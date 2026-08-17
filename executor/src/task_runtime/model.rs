@@ -63,6 +63,7 @@ pub struct ProjectUpdate {
     pub provider_config: Option<Value>,
     pub board_config: Option<Value>,
     pub card_display: Option<Value>,
+    pub workflow_definition: Option<Value>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -77,6 +78,8 @@ pub struct TaskCreate {
     pub parent_id: Option<String>,
     #[serde(default)]
     pub tags: Vec<String>,
+    #[serde(default)]
+    pub workflow: Option<Value>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -90,6 +93,7 @@ pub struct TaskUpdate {
     pub tags: Option<Vec<String>>,
     pub assignee_agent_id: Option<Option<String>>,
     pub execution_payload: Option<Value>,
+    pub workflow: Option<Option<Value>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -289,6 +293,8 @@ pub struct RuntimeTaskAddress {
     pub task_title: Option<String>,
     #[serde(default, alias = "backendTaskId")]
     pub backend_task_id: Option<i64>,
+    #[serde(default, alias = "workflowNodeId")]
+    pub workflow_node_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -301,6 +307,7 @@ pub struct TaskBinding {
     pub task_id: String,
     pub task_title: Option<String>,
     pub backend_task_id: Option<i64>,
+    pub workflow_node_id: Option<String>,
     pub linked_at: String,
 }
 

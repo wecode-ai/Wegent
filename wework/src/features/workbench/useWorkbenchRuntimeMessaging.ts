@@ -802,6 +802,7 @@ export function useWorkbenchRuntimeMessaging({
         openInMainPane?: boolean
         refreshWorkListsOnResolve?: boolean
         sideSource?: RuntimeTaskAddress | null
+        workspaceSource?: RuntimeTaskAddress | null
         preserveAttachments?: boolean
         launchStartedAt?: number
       }
@@ -879,11 +880,12 @@ export function useWorkbenchRuntimeMessaging({
         'projectId' | 'deviceWorkspaceId' | 'deviceId' | 'workspacePath'
       >
       let optimisticDeviceId: string
-      if (options?.sideSource?.deviceId && options.sideSource.workspacePath) {
-        optimisticDeviceId = options.sideSource.deviceId
+      const inheritedWorkspaceSource = options?.workspaceSource ?? options?.sideSource
+      if (inheritedWorkspaceSource?.deviceId && inheritedWorkspaceSource.workspacePath) {
+        optimisticDeviceId = inheritedWorkspaceSource.deviceId
         runtimeTaskTarget = {
-          deviceId: options.sideSource.deviceId,
-          workspacePath: options.sideSource.workspacePath,
+          deviceId: inheritedWorkspaceSource.deviceId,
+          workspacePath: inheritedWorkspaceSource.workspacePath,
         }
       } else if (projectId) {
         if (!selectedProjectWorkspace) {
@@ -1706,6 +1708,9 @@ export function useWorkbenchRuntimeMessaging({
         : options.modelId
           ? { ...prepared.payload, force_override_bot_model: options.modelId }
           : prepared.payload
+      if (options.workspaceSource) {
+        delete payload.execution
+      }
       const explicitModelSelection = options.executionModel?.modelId
         ? {
             modelName: options.executionModel.modelId,
@@ -1723,6 +1728,7 @@ export function useWorkbenchRuntimeMessaging({
         origin: options.origin,
         modelSelection: explicitModelSelection,
         additionalContext: options.additionalContext,
+        workspaceSource: options.workspaceSource,
         onError: options.onError,
         onRuntimeTaskOptimisticOpen: options.onRuntimeTaskOptimisticOpen,
         openInMainPane: false,

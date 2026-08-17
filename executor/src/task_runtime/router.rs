@@ -1436,6 +1436,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: Some("GH-7".to_owned()),
                     tags: vec!["bug".to_owned()],
+                    workflow: None,
                 },
             )
             .await
@@ -1538,6 +1539,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: Some("GL-9".to_owned()),
                     tags: vec!["delivery".to_owned()],
+                    workflow: None,
                 },
             )
             .await

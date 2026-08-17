@@ -10,6 +10,7 @@ sidebar_position: 1
 | --------------------------- | -------------------------------------------------------- | ----------------------------------------------------------------- |
 | 看板自动化与 Wegent 执行    | [board-automation.md](board-automation.md)               | 指派、执行真值、runtime 激活、续聊、取消、终态投影                |
 | 内置浏览器导航与多标签      | [embedded-browser.md](embedded-browser.md)               | bridge 路由、pending open、WebView 生命周期、导航完成、多标签 E2E |
+| Issue、任务与工作流编排     | [issue-task-workflow.md](issue-task-workflow.md)         | Issue 聚合、任务绑定、工作空间继承、DAG 就绪判断、状态聚合         |
 | 项目执行状态与 Runtime 容量 | [project-execution-state.md](project-execution-state.md) | claim、事件顺序、取消、重试、lease、并发容量、UI 投影             |
 
 详细产品说明继续放在原开发指南；本目录只保存可评审的架构真值。

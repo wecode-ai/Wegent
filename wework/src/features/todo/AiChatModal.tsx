@@ -11,6 +11,7 @@ import {
 import { useCallback, useEffect, useState } from 'react'
 
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
+import { WorkbenchHarnessSelector } from '@/components/layout/WorkbenchHarnessSelector'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -22,7 +23,9 @@ import type {
   ProjectWithTasks,
   RuntimeTaskAddress,
 } from '@/types/api'
+import { ConnectedIssueProjectWork } from './ConnectedIssueProjectWork'
 import { projectSpaceChatRuntimeContext } from './projectProviderConfig'
+import { WorkItemComposerGuide } from './WorkItemComposerGuide'
 
 interface AiChatModalProps {
   project: CloudProject
@@ -34,11 +37,17 @@ interface AiChatModalProps {
   open: boolean
   onClose: () => void
   initialAddress?: RuntimeTaskAddress | null
+  initialLocalProjectId?: number | null
+  inheritFromTask?: RuntimeTaskAddress | null
   taskTitle?: string | null
   initialTaskInput?: string
   autoSubmitInitialTaskInput?: boolean
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
   onAddressChange?: (address: RuntimeTaskAddress) => void
+  onTaskCreated?: (
+    address: RuntimeTaskAddress,
+    localProject: ProjectWithTasks | null
+  ) => Promise<void> | void
   embedded?: boolean
 }
 
@@ -62,11 +71,14 @@ export function AiChatModal({
   open,
   onClose,
   initialAddress = null,
+  initialLocalProjectId = null,
+  inheritFromTask = null,
   taskTitle,
   initialTaskInput = '',
   autoSubmitInitialTaskInput = false,
   onOpenRuntimeTask,
   onAddressChange,
+  onTaskCreated,
   embedded = false,
 }: AiChatModalProps) {
   const { t } = useTranslation('common')
@@ -83,6 +95,7 @@ export function AiChatModal({
   const [sessionKey, setSessionKey] = useState(0)
   const [localProjectId, setLocalProjectId] = useState<number | null>(() => {
     const matched =
+      localProjects.find(candidate => candidate.id === initialLocalProjectId) ??
       localProjects.find(candidate => String(candidate.id) === String(project.id)) ??
       localProjects[0]
     return matched?.id ?? null
@@ -120,6 +133,7 @@ export function AiChatModal({
     ) => {
       const address = await createProjectRuntimeTask(message, {
         project: selectedLocalProject,
+        workspaceSource: inheritFromTask,
         runtime: 'codex',
         attachments: options.attachments,
         executionModel: options.executionModel,
@@ -149,9 +163,10 @@ export function AiChatModal({
         onError: options.onError,
         onRuntimeTaskOptimisticOpen: options.onRuntimeTaskOptimisticOpen,
       })
+      if (address) await onTaskCreated?.(address, selectedLocalProject)
       return address
     },
-    [createProjectRuntimeTask, project, selectedLocalProject, task]
+    [createProjectRuntimeTask, inheritFromTask, onTaskCreated, project, selectedLocalProject, task]
   )
 
   const rememberAddress = useCallback(
@@ -169,6 +184,58 @@ export function AiChatModal({
     setComposeNew(current => !current)
     setSessionKey(key => key + 1)
   }, [])
+  const renderNewTaskComposer = (
+    instanceId: string,
+    testId: string,
+    options: { expanded?: boolean; key?: number; startFresh?: boolean } = {}
+  ) => {
+    const composer = (projectWork?: Parameters<typeof TemporaryChatPanel>[0]['projectWork']) => (
+      <TemporaryChatPanel
+        key={options.key}
+        currentProject={selectedLocalProject}
+        source={null}
+        instanceId={instanceId}
+        testId={testId}
+        initialInput={initialTaskInput}
+        autoSubmitInitialInput={autoSubmitInitialTaskInput}
+        initialAddress={options.startFresh ? null : currentAddress}
+        createTask={createConversation}
+        onAddressChange={rememberAddress}
+        emptyStateText={t(
+          'todo.issue_task_composer_empty',
+          '描述这个任务要完成什么，发送后会创建任务并关联当前 Issue。'
+        )}
+        placeholder={t('todo.issue_task_composer_placeholder', '描述要执行的任务')}
+        expanded={options.expanded}
+        wideComposer={options.expanded}
+        projectWork={projectWork}
+        showProjectWorkBar={Boolean(projectWork)}
+        projectWorkBarMiddleContext={<WorkItemComposerGuide integrated toolbar project={project} />}
+        projectWorkBarTrailingContext={
+          <WorkbenchHarnessSelector
+            runtime="codex"
+            harnesses={[]}
+            enabledHarnesses={[]}
+            loading={false}
+            detectionFailed={false}
+            onRuntimeChange={() => undefined}
+          />
+        }
+      />
+    )
+
+    return selectedLocalProject ? (
+      <ConnectedIssueProjectWork
+        project={selectedLocalProject}
+        onSelectProject={setLocalProjectId}
+        inheritFromTask={inheritFromTask}
+      >
+        {projectWork => composer(projectWork)}
+      </ConnectedIssueProjectWork>
+    ) : (
+      composer()
+    )
+  }
 
   if (initialAddress) {
     if (embedded) {
@@ -329,14 +396,20 @@ export function AiChatModal({
 
   if (embedded) {
     return (
-      <aside
+      <div
         data-testid="ai-chat-modal-backdrop"
         className={cn(
-          'relative z-10 flex h-full min-h-0 w-[min(620px,38vw)] min-w-[460px] shrink-0 flex-col border-l border-border bg-background',
+          'fixed inset-0 z-modal flex items-center justify-center bg-black/30 p-6 backdrop-blur-[2px]',
           !open && 'hidden'
         )}
+        onClick={event => {
+          if (event.target === event.currentTarget) onClose()
+        }}
       >
-        <section data-testid="ai-chat-modal" className="flex h-full min-h-0 min-w-0 flex-col">
+        <section
+          data-testid="ai-chat-modal"
+          className="flex h-[min(680px,calc(100vh_-_48px))] w-[min(72rem,calc(100vw_-_48px))] min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-xl"
+        >
           <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3">
             <button
               type="button"
@@ -353,42 +426,14 @@ export function AiChatModal({
               </div>
               <div className="truncate text-sm font-medium text-text-primary">新建任务</div>
             </div>
-            <label className="relative flex h-8 max-w-44 shrink-0 items-center rounded-lg border border-border bg-background transition hover:bg-muted">
-              <span className="sr-only">{t('workbench.project_space_chat.runtime_project')}</span>
-              <select
-                data-testid="ai-chat-runtime-project"
-                value={selectedLocalProject?.id ?? ''}
-                onChange={event =>
-                  setLocalProjectId(event.target.value ? Number(event.target.value) : null)
-                }
-                className="h-full w-full appearance-none truncate rounded-lg bg-transparent pl-2.5 pr-7 text-xs text-text-primary outline-none"
-              >
-                <option value="">{t('workbench.project_space_chat.no_runtime_project')}</option>
-                {localProjects.map(localProject => (
-                  <option key={localProject.id} value={localProject.id}>
-                    {localProject.name}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown className="pointer-events-none absolute right-2 h-3.5 w-3.5 text-text-muted" />
-            </label>
           </header>
-          <TemporaryChatPanel
-            currentProject={selectedLocalProject}
-            source={null}
-            instanceId={`work-item-new-task:${project.id}:${task?.id ?? 'project'}`}
-            testId="work-item-new-task-chat-panel"
-            initialInput={initialTaskInput}
-            autoSubmitInitialInput={autoSubmitInitialTaskInput}
-            initialAddress={currentAddress}
-            createTask={createConversation}
-            onAddressChange={rememberAddress}
-            emptyStateText="描述这个任务要完成什么，发送后会创建任务并关联当前 Issue。"
-            placeholder="描述要执行的任务"
-            expanded
-          />
+          {renderNewTaskComposer(
+            `work-item-new-task:${project.id}:${task?.id ?? 'project'}`,
+            'work-item-new-task-chat-panel',
+            { expanded: true, startFresh: true }
+          )}
         </section>
-      </aside>
+      </div>
     )
   }
 
@@ -467,16 +512,11 @@ export function AiChatModal({
             <X className="h-4 w-4" />
           </button>
         </header>
-        <TemporaryChatPanel
-          key={sessionKey}
-          currentProject={selectedLocalProject}
-          source={null}
-          instanceId={`ai-chat:${project.id}:${task?.id ?? 'project'}:${sessionKey}`}
-          testId="ai-chat-panel"
-          initialAddress={composeNew ? null : currentAddress}
-          createTask={createConversation}
-          onAddressChange={rememberAddress}
-        />
+        {renderNewTaskComposer(
+          `ai-chat:${project.id}:${task?.id ?? 'project'}:${sessionKey}`,
+          'ai-chat-panel',
+          { key: sessionKey, startFresh: composeNew }
+        )}
       </section>
     </div>
   )

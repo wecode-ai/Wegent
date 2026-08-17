@@ -13,3 +13,13 @@ export function shouldPrepareWorkItemTask(
 ): boolean {
   return item.parent_id === null && item.status !== targetStatus && taskBindingCount === 0
 }
+
+export function shouldDeferWorkItemMoveUntilTaskCreated(
+  item: Pick<CloudLoopItem, 'parent_id' | 'status'>,
+  targetStatus: TaskEntryStatus,
+  taskBindingCount: number
+): boolean {
+  return (
+    targetStatus === 'pending' && shouldPrepareWorkItemTask(item, targetStatus, taskBindingCount)
+  )
+}

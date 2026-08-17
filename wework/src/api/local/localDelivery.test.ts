@@ -304,6 +304,44 @@ describe('local delivery API', () => {
     })
   })
 
+  test('persists the local coding project without exposing its system tag', async () => {
+    const associatedRecord = {
+      ...taskRecord,
+      metadata: {
+        tags: ['feature', 'wegent:local-project:91:Wegent'],
+      },
+    }
+    const request = vi.fn(async (method: string) => {
+      if (method === 'todos.create') return associatedRecord
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createLocalDeliveryApi(request)
+
+    await expect(
+      api.createLoopItem('project-1', {
+        title: 'Modify Wegent',
+        tags: ['feature'],
+        local_project_id: 91,
+        local_project_name: 'Wegent',
+      })
+    ).resolves.toMatchObject({
+      local_project_id: 91,
+      local_project_name: 'Wegent',
+      tags: ['feature'],
+    })
+    expect(request).toHaveBeenCalledWith('todos.create', {
+      project_id: 'project-1',
+      todo: {
+        title: 'Modify Wegent',
+        description: '',
+        status: 'inbox',
+        priority: 'none',
+        parent_id: null,
+        tags: ['feature', 'wegent:local-project:91:Wegent'],
+      },
+    })
+  })
+
   test('does not expose cached backend projects as local project spaces', async () => {
     const backendProjectRecord = {
       ...projectRecord,
@@ -451,7 +489,7 @@ describe('local delivery API', () => {
       todo: {
         title: 'Runtime task',
         description: 'Track only this explicitly selected task',
-        status: 'in_progress',
+        status: 'pending',
         priority: 'none',
         parent_id: null,
         tags: [],
@@ -521,6 +559,7 @@ describe('local delivery API', () => {
       }
       if (method === 'projects.list') return [projectRecord]
       if (method === 'todos.get') return trackedTask
+      if (method === 'todos.bindings') return []
       if (method === 'todos.update') return reviewedTask
       throw new Error(`Unexpected method: ${method}`)
     })

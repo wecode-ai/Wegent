@@ -701,6 +701,12 @@ class ProjectAutomationExecution:
             run.completed_at = utcnow()
             run.version += 1
             run_changed = True
+        if run_changed:
+            from app.services.project_workflow_projection import (
+                sync_automation_workflow_node,
+            )
+
+            sync_automation_workflow_node(db, run)
 
         if backend_task_id is not None and run.backend_task_id != backend_task_id:
             run.backend_task_id = backend_task_id
@@ -780,6 +786,11 @@ class ProjectAutomationExecution:
         run.status = "failed"
         run.description = error[:2000]
         run.version += 1
+        from app.services.project_workflow_projection import (
+            sync_automation_workflow_node,
+        )
+
+        sync_automation_workflow_node(db, run)
         self.finish_activity(
             db,
             run=run,
@@ -954,6 +965,11 @@ class ProjectAutomationProcessor:
         run.assignee_agent_id = ""
         run.device_id = ""
         run.version += 1
+        from app.services.project_workflow_projection import (
+            sync_automation_workflow_node,
+        )
+
+        sync_automation_workflow_node(db, run)
         db.commit()
         db.refresh(run)
 

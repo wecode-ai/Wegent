@@ -17,6 +17,7 @@ from pydantic import (
 )
 
 from app.schemas.cloud_project import CloudProjectResponse, SnowflakeId
+from app.schemas.issue_workflow import IssueWorkflowInstance
 from app.schemas.tagging import MAX_TAGS_PER_ITEM
 from app.schemas.tagging import normalize_tags as _normalize_tags
 
@@ -32,6 +33,7 @@ class LoopItemCreate(BaseModel):
     due_at: datetime | None = None
     parent_id: str | None = Field(default=None, max_length=64)
     tags: list[str] = Field(default_factory=list, max_length=MAX_TAGS_PER_ITEM)
+    workflow: IssueWorkflowInstance | None = None
 
     _normalize = field_validator("tags", mode="before")(_normalize_tags)
 
@@ -62,6 +64,7 @@ class LoopItemUpdate(BaseModel):
     due_at: datetime | None = None
     parent_id: str | None = Field(default=None, max_length=64)
     tags: list[str] | None = Field(default=None, max_length=MAX_TAGS_PER_ITEM)
+    workflow: IssueWorkflowInstance | None = None
 
     _normalize = field_validator("tags", mode="before")(
         lambda value: None if value is None else _normalize_tags(value)
@@ -122,6 +125,7 @@ class LoopItemResponse(BaseModel):
     execution_note: str | None = None
     execution_error: str | None = None
     automation: dict[str, Any] | None = None
+    workflow: IssueWorkflowInstance | None = None
     priority: str
     due_at: datetime | None
     sort_order: int
@@ -179,6 +183,15 @@ class LoopItemResponse(BaseModel):
                     else None
                 )
             )
+            workflow = (
+                value.get("workflow")
+                if value.get("workflow") is not None
+                else (
+                    metadata.get("workflow")
+                    if isinstance(metadata.get("workflow"), dict)
+                    else None
+                )
+            )
             queued_at_value = value.get("queued_at")
             if isinstance(queued_at_value, datetime):
                 queued_at = queued_at_value.isoformat()
@@ -198,6 +211,7 @@ class LoopItemResponse(BaseModel):
                 "assignment_history": assignment_history,
                 "status_history": status_history,
                 "approval": approval,
+                "workflow": workflow,
                 "queued_at": queued_at,
                 "execution_note": (
                     value.get("execution_note")
@@ -326,6 +340,13 @@ class LoopItemTaskBind(BaseModel):
     task_id: str = Field(alias="taskId", min_length=1, max_length=255)
     task_title: str | None = Field(default=None, alias="taskTitle", max_length=255)
     backend_task_id: int | None = Field(default=None, alias="backendTaskId")
+    workflow_node_id: str | None = Field(
+        default=None,
+        alias="workflowNodeId",
+        min_length=1,
+        max_length=64,
+        pattern=r"^[A-Za-z0-9_-]+$",
+    )
 
 
 class LoopItemTaskBindingResponse(BaseModel):
@@ -339,6 +360,7 @@ class LoopItemTaskBindingResponse(BaseModel):
     task_id: str
     task_title: str | None
     backend_task_id: int | None
+    workflow_node_id: str | None = None
     linked_by_user_id: int
     linked_at: datetime
     unlinked_at: datetime | None

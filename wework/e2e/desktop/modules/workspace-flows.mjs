@@ -322,18 +322,13 @@ async function verifyWorkspaceIssueCreation(control) {
   })
 
   await control.command('click', `${boardContentSelector} [data-testid="cloud-create-issue"]`)
+  await control.command('waitFor', '[data-testid="workspace-issue-composer"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command(
     'waitFor',
-    `${boardContentSelector} [data-testid="workspace-issue-composer"]`,
-    {
-      text: '新建 Issue',
-      visible: true,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
-  )
-  await control.command(
-    'waitFor',
-    `${boardContentSelector} [data-testid="workspace-issue-composer"] [data-testid="project-chat-composer"]`,
+    '[data-testid="workspace-issue-composer"] [data-testid="project-chat-composer"]',
     {
       visible: true,
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -341,7 +336,7 @@ async function verifyWorkspaceIssueCreation(control) {
   )
   await control.command(
     'waitFor',
-    `${boardContentSelector} [data-testid="workspace-issue-composer"] [data-testid="attachment-file-input"]`,
+    '[data-testid="workspace-issue-composer"] [data-testid="attachment-file-input"]',
     {
       visible: false,
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -349,17 +344,30 @@ async function verifyWorkspaceIssueCreation(control) {
   )
   await control.command(
     'waitFor',
-    `${boardContentSelector} [data-testid="workspace-issue-start-execution"]`,
+    '[data-testid="workspace-create-issue-tab"][aria-selected="true"]',
     {
       visible: true,
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )
-  await control.command('fill', `${boardContentSelector} [data-testid="workspace-issue-input"]`, {
+  await control.command('click', '[data-testid="workspace-create-task-tab"]')
+  await control.command(
+    'waitFor',
+    '[data-testid="workspace-create-task-tab"][aria-selected="true"]',
+    {
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  await control.command('waitFor', '[data-testid="project-work-button"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="workspace-create-issue-tab"]')
+  await control.command('fill', '[data-testid="workspace-issue-input"]', {
     value: 'WEWORK_DESKTOP_E2E_ISSUE\nWorkspace issue creation verified',
   })
-  await captureVerificationScreenshot(control, 'workspace-issue-01-ready.png', boardContentSelector)
-  await control.command('click', `${boardContentSelector} [data-testid="workspace-issue-submit"]`)
+  await captureVerificationScreenshot(control, 'workspace-issue-01-ready.png')
+  await control.command('click', '[data-testid="workspace-issue-submit"]')
   await control.command(
     'waitFor',
     `${boardContentSelector} [data-testid="cloud-todo-detail-title"]`,

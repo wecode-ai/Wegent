@@ -209,7 +209,7 @@ describe('createDeliveryApi task tracking', () => {
     expect(post).toHaveBeenNthCalledWith(1, '/v1/cloud-projects/project-1/loop-items', {
       title: 'Runtime task',
       description: 'Track this task',
-      status: 'in_progress',
+      status: 'pending',
     })
     expect(post).toHaveBeenNthCalledWith(2, '/v1/loop-items/WEG-1/tasks', {
       ...task,
@@ -242,7 +242,11 @@ describe('createDeliveryApi task tracking', () => {
   test('updates tracking status through the existing loop item endpoint', async () => {
     const reviewedItem = { ...trackedItem, status: 'in_review', version: 2 }
     const context = { loop_item_id: trackedItem.id } as CloudTaskContext
-    const get = vi.fn().mockResolvedValueOnce(context).mockResolvedValueOnce(trackedItem)
+    const get = vi
+      .fn()
+      .mockResolvedValueOnce(context)
+      .mockResolvedValueOnce(trackedItem)
+      .mockResolvedValueOnce([])
     const patch = vi.fn().mockResolvedValue(reviewedItem)
     const api = createDeliveryApi(clientWith({ get, patch }))
 
@@ -254,6 +258,7 @@ describe('createDeliveryApi task tracking', () => {
       '/v1/runtime-tasks/cloud-context?device_id=local-device&task_id=runtime-1'
     )
     expect(get).toHaveBeenNthCalledWith(2, '/v1/loop-items/WEG-1')
+    expect(get).toHaveBeenNthCalledWith(3, '/v1/loop-items/WEG-1/tasks')
     expect(patch).toHaveBeenCalledWith('/v1/loop-items/WEG-1', {
       version: 1,
       status: 'in_review',
@@ -329,6 +334,96 @@ describe('createDeliveryApi task tracking', () => {
       version: 2,
       status: 'completed',
     })
+  })
+
+  test('serializes workflow projection updates from parallel runtime tasks', async () => {
+    const workflowItem: CloudLoopItem = {
+      ...trackedItem,
+      status: 'pending',
+      workflow: {
+        version: 1,
+        definition_version: 1,
+        nodes: [
+          {
+            id: 'develop',
+            name: 'Develop',
+            kind: 'my_task',
+            depends_on: [],
+            required: true,
+            workspace_policy: 'composer',
+            status: 'ready',
+            task_binding_id: null,
+            execution_id: null,
+          },
+          {
+            id: 'docs',
+            name: 'Docs',
+            kind: 'my_task',
+            depends_on: [],
+            required: true,
+            workspace_policy: 'composer',
+            status: 'ready',
+            task_binding_id: null,
+            execution_id: null,
+          },
+        ],
+      },
+    }
+    let currentItem = workflowItem
+    let releaseFirstUpdate: (() => void) | null = null
+    const firstUpdateReleased = new Promise<void>(resolve => {
+      releaseFirstUpdate = resolve
+    })
+    const get = vi.fn(async (endpoint: string) => {
+      if (endpoint.includes('/cloud-context')) {
+        const nodeId = endpoint.includes('runtime-develop') ? 'develop' : 'docs'
+        return {
+          loop_item_id: currentItem.id,
+          loop_item: currentItem,
+          workflow_node_id: nodeId,
+        } as CloudTaskContext
+      }
+      return currentItem
+    })
+    const patch = vi.fn(
+      async (_endpoint: string, body: { version: number; workflow: CloudLoopItem['workflow'] }) => {
+        if (body.version === 1) await firstUpdateReleased
+        currentItem = {
+          ...currentItem,
+          status: 'in_progress',
+          version: body.version + 1,
+          workflow: body.workflow,
+        }
+        return currentItem
+      }
+    )
+    const developApi = createDeliveryApi(clientWith({ get, patch }))
+    const docsApi = createDeliveryApi(clientWith({ get, patch }))
+
+    const develop = developApi.updateTaskTrackingStatus(
+      { deviceId: 'local-device', taskId: 'runtime-develop' },
+      'running'
+    )
+    const docs = docsApi.updateTaskTrackingStatus(
+      { deviceId: 'local-device', taskId: 'runtime-docs' },
+      'running'
+    )
+    await vi.waitFor(() => expect(patch).toHaveBeenCalledTimes(1))
+
+    releaseFirstUpdate?.()
+
+    await Promise.all([develop, docs])
+    expect(patch).toHaveBeenNthCalledWith(
+      1,
+      `/v1/loop-items/${trackedItem.id}`,
+      expect.objectContaining({ version: 1 })
+    )
+    expect(patch).toHaveBeenNthCalledWith(
+      2,
+      `/v1/loop-items/${trackedItem.id}`,
+      expect.objectContaining({ version: 2 })
+    )
+    expect(currentItem.workflow?.nodes.map(node => node.status)).toEqual(['running', 'running'])
   })
 
   test('synchronizes a friendly runtime title to the bound task', async () => {

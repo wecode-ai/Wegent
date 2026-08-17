@@ -350,6 +350,73 @@ class ProjectAutomationService:
             run, str(_metadata(rule).get("timezone") or "Asia/Shanghai")
         )
 
+    async def run_for_workflow_node(
+        self,
+        db: Session,
+        project_id: str,
+        automation_id: str,
+        item_id: str,
+        workflow_node_id: str,
+        user_id: int,
+    ) -> dict:
+        require_cloud_project_role(db, project_id, user_id, BaseRole.Developer)
+        rule = self._rule(db, project_id, automation_id)
+        item = loop_item_service.get(db, item_id, user_id)
+        if str(item.cloud_project_id) != str(project_id):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Issue not found")
+        workflow = (
+            item.metadata_json.get("workflow")
+            if isinstance(item.metadata_json, dict)
+            else None
+        )
+        nodes = workflow.get("nodes") if isinstance(workflow, dict) else None
+        node = next(
+            (
+                candidate
+                for candidate in nodes or []
+                if isinstance(candidate, dict)
+                and candidate.get("id") == workflow_node_id
+            ),
+            None,
+        )
+        if node is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow node not found")
+        if node.get("kind") not in {"automation", "ai"}:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "Workflow node is not an automation",
+            )
+        if node.get("status") not in {"ready", "failed"}:
+            raise HTTPException(status.HTTP_409_CONFLICT, "Workflow node is not ready")
+        if node.get("automation_rule_id") != automation_id:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "Workflow node automation does not match",
+            )
+        run = self._create_run(db, rule, "manual", utcnow(), commit=False)
+        run.task_id = item.id
+        run.task_title = item.title or ""
+        run.metadata_json = {
+            **(run.metadata_json or {}),
+            "workflow_node_id": workflow_node_id,
+        }
+        db.commit()
+        db.refresh(run)
+        from app.services.project_workflow_projection import update_workflow_node
+
+        update_workflow_node(
+            db,
+            item_id=item.id,
+            node_id=workflow_node_id,
+            node_status="queued",
+            automation_run_id=str(run.id),
+        )
+        db.commit()
+        await project_automation_execution.dispatch(db, rule, run)
+        return self._run_view(
+            run, str(_metadata(rule).get("timezone") or "Asia/Shanghai")
+        )
+
     async def retry_run(
         self, db: Session, project_id: str, run_id: str, user_id: int
     ) -> dict:
@@ -500,6 +567,11 @@ class ProjectAutomationService:
 
         run.status = "cancelled"
         run.version += 1
+        from app.services.project_workflow_projection import (
+            sync_automation_workflow_node,
+        )
+
+        sync_automation_workflow_node(db, run)
         project_automation_execution.finish_activity(
             db,
             run=run,

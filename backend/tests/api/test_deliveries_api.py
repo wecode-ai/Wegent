@@ -447,7 +447,7 @@ def test_delivery_flow_creates_immutable_snapshot(
 
 
 @pytest.mark.parametrize("initial_status", ["inbox", "pending"])
-def test_binding_task_advances_unstarted_todo_to_in_progress(
+def test_binding_task_preserves_unstarted_todo_until_runtime_starts(
     test_client: TestClient,
     test_token: str,
     delivery_project: CloudProject,
@@ -469,8 +469,144 @@ def test_binding_task_advances_unstarted_todo_to_in_progress(
     item = test_client.get(
         f"/api/v1/loop-items/{created['id']}", headers=_auth(test_token)
     ).json()
-    assert item["status"] == "in_progress"
-    assert item["version"] == created["version"] + 1
+    assert item["status"] == initial_status
+    assert item["version"] == created["version"]
+
+
+def test_project_workflow_is_snapshotted_into_new_issue(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+    delivery_project: CloudProject,
+) -> None:
+    delivery_project.metadata_json = {
+        **(delivery_project.metadata_json or {}),
+        "workflow_definition": {
+            "version": 4,
+            "nodes": [
+                {
+                    "id": "develop",
+                    "name": "开发",
+                    "kind": "my_task",
+                    "depends_on": [],
+                    "required": True,
+                    "workspace_policy": "composer",
+                },
+                {
+                    "id": "test",
+                    "name": "测试",
+                    "kind": "my_task",
+                    "depends_on": ["develop"],
+                    "required": True,
+                    "workspace_policy": "inherit",
+                },
+            ],
+        },
+    }
+    test_db.commit()
+
+    response = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Workflow issue"},
+    )
+
+    assert response.status_code == 201
+    workflow = response.json()["workflow"]
+    assert workflow["definition_version"] == 4
+    assert [node["status"] for node in workflow["nodes"]] == ["ready", "blocked"]
+
+
+def test_workflow_task_binding_requires_a_ready_unoccupied_user_task_node(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+    delivery_project: CloudProject,
+) -> None:
+    delivery_project.metadata_json = {
+        **(delivery_project.metadata_json or {}),
+        "workflow_definition": {
+            "version": 1,
+            "nodes": [
+                {
+                    "id": "develop",
+                    "name": "Develop",
+                    "kind": "my_task",
+                    "depends_on": [],
+                    "required": True,
+                    "workspace_policy": "composer",
+                },
+                {
+                    "id": "test",
+                    "name": "Test",
+                    "kind": "my_task",
+                    "depends_on": ["develop"],
+                    "required": True,
+                    "workspace_policy": "inherit",
+                },
+                {
+                    "id": "deploy",
+                    "name": "Deploy",
+                    "kind": "automation",
+                    "depends_on": [],
+                    "required": True,
+                    "workspace_policy": "none",
+                    "automation_rule_id": "rule-1",
+                },
+            ],
+        },
+    }
+    test_db.commit()
+    item = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Workflow binding"},
+    ).json()
+
+    blocked = test_client.post(
+        f"/api/v1/loop-items/{item['id']}/tasks",
+        headers=_auth(test_token),
+        json={
+            "deviceId": "local-device",
+            "taskId": "test-task",
+            "workflowNodeId": "test",
+        },
+    )
+    assert blocked.status_code == 409
+
+    automatic = test_client.post(
+        f"/api/v1/loop-items/{item['id']}/tasks",
+        headers=_auth(test_token),
+        json={
+            "deviceId": "local-device",
+            "taskId": "deploy-task",
+            "workflowNodeId": "deploy",
+        },
+    )
+    assert automatic.status_code == 422
+
+    first = test_client.post(
+        f"/api/v1/loop-items/{item['id']}/tasks",
+        headers=_auth(test_token),
+        json={
+            "deviceId": "local-device",
+            "taskId": "develop-task",
+            "workflowNodeId": "develop",
+        },
+    )
+    assert first.status_code == 201
+    assert first.json()["workflow_node_id"] == "develop"
+
+    duplicate = test_client.post(
+        f"/api/v1/loop-items/{item['id']}/tasks",
+        headers=_auth(test_token),
+        json={
+            "deviceId": "local-device",
+            "taskId": "other-develop-task",
+            "workflowNodeId": "develop",
+        },
+    )
+    assert duplicate.status_code == 409
 
 
 def test_binding_subscription_backend_task_uses_task_store(

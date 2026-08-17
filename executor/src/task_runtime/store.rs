@@ -293,6 +293,9 @@ impl LocalTaskStore {
         if let Some(card_display) = input.card_display {
             metadata["card_display"] = card_display;
         }
+        if let Some(workflow_definition) = input.workflow_definition {
+            metadata["workflow_definition"] = workflow_definition;
+        }
         let connection = self.connection()?;
         let updated = connection.execute(
             "UPDATE loop_items
@@ -406,7 +409,12 @@ impl LocalTaskStore {
         let id = format!("{project_key}-{sequence}");
         let now = now();
         let completed_at = (input.status == "completed").then(|| now.clone());
-        let metadata = json!({"tags": input.tags});
+        let mut metadata = json!({"tags": input.tags});
+        if let Some(workflow) = input.workflow {
+            metadata["workflow"] = workflow;
+        } else if let Some(definition) = project.metadata.get("workflow_definition") {
+            metadata["workflow"] = instantiate_local_workflow(definition)?;
+        }
         transaction.execute(
             "UPDATE loop_items SET next_item_number = ?1, version = version + 1,
                     updated_at = ?2 WHERE id = ?3",
@@ -486,6 +494,9 @@ impl LocalTaskStore {
         let mut metadata = current.metadata;
         if let Some(tags) = input.tags {
             metadata["tags"] = json!(tags);
+        }
+        if let Some(workflow) = input.workflow {
+            metadata["workflow"] = workflow.unwrap_or(Value::Null);
         }
         let assignee_agent_id = match input.assignee_agent_id.as_ref() {
             Some(Some(agent_id)) => Some(agent_id.as_str()),
@@ -1988,17 +1999,38 @@ impl LocalTaskStore {
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let active = get_active_binding(&transaction, &input.device_id, &input.task_id)?;
-        let metadata = json!({"external_item_id": external_item_id});
+        if let (Some(item_id), Some(workflow_node_id)) =
+            (item_id, input.workflow_node_id.as_deref())
+        {
+            validate_local_workflow_task_binding(
+                &transaction,
+                item_id,
+                workflow_node_id,
+                &input.device_id,
+                &input.task_id,
+            )?;
+        }
+        let metadata = json!({
+            "external_item_id": external_item_id,
+            "workflow_node_id": input.workflow_node_id,
+        });
         if let Some(active) = active {
             let target_item_id = item_id.or(external_item_id);
             let same_target = active.cloud_project_id == project_id
-                && active.loop_item_id.as_deref() == target_item_id;
+                && active.loop_item_id.as_deref() == target_item_id
+                && active.workflow_node_id == input.workflow_node_id;
             if same_target {
                 transaction.execute(
                     "UPDATE loop_items SET task_title = ?1, backend_task_id = ?2,
-                            updated_at = ?3
-                     WHERE id = ?4",
-                    params![input.task_title, input.backend_task_id, now(), active.id],
+                            metadata = ?3, updated_at = ?4
+                     WHERE id = ?5",
+                    params![
+                        input.task_title,
+                        input.backend_task_id,
+                        metadata.to_string(),
+                        now(),
+                        active.id
+                    ],
                 )?;
                 transaction.commit()?;
                 drop(connection);
@@ -2032,9 +2064,6 @@ impl LocalTaskStore {
         )?;
         transaction.commit()?;
         drop(connection);
-        if let Some(item_id) = item_id {
-            self.advance_started_task(project_id, item_id)?;
-        }
         self.get_binding(&id)
     }
 
@@ -2044,7 +2073,8 @@ impl LocalTaskStore {
             "SELECT id, cloud_project_id,
                     COALESCE(loop_item_id, json_extract(metadata, '$.external_item_id')),
                     task_user_id, device_id,
-                    task_id, task_title, backend_task_id, linked_at
+                    task_id, task_title, backend_task_id,
+                    json_extract(metadata, '$.workflow_node_id'), linked_at
              FROM loop_items
              WHERE resource_type = 'execution' AND unlinked_at IS NULL
                AND (loop_item_id = ?1 OR json_extract(metadata, '$.external_item_id') = ?1)
@@ -2083,29 +2113,14 @@ impl LocalTaskStore {
                 "SELECT id, cloud_project_id,
                         COALESCE(loop_item_id, json_extract(metadata, '$.external_item_id')),
                         task_user_id, device_id,
-                        task_id, task_title, backend_task_id, linked_at
+                        task_id, task_title, backend_task_id,
+                        json_extract(metadata, '$.workflow_node_id'), linked_at
                  FROM loop_items WHERE id = ?1 AND resource_type = 'execution'",
                 [id],
                 map_task_binding,
             )
             .optional()?
             .ok_or(TaskRuntimeError::TaskNotFound)
-    }
-
-    fn advance_started_task(
-        &self,
-        project_id: &str,
-        item_id: &str,
-    ) -> Result<(), TaskRuntimeError> {
-        let connection = self.connection()?;
-        connection.execute(
-            "UPDATE loop_items
-             SET status = 'in_progress', completed_at = NULL, version = version + 1,
-                 updated_at = ?1
-             WHERE id = ?2 AND cloud_project_id = ?3 AND status IN ('inbox', 'pending')",
-            params![now(), item_id, project_id],
-        )?;
-        Ok(())
     }
 
     pub(crate) fn get_project(&self, project_id: &str) -> Result<LoopItem, TaskRuntimeError> {
@@ -2145,7 +2160,8 @@ fn get_active_binding(
             "SELECT id, cloud_project_id,
                     COALESCE(loop_item_id, json_extract(metadata, '$.external_item_id')),
                     task_user_id, device_id,
-                    task_id, task_title, backend_task_id, linked_at
+                    task_id, task_title, backend_task_id,
+                    json_extract(metadata, '$.workflow_node_id'), linked_at
              FROM loop_items
              WHERE resource_type = 'execution' AND device_id = ?1 AND task_id = ?2
                AND unlinked_at IS NULL
@@ -2155,6 +2171,66 @@ fn get_active_binding(
         )
         .optional()
         .map_err(TaskRuntimeError::from)
+}
+
+fn validate_local_workflow_task_binding(
+    connection: &Connection,
+    item_id: &str,
+    workflow_node_id: &str,
+    device_id: &str,
+    task_id: &str,
+) -> Result<(), TaskRuntimeError> {
+    let item = get_item_from(connection, item_id, "task")?.ok_or(TaskRuntimeError::TaskNotFound)?;
+    let nodes = item
+        .metadata
+        .get("workflow")
+        .and_then(|workflow| workflow.get("nodes"))
+        .and_then(Value::as_array)
+        .ok_or_else(|| TaskRuntimeError::Invalid("task has no workflow".to_owned()))?;
+    let node = nodes
+        .iter()
+        .find(|node| node.get("id").and_then(Value::as_str) == Some(workflow_node_id))
+        .ok_or_else(|| TaskRuntimeError::Invalid("workflow node not found".to_owned()))?;
+    if node.get("kind").and_then(Value::as_str) != Some("my_task") {
+        return Err(TaskRuntimeError::Invalid(
+            "workflow node does not accept a runtime task".to_owned(),
+        ));
+    }
+
+    let current_binding = get_active_binding(connection, device_id, task_id)?;
+    let is_idempotent = current_binding.as_ref().is_some_and(|binding| {
+        binding.loop_item_id.as_deref() == Some(item_id)
+            && binding.workflow_node_id.as_deref() == Some(workflow_node_id)
+    });
+    let status = node
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !is_idempotent && !matches!(status, "ready" | "failed") {
+        return Err(TaskRuntimeError::Invalid(
+            "workflow node is not ready".to_owned(),
+        ));
+    }
+
+    let occupied = connection.query_row(
+        "SELECT EXISTS(
+            SELECT 1
+            FROM loop_items
+            WHERE resource_type = 'execution'
+              AND loop_item_id = ?1
+              AND json_extract(metadata, '$.workflow_node_id') = ?2
+              AND unlinked_at IS NULL
+              AND NOT (device_id = ?3 AND task_id = ?4)
+        )",
+        params![item_id, workflow_node_id, device_id, task_id],
+        |row| row.get::<_, bool>(0),
+    )?;
+    if occupied {
+        return Err(TaskRuntimeError::Invalid(
+            "workflow node already has a runtime task".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 fn map_task_binding(row: &Row<'_>) -> rusqlite::Result<TaskBinding> {
@@ -2167,7 +2243,8 @@ fn map_task_binding(row: &Row<'_>) -> rusqlite::Result<TaskBinding> {
         task_id: row.get(5)?,
         task_title: row.get(6)?,
         backend_task_id: row.get(7)?,
-        linked_at: row.get(8)?,
+        workflow_node_id: row.get(8)?,
+        linked_at: row.get(9)?,
     })
 }
 
@@ -2890,6 +2967,105 @@ fn validate_priority(value: &str) -> Result<(), TaskRuntimeError> {
         .ok_or_else(|| TaskRuntimeError::Invalid("invalid task priority".to_owned()))
 }
 
+fn instantiate_local_workflow(definition: &Value) -> Result<Value, TaskRuntimeError> {
+    let version = definition
+        .get("version")
+        .and_then(Value::as_i64)
+        .unwrap_or(1);
+    let definitions = definition
+        .get("nodes")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let ids = definitions
+        .iter()
+        .filter_map(|node| node.get("id").and_then(Value::as_str))
+        .map(ToOwned::to_owned)
+        .collect::<HashSet<_>>();
+    if ids.len() != definitions.len() {
+        return Err(TaskRuntimeError::Invalid(
+            "workflow node ids must be unique and non-empty".to_owned(),
+        ));
+    }
+    let dependency_map = definitions
+        .iter()
+        .map(|node| {
+            let node_id = node
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned();
+            let dependencies = node
+                .get("depends_on")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>();
+            (node_id, dependencies)
+        })
+        .collect::<HashMap<_, _>>();
+    fn visit_workflow_node(
+        node_id: &str,
+        dependencies: &HashMap<String, Vec<String>>,
+        visiting: &mut HashSet<String>,
+        visited: &mut HashSet<String>,
+    ) -> Result<(), TaskRuntimeError> {
+        if visiting.contains(node_id) {
+            return Err(TaskRuntimeError::Invalid(
+                "workflow dependencies must be acyclic".to_owned(),
+            ));
+        }
+        if visited.contains(node_id) {
+            return Ok(());
+        }
+        visiting.insert(node_id.to_owned());
+        for dependency in dependencies.get(node_id).into_iter().flatten() {
+            visit_workflow_node(dependency, dependencies, visiting, visited)?;
+        }
+        visiting.remove(node_id);
+        visited.insert(node_id.to_owned());
+        Ok(())
+    }
+    let mut visiting = HashSet::new();
+    let mut visited = HashSet::new();
+    for node_id in &ids {
+        visit_workflow_node(node_id, &dependency_map, &mut visiting, &mut visited)?;
+    }
+    let mut nodes = Vec::with_capacity(definitions.len());
+    for definition in definitions {
+        let dependencies = definition
+            .get("depends_on")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        if dependencies
+            .iter()
+            .filter_map(Value::as_str)
+            .any(|dependency| !ids.contains(dependency))
+        {
+            return Err(TaskRuntimeError::Invalid(
+                "workflow dependency does not exist".to_owned(),
+            ));
+        }
+        let mut node = definition;
+        node["status"] = json!(if dependencies.is_empty() {
+            "ready"
+        } else {
+            "blocked"
+        });
+        node["task_binding_id"] = Value::Null;
+        node["execution_id"] = Value::Null;
+        nodes.push(node);
+    }
+    Ok(json!({
+        "version": 1,
+        "definition_version": version,
+        "nodes": nodes,
+    }))
+}
+
 fn local_database_path() -> PathBuf {
     let home = env::var_os("WEGENT_EXECUTOR_HOME")
         .filter(|value| !value.is_empty())
@@ -3416,6 +3592,7 @@ mod tests {
                     priority: "high".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    workflow: None,
                 },
             )
             .unwrap();
@@ -3433,6 +3610,7 @@ mod tests {
                     tags: None,
                     assignee_agent_id: Some(Some(agent.id.clone())),
                     execution_payload: Some(json!({"message": "run it"})),
+                    workflow: None,
                 },
             )
             .unwrap();
@@ -3478,6 +3656,7 @@ mod tests {
                     priority: "medium".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    workflow: None,
                 },
             )
             .unwrap();
@@ -3560,6 +3739,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    workflow: None,
                 },
             )
             .unwrap();
@@ -3577,6 +3757,7 @@ mod tests {
                     tags: None,
                     assignee_agent_id: Some(Some(agent.id.clone())),
                     execution_payload: None,
+                    workflow: None,
                 },
             )
             .unwrap();
@@ -3654,6 +3835,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    workflow: None,
                 },
             )
             .unwrap();
@@ -3671,6 +3853,7 @@ mod tests {
                     tags: None,
                     assignee_agent_id: Some(Some(agent.id.clone())),
                     execution_payload: None,
+                    workflow: None,
                 },
             )
             .unwrap();
@@ -3734,6 +3917,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    workflow: None,
                 },
             )
             .unwrap();
@@ -3751,6 +3935,7 @@ mod tests {
                     tags: None,
                     assignee_agent_id: Some(Some(agent.id.clone())),
                     execution_payload: Some(json!({"message": "run"})),
+                    workflow: None,
                 },
             )
             .unwrap();
@@ -3782,6 +3967,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    workflow: None,
                 },
             )
             .unwrap();
@@ -3799,6 +3985,7 @@ mod tests {
                     tags: None,
                     assignee_agent_id: Some(Some(agent.id.clone())),
                     execution_payload: Some(json!({"message": "run"})),
+                    workflow: None,
                 },
             )
             .unwrap();
@@ -3826,6 +4013,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    workflow: None,
                 },
             )
             .unwrap();
@@ -3843,6 +4031,7 @@ mod tests {
                     tags: None,
                     assignee_agent_id: Some(Some(agent.id.clone())),
                     execution_payload: Some(json!({"message": "run it"})),
+                    workflow: None,
                 },
             )
             .unwrap();
@@ -3890,6 +4079,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    workflow: None,
                 },
             )
             .unwrap();
@@ -3907,6 +4097,7 @@ mod tests {
                     tags: None,
                     assignee_agent_id: Some(Some(agent.id.clone())),
                     execution_payload: None,
+                    workflow: None,
                 },
             )
             .unwrap();
@@ -4074,6 +4265,7 @@ mod tests {
                         priority: "none".to_owned(),
                         parent_id: None,
                         tags: vec![],
+                        workflow: None,
                     },
                 )
                 .unwrap();
@@ -4091,6 +4283,7 @@ mod tests {
                         tags: None,
                         assignee_agent_id: Some(Some(agent.id.clone())),
                         execution_payload: Some(json!({"message": title})),
+                        workflow: None,
                     },
                 )
                 .unwrap();
@@ -4165,6 +4358,7 @@ mod tests {
                         priority: "none".to_owned(),
                         parent_id: None,
                         tags: vec![],
+                        workflow: None,
                     },
                 )
                 .unwrap();
@@ -4182,6 +4376,7 @@ mod tests {
                         tags: None,
                         assignee_agent_id: Some(Some(agent.id.clone())),
                         execution_payload: Some(json!({"message": "run"})),
+                        workflow: None,
                     },
                 )
                 .unwrap();
@@ -4232,6 +4427,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    workflow: None,
                 },
             )
             .unwrap();
@@ -4249,6 +4445,7 @@ mod tests {
                     tags: None,
                     assignee_agent_id: Some(Some(agent.id.clone())),
                     execution_payload: Some(json!({"message": "go"})),
+                    workflow: None,
                 },
             )
             .unwrap();
@@ -4290,6 +4487,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    workflow: None,
                 },
             )
             .unwrap();
@@ -4355,6 +4553,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    workflow: None,
                 },
             )
             .unwrap();
@@ -4413,6 +4612,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    workflow: None,
                 },
             )
             .unwrap();
@@ -4430,6 +4630,7 @@ mod tests {
                     tags: None,
                     assignee_agent_id: Some(Some(agent.id.clone())),
                     execution_payload: Some(json!({"message": "run"})),
+                    workflow: None,
                 },
             )
             .unwrap();
@@ -4459,6 +4660,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    workflow: None,
                 },
             )
             .unwrap();
@@ -4521,6 +4723,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    workflow: None,
                 },
             )
             .unwrap();
@@ -4598,6 +4801,7 @@ mod tests {
                         priority: "none".to_owned(),
                         parent_id: None,
                         tags: vec![],
+                        workflow: None,
                     },
                 )
                 .unwrap();
@@ -4682,6 +4886,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    workflow: None,
                 },
             )
             .unwrap();
@@ -4754,6 +4959,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    workflow: None,
                 },
             )
             .unwrap();
@@ -4959,6 +5165,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    workflow: None,
                 },
             )
             .unwrap();
@@ -4976,6 +5183,7 @@ mod tests {
                     tags: None,
                     assignee_agent_id: Some(Some(agent.id.clone())),
                     execution_payload: Some(json!({"message": "run"})),
+                    workflow: None,
                 },
             )
             .unwrap();
@@ -5343,6 +5551,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    workflow: None,
                 },
             )
             .unwrap();
@@ -5356,6 +5565,7 @@ mod tests {
                     priority: "high".to_owned(),
                     parent_id: Some(parent.id.clone()),
                     tags: vec!["nested".to_owned()],
+                    workflow: None,
                 },
             )
             .unwrap();
@@ -5389,6 +5599,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    workflow: None,
                 },
             )
             .unwrap();
@@ -5402,6 +5613,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    workflow: None,
                 },
             )
             .unwrap();
@@ -5442,6 +5654,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    workflow: None,
                 },
             )
             .unwrap();
@@ -5456,6 +5669,7 @@ mod tests {
                     task_id: "runtime-1".to_owned(),
                     task_title: Some("Runtime".to_owned()),
                     backend_task_id: None,
+                    workflow_node_id: None,
                 },
             )
             .unwrap();
@@ -5468,13 +5682,106 @@ mod tests {
                 .unwrap()
                 .status
                 .as_deref(),
-            Some("in_progress")
+            Some("inbox")
         );
         store.unbind_task("local-device", "runtime-1").unwrap();
         assert!(matches!(
             store.find_task_binding("local-device", "runtime-1"),
             Err(TaskRuntimeError::TaskNotFound)
         ));
+    }
+
+    #[test]
+    fn validates_local_workflow_task_bindings() {
+        let (_directory, store) = store();
+        let project = local_project(&store);
+        let project = store
+            .update_project(
+                &project.id,
+                ProjectUpdate {
+                    version: project.version,
+                    workflow_definition: Some(json!({
+                        "version": 1,
+                        "nodes": [
+                            {
+                                "id": "develop",
+                                "name": "Develop",
+                                "kind": "my_task",
+                                "depends_on": [],
+                                "required": true,
+                                "workspace_policy": "composer"
+                            },
+                            {
+                                "id": "test",
+                                "name": "Test",
+                                "kind": "my_task",
+                                "depends_on": ["develop"],
+                                "required": true,
+                                "workspace_policy": "inherit"
+                            }
+                        ]
+                    })),
+                    ..ProjectUpdate::default()
+                },
+            )
+            .unwrap();
+        let task = store
+            .create_task(
+                &project.id,
+                TaskCreate {
+                    title: "Workflow task".to_owned(),
+                    description: String::new(),
+                    status: "pending".to_owned(),
+                    priority: "none".to_owned(),
+                    parent_id: None,
+                    tags: vec![],
+                    workflow: None,
+                },
+            )
+            .unwrap();
+
+        store
+            .bind_task(
+                &project.id,
+                Some(&task.id),
+                None,
+                RuntimeTaskAddress {
+                    device_id: "local-device".to_owned(),
+                    task_id: "runtime-1".to_owned(),
+                    task_title: Some("Develop".to_owned()),
+                    backend_task_id: None,
+                    workflow_node_id: Some("develop".to_owned()),
+                },
+            )
+            .unwrap();
+
+        let occupied = store.bind_task(
+            &project.id,
+            Some(&task.id),
+            None,
+            RuntimeTaskAddress {
+                device_id: "local-device".to_owned(),
+                task_id: "runtime-2".to_owned(),
+                task_title: Some("Duplicate develop".to_owned()),
+                backend_task_id: None,
+                workflow_node_id: Some("develop".to_owned()),
+            },
+        );
+        assert!(matches!(occupied, Err(TaskRuntimeError::Invalid(_))));
+
+        let blocked = store.bind_task(
+            &project.id,
+            Some(&task.id),
+            None,
+            RuntimeTaskAddress {
+                device_id: "local-device".to_owned(),
+                task_id: "runtime-3".to_owned(),
+                task_title: Some("Test".to_owned()),
+                backend_task_id: None,
+                workflow_node_id: Some("test".to_owned()),
+            },
+        );
+        assert!(matches!(blocked, Err(TaskRuntimeError::Invalid(_))));
     }
 
     #[test]
@@ -5491,6 +5798,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    workflow: None,
                 },
             )
             .unwrap();

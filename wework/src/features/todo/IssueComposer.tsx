@@ -1,24 +1,24 @@
-import { CircleDot, Play } from 'lucide-react'
 import { useContext, useEffect, useRef, useState } from 'react'
-import type { CloudLoopItem } from '@/api/deliveries'
-import { type ProjectChatControls } from '@/components/chat/ChatInput'
+import type { CloudProject } from '@/api/deliveries'
+import { type ProjectChatControls, type ProjectWorkControls } from '@/components/chat/ChatInput'
 import { BufferedChatInput } from '@/components/layout/BufferedChatInput'
+import { WorkbenchHarnessSelector } from '@/components/layout/WorkbenchHarnessSelector'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
-import type { Attachment } from '@/types/api'
+import type { Attachment, ProjectWithTasks } from '@/types/api'
 import { WorkbenchPaneContext } from '@/features/workbench/useWorkbench'
+import { ConnectedIssueProjectWork } from './ConnectedIssueProjectWork'
+import { WorkItemComposerGuide } from './WorkItemComposerGuide'
 import { issueDraftFromText } from './issueComposerDraft'
 
-export interface IssueComposerBoard {
-  key: string
-  name: string
-}
-
 interface IssueComposerProps {
-  boards: IssueComposerBoard[]
+  projects: CloudProject[]
   initialBoardKey: string
-  initialStatus?: CloudLoopItem['status']
   initialStartExecution?: boolean
+  initialContent?: string
+  localProjects?: ProjectWithTasks[]
+  initialLocalProjectId?: number | null
+  presentation?: 'page' | 'popup'
   busy?: boolean
   error?: string | null
   onCancel: () => void
@@ -27,7 +27,8 @@ interface IssueComposerProps {
     title: string
     description: string
     files: File[]
-    startExecution: boolean
+    createTask: boolean
+    localProjectId: number | null
   }) => Promise<boolean | void> | boolean | void
 }
 
@@ -50,10 +51,13 @@ function attachmentFromFile(file: File, id: number): Attachment {
 }
 
 export function IssueComposer({
-  boards,
+  projects,
   initialBoardKey,
-  initialStatus = 'inbox',
   initialStartExecution = false,
+  initialContent = '',
+  localProjects = [],
+  initialLocalProjectId = null,
+  presentation = 'page',
   busy = false,
   error,
   onCancel,
@@ -62,8 +66,34 @@ export function IssueComposer({
   const { t } = useTranslation()
   const workbench = useContext(WorkbenchPaneContext)
   const [boardKey, setBoardKey] = useState(initialBoardKey)
-  const [content, setContent] = useState('')
-  const [startExecution, setStartExecution] = useState(initialStartExecution)
+  const [content, setContent] = useState(initialContent)
+  const [creationMode, setCreationMode] = useState<'issue' | 'task'>(
+    initialStartExecution ? 'task' : 'issue'
+  )
+  const [localProjectId, setLocalProjectId] = useState<number | null>(
+    initialLocalProjectId ?? localProjects[0]?.id ?? null
+  )
+  const selectedLocalProject = localProjects.find(project => project.id === localProjectId) ?? null
+  const selectedWorkItemProject =
+    projects.find(project => `${project.project_store}:${String(project.id)}` === boardKey) ??
+    projects[0] ??
+    null
+  const projectRuntimeWork = workbench?.state?.runtimeWork ?? {
+    projects: localProjects.map(project => ({
+      project: {
+        key: `local-project-${project.id}`,
+        id: project.id,
+        name: project.name,
+        description: project.description,
+        kind: 'local',
+        source: 'local_project',
+      },
+      deviceWorkspaces: [],
+      totalTasks: project.tasks?.length ?? 0,
+    })),
+    chats: [],
+    totalTasks: 0,
+  }
   const [stagedAttachments, setStagedAttachments] = useState<StagedIssueAttachment[]>([])
   const nextAttachmentId = useRef(-1)
 
@@ -102,7 +132,6 @@ export function IssueComposer({
         },
       }
     : undefined
-
   const submit = async (submittedContent?: string) => {
     const submittedDraft = issueDraftFromText(submittedContent ?? content)
     if (!boardKey || !submittedDraft.title || busy) return false
@@ -110,112 +139,139 @@ export function IssueComposer({
       boardKey,
       ...submittedDraft,
       files: stagedAttachments.map(item => item.file),
-      startExecution,
+      createTask: creationMode === 'task',
+      localProjectId: creationMode === 'task' ? localProjectId : null,
     })
   }
-
-  const destinationLabel = startExecution
-    ? t('todo.issue_execution_destination', '创建后进入「进行中」并开始执行')
-    : t('todo.issue_status_destination', '创建到「{{status}}」', {
-        status: {
-          inbox: t('todo.status_inbox', '收集箱'),
-          pending: t('todo.status_pending', '待开始'),
-          in_progress: t('todo.status_in_progress', '进行中'),
-          in_review: t('todo.status_in_review', '待确认'),
-          completed: t('todo.status_completed', '已完成'),
-        }[initialStatus],
-      })
+  const fallbackProjectWork: ProjectWorkControls | undefined =
+    localProjects.length > 0
+      ? {
+          projects: localProjects,
+          devices: [],
+          runtimeWork: projectRuntimeWork,
+          currentProject: selectedLocalProject,
+          currentProjectId: selectedLocalProject?.id,
+          executionMode: 'current_workspace',
+          onSelectProject: setLocalProjectId,
+          onSelectStandaloneDevice: () => undefined,
+          onExecutionModeChange: () => undefined,
+          showProjectClearButton: false,
+        }
+      : undefined
+  const renderComposer = (resolvedProjectWork: ProjectWorkControls | undefined) => (
+    <BufferedChatInput
+      value={content}
+      onChange={setContent}
+      onSubmit={submit}
+      disabled={busy}
+      submitDisabled={busy || !boardKey}
+      error={error}
+      placeholder={t('workbench.input_placeholder', '随心输入')}
+      inputTestId="workspace-issue-input"
+      submitButtonTestId="workspace-issue-submit"
+      variant="desktop"
+      projectChat={projectChat}
+      projectWork={resolvedProjectWork}
+      showProjectWorkBar={creationMode === 'task' && localProjects.length > 0}
+      showExecutionTools={creationMode === 'task'}
+      showWorkspaceMenu={false}
+      projectWorkBarMiddleContext={
+        creationMode === 'task' && selectedWorkItemProject ? (
+          <WorkItemComposerGuide
+            integrated
+            toolbar
+            project={selectedWorkItemProject}
+            projects={projects}
+            onSelectProject={project =>
+              setBoardKey(`${project.project_store}:${String(project.id)}`)
+            }
+          />
+        ) : undefined
+      }
+      projectWorkBarTrailingContext={
+        creationMode === 'task' ? (
+          <WorkbenchHarnessSelector
+            runtime="codex"
+            harnesses={[]}
+            enabledHarnesses={[]}
+            loading={false}
+            detectionFailed={false}
+            onRuntimeChange={() => undefined}
+          />
+        ) : undefined
+      }
+    />
+  )
 
   return (
     <div
       data-testid="workspace-issue-composer"
-      className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto px-5 pb-16 pt-8"
+      onClick={event => {
+        if (presentation === 'popup' && event.target === event.currentTarget) {
+          onCancel()
+        }
+      }}
+      className={cn(
+        'flex min-h-0 flex-1 items-center justify-center overflow-y-auto px-6 py-10',
+        presentation === 'popup' &&
+          'fixed inset-0 z-modal bg-black/30 px-6 py-10 backdrop-blur-[2px]'
+      )}
     >
-      <section className="w-full max-w-[760px]">
-        <header className="mb-5">
-          <h1 className="text-heading-md font-medium text-text-primary">
-            {t('todo.new_issue', '新建 Issue')}
-          </h1>
-          <p className="mt-1.5 text-sm text-text-muted">
-            {t('todo.issue_create_description', '描述要推进的事情，创建后自动进入所选看板。')}
-          </p>
-        </header>
-
-        <BufferedChatInput
-          value={content}
-          onChange={setContent}
-          onSubmit={submit}
-          disabled={busy}
-          submitDisabled={busy || !boardKey}
-          error={error}
-          placeholder={t('todo.issue_placeholder', '描述你想推进的事情…')}
-          inputTestId="workspace-issue-input"
-          submitButtonTestId="workspace-issue-submit"
-          variant="desktop"
-          projectChat={projectChat}
-          showProjectWorkBar={false}
-          showWorkspaceMenu={false}
-          contextHeader={
-            <div className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5">
-              <span className="shrink-0 text-xs text-text-muted">
-                {t('todo.issue_board_label', '放入')}
-              </span>
-              <span className="relative inline-flex min-w-0 items-center">
-                <CircleDot className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-blue-500" />
-                <select
-                  data-testid="workspace-issue-board"
-                  aria-label={t('todo.issue_board_aria', '选择 Issue 看板')}
-                  value={boardKey}
-                  onChange={event => setBoardKey(event.target.value)}
-                  className="h-8 max-w-64 cursor-pointer appearance-none rounded-lg bg-transparent py-0 pl-8 pr-7 text-sm font-medium text-text-primary outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-focus/30"
-                >
-                  {boards.map(board => (
-                    <option key={board.key} value={board.key}>
-                      {board.name}
-                    </option>
-                  ))}
-                </select>
-                <span className="pointer-events-none absolute right-2 text-xs text-text-muted">
-                  ⌄
-                </span>
-              </span>
-              <span className="ml-auto min-w-0 truncate text-xs text-text-muted">
-                {destinationLabel}
-              </span>
-            </div>
-          }
-          toolbarLeadingContext={
-            <label className="flex h-8 cursor-pointer items-center gap-2 rounded-lg px-2 text-xs text-text-secondary transition hover:bg-muted hover:text-text-primary">
-              <input
-                type="checkbox"
-                data-testid="workspace-issue-start-execution"
-                checked={startExecution}
-                onChange={event => setStartExecution(event.target.checked)}
-                className="sr-only"
-              />
-              <span
-                className={cn(
-                  'flex h-5 w-5 items-center justify-center rounded-md border',
-                  startExecution
-                    ? 'border-text-primary bg-text-primary text-background'
-                    : 'border-border text-transparent'
-                )}
-              >
-                <Play className="h-3 w-3 fill-current" />
-              </span>
-              {t('todo.issue_start_execution', '创建后开始执行')}
-            </label>
-          }
-        />
-
-        {!error ? (
-          <p className="mt-3 text-center text-xs text-text-muted">
-            {t(
-              'todo.issue_composer_hint',
-              '第一行作为 Issue 标题；附件、插件和模型与新建任务保持一致'
+      <section
+        data-testid="workspace-issue-composer-panel"
+        className={cn(
+          'w-full max-w-[760px]',
+          presentation === 'popup' &&
+            'max-h-full overflow-y-auto rounded-2xl border border-border bg-background p-6 shadow-2xl'
+        )}
+      >
+        <div
+          data-testid="workspace-issue-creation-tabs"
+          className="mb-3 inline-flex h-9 items-center rounded-xl bg-muted p-1"
+          role="tablist"
+          aria-label={t('todo.issue_creation_mode', '创建方式')}
+        >
+          <button
+            type="button"
+            role="tab"
+            data-testid="workspace-create-issue-tab"
+            aria-selected={creationMode === 'issue'}
+            onClick={() => setCreationMode('issue')}
+            className={cn(
+              'h-7 rounded-lg px-3 text-sm font-medium transition',
+              creationMode === 'issue'
+                ? 'bg-background text-text-primary shadow-sm'
+                : 'text-text-secondary hover:text-text-primary'
             )}
-          </p>
-        ) : null}
+          >
+            {t('todo.create_issue_tab', '创建 Issue')}
+          </button>
+          <button
+            type="button"
+            role="tab"
+            data-testid="workspace-create-task-tab"
+            aria-selected={creationMode === 'task'}
+            onClick={() => setCreationMode('task')}
+            className={cn(
+              'h-7 rounded-lg px-3 text-sm font-medium transition',
+              creationMode === 'task'
+                ? 'bg-background text-text-primary shadow-sm'
+                : 'text-text-secondary hover:text-text-primary'
+            )}
+          >
+            {t('todo.create_task_tab', '创建任务')}
+          </button>
+        </div>
+        {creationMode === 'task' && workbench?.selectProject && selectedLocalProject ? (
+          <ConnectedIssueProjectWork
+            project={selectedLocalProject}
+            onSelectProject={setLocalProjectId}
+          >
+            {renderComposer}
+          </ConnectedIssueProjectWork>
+        ) : (
+          renderComposer(fallbackProjectWork)
+        )}
       </section>
     </div>
   )

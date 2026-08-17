@@ -34,6 +34,7 @@ import type {
   CloudProject,
   CloudProjectMember,
 } from '@/api/deliveries'
+import { isDefaultWorkItemProject } from '@/api/deliveries'
 import type { AITableField } from '@/api/aitable'
 import { ApiError } from '@/api/http'
 import type { ProjectChatAgent } from '@/api/projectChatAgents'
@@ -53,6 +54,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { cn } from '@/lib/utils'
 import { track } from '@/telemetry/client'
+import { hydrateRuntimeTaskAddress } from '@/features/workbench/workbenchRuntimeHelpers'
 import { AITableView } from '@/features/todo/AITableView'
 import type {
   ProjectWithTasks,
@@ -79,19 +81,29 @@ import {
   projectSpaceRef,
   projectSupportsRobotAutomation,
   sameProjectSpace,
+  subscribeProjectSpaceTaskContextChanged,
 } from './projectSpaceSelection'
 import { CloudProjectsHome } from './CloudProjectsHome'
 import { CloudFilesView } from './CloudFilesView'
 import { ProjectSpaceChatSidebar } from './ProjectSpaceChatSidebar'
 import { GlobalTodoSearch } from './GlobalTodoSearch'
+import { BoardQuickCreate } from './BoardQuickCreate'
 import { parseDingTalkAITableLink, repositoryProviderConfig } from './projectProviderConfig'
+import { isRuntimeMyWorkItem, runtimeMyWorkItems } from './runtimeMyWork'
 import { TaskSearchPanel } from './TaskSearchPanel'
 import { TodoEditor } from './TodoEditor'
 import { IssueComposer } from './IssueComposer'
+import { issueDraftFromText } from './issueComposerDraft'
+import { preferNewestLoopItemSnapshot } from '@/api/issueWorkflow'
+import { associateLoopItemTags, loopItemLocalProject } from '@/api/localProjectAssociation'
 import { emptyTaskSearchFilters, type TaskSearchFilters } from './taskSearch'
 import { boardStatusColorClasses, columnDotClasses, columns, reorderLaneItems } from './todoShared'
 import { AiChatModal } from './AiChatModal'
-import { shouldPrepareWorkItemTask, workItemTaskInput } from './workItemTaskInput'
+import {
+  shouldDeferWorkItemMoveUntilTaskCreated,
+  shouldPrepareWorkItemTask,
+  workItemTaskInput,
+} from './workItemTaskInput'
 
 type ProjectView = 'board' | 'table' | 'files' | 'automation' | 'manage'
 type RootView = 'projects' | 'my-work' | 'settings'
@@ -114,6 +126,18 @@ const nativeBoardStatusColors: Record<
   in_progress: 'orange',
   in_review: 'purple',
   completed: 'green',
+}
+
+function localProjectFilterStorageKey(userId: number): string {
+  return `wework-my-tasks-local-project:${userId}`
+}
+
+function storedLocalProjectFilter(userId: number): string | null {
+  try {
+    return window.localStorage.getItem(localProjectFilterStorageKey(userId))
+  } catch {
+    return null
+  }
 }
 
 function aitableCellLabels(value: unknown): string[] {
@@ -223,9 +247,6 @@ type LocatedCloudProject = LocatedProjectSpace
 type LocatedLoopItem = CloudLoopItem & {
   project_store?: RuntimeProjectSpaceRef['projectStore']
 }
-type LocatedMyWorkItem = CloudMyWorkItem & {
-  project_store: RuntimeProjectSpaceRef['projectStore']
-}
 type LoopItemTaskBinding = Awaited<ReturnType<DeliveryApi['listTaskBindings']>>[number]
 type SelectedTaskBinding = Pick<
   LoopItemTaskBinding,
@@ -237,6 +258,8 @@ type TaskComposerRequest = {
   workItemId: string
   initialInput: string
   autoSubmit: boolean
+  workflowNodeId?: string
+  inheritFromTask?: RuntimeTaskAddress | null
 }
 
 interface AvailableProjectSpaceApi {
@@ -817,9 +840,7 @@ export function CloudTodoWorkspace({
   // Which project's items are currently in `items`. Anything else rendered on
   // the board would be stale, so the board shows the skeleton instead.
   const [itemsProjectKey, setItemsProjectKey] = useState<string | null>(null)
-  const [localMyWork, setLocalMyWork] = useState<LocatedMyWorkItem[]>([])
-  const [cloudMyWork, setCloudMyWork] = useState<LocatedMyWorkItem[]>([])
-  const myWork = useMemo(() => [...localMyWork, ...cloudMyWork], [cloudMyWork, localMyWork])
+  const myWork = useMemo(() => runtimeMyWorkItems(runtimeWork), [runtimeWork])
   const [rootView, setRootView] = useState<RootView>('projects')
   const [projectView, setProjectView] = useState<ProjectView>('board')
   const [selectedItem, setSelectedItem] = useState<LocatedLoopItem | null>(null)
@@ -830,9 +851,15 @@ export function CloudTodoWorkspace({
   const [createTodoOpen, setCreateTodoOpen] = useState(false)
   const [createTodoParent, setCreateTodoParent] = useState<LocatedLoopItem | null>(null)
   const [createTodoStatus, setCreateTodoStatus] = useState<CloudLoopItem['status']>('inbox')
+  const [createTodoInitialTitle, setCreateTodoInitialTitle] = useState<string | undefined>()
+  const [quickCreateStatus, setQuickCreateStatus] = useState<CloudLoopItem['status'] | null>(null)
   const [issueComposerOpen, setIssueComposerOpen] = useState(false)
   const [issueComposerBoardKey, setIssueComposerBoardKey] = useState('')
   const [issueComposerStatus, setIssueComposerStatus] = useState<CloudLoopItem['status']>('inbox')
+  const [issueComposerInitialContent, setIssueComposerInitialContent] = useState('')
+  const [issueComposerPresentation, setIssueComposerPresentation] = useState<'page' | 'popup'>(
+    'page'
+  )
   const [issueComposerBusy, setIssueComposerBusy] = useState(false)
   const [issueComposerError, setIssueComposerError] = useState<string | null>(null)
   const [boardParentId, setBoardParentId] = useState<string | null>(null)
@@ -846,6 +873,9 @@ export function CloudTodoWorkspace({
   const [nativeGroupBy, setNativeGroupBy] = useState<NativeBoardGroupBy>('status')
   const [nativeGroupFilter, setNativeGroupFilter] = useState('')
   const [nativeBoardQuery, setNativeBoardQuery] = useState('')
+  const [localProjectFilter, setLocalProjectFilter] = useState(
+    () => storedLocalProjectFilter(user.id) ?? ''
+  )
   const [groupScopeBusy, setGroupScopeBusy] = useState(false)
   const [activeDragItemId, setActiveDragItemId] = useState<string | null>(null)
   const boardSensors = useSensors(
@@ -1033,25 +1063,79 @@ export function CloudTodoWorkspace({
         project.id === selectedProjectRef?.projectId &&
         project.project_store === selectedProjectRef.projectStore
     ) ?? null
+  const localProjectOptions = useMemo(() => {
+    const runtimeProjectOrder = new Map(
+      (runtimeWork?.projects ?? []).flatMap((entry, index) =>
+        entry.project.id ? [[entry.project.id, index] as const] : []
+      )
+    )
+    return [...localProjects].sort((left, right) => {
+      const leftOrder = runtimeProjectOrder.get(left.id) ?? Number.MAX_SAFE_INTEGER
+      const rightOrder = runtimeProjectOrder.get(right.id) ?? Number.MAX_SAFE_INTEGER
+      return leftOrder - rightOrder || left.name.localeCompare(right.name, 'zh-CN')
+    })
+  }, [localProjects, runtimeWork])
+  const isMyTasksBoard = isDefaultWorkItemProject(selectedProject)
+  const activeRuntimeProjectId = runtimeWork?.projects.find(entry => entry.project.active)?.project
+    .id
+  const defaultLocalProject =
+    localProjectOptions.find(project => project.id === activeRuntimeProjectId) ??
+    localProjectOptions[0] ??
+    null
+  const activeLocalProjectFilter =
+    localProjectFilter === 'all' ||
+    localProjectOptions.some(project => String(project.id) === localProjectFilter)
+      ? localProjectFilter
+      : defaultLocalProject
+        ? String(defaultLocalProject.id)
+        : ''
+  const selectedLocalProject =
+    localProjectOptions.find(project => String(project.id) === activeLocalProjectFilter) ?? null
+  const runtimeProjectIdByTask = useMemo(() => {
+    const result = new Map<string, number>()
+    for (const projectWork of runtimeWork?.projects ?? []) {
+      if (!projectWork.project.id) continue
+      for (const workspace of projectWork.deviceWorkspaces) {
+        for (const task of workspace.tasks) {
+          result.set(`${workspace.deviceId}:${task.taskId}`, projectWork.project.id)
+        }
+      }
+    }
+    return result
+  }, [runtimeWork])
+  const localProjectIdForItem = useCallback(
+    (item: CloudLoopItem): number | null => {
+      const storedAssociation = loopItemLocalProject(item)
+      if (storedAssociation) return storedAssociation.id
+      for (const binding of itemTaskBindings[item.id] ?? []) {
+        const projectId = runtimeProjectIdByTask.get(`${binding.device_id}:${binding.task_id}`)
+        if (projectId) return projectId
+      }
+      return null
+    },
+    [itemTaskBindings, runtimeProjectIdByTask]
+  )
   const selectedProjectKey = selectedProject
     ? projectSpaceKey(projectSpaceRef(selectedProject))
     : null
-  const projectForItem = useCallback(
-    (item: Pick<LocatedLoopItem, 'cloud_project_id' | 'project_store'>) => {
-      if (item.project_store) {
-        return projects.find(project =>
-          sameProjectSpace(projectSpaceRef(project), {
-            projectStore: item.project_store!,
-            projectId: item.cloud_project_id,
-          })
-        )
-      }
-      if (selectedProject?.id === item.cloud_project_id) return selectedProject
-      const matches = projects.filter(project => project.id === item.cloud_project_id)
-      return matches.length === 1 ? matches[0] : undefined
-    },
-    [projects, selectedProject]
-  )
+  const projectForItem = (item: Pick<LocatedLoopItem, 'cloud_project_id' | 'project_store'>) => {
+    if (item.project_store) {
+      return projects.find(project =>
+        sameProjectSpace(projectSpaceRef(project), {
+          projectStore: item.project_store!,
+          projectId: item.cloud_project_id,
+        })
+      )
+    }
+    const matches = projects.filter(project => project.id === item.cloud_project_id)
+    if (selectedProjectKey) {
+      const selectedMatch = matches.find(
+        project => projectSpaceKey(projectSpaceRef(project)) === selectedProjectKey
+      )
+      if (selectedMatch) return selectedMatch
+    }
+    return matches.length === 1 ? matches[0] : undefined
+  }
   const locateItems = useCallback(
     <T extends CloudLoopItem>(
       sourceItems: T[],
@@ -1059,18 +1143,6 @@ export function CloudTodoWorkspace({
     ): Array<T & { project_store: RuntimeProjectSpaceRef['projectStore'] }> =>
       sourceItems.map(item => ({ ...item, project_store: projectStore })),
     []
-  )
-  const updateMyWorkItem = useCallback(
-    (updated: CloudLoopItem) => {
-      const current = myWork.find(entry => entry.id === updated.id)
-      const project = projectForItem(current ?? updated)
-      if (!project) return
-      const setSourceMyWork = project.location === 'local' ? setLocalMyWork : setCloudMyWork
-      setSourceMyWork(current =>
-        current.map(entry => (entry.id === updated.id ? { ...entry, ...updated } : entry))
-      )
-    },
-    [myWork, projectForItem]
   )
   const selectedProjectAutomationSupported = selectedProject
     ? projectSupportsRobotAutomation(selectedProject)
@@ -1101,8 +1173,10 @@ export function CloudTodoWorkspace({
   // wrapped once per selected project API instead of being recreated on every
   // render, so unrelated workspace re-renders do not restart the queue load
   // (which flashed the loading state).
+  /* eslint-disable react-hooks/preserve-manual-memoization -- the automation view
+   * reloads its queue when this adapter identity changes, so it must remain stable. */
   const automationExecutionApi = useMemo(() => {
-    if (selectedProject?.location === 'local') {
+    if (selectedProjectLocation === 'local') {
       const local = selectedProjectServices?.loopItemExecutionApi
       if (!local) return undefined
       return {
@@ -1121,20 +1195,18 @@ export function CloudTodoWorkspace({
         selectedProjectApi.stopExecution(projectId, executionId),
     }
   }, [
-    selectedProject?.location,
+    selectedProjectLocation,
     selectedProjectApi,
     services.runtimeWorkApi,
     selectedProjectServices?.loopItemExecutionApi,
   ])
-  const selectedProjectAgents = useMemo(
-    () => (selectedProjectKey ? (projectAgents[selectedProjectKey] ?? []) : []),
-    [projectAgents, selectedProjectKey]
-  )
-  const agentNameById = useMemo(() => {
+  /* eslint-enable react-hooks/preserve-manual-memoization */
+  const selectedProjectAgents = selectedProjectKey ? (projectAgents[selectedProjectKey] ?? []) : []
+  const agentNameById = (() => {
     const names: Record<string, string> = {}
     for (const agent of selectedProjectAgents) names[agent.id] = agent.name
     return names
-  }, [selectedProjectAgents])
+  })()
   const boardCardDisplay: BoardCardDisplaySettings = {
     showAssignee: selectedProject?.card_display?.show_assignee ?? true,
     showPriority: selectedProject?.card_display?.show_priority ?? true,
@@ -1144,6 +1216,15 @@ export function CloudTodoWorkspace({
   const personalGroupKey = selectedProject
     ? `wework-board-group:${user.id}:${selectedProject.id}`
     : null
+
+  useEffect(() => {
+    if (!activeLocalProjectFilter) return
+    try {
+      window.localStorage.setItem(localProjectFilterStorageKey(user.id), activeLocalProjectFilter)
+    } catch {
+      // The selector still works for this session when persistence is unavailable.
+    }
+  }, [activeLocalProjectFilter, user.id])
 
   useEffect(() => {
     if (!selectedProjectId || !selectedProjectKey || !selectedProjectAgentApi) return
@@ -1181,6 +1262,7 @@ export function CloudTodoWorkspace({
       name: column.label,
       color: nativeBoardStatusColors[column.status],
     }))
+  const visibleNativeStatuses = nativeStatuses
 
   useEffect(() => {
     if (!selectedProject || isAITableProject) return
@@ -1312,7 +1394,7 @@ export function CloudTodoWorkspace({
                 dotClass: 'bg-zinc-400',
               },
             ]
-          : nativeStatuses.map(status => ({
+          : visibleNativeStatuses.map(status => ({
               key: status.id,
               label: status.name,
               status: status.id,
@@ -1512,11 +1594,83 @@ export function CloudTodoWorkspace({
 
   function openTodoCreation(
     parent: CloudLoopItem | null,
-    status: CloudLoopItem['status'] = 'inbox'
+    status: CloudLoopItem['status'] = 'inbox',
+    initialTitle?: string
   ) {
+    setQuickCreateStatus(null)
     setCreateTodoParent(parent)
     setCreateTodoStatus(status)
+    setCreateTodoInitialTitle(initialTitle)
     setCreateTodoOpen(true)
+  }
+
+  function openMyWorkItem(item: CloudMyWorkItem) {
+    if (isRuntimeMyWorkItem(item)) {
+      void onOpenRuntimeTask?.(item.runtime_address)
+      return
+    }
+    if (item.can_view_detail !== false) setSelectedItem(item)
+  }
+
+  function addCreatedTodo(item: CloudLoopItem, project: LocatedCloudProject) {
+    const locatedItem = {
+      ...item,
+      project_store: project.project_store,
+    }
+    if (
+      selectedProject &&
+      sameProjectSpace(projectSpaceRef(project), projectSpaceRef(selectedProject))
+    ) {
+      setItems(current => [...current, locatedItem])
+    } else {
+      setDetailItems(current => [...current, locatedItem])
+    }
+    const targetProjectKey = projectSpaceKey(projectSpaceRef(project))
+    setProjectCounts(current => ({
+      ...current,
+      [targetProjectKey]: (current[targetProjectKey] ?? 0) + 1,
+    }))
+    setProjectItems(current => ({
+      ...current,
+      [targetProjectKey]: [...(current[targetProjectKey] ?? []), locatedItem],
+    }))
+    track('board_item_created', {
+      has_parent: item.parent_id !== null,
+      source: project.location,
+    })
+    return locatedItem
+  }
+
+  async function createTodoInBoardColumn(status: CloudLoopItem['status'], content: string) {
+    if (!selectedProject || !selectedProjectApi) throw new Error('项目空间接口当前不可用')
+    if (isMyTasksBoard && status !== 'inbox' && !selectedLocalProject) {
+      throw new Error(t('todo.select_local_project_before_create', '请先选择要修改的本地项目'))
+    }
+    const draft = issueDraftFromText(content)
+    try {
+      const created = await selectedProjectApi.createLoopItem(selectedProject.id, {
+        title: draft.title,
+        description: draft.description,
+        priority: 'none',
+        status,
+        tags: [],
+        ...(isMyTasksBoard && status !== 'inbox' && selectedLocalProject
+          ? {
+              local_project_id: selectedLocalProject.id,
+              local_project_name: selectedLocalProject.name,
+            }
+          : {}),
+        ...(boardParent ? { parent_id: boardParent.id } : {}),
+        ...(selectedProject.current_user_name
+          ? { creator_name: selectedProject.current_user_name }
+          : {}),
+      })
+      addCreatedTodo(created, selectedProject)
+      setQuickCreateStatus(null)
+    } catch (cause) {
+      track('operation_failed', { operation: 'board_item_action' })
+      throw cause
+    }
   }
 
   function retryLocalProjects() {
@@ -1669,6 +1823,13 @@ export function CloudTodoWorkspace({
     services.aitableApi,
     services.dwsApi,
   ])
+  useEffect(
+    () =>
+      subscribeProjectSpaceTaskContextChanged(() => {
+        setBoardRefreshNonce(value => value + 1)
+      }),
+    []
+  )
   useEffect(() => {
     if (
       !selectedProjectApi ||
@@ -1749,43 +1910,6 @@ export function CloudTodoWorkspace({
     selectedProjectKey,
   ])
   useEffect(() => {
-    if (rootView !== 'my-work' && !(rootView === 'projects' && !selectedProjectId)) return
-    const api = projectSpaceApis.local
-    if (!api) return
-    let active = true
-    void api
-      .listMyWork()
-      .then(response => {
-        if (active) setLocalMyWork(locateItems(response.items, 'local'))
-      })
-      .catch(error => {
-        console.error('[Wework project spaces] local my work failed', error)
-        if (active) setLocalMyWork([])
-      })
-    return () => {
-      active = false
-    }
-  }, [locateItems, projectSpaceApis.local, rootView, selectedProjectId])
-
-  useEffect(() => {
-    if (rootView !== 'my-work' && !(rootView === 'projects' && !selectedProjectId)) return
-    const api = projectSpaceApis.cloud
-    if (!api) return
-    let active = true
-    void api
-      .listMyWork()
-      .then(response => {
-        if (active) setCloudMyWork(locateItems(response.items, 'backend'))
-      })
-      .catch(error => {
-        console.warn('[Wework project spaces] cloud my work failed', error)
-        if (active) setCloudMyWork([])
-      })
-    return () => {
-      active = false
-    }
-  }, [locateItems, projectSpaceApis.cloud, rootView, selectedProjectId])
-  useEffect(() => {
     if (!globalSearchOpen) return
     let active = true
     void Promise.allSettled(
@@ -1838,6 +1962,21 @@ export function CloudTodoWorkspace({
     const item = items.find(candidate => candidate.id === itemId)
     const column = boardColumns.find(candidate => candidate.key === columnKey)
     if (!item || !column || item.can_edit === false || isAITableProject) return
+    const taskBindingCount = itemTaskBindings[item.id]?.length ?? 0
+    if (
+      nativeGroupBy === 'status' &&
+      (column.status === 'pending' || column.status === 'in_progress') &&
+      shouldDeferWorkItemMoveUntilTaskCreated(item, column.status, taskBindingCount)
+    ) {
+      setSelectedTaskBinding(null)
+      setSelectedItem(item)
+      setTaskComposerRequest({
+        workItemId: item.id,
+        initialInput: workItemTaskInput(item),
+        autoSubmit: false,
+      })
+      return
+    }
     const reordered =
       nativeGroupBy === 'status'
         ? reorderLaneItems(items, itemId, column.status, beforeItemId)
@@ -1922,7 +2061,7 @@ export function CloudTodoWorkspace({
       const shouldOpenTaskComposer =
         nativeGroupBy === 'status' &&
         (column.status === 'pending' || column.status === 'in_progress') &&
-        shouldPrepareWorkItemTask(item, column.status, itemTaskBindings[item.id]?.length ?? 0)
+        shouldPrepareWorkItemTask(item, column.status, taskBindingCount)
       if (shouldOpenTaskComposer) {
         setSelectedTaskBinding(null)
         setSelectedItem(locatedUpdated)
@@ -2008,14 +2147,21 @@ export function CloudTodoWorkspace({
 
   const aiChatProject = selectedItemProject
 
-  function openIssueCreation(status: CloudLoopItem['status'] = 'inbox') {
+  function openIssueCreation(
+    status: CloudLoopItem['status'] = 'inbox',
+    initialContent = '',
+    presentation: 'page' | 'popup' = 'page'
+  ) {
     const targetProject = selectedProject ?? projects[0]
     if (!targetProject) {
       setCreateProjectOpen(true)
       return
     }
+    setQuickCreateStatus(null)
     setIssueComposerBoardKey(projectSpaceKey(projectSpaceRef(targetProject)))
     setIssueComposerStatus(status)
+    setIssueComposerInitialContent(initialContent)
+    setIssueComposerPresentation(presentation)
     setIssueComposerError(null)
     setIssueComposerOpen(true)
     setRootView('projects')
@@ -2027,7 +2173,8 @@ export function CloudTodoWorkspace({
     title: string
     description: string
     files: File[]
-    startExecution: boolean
+    createTask: boolean
+    localProjectId: number | null
   }) {
     const targetProject = projects.find(
       project => projectSpaceKey(projectSpaceRef(project)) === input.boardKey
@@ -2037,11 +2184,19 @@ export function CloudTodoWorkspace({
     setIssueComposerBusy(true)
     setIssueComposerError(null)
     try {
+      const issueLocalProject =
+        localProjectOptions.find(project => project.id === input.localProjectId) ?? null
       let created = await targetApi.createLoopItem(targetProject.id, {
         title: input.title,
         description: input.description,
-        status: input.startExecution ? 'in_progress' : issueComposerStatus,
+        status: input.createTask ? 'pending' : 'inbox',
         parent_id: null,
+        ...(input.createTask && isDefaultWorkItemProject(targetProject) && issueLocalProject
+          ? {
+              local_project_id: issueLocalProject.id,
+              local_project_name: issueLocalProject.name,
+            }
+          : {}),
       })
       if (input.files.length > 0) {
         const uploadedAttachments = await Promise.all(
@@ -2083,7 +2238,7 @@ export function CloudTodoWorkspace({
       setBoardParentId(null)
       setIssueComposerOpen(false)
       setSelectedItem(locatedItem)
-      if (input.startExecution) {
+      if (input.createTask) {
         setTaskComposerRequest({
           workItemId: locatedItem.id,
           initialInput: workItemTaskInput(locatedItem),
@@ -2377,14 +2532,16 @@ export function CloudTodoWorkspace({
           ) : null}
           {issueComposerOpen ? (
             <IssueComposer
-              key={`${issueComposerBoardKey}:${issueComposerStatus}`}
-              boards={projects.map(project => ({
-                key: projectSpaceKey(projectSpaceRef(project)),
-                name: project.name,
-              }))}
+              key={`${issueComposerBoardKey}:${issueComposerStatus}:${issueComposerInitialContent}`}
+              projects={projects}
               initialBoardKey={issueComposerBoardKey}
-              initialStatus={issueComposerStatus}
-              initialStartExecution={issueComposerStatus === 'in_progress'}
+              initialStartExecution={
+                issueComposerStatus === 'pending' || issueComposerStatus === 'in_progress'
+              }
+              initialContent={issueComposerInitialContent}
+              localProjects={localProjectOptions}
+              initialLocalProjectId={selectedLocalProject?.id ?? null}
+              presentation={issueComposerPresentation}
               busy={issueComposerBusy}
               error={issueComposerError}
               onCancel={() => setIssueComposerOpen(false)}
@@ -2397,27 +2554,7 @@ export function CloudTodoWorkspace({
               projectServices={services.projectSpaceDetailServices}
             />
           ) : rootView === 'my-work' ? (
-            <CloudMyWorkView
-              items={myWork}
-              // Open the detail drawer in place instead of jumping to the board.
-              onSelectItem={item => {
-                if (item.can_view_detail !== false) setSelectedItem(item)
-              }}
-              onApproveItem={async item => {
-                const api = apiForProject(projectForItem(item))
-                if (!api) return
-                try {
-                  const updated = await api.approveLoopItemRun(
-                    item.cloud_project_id,
-                    item.id,
-                    item.version
-                  )
-                  updateMyWorkItem(updated)
-                } catch (error) {
-                  console.error('[Wework] Failed to approve task from my work', error)
-                }
-              }}
-            />
+            <CloudMyWorkView items={myWork} onSelectItem={openMyWorkItem} />
           ) : !selectedProject && projects.length === 0 && localProjectsError ? (
             <div
               data-testid="local-project-spaces-error"
@@ -2495,14 +2632,15 @@ export function CloudTodoWorkspace({
                   ) : (
                     <Cloud className="h-4 w-4 shrink-0 text-text-muted" />
                   )}
-                  <span className="ml-2 min-w-0 truncate text-base font-semibold">
-                    {embedded ? t('workbench.work_items', '工作空间') : selectedProject.name}
-                  </span>
-                  {!embedded ? (
-                    <span className="ml-2 shrink-0 rounded-md bg-muted px-1.5 py-0.5 text-xs text-text-muted">
-                      {selectedProject.location === 'local' ? '本地' : '云端'}
+                  {embedded ? (
+                    <span className="ml-2 min-w-0 truncate text-base font-semibold">
+                      {t('workbench.work_items', '工作空间')}
                     </span>
-                  ) : null}
+                  ) : (
+                    <span className="ml-2 min-w-0 truncate text-base font-semibold">
+                      {selectedProject.name}
+                    </span>
+                  )}
                 </div>
                 {projectHeaderLevel < 2 ? (
                   <nav
@@ -2753,6 +2891,7 @@ export function CloudTodoWorkspace({
                   aitableApi={aitableApi}
                   dwsApi={services.dwsApi}
                   incomingHookApi={selectedProjectServices?.projectIncomingHookApi}
+                  projectAutomationApi={selectedProjectServices?.projectAutomationApi}
                   project={selectedProject}
                   boardCardDisplay={boardCardDisplay}
                   onProjectUpdated={updated => replaceProject(selectedProject, updated)}
@@ -2803,6 +2942,40 @@ export function CloudTodoWorkspace({
                     </div>
                   ) : (
                     <div className="flex shrink-0 items-center gap-2 px-6 pb-3">
+                      {isMyTasksBoard && localProjectOptions.length > 0 ? (
+                        <label className="relative inline-flex h-8 min-w-40 cursor-pointer items-center rounded-lg border border-border bg-background pl-3 pr-8 text-xs font-medium text-text-primary hover:bg-muted">
+                          <span className="sr-only">
+                            {t('todo.local_project_filter', '本地项目')}
+                          </span>
+                          <span className="pointer-events-none min-w-0 truncate">
+                            {t('todo.project_with_name', '项目：{{project}}', {
+                              project:
+                                activeLocalProjectFilter === 'all'
+                                  ? t('todo.all_local_projects', '全部项目')
+                                  : (selectedLocalProject?.name ??
+                                    t('todo.select_local_project', '选择项目')),
+                            })}
+                          </span>
+                          <ChevronDown className="pointer-events-none absolute right-2.5 h-3.5 w-3.5 text-text-muted" />
+                          <select
+                            data-testid="cloud-local-project-filter"
+                            aria-label={t('todo.local_project_filter', '本地项目')}
+                            value={activeLocalProjectFilter}
+                            onChange={event => {
+                              setQuickCreateStatus(null)
+                              setLocalProjectFilter(event.target.value)
+                            }}
+                            className="absolute inset-0 cursor-pointer opacity-0"
+                          >
+                            <option value="all">{t('todo.all_local_projects', '全部项目')}</option>
+                            {localProjectOptions.map(project => (
+                              <option key={project.id} value={project.id}>
+                                {project.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      ) : null}
                       <AITableGroupFieldPicker
                         fields={nativeBoardGroupFields}
                         value={nativeGroupBy}
@@ -2952,6 +3125,11 @@ export function CloudTodoWorkspace({
                             const columnItems = items.filter(
                               item =>
                                 item.parent_id === boardParentId &&
+                                (!isMyTasksBoard ||
+                                  activeLocalProjectFilter === 'all' ||
+                                  localProjectIdForItem(item) === selectedLocalProject?.id ||
+                                  (item.status === 'inbox' &&
+                                    localProjectIdForItem(item) === null)) &&
                                 (!isAITableProject ||
                                   !column.groupValue ||
                                   (column.groupValue === '未设置'
@@ -2984,6 +3162,16 @@ export function CloudTodoWorkspace({
                                     .toLowerCase()
                                     .includes(aitableBoardQuery.trim().toLowerCase()))
                             )
+                            const canCreateInColumn =
+                              column.status === 'inbox' || column.status === 'pending'
+                            const canQuickCreateInColumn = column.status === 'inbox'
+                            const openColumnCreation = () => {
+                              if (!boardParent && column.status === 'pending') {
+                                openIssueCreation('pending', '', 'popup')
+                                return
+                              }
+                              setQuickCreateStatus(column.status)
+                            }
                             return (
                               <section
                                 key={column.key}
@@ -3009,7 +3197,8 @@ export function CloudTodoWorkspace({
                                   </span>
                                   {canCreateBoardTask &&
                                     !isAITableProject &&
-                                    nativeGroupBy === 'status' && (
+                                    nativeGroupBy === 'status' &&
+                                    canCreateInColumn && (
                                       <Tooltip
                                         label={t(
                                           boardParent
@@ -3026,11 +3215,7 @@ export function CloudTodoWorkspace({
                                         <button
                                           type="button"
                                           data-testid={`cloud-todo-column-add-${column.key}`}
-                                          onClick={() =>
-                                            boardParent
-                                              ? openTodoCreation(boardParent, column.status)
-                                              : openIssueCreation(column.status)
-                                          }
+                                          onClick={openColumnCreation}
                                           className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted opacity-0 transition hover:bg-background hover:text-text-primary focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 group-hover:opacity-100"
                                           aria-label={t(
                                             'todo.new_task_in_column',
@@ -3050,7 +3235,6 @@ export function CloudTodoWorkspace({
                                     <CloudTodoBoardCard
                                       key={item.id}
                                       item={item}
-                                      children={items.filter(child => child.parent_id === item.id)}
                                       taskBindings={
                                         itemTaskBindingsProjectKey === selectedProjectKey
                                           ? (itemTaskBindings[item.id] ?? [])
@@ -3059,8 +3243,6 @@ export function CloudTodoWorkspace({
                                       onClick={() => {
                                         if (item.can_view_detail !== false) setSelectedItem(item)
                                       }}
-                                      onAddChild={() => openTodoCreation(item)}
-                                      onOpenChildren={() => setBoardParentId(item.id)}
                                       onArchive={() => {
                                         setArchiveError(null)
                                         setArchiveItem(item)
@@ -3083,36 +3265,60 @@ export function CloudTodoWorkspace({
                                     (boardParent
                                       ? columnEmptyHints[column.status]
                                       : issueColumnEmptyHints[column.status]) && (
-                                      <div className="rounded-xl border border-dashed border-border px-3 py-6 text-center text-xs text-text-muted">
-                                        {boardParent
-                                          ? columnEmptyHints[column.status]
-                                          : issueColumnEmptyHints[column.status]}
-                                      </div>
+                                      <>
+                                        {canCreateInColumn ? (
+                                          <button
+                                            type="button"
+                                            data-testid={`cloud-todo-column-empty-add-${column.key}`}
+                                            onClick={openColumnCreation}
+                                            className="flex min-h-24 w-full items-center justify-center rounded-xl border border-dashed border-border text-text-muted transition hover:border-text-muted hover:bg-background hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30"
+                                            aria-label={t(
+                                              boardParent
+                                                ? 'todo.new_task_in_column'
+                                                : 'todo.new_issue_in_column',
+                                              { column: column.label }
+                                            )}
+                                          >
+                                            <Plus className="h-5 w-5" />
+                                          </button>
+                                        ) : (
+                                          <div className="rounded-xl border border-dashed border-border px-3 py-6 text-center text-xs text-text-muted">
+                                            {boardParent
+                                              ? columnEmptyHints[column.status]
+                                              : issueColumnEmptyHints[column.status]}
+                                          </div>
+                                        )}
+                                      </>
                                     )}
                                 </TodoColumnDropzone>
                                 {canCreateBoardTask &&
                                   !isAITableProject &&
-                                  nativeGroupBy === 'status' && (
-                                    <div className="shrink-0 px-2 pb-2">
-                                      <button
-                                        type="button"
-                                        data-testid={`cloud-todo-column-bottom-add-${column.key}`}
-                                        onClick={() =>
-                                          boardParent
-                                            ? openTodoCreation(boardParent, column.status)
-                                            : openIssueCreation(column.status)
-                                        }
-                                        className="flex h-9 w-full items-center gap-2 rounded-xl border border-dashed border-transparent bg-muted px-2.5 text-sm text-text-muted hover:border-border hover:bg-background hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30"
-                                        aria-label={`在${column.label}中新建${
-                                          boardParent ? '任务' : ' Issue'
-                                        }`}
-                                      >
-                                        <Plus className="h-4 w-4" />
-                                        {boardParent
-                                          ? t('todo.new_task', '新建任务')
-                                          : t('todo.new_issue', '新建 Issue')}
-                                      </button>
-                                    </div>
+                                  nativeGroupBy === 'status' &&
+                                  canQuickCreateInColumn &&
+                                  quickCreateStatus === column.status && (
+                                    <BoardQuickCreate
+                                      key={`${selectedProjectKey}:${boardParentId ?? 'root'}:${column.key}`}
+                                      columnKey={column.key}
+                                      columnLabel={column.label}
+                                      localProjects={
+                                        isMyTasksBoard ? localProjectOptions : undefined
+                                      }
+                                      localProjectId={selectedLocalProject?.id}
+                                      onLocalProjectChange={
+                                        isMyTasksBoard
+                                          ? projectId => setLocalProjectFilter(String(projectId))
+                                          : undefined
+                                      }
+                                      onCancel={() => setQuickCreateStatus(null)}
+                                      onCreate={title =>
+                                        createTodoInBoardColumn(column.status, title)
+                                      }
+                                      onOpenFull={title =>
+                                        boardParent
+                                          ? openTodoCreation(boardParent, column.status, title)
+                                          : openIssueCreation(column.status, title, 'popup')
+                                      }
+                                    />
                                   )}
                               </section>
                             )
@@ -3162,18 +3368,65 @@ export function CloudTodoWorkspace({
             item={selectedItem}
             project={selectedItemProject}
             allItems={detailAllItems}
+            showChildren={false}
+            taskRefreshKey={boardRefreshNonce}
+            onCreateTask={async workflowNodeId => {
+              setSelectedTaskBinding(null)
+              let inheritFromTask: RuntimeTaskAddress | null = null
+              const workflowNode = selectedItem.workflow?.nodes.find(
+                node => node.id === workflowNodeId
+              )
+              if (
+                workflowNode?.workspace_policy === 'inherit' &&
+                workflowNode.depends_on.length > 0
+              ) {
+                const bindings = await selectedItemApi.listTaskBindings(selectedItem.id)
+                const predecessor = bindings.find(binding =>
+                  workflowNode.depends_on.includes(binding.workflow_node_id ?? '')
+                )
+                if (predecessor) {
+                  inheritFromTask = hydrateRuntimeTaskAddress(runtimeWork, {
+                    deviceId: predecessor.device_id,
+                    taskId: predecessor.task_id,
+                  })
+                }
+              }
+              setTaskComposerRequest({
+                workItemId: selectedItem.id,
+                initialInput:
+                  selectedItem.workflow?.nodes.find(node => node.id === workflowNodeId)?.name ?? '',
+                autoSubmit: false,
+                workflowNodeId,
+                inheritFromTask,
+              })
+            }}
+            onRunWorkflowNode={(workflowNodeId, automationRuleId) => {
+              const automationApi = selectedProjectServices?.projectAutomationApi
+              if (!automationApi || !selectedItemProject) return
+              void automationApi
+                .runWorkflowNode(
+                  String(selectedItemProject.id),
+                  selectedItem.id,
+                  workflowNodeId,
+                  automationRuleId
+                )
+                .then(async () => {
+                  const updated = await selectedItemApi.getLoopItem(selectedItem.id)
+                  const locatedUpdated = {
+                    ...updated,
+                    project_store: selectedItem.project_store,
+                  }
+                  setItems(current =>
+                    current.map(item => (item.id === locatedUpdated.id ? locatedUpdated : item))
+                  )
+                  setSelectedItem(locatedUpdated)
+                })
+                .catch(() => setBoardRefreshNonce(value => value + 1))
+            }}
             onClose={() => {
               setSelectedItem(null)
               setSelectedTaskBinding(null)
               setTaskComposerRequest(null)
-            }}
-            onCreateTask={() => {
-              setSelectedTaskBinding(null)
-              setTaskComposerRequest({
-                workItemId: selectedItem.id,
-                initialInput: '',
-                autoSubmit: false,
-              })
             }}
             onOpenTaskConversation={task => {
               setTaskComposerRequest(null)
@@ -3182,7 +3435,6 @@ export function CloudTodoWorkspace({
                 work_item_id: selectedItem.id,
               })
             }}
-            onAddChild={() => openTodoCreation(selectedItem)}
             onUpdated={updated => {
               const locatedUpdated = {
                 ...updated,
@@ -3194,7 +3446,6 @@ export function CloudTodoWorkspace({
               setDetailItems(current =>
                 current.map(item => (item.id === updated.id ? locatedUpdated : item))
               )
-              updateMyWorkItem(locatedUpdated)
               setSelectedItem(locatedUpdated)
               track('feature_action_completed', { domain: 'board_item', action: 'update' })
             }}
@@ -3213,6 +3464,15 @@ export function CloudTodoWorkspace({
             project={aiChatProject}
             localProjects={localProjects}
             task={selectedItem}
+            initialLocalProjectId={
+              localProjectIdForItem(selectedItem) ??
+              (isMyTasksBoard ? selectedLocalProject?.id : null)
+            }
+            inheritFromTask={
+              taskComposerRequest?.workItemId === selectedItem.id
+                ? taskComposerRequest.inheritFromTask
+                : null
+            }
             initialAddress={
               selectedTaskBinding?.work_item_id === selectedItem.id
                 ? {
@@ -3251,6 +3511,64 @@ export function CloudTodoWorkspace({
                 work_item_id: selectedItem.id,
               })
               setTaskComposerRequest(null)
+              setBoardRefreshNonce(value => value + 1)
+            }}
+            onTaskCreated={async (address, localProject) => {
+              const itemApi = apiForProject(selectedItemProject)
+              if (!itemApi) return
+              try {
+                const latest = await itemApi.getLoopItem(selectedItem.id)
+                const workflowNodeId =
+                  taskComposerRequest?.workItemId === selectedItem.id
+                    ? taskComposerRequest.workflowNodeId
+                    : undefined
+                await itemApi.bindTask(latest.id, address, latest.title, workflowNodeId)
+                const associatedTags =
+                  isMyTasksBoard && localProject
+                    ? associateLoopItemTags(latest, localProject)
+                    : latest.tags
+                const associationChanged =
+                  associatedTags.length !== latest.tags.length ||
+                  associatedTags.some((tag, index) => tag !== latest.tags[index])
+                const workflow =
+                  workflowNodeId && latest.workflow
+                    ? {
+                        ...latest.workflow,
+                        version: latest.workflow.version + 1,
+                        nodes: latest.workflow.nodes.map(node =>
+                          node.id === workflowNodeId ? { ...node, status: 'queued' as const } : node
+                        ),
+                      }
+                    : latest.workflow
+                const workflowChanged = workflow !== latest.workflow
+                const updated =
+                  latest.status === 'inbox' || associationChanged || workflowChanged
+                    ? await itemApi.updateLoopItem(latest.id, {
+                        version: latest.version,
+                        ...(latest.status === 'inbox' ? { status: 'pending' } : {}),
+                        ...(associationChanged ? { tags: associatedTags } : {}),
+                        ...(workflowChanged ? { workflow } : {}),
+                      })
+                    : latest
+                const locatedUpdated = {
+                  ...updated,
+                  project_store: selectedItem.project_store,
+                }
+                setItems(current =>
+                  current.map(item =>
+                    item.id === locatedUpdated.id
+                      ? preferNewestLoopItemSnapshot(item, locatedUpdated)
+                      : item
+                  )
+                )
+                setSelectedItem(current =>
+                  current?.id === locatedUpdated.id
+                    ? preferNewestLoopItemSnapshot(current, locatedUpdated)
+                    : current
+                )
+              } catch {
+                setBoardRefreshNonce(value => value + 1)
+              }
             }}
             onOpenRuntimeTask={onOpenRuntimeTask}
           />
@@ -3328,36 +3646,19 @@ export function CloudTodoWorkspace({
           project={createTodoProject}
           initialParent={createTodoParent}
           initialStatus={createTodoStatus}
+          initialTitle={createTodoInitialTitle}
           allItems={createTodoParent ? detailAllItems : items}
           onClose={() => {
             setCreateTodoOpen(false)
             setCreateTodoParent(null)
+            setCreateTodoInitialTitle(undefined)
           }}
           onCreated={item => {
-            const locatedItem = {
-              ...item,
-              project_store: createTodoProject.project_store,
-            }
-            if (
-              selectedProject &&
-              sameProjectSpace(projectSpaceRef(createTodoProject), projectSpaceRef(selectedProject))
-            ) {
-              setItems(current => [...current, locatedItem])
-            } else {
-              setDetailItems(current => [...current, locatedItem])
-            }
-            const targetProjectKey = projectSpaceKey(projectSpaceRef(createTodoProject))
-            setProjectCounts(current => ({
-              ...current,
-              [targetProjectKey]: (current[targetProjectKey] ?? 0) + 1,
-            }))
+            const locatedItem = addCreatedTodo(item, createTodoProject)
             setCreateTodoOpen(false)
             setCreateTodoParent(null)
+            setCreateTodoInitialTitle(undefined)
             if (item.assignee_agent_id || item.assignee_team_id) setSelectedItem(locatedItem)
-            track('board_item_created', {
-              has_parent: item.parent_id !== null,
-              source: createTodoProject.location,
-            })
           }}
         />
       )}

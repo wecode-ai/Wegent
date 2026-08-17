@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { ApiError, type HttpClient } from './http'
+import { updateIssueWorkflowForRuntime, workflowBoardStatus } from './issueWorkflow'
 import type { RuntimeTaskAddress } from '@/types/api'
 
 import { openLocalFile } from '@/lib/local-terminal'
@@ -107,6 +108,7 @@ export interface CloudLoopItem {
     scheduled_for?: string | null
     bug_key?: string
   } | null
+  workflow?: IssueWorkflowInstance | null
   ai_state?: {
     run_id?: string
     status?: string
@@ -126,6 +128,8 @@ export interface CloudLoopItem {
     auto_retry?: boolean
     auto_retry_count?: number
   } | null
+  local_project_id?: number | null
+  local_project_name?: string | null
   title: string
   description: string
   status: string
@@ -245,6 +249,7 @@ export interface CloudProject {
     auto_retry_on_failure: boolean
     max_retry_count: number
   }
+  workflow_definition?: ProjectWorkflowDefinition
   created_by_user_id: number
   current_user_id?: number
   current_user_name?: string
@@ -270,9 +275,42 @@ export interface CloudTaskContext {
   task_id: string
   task_title: string | null
   backend_task_id: number | null
+  workflow_node_id?: string | null
   project: CloudProject
   loop_item: CloudLoopItem | null
   linked_at: string
+}
+
+export type WorkflowNodeKind = 'my_task' | 'automation' | 'ai'
+export type WorkflowWorkspacePolicy = 'none' | 'composer' | 'inherit'
+export type WorkflowNodeStatus = 'blocked' | 'ready' | 'queued' | 'running' | 'completed' | 'failed'
+
+export interface WorkflowNodeDefinition {
+  id: string
+  name: string
+  kind: WorkflowNodeKind
+  depends_on: string[]
+  required: boolean
+  workspace_policy: WorkflowWorkspacePolicy
+  automation_rule_id?: string | null
+}
+
+export interface ProjectWorkflowDefinition {
+  version: number
+  nodes: WorkflowNodeDefinition[]
+}
+
+export interface WorkflowNodeInstance extends WorkflowNodeDefinition {
+  status: WorkflowNodeStatus
+  task_binding_id?: string | null
+  execution_id?: number | null
+  automation_run_id?: string | null
+}
+
+export interface IssueWorkflowInstance {
+  version: number
+  definition_version: number
+  nodes: WorkflowNodeInstance[]
 }
 
 export interface CloudProjectFile {
@@ -421,6 +459,25 @@ export function createTaskTrackingStatusQueue() {
 
 export const enqueueTaskTrackingMutation = createTaskTrackingStatusQueue()
 
+const workflowMutationTails = new Map<string, Promise<void>>()
+
+export function enqueueIssueWorkflowMutation<T>(
+  itemId: string,
+  update: () => Promise<T>
+): Promise<T> {
+  const previous = workflowMutationTails.get(itemId) ?? Promise.resolve()
+  const request = previous.then(update, update)
+  const tail = request.then(
+    () => undefined,
+    () => undefined
+  )
+  workflowMutationTails.set(itemId, tail)
+  void tail.then(() => {
+    if (workflowMutationTails.get(itemId) === tail) workflowMutationTails.delete(itemId)
+  })
+  return request
+}
+
 export function createDeliveryApi(client: HttpClient) {
   const trackProjectTaskOnce = createProjectTaskTrackingSingleFlight()
   const pendingTrackedItems = new Map<string, CloudLoopItem>()
@@ -462,6 +519,7 @@ export function createDeliveryApi(client: HttpClient) {
         visibility?: 'private' | 'public'
         card_display?: CloudProject['card_display']
         board_config?: CloudProject['board_config']
+        workflow_definition?: CloudProject['workflow_definition']
         provider_config?: {
           repository?: string
           domain?: string
@@ -596,6 +654,9 @@ export function createDeliveryApi(client: HttpClient) {
         due_at?: string
         parent_id?: string | null
         tags?: string[]
+        local_project_id?: number | null
+        local_project_name?: string | null
+        workflow?: IssueWorkflowInstance | null
       }
     ): Promise<CloudLoopItem> {
       return client.post(`/v1/cloud-projects/${projectId}/loop-items`, data)
@@ -615,6 +676,7 @@ export function createDeliveryApi(client: HttpClient) {
           | 'assignee_team_id'
           | 'due_at'
           | 'tags'
+          | 'workflow'
         >
       > & {
         version: number
@@ -716,6 +778,7 @@ export function createDeliveryApi(client: HttpClient) {
         task_id: string
         task_title: string | null
         backend_task_id: number | null
+        workflow_node_id?: string | null
         linked_at: string
       }>
     > {
@@ -732,10 +795,16 @@ export function createDeliveryApi(client: HttpClient) {
     removeLoopItemCollaborator(itemId: string, userId: number): Promise<void> {
       return client.delete(`/v1/loop-items/${encodeURIComponent(itemId)}/collaborators/${userId}`)
     },
-    bindTask(itemId: string, task: RuntimeTaskAddress, taskTitle?: string | null): Promise<void> {
+    bindTask(
+      itemId: string,
+      task: RuntimeTaskAddress,
+      taskTitle?: string | null,
+      workflowNodeId?: string | null
+    ): Promise<void> {
       return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/tasks`, {
         ...task,
         ...(taskTitle ? { taskTitle } : {}),
+        ...(workflowNodeId ? { workflowNodeId } : {}),
       })
     },
     bindProjectTask(
@@ -771,7 +840,7 @@ export function createDeliveryApi(client: HttpClient) {
           (await api.createLoopItem(projectId, {
             title: taskTitle,
             description,
-            status: 'in_progress',
+            status: 'pending',
           }))
         pendingTrackedItems.set(trackingKey, item)
         await api.bindTask(item.id, task, taskTitle)
@@ -793,6 +862,26 @@ export function createDeliveryApi(client: HttpClient) {
         }
         if (!context.loop_item_id) return null
         const item = context.loop_item ?? (await api.getLoopItem(context.loop_item_id))
+        if (item.workflow && context.workflow_node_id) {
+          return enqueueIssueWorkflowMutation(item.id, async () => {
+            const current = await api.getLoopItem(item.id)
+            if (!current.workflow) return current
+            const workflow = updateIssueWorkflowForRuntime(
+              current.workflow,
+              context.workflow_node_id!,
+              executionStatus
+            )
+            return api.updateLoopItem(current.id, {
+              version: current.version,
+              workflow,
+              status: workflowBoardStatus(workflow),
+            })
+          })
+        }
+        if (executionStatus === 'succeeded') {
+          const bindings = await api.listTaskBindings(item.id)
+          if (bindings.length > 1) return item
+        }
         const nextStatus = nextTaskTrackingStatus(item.status, executionStatus, {
           completeOnSuccess: isDefaultWorkItemProject(context.project),
         })

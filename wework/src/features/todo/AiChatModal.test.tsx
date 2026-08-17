@@ -21,6 +21,16 @@ vi.mock('@/features/workbench/useWorkbench', () => ({
   }),
 }))
 
+vi.mock('./ConnectedIssueProjectWork', () => ({
+  ConnectedIssueProjectWork: ({
+    project,
+    children,
+  }: {
+    project: ProjectWithTasks
+    children: (projectWork: { currentProject: ProjectWithTasks }) => React.ReactNode
+  }) => children({ currentProject: project }),
+}))
+
 vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
   TemporaryChatPanel: ({
     currentProject,
@@ -196,6 +206,36 @@ describe('AiChatModal', () => {
           modelOptions: { reasoningEffort: 'high' },
         },
         cloudProjectId: '11',
+      })
+    )
+    mocks.createProjectRuntimeTask.mockClear()
+  })
+
+  it('reuses the predecessor workspace without continuing its conversation', async () => {
+    const inheritFromTask: RuntimeTaskAddress = {
+      deviceId: 'local-device',
+      taskId: 'development-task',
+      workspacePath: '/workspace/worktrees/login',
+      threadId: 'development-thread',
+    }
+
+    render(
+      <AiChatModal
+        project={project}
+        localProjects={localProjects}
+        task={task}
+        inheritFromTask={inheritFromTask}
+        open
+        onClose={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('mock-chat-send'))
+
+    expect(mocks.createProjectRuntimeTask).toHaveBeenCalledWith(
+      '给出任务列表',
+      expect.objectContaining({
+        workspaceSource: inheritFromTask,
       })
     )
     mocks.createProjectRuntimeTask.mockClear()

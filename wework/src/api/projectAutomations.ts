@@ -287,6 +287,18 @@ export function createProjectAutomationApi(client: HttpClient) {
         {}
       )
     },
+    runWorkflowNode(
+      projectId: string,
+      itemId: string,
+      workflowNodeId: string,
+      automationId: string
+    ) {
+      const query = new URLSearchParams({ automation_id: automationId })
+      return client.post<ProjectAutomationRun>(
+        `/v1/cloud-projects/${projectId}/loop-items/${encodeURIComponent(itemId)}/workflow-nodes/${encodeURIComponent(workflowNodeId)}/run?${query.toString()}`,
+        {}
+      )
+    },
     listRuns(projectId: string, automationId: string) {
       return client.get<ProjectAutomationRun[]>(
         `/v1/cloud-projects/${projectId}/automations/${automationId}/runs`

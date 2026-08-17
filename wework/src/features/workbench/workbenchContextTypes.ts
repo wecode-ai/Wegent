@@ -115,6 +115,9 @@ export interface CreateTemporaryRuntimeTaskOptions {
 
 export interface CreateProjectRuntimeTaskOptions {
   project?: ProjectWithTasks | null
+  /** Reuse the exact workspace or worktree from a previous runtime task
+   * without inheriting its conversation. */
+  workspaceSource?: RuntimeTaskAddress | null
   /** Project-space entry points can pin the shell independently from the
    * globally selected model. */
   runtime?: RuntimeName

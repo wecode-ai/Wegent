@@ -104,6 +104,7 @@ interface ProjectChatComposerProps {
   onListLocalApps?: () => Promise<LocalDeviceApp[]>
   projectWork: ProjectWorkControls
   showProjectWorkBar?: boolean
+  showExecutionTools?: boolean
   isStreaming?: boolean
   onPause?: () => void
   showWorkspaceMenu?: boolean
@@ -180,6 +181,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       onListLocalApps,
       projectWork,
       showProjectWorkBar = true,
+      showExecutionTools = true,
       isStreaming = false,
       onPause,
       showWorkspaceMenu,
@@ -493,6 +495,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
             sendButtonTestId={submitButtonTestId}
             disabled={disabled}
             pluginPickerIconOnly={pluginPickerIconOnly}
+            showExecutionTools={showExecutionTools}
             models={models}
             selectedModel={selectedModel}
             activeModel={activeModel}

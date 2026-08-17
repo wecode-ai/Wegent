@@ -775,6 +775,13 @@ class ProjectChatService:
             run.status = terminal_status
         elif event_name in {"response.created", "response.in_progress"}:
             run.status = "running"
+        else:
+            return
+        from app.services.project_workflow_projection import (
+            sync_automation_workflow_node,
+        )
+
+        sync_automation_workflow_node(db, run)
 
     @staticmethod
     def _streaming_activity_for_runtime(

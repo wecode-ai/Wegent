@@ -2269,6 +2269,7 @@ mod tests {
                     priority: "high".to_owned(),
                     parent_id: None,
                     tags: vec!["bug".to_owned()],
+                    workflow: None,
                 },
             )
             .unwrap();
@@ -2282,6 +2283,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec!["docs".to_owned()],
+                    workflow: None,
                 },
             )
             .unwrap();
@@ -2341,6 +2343,7 @@ mod tests {
                         priority: "none".to_owned(),
                         parent_id: None,
                         tags: vec!["feedback".to_owned()],
+                        workflow: None,
                     },
                 )
                 .unwrap();
@@ -2383,6 +2386,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: None,
                     tags: vec![],
+                    workflow: None,
                 },
             )
             .unwrap();

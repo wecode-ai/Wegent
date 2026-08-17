@@ -13,6 +13,23 @@ vi.mock('@/hooks/useTranslation', () => ({
   }),
 }))
 
+const workItemProject = {
+  id: 'default-work-items',
+  public_id: 'default-work-items',
+  project_key: 'WORK',
+  name: '我的任务',
+  description: '',
+  project_store: 'local' as const,
+  task_provider: 'local' as const,
+  provider_config: {},
+  created_by_user_id: 1,
+  status: 'active',
+  tags: [],
+  version: 1,
+  created_at: '',
+  updated_at: '',
+}
+
 function renderWithProjectChat(
   component: React.ReactNode,
   overrides: Partial<ProjectChatControls> = {}
@@ -43,38 +60,92 @@ function renderWithProjectChat(
 }
 
 describe('IssueComposer', () => {
-  it('uses the first line as the title and remaining lines as the description', () => {
+  it('derives a compact task-style title and preserves the complete content', () => {
     expect(issueDraftFromText('完成发布验证\n覆盖创建和完成链路\n补充截图')).toEqual({
-      title: '完成发布验证',
-      description: '覆盖创建和完成链路\n补充截图',
+      title: '完成发布验证 覆盖创建和完成链路 补充截图',
+      description: '完成发布验证\n覆盖创建和完成链路\n补充截图',
     })
   })
 
-  it('creates an issue in the selected board from one lightweight input', async () => {
+  it('uses the same title length limit as task mode', () => {
+    const description = '需要处理的任务'.repeat(20)
+
+    expect(issueDraftFromText(description)).toEqual({
+      title: `${Array.from(description).slice(0, 59).join('')}…`,
+      description,
+    })
+  })
+
+  it('creates a lightweight issue without requiring a local execution project', async () => {
     const onCreate = vi.fn()
     render(
       <IssueComposer
-        boards={[
-          { key: 'backend:1', name: '产品发布' },
-          { key: 'local:2', name: '体验优化' },
-        ]}
+        projects={[workItemProject]}
         initialBoardKey="backend:1"
+        localProjects={[
+          { id: 91, name: 'Wegent' },
+          { id: 92, name: 'ChatGPT' },
+        ]}
+        initialLocalProjectId={91}
         onCancel={vi.fn()}
         onCreate={onCreate}
       />
     )
 
-    await userEvent.selectOptions(screen.getByTestId('workspace-issue-board'), 'local:2')
+    expect(screen.getByTestId('workspace-create-issue-tab')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    expect(screen.queryByText('描述要推进的事情，创建后自动进入所选看板。')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('project-work-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('model-selector-button')).not.toBeInTheDocument()
     await userEvent.type(screen.getByTestId('workspace-issue-input'), '修复工作空间创建入口')
     await userEvent.keyboard('{Shift>}{Enter}{/Shift}只创建 Issue')
     await userEvent.click(screen.getByTestId('workspace-issue-submit'))
 
     expect(onCreate).toHaveBeenCalledWith({
-      boardKey: 'local:2',
-      title: '修复工作空间创建入口',
-      description: '只创建 Issue',
+      boardKey: 'backend:1',
+      title: '修复工作空间创建入口 只创建 Issue',
+      description: '修复工作空间创建入口\n只创建 Issue',
       files: [],
-      startExecution: false,
+      createTask: false,
+      localProjectId: null,
+    })
+  })
+
+  it('switches to the full task composer without losing the issue content', async () => {
+    const onCreate = vi.fn()
+    render(
+      <IssueComposer
+        projects={[workItemProject]}
+        initialBoardKey="backend:1"
+        localProjects={[
+          { id: 91, name: 'Wegent' },
+          { id: 92, name: 'ChatGPT' },
+        ]}
+        initialLocalProjectId={91}
+        onCancel={vi.fn()}
+        onCreate={onCreate}
+      />
+    )
+
+    await userEvent.type(screen.getByTestId('workspace-issue-input'), '修复创建流程')
+    await userEvent.click(screen.getByTestId('workspace-create-task-tab'))
+
+    expect(screen.getByTestId('workspace-create-task-tab')).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByTestId('workspace-issue-input')).toHaveTextContent('修复创建流程')
+    expect(screen.getByTestId('project-work-button')).toHaveTextContent('Wegent')
+    await userEvent.click(screen.getByTestId('project-work-button'))
+    await userEvent.click(screen.getByTestId('project-option-92'))
+    await userEvent.click(screen.getByTestId('workspace-issue-submit'))
+
+    expect(onCreate).toHaveBeenCalledWith({
+      boardKey: 'backend:1',
+      title: '修复创建流程',
+      description: '修复创建流程',
+      files: [],
+      createTask: true,
+      localProjectId: 92,
     })
   })
 
@@ -82,7 +153,7 @@ describe('IssueComposer', () => {
     const onCreate = vi.fn()
     render(
       <IssueComposer
-        boards={[{ key: 'backend:1', name: '产品发布' }]}
+        projects={[workItemProject]}
         initialBoardKey="backend:1"
         onCancel={vi.fn()}
         onCreate={onCreate}
@@ -96,40 +167,42 @@ describe('IssueComposer', () => {
     expect(onCreate).toHaveBeenCalledWith({
       boardKey: 'backend:1',
       title: '快捷创建 Issue',
-      description: '',
+      description: '快捷创建 Issue',
       files: [],
-      startExecution: false,
+      createTask: false,
+      localProjectId: null,
     })
   })
 
-  it('can create an issue and start its first task immediately', async () => {
+  it('can open directly in task creation mode', async () => {
     const onCreate = vi.fn()
     render(
       <IssueComposer
-        boards={[{ key: 'backend:1', name: '产品发布' }]}
+        projects={[workItemProject]}
         initialBoardKey="backend:1"
+        initialStartExecution
         onCancel={vi.fn()}
         onCreate={onCreate}
       />
     )
 
     await userEvent.type(screen.getByTestId('workspace-issue-input'), '完成发布验证')
-    await userEvent.click(screen.getByTestId('workspace-issue-start-execution'))
     await userEvent.click(screen.getByTestId('workspace-issue-submit'))
 
     expect(onCreate).toHaveBeenCalledWith({
       boardKey: 'backend:1',
       title: '完成发布验证',
-      description: '',
+      description: '完成发布验证',
       files: [],
-      startExecution: true,
+      createTask: true,
+      localProjectId: null,
     })
   })
 
   it('reuses the desktop task composer instead of a separate issue form', () => {
     render(
       <IssueComposer
-        boards={[{ key: 'backend:1', name: '产品发布' }]}
+        projects={[workItemProject]}
         initialBoardKey="backend:1"
         onCancel={vi.fn()}
         onCreate={vi.fn()}
@@ -145,7 +218,7 @@ describe('IssueComposer', () => {
     const file = new File(['release context'], 'release.md', { type: 'text/markdown' })
     renderWithProjectChat(
       <IssueComposer
-        boards={[{ key: 'backend:1', name: '产品发布' }]}
+        projects={[workItemProject]}
         initialBoardKey="backend:1"
         onCancel={vi.fn()}
         onCreate={onCreate}
@@ -161,9 +234,10 @@ describe('IssueComposer', () => {
     expect(onCreate).toHaveBeenCalledWith({
       boardKey: 'backend:1',
       title: '完成发布验证',
-      description: '',
+      description: '完成发布验证',
       files: [file],
-      startExecution: false,
+      createTask: false,
+      localProjectId: null,
     })
   })
 
@@ -171,7 +245,7 @@ describe('IssueComposer', () => {
     const onCancel = vi.fn()
     render(
       <IssueComposer
-        boards={[{ key: 'backend:1', name: '产品发布' }]}
+        projects={[workItemProject]}
         initialBoardKey="backend:1"
         onCancel={onCancel}
         onCreate={vi.fn()}
@@ -180,6 +254,25 @@ describe('IssueComposer', () => {
 
     expect(screen.queryByRole('button', { name: '取消' })).not.toBeInTheDocument()
     fireEvent.keyDown(screen.getByTestId('workspace-issue-input'), { key: 'Escape' })
+    expect(onCancel).toHaveBeenCalledTimes(1)
+  })
+
+  it('closes a popup by clicking the backdrop without closing from panel clicks', () => {
+    const onCancel = vi.fn()
+    render(
+      <IssueComposer
+        projects={[workItemProject]}
+        initialBoardKey="backend:1"
+        presentation="popup"
+        onCancel={onCancel}
+        onCreate={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('workspace-issue-composer-panel'))
+    expect(onCancel).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByTestId('workspace-issue-composer'))
     expect(onCancel).toHaveBeenCalledTimes(1)
   })
 })

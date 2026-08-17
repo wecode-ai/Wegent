@@ -2277,6 +2277,11 @@ class LoopItemExecutionService:
                         run.status = "succeeded"
                         run.completed_at = completed_at
                         run.version += 1
+                        from app.services.project_workflow_projection import (
+                            sync_automation_workflow_node,
+                        )
+
+                        sync_automation_workflow_node(db, run)
                     return activity
                 if (
                     execution.executor_type == "automation_manager"
@@ -2310,6 +2315,11 @@ class LoopItemExecutionService:
                     run.description = description
                     run.completed_at = completed_at
                     run.version += 1
+                    from app.services.project_workflow_projection import (
+                        sync_automation_workflow_node,
+                    )
+
+                    sync_automation_workflow_node(db, run)
         return activity
 
     @staticmethod
@@ -2393,6 +2403,11 @@ class LoopItemExecutionService:
             }:
                 run.status = STATUS_QUEUED
                 run.version += 1
+                from app.services.project_workflow_projection import (
+                    sync_automation_workflow_node,
+                )
+
+                sync_automation_workflow_node(db, run)
         return linked
 
     def _push_activity_after_commit(
@@ -2533,6 +2548,11 @@ class LoopItemExecutionService:
             return
         run.status = status_value
         run.version += 1
+        from app.services.project_workflow_projection import (
+            sync_automation_workflow_node,
+        )
+
+        sync_automation_workflow_node(db, run)
         if commit:
             db.commit()
 

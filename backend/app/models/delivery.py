@@ -262,6 +262,14 @@ class CloudProjectLocalBinding(LoopNode):
 class LoopItemTaskBinding(LoopNode):
     __mapper_args__ = {"polymorphic_identity": "execution"}
 
+    @property
+    def workflow_node_id(self) -> str | None:
+        metadata = self.metadata_json
+        if not isinstance(metadata, dict):
+            return None
+        value = metadata.get("workflow_node_id")
+        return value if isinstance(value, str) and value else None
+
     def __init__(self, **kwargs: object) -> None:
         kwargs.setdefault("linked_at", func.now())
         super().__init__(**kwargs)
