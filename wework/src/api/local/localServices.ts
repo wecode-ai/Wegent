@@ -2238,6 +2238,7 @@ export function createRuntimeWorkApiFromIpc(
           if (!expectedModelAvailable) {
             throw new Error(i18n.t('workbench.cloud_model_catalog_sync_verify_failed'))
           }
+          markLocalModelCatalogReady(currentCatalogModels)
           appliedCatalogKey = currentCatalogKey
           syncedModelCatalogKeys.add(currentDeviceCatalogKey)
         })
