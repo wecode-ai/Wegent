@@ -13,6 +13,7 @@ closes MRs that merged without an event.
 
 import logging
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.celery_app import celery_app
@@ -90,7 +91,9 @@ def _process_integration_event(
     if integration is None or not integration.enabled:
         return
     project = db.get(CloudProject, integration.cloud_project_id)
-    if project is None:
+    if project is None or project.status != "active":
+        # A webhook may linger on the repo after the project was archived; ack
+        # it without touching the board.
         return
     handler = EVENT_KIND_HANDLERS.get(event_kind)
     if handler is None:
@@ -137,15 +140,26 @@ def process_gitlab_event(
     name="app.tasks.gitlab_mr_tasks.reconcile_gitlab_mr_integrations",
 )
 def reconcile_gitlab_mr_integrations(self) -> dict[str, object]:
-    """Periodically reconcile every enabled MR integration."""
+    """Periodically reconcile every enabled MR integration of active projects.
+
+    Archived projects are skipped: their integration is torn down on archive,
+    and a stale row must not re-install its GitLab webhook or keep feeding the
+    archived board.
+    """
     from app.db.session import get_db_session
 
     processed = 0
     with get_db_session() as db:
+        active_project_ids = select(CloudProject.id).where(
+            CloudProject.status == "active"
+        )
         integrations = (
             db.query(MRIntegration)
-            .filter(MRIntegration.enabled == True)
-            .all()  # noqa: E712
+            .filter(
+                MRIntegration.enabled == True,  # noqa: E712
+                MRIntegration.cloud_project_id.in_(active_project_ids),
+            )
+            .all()
         )
         for integration in integrations:
             try:

@@ -329,3 +329,35 @@ def test_enable_rejects_loopback_public_url(
         )
     assert exc_info.value.status_code == 502
     assert env["fake"].hooks == []  # no hook was installed
+
+
+def test_archive_tears_down_mr_integration(env: dict[str, Any]) -> None:
+    """Archiving a project must remove its GitLab webhook, records, and
+    integration row so it stops receiving MR events and reconcile cannot
+    re-install the hook."""
+    db = env["db"]
+    project = env["project"]
+    integration = env["integration"]
+    db.add(
+        MRRecord(
+            integration_id=integration.id,
+            mr_iid=1,
+            project_key=project.project_key,
+            state="evaluating",
+        )
+    )
+    db.commit()
+
+    from app.services.cloud_projects.service import cloud_project_service
+
+    cloud_project_service.archive(
+        db, int(project.id), project.created_by_user_id, project.version
+    )
+
+    db.expire_all()
+    assert db.get(CloudProject, project.id).status == "archived"
+    assert db.get(MRIntegration, integration.id) is None
+    assert (
+        db.query(MRRecord).filter(MRRecord.integration_id == integration.id).count()
+        == 0
+    )

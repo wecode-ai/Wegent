@@ -385,3 +385,65 @@ def test_manual_rule_assigns_mr_card_to_robot(
     assert execution is not None
     assert execution.executor_type == "project_robot"
     assert execution.status in {"queued", "pending_approval"}
+
+
+def test_process_integration_event_ignores_archived_project(
+    env: dict[str, Any],
+    test_db: Session,
+) -> None:
+    """A webhook that lingers after the project was archived must not touch the
+    board."""
+    db = env["db"]
+    env["project"].status = "archived"
+    test_db.commit()
+
+    _process_integration_event(
+        db,
+        env["integration"].id,
+        "merge_request",
+        {
+            "object_kind": "merge_request",
+            "object_attributes": {
+                "iid": 1,
+                "state": "opened",
+                "title": "X",
+                "source_branch": "feat/x",
+                "target_branch": "main",
+                "author_id": 11,
+                "url": "https://gitlab.internal/group/project/-/merge_requests/1",
+                "last_commit": {"id": SHA1},
+            },
+        },
+    )
+
+    card = (
+        db.query(LoopItem)
+        .filter(LoopItem.cloud_project_id == str(env["project"].id))
+        .first()
+    )
+    assert card is None
+
+
+def test_reconcile_skips_archived_projects(
+    env: dict[str, Any],
+    test_db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reconcile must not revive integrations of archived projects."""
+    import contextlib
+
+    from app.db import session as db_session_module
+    from app.tasks.gitlab_mr_tasks import reconcile_gitlab_mr_integrations
+
+    env["project"].status = "archived"
+    test_db.commit()
+    monkeypatch.setattr(
+        db_session_module,
+        "get_db_session",
+        lambda: contextlib.nullcontext(env["db"]),
+    )
+
+    assert reconcile_gitlab_mr_integrations() == {
+        "status": "ok",
+        "reconciled": 0,
+    }

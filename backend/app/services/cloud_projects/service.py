@@ -333,6 +333,19 @@ class CloudProjectService:
         if updated != 1:
             db.rollback()
             raise HTTPException(status.HTTP_409_CONFLICT, "Cloud project changed")
+        # Retiring a project must also retire its GitLab MR integration: drop
+        # the repo webhook, its records, and the integration row so the archived
+        # project stops receiving MR events and reconcile cannot re-install the
+        # hook. Best-effort; the project is archived regardless.
+        try:
+            from app.services.gitlab.integration_service import mr_integration_service
+
+            mr_integration_service.disable(db, project)
+        except Exception:
+            logger.exception(
+                "Failed to clean up GitLab MR integration on archive project=%s",
+                project.id,
+            )
         db.commit()
 
     def list_members(
