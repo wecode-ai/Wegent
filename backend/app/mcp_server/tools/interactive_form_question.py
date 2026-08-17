@@ -33,6 +33,9 @@ from typing import Any, Dict, List, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from app.api.endpoints.adapter.aigc_video.clarification import (
+    normalize_video_clarification_questions,
+)
 from app.mcp_server.auth import TaskTokenInfo
 from app.mcp_server.tools.decorator import mcp_tool
 
@@ -330,6 +333,10 @@ def build_render_payload_from_tool_input(
     questions = tool_input.get("questions")
     if not isinstance(questions, list) or not questions:
         return None
+    questions = normalize_video_clarification_questions(
+        task_id=task_id,
+        questions=questions,
+    )
 
     normalized_questions = []
     for raw_question in questions:

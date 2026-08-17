@@ -1577,6 +1577,7 @@ const MessageBubble = memo(
                         subtaskId={msg.subtaskId}
                         currentMessageIndex={index}
                         onAskUserSubmit={onAskUserSubmit}
+                        onSendMessage={content => onSendMessage?.(content)}
                         hideToolDetails={hideToolDetails}
                       />
                       {!showFinalAnswerOnly && (
@@ -1767,6 +1768,7 @@ const MessageBubble = memo(
       prevProps.waitingMessage === nextProps.waitingMessage &&
       prevProps.theme === nextProps.theme &&
       prevProps.onTextSelect === nextProps.onTextSelect &&
+      prevProps.onAskUserSubmit === nextProps.onAskUserSubmit &&
       prevProps.paragraphAction === nextProps.paragraphAction &&
       prevProps.isCurrentUserMessage === nextProps.isCurrentUserMessage &&
       prevProps.onRetry === nextProps.onRetry &&

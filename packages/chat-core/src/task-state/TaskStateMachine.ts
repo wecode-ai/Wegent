@@ -9,7 +9,9 @@
  */
 
 import type { TaskDetail, TaskDetailSubtask, TaskStatus as ApiTaskStatus } from '../api-types'
+import type { MessageBlock } from '../message-blocks'
 import {
+  reduceChatBlockUpdatedEvent,
   reduceChatCancelledEvent,
   reduceChatChunkEvent,
   reduceChatDoneEvent,
@@ -343,6 +345,16 @@ export class TaskStateMachine {
     offset?: number
   ): void {
     this.dispatch({ type: 'CHAT_CHUNK', subtaskId, content, offset, result, sources, blockId })
+  }
+
+  /** Handle a block update even after the assistant stream has completed. */
+  handleChatBlockUpdated(subtaskId: number, blockId: string, updates: Partial<MessageBlock>): void {
+    this.dispatch({
+      type: 'CHAT_BLOCK_UPDATED',
+      subtaskId,
+      blockId,
+      updates,
+    })
   }
 
   /**
@@ -727,6 +739,14 @@ export class TaskStateMachine {
         }
         break
       }
+
+      case 'CHAT_BLOCK_UPDATED':
+        this.state = reduceChatBlockUpdatedEvent({
+          state: this.state,
+          event,
+          deriveRuntimeState: runtime => this.deriveRuntimeState(runtime),
+        })
+        break
 
       case 'CHAT_DONE':
         this.state = reduceChatDoneEvent({

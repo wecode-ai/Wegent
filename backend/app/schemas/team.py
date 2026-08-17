@@ -44,6 +44,15 @@ class BotDetailInfo(BaseModel):
     role: Optional[str] = None
 
 
+class TeamAllowedModel(BaseModel):
+    """Allowed model reference exposed through Team APIs."""
+
+    name: str
+    type: Optional[str] = None
+    namespace: Optional[str] = None
+    modelCategoryType: Optional[str] = None
+
+
 class TeamBase(QuickPhraseMixin):
     """Team base model"""
 
@@ -53,6 +62,7 @@ class TeamBase(QuickPhraseMixin):
     bots: List[BotInfo]
     workflow: Optional[dict[str, Any]] = None
     bind_mode: Optional[List[str]] = None  # ['chat', 'code'] or empty list for none
+    allowed_models: Optional[List[TeamAllowedModel]] = None
     is_active: bool = True
     icon: Optional[str] = None  # Icon ID from preset icon library
     display_config: Optional[TeamDisplayConfig] = None
@@ -79,6 +89,7 @@ class TeamUpdate(QuickPhraseMixin):
     bots: Optional[List[BotInfo]] = None
     workflow: Optional[dict[str, Any]] = None
     bind_mode: Optional[List[str]] = None  # ['chat', 'code'] or empty list for none
+    allowed_models: Optional[List[TeamAllowedModel]] = None
     is_active: Optional[bool] = None
     namespace: Optional[str] = None  # Group namespace
     icon: Optional[str] = None  # Icon ID from preset icon library
@@ -102,6 +113,7 @@ class TeamInDB(TeamBase):
     share_status: int = 0  # 0-private, 1-sharing, 2-shared from others
     agent_type: Optional[str] = None  # agno, claude, dify, etc.
     bind_mode: Optional[List[str]] = None  # ['chat', 'code'] or empty list for none
+    mode_spec: Optional[dict[str, Any]] = None
     display_config: Optional[TeamDisplayConfig] = None
     recommended_mode: Optional[str] = (
         None  # 'chat', 'code', or 'both' - derived from bind_mode
@@ -129,6 +141,8 @@ class TeamDetail(BaseModel):
     share_status: int = 0  # 0-private, 1-sharing, 2-shared from others
     display_config: Optional[TeamDisplayConfig] = None
     inputPlaceholder: Optional[TeamInputPlaceholder] = None
+    mode_spec: Optional[dict[str, Any]] = None
+    allowed_models: Optional[List[TeamAllowedModel]] = None
 
     class Config:
         from_attributes = True

@@ -17,6 +17,9 @@ from typing import Any, List, Optional, Union
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.api.endpoints.adapter.aigc_video.skill_context import (
+    inject_generation_into_public_skills,
+)
 from app.core.config import settings
 from app.core.constants import CLIENT_ORIGIN_WEWORK
 from app.models.project import Project
@@ -151,6 +154,7 @@ class TaskRequestBuilder:
         runtime_model_config: Optional[dict[str, Any]] = None,
         team_member_prompt: Optional[str] = None,
         web_runtime_guidance: bool = False,
+        user_generation: Optional[dict[str, Any]] = None,
     ) -> ExecutionRequest:
         """Build ExecutionRequest from database models.
 
@@ -299,6 +303,12 @@ class TaskRequestBuilder:
                 user_preload_skills=user_preload_skills,
                 user_available_skills=user_available_skills,
             )
+        )
+        inject_generation_into_public_skills(
+            resolved_skills=resolved_skills,
+            team_user_id=team.user_id,
+            generation=user_generation,
+            prompt=message if isinstance(message, str) else None,
         )
         preload_skill_refs = {
             name: skill_refs[name]

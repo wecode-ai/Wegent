@@ -92,6 +92,7 @@ from app.api.endpoints.adapter import (
     teams,
     templates,
 )
+from app.api.endpoints.adapter.aigc_video.router import router as aigc_video_router
 from app.api.endpoints.internal import (
     api_keys_internal_router,
 )
@@ -228,6 +229,7 @@ api_router.include_router(dify.router, prefix="/dify", tags=["dify"])
 api_router.include_router(
     model_runtime.router, prefix="/model-runtime", tags=["model-runtime"]
 )
+api_router.include_router(aigc_video_router, prefix="/aigc-video", tags=["aigc-video"])
 api_router.include_router(retrievers.router, prefix="/retrievers", tags=["retrievers"])
 api_router.include_router(
     wiki.internal_router, prefix="/internal/wiki", tags=["wiki-internal"]

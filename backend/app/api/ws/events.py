@@ -127,7 +127,7 @@ class SkillRef(BaseModel):
 
 
 class GenerateParams(BaseModel):
-    """Generation parameters for video/image tasks (user-selected at generation time)."""
+    """Generation parameters selected for video, image, or media-aware chat tasks."""
 
     resolution: Optional[str] = Field(
         None, description="Video resolution (e.g., '720p')"
@@ -138,6 +138,9 @@ class GenerateParams(BaseModel):
         None, description="Selected video generation mode"
     )
     size: Optional[str] = Field(None, description="Image dimensions (e.g., '1512x648')")
+    model: Optional[str] = Field(
+        None, description="Selected generation model resource name"
+    )
 
 
 class ChatExecutionWorkspacePayload(BaseModel):

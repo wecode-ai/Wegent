@@ -46,6 +46,17 @@ def get_video_provider(
             default_headers=model_config.get("default_headers"),
         )
 
+    if protocol == "wanxiang":
+        from .wanxiang import WanxiangProvider
+
+        return WanxiangProvider(
+            base_url=model_config.get("base_url"),
+            api_key=model_config.get("api_key"),
+            model_id=model_config.get("model_id"),
+            video_config=model_config.get("videoConfig", {}),
+            default_headers=model_config.get("default_headers"),
+        )
+
     # Future providers
     # elif protocol == "runway":
     #     from .runway import RunwayProvider

@@ -13,6 +13,7 @@ Uses distributed lock to prevent multiple instances from recovering
 the same jobs simultaneously.
 """
 
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -61,6 +62,12 @@ async def recover_video_jobs() -> int:
             return 0
 
         return await _do_recover_video_jobs()
+
+
+async def recover_video_jobs_after_stale_delay() -> int:
+    """Retry startup recovery after recently-polled jobs become stale."""
+    await asyncio.sleep(STALE_THRESHOLD_SECONDS)
+    return await recover_video_jobs()
 
 
 async def _do_recover_video_jobs() -> int:

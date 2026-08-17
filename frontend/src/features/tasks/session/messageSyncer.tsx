@@ -445,6 +445,10 @@ export function useMessageSyncer({
         summary,
         children,
         status,
+        card_status,
+        card_data,
+        card_preview_data,
+        card_error,
       } = data
 
       if (!taskId) {
@@ -469,17 +473,15 @@ export function useMessageSyncer({
         ...(summary !== undefined && { summary }),
         ...(children !== undefined && { children }),
         ...(mappedStatus !== undefined && { status: mappedStatus }),
+        ...(card_status !== undefined && { card_status }),
+        ...(card_data !== undefined && { card_data }),
+        ...(card_preview_data !== undefined && { card_preview_data }),
+        ...(card_error !== undefined && { card_error }),
       }
 
       const machine = getMachineForTask(taskId)
       if (machine) {
-        machine.handleChatChunk(
-          subtask_id,
-          '',
-          { blocks: [blockUpdate as MessageBlock] },
-          undefined,
-          undefined
-        )
+        machine.handleChatBlockUpdated(subtask_id, block_id, blockUpdate)
       }
     },
     [getMachineForTask]
@@ -689,9 +691,18 @@ export function useMessageSyncer({
       })
 
       // Create user message
-      // Persist the optimistic config badge only for video generation.
+      const hasVideoGenerationParams = Boolean(
+        request.generate_params &&
+        (request.task_type === 'video' ||
+          request.generate_params.resolution ||
+          request.generate_params.ratio ||
+          request.generate_params.duration)
+      )
+
+      // Keep video settings on the optimistic message for both dedicated video tasks
+      // and chat agents that expose video generation through modeSpec.
       const videoConfig =
-        request.task_type === 'video' && request.generate_params
+        hasVideoGenerationParams && request.generate_params
           ? {
               model: request.generate_params.model,
               resolution: request.generate_params.resolution,

@@ -114,6 +114,7 @@ export interface MobileChatInputControlsProps {
   selectedVideoModel?: Model | null
   onVideoModelChange?: (model: Model) => void
   isVideoModelsLoading?: boolean
+  showVideoModelSelectorInChat?: boolean
 
   // State flags
   isStreaming: boolean
@@ -200,6 +201,7 @@ export function MobileChatInputControls({
   selectedVideoModel,
   onVideoModelChange,
   isVideoModelsLoading = false,
+  showVideoModelSelectorInChat = false,
   isStreaming,
   isStopping,
   hasMessages,
@@ -233,6 +235,7 @@ export function MobileChatInputControls({
   const [moreMenuStyle, setMoreMenuStyle] = useState<React.CSSProperties>({})
   const showChatContexts = canUseChatContexts(taskType, selectedTeam)
   const isGenerationMode = taskType === 'image' || taskType === 'video'
+  const shouldShowVideoModelSelector = taskType === 'video' || showVideoModelSelectorInChat
   const showAttachmentAction = isGenerationMode
     ? selectedVideoGenerationMode !== 'first_last_frame'
     : supportsAttachments(selectedTeam)
@@ -557,17 +560,18 @@ export function MobileChatInputControls({
             disabled={isStreaming}
           />
         )}
-        {!isVoiceMode && taskType === 'video' && onVideoModelChange && (
+        {!isVoiceMode && shouldShowVideoModelSelector && onVideoModelChange && (
           <div className="flex-1 min-w-0 overflow-hidden">
             <ModelSelector
               selectedModel={selectedVideoModel ?? null}
               setSelectedModel={model => model && onVideoModelChange(model)}
               forceOverride={false}
               setForceOverride={() => {}}
-              selectedTeam={null}
+              selectedTeam={selectedTeam}
               disabled={isStreaming}
               isLoading={isVideoModelsLoading}
               modelCategoryType="video"
+              taskModelId={selectedVideoModel?.name}
             />
           </div>
         )}
@@ -586,7 +590,7 @@ export function MobileChatInputControls({
             />
           </div>
         )}
-        {!isVoiceMode && selectedTeam && !isGenerationMode && (
+        {!isVoiceMode && selectedTeam && !isGenerationMode && !showVideoModelSelectorInChat && (
           <div
             className={`flex-1 min-w-0 max-w-[112px] overflow-hidden ${shouldHideSideControls ? 'opacity-50 pointer-events-none' : ''}`}
           >

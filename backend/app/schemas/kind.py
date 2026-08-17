@@ -534,12 +534,30 @@ class TeamInputPlaceholder(LocalizedInputPlaceholder):
     desktop: Optional[LocalizedInputPlaceholder] = None
 
 
+class ModeSpec(BaseModel):
+    """Model categories exposed by a Team independently of its bind mode."""
+
+    allowedModelCategories: List[ModelCategoryType]
+    hiddenVideoParams: Optional[List[str]] = None
+
+
+class TeamAllowedModel(BaseModel):
+    """Model reference allowed by a Team-level selector."""
+
+    name: str
+    type: Optional[str] = None
+    namespace: Optional[str] = None
+    modelCategoryType: Optional[ModelCategoryType] = None
+
+
 class TeamSpec(QuickPhraseMixin):
     """Team specification"""
 
     members: List[TeamMember]
     collaborationModel: str  # solo、pipeline、route、coordinate、collaborate
     bind_mode: Optional[List[str]] = None  # ['chat', 'code'] or empty list for none
+    modeSpec: Optional[ModeSpec] = None
+    allowedModels: Optional[List[TeamAllowedModel]] = None
     description: Optional[str] = None  # Team description
     icon: Optional[str] = None  # Icon ID from preset icon library
     displayConfig: TeamDisplayConfig = Field(default_factory=TeamDisplayConfig)

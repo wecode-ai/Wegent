@@ -1,0 +1,84 @@
+# Public video models used by media-aware chat agents and direct generation.
+apiVersion: agent.wecode.io/v1
+kind: Model
+metadata:
+  name: seedance-2-0-pro
+  displayName: Seedance 2.0 Pro
+  namespace: default
+  labels:
+    showInChat: "true"
+spec:
+  protocol: seedance
+  modelType: video
+  modelConfig:
+    env:
+      model: seedance
+      model_id: doubao-seedance-2-0-260128
+      base_url: https://ai.intra.weibo.com/api/v1/wegent/v1/video_generate/seedance
+      api_key: ${VIDEO_MODEL_API_KEY}
+  videoConfig:
+    resolution: 720p
+    ratio: "16:9"
+    duration: 5
+    watermark: false
+    generate_audio: true
+    capabilities:
+      resolutions:
+        - { label: 480p, value: 480p }
+        - { label: 720p, value: 720p }
+        - { label: 1080p, value: 1080p }
+      aspect_ratios:
+        - { label: "16:9 (横屏)", value: "16:9" }
+        - { label: "9:16 (竖屏)", value: "9:16" }
+        - { label: "1:1", value: "1:1" }
+      durations_sec: [5, 10]
+      supports_image_input: true
+      supports_video_input: true
+      supports_audio_input: true
+      max_reference_images: 9
+      max_reference_videos: 3
+      max_reference_audios: 3
+status:
+  state: Available
+---
+apiVersion: agent.wecode.io/v1
+kind: Model
+metadata:
+  name: happyhorse-1-0
+  displayName: HappyHorse 1.0
+  namespace: default
+  labels:
+    showInChat: "true"
+spec:
+  protocol: wanxiang
+  modelType: video
+  modelConfig:
+    env:
+      model: wanxiang
+      model_id: happyhorse-1.0
+      base_url: https://ai.intra.weibo.com/api/v1/wegent/v1/video_generate/wanxiang
+      api_key: ${VIDEO_MODEL_API_KEY}
+  videoConfig:
+    resolution: 720p
+    ratio: "16:9"
+    duration: 5
+    watermark: false
+    prompt_max_length: 2500
+    capabilities:
+      resolutions:
+        - { label: 720p, value: 720p }
+        - { label: 1080p, value: 1080p }
+      aspect_ratios:
+        - { label: "16:9 (横屏)", value: "16:9" }
+        - { label: "9:16 (竖屏)", value: "9:16" }
+        - { label: "1:1", value: "1:1" }
+      durations_sec: [5, 10]
+      supports_image_input: true
+      supports_video_input: true
+      supports_audio_input: false
+      max_reference_images: 9
+      max_reference_images_with_video: 5
+      max_reference_videos: 1
+      max_reference_audios: 0
+status:
+  state: Available

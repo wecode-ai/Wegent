@@ -100,6 +100,7 @@ export interface UnifiedMessage {
       resolution?: string
       ratio?: string
       duration?: number
+      generation_mode_id?: string
     }
   }
   sources?: SourceReference[]
@@ -245,6 +246,12 @@ export type Event =
       result?: UnifiedMessage['result']
       sources?: UnifiedMessage['sources']
       blockId?: string
+    }
+  | {
+      type: 'CHAT_BLOCK_UPDATED'
+      subtaskId: number
+      blockId: string
+      updates: Partial<MessageBlock>
     }
   | {
       type: 'CHAT_DONE'

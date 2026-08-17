@@ -2497,6 +2497,82 @@ class TestVideoAttachmentProcessing:
         assert '"fid": 12345' in metadata_text
         assert fid == 12345
 
+    def test_build_video_metadata_text_supports_hosted_media_id(self) -> None:
+        """Metadata-only chat keeps the media id used by AIGC tools."""
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.services.context import context_service
+
+        context = SubtaskContext(
+            subtask_id=100,
+            user_id=1,
+            context_type=ContextType.ATTACHMENT.value,
+            name="video.mp4",
+            status=ContextStatus.READY.value,
+            type_data={
+                "file_extension": ".mp4",
+                "original_filename": "video.mp4",
+                "file_size": 1024000,
+                "mime_type": "video/mp4",
+                "weibo_video_upload": {"media_id": "media-123"},
+            },
+        )
+        context.id = 999
+
+        _header, metadata_text, media_id = context_service.build_video_metadata_text(
+            context
+        )
+
+        assert '"media_id": "media-123"' in metadata_text
+        assert media_id == "media-123"
+
+    def test_build_video_content_resolves_hosted_media_id(
+        self, monkeypatch, test_db
+    ) -> None:
+        """Video-capable models resolve externally hosted reference videos."""
+        from importlib import import_module
+        from types import SimpleNamespace
+
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.services.context import context_service
+
+        context_service_module = import_module("app.services.context.context_service")
+        context = SubtaskContext(
+            subtask_id=100,
+            user_id=1,
+            context_type=ContextType.ATTACHMENT.value,
+            name="video.mp4",
+            status=ContextStatus.READY.value,
+            type_data={
+                "file_extension": ".mp4",
+                "original_filename": "video.mp4",
+                "file_size": 1024000,
+                "mime_type": "video/mp4",
+                "weibo_video_upload": {"media_id": "media-123"},
+            },
+        )
+        context.id = 999
+        monkeypatch.setattr(
+            context_service_module,
+            "resolve_external_attachment_playback",
+            lambda **kwargs: SimpleNamespace(
+                url="https://example.com/video.mp4", media_type="video/mp4"
+            ),
+        )
+
+        payload = context_service.build_video_content_from_attachment(test_db, context)
+
+        assert payload is not None
+        assert payload.video_url == "https://example.com/video.mp4"
+        assert '"media_id": "media-123"' in payload.metadata_text
+
     def test_build_video_history_metadata_text_allows_missing_fid(
         self, test_db
     ) -> None:

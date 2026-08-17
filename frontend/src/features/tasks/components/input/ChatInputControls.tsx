@@ -52,6 +52,7 @@ import {
   teamSupportsBothGenerationModes,
   type TeamModeFilter,
 } from '../selector/team-selector-utils'
+import { teamHidesVideoParam, teamUsesModeSpecCategory } from '@/features/video/teamModeSpec'
 
 export interface ChatInputControlsProps {
   /** Task type to determine which controls to show */
@@ -306,6 +307,9 @@ export function ChatInputControls({
   // Check if we're in video or image mode
   const isVideoMode = taskType === 'video'
   const isImageMode = taskType === 'image'
+  const showVideoModelSelectorInChat =
+    !isVideoMode && teamUsesModeSpecCategory(selectedTeam, 'video')
+  const hideVideoDuration = teamHidesVideoParam(selectedTeam, 'duration')
   // Check if we're in generation mode (video or image)
   const isGenerationMode = isVideoMode || isImageMode
   // Always use compact mode (icon only) to save space
@@ -479,6 +483,7 @@ export function ChatInputControls({
         selectedVideoModel={selectedVideoModel}
         onVideoModelChange={onVideoModelChange}
         isVideoModelsLoading={isVideoModelsLoading}
+        showVideoModelSelectorInChat={showVideoModelSelectorInChat}
       />
     )
   }
@@ -540,6 +545,7 @@ export function ChatInputControls({
                 disabled={isStreaming}
                 isLoading={isVideoModelsLoading}
                 modelCategoryType="video"
+                taskModelId={selectedVideoModel?.name}
               />
             )}
 
@@ -624,6 +630,43 @@ export function ChatInputControls({
               hasNoTeams={hasNoTeams}
             />
 
+            {showVideoModelSelectorInChat && onVideoModelChange && (
+              <ModelSelector
+                selectedModel={selectedVideoModel ?? null}
+                setSelectedModel={model => model && onVideoModelChange(model)}
+                forceOverride={false}
+                setForceOverride={() => {}}
+                selectedTeam={selectedTeam}
+                disabled={isStreaming}
+                isLoading={isVideoModelsLoading}
+                modelCategoryType="video"
+                teamId={teamId}
+                taskId={taskId}
+                taskModelId={selectedVideoModel?.name}
+              />
+            )}
+
+            {showVideoModelSelectorInChat &&
+              onResolutionChange &&
+              onRatioChange &&
+              onDurationChange && (
+                <VideoSettingsPopover
+                  selectedRatio={selectedRatio}
+                  onRatioChange={onRatioChange}
+                  availableRatios={availableRatios ?? ['16:9', '9:16', '1:1']}
+                  ratioOptions={ratioOptions}
+                  selectedDuration={selectedDuration}
+                  onDurationChange={onDurationChange}
+                  availableDurations={availableDurations ?? [5, 10]}
+                  selectedResolution={selectedResolution}
+                  onResolutionChange={onResolutionChange}
+                  availableResolutions={availableResolutions ?? ['480p', '720p', '1080p']}
+                  resolutionOptions={resolutionOptions}
+                  showDuration={!hideVideoDuration}
+                  disabled={isStreaming}
+                />
+              )}
+
             {showChatContexts && (
               <>
                 <ChatContextInput
@@ -684,7 +727,7 @@ export function ChatInputControls({
         className="ml-auto flex items-center gap-1.5 flex-shrink-0"
         data-testid="input-right-actions"
       >
-        {!isGenerationMode && (
+        {!isGenerationMode && !showVideoModelSelectorInChat && (
           <div
             className={`flex items-center gap-1.5 ${hideSelectors ? 'opacity-50 pointer-events-none' : ''}`}
           >

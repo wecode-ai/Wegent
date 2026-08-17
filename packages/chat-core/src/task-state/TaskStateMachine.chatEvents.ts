@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import type { MessageBlock } from '../message-blocks'
+import { nestMessageBlocks, type MessageBlock } from '../message-blocks'
 import { mergeBlocksForDone, mergeStreamingBlocks } from './TaskStateMachine.blockMerging'
 import { generateMessageId, mergeChunkContent } from './TaskStateMachine.messageUtils'
 import type {
@@ -193,6 +193,41 @@ export function reduceChatChunkEvent({
     pendingChunks,
     notifyListenersImmediately: true,
   }
+}
+
+export function reduceChatBlockUpdatedEvent({
+  state,
+  event,
+}: ChatEventReducerParams<
+  Extract<Event, { type: 'CHAT_BLOCK_UPDATED' }>
+>): TaskMachineInternalState {
+  const aiMessageId = generateMessageId('ai', event.subtaskId)
+  const existingMessage = state.messages.get(aiMessageId)
+  if (!existingMessage) return state
+
+  const existingBlocks = existingMessage.result?.blocks ?? []
+  const hasTargetBlock = existingBlocks.some(block => {
+    if (block.id === event.blockId) return true
+    return block.type === 'subagent'
+      ? (block.children ?? []).some(child => child.id === event.blockId)
+      : false
+  })
+  if (!hasTargetBlock) return state
+
+  const updatedBlock = {
+    id: event.blockId,
+    ...event.updates,
+  } as MessageBlock
+  const blocks = nestMessageBlocks([...existingBlocks, updatedBlock])
+  const newMessages = new Map(state.messages)
+  newMessages.set(aiMessageId, {
+    ...existingMessage,
+    result: {
+      ...existingMessage.result,
+      blocks,
+    },
+  })
+  return { ...state, messages: newMessages }
 }
 
 export function reduceChatDoneEvent({

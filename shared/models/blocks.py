@@ -31,6 +31,7 @@ class BlockType(str, Enum):
     TEXT = "text"
     SUBAGENT = "subagent"
     GUIDANCE = "guidance"
+    CARD = "card"
 
 
 class BlockStatus(str, Enum):
@@ -404,6 +405,35 @@ def create_text_block(
         "status": BlockStatus.STREAMING.value,
         "timestamp": ts,
     }
+
+
+def create_card_block(
+    card_id: str | int,
+    card_type: str,
+    card_data: Optional[Dict[str, Any]] = None,
+    card_status: str = "populated",
+    card_preview_data: Optional[Dict[str, Any]] = None,
+    block_id: Optional[str] = None,
+    timestamp: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Create a reusable asynchronous card block."""
+    import time
+
+    ts = timestamp if timestamp is not None else int(time.time() * 1000)
+    normalized_card_id = str(card_id)
+    block: Dict[str, Any] = {
+        "id": block_id or f"card-{normalized_card_id}",
+        "type": BlockType.CARD.value,
+        "card_id": normalized_card_id,
+        "card_type": card_type,
+        "card_data": card_data or {},
+        "card_status": card_status,
+        "status": "error" if card_status == "error" else BlockStatus.DONE.value,
+        "timestamp": ts,
+    }
+    if card_preview_data:
+        block["card_preview_data"] = card_preview_data
+    return block
 
 
 def create_guidance_block(

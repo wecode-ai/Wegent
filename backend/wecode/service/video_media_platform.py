@@ -55,7 +55,7 @@ def upload_media(
     common_headers = auth_headers(uid)
     timeout = config.WEIBO_MEDIA_TIMEOUT_SECONDS
 
-    with httpx.Client(timeout=timeout) as client:
+    with httpx.Client(timeout=timeout, trust_env=False) as client:
         dispatch = client.get(
             f"{base_url}/2/fileplatform/dispatch.json",
             params={
@@ -230,7 +230,9 @@ def fetch_playback(
 
     config = video_media_settings
     config.validate_playback_config()
-    with httpx.Client(timeout=config.WEIBO_MEDIA_TIMEOUT_SECONDS) as client:
+    with httpx.Client(
+        timeout=config.WEIBO_MEDIA_TIMEOUT_SECONDS, trust_env=False
+    ) as client:
         response = client.get(
             config.WEIBO_VIDEO_SHOW_BATCH_URL,
             params={
@@ -283,7 +285,9 @@ def sign_urls(urls: list[str], uid: str) -> dict[str, Optional[str]]:
         return {}
     config = video_media_settings
     config.validate_storage_config()
-    with httpx.Client(timeout=config.WEIBO_MEDIA_TIMEOUT_SECONDS) as client:
+    with httpx.Client(
+        timeout=config.WEIBO_MEDIA_TIMEOUT_SECONDS, trust_env=False
+    ) as client:
         response = client.get(
             config.WEIBO_MEDIA_SSIG_URL,
             params={

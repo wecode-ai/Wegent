@@ -34,6 +34,7 @@ export interface VideoSettingsPopoverProps {
   onResolutionChange: (resolution: string) => void
   availableResolutions: string[]
   resolutionOptions?: ResolutionOption[]
+  showDuration?: boolean
   // State
   disabled?: boolean
 }
@@ -73,6 +74,7 @@ export function VideoSettingsPopover({
   onResolutionChange,
   availableResolutions,
   resolutionOptions,
+  showDuration = true,
   disabled = false,
 }: VideoSettingsPopoverProps) {
   const { t } = useTranslation('chat')
@@ -84,7 +86,9 @@ export function VideoSettingsPopover({
   const selectedResolutionLabel =
     resolutionOptions?.find(option => (option.value ?? option.label) === selectedResolution)
       ?.label ?? selectedResolution.toUpperCase()
-  const summaryText = `${selectedRatioLabel} · ${selectedDuration}S · ${selectedResolutionLabel}`
+  const summaryText = showDuration
+    ? `${selectedRatioLabel} · ${selectedDuration}S · ${selectedResolutionLabel}`
+    : `${selectedRatioLabel} · ${selectedResolutionLabel}`
   const displayedRatios = ratioOptions?.length
     ? ratioOptions
     : availableRatios.map(value => ({ label: value, value }))
@@ -146,7 +150,7 @@ export function VideoSettingsPopover({
           </div>
 
           {/* Duration Section */}
-          <div>
+          <div hidden={!showDuration}>
             <h4 className="text-sm font-medium text-text-primary mb-2">
               {t('video.duration_section')}
             </h4>

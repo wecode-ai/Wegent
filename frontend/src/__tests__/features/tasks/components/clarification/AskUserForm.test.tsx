@@ -289,56 +289,12 @@ describe('AskUserForm', () => {
     expect(screen.getByTestId('ask-user-option-language-2')).toBeInTheDocument()
   })
 
-  it('shows custom input toggle button for choice questions', () => {
+  it('keeps choice questions as radio options', () => {
     const data = createMockData()
     render(<AskUserForm data={data} taskId={1} currentMessageIndex={0} />)
 
-    expect(screen.getByTestId('ask-user-toggle-custom-language')).toBeInTheDocument()
-    expect(screen.getByText('Custom Input')).toBeInTheDocument()
-  })
-
-  it('switches to custom textarea when toggle is clicked', async () => {
-    const data = createMockData()
-    render(<AskUserForm data={data} taskId={1} currentMessageIndex={0} />)
-
-    const toggleButton = screen.getByTestId('ask-user-toggle-custom-language')
-    await act(async () => {
-      fireEvent.click(toggleButton)
-    })
-
-    expect(screen.getByTestId('ask-user-custom-textarea-language')).toBeInTheDocument()
-    expect(screen.getByText('Back to choices')).toBeInTheDocument()
-  })
-
-  it('calls onSubmit with custom text when in custom mode', async () => {
-    const mockOnSubmit = jest.fn()
-    const data = createMockData()
-    render(<AskUserForm data={data} taskId={1} currentMessageIndex={0} onSubmit={mockOnSubmit} />)
-
-    // Switch to custom mode
-    const toggleButton = screen.getByTestId('ask-user-toggle-custom-language')
-    await act(async () => {
-      fireEvent.click(toggleButton)
-    })
-
-    // Type custom text
-    const customTextarea = screen.getByTestId('ask-user-custom-textarea-language')
-    await act(async () => {
-      fireEvent.change(customTextarea, { target: { value: 'My custom preference' } })
-    })
-
-    const submitButton = screen.getByTestId('ask-user-submit')
-    await act(async () => {
-      fireEvent.click(submitButton)
-    })
-
-    expect(mockOnSubmit).toHaveBeenCalledWith(
-      'tool_test123',
-      '## 📝 我的回答 (My Answers)\n\n### LANGUAGE: Which programming language do you prefer?\n**Answer**: My custom preference\n\n',
-      expect.objectContaining({
-        tool_use_id: 'tool_test123',
-        answers: { language: 'My custom preference' },
-      })
-    )
+    expect(screen.getAllByRole('radio')).toHaveLength(3)
+    expect(screen.queryByText('Custom Input')).not.toBeInTheDocument()
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
   })
 })

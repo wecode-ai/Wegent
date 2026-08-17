@@ -745,6 +745,14 @@
     "duration_section": "Duration",
     "resolution_section": "Resolution"
   },
+  "asyncCards": {
+    "loading": "Loading card...",
+    "pleaseWait": "Please wait while the task is processed",
+    "failed": "The asynchronous task failed",
+    "videoTitle": "Creative video",
+    "viewDetails": "View details",
+    "panelDescription": "Review the current result and continue to the next video stage"
+  },
   "image": {
     "title": "Image Generation",
     "model_selector": "Select Image Model",

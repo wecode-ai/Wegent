@@ -46,6 +46,7 @@ from .blocks import (
     block_from_dict,
     blocks_from_list,
     blocks_to_list,
+    create_card_block,
     create_text_block,
     create_tool_block,
 )
@@ -208,6 +209,7 @@ __all__ = [
     "block_from_dict",
     "blocks_from_list",
     "blocks_to_list",
+    "create_card_block",
     "create_tool_block",
     "create_text_block",
     # Splitter config

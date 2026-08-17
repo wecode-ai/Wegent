@@ -203,6 +203,11 @@ class Settings(BaseSettings):
     VIDEO_RECOVERY_STALE_SECONDS: int = 10
     VIDEO_RECOVERY_LOOKBACK_HOURS: int = 1
 
+    # External AIGC workflow used by stepped creative-video skills.
+    AIGC_VIDEO_AGENT_URL: str = "http://i.multimedia.api.weibo.com"
+    AIGC_CARD_POLL_INTERVAL_SECONDS: int = 3
+    AIGC_CARD_MAX_POLL_COUNT: int = 1200
+
     # Default models used by image/video generation MCP tools when the current
     # task model is not a matching generation model.
     DEFAULT_IMAGE_GENERATION_MODEL: str = ""

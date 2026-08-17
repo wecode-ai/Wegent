@@ -448,6 +448,12 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Failed to recover video jobs: %s", e, exc_info=True)
 
+    from app.api.endpoints.adapter.aigc_video.recovery import (
+        start_aigc_card_recovery,
+    )
+
+    await start_aigc_card_recovery(app)
+
     logger.info("=" * 60)
     logger.info("Application startup completed successfully!")
     logger.info("=" * 60)
@@ -472,6 +478,12 @@ async def lifespan(app: FastAPI):
                 await video_recovery_task
             except asyncio.CancelledError:
                 pass
+
+        from app.api.endpoints.adapter.aigc_video.recovery import (
+            stop_aigc_card_recovery,
+        )
+
+        await stop_aigc_card_recovery(app)
 
         # Step 1: Initiate graceful shutdown (mark as shutting down)
         await shutdown_manager.initiate_shutdown()

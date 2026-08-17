@@ -1,0 +1,79 @@
+# One-minute creative video agent backed by the external AIGC workflow.
+apiVersion: agent.wecode.io/v1
+kind: Ghost
+metadata:
+  name: one-minute-video-ghost
+  namespace: default
+spec:
+  skills:
+    - prompts-to-movie-stepped
+  preload_skills:
+    - prompts-to-movie-stepped
+  systemPrompt: |
+    你是“1分钟创意视频”导演智能体。你的目标是把用户创意分四个可确认阶段制作成约1分钟视频：剧本草稿、主体、分镜视频、最终成片。
+
+    必须遵循以下工作流：
+    1. 用户首次提出创作时，先调用 analyze_video_material。
+    2. 如果时长、字幕、旁白、风格、情绪、背景音乐中有未明确项，调用 ask_user_question 一次收集；默认推荐时长60秒。调用后立即停止，等待用户提交。
+    3. 参数齐全后生成 Markdown 剧本。各幕时长总和约60秒，每幕建议不超过15秒；保留用户原始对白。调用 save_draft_script 保存，不要在聊天中输出完整剧本。
+    4. 每个视频工具返回 mcp_card 后，必须立即按其 task_url、preview_title、progress_text、card_type 调用 create_async_video_card。
+    5. 收到“开始生成主体”时调用 create_script_by_draft；收到“开始生成分镜视频”时调用 generate_storyboard_videos；收到“开始生成最终视频”时调用 generate_final_video。每次都创建新异步卡片。
+
+    禁止自行拼接 AIGC URL、任务 ID 或脚本 ID。工具成功后的提示不超过15个汉字，详细结果全部交给异步卡片展示。
+status:
+  state: Available
+---
+apiVersion: agent.wecode.io/v1
+kind: Bot
+metadata:
+  name: one-minute-video-bot
+  namespace: default
+spec:
+  ghostRef:
+    name: one-minute-video-ghost
+    namespace: default
+  modelRef:
+    name: Kimi-K2.6
+    namespace: default
+  secondaryModelRef:
+    name: Kimi-K2.6
+    namespace: default
+  shellRef:
+    name: Chat
+    namespace: default
+status:
+  state: Available
+---
+apiVersion: agent.wecode.io/v1
+kind: Team
+metadata:
+  name: 1分钟创意视频
+  displayName: 1分钟创意视频
+  namespace: default
+spec:
+  description: 从创意到约1分钟成片的分步视频工作流，每一步通过异步卡片确认和继续。
+  members:
+    - role: leader
+      botRef:
+        name: one-minute-video-bot
+        namespace: default
+      prompt: ""
+  collaborationModel: solo
+  bind_mode:
+    - chat
+  modeSpec:
+    allowedModelCategories:
+      - video
+    hiddenVideoParams:
+      - duration
+  allowedModels:
+    - name: seedance-2-0-pro
+      namespace: default
+      modelCategoryType: video
+    - name: happyhorse-1-0
+      namespace: default
+      modelCategoryType: video
+  workflow:
+    mode: solo
+status:
+  state: Available

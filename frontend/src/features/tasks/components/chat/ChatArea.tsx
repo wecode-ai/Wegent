@@ -109,6 +109,7 @@ import {
   isVideoExtension,
 } from '@/apis/attachments'
 import type { AttachmentTypeLimits } from '@/hooks/useMultiAttachment'
+import { teamHidesVideoParam, teamUsesModeSpecCategory } from '@/features/video/teamModeSpec'
 
 /**
  * Threshold in pixels for determining when to collapse selectors.
@@ -366,12 +367,29 @@ function ChatAreaContent({
     maxAttachmentsByType: mediaAttachmentLimits.maxByType,
     validateAttachmentFile: validateAttachmentFileProxy,
   })
+  const showVideoModelSelectorInChat = teamUsesModeSpecCategory(chatState.selectedTeam, 'video')
+  const hideVideoDuration = teamHidesVideoParam(chatState.selectedTeam, 'duration')
+  const persistedVideoModel = useMemo(() => {
+    if (!taskState?.messages) return undefined
+
+    let latestModel: string | undefined
+    let latestTimestamp = -1
+    taskState.messages.forEach(message => {
+      const model = message.result?.video_config?.model
+      if (message.type === 'user' && model && message.timestamp >= latestTimestamp) {
+        latestModel = model
+        latestTimestamp = message.timestamp
+      }
+    })
+    return latestModel
+  }, [taskState?.messages])
 
   // Video model selection state - only enabled for video mode
   // Uses unified useModelSelection hook with modelCategoryType='video'
   const videoModelSelection = useModelSelection({
     teamId: chatState.selectedTeam?.id ?? null,
     taskId: effectiveTaskId ?? null,
+    taskModelId: persistedVideoModel,
     selectedTeam: chatState.selectedTeam,
     disabled: taskType !== 'video',
     modelCategoryType: 'video',
@@ -472,7 +490,7 @@ function ChatAreaContent({
       video: videoMaterialLimits.video,
       audio: videoMaterialLimits.audio,
     }
-  }, [taskType, videoMaterialLimits])
+  }, [taskType, videoCapabilities?.max_reference_images_with_video, videoMaterialLimits])
 
   const videoImageMaterialAccept = useMemo(
     () => formatsToAcceptString(videoCapabilities?.image_formats, 'image/*'),
@@ -1311,11 +1329,11 @@ function ChatAreaContent({
   // Build generate params for video/image generation tasks
   // Include model name for display in user message bubble
   const generateParams = useMemo(() => {
-    if (effectiveTaskType === 'video') {
+    if (effectiveTaskType === 'video' || showVideoModelSelectorInChat) {
       return {
         resolution: selectedResolution,
         ratio: selectedRatio,
-        duration: selectedDuration,
+        ...(!hideVideoDuration ? { duration: selectedDuration } : {}),
         model: videoModelSelection.selectedModel?.name,
         generation_mode_id: selectedVideoGenerationMode,
       }
@@ -1329,6 +1347,8 @@ function ChatAreaContent({
     return undefined
   }, [
     effectiveTaskType,
+    hideVideoDuration,
+    showVideoModelSelectorInChat,
     selectedResolution,
     selectedRatio,
     selectedDuration,
@@ -1466,6 +1486,7 @@ function ChatAreaContent({
       // In video mode, we need a video model selected
       return !videoModelSelection.selectedModel
     }
+    if (showVideoModelSelectorInChat && !videoModelSelection.selectedModel) return true
     // Image mode uses image model selection
     if (effectiveTaskType === 'image') {
       // In image mode, we need an image model selected
@@ -1480,6 +1501,7 @@ function ChatAreaContent({
     chatState.selectedModel,
     effectiveTaskType,
     hideSelectors,
+    showVideoModelSelectorInChat,
     videoModelSelection.selectedModel,
     imageModelSelection.selectedModel,
   ])

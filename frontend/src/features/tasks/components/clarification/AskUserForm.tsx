@@ -6,7 +6,6 @@
 
 import { useState, useEffect, useMemo } from 'react'
 import { Send } from 'lucide-react'
-import { FiEdit3 } from 'react-icons/fi'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
@@ -46,7 +45,6 @@ interface QuestionWidgetProps {
   question: AskUserQuestion
   value: string[]
   customText: string
-  isCustomMode: boolean
   isReadOnly: boolean
   hasError: boolean
   onSingleChange: (qId: string, value: string) => void
@@ -58,7 +56,6 @@ function QuestionWidget({
   question,
   value,
   customText,
-  isCustomMode,
   isReadOnly,
   hasError,
   onSingleChange,
@@ -85,22 +82,6 @@ function QuestionWidget({
   }
 
   if (!question.options || question.options.length === 0) return null
-
-  // Custom text mode: replace choices with a textarea
-  if (isCustomMode) {
-    return (
-      <Textarea
-        value={customText}
-        onChange={e => onCustomTextChange(question.id, e.target.value)}
-        placeholder={t('ask_user_question.custom_placeholder') || 'Enter custom input...'}
-        disabled={isReadOnly}
-        rows={3}
-        className={`w-full${hasError ? ' border-red-500 focus-visible:ring-red-500' : ''}`}
-        data-testid={`ask-user-custom-textarea-${question.id}`}
-        autoFocus
-      />
-    )
-  }
 
   if (question.multi_select) {
     return (
@@ -141,24 +122,27 @@ function QuestionWidget({
       value={value[0] || ''}
       onValueChange={v => onSingleChange(question.id, v)}
       disabled={isReadOnly}
-      className={`flex flex-col gap-2${hasError ? ' rounded border border-red-500 p-2' : ''}`}
+      className={`flex flex-wrap items-start gap-x-6 gap-y-3${
+        hasError ? ' rounded border border-red-500 p-2' : ''
+      }`}
       data-testid={`ask-user-radio-${question.id}`}
     >
       {question.options.map((option: AskUserOption, index: number) => (
-        <div key={option.value} className="flex items-center space-x-2">
+        <div key={option.value} className="flex min-w-fit items-center gap-2">
           <RadioGroupItem
             value={option.value}
             id={`ask-user-${question.id}-option-${index}`}
             disabled={isReadOnly}
+            className="border-[#BDBDBD] text-[#FF8200] shadow-none data-[state=checked]:border-[#FF8200] [&>span>div]:bg-[#FF8200]"
             data-testid={`ask-user-option-${question.id}-${index}`}
           />
           <label
             htmlFor={`ask-user-${question.id}-option-${index}`}
-            className="text-sm font-normal cursor-pointer"
+            className="cursor-pointer text-sm font-normal text-[#636363]"
           >
             {option.label}
             {option.recommended && (
-              <span className="ml-2 text-xs text-primary">
+              <span className="ml-2 text-xs text-[#999999]">
                 ({t('ask_user_question.recommended') || 'Recommended'})
               </span>
             )}
@@ -196,20 +180,11 @@ export default function AskUserForm({
     return init
   })
 
-  // Per-question custom text (text input or custom mode): { [qId]: string }
+  // Per-question text input: { [qId]: string }
   const [customTexts, setCustomTexts] = useState<Record<string, string>>(() => {
     const init: Record<string, string> = {}
     normalizedQuestions.forEach(q => {
       init[q.id] = ''
-    })
-    return init
-  })
-
-  // Per-question custom mode toggle (for choice questions): { [qId]: boolean }
-  const [customModes, setCustomModes] = useState<Record<string, boolean>>(() => {
-    const init: Record<string, boolean> = {}
-    normalizedQuestions.forEach(q => {
-      init[q.id] = false
     })
     return init
   })
@@ -301,30 +276,11 @@ export default function AskUserForm({
     clearFieldError(qId)
   }
 
-  const handleToggleCustom = (qId: string) => {
-    if (isReadOnly) return
-    setHasUserInteracted(true)
-    setCustomModes(prev => {
-      const next = !prev[qId]
-      if (!next) {
-        // Switching back to choices: clear the custom text
-        setCustomTexts(t => ({ ...t, [qId]: '' }))
-      }
-      return { ...prev, [qId]: next }
-    })
-    clearFieldError(qId)
-  }
-
   const handleSubmit = () => {
     const errors: Record<string, string> = {}
     for (const q of normalizedQuestions) {
       if (!q.required) continue
       if (q.input_type === 'text') {
-        if (!customTexts[q.id]?.trim()) {
-          errors[q.id] = t('ask_user_question.required_field') || 'This field is required'
-        }
-      } else if (customModes[q.id]) {
-        // Custom mode: require non-empty text
         if (!customTexts[q.id]?.trim()) {
           errors[q.id] = t('ask_user_question.required_field') || 'This field is required'
         }
@@ -354,7 +310,7 @@ export default function AskUserForm({
       formattedMessage += `### ${qId}: ${q.question}\n`
       formattedMessage += '**Answer**: '
 
-      if (q.input_type === 'text' || customModes[q.id]) {
+      if (q.input_type === 'text') {
         const value = customTexts[q.id] ?? ''
         answers[q.id] = value
         formattedMessage += `${value}\n\n`
@@ -407,10 +363,7 @@ export default function AskUserForm({
 
       {/* Question list */}
       <div className={isMultiQuestion ? 'space-y-4' : 'space-y-2'}>
-        {normalizedQuestions.map(q => {
-          const isChoiceQuestion = q.input_type === 'choice' && q.options && q.options.length > 0
-          const isInCustomMode = customModes[q.id] ?? false
-
+        {normalizedQuestions.map((q, index) => {
           return (
             <div
               key={q.id}
@@ -418,29 +371,13 @@ export default function AskUserForm({
                 isMultiQuestion ? 'p-3 rounded bg-surface/50 border border-border' : 'space-y-2'
               }
             >
-              <div className="flex items-start justify-between">
-                <div className="text-sm font-medium text-text-primary">
-                  {q.question}
-                  {q.required && (
-                    <span className="ml-1 text-red-500" aria-hidden="true">
-                      *
-                    </span>
-                  )}
-                </div>
-                {isChoiceQuestion && !isReadOnly && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleToggleCustom(q.id)}
-                    className="text-xs text-text-muted hover:text-text-primary shrink-0"
-                    data-testid={`ask-user-toggle-custom-${q.id}`}
-                  >
-                    <FiEdit3 className="w-3 h-3" />
-                    {isInCustomMode
-                      ? t('clarification.back_to_choices') || 'Back to choices'
-                      : t('ask_user_question.custom_input') || 'Custom Input'}
-                  </Button>
+              <div className="text-sm font-medium text-text-primary">
+                {isMultiQuestion ? `${index + 1}. ` : ''}
+                {q.question}
+                {q.required && (
+                  <span className="ml-1 text-[#F08A00]" aria-hidden="true">
+                    *
+                  </span>
                 )}
               </div>
 
@@ -452,7 +389,6 @@ export default function AskUserForm({
                   question={q}
                   value={selectedValues[q.id] ?? []}
                   customText={customTexts[q.id] ?? ''}
-                  isCustomMode={isInCustomMode}
                   isReadOnly={isReadOnly}
                   hasError={Boolean(fieldErrors[q.id])}
                   onSingleChange={handleSingleChange}

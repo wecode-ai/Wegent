@@ -65,6 +65,7 @@ jest.mock('@/features/tasks/components/subscription/SubscriptionPreviewCard', ()
 
 jest.mock('@/features/tasks/components/message/block-registry', () => ({
   blockRendererRegistry: {
+    register: jest.fn(),
     findRenderer: () => null,
   },
 }))

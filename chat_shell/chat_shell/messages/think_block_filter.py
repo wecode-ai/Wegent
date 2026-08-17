@@ -585,7 +585,7 @@ def _ensure_reasoning_has_output(
 
 
 def _filter_empty_text_blocks(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Remove empty text blocks from assistant message content lists.
+    """Remove empty assistant text content that Kimi rejects.
 
     Some models (e.g. Kimi) reject requests containing empty text blocks.
     These blocks typically appear after reasoning-only content is stripped.
@@ -597,6 +597,9 @@ def _filter_empty_text_blocks(messages: list[dict[str, Any]]) -> list[dict[str, 
             continue
 
         content = msg.get("content")
+        has_tool_call = bool(msg.get("tool_calls") or msg.get("function_call"))
+        if isinstance(content, str) and not content.strip() and not has_tool_call:
+            continue
         if not isinstance(content, list):
             filtered.append(msg)
             continue

@@ -265,7 +265,14 @@ export interface GeminiAnnotation {
   source: string
 }
 
-export type ChatBlockType = 'text' | 'tool' | 'subagent' | 'thinking' | 'error' | 'guidance'
+export type ChatBlockType =
+  | 'text'
+  | 'tool'
+  | 'subagent'
+  | 'thinking'
+  | 'error'
+  | 'guidance'
+  | 'card'
 
 export interface ChatBlock {
   id: string
@@ -290,6 +297,12 @@ export interface ChatBlock {
   argument_status?: 'streaming' | 'done'
   status?: 'generating_arguments' | 'pending' | 'streaming' | 'invoking' | 'done' | 'error'
   timestamp?: number
+  card_id?: string
+  card_type?: string
+  card_status?: 'pending' | 'partial_ready' | 'populated' | 'error' | 'expired'
+  card_data?: Record<string, unknown>
+  card_preview_data?: Record<string, unknown>
+  card_error?: string
 }
 
 export interface ChatStartPayload {
@@ -467,6 +480,10 @@ export interface ChatBlockUpdatedPayload {
   loop_index?: number
   applied_at?: string
   status?: ChatBlock['status'] | 'running'
+  card_status?: ChatBlock['card_status']
+  card_data?: Record<string, unknown>
+  card_preview_data?: Record<string, unknown>
+  card_error?: string
 }
 
 export interface ChatGuidanceQueuedPayload {

@@ -20,6 +20,7 @@ from chat_shell.tools.deferred_input import (
     is_deferred_user_input_result,
 )
 from shared.models import ResponsesAPIEmitter
+from shared.models.blocks import create_card_block
 from shared.telemetry.context.large_data import log_large_attribute
 from shared.telemetry.decorators import add_span_event
 from shared.utils.tool_arguments import sanitize_tool_arguments
@@ -345,6 +346,8 @@ def _handle_tool_end(
                 skill_name,
             )
 
+    _emit_card_block(state, emitter, tool_name, serializable_output)
+
     # Emit tool_done event via ResponsesAPIEmitter
     # Only include arguments if tool is in whitelist
     arguments = (
@@ -436,6 +439,53 @@ def _parse_json_object(value: Any) -> dict[str, Any] | None:
     except json.JSONDecodeError:
         return None
     return parsed if isinstance(parsed, dict) else None
+
+
+def _extract_card_result(value: Any) -> dict[str, Any] | None:
+    """Extract a card entity from plain and MCP text-content outputs."""
+    parsed = _parse_json_object(value)
+    if parsed is not None:
+        return parsed
+    if not isinstance(value, list):
+        return None
+    for item in value:
+        if isinstance(item, dict) and item.get("type") == "text":
+            parsed = _parse_json_object(item.get("text"))
+        elif getattr(item, "type", None) == "text":
+            parsed = _parse_json_object(getattr(item, "text", None))
+        else:
+            parsed = None
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _emit_card_block(
+    state: Any,
+    emitter: ResponsesAPIEmitter,
+    tool_name: str,
+    tool_output: Any,
+) -> None:
+    """Render a card tool result immediately through the common block stream."""
+    if not tool_name.endswith("create_async_video_card"):
+        return
+    card = _extract_card_result(tool_output)
+    if not card or "id" not in card or card.get("error"):
+        return
+    block = create_card_block(
+        card_id=card["id"],
+        card_type=str(card.get("card_type") or "unknown"),
+        card_data=card.get("data") if isinstance(card.get("data"), dict) else {},
+        card_status=str(card.get("status") or "populated"),
+        card_preview_data=(
+            card.get("preview_data")
+            if isinstance(card.get("preview_data"), dict)
+            else None
+        ),
+    )
+    _run_async(emitter.block_created(block))
+    if hasattr(state, "add_block"):
+        state.add_block(block)
 
 
 def _extract_sources(tool_name: str, tool_output: Any) -> list[dict[str, Any]]:

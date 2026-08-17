@@ -218,6 +218,7 @@ export function useModelSelection({
   // -------------------------------------------------------------------------
   const prevTeamIdRef = useRef<number | null | undefined>(undefined)
   const prevTaskIdRef = useRef<number | null | undefined>(undefined)
+  const prevTaskModelIdRef = useRef<string | null | undefined>(undefined)
   const hasInitializedRef = useRef(false)
   const isRestoringRef = useRef(false)
 
@@ -242,12 +243,17 @@ export function useModelSelection({
     return getCompatibleProviderFromAgentType(selectedTeam?.agent_type)
   }, [modelCategoryType, selectedTeam?.agent_type])
 
-  /** Get allowed_models whitelist from the first bot's agent_config */
+  /** Resolve Team-level whitelist first, then fall back to Bot configuration. */
   const allowedModels = useMemo(() => {
+    const teamAllowedModels = (selectedTeam?.allowed_models ?? []).filter(
+      model => !model.modelCategoryType || model.modelCategoryType === modelCategoryType
+    )
+    if (teamAllowedModels.length > 0) return teamAllowedModels
+
     const firstBot = selectedTeam?.bots?.[0]?.bot
     if (!firstBot?.agent_config) return []
     return getAllowedModelsFromConfig(firstBot.agent_config as Record<string, unknown>)
-  }, [selectedTeam])
+  }, [modelCategoryType, selectedTeam])
 
   const boundDefaultModel = useMemo((): Model | null => {
     const configuredModels = (selectedTeam?.bots ?? [])
@@ -289,8 +295,15 @@ export function useModelSelection({
     }
     // Apply allowed_models whitelist filter if configured
     if (allowedModels.length > 0) {
-      const allowedNames = new Set(allowedModels.map(m => m.name))
-      result = result.filter(m => allowedNames.has(m.name))
+      result = result.filter(model =>
+        allowedModels.some(
+          allowed =>
+            allowed.name === model.name &&
+            (!allowed.namespace ||
+              allowed.namespace === 'default' ||
+              allowed.namespace === model.namespace)
+        )
+      )
     }
     if (requireVideoInput) {
       result = result.filter(
@@ -407,12 +420,14 @@ export function useModelSelection({
       hasInitializedRef.current &&
       prevTaskIdRef.current !== taskId &&
       (typeof prevTaskIdRef.current === 'number' || typeof taskId === 'number')
+    const taskModelChanged = hasInitializedRef.current && prevTaskModelIdRef.current !== taskModelId
 
     prevTeamIdRef.current = currentTeamId
     prevTaskIdRef.current = taskId
+    prevTaskModelIdRef.current = taskModelId
 
     // Case 1: Initial load or team/task changed - restore model
-    if (!hasInitializedRef.current || teamChanged || taskChanged) {
+    if (!hasInitializedRef.current || teamChanged || taskChanged || taskModelChanged) {
       isRestoringRef.current = true
       let restoredModel: Model | null = null
       let restoredForceOverride: boolean | undefined

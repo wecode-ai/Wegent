@@ -87,4 +87,36 @@ describe('nestMessageBlocks', () => {
       ],
     })
   })
+
+  it('merges asynchronous card updates without losing the card type', () => {
+    const blocks: MessageBlock[] = [
+      {
+        id: 'card-1',
+        type: 'card',
+        card_id: '1',
+        card_type: 'video_director_generation',
+        card_status: 'pending',
+        card_data: {},
+        card_preview_data: { progress: 0 },
+      },
+      {
+        id: 'card-1',
+        type: 'card',
+        card_id: '1',
+        card_type: 'video_director_generation',
+        card_status: 'populated',
+        card_data: { title: '一分钟短片' },
+        card_preview_data: { progress: 100 },
+      },
+    ]
+
+    expect(nestMessageBlocks(blocks)).toEqual([
+      expect.objectContaining({
+        id: 'card-1',
+        type: 'card',
+        card_status: 'populated',
+        card_data: { title: '一分钟短片' },
+      }),
+    ])
+  })
 })

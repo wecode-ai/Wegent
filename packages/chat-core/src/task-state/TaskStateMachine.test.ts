@@ -88,6 +88,45 @@ describe('TaskStateMachine', () => {
     expect(machine.getState().messages.get('ai-42')?.botName).toBe('Planner Bot')
   })
 
+  it('applies asynchronous card updates after the assistant stream completes', () => {
+    const machine = new TaskStateMachine(100, {
+      joinTask: vi.fn(),
+      isConnected: () => true,
+    })
+    machine.handleChatStart(42, 'Chat', 7)
+    machine.handleChatChunk(42, '', {
+      blocks: [
+        {
+          id: 'card-1',
+          type: 'card',
+          card_id: '1',
+          card_type: 'video_director_generation',
+          card_status: 'pending',
+          card_data: {},
+          card_preview_data: { progress: 0 },
+          status: 'done',
+        },
+      ],
+    })
+    machine.handleChatDone(42, 'Working')
+
+    machine.handleChatBlockUpdated(42, 'card-1', {
+      card_status: 'populated',
+      card_data: { title: 'Ready' },
+      card_preview_data: { progress: 100 },
+    })
+
+    expect(machine.getState().messages.get('ai-42')?.result?.blocks).toContainEqual(
+      expect.objectContaining({
+        id: 'card-1',
+        type: 'card',
+        card_status: 'populated',
+        card_data: { title: 'Ready' },
+        card_preview_data: { progress: 100 },
+      })
+    )
+  })
+
   it('nests child agent blocks under their parent subagent block', () => {
     const machine = new TaskStateMachine(100, {
       joinTask: vi.fn(),

@@ -36,6 +36,7 @@ from app.schemas.kind import (
     Shell,
     Task,
     Team,
+    TeamAllowedModel,
     TeamInputPlaceholder,
     dump_team_display_config,
 )
@@ -246,6 +247,13 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         bind_mode = getattr(obj_in, "bind_mode", None)
         if bind_mode is not None:
             spec["bind_mode"] = bind_mode
+
+        allowed_models = getattr(obj_in, "allowed_models", None)
+        if allowed_models is not None:
+            spec["allowedModels"] = [
+                model.model_dump(mode="json", exclude_none=True)
+                for model in allowed_models
+            ]
 
         # Handle description - get from obj_in directly
         description = getattr(obj_in, "description", None)
@@ -1440,6 +1448,14 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         if "bind_mode" in update_data:
             team_crd.spec.bind_mode = update_data["bind_mode"]
 
+        if "allowed_models" in update_data:
+            allowed_models = update_data["allowed_models"]
+            team_crd.spec.allowedModels = (
+                [TeamAllowedModel.model_validate(model) for model in allowed_models]
+                if allowed_models
+                else None
+            )
+
         # Handle description update
         if "description" in update_data:
             team_crd.spec.description = update_data["description"]
@@ -1947,6 +1963,19 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
         # Get bind_mode from spec (directly, not from workflow)
         bind_mode = team_crd.spec.bind_mode
+        mode_spec = (
+            team_crd.spec.modeSpec.model_dump(mode="json", exclude_none=True)
+            if team_crd.spec.modeSpec
+            else None
+        )
+        allowed_models = (
+            [
+                model.model_dump(mode="json", exclude_none=True)
+                for model in team_crd.spec.allowedModels
+            ]
+            if team_crd.spec.allowedModels
+            else None
+        )
 
         # Derive recommended_mode from bind_mode
         # 'both' if both modes, 'code' if only code, 'chat' otherwise
@@ -1995,6 +2024,8 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             "bots": bots,
             "workflow": workflow,
             "bind_mode": bind_mode,
+            "mode_spec": mode_spec,
+            "allowed_models": allowed_models,
             "recommended_mode": recommended_mode,  # Add recommended_mode field
             "is_mix_team": is_mix_team,
             "is_active": team.is_active,
@@ -2162,6 +2193,19 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
         # Get bind_mode from spec (directly, not from workflow)
         bind_mode = team_crd.spec.bind_mode
+        mode_spec = (
+            team_crd.spec.modeSpec.model_dump(mode="json", exclude_none=True)
+            if team_crd.spec.modeSpec
+            else None
+        )
+        allowed_models = (
+            [
+                model.model_dump(mode="json", exclude_none=True)
+                for model in team_crd.spec.allowedModels
+            ]
+            if team_crd.spec.allowedModels
+            else None
+        )
 
         # Derive recommended_mode from bind_mode
         # 'both' if both modes, 'code' if only code, 'chat' otherwise
@@ -2204,6 +2248,8 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             "bots": bots,
             "workflow": workflow,
             "bind_mode": bind_mode,
+            "mode_spec": mode_spec,
+            "allowed_models": allowed_models,
             "recommended_mode": recommended_mode,  # Add recommended_mode field
             "is_mix_team": is_mix_team,
             "is_active": team.is_active,

@@ -73,6 +73,8 @@ IMAGE_MCP_MOUNT_PATH = "/mcp/image"
 IMAGE_MCP_TRANSPORT_PATH = "/sse"
 VIDEO_MCP_MOUNT_PATH = "/mcp/video"
 VIDEO_MCP_TRANSPORT_PATH = "/sse"
+CARDS_MCP_MOUNT_PATH = "/mcp/cards"
+CARDS_MCP_TRANSPORT_PATH = "/sse"
 WEWORK_SPACE_MCP_MOUNT_PATH = "/mcp/wework-space"
 WEWORK_SPACE_MCP_TRANSPORT_PATH = "/sse"
 
@@ -641,14 +643,25 @@ video_mcp_server = FastMCP(
     streamable_http_path="/",
     transport_security=_build_transport_security_settings(),
 )
+cards_mcp_server = FastMCP(
+    "wegent-cards-mcp",
+    stateless_http=True,
+    json_response=True,
+    streamable_http_path="/",
+    transport_security=_build_transport_security_settings(),
+)
 _image_request_token_info: contextvars.ContextVar[Optional[TaskTokenInfo]] = (
     contextvars.ContextVar("_image_request_token_info", default=None)
 )
 _video_request_token_info: contextvars.ContextVar[Optional[TaskTokenInfo]] = (
     contextvars.ContextVar("_video_request_token_info", default=None)
 )
+_cards_request_token_info: contextvars.ContextVar[Optional[TaskTokenInfo]] = (
+    contextvars.ContextVar("_cards_request_token_info", default=None)
+)
 _image_tools_registered = False
 _video_tools_registered = False
+_cards_tools_registered = False
 
 
 def ensure_image_tools_registered() -> None:
@@ -673,6 +686,18 @@ def ensure_video_tools_registered() -> None:
     count = register_tools_to_server(video_mcp_server, "video")
     logger.info("[MCP:Video] Registered %s tools", count)
     _video_tools_registered = True
+
+
+def ensure_cards_tools_registered() -> None:
+    global _cards_tools_registered
+    if _cards_tools_registered:
+        return
+    from app.mcp_server.tool_registry import register_tools_to_server
+    from app.mcp_server.tools import cards  # noqa: F401
+
+    count = register_tools_to_server(cards_mcp_server, "cards")
+    logger.info("[MCP:Cards] Registered %s tools", count)
+    _cards_tools_registered = True
 
 
 # ============== Starlette App Factory ==============
@@ -763,6 +788,16 @@ _VIDEO_MCP_SPEC = McpAppSpec(
     log_prefix="Video",
 )
 
+_CARDS_MCP_SPEC = McpAppSpec(
+    name="cards",
+    service_name="wegent-cards-mcp",
+    mount_path=CARDS_MCP_MOUNT_PATH,
+    transport_path=CARDS_MCP_TRANSPORT_PATH,
+    server=cards_mcp_server,
+    token_context=_cards_request_token_info,
+    log_prefix="Cards",
+)
+
 _WEWORK_SPACE_MCP_SPEC = McpAppSpec(
     name="wework_space",
     service_name="wegent-wework-space-mcp",
@@ -783,6 +818,7 @@ MCP_APP_SPECS = (
     _MEDIA_UNDERSTANDING_MCP_SPEC,
     _IMAGE_MCP_SPEC,
     _VIDEO_MCP_SPEC,
+    _CARDS_MCP_SPEC,
     _WEWORK_SPACE_MCP_SPEC,
 )
 
@@ -795,6 +831,7 @@ MCP_CONTEXT_SERVER_NAMES = frozenset(
         "media",
         "image",
         "video",
+        "cards",
         "wework_space",
     }
 )
@@ -865,6 +902,8 @@ def _build_mcp_app(spec: McpAppSpec) -> Starlette:
         ensure_image_tools_registered()
     elif spec.name == "video":
         ensure_video_tools_registered()
+    elif spec.name == "cards":
+        ensure_cards_tools_registered()
     elif spec.name == "wework_space":
         ensure_wework_space_tools_registered()
 

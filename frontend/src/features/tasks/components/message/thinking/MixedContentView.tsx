@@ -36,6 +36,7 @@ import { blockToToolPair } from './utils/blockToToolPair'
 import { resolveGeneratedImageDisplayLayout } from '@/features/tasks/utils/imageDisplaySize'
 // Import to register prompt optimization block renderer
 import '@/features/prompt-optimization/block-renderer'
+import '@/features/cards/block-renderer'
 
 const normalizeForComparison = (value: string): string =>
   value.toLowerCase().replace(/[\s\p{P}\p{S}]+/gu, '')
@@ -133,6 +134,8 @@ interface MixedContentViewProps {
   processingMessage?: string
   /** Hide tool input/output details and parameter previews */
   hideToolDetails?: boolean
+  /** Send a follow-up message from an interactive content block. */
+  onSendMessage?: (content: string) => void
 }
 
 const MEDIA_COMPLETION_MESSAGES = new Set([
@@ -217,6 +220,7 @@ const MixedContentView = memo(function MixedContentView({
   onAskUserSubmit,
   processingMessage,
   hideToolDetails = false,
+  onSendMessage,
 }: MixedContentViewProps) {
   const { t } = useTranslation('chat')
   const isTerminalFailure = ['FAILED', 'CANCELLED'].includes(taskStatus?.toUpperCase() || '')
@@ -249,6 +253,22 @@ const MixedContentView = memo(function MixedContentView({
       )
       const mapped = nestedBlocks
         .map(block => {
+          const featureRenderer = blockRendererRegistry.findRenderer(block)
+          if (featureRenderer && block.type !== 'tool') {
+            return {
+              type: 'custom' as const,
+              blockId: block.id,
+              render: () =>
+                featureRenderer.render({
+                  block,
+                  isLastBlock: false,
+                  taskId,
+                  subtaskId,
+                  currentMessageIndex,
+                  onSendMessage,
+                }),
+            }
+          }
           if (block.type === 'text') {
             // CRITICAL FIX: When page refreshes during streaming, block.content may be empty
             // but the actual content is in the `content` prop (from cached_content).
@@ -413,7 +433,15 @@ const MixedContentView = memo(function MixedContentView({
               return {
                 type: 'custom' as const,
                 blockId: block.id,
-                render: () => customRenderer.render({ block, isLastBlock: false }),
+                render: () =>
+                  customRenderer.render({
+                    block,
+                    isLastBlock: false,
+                    taskId,
+                    subtaskId,
+                    currentMessageIndex,
+                    onSendMessage,
+                  }),
               }
             }
             return {
@@ -547,7 +575,7 @@ const MixedContentView = memo(function MixedContentView({
     }
 
     return items
-  }, [blocks, thinking, content, toolMap, taskId, subtaskId])
+  }, [blocks, thinking, content, toolMap, taskId, subtaskId, currentMessageIndex, onSendMessage])
 
   // Check if we should show "Processing..." indicator
   const shouldShowProcessing = useMemo(() => {
