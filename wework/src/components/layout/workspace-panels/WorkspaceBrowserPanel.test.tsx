@@ -1296,7 +1296,10 @@ describe('WorkspaceBrowserPanel', () => {
           width: 400,
           height: 300,
         },
-        'workspace-browser'
+        'workspace-browser',
+        true,
+        true,
+        false
       )
     })
     expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('https://example.test/')
@@ -1409,6 +1412,7 @@ describe('WorkspaceBrowserPanel', () => {
         },
         'workspace-browser',
         false,
+        false,
         false
       )
     })
@@ -1449,7 +1453,8 @@ describe('WorkspaceBrowserPanel', () => {
         },
         'workspace-browser',
         false,
-        true
+        true,
+        false
       )
     })
     expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledTimes(1)

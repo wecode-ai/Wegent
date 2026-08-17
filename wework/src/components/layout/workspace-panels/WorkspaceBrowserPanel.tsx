@@ -1151,8 +1151,19 @@ export function WorkspaceBrowserTabPanel({
           visible,
         })
         const pageState = visible
-          ? await openEmbeddedBrowser(nativeOpeningUrl, bounds, openingLabel)
-          : await openEmbeddedBrowser(nativeOpeningUrl, bounds, openingLabel, false, !active)
+          ? requestId
+            ? await openEmbeddedBrowser(nativeOpeningUrl, bounds, openingLabel, true, true, false)
+            : await openEmbeddedBrowser(nativeOpeningUrl, bounds, openingLabel)
+          : requestId
+            ? await openEmbeddedBrowser(
+                nativeOpeningUrl,
+                bounds,
+                openingLabel,
+                false,
+                !active,
+                false
+              )
+            : await openEmbeddedBrowser(nativeOpeningUrl, bounds, openingLabel, false, !active)
         if (isAbandoned()) {
           await closeEmbeddedBrowser(openingLabel).catch(() => undefined)
           logBrowserOpenDiagnostic('lifecycle_cancelled', {

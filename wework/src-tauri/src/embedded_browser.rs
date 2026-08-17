@@ -1626,10 +1626,12 @@ pub async fn embedded_browser_open(
     label: Option<String>,
     visible: Option<bool>,
     ready_when_hidden: Option<bool>,
+    navigate_existing: Option<bool>,
 ) -> Result<EmbeddedBrowserPageState, String> {
     let label = browser_label(label);
     let visible = visible.unwrap_or(true);
     let bridge_ready = visible || ready_when_hidden.unwrap_or(true);
+    let navigate_existing = navigate_existing.unwrap_or(true);
     let _lifecycle = state.lifecycle.lock().await;
     let display_url = resolve_browser_navigation_url(&state, &url)?;
     let initial_title = browser_url(&url)
@@ -1664,19 +1666,21 @@ pub async fn embedded_browser_open(
                 "nativeLabel": &entry.native_label,
             }),
         );
-        if let Err(error) = webview.navigate(display_url) {
-            let message = format!("Failed to navigate embedded browser: {error}");
-            log_embedded_browser_diagnostic(
-                &state,
-                &label,
-                "open_reuse_navigate_failed",
-                json!({
-                    "requestedUrl": &url,
-                    "nativeLabel": &entry.native_label,
-                    "error": &message,
-                }),
-            );
-            return Err(message);
+        if navigate_existing {
+            if let Err(error) = webview.navigate(display_url) {
+                let message = format!("Failed to navigate embedded browser: {error}");
+                log_embedded_browser_diagnostic(
+                    &state,
+                    &label,
+                    "open_reuse_navigate_failed",
+                    json!({
+                        "requestedUrl": &url,
+                        "nativeLabel": &entry.native_label,
+                        "error": &message,
+                    }),
+                );
+                return Err(message);
+            }
         }
         let visibility_result = if visible {
             webview
@@ -1702,8 +1706,10 @@ pub async fn embedded_browser_open(
         }
         let initial_title_for_entry = initial_title.clone();
         update_entry_for_native_label(&state, &entry.native_label, |entry| {
-            entry.url = Some(url.clone());
-            entry.title = initial_title_for_entry;
+            if navigate_existing {
+                entry.url = Some(url.clone());
+                entry.title = initial_title_for_entry;
+            }
             entry.host_ready = bridge_ready;
             entry.phase = if bridge_ready {
                 EmbeddedBrowserPhase::Ready(webview.clone())
@@ -1714,7 +1720,11 @@ pub async fn embedded_browser_open(
         log_embedded_browser_diagnostic(
             &state,
             &label,
-            "open_reuse_dispatched",
+            if navigate_existing {
+                "open_reuse_dispatched"
+            } else {
+                "open_reuse_preserved"
+            },
             json!({
                 "requestedUrl": &url,
                 "nativeLabel": &entry.native_label,
@@ -1728,8 +1738,16 @@ pub async fn embedded_browser_open(
             #[cfg(not(target_os = "macos"))]
             invalid_tls_certificate: None,
             native_label: entry.native_label,
-            title: initial_title,
-            url: Some(url),
+            title: if navigate_existing {
+                initial_title
+            } else {
+                entry.title
+            },
+            url: if navigate_existing {
+                Some(url)
+            } else {
+                entry.url
+            },
         });
     }
 
