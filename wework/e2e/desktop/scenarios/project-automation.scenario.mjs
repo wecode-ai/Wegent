@@ -765,24 +765,32 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       managerToolCalls > customToolCallsBefore,
       'Custom AI manager did not call assign_board_item'
     )
-    await control.command('click', '[data-testid="cloud-project-board-view"]')
-    await control.command('waitFor', '[data-testid="cloud-project-task-search-toggle"]', {
+    const activeBoard = '[data-workspace-tab-content][aria-hidden="false"]'
+    await control.command('click', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
+      visible: true,
+    })
+    const taskSearchToggle = `${activeBoard} [data-testid="cloud-project-task-search-toggle"]`
+    await control.command('waitFor', taskSearchToggle, {
       timeoutMs: uiTimeoutMs,
       visible: true,
     })
-    await control.command('click', '[data-testid="cloud-project-task-search-toggle"]')
-    await control.command('fill', '[data-testid="cloud-project-task-search-input"]', {
-      value: customManagerTask.id,
-      visible: true,
-    })
-    const customManagerTaskResult = `[data-testid="cloud-task-search-result-${customManagerTask.id}"]`
+    await control.command('click', taskSearchToggle, { visible: true })
+    await control.command(
+      'fill',
+      `${activeBoard} [data-testid="cloud-project-task-search-input"]`,
+      {
+        value: customManagerTask.id,
+        visible: true,
+      }
+    )
+    const customManagerTaskResult = `${activeBoard} [data-testid="cloud-task-search-result-${customManagerTask.id}"]`
     await control.command('waitFor', customManagerTaskResult, {
       text: customManagerTask.title,
       timeoutMs: uiTimeoutMs,
       visible: true,
     })
     await control.command('click', customManagerTaskResult)
-    await control.command('waitFor', '[data-testid="cloud-todo-detail"]', {
+    await control.command('waitFor', `${activeBoard} [data-testid="cloud-todo-detail"]`, {
       text: customManagerTask.title,
       timeoutMs: uiTimeoutMs,
       visible: true,
