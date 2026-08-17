@@ -991,6 +991,7 @@ export function WorkspaceBrowserTabPanel({
     const requestId = activeOpenRequestIdRef.current
     const openingLabel = label
     const openingUrl = currentUrl
+    const nativeOpeningUrl = requestId ? 'about:blank' : openingUrl
     const isAbandoned = () => !mountedRef.current || currentLabelRef.current !== openingLabel
     nativeBrowserOpeningRef.current = true
 
@@ -1076,8 +1077,8 @@ export function WorkspaceBrowserTabPanel({
           visible,
         })
         const pageState = visible
-          ? await openEmbeddedBrowser(openingUrl, bounds, openingLabel)
-          : await openEmbeddedBrowser(openingUrl, bounds, openingLabel, false, !active)
+          ? await openEmbeddedBrowser(nativeOpeningUrl, bounds, openingLabel)
+          : await openEmbeddedBrowser(nativeOpeningUrl, bounds, openingLabel, false, !active)
         if (isAbandoned()) {
           await closeEmbeddedBrowser(openingLabel).catch(() => undefined)
           logBrowserOpenDiagnostic('lifecycle_cancelled', {
@@ -1091,7 +1092,7 @@ export function WorkspaceBrowserTabPanel({
         adoptNativeLabel(pageState.nativeLabel, openingLabel)
         setInvalidTlsCertificate(pageState.invalidTlsCertificate ?? null)
         nativeBrowserOpenRef.current = true
-        updatePageUrl(pageState.url || openingUrl)
+        updatePageUrl(requestId ? openingUrl : pageState.url || openingUrl)
         await revealHiddenBrowser(visible)
         schedulePostOpenBoundsSync(activeRef.current)
         if (readyTimer !== null) window.clearTimeout(readyTimer)

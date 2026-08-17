@@ -4,6 +4,8 @@ sidebar_position: 32
 
 # 云项目协作架构
 
+看板自动化与 Wegent 执行的架构评审以 [独立架构文件](../../architecture/board-automation.md) 为准；本文保留云项目领域、API 和交付说明。
+
 > UI 与交互实现以 `/Users/hongyu9/Downloads/wework-delivery-v4-TODO.pen` 为当前 V4 设计源，不根据本文重新推导页面布局。
 
 ## 目标
@@ -155,23 +157,23 @@ flowchart LR
 
 连线的代码归属必须逐条保持一致：
 
-| 连线 | 唯一职责 | 当前代码归属 |
-| --- | --- | --- |
-| 入口 → 指派 | 校验成员/机器人并写负责人 | `loop_items/service.py`、`external_provider.py` |
-| 指派 → 执行真值 | 取消旧尝试并创建新尝试 | `loop_item_executions/service.py` |
-| 自动化 → runtime 激活 | 在指派事务提交后激活新执行 | `project_automation_execution.py` |
-| 项目空间归档 → 自动化清理 | 在项目归档的同一事务内停用并软删除全部规则，清空下次触发时间 | `cloud_projects/service.py`、`project_automations.py` |
-| Wework 激活 | 本地设备领取或云消费者 claim | `robot_queue_tasks.py`、Wework 本地 puller |
-| 设置 → 设备总并发 | 按设备通过已认证 Runtime RPC 持久化并立即应用 scheduler 上限；`slot_used/slot_max` 只做容量投影 | `devices.py`、`runtime_rpc_service.py`、Rust `runtime.settings.*` |
-| Wegent 激活 | 按 execution ID 创建 Task/Subtask 并入 Team 管线 | `board_team_execution.py`、`project_automation_tasks.py` |
-| Wegent 看板 MCP 注入 | Backend 从原生 Task 标签识别看板执行，为 ChatShell 与 Executor 的同一 `ExecutionRequest` 注入 Backend MCP URL 和任务级认证；不得依赖调用方临时布尔参数 | `execution/request_builder.py`、`mcp_server/server.py` |
-| Backend 看板 MCP → 领域服务 | 使用与本地 Space MCP 一致的规范工具名，通过 Backend 现有 CloudProject、LoopItem、文件、附件、交付和指派服务操作；不得转调 Wework 本地 stdio MCP | `mcp_server/tools/wework_space.py` 及对应领域服务 |
-| Wework 本地 MCP | 仅由 Wework Runtime 原生启动，负责本地项目空间和本地文件路径能力；不得覆盖 Backend 为 Wegent Runtime 注入的远程看板 MCP | `executor/src/task_runtime/mcp.rs` |
-| 看板执行 → 三端输入 | 本地、云端和 Wegent 共用可见 user input：规范 ID、任务 URI、机器人执行提示词；任务正文由 runtime 通过 MCP 读取 | `loop_item_executions/profile.py`、`board_team_execution.py` |
-| Wegent 终态 → 执行真值 | 严格校验全部关联 ID 后投影终态 | `board_team_completion.py` |
-| Wegent 评论 → 原生续聊 | 从回复目标解析精确 `backend_task_id`，在同一 Task 新建 Subtask；续聊结果只投影到对应评论，不重写已终结的 execution | `board_team_continuation.py`、`project_automation_tasks.py` |
-| Wegent 主动停止 → 取消意图 | 原生 Task 写 `CANCELLING`，看板 execution 写 `cancel_requested`，再发送 Runtime 取消命令 | `chat_namespace.py`、`board_team_completion.py` |
-| Runtime 取消 ACK → 两侧终态 | Runtime 确认进程停止后写 Task/Subtask `CANCELLED` 并通过统一终态投影器写看板 `cancelled` | Rust executor、`status_updating.py`、`board_team_completion.py` |
+| 连线                        | 唯一职责                                                                                                                                               | 当前代码归属                                                      |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------- |
+| 入口 → 指派                 | 校验成员/机器人并写负责人                                                                                                                              | `loop_items/service.py`、`external_provider.py`                   |
+| 指派 → 执行真值             | 取消旧尝试并创建新尝试                                                                                                                                 | `loop_item_executions/service.py`                                 |
+| 自动化 → runtime 激活       | 在指派事务提交后激活新执行                                                                                                                             | `project_automation_execution.py`                                 |
+| 项目空间归档 → 自动化清理   | 在项目归档的同一事务内停用并软删除全部规则，清空下次触发时间                                                                                           | `cloud_projects/service.py`、`project_automations.py`             |
+| Wework 激活                 | 本地设备领取或云消费者 claim                                                                                                                           | `robot_queue_tasks.py`、Wework 本地 puller                        |
+| 设置 → 设备总并发           | 按设备通过已认证 Runtime RPC 持久化并立即应用 scheduler 上限；`slot_used/slot_max` 只做容量投影                                                        | `devices.py`、`runtime_rpc_service.py`、Rust `runtime.settings.*` |
+| Wegent 激活                 | 按 execution ID 创建 Task/Subtask 并入 Team 管线                                                                                                       | `board_team_execution.py`、`project_automation_tasks.py`          |
+| Wegent 看板 MCP 注入        | Backend 从原生 Task 标签识别看板执行，为 ChatShell 与 Executor 的同一 `ExecutionRequest` 注入 Backend MCP URL 和任务级认证；不得依赖调用方临时布尔参数 | `execution/request_builder.py`、`mcp_server/server.py`            |
+| Backend 看板 MCP → 领域服务 | 使用与本地 Space MCP 一致的规范工具名，通过 Backend 现有 CloudProject、LoopItem、文件、附件、交付和指派服务操作；不得转调 Wework 本地 stdio MCP        | `mcp_server/tools/wework_space.py` 及对应领域服务                 |
+| Wework 本地 MCP             | 仅由 Wework Runtime 原生启动，负责本地项目空间和本地文件路径能力；不得覆盖 Backend 为 Wegent Runtime 注入的远程看板 MCP                                | `executor/src/task_runtime/mcp.rs`                                |
+| 看板执行 → 三端输入         | 本地、云端和 Wegent 共用可见 user input：规范 ID、任务 URI、机器人执行提示词；任务正文由 runtime 通过 MCP 读取                                         | `loop_item_executions/profile.py`、`board_team_execution.py`      |
+| Wegent 终态 → 执行真值      | 严格校验全部关联 ID 后投影终态                                                                                                                         | `board_team_completion.py`                                        |
+| Wegent 评论 → 原生续聊      | 从回复目标解析精确 `backend_task_id`，在同一 Task 新建 Subtask；续聊结果只投影到对应评论，不重写已终结的 execution                                     | `board_team_continuation.py`、`project_automation_tasks.py`       |
+| Wegent 主动停止 → 取消意图  | 原生 Task 写 `CANCELLING`，看板 execution 写 `cancel_requested`，再发送 Runtime 取消命令                                                               | `chat_namespace.py`、`board_team_completion.py`                   |
+| Runtime 取消 ACK → 两侧终态 | Runtime 确认进程停止后写 Task/Subtask `CANCELLED` 并通过统一终态投影器写看板 `cancelled`                                                               | Rust executor、`status_updating.py`、`board_team_completion.py`   |
 
 Backend 看板 MCP 必须完整暴露 Backend 云看板已有的领域能力：`get_current_context`，空间的 `list/create/update`，看板任务的 `list/search/create/get/update/reorder`，指派候选与 `assign`，provider 评论，空间文件的 `list/read`，任务附件的 `list/upload/read/delete`，以及交付的 `list/read`。远程 MCP 的文件内容使用内联文本或 Base64 传输，不接受 Runtime 本地文件路径。钉钉 AI 表格的动态字段/记录工具属于 Wework 本地 provider 路由，不得在没有 Backend provider 服务时伪造同名实现。
 

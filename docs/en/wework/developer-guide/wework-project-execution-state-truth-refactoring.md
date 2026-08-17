@@ -4,6 +4,8 @@ sidebar_position: 19
 
 # Project Execution State-of-Truth Refactoring
 
+Use [project execution state and Runtime capacity](../../architecture/project-execution-state.md) as the architecture review source of truth. This guide retains the detailed state matrix, migration background, and acceptance coverage.
+
 > Implementation status: the state-of-truth path and concurrency extension are complete; full Backend, Wework, and Executor regression, MySQL migration rollback/upgrade, and real Tauri desktop acceptance have passed.
 >
 > Hard constraint: no new database tables. This change only extends the existing MySQL/SQLite `loop_item_executions` tables and continues using existing LoopItem, chat-message, and Automation Run storage.
@@ -118,19 +120,19 @@ Capacity is live Runtime state and is never persisted into Device Kind as fact. 
 
 One existing `loop_item_executions` row is one attempt. This concurrency migration adds only `runtime_instance_id` and the non-unique `idx_exec_runtime_capacity` index to the existing MySQL table; it contains no `CREATE TABLE`. Local SQLite alters the existing table, creates `ix_exec_runtime_capacity` after the column exists, and moves to schema version 7.
 
-| Dimension | Columns | Meaning |
-| --- | --- | --- |
-| Control | `status` | `pending_approval`, `queued`, `claimed`, `running`, `cancel_requested`, `completed`, `failed`, `cancelled` |
-| Runtime observation | `observed_state`, `observed_at` | Latest verified Runtime state and evidence time |
-| Sync health | `sync_state` | `pending`, `in_sync`, `stale`, `diverged` |
-| Attempt causality | `attempt_no`, `previous_execution_id` | Attempt number and previous-attempt link |
-| Concurrency domain | `execution_scope` | Project robot by task; manager by Automation Run |
-| Start fence | `claimed_at`, `start_requested_at` | Separates a releasable claim from a Start that may have arrived |
-| Runtime identity | `runtime_device_id`, `runtime_task_id` | Task ID is deterministically `codex-queue-{execution.id}` and validated at every write |
-| Capacity identity | `runtime_instance_id` | Merges all routes by `owner_user_id + runtime_instance_id` |
-| Event fence | `last_event_seq` | Only a greater Runtime sequence is accepted |
-| Cancellation/terminal | `cancel_requested_at`, `termination_reason` | Cancellation intent time and confirmed terminal reason |
-| Control lease | `heartbeat_at`, `lease_expires_at` | Dispatcher/claim liveness, never standalone process proof |
+| Dimension             | Columns                                     | Meaning                                                                                                    |
+| --------------------- | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Control               | `status`                                    | `pending_approval`, `queued`, `claimed`, `running`, `cancel_requested`, `completed`, `failed`, `cancelled` |
+| Runtime observation   | `observed_state`, `observed_at`             | Latest verified Runtime state and evidence time                                                            |
+| Sync health           | `sync_state`                                | `pending`, `in_sync`, `stale`, `diverged`                                                                  |
+| Attempt causality     | `attempt_no`, `previous_execution_id`       | Attempt number and previous-attempt link                                                                   |
+| Concurrency domain    | `execution_scope`                           | Project robot by task; manager by Automation Run                                                           |
+| Start fence           | `claimed_at`, `start_requested_at`          | Separates a releasable claim from a Start that may have arrived                                            |
+| Runtime identity      | `runtime_device_id`, `runtime_task_id`      | Task ID is deterministically `codex-queue-{execution.id}` and validated at every write                     |
+| Capacity identity     | `runtime_instance_id`                       | Merges all routes by `owner_user_id + runtime_instance_id`                                                 |
+| Event fence           | `last_event_seq`                            | Only a greater Runtime sequence is accepted                                                                |
+| Cancellation/terminal | `cancel_requested_at`, `termination_reason` | Cancellation intent time and confirmed terminal reason                                                     |
+| Control lease         | `heartbeat_at`, `lease_expires_at`          | Dispatcher/claim liveness, never standalone process proof                                                  |
 
 There is deliberately no unique `runtime_task_id` index: a row is inserted before its ID exists, and historical empty defaults would conflict. Deterministic identity validation plus `execution_scope`, agent occupancy, owner/device locks, and CAS enforce the invariant.
 
@@ -425,27 +427,27 @@ Direct App dispatcher `complete`/`fail` entry points were removed. Heartbeat req
 
 ## 14. Acceptance matrix
 
-| Scenario | Required result | Forbidden result |
-| --- | --- | --- |
-| Claimed, Start not sent | `starting` | `running` |
-| Runtime accepted, no active turn yet | `waiting_runtime` | `starting` or `running` |
-| Start response lost | `unknown`, capacity held | Same-row redelivery or duplicate run |
-| First Runtime event | `running` with `observed_at/eventSeq` | Heartbeat-as-proof |
-| Missing-sequence, duplicate, reordered, or post-terminal event | Execution and every downstream projection ignore it | Message/activity bypasses the truth gate |
-| Cancel before Start | Immediate `cancelled` | Pointless Runtime cancel |
-| Cancel after Start | `cancelling` until ACK/event | Immediate fake cancelled |
-| Lease expires before Start | Same row queued, retry unchanged | Duplicate attempt |
-| Lease expires after possible Start | Unknown, reconcile, hold capacity | Automatic failure/redelivery |
-| Runtime failure and retry | Old row failed, new row queued | Old row changed back to queued |
-| GET/page refresh | State unchanged | Read-time mutation |
-| My Work/Queue/Detail/Automation | Same exact display state | Pending/claimed shown as running |
-| Missing/expired/mismatched capacity heartbeat | Stop claiming and retain existing state | Fixed or caller-supplied capacity fallback |
-| Runtime active and durable claim share a task ID | Count once | False-full double count |
-| Manual Runtime task and not-yet-delivered durable claim differ | Count both in O | `max()` undercount and over-claim |
-| One robot reaches R | Other robots remain claimable fairly | Hot-robot starvation or route-based R bypass |
-| Bound non-Git project requests R > 1 | Reject at configuration and verify again at preflight | Concurrent execution in one shared directory |
-| “Run now” while Runtime is full | Move to queue front and wait | Start task D+1 |
-| Migration | ALTER existing table and create index only | Any new table |
+| Scenario                                                       | Required result                                       | Forbidden result                             |
+| -------------------------------------------------------------- | ----------------------------------------------------- | -------------------------------------------- |
+| Claimed, Start not sent                                        | `starting`                                            | `running`                                    |
+| Runtime accepted, no active turn yet                           | `waiting_runtime`                                     | `starting` or `running`                      |
+| Start response lost                                            | `unknown`, capacity held                              | Same-row redelivery or duplicate run         |
+| First Runtime event                                            | `running` with `observed_at/eventSeq`                 | Heartbeat-as-proof                           |
+| Missing-sequence, duplicate, reordered, or post-terminal event | Execution and every downstream projection ignore it   | Message/activity bypasses the truth gate     |
+| Cancel before Start                                            | Immediate `cancelled`                                 | Pointless Runtime cancel                     |
+| Cancel after Start                                             | `cancelling` until ACK/event                          | Immediate fake cancelled                     |
+| Lease expires before Start                                     | Same row queued, retry unchanged                      | Duplicate attempt                            |
+| Lease expires after possible Start                             | Unknown, reconcile, hold capacity                     | Automatic failure/redelivery                 |
+| Runtime failure and retry                                      | Old row failed, new row queued                        | Old row changed back to queued               |
+| GET/page refresh                                               | State unchanged                                       | Read-time mutation                           |
+| My Work/Queue/Detail/Automation                                | Same exact display state                              | Pending/claimed shown as running             |
+| Missing/expired/mismatched capacity heartbeat                  | Stop claiming and retain existing state               | Fixed or caller-supplied capacity fallback   |
+| Runtime active and durable claim share a task ID               | Count once                                            | False-full double count                      |
+| Manual Runtime task and not-yet-delivered durable claim differ | Count both in O                                       | `max()` undercount and over-claim            |
+| One robot reaches R                                            | Other robots remain claimable fairly                  | Hot-robot starvation or route-based R bypass |
+| Bound non-Git project requests R > 1                           | Reject at configuration and verify again at preflight | Concurrent execution in one shared directory |
+| “Run now” while Runtime is full                                | Move to queue front and wait                          | Start task D+1                               |
+| Migration                                                      | ALTER existing table and create index only            | Any new table                                |
 
 ## 15. Automated and manual verification
 

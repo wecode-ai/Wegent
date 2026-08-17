@@ -4,6 +4,8 @@ sidebar_position: 19
 
 # 项目执行状态真实性重构
 
+架构评审以 [项目执行状态与 Runtime 容量](../../architecture/project-execution-state.md) 为准；本文保留详细状态矩阵、迁移背景和验收说明。
+
 > 实现状态：状态真实性主链与并发扩展已完成；Backend、Wework、Executor 全量回归、MySQL 迁移升降级及真实 Tauri 桌面验收均已通过。
 >
 > 硬约束：不新建数据库表。本次只扩展已有 MySQL/SQLite `loop_item_executions`，并继续使用已有 `loop_items`、`project_chat_messages` 和 Automation Run。
@@ -122,19 +124,19 @@ flowchart LR
 
 已有 `loop_item_executions` 的一行就是一个 Attempt。本次并发迁移只在 MySQL 同名表增加 `runtime_instance_id` 和普通索引 `idx_exec_runtime_capacity`，没有 `CREATE TABLE`；本地 SQLite 在已有同名表上 `ALTER TABLE`，随后创建 `ix_exec_runtime_capacity`，schema version 升为 7。
 
-| 维度 | 字段 | 语义 |
-| --- | --- | --- |
-| 控制状态 | `status` | `pending_approval`、`queued`、`claimed`、`running`、`cancel_requested`、`completed`、`failed`、`cancelled` |
-| Runtime 观察 | `observed_state`、`observed_at` | `unconfirmed`、`accepted`、`running`、`succeeded`、`failed`、`cancelled` 及最后证据时间 |
-| 同步健康 | `sync_state` | `pending`、`in_sync`、`stale`、`diverged` |
-| Attempt 因果 | `attempt_no`、`previous_execution_id` | 第几次执行及其上一次 Attempt |
-| 并发域 | `execution_scope` | project robot 按任务，manager 按 Automation Run 隔离 |
-| Start 围栏 | `claimed_at`、`start_requested_at` | 区分“安全释放的领取”和“可能已送达 Runtime 的启动” |
-| Runtime 身份 | `runtime_device_id`、`runtime_task_id` | task id 固定为 `codex-queue-{execution.id}`；服务层严格校验 |
-| 容量身份 | `runtime_instance_id` | 按 `owner_user_id + runtime_instance_id` 合并同一 Runtime 的多个传输 route |
-| 事件围栏 | `last_event_seq` | 只接受更大的 Runtime 事件序号 |
-| 取消/终止 | `cancel_requested_at`、`termination_reason` | 取消意图时间与已确认终止原因 |
-| 控制租约 | `heartbeat_at`、`lease_expires_at` | dispatcher/claim 存活性，不等于 Runtime 进程证据 |
+| 维度         | 字段                                        | 语义                                                                                                       |
+| ------------ | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| 控制状态     | `status`                                    | `pending_approval`、`queued`、`claimed`、`running`、`cancel_requested`、`completed`、`failed`、`cancelled` |
+| Runtime 观察 | `observed_state`、`observed_at`             | `unconfirmed`、`accepted`、`running`、`succeeded`、`failed`、`cancelled` 及最后证据时间                    |
+| 同步健康     | `sync_state`                                | `pending`、`in_sync`、`stale`、`diverged`                                                                  |
+| Attempt 因果 | `attempt_no`、`previous_execution_id`       | 第几次执行及其上一次 Attempt                                                                               |
+| 并发域       | `execution_scope`                           | project robot 按任务，manager 按 Automation Run 隔离                                                       |
+| Start 围栏   | `claimed_at`、`start_requested_at`          | 区分“安全释放的领取”和“可能已送达 Runtime 的启动”                                                          |
+| Runtime 身份 | `runtime_device_id`、`runtime_task_id`      | task id 固定为 `codex-queue-{execution.id}`；服务层严格校验                                                |
+| 容量身份     | `runtime_instance_id`                       | 按 `owner_user_id + runtime_instance_id` 合并同一 Runtime 的多个传输 route                                 |
+| 事件围栏     | `last_event_seq`                            | 只接受更大的 Runtime 事件序号                                                                              |
+| 取消/终止    | `cancel_requested_at`、`termination_reason` | 取消意图时间与已确认终止原因                                                                               |
+| 控制租约     | `heartbeat_at`、`lease_expires_at`          | dispatcher/claim 存活性，不等于 Runtime 进程证据                                                           |
 
 没有给 `runtime_task_id` 增加唯一索引：插入时 ID 尚未生成，历史默认空值也会产生错误冲突。身份由 `codex-queue-{id}` 确定性生成，并在所有写入口校验；并发占用由 `execution_scope`、agent、owner/device 锁和 CAS 共同控制。
 
@@ -429,27 +431,27 @@ Cloud/App 启动协议：
 
 ## 14. 验收矩阵
 
-| 场景 | 必须看到 | 禁止出现 |
-| --- | --- | --- |
-| claim 成功、Start 未发 | `starting` | `running` |
-| Runtime 已接受、尚无活跃 turn | `waiting_runtime` | `starting` 或 `running` |
-| Start 响应丢失 | `unknown` 且占容量 | 原行重排、双跑 |
-| Runtime 首事件 | `running`，写 `observed_at/eventSeq` | 用 heartbeat 冒充 |
-| 缺序号、重复、乱序或终态后的事件 | Execution 与所有下游投影都忽略 | 消息/活动绕过门禁继续推进 |
-| Start 前取消 | 直接 `cancelled` | 无意义 Runtime cancel |
-| Start 后取消 | `cancelling` 到 ACK/event | 立即假 cancelled |
-| lease 过期且未 Start | 原行 queued、retry 不变 | 新建重复 Attempt |
-| lease 过期且可能 Start | `unknown`、对账、占容量 | 自动失败/重发 |
-| Runtime failed + retry | 旧行 failed、新行 queued | 修改旧行为 queued |
-| GET / 刷新页面 | 状态不改变 | 读取时写状态 |
-| My Work/Queue/Detail/Automation | 同一精确展示态 | pending/claimed 被显示 running |
-| 容量心跳缺失/过期/实例不匹配 | 停止 claim，已有状态保持 | 固定常量或调用方容量回退 |
-| Runtime active 与 durable claim 指向同一 task id | 只计一次 | 双计导致假满 |
-| Runtime 人工任务与尚未送达的 durable claim 不同 | 两者都计入 O | `max()` 漏计导致超领 |
-| 单机器人达到 R | 其他机器人仍可按公平顺序 claim | 热机器人饿死队列或跨设备绕过 R |
-| 绑定非 Git 项目设置 R > 1 | 配置时拒绝，启动前再次校验 | 在共享目录并发执行 |
-| “立即运行”且 Runtime 已满 | 移到 Runtime 队首，仍等待槽位 | 越过 D 启动第 D+1 个任务 |
-| Migration | 只 ALTER 现有表和建索引 | 任何新表 |
+| 场景                                             | 必须看到                             | 禁止出现                       |
+| ------------------------------------------------ | ------------------------------------ | ------------------------------ |
+| claim 成功、Start 未发                           | `starting`                           | `running`                      |
+| Runtime 已接受、尚无活跃 turn                    | `waiting_runtime`                    | `starting` 或 `running`        |
+| Start 响应丢失                                   | `unknown` 且占容量                   | 原行重排、双跑                 |
+| Runtime 首事件                                   | `running`，写 `observed_at/eventSeq` | 用 heartbeat 冒充              |
+| 缺序号、重复、乱序或终态后的事件                 | Execution 与所有下游投影都忽略       | 消息/活动绕过门禁继续推进      |
+| Start 前取消                                     | 直接 `cancelled`                     | 无意义 Runtime cancel          |
+| Start 后取消                                     | `cancelling` 到 ACK/event            | 立即假 cancelled               |
+| lease 过期且未 Start                             | 原行 queued、retry 不变              | 新建重复 Attempt               |
+| lease 过期且可能 Start                           | `unknown`、对账、占容量              | 自动失败/重发                  |
+| Runtime failed + retry                           | 旧行 failed、新行 queued             | 修改旧行为 queued              |
+| GET / 刷新页面                                   | 状态不改变                           | 读取时写状态                   |
+| My Work/Queue/Detail/Automation                  | 同一精确展示态                       | pending/claimed 被显示 running |
+| 容量心跳缺失/过期/实例不匹配                     | 停止 claim，已有状态保持             | 固定常量或调用方容量回退       |
+| Runtime active 与 durable claim 指向同一 task id | 只计一次                             | 双计导致假满                   |
+| Runtime 人工任务与尚未送达的 durable claim 不同  | 两者都计入 O                         | `max()` 漏计导致超领           |
+| 单机器人达到 R                                   | 其他机器人仍可按公平顺序 claim       | 热机器人饿死队列或跨设备绕过 R |
+| 绑定非 Git 项目设置 R > 1                        | 配置时拒绝，启动前再次校验           | 在共享目录并发执行             |
+| “立即运行”且 Runtime 已满                        | 移到 Runtime 队首，仍等待槽位        | 越过 D 启动第 D+1 个任务       |
+| Migration                                        | 只 ALTER 现有表和建索引              | 任何新表                       |
 
 ## 15. 自动化与人工验证
 

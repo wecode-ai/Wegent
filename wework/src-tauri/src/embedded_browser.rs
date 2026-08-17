@@ -619,10 +619,6 @@ fn browser_open_action(readiness: Option<EmbeddedBrowserReadiness>) -> EmbeddedB
     }
 }
 
-fn browser_open_action_requires_navigation(action: EmbeddedBrowserOpenAction) -> bool {
-    action != EmbeddedBrowserOpenAction::RequestOpen
-}
-
 fn wait_for_browser_ready_with_observer(
     mut readiness: impl FnMut() -> Result<Option<EmbeddedBrowserReadiness>, String>,
     attempts: u64,
@@ -1403,7 +1399,7 @@ fn handle_bridge_request(
                 .url
                 .ok_or_else(|| "Embedded browser navigate requires url".to_string())?;
             bridge_navigation_url(&url)?;
-            let open_action = request_browser_open(
+            request_browser_open(
                 app,
                 state,
                 &base_label,
@@ -1411,9 +1407,7 @@ fn handle_bridge_request(
                 &url,
                 request.browser_session_id.as_deref(),
             )?;
-            if browser_open_action_requires_navigation(open_action) {
-                navigate_label(state, &label, url.clone())?;
-            }
+            navigate_label(state, &label, url.clone())?;
             let timeout_ms = request.timeout_ms.unwrap_or(BRIDGE_EVAL_TIMEOUT_MS);
             wait_for_browser_navigation(state, &label, timeout_ms)?;
             Ok(json!({ "ok": true }))

@@ -1238,7 +1238,7 @@ describe('WorkspaceBrowserPanel', () => {
     embeddedBrowserMocks.openEmbeddedBrowser.mockResolvedValueOnce({
       nativeLabel: 'workspace-browser-native-1',
       title: null,
-      url: 'https://example.test/',
+      url: 'about:blank',
     })
     render(
       <WorkspaceBrowserPanel
@@ -1258,7 +1258,7 @@ describe('WorkspaceBrowserPanel', () => {
 
     await waitFor(() => {
       expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledWith(
-        'https://example.test/',
+        'about:blank',
         {
           x: 500,
           y: 120,
@@ -1311,7 +1311,7 @@ describe('WorkspaceBrowserPanel', () => {
 
     await waitFor(() => {
       expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledWith(
-        'https://example.test/',
+        'about:blank',
         {
           x: 0,
           y: 0,
@@ -1351,7 +1351,7 @@ describe('WorkspaceBrowserPanel', () => {
 
     await waitFor(() => {
       expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledWith(
-        'https://example.test/',
+        'about:blank',
         {
           x: 0,
           y: 0,
