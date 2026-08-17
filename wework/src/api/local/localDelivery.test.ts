@@ -342,6 +342,48 @@ describe('local delivery API', () => {
     })
   })
 
+  test('preserves the hidden local project association when visible tags change', async () => {
+    const associatedRecord = {
+      ...taskRecord,
+      metadata: {
+        ...taskRecord.metadata,
+        tags: ['feature', 'wegent:local-project:91:Wegent'],
+      },
+    }
+    const updatedRecord = {
+      ...associatedRecord,
+      version: 2,
+      metadata: {
+        ...associatedRecord.metadata,
+        tags: ['bug', 'wegent:local-project:91:Wegent'],
+      },
+    }
+    const request = vi.fn(async (method: string) => {
+      if (method === 'todos.list') return [associatedRecord]
+      if (method === 'todos.get') return associatedRecord
+      if (method === 'todos.update') return updatedRecord
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createLocalDeliveryApi(request)
+
+    await api.listLoopItems('project-1')
+    await expect(
+      api.updateLoopItem('LOCAL-1', { version: 1, tags: ['bug'] })
+    ).resolves.toMatchObject({
+      local_project_id: 91,
+      local_project_name: 'Wegent',
+      tags: ['bug'],
+    })
+    expect(request).toHaveBeenCalledWith('todos.update', {
+      project_id: 'project-1',
+      task_id: 'LOCAL-1',
+      todo: {
+        version: 1,
+        tags: ['bug', 'wegent:local-project:91:Wegent'],
+      },
+    })
+  })
+
   test('does not expose cached backend projects as local project spaces', async () => {
     const backendProjectRecord = {
       ...projectRecord,

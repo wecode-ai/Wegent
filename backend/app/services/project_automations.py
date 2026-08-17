@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session, aliased
 from app.core.project_automation_secrets import encrypt_webhook_secret
 from app.models.delivery import (
     CloudProject,
+    LoopItem,
     ProjectAutomationRule,
     ProjectAutomationRun,
     ProjectChatAgent,
@@ -361,8 +362,10 @@ class ProjectAutomationService:
     ) -> dict:
         require_cloud_project_role(db, project_id, user_id, BaseRole.Developer)
         rule = self._rule(db, project_id, automation_id)
-        item = loop_item_service.get(db, item_id, user_id)
-        if str(item.cloud_project_id) != str(project_id):
+        item = (
+            db.query(LoopItem).filter(LoopItem.id == item_id).with_for_update().first()
+        )
+        if item is None or str(item.cloud_project_id) != str(project_id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Issue not found")
         workflow = (
             item.metadata_json.get("workflow")
@@ -400,8 +403,6 @@ class ProjectAutomationService:
             **(run.metadata_json or {}),
             "workflow_node_id": workflow_node_id,
         }
-        db.commit()
-        db.refresh(run)
         from app.services.project_workflow_projection import update_workflow_node
 
         update_workflow_node(
@@ -412,6 +413,7 @@ class ProjectAutomationService:
             automation_run_id=str(run.id),
         )
         db.commit()
+        db.refresh(run)
         await project_automation_execution.dispatch(db, rule, run)
         return self._run_view(
             run, str(_metadata(rule).get("timezone") or "Asia/Shanghai")

@@ -6,6 +6,7 @@ import type { CloudLoopItem } from '@/api/deliveries'
 import { Tooltip } from '@/components/ui/tooltip'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
+import { isLoopItemExecutionActive } from './cloudMyWorkModel'
 import { priorityBadgeClasses } from './todoShared'
 
 export interface BoardCardDisplaySettings {
@@ -144,11 +145,7 @@ export function CloudTodoBoardCard({
 }: CloudTodoBoardCardProps) {
   const { t } = useTranslation('common')
   const [menuOpen, setMenuOpen] = useState(false)
-  const hasActiveTask =
-    item.status === 'in_progress' ||
-    item.execution_state === 'queued' ||
-    item.execution_state === 'running' ||
-    item.execution_state === 'waiting_approval'
+  const hasActiveTask = isLoopItemExecutionActive(item)
   const currentTaskBinding = hasActiveTask ? taskBindings[0] : undefined
   const {
     attributes,

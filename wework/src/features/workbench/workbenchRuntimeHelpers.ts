@@ -333,7 +333,7 @@ export function findRuntimeTaskWorkspace(
   return (
     workspaces.find(
       workspace =>
-        workspace.deviceId === address.deviceId &&
+        (workspace.deviceId === address.deviceId || workspace.remoteHostId === address.deviceId) &&
         workspace.tasks.some(task => task.taskId === address.taskId)
     ) ?? null
   )

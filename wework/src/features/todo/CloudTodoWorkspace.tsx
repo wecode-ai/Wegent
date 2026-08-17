@@ -1031,6 +1031,7 @@ export function CloudTodoWorkspace({
   // loaded-but-empty project (renders empty columns) from a failed fetch
   // (renders the skeleton plus the error banner instead of an empty board).
   const applyBoardItems = useCallback(
+    // eslint-disable-next-line react-hooks/preserve-manual-memoization -- React state setters are stable.
     (spaceKey: string, fetchedItems: CloudLoopItem[], error: string | null) => {
       console.info('[Wework project board] snapshot applied', {
         projectSpace: spaceKey,
@@ -3127,6 +3128,7 @@ export function CloudTodoWorkspace({
                                 item.parent_id === boardParentId &&
                                 (!isMyTasksBoard ||
                                   activeLocalProjectFilter === 'all' ||
+                                  !selectedLocalProject ||
                                   localProjectIdForItem(item) === selectedLocalProject?.id ||
                                   (item.status === 'inbox' &&
                                     localProjectIdForItem(item) === null)) &&
@@ -3566,7 +3568,10 @@ export function CloudTodoWorkspace({
                     ? preferNewestLoopItemSnapshot(current, locatedUpdated)
                     : current
                 )
-              } catch {
+              } catch (cause) {
+                setBoardError(
+                  cause instanceof Error ? cause.message : '关联任务与 Issue 失败，请重试'
+                )
                 setBoardRefreshNonce(value => value + 1)
               }
             }}

@@ -3064,7 +3064,6 @@
     "quick_create_confirm": "Create task",
     "quick_create_full_mode": "Full mode",
     "quick_create_failed": "Could not create the task. Try again.",
-    "creating": "Creating…",
     "issue_execution_workflow": "Issue execution workflow",
     "issue_execution_workflow_hint": "New issues snapshot these stages; every stage references a real task or automation run.",
     "workflow_new_stage": "New stage",

@@ -269,6 +269,7 @@ describe('IssueComposer', () => {
       />
     )
 
+    expect(screen.getByRole('dialog', { name: '新建 Issue' })).toHaveAttribute('aria-modal', 'true')
     fireEvent.click(screen.getByTestId('workspace-issue-composer-panel'))
     expect(onCancel).not.toHaveBeenCalled()
 

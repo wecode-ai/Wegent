@@ -3061,7 +3061,6 @@
     "quick_create_confirm": "创建任务",
     "quick_create_full_mode": "完整模式",
     "quick_create_failed": "创建任务失败，请重试",
-    "creating": "创建中…",
     "issue_execution_workflow": "Issue 执行流程",
     "issue_execution_workflow_hint": "新建 Issue 时固化为执行阶段；每个阶段引用真实任务或自动执行。",
     "workflow_new_stage": "新阶段",

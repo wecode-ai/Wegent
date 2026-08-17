@@ -96,6 +96,7 @@ export function IssueComposer({
   }
   const [stagedAttachments, setStagedAttachments] = useState<StagedIssueAttachment[]>([])
   const nextAttachmentId = useRef(-1)
+  const panelRef = useRef<HTMLElement | null>(null)
 
   useEffect(() => {
     const handleEscape = (event: globalThis.KeyboardEvent) => {
@@ -106,6 +107,21 @@ export function IssueComposer({
     window.addEventListener('keydown', handleEscape)
     return () => window.removeEventListener('keydown', handleEscape)
   }, [onCancel])
+
+  useEffect(() => {
+    if (presentation !== 'popup') return
+    const previousFocus = document.activeElement as HTMLElement | null
+    const frame = window.requestAnimationFrame(() => {
+      const focusTarget = panelRef.current?.querySelector<HTMLElement>(
+        '[data-testid="workspace-issue-input"], button, input, select, textarea, [tabindex]:not([tabindex="-1"])'
+      )
+      focusTarget?.focus()
+    })
+    return () => {
+      window.cancelAnimationFrame(frame)
+      if (previousFocus?.isConnected) previousFocus.focus()
+    }
+  }, [presentation])
 
   const projectChat: ProjectChatControls | undefined = workbench?.projectChat
     ? {
@@ -218,7 +234,30 @@ export function IssueComposer({
       )}
     >
       <section
+        ref={panelRef}
         data-testid="workspace-issue-composer-panel"
+        role={presentation === 'popup' ? 'dialog' : undefined}
+        aria-modal={presentation === 'popup' ? 'true' : undefined}
+        aria-label={presentation === 'popup' ? t('todo.new_issue', '新建 Issue') : undefined}
+        onKeyDown={event => {
+          if (presentation !== 'popup' || event.key !== 'Tab') return
+          const focusable = Array.from(
+            panelRef.current?.querySelectorAll<HTMLElement>(
+              'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [contenteditable="true"], [tabindex]:not([tabindex="-1"])'
+            ) ?? []
+          )
+          if (focusable.length === 0) return
+          const currentIndex = focusable.indexOf(document.activeElement as HTMLElement)
+          const nextIndex = event.shiftKey
+            ? currentIndex <= 0
+              ? focusable.length - 1
+              : currentIndex - 1
+            : currentIndex === focusable.length - 1
+              ? 0
+              : currentIndex + 1
+          event.preventDefault()
+          focusable[nextIndex]?.focus()
+        }}
         className={cn(
           'w-full max-w-[760px]',
           presentation === 'popup' &&

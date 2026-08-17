@@ -51,6 +51,7 @@ import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { AssignmentChainPopover } from './AssignmentChainPopover'
+import { isLoopItemExecutionActive } from './cloudMyWorkModel'
 import { StatusHistoryPopover } from './StatusHistoryPopover'
 import { TaskDescriptionEditor } from './TaskDescriptionEditor'
 import { TagEditor } from './TagEditor'
@@ -759,11 +760,7 @@ export function TodoEditor(props: TodoEditorProps) {
   if (item) excludedParentIds.add(item.id)
   const parentOptions = allItems.filter(candidate => !excludedParentIds.has(candidate.id))
   const childItems = item ? allItems.filter(candidate => candidate.parent_id === item.id) : []
-  const itemHasActiveTask =
-    item?.status === 'in_progress' ||
-    item?.execution_state === 'queued' ||
-    item?.execution_state === 'running' ||
-    item?.execution_state === 'waiting_approval'
+  const itemHasActiveTask = item ? isLoopItemExecutionActive(item) : false
   const displayedTasks = props.showCurrentTaskOnly
     ? itemHasActiveTask
       ? tasks.slice(0, 1)

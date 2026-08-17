@@ -317,10 +317,27 @@ export function createExternalIssueApi(request: LocalRequest) {
       itemId: string,
       data: Record<string, unknown> & { version: number }
     ) {
+      let todo = data
+      if (Array.isArray(data.tags)) {
+        const current = await request<LocalLoopItemRecord>('external_todos.get', {
+          project: externalProjectDescriptor(project),
+          task_id: itemId,
+        })
+        const association = localProjectAssociationFromTags(stringList(current.metadata.tags))
+        todo = {
+          ...data,
+          tags: association
+            ? [
+                ...visibleLoopItemTags(stringList(data.tags)),
+                localProjectAssociationTag(association),
+              ]
+            : data.tags,
+        }
+      }
       const record = await request<LocalLoopItemRecord>('external_todos.update', {
         project: externalProjectDescriptor(project),
         task_id: itemId,
-        todo: data,
+        todo,
       })
       return localTask(record, project)
     },
@@ -862,10 +879,27 @@ export function createLocalDeliveryApi(
     },
     async updateLoopItem(itemId: string, data: Record<string, unknown> & { version: number }) {
       const projectId = await resolveProjectId(itemId)
+      let todo = data
+      if (Array.isArray(data.tags)) {
+        const current = await request<LocalLoopItemRecord>('todos.get', {
+          project_id: projectId,
+          task_id: itemId,
+        })
+        const association = localProjectAssociationFromTags(stringList(current.metadata.tags))
+        todo = {
+          ...data,
+          tags: association
+            ? [
+                ...visibleLoopItemTags(stringList(data.tags)),
+                localProjectAssociationTag(association),
+              ]
+            : data.tags,
+        }
+      }
       const record = await request<LocalLoopItemRecord>('todos.update', {
         project_id: projectId,
         task_id: itemId,
-        todo: data,
+        todo,
       })
       taskProjects.set(record.id, projectId)
       return localTask(record)

@@ -130,6 +130,7 @@ export function ProjectWorkflowEditor({
               </span>
               <input
                 value={node.name}
+                data-testid={`project-workflow-stage-name-${node.id}`}
                 onChange={event => updateNode(node.id, { name: event.target.value })}
                 aria-label={t('todo.workflow_stage_name', '阶段 {{index}} 名称', {
                   index: index + 1,
@@ -138,6 +139,7 @@ export function ProjectWorkflowEditor({
               />
               <select
                 value={node.kind}
+                data-testid={`project-workflow-stage-kind-${node.id}`}
                 onChange={event => {
                   const kind = event.target.value as WorkflowNodeKind
                   updateNode(node.id, {
@@ -157,6 +159,7 @@ export function ProjectWorkflowEditor({
               </select>
               <select
                 value={node.workspace_policy}
+                data-testid={`project-workflow-stage-workspace-${node.id}`}
                 onChange={event =>
                   updateNode(node.id, {
                     workspace_policy: event.target.value as WorkflowWorkspacePolicy,
@@ -190,6 +193,7 @@ export function ProjectWorkflowEditor({
               {node.kind === 'automation' || node.kind === 'ai' ? (
                 <select
                   value={node.automation_rule_id ?? ''}
+                  data-testid={`project-workflow-stage-automation-${node.id}`}
                   onChange={event =>
                     updateNode(node.id, {
                       automation_rule_id: event.target.value || null,
@@ -220,6 +224,7 @@ export function ProjectWorkflowEditor({
                   <label key={candidate.id} className="flex items-center gap-1">
                     <input
                       type="checkbox"
+                      data-testid={`project-workflow-stage-dependency-${node.id}-${candidate.id}`}
                       checked={node.depends_on.includes(candidate.id)}
                       onChange={() =>
                         updateNode(node.id, {
