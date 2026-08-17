@@ -2561,6 +2561,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const projectChatWithModelSelectorSignal = useMemo<ProjectChatControls>(
     () => ({
       ...projectChat,
+      scopeKey: paneSession.scopeKey,
+      attachments: paneSession.attachments,
+      uploadingFiles: paneSession.uploadingFiles,
+      errors: paneSession.attachmentErrors,
+      handleFileSelect: paneSession.handleFileSelect,
+      removeAttachment: paneSession.removeAttachment,
       modelSelectorOpenSignal,
       setSelectedModel: model => {
         projectChat.setSelectedModel(model)
@@ -2579,6 +2585,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     }),
     [
       modelSelectorOpenSignal,
+      paneSession.attachmentErrors,
+      paneSession.attachments,
+      paneSession.handleFileSelect,
+      paneSession.removeAttachment,
+      paneSession.scopeKey,
+      paneSession.uploadingFiles,
       projectChat,
       refinePluginTrialPrompt,
       retryFailedMessageAfterModelSelect,

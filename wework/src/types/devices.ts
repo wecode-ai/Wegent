@@ -103,6 +103,7 @@ export interface RemoteDeviceStartupCommand {
 }
 
 export interface CreateDockerRemoteDeviceCommandRequest {
+  container_name?: string
   client_origin?: string
 }
 

@@ -216,7 +216,7 @@ export function ContextUsageIndicator({
                 type="button"
                 data-testid="confirm-compact-context-button"
                 onClick={handleCompact}
-                className="inline-flex h-7 items-center gap-1.5 rounded-full bg-[#1f1f1f] px-2.5 text-xs font-medium text-white hover:bg-[#333]"
+                className="inline-flex h-7 items-center gap-1.5 rounded-full bg-text-primary px-2.5 text-xs font-medium text-background hover:bg-text-primary/90"
               >
                 <FileArchive className="h-3.5 w-3.5" />
                 <span>{t('workbench.compact_context', '压缩')}</span>

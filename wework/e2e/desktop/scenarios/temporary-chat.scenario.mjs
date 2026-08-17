@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 
 const ACTIVE_SURFACE = '[data-workspace-tab-content][aria-hidden="false"]'
 const MAIN_COMPOSER = `${ACTIVE_SURFACE} [data-testid="desktop-empty-composer-frame"] [data-testid="chat-message-input"]`
@@ -204,9 +206,84 @@ async function waitForRuntimeSource(control, taskId, timeoutMs) {
   )
 }
 
-export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspacePath }) {
+async function waitForFollowUpRequest(getRequestCount, timeoutMs) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    if (getRequestCount() > 0) return
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error('The temporary-chat direct follow-up did not reach the model server')
+}
+
+async function waitForRetainedSideThread(executorLogPath, sourceTaskId, fromOffset, timeoutMs) {
+  const startedAt = Date.now()
+  let sideThreadId = null
+  while (Date.now() - startedAt < timeoutMs) {
+    const content = await readFile(executorLogPath, 'utf8').catch(() => '')
+    const recentContent = content.slice(fromOffset)
+    if (sideThreadId === null) {
+      const completedTurns = [
+        ...recentContent.matchAll(
+          /codex shared turn request finished task_id=([^\s]+)[^\n]* thread_id=([^\s]+)[^\n]* outcome=completed/g
+        ),
+      ]
+      sideThreadId = completedTurns.find(match => match[1] !== sourceTaskId)?.[2] ?? null
+    }
+    if (sideThreadId !== null) {
+      await new Promise(resolve => setTimeout(resolve, 500))
+      const settledContent = (await readFile(executorLogPath, 'utf8').catch(() => '')).slice(
+        fromOffset
+      )
+      assert.ok(
+        !settledContent.includes(
+          `codex shared thread unsubscribe background started thread_id=${sideThreadId}`
+        ),
+        'The active temporary-chat thread was unsubscribed before its direct follow-up'
+      )
+      return sideThreadId
+    }
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error('The temporary-chat ephemeral thread did not complete its first turn')
+}
+
+async function waitForSecondTurnOnSideThread(executorLogPath, sideThreadId, fromOffset, timeoutMs) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    const content = (await readFile(executorLogPath, 'utf8').catch(() => '')).slice(fromOffset)
+    const completedTurnCount = [
+      ...content.matchAll(
+        new RegExp(
+          `codex shared turn request finished[^\\n]* thread_id=${sideThreadId}[^\\n]* outcome=completed`,
+          'g'
+        )
+      ),
+    ].length
+    assert.ok(
+      !content.includes(
+        `codex shared thread unsubscribe background started thread_id=${sideThreadId}`
+      ),
+      'The active temporary-chat thread was unsubscribed between its two turns'
+    )
+    if (completedTurnCount >= 2) return
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error('The temporary-chat follow-up did not complete on the retained side thread')
+}
+
+export function createDesktopScenario({
+  captureScreenshot,
+  resultDir,
+  uiTimeoutMs,
+  workspacePath,
+}) {
   let active = false
+  let followUpRequestCount = 0
+  let releaseSource
   let releaseFollowUp
+  const sourceRelease = new Promise(resolve => {
+    releaseSource = resolve
+  })
   const followUpRelease = new Promise(resolve => {
     releaseFollowUp = resolve
   })
@@ -239,6 +316,22 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           : prompt === INITIAL_PROMPT
             ? INITIAL_COMPLETION
             : SOURCE_COMPLETION
+      if (prompt === FOLLOW_UP_PROMPT) {
+        followUpRequestCount += 1
+      }
+      if (prompt === SOURCE_PROMPT) {
+        const stream = streamingAssistantResponse(responseId, completion)
+        response.writeHead(200, {
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'Content-Type': 'text/event-stream; charset=utf-8',
+        })
+        response.flushHeaders()
+        response.write(sse(stream.start))
+        await sourceRelease
+        response.end(sse(stream.finish))
+        return true
+      }
       if (prompt !== FOLLOW_UP_PROMPT) {
         response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
         response.end(
@@ -277,10 +370,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       )
       await control.command('fill', MAIN_COMPOSER, { value: SOURCE_PROMPT })
       await control.command('press', MAIN_COMPOSER, { key: 'Enter' })
-      await control.command('waitFor', '[data-testid="message-assistant"]', {
-        text: SOURCE_COMPLETION,
-        timeoutMs: taskTimeoutMs,
-      })
       const sourceTaskRow = await waitForNewTaskRow(control, knownRows, taskTimeoutMs)
       const sourceTaskId = sourceTaskRow.replace('runtime-local-task-row-', '')
       await expandProject(control, uiTimeoutMs)
@@ -289,8 +378,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         timeoutMs: uiTimeoutMs,
       })
       await control.command('click', `[data-testid="${sourceTaskRow}"]`)
-      await control.command('waitFor', '[data-testid="message-assistant"]', {
-        text: SOURCE_COMPLETION,
+      await control.command('waitFor', '[data-testid="user-message-content"]', {
+        text: SOURCE_PROMPT,
         timeoutMs: taskTimeoutMs,
       })
       await waitForRuntimeSource(control, sourceTaskId, taskTimeoutMs)
@@ -298,6 +387,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       await control.command('click', '[data-testid="toggle-right-workspace-panel-button"]')
       await control.command('click', '[data-testid="right-workspace-chat-option"]')
       await control.command('waitFor', SIDE_COMPOSER, { timeoutMs: uiTimeoutMs })
+      const executorLogPath = join(resultDir, 'executor.log')
+      const executorLogOffset = (await readFile(executorLogPath, 'utf8').catch(() => '')).length
       await control.command('fill', SIDE_COMPOSER, { value: INITIAL_PROMPT })
       await control.command('press', SIDE_COMPOSER, { key: 'Enter' })
       await control.command('waitFor', `${SIDE_CHAT} [data-testid="message-assistant"]`, {
@@ -305,10 +396,26 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         timeoutMs: taskTimeoutMs,
       })
       await waitForThinkingToSettle(control, taskTimeoutMs)
+      const sideThreadId = await waitForRetainedSideThread(
+        executorLogPath,
+        sourceTaskId,
+        executorLogOffset,
+        taskTimeoutMs
+      )
+
+      await expandProject(control, uiTimeoutMs)
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', MAIN_COMPOSER, { stableMs: 300, timeoutMs: uiTimeoutMs })
+      await control.command('click', `[data-testid="${sourceTaskRow}"]`)
+      await control.command('waitFor', `${SIDE_CHAT} [data-testid="message-assistant"]`, {
+        text: INITIAL_COMPLETION,
+        timeoutMs: taskTimeoutMs,
+      })
 
       await control.command('fill', SIDE_COMPOSER, { value: FOLLOW_UP_PROMPT })
       await control.command('press', SIDE_COMPOSER, { key: 'Enter' })
       try {
+        await waitForFollowUpRequest(() => followUpRequestCount, uiTimeoutMs)
         await control.command('waitFor', `${SIDE_CHAT} [data-testid="thinking-indicator"]`, {
           visible: true,
           timeoutMs: taskTimeoutMs,
@@ -355,8 +462,21 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           restoredSideChat.text.includes(FOLLOW_UP_PROMPT),
           'Switching conversations cleared the temporary chat follow-up'
         )
-        await captureScreenshot(control, '02-temporary-chat-restored.png', ACTIVE_SURFACE)
+        releaseFollowUp()
+        await control.command('waitFor', `${SIDE_CHAT} [data-testid="message-assistant"]`, {
+          text: FOLLOW_UP_COMPLETION,
+          timeoutMs: taskTimeoutMs,
+        })
+        await waitForThinkingToSettle(control, taskTimeoutMs)
+        await waitForSecondTurnOnSideThread(
+          executorLogPath,
+          sideThreadId,
+          executorLogOffset,
+          taskTimeoutMs
+        )
+        await captureScreenshot(control, '02-temporary-chat-two-turns.png', ACTIVE_SURFACE)
       } finally {
+        releaseSource()
         releaseFollowUp()
       }
     },

@@ -6,6 +6,9 @@ const FIRST_PROMPT = 'SPLIT LEFT TASK'
 const SECOND_PROMPT = 'SPLIT RIGHT TASK'
 const THIRD_PROMPT = 'SPLIT OUTSIDE TASK'
 const PANE_SELECTOR = '[data-testid^="workbench-pane-"][data-focused]'
+const SPLIT_ATTACHMENT_FILENAME = 'split-pane-only.png'
+const IMAGE_ARTIFACT_BASE64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAIAAAACUFjqAAAAEklEQVR4nGP4z8CAB+GTG8HSALfKY52fTcuYAAAAAElFTkSuQmCC'
 
 function sse(events) {
   return events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join('')
@@ -284,6 +287,7 @@ async function assertIndependentTitlebar(control, paneSelector, title) {
 
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspacePath }) {
   let active = false
+  let nextAttachmentId = 1
   return {
     async handleHttp(request, response, url) {
       if (request.method === 'GET' && url.pathname === '/api/auth/wework/config') {
@@ -358,6 +362,25 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       ) {
         const body = await readJson(request)
         json(response, 200, { away: Boolean(body.away), ttlSeconds: 60 })
+        return true
+      }
+      if (
+        active &&
+        request.method === 'POST' &&
+        ['/attachments/upload', '/api/attachments/upload'].includes(url.pathname)
+      ) {
+        for await (const _chunk of request) {
+          // Drain the multipart request before replying.
+        }
+        json(response, 200, {
+          id: nextAttachmentId++,
+          filename: SPLIT_ATTACHMENT_FILENAME,
+          file_size: 68,
+          mime_type: 'image/png',
+          status: 'ready',
+          file_extension: '.png',
+          created_at: '2026-08-16T00:00:00.000Z',
+        })
         return true
       }
       if (
@@ -497,6 +520,32 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       await assertIndependentTitlebar(control, secondPane, SECOND_PROMPT)
       await captureScreenshot(control, '03-split-two-independent-panes.png', 'body')
 
+      const firstComposer = `${firstPane} [data-testid="chat-message-input"]`
+      const secondComposer = `${secondPane} [data-testid="chat-message-input"]`
+      await control.command('pasteFile', firstComposer, {
+        filename: SPLIT_ATTACHMENT_FILENAME,
+        mimeType: 'image/png',
+        value: IMAGE_ARTIFACT_BASE64,
+      })
+      await control.command('waitFor', `${firstPane} [data-testid="attachment-badge"]`, {
+        visible: true,
+        stableMs: 300,
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.equal(
+        Number(
+          await control.command('getElementCount', `${secondPane} [data-testid="attachment-badge"]`)
+        ),
+        0,
+        'Pasting an attachment into the first pane leaked it into the second pane composer'
+      )
+      assert.equal(
+        Number(await control.command('getElementCount', '[data-testid="attachment-badge"]')),
+        1,
+        'A single pasted attachment rendered in more than one split-pane composer'
+      )
+      await captureScreenshot(control, '04-split-attachment-isolated.png', 'body')
+
       const firstFocus = `${firstPane} [data-testid^="workbench-focus-pane-"]`
       await control.command('click', firstFocus)
       await control.command(
@@ -515,7 +564,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         'Focused task view must hide split separators'
       )
       await assertPaneConversation(control, firstPane, `${FIRST_PROMPT}_COMPLETE`)
-      await captureScreenshot(control, '04-split-focused-task.png', 'body')
+      await captureScreenshot(control, '05-split-focused-task.png', 'body')
 
       await control.command('click', firstFocus)
       await control.command('waitFor', '[role="separator"][data-separator]', {
@@ -528,7 +577,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         2,
         'Returning from focus view must restore both panes'
       )
-      await captureScreenshot(control, '05-split-restored.png', 'body')
+      await captureScreenshot(control, '06-split-restored.png', 'body')
 
       await control.command('click', `${firstPane} [data-testid="environment-info-button"]`)
       await control.command('waitFor', '[data-testid="environment-info-popover"]', {
@@ -549,7 +598,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         2,
         'Environment state leaked into the other pane'
       )
-      await captureScreenshot(control, '06-split-local-environment.png', 'body')
+      await captureScreenshot(control, '07-split-local-environment.png', 'body')
       await control.command('click', `${firstPane} [data-testid="environment-info-button"]`)
       await waitForElementCount(control, '[data-testid="environment-info-popover"]', 0, uiTimeoutMs)
 
@@ -588,7 +637,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         0,
         'Bottom panel state leaked into the other pane'
       )
-      await captureScreenshot(control, '07-split-local-bottom-panel.png', 'body')
+      await captureScreenshot(control, '08-split-local-bottom-panel.png', 'body')
       await control.command(
         'click',
         `${firstPane} [data-testid="toggle-bottom-workspace-panel-button"]`
@@ -660,7 +709,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         0,
         'Right panel state leaked into the other pane'
       )
-      await captureScreenshot(control, '08-split-local-right-panel.png', 'body')
+      await captureScreenshot(control, '09-split-local-right-panel.png', 'body')
       await control.command(
         'click',
         `${secondPane} [data-testid="toggle-right-workspace-panel-button"]`
@@ -681,7 +730,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         Math.abs(afterResize.width - beforeResize.width) > 40,
         'Dragging the separator did not visibly resize the split'
       )
-      await captureScreenshot(control, '09-split-resized.png', 'body')
+      await captureScreenshot(control, '10-split-resized.png', 'body')
 
       const readyCountBeforeReload = control.readyCount
       await control.command('reloadMainWindow', 'body')
@@ -724,7 +773,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         }),
         'Split members do not share one group identifier'
       )
-      await captureScreenshot(control, '10-split-restored-after-reload.png', 'body')
+      await captureScreenshot(control, '11-split-restored-after-reload.png', 'body')
 
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER, { stableMs: 500, timeoutMs: uiTimeoutMs })
@@ -760,7 +809,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         'true',
         'Clicking a split member did not restore its complete group'
       )
-      await captureScreenshot(control, '11-split-group-restored-from-sidebar.png', 'body')
+      await captureScreenshot(control, '12-split-group-restored-from-sidebar.png', 'body')
 
       await control.command(
         'click',
@@ -788,7 +837,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       )
       await waitForElementCount(control, firstGroupBadge, 0, uiTimeoutMs)
       await waitForElementCount(control, secondGroupBadge, 0, uiTimeoutMs)
-      await captureScreenshot(control, '12-split-return-single.png', 'body')
+      await captureScreenshot(control, '13-split-return-single.png', 'body')
 
       assert.ok(firstTaskId && secondTaskId && thirdTaskRow)
     },

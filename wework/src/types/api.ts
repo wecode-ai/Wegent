@@ -698,6 +698,10 @@ export interface RequestUserInputResponse {
 export interface RuntimeSendResponse {
   accepted: boolean
   taskId: string
+  turnId?: string
+  turn_id?: string
+  compactionItemId?: string
+  compaction_item_id?: string
   error?: string | null
 }
 

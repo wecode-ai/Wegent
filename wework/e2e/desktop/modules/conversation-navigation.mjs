@@ -1252,11 +1252,22 @@ async function verifyLastUserMessageEdit({ composerSelector, control }) {
     text: MESSAGE_EDIT_ORIGINAL_COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      !snapshot.testIds.includes('pause-response-button') &&
+      !snapshot.testIds.includes('thinking-indicator') &&
+      !snapshot.testIds.includes('message-assistant-waiting'),
+    'The original response did not settle before editing the last user message'
+  )
 
   await control.command(
     'hover',
     `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"] [data-testid="message-hover-region"]`
   )
+  await control.command('waitFor', '[data-testid="edit-message-button"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('click', '[data-testid="edit-message-button"]')
   await control.command('waitFor', '[data-testid="edit-user-message-textarea"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,

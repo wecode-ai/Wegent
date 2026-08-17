@@ -35,6 +35,7 @@ import {
   CLOUD_ARTIFACT_NAME,
   CLOUD_COMPLETION_TEXT,
   CLOUD_DEVICE_ID,
+  REMOTE_DOCKER_DEVICE_ID,
   CLOUD_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES,
   CLOUD_MULTIMODAL_VISION_CASE,
   CLOUD_FOLLOW_UP_COMPLETION_TEXT,
@@ -90,6 +91,7 @@ import {
 } from './shared.mjs'
 
 import { waitForTaskRowByText } from './task-state-flows.mjs'
+import { remoteDeviceE2EExtension } from '../remote-device-extension.mjs'
 
 import {
   captureVerificationScreenshot,
@@ -508,6 +510,82 @@ async function verifyCloudVisionFlows(control, composerSelector) {
   })
 }
 
+export async function verifyRemoteDockerCommandFlow(control, cloudEnvironment) {
+  await control.command('navigate', 'body', { value: '/settings/connections?addDevice=1' })
+  await control.command('waitFor', '[data-testid="add-cloud-device-dialog"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  const setupSnapshot = JSON.parse(
+    await control.command('snapshot', '[data-testid="add-cloud-device-dialog"]')
+  )
+  assert.equal(
+    setupSnapshot.testIds.includes('remote-docker-public-url-input'),
+    false,
+    'The remote Docker setup still exposed a manual IDE URL input'
+  )
+  await control.command('clickWhenEnabled', '[data-testid="add-remote-docker-button"]')
+  await control.command('waitFor', '[data-testid="remote-docker-command"]', {
+    text: remoteDeviceE2EExtension.commandMarker,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  const commandSnapshot = JSON.parse(
+    await control.command('snapshot', '[data-testid="remote-docker-command"]')
+  )
+  remoteDeviceE2EExtension.assertCommand({
+    assert,
+    command: commandSnapshot.text,
+    backendUrl: cloudEnvironment.backendUrl,
+    socketUrl: cloudEnvironment.socketUrl,
+  })
+  let runnableCommandSnapshot = commandSnapshot
+  if (remoteDeviceE2EExtension.supportsStatusRecovery) {
+    await control.command('waitFor', '[data-testid="remote-docker-connection-status"]', {
+      text: '连接失败',
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await control.command('clickWhenEnabled', '[data-testid="add-remote-docker-button"]')
+    runnableCommandSnapshot = await waitForSnapshot(
+      control,
+      snapshot =>
+        snapshot.text.includes(remoteDeviceE2EExtension.commandMarker) &&
+        snapshot.text !== commandSnapshot.text,
+      'Regenerating the remote Docker command did not replace the failed command',
+      WORKBENCH_READY_TIMEOUT_MS,
+      '[data-testid="remote-docker-command"]'
+    )
+  }
+  await control.command('click', '[data-testid="copy-remote-docker-command"]')
+  await control.command('waitFor', '[data-testid="copy-remote-docker-command"]', {
+    text: '已复制',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(
+    await control.command('getClipboardText', ''),
+    runnableCommandSnapshot.text,
+    'The remote Docker command was not copied into the desktop E2E clipboard'
+  )
+  await captureVerificationScreenshot(control, 'cloud-00-remote-docker-command.png')
+  const generatedDeviceId = runnableCommandSnapshot.text.match(/DEVICE_ID=([^\s\\]+)/)?.[1]
+  const generatedDeviceName = runnableCommandSnapshot.text.match(/DEVICE_NAME=([^\s\\]+)/)?.[1]
+  const generatedAuthToken = runnableCommandSnapshot.text.match(/WEGENT_AUTH_TOKEN=([^\s\\]+)/)?.[1]
+  assert.ok(generatedDeviceId, 'The generated command did not include a device ID')
+  assert.ok(generatedDeviceName, 'The generated command did not include a device name')
+  assert.ok(generatedAuthToken, 'The generated command did not include an auth token')
+  await cloudEnvironment.startGeneratedRemoteDevice({
+    deviceId: generatedDeviceId,
+    deviceName: generatedDeviceName,
+    authToken: generatedAuthToken,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      !snapshot.testIds.includes('add-cloud-device-dialog') &&
+      snapshot.testIds.includes(`connection-device-${generatedDeviceId}`),
+    'The generated remote device did not close the dialog and refresh the device list'
+  )
+  await control.command('navigate', 'body', { value: '/' })
+}
+
 async function verifyFailedCloudConnectionCanDisconnect(control) {
   await control.command('waitFor', '[data-testid="sidebar-cloud-connection-button"]', {
     text: '云端工作',
@@ -557,6 +635,10 @@ async function verifyCloudProjectFlow(
   await control.command('waitFor', '[data-testid="projects-create-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  await verifyRemoteDockerCommandFlow(control, cloudEnvironment)
+  await control.command('waitFor', '[data-testid="projects-create-button"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
 
   await control.command('click', '[data-testid="projects-create-button"]')
   await control.command('click', '[data-testid="project-create-remote-option"]')
@@ -576,6 +658,21 @@ async function verifyCloudProjectFlow(
   await control.command('waitFor', '[data-testid="standalone-remote-device-select"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command(
+    'waitFor',
+    `[data-testid="standalone-remote-device-option-${REMOTE_DOCKER_DEVICE_ID}"]`,
+    { text: 'Remote Docker', timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+  )
+  await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
+    value: REMOTE_DOCKER_DEVICE_ID,
+  })
+  await waitForControlValue(
+    control,
+    '[data-testid="device-folder-path-input"]',
+    join(resultDir, 'remote-docker-executor-home'),
+    'The remote Docker device was not selectable from the real desktop device picker'
+  )
+  await captureVerificationScreenshot(control, 'cloud-01-remote-docker-device-selected.png')
   await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
     value: CLOUD_DEVICE_ID,
   })
@@ -585,7 +682,7 @@ async function verifyCloudProjectFlow(
     join(resultDir, 'cloud-executor-home'),
     'The remote folder picker did not load the real executor home directory'
   )
-  await captureVerificationScreenshot(control, 'cloud-01-remote-device-selected.png')
+  await captureVerificationScreenshot(control, 'cloud-02-cloud-device-selected.png')
   await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
@@ -599,7 +696,7 @@ async function verifyCloudProjectFlow(
     workspacePath,
     'The remote folder picker did not retain the selected cloud workspace path'
   )
-  await captureVerificationScreenshot(control, 'cloud-02-workspace-path-confirmed.png')
+  await captureVerificationScreenshot(control, 'cloud-03-workspace-path-confirmed.png')
   await control.command('clickWhenEnabled', '[data-testid="confirm-device-folder-picker-button"]')
   await waitForSnapshot(
     control,

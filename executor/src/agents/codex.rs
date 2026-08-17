@@ -1532,7 +1532,9 @@ async fn run_codex_app_server_turn_on_shared_client(
 
     if let Some(thread_id) = subscribed_thread_id {
         if let Some(generation) = client.mark_thread_idle(&thread_id).await {
-            if result.is_ok() {
+            // Ephemeral threads cannot be resumed after app-server unloads them, so keep the
+            // owner subscription alive while the temporary chat may still send direct turns.
+            if result.is_ok() && !prepared.request.ephemeral {
                 client.unsubscribe_thread_in_background(thread_id, generation);
             } else {
                 client

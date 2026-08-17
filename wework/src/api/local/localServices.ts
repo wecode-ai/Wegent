@@ -111,6 +111,7 @@ import {
 } from '@/tauri/localWorkspaceFiles'
 import { WEWORK_MIN_EXECUTOR_VERSION } from '@/lib/device-capabilities'
 import { normalizeModelOptionAliases, normalizeModelOptionValue } from '@/lib/model-ui'
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import {
   runtimePermissionMode,
   runtimePermissionProfile,
@@ -2720,14 +2721,27 @@ export function createRuntimeWorkApiFromIpc(
       return requestWithLocalDevice('runtime.tasks.cancel', data)
     },
     async createRuntimeTask(data: RuntimeTaskCreateRequest): Promise<RuntimeTaskCreateResponse> {
+      const startedAt = Date.now()
+      logRuntimeTaskCreateStage('local-create-started', {
+        taskId: data.taskId ?? null,
+        deviceId: data.deviceId ?? null,
+        runtime: data.runtime,
+      })
       const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
+      logRuntimeTaskCreateStage('local-device-resolved', {
+        taskId: data.taskId ?? null,
+        requestedDeviceId: data.deviceId ?? null,
+        deviceId: localDeviceId,
+        elapsedMs: Date.now() - startedAt,
+      })
       if (!(await prepareRuntimeModel({ deviceId: localDeviceId, modelId: data.modelId }))) {
         throw modelCatalogSyncCancelled()
       }
-      console.info('[Wework] Runtime task primary model preparation completed', {
+      logRuntimeTaskCreateStage('local-primary-model-prepared', {
+        taskId: data.taskId ?? null,
         deviceId: localDeviceId,
-        taskId: data.taskId,
         modelId: data.modelId ?? null,
+        elapsedMs: Date.now() - startedAt,
       })
       const supervisorModelId = data.initialSupervisor?.modelSelection?.modelName
       if (
@@ -2736,11 +2750,11 @@ export function createRuntimeWorkApiFromIpc(
       ) {
         throw modelCatalogSyncCancelled()
       }
-      console.info('[Wework] Runtime task model preparation completed', {
+      logRuntimeTaskCreateStage('local-supervisor-model-prepared', {
+        taskId: data.taskId ?? null,
         deviceId: localDeviceId,
-        taskId: data.taskId,
-        modelId: data.modelId ?? null,
         supervisorModelId: supervisorModelId ?? null,
+        elapsedMs: Date.now() - startedAt,
       })
       const payload = await createLocalRuntimeTaskPayload(
         data,
@@ -2749,6 +2763,11 @@ export function createRuntimeWorkApiFromIpc(
         options.cloudModelGateway,
         user
       )
+      logRuntimeTaskCreateStage('local-payload-built', {
+        taskId: data.taskId ?? null,
+        deviceId: localDeviceId,
+        elapsedMs: Date.now() - startedAt,
+      })
       debugLocalRuntimeCreatePayload(data, payload)
       const executionRequest = recordValue(payload.executionRequest)
       console.info('[Wework] Friendly task title request', {
@@ -2762,11 +2781,23 @@ export function createRuntimeWorkApiFromIpc(
         userId: executionRequest.user_id ?? null,
         userName: stringValue(executionRequest.user_name),
       })
+      logRuntimeTaskCreateStage('local-rpc-dispatched', {
+        taskId: data.taskId ?? null,
+        deviceId: localDeviceId,
+        method: 'runtime.tasks.create',
+        elapsedMs: Date.now() - startedAt,
+      })
       const response = await request<Partial<RuntimeTaskCreateResponse>>(
         'runtime.tasks.create',
         payload,
         localDeviceId
       )
+      logRuntimeTaskCreateStage('local-rpc-resolved', {
+        taskId: data.taskId ?? null,
+        deviceId: localDeviceId,
+        elapsedMs: Date.now() - startedAt,
+        accepted: response.accepted ?? true,
+      })
       const responseRecord = recordValue(response)
       const workspacePath =
         stringValue(responseRecord.workspacePath) ??
@@ -3176,42 +3207,44 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   })
   const aitableApi = createLocalAITableApi(request)
   const dwsApi = createDwsApi(request)
+  const teamApi = {
+    listTeams: async () => [LOCAL_WORKBENCH_TEAM],
+    getDefaultWorkbenchTeam: async () => LOCAL_WORKBENCH_TEAM,
+  }
+  const modelApi = {
+    listModels: async () => {
+      let codexOfficialModels: CodexOfficialModel[]
+      let codexOfficialError: string | null
+      let codexAuthConfigured: boolean
+      try {
+        await ensureStatus()
+        const [codexOfficialResult, nextCodexAuthConfigured] = await Promise.all([
+          requestLocalCodexOfficialModels(request).then(
+            value => ({ value, error: null }),
+            error => ({
+              value: null,
+              error: error instanceof Error ? error.message : String(error),
+            })
+          ),
+          loadLocalCodexAuthConfigured(request),
+        ])
+        codexOfficialModels = codexOfficialResult.value?.models ?? []
+        codexOfficialError = codexOfficialResult.error
+        codexAuthConfigured = nextCodexAuthConfigured
+      } catch (error) {
+        codexOfficialModels = []
+        codexOfficialError = error instanceof Error ? error.message : String(error)
+        codexAuthConfigured = false
+      }
+      return {
+        data: localRuntimeModels(codexOfficialModels, codexOfficialError, codexAuthConfigured),
+      }
+    },
+  }
 
   return {
-    teamApi: {
-      listTeams: async () => [LOCAL_WORKBENCH_TEAM],
-      getDefaultWorkbenchTeam: async () => LOCAL_WORKBENCH_TEAM,
-    },
-    modelApi: {
-      listModels: async () => {
-        let codexOfficialModels: CodexOfficialModel[]
-        let codexOfficialError: string | null
-        let codexAuthConfigured: boolean
-        try {
-          await ensureStatus()
-          const [codexOfficialResult, nextCodexAuthConfigured] = await Promise.all([
-            requestLocalCodexOfficialModels(request).then(
-              value => ({ value, error: null }),
-              error => ({
-                value: null,
-                error: error instanceof Error ? error.message : String(error),
-              })
-            ),
-            loadLocalCodexAuthConfigured(request),
-          ])
-          codexOfficialModels = codexOfficialResult.value?.models ?? []
-          codexOfficialError = codexOfficialResult.error
-          codexAuthConfigured = nextCodexAuthConfigured
-        } catch (error) {
-          codexOfficialModels = []
-          codexOfficialError = error instanceof Error ? error.message : String(error)
-          codexAuthConfigured = false
-        }
-        return {
-          data: localRuntimeModels(codexOfficialModels, codexOfficialError, codexAuthConfigured),
-        }
-      },
-    },
+    teamApi,
+    modelApi,
     skillApi: {
       listSkills: async () => [],
       getTeamSkills: async () => ({ skills: [], preload_skills: [] }),
@@ -3255,6 +3288,17 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     projectSpaceApis: {
       local: deliveryApi,
       defaultLocation: 'local',
+    },
+    projectSpaceDetailServices: {
+      local: {
+        deliveryApi,
+        projectChatClient: localProjectChatClient,
+        projectChatAgentApi: localProjectChatAgentApi,
+        loopItemExecutionApi: localLoopItemExecutionApi,
+        deviceApi,
+        modelApi,
+        teamApi,
+      },
     },
     runtimeWorkApi,
     automationApi,

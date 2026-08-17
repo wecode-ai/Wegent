@@ -47,6 +47,7 @@ import type {
   AutomationSchedule,
   AutomationSource,
 } from '@/types/automation'
+import { WORKBENCH_AUTOMATIONS_CHANGED_EVENT } from '@/features/workbench/workbenchCloudDataEvents'
 
 type StatusFilter = 'all' | 'active' | 'paused'
 
@@ -179,9 +180,12 @@ export function AutomationsPage() {
   useEffect(() => {
     const initialLoad = window.setTimeout(() => void loadAutomations(), 0)
     const timer = window.setInterval(() => void loadAutomations(), 30_000)
+    const handleAutomationsChanged = () => void loadAutomations()
+    window.addEventListener(WORKBENCH_AUTOMATIONS_CHANGED_EVENT, handleAutomationsChanged)
     return () => {
       window.clearTimeout(initialLoad)
       window.clearInterval(timer)
+      window.removeEventListener(WORKBENCH_AUTOMATIONS_CHANGED_EVENT, handleAutomationsChanged)
     }
   }, [loadAutomations])
 

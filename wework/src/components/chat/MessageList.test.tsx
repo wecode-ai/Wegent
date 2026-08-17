@@ -24,7 +24,11 @@ vi.mock('@/lib/embedded-browser', () => ({
 }))
 
 describe('MessageList', () => {
-  test('renders a generated Codex inline visualization from the changed workspace file', () => {
+  test('renders a generated Codex inline visualization from the changed workspace file', async () => {
+    tauriCoreMock.invoke.mockResolvedValueOnce('<div>折线图</div>')
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:workspace-visualization')
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
+
     render(
       <MessageList
         messages={[
@@ -64,14 +68,19 @@ describe('MessageList', () => {
 
     expect(screen.getByText('已生成折线图。')).toBeInTheDocument()
     expect(screen.queryByText('::codex-inline-vis')).not.toBeInTheDocument()
-    expect(screen.getByTestId('codex-inline-visualization-frame')).toHaveAttribute(
-      'src',
-      'asset://localhost/Users/dev/workspace/.codex/visualizations/2026/07/23/thread-1/weekly-values-line-chart.html'
+    await waitFor(() =>
+      expect(screen.getByTestId('codex-inline-visualization-frame')).toHaveAttribute(
+        'src',
+        'blob:workspace-visualization'
+      )
     )
+    expect(tauriCoreMock.invoke).toHaveBeenCalledWith('read_inline_visualization_html', {
+      path: '/Users/dev/workspace/.codex/visualizations/2026/07/23/thread-1/weekly-values-line-chart.html',
+    })
   })
 
   test('renders a ChatGPT visualize content reference from its absolute path', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('<div>可视化内容</div>'))
+    tauriCoreMock.invoke.mockResolvedValueOnce('<div>可视化内容</div>')
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:chatgpt-visualization')
     vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
 
@@ -99,6 +108,43 @@ describe('MessageList', () => {
       expect(screen.getByTestId('codex-inline-visualization-frame')).toHaveAttribute(
         'src',
         'blob:chatgpt-visualization'
+      )
+    )
+  })
+
+  test('renders a ChatGPT visualize content reference from the Wework attachment draft', async () => {
+    tauriCoreMock.invoke.mockResolvedValueOnce('<div>看板内容</div>')
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:wework-attachment-visualization')
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-attachment-visualization',
+            role: 'assistant',
+            content:
+              'visualize{"path":"/Users/me/.wework/workspace/attachments/draft/task-board.html","mode":"wide","title":"任务池调度多看板 Demo"}',
+            status: 'done',
+            createdAt: '2026-08-16T10:00:00Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByText('visualize')).not.toBeInTheDocument()
+    expect(screen.getByTestId('codex-inline-visualization')).toHaveAttribute(
+      'data-visualization-mode',
+      'wide'
+    )
+    expect(screen.getByTestId('codex-inline-visualization-frame')).toHaveAttribute(
+      'title',
+      '任务池调度多看板 Demo'
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('codex-inline-visualization-frame')).toHaveAttribute(
+        'src',
+        'blob:wework-attachment-visualization'
       )
     )
   })

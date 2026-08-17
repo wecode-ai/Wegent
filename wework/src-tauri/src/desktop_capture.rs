@@ -8,6 +8,11 @@ use objc2_app_kit::{
 };
 #[cfg(target_os = "macos")]
 use objc2_foundation::{NSDictionary, NSError};
+#[cfg(target_os = "macos")]
+use std::time::Duration;
+
+#[cfg(target_os = "macos")]
+const EMBEDDED_BROWSER_SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[tauri::command]
 pub async fn capture_main_webview(app: tauri::AppHandle) -> Result<String, String> {
@@ -50,10 +55,8 @@ pub async fn capture_workspace_webview(app: tauri::AppHandle) -> Result<String, 
 }
 
 #[cfg(target_os = "macos")]
-#[allow(dead_code)]
 pub(crate) async fn capture_embedded_webview_png(
     webview: tauri::Webview<tauri::Wry>,
-    timeout: std::time::Duration,
 ) -> Result<Vec<u8>, String> {
     let (sender, mut receiver) = tauri::async_runtime::channel(1);
     webview
@@ -72,14 +75,13 @@ pub(crate) async fn capture_embedded_webview_png(
             }
         })
         .map_err(|error| format!("Failed to request embedded browser snapshot: {error}"))?;
-    tokio::time::timeout(timeout, receiver.recv())
+    tokio::time::timeout(EMBEDDED_BROWSER_SNAPSHOT_TIMEOUT, receiver.recv())
         .await
         .map_err(|_| "Timed out capturing embedded browser snapshot".to_string())?
         .ok_or_else(|| "Embedded browser snapshot request was cancelled".to_string())?
 }
 
 #[cfg(target_os = "macos")]
-#[allow(dead_code)]
 unsafe fn encode_embedded_webview_snapshot(image: *mut NSImage) -> Result<Vec<u8>, String> {
     if image.is_null() {
         return Err("WebKit returned no embedded browser snapshot".to_string());

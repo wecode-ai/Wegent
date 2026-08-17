@@ -57,37 +57,37 @@ export function ProjectSwitcherOverlay({
   return (
     <div
       data-testid="todo-project-switcher-overlay"
-      className="absolute inset-x-0 bottom-0 top-[52px] z-20 bg-[#1118271A]"
+      className="absolute inset-x-0 bottom-0 top-[52px] z-20 bg-black/10"
       onMouseDown={event => event.currentTarget === event.target && onClose()}
     >
       <section
         data-testid="todo-project-switcher-menu"
-        className="absolute left-3 top-[-6px] flex h-[350px] w-[314px] flex-col gap-2 rounded-lg border border-[#D7DBDE] bg-white p-3 shadow-[0_10px_26px_rgba(17,24,39,0.20)] dark:border-border dark:bg-background"
+        className="absolute left-3 top-[-6px] flex h-[350px] w-[314px] flex-col gap-2 rounded-lg border border-border bg-popover p-3 text-text-primary shadow-[0_10px_26px_rgba(17,24,39,0.20)]"
         onMouseDown={event => event.stopPropagation()}
       >
         <div className="flex shrink-0 items-center justify-between">
-          <span className="text-sm font-semibold text-[#30353A] dark:text-text-primary">
+          <span className="text-sm font-semibold text-text-primary">
             {t('todo.switch_project', '切换项目')}
           </span>
-          <span className="font-mono text-xs text-[#8A9299]">⌘ K</span>
+          <span className="font-mono text-xs text-text-muted">⌘ K</span>
         </div>
         <label className="relative block shrink-0">
-          <Search className="pointer-events-none absolute left-2.5 top-2.5 h-3.5 w-3.5 text-[#818A92]" />
+          <Search className="pointer-events-none absolute left-2.5 top-2.5 h-3.5 w-3.5 text-text-muted" />
           <input
             autoFocus
             data-testid="todo-project-search-input"
             value={search}
             onChange={event => onSearchChange(event.target.value)}
             placeholder={t('todo.search_projects', '搜索项目…')}
-            className="h-[34px] w-full rounded-md border border-[#E0E3E6] bg-[#F7F8F9] pl-8 pr-2 text-xs text-[#343A40] outline-none placeholder:text-[#9AA1A8] focus:border-[#9FDCD5] dark:border-border dark:bg-muted dark:text-text-primary"
+            className="h-[34px] w-full rounded-md border border-border bg-muted pl-8 pr-2 text-xs text-text-primary outline-none placeholder:text-text-muted focus:border-focus"
           />
         </label>
-        <span className="shrink-0 text-xs font-semibold text-[#969EA5]">
+        <span className="shrink-0 text-xs font-semibold text-text-muted">
           {t('todo.recent_projects', '最近项目')}
         </span>
         <div className="min-h-0 flex-1 overflow-y-auto">
           {filteredProjects.length === 0 ? (
-            <div className="flex h-full items-center justify-center text-xs text-[#929AA1]">
+            <div className="flex h-full items-center justify-center text-xs text-text-muted">
               {t('todo.no_project_results', '没有匹配的项目')}
             </div>
           ) : (
@@ -104,8 +104,8 @@ export function ProjectSwitcherOverlay({
                   data-testid={`todo-project-menu-item-${entry.project.id}`}
                   onClick={() => onSelectProject(entry.project.id)}
                   className={cn(
-                    'flex h-[42px] w-full items-center justify-between rounded-md px-2.5 text-left hover:bg-[#F2F4F5] dark:hover:bg-muted',
-                    selected && 'bg-[#E8F8F5] dark:bg-primary/10'
+                    'flex h-[42px] w-full items-center justify-between rounded-md px-2.5 text-left hover:bg-muted',
+                    selected && 'bg-primary/10'
                   )}
                 >
                   <span className="flex min-w-0 items-center gap-2.5">
@@ -116,10 +116,10 @@ export function ProjectSwitcherOverlay({
                       {entry.project.name.slice(0, 1).toUpperCase()}
                     </span>
                     <span className="min-w-0">
-                      <span className="block truncate text-xs font-semibold text-[#343A40] dark:text-text-primary">
+                      <span className="block truncate text-xs font-semibold text-text-primary">
                         {entry.project.name}
                       </span>
-                      <span className="block text-xs text-[#929AA1]">
+                      <span className="block text-xs text-text-muted">
                         {t('todo.work_item_count', {
                           defaultValue: '{{count}} 个工作项',
                           count,
@@ -128,21 +128,21 @@ export function ProjectSwitcherOverlay({
                     </span>
                   </span>
                   {selected ? (
-                    <Check className="h-3.5 w-3.5 shrink-0 text-[#0F8F82]" />
+                    <Check className="h-3.5 w-3.5 shrink-0 text-primary" />
                   ) : (
-                    <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[#A0A7AE]" />
+                    <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-muted" />
                   )}
                 </button>
               )
             })
           )}
         </div>
-        <div className="h-px shrink-0 bg-[#E6E8EA] dark:bg-border" />
+        <div className="h-px shrink-0 bg-border" />
         <button
           type="button"
           data-testid="todo-view-all-projects"
           onClick={onViewAll}
-          className="flex h-[34px] shrink-0 items-center gap-2 rounded-md px-2 text-xs font-semibold text-[#596169] hover:bg-[#F2F4F5] dark:text-text-secondary dark:hover:bg-muted"
+          className="flex h-[34px] shrink-0 items-center gap-2 rounded-md px-2 text-xs font-semibold text-text-secondary hover:bg-muted"
         >
           <FolderOpen className="h-3.5 w-3.5" />
           {t('todo.view_all_projects', '查看全部项目')}
@@ -172,29 +172,29 @@ export function TodoSearchOverlay({
   return (
     <div
       data-testid="todo-search-overlay"
-      className="absolute inset-0 z-40 flex items-start justify-center bg-[#11182733] pt-[72px]"
+      className="absolute inset-0 z-40 flex items-start justify-center bg-black/20 pt-[72px]"
       onMouseDown={event => event.currentTarget === event.target && onClose()}
     >
       <section
         data-testid="todo-search-dialog"
-        className="flex max-h-[520px] w-[560px] max-w-[calc(100vw-40px)] flex-col overflow-hidden rounded-xl border border-[#D7DBDE] bg-white shadow-[0_18px_42px_rgba(17,24,39,0.24)] dark:border-border dark:bg-background"
+        className="flex max-h-[520px] w-[560px] max-w-[calc(100vw-40px)] flex-col overflow-hidden rounded-xl border border-border bg-popover text-text-primary shadow-[0_18px_42px_rgba(17,24,39,0.24)]"
         onMouseDown={event => event.stopPropagation()}
       >
-        <label className="relative flex h-14 shrink-0 items-center border-b border-[#E2E5E7] px-4 dark:border-border">
-          <Search className="h-4 w-4 shrink-0 text-[#717A82]" />
+        <label className="relative flex h-14 shrink-0 items-center border-b border-border px-4">
+          <Search className="h-4 w-4 shrink-0 text-text-secondary" />
           <input
             autoFocus
             data-testid="todo-search-input"
             value={query}
             onChange={event => setQuery(event.target.value)}
             placeholder={t('todo.search_todos', '搜索标题、编号或任务内容…')}
-            className="min-w-0 flex-1 bg-transparent px-3 text-sm text-[#30363C] outline-none placeholder:text-[#9AA1A8] dark:text-text-primary"
+            className="min-w-0 flex-1 bg-transparent px-3 text-sm text-text-primary outline-none placeholder:text-text-muted"
           />
           <button
             type="button"
             data-testid="todo-search-close"
             onClick={onClose}
-            className="flex h-7 w-7 items-center justify-center rounded-md text-[#717A82] hover:bg-[#F2F4F5] dark:hover:bg-muted"
+            className="flex h-7 w-7 items-center justify-center rounded-md text-text-secondary hover:bg-muted"
             aria-label={t('workbench.close', '关闭')}
           >
             <span className="font-mono text-xs">ESC</span>
@@ -202,7 +202,7 @@ export function TodoSearchOverlay({
         </label>
         <div className="min-h-0 overflow-y-auto p-2">
           {results.length === 0 ? (
-            <div className="flex h-24 items-center justify-center text-xs text-[#929AA1]">
+            <div className="flex h-24 items-center justify-center text-xs text-text-muted">
               {t('todo.no_matching_items', '暂无符合条件的任务')}
             </div>
           ) : (
@@ -212,17 +212,17 @@ export function TodoSearchOverlay({
                 type="button"
                 data-testid={`todo-search-result-${item.id}`}
                 onClick={() => onSelectItem(item)}
-                className="flex h-14 w-full items-center justify-between rounded-lg px-3 text-left hover:bg-[#F3F5F6] dark:hover:bg-muted"
+                className="flex h-14 w-full items-center justify-between rounded-lg px-3 text-left hover:bg-muted"
               >
                 <span className="min-w-0">
-                  <span className="block truncate text-xs font-semibold text-[#30363C] dark:text-text-primary">
+                  <span className="block truncate text-xs font-semibold text-text-primary">
                     {item.title}
                   </span>
-                  <span className="mt-1 block truncate text-xs text-[#858E96]">
+                  <span className="mt-1 block truncate text-xs text-text-secondary">
                     {item.code} · {item.workspace}
                   </span>
                 </span>
-                <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[#9AA1A8]" />
+                <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-muted" />
               </button>
             ))
           )}
@@ -282,7 +282,7 @@ export function TodoSidebar({
     <aside
       data-testid="todo-sidebar"
       className={cn(
-        'relative shrink-0 overflow-hidden border-r border-[#E1E4E7] bg-[#F2F3F4] transition-[width] duration-200 dark:border-border dark:bg-surface',
+        'relative shrink-0 overflow-hidden border-r border-border bg-surface transition-[width] duration-200',
         collapsed ? 'w-0' : 'w-[252px]'
       )}
     >
@@ -315,13 +315,13 @@ export function TodoSidebar({
         </nav>
 
         <div className="absolute inset-x-2 bottom-14 top-[146px] overflow-y-auto">
-          <div className="flex h-8 items-center justify-between px-2 text-xs font-semibold text-[#939BA3]">
+          <div className="flex h-8 items-center justify-between px-2 text-xs font-semibold text-text-muted">
             <span>{t('workbench.projects', '项目')}</span>
             <button
               type="button"
               data-testid="todo-sidebar-add-project"
               onClick={onAddProject}
-              className="flex h-6 w-6 items-center justify-center rounded hover:bg-[#E7E9EB] dark:hover:bg-muted"
+              className="flex h-6 w-6 items-center justify-center rounded hover:bg-muted"
               aria-label={t('todo.add_project', '添加项目')}
             >
               <Plus className="h-3.5 w-3.5" />
@@ -329,7 +329,7 @@ export function TodoSidebar({
           </div>
           {selectedProject && (
             <section className="relative">
-              <div className="flex h-9 items-center rounded-md bg-[#E5E7E9] pr-1 dark:bg-muted">
+              <div className="flex h-9 items-center rounded-md bg-muted pr-1">
                 <button
                   type="button"
                   data-testid={`todo-sidebar-project-${selectedProject.project.id}`}
@@ -338,15 +338,15 @@ export function TodoSidebar({
                   className="flex h-full min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-left"
                 >
                   {selectedExpanded ? (
-                    <ChevronDown className="h-3.5 w-3.5 shrink-0 text-[#68717A]" />
+                    <ChevronDown className="h-3.5 w-3.5 shrink-0 text-text-secondary" />
                   ) : (
-                    <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[#68717A]" />
+                    <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-secondary" />
                   )}
                   <span
                     className="h-5 w-5 shrink-0 rounded-[5px]"
                     style={{ backgroundColor: projectColor(selectedProject.project, 0) }}
                   />
-                  <span className="truncate text-xs font-semibold text-[#30353A] dark:text-text-primary">
+                  <span className="truncate text-xs font-semibold text-text-primary">
                     {selectedProject.project.name}
                   </span>
                 </button>
@@ -355,22 +355,22 @@ export function TodoSidebar({
                   data-testid={`todo-sidebar-project-more-${selectedProject.project.id}`}
                   aria-expanded={projectActionsOpen}
                   onClick={() => setProjectActionsOpen(value => !value)}
-                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded hover:bg-[#D9DCDE] dark:hover:bg-background"
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded hover:bg-background"
                   aria-label={t('todo.project_actions', '项目操作')}
                 >
-                  <Ellipsis className="h-3.5 w-3.5 text-[#757E86]" />
+                  <Ellipsis className="h-3.5 w-3.5 text-text-secondary" />
                 </button>
               </div>
               {projectActionsOpen && (
                 <div
                   data-testid="todo-sidebar-project-menu"
-                  className="absolute right-0 top-10 z-30 w-44 rounded-md border border-[#D8DCE0] bg-white p-1 shadow-lg dark:border-border dark:bg-background"
+                  className="absolute right-0 top-10 z-30 w-44 rounded-md border border-border bg-popover p-1 shadow-lg"
                 >
                   <button
                     type="button"
                     data-testid="todo-sidebar-open-in-wework"
                     onClick={onOpenProjects}
-                    className="flex h-8 w-full items-center gap-2 rounded px-2 text-xs text-[#4F575F] hover:bg-[#F2F4F5] dark:text-text-secondary dark:hover:bg-muted"
+                    className="flex h-8 w-full items-center gap-2 rounded px-2 text-xs text-text-secondary hover:bg-muted"
                   >
                     <FolderOpen className="h-3.5 w-3.5" />
                     {t('todo.open_in_wework', '在 Wework 中打开')}
@@ -384,7 +384,7 @@ export function TodoSidebar({
                         window.setTimeout(() => setProjectIdCopied(false), 2000)
                       })
                     }}
-                    className="flex h-8 w-full items-center gap-2 rounded px-2 text-xs text-[#4F575F] hover:bg-[#F2F4F5] dark:text-text-secondary dark:hover:bg-muted"
+                    className="flex h-8 w-full items-center gap-2 rounded px-2 text-xs text-text-secondary hover:bg-muted"
                   >
                     {projectIdCopied ? (
                       <Check className="h-3.5 w-3.5 text-green-600" />
@@ -399,7 +399,7 @@ export function TodoSidebar({
                     type="button"
                     data-testid="todo-sidebar-menu-add-project"
                     onClick={onAddProject}
-                    className="flex h-8 w-full items-center gap-2 rounded px-2 text-xs text-[#4F575F] hover:bg-[#F2F4F5] dark:text-text-secondary dark:hover:bg-muted"
+                    className="flex h-8 w-full items-center gap-2 rounded px-2 text-xs text-text-secondary hover:bg-muted"
                   >
                     <Plus className="h-3.5 w-3.5" />
                     {t('todo.add_project', '添加项目')}
@@ -444,19 +444,19 @@ export function TodoSidebar({
                   data-testid={`todo-sidebar-project-${entry.project.id}`}
                   aria-expanded={false}
                   onClick={() => onSelectProject(entry.project.id)}
-                  className="flex h-9 w-full items-center justify-between rounded-md px-2 text-left hover:bg-[#E7E9EB] dark:hover:bg-muted"
+                  className="flex h-9 w-full items-center justify-between rounded-md px-2 text-left hover:bg-muted"
                 >
                   <span className="flex min-w-0 items-center gap-2">
-                    <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[#899198]" />
+                    <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-muted" />
                     <span
                       className="h-5 w-5 shrink-0 rounded-[5px]"
                       style={{ backgroundColor: projectColor(entry.project, index + 1) }}
                     />
-                    <span className="truncate text-xs text-[#555D65] dark:text-text-secondary">
+                    <span className="truncate text-xs text-text-secondary">
                       {entry.project.name}
                     </span>
                   </span>
-                  <span className="font-mono text-xs text-[#9AA1A8]">
+                  <span className="font-mono text-xs text-text-muted">
                     {projectItemCount(entry)}
                   </span>
                 </button>
@@ -466,14 +466,14 @@ export function TodoSidebar({
         </div>
 
         <div className="absolute inset-x-2 bottom-1 flex h-12 items-center gap-2.5 px-2">
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#C9D9FA] text-[#2F6FE4]">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/15 text-primary">
             <UserRound className="h-4 w-4" />
           </span>
           <span className="min-w-0">
-            <span className="block truncate text-xs font-semibold text-[#272B30] dark:text-text-primary">
+            <span className="block truncate text-xs font-semibold text-text-primary">
               {user?.user_name || 'local'}
             </span>
-            <span className="block truncate text-xs text-[#737B83]">
+            <span className="block truncate text-xs text-text-secondary">
               {user?.email || 'local@wework.local'}
             </span>
           </span>
@@ -499,7 +499,7 @@ function SidebarAction({
       type="button"
       data-testid={testId}
       onClick={onClick}
-      className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm font-normal leading-[18px] text-[#30353A] hover:bg-[#E7E9EB] dark:text-text-primary dark:hover:bg-muted"
+      className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm font-normal leading-[18px] text-text-primary hover:bg-muted"
     >
       <Icon className="h-4 w-4 text-current" />
       <span>{label}</span>
@@ -528,8 +528,8 @@ function ProjectNav({
       data-testid={testId}
       onClick={onClick}
       className={cn(
-        'flex h-8 w-full items-center justify-between rounded-md pl-9 pr-3 text-xs text-[#58616A] hover:bg-[#E7E9EB] dark:text-text-secondary dark:hover:bg-muted',
-        active && 'bg-[#E8F8F5] font-semibold text-[#0F766E] dark:bg-primary/10 dark:text-primary'
+        'flex h-8 w-full items-center justify-between rounded-md pl-9 pr-3 text-xs text-text-secondary hover:bg-muted',
+        active && 'bg-primary/10 font-semibold text-primary'
       )}
     >
       <span className="flex items-center gap-2">
@@ -539,8 +539,8 @@ function ProjectNav({
       {count != null && (
         <span
           className={cn(
-            'flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 font-mono text-xs text-[#818A92]',
-            active && 'bg-[#D6EEEA] text-[#14786F] dark:bg-primary/15 dark:text-primary'
+            'flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 font-mono text-xs text-text-muted',
+            active && 'bg-primary/15 text-primary'
           )}
         >
           {count}

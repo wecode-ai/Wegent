@@ -2,24 +2,45 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tests for remote device Docker onboarding APIs."""
+"""Tests for the open-source remote device onboarding provider."""
 
 from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 
 from app.api.endpoints import remote_devices
+from app.core.config import settings
 from app.models.api_key import APIKey
 from app.models.kind import Kind
+from app.services.device.remote_device_startup import (
+    DefaultRemoteDeviceCommandProvider,
+    RemoteDeviceCommandContext,
+    get_remote_device_command_provider,
+    register_remote_device_command_provider,
+)
 
 
 class _FakeRequest:
-    def __init__(self, host: str = "testserver", scheme: str = "http"):
+    def __init__(self, host: str = "testserver", scheme: str = "http") -> None:
         self.headers = {
             "host": host,
             "authorization": "Bearer jwt.current.user",
         }
         self.url = SimpleNamespace(scheme=scheme, netloc=host)
+
+
+@pytest.fixture(autouse=True)
+def use_default_remote_device_provider(monkeypatch):
+    previous_provider = get_remote_device_command_provider()
+    register_remote_device_command_provider(DefaultRemoteDeviceCommandProvider())
+    monkeypatch.delenv("REMOTE_DEVICE_DOCKER_IMAGE", raising=False)
+    monkeypatch.delenv("REMOTE_DEVICE_BACKEND_URL", raising=False)
+    monkeypatch.delenv("REMOTE_DEVICE_EXECUTOR_INSTALL_URL", raising=False)
+    monkeypatch.setattr(settings, "WEGENT_BACKEND_PUBLIC_URL", "")
+    monkeypatch.setattr(settings, "WEGENT_SOCKET_URL", "")
+    yield
+    register_remote_device_command_provider(previous_provider)
 
 
 @pytest.mark.asyncio
@@ -28,11 +49,15 @@ async def test_create_docker_start_command_creates_credentials_without_device_cr
     test_db,
     test_user,
 ):
-    """Docker onboarding should create credentials without adding an offline device."""
     monkeypatch.setattr(
-        remote_devices.settings,
-        "BACKEND_INTERNAL_URL",
+        settings,
+        "WEGENT_BACKEND_PUBLIC_URL",
         "https://backend.current.example",
+    )
+    monkeypatch.setattr(
+        settings,
+        "BACKEND_INTERNAL_URL",
+        "http://backend:8000",
     )
 
     response = await remote_devices.create_docker_start_command(
@@ -61,23 +86,15 @@ async def test_create_docker_start_command_creates_credentials_without_device_cr
     assert response.env["EXECUTOR_MODE"] == "local"
     assert response.env["WEGENT_BACKEND_URL"] == "https://backend.current.example"
     assert response.env["DEVICE_PUBLIC_BASE_URL"] == "http://localhost:17888"
-    assert "--add-host host.docker.internal:host-gateway" not in response.command
-    assert "DEVICE_TYPE=remote" in response.command
-    assert "EXECUTOR_MODE=local" in response.command
-    assert f"WEGENT_AUTH_TOKEN={response.env['WEGENT_AUTH_TOKEN']}" in response.command
-    assert "WEGENT_EXECUTOR_HOME=" not in response.command
-    assert "<host-ip>" not in response.command
+    assert response.image == "ghcr.io/wecode-ai/wegent-device:latest"
+    assert "-p 17888:17888" in response.command
+    assert "--network host" not in response.command
     assert [command.kind for command in response.commands] == ["docker", "process"]
     assert response.commands[0].command == response.command
     assert "local_executor_install.sh" in response.commands[1].command
-    assert 'curl -fsSL "$INSTALL_URL" | bash' in response.commands[1].command
-    assert 'nohup "$EXECUTOR_BIN"' in response.commands[1].command
-    assert "$EXECUTOR_HOME/bin/wegent-executor" in response.commands[1].command
     assert (
         "DEVICE_PUBLIC_BASE_URL=http://localhost:17888" in response.commands[1].command
     )
-    assert "export EXECUTOR_MODE=local" in response.commands[1].command
-    assert "export WEGENT_EXECUTOR_HOME=" not in response.commands[1].command
 
     api_key = (
         test_db.query(APIKey)
@@ -98,16 +115,19 @@ async def test_create_docker_start_command_uses_current_system_urls(
     test_db,
     test_user,
 ):
-    """Docker onboarding should derive command URLs from current runtime context."""
     monkeypatch.setattr(
         remote_devices,
         "create_api_key_for_remote_device",
         lambda db, user_id, user_name: ("key-id", "wg-remote-token"),
     )
-    monkeypatch.setattr(
-        remote_devices,
-        "DEFAULT_REMOTE_DEVICE_BACKEND_URL",
+    monkeypatch.setenv(
+        "REMOTE_DEVICE_BACKEND_URL",
         "https://backend.example.com/api",
+    )
+    monkeypatch.setattr(
+        settings,
+        "WEGENT_SOCKET_URL",
+        "wss://socket.example.com",
     )
 
     response = await remote_devices.create_docker_start_command(
@@ -120,6 +140,70 @@ async def test_create_docker_start_command_uses_current_system_urls(
     )
 
     assert response.env["WEGENT_BACKEND_URL"] == "https://backend.example.com"
-    assert response.env["EXECUTOR_MODE"] == "local"
+    assert response.env["WEGENT_SOCKET_URL"] == "wss://socket.example.com"
     assert response.env["DEVICE_PUBLIC_BASE_URL"] == "http://app.example.com:17888"
     assert "--add-host host.docker.internal:host-gateway" not in response.command
+
+
+@pytest.mark.asyncio
+async def test_create_docker_start_command_keeps_client_origin_optional(
+    monkeypatch,
+    test_db,
+    test_user,
+):
+    response = await remote_devices.create_docker_start_command(
+        request=_FakeRequest(host="backend.example.com", scheme="https"),
+        body=remote_devices.CreateDockerRemoteDeviceRequest(),
+        db=test_db,
+        current_user=test_user,
+    )
+
+    assert response.env["WEGENT_BACKEND_URL"] == "https://backend.example.com"
+    assert response.env["WEGENT_SOCKET_URL"] == "https://backend.example.com"
+    assert response.env["DEVICE_PUBLIC_BASE_URL"] == "http://backend.example.com:17888"
+
+
+def _provider_context(
+    container_name: str = "remote device",
+) -> RemoteDeviceCommandContext:
+    return RemoteDeviceCommandContext(
+        container_name=container_name,
+        client_origin="https://app.example.com",
+        request_scheme="https",
+        request_netloc="backend.example.com",
+        request_headers={"host": "backend.example.com"},
+        device_id="device-1",
+        device_name="alice-remote-device-1",
+        auth_token="wg-secret-token",
+    )
+
+
+def test_default_provider_rejects_invalid_backend_url(monkeypatch):
+    monkeypatch.setenv("REMOTE_DEVICE_BACKEND_URL", "https://user:secret@example.com")
+
+    with pytest.raises(HTTPException) as exc_info:
+        DefaultRemoteDeviceCommandProvider().build(_provider_context())
+
+    assert exc_info.value.status_code == 400
+    assert "must not contain user information" in exc_info.value.detail
+
+
+def test_default_provider_rejects_invalid_image(monkeypatch):
+    monkeypatch.setenv(
+        "REMOTE_DEVICE_DOCKER_IMAGE", "ghcr.io/example/device:latest\n--privileged"
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        DefaultRemoteDeviceCommandProvider().build(_provider_context())
+
+    assert exc_info.value.status_code == 400
+
+
+def test_default_provider_shell_quotes_container_name(monkeypatch):
+    monkeypatch.setenv("REMOTE_DEVICE_BACKEND_URL", "https://backend.example.com")
+
+    result = DefaultRemoteDeviceCommandProvider().build(
+        _provider_context("remote device; echo unsafe")
+    )
+
+    assert "--name 'remote device; echo unsafe'" in result.command
