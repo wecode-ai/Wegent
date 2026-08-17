@@ -827,6 +827,7 @@ async def _create_streaming_response_unified(
     # Extract data needed for streaming before closing db
     user_id = user.id
     user_name = user.user_name
+    team_owner_user_id = team.user_id
 
     current_kb_refs = _get_current_knowledge_base_refs(tool_settings)
     inherited_kb_refs = _get_inherited_knowledge_base_refs(
@@ -912,22 +913,27 @@ async def _create_streaming_response_unified(
         db.close()
 
     if not execution_dispatcher.supports_streaming(execution_request):
-        error_message = "Streaming is only supported for Chat Shell type teams"
-        await _persist_terminal_failure(
-            subtask_id=assistant_subtask_id,
-            task_id=task_kind_id,
-            error_message=error_message,
-            error_code="streaming_not_supported",
+        target = execution_dispatcher.router.route(execution_request, device_id=None)
+        shell_type = (
+            execution_request.bot[0].get("shell_type", "Chat")
+            if execution_request.bot
+            else "Chat"
         )
         logger.warning(
-            "[OPENAPI] Streaming rejected for non-SSE task: "
-            "task_id=%d, subtask_id=%d",
+            "[OPENAPI] Non-SSE streaming request: "
+            "caller_user_id=%s, caller_username=%s, team_owner_user_id=%s, "
+            "team_namespace=%s, team_name=%s, api_key_name=%s, "
+            "shell_type=%s, route_mode=%s, task_id=%d, subtask_id=%d",
+            user_id,
+            user_name,
+            team_owner_user_id,
+            model_info.get("namespace"),
+            model_info.get("team_name"),
+            api_key_name,
+            shell_type,
+            target.mode.value,
             task_kind_id,
             assistant_subtask_id,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=error_message,
         )
 
     @trace_async_generator(
