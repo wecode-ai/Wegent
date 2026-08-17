@@ -4,6 +4,8 @@ sidebar_position: 38
 
 # Embedded Browser
 
+Use [embedded-browser navigation and tabs](../../architecture/embedded-browser.md) as the architecture review source of truth. This guide retains capability, compatibility, and verification details.
+
 Wework's embedded browser displays an interactive web page inside the desktop workbench right panel and lets the local runtime control the same page through the WKWebView bridge. It is not a screenshot preview, and it should not open a separate external Chrome window.
 
 ## Architecture
@@ -21,6 +23,100 @@ Each Wework process binds an independent random local bridge port and atomically
 Bridge requests must include the authentication token. `open` and `navigate` allow only safe web schemes; do not allow `file:`, `javascript:`, or other URLs that could read local files or execute arbitrary script through the Agent navigation path.
 
 The bridge supports limited concurrency. A long `waitFor` request must not block independent `click`, `fill`, or `inspect` requests; when the concurrency limit is reached, return an explicit busy error instead of waiting forever.
+
+### Multi-tab navigation connection graph
+
+```mermaid
+flowchart LR
+    E2E[E2E browser-multi-tabs] -->|read identity + Bearer token| BRIDGE[loopback browser bridge]
+    MCP[Executor browser MCP] -->|same protocol| BRIDGE
+    BRIDGE -->|base label + browser_session_id| ROUTE[active_tabs / agent_tabs routing]
+    ROUTE -->|resolve one logical label| ENTRY[(EmbeddedBrowserState.webviews)]
+
+    BRIDGE -->|first open, host absent| PENDING[(pending_open_requests)]
+    PENDING -->|open-request event / pending snapshot| MAIN[DesktopWorkbenchMain]
+    MAIN -->|create top-level browser:N + select| PANEL[WorkspaceBrowserPanel]
+    PANEL -->|embedded_browser_open| NATIVE[native WKWebView for logical label]
+    NATIVE --> ENTRY
+
+    BRIDGE -->|navigate after host is ready| NATIVE
+    PANEL -->|address submit or consume open request| NATIVE
+    NATIVE -->|PageLoadEvent::Finished| LOAD[update loaded_url]
+    LOAD -->|page-state-change| PANEL
+    LOAD -->|release bridge open wait| BRIDGE
+
+    MAIN -->|set_active_tab| ROUTE
+    MAIN -->|close tab with expected native label| CLOSE[close / close_many]
+    CLOSE --> ENTRY
+    ENTRY -->|pageState / inspect / status| BRIDGE
+```
+
+Connection ownership is fixed as follows:
+
+| Connection                               | Sole responsibility                                                                                          | Current code owner                                                                                                                              |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| E2E/MCP → bridge                         | Read the latest identity, authenticate the request, and carry the base label plus optional session ID        | `e2e/desktop/scenarios/embedded-browser-multi-tabs.scenario.mjs`, `executor/src/browser_mcp`, `src-tauri/src/embedded_browser/bridge_server.rs` |
+| bridge → routing                         | Resolve the base label to exactly one active logical label; tests must not guess native labels               | `active_tabs` and `agent_tabs` in `src-tauri/src/embedded_browser.rs`                                                                           |
+| bridge → pending open                    | Persist an ID-bearing request before notifying React to create the host                                      | `request_browser_open`, `embedded_browser_pending_open_requests`                                                                                |
+| React → top-level tab                    | Create independent state and a logical label for every `browser:N`, then synchronize the active tab          | `DesktopWorkbenchMain.tsx`, `RightWorkspacePanel.tsx`                                                                                           |
+| panel → native WebView                   | Create or reuse the WebView for the logical label after the host has usable bounds                           | `WorkspaceBrowserPanel.tsx`, `embedded_browser_open`                                                                                            |
+| native load → execution truth            | Only `PageLoadEvent::Finished` writes `loaded_url`; `url` represents navigation intent only                  | `on_page_load` in `embedded_browser.rs`                                                                                                         |
+| load truth → bridge                      | `open` succeeds only after the target entry has a `loaded_url`                                               | `wait_for_browser_navigation`                                                                                                                   |
+| tab select/close → routing and lifecycle | Selection updates base-label routing; close may destroy only the instance matching the expected native label | `DesktopWorkbenchMain.tsx`, `embedded_browser_set_active_tab`, `embedded_browser_close(_many)`                                                  |
+
+### First multi-tab navigation sequence
+
+```mermaid
+sequenceDiagram
+    participant T as E2E / browser MCP
+    participant B as loopback bridge
+    participant S as EmbeddedBrowserState
+    participant R as React workbench
+    participant P as WorkspaceBrowserPanel
+    participant W as native WKWebView
+    participant H as target HTTP service
+
+    T->>B: open(base label, URL, timeout)
+    B->>S: resolve active logical label
+    alt logical label has no host
+        B->>S: store pending open(request ID, target label, URL)
+        B-->>R: embedded-browser-open-request
+        R->>R: create and select browser:N
+        R->>S: set_active_tab(base, target label)
+        R->>P: render panel with openRequest
+        P->>W: embedded_browser_open(URL, bounds, target label)
+        W->>S: Opening -> Ready
+        B->>S: observe target label Ready
+    else logical label is already Ready
+        B->>S: reuse existing entry
+    end
+    B->>W: navigate(URL)
+    W->>H: GET URL
+    H-->>W: page response
+    W-->>S: PageLoadEvent::Finished(URL)
+    S->>S: loaded_url = URL
+    S-->>P: page-state-change(URL, title)
+    B->>S: read loaded_url
+    S-->>B: navigation completed
+    B-->>T: open succeeds
+
+    T->>R: add and select a second browser:N
+    R->>S: set_active_tab(base, second label)
+    T->>B: open(base label, URL B)
+    B->>S: route base label to second label
+    Note over B,W: Later switches, inspections, and closes must target each logical label; the two WebViews never overwrite each other's page state
+```
+
+This path must preserve these invariants:
+
+1. The base label is only the Agent entry point; state, lifecycle, and page truth belong to the resolved logical label.
+2. `Ready` means that the native host can be operated, not that the destination page loaded. Navigation success requires `loaded_url` on that entry.
+3. A first `open` has exactly one navigation owner. React creates the host; the bridge waits and submits the destination navigation. Consuming the same pending request must not produce competing duplicate navigations.
+4. `PageLoadEvent::Finished` updates the current logical owner of the native label; tab switching or relabeling must not write the event to a stale owner.
+5. The E2E fixture must receive the destination request. After the bridge succeeds, the test asserts both the address field and inspected content; a tab, address draft, or `navigation_requested` log alone is not success.
+6. A second browser tab owns a distinct logical label and native WebView. `set_active_tab` changes only base-label routing and never copies or swaps page state.
+7. Closing a tab carries the expected native label, and the base label routes to the surviving active tab afterward.
+8. A timeout retry or longer wait cannot replace a missing `GET → Finished → loaded_url` completion edge.
 
 ## Agent Browser Capabilities
 

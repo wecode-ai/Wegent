@@ -27,7 +27,13 @@ import { useTranslation } from '@/hooks/useTranslation'
 import type { DeviceInfo } from '@/types/api'
 import type { Team, UnifiedModel } from '@/types/api'
 import { CloudTodoModal } from './CloudTodoModal'
-import { executionDisplayStatus, isExecutionFailed, isExecutionRunning } from './executionStatus'
+import {
+  executionDisplayStatus,
+  isExecutionActive,
+  isExecutionCancellable,
+  isExecutionFailed,
+  isExecutionTerminal,
+} from './executionStatus'
 import { ProjectAutomationTemplates } from './ProjectAutomationTemplates'
 import { ProjectAutomationRunDetailDialog } from './ProjectAutomationRunDetailDialog'
 import {
@@ -138,7 +144,7 @@ export function ProjectAutomationRulesSection({
 
   useEffect(() => {
     const ruleId = selected?.id
-    if (!api || !ruleId || !runs.some(run => isExecutionRunning(run.status))) return
+    if (!api || !ruleId || !runs.some(run => isExecutionActive(run.status))) return
 
     let disposed = false
     const timer = window.setTimeout(() => {
@@ -147,7 +153,7 @@ export function ProjectAutomationRulesSection({
         .then(latestRuns => {
           if (disposed) return
           setRuns(latestRuns)
-          if (!latestRuns.some(run => isExecutionRunning(run.status))) void load()
+          if (!latestRuns.some(run => isExecutionActive(run.status))) void load()
         })
         .catch(loadError => {
           if (!disposed) {
@@ -343,8 +349,16 @@ export function ProjectAutomationRulesSection({
   const statusLabel = useMemo(
     () => ({
       queued: t('workbench.project_automation_queued'),
+      waiting_approval: t('workbench.project_automation_waiting_approval'),
+      starting: t('workbench.project_automation_starting'),
+      waiting_runtime: t('workbench.project_automation_waiting_runtime'),
       running: t('workbench.project_automation_running'),
-      completed: t('workbench.project_automation_completed'),
+      cancelling: t('workbench.project_automation_cancelling'),
+      succeeded: t('workbench.project_automation_succeeded'),
+      failed: t('workbench.project_automation_failed'),
+      cancelled: t('workbench.project_automation_cancelled'),
+      skipped: t('workbench.project_automation_skipped'),
+      unknown: t('workbench.project_automation_unknown'),
     }),
     [t]
   )
@@ -441,7 +455,7 @@ export function ProjectAutomationRulesSection({
                   {rule.lastRunStatus
                     ? rule.lastRunStatus === 'queued'
                       ? statusLabel.queued
-                      : statusLabel[executionDisplayStatus(rule.lastRunStatus) ?? 'running']
+                      : statusLabel[executionDisplayStatus(rule.lastRunStatus) ?? 'unknown']
                     : rule.triggerType === 'event' && rule.enabled
                       ? t('workbench.project_automation_waiting_event')
                       : rule.nextRunAt
@@ -875,38 +889,33 @@ export function ProjectAutomationRulesSection({
                     data-testid="project-automation-run-list"
                   >
                     {runs.map(run => {
-                      const finished = !isExecutionRunning(run.status)
+                      const finished = isExecutionTerminal(run.status)
                       const failed = isExecutionFailed(run.status) || Boolean(run.error)
+                      const displayStatus = executionDisplayStatus(run.status) ?? 'unknown'
+                      const succeeded = displayStatus === 'succeeded'
                       return (
                         <div key={run.id} className="flex min-h-10 items-center gap-3 py-2 text-sm">
                           {finished ? (
                             <button
                               type="button"
                               data-testid={`project-automation-run-detail-${run.id}`}
-                              aria-label={t(
-                                failed
-                                  ? 'workbench.project_automation_run_failed_details'
-                                  : 'workbench.project_automation_run_succeeded_details'
-                              )}
-                              title={t(
-                                failed
-                                  ? 'workbench.project_automation_run_failed_details'
-                                  : 'workbench.project_automation_run_succeeded_details'
-                              )}
+                              aria-label={t('workbench.project_automation_run_details')}
+                              title={t('workbench.project_automation_run_details')}
                               onClick={() => setDetailRun(run)}
-                              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg hover:bg-surface ${failed ? 'text-red-600' : 'text-green-600'}`}
+                              className={`flex h-8 shrink-0 items-center justify-center gap-1 rounded-lg px-2 text-xs hover:bg-surface ${failed ? 'text-red-600' : succeeded ? 'text-green-600' : 'text-text-muted'}`}
                             >
                               {failed ? (
                                 <CircleX className="h-4 w-4" aria-hidden="true" />
                               ) : (
                                 <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
                               )}
+                              {statusLabel[displayStatus]}
                             </button>
                           ) : (
                             <span className="w-8 shrink-0">
                               {run.status === 'queued'
                                 ? statusLabel.queued
-                                : statusLabel[executionDisplayStatus(run.status) ?? 'running']}
+                                : statusLabel[displayStatus]}
                             </span>
                           )}
                           <span className="min-w-0 flex-1">
@@ -947,7 +956,7 @@ export function ProjectAutomationRulesSection({
                               {t('workbench.project_automation_retry_run')}
                             </button>
                           ) : null}
-                          {isExecutionRunning(run.status) ? (
+                          {isExecutionCancellable(run.status) ? (
                             <button
                               type="button"
                               data-testid={`project-automation-cancel-run-${run.id}`}

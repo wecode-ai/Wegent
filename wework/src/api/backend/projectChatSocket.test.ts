@@ -177,4 +177,33 @@ describe('createProjectChatClient', () => {
       })
     ).resolves.toEqual(message)
   })
+
+  it('continues the native Wegent Task bound to a board reply', async () => {
+    socket.emit.mockImplementation((event, payload, ack) => {
+      expect(event).toBe('wework:project_chat:wegent:continue')
+      expect(payload).toEqual({
+        projectId: 'project-1',
+        taskId: 'task-1',
+        triggerMessageId: 'message-7',
+        agentId: '12',
+        attachmentIds: [9],
+      })
+      ack({ ok: true, result: message })
+    })
+    const client = createProjectChatClient({
+      socketBaseUrl: 'https://cloud.example.com',
+      socketPath: '/socket.io',
+      getToken: () => 'token',
+    })
+
+    await expect(
+      client.continueWegentTask!({
+        projectId: 'project-1',
+        taskId: 'task-1',
+        triggerMessageId: 'message-7',
+        agentId: '12',
+        attachmentIds: [9],
+      })
+    ).resolves.toEqual(message)
+  })
 })

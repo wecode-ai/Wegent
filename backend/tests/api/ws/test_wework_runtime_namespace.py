@@ -5,7 +5,8 @@
 """Tests for the Wework runtime IPC relay namespace."""
 
 import asyncio
-from unittest.mock import AsyncMock
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -322,4 +323,52 @@ async def test_project_chat_agent_start_creates_one_streaming_message(monkeypatc
         "wework:project_chat:message:created",
         message,
         room="wework-project-chat:project:project-1",
+    )
+
+
+@pytest.mark.asyncio
+async def test_project_chat_wegent_continue_dispatches_native_turn(monkeypatch):
+    namespace = WeworkRuntimeNamespace()
+    message = {
+        "sequenceNumber": 7,
+        "messageId": "wegent-continuation-7",
+        "projectId": "project-1",
+        "taskId": "task-1",
+        "status": "pending",
+    }
+    monkeypatch.setattr(
+        namespace,
+        "get_session",
+        AsyncMock(return_value={"user_id": 7, "user_name": "Ada"}),
+    )
+    monkeypatch.setattr(namespace, "emit", AsyncMock())
+    start = AsyncMock(
+        return_value=SimpleNamespace(
+            message=SimpleNamespace(
+                model_dump=MagicMock(return_value=message),
+            ),
+            created=True,
+        )
+    )
+    monkeypatch.setattr(
+        "app.services.board_team_continuation.board_team_continuation_service.start",
+        start,
+    )
+
+    response = await namespace.on_project_chat_wegent_continue(
+        "browser-sid",
+        {
+            "projectId": "project-1",
+            "taskId": "task-1",
+            "triggerMessageId": "user-message-6",
+            "agentId": "agent-1",
+        },
+    )
+
+    assert response == {"ok": True, "result": message}
+    start.assert_awaited_once()
+    namespace.emit.assert_awaited_once_with(
+        "wework:project_chat:message:created",
+        message,
+        room="wework-project-chat:task:project-1:task-1",
     )

@@ -21,8 +21,8 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core.config import settings
-from app.core.security import get_current_user
-from app.models.delivery import Delivery
+from app.core.security import get_current_user, get_current_user_flexible_for_executor
+from app.models.delivery import Delivery, LoopItem
 from app.models.user import User
 from app.schemas.delivery import (
     CloudTaskContextResponse,
@@ -262,8 +262,10 @@ async def create_loop_item(
     project_id: int,
     values: LoopItemCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_flexible_for_executor),
 ) -> LoopItemResponse:
+    """Create a board task using a user JWT or personal API key."""
+
     project = cloud_project_service.get(db, project_id, current_user.id)
     created = loop_item_provider_router.create(db, project, current_user, values)
     response = LoopItemResponse.model_validate(created.values)
@@ -293,6 +295,25 @@ async def create_loop_item(
         )
     if created.internal_item is not None:
         db.refresh(created.internal_item)
+        if created.internal_item.assignee_agent_id:
+            from app.services.board_team_execution import (
+                dispatch_board_team_assignment,
+            )
+
+            await dispatch_board_team_assignment(
+                db,
+                item=created.internal_item,
+                user=current_user,
+            )
+            db.refresh(created.internal_item)
+        if project.task_provider in {"github", "gitlab"}:
+            return LoopItemResponse.model_validate(
+                external_loop_item_provider.get(
+                    db,
+                    str(created.values["id"]),
+                    current_user.id,
+                )
+            )
         return _loop_item_response(db, created.internal_item, current_user)
     return response
 
@@ -338,17 +359,31 @@ def get_loop_item(
 
 
 @router.patch("/loop-items/{item_id}", response_model=LoopItemResponse)
-def update_loop_item(
+async def update_loop_item(
     item_id: str,
     values: LoopItemUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> LoopItemResponse:
     if external_loop_item_provider.is_external_item(db, item_id):
-        return LoopItemResponse.model_validate(
-            external_loop_item_provider.update(db, item_id, current_user.id, values)
+        response = external_loop_item_provider.update(
+            db, item_id, current_user.id, values
         )
+        if values.assignee_agent_id:
+            from app.services.board_team_execution import dispatch_board_team_assignment
+
+            item = db.get(LoopItem, item_id)
+            if item is None:
+                raise RuntimeError("External robot assignment index is unavailable")
+            await dispatch_board_team_assignment(db, item=item, user=current_user)
+            response = external_loop_item_provider.get(db, item_id, current_user.id)
+        return LoopItemResponse.model_validate(response)
     item = loop_item_service.update(db, item_id, current_user.id, values)
+    if item.assignee_agent_id and "assignee_agent_id" in values.model_fields_set:
+        from app.services.board_team_execution import dispatch_board_team_assignment
+
+        await dispatch_board_team_assignment(db, item=item, user=current_user)
+        db.refresh(item)
     return _loop_item_response(db, item, current_user)
 
 

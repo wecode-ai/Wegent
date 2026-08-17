@@ -79,6 +79,8 @@ pub(crate) struct RuntimeTaskLink {
     #[serde(skip)]
     pub list_order: Option<usize>,
     #[serde(skip)]
+    pub sidebar_order: Option<usize>,
+    #[serde(skip)]
     pub group_workspace_path: Option<String>,
     #[serde(skip)]
     pub group_project_key: Option<String>,
@@ -123,6 +125,7 @@ impl RuntimeTaskLink {
             runtime_project_key: None,
             runtime_workspace_roots: Vec::new(),
             list_order: None,
+            sidebar_order: None,
             group_workspace_path: None,
             group_project_key: None,
             pinned: false,
@@ -161,6 +164,7 @@ impl RuntimeTaskLink {
             runtime_project_key: None,
             runtime_workspace_roots: Vec::new(),
             list_order: None,
+            sidebar_order: None,
             group_workspace_path: None,
             group_project_key: None,
             pinned: false,
@@ -258,6 +262,7 @@ impl RuntimeTaskLink {
                 .map(|link| link.runtime_workspace_roots.clone())
                 .unwrap_or_default(),
             list_order: None,
+            sidebar_order: None,
             group_workspace_path: None,
             group_project_key: None,
             pinned: false,
@@ -289,6 +294,7 @@ impl RuntimeTaskLink {
             runtime_project_key: self.runtime_project_key.clone(),
             runtime_workspace_roots: self.runtime_workspace_roots.clone(),
             list_order: self.list_order,
+            sidebar_order: self.sidebar_order,
             group_workspace_path: self.group_workspace_path.clone(),
             group_project_key: self.group_project_key.clone(),
             pinned: self.pinned,
@@ -343,6 +349,7 @@ impl Default for RuntimeTaskLink {
             runtime_project_key: None,
             runtime_workspace_roots: Vec::new(),
             list_order: None,
+            sidebar_order: None,
             group_workspace_path: None,
             group_project_key: None,
             pinned: false,
@@ -668,7 +675,7 @@ fn local_task_json(link: RuntimeTaskLink) -> Value {
     if let Some(thread_id) = link.thread_id.clone() {
         task.insert("threadId".to_owned(), Value::String(thread_id));
     }
-    if let Some(order) = link.list_order {
+    if let Some(order) = link.sidebar_order {
         task.insert("sidebarOrder".to_owned(), json!(order));
     }
     if let Some(git_info) = link.git_info {

@@ -10,7 +10,6 @@ request only when an execution is claimed.
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -19,6 +18,30 @@ from sqlalchemy.orm import Session
 
 from app.models.delivery import CloudProject, ProjectChatAgent
 from app.models.user import User
+
+
+def build_project_robot_user_input(
+    *,
+    project_id: str,
+    task_id: str,
+    execution_id: int,
+    execution_prompt: str,
+) -> str:
+    """Build the one visible user input shared by every robot runtime."""
+
+    task_url = f"cloud://projects/{project_id}/todos/{task_id}"
+    sections = [
+        (
+            f"project_id: {project_id}\n"
+            f"task_id: {task_id}\n"
+            f"execution_id: {execution_id}"
+        ),
+        f"看板任务数据位于 {task_url}，请通过看板工具自行查看。",
+    ]
+    normalized_prompt = execution_prompt.strip()
+    if normalized_prompt:
+        sections.append(normalized_prompt)
+    return "\n\n".join(sections)
 
 
 def validate_wework_execution_target(
@@ -68,31 +91,34 @@ class WeworkExecutionProfile:
 
     owner_user_id: int
     display_name: str
-    system_prompt: str
+    execution_prompt: str
     instruction: str
     model: str = ""
     agent_id: str = ""
     local_project_id: int = 0
+    max_concurrent_executions: int = 1
     manager_mode: bool = False
 
     @classmethod
     def for_project_robot(
         cls,
         agent: ProjectChatAgent,
-        *,
-        instruction: str | None = None,
     ) -> "WeworkExecutionProfile":
-        from app.services.project_chat.service import bot_config
+        from app.services.project_chat.service import (
+            bot_config,
+            bot_max_concurrent_executions,
+        )
 
         config = bot_config(agent)
         return cls(
             owner_user_id=int(agent.created_by_user_id or 0),
             display_name=str(agent.title or agent.name or "AI"),
-            system_prompt=str(config.get("system_prompt") or ""),
-            instruction=instruction or "",
+            execution_prompt=str(config.get("execution_prompt") or ""),
+            instruction="",
             model=str(config.get("model") or ""),
             agent_id=agent.id,
             local_project_id=int(agent.local_project_id or 0),
+            max_concurrent_executions=bot_max_concurrent_executions(agent),
         )
 
     @classmethod
@@ -103,7 +129,6 @@ class WeworkExecutionProfile:
         display_name: str,
         instruction: str,
         model: str,
-        system_prompt: str = "",
         local_project_id: int = 0,
     ) -> "WeworkExecutionProfile":
         if not model:
@@ -111,37 +136,34 @@ class WeworkExecutionProfile:
         return cls(
             owner_user_id=owner_user_id,
             display_name=display_name or "AI 托管",
-            system_prompt=system_prompt,
+            execution_prompt="",
             instruction=instruction,
             model=model,
             local_project_id=local_project_id,
             manager_mode=True,
         )
 
-    def identity_prompt(self) -> str:
+    def user_input(
+        self,
+        *,
+        project_id: str,
+        task_id: str,
+        execution_id: int,
+    ) -> str:
         if self.manager_mode:
-            base = (
-                f"你是 {self.display_name}，负责读取看板信息并通过工具将任务分配给"
-                "合适的项目成员或项目机器人。你不是任务执行者。"
-            )
-        else:
-            base = f"你是 {self.display_name}，这个项目任务的 AI 执行者。"
-        if self.system_prompt:
-            base = f"{base}\n{self.system_prompt}"
-        return base
-
-    def runtime_prompt(self) -> str:
-        identity = self.identity_prompt()
-        return (
-            f"{identity}\n\n自动化规则指令：\n{self.instruction}"
-            if self.instruction
-            else identity
+            return self.instruction.strip()
+        return build_project_robot_user_input(
+            project_id=project_id,
+            task_id=task_id,
+            execution_id=execution_id,
+            execution_prompt=self.execution_prompt,
         )
 
     def build_runtime_payload(
         self,
         db: Session,
         *,
+        execution_id: int,
         runtime_task_id: str,
         task: Any,
         cloud_project_id: str,
@@ -177,26 +199,20 @@ class WeworkExecutionProfile:
                 model_config.get("codex_catalog_model_id") or "wework-gpt-5.6-sol"
             )
 
-        prompt = self.runtime_prompt()
-        identity = self.identity_prompt()
+        task_id = str(getattr(task, "id", ""))
+        prompt = self.user_input(
+            project_id=str(project.id),
+            task_id=task_id,
+            execution_id=execution_id,
+        )
         title = str(getattr(task, "title", "") or "")
-        task_context = task.to_context() if hasattr(task, "to_context") else dict(task)
-        project_context = {
-            "id": str(project.id),
-            "key": project.project_key,
-            "name": project.title or project.name or "",
-            "description": project.description or "",
-            "task_provider": project.task_provider,
-        }
-        event_context = origin_context.get("event")
-        event_context = event_context if isinstance(event_context, dict) else {}
         team_id = int(getattr(team, "id", 0) or 0)
         team_name = str(getattr(team, "name", "") or "")
         team_namespace = str(getattr(team, "namespace", "default") or "default")
         subtask_id = f"{runtime_task_id}-assistant"
         bot_id: int | str = self.agent_id or 0
         origin = {
-            "type": "project_automation" if origin_context else "board_task",
+            "type": "project_automation" if self.manager_mode else "board_task",
             "cloudProjectId": str(project.id),
             "loopItemId": str(getattr(task, "id", "")),
             **origin_context,
@@ -208,7 +224,6 @@ class WeworkExecutionProfile:
                 "id": bot_id,
                 "name": self.display_name,
                 "shell_type": "Codex",
-                "system_prompt": identity,
             }
         ]
         execution_request = {
@@ -230,7 +245,6 @@ class WeworkExecutionProfile:
             "bot": bot,
             "bot_name": self.display_name,
             "bot_namespace": "wework",
-            "system_prompt": identity,
             "prompt": prompt,
             "model_config": model_config,
             "standalone_chat_workspace": self.local_project_id <= 0,
@@ -255,34 +269,9 @@ class WeworkExecutionProfile:
             # context without manager authority.
             "origin": origin,
         }
-        context_value = lambda value: {
-            "kind": "application",
-            "value": json.dumps(value, ensure_ascii=False, default=str),
-        }
-        additional_context = {
-            "projectChatAgent": {
-                "kind": "application",
-                "value": identity,
-            },
-        }
-        if not self.manager_mode:
-            additional_context.update(
-                {
-                    "project": context_value(project_context),
-                    "task": context_value(task_context),
-                    "event": context_value(event_context),
-                    "projectChat": {
-                        "kind": "application",
-                        "value": (
-                            f"This run is bound to task cloud://projects/{project.id}/todos/"
-                            f"{getattr(task, 'id', '')}. The project, current task context, "
-                            "and trigger event are provided in separate application contexts. "
-                            "Use that context to perform the requested work. Your final response "
-                            "is a reviewable task comment."
-                        ),
-                    },
-                }
-            )
+        if self.local_project_id > 0 and self.max_concurrent_executions > 1:
+            execution_request["workspace_source"] = "git_worktree"
+        additional_context: dict[str, dict[str, str]] = {}
 
         payload = {
             "taskId": runtime_task_id,
@@ -302,6 +291,8 @@ class WeworkExecutionProfile:
             "standaloneChatWorkspace": self.local_project_id <= 0,
             "additionalContext": additional_context,
         }
+        if self.local_project_id > 0 and self.max_concurrent_executions > 1:
+            payload["execution"] = {"workspace": {"source": "git_worktree"}}
         if materialize_execution_request:
             payload["executionRequest"] = execution_request
         return payload

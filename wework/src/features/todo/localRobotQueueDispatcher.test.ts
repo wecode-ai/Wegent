@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { LocalLoopItemExecution } from '@/api/local/localDelivery'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import { startLocalRobotQueueDispatcher } from './localRobotQueueDispatcher'
+import {
+  startLocalRobotQueueDispatcher,
+  stopLocalRobotQueueExecution,
+} from './localRobotQueueDispatcher'
 
 const LOCAL_QUEUE_POLL_MS = 3000
 
@@ -47,12 +50,24 @@ function execution(overrides: Partial<LocalLoopItemExecution> = {}): LocalLoopIt
     execution_environment: 'local',
     execution_device_id: 'local-device',
     status: 'queued',
+    display_state: 'queued',
+    observed_state: 'unconfirmed',
+    sync_state: 'pending',
     priority_weight: 20,
     queued_at: null,
     started_at: null,
     completed_at: null,
     lease_expires_at: null,
     heartbeat_at: null,
+    claimed_at: null,
+    start_requested_at: null,
+    observed_at: null,
+    cancel_requested_at: null,
+    attempt_no: 1,
+    previous_execution_id: null,
+    execution_scope: 'project_robot:T-1',
+    last_event_seq: 0,
+    termination_reason: '',
     retry_attempt: 0,
     error_message: '',
     execution_note: '',
@@ -78,10 +93,16 @@ function services(
     claimNext?: ReturnType<typeof vi.fn>
     heartbeat?: ReturnType<typeof vi.fn>
     fail?: ReturnType<typeof vi.fn>
+    startRequested?: ReturnType<typeof vi.fn>
+    dispatchUnknown?: ReturnType<typeof vi.fn>
     recoverStale?: ReturnType<typeof vi.fn>
+    listStale?: ReturnType<typeof vi.fn>
+    reconcile?: ReturnType<typeof vi.fn>
     createRuntimeTask?: ReturnType<typeof vi.fn>
     cloudClaimNext?: ReturnType<typeof vi.fn>
     runtimeStart?: ReturnType<typeof vi.fn>
+    cloudStartRequested?: ReturnType<typeof vi.fn>
+    cloudDispatchUnknown?: ReturnType<typeof vi.fn>
     runtimeWork?: Array<Record<string, unknown>>
     devices?: Array<{ device_id: string; device_type?: string }>
     listDevices?: ReturnType<typeof vi.fn>
@@ -91,7 +112,13 @@ function services(
   const claimNext = overrides.claimNext ?? vi.fn(async () => execution())
   const heartbeat = overrides.heartbeat ?? vi.fn(async () => execution({ status: 'running' }))
   const fail = overrides.fail ?? vi.fn(async () => execution({ status: 'failed' }))
-  const recoverStale = overrides.recoverStale ?? vi.fn(async () => ({ requeued: 0, failed: 0 }))
+  const startRequested =
+    overrides.startRequested ?? vi.fn(async () => execution({ status: 'claimed' }))
+  const dispatchUnknown =
+    overrides.dispatchUnknown ?? vi.fn(async () => execution({ sync_state: 'stale' }))
+  const recoverStale = overrides.recoverStale ?? vi.fn(async () => ({ requeued: 0, unknown: 0 }))
+  const listStale = overrides.listStale ?? vi.fn(async () => [])
+  const reconcile = overrides.reconcile ?? vi.fn(async () => execution({ sync_state: 'in_sync' }))
   const createRuntimeTask =
     overrides.createRuntimeTask ??
     vi.fn(async () => ({
@@ -104,7 +131,19 @@ function services(
     overrides.listDevices ??
     vi.fn(async () => overrides.devices ?? [{ device_id: 'local-device', device_type: 'local' }])
   const cloudClaimNext = overrides.cloudClaimNext ?? vi.fn(async () => null)
-  const runtimeStart = overrides.runtimeStart ?? vi.fn(async () => execution({ status: 'running' }))
+  const runtimeStart =
+    overrides.runtimeStart ??
+    vi.fn(async () =>
+      execution({
+        status: 'claimed',
+        display_state: 'waiting_runtime',
+        observed_state: 'accepted',
+      })
+    )
+  const cloudStartRequested =
+    overrides.cloudStartRequested ?? vi.fn(async () => execution({ status: 'claimed' }))
+  const cloudDispatchUnknown =
+    overrides.cloudDispatchUnknown ?? vi.fn(async () => execution({ sync_state: 'stale' }))
   const listModels =
     overrides.listModels ??
     vi.fn(async () => ({
@@ -127,16 +166,21 @@ function services(
         reject: vi.fn(),
         claimNext,
         heartbeat,
-        complete: vi.fn(),
-        fail,
+        startRequested,
+        runtimeStart,
+        dispatchUnknown,
+        dispatchFailed: fail,
         recoverStale,
+        listStale,
+        reconcile,
       },
       projectAutomationApi: {
         claimNext: cloudClaimNext,
         heartbeat,
+        startRequested: cloudStartRequested,
+        dispatchUnknown: cloudDispatchUnknown,
         runtimeStart,
-        complete: vi.fn(),
-        fail,
+        dispatchFailed: fail,
       },
       runtimeWorkApi: {
         createRuntimeTask,
@@ -157,16 +201,61 @@ function services(
       claimNext,
       heartbeat,
       fail,
+      startRequested,
+      dispatchUnknown,
       recoverStale,
+      listStale,
+      reconcile,
       createRuntimeTask,
       listDevices,
       cloudClaimNext,
       runtimeStart,
+      cloudStartRequested,
+      cloudDispatchUnknown,
       listModels,
       getHomeDirectory,
     },
   }
 }
+
+describe('stopLocalRobotQueueExecution', () => {
+  it('terminalizes a provably unstarted execution without contacting Runtime', async () => {
+    const cancel = vi.fn(async () => execution({ status: 'cancelled', display_state: 'cancelled' }))
+    const cancelRuntimeTask = vi.fn()
+    const stopped = await stopLocalRobotQueueExecution(
+      { cancel } as unknown as NonNullable<WorkbenchServices['localLoopItemExecutionApi']>,
+      { cancelRuntimeTask } as unknown as NonNullable<WorkbenchServices['runtimeWorkApi']>,
+      9
+    )
+
+    expect(cancel).toHaveBeenCalledWith(9)
+    expect(stopped.status).toBe('cancelled')
+    expect(cancelRuntimeTask).not.toHaveBeenCalled()
+  })
+
+  it('keeps a delivered execution cancelling until Runtime acknowledges stop', async () => {
+    const cancelling = execution({
+      status: 'cancel_requested',
+      display_state: 'cancelling',
+      runtime_device_id: 'local-device',
+      runtime_task_id: 'codex-queue-9',
+    })
+    const cancel = vi.fn(async () => cancelling)
+    const cancelRuntimeTask = vi.fn(async () => ({ accepted: true }))
+    const stopped = await stopLocalRobotQueueExecution(
+      { cancel } as unknown as NonNullable<WorkbenchServices['localLoopItemExecutionApi']>,
+      { cancelRuntimeTask } as unknown as NonNullable<WorkbenchServices['runtimeWorkApi']>,
+      9
+    )
+
+    expect(stopped).toBe(cancelling)
+    expect(cancelRuntimeTask).toHaveBeenCalledWith({
+      deviceId: 'local-device',
+      taskId: 'codex-queue-9',
+    })
+    expect(stopped.status).toBe('cancel_requested')
+  })
+})
 
 describe('startLocalRobotQueueDispatcher', () => {
   beforeEach(() => {
@@ -193,31 +282,25 @@ describe('startLocalRobotQueueDispatcher', () => {
     await vi.runOnlyPendingTimersAsync()
     expect(claimNext).toHaveBeenNthCalledWith(1, {
       execution_device_id: 'local-device',
-      device_capacity: 5,
       lease_seconds: 300,
     })
     expect(claimNext).toHaveBeenNthCalledWith(2, {
       execution_device_id: 'app-device',
-      device_capacity: 5,
       lease_seconds: 300,
     })
     expect(mocks.createRuntimeTask).toHaveBeenCalledOnce()
     stop()
   })
 
-  it('falls back to local-device when no devices resolve', async () => {
+  it('does not invent a fallback device when no devices resolve', async () => {
     const claimNext = vi.fn().mockResolvedValueOnce(execution()).mockResolvedValue(null)
     const listDevices = vi.fn(async () => [])
     const { services: svc, mocks } = services({ claimNext, listDevices })
     const stop = startLocalRobotQueueDispatcher(svc)
     await vi.advanceTimersByTimeAsync(LOCAL_QUEUE_POLL_MS)
     await vi.runOnlyPendingTimersAsync()
-    expect(claimNext).toHaveBeenCalledWith({
-      execution_device_id: 'local-device',
-      device_capacity: 5,
-      lease_seconds: 300,
-    })
-    expect(mocks.createRuntimeTask).toHaveBeenCalledOnce()
+    expect(claimNext).not.toHaveBeenCalled()
+    expect(mocks.createRuntimeTask).not.toHaveBeenCalled()
     stop()
   })
 
@@ -228,12 +311,10 @@ describe('startLocalRobotQueueDispatcher', () => {
     const stop = startLocalRobotQueueDispatcher(svc)
     await vi.advanceTimersByTimeAsync(LOCAL_QUEUE_POLL_MS)
     await vi.advanceTimersByTimeAsync(0)
-    // Initial heartbeat after createRuntimeTask.
-    expect(heartbeat).toHaveBeenCalledWith(1, 'local-device', 'codex-queue-1', 300)
-    const initialCalls = heartbeat.mock.calls.length
-    // 60s later the keeper heartbeats again.
+    expect(heartbeat).not.toHaveBeenCalled()
+    // Runtime acceptance is recorded separately; the lease keeper starts 60s later.
     await vi.advanceTimersByTimeAsync(60_000)
-    expect(heartbeat.mock.calls.length).toBeGreaterThan(initialCalls)
+    expect(heartbeat).toHaveBeenCalledWith(1, 'local-device', 'codex-queue-1', 300)
     stop()
   })
 
@@ -552,10 +633,7 @@ describe('startLocalRobotQueueDispatcher', () => {
   })
 
   it('stops heartbeating once the run is terminal', async () => {
-    const heartbeat = vi
-      .fn()
-      .mockResolvedValueOnce(execution({ status: 'running' }))
-      .mockResolvedValue(null)
+    const heartbeat = vi.fn().mockResolvedValue(null)
     const claimNext = vi.fn().mockResolvedValueOnce(execution()).mockResolvedValue(null)
     const { services: svc } = services({ heartbeat, claimNext })
     const stop = startLocalRobotQueueDispatcher(svc)
@@ -572,16 +650,29 @@ describe('startLocalRobotQueueDispatcher', () => {
     stop()
   })
 
-  it('fails the execution when runtime task creation throws', async () => {
+  it('marks the fenced execution unknown when runtime task creation throws', async () => {
     const createRuntimeTask = vi.fn(async () => {
       throw new Error('workspace unavailable')
     })
     const fail = vi.fn(async () => execution({ status: 'failed' }))
-    const { services: svc, mocks } = services({ createRuntimeTask, fail })
+    const dispatchUnknown = vi.fn(async () => execution({ sync_state: 'stale' }))
+    const claimNext = vi.fn().mockResolvedValueOnce(execution()).mockResolvedValue(null)
+    const { services: svc, mocks } = services({
+      createRuntimeTask,
+      dispatchUnknown,
+      fail,
+      claimNext,
+    })
     const stop = startLocalRobotQueueDispatcher(svc)
     await vi.advanceTimersByTimeAsync(LOCAL_QUEUE_POLL_MS)
     await vi.runOnlyPendingTimersAsync()
-    expect(fail).toHaveBeenCalledWith(1, expect.stringContaining('workspace unavailable'))
+    expect(dispatchUnknown).toHaveBeenCalledWith(
+      1,
+      'local-device',
+      'codex-queue-1',
+      expect.stringContaining('workspace unavailable')
+    )
+    expect(fail).not.toHaveBeenCalled()
     expect(mocks.heartbeat).not.toHaveBeenCalled()
     stop()
   })
@@ -607,12 +698,65 @@ describe('startLocalRobotQueueDispatcher', () => {
   })
 
   it('recovers stale runs on the recovery interval', async () => {
-    const recoverStale = vi.fn(async () => ({ requeued: 1, failed: 0 }))
+    const recoverStale = vi.fn(async () => ({ requeued: 1, unknown: 0 }))
     const claimNext = vi.fn(async () => null)
     const { services: svc, mocks } = services({ recoverStale, claimNext })
     const stop = startLocalRobotQueueDispatcher(svc)
     await vi.advanceTimersByTimeAsync(60_000)
     expect(mocks.recoverStale).toHaveBeenCalled()
+    stop()
+  })
+
+  it('reconciles stale local executions from the exact Runtime task snapshot', async () => {
+    const stale = execution({
+      status: 'claimed',
+      display_state: 'unknown',
+      sync_state: 'stale',
+      runtime_device_id: 'local-device',
+      runtime_task_id: 'codex-queue-1',
+    })
+    const listStale = vi.fn(async () => [stale])
+    const reconcile = vi.fn(async () =>
+      execution({ status: 'completed', display_state: 'succeeded' })
+    )
+    const claimNext = vi.fn(async () => null)
+    const { services: svc } = services({
+      claimNext,
+      listStale,
+      reconcile,
+      runtimeWork: [
+        {
+          project: { id: 7, name: 'Bound project', roots: [] },
+          deviceWorkspaces: [
+            {
+              deviceId: 'local-device',
+              available: true,
+              workspacePath: '/tmp/workspace',
+              tasks: [
+                {
+                  taskId: 'codex-queue-1',
+                  workspacePath: '/tmp/workspace',
+                  title: 'Run me',
+                  runtime: 'codex',
+                  status: 'active',
+                  running: false,
+                  turnStatus: 'completed',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    })
+    const stop = startLocalRobotQueueDispatcher(svc)
+
+    await vi.advanceTimersByTimeAsync(60_000)
+
+    expect(reconcile).toHaveBeenCalledWith(1, {
+      runtime_status: 'active',
+      running: false,
+      turn_status: 'completed',
+    })
     stop()
   })
 })

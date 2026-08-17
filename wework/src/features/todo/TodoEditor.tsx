@@ -46,7 +46,7 @@ import type { ProjectChatClient } from '@/api/backend/projectChatSocket'
 import type { ProjectChatAgent } from '@/api/projectChatAgents'
 import type { createProjectChatAgentApi } from '@/api/projectChatAgents'
 import type { AITableApi } from '@/api/aitable'
-import type { ProjectWithTasks } from '@/types/api'
+import type { ProjectWithTasks, Team } from '@/types/api'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
@@ -489,6 +489,7 @@ export type TodoEditorProps = {
   api: DeliveryApi
   aitableApi?: AITableApi
   projectChatAgentApi?: ReturnType<typeof createProjectChatAgentApi>
+  teamApi?: WorkbenchServices['teamApi']
   projectChatClient?: ProjectChatClient
   selfManagedExecution?: boolean
   currentUserId?: string | number
@@ -537,11 +538,13 @@ export function TodoEditor(props: TodoEditorProps) {
   )
   const [dueDate, setDueDate] = useState(item?.due_at?.slice(0, 10) ?? draft?.dueDate ?? '')
   const [assigneeTarget, setAssigneeTarget] = useState(
-    item?.assignee_agent_id
-      ? `agent:${item.assignee_agent_id}`
-      : item?.assignee_user_id
-        ? `user:${item.assignee_user_id}`
-        : ''
+    item?.assignee_team_id
+      ? `team:${item.assignee_team_id}`
+      : item?.assignee_agent_id
+        ? `agent:${item.assignee_agent_id}`
+        : item?.assignee_user_id
+          ? `user:${item.assignee_user_id}`
+          : ''
   )
   const [tags, setTags] = useState<string[]>(item?.tags ?? draft?.tags ?? [])
   const [tagDraft, setTagDraft] = useState('')
@@ -555,17 +558,21 @@ export function TodoEditor(props: TodoEditorProps) {
     if (previous && previous.id === item.id && previous.version === item.version) return
     const sameTask = previous?.id === item.id
     const previousAssigneeTarget = previous
-      ? previous.assignee_agent_id
-        ? `agent:${previous.assignee_agent_id}`
-        : previous.assignee_user_id
-          ? `user:${previous.assignee_user_id}`
-          : ''
+      ? previous.assignee_team_id
+        ? `team:${previous.assignee_team_id}`
+        : previous.assignee_agent_id
+          ? `agent:${previous.assignee_agent_id}`
+          : previous.assignee_user_id
+            ? `user:${previous.assignee_user_id}`
+            : ''
       : ''
-    const nextAssigneeTarget = item.assignee_agent_id
-      ? `agent:${item.assignee_agent_id}`
-      : item.assignee_user_id
-        ? `user:${item.assignee_user_id}`
-        : ''
+    const nextAssigneeTarget = item.assignee_team_id
+      ? `team:${item.assignee_team_id}`
+      : item.assignee_agent_id
+        ? `agent:${item.assignee_agent_id}`
+        : item.assignee_user_id
+          ? `user:${item.assignee_user_id}`
+          : ''
     const tagsMatch = (left: string[], right: string[]) =>
       left.length === right.length && left.every((tag, index) => tag === right[index])
     if (!sameTask || title === (previous?.title ?? '')) setTitle(item.title ?? '')
@@ -614,6 +621,7 @@ export function TodoEditor(props: TodoEditorProps) {
   const [collaborators, setCollaborators] = useState<CloudLoopItemCollaborator[]>([])
   const [projectMembers, setProjectMembers] = useState<CloudProjectMember[]>([])
   const [projectAgents, setProjectAgents] = useState<ProjectChatAgent[]>([])
+  const [wegentTeams, setWegentTeams] = useState<Team[]>([])
   const [addingCollaborator, setAddingCollaborator] = useState(false)
   const [selectedCollaboratorId, setSelectedCollaboratorId] = useState<number | null>(null)
   const [collaboratorBusy, setCollaboratorBusy] = useState(false)
@@ -657,6 +665,7 @@ export function TodoEditor(props: TodoEditorProps) {
       api.listLoopItemCollaborators(editItemId),
       api.listCloudProjectMembers(editProjectId),
       props.projectChatAgentApi?.list(String(editProjectId)) ?? Promise.resolve([]),
+      props.teamApi?.listTeams() ?? Promise.resolve([]),
     ]).then(
       ([
         deliveryResult,
@@ -665,6 +674,7 @@ export function TodoEditor(props: TodoEditorProps) {
         collaboratorResult,
         memberResult,
         agentResult,
+        teamResult,
       ]) => {
         if (deliveryResult.status === 'fulfilled') setDeliveries(deliveryResult.value.items)
         if (taskResult.status === 'fulfilled') setTasks(taskResult.value)
@@ -674,21 +684,31 @@ export function TodoEditor(props: TodoEditorProps) {
         if (agentResult.status === 'fulfilled') {
           setProjectAgents(agentResult.value.filter(agent => agent.status === 'active'))
         }
+        if (teamResult.status === 'fulfilled') {
+          setWegentTeams(teamResult.value.filter(team => team.is_active !== false))
+        }
       }
     )
-  }, [api, editItemId, editProjectId, props.projectChatAgentApi])
+  }, [api, editItemId, editProjectId, props.projectChatAgentApi, props.teamApi])
 
-  // Create mode only needs the member list for the assignee select.
+  // Assignee sources are independent: one unavailable directory must not hide
+  // otherwise valid members, robots, or Wegent Teams.
   useEffect(() => {
     if (createProjectId == null) return
-    void Promise.all([
+    void Promise.allSettled([
       api.listCloudProjectMembers(createProjectId),
       props.projectChatAgentApi?.list(String(createProjectId)) ?? Promise.resolve([]),
-    ]).then(([members, agents]) => {
-      setProjectMembers(members)
-      setProjectAgents(agents.filter(agent => agent.status === 'active'))
+      props.teamApi?.listTeams() ?? Promise.resolve([]),
+    ]).then(([memberResult, agentResult, teamResult]) => {
+      if (memberResult.status === 'fulfilled') setProjectMembers(memberResult.value)
+      if (agentResult.status === 'fulfilled') {
+        setProjectAgents(agentResult.value.filter(agent => agent.status === 'active'))
+      }
+      if (teamResult.status === 'fulfilled') {
+        setWegentTeams(teamResult.value.filter(team => team.is_active !== false))
+      }
     })
-  }, [api, createProjectId, props.projectChatAgentApi])
+  }, [api, createProjectId, props.projectChatAgentApi, props.teamApi])
 
   // Persist the text draft on every edit; a fully cleared form removes it.
   useEffect(() => {
@@ -724,11 +744,13 @@ export function TodoEditor(props: TodoEditorProps) {
       priority !== item.priority ||
       parentId !== (item.parent_id ?? '') ||
       assigneeTarget !==
-        (item.assignee_agent_id
-          ? `agent:${item.assignee_agent_id}`
-          : item.assignee_user_id
-            ? `user:${item.assignee_user_id}`
-            : '') ||
+        (item.assignee_team_id
+          ? `team:${item.assignee_team_id}`
+          : item.assignee_agent_id
+            ? `agent:${item.assignee_agent_id}`
+            : item.assignee_user_id
+              ? `user:${item.assignee_user_id}`
+              : '') ||
       dueDate !== (item.due_at?.slice(0, 10) ?? '') ||
       tagsDirty
     : false
@@ -758,6 +780,7 @@ export function TodoEditor(props: TodoEditorProps) {
   const parentItem = allItems.find(candidate => candidate.id === parentId)
   const assignee = projectMembers.find(member => assigneeTarget === `user:${member.user_id}`)
   const assigneeAgent = projectAgents.find(agent => assigneeTarget === `agent:${agent.id}`)
+  const assigneeTeam = wegentTeams.find(team => assigneeTarget === `team:${team.id}`)
   const canAssign = project
     ? project.access_role === 'Owner' || project.access_role === 'Maintainer'
     : false
@@ -793,10 +816,8 @@ export function TodoEditor(props: TodoEditorProps) {
         if (supportsAssignApi(api)) {
           created = await api.assignLoopItem(props.project.id, created.id, {
             version: created.version,
-            assigneeType: assigneeTarget.startsWith('user:') ? 'user' : 'agent',
-            assigneeId: assigneeTarget.startsWith('user:')
-              ? assigneeTarget.slice(5)
-              : assigneeTarget.slice(6),
+            assigneeType: assigneeTarget.split(':', 1)[0] as 'user' | 'agent' | 'team',
+            assigneeId: assigneeTarget.slice(assigneeTarget.indexOf(':') + 1),
           })
         } else {
           created = await api.updateLoopItem(created.id, {
@@ -805,6 +826,9 @@ export function TodoEditor(props: TodoEditorProps) {
               ? Number(assigneeTarget.slice(5))
               : null,
             assignee_agent_id: assigneeTarget.startsWith('agent:') ? assigneeTarget.slice(6) : null,
+            assignee_team_id: assigneeTarget.startsWith('team:')
+              ? Number(assigneeTarget.slice(5))
+              : null,
           })
         }
       }
@@ -854,25 +878,26 @@ export function TodoEditor(props: TodoEditorProps) {
         due_at: dueDate || null,
         tags,
       })
-      const currentAssigneeTarget = current.assignee_agent_id
-        ? `agent:${current.assignee_agent_id}`
-        : current.assignee_user_id
-          ? `user:${current.assignee_user_id}`
-          : ''
+      const currentAssigneeTarget = current.assignee_team_id
+        ? `team:${current.assignee_team_id}`
+        : current.assignee_agent_id
+          ? `agent:${current.assignee_agent_id}`
+          : current.assignee_user_id
+            ? `user:${current.assignee_user_id}`
+            : ''
       if (assigneeTarget !== currentAssigneeTarget) {
         if (!assigneeTarget) {
           updated = await api.updateLoopItem(current.id, {
             version: updated.version,
             assignee_user_id: null,
             assignee_agent_id: null,
+            assignee_team_id: null,
           })
         } else if (project && supportsAssignApi(api)) {
           updated = await api.assignLoopItem(project.id, current.id, {
             version: updated.version,
-            assigneeType: assigneeTarget.startsWith('user:') ? 'user' : 'agent',
-            assigneeId: assigneeTarget.startsWith('user:')
-              ? assigneeTarget.slice(5)
-              : assigneeTarget.slice(6),
+            assigneeType: assigneeTarget.split(':', 1)[0] as 'user' | 'agent' | 'team',
+            assigneeId: assigneeTarget.slice(assigneeTarget.indexOf(':') + 1),
           })
         } else {
           updated = await api.updateLoopItem(current.id, {
@@ -881,6 +906,9 @@ export function TodoEditor(props: TodoEditorProps) {
               ? Number(assigneeTarget.slice(5))
               : null,
             assignee_agent_id: assigneeTarget.startsWith('agent:') ? assigneeTarget.slice(6) : null,
+            assignee_team_id: assigneeTarget.startsWith('team:')
+              ? Number(assigneeTarget.slice(5))
+              : null,
           })
         }
       }
@@ -1088,7 +1116,7 @@ export function TodoEditor(props: TodoEditorProps) {
     editProps.project.task_provider !== 'dingtalk_aitable' &&
     props.projectChatClient ? (
       <TaskActivityView
-        key={`${item.id}:${item.assignee_agent_id ?? 'unassigned'}`}
+        key={`${item.id}:${item.assignee_team_id ?? item.assignee_agent_id ?? 'unassigned'}`}
         client={props.projectChatClient}
         project={editProps.project}
         task={item}
@@ -1162,6 +1190,15 @@ export function TodoEditor(props: TodoEditorProps) {
           ))}
         </optgroup>
       ) : null}
+      {wegentTeams.length ? (
+        <optgroup label="Wegent 智能体">
+          {wegentTeams.map(team => (
+            <option key={team.id} value={`team:${team.id}`}>
+              {team.displayName || team.name}
+            </option>
+          ))}
+        </optgroup>
+      ) : null}
     </select>
   )
   const parentSelect = (
@@ -1215,7 +1252,12 @@ export function TodoEditor(props: TodoEditorProps) {
     high: 'P1 高',
     urgent: 'P0 紧急',
   }
-  const railAssigneeName = assigneeAgent?.name ?? assignee?.user_name ?? null
+  const railAssigneeName =
+    assigneeTeam?.displayName ??
+    assigneeTeam?.name ??
+    assigneeAgent?.name ??
+    assignee?.user_name ??
+    null
   const iterationText =
     item && editProps?.project
       ? (sourceCellText(item.source_cells, ['iteration', 'sprint', '迭代']) ??
@@ -1269,14 +1311,23 @@ export function TodoEditor(props: TodoEditorProps) {
       {statusChip}
       {statusHistoryTrigger}
       {priorityChip}
-      <span className={cn(propChipClass, !assignee && !assigneeAgent && 'text-text-muted')}>
-        {assigneeAgent ? (
+      <span
+        className={cn(
+          propChipClass,
+          !assignee && !assigneeAgent && !assigneeTeam && 'text-text-muted'
+        )}
+      >
+        {assigneeAgent || assigneeTeam ? (
           <Bot className="h-3.5 w-3.5 text-violet-600" />
         ) : (
           <CircleUserRound className="h-3.5 w-3.5 text-text-muted" />
         )}
         <span className="text-text-muted">负责人</span>
-        {assigneeAgent?.name ?? assignee?.user_name ?? '添加'}
+        {assigneeTeam?.displayName ??
+          assigneeTeam?.name ??
+          assigneeAgent?.name ??
+          assignee?.user_name ??
+          '添加'}
         <ChevronDown className="h-3 w-3 text-text-muted" />
         {assigneeSelect}
       </span>
@@ -1645,14 +1696,18 @@ export function TodoEditor(props: TodoEditorProps) {
               {twoColumn ? (
                 <div className="task-detail-meta-line">
                   <span className="task-detail-meta-item">
-                    {assigneeAgent ? (
+                    {assigneeAgent || assigneeTeam ? (
                       <Bot className="h-3.5 w-3.5 text-violet-600" />
                     ) : (
                       <CircleUserRound className="h-3.5 w-3.5" />
                     )}
                     负责人
                     <span className="text-text-primary">
-                      {assignee?.user_name ?? assigneeAgent?.name ?? '未指派'}
+                      {assignee?.user_name ??
+                        assigneeTeam?.displayName ??
+                        assigneeTeam?.name ??
+                        assigneeAgent?.name ??
+                        '未指派'}
                     </span>
                   </span>
                   <span className="task-detail-meta-item">

@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'vitest'
 import type { RuntimeTaskSummary } from '@/types/api'
-import { normalizeRuntimeTaskSummary, shouldReplaceRuntimeTaskProjection } from './projection'
+import {
+  normalizeRuntimeTaskSummary,
+  runtimeTaskReconciliationSnapshot,
+  shouldReplaceRuntimeTaskProjection,
+} from './projection'
 
 function task(overrides: Partial<RuntimeTaskSummary> = {}): RuntimeTaskSummary {
   return {
@@ -13,6 +17,27 @@ function task(overrides: Partial<RuntimeTaskSummary> = {}): RuntimeTaskSummary {
 }
 
 describe('runtimeTaskProjection', () => {
+  test('derives reconciliation truth through the lifecycle vocabulary', () => {
+    expect(
+      runtimeTaskReconciliationSnapshot(
+        task({ status: 'active', running: false, turnStatus: 'completed' })
+      )
+    ).toEqual({
+      runtimeStatus: 'active',
+      running: false,
+      turnStatus: 'completed',
+    })
+    expect(
+      runtimeTaskReconciliationSnapshot(
+        task({ status: 'running', running: true, turnStatus: 'inProgress' })
+      )
+    ).toEqual({
+      runtimeStatus: 'running',
+      running: true,
+      turnStatus: 'inProgress',
+    })
+  })
+
   test('normalizes completed executor state into one terminal projection', () => {
     expect(
       normalizeRuntimeTaskSummary(

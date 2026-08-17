@@ -120,7 +120,7 @@ async def test_wegent_agent_is_only_a_manager_transport(monkeypatch):
     custom.assert_not_called()
 
 
-def test_manager_prompt_requires_mcp_assignment_instead_of_output_protocol():
+def test_manager_prompt_is_minimal_visible_assignment_input():
     service = ProjectAutomationExecution()
     project = SimpleNamespace(
         id="project-1",
@@ -135,13 +135,16 @@ def test_manager_prompt_requires_mcp_assignment_instead_of_output_protocol():
         owner=SimpleNamespace(id=7),
         project=project,
         rule=SimpleNamespace(description="Prefer domain ownership."),
-        run=SimpleNamespace(task_id="task-1"),
+        run=SimpleNamespace(id="run-1", task_id="task-1"),
         context={"trigger": "event"},
     )
 
-    assert "不是任务执行者" in prompt
-    assert "项目成员和项目机器人的能力说明" in prompt
-    assert "通过工具直接完成" in prompt
-    assert "最终回复不参与分派" in prompt
-    assert "不要求 JSON" in prompt
-    assert "不要自己执行原始任务" in prompt
+    assert prompt == (
+        "project_id: project-1\n"
+        "task_id: task-1\n"
+        "automation_run_id: run-1\n\n"
+        "看板任务数据位于 cloud://projects/project-1/todos/task-1，"
+        "请通过看板工具自行查看。\n\n"
+        "请读取候选执行者并按调度要求完成分派，不要执行任务。\n\n"
+        "Prefer domain ownership."
+    )

@@ -45,6 +45,7 @@ export function CloudTodoCardContent({ item, display, agentNames }: CloudTodoCar
   const showFooter = display.showPriority || display.showDate || display.showAssignee
   const assigneeName =
     item.assignee_name ||
+    item.assignee_team_name ||
     (item.assignee_agent_id
       ? item.assignee_agent_name || agentNames?.[item.assignee_agent_id] || null
       : null)
@@ -108,7 +109,9 @@ export function CloudTodoCardContent({ item, display, agentNames }: CloudTodoCar
                   className="inline-flex min-w-0 items-center gap-1.5"
                 >
                   <span className="sr-only">负责人</span>
-                  {item.assignee_agent_id ? <Bot className="h-3.5 w-3.5 shrink-0" /> : null}
+                  {item.assignee_agent_id || item.assignee_team_id ? (
+                    <Bot className="h-3.5 w-3.5 shrink-0" />
+                  ) : null}
                   <span className="truncate">{assigneeName}</span>
                 </span>
               </Tooltip>

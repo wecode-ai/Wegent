@@ -167,10 +167,15 @@ classify_wework_path() {
       select_target "core:priority-filter"
       return
       ;;
+    wework/e2e/desktop/scenarios/project-automation.scenario.mjs)
+      select_target "core:automation-lifecycle"
+      select_target "core:project-automation"
+      select_target "cloud:all"
+      return
+      ;;
     wework/src/features/todo/ProjectAutomation* | \
       wework/src/features/todo/projectAutomationForm* | \
-      wework/src/api/projectAutomations* | \
-      wework/e2e/desktop/scenarios/project-automation.scenario.mjs)
+      wework/src/api/projectAutomations*)
       select_target "core:automation-lifecycle"
       select_target "core:project-automation"
       return

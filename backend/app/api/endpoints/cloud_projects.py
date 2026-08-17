@@ -17,7 +17,8 @@ from fastapi import (
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
-from app.core.security import get_current_user
+from app.core.security import get_current_user, get_current_user_flexible_for_executor
+from app.models.delivery import LoopItem
 from app.models.user import User
 from app.schemas.cloud_file import (
     CloudFileAccessResponse,
@@ -74,8 +75,10 @@ def _project_response(
 def create_cloud_project(
     values: CloudProjectCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_flexible_for_executor),
 ) -> CloudProjectResponse:
+    """Create a cloud board using a user JWT or personal API key."""
+
     project = cloud_project_service.create(db, current_user.id, values)
     return _project_response(db, project, current_user)
 
@@ -162,7 +165,7 @@ def update_project_chat_agent(
     "/{project_id}/loop-items/{item_id}/assign",
     response_model=LoopItemResponse,
 )
-def assign_loop_item(
+async def assign_loop_item(
     project_id: int,
     item_id: str,
     values: LoopItemAssign,
@@ -170,7 +173,7 @@ def assign_loop_item(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> LoopItemResponse:
-    """Assign a task to a project member or to one of the project robots.
+    """Assign a task to a member, project robot, or Wegent Team.
 
     The assignment chain and the derived queue state live on the task itself;
     there is no separate queue storage.
@@ -180,6 +183,16 @@ def assign_loop_item(
         response = external_loop_item_provider.assign(
             db, item_id, current_user.id, values
         )
+        if values.assignee_type == "agent":
+            from app.services.board_team_execution import (
+                dispatch_board_team_assignment,
+            )
+
+            item = db.get(LoopItem, item_id)
+            if item is None:
+                raise RuntimeError("External Team assignment index is unavailable")
+            await dispatch_board_team_assignment(db, item=item, user=current_user)
+            response = external_loop_item_provider.get(db, item_id, current_user.id)
         from app.tasks.robot_queue_tasks import consume_queues_background
 
         background_tasks.add_task(consume_queues_background)
@@ -191,6 +204,11 @@ def assign_loop_item(
         user_id=current_user.id,
         values=values,
     )
+    if values.assignee_type == "agent":
+        from app.services.board_team_execution import dispatch_board_team_assignment
+
+        await dispatch_board_team_assignment(db, item=item, user=current_user)
+        db.refresh(item)
     from app.tasks.robot_queue_tasks import consume_queues_background
 
     background_tasks.add_task(consume_queues_background)

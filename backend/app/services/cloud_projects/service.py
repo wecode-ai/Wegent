@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.core.provider_credentials import store_provider_config
 from app.models.cloud_project import CloudProject
-from app.models.delivery import LoopItem, loop_datetime_is_unset
+from app.models.delivery import LoopItem, ProjectAutomationRun, loop_datetime_is_unset
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.user import User
@@ -311,11 +311,27 @@ class CloudProjectService:
         return project
 
     def archive(self, db: Session, project_id: int, user_id: int, version: int) -> None:
-        """Archive a project so it no longer appears in active project lists."""
+        """Archive a project and remove every future automation trigger."""
 
         project = require_cloud_project_role(
             db, project_id, user_id, BaseRole.Maintainer
         ).project
+        active_run = (
+            db.query(ProjectAutomationRun.id)
+            .filter(
+                ProjectAutomationRun.cloud_project_id == str(project.id),
+                ProjectAutomationRun.status.in_(
+                    {"pending", "queued", "waiting_device", "running"}
+                ),
+                loop_datetime_is_unset(ProjectAutomationRun.deleted_at),
+            )
+            .first()
+        )
+        if active_run is not None:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Stop active automation runs before archiving this project",
+            )
         updated = (
             db.query(CloudProject)
             .filter(
@@ -333,7 +349,20 @@ class CloudProjectService:
         if updated != 1:
             db.rollback()
             raise HTTPException(status.HTTP_409_CONFLICT, "Cloud project changed")
+        from app.services.project_automations import project_automation_service
+
+        deleted_rule_count = project_automation_service.delete_project_rules(
+            db,
+            project_id=str(project.id),
+            user_id=user_id,
+        )
         db.commit()
+        logger.info(
+            "Archived cloud project project=%s deleted_automation_rules=%s user=%s",
+            project.id,
+            deleted_rule_count,
+            user_id,
+        )
 
     def list_members(
         self, db: Session, cloud_project_id: int, user_id: int

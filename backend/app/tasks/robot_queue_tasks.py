@@ -27,6 +27,7 @@ from app.core.config import settings
 from app.core.distributed_lock import distributed_lock
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.user import User
+from app.services.device.capacity import get_runtime_capacity
 from app.services.device_service import device_service
 from app.services.loop_item_executions.service import (
     WeworkRuntimeConfigurationError,
@@ -114,6 +115,22 @@ def _fail_dispatch(
     semantics.
     """
 
+    if isinstance(exc, ExecutorSessionStartError):
+        reason = _infra_reason(exc)
+        logger.error(
+            "[RobotQueue] Runtime start outcome is unknown execution=%s "
+            "device=%s error=%s",
+            execution.id,
+            execution.execution_device_id,
+            str(exc)[:300],
+        )
+        loop_item_execution_service.mark_dispatch_unknown(
+            db,
+            execution_id=execution.id,
+            error=str(exc),
+        )
+        ROBOT_QUEUE_INFRA_FAILED_TOTAL.labels(reason=reason).inc()
+        return
     if isinstance(exc, RobotQueueInfraError):
         reason = _infra_reason(exc)
         logger.warning(
@@ -206,9 +223,12 @@ def scan_robot_queue(self) -> dict:
             return {"status": "skipped", "reason": "lock_held_by_another_instance"}
         with get_db_session() as db:
             try:
-                requeued, failed = loop_item_execution_service.recovery_scan(db)
+                requeued, unknown = loop_item_execution_service.recovery_scan(db)
                 ROBOT_QUEUE_RECOVERED_TOTAL.labels(action="requeued").inc(requeued)
-                ROBOT_QUEUE_RECOVERED_TOTAL.labels(action="failed").inc(failed)
+                ROBOT_QUEUE_RECOVERED_TOTAL.labels(action="unknown").inc(unknown)
+                reconciled = _robot_queue_loop().run_until_complete(
+                    _reconcile_stale_executions(db)
+                )
                 stalled = loop_item_execution_service.stall_scan(db)
                 if stalled:
                     logger.warning(
@@ -241,7 +261,8 @@ def scan_robot_queue(self) -> dict:
                 return {
                     "status": "ok",
                     "requeued": requeued,
-                    "failed": failed,
+                    "unknown": unknown,
+                    "reconciled": reconciled,
                     "stalled": len(stalled),
                 }
             except Exception:
@@ -258,9 +279,8 @@ def execute_robot_task(self, execution_id: int) -> dict:
     """Run one claimed cloud execution on its bound device.
 
     The consumer loop only claims (queued -> claimed) and hands the work here;
-    this subtask advances claimed -> running, performs the runtime RPC and
-    writes back. A run that was reclaimed by the lease watchdog in between is
-    skipped instead of double-executed.
+    this subtask records that Start may be delivered, performs the Runtime RPC,
+    and waits for a Runtime event to prove the process actually started.
     """
 
     from app.db.session import get_db_session
@@ -275,19 +295,12 @@ def execute_robot_task(self, execution_id: int) -> dict:
                 "reason": "local executions are claimed by the Wework App",
                 "execution_id": execution_id,
             }
-        advanced = loop_item_execution_service.mark_running(
-            db, execution_ids=[execution_id]
-        )
-        if advanced != 1:
+        if execution.status != "claimed":
             return {
                 "status": "skipped",
                 "reason": "execution is no longer claimed",
                 "execution_id": execution_id,
             }
-        # mark_running updates the row out-of-band; refresh so heartbeat and
-        # dispatch observe the running state instead of the stale claim.
-        db.expire_all()
-        execution = db.get(LoopItemExecution, execution_id)
         try:
             _robot_queue_loop().run_until_complete(_dispatch_execution(db, execution))
             ROBOT_QUEUE_DISPATCHED_TOTAL.inc()
@@ -295,8 +308,13 @@ def execute_robot_task(self, execution_id: int) -> dict:
         except Exception as exc:
             _fail_dispatch(db, execution, exc)
             if isinstance(exc, RobotQueueInfraError):
+                current = db.get(LoopItemExecution, execution_id)
                 return {
-                    "status": "requeued",
+                    "status": (
+                        "unknown"
+                        if current is not None and current.sync_state == "stale"
+                        else "requeued"
+                    ),
                     "reason": _infra_reason(exc),
                     "execution_id": execution_id,
                 }
@@ -386,7 +404,7 @@ def _robot_queue_internal_url() -> str:
 
 
 def emit_runtime_cancels(executions: list[LoopItemExecution]) -> None:
-    """Best-effort stop runtime tasks after their queue rows are cancelled."""
+    """Stop Runtime tasks and commit cancellation only after its ACK."""
 
     import httpx
 
@@ -414,14 +432,28 @@ def emit_runtime_cancels(executions: list[LoopItemExecution]) -> None:
                             "taskId": runtime_task_id,
                             "deviceId": runtime_device_id,
                         },
+                        "wait_ack": True,
+                        "ack_timeout_seconds": 15,
                     },
                 )
-                if response.status_code != 200:
+                result = response.json() if response.status_code == 200 else {}
+                if response.status_code != 200 or not result.get("accepted"):
                     logger.warning(
-                        "[RobotQueue] Runtime cancel emit failed status=%s execution=%s",
+                        "[RobotQueue] Runtime cancel was not confirmed status=%s "
+                        "execution=%s result=%s",
                         response.status_code,
                         execution.id,
+                        str(result)[:500],
                     )
+                    continue
+            from app.db.session import get_db_session
+
+            with get_db_session() as db:
+                loop_item_execution_service.confirm_runtime_cancelled(
+                    db,
+                    execution_id=execution.id,
+                    note="Runtime confirmed cancellation",
+                )
         except Exception:
             logger.exception(
                 "[RobotQueue] Runtime cancel emit failed execution=%s",
@@ -469,6 +501,58 @@ def publish_run_event(device_id: str, runtime_task_id: str, event_name: str) -> 
             runtime_task_id,
             event_name,
         )
+
+
+async def _reconcile_stale_executions(db: Session) -> int:
+    """Query Runtime for stale attempts without guessing from lease expiry."""
+
+    reconciled = 0
+    for execution in loop_item_execution_service.stale_for_reconciliation(db):
+        result = await _emit_runtime_rpc(
+            user_id=execution.executor_owner_user_id,
+            device_id=execution.runtime_device_id,
+            method="runtime.tasks.list",
+            payload={},
+            wait_ack=True,
+        )
+        response = result.get("response")
+        if not result.get("accepted") or not isinstance(response, dict):
+            continue
+        task_snapshot: Optional[dict] = None
+        for workspace in response.get("workspaces", []):
+            if not isinstance(workspace, dict):
+                continue
+            for task in workspace.get("tasks", []):
+                if (
+                    isinstance(task, dict)
+                    and str(task.get("taskId") or task.get("task_id") or "")
+                    == execution.runtime_task_id
+                ):
+                    task_snapshot = task
+                    break
+            if task_snapshot is not None:
+                break
+        if task_snapshot is None:
+            loop_item_execution_service.reconcile_runtime_snapshot(
+                db,
+                execution_id=execution.id,
+                runtime_status="missing",
+                running=False,
+            )
+            continue
+        loop_item_execution_service.reconcile_runtime_snapshot(
+            db,
+            execution_id=execution.id,
+            runtime_status=str(task_snapshot.get("status") or ""),
+            running=bool(task_snapshot.get("running")),
+            turn_status=str(
+                task_snapshot.get("turnStatus")
+                or task_snapshot.get("turn_status")
+                or ""
+            ),
+        )
+        reconciled += 1
+    return reconciled
 
 
 def wait_for_run_event(
@@ -524,29 +608,43 @@ async def _consumer_pass(db: Session) -> int:
     handled = 0
     for owner_user_id, device_id, environment in _queued_devices(db):
         with distributed_lock.acquire_context(
-            f"robot_exec:{owner_user_id}:{environment}:{device_id}",
+            f"robot_exec_owner:{owner_user_id}",
             expire_seconds=ROBOT_DEVICE_LOCK_TIMEOUT,
-        ) as acquired:
-            if not acquired:
+        ) as owner_acquired:
+            if not owner_acquired:
                 continue
-            routing_user_id = await _routing_user_for_device(
-                db, owner_user_id, device_id, environment
-            )
-            if routing_user_id is None:
-                # Device offline or no identity online; leave runs queued.
-                continue
-            capacity = settings.ROBOT_CLOUD_DEVICE_SLOTS
-            executions = loop_item_execution_service.claim_batch_for_device(
+            capacity = await get_runtime_capacity(
                 db,
-                execution_device_id=device_id,
-                environment=environment,
-                device_capacity=capacity,
-                batch_size=ROBOT_CONSUMER_BATCH_SIZE,
                 owner_user_id=owner_user_id,
+                device_id=device_id,
             )
-            for execution in executions:
-                execute_robot_task.apply_async(args=[execution.id])
-            handled += len(executions)
+            if capacity is None:
+                continue
+            with distributed_lock.acquire_context(
+                f"robot_exec:{owner_user_id}:runtime:{capacity.runtime_instance_id}",
+                expire_seconds=ROBOT_DEVICE_LOCK_TIMEOUT,
+            ) as device_acquired:
+                if not device_acquired:
+                    continue
+                routing_user_id = await _routing_user_for_device(
+                    db, owner_user_id, device_id, environment
+                )
+                if routing_user_id is None:
+                    continue
+                executions = loop_item_execution_service.claim_batch_for_device(
+                    db,
+                    execution_device_id=device_id,
+                    environment=environment,
+                    runtime_instance_id=capacity.runtime_instance_id,
+                    device_capacity=capacity.limit,
+                    runtime_active=capacity.active,
+                    runtime_active_task_ids=capacity.active_task_ids,
+                    batch_size=ROBOT_CONSUMER_BATCH_SIZE,
+                    owner_user_id=owner_user_id,
+                )
+                for execution in executions:
+                    execute_robot_task.apply_async(args=[execution.id])
+                handled += len(executions)
     return handled
 
 
@@ -630,8 +728,10 @@ async def _dispatch_execution(
     if routing_user_id is None:
         raise RuntimeError(f"Execution {execution.id} has no routable device owner")
 
-    online = await device_service.get_device_online_info(
-        routing_user_id, execution.execution_device_id
+    capacity = await get_runtime_capacity(
+        db,
+        owner_user_id=routing_user_id,
+        device_id=execution.execution_device_id,
     )
     logger.info(
         "[RobotQueue] Dispatch online check execution=%s device=%s "
@@ -639,10 +739,12 @@ async def _dispatch_execution(
         execution.id,
         execution.execution_device_id,
         routing_user_id,
-        bool(online),
+        bool(capacity),
     )
-    if not online:
-        raise DeviceOfflineError("Device went offline before dispatch")
+    if capacity is None:
+        raise DeviceOfflineError("Device capacity observation expired before dispatch")
+    if capacity.runtime_instance_id != execution.runtime_instance_id:
+        raise DeviceOfflineError("Runtime capacity identity changed before dispatch")
 
     payload = loop_item_execution_service.build_runtime_payload(
         db,
@@ -656,6 +758,15 @@ async def _dispatch_execution(
     if isinstance(execution_request, dict):
         execution_request["task_id"] = task_id
         execution_request["subtask_id"] = f"{task_id}-assistant"
+    advanced = loop_item_execution_service.mark_start_requested(
+        db, execution_ids=[execution.id]
+    )
+    if advanced != 1:
+        raise RuntimeError(f"Execution {execution.id} is no longer dispatchable")
+    db.expire_all()
+    execution = db.get(LoopItemExecution, execution.id)
+    if execution is None:
+        raise RuntimeError("Execution disappeared before Runtime dispatch")
     # Write the runtime ids first so the executor's first event matches this
     # execution, then emit through the uvicorn process (the worker's Socket.IO
     # singleton is bound to a foreign loop). The Socket.IO ACK routing through
@@ -663,12 +774,6 @@ async def _dispatch_execution(
     # the executor's first runtime event (subscribe-before-emit): only a real
     # codex session produces one. A run whose executor never starts the session
     # fails/requeues here instead of showing a fake "AI 执行" comment.
-    loop_item_execution_service.heartbeat(
-        db,
-        execution_id=execution.id,
-        runtime_device_id=execution.execution_device_id,
-        runtime_task_id=task_id,
-    )
     import asyncio
 
     # Start the subscriber before emitting so the executor's first event can
@@ -688,6 +793,10 @@ async def _dispatch_execution(
     )
     if not ack.get("emitted"):
         wait_task.cancel()
+        if ack.get("outcome_unknown"):
+            raise ExecutorSessionStartError(
+                "Runtime RPC delivery outcome is unknown after Start was fenced"
+            )
         raise DeviceEmitRejectedError("Device did not accept the runtime RPC")
     event_name = await wait_task
     if not event_name:
@@ -753,7 +862,10 @@ async def _emit_runtime_rpc(
                     response.status_code,
                     response.text[:500],
                 )
-                return {"emitted": False}
+                return {
+                    "emitted": False,
+                    "outcome_unknown": response.status_code >= 500,
+                }
             return response.json()
     except Exception as exc:
         logger.exception(
@@ -762,7 +874,7 @@ async def _emit_runtime_rpc(
             device_id,
             method,
         )
-        return {"emitted": False}
+        return {"emitted": False, "outcome_unknown": True}
 
 
 async def _device_online(user_id: int, device_id: str) -> bool:

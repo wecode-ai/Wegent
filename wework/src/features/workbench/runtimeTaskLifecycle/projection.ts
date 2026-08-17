@@ -33,6 +33,19 @@ export function normalizeRuntimeTaskSummary(task: RuntimeTaskSummary): RuntimeTa
   }
 }
 
+export function runtimeTaskReconciliationSnapshot(task: RuntimeTaskSummary): {
+  runtimeStatus: string
+  running: boolean
+  turnStatus: string | null
+} {
+  const canonical = normalizeRuntimeTaskSummary(task)
+  return {
+    runtimeStatus: canonical.status ?? '',
+    running: isRuntimeTaskConfirmedActive(canonical),
+    turnStatus: canonical.turnStatus ?? null,
+  }
+}
+
 export function shouldReplaceRuntimeTaskProjection(
   currentTask: RuntimeTaskSummary,
   candidateTask: RuntimeTaskSummary

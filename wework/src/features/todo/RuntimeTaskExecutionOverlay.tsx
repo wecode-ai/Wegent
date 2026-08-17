@@ -12,7 +12,7 @@ import {
   truncateRuntimeTaskTitle,
 } from '@/features/workbench/workbenchRuntimeHelpers'
 import type { RuntimeTaskAddress } from '@/types/api'
-import { executionDisplayStatus } from './executionStatus'
+import { executionDisplayStatus, isExecutionCancellable } from './executionStatus'
 
 export interface RuntimeTaskExecutionOverlayProps {
   address: RuntimeTaskAddress
@@ -46,9 +46,11 @@ export function RuntimeTaskExecutionOverlay({
   const device = state.devices.find(candidate => candidate.device_id === address.deviceId)
   const resolvedModel = modelName ?? runtimeTaskSummary?.modelSelection?.modelName ?? '—'
   const resolvedRunId = runId ?? String(address.taskId)
-  const displayStatus = executionDisplayStatus(runStatus ?? runtimeTaskSummary?.status)
-  const running = session.status.taskExecution.running || displayStatus === 'running'
-  const completed = displayStatus === 'completed'
+  const reportedStatus = runtimeTaskSummary?.status ?? runStatus
+  const displayStatus = session.status.taskExecution.running
+    ? 'running'
+    : (executionDisplayStatus(reportedStatus) ?? 'unknown')
+  const cancellable = isExecutionCancellable(displayStatus)
 
   useEffect(() => {
     const previouslyFocused = document.activeElement as HTMLElement | null
@@ -81,18 +83,51 @@ export function RuntimeTaskExecutionOverlay({
     }
   }
 
-  const statusContent =
-    running || !completed ? (
+  const statusContent = (() => {
+    if (displayStatus === 'succeeded') {
+      return (
+        <>
+          <Check className="h-3 w-3" />
+          {t('workbench.queue_state_succeeded')}
+        </>
+      )
+    }
+    if (displayStatus === 'failed') {
+      return (
+        <>
+          <X className="h-3 w-3" />
+          {t('workbench.queue_state_failed')}
+        </>
+      )
+    }
+    if (displayStatus === 'cancelled' || displayStatus === 'skipped') {
+      return (
+        <>
+          <Square className="h-3 w-3" />
+          {t(
+            displayStatus === 'cancelled'
+              ? 'workbench.queue_state_cancelled'
+              : 'workbench.queue_state_skipped'
+          )}
+        </>
+      )
+    }
+    const labelKey = {
+      waiting_approval: 'workbench.queue_state_pending_approval',
+      queued: 'workbench.queue_state_queued',
+      starting: 'workbench.queue_state_starting',
+      waiting_runtime: 'workbench.queue_state_waiting_runtime',
+      running: 'workbench.queue_state_running',
+      cancelling: 'workbench.queue_state_cancelling',
+      unknown: 'workbench.queue_state_unknown',
+    }[displayStatus]
+    return (
       <>
         <LoaderCircle className="h-3 w-3 animate-spin" />
-        {t('workbench.project_chat_processing')}
-      </>
-    ) : (
-      <>
-        <Check className="h-3 w-3" />
-        {t('workbench.project_chat_completed')}
+        {t(labelKey)}
       </>
     )
+  })()
 
   const statusClassName = 'bg-muted text-text-secondary'
 
@@ -178,7 +213,7 @@ export function RuntimeTaskExecutionOverlay({
         </div>
 
         <footer className="flex flex-none items-center gap-3 border-t border-border/50 px-6 py-3">
-          {running ? (
+          {cancellable ? (
             <button
               type="button"
               data-testid="runtime-execution-detail-stop"
