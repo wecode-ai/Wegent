@@ -468,6 +468,7 @@ async fn runtime_task_list_groups_threads_under_open_workspace_roots() {
     assert_eq!(workspace["updatedAt"], 1780000060000_i64);
     assert_eq!(workspace["tasks"][0]["createdAt"], 1780000000000_i64);
     assert_eq!(workspace["tasks"][0]["updatedAt"], 1780000060000_i64);
+    assert!(workspace["tasks"][0]["sidebarOrder"].is_null());
 }
 
 #[tokio::test]

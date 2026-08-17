@@ -43,6 +43,40 @@ describe('runtimeTaskSidebarHelpers', () => {
     ])
   })
 
+  test('sorts tasks without manual order by latest activity', () => {
+    const workspace: RuntimeDeviceWorkspace = {
+      deviceId: 'device-1',
+      workspacePath: '/workspace/chats',
+      workspaceKind: 'chat',
+      available: true,
+      tasks: [
+        {
+          taskId: 'recently-reactivated',
+          workspacePath: '/workspace/chats/recently-reactivated',
+          workspaceKind: 'chat',
+          title: 'Recently reactivated',
+          runtime: 'codex',
+          createdAt: '2026-08-01T02:00:00.000Z',
+          updatedAt: '2026-08-17T02:00:00.000Z',
+        },
+        {
+          taskId: 'previously-first',
+          workspacePath: '/workspace/chats/previously-first',
+          workspaceKind: 'chat',
+          title: 'Previously first',
+          runtime: 'codex',
+          createdAt: '2026-08-16T02:00:00.000Z',
+          updatedAt: '2026-08-16T02:00:00.000Z',
+        },
+      ],
+    }
+
+    expect(getRuntimeChatSidebarTaskItems([workspace]).map(item => item.task.taskId)).toEqual([
+      'recently-reactivated',
+      'previously-first',
+    ])
+  })
+
   test('keeps the current task visible beyond the collapsed ordered task list', () => {
     const workspace: RuntimeDeviceWorkspace = {
       deviceId: 'device-1',
@@ -308,7 +342,7 @@ describe('runtimeTaskSidebarHelpers', () => {
     ])
   })
 
-  test('keeps a resumed task in place while its latest turn is streaming', () => {
+  test('moves a resumed task to the top while its latest turn is streaming', () => {
     const workspace: RuntimeDeviceWorkspace = {
       deviceId: 'device-1',
       workspacePath: '/workspace/repo',
@@ -338,12 +372,12 @@ describe('runtimeTaskSidebarHelpers', () => {
     }
 
     expect(getRuntimeSidebarTaskItems([workspace]).map(item => item.task.taskId)).toEqual([
-      'completed',
       'running',
+      'completed',
     ])
   })
 
-  test('moves a streaming task only after its latest turn completes', () => {
+  test('keeps a recently updated task first after its latest turn completes', () => {
     const workspace: RuntimeDeviceWorkspace = {
       deviceId: 'device-1',
       workspacePath: '/workspace/repo',
@@ -373,8 +407,8 @@ describe('runtimeTaskSidebarHelpers', () => {
     }
 
     expect(getRuntimeSidebarTaskItems([workspace]).map(item => item.task.taskId)).toEqual([
-      'idle',
       'streaming',
+      'idle',
     ])
 
     workspace.tasks[0] = {
