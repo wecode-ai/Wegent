@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import hashlib
-import io
 import logging
 import tempfile
 import uuid
@@ -16,7 +15,7 @@ from typing import Any, BinaryIO
 
 from fastapi import HTTPException, status
 from sqlalchemy import func, or_, select
-from sqlalchemy.orm import Session, aliased
+from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.cloud_project import (
@@ -673,26 +672,6 @@ class LoopItemService:
             .all()
         )
 
-    def list_project_attachments(
-        self, db: Session, cloud_project_id: int, user_id: int
-    ) -> list[tuple[LoopItemAttachment, LoopItem]]:
-        require_cloud_project_role(db, cloud_project_id, user_id)
-        attachment = aliased(LoopItemAttachment)
-        item = aliased(LoopItem)
-        return (
-            db.query(attachment, item)
-            .join(item, item.id == attachment.loop_item_id)
-            .filter(
-                item.cloud_project_id == str(cloud_project_id),
-                loop_datetime_is_unset(item.deleted_at),
-            )
-            .order_by(
-                attachment.created_at.desc(),
-                item.sequence_number,
-            )
-            .all()
-        )
-
     def add_attachment(
         self,
         db: Session,
@@ -717,106 +696,6 @@ class LoopItemService:
             content_type,
             source,
             settings.DELIVERY_MAX_ASSET_SIZE_MB,
-        )
-
-    def import_context_attachments(
-        self,
-        db: Session,
-        item_id: str,
-        user_id: int,
-        context_ids: list[int],
-    ) -> list[LoopItemAttachment]:
-        """Copy uploaded conversation attachments into the task attachment store."""
-
-        from app.services.context import context_service
-        from app.services.context.context_service import NotFoundException
-
-        item = self.get(db, item_id, user_id)
-        self._require_item_access(db, item, user_id, edit=True)
-        project = db.get(CloudProject, item.cloud_project_id)
-        if project is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Cloud project not found")
-
-        existing = {
-            int((attachment.metadata_json or {}).get("source_context_id"))
-            for attachment in self.list_attachments(db, item_id, user_id)
-            if isinstance(attachment.metadata_json, dict)
-            and attachment.metadata_json.get("source_context_id") is not None
-        }
-        imported: list[LoopItemAttachment] = []
-        for context_id in context_ids:
-            if context_id in existing:
-                continue
-            try:
-                context = context_service.get_context(db, context_id, user_id)
-            except NotFoundException as exc:
-                raise HTTPException(
-                    status.HTTP_404_NOT_FOUND, "Attachment context not found"
-                ) from exc
-            if context.context_type != "attachment" or context.status != "ready":
-                raise HTTPException(
-                    status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    "Attachment context is not ready",
-                )
-            binary_data = context_service.get_attachment_binary_data(db, context)
-            if binary_data is None:
-                raise HTTPException(
-                    status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    "Attachment content is unavailable",
-                )
-            attachment = self._store_attachment(
-                db,
-                item,
-                project,
-                user_id,
-                context.original_filename,
-                context.mime_type or "application/octet-stream",
-                io.BytesIO(binary_data),
-                settings.DELIVERY_MAX_ASSET_SIZE_MB,
-                metadata={"source_context_id": context.id},
-            )
-            imported.append(attachment)
-        return imported
-
-    def add_generated_image_attachment(
-        self,
-        db: Session,
-        item_id: str,
-        user_id: int,
-        display_name: str,
-        content_type: str,
-        data: bytes,
-        source_call_id: str,
-    ) -> LoopItemAttachment:
-        """Persist one AI-generated image as a task attachment."""
-
-        item = self.get(db, item_id, user_id)
-        self._require_item_access(db, item, user_id, edit=True)
-        project = db.get(CloudProject, item.cloud_project_id)
-        if project is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Cloud project not found")
-
-        existing = next(
-            (
-                attachment
-                for attachment in self.list_attachments(db, item_id, user_id)
-                if isinstance(attachment.metadata_json, dict)
-                and attachment.metadata_json.get("source_call_id") == source_call_id
-            ),
-            None,
-        )
-        if existing is not None:
-            return existing
-        return self._store_attachment(
-            db,
-            item,
-            project,
-            user_id,
-            display_name,
-            content_type,
-            io.BytesIO(data),
-            settings.DELIVERY_MAX_ASSET_SIZE_MB,
-            metadata={"source_call_id": source_call_id},
         )
 
     def has_attachment(self, db: Session, item_id: str, display_name: str) -> bool:
@@ -868,7 +747,6 @@ class LoopItemService:
         content_type: str,
         source: BinaryIO,
         max_size_mb: int,
-        metadata: dict[str, Any] | None = None,
     ) -> LoopItemAttachment:
 
         attachment_id = str(uuid.uuid4())
@@ -900,7 +778,6 @@ class LoopItemService:
             size_bytes=length,
             sha256=digest.hexdigest(),
             created_by_user_id=user_id,
-            metadata_json=metadata,
         )
         try:
             db.add(attachment)

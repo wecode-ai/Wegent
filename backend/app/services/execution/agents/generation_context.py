@@ -93,26 +93,6 @@ def resolve_generation_context(
     )
 
 
-def resolve_project_space_loop_item_id(
-    db: Session,
-    token_info: TaskTokenInfo,
-) -> str | None:
-    """Return the board task id recorded on a project-space runtime task."""
-
-    task = task_store.get_non_deleted_task(
-        db,
-        task_id=token_info.task_id,
-        owner_user_id=token_info.user_id,
-    )
-    if not task:
-        return None
-    labels = (task.json or {}).get("metadata", {}).get("labels", {})
-    if not isinstance(labels, dict):
-        return None
-    loop_item_id = labels.get("weworkProjectSpaceLoopItemId")
-    return str(loop_item_id) if loop_item_id is not None else None
-
-
 def resolve_generation_model(
     db: Session,
     context: GenerationContext,

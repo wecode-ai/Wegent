@@ -3979,44 +3979,6 @@ def test_runtime_model_override_falls_back_to_request_model_id_for_unknown_model
     assert force_override is False
 
 
-def test_runtime_task_context_records_project_space_origin_labels(
-    test_db,
-    test_user,
-):
-    from app.schemas.runtime_work import RuntimeTaskCreateRequest
-    from app.services import runtime_work_service
-
-    request = RuntimeTaskCreateRequest(
-        teamId=1,
-        runtime="codex",
-        message="hello",
-        origin={
-            "type": "board_comment",
-            "cloudProjectId": "896185331840201807",
-            "loopItemId": "GW-1",
-            "rootCommentId": "comment-1",
-        },
-    )
-    target = runtime_work_service.RuntimeTaskTarget(
-        device_id="device-1",
-        workspace_path="/repo/Wegent",
-    )
-    team = SimpleNamespace(name="runtime-team", namespace="default")
-
-    context = runtime_work_service._runtime_task_context(
-        user_id=test_user.id,
-        task_id=1,
-        request=request,
-        target=target,
-        team=team,
-    )
-
-    labels = context.json["metadata"]["labels"]
-    assert labels["weworkProjectSpaceLoopItemId"] == "GW-1"
-    assert labels["weworkProjectSpaceCloudProjectId"] == "896185331840201807"
-    assert "projectId" not in labels
-
-
 def _runtime_team_with_bot(test_db, user_id: int) -> Kind:
     """Create a minimal Team + Bot + Shell + Ghost for runtime request building."""
     model = _codex_provider_model(

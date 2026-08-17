@@ -14,6 +14,7 @@ from fastapi import (
     UploadFile,
     status,
 )
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -38,11 +39,7 @@ from app.schemas.cloud_project import (
     CloudProjectResponse,
     CloudProjectUpdate,
 )
-from app.schemas.delivery import (
-    LoopItemResponse,
-    ProjectLoopItemAttachmentListResponse,
-    ProjectLoopItemAttachmentResponse,
-)
+from app.schemas.delivery import LoopItemResponse
 from app.schemas.project_chat import (
     LoopItemApproval,
     LoopItemAssign,
@@ -406,31 +403,6 @@ def list_project_delivery_files(
     )
 
 
-@router.get(
-    "/{project_id}/task-attachments",
-    response_model=ProjectLoopItemAttachmentListResponse,
-)
-def list_project_task_attachments(
-    project_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> ProjectLoopItemAttachmentListResponse:
-    """List attachments created by task conversations and task editors."""
-
-    rows = loop_item_service.list_project_attachments(db, project_id, current_user.id)
-    return ProjectLoopItemAttachmentListResponse(
-        items=[
-            ProjectLoopItemAttachmentResponse.model_validate(
-                {
-                    **attachment.__dict__,
-                    "loop_item_title": item.title or item.name or item.id,
-                }
-            )
-            for attachment, item in rows
-        ]
-    )
-
-
 @router.post(
     "/{project_id}/folders",
     response_model=CloudFileResponse,
@@ -479,6 +451,22 @@ def access_cloud_file(
 ) -> CloudFileAccessResponse:
     return CloudFileAccessResponse(
         url=cloud_file_service.access_url(db, file_id, current_user.id)
+    )
+
+
+@router.get("/files/{file_id}/content")
+def read_cloud_file(
+    file_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    content, content_type, filename = cloud_file_service.read_content(
+        db, file_id, current_user.id
+    )
+    return Response(
+        content=content,
+        media_type=content_type,
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
     )
 
 

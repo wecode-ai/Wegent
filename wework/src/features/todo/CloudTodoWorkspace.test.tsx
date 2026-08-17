@@ -254,6 +254,7 @@ function services(overrides: Partial<WorkbenchServices> = {}): WorkbenchServices
       searchCloudProjectUsers: vi.fn(async () => ({ users: [], total: 0 })),
       listCloudFiles: vi.fn(async () => ({ items: [] })),
       listProjectDeliveryFiles: vi.fn(async () => ({ items: [] })),
+      listProjectTaskAttachments: vi.fn(async () => ({ items: [] })),
       createCloudFolder: vi.fn(async (_projectId: number, path: string) => ({
         id: 51,
         cloud_project_id: 11,

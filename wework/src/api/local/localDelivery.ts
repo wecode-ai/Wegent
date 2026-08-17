@@ -930,6 +930,13 @@ export function createLocalDeliveryApi(
         })
       )
     },
+    async readLoopItemAttachment(attachmentId: string) {
+      const access = await request<LocalAccessRecord>('attachments.access', {
+        attachment_id: attachmentId,
+      })
+      const [file] = await readDroppedFiles([access.path])
+      return file
+    },
     async downloadLoopItemAttachment(attachmentId: string) {
       const access = await request<LocalAccessRecord>('attachments.access', {
         attachment_id: attachmentId,
@@ -1099,10 +1106,22 @@ export function createLocalDeliveryApi(
     async accessCloudFile(fileId: string) {
       return localAccess(await request<LocalAccessRecord>('files.access', { file_id: fileId }))
     },
+    async readCloudFile(fileId: string) {
+      const access = await request<LocalAccessRecord>('files.access', { file_id: fileId })
+      const [file] = await readDroppedFiles([access.path])
+      return file
+    },
     async accessDeliveryFile(assetId: string) {
       return localAccess(
         await request<LocalAccessRecord>('deliveries.access_asset', { asset_id: assetId })
       )
+    },
+    async readDeliveryFile(assetId: string) {
+      const access = await request<LocalAccessRecord>('deliveries.access_asset', {
+        asset_id: assetId,
+      })
+      const [file] = await readDroppedFiles([access.path])
+      return file
     },
     async moveCloudFile(fileId: string, path: string, version: number) {
       const record = await request<LocalProjectFileRecord>('files.move', {

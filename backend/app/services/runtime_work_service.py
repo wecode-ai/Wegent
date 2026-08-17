@@ -3747,16 +3747,6 @@ def _runtime_task_context(
 ) -> SimpleNamespace:
     title = _runtime_task_title(request)
     workspace_spec = _runtime_workspace_spec(request, target)
-    labels: dict[str, str] = (
-        {"projectId": str(target.project.id)} if target.project else {}
-    )
-    if isinstance(request.origin, dict):
-        loop_item_id = request.origin.get("loopItemId")
-        cloud_project_id = request.origin.get("cloudProjectId")
-        if loop_item_id is not None:
-            labels["weworkProjectSpaceLoopItemId"] = str(loop_item_id)
-        if cloud_project_id is not None:
-            labels["weworkProjectSpaceCloudProjectId"] = str(cloud_project_id)
     return SimpleNamespace(
         id=task_id,
         user_id=user_id,
@@ -3772,7 +3762,9 @@ def _runtime_task_context(
             "metadata": {
                 "name": f"runtime-{task_id}",
                 "namespace": "default",
-                "labels": labels,
+                "labels": (
+                    {"projectId": str(target.project.id)} if target.project else {}
+                ),
             },
             "spec": {
                 "title": title,

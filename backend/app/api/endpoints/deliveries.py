@@ -33,7 +33,6 @@ from app.schemas.delivery import (
     DeliveryListResponse,
     DeliveryResponse,
     LoopItemAttachmentAccessResponse,
-    LoopItemAttachmentImport,
     LoopItemAttachmentResponse,
     LoopItemCollaboratorCreate,
     LoopItemCollaboratorResponse,
@@ -458,31 +457,6 @@ def add_loop_item_attachment(
     return LoopItemAttachmentResponse.model_validate(attachment)
 
 
-@router.post(
-    "/loop-items/{item_id}/attachments/import-contexts",
-    response_model=list[LoopItemAttachmentResponse],
-    status_code=status.HTTP_201_CREATED,
-)
-def import_loop_item_attachments(
-    item_id: str,
-    values: LoopItemAttachmentImport,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> list[LoopItemAttachmentResponse]:
-    """Copy uploaded conversation contexts into the task attachment store."""
-
-    attachments = loop_item_service.import_context_attachments(
-        db,
-        item_id,
-        current_user.id,
-        values.context_ids,
-    )
-    return [
-        LoopItemAttachmentResponse.model_validate(attachment)
-        for attachment in attachments
-    ]
-
-
 @router.get(
     "/loop-item-attachments/{attachment_id}/access",
     response_model=LoopItemAttachmentAccessResponse,
@@ -623,6 +597,22 @@ def access_delivery_asset(
 ) -> DeliveryAssetAccessResponse:
     return DeliveryAssetAccessResponse(
         url=delivery_service.access_asset_url(db, asset_id, current_user.id)
+    )
+
+
+@router.get("/delivery-assets/{asset_id}/content")
+def read_delivery_asset(
+    asset_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    content, content_type, filename = delivery_service.read_asset_content(
+        db, asset_id, current_user.id
+    )
+    return Response(
+        content=content,
+        media_type=content_type,
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
     )
 
 

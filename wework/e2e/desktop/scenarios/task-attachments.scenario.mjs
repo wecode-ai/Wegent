@@ -8,7 +8,8 @@ const PROJECT = {
   public_id: 'e2e-task-attachments',
   project_key: 'TA',
   name: '任务附件验收',
-  description: '任务对话附件统一展示验收',
+  description: '远程项目仅在显式交付后共享文件',
+  project_store: 'backend',
   created_by_user_id: 9001,
   status: 'active',
   version: 1,
@@ -23,7 +24,7 @@ const TASK = {
   parent_id: null,
   created_by_user_id: 9001,
   assignee_user_id: null,
-  assignee_agent_id: 'agent-task-attachments',
+  assignee_agent_id: null,
   title: '整理附件',
   description: '',
   status: 'inbox',
@@ -50,18 +51,16 @@ const AGENT = {
   updatedAt: '2026-08-17T00:00:00',
 }
 
-const TASK_ATTACHMENT = {
-  id: 'task-attachment-1',
-  loop_item_id: TASK.id,
-  loop_item_title: TASK.title,
-  display_name: 'conversation-image.png',
-  content_type: 'image/png',
+const DELIVERY_FILE = {
+  asset_id: 'delivery-asset-1',
+  delivery_id: 'delivery-1',
+  loop_item_id: 'TA-1',
+  loop_item_title: '整理附件',
+  relative_path: 'reports/result.pdf',
+  display_name: 'result.pdf',
+  content_type: 'application/pdf',
   size_bytes: 256,
-  sha256: 'e2e-task-attachment-sha',
-  created_by_user_id: 9001,
-  created_at: '2026-08-17T10:00:00',
-  markdown_url: 'wegent://attachments/task-attachment-1',
-  markdown: '[conversation-image.png](wegent://attachments/task-attachment-1)',
+  delivered_at: '2026-08-17T10:00:00',
 }
 
 function json(response, status, body) {
@@ -70,8 +69,6 @@ function json(response, status, body) {
 }
 
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
-  let taskAttachmentListRequests = 0
-
   return {
     async handleHttp(request, response, url) {
       if (request.method !== 'GET') return false
@@ -107,18 +104,18 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         /^\/api\/v1\/cloud-projects\/([^/]+)\/delivery-files$/
       )
       if (deliveryFilesMatch) {
-        json(response, 200, { items: [] })
+        json(response, 200, {
+          items: deliveryFilesMatch[1] === PROJECT.id ? [DELIVERY_FILE] : [],
+        })
         return true
       }
 
-      const taskAttachmentsMatch = url.pathname.match(
-        /^\/api\/v1\/cloud-projects\/([^/]+)\/task-attachments$/
+      const deliveryFileContentMatch = url.pathname.match(
+        /^\/api\/v1\/delivery-assets\/([^/]+)\/content$/
       )
-      if (taskAttachmentsMatch) {
-        taskAttachmentListRequests += 1
-        json(response, 200, {
-          items: taskAttachmentsMatch[1] === PROJECT.id ? [TASK_ATTACHMENT] : [],
-        })
+      if (deliveryFileContentMatch) {
+        response.writeHead(200, { 'content-type': 'application/pdf' })
+        response.end('result')
         return true
       }
 
@@ -138,33 +135,52 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         timeoutMs: uiTimeoutMs,
       })
       await control.command('click', `[data-testid="cloud-sidebar-project-${PROJECT.id}"]`)
-      await control.command('waitFor', `[data-testid="cloud-todo-card-${TASK.id}"]`, {
+      await control.command('waitFor', `[data-testid="cloud-todo-card-TA-1"]`, {
         timeoutMs: uiTimeoutMs,
       })
 
       await control.command('click', '[data-testid="cloud-project-files-view"]')
-      await control.command('waitFor', `[data-testid="task-attachment-${TASK_ATTACHMENT.id}"]`, {
+      await control.command('waitFor', `[data-testid="delivery-file-${DELIVERY_FILE.asset_id}"]`, {
         timeoutMs: uiTimeoutMs,
       })
 
-      const attachmentText = await control.command(
+      const deliveryText = await control.command(
         'getText',
-        `[data-testid="task-attachment-${TASK_ATTACHMENT.id}"]`
+        `[data-testid="delivery-file-${DELIVERY_FILE.asset_id}"]`
       )
-      assert.match(attachmentText, /TA-1/)
-      assert.match(attachmentText, /整理附件/)
-      assert.match(attachmentText, /conversation-image\.png/)
-      assert.equal(taskAttachmentListRequests, 1, 'Task attachments should be loaded once')
+      assert.match(deliveryText, /TA-1/)
+      assert.match(deliveryText, /整理附件/)
+      assert.match(deliveryText, /reports\/result\.pdf/)
+
+      const taskAttachmentCount = Number(
+        await control.command('getElementCount', '[data-testid^="task-attachment-"]', {
+          visible: true,
+        })
+      )
+      assert.equal(taskAttachmentCount, 0, 'Remote projects must not expose raw task attachments')
+
+      await control.command(
+        'click',
+        `[data-testid="delivery-file-preview-${DELIVERY_FILE.asset_id}"]`
+      )
+      await control.command('waitFor', '[data-testid="cloud-file-preview-sidebar"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      const previewTitle = await control.command(
+        'getText',
+        '[data-testid="cloud-file-preview-title"]'
+      )
+      assert.match(previewTitle, /reports\/result\.pdf/)
 
       await captureScreenshot(
         control,
-        'task-attachments-01-files-view.png',
+        'task-attachments-remote-delivery-only.png',
         ACTIVE_WORKBENCH_SELECTOR
       )
     },
 
     diagnostics() {
-      return { taskAttachmentListRequests }
+      return {}
     },
   }
 }

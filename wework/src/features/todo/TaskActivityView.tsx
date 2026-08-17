@@ -625,7 +625,7 @@ export function TaskActivityView({
   }
 
   async function persistConversationAttachments(attachments: Attachment[]) {
-    if (!projectDeliveryApi || attachments.length === 0) return
+    if (projectLocation !== 'local' || !projectDeliveryApi || attachments.length === 0) return
     try {
       await projectDeliveryApi.importLoopItemAttachments(task.id, attachments)
     } catch (cause) {

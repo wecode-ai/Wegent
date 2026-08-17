@@ -1,13 +1,38 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { CloudFilesView } from './CloudFilesView'
+
+vi.mock('@/components/layout/workspace-panels/WorkspaceFilePreview', () => ({
+  WorkspaceFilePreview: ({
+    file,
+    binaryFile,
+    loading,
+    error,
+    onRetry,
+  }: {
+    file?: { name: string } | null
+    binaryFile?: { name: string } | null
+    loading: boolean
+    error?: string | null
+    onRetry: () => void
+  }) => (
+    <div data-testid="cloud-file-preview-content">
+      <span data-testid="cloud-file-preview-name">{file?.name ?? binaryFile?.name}</span>
+      <span data-testid="cloud-file-preview-loading">{String(loading)}</span>
+      {error ? <span data-testid="cloud-file-preview-error">{error}</span> : null}
+      <button type="button" data-testid="cloud-file-preview-retry" onClick={onRetry} />
+    </div>
+  ),
+}))
 
 const project = {
   id: 13,
   public_id: 'project-13',
   project_key: 'CLOUD',
   name: 'Cloud project',
+  project_store: 'local',
   description: '',
   created_by_user_id: 1,
   status: 'active',
@@ -64,5 +89,59 @@ describe('CloudFilesView', () => {
     expect(screen.getByTestId('task-attachment-attachment-1')).toHaveTextContent(
       'conversation-image.png'
     )
+  })
+
+  it('does not show raw task attachments for remote projects', async () => {
+    const listProjectTaskAttachments = vi.fn(async () => ({ items: [] }))
+    const api = {
+      listCloudFiles: vi.fn(async () => ({ items: [] })),
+      listProjectDeliveryFiles: vi.fn(async () => ({ items: [] })),
+      listProjectTaskAttachments,
+    } as unknown as NonNullable<WorkbenchServices['deliveryApi']>
+
+    render(<CloudFilesView api={api} project={{ ...project, project_store: 'backend' }} />)
+
+    await screen.findByTestId('cloud-files-upload')
+    expect(listProjectTaskAttachments).not.toHaveBeenCalled()
+    expect(screen.queryByText('任务附件')).not.toBeInTheDocument()
+  })
+
+  it('opens shared files in the reusable right-side preview component', async () => {
+    const readCloudFile = vi.fn(async () => new Blob(['# Notes'], { type: 'text/markdown' }))
+    const api = {
+      listCloudFiles: vi.fn(async () => ({
+        items: [
+          {
+            id: 'file-1',
+            cloud_project_id: 13,
+            path: 'research/notes.md',
+            name: 'notes.md',
+            kind: 'file',
+            content_type: 'text/markdown',
+            size_bytes: 7,
+            sha256: null,
+            description: '',
+            created_by_user_id: 1,
+            updated_by_user_id: 1,
+            version: 1,
+            created_at: '2026-07-22T00:00:00Z',
+            updated_at: '2026-07-22T00:00:00Z',
+          },
+        ],
+      })),
+      listProjectDeliveryFiles: vi.fn(async () => ({ items: [] })),
+      listProjectTaskAttachments: vi.fn(async () => ({ items: [] })),
+      readCloudFile,
+    } as unknown as NonNullable<WorkbenchServices['deliveryApi']>
+
+    render(<CloudFilesView api={api} project={project} />)
+
+    await userEvent.click(await screen.findByTestId('cloud-file-preview-file-1'))
+    expect(await screen.findByTestId('cloud-file-preview-title')).toHaveTextContent(
+      'research/notes.md'
+    )
+    await waitFor(() => expect(readCloudFile).toHaveBeenCalledWith('file-1'))
+    expect(await screen.findByTestId('cloud-file-preview-name')).toHaveTextContent('notes.md')
+    expect(screen.getByTestId('cloud-file-preview-loading')).toHaveTextContent('false')
   })
 })

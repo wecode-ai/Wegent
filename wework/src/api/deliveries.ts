@@ -909,8 +909,14 @@ export function createDeliveryApi(client: HttpClient) {
     accessCloudFile(fileId: string): Promise<{ url: string; expires_in_seconds: number }> {
       return client.get(`/v1/cloud-projects/files/${fileId}/access`)
     },
+    readCloudFile(fileId: string): Promise<Blob> {
+      return client.getBlob(`/v1/cloud-projects/files/${fileId}/content`)
+    },
     accessDeliveryFile(assetId: string): Promise<{ url: string; expires_in_seconds: number }> {
       return client.get(`/v1/delivery-assets/${encodeURIComponent(assetId)}/access`)
+    },
+    readDeliveryFile(assetId: string): Promise<Blob> {
+      return client.getBlob(`/v1/delivery-assets/${encodeURIComponent(assetId)}/content`)
     },
     moveCloudFile(fileId: string, path: string, version: number): Promise<CloudProjectFile> {
       return client.patch(`/v1/cloud-projects/files/${fileId}`, { path, version })
