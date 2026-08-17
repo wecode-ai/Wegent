@@ -624,6 +624,19 @@ export function TaskActivityView({
     }
   }
 
+  async function persistConversationAttachments(attachments: Attachment[]) {
+    if (!projectDeliveryApi || attachments.length === 0) return
+    try {
+      await projectDeliveryApi.importLoopItemAttachments(task.id, attachments)
+    } catch (cause) {
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : t('workbench.task_activity_attachment_persist_failed')
+      )
+    }
+  }
+
   async function sendCardReply(
     card: {
       root: ProjectChatMessage
@@ -660,6 +673,7 @@ export function TaskActivityView({
       followCardRef.current = rootId
       setMessages(current => mergeProjectChatMessages(current, [message]))
       setCardAiErrors(current => ({ ...current, [rootId]: '' }))
+      void persistConversationAttachments(attachments)
       if (assignedAgent && !selfManagedExecution) {
         // The comment is already posted; keep the input cleared and let the
         // AI start settle in the background, surfacing failures in the card.
@@ -735,6 +749,7 @@ export function TaskActivityView({
       setNewCommentDraft('')
       attachmentSelection.resetAttachments()
       scrollTaskCommentsToTop()
+      void persistConversationAttachments(attachments)
       if (assignedAgent && !selfManagedExecution) {
         await startTaskAiRun({
           client,

@@ -256,6 +256,18 @@ class LoopItemAttachmentAccessResponse(BaseModel):
     expires_in_seconds: int
 
 
+class ProjectLoopItemAttachmentResponse(LoopItemAttachmentResponse):
+    loop_item_title: str
+
+
+class ProjectLoopItemAttachmentListResponse(BaseModel):
+    items: list[ProjectLoopItemAttachmentResponse]
+
+
+class LoopItemAttachmentImport(BaseModel):
+    context_ids: list[int] = Field(min_length=1)
+
+
 class MyWorkItemResponse(LoopItemResponse):
     project_key: str
     project_name: str

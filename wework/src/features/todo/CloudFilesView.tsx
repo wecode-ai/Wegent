@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Download, File, Folder, FolderPlus, Pencil, Trash2, Upload } from 'lucide-react'
-import type { CloudProject, CloudProjectFile, ProjectDeliveryFile } from '@/api/deliveries'
+import type {
+  CloudProject,
+  CloudProjectFile,
+  ProjectDeliveryFile,
+  ProjectTaskAttachment,
+} from '@/api/deliveries'
 import { Tooltip } from '@/components/ui/tooltip'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -13,6 +18,7 @@ export function CloudFilesView({ api, project }: { api: DeliveryApi; project: Cl
   const { t } = useTranslation('common')
   const [files, setFiles] = useState<CloudProjectFile[]>([])
   const [deliveryFiles, setDeliveryFiles] = useState<ProjectDeliveryFile[]>([])
+  const [taskAttachments, setTaskAttachments] = useState<ProjectTaskAttachment[]>([])
   const [folderName, setFolderName] = useState('')
   const [creatingFolder, setCreatingFolder] = useState(false)
   const [uploadingCount, setUploadingCount] = useState(0)
@@ -21,10 +27,15 @@ export function CloudFilesView({ api, project }: { api: DeliveryApi; project: Cl
   const [editingPath, setEditingPath] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
   const refresh = useCallback(() => {
-    void Promise.all([api.listCloudFiles(project.id), api.listProjectDeliveryFiles(project.id)])
-      .then(([shared, delivered]) => {
+    void Promise.all([
+      api.listCloudFiles(project.id),
+      api.listProjectDeliveryFiles(project.id),
+      api.listProjectTaskAttachments(project.id),
+    ])
+      .then(([shared, delivered, taskAttachments]) => {
         setFiles(shared.items)
         setDeliveryFiles(delivered.items)
+        setTaskAttachments(taskAttachments.items)
       })
       .catch(cause => setError(cause instanceof Error ? cause.message : '加载文件失败'))
   }, [api, project.id])
@@ -84,6 +95,17 @@ export function CloudFilesView({ api, project }: { api: DeliveryApi; project: Cl
       track('feature_action_completed', { action: 'open', domain: 'project_space_file' })
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '打开交付文件失败')
+      track('operation_failed', { operation: 'project_space_file_action' })
+    }
+  }
+
+  async function openTaskAttachment(entry: ProjectTaskAttachment) {
+    setError(null)
+    try {
+      await api.downloadLoopItemAttachment(entry.id, entry.display_name)
+      track('feature_action_completed', { action: 'open', domain: 'project_space_file' })
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('todo.open_task_attachment_failed'))
       track('operation_failed', { operation: 'project_space_file_action' })
     }
   }
@@ -299,6 +321,79 @@ export function CloudFilesView({ api, project }: { api: DeliveryApi; project: Cl
             ))
           )}
         </div>
+        <section className="mt-8">
+          <div className="flex items-baseline gap-2.5">
+            <h3 className="text-base font-semibold text-text-primary">
+              {t('todo.task_attachments')}
+            </h3>
+            <span className="text-xs text-text-muted">
+              {t('todo.task_attachments_description')}
+            </span>
+          </div>
+          <div className="mt-3 overflow-hidden rounded-2xl border border-border bg-background shadow-sm">
+            <div className="grid h-10 grid-cols-[240px_minmax(0,1fr)_120px_120px_80px_40px] items-center bg-muted/30 px-4 text-xs text-text-muted">
+              <span>{t('todo.task_attachment_task')}</span>
+              <span>{t('todo.task_attachment_name')}</span>
+              <span>{t('todo.task_attachment_type')}</span>
+              <span>{t('todo.task_attachment_uploaded_at')}</span>
+              <span>{t('todo.task_attachment_size')}</span>
+              <span />
+            </div>
+            {taskAttachments.length === 0 ? (
+              <div className="flex h-24 items-center justify-center text-sm text-text-muted">
+                {t('todo.task_attachments_empty')}
+              </div>
+            ) : (
+              taskAttachments.map(entry => (
+                <div
+                  key={entry.id}
+                  data-testid={`task-attachment-${entry.id}`}
+                  className="grid min-h-12 grid-cols-[240px_minmax(0,1fr)_120px_120px_80px_40px] items-center border-t border-border px-4 text-xs transition-colors hover:bg-muted/60"
+                >
+                  <Tooltip
+                    label={`${entry.loop_item_id} · ${entry.loop_item_title}`}
+                    align="start"
+                    className="min-w-0 shrink"
+                  >
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="shrink-0 font-mono text-text-muted">
+                        {entry.loop_item_id}
+                      </span>
+                      <span className="truncate text-text-primary">{entry.loop_item_title}</span>
+                    </span>
+                  </Tooltip>
+                  <span className="flex min-w-0 items-center gap-2 text-text-primary">
+                    <File className="h-4 w-4 shrink-0 text-text-muted" />
+                    <Tooltip label={entry.display_name} align="start" className="min-w-0 shrink">
+                      <span className="truncate">{entry.display_name}</span>
+                    </Tooltip>
+                  </span>
+                  <span className="truncate text-text-muted">
+                    {entry.content_type || t('todo.task_attachment_file')}
+                  </span>
+                  <span className="text-text-muted">{entry.created_at.slice(0, 10)}</span>
+                  <span className="text-text-muted">{entry.size_bytes} B</span>
+                  <Tooltip
+                    label={t('todo.open_task_attachment', { name: entry.display_name })}
+                    align="end"
+                  >
+                    <button
+                      type="button"
+                      data-testid={`task-attachment-open-${entry.id}`}
+                      onClick={() => void openTaskAttachment(entry)}
+                      className="flex h-7 w-7 items-center justify-center rounded-md hover:bg-muted"
+                      aria-label={t('todo.open_task_attachment', {
+                        name: entry.display_name,
+                      })}
+                    >
+                      <Download className="h-3.5 w-3.5" />
+                    </button>
+                  </Tooltip>
+                </div>
+              ))
+            )}
+          </div>
+        </section>
         <section className="mt-8">
           <div className="flex items-baseline gap-2.5">
             <h3 className="text-base font-semibold text-text-primary">交付快照</h3>

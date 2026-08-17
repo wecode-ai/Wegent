@@ -24,6 +24,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'split-workbench': './scenarios/split-workbench.scenario.mjs',
   'project-automation': './scenarios/project-automation.scenario.mjs',
   'offline-local-project-space': './scenarios/offline-local-project-space.scenario.mjs',
+  'task-attachments': './scenarios/task-attachments.scenario.mjs',
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'change-request-status',
@@ -31,6 +32,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'local-file-preview',
   'local-harness',
   'offline-local-project-space',
+  'task-attachments',
   'runtime-task-queue',
   'context-compaction',
   'split-workbench',

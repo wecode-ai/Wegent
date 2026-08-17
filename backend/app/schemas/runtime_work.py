@@ -789,6 +789,7 @@ class RuntimeTaskCreateRequest(BaseModel):
         default=None, alias="deliveryId", min_length=36, max_length=36
     )
     cloud_project_id: Optional[int] = Field(default=None, alias="cloudProjectId", ge=1)
+    origin: Optional[dict[str, Any]] = None
     additional_context: Optional[dict[str, dict[str, Any]]] = Field(
         default=None,
         alias="additionalContext",

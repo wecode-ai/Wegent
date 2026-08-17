@@ -35,6 +35,23 @@ describe('CloudFilesView', () => {
           },
         ],
       })),
+      listProjectTaskAttachments: vi.fn(async () => ({
+        items: [
+          {
+            id: 'attachment-1',
+            loop_item_id: 'CLOUD-3',
+            loop_item_title: 'Prepare report',
+            display_name: 'conversation-image.png',
+            content_type: 'image/png',
+            size_bytes: 256,
+            sha256: 'sha',
+            created_by_user_id: 1,
+            created_at: '2026-07-22T12:00:00Z',
+            markdown_url: 'wegent://attachments/attachment-1',
+            markdown: '[conversation-image.png](wegent://attachments/attachment-1)',
+          },
+        ],
+      })),
     } as unknown as NonNullable<WorkbenchServices['deliveryApi']>
 
     render(<CloudFilesView api={api} project={project} />)
@@ -43,5 +60,9 @@ describe('CloudFilesView', () => {
     expect(screen.getByTestId('delivery-file-asset-1')).toHaveTextContent('Prepare report')
     expect(screen.getByTestId('delivery-file-asset-1')).toHaveTextContent('reports/result.pdf')
     expect(screen.getByText('来自已完成任务，只读且不可修改')).toBeInTheDocument()
+    expect(await screen.findByTestId('task-attachment-attachment-1')).toHaveTextContent('CLOUD-3')
+    expect(screen.getByTestId('task-attachment-attachment-1')).toHaveTextContent(
+      'conversation-image.png'
+    )
   })
 })

@@ -9,6 +9,7 @@ import {
   type CloudProjectFile,
   type CloudProjectId,
   type CloudProjectMember,
+  type ProjectTaskAttachment,
   type Delivery,
   type DeliveryAsset,
   type DeliveryCreateInput,
@@ -16,7 +17,8 @@ import {
 } from '@/api/deliveries'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { openLocalFile } from '@/lib/local-terminal'
-import type { RuntimeTaskAddress } from '@/types/api'
+import { readDroppedFiles } from '@/tauri/droppedFiles'
+import type { Attachment, RuntimeTaskAddress } from '@/types/api'
 
 type LocalRequest = <T>(
   method: string,
@@ -768,6 +770,40 @@ export function createLocalDeliveryApi(
         project_id: projectId,
         item_id: itemId,
       })
+    },
+    async listProjectTaskAttachments(projectId: CloudProjectId) {
+      const tasks = await api.listLoopItems(projectId)
+      const rows = await Promise.all(
+        tasks.items.map(async item => {
+          const attachments = await request<CloudLoopItemAttachment[]>('attachments.list', {
+            project_id: projectId,
+            item_id: item.id,
+          })
+          return attachments.map(attachment => ({
+            ...attachment,
+            loop_item_title: item.title,
+          }))
+        })
+      )
+      return {
+        items: rows
+          .flat()
+          .sort((left, right) =>
+            right.created_at.localeCompare(left.created_at)
+          ) as ProjectTaskAttachment[],
+      }
+    },
+    async importLoopItemAttachments(itemId: string, attachments: Attachment[]) {
+      const files = await readDroppedFiles(
+        attachments
+          .filter(attachment => Boolean(attachment.local_path?.trim()))
+          .map(attachment => attachment.local_path!)
+      )
+      const imported: CloudLoopItemAttachment[] = []
+      for (const file of files) {
+        imported.push(await api.addLoopItemAttachment(itemId, file))
+      }
+      return imported
     },
     async addLoopItemAttachment(itemId: string, file: File) {
       const projectId = await resolveProjectId(itemId)

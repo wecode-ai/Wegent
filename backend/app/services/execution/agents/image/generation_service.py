@@ -16,6 +16,7 @@ from app.services.context import context_service
 from app.services.execution.agents.generation_context import (
     resolve_generation_context,
     resolve_generation_model,
+    resolve_project_space_loop_item_id,
 )
 from app.services.execution.agents.video.materials import (
     normalize_reference_materials,
@@ -83,6 +84,7 @@ class ImageGenerationService:
         )
         mime_subtype = "jpeg" if output_format == "jpg" else output_format
 
+        block_id = f"image-{uuid.uuid4().hex[:8]}"
         for index, image in enumerate(result.images):
             image_url = image.url
             if not image_url and image.b64_json:
@@ -110,6 +112,13 @@ class ImageGenerationService:
                     "expires_in_seconds": IMAGE_DOWNLOAD_URL_EXPIRES_SECONDS,
                 }
             )
+            await self._persist_project_image_attachment(
+                db=db,
+                token_info=token_info,
+                attachment_id=attachment_id,
+                index=index,
+                source_call_id=f"{block_id}:{index}",
+            )
 
         if not images:
             raise ValueError("No valid images generated")
@@ -118,7 +127,7 @@ class ImageGenerationService:
             "value": "Image generation completed",
             "blocks": [
                 {
-                    "id": f"image-{uuid.uuid4().hex[:8]}",
+                    "id": block_id,
                     "type": "image",
                     "status": "done",
                     "is_placeholder": False,
@@ -144,6 +153,49 @@ class ImageGenerationService:
             "persisted": True,
             "result_data": result_data,
         }
+
+    async def _persist_project_image_attachment(
+        self,
+        *,
+        db: Session,
+        token_info: TaskTokenInfo,
+        attachment_id: int,
+        index: int,
+        source_call_id: str,
+    ) -> None:
+        """Mirror generated project-space images into the task attachment list."""
+
+        loop_item_id = resolve_project_space_loop_item_id(db, token_info)
+        if not loop_item_id:
+            return
+        try:
+            context = context_service.get_context(db, attachment_id, token_info.user_id)
+            binary_data = context_service.get_attachment_binary_data(db, context)
+            if binary_data is None:
+                return
+            display_name = (
+                context.original_filename
+                or f"image_{index}.{context.file_extension or 'jpg'}"
+            )
+            from app.services.loop_items import loop_item_service
+
+            loop_item_service.add_generated_image_attachment(
+                db,
+                loop_item_id,
+                token_info.user_id,
+                display_name,
+                context.mime_type or "application/octet-stream",
+                binary_data,
+                source_call_id,
+            )
+        except Exception:
+            logger.warning(
+                "[ImageUploader] Failed to mirror project image "
+                "attachment_id=%s loop_item_id=%s",
+                attachment_id,
+                loop_item_id,
+                exc_info=True,
+            )
 
     @staticmethod
     def _validate_reference_images(

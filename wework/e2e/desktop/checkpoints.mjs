@@ -10,6 +10,7 @@ export const DESKTOP_CHECKPOINTS = [
   'model-routing',
   'permission-modes',
   'core-task-flow',
+  'task-attachments',
   'context-compaction',
   'runtime-task-queue',
   'split-workbench',
