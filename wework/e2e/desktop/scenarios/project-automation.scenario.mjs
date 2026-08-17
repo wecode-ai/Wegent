@@ -766,12 +766,27 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       'Custom AI manager did not call assign_board_item'
     )
     await control.command('click', '[data-testid="cloud-project-board-view"]')
-    const customManagerTaskSelector = `[data-testid="cloud-todo-card-${customManagerTask.id}"]`
-    await control.command('waitFor', customManagerTaskSelector, {
+    await control.command('waitFor', '[data-testid="cloud-project-task-search-toggle"]', {
       timeoutMs: uiTimeoutMs,
       visible: true,
     })
-    await control.command('click', customManagerTaskSelector)
+    await control.command('click', '[data-testid="cloud-project-task-search-toggle"]')
+    await control.command('fill', '[data-testid="cloud-project-task-search-input"]', {
+      value: customManagerTask.id,
+      visible: true,
+    })
+    const customManagerTaskResult = `[data-testid="cloud-task-search-result-${customManagerTask.id}"]`
+    await control.command('waitFor', customManagerTaskResult, {
+      text: customManagerTask.title,
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('click', customManagerTaskResult)
+    await control.command('waitFor', '[data-testid="cloud-todo-detail"]', {
+      text: customManagerTask.title,
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
     const customManagerCard =
       '[data-executor-type="automation_manager"][data-manager-type="custom"]'
     await control.command('waitFor', customManagerCard, {
