@@ -29,6 +29,8 @@ from app.schemas.installed_plugin import (
     PluginDeleteImpactResponse,
     PluginDeleteRequest,
     PluginDeleteResponse,
+    PluginDeviceReportRequest,
+    PluginDeviceReportResponse,
     PluginDeviceSyncResponse,
     PluginMarketplaceCapabilities,
     PluginMarketplaceInstallResponse,
@@ -159,6 +161,35 @@ async def sync_installed_plugins_to_device(
         deviceId=normalized_device_id,
         pendingCount=pending_count,
         sync=sync,
+    )
+
+
+@router.post("/installed/report-device", response_model=PluginDeviceReportResponse)
+def report_installed_plugins_on_device(
+    payload: PluginDeviceReportRequest,
+    device_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+) -> PluginDeviceReportResponse:
+    """Acknowledge locally present plugins on one device without pushing packages."""
+    normalized_device_id = device_id.strip()
+    if not normalized_device_id:
+        raise HTTPException(status_code=400, detail="device_id is required")
+    acknowledged_count = plugin_device_installation_service.acknowledge_local_installs(
+        db,
+        user_id=current_user.id,
+        device_id=normalized_device_id,
+        installed_plugin_ids=payload.installedPluginIds,
+    )
+    logger.info(
+        "Device plugin status reported: user_id=%s device_id=%s acknowledged=%s",
+        current_user.id,
+        normalized_device_id,
+        acknowledged_count,
+    )
+    return PluginDeviceReportResponse(
+        deviceId=normalized_device_id,
+        acknowledgedCount=acknowledged_count,
     )
 
 

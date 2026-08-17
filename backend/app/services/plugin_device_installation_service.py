@@ -143,6 +143,38 @@ class PluginDeviceInstallationService:
         self._record_device_sync_result(db, user_id, result)
         db.commit()
 
+    def acknowledge_local_installs(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        device_id: str,
+        installed_plugin_ids: list[int],
+    ) -> int:
+        """Mark locally present plugins as installed without pushing packages."""
+        normalized_device_id = device_id.strip()
+        requested_ids = {
+            plugin_id
+            for plugin_id in installed_plugin_ids
+            if isinstance(plugin_id, int)
+        }
+        if not normalized_device_id or not requested_ids:
+            return 0
+        acknowledged = 0
+        for installed in self._desired_installs(db, user_id):
+            if installed.id not in requested_ids:
+                continue
+            if self._acknowledge_local_install(
+                db,
+                user_id=user_id,
+                device_id=normalized_device_id,
+                installed=installed,
+            ):
+                acknowledged += 1
+        if acknowledged:
+            db.commit()
+        return acknowledged
+
     def _record_device_sync_result(
         self,
         db: Session,
@@ -165,6 +197,42 @@ class PluginDeviceInstallationService:
                 result=result,
                 item_result=plugin_results.get(installed.id),
             )
+
+    def _acknowledge_local_install(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        device_id: str,
+        installed: Kind,
+    ) -> bool:
+        release_id = installed.json.get("spec", {}).get("releaseId")
+        if not isinstance(release_id, int):
+            return False
+        row = self._device_row(db, installed.id, device_id)
+        if row and row.state == "uninstalling":
+            return False
+        if row and self._auto_update_blocked(row, desired_release_id=release_id):
+            return False
+        if row and row.actual_release_id and row.actual_release_id != release_id:
+            # A newer desired release is a real package gap, not a stale ack.
+            return False
+        if not row:
+            row = PluginDeviceInstallation(
+                installed_kind_id=installed.id,
+                user_id=user_id,
+                device_id=device_id,
+                desired_release_id=release_id,
+            )
+            db.add(row)
+        row.desired_release_id = release_id
+        row.actual_release_id = release_id
+        row.state = "installed"
+        row.error_code = ""
+        row.error_message = ""
+        row.attempt_count = 0
+        row.last_sync_at = datetime.now()
+        return True
 
     def _record_removed_installs(
         self,

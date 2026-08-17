@@ -322,6 +322,19 @@ class PluginDeviceSyncResponse(BaseModel):
     sync: DeviceCapabilitySyncResponse
 
 
+class PluginDeviceReportRequest(BaseModel):
+    """Local packages already present on a device; do not push installs."""
+
+    installedPluginIds: List[int] = Field(default_factory=list)
+
+
+class PluginDeviceReportResponse(BaseModel):
+    """Result of acknowledging local plugin presence on one device."""
+
+    deviceId: str
+    acknowledgedCount: int = 0
+
+
 class PluginAutoUpdateItem(BaseModel):
     """One account installation advanced to a newer marketplace release."""
 

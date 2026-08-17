@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import type { InstalledPlugin } from '@/types/api'
 import {
+  hasLocalCodexMaterialization,
   isCloudManagedInstalledPlugin,
   mergeInstalledPlugins,
   resolveProgressiveLocalInstalledRaw,
@@ -167,6 +168,42 @@ describe('mergeInstalledPlugins', () => {
 
     expect(merged).toHaveLength(1)
     expect(merged[0]?.spec.pluginId).toBe(4)
+    expect(merged[0]?.spec.sourcePayload).toMatchObject({ localPresent: true })
+  })
+
+  test('keeps a local Codex package when the cloud device row is still pending', () => {
+    const cloud = cloudPlugin({ installState: 'not_installed', version: '0.2.9' })
+    cloud.status.devices = [
+      {
+        deviceId: 'current-device',
+        desiredReleaseId: 6,
+        actualReleaseId: null,
+        state: 'pending',
+        attemptCount: 0,
+        updatedAt: '2026-01-01T00:00:00Z',
+      },
+    ]
+    const local = localCodexPlugin({
+      id: 'github-local',
+      name: 'github',
+      pluginKey: 'github',
+      marketplace: 'wegent',
+      version: '0.2.8',
+    })
+
+    const merged = mergeInstalledPlugins([cloud], [local], 'current-device')
+
+    expect(merged).toHaveLength(1)
+    expect(hasLocalCodexMaterialization(merged[0]!)).toBe(true)
+    expect(merged[0]?.spec.pluginId).toBe(4)
+    expect(merged[0]?.metadata.labels).toMatchObject({ id: 4 })
+    expect(merged[0]?.spec.sourcePayload).toMatchObject({
+      localPresent: true,
+      cloudInstalledPluginId: '4',
+      localVersion: '0.2.8',
+    })
+    expect(merged[0]?.spec.sourcePayload).not.toHaveProperty('localId')
+    expect(merged[0]?.status.devices?.[0]?.state).toBe('pending')
   })
 
   test('prefers a locally created plugin linked to the same published cloud plugin', () => {
@@ -241,6 +278,16 @@ describe('isCloudManagedInstalledPlugin', () => {
   test('treats only numeric cloud pluginId as cloud-managed', () => {
     expect(isCloudManagedInstalledPlugin(cloudPlugin())).toBe(true)
     expect(isCloudManagedInstalledPlugin(localCodexPlugin())).toBe(false)
+  })
+})
+
+describe('hasLocalCodexMaterialization', () => {
+  test('treats a Codex package and a cloud row with localPresent as materialized', () => {
+    expect(hasLocalCodexMaterialization(localCodexPlugin())).toBe(true)
+    expect(hasLocalCodexMaterialization(cloudPlugin())).toBe(false)
+    const marked = cloudPlugin()
+    marked.spec.sourcePayload = { localPresent: true }
+    expect(hasLocalCodexMaterialization(marked)).toBe(true)
   })
 })
 

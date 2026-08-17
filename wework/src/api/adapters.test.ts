@@ -251,6 +251,18 @@ describe('REST adapters', () => {
     expect(client.post).toHaveBeenCalledWith('/plugins/builtin/wegent-sites/ensure-installed', {})
   })
 
+  test('reports locally present plugins without syncing packages', async () => {
+    const client = mockClient()
+    vi.mocked(client.post).mockResolvedValueOnce({ deviceId: 'device-1', acknowledgedCount: 2 })
+
+    await createPluginApi(client).reportInstalledPluginsOnDevice('device-1', [101, 202])
+
+    expect(client.post).toHaveBeenCalledWith(
+      '/plugins/installed/report-device?device_id=device-1',
+      { installedPluginIds: [101, 202] }
+    )
+  })
+
   test('starts project-scoped terminal and IDE sessions', async () => {
     const client = mockClient()
     vi.mocked(client.post).mockResolvedValue({ url: 'http://localhost/session' })

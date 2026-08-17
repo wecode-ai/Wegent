@@ -3,7 +3,11 @@ import { applyInstalledPluginsToMarketplaceItems } from '@/api/local/codexPlugin
 import { isPersonalMarketplaceId } from '@/features/plugins/builtinPlugins'
 import { isBuiltInMarketplaceId } from '@/features/plugins/marketplaceIdentity'
 import { marketplaceItemMarketplaceId } from './pluginDistribution'
-import { linkedCloudPluginId, localPluginId } from './installedPluginMerge'
+import {
+  hasLocalCodexMaterialization,
+  linkedCloudPluginId,
+  localPluginId,
+} from './installedPluginMerge'
 
 export function isLocalMarketplaceItem(item: PluginMarketplaceItem): boolean {
   if (item.latestReleaseId != null) return false
@@ -107,7 +111,10 @@ export function mergeMarketplaceCatalog(
         ? {
             installed: true,
             installedPluginId: localPluginId(matchedInstall) ?? item.installedPluginId,
-            installedLocally: Boolean(localInstall) || Boolean(item.installedLocally),
+            installedLocally:
+              Boolean(localInstall) ||
+              Boolean(item.installedLocally) ||
+              hasLocalCodexMaterialization(matchedInstall),
             enabled: matchedInstall.spec.enabled,
             updateAvailable:
               item.updateAvailable || matchedInstall.spec.installState === 'update_available',
@@ -131,7 +138,7 @@ export function mergeMarketplaceCatalog(
     const normalizedName = item.name.toLowerCase()
     if (cloudNames.has(normalizedName)) {
       const ownedCloudKey = ownedCloudKeysByName.get(normalizedName)
-      const marketplacePath = item.manifest.marketplacePath
+      const marketplacePath = item.manifest?.marketplacePath
       if (
         ownedCloudKey &&
         marketplaceId &&

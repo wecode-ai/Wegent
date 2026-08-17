@@ -1,14 +1,17 @@
 import { beforeEach, describe, expect, test } from 'vitest'
-import type { PluginMarketplaceItem } from '@/types/api'
+import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
 import {
   beginPluginDeviceSync,
   clearPluginDeviceAutoSyncAttempts,
+  collectInstalledPluginIdsNeedingDeviceStatusReport,
   hasAttemptedPluginDeviceAutoSync,
+  hasAttemptedPluginDeviceStatusReport,
   hasSettledPluginDeviceAutoSync,
   marketplaceItemNeedsDeviceSync,
   marketplaceItemOffersDeviceSyncRetry,
   markPluginDeviceAutoSyncAttempted,
   markPluginDeviceAutoSyncSettled,
+  markPluginDeviceStatusReportAttempted,
   withOptimisticDevicePending,
 } from './pluginDeviceAutoSync'
 
@@ -205,5 +208,173 @@ describe('pluginDeviceAutoSync', () => {
     expect(next[0]?.currentDeviceInstallation?.state).toBe('pending')
     expect(next[0]?.currentDeviceInstallation?.errorMessage).toBeNull()
     expect(next[1]?.currentDeviceInstallation).toBeUndefined()
+  })
+
+  test('reports stale cloud pending when the package is already local', () => {
+    const plugin: InstalledPlugin = {
+      apiVersion: 'agent.wecode.io/v1',
+      kind: 'InstalledPlugin',
+      metadata: { name: 'mail', labels: { id: '101' } },
+      spec: {
+        source: { type: 'marketplace', providerKey: 'wegent', pluginKey: 'mail' },
+        displayName: 'Mail',
+        description: '',
+        installState: 'not_installed',
+        enabled: true,
+        manifest: {},
+        components: {
+          skills: [],
+          commands: [],
+          agents: [],
+          hooks: [],
+          mcps: [],
+          connectors: [],
+          lsps: [],
+          monitors: [],
+          bins: [],
+        },
+        pluginId: 7,
+        releaseId: 9,
+        sourcePayload: { localPresent: true },
+      },
+      status: {
+        state: 'pending',
+        devices: [
+          {
+            deviceId: 'd1',
+            desiredReleaseId: 9,
+            actualReleaseId: null,
+            state: 'pending',
+            attemptCount: 0,
+            updatedAt: '2026-01-01T00:00:00Z',
+          },
+        ],
+      },
+    }
+    expect(collectInstalledPluginIdsNeedingDeviceStatusReport([plugin], [], 'd1')).toEqual([101])
+    expect(
+      marketplaceItemNeedsDeviceSync(
+        item({
+          id: 7,
+          name: 'mail',
+          installedPluginId: 101,
+          installed: true,
+          installedLocally: true,
+          currentDeviceInstallation: plugin.status.devices?.[0],
+        })
+      )
+    ).toBe(false)
+  })
+
+  test('does not report a newer desired version when actualReleaseId is still empty', () => {
+    const plugin: InstalledPlugin = {
+      apiVersion: 'agent.wecode.io/v1',
+      kind: 'InstalledPlugin',
+      metadata: { name: 'dingtalk', labels: { id: '101' } },
+      spec: {
+        source: { type: 'marketplace', providerKey: 'wegent', pluginKey: 'dingtalk' },
+        displayName: 'DingTalk',
+        description: '',
+        version: '0.2.9',
+        installState: 'not_installed',
+        enabled: true,
+        manifest: {},
+        components: {
+          skills: [],
+          commands: [],
+          agents: [],
+          hooks: [],
+          mcps: [],
+          connectors: [],
+          lsps: [],
+          monitors: [],
+          bins: [],
+        },
+        pluginId: 7,
+        releaseId: 10,
+        sourcePayload: { localPresent: true, localVersion: '0.2.8' },
+      },
+      status: {
+        state: 'pending',
+        devices: [
+          {
+            deviceId: 'd1',
+            desiredReleaseId: 10,
+            actualReleaseId: null,
+            state: 'pending',
+            attemptCount: 0,
+            updatedAt: '2026-01-01T00:00:00Z',
+          },
+        ],
+      },
+    }
+    expect(
+      collectInstalledPluginIdsNeedingDeviceStatusReport(
+        [plugin],
+        [
+          item({
+            id: 7,
+            name: 'dingtalk',
+            version: '0.2.9',
+            installedPluginId: 101,
+            installed: true,
+            installedLocally: true,
+            currentDeviceInstallation: plugin.status.devices?.[0],
+          }),
+        ],
+        'd1'
+      )
+    ).toEqual([])
+  })
+
+  test('does not report a newer desired release as already installed', () => {
+    const plugin: InstalledPlugin = {
+      apiVersion: 'agent.wecode.io/v1',
+      kind: 'InstalledPlugin',
+      metadata: { name: 'mail', labels: { id: '101' } },
+      spec: {
+        source: { type: 'marketplace', providerKey: 'wegent', pluginKey: 'mail' },
+        displayName: 'Mail',
+        description: '',
+        installState: 'update_available',
+        enabled: true,
+        manifest: {},
+        components: {
+          skills: [],
+          commands: [],
+          agents: [],
+          hooks: [],
+          mcps: [],
+          connectors: [],
+          lsps: [],
+          monitors: [],
+          bins: [],
+        },
+        pluginId: 7,
+        releaseId: 10,
+        sourcePayload: { localPresent: true },
+      },
+      status: {
+        state: 'pending',
+        devices: [
+          {
+            deviceId: 'd1',
+            desiredReleaseId: 10,
+            actualReleaseId: 9,
+            state: 'pending',
+            attemptCount: 1,
+            updatedAt: '2026-01-01T00:00:00Z',
+          },
+        ],
+      },
+    }
+    expect(collectInstalledPluginIdsNeedingDeviceStatusReport([plugin], [], 'd1')).toEqual([])
+  })
+
+  test('tracks one status report attempt per device id', () => {
+    expect(hasAttemptedPluginDeviceStatusReport('device-a')).toBe(false)
+    markPluginDeviceStatusReportAttempted('device-a')
+    expect(hasAttemptedPluginDeviceStatusReport('device-a')).toBe(true)
+    expect(hasAttemptedPluginDeviceStatusReport('device-b')).toBe(false)
   })
 })

@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
+import { mergeInstalledPlugins } from './installedPluginMerge'
 import {
   mergeDiskPersonalIntoLocalRows,
   mergeMarketplaceCatalog,
@@ -247,6 +248,92 @@ describe('mergeMarketplaceCatalog', () => {
       enabled: true,
     })
     expect(shouldShowInstalledMarketplaceActions(merged[0], true)).toBe(true)
+  })
+
+  test('marks a pending cloud row installed locally when Codex already has the package', () => {
+    const cloudPending: PluginMarketplaceItem = {
+      ...cloudPlugin(),
+      installed: true,
+      installedPluginId: 4,
+      currentDeviceInstallation: {
+        deviceId: 'current-device',
+        desiredReleaseId: 6,
+        actualReleaseId: null,
+        state: 'pending',
+        attemptCount: 0,
+        updatedAt: '2026-01-01T00:00:00Z',
+      },
+    }
+    const cloudInstalled: InstalledPlugin = {
+      apiVersion: 'wegent.ai/v1',
+      kind: 'InstalledPlugin',
+      metadata: { name: 'dev-tools', namespace: 'default', labels: { id: '4' } },
+      spec: {
+        source: {
+          type: 'marketplace',
+          providerKey: 'wegent-market',
+          pluginKey: 'dev-tools',
+          marketplace: 'wegent',
+        },
+        pluginId: 4,
+        releaseId: 6,
+        installState: 'installed',
+        enabled: true,
+        displayName: 'Dev Tools',
+        description: '',
+        componentStates: {},
+        components,
+        interface: null,
+        packageRef: null,
+        sourcePayload: {},
+      },
+      status: {
+        state: 'enabled',
+        devices: [
+          {
+            deviceId: 'current-device',
+            desiredReleaseId: 6,
+            actualReleaseId: null,
+            state: 'pending',
+            attemptCount: 0,
+            updatedAt: '2026-01-01T00:00:00Z',
+          },
+        ],
+      },
+    }
+    const localInstall: InstalledPlugin = {
+      ...localInstalledPlugin(),
+      spec: {
+        ...localInstalledPlugin().spec,
+        origin: 'marketplace',
+        source: {
+          type: 'marketplace',
+          providerKey: 'wegent',
+          pluginKey: 'dev-tools',
+          catalogItemId: 'dev-tools@wegent',
+          marketplace: 'wegent',
+        },
+        sourcePayload: { marketplaceName: 'wegent' },
+      },
+    }
+
+    const mergedInstalled = mergeInstalledPlugins(
+      [cloudInstalled],
+      [localInstall],
+      'current-device'
+    )
+    const merged = mergeMarketplaceCatalog([cloudPending], [], mergedInstalled)
+
+    expect(merged).toHaveLength(1)
+    expect(merged[0]).toMatchObject({
+      id: 4,
+      installed: true,
+      installedLocally: true,
+      currentDeviceInstallation: {
+        deviceId: 'current-device',
+        state: 'pending',
+      },
+    })
   })
 })
 

@@ -30,6 +30,7 @@ import {
   mergeInstalledPlugins,
 } from './installedPluginMerge'
 import { pluginUninstallWarningDetails, uninstallPluginIdentities } from './pluginUninstall'
+import { humanizeMarketplaceUninstallError } from './marketplaceInstallError'
 import { withPublishedPluginCloudLink } from './publishedPluginIdentity'
 import { PluginDetailView } from './PluginDetailView'
 import { PluginOperationNotice, type PluginOperationNoticeState } from './PluginOperationNotice'
@@ -391,6 +392,11 @@ export function PluginManagementWorkspace({
         next.delete(id)
         return next
       })
+      setPluginOperationNotice({
+        id: `uninstall-error-${id}`,
+        kind: 'error',
+        message: t('workbench.plugins_uninstall_failed', '卸载失败，请稍后重试'),
+      })
       return
     }
     void logoutLocalConnectorsForPlugin(plugin.raw)
@@ -432,11 +438,19 @@ export function PluginManagementWorkspace({
           source: isCloudManagedInstalledPlugin(plugin.raw) ? 'cloud' : 'local',
         })
       })
-      .catch((error: Error) => {
+      .catch((error: unknown) => {
+        const rawErrorMessage = getErrorMessage(
+          error,
+          t('workbench.plugins_uninstall_failed', '卸载失败，请稍后重试')
+        )
+        console.error('[Wework plugins] uninstall plugin failed', {
+          pluginId: id,
+          error: rawErrorMessage,
+        })
         setPluginOperationNotice({
           id: `uninstall-error-${id}`,
           kind: 'error',
-          message: error.message,
+          message: humanizeMarketplaceUninstallError(rawErrorMessage, t),
         })
         track('operation_failed', { operation: 'plugin_uninstall' })
       })

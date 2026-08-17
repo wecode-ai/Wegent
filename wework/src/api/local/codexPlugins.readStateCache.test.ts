@@ -1162,6 +1162,115 @@ describe('local codex plugin readState cache', () => {
     )
   })
 
+  test('readState finishes plugin/installed before starting plugin/list', async () => {
+    const order: string[] = []
+    let resolveInstalled: ((value: unknown) => void) | null = null
+    mocks.requestLocalExecutor.mockImplementation(
+      async (
+        method: string,
+        params: {
+          method?: string
+        }
+      ) => {
+        if (method !== 'codex.app_server_request') {
+          throw new Error(`Unexpected executor method ${method}`)
+        }
+        if (params.method === 'plugin/installed') {
+          order.push('installed-start')
+          return await new Promise(resolve => {
+            resolveInstalled = value => {
+              order.push('installed-end')
+              resolve(value)
+            }
+          })
+        }
+        if (params.method === 'plugin/list') {
+          order.push('list-start')
+          return { marketplaces: [personalMarketplace] }
+        }
+        throw new Error(`Unexpected app-server method ${params.method}`)
+      }
+    )
+
+    const pending = createLocalCodexPluginApi().readState({ mergeAllMarketplaces: true })
+    await vi.waitFor(() => expect(order).toEqual(['installed-start']))
+    expect(order).not.toContain('list-start')
+
+    resolveInstalled?.({ marketplaces: [personalMarketplace] })
+    await pending
+    expect(order).toEqual(['installed-start', 'installed-end', 'list-start'])
+  })
+
+  test('listInstalledPlugins shares in-flight plugin/installed and keeps plugin/list behind it', async () => {
+    const order: string[] = []
+    let resolveInstalled: ((value: unknown) => void) | null = null
+    mocks.requestLocalExecutor.mockImplementation(
+      async (
+        method: string,
+        params: {
+          method?: string
+        }
+      ) => {
+        if (method !== 'codex.app_server_request') {
+          throw new Error(`Unexpected executor method ${method}`)
+        }
+        if (params.method === 'plugin/installed') {
+          order.push('installed-start')
+          return await new Promise(resolve => {
+            resolveInstalled = value => {
+              order.push('installed-end')
+              resolve(value)
+            }
+          })
+        }
+        if (params.method === 'plugin/list') {
+          order.push('list-start')
+          return { marketplaces: [personalMarketplace] }
+        }
+        throw new Error(`Unexpected app-server method ${params.method}`)
+      }
+    )
+
+    const api = createLocalCodexPluginApi()
+    const listed = api.listInstalledPlugins({ refresh: true })
+    const state = api.readState({ mergeAllMarketplaces: true, refresh: true })
+    await vi.waitFor(() => expect(order).toEqual(['installed-start']))
+    expect(
+      mocks.requestLocalExecutor.mock.calls.filter(
+        ([method, params]) =>
+          method === 'codex.app_server_request' &&
+          (params as { method?: string }).method === 'plugin/installed'
+      )
+    ).toHaveLength(1)
+    expect(order).not.toContain('list-start')
+
+    resolveInstalled?.({
+      marketplaces: [
+        {
+          ...personalMarketplace,
+          plugins: [
+            {
+              name: 'dev-tools',
+              id: 'dev-tools',
+              installed: true,
+              enabled: true,
+              interface: { displayName: 'Dev Tools' },
+            },
+          ],
+        },
+      ],
+    })
+    await expect(listed).resolves.toEqual(
+      expect.objectContaining({
+        items: [
+          expect.objectContaining({ metadata: expect.objectContaining({ name: 'dev-tools' }) }),
+        ],
+      })
+    )
+    await state
+    expect(order).toEqual(['installed-start', 'installed-end', 'list-start'])
+  })
+
   test('listInstalledPlugins uses plugin/installed and never waits on plugin/list', async () => {
     mocks.requestLocalExecutor.mockImplementation(
       async (
@@ -1201,6 +1310,63 @@ describe('local codex plugin readState cache', () => {
     const api = createLocalCodexPluginApi()
     const listed = await api.listInstalledPlugins()
     expect(listed.items.map(item => item.metadata.name)).toEqual(['dev-tools'])
+    expect(
+      mocks.requestLocalExecutor.mock.calls.filter(
+        ([method, params]) =>
+          method === 'codex.app_server_request' &&
+          (params as { method?: string }).method === 'plugin/list'
+      )
+    ).toHaveLength(0)
+    expect(
+      mocks.requestLocalExecutor.mock.calls.filter(
+        ([method, params]) =>
+          method === 'codex.app_server_request' &&
+          (params as { method?: string }).method === 'plugin/installed'
+      )
+    ).toHaveLength(1)
+  })
+
+  test('listInstalledPlugins refresh bypasses a fresh peek and still skips plugin/list', async () => {
+    const api = createLocalCodexPluginApi()
+    await api.readState({ mergeAllMarketplaces: true })
+    mocks.requestLocalExecutor.mockClear()
+    mocks.requestLocalExecutor.mockImplementation(
+      async (
+        method: string,
+        params: {
+          method?: string
+        }
+      ) => {
+        if (method !== 'codex.app_server_request') {
+          throw new Error(`Unexpected executor method ${method}`)
+        }
+        if (params.method === 'plugin/list') {
+          throw new Error('plugin/list must not run for listInstalledPlugins refresh')
+        }
+        if (params.method === 'plugin/installed') {
+          return {
+            marketplaces: [
+              {
+                ...personalMarketplace,
+                plugins: [
+                  {
+                    name: 'live-membership',
+                    id: 'live-membership',
+                    installed: true,
+                    enabled: true,
+                    interface: { displayName: 'Live Membership' },
+                  },
+                ],
+              },
+            ],
+          }
+        }
+        throw new Error(`Unexpected app-server method ${params.method}`)
+      }
+    )
+
+    const listed = await api.listInstalledPlugins({ refresh: true })
+    expect(listed.items.map(item => item.metadata.name)).toEqual(['live-membership'])
     expect(
       mocks.requestLocalExecutor.mock.calls.filter(
         ([method, params]) =>
@@ -1270,6 +1436,70 @@ describe('local codex plugin readState cache', () => {
           (params as { method?: string }).method === 'plugin/installed'
       )
     ).toHaveLength(1)
+  })
+
+  test('listInstalledPlugins refresh keeps cached OpenAI installs when live membership omits them', async () => {
+    const githubMarketplace = {
+      name: 'openai-curated-remote',
+      path: 'openai-curated-remote',
+      interface: { displayName: 'OpenAI' },
+      plugins: [
+        {
+          id: 'github@openai-curated-remote',
+          remotePluginId: 'plugin_connector_1p_github',
+          name: 'github',
+          installed: true,
+          enabled: true,
+          interface: { displayName: 'GitHub' },
+        },
+      ],
+    }
+    mocks.requestLocalExecutor.mockImplementation(
+      async (
+        method: string,
+        params: {
+          method?: string
+        }
+      ) => {
+        if (method !== 'codex.app_server_request') {
+          throw new Error(`Unexpected executor method ${method}`)
+        }
+        if (params.method === 'plugin/list' || params.method === 'plugin/installed') {
+          return { marketplaces: [githubMarketplace] }
+        }
+        throw new Error(`Unexpected app-server method ${params.method}`)
+      }
+    )
+    const api = createLocalCodexPluginApi()
+    await api.readState({ mergeAllMarketplaces: true })
+    expect(
+      peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })?.installedPlugins.map(
+        item => item.spec.source.pluginKey
+      )
+    ).toEqual(['github'])
+
+    mocks.requestLocalExecutor.mockImplementation(
+      async (
+        method: string,
+        params: {
+          method?: string
+        }
+      ) => {
+        if (method !== 'codex.app_server_request') {
+          throw new Error(`Unexpected executor method ${method}`)
+        }
+        if (params.method === 'plugin/list') {
+          throw new Error('plugin/list must not run for listInstalledPlugins')
+        }
+        if (params.method === 'plugin/installed') {
+          return { marketplaces: [] }
+        }
+        throw new Error(`Unexpected app-server method ${params.method}`)
+      }
+    )
+
+    const listed = await api.listInstalledPlugins({ refresh: true })
+    expect(listed.items.map(item => item.spec.source.pluginKey)).toEqual(['github'])
   })
 
   test('listInstalledPlugins refreshes via plugin/installed when peek is stale', async () => {

@@ -35,6 +35,7 @@ import {
 import { rankMarketplaceSearchResults } from '@/features/plugins/marketplaceSearch'
 import { preferWeworkPersonalInstalled } from '@/features/plugins/personalPluginMigration'
 import { isWegentCloudMarketplace } from '@/features/plugins/pluginNavigation'
+import { retainOpenAiOfficialLocalInstalls } from '@/features/plugins/retainOpenAiOfficialLocalInstalls'
 
 export interface LocalCodexPluginsState {
   marketplaceItems: PluginMarketplaceItem[]
@@ -175,7 +176,9 @@ export interface LocalCodexPluginApi {
     refresh?: boolean
   }): Promise<LocalCodexPluginsState>
   readMarketplacePluginDetail(marketplaceId: string, pluginName: string): Promise<InstalledPlugin>
-  listInstalledPlugins(): Promise<InstalledPluginListResponse>
+  listInstalledPlugins(options?: {
+    refresh?: boolean
+  }): Promise<InstalledPluginListResponse & { deviceId?: string }>
   listSkills(params?: { cwds?: string[]; forceReload?: boolean }): Promise<LocalDeviceSkill[]>
   listApps(params?: { forceRefetch?: boolean }): Promise<LocalDeviceApp[]>
   listAvailablePlugins(params?: {
@@ -372,6 +375,9 @@ let nextReadStateGeneration = 1
 let cachedStateAt = 0
 let cachedStateParamsKey = ''
 const inflightReadState = new Map<string, Promise<LocalCodexPluginsState>>()
+let inflightPluginInstalled: Promise<{
+  marketplaces: CodexPluginMarketplaceEntry[]
+}> | null = null
 let didHydrateReadStateSession = false
 let warmupReadStatePromise: Promise<LocalCodexPluginsState> | null = null
 
@@ -393,6 +399,7 @@ export function clearLocalCodexPluginsReadStateCache(): void {
   cachedStateAt = 0
   cachedStateParamsKey = ''
   inflightReadState.clear()
+  inflightPluginInstalled = null
   didHydrateReadStateSession = false
   warmupReadStatePromise = null
   if (typeof window !== 'undefined') {
@@ -823,6 +830,23 @@ function withFilteredMarketplaceItems(
     ...state,
     marketplaceItems: filterPluginItems(state.marketplaceItems, query),
   }
+}
+
+function requestPluginInstalled(): Promise<{ marketplaces: CodexPluginMarketplaceEntry[] }> {
+  if (!inflightPluginInstalled) {
+    const request = codexAppServerRequest<{
+      marketplaces: CodexPluginMarketplaceEntry[]
+    }>('plugin/installed', {
+      cwds: null,
+      installSuggestionPluginNames: null,
+    }).finally(() => {
+      if (inflightPluginInstalled === request) {
+        inflightPluginInstalled = null
+      }
+    })
+    inflightPluginInstalled = request
+  }
+  return inflightPluginInstalled
 }
 
 async function codexAppServerRequest<T>(
@@ -2048,7 +2072,9 @@ export function applyInstalledPluginsToMarketplaceItems(
     const installed = installedByIdentity.get(marketplaceItemInstallIdentity(item))
     if (!installed) return item
     const id = installedPluginId(installed)
-    const installedLocally = typeof installed.spec.pluginId !== 'number'
+    const installedLocally =
+      typeof installed.spec.pluginId !== 'number' ||
+      installed.spec.sourcePayload?.localPresent === true
     if (
       item.installed &&
       item.installedPluginId != null &&
@@ -2064,6 +2090,7 @@ export function applyInstalledPluginsToMarketplaceItems(
         typeof id === 'string' || typeof id === 'number' ? id : item.installedPluginId,
       installedLocally: item.installedLocally || installedLocally,
       enabled: installed.spec.enabled,
+      currentDeviceInstallation: item.currentDeviceInstallation,
     }
   })
 }
@@ -2142,25 +2169,17 @@ async function loadReadStateSnapshot(
   const requestedMarketplaceId = params.mergeAllMarketplaces
     ? ''
     : params.marketplaceId?.trim() || selectedMarketplaceId()
-  // Do not restrict marketplaceKinds: Codex must sync the OpenAI curated
-  // marketplace (github.com/openai/plugins) so the OpenAI官方 tab can populate
-  // on a cold Codex home. This path is only used from the Plugins page; chat /
-  // composer use loadInstalledPluginsOnly and must never call plugin/list.
-  // Durable peek + personal disk paint keep first paint responsive while this
-  // request may take several seconds on first sync. Cloud Wework catalog is
-  // loaded separately by the UI.
-  const [availableResponse, installedResponse] = await Promise.all([
-    codexAppServerRequest<{
-      marketplaces: CodexPluginMarketplaceEntry[]
-      featuredPluginIds?: string[]
-    }>('plugin/list', {
-      cwds: null,
-    }),
-    codexAppServerRequest<{ marketplaces: CodexPluginMarketplaceEntry[] }>('plugin/installed', {
-      cwds: null,
-      installSuggestionPluginNames: null,
-    }),
-  ])
+  // Membership first. Unrestricted plugin/list reconciles github.com/openai/plugins
+  // on the shared Codex app-server; starting it in the same Promise.all starved
+  // plugin/installed whenever GitHub was slow, so Wework/official cards stayed
+  // "同步中" until a VPN unblocked the OpenAI catalog.
+  const installedResponse = await requestPluginInstalled()
+  const availableResponse = await codexAppServerRequest<{
+    marketplaces: CodexPluginMarketplaceEntry[]
+    featuredPluginIds?: string[]
+  }>('plugin/list', {
+    cwds: null,
+  })
   const availableMarketplaces = withInitializedBundledMarketplace(availableResponse.marketplaces)
   const featuredIds = featuredPluginIdSet(availableResponse.featuredPluginIds)
   const requestedSelectedId = requestedMarketplaceId || availableMarketplaces[0]?.name || ''
@@ -2353,12 +2372,8 @@ async function loadInstalledPluginsOnly(): Promise<{
   deviceId: string
 }> {
   const executorStatus = await ensureLocalExecutorStarted()
-  const installedResponse = await codexAppServerRequest<{
-    marketplaces: CodexPluginMarketplaceEntry[]
-  }>('plugin/installed', {
-    cwds: null,
-    installSuggestionPluginNames: null,
-  })
+  await ensureBundledPluginMarketplaceRegistered()
+  const installedResponse = await requestPluginInstalled()
   const bundled = getInitializedBundledPluginMarketplace()
   const personalPath =
     bundled?.path && isLocalMarketplacePath(bundled.path) ? bundled.path.trim() : ''
@@ -2708,30 +2723,38 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         detail
       )
     },
-    async listInstalledPlugins() {
+    async listInstalledPlugins(options) {
       if (!isTauriRuntime()) return { items: [] }
       const mergeParams = { mergeAllMarketplaces: true as const }
       const peeked = peekLocalCodexPluginsReadState(mergeParams) || peekLocalCodexPluginsReadState()
-      // Only trust a non-empty install list while the readState snapshot is still
-      // fresh. Durable localStorage can keep installs for days after uninstall.
-      const peekedIsFresh =
-        Boolean(peeked) &&
-        (isLocalCodexPluginsReadStateFresh(mergeParams) || isLocalCodexPluginsReadStateFresh())
-      if (peeked && peeked.installedPlugins.length > 0 && peekedIsFresh) {
-        return { items: peeked.installedPlugins }
+      // Auto-sync / device inventory must bypass peek. Durable snapshots and a
+      // fresh readState cache can both lag behind plugin/installed.
+      if (!options?.refresh) {
+        // Only trust a non-empty install list while the readState snapshot is still
+        // fresh. Durable localStorage can keep installs for days after uninstall.
+        const peekedIsFresh =
+          Boolean(peeked) &&
+          (isLocalCodexPluginsReadStateFresh(mergeParams) || isLocalCodexPluginsReadStateFresh())
+        if (peeked && peeked.installedPlugins.length > 0 && peekedIsFresh) {
+          return { items: peeked.installedPlugins, deviceId: peeked.deviceId }
+        }
       }
       const loaded = await loadInstalledPluginsOnly()
+      const installedPlugins = retainOpenAiOfficialLocalInstalls(
+        loaded.installedPlugins,
+        cachedState?.installedPlugins ?? peeked?.installedPlugins ?? []
+      )
       if (cachedState) {
         cachedState = {
           ...cachedState,
-          installedPlugins: loaded.installedPlugins,
+          installedPlugins,
           deviceId: loaded.deviceId || cachedState.deviceId,
         }
         cachedStateAt = Date.now()
         // Keep the update in memory only. Persisting would write a membership-only
         // snapshot into the 7-day durable cache and can clobber a fuller readState.
       }
-      return { items: loaded.installedPlugins }
+      return { items: installedPlugins, deviceId: loaded.deviceId }
     },
     async listSkills(params = {}) {
       if (!isTauriRuntime()) return []

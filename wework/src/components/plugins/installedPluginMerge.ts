@@ -93,24 +93,25 @@ export function mergeInstalledPlugins(
       const currentDeviceInstallation = item.status.devices?.find(
         device => device.deviceId === currentDeviceId
       )
+      const identity = pluginIdentity(item)
+      const localMatch = identity ? localItemsByIdentity.get(identity) : undefined
       const hasMaterializedRelease = Boolean(currentDeviceInstallation?.actualReleaseId)
       if (
         currentDeviceId &&
         item.spec.installState !== 'installed' &&
         item.spec.installState !== 'update_available' &&
-        !hasMaterializedRelease
+        !hasMaterializedRelease &&
+        !localMatch
       ) {
         continue
       }
       if (locallyPublishedPluginIds.has(String(item.spec.pluginId))) {
         continue
       }
-      const identity = pluginIdentity(item)
       const actualReleaseId = currentDeviceInstallation?.actualReleaseId
       const localMaterialization =
-        actualReleaseId && actualReleaseId !== item.spec.releaseId && identity
-          ? localItemsByIdentity.get(identity)
-          : undefined
+        actualReleaseId && actualReleaseId !== item.spec.releaseId ? localMatch : undefined
+      const localPresentPayload = localMatch ? cloudRowLocalPresencePayload(item, localMatch) : {}
       const mergedItem = localMaterialization
         ? {
             ...item,
@@ -123,14 +124,24 @@ export function mergeInstalledPlugins(
               interface: localMaterialization.spec.interface,
               packageRef: localMaterialization.spec.packageRef,
               sourcePayload: {
-                ...(localMaterialization.spec.sourcePayload ?? {}),
                 ...(item.spec.sourcePayload ?? {}),
+                ...localPresentPayload,
                 releaseId: actualReleaseId,
-                cloudInstalledPluginId: localPluginId(item),
               },
             },
           }
-        : item
+        : localMatch
+          ? {
+              ...item,
+              spec: {
+                ...item.spec,
+                sourcePayload: {
+                  ...(item.spec.sourcePayload ?? {}),
+                  ...localPresentPayload,
+                },
+              },
+            }
+          : item
       merged.set(`market:${item.spec.pluginId}:${mergedItem.spec.releaseId}`, mergedItem)
       if (identity) cloudPluginIdentities.add(identity)
     }
@@ -213,6 +224,34 @@ export function installedPluginSourceLabel(item: InstalledPlugin): string {
 
 export function isCloudManagedInstalledPlugin(item: InstalledPlugin): boolean {
   return typeof item.spec.pluginId === 'number'
+}
+
+function payloadString(payload: Record<string, unknown> | null | undefined, key: string): string {
+  const value = payload?.[key]
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+/** Codex already materialized this package on disk, even if the cloud row is pending. */
+export function hasLocalCodexMaterialization(item: InstalledPlugin): boolean {
+  if (typeof item.spec.pluginId !== 'number') return true
+  return item.spec.sourcePayload?.localPresent === true
+}
+
+export function localMaterializedVersion(item: InstalledPlugin): string {
+  return payloadString(item.spec.sourcePayload, 'localVersion')
+}
+
+function cloudRowLocalPresencePayload(
+  cloudItem: InstalledPlugin,
+  localMatch: InstalledPlugin
+): Record<string, unknown> {
+  const localVersion = localMatch.spec.version?.trim()
+  const cloudKindId = localPluginId(cloudItem)
+  return {
+    localPresent: true,
+    ...(cloudKindId ? { cloudInstalledPluginId: cloudKindId } : {}),
+    ...(localVersion ? { localVersion } : {}),
+  }
 }
 
 /**

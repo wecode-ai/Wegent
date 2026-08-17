@@ -2218,6 +2218,11 @@ export interface PluginDeviceSyncResponse {
   sync: DeviceCapabilitySyncResponse
 }
 
+export interface PluginDeviceReportResponse {
+  deviceId: string
+  acknowledgedCount: number
+}
+
 export interface PluginAutoUpdateItem {
   installedPluginId: number
   pluginId: number
