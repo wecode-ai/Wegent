@@ -688,7 +688,7 @@ describe('useWorkbenchCloudProjectContext', () => {
     expect(result.current.closeDeliveryDialog).toBe(closeDeliveryDialog)
   })
 
-  test('opens a bound work item in a new board tab while preserving existing tabs', async () => {
+  test('reuses the existing project board tab when opening a bound work item', async () => {
     const cloudProject = project('space-local', 'local')
     cloudProject.name = '我的任务'
     const item = loopItem(cloudProject.id)
@@ -722,7 +722,7 @@ describe('useWorkbenchCloudProjectContext', () => {
       id: 'board-existing',
       kind: 'board' as const,
       title: '工作项',
-      contentRoute: '/todo',
+      contentRoute: `/todo?projectStore=${cloudProject.project_store}&projectId=${cloudProject.id}`,
     }
     const openTab = vi.fn()
     const workspaceTabs = {
@@ -760,13 +760,13 @@ describe('useWorkbenchCloudProjectContext', () => {
     await waitFor(() => expect(result.current.boundCloudItem).toEqual(item))
     act(() => result.current.openBoundProjectSpaceTask())
 
-    expect(openTab).toHaveBeenCalledOnce()
-    expect(openTab).toHaveBeenCalledWith('board', {
+    expect(openTab).not.toHaveBeenCalled()
+    expect(workspaceTabs.selectTab).toHaveBeenCalledOnce()
+    expect(workspaceTabs.selectTab).toHaveBeenCalledWith(boardTab.id, {
       title: '我的任务',
       contentRoute: `/todo?projectStore=${cloudProject.project_store}&projectId=${cloudProject.id}&itemId=${item.id}`,
     })
     expect(workspaceTabs.tabs).toEqual([taskTab, boardTab])
-    expect(workspaceTabs.selectTab).not.toHaveBeenCalled()
   })
 
   test('maps a cloud task to the local delivery model', () => {

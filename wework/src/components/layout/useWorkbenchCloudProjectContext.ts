@@ -71,6 +71,15 @@ const PENDING_BINDING_CONTEXT_RETRY_MS = 100
 const PENDING_BINDING_CONTEXT_RETRY_LIMIT = 50
 const DEFAULT_WORK_ITEM_LOOKUP_TIMEOUT_MS = 1_500
 
+function boardTabProjectKey(contentRoute: string): string | null {
+  const searchIndex = contentRoute.indexOf('?')
+  if (searchIndex < 0) return null
+  const params = new URLSearchParams(contentRoute.slice(searchIndex + 1))
+  const projectStore = params.get('projectStore')
+  const projectId = params.get('projectId')
+  return projectStore && projectId ? `${projectStore}:${projectId}` : null
+}
+
 function pendingBindingTargetsTask(address: RuntimeTaskAddress): boolean {
   const target = pendingTodoBinding?.target
   return Boolean(
@@ -758,6 +767,17 @@ export function useWorkbenchCloudProjectContext({
     params.set('itemId', boundCloudItem.id)
     const contentRoute = `/todo?${params.toString()}`
     if (workspaceTabs) {
+      const projectKey = projectSpaceKey(projectSpaceRef(boundCloudProject))
+      const existingBoardTab = workspaceTabs.tabs.find(
+        tab => tab.kind === 'board' && boardTabProjectKey(tab.contentRoute) === projectKey
+      )
+      if (existingBoardTab) {
+        workspaceTabs.selectTab(existingBoardTab.id, {
+          title: boundCloudProject.name,
+          contentRoute,
+        })
+        return
+      }
       workspaceTabs.openTab('board', {
         title: boundCloudProject.name,
         contentRoute,

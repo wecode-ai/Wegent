@@ -1058,6 +1058,7 @@ export function createHybridWorkbenchServices(
           deviceId: data.deviceId ?? null,
           elapsedMs: Date.now() - startedAt,
           error: error instanceof Error ? error.name : typeof error,
+          errorMessage: error instanceof Error ? error.message : String(error),
         })
         throw error
       }

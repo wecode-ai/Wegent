@@ -14,8 +14,6 @@ import {
   writeFile,
 } from './shared.mjs'
 
-const BOARD_REFRESH_TIMEOUT_MS = 30_000
-
 async function waitForFolderPathReady(control, expectedPath) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
@@ -452,17 +450,16 @@ async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )
-  const activeTaskConversationSelector = `${activeBoardContentSelector} [data-testid^="cloud-todo-open-task-conversation-"]`
-  await control.command('waitFor', activeTaskConversationSelector, {
-    visible: true,
-    stableMs: 500,
-    timeoutMs: BOARD_REFRESH_TIMEOUT_MS,
-  })
   await captureVerificationScreenshot(
     control,
     'workspace-05-completed-on-board.png',
     activeBoardContentSelector
   )
+  const activeTaskConversationSelector = `${activeBoardContentSelector} [data-testid^="cloud-todo-open-task-conversation-"]`
+  await control.command('waitFor', activeTaskConversationSelector, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('click', activeTaskConversationSelector, {
     visible: true,
   })
