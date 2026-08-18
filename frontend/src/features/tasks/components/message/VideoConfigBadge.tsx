@@ -5,6 +5,7 @@
 'use client'
 
 import { useTranslation } from '@/hooks/useTranslation'
+import { formatVideoDuration } from '@/features/tasks/utils/videoDuration'
 
 export interface VideoConfigBadgeProps {
   config: {
@@ -23,12 +24,13 @@ export interface VideoConfigBadgeProps {
  */
 export function VideoConfigBadge({ config }: VideoConfigBadgeProps) {
   const { t } = useTranslation('chat')
+  const durationLabel = formatVideoDuration(config.duration, t('video.duration_auto'))
 
   // Build parameter parts: model | ratio | duration | resolution
   const parts = [
     config.model,
     config.ratio,
-    config.duration ? `${config.duration}S` : null,
+    durationLabel,
     config.resolution?.toUpperCase(),
   ].filter(Boolean)
 

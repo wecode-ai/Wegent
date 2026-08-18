@@ -1759,6 +1759,105 @@ describe('TaskStateMachine', () => {
     consoleInfoSpy.mockRestore()
   })
 
+  it('resyncs a completed video placeholder when reconnect lost the active stream id', async () => {
+    const consoleInfoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
+    const finalAssistantSubtask = {
+      id: 77,
+      task_id: 42,
+      team_id: 1,
+      title: 'done',
+      bot_ids: [],
+      role: 'TEAM',
+      message_id: 2,
+      parent_id: 1,
+      prompt: '',
+      executor_namespace: '',
+      executor_name: '',
+      status: 'COMPLETED',
+      progress: 100,
+      batch: 0,
+      result: {
+        value: 'Video generation completed',
+        blocks: [
+          {
+            id: 'video-77',
+            type: 'video',
+            status: 'done',
+            video_url: 'https://example.com/final.mp4',
+            is_placeholder: false,
+          },
+        ],
+      },
+      error_message: '',
+      user_id: 1,
+      created_at: '2026-06-01T10:00:05.000Z',
+      updated_at: '2026-06-01T10:00:10.000Z',
+      completed_at: '2026-06-01T10:00:10.000Z',
+      bots: [],
+    }
+    const actions = createRuntimeActions({
+      pullRuntime: vi.fn().mockResolvedValue({
+        task_id: 42,
+        task_status: 'COMPLETED',
+        status_updated_at: '2026-06-01T10:00:10',
+        active_stream: null,
+      }),
+      joinTask: vi.fn().mockImplementation((_taskId, options) =>
+        Promise.resolve({
+          subtasks: options.afterMessageId === 1 ? [finalAssistantSubtask] : [],
+        })
+      ),
+    })
+    const machine = new TaskStateMachine(42, actions)
+
+    machine.handleTaskStatus('RUNNING', '2026-06-01T10:00:00')
+    machine.addUserMessage({
+      id: 'user-1',
+      type: 'user',
+      status: 'completed',
+      content: 'generate a video',
+      timestamp: Date.now(),
+      subtaskId: 1,
+      messageId: 1,
+    })
+    machine.handleChatStart(77, 'Chat', 2)
+    machine.handleChatChunk(77, '', {
+      blocks: [
+        {
+          id: 'video-77',
+          type: 'video',
+          status: 'streaming',
+          video_url: '',
+          video_progress: 9,
+          is_placeholder: true,
+        },
+      ],
+    })
+    machine.loadTask({
+      id: 42,
+      status: 'COMPLETED',
+      updated_at: '2026-06-01T10:00:10',
+    })
+
+    expect(machine.getState().runtime.activeStreamSubtaskId).toBeUndefined()
+    expect(machine.getState().messages.get('ai-77')?.result?.blocks?.[0]).toMatchObject({
+      is_placeholder: true,
+    })
+
+    await machine.requestRuntimeCheck('websocket-reconnect')
+
+    expect(actions.joinTask).toHaveBeenCalledWith(42, {
+      forceRefresh: true,
+      afterMessageId: 1,
+    })
+    expect(machine.getState().messages.get('ai-77')?.result?.blocks?.[0]).toMatchObject({
+      video_url: 'https://example.com/final.mp4',
+      is_placeholder: false,
+    })
+
+    consoleInfoSpy.mockRestore()
+  })
+
   it('restores a running image generation placeholder from persisted image config', async () => {
     const consoleInfoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
     const actions = createRuntimeActions({
