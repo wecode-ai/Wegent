@@ -23,6 +23,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'context-compaction': './scenarios/context-compaction.scenario.mjs',
   'split-workbench': './scenarios/split-workbench.scenario.mjs',
   'project-automation': './scenarios/project-automation.scenario.mjs',
+  'project-assignment-notification': './scenarios/project-assignment-notification.scenario.mjs',
   'offline-local-project-space': './scenarios/offline-local-project-space.scenario.mjs',
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
@@ -31,11 +32,37 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'local-file-preview',
   'local-harness',
   'offline-local-project-space',
+  'project-assignment-notification',
   'runtime-task-queue',
   'context-compaction',
   'split-workbench',
   'temporary-chat',
 ])
+const CLOUD_ONLY_CHECKPOINTS = new Set([
+  'cloud-git-worktree',
+  'cloud-worktree-capability',
+  'cloud-worktree-create',
+  'cloud-worktree-queued-cancel',
+  'cloud-worktree-tools',
+  'cloud-worktree-archive-restore',
+  'cloud-worktree-device-restart',
+])
+const COMPOSITE_CHECKPOINTS = new Map([
+  [
+    'cloud-git-worktree',
+    [
+      'cloud-worktree-capability',
+      'cloud-worktree-create',
+      'cloud-worktree-queued-cancel',
+      'cloud-worktree-tools',
+      'cloud-worktree-archive-restore',
+      'cloud-worktree-device-restart',
+    ],
+  ],
+])
+const DEFAULT_DESKTOP_CHECKPOINTS = DESKTOP_CHECKPOINTS.filter(
+  checkpoint => !COMPOSITE_CHECKPOINTS.has(checkpoint)
+)
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const taskFlowPath = join(scriptDir, 'task-flow.e2e.mjs')
 const cliArgs = process.argv.slice(2)
@@ -199,11 +226,28 @@ function existingBuildManifest(env) {
 function requestedCheckpointRange(args) {
   if (args.length !== 2) return null
   const [flag, checkpoint] = args
-  const startIndex = DESKTOP_CHECKPOINTS.indexOf(checkpoint)
-  if (startIndex < 0) return null
   if (flag === '--segment') return [checkpoint]
-  if (flag === '--from-segment') return DESKTOP_CHECKPOINTS.slice(startIndex)
+  if (flag === '--from-segment') {
+    const startCheckpoint = COMPOSITE_CHECKPOINTS.get(checkpoint)?.[0] ?? checkpoint
+    const startIndex = DEFAULT_DESKTOP_CHECKPOINTS.indexOf(startCheckpoint)
+    if (startIndex < 0) return null
+    return DEFAULT_DESKTOP_CHECKPOINTS.slice(startIndex)
+  }
   return null
+}
+
+function expandCompositeCheckpoints(checkpoints) {
+  const expanded = []
+  const seen = new Set()
+  for (const checkpoint of checkpoints) {
+    const members = COMPOSITE_CHECKPOINTS.get(checkpoint) ?? [checkpoint]
+    for (const member of members) {
+      if (seen.has(member)) continue
+      seen.add(member)
+      expanded.push(member)
+    }
+  }
+  return expanded
 }
 
 function requestedParallelCheckpoints(args) {
@@ -220,7 +264,7 @@ function requestedParallelCheckpoints(args) {
       throw new Error(`Unknown desktop E2E checkpoint: ${checkpoint}`)
     }
   }
-  return checkpoints
+  return expandCompositeCheckpoints(checkpoints)
 }
 
 function parallelCheckpointLimit() {
@@ -337,7 +381,10 @@ async function runCheckpoints(checkpoints) {
         checkpoint
       )
       console.log(`\n[desktop-e2e] START ${checkpoint}`)
-      const result = await runTaskFlow(['--segment', checkpoint], env, checkpoint)
+      const args = CLOUD_ONLY_CHECKPOINTS.has(checkpoint)
+        ? ['--cloud-only', '--segment', checkpoint]
+        : ['--segment', checkpoint]
+      const result = await runTaskFlow(args, env, checkpoint)
 
       if (!buildManifest && !existingBuildManifest(env)) {
         try {
@@ -387,7 +434,7 @@ async function runCheckpoints(checkpoints) {
 }
 
 async function runAllCheckpoints() {
-  await runCheckpoints(DESKTOP_CHECKPOINTS)
+  await runCheckpoints(DEFAULT_DESKTOP_CHECKPOINTS)
 }
 
 if (requestedArgs.length > 0) {

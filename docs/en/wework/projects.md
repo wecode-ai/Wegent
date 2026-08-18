@@ -41,6 +41,8 @@ New conversations started in that local project inherit the selected project spa
 
 The default project space belongs to the local project's settings and is stored with that project's device-local state; the project space does not keep a reverse link. Use the composer's **+** menu to select, replace, or remove the project space for an individual conversation before sending.
 
+When another member assigns you a board task in a cloud project space, a Wework desktop app that is connected to that cloud and allowed to send system notifications displays a system notification. Reassigning the same owner or assigning a task to yourself does not send another notification.
+
 ## Project space automation
 
 Project space boards include an **Automation** tab that manages robot members and the execution queue together.

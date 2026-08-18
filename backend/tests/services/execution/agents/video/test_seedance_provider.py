@@ -387,6 +387,50 @@ async def test_seedance_25_uses_configured_asset_library(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_seedance_passes_through_external_content_blocks(monkeypatch) -> None:
+    client = _Client()
+    monkeypatch.setattr(
+        "app.services.execution.agents.video.providers.seedance.httpx.AsyncClient",
+        lambda **kwargs: client,
+    )
+    monkeypatch.setattr(
+        "app.services.execution.agents.video.providers.seedance.build_external_provider_content",
+        lambda *, media_type, descriptor, role, **_: {
+            "type": f"external_{media_type}_reference",
+            f"external_{media_type}_reference": descriptor["external_reference"]["id"],
+            "role": role,
+        },
+    )
+    provider = SeedanceProvider(
+        base_url="https://example.com",
+        api_key="test-key",
+    )
+
+    await provider.create_job(
+        prompt="Generate a video",
+        reference_videos=[
+            {"external_reference": {"id": "video-123"}},
+        ],
+        reference_audios=[
+            {"external_reference": {"id": "audio-456"}},
+        ],
+    )
+
+    assert client.post_kwargs["json"]["content"][1:] == [
+        {
+            "type": "external_video_reference",
+            "external_video_reference": "video-123",
+            "role": "reference_video",
+        },
+        {
+            "type": "external_audio_reference",
+            "external_audio_reference": "audio-456",
+            "role": "reference_audio",
+        },
+    ]
+
+
+@pytest.mark.asyncio
 async def test_seedance_uses_external_media_id_blocks(monkeypatch) -> None:
     client = _Client()
     monkeypatch.setattr(

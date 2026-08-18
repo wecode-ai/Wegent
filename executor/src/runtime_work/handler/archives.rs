@@ -4,6 +4,15 @@
 
 use super::*;
 
+pub(super) async fn run_worktree_restore_blocking<F>(restore: F) -> Result<bool, String>
+where
+    F: FnOnce() -> Result<bool, String> + Send + 'static,
+{
+    tokio::task::spawn_blocking(restore)
+        .await
+        .map_err(|error| format!("Worktree restore task failed: {error}"))?
+}
+
 impl RuntimeWorkRpcHandler {
     pub(super) async fn archive_task(&self, payload: Value) -> Result<Value, AppIpcError> {
         log_executor_event(
@@ -27,6 +36,30 @@ impl RuntimeWorkRpcHandler {
             ],
         );
         let mut link = self.task_link_from_payload(&payload, false).await?;
+        if !self
+            .wait_for_worktree_preparation_to_finish(&link.local_task_id)
+            .await
+        {
+            return Ok(json!({
+                "success": false,
+                "accepted": false,
+                "taskId": link.local_task_id,
+                "workspacePath": link.workspace_path,
+                "runtime": link.runtime,
+                "error": "runtime task worktree preparation did not stop within timeout",
+                "code": "worktree_runtime_stop_timeout",
+            }));
+        }
+        let stop_result = self
+            .cancel_task(json!({
+                "taskId": link.local_task_id,
+                "workspacePath": link.workspace_path,
+            }))
+            .await?;
+        if stop_result["accepted"] != true {
+            return Ok(stop_result);
+        }
+        link = self.task_link_from_payload(&payload, false).await?;
         let archive_thread_id = runtime_session_id_from_link(&link);
         log_runtime_archive_link("runtime task archive resolved link", &link, false);
         if let Some(thread_id) = archive_thread_id.as_deref() {
@@ -158,14 +191,24 @@ impl RuntimeWorkRpcHandler {
         let requested_count = links.len();
         let mut accepted_count = 0_usize;
         let mut results = Vec::new();
-        for link in links {
-            let result = self
-                .archive_task(json!({
-                    "taskId": link.local_task_id,
-                    "workspacePath": link.workspace_path,
-                    "runtimeHandle": link.runtime_handle,
-                }))
-                .await?;
+        let archive_results = stream::iter(links)
+            .map(|link| {
+                let handler = self.clone();
+                async move {
+                    handler
+                        .archive_task(json!({
+                            "taskId": link.local_task_id,
+                            "workspacePath": link.workspace_path,
+                            "runtimeHandle": link.runtime_handle,
+                        }))
+                        .await
+                }
+            })
+            .buffered(8)
+            .collect::<Vec<_>>()
+            .await;
+        for result in archive_results {
+            let result = result?;
             if result["accepted"].as_bool() == Some(true) {
                 accepted_count += 1;
             }
@@ -183,9 +226,10 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) async fn unarchive_task(&self, payload: Value) -> Result<Value, AppIpcError> {
         let mut link = self.task_link_from_payload(&payload, true).await?;
-        if let Err(error) = self
-            .worktrees
-            .restore_if_known(Path::new(&link.workspace_path))
+        let worktrees = self.worktrees.clone();
+        let workspace_path = PathBuf::from(&link.workspace_path);
+        if let Err(error) =
+            run_worktree_restore_blocking(move || worktrees.restore_if_known(&workspace_path)).await
         {
             return Ok(task_action_failure(&link, error));
         }
@@ -458,9 +502,14 @@ impl RuntimeWorkRpcHandler {
                 == normalize_workspace_path(&link.workspace_path)
         });
         if !has_other_link {
-            if let Err(error) = self
-                .worktrees
-                .forget_if_known(Path::new(&link.workspace_path))
+            let worktrees = self.worktrees.clone();
+            let workspace_path = PathBuf::from(&link.workspace_path);
+            let forgotten =
+                tokio::task::spawn_blocking(move || worktrees.forget_if_known(&workspace_path))
+                    .await;
+            if let Err(error) = forgotten
+                .map_err(|error| error.to_string())
+                .and_then(|result| result.map_err(|error| error.to_string()))
             {
                 log_executor_event(
                     "runtime archived conversation worktree snapshot cleanup failed",

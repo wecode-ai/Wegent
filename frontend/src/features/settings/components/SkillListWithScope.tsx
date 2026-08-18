@@ -317,23 +317,24 @@ export function SkillListWithScope({
     return scope === 'group' && !!currentGroup?.my_role && canDelete(currentGroup.my_role)
   }
 
+  const isGroupSkill = useCallback(
+    (skill: UnifiedSkill) =>
+      !isSystemSkill(skill) &&
+      (Boolean(skill.namespace && skill.namespace !== 'default') || Boolean(skill.is_group_shared)),
+    []
+  )
+
   const getSkillSourceLabel = (skill: UnifiedSkill): string => {
     if (isSystemSkill(skill)) return tSettings('skills.source.system')
-    if (skill.namespace && skill.namespace !== 'default') return tSettings('skills.source.group')
+    if (isGroupSkill(skill)) return tSettings('skills.source.group')
     if (user && skill.user_id === user.id) return tSettings('skills.source.personal')
     return tSettings('skills.source.library')
   }
 
-  const isGroupSkill = useCallback(
-    (skill: UnifiedSkill) =>
-      !isSystemSkill(skill) && Boolean(skill.namespace && skill.namespace !== 'default'),
-    []
-  )
-
   const matchesSourceFilter = useCallback(
     (skill: UnifiedSkill): boolean => {
       if (sourceFilter === 'personal') {
-        return !isSystemSkill(skill) && skill.namespace === 'default'
+        return !isSystemSkill(skill) && !isGroupSkill(skill)
       }
       if (sourceFilter === 'group') {
         return isGroupSkill(skill)

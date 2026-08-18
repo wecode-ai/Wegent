@@ -181,8 +181,16 @@ export class RuntimeTaskLifecycleStore {
     this.publish()
   }
 
-  sendRequested(address: RuntimeTaskAddress): void {
-    this.dispatch(address, { type: 'send_requested' })
+  sendRequested(
+    address: RuntimeTaskAddress,
+    options: { workspaceCreationKind?: 'worktree' } = {}
+  ): void {
+    this.dispatch(address, {
+      type: 'send_requested',
+      ...(options.workspaceCreationKind
+        ? { workspaceCreationKind: options.workspaceCreationKind }
+        : {}),
+    })
   }
 
   sendAccepted(address: RuntimeTaskAddress): void {
@@ -402,15 +410,21 @@ export class RuntimeTaskLifecycleStore {
         goalStatus: previousState.goalStatus,
       })
     }
+    const sendRequestedEvent: RuntimeTaskLifecycleEvent = {
+      type: 'send_requested',
+      ...(previousState.workspaceCreationKind
+        ? { workspaceCreationKind: previousState.workspaceCreationKind }
+        : {}),
+    }
     if (previousState.executionPhase === 'starting') {
-      nextMachine.dispatch({ type: 'send_requested' })
+      nextMachine.dispatch(sendRequestedEvent)
     } else if (previousState.executionPhase === 'running') {
       nextMachine.dispatch({ type: 'executor_started' })
     }
     if (previousState.turnPhase === 'streaming') {
       nextMachine.dispatch({ type: 'turn_started', turnId: previousState.activeTurnId })
     } else if (previousState.turnPhase === 'submitting') {
-      nextMachine.dispatch({ type: 'send_requested' })
+      nextMachine.dispatch(sendRequestedEvent)
     } else if (previousState.turnPhase === 'awaiting') {
       nextMachine.dispatch({ type: 'send_accepted' })
     }

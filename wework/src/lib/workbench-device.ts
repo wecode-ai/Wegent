@@ -68,7 +68,7 @@ export function findWorkbenchDevice(devices: DeviceInfo[], deviceId: string | nu
 }
 
 export function isWorkbenchDeviceOnline(device: DeviceInfo | null) {
-  return Boolean(device && device.status === 'online')
+  return Boolean(device && (device.status === 'online' || device.status === 'busy'))
 }
 
 export function getWorkbenchDeviceDisplayName(

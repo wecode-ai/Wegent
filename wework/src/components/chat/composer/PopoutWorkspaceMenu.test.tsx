@@ -13,8 +13,11 @@ vi.mock('@/hooks/useTranslation', () => ({
         'workbench.popout_workspace_menu_project': '项目',
         'workbench.popout_workspace_menu_no_project': '无项目',
         'workbench.popout_workspace_menu_launch_mode': '启动模式',
-        'workbench.popout_workspace_menu_worktree': '工作树',
+        'workbench.popout_workspace_menu_worktree': '新工作树',
         'workbench.popout_workspace_menu_current_workspace': '当前工作区',
+        'workbench.worktree_unavailable_not_git': '当前工作区不是 Git 仓库。',
+        'workbench.worktree_unavailable_preflight_pending': '正在检查工作树可用性…',
+        'workbench.worktree_unavailable_preflight_failed': '无法确认工作树是否可用。',
         'workbench.popout_workspace_menu_branch': '分支',
         'workbench.popout_workspace_menu_no_branch': '无分支',
         'workbench.popout_workspace_menu_permission': '权限',
@@ -42,6 +45,12 @@ function renderMenu(overrides: Partial<ComponentProps<typeof PopoutWorkspaceMenu
     onExecutionModeChange: vi.fn(),
     onListBranches: vi.fn().mockResolvedValue(['main', 'fix/menu']),
     onSelectProject: vi.fn(),
+    worktreeAvailability: {
+      available: true,
+      reason: 'available',
+      deviceId: 'device-1',
+      sourcePath: '/repo/Wegent',
+    },
     ...overrides,
   }
   render(<PopoutWorkspaceMenu {...props} />)
@@ -90,12 +99,72 @@ describe('PopoutWorkspaceMenu', () => {
   })
 
   test('disables worktree mode when the selected project is not a Git project', async () => {
-    renderMenu({ executionMode: 'current_workspace', isGitProject: false })
+    renderMenu({
+      executionMode: 'current_workspace',
+      isGitProject: false,
+      worktreeAvailability: {
+        available: false,
+        reason: 'not_git',
+        deviceId: 'device-1',
+        sourcePath: '/repo/Wegent',
+      },
+    })
 
     await userEvent.click(screen.getByTestId('composer-project-menu-button'))
     await userEvent.click(screen.getByTestId('popout-workspace-launch-mode-button'))
 
     expect(screen.getByTestId('popout-workspace-launch-mode-git_worktree')).toBeDisabled()
+    expect(screen.getByTestId('popout-workspace-worktree-unavailable-reason')).toHaveTextContent(
+      '当前工作区不是 Git 仓库'
+    )
+  })
+
+  test('does not infer worktree availability when Runtime availability is missing', async () => {
+    const props = renderMenu({
+      executionMode: 'current_workspace',
+      worktreeAvailability: undefined,
+    })
+
+    await userEvent.click(screen.getByTestId('composer-project-menu-button'))
+    await userEvent.click(screen.getByTestId('popout-workspace-launch-mode-button'))
+
+    expect(screen.getByTestId('popout-workspace-launch-mode-git_worktree')).toBeDisabled()
+    expect(screen.getByTestId('popout-workspace-worktree-unavailable-reason')).toHaveTextContent(
+      '正在检查工作树可用性'
+    )
+    expect(props.onExecutionModeChange).not.toHaveBeenCalled()
+  })
+
+  test('uses a shared availability reason and preserves the selected worktree mode', async () => {
+    const props = renderMenu({
+      worktreeAvailability: {
+        available: false,
+        reason: 'preflight_failed',
+        deviceId: 'device-1',
+        sourcePath: '/repo/Wegent',
+      },
+    })
+
+    await userEvent.click(screen.getByTestId('composer-project-menu-button'))
+    expect(screen.getByTestId('popout-workspace-launch-mode-button')).toHaveTextContent('新工作树')
+    await userEvent.click(screen.getByTestId('popout-workspace-launch-mode-button'))
+
+    expect(screen.getByTestId('popout-workspace-launch-mode-git_worktree')).toBeDisabled()
+    expect(screen.getByTestId('popout-workspace-worktree-unavailable-reason')).toHaveTextContent(
+      '无法确认工作树是否可用'
+    )
+    expect(props.onExecutionModeChange).not.toHaveBeenCalled()
+  })
+
+  test('locks both launch mode options for an existing task', async () => {
+    const props = renderMenu({ executionModeLocked: true })
+
+    await userEvent.click(screen.getByTestId('composer-project-menu-button'))
+    await userEvent.click(screen.getByTestId('popout-workspace-launch-mode-button'))
+
+    expect(screen.getByTestId('popout-workspace-launch-mode-current_workspace')).toBeDisabled()
+    expect(screen.getByTestId('popout-workspace-launch-mode-git_worktree')).toBeDisabled()
+    expect(props.onExecutionModeChange).not.toHaveBeenCalled()
   })
 
   test('loads, filters, and switches branches from its submenu', async () => {

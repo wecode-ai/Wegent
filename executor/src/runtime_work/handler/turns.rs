@@ -10,12 +10,20 @@ use aes_gcm::{
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use std::fs::OpenOptions;
 use std::io::Write;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Mutex as StdMutex, OnceLock,
+};
 
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 
 const RUNTIME_TURN_QUEUE_VERSION: u64 = 1;
 const RUNTIME_TURN_QUEUE_AAD: &[u8] = b"wework-runtime-turn-queue-v1";
+const WORKTREE_PREPARATION_STOP_WAIT_ATTEMPTS: usize = 600;
+const WORKTREE_PREPARATION_STOP_WAIT_MS: u64 = 50;
+static RUNTIME_TURN_QUEUE_WRITE_LOCK: OnceLock<StdMutex<()>> = OnceLock::new();
+static RUNTIME_TURN_QUEUE_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -90,6 +98,10 @@ pub(super) fn write_runtime_turn_queue(
     queue_path: &Path,
     turns: &VecDeque<SpawnTurnRequest>,
 ) -> Result<(), String> {
+    let _write_guard = RUNTIME_TURN_QUEUE_WRITE_LOCK
+        .get_or_init(|| StdMutex::new(()))
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     let parent = queue_path
         .parent()
         .ok_or_else(|| "Runtime turn queue path has no parent".to_owned())?;
@@ -124,6 +136,31 @@ pub(super) fn write_runtime_turn_queue(
     write_private_atomic(queue_path, &envelope)
 }
 
+pub(super) fn partition_restored_turns(
+    worktrees: &WorktreeManager,
+    turns: VecDeque<SpawnTurnRequest>,
+) -> (VecDeque<SpawnTurnRequest>, VecDeque<SpawnTurnRequest>) {
+    let mut resumable = VecDeque::new();
+    let mut interrupted_worktrees = VecDeque::new();
+    for turn in turns {
+        let deferred_worktree = turn
+            .request
+            .extra
+            .contains_key("deferred_worktree_source_path");
+        let managed_worktree = turn
+            .request
+            .project_workspace_path
+            .as_deref()
+            .is_some_and(|path| worktrees.is_managed_path(Path::new(path)));
+        if deferred_worktree || managed_worktree {
+            interrupted_worktrees.push_back(turn);
+        } else {
+            resumable.push_back(turn);
+        }
+    }
+    (resumable, interrupted_worktrees)
+}
+
 fn read_runtime_turn_queue_key(queue_path: &Path) -> Result<[u8; 32], String> {
     let key_path = runtime_turn_queue_key_path(queue_path);
     let key = fs::read(&key_path)
@@ -153,9 +190,10 @@ fn write_private_atomic(path: &Path, content: &[u8]) -> Result<(), String> {
         .and_then(|name| name.to_str())
         .unwrap_or("runtime-turn-queue");
     let temp_path = path.with_file_name(format!(
-        ".{file_name}.{}.{}.tmp",
+        ".{file_name}.{}.{}.{}.tmp",
         std::process::id(),
-        now_ms()
+        now_ms(),
+        RUNTIME_TURN_QUEUE_TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed)
     ));
     let mut options = OpenOptions::new();
     options.create_new(true).write(true);
@@ -297,31 +335,45 @@ impl RuntimeWorkRpcHandler {
             .extra
             .remove("deferred_worktree_path")
             .and_then(|value| value.as_str().map(PathBuf::from));
+        let repo_root_fingerprint = turn
+            .request
+            .extra
+            .remove("deferred_worktree_repo_root_fingerprint")
+            .and_then(|value| value.as_str().map(ToOwned::to_owned));
         let worktrees = self.worktrees.clone();
         let worktree_id = turn.local_task_id.clone();
-        let record = tokio::task::spawn_blocking(move || match planned_path {
-            Some(planned_path) => worktrees.prepare_at(
-                Path::new(&source_path),
-                &worktree_id,
-                git_ref.as_deref(),
-                false,
-                &planned_path,
-            ),
-            None => worktrees.prepare(
-                Path::new(&source_path),
-                &worktree_id,
-                git_ref.as_deref(),
-                false,
-            ),
-        })
-        .await
-        .map_err(|error| {
-            AppIpcError::new(
-                "worktree_prepare_failed",
-                format!("Worktree preparation task failed: {error}"),
-            )
-        })?
-        .map_err(|error| AppIpcError::new("worktree_prepare_failed", error))?;
+        let record =
+            tokio::task::spawn_blocking(move || match (planned_path, repo_root_fingerprint) {
+                (Some(planned_path), Some(repo_root_fingerprint)) => worktrees.prepare_planned(
+                    Path::new(&source_path),
+                    &worktree_id,
+                    git_ref.as_deref(),
+                    false,
+                    &planned_path,
+                    &repo_root_fingerprint,
+                ),
+                (Some(planned_path), None) => worktrees.prepare_at(
+                    Path::new(&source_path),
+                    &worktree_id,
+                    git_ref.as_deref(),
+                    false,
+                    &planned_path,
+                ),
+                (None, _) => worktrees.prepare(
+                    Path::new(&source_path),
+                    &worktree_id,
+                    git_ref.as_deref(),
+                    false,
+                ),
+            })
+            .await
+            .map_err(|error| {
+                AppIpcError::new(
+                    "worktree_prepare_failed",
+                    format!("Worktree preparation task failed: {error}"),
+                )
+            })?
+            .map_err(|error| AppIpcError::new(worktree_error_code(&error), error))?;
         turn.request.project_workspace_path = Some(record.path.clone());
         self.store.update_task(&turn.local_task_id, |link| {
             link.workspace_path = record.path.clone();
@@ -362,6 +414,30 @@ impl RuntimeWorkRpcHandler {
         true
     }
 
+    pub(super) async fn wait_for_worktree_preparation_to_finish(
+        &self,
+        local_task_id: &str,
+    ) -> bool {
+        for attempt in 0..=WORKTREE_PREPARATION_STOP_WAIT_ATTEMPTS {
+            let preparing = self
+                .preparing_worktree_turns
+                .lock()
+                .expect("preparing worktree turn map lock should not be poisoned")
+                .contains_key(local_task_id);
+            if !preparing {
+                return true;
+            }
+            if attempt == WORKTREE_PREPARATION_STOP_WAIT_ATTEMPTS {
+                return false;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(
+                WORKTREE_PREPARATION_STOP_WAIT_MS,
+            ))
+            .await;
+        }
+        false
+    }
+
     fn mark_deferred_worktree_failed(&self, turn: &SpawnTurnRequest, error: &AppIpcError) {
         let local_task_id = &turn.local_task_id;
         self.persist_failed_assistant_message(local_task_id, &turn.request, &error.message);
@@ -376,6 +452,10 @@ impl RuntimeWorkRpcHandler {
             if let Some(runtime_handle) = link.runtime_handle.as_object_mut() {
                 runtime_handle.remove("queuePosition");
                 runtime_handle.insert("lastError".to_owned(), Value::String(error.message.clone()));
+                runtime_handle.insert(
+                    "lastErrorCode".to_owned(),
+                    Value::String(error.code.clone()),
+                );
             }
         });
     }
@@ -406,8 +486,19 @@ impl RuntimeWorkRpcHandler {
         };
         let worktrees = self.worktrees.clone();
         let cleanup_path = path.clone();
-        let result =
-            tokio::task::spawn_blocking(move || worktrees.delete(&cleanup_path, false)).await;
+        let worktree_id = turn.local_task_id.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            worktrees
+                .delete(&cleanup_path, false)
+                .map(|_| ())
+                .or_else(|delete_error| {
+                    worktrees
+                        .discard_failed_preparation(&cleanup_path, &worktree_id)
+                        .map(|_| ())
+                        .map_err(|discard_error| format!("{delete_error}; {discard_error}"))
+                })
+        })
+        .await;
         if let Err(error) = result
             .map_err(|error| error.to_string())
             .and_then(|result| result.map_err(|error| error.to_string()))
@@ -459,6 +550,7 @@ impl RuntimeWorkRpcHandler {
                 .is_some_and(|preparation| preparation.cancellation_requested)
         };
         if cancelled {
+            self.cleanup_cancelled_worktree(&turn).await;
             self.mark_deferred_worktree_cancelled(&turn.local_task_id);
             self.finish_scheduled_turn(&turn.local_task_id).await;
             return Ok(());
@@ -544,6 +636,7 @@ impl RuntimeWorkRpcHandler {
         let handler = self.clone();
         let turn_local_task_id = local_task_id.clone();
         let turn_handle = tokio::spawn(async move {
+            let _stopped_turn_guard = StoppedTurnGuard::new(stopped_tx);
             let _scheduled_turn_guard =
                 ScheduledTurnGuard::new(handler.clone(), turn_local_task_id.clone());
             handler.ensure_notification_router().await;
@@ -722,7 +815,6 @@ impl RuntimeWorkRpcHandler {
                 handler.clear_active_codex_turn(&turn_local_task_id, execution_id);
                 handler.mark_thread_event_routes_idle_for_local_task(&turn_local_task_id);
                 handler.clear_active_request_user_input(&turn_local_task_id, execution_id);
-                let _ = stopped_tx.send(());
                 return;
             }
 
@@ -741,7 +833,6 @@ impl RuntimeWorkRpcHandler {
             );
             handler.clear_active_codex_turn(&turn_local_task_id, execution_id);
             handler.clear_active_request_user_input(&turn_local_task_id, execution_id);
-            let _ = stopped_tx.send(());
         });
         drop(turn_handle);
     }
@@ -1185,22 +1276,20 @@ mod tests {
     }
 
     #[test]
-    fn forced_turn_moves_to_front_without_exceeding_the_limit() {
+    fn forced_turn_overcommits_without_releasing_more_queued_work() {
         let mut scheduler = RuntimeTurnScheduler::new(1, VecDeque::new());
         assert!(scheduler.enqueue(scheduled_turn("running")).is_some());
         assert!(scheduler.enqueue(scheduled_turn("forced")).is_none());
         assert!(scheduler.enqueue(scheduled_turn("waiting")).is_none());
 
-        assert!(scheduler.force_start("forced").is_none());
-        assert_eq!(scheduler.active_tasks, 1);
         assert_eq!(
             scheduler
-                .finish("running")
-                .into_iter()
-                .map(|turn| turn.local_task_id)
-                .collect::<Vec<_>>(),
-            vec!["forced"]
+                .force_start("forced")
+                .map(|turn| turn.local_task_id),
+            Some("forced".to_owned())
         );
+        assert_eq!(scheduler.active_tasks, 2);
+        assert!(scheduler.finish("running").is_empty());
         assert_eq!(scheduler.active_tasks, 1);
         assert_eq!(
             scheduler
@@ -1210,6 +1299,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["waiting"]
         );
+        assert_eq!(scheduler.active_tasks, 1);
     }
 
     #[test]
@@ -1271,6 +1361,10 @@ mod tests {
         turn.request.auth_token = Some("top-secret-auth-token".to_owned());
         turn.request.runtime_auth_token = Some("runtime-secret-token".to_owned());
         turn.request.model_config = json!({"api_key": "model-secret-key"});
+        turn.request.extra.insert(
+            "deferred_worktree_repo_root_fingerprint".to_owned(),
+            Value::String("sha256:planned-repository".to_owned()),
+        );
         let turns = VecDeque::from([turn]);
 
         write_runtime_turn_queue(&queue_path, &turns).expect("runtime queue should be persisted");
@@ -1295,6 +1389,10 @@ mod tests {
             restored[0].request.model_config["api_key"],
             "model-secret-key"
         );
+        assert_eq!(
+            restored[0].request.extra["deferred_worktree_repo_root_fingerprint"],
+            "sha256:planned-repository"
+        );
 
         #[cfg(unix)]
         {
@@ -1313,6 +1411,93 @@ mod tests {
             assert_eq!(queue_mode, 0o600);
             assert_eq!(key_mode, 0o600);
         }
+    }
+
+    #[test]
+    fn concurrent_queue_writes_use_one_key_and_unique_temporary_files() {
+        let temp = tempfile::tempdir().expect("temporary queue directory should exist");
+        let queue_path = Arc::new(temp.path().join("turn-queue.json"));
+        let barrier = Arc::new(std::sync::Barrier::new(8));
+        let writers = (0..8)
+            .map(|index| {
+                let queue_path = Arc::clone(&queue_path);
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    let turns =
+                        VecDeque::from([scheduled_turn(&format!("task-concurrent-{index}"))]);
+                    barrier.wait();
+                    write_runtime_turn_queue(&queue_path, &turns)
+                })
+            })
+            .collect::<Vec<_>>();
+
+        for writer in writers {
+            writer
+                .join()
+                .expect("queue writer should not panic")
+                .expect("concurrent queue write should succeed");
+        }
+
+        let restored =
+            read_runtime_turn_queue(&queue_path).expect("final queue should remain decryptable");
+        assert_eq!(restored.len(), 1);
+        assert!(restored[0].local_task_id.starts_with("task-concurrent-"));
+        let temporary_files = fs::read_dir(temp.path())
+            .expect("queue directory should remain readable")
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.ends_with(".tmp"))
+            })
+            .count();
+        assert_eq!(temporary_files, 0);
+    }
+
+    #[test]
+    fn restored_worktree_turns_are_quarantined_from_resumable_queue() {
+        let temp = tempfile::tempdir().expect("temporary worktree directory should exist");
+        let worktrees = WorktreeManager::new(temp.path().join("runtime-work/worktrees.json"));
+        let managed_root = temp.path().join("workspace/worktrees");
+        worktrees
+            .update_settings(WorktreeSettingsPatch {
+                worktree_root: Some(managed_root.display().to_string()),
+                ..WorktreeSettingsPatch::default()
+            })
+            .expect("managed worktree root should be configured");
+
+        let normal = scheduled_turn("normal");
+        let mut deferred = scheduled_turn("deferred-worktree");
+        deferred.request.extra.insert(
+            "deferred_worktree_source_path".to_owned(),
+            Value::String(temp.path().join("source").display().to_string()),
+        );
+        let mut existing = scheduled_turn("existing-worktree");
+        existing.request.project_workspace_path = Some(
+            managed_root
+                .join("existing-worktree/repository")
+                .display()
+                .to_string(),
+        );
+
+        let (resumable, interrupted) =
+            partition_restored_turns(&worktrees, VecDeque::from([normal, deferred, existing]));
+
+        assert_eq!(
+            resumable
+                .iter()
+                .map(|turn| turn.local_task_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["normal"]
+        );
+        assert_eq!(
+            interrupted
+                .iter()
+                .map(|turn| turn.local_task_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["deferred-worktree", "existing-worktree"]
+        );
     }
 
     #[test]

@@ -95,6 +95,9 @@ class RemoteDeviceProvider(LocalDeviceProvider):
             "client_ip": spec.get("clientIp"),
             "runtime_transfer_host": spec.get("runtimeTransferHost"),
             "runtime_instance_id": spec.get("runtimeInstanceId"),
+            "runtime_features": (
+                online_info.get("runtime_features") if online_info else None
+            ),
             "remote_config": spec.get("remoteConfig"),
             "bind_shell": spec.get("bindShell", "claudecode"),
         }
@@ -180,6 +183,9 @@ class RemoteDeviceProvider(LocalDeviceProvider):
                     "client_ip": spec.get("clientIp"),
                     "runtime_transfer_host": spec.get("runtimeTransferHost"),
                     "runtime_instance_id": spec.get("runtimeInstanceId"),
+                    "runtime_features": (
+                        online_info.get("runtime_features") if online_info else None
+                    ),
                     "remote_config": spec.get("remoteConfig"),
                     "bind_shell": spec.get("bindShell", "claudecode"),
                 }
