@@ -1982,6 +1982,8 @@
     "general_settings_system_tray_title": "System tray",
     "general_settings_task_completion_notifications": "Send a system notification when a task completes",
     "general_settings_task_completion_notifications_description": "Only notify when away: send an operating system notification when a background task completes and the Wework window is not focused.",
+    "project_task_assigned_notification_title": "New board task assigned",
+    "project_task_assigned_notification_body": "{{assigner}} assigned “{{task}}” to you ({{project}})",
     "general_settings_tray_display_content": "Tray display content",
     "general_settings_tray_display_content_description": "Choose which statuses appear in the tray icon and menu.",
     "general_settings_tray_unread": "Unread tasks",
