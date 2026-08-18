@@ -1910,6 +1910,16 @@ pub async fn embedded_browser_open(
                         }
                     }
                 }
+                let _ =
+                    update_entry_for_native_label(&state, &native_label_for_navigation, |entry| {
+                        entry.is_loading = true
+                    });
+                emit_page_state_change(
+                    &app_for_navigation,
+                    &state,
+                    owner,
+                    native_label_for_navigation.clone(),
+                );
                 true
             }
         })
@@ -1932,20 +1942,6 @@ pub async fn embedded_browser_open(
                     "webviewUrl": webview_url.clone(),
                 }),
             );
-            if matches!(payload.event(), PageLoadEvent::Started) {
-                let _ = update_entry_for_native_label(
-                    &load_state_handle,
-                    &native_label_for_load,
-                    |entry| entry.is_loading = true,
-                );
-                emit_page_state_change(
-                    &app_for_load,
-                    &load_state_handle,
-                    owner,
-                    native_label_for_load.clone(),
-                );
-                return;
-            }
             if matches!(payload.event(), PageLoadEvent::Finished) {
                 let bootstrap_finished = mark_entry_bootstrap_finished_for_native_label(
                     &load_state_handle,

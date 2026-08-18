@@ -20,7 +20,7 @@ flowchart LR
     WEBVIEW -->|其他平台: builder 原子绑定初始 URL| READY
     READY --> BRIDGE
     BRIDGE -->|唯一目标导航| WEBVIEW
-    WEBVIEW -->|PageLoadEvent::Started| LOADING[标签加载动画]
+    WEBVIEW -->|on_navigation 接受导航| LOADING[标签加载动画]
     LOADING --> PANEL
     WEBVIEW -->|PageLoadEvent::Finished| LOADED[loaded_url 真值]
     LOADED --> BRIDGE
@@ -52,7 +52,7 @@ sequenceDiagram
     S->>S: Opening -> Ready
     R->>R: 结束一次性 bridge 宿主请求
     B->>W: navigate(URL)
-    W-->>S: Started(URL)
+    W-->>S: 接受导航
     S-->>R: isLoading = true
     R->>R: 标签图标显示加载动画
     W->>H: GET URL
@@ -75,6 +75,6 @@ sequenceDiagram
 | `about:blank` 宿主创建与 UI 状态              | `wework/src/components/layout/workspace-panels/WorkspaceBrowserPanel.tsx` |
 | 多标签真实桌面回归                            | `wework/e2e/desktop/scenarios/embedded-browser-multi-tabs.scenario.mjs`   |
 
-不变量：base label 只负责入口路由；每个标签拥有独立 logical label 和 WebView；bridge 请求只在首次宿主创建期间有效，React 用 ensure-host 创建宿主且复用时禁止导航；macOS 的 `build()` 只代表对象创建，后置 bootstrap `about:blank` 的 `Finished` 才能把宿主从 `Opening` 变为 `Ready`，其他平台由 builder 原子绑定初始 URL，无后置导航竞争；bridge 是首次目标 URL 的唯一后置导航者；原生 `Started / Finished` 是标签加载状态的唯一真值，加载时替换现有标签图标而不增加信息位；目标 URL 的 `Finished → loaded_url` 才能完成 `open`；关闭只能销毁 expected native label。
+不变量：base label 只负责入口路由；每个标签拥有独立 logical label 和 WebView；bridge 请求只在首次宿主创建期间有效，React 用 ensure-host 创建宿主且复用时禁止导航；macOS 的 `build()` 只代表对象创建，后置 bootstrap `about:blank` 的 `Finished` 才能把宿主从 `Opening` 变为 `Ready`，其他平台由 builder 原子绑定初始 URL，无后置导航竞争；bridge 是首次目标 URL 的唯一后置导航者；原生 `on_navigation` 接受导航即进入加载态，`Finished` 是结束加载的唯一真值，加载时替换现有标签图标而不增加信息位；目标 URL 的 `Finished → loaded_url` 才能完成 `open`；关闭只能销毁 expected native label。
 
 详细能力与验证说明见 [内置浏览器开发指南](../wework/developer-guide/wework-embedded-browser.md)。
