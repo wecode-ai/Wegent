@@ -53,10 +53,14 @@ sequenceDiagram
     U->>B: runtime.tasks.create(taskId, sourcePath, git_worktree)
     B->>E: 原样转发
     E->>E: 计算稳定 plannedPath 并持久化任务意图
+    E-->>U: accepted + plannedPath
+    U->>U: 将 plannedPath 写入当前任务地址
     alt 无可用 slot
-        E-->>U: queued + plannedPath
         S->>S: 等待 slot，不创建目录
     end
+    U->>E: runtime.tasks.list
+    E-->>U: 任务投影 + plannedPath/finalPath
+    U->>U: 用任务投影回填当前任务路径
     S->>E: 获得 slot
     E->>G: 重新校验并创建 Worktree
     G-->>E: finalPath
@@ -91,7 +95,7 @@ sequenceDiagram
 | 边                                                 | 代码归属                                                                           |
 | -------------------------------------------------- | ---------------------------------------------------------------------------------- |
 | DeviceWorkspace 选择、可用性、偏好和 UI            | `wework/src/features/workbench/`、`wework/src/components/chat/composer/`           |
-| Local/Cloud/Remote Runtime 路由和任务投影          | `wework/src/api/`、`wework/src/features/workbench/useWorkbenchRuntimeMessaging.ts` |
+| Local/Cloud/Remote Runtime 路由和任务投影          | `wework/src/api/`、`wework/src/features/workbench/useWorkbenchRuntimeMessaging.ts`、`wework/src/features/workbench/workbenchReducer.ts` |
 | 逻辑设备鉴权、持久 Runtime 身份和 Socket 解析      | `backend/app/services/device/`、`backend/app/api/ws/`                              |
 | Worktree capability、preflight、Git 生命周期和状态 | `executor/src/runtime_work/`                                                       |
 | 云设备持久卷、固定挂载路径和单写实例               | 云设备 Provider、部署配置、`docker/device/`                                        |
@@ -121,5 +125,6 @@ sequenceDiagram
 20. `preserveSnapshot=false` 表示终态清理：Executor 必须删除已有快照引用并从 `worktrees.json` 移除记录；后续 `runtime.worktrees.list` 不得返回已清理的墓碑条目。
 21. 工作区类型判定优先使用真实 Git 元数据；只有路径中没有可解析的 Git 仓库或 Worktree 元数据时，才允许使用 `worktrees/<id>/<project>` 路径约定兜底。普通仓库不得仅因任一父目录名为 `worktrees` 被投影成 Worktree。
 22. Runtime 接受任务后，列表刷新失败只能降级为稍后对账，不能撤销已接受任务的本地可见状态或报告发送失败。
+23. 当前任务地址必须从接受响应和后续任务列表中持续回填稳定计划路径或最终路径；任务列表已经提供非空路径时，不得保留乐观任务地址中的空路径。
 
 详细开发波次、子 Agent 写入范围和验收矩阵见 [云端 Git Worktree 目标模式与并行开发计划](../wework/developer-guide/wework-cloud-git-worktree-parallel-development-plan.md)。
