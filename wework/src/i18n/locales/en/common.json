@@ -561,6 +561,8 @@
     "diagram_save_image": "Save image",
     "diagram_image_saved": "Image saved",
     "diagram_image_save_failed": "Failed to save image",
+    "diagram_full_screen": "View full screen",
+    "diagram_exit_full_screen": "Exit full screen",
     "workspace_file_no_workspace": "No workspace available",
     "workspace_file_hide_tree": "Hide directory tree",
     "workspace_file_show_tree": "Show directory tree",

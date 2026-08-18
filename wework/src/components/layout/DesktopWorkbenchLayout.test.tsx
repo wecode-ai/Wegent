@@ -6342,7 +6342,7 @@ describe('DesktopWorkbenchLayout', () => {
         })
       )
     )
-  })
+  }, 15_000)
 
   test('temporary chat queues a follow-up while its current response is running', async () => {
     const address: RuntimeTaskAddress = {

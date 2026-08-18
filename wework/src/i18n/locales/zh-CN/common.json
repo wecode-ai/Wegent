@@ -560,6 +560,8 @@
     "diagram_save_image": "保存图片",
     "diagram_image_saved": "图片已保存",
     "diagram_image_save_failed": "保存图片失败",
+    "diagram_full_screen": "全屏查看",
+    "diagram_exit_full_screen": "退出全屏",
     "workspace_file_no_workspace": "暂无可浏览的工作区",
     "workspace_file_hide_tree": "隐藏目录树",
     "workspace_file_show_tree": "显示目录树",
