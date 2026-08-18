@@ -119,5 +119,6 @@ Essential invariants:
 18. Deferred creation persists the source-repository fingerprint captured while planning and compares it with a freshly computed fingerprint after acquiring a slot. Replacing the source directory with another repository fails as `worktree_source_changed`.
 19. A stop timeout has an unknown outcome. It never clears Runtime cancellation control or treats the task as stopped; an archive/delete retry still requires a stop acknowledgement from the same Runtime.
 20. `preserveSnapshot=false` is terminal cleanup: the Executor deletes any existing snapshot reference and removes the record from `worktrees.json`; later `runtime.worktrees.list` calls never return a tombstone for the cleaned Worktree.
+21. Workspace-kind detection prefers real Git metadata. The `worktrees/<id>/<project>` path convention is only a fallback when no Git repository or Worktree metadata can be resolved. A normal repository is never projected as a Worktree solely because an ancestor directory is named `worktrees`.
 
 See [Cloud Git Worktree Goal Mode and Parallel Development Plan](../wework/developer-guide/wework-cloud-git-worktree-parallel-development-plan.md) for delivery waves, sub-agent write scopes, and the acceptance matrix.

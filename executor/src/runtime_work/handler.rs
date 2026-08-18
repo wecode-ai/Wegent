@@ -229,11 +229,6 @@ impl RuntimeTurnScheduler {
             .queued_turns
             .iter()
             .position(|turn| turn.local_task_id == local_task_id)?;
-        if self.active_tasks >= self.max_concurrent_tasks {
-            let turn = self.queued_turns.remove(position)?;
-            self.queued_turns.push_front(turn);
-            return None;
-        }
         let turn = self.queued_turns.remove(position)?;
         self.active_tasks += 1;
         self.active_task_ids.insert(turn.local_task_id.clone());

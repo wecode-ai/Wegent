@@ -119,5 +119,6 @@ sequenceDiagram
 18. 延迟创建必须持久化计划阶段的源仓库 fingerprint，并在获得 slot 后与创建前重新计算的 fingerprint 比较；源目录被替换为另一个仓库时必须以 `worktree_source_changed` 失败。
 19. 停止超时是未知结果，不得清除 Runtime 取消控制或把任务当作已停止；重试归档/删除前仍必须获得同一 Runtime 的停止 ACK。
 20. `preserveSnapshot=false` 表示终态清理：Executor 必须删除已有快照引用并从 `worktrees.json` 移除记录；后续 `runtime.worktrees.list` 不得返回已清理的墓碑条目。
+21. 工作区类型判定优先使用真实 Git 元数据；只有路径中没有可解析的 Git 仓库或 Worktree 元数据时，才允许使用 `worktrees/<id>/<project>` 路径约定兜底。普通仓库不得仅因任一父目录名为 `worktrees` 被投影成 Worktree。
 
 详细开发波次、子 Agent 写入范围和验收矩阵见 [云端 Git Worktree 目标模式与并行开发计划](../wework/developer-guide/wework-cloud-git-worktree-parallel-development-plan.md)。

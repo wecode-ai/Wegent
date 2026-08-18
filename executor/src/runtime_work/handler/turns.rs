@@ -1277,22 +1277,20 @@ mod tests {
     }
 
     #[test]
-    fn forced_turn_moves_to_front_without_exceeding_the_limit() {
+    fn forced_turn_overcommits_without_releasing_more_queued_work() {
         let mut scheduler = RuntimeTurnScheduler::new(1, VecDeque::new());
         assert!(scheduler.enqueue(scheduled_turn("running")).is_some());
         assert!(scheduler.enqueue(scheduled_turn("forced")).is_none());
         assert!(scheduler.enqueue(scheduled_turn("waiting")).is_none());
 
-        assert!(scheduler.force_start("forced").is_none());
-        assert_eq!(scheduler.active_tasks, 1);
         assert_eq!(
             scheduler
-                .finish("running")
-                .into_iter()
-                .map(|turn| turn.local_task_id)
-                .collect::<Vec<_>>(),
-            vec!["forced"]
+                .force_start("forced")
+                .map(|turn| turn.local_task_id),
+            Some("forced".to_owned())
         );
+        assert_eq!(scheduler.active_tasks, 2);
+        assert!(scheduler.finish("running").is_empty());
         assert_eq!(scheduler.active_tasks, 1);
         assert_eq!(
             scheduler
@@ -1302,6 +1300,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["waiting"]
         );
+        assert_eq!(scheduler.active_tasks, 1);
     }
 
     #[test]
