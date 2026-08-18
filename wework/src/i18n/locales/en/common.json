@@ -3138,7 +3138,7 @@
     "workflow_context_activity": "Execution activity",
     "workflow_context_activity_hint": "Key process and activity summaries from predecessor tasks",
     "workflow_dependencies": "Prerequisites",
-    "workflow_no_dependencies": "None",
+    "workflow_no_dependencies": "No prerequisite stages",
     "workflow_dependency_count": "{{count}} prerequisite stages",
     "workflow_runtime_title": "Stages and tasks",
     "workflow_node_blocked": "Waiting for prerequisites",

@@ -507,14 +507,30 @@ export function ProjectWorkflowEditor({
       return
     }
     if (!onEnsureStageRobotRule) return
+    const revertToHumanExecution = () => {
+      setRobotModeNodeIds(current => {
+        const next = new Set(current)
+        next.delete(node.id)
+        return next
+      })
+      updateNode(node.id, {
+        automation_rule_id: null,
+        workspace_policy: node.workspace_policy === 'none' ? 'composer' : node.workspace_policy,
+      })
+    }
     setStageRobotBusyId(node.id)
     try {
       const ruleId = await onEnsureStageRobotRule(agentId)
-      if (!ruleId) return
+      if (!ruleId) {
+        revertToHumanExecution()
+        return
+      }
       updateNode(node.id, {
         automation_rule_id: ruleId,
         workspace_policy: 'none',
       })
+    } catch {
+      revertToHumanExecution()
     } finally {
       setStageRobotBusyId(null)
     }

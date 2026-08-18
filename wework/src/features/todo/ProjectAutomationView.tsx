@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import type { CloudLoopItem, CloudProject, ProjectWorkflowDefinition } from '@/api/deliveries'
 import type { ProjectAutomationInput, ProjectAutomationRule } from '@/api/projectAutomations'
 import type { ProjectChatAgent } from '@/api/projectChatAgents'
@@ -49,29 +49,20 @@ export function ProjectAutomationView({
   )
   const [workflowBusy, setWorkflowBusy] = useState(false)
   const [workflowError, setWorkflowError] = useState<string | null>(null)
+  const projectVersionRef = useRef({ projectId: String(project.id), version: project.version })
   const [automationRules, setAutomationRules] = useState<ProjectAutomationRule[]>([])
   const [projectAgents, setProjectAgents] = useState<ProjectChatAgent[]>([])
   const [robotCreateRequestKey, setRobotCreateRequestKey] = useState(0)
   const [coordinatorCreateRequestKey, setCoordinatorCreateRequestKey] = useState(0)
 
-  useEffect(() => {
-    if (!projectChatAgentApi) return
-    let active = true
-    void projectChatAgentApi
-      .list(String(project.id))
-      .then(agents => {
-        if (active) setProjectAgents(agents.filter(agent => agent.status === 'active'))
-      })
-      .catch(() => {
-        if (active) setProjectAgents([])
-      })
-    return () => {
-      active = false
-    }
-  }, [project.id, projectChatAgentApi])
-
   const handleRulesChange = useCallback((rules: ProjectAutomationRule[]) => {
-    setAutomationRules(rules)
+    setAutomationRules(current => {
+      const next = new Map(rules.map(rule => [rule.id, rule]))
+      for (const rule of current) {
+        if (rule.triggerType === 'workflow' && !next.has(rule.id)) next.set(rule.id, rule)
+      }
+      return [...next.values()]
+    })
   }, [])
   const handleAgentsChange = useCallback((agents: ProjectChatAgent[]) => {
     setProjectAgents(agents.filter(agent => agent.status === 'active'))
@@ -119,13 +110,21 @@ export function ProjectAutomationView({
     setWorkflowBusy(true)
     setWorkflowError(null)
     try {
+      const projectVersion =
+        projectVersionRef.current.projectId === String(project.id)
+          ? projectVersionRef.current.version
+          : project.version
       const updated = await api.updateCloudProject(project.id, {
         workflow_definition: {
           ...workflowDefinition,
           version: workflowDefinition.version + 1,
         },
-        version: project.version,
+        version: projectVersion,
       })
+      projectVersionRef.current = {
+        projectId: String(project.id),
+        version: updated.version,
+      }
       setWorkflowDefinition(
         updated.workflow_definition ?? { version: workflowDefinition.version + 1, nodes: [] }
       )
@@ -171,8 +170,10 @@ export function ProjectAutomationView({
           projectAgents={projectAgents}
           onEnsureStageRobotRule={ensureStageRobotRule}
           onRequestCreateRobot={() => setRobotCreateRequestKey(current => current + 1)}
-          onRequestConfigureAiCoordinator={() =>
-            setCoordinatorCreateRequestKey(current => current + 1)
+          onRequestConfigureAiCoordinator={
+            canManageAgents
+              ? () => setCoordinatorCreateRequestKey(current => current + 1)
+              : undefined
           }
         />
         {workflowError ? <p className="mt-3 text-xs text-destructive">{workflowError}</p> : null}

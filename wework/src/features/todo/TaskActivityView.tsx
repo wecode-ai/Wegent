@@ -903,7 +903,7 @@ export function TaskActivityView({
                 compact ? 'text-base' : 'text-sm'
               )}
             >
-              {compact ? '动态' : t('workbench.task_activity_title')}
+              {t('workbench.task_activity_title')}
             </span>
           </span>
           {compact && threadMessages.length > 0 ? (
