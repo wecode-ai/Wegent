@@ -406,39 +406,41 @@ export function GeneralSettingsPage() {
               </div>
             }
           />
-          <SettingsRow
-            label={t('workbench.general_settings_default_workspace_tab')}
-            description={t('workbench.general_settings_default_workspace_tab_description')}
-            className={GENERAL_ROW_CLASS_NAME}
-            labelClassName={GENERAL_ROW_LABEL_CLASS_NAME}
-            control={
-              <div className="grid h-8 w-full shrink-0 grid-cols-3 rounded-md border border-border bg-background p-0.5 md:w-[300px]">
-                {DEFAULT_WORKSPACE_TAB_OPTIONS.map(tabKind => {
-                  const active = preferences.defaultWorkspaceTab === tabKind
-                  return (
-                    <button
-                      key={tabKind}
-                      type="button"
-                      data-testid={`general-default-workspace-tab-${tabKind}-button`}
-                      disabled={loading || saving}
-                      aria-pressed={active}
-                      onClick={() => void handleDefaultWorkspaceTabChange(tabKind)}
-                      className={[
-                        'flex min-w-0 items-center justify-center rounded-[5px] px-2 text-sm font-medium leading-[18px] transition-colors disabled:cursor-not-allowed disabled:opacity-60',
-                        active
-                          ? 'bg-text-primary text-background shadow-sm'
-                          : 'text-text-secondary hover:bg-muted hover:text-text-primary',
-                      ].join(' ')}
-                    >
-                      <span className="truncate">
-                        {t(`workbench.general_settings_default_workspace_tab_${tabKind}`)}
-                      </span>
-                    </button>
-                  )
-                })}
-              </div>
-            }
-          />
+          {preferences.experimentalFeaturesEnabled ? (
+            <SettingsRow
+              label={t('workbench.general_settings_default_workspace_tab')}
+              description={t('workbench.general_settings_default_workspace_tab_description')}
+              className={GENERAL_ROW_CLASS_NAME}
+              labelClassName={GENERAL_ROW_LABEL_CLASS_NAME}
+              control={
+                <div className="grid h-8 w-full shrink-0 grid-cols-3 rounded-md border border-border bg-background p-0.5 md:w-[300px]">
+                  {DEFAULT_WORKSPACE_TAB_OPTIONS.map(tabKind => {
+                    const active = preferences.defaultWorkspaceTab === tabKind
+                    return (
+                      <button
+                        key={tabKind}
+                        type="button"
+                        data-testid={`general-default-workspace-tab-${tabKind}-button`}
+                        disabled={loading || saving}
+                        aria-pressed={active}
+                        onClick={() => void handleDefaultWorkspaceTabChange(tabKind)}
+                        className={[
+                          'flex min-w-0 items-center justify-center rounded-[5px] px-2 text-sm font-medium leading-[18px] transition-colors disabled:cursor-not-allowed disabled:opacity-60',
+                          active
+                            ? 'bg-text-primary text-background shadow-sm'
+                            : 'text-text-secondary hover:bg-muted hover:text-text-primary',
+                        ].join(' ')}
+                      >
+                        <span className="truncate">
+                          {t(`workbench.general_settings_default_workspace_tab_${tabKind}`)}
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              }
+            />
+          ) : null}
           {renderSwitchRow({
             preferenceKey: 'showMainWindowOnLaunch',
             testId: 'general-show-main-window-on-launch-toggle',

@@ -4,6 +4,7 @@ import { WorkspaceTabsProvider } from '@/features/workspace-tabs/WorkspaceTabsCo
 import { ChromeTitlebar } from './ChromeTitlebar'
 
 const startDragging = vi.fn().mockResolvedValue(undefined)
+const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
 
 vi.mock('@tauri-apps/api/window', () => ({
   getCurrentWindow: () => ({ startDragging }),
@@ -15,6 +16,10 @@ vi.mock('@/components/layout/WindowFrameControls', () => ({
 
 vi.mock('@/features/feedback/TaskFeedbackDialog', () => ({
   TaskFeedbackDialog: () => <div data-testid="task-feedback-dialog">FeedbackDialog</div>,
+}))
+
+vi.mock('@/features/experimental-features/useExperimentalFeaturesEnabled', () => ({
+  useExperimentalFeaturesEnabled: () => experimentalFeatures.enabled,
 }))
 
 const labels = {
@@ -60,6 +65,7 @@ describe('ChromeTitlebar', () => {
     startDragging.mockClear()
     localStorage.clear()
     disableTauri()
+    experimentalFeatures.enabled = true
     mockUserAgent('Mozilla/5.0')
     window.history.replaceState({}, '', '/')
   })
@@ -83,6 +89,12 @@ describe('ChromeTitlebar', () => {
     expect(screen.getByTestId('chrome-titlebar-after-tabs')).toHaveTextContent('Update')
     expect(screen.getByTestId('workspace-tab-strip-container')).toHaveClass('flex-1')
     expect(screen.getByTestId('titlebar-actions')).toHaveClass('h-full', 'gap-1', 'w-[5rem]')
+  })
+
+  test('hides the workspace tab strip while experimental features are disabled', () => {
+    experimentalFeatures.enabled = false
+    renderTitlebar()
+    expect(screen.queryByTestId('workspace-tab-strip')).not.toBeInTheDocument()
   })
 
   test('shows the macOS traffic-light spacer and starts native dragging', async () => {

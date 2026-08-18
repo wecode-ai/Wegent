@@ -2,6 +2,7 @@ import { Folder, FolderPlus, LayoutDashboard, Loader2, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { shouldUseNativeProjectDirectoryPicker } from '@/e2e/automation'
+import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import {
   loadProjectSpaceOptions,
   projectSpaceKey,
@@ -55,6 +56,7 @@ export function LocalProjectEditDialog({
   onSave,
   onDelete,
 }: LocalProjectEditDialogProps) {
+  const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   if (!open || !projectWork) return null
   return (
     <LocalProjectEditDialogContent
@@ -64,7 +66,7 @@ export function LocalProjectEditDialog({
       onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
       onListDeviceDirectories={onListDeviceDirectories}
       onCreateDeviceDirectory={onCreateDeviceDirectory}
-      projectSpaceApis={projectSpaceApis}
+      projectSpaceApis={experimentalFeaturesEnabled ? projectSpaceApis : undefined}
       onClose={onClose}
       onSave={onSave}
       onDelete={onDelete}

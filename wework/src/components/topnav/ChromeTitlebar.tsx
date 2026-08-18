@@ -15,6 +15,7 @@ import { MessageSquareWarning } from 'lucide-react'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS } from '@/components/layout/DesktopTopBar'
 import { useState, type ReactNode } from 'react'
 import { WorkspaceTabStrip } from '@/features/workspace-tabs/WorkspaceTabStrip'
+import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 
 interface ChromeTitlebarProps {
   beforeTabs?: ReactNode
@@ -33,6 +34,7 @@ export function ChromeTitlebar({
 }: ChromeTitlebarProps) {
   const isTauri = isTauriRuntime()
   const platform = getPlatform()
+  const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   const feedbackSlotVisible = isTauri && platform === 'mac'
   const fixedActionsWidth = showWorkspacePortals
     ? feedbackSlotVisible
@@ -67,7 +69,7 @@ export function ChromeTitlebar({
         </div>
       )}
 
-      <WorkspaceTabStrip />
+      {experimentalFeaturesEnabled ? <WorkspaceTabStrip /> : null}
       {afterTabs && (
         <div data-testid="chrome-titlebar-after-tabs" className="ml-3 flex shrink-0 items-center">
           {afterTabs}

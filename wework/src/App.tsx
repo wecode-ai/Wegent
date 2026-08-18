@@ -751,7 +751,9 @@ function AppShell() {
       storageScope={workspaceTabStorageScope}
       labels={workspaceTabLabels}
       startupTabKind={
-        isMainWindow && appPreferences?.loaded
+        isMainWindow &&
+        appPreferences?.loaded &&
+        appPreferences.preferences.experimentalFeaturesEnabled
           ? appPreferences.preferences.defaultWorkspaceTab
           : undefined
       }
