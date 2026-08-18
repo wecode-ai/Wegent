@@ -1,0 +1,79 @@
+# Material-based video editing agent backed by the external AIGC workflow.
+apiVersion: agent.wecode.io/v1
+kind: Ghost
+metadata:
+  name: video-ai-edit-ghost
+  namespace: default
+spec:
+  skills:
+    - material-to-video-unified-async
+  preload_skills:
+    - material-to-video-unified-async
+  systemPrompt: |
+    你是“视频ai编辑助手”。你的职责是把用户上传的视频或图片素材，按可确认的阶段制作成最终视频。业务处理由 material-to-video-unified-async 工具完成，聊天只负责收集偏好、调用工具和展示异步卡片。
+
+    必须遵循以下规则：
+    1. 首次收到视频剪辑需求时先调用 analyze_video_material。没有素材时提醒用户上传素材并结束本轮，禁止继续调用后续工具。
+    2. 素材可用后调用 interactive_form_question，一次确认视频类型、声音模式、画面比例和补充说明。所有 choice 问题必须为单选并提供默认值；调用后立即结束本轮，等待用户提交，禁止同轮调用 submit_* 工具。
+    3. 偏好表单问题固定为：
+       - video_type：Vlog、历史解说、科普、旅行、产品广告、其他；默认按用户需求推断，无法推断时选 Vlog。
+       - audio_mode：原声、AI配音、AI配音+原声、仅背景音乐；默认按用户需求推断，无法推断时选 AI配音。
+       - aspect_ratio：16:9 横屏、9:16 竖屏、1:1 方形、4:3、3:4；默认按素材方向推断，无法推断时选 9:16。
+       - additional_info：可选文本。
+       表单标题固定为“在开始剪辑视频之前，请确认以下信息”。
+    4. 用户提交偏好后的新一轮调用 submit_narration_framework。need_search_materials 固定为 false；audio_mode 使用用户选择；need_voiceover 在 ai_voiceover 或 hybrid 时为 true；need_mg 默认 true，用户明确不要动画时才为 false。工具返回后立即调用 create_async_video_card，然后结束本轮。
+    5. 只有用户确认叙事框架后的新一轮才能调用 submit_run_pipeline。工具返回后立即创建异步卡片，然后结束本轮。
+    6. 只有用户在时间线面板保存并明确要求渲染后的新一轮才能调用 submit_render_video。工具返回后立即创建最终视频异步卡片，然后结束本轮。
+
+    禁止自行跳步、连续推进多个阶段、拼接 AIGC URL 或伪造任务 ID。工具成功后的文本不超过15个汉字，详细内容全部由异步卡片和视频编辑面板展示。
+status:
+  state: Available
+---
+apiVersion: agent.wecode.io/v1
+kind: Bot
+metadata:
+  name: video-ai-edit-bot
+  namespace: default
+spec:
+  ghostRef:
+    name: video-ai-edit-ghost
+    namespace: default
+  modelRef:
+    name: Kimi-K2.6
+    namespace: default
+  secondaryModelRef:
+    name: Kimi-K2.6
+    namespace: default
+  shellRef:
+    name: Chat
+    namespace: default
+status:
+  state: Available
+---
+apiVersion: agent.wecode.io/v1
+kind: Team
+metadata:
+  name: 视频ai编辑助手
+  displayName: 视频ai编辑助手
+  namespace: default
+spec:
+  description: 基于用户上传素材完成内容策划、视频生产、时间线编辑和最终渲染。
+  inputPlaceholder:
+    zh: 请输入视频创作或剪辑需求，并上传需要使用的视频或图片素材
+    en: Describe the video edit and upload the source videos or images
+  members:
+    - role: leader
+      botRef:
+        name: video-ai-edit-bot
+        namespace: default
+      prompt: ""
+  collaborationModel: solo
+  bind_mode:
+    - chat
+  requiresWorkspace: true
+  generatedMediaPanel: true
+  generatedMediaPanelMaxItems: 8
+  workflow:
+    mode: solo
+status:
+  state: Available

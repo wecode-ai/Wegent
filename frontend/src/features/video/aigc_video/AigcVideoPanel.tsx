@@ -29,10 +29,48 @@ const StoryboardPanel = dynamic(
   }
 )
 
+const MaterialVideoPanel = dynamic(
+  () =>
+    import('../materials_to_video/MaterialVideoPanel').then(module => ({
+      default: module.MaterialVideoPanel,
+    })),
+  {
+    ssr: false,
+    loading: () => (
+      <div
+        className="flex min-h-0 flex-1 items-center justify-center"
+        data-testid="material-video-panel-loading"
+      >
+        <Loader2 className="h-5 w-5 animate-spin text-primary" />
+      </div>
+    ),
+  }
+)
+
+const EntityPanel = dynamic(
+  () =>
+    import('../entity/EntityPanel').then(module => ({
+      default: module.EntityPanel,
+    })),
+  {
+    ssr: false,
+    loading: () => (
+      <div
+        className="flex min-h-0 flex-1 items-center justify-center"
+        data-testid="entity-panel-module-loading"
+      >
+        <Loader2 className="h-5 w-5 animate-spin text-primary" />
+      </div>
+    ),
+  }
+)
+
 export interface VideoPanelTarget {
   panel?: string
   scriptId?: number
   taskId?: number
+  sessionId?: string
+  taskUuid?: string
   index: number
 }
 
@@ -42,7 +80,7 @@ interface AigcVideoPanelProps {
   title: string
   fallbackTaskId?: number
   onClose: () => void
-  onGenerateFinalVideo?: () => void
+  onContinue?: (buttonName?: string) => void
   children: ReactNode
 }
 
@@ -60,11 +98,24 @@ export function parseVideoPanelTarget(link?: string): VideoPanelTarget {
       panel: url.searchParams.get('openPanel') || undefined,
       scriptId: Number.isInteger(scriptId) && scriptId > 0 ? scriptId : undefined,
       taskId: Number.isInteger(taskId) && taskId > 0 ? taskId : undefined,
+      sessionId: url.searchParams.get('session_id') || undefined,
+      taskUuid: url.searchParams.get('task_uuid') || undefined,
       index: Number.isInteger(index) && index >= 0 ? index : 0,
     }
   } catch {
     return { index: 0 }
   }
+}
+
+export function resolveVideoPanelSessionId(
+  target: VideoPanelTarget,
+  fallbackTaskId?: number
+): string | undefined {
+  if (target.sessionId) return target.sessionId
+  if (target.panel !== 'timeline') return undefined
+
+  const taskId = target.taskId ?? fallbackTaskId
+  return taskId ? String(taskId) : undefined
 }
 
 export function AigcVideoPanel({
@@ -73,17 +124,24 @@ export function AigcVideoPanel({
   title,
   fallbackTaskId,
   onClose,
-  onGenerateFinalVideo,
+  onContinue,
   children,
 }: AigcVideoPanelProps) {
   const { t } = useTranslation('video')
   if (!open) return null
   const target = parseVideoPanelTarget(link)
   const taskId = target.taskId ?? fallbackTaskId
+  const sessionId = resolveVideoPanelSessionId(target, fallbackTaskId)
   const isStoryboard =
     (target.panel === 'storyboard' || target.panel === 'storyboard-video') &&
     target.scriptId &&
     taskId
+  const isMaterialVideo =
+    Boolean(sessionId) &&
+    (target.panel === 'narrative-framework' ||
+      target.panel === 'material-search' ||
+      target.panel === 'timeline')
+  const isEntity = target.panel === 'entity' && taskId
 
   return createPortal(
     <section
@@ -97,7 +155,7 @@ export function AigcVideoPanel({
           taskId={taskId!}
           initialIndex={target.index}
           onClose={onClose}
-          onGenerateFinalVideo={onGenerateFinalVideo}
+          onGenerateFinalVideo={onContinue ? () => onContinue() : undefined}
         />
       ) : (
         <>
@@ -116,7 +174,20 @@ export function AigcVideoPanel({
               <X className="h-5 w-5" />
             </Button>
           </header>
-          <div className="min-h-0 flex-1 overflow-y-auto p-5">{children}</div>
+          <div className="min-h-0 flex-1 overflow-hidden">
+            {isMaterialVideo ? (
+              <MaterialVideoPanel
+                panel={target.panel!}
+                sessionId={sessionId}
+                taskUuid={target.taskUuid}
+                onContinue={onContinue}
+              />
+            ) : isEntity ? (
+              <EntityPanel taskId={taskId!} onContinue={onContinue} />
+            ) : (
+              <div className="h-full overflow-y-auto p-5">{children}</div>
+            )}
+          </div>
         </>
       )}
     </section>,

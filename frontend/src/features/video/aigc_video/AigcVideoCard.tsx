@@ -64,8 +64,9 @@ export default function AigcVideoCard({ card, taskId, onSendMessage }: AsyncCard
     }
   }
 
+  const chatButtons = buttons.filter(button => button.button_type !== 'link')
   const finalVideoButton =
-    buttons.find(button => /最终|合成|final/i.test(button.button_name)) ?? buttons.at(-1)
+    chatButtons.find(button => /最终|合成|final/i.test(button.button_name)) ?? chatButtons.at(-1)
 
   if (pending) {
     return (
@@ -157,11 +158,15 @@ export default function AigcVideoCard({ card, taskId, onSendMessage }: AsyncCard
         title={title}
         fallbackTaskId={taskId}
         onClose={() => setPanelOpen(false)}
-        onGenerateFinalVideo={
-          finalVideoButton && onSendMessage
-            ? () => {
+        onContinue={
+          onSendMessage
+            ? buttonName => {
                 setPanelOpen(false)
-                onSendMessage(finalVideoButton.prompt || finalVideoButton.button_name)
+                const button =
+                  buttons.find(candidate => candidate.button_name === buttonName) ??
+                  finalVideoButton
+                const message = button?.prompt || buttonName || button?.button_name
+                if (message) onSendMessage(message)
               }
             : undefined
         }

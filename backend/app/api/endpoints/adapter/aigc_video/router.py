@@ -36,7 +36,10 @@ from app.services.media.weibo_media_service import resolve_weibo_media_uid
 from wecode.config.video_media_config import video_media_settings
 from wecode.service.video_media_platform import fetch_playback, sign_urls, upload_media
 
+from .opencut import router as opencut_router
+
 router = APIRouter()
+router.include_router(opencut_router)
 MEDIA_TIMEOUT_SECONDS = 120.0
 MEDIA_CHUNK_SIZE = 1024 * 1024
 UPSTREAM_TIMEOUT_SECONDS = 120.0

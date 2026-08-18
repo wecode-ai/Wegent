@@ -23,7 +23,8 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 from fastapi import HTTPException, status
 
 from app.api.endpoints.adapter.aigc_video.skill_context import (
-    merge_attachment_media_into_generation,
+    filter_prior_user_attachments,
+    inherit_attachment_media_into_generation,
 )
 from app.core.constants import CLIENT_ORIGIN_FRONTEND
 from app.db.session import SessionLocal
@@ -891,9 +892,15 @@ async def build_execution_request(
             if generate_params:
                 user_generation = generate_params.model_dump(exclude_none=True)
         if user_subtask_id:
-            user_generation = merge_attachment_media_into_generation(
+            task_attachments = filter_prior_user_attachments(
+                context_service.get_attachments_by_task(db, task.id),
+                current_subtask_id=user_subtask_id,
+                user_id=user.id,
+            )
+            user_generation = inherit_attachment_media_into_generation(
                 user_generation,
                 context_service.get_attachments_by_subtask(db, user_subtask_id),
+                task_attachments,
             )
 
         request = builder.build(

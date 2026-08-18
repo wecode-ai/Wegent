@@ -52,3 +52,21 @@ def test_access_logs_include_forwarded_headers(test_client, caplog):
             "x-real-ip=203.0.113.9, "
             "forwarded=for=203.0.113.9;proto=https;host=api.example.com}"
         ) in log_message
+
+
+def test_access_logs_redact_sensitive_query_parameters(test_client, caplog):
+    with caplog.at_level(logging.INFO, logger="app.main"):
+        response = test_client.get("/api/health?token=opencut-secret&probe=visible")
+
+    assert response.status_code == 200
+    access_logs = [
+        record.message
+        for record in caplog.records
+        if "/api/health" in record.message
+        and record.message.startswith(("request :", "response:"))
+    ]
+    assert len(access_logs) == 2
+    for log_message in access_logs:
+        assert "opencut-secret" not in log_message
+        assert "token=%5BREDACTED%5D" in log_message
+        assert "probe=visible" in log_message

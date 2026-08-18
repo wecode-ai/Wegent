@@ -2,7 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { getAigcVideoPlaybackUrl } from '@/features/video/aigc_video/types'
+import {
+  getAigcVideoImageUrl,
+  getAigcVideoPlaybackUrl,
+} from '@/features/video/aigc_video/mediaUrls'
 
 describe('getAigcVideoPlaybackUrl', () => {
   it('routes Weibo CDN videos through the signed playback endpoint', () => {
@@ -17,5 +20,13 @@ describe('getAigcVideoPlaybackUrl', () => {
     const source = 'https://media.example.com/video.mp4'
 
     expect(getAigcVideoPlaybackUrl(source)).toBe(source)
+  })
+
+  it('routes Weibo CDN covers through the image proxy', () => {
+    const source = 'https://wx1.sinaimg.cn/large/example.jpg'
+
+    expect(getAigcVideoImageUrl(source)).toBe(
+      `/api/aigc-video/media/image?image_url=${encodeURIComponent(source)}`
+    )
   })
 })

@@ -6,7 +6,8 @@
 
 import type { AsyncCardComponentProps } from '@/features/cards/types'
 import VideoPlayer from '@/features/tasks/components/message/VideoPlayer'
-import { getAigcVideoImageUrl, getAigcVideoPlaybackUrl, parseAigcVideoCardData } from './types'
+import { getAigcVideoImageUrl, getAigcVideoPlaybackUrl } from './mediaUrls'
+import { parseAigcVideoCardData } from './types'
 
 function progressValue(value: unknown): number {
   const parsed = Number(value)
