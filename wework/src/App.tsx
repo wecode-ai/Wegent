@@ -550,9 +550,9 @@ function AppShell() {
   )
   const availableWorkspaceTabKinds = useMemo<readonly WorkspaceTabKind[] | undefined>(
     () =>
-      experimentalFeatures.loaded && !experimentalFeatures.enabled
-        ? ['task', 'agent', 'auxiliary']
-        : undefined,
+      experimentalFeatures.loaded && experimentalFeatures.enabled
+        ? undefined
+        : ['task', 'agent', 'auxiliary'],
     [experimentalFeatures.enabled, experimentalFeatures.loaded]
   )
   const [workbenchStartupReady, setWorkbenchStartupReady] = useState(false)

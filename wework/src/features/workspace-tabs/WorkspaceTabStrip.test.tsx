@@ -4,7 +4,7 @@ import type { ComponentProps } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { WorkspaceTabsProvider } from './WorkspaceTabsContext'
 import { WorkspaceTabStrip } from './WorkspaceTabStrip'
-import type { WorkspaceTabKind } from './workspaceTabs'
+import { workspaceTabsStorageKey, type WorkspaceTabKind } from './workspaceTabs'
 
 const openWorkspaceTabWindow = vi.fn().mockResolvedValue(true)
 
@@ -27,10 +27,16 @@ const labels = {
 
 function renderStrip(
   search = '',
-  availableKinds?: ComponentProps<typeof WorkspaceTabStrip>['availableKinds']
+  availableKinds?: ComponentProps<typeof WorkspaceTabStrip>['availableKinds'],
+  pathname = '/'
 ) {
   return render(
-    <WorkspaceTabsProvider pathname="/" search={search} storageScope="strip-test" labels={labels}>
+    <WorkspaceTabsProvider
+      pathname={pathname}
+      search={search}
+      storageScope="strip-test"
+      labels={labels}
+    >
       <WorkspaceTabStrip availableKinds={availableKinds} />
     </WorkspaceTabsProvider>
   )
@@ -97,6 +103,28 @@ describe('WorkspaceTabStrip', () => {
     expect(screen.queryByTestId('workspace-tab-add-board')).not.toBeInTheDocument()
     expect(screen.getByTestId('workspace-tab-add-task')).toBeInTheDocument()
     expect(screen.getByTestId('workspace-tab-add-agent')).toBeInTheDocument()
+  })
+
+  test('opens an allowed fallback tab in a board-only window when board is unavailable', async () => {
+    localStorage.setItem(
+      workspaceTabsStorageKey('strip-test'),
+      JSON.stringify({
+        activeTabId: 'board-only',
+        tabs: [{ id: 'board-only', kind: 'board', title: '项目空间', contentRoute: '/todo' }],
+      })
+    )
+
+    renderStrip('', ['task', 'agent', 'auxiliary'] satisfies WorkspaceTabKind[], '/todo')
+
+    const tablist = screen.getByTestId('workspace-tab-strip')
+    await waitFor(() => {
+      expect(screen.queryByRole('tab', { name: '项目空间' })).not.toBeInTheDocument()
+      expect(within(tablist).getAllByRole('tab')).toHaveLength(1)
+    })
+    expect(within(tablist).getByRole('tab', { name: '任务' })).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
   })
 
   test('closes and restores the active tab with browser shortcuts', async () => {

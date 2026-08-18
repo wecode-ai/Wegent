@@ -314,6 +314,9 @@ async function verifyDefaultWorkspaceStartupTab(control) {
 
 async function verifyWorkspaceIssueCreation(control) {
   await ensureExperimentalFeaturesEnabled(control)
+  await control.command('waitFor', '[data-testid="workspace-tab-strip"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   const boardTabs = workspaceTabIds(JSON.parse(await control.command('snapshot', 'body')), 'board')
   assert.ok(boardTabs.length > 0, 'The workspace issue flow requires an existing board tab')
   const boardTabSuffix = boardTabs[0].slice('workspace-tab-board-'.length)

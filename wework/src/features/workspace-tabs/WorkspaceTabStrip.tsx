@@ -221,9 +221,23 @@ export function WorkspaceTabStrip({
   useOutsideMenu(Boolean(contextMenu), contextMenuRef, () => setContextMenu(null))
 
   useEffect(() => {
+    if (tabs.length > 0 && visibleTabs.length === 0) {
+      const fallbackKind =
+        availableKinds.find(kind => kind !== 'auxiliary' && kind !== 'board') ?? availableKinds[0]
+      if (fallbackKind) openTab(fallbackKind)
+      return
+    }
     if (visibleActiveTabId === activeTabId) return
     selectTab(visibleActiveTabId)
-  }, [activeTabId, selectTab, visibleActiveTabId])
+  }, [
+    activeTabId,
+    availableKinds,
+    openTab,
+    selectTab,
+    tabs.length,
+    visibleActiveTabId,
+    visibleTabs.length,
+  ])
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
