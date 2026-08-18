@@ -1,8 +1,10 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import type { ComponentProps } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { WorkspaceTabsProvider } from './WorkspaceTabsContext'
 import { WorkspaceTabStrip } from './WorkspaceTabStrip'
+import type { WorkspaceTabKind } from './workspaceTabs'
 
 const openWorkspaceTabWindow = vi.fn().mockResolvedValue(true)
 
@@ -23,10 +25,13 @@ const labels = {
   },
 }
 
-function renderStrip(search = '') {
+function renderStrip(
+  search = '',
+  availableKinds?: ComponentProps<typeof WorkspaceTabStrip>['availableKinds']
+) {
   return render(
     <WorkspaceTabsProvider pathname="/" search={search} storageScope="strip-test" labels={labels}>
-      <WorkspaceTabStrip />
+      <WorkspaceTabStrip availableKinds={availableKinds} />
     </WorkspaceTabsProvider>
   )
 }
@@ -73,6 +78,25 @@ describe('WorkspaceTabStrip', () => {
       'aria-selected',
       'true'
     )
+  })
+
+  test('hides the project-space tab and add action when board is not available', async () => {
+    const user = userEvent.setup()
+    renderStrip('', ['task', 'agent', 'auxiliary'] satisfies WorkspaceTabKind[])
+
+    const tablist = screen.getByTestId('workspace-tab-strip')
+    expect(
+      within(tablist)
+        .getAllByRole('tab')
+        .map(tab => tab.textContent)
+    ).toEqual([expect.stringContaining('任务'), expect.stringContaining('智能体')])
+    expect(screen.queryByRole('tab', { name: '项目空间' })).not.toBeInTheDocument()
+
+    await user.click(screen.getByTestId('workspace-tab-add'))
+    expect(screen.getByTestId('workspace-tab-add-menu')).toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-tab-add-board')).not.toBeInTheDocument()
+    expect(screen.getByTestId('workspace-tab-add-task')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-tab-add-agent')).toBeInTheDocument()
   })
 
   test('closes and restores the active tab with browser shortcuts', async () => {

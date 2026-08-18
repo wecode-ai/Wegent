@@ -2124,6 +2124,14 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('mention-cloud-projects-action')).not.toBeInTheDocument()
   })
 
+  test('hides the work-item composer guide while experimental features are disabled', () => {
+    experimentalFeatures.enabled = false
+
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    expect(screen.queryByTestId('project-space-context-pill')).not.toBeInTheDocument()
+  })
+
   test('shows cloud project space entries in the @ menu while experimental features are enabled', async () => {
     deliveryApiMock.available = true
 
