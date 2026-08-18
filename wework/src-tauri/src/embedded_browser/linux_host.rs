@@ -1,9 +1,23 @@
-use std::time::Duration;
+use std::{cell::Cell, rc::Rc, time::Duration};
 
 use gtk::prelude::*;
 use tauri::{LogicalPosition, LogicalSize, Webview, Wry};
 
 const HOST_NAME: &str = "wework-embedded-browser-host";
+const ALLOCATION_CONTROLLER_DATA: &str = "wework-embedded-browser-allocation-controller";
+
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+struct AllocationTarget {
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+}
+
+struct AllocationController {
+    target: Cell<AllocationTarget>,
+    applying: Cell<bool>,
+}
 
 fn find_host(container: &gtk::Box) -> Option<gtk::Fixed> {
     container.children().into_iter().find_map(|child| {
@@ -101,25 +115,54 @@ fn place_webview(
     let height = size.height.round() as i32;
     embedded_webview.set_size_request(width, height);
     host.move_(&embedded_webview, x, y);
+    let controller = allocation_controller(&embedded_webview);
+    controller.target.set(AllocationTarget {
+        x,
+        y,
+        width,
+        height,
+    });
     apply_webview_allocation(&embedded_webview, x, y, width, height);
 
-    // GtkFixed can run another allocation pass after this command returns and
-    // restore WebView's natural host-sized allocation. Re-apply the bounds in
-    // two idle passes so the final allocation follows the latest toolbar state.
-    let deferred_webview = embedded_webview.clone();
-    let deferred_host = host.clone();
-    gtk::glib::idle_add_local_once(move || {
-        deferred_host.move_(&deferred_webview, x, y);
-        apply_webview_allocation(&deferred_webview, x, y, width, height);
-
-        let deferred_webview = deferred_webview.clone();
-        let deferred_host = deferred_host.clone();
-        gtk::glib::idle_add_local_once(move || {
-            deferred_host.move_(&deferred_webview, x, y);
-            apply_webview_allocation(&deferred_webview, x, y, width, height);
-        });
-    });
     Ok(())
+}
+
+fn allocation_controller(webview: &webkit2gtk::WebView) -> Rc<AllocationController> {
+    if let Some(controller) =
+        unsafe { webview.data::<Rc<AllocationController>>(ALLOCATION_CONTROLLER_DATA) }
+            .map(|data| unsafe { data.as_ref().clone() })
+    {
+        return controller;
+    }
+
+    let controller = Rc::new(AllocationController {
+        target: Cell::new(AllocationTarget::default()),
+        applying: Cell::new(false),
+    });
+    let callback_controller = controller.clone();
+    webview.connect_size_allocate(move |webview, allocation| {
+        let target = callback_controller.target.get();
+        if callback_controller.applying.get()
+            || (allocation.x() == target.x
+                && allocation.y() == target.y
+                && allocation.width() == target.width
+                && allocation.height() == target.height)
+        {
+            return;
+        }
+
+        callback_controller.applying.set(true);
+        if let Some(host) = webview
+            .parent()
+            .and_then(|parent| parent.downcast::<gtk::Fixed>().ok())
+        {
+            host.move_(webview, target.x, target.y);
+        }
+        apply_webview_allocation(webview, target.x, target.y, target.width, target.height);
+        callback_controller.applying.set(false);
+    });
+    unsafe { webview.set_data(ALLOCATION_CONTROLLER_DATA, controller.clone()) };
+    controller
 }
 
 fn apply_webview_allocation(
