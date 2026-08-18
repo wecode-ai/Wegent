@@ -65,12 +65,7 @@ if is_stdio_server "${1:-}" && [ -z "${WEGENT_EXECUTOR_BINARY:-}" ]; then
 fi
 
 if [ "${WEGENT_EXECUTOR_DEV_RELOAD:-1}" != "0" ] && [ -z "${WEGENT_EXECUTOR_BINARY:-}" ]; then
-  EXECUTOR_DEV_BINARY="$(cargo_target_binary_path "$EXECUTOR_DIR" debug wegent-executor-dev)"
-  cargo build \
-    --manifest-path "$EXECUTOR_DIR/Cargo.toml" \
-    --features dev-reload \
-    --bin wegent-executor-dev
-  exec "$EXECUTOR_DEV_BINARY" "$@"
+  exec node "$SCRIPT_DIR/dev-executor-reload.mjs" "$@"
 fi
 
 if [ -n "${WEGENT_EXECUTOR_BINARY:-}" ]; then

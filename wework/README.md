@@ -13,6 +13,8 @@ Wework is the Wegent desktop workbench for local-first AI coding and workplace w
 
 ## Development
 
+Requires Node.js 20+ and pnpm.
+
 From the repository root:
 
 ```bash

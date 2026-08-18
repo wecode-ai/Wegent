@@ -276,7 +276,10 @@ describe('ResourceLibraryPage', () => {
     expect(screen.getByRole('tab', { name: 'MCP 市场' })).toBeInTheDocument()
     expect(screen.queryByRole('tab', { name: '模型' })).not.toBeInTheDocument()
     expect(screen.queryByTestId('resource-library-source-select')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('resource-library-header-search')).not.toBeInTheDocument()
+    expect(screen.getByTestId('resource-library-header-search-input')).toHaveAttribute(
+      'placeholder',
+      '搜索智能体或描述'
+    )
     expect(screen.getByTestId('featured-scenarios')).toBeInTheDocument()
     expect(screen.getByTestId('discover-resources')).toHaveAttribute('data-type', 'agent')
     expect(screen.getByTestId('discover-resources')).toHaveAttribute('data-system-only', 'true')
@@ -284,6 +287,34 @@ describe('ResourceLibraryPage', () => {
       'rounded-none',
       'bg-transparent'
     )
+  })
+
+  it('searches only within the selected marketplace', () => {
+    mockSearchParams = new URLSearchParams('type=skill&keyword=summary')
+    render(<ResourceLibraryPage />)
+
+    expect(screen.getByRole('tab', { name: '智能体市场' })).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getByRole('tab', { name: '技能市场' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByTestId('discover-resources')).toHaveAttribute('data-type', 'skill')
+    expect(screen.getByTestId('resource-library-header-search-input')).toHaveAttribute(
+      'placeholder',
+      '搜索技能'
+    )
+    expect(screen.queryByTestId('featured-scenarios')).not.toBeInTheDocument()
+  })
+
+  it('submits a marketplace search and clears the tag filter', () => {
+    mockSearchParams = new URLSearchParams('type=agent&tag=data_analysis')
+    render(<ResourceLibraryPage />)
+
+    fireEvent.change(screen.getByTestId('resource-library-header-search-input'), {
+      target: { value: '  summary  ' },
+    })
+    fireEvent.submit(screen.getByTestId('resource-library-header-search'))
+
+    expect(mockReplace).toHaveBeenCalledWith('/resource-library?type=agent&keyword=summary', {
+      scroll: false,
+    })
   })
 
   it('opens the MCP marketplace as a top-level market', () => {

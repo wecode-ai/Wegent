@@ -37,6 +37,7 @@ from app.api.endpoints import (
     openapi_responses,
     pet,
     project_automations,
+    project_incoming_hooks,
     projects,
     prompt_optimization,
     quota,
@@ -158,6 +159,16 @@ api_router.include_router(
 )
 api_router.include_router(
     cloud_projects_gitlab_mr.router, tags=["cloud-projects-gitlab-mr"]
+)
+api_router.include_router(
+    project_incoming_hooks.router,
+    prefix="/v1/cloud-projects",
+    tags=["project-incoming-hooks"],
+)
+api_router.include_router(
+    project_incoming_hooks.public_router,
+    prefix="/v1/incoming-hooks",
+    tags=["project-incoming-hooks"],
 )
 api_router.include_router(
     loop_item_executions.router,

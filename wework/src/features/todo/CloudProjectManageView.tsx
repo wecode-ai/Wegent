@@ -1,5 +1,16 @@
-import { Check, GitBranch, LockKeyhole, Pencil, Search, Trash2, X } from 'lucide-react'
-import { useEffect, useMemo, useCallback, useState } from 'react'
+import {
+  Check,
+  Copy,
+  GitBranch,
+  LockKeyhole,
+  Pencil,
+  RefreshCw,
+  Search,
+  Trash2,
+  Webhook,
+  X,
+} from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { AITableApi } from '@/api/aitable'
 import type { DwsApi, DwsAuthStatus } from '@/api/dws'
 import type {
@@ -9,6 +20,7 @@ import type {
   CloudUserSearchItem,
   GitLabMrIntegration,
 } from '@/api/deliveries'
+import type { createProjectIncomingHookApi, ProjectIncomingHook } from '@/api/projectIncomingHooks'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import { Tooltip } from '@/components/ui/tooltip'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
@@ -50,6 +62,7 @@ export function CloudProjectManageView({
   api,
   aitableApi,
   dwsApi,
+  incomingHookApi,
   project,
   boardCardDisplay,
   onProjectUpdated,
@@ -57,6 +70,7 @@ export function CloudProjectManageView({
   api: DeliveryApi
   aitableApi?: AITableApi
   dwsApi?: DwsApi
+  incomingHookApi?: ReturnType<typeof createProjectIncomingHookApi>
   project: CloudProject
   boardCardDisplay?: BoardCardDisplaySettings
   onProjectUpdated?: (project: CloudProject) => void
@@ -85,6 +99,9 @@ export function CloudProjectManageView({
   const [displayBusy, setDisplayBusy] = useState(false)
   const [statusBusy, setStatusBusy] = useState(false)
   const [visibilityBusy, setVisibilityBusy] = useState(false)
+  const [incomingHooks, setIncomingHooks] = useState<ProjectIncomingHook[]>([])
+  const [incomingHookBusy, setIncomingHookBusy] = useState(false)
+  const [copiedHookId, setCopiedHookId] = useState<string | null>(null)
 
   const externalProvider =
     project.task_provider === 'github' || project.task_provider === 'gitlab'
@@ -123,6 +140,22 @@ export function CloudProjectManageView({
       active = false
     }
   }, [api, project.id])
+
+  useEffect(() => {
+    if (!incomingHookApi || project.task_provider !== 'local') return
+    let active = true
+    void incomingHookApi
+      .list(project.id)
+      .then(hooks => active && setIncomingHooks(hooks))
+      .catch(
+        cause =>
+          active &&
+          setError(cause instanceof Error ? cause.message : t('todo.incoming_hook_load_failed'))
+      )
+    return () => {
+      active = false
+    }
+  }, [incomingHookApi, project.id, project.task_provider, t])
 
   useEffect(() => {
     if (!isAITable || !aitableApi) return
@@ -331,6 +364,62 @@ export function CloudProjectManageView({
       setError(cause instanceof Error ? cause.message : '保存状态设置失败')
     } finally {
       setStatusBusy(false)
+    }
+  }
+
+  async function createIncomingHook() {
+    if (!incomingHookApi || incomingHookBusy) return
+    setIncomingHookBusy(true)
+    try {
+      const hook = await incomingHookApi.create(project.id, '外部系统')
+      setIncomingHooks(current => [...current, hook])
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('todo.incoming_hook_create_failed'))
+    } finally {
+      setIncomingHookBusy(false)
+    }
+  }
+
+  async function toggleIncomingHook(hook: ProjectIncomingHook) {
+    if (!incomingHookApi || incomingHookBusy) return
+    setIncomingHookBusy(true)
+    try {
+      const updated = await incomingHookApi.update(project.id, hook.id, {
+        version: hook.version,
+        status: hook.status === 'active' ? 'disabled' : 'active',
+      })
+      setIncomingHooks(current => current.map(item => (item.id === hook.id ? updated : item)))
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('todo.incoming_hook_update_failed'))
+    } finally {
+      setIncomingHookBusy(false)
+    }
+  }
+
+  async function rotateIncomingHook(hook: ProjectIncomingHook) {
+    if (!incomingHookApi || incomingHookBusy) return
+    if (!window.confirm(t('todo.incoming_hook_rotate_confirm'))) return
+    setIncomingHookBusy(true)
+    try {
+      const updated = await incomingHookApi.rotate(project.id, hook.id)
+      setIncomingHooks(current => current.map(item => (item.id === hook.id ? updated : item)))
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('todo.incoming_hook_rotate_failed'))
+    } finally {
+      setIncomingHookBusy(false)
+    }
+  }
+
+  async function copyIncomingHook(hook: ProjectIncomingHook) {
+    try {
+      await navigator.clipboard.writeText(hook.webhookUrl)
+      setCopiedHookId(hook.id)
+      window.setTimeout(
+        () => setCopiedHookId(current => (current === hook.id ? null : current)),
+        1500
+      )
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('todo.incoming_hook_copy_failed'))
     }
   }
 
@@ -967,6 +1056,132 @@ export function CloudProjectManageView({
             </div>
             <p className="mt-1 text-xs text-text-muted">{t('todo.mr_integration_retry_desc')}</p>
             {mrError && <p className="mt-2 text-xs text-destructive">{mrError}</p>}
+          </section>
+        )}
+
+        {incomingHookApi && project.task_provider === 'local' && (
+          <section className="border-t border-border py-6" data-testid="incoming-hook-settings">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-heading-md font-semibold">{t('todo.incoming_hook_title')}</h2>
+                <p className="mt-1 text-sm text-text-muted">
+                  {t('todo.incoming_hook_description')}
+                </p>
+              </div>
+              <button
+                type="button"
+                data-testid="incoming-hook-create"
+                disabled={incomingHookBusy}
+                onClick={() => void createIncomingHook()}
+                className="h-8 rounded-lg px-2.5 text-sm text-text-secondary hover:bg-muted disabled:opacity-40"
+              >
+                ＋ {t('todo.incoming_hook_generate')}
+              </button>
+            </div>
+            {incomingHooks.length === 0 ? (
+              <button
+                type="button"
+                data-testid="incoming-hook-empty-create"
+                disabled={incomingHookBusy}
+                onClick={() => void createIncomingHook()}
+                className="mt-4 flex w-full items-center gap-3 rounded-xl bg-muted px-4 py-4 text-left hover:bg-muted/80 disabled:opacity-40"
+              >
+                <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-background">
+                  <Webhook className="h-4 w-4 text-text-secondary" />
+                </span>
+                <span>
+                  <span className="block text-sm font-medium">
+                    {t('todo.incoming_hook_empty_title')}
+                  </span>
+                  <span className="mt-0.5 block text-xs text-text-muted">
+                    {t('todo.incoming_hook_supported')}
+                  </span>
+                </span>
+              </button>
+            ) : (
+              <div className="mt-4 space-y-2">
+                {incomingHooks.map(hook => (
+                  <div
+                    key={hook.id}
+                    data-testid={`incoming-hook-${hook.id}`}
+                    className="rounded-xl bg-muted p-3"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={cn(
+                          'h-2 w-2 rounded-full',
+                          hook.status === 'active' ? 'bg-green-500' : 'bg-text-tertiary'
+                        )}
+                      />
+                      <span className="text-sm font-medium">{hook.name}</span>
+                      <span className="text-xs text-text-muted">
+                        {hook.status === 'active'
+                          ? t('todo.incoming_hook_receiving')
+                          : t('todo.incoming_hook_disabled')}
+                      </span>
+                      <div className="ml-auto flex gap-1">
+                        <Tooltip
+                          label={
+                            copiedHookId === hook.id
+                              ? t('todo.incoming_hook_copied')
+                              : t('todo.incoming_hook_copy')
+                          }
+                        >
+                          <button
+                            type="button"
+                            data-testid={`incoming-hook-copy-${hook.id}`}
+                            onClick={() => void copyIncomingHook(hook)}
+                            className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-background hover:text-text-primary"
+                            aria-label={
+                              copiedHookId === hook.id
+                                ? t('todo.incoming_hook_copied')
+                                : t('todo.incoming_hook_copy')
+                            }
+                          >
+                            {copiedHookId === hook.id ? (
+                              <Check className="h-3.5 w-3.5" />
+                            ) : (
+                              <Copy className="h-3.5 w-3.5" />
+                            )}
+                          </button>
+                        </Tooltip>
+                        <Tooltip label={t('todo.incoming_hook_rotate')}>
+                          <button
+                            type="button"
+                            data-testid={`incoming-hook-rotate-${hook.id}`}
+                            disabled={incomingHookBusy}
+                            onClick={() => void rotateIncomingHook(hook)}
+                            className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-background hover:text-text-primary disabled:opacity-40"
+                            aria-label={t('todo.incoming_hook_rotate')}
+                          >
+                            <RefreshCw className="h-3.5 w-3.5" />
+                          </button>
+                        </Tooltip>
+                        <button
+                          type="button"
+                          data-testid={`incoming-hook-toggle-${hook.id}`}
+                          disabled={incomingHookBusy}
+                          onClick={() => void toggleIncomingHook(hook)}
+                          className="h-7 rounded-md px-2 text-xs text-text-secondary hover:bg-background disabled:opacity-40"
+                        >
+                          {hook.status === 'active'
+                            ? t('todo.incoming_hook_disable')
+                            : t('todo.incoming_hook_enable')}
+                        </button>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void copyIncomingHook(hook)}
+                      className="mt-2 block w-full truncate rounded-lg border border-border bg-background px-3 py-2 text-left text-code text-text-secondary hover:border-text-tertiary"
+                      title={hook.webhookUrl}
+                    >
+                      {hook.webhookUrl}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </section>
         )}
 

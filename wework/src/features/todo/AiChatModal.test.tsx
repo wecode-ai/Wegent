@@ -25,10 +25,16 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
   TemporaryChatPanel: ({
     currentProject,
     createTask,
+    initialInput,
+    autoSubmitInitialInput,
     initialAddress,
     onAddressChange,
+    sendEphemeral,
+    testId,
   }: {
     currentProject: ProjectWithTasks | null
+    initialInput?: string
+    autoSubmitInitialInput?: boolean
     createTask?: (
       message: string,
       options: {
@@ -44,6 +50,8 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
     ) => Promise<RuntimeTaskAddress | false>
     initialAddress?: RuntimeTaskAddress | null
     onAddressChange?: (address: RuntimeTaskAddress | null) => void
+    sendEphemeral?: boolean
+    testId?: string
   }) => {
     const mountId = useRef(++mocks.chatPanelMounts).current
     mocks.lastOnAddressChange = onAddressChange ?? null
@@ -70,8 +78,12 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
         <div
           data-testid="mock-chat-panel"
           data-project-id={currentProject?.id ?? ''}
+          data-initial-input={initialInput ?? ''}
+          data-auto-submit={autoSubmitInitialInput ? 'yes' : 'no'}
           data-mount-id={mountId}
           data-has-initial-address={initialAddress ? 'yes' : 'no'}
+          data-send-ephemeral={sendEphemeral === false ? 'no' : 'yes'}
+          data-panel-testid={testId}
         />
       </>
     )
@@ -120,6 +132,47 @@ const task = {
 }
 
 describe('AiChatModal', () => {
+  it('keeps the original title as an unsent draft when a work item moves to pending', () => {
+    render(
+      <AiChatModal
+        project={project}
+        localProjects={localProjects}
+        task={task}
+        initialTaskInput="Implement cloud MCP"
+        embedded
+        open
+        onClose={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute(
+      'data-initial-input',
+      'Implement cloud MCP'
+    )
+    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute('data-auto-submit', 'no')
+  })
+
+  it('submits the original title immediately when a work item moves to in progress', () => {
+    render(
+      <AiChatModal
+        project={project}
+        localProjects={localProjects}
+        task={task}
+        initialTaskInput="Implement cloud MCP"
+        autoSubmitInitialTaskInput
+        embedded
+        open
+        onClose={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute(
+      'data-initial-input',
+      'Implement cloud MCP'
+    )
+    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute('data-auto-submit', 'yes')
+  })
+
   it('always creates private AI conversations with the Codex runtime', async () => {
     render(
       <AiChatModal
@@ -282,5 +335,34 @@ describe('AiChatModal', () => {
     )
     expect(screen.getByTestId('ai-chat-modal-backdrop')).not.toHaveClass('hidden')
     expect(Number(panel().getAttribute('data-mount-id'))).toBe(firstMount)
+  })
+
+  it('opens a focused bound task as a split detail and persistent conversation', async () => {
+    const onOpenRuntimeTask = vi.fn()
+    const address = { deviceId: 'local-device', taskId: 'runtime-1' }
+
+    render(
+      <AiChatModal
+        project={project}
+        localProjects={localProjects}
+        task={task}
+        taskTitle="实现云端交付"
+        initialAddress={address}
+        open
+        onClose={vi.fn()}
+        onOpenRuntimeTask={onOpenRuntimeTask}
+      />
+    )
+
+    expect(screen.getByTestId('work-item-task-context')).toHaveTextContent('WEG-1')
+    expect(screen.getByTestId('work-item-task-context')).toHaveTextContent('Implement cloud MCP')
+    expect(screen.getByTestId('work-item-task-context')).toHaveTextContent('实现云端交付')
+    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute(
+      'data-panel-testid',
+      'work-item-task-chat-panel'
+    )
+    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute('data-send-ephemeral', 'no')
+    await userEvent.click(screen.getByTestId('ai-chat-open-runtime-task'))
+    expect(onOpenRuntimeTask).toHaveBeenCalledWith(address)
   })
 })

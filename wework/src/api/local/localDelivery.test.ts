@@ -43,6 +43,50 @@ const taskRecord = {
 }
 
 describe('local delivery API', () => {
+  test('lists every task execution associated with a work-item project', async () => {
+    const execution = {
+      id: 7,
+      loop_item_id: 'WORK-1',
+      cloud_project_id: 'project-1',
+      task_title: 'First execution',
+      agent_id: '',
+      assigner_user_id: 0,
+      execution_environment: 'local',
+      status: 'completed',
+      priority_weight: 0,
+      retry_attempt: 0,
+      error_message: '',
+      execution_note: '',
+      version: 1,
+      created_at: '2026-08-15T00:00:00Z',
+      updated_at: '2026-08-15T00:00:00Z',
+      agent_name: '',
+      agent_system_prompt: '',
+    }
+    const request = vi.fn(async (method: string) => {
+      if (method === 'executions.list') return [execution]
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createLocalDeliveryApi(request)
+
+    await expect(api.listLoopItemExecutions('project-1')).resolves.toEqual({
+      items: [
+        {
+          ...execution,
+          executor_type: 'project_robot',
+          team_id: null,
+          backend_task_id: null,
+          automation_run_id: '',
+        },
+      ],
+    })
+    expect(request).toHaveBeenCalledWith('executions.list', {
+      project_id: 'project-1',
+      agent_id: null,
+      status: null,
+    })
+  })
+
   test('maps execution state from local task records', async () => {
     const request = vi.fn(async (method: string) => {
       if (method === 'todos.list') {

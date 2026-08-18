@@ -440,10 +440,17 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       timeoutMs: uiTimeoutMs,
     })
     await control.command('click', `${activeBoard} [data-testid="cloud-todo-add"]`)
-    await control.command('fill', `${activeBoard} [data-testid="cloud-todo-title"]`, {
+    await control.command('waitFor', `${activeBoard} [data-testid="workspace-issue-input"]`, {
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('fill', `${activeBoard} [data-testid="workspace-issue-input"]`, {
       value: '真实后端智能体看板任务',
     })
-    const assigneeSelector = `${activeBoard} [data-testid="cloud-todo-create-assignee"]`
+    await control.command('click', `${activeBoard} [data-testid="workspace-issue-submit"]`)
+    await control.command('waitFor', `${activeBoard} [data-testid="cloud-todo-detail-title"]`, {
+      timeoutMs: uiTimeoutMs,
+    })
+    const assigneeSelector = `${activeBoard} [data-testid="cloud-todo-detail-assignee"]`
     await control.command('waitFor', assigneeSelector, {
       text: wegentAgent.name,
       timeoutMs: uiTimeoutMs,
@@ -452,7 +459,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       value: `agent:${wegentAgent.id}`,
     })
     assert.equal(await control.command('getValue', assigneeSelector), `agent:${wegentAgent.id}`)
-    await control.command('click', `${activeBoard} [data-testid="cloud-todo-create-confirm"]`)
+    await control.command('clickWhenEnabled', `${activeBoard} [data-testid="cloud-todo-save"]`, {
+      timeoutMs: uiTimeoutMs,
+    })
     const teamTask = await waitForValue(
       () => cloudRequest(`/api/v1/cloud-projects/${projectId}/loop-items`),
       response =>
@@ -756,6 +765,88 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       managerToolCalls > customToolCallsBefore,
       'Custom AI manager did not call assign_board_item'
     )
+    const readyCountBeforeBoardReload = control.readyCount
+    await control.command('reloadMainWindow', 'body')
+    await withTimeout(
+      control.awaitReadyAfter(readyCountBeforeBoardReload),
+      uiTimeoutMs * 3,
+      'The redesigned project board did not reconnect after loading API-created issues'
+    )
+    const activeBoard = '[data-workspace-tab-content][aria-hidden="false"]'
+    await control.command('waitFor', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('click', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
+      visible: true,
+    })
+    const taskSearchToggle = `${activeBoard} [data-testid="cloud-project-task-search-toggle"]`
+    await control.command('waitFor', taskSearchToggle, {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('click', taskSearchToggle, { visible: true })
+    await control.command(
+      'fill',
+      `${activeBoard} [data-testid="cloud-project-task-search-input"]`,
+      {
+        value: customManagerTask.id,
+        visible: true,
+      }
+    )
+    const customManagerTaskResult = `${activeBoard} [data-testid="cloud-task-search-result-${customManagerTask.id}"]`
+    await control.command('waitFor', customManagerTaskResult, {
+      text: customManagerTask.title,
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('click', customManagerTaskResult, { visible: true })
+    await control.command('waitFor', `${activeBoard} [data-testid="cloud-todo-detail"]`, {
+      text: customManagerTask.title,
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    const customManagerCard = `${activeBoard} [data-executor-type="automation_manager"][data-manager-type="custom"]`
+    await control.command('waitFor', customManagerCard, {
+      text: '自定义 AI 调度员',
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('scrollIntoView', customManagerCard)
+    await control.command('waitFor', customManagerCard, {
+      text: '自定义 AI 调度员',
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    const managerReplyComposer = `${customManagerCard} [data-testid^="cloud-task-activity-card-composer-"]`
+    await control.command('fill', managerReplyComposer, {
+      value: '请确认当前分派结果',
+      visible: true,
+    })
+    await control.command('press', managerReplyComposer, {
+      key: 'Enter',
+      visible: true,
+    })
+    await waitForValue(
+      () => control.command('getText', customManagerCard),
+      text =>
+        text.includes('请确认当前分派结果') &&
+        text.split('已通过看板工具完成机器人分派。').length >= 3 &&
+        text.split('自定义 AI 调度员').length >= 3,
+      'The custom manager did not append a distinct reply to its comment thread',
+      uiTimeoutMs * 3
+    )
+    await control.command('scrollIntoView', customManagerCard)
+    const managerExecutionsAfterReply = await allExecutions(projectId)
+    assert.equal(
+      managerExecutionsAfterReply.filter(
+        execution =>
+          execution.loopItemId === customManagerTask.id &&
+          execution.executorType === 'automation_manager'
+      ).length,
+      1,
+      'Manager conversation created a second board execution'
+    )
+    await captureScreenshot(control, 'project-automation-custom-manager-continuation.png')
     await disableRule(projectId, customManagerRule)
 
     const wegentManagerRule = await createRule({
@@ -1038,6 +1129,17 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         json(response, 201, createdBoardItem)
         return true
       }
+      if (request.method === 'PATCH' && url.pathname === '/api/v1/loop-items/AUTO-201') {
+        const payload = await readJson(request)
+        createdBoardItem = {
+          ...createdBoardItem,
+          ...payload,
+          version: createdBoardItem.version + 1,
+          updated_at: '2026-08-15T00:01:00Z',
+        }
+        json(response, 200, createdBoardItem)
+        return true
+      }
       if (
         request.method === 'POST' &&
         url.pathname === `/api/v1/cloud-projects/${PROJECT_ID}/loop-items/AUTO-201/assign`
@@ -1050,7 +1152,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
           assignee_team_name: TEAM.displayName,
           execution_state: 'queued',
           execution_control_state: 'queued',
-          version: 2,
+          version: createdBoardItem.version + 1,
         }
         json(response, 200, createdBoardItem)
         return true
@@ -1261,10 +1363,17 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         timeoutMs: uiTimeoutMs,
       })
       await control.command('click', `${activeBoard} [data-testid="cloud-todo-add"]`)
-      await control.command('fill', `${activeBoard} [data-testid="cloud-todo-title"]`, {
+      await control.command('waitFor', `${activeBoard} [data-testid="workspace-issue-input"]`, {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('fill', `${activeBoard} [data-testid="workspace-issue-input"]`, {
         value: '由智能体评审看板状态',
       })
-      const assigneeSelector = `${activeBoard} [data-testid="cloud-todo-create-assignee"]`
+      await control.command('click', `${activeBoard} [data-testid="workspace-issue-submit"]`)
+      await control.command('waitFor', `${activeBoard} [data-testid="cloud-todo-detail-title"]`, {
+        timeoutMs: uiTimeoutMs,
+      })
+      const assigneeSelector = `${activeBoard} [data-testid="cloud-todo-detail-assignee"]`
       await control.command('waitFor', assigneeSelector, {
         text: TEAM.displayName,
         timeoutMs: uiTimeoutMs,
@@ -1273,7 +1382,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         value: `team:${TEAM_ID}`,
       })
       assert.equal(await control.command('getValue', assigneeSelector), `team:${TEAM_ID}`)
-      await control.command('click', `${activeBoard} [data-testid="cloud-todo-create-confirm"]`)
+      await control.command('clickWhenEnabled', `${activeBoard} [data-testid="cloud-todo-save"]`, {
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('waitFor', `${activeBoard} [data-testid="cloud-todo-card-AUTO-201"]`, {
         text: TEAM.displayName,
         timeoutMs: uiTimeoutMs,
