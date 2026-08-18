@@ -173,7 +173,13 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
         except (RuntimeRpcError, DeviceCommandError) as exc:
             return ipc_error(data, "runtime_rpc_failed", str(exc), request_id)
 
-        if result.get("success") is False:
+        # ``device.execute_command`` is a pass-through executor command whose
+        # ``success`` field reports the command exit code, not RPC transport
+        # health. A non-zero exit (e.g. ``git_is_worktree`` exiting 1 on a
+        # non-git directory) is a valid result the client must interpret, so
+        # relay it verbatim to match the local Tauri IPC path. Other runtime
+        # methods use ``success: False`` to signal an RPC-level failure.
+        if method != "device.execute_command" and result.get("success") is False:
             return ipc_error(
                 data,
                 "runtime_rpc_failed",
