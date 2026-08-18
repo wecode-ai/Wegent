@@ -110,7 +110,7 @@ export default defineConfig({
     globals: true,
     // Keep local and pre-push runs below the resource-contention point where
     // jsdom-heavy files begin timing out nondeterministically.
-    maxWorkers: 4,
+    maxWorkers: 2,
     exclude: [...configDefaults.exclude, 'e2e/**', 'test-results/**'],
     coverage: {
       provider: 'istanbul',
