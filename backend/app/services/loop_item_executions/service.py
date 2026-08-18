@@ -638,7 +638,7 @@ class LoopItemExecutionService:
             db.query(LoopItemExecution)
             .filter(
                 LoopItemExecution.id == execution_id,
-                LoopItemExecution.team_id.isnot(None),
+                LoopItemExecution.team_id > 0,
                 LoopItemExecution.status == STATUS_QUEUED,
             )
             .update(
@@ -1638,14 +1638,8 @@ class LoopItemExecutionService:
                 "model": profile.model or None,
             }
         )
-        row.sender_type = "agent"
-        row.sender_id = execution.agent_id or (
-            f"{execution.executor_type}:{execution.automation_run_id}"
-        )
-        row.sender_name = profile.display_name
         row.message_type = "agent_chunk"
         row.metadata_json = metadata
-        row.agent_id = execution.agent_id or ""
         row.runtime_device_id = execution.runtime_device_id
         row.runtime_task_id = execution.runtime_task_id
         row.runtime_activity_key = project_chat_service._runtime_activity_key(
@@ -3015,8 +3009,8 @@ class LoopItemExecutionService:
                 "executor_type": execution.executor_type,
                 "executor_owner_user_id": execution.executor_owner_user_id,
                 "agent_id": _optional_text(execution.agent_id),
-                "team_id": execution.team_id,
-                "backend_task_id": execution.backend_task_id,
+                "team_id": execution.optional_team_id,
+                "backend_task_id": execution.optional_backend_task_id,
                 "automation_run_id": execution.automation_run_id,
                 "assigner_user_id": execution.assigner_user_id,
                 "execution_environment": execution.execution_environment,

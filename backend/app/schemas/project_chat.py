@@ -5,7 +5,7 @@
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 def _to_camel(value: str) -> str:
@@ -212,6 +212,11 @@ class LoopItemExecutionView(ProjectChatSchema):
     created_at: Any
     updated_at: Any
 
+    @field_validator("team_id", "backend_task_id", mode="before")
+    @classmethod
+    def normalize_optional_execution_id(cls, value: object) -> object:
+        return None if value == 0 else value
+
 
 class LoopItemExecutionListResponse(ProjectChatSchema):
     items: list[LoopItemExecutionView]
@@ -258,6 +263,15 @@ class ProjectChatAgentFailure(ProjectChatSchema):
     task_id: str | None = Field(default=None, max_length=64)
     message_id: str = Field(min_length=1, max_length=64)
     error: str | None = Field(default=None, max_length=2_000)
+
+
+class ProjectChatAutomationManagerContinuation(ProjectChatSchema):
+    """Open one reply in a custom automation manager's Runtime session."""
+
+    project_id: str = Field(min_length=1, max_length=64)
+    task_id: str = Field(min_length=1, max_length=64)
+    trigger_message_id: str = Field(min_length=1, max_length=64)
+    manager_message_id: str = Field(min_length=1, max_length=64)
 
 
 class ProjectChatWegentContinuation(ProjectChatSchema):

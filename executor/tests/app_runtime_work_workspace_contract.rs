@@ -1212,7 +1212,7 @@ async fn runtime_task_list_uses_thread_root_hints_and_skips_projectless_threads(
 }
 
 #[tokio::test]
-async fn runtime_task_list_preserves_unlisted_thread_order_for_hinted_manual_project() {
+async fn runtime_task_list_puts_new_unlisted_tasks_before_manual_project_order() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
         "WEGENT_EXECUTOR_HOME",
@@ -1291,9 +1291,9 @@ async fn runtime_task_list_preserves_unlisted_thread_order_for_hinted_manual_pro
             .map(|task| task["taskId"].as_str().expect("task id"))
             .collect::<Vec<_>>(),
         vec![
-            "thread-listed",
+            "thread-unlisted-second",
             "thread-unlisted-first",
-            "thread-unlisted-second"
+            "thread-listed"
         ]
     );
     assert_eq!(

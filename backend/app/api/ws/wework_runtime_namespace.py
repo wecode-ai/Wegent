@@ -19,6 +19,7 @@ from app.core.config import settings
 from app.schemas.project_chat import (
     ProjectChatAgentFailure,
     ProjectChatAgentStart,
+    ProjectChatAutomationManagerContinuation,
     ProjectChatSend,
     ProjectChatSubscribe,
     ProjectChatWegentContinuation,
@@ -50,6 +51,7 @@ PROJECT_CHAT_SEND_EVENT = "wework:project_chat:message:send"
 PROJECT_CHAT_CREATED_EVENT = "wework:project_chat:message:created"
 PROJECT_CHAT_AGENT_CHUNK_EVENT = "wework:project_chat:agent:chunk"
 PROJECT_CHAT_AGENT_START_EVENT = "wework:project_chat:agent:start"
+PROJECT_CHAT_MANAGER_CONTINUE_EVENT = "wework:project_chat:manager:continue"
 PROJECT_CHAT_AGENT_FAILED_EVENT = "wework:project_chat:agent:failed"
 PROJECT_CHAT_WEGENT_CONTINUE_EVENT = "wework:project_chat:wegent:continue"
 PROJECT_CHAT_PROJECT_ROOM_PREFIX = "wework-project-chat:project:"
@@ -73,6 +75,7 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
             PROJECT_CHAT_UNSUBSCRIBE_EVENT: "on_project_chat_unsubscribe",
             PROJECT_CHAT_SEND_EVENT: "on_project_chat_message_send",
             PROJECT_CHAT_AGENT_START_EVENT: "on_project_chat_agent_start",
+            PROJECT_CHAT_MANAGER_CONTINUE_EVENT: "on_project_chat_manager_continue",
             PROJECT_CHAT_AGENT_FAILED_EVENT: "on_project_chat_agent_failed",
             PROJECT_CHAT_WEGENT_CONTINUE_EVENT: "on_project_chat_wegent_continue",
         }
@@ -295,6 +298,26 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
         await emit_project_chat_message(self, message)
         return {"ok": True, "result": message}
 
+    async def on_project_chat_manager_continue(self, sid: str, data: dict) -> dict:
+        """Open a reply in the custom AI manager's existing Runtime session."""
+
+        identity = await self._project_chat_identity(sid)
+        if identity is None:
+            return project_chat_error("UNAUTHENTICATED", "Not authenticated")
+        try:
+            request = ProjectChatAutomationManagerContinuation.model_validate(
+                project_chat_payload(data)
+            )
+            message = await run_sync_in_executor(
+                _start_project_chat_manager_continuation_sync,
+                int(identity["user_id"]),
+                request,
+            )
+        except (ValidationError, HTTPException) as exc:
+            return project_chat_exception_ack(exc)
+        await emit_project_chat_message(self, message)
+        return {"ok": True, "result": message}
+
     async def on_project_chat_wegent_continue(self, sid: str, data: dict) -> dict:
         """Persist and dispatch one reply into its bound native Wegent Task."""
 
@@ -503,6 +526,16 @@ def _start_project_chat_agent_sync(
 ) -> dict[str, Any]:
     with get_db_session() as db:
         message = project_chat_service.start_agent_response(
+            db, user_id=user_id, request=request
+        )
+        return message.model_dump(mode="json", by_alias=True)
+
+
+def _start_project_chat_manager_continuation_sync(
+    user_id: int, request: ProjectChatAutomationManagerContinuation
+) -> dict[str, Any]:
+    with get_db_session() as db:
+        message = project_chat_service.start_automation_manager_response(
             db, user_id=user_id, request=request
         )
         return message.model_dump(mode="json", by_alias=True)

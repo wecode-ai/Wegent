@@ -310,6 +310,7 @@ _MYSQL_NON_NULL_DEFAULTS: dict[str, object] = {
     "created_by_user_id": 0,
     "updated_by_user_id": 0,
     "assignee_user_id": 0,
+    "assignee_team_id": 0,
     "user_id": 0,
     "added_by_user_id": 0,
     "source": "",
