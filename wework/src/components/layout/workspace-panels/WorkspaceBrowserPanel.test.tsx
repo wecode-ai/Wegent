@@ -2508,6 +2508,12 @@ describe('WorkspaceBrowserPanel', () => {
     view.rerender(<WorkspaceBrowserPanel active />)
     fireEvent.click(screen.getByTestId('workspace-browser-annotate-button'))
     await screen.findByTestId('workspace-browser-annotation-close-button')
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.evalEmbeddedBrowser).toHaveBeenCalledWith(
+        expect.stringContaining('setOriginalViewEnabled?.(false)'),
+        'workspace-browser'
+      )
+    })
 
     embeddedBrowserMocks.evalEmbeddedBrowser.mockClear()
     await act(async () => {
