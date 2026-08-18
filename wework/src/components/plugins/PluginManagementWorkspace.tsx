@@ -17,6 +17,8 @@ import {
 import { useTranslation } from '@/hooks/useTranslation'
 import { getErrorMessage } from '@/lib/error-message'
 import { navigateTo } from '@/lib/navigation'
+import { INTERNAL_DEVICE_MARKETPLACE_ID } from '@/features/plugins/marketplaceIdentity'
+import { buildPluginDetailRoute } from '@/features/plugins/pluginNavigation'
 import type {
   InstalledPlugin,
   PluginAccessResponse,
@@ -47,7 +49,13 @@ import {
   resolveContinueEditingPluginKey,
 } from './pluginOwnerLocalPackage'
 import { UninstallPluginDialog } from './plugin-dialogs/UninstallPluginDialog'
-import { installedPluginDistribution } from './pluginDistribution'
+import {
+  installedPluginDistribution,
+  installedPluginMarketplaceId,
+  marketplaceItemMarketplaceId,
+} from './pluginDistribution'
+import { findMarketplaceItemForInstalled } from './findMarketplaceItemForInstalled'
+import { pluginDetailReadyToTry } from './pluginDetailReadyToTry'
 import { getRuntimeConfig } from '@/config/runtime'
 
 interface PluginShareState {
@@ -482,6 +490,36 @@ export function PluginManagementWorkspace({
     )
   }
 
+  const openInstalledPluginDetail = (plugin: InstalledPluginItem) => {
+    const packableCreated =
+      findPackableCreatedPlugin(installedPlugins, [
+        plugin.raw.spec.source.pluginKey,
+        createdPluginSlug(plugin),
+        plugin.name,
+      ]) ?? (plugin.origin === 'created' ? plugin : null)
+    if (packableCreated?.origin === 'created') {
+      setSelectedPluginId(packableCreated.id)
+      return
+    }
+    const marketplaceItem =
+      (typeof plugin.raw.spec.pluginId === 'number'
+        ? marketplaceById.get(String(plugin.raw.spec.pluginId))
+        : undefined) ?? findMarketplaceItemForInstalled(plugin, marketplaceItems)
+    if (marketplaceItem || isCloudManagedInstalledPlugin(plugin.raw)) {
+      navigateTo(
+        buildPluginDetailRoute({
+          pluginName: marketplaceItem?.name || plugin.raw.spec.source.pluginKey,
+          marketplaceName:
+            (marketplaceItem && marketplaceItemMarketplaceId(marketplaceItem)) ||
+            installedPluginMarketplaceId(plugin.raw) ||
+            INTERNAL_DEVICE_MARKETPLACE_ID,
+        })
+      )
+      return
+    }
+    setSelectedPluginId(plugin.id)
+  }
+
   const listingTypeForPlugin = (plugin: InstalledPluginItem): 'plugin' | 'skill' => {
     const components = plugin.raw.spec.components
     const isSingleSkill =
@@ -796,6 +834,7 @@ export function PluginManagementWorkspace({
         <PluginDetailView
           plugin={selectedPlugin}
           backLabel={t('workbench.plugins_back_to_management', '返回管理插件')}
+          usableOnThisDevice={pluginDetailReadyToTry(selectedPlugin, ownedMarketplace)}
           primaryActionLabel={
             isUninstalling
               ? t('workbench.plugins_uninstalling', '正在卸载')
@@ -925,7 +964,7 @@ export function PluginManagementWorkspace({
                   <InstalledPluginRow
                     plugin={plugin}
                     marketplaceItem={marketplaceItem}
-                    onOpen={() => setSelectedPluginId(packableCreated?.id ?? plugin.id)}
+                    onOpen={() => openInstalledPluginDetail(plugin)}
                     onTry={() => tryPluginInChat(plugin.raw)}
                     onPublish={
                       ownerActions.canOpenPublishDialog

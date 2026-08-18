@@ -72,6 +72,7 @@ interface PluginDetailViewProps {
   onSkillRun?: (skillName: string) => void
   shareRecipient?: boolean
   primaryActionIcon?: 'try' | 'install' | 'none'
+  usableOnThisDevice?: boolean
   deleteActionLabel?: string
   deleteActionDisabled?: boolean
   onDeleteAction?: () => void
@@ -467,6 +468,7 @@ export function PluginDetailView({
   onSkillRun,
   shareRecipient = false,
   primaryActionIcon = 'try',
+  usableOnThisDevice,
   deleteActionLabel,
   deleteActionDisabled = false,
   onDeleteAction,
@@ -488,7 +490,7 @@ export function PluginDetailView({
     return () => document.removeEventListener('mousedown', handlePointerDown)
   }, [isActionMenuOpen])
   const raw = plugin.raw
-  const isInstalled = raw.spec.installState === 'installed'
+  const isInstalled = usableOnThisDevice ?? raw.spec.installState === 'installed'
   const hasMaterializedOutdatedRelease =
     raw.spec.installState === 'update_available' &&
     Boolean(raw.status.devices?.some(device => Boolean(device.actualReleaseId)))

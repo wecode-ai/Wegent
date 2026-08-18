@@ -47,6 +47,33 @@ function pluginIdentity(item: InstalledPlugin): string {
   return plugin && marketplace ? `${plugin}@${marketplace}` : ''
 }
 
+/** Device ZIP dirs look like `267250-wegent-wegent-sites-0.1.6`. */
+export function storeDirMatchesPluginKey(dirName: string, pluginKeyValue: string): boolean {
+  const haystack = dirName.trim().toLowerCase()
+  const needle = pluginKeyValue.trim().toLowerCase()
+  if (!haystack || !needle || haystack === needle) return false
+  return haystack.includes(`-${needle}-`) || haystack.endsWith(`-${needle}`)
+}
+
+function localMatchesCloudPlugin(local: InstalledPlugin, cloud: InstalledPlugin): boolean {
+  const identity = pluginIdentity(cloud)
+  const localIdentity = pluginIdentity(local)
+  if (identity && localIdentity === identity) return true
+  const cloudPluginId = cloud.spec.pluginId
+  const localId = (localPluginId(local) || '').trim()
+  if (typeof cloudPluginId === 'number') {
+    const id = String(cloudPluginId)
+    if (localId.startsWith(`${id}-`)) return true
+  }
+  const cloudKey = pluginKey(cloud)
+  if (!cloudKey) return false
+  if (storeDirMatchesPluginKey(localId, cloudKey)) return true
+  if (storeDirMatchesPluginKey(String(local.metadata.name || ''), cloudKey)) return true
+  return (
+    pluginKey(local) === cloudKey && isInternalDeviceMarketplaceId(marketplaceKey(local) || null)
+  )
+}
+
 export function linkedCloudPluginId(item: InstalledPlugin): number | null {
   const value = item.spec.sourcePayload?.cloudPluginId
   if (typeof value === 'number' && Number.isFinite(value)) return value
@@ -87,6 +114,7 @@ export function mergeInstalledPlugins(
       return identity ? ([[identity, item]] as const) : []
     })
   )
+  const matchedLocalKeys = new Set<string>()
 
   for (const item of cloudItems) {
     if (item.spec.pluginId && item.spec.releaseId) {
@@ -94,7 +122,9 @@ export function mergeInstalledPlugins(
         device => device.deviceId === currentDeviceId
       )
       const identity = pluginIdentity(item)
-      const localMatch = identity ? localItemsByIdentity.get(identity) : undefined
+      const localMatch =
+        (identity ? localItemsByIdentity.get(identity) : undefined) ??
+        localItems.find(local => localMatchesCloudPlugin(local, item))
       const hasMaterializedRelease = Boolean(currentDeviceInstallation?.actualReleaseId)
       if (
         currentDeviceId &&
@@ -144,6 +174,12 @@ export function mergeInstalledPlugins(
           : item
       merged.set(`market:${item.spec.pluginId}:${mergedItem.spec.releaseId}`, mergedItem)
       if (identity) cloudPluginIdentities.add(identity)
+      if (localMatch) {
+        const localIdentity = pluginIdentity(localMatch)
+        if (localIdentity) matchedLocalKeys.add(localIdentity)
+        const localId = localPluginId(localMatch)
+        if (localId) matchedLocalKeys.add(`id:${localId}`)
+      }
     }
   }
 
@@ -175,8 +211,11 @@ export function mergeInstalledPlugins(
     }
 
     const identity = pluginIdentity(item)
-    if (identity && cloudPluginIdentities.has(identity)) continue
+    if (identity && (cloudPluginIdentities.has(identity) || matchedLocalKeys.has(identity))) {
+      continue
+    }
     const id = localPluginId(item)
+    if (id && matchedLocalKeys.has(`id:${id}`)) continue
     if (id) merged.set(`runtime:${id}`, item)
     else if (identity) merged.set(`runtime:${identity}`, item)
   }

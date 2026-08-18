@@ -1,8 +1,9 @@
-import { afterEach, describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { PluginMarketplaceItem } from '@/types/api'
 import type { InstalledPluginItem } from '@/components/plugins/PluginManagementRows'
 import {
   clearPluginMarketplaceCache,
+  flushPluginMarketplaceCachePersist,
   getPluginMarketplaceCache,
   marketplaceItemsSignature,
   pluginMarketplaceCacheKey,
@@ -11,6 +12,7 @@ import {
   sameMarketplaceItems,
   setPluginMarketplaceCache,
   splitPluginMarketplaceCacheKey,
+  subscribePluginMarketplaceCache,
 } from './pluginMarketplaceCache'
 
 function item(
@@ -50,6 +52,8 @@ function item(
 
 describe('pluginMarketplaceCache', () => {
   afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
     clearPluginMarketplaceCache()
   })
 
@@ -223,6 +227,7 @@ describe('pluginMarketplaceCache', () => {
       canSharePersonalPlugins: true,
       fetchedAt: Date.now(),
     })
+    flushPluginMarketplaceCachePersist()
 
     expect(window.localStorage.getItem(storageKey)).toMatch(/^lz:/)
     resetPluginMarketplaceCacheMemory()
@@ -394,5 +399,82 @@ describe('pluginMarketplaceCache', () => {
     const right = [{ ...left[0], name: 'Dev Tools 2', distribution: 'public' as const }]
     expect(sameInstalledPlugins(left, left)).toBe(true)
     expect(sameInstalledPlugins(left, right)).toBe(false)
+  })
+
+  test('keeps memory and listeners immediate while delaying durable persist', () => {
+    vi.useFakeTimers()
+    const key = pluginMarketplaceCacheKey('http://api', 'token-debounce')
+    const storageKey = 'wework.plugins.marketplaceCache.v2'
+    const heard: Array<string | undefined> = []
+    const unsubscribe = subscribePluginMarketplaceCache(next => {
+      heard.push(next?.deviceId)
+    })
+
+    setPluginMarketplaceCache({
+      cacheKey: key,
+      marketplaceItems: [item({ id: 1, name: 'a' })],
+      installedPlugins: [],
+      marketplaces: [],
+      selectedMarketplaceKey: '',
+      deviceId: 'device-live',
+      canPublish: false,
+      canSharePersonalPlugins: true,
+      fetchedAt: Date.now(),
+    })
+
+    expect(getPluginMarketplaceCache(key)?.deviceId).toBe('device-live')
+    expect(heard).toEqual(['device-live'])
+    expect(window.localStorage.getItem(storageKey)).toBeNull()
+
+    vi.advanceTimersByTime(300)
+    expect(window.localStorage.getItem(storageKey)).toBeTruthy()
+    unsubscribe()
+    vi.useRealTimers()
+  })
+
+  test('skips a durable rewrite when the snapshot signature is unchanged', () => {
+    const key = pluginMarketplaceCacheKey('http://api', 'token-skip')
+    const snapshot = {
+      cacheKey: key,
+      marketplaceItems: [item({ id: 1, name: 'a' })],
+      installedPlugins: [],
+      marketplaces: [],
+      selectedMarketplaceKey: '',
+      deviceId: 'device-1',
+      canPublish: false,
+      canSharePersonalPlugins: true,
+      fetchedAt: Date.now(),
+    }
+    setPluginMarketplaceCache(snapshot, { persistImmediately: true })
+    const setItem = vi.spyOn(Storage.prototype, 'setItem')
+    setItem.mockClear()
+    setPluginMarketplaceCache(
+      { ...snapshot, fetchedAt: Date.now() + 10 },
+      {
+        persistImmediately: true,
+      }
+    )
+    expect(setItem).not.toHaveBeenCalled()
+  })
+
+  test('flushPluginMarketplaceCachePersist writes the pending snapshot immediately', () => {
+    vi.useFakeTimers()
+    const key = pluginMarketplaceCacheKey('http://api', 'token-flush')
+    const storageKey = 'wework.plugins.marketplaceCache.v2'
+    setPluginMarketplaceCache({
+      cacheKey: key,
+      marketplaceItems: [item({ id: 2, name: 'b' })],
+      installedPlugins: [],
+      marketplaces: [],
+      selectedMarketplaceKey: '',
+      deviceId: 'device-flush',
+      canPublish: false,
+      canSharePersonalPlugins: true,
+      fetchedAt: Date.now(),
+    })
+    expect(window.localStorage.getItem(storageKey)).toBeNull()
+    flushPluginMarketplaceCachePersist()
+    expect(window.localStorage.getItem(storageKey)).toBeTruthy()
+    vi.useRealTimers()
   })
 })

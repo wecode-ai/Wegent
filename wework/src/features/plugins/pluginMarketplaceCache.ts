@@ -41,6 +41,11 @@ interface PersistedMarketplaceCacheStore {
 let snapshot: PluginMarketplaceCacheSnapshot | null = null
 type MarketplaceCacheListener = (next: PluginMarketplaceCacheSnapshot | null) => void
 const listeners = new Set<MarketplaceCacheListener>()
+const PERSIST_DEBOUNCE_MS = 300
+let pendingPersist: PluginMarketplaceCacheSnapshot | null = null
+let persistTimeoutId: number | null = null
+let lastPersistedSignature = ''
+let persistFlushBound = false
 
 export function pluginMarketplaceCacheKey(
   cloudApiBaseUrl?: string | null,
@@ -255,6 +260,19 @@ function trimPersistedEntries(store: PersistedMarketplaceCacheStore): void {
   }
 }
 
+function snapshotPersistSignature(next: PluginMarketplaceCacheSnapshot): string {
+  return [
+    next.cacheKey,
+    next.deviceId,
+    next.selectedMarketplaceKey,
+    next.canPublish ? '1' : '0',
+    next.canSharePersonalPlugins ? '1' : '0',
+    next.marketplaces.map(entry => `${entry.key}:${entry.id}:${entry.path ?? ''}`).join(','),
+    marketplaceItemsSignature(next.marketplaceItems),
+    installedPluginsSignature(next.installedPlugins),
+  ].join('|')
+}
+
 function persistSnapshot(next: PluginMarketplaceCacheSnapshot): void {
   if (typeof window === 'undefined') return
   const previousRaw = window.localStorage.getItem(STORAGE_KEY)
@@ -302,6 +320,50 @@ function persistSnapshot(next: PluginMarketplaceCacheSnapshot): void {
   }
 }
 
+function clearPersistTimer(): void {
+  if (persistTimeoutId === null) return
+  window.clearTimeout(persistTimeoutId)
+  persistTimeoutId = null
+}
+
+function persistIfChanged(next: PluginMarketplaceCacheSnapshot): void {
+  const signature = snapshotPersistSignature(next)
+  if (signature === lastPersistedSignature) return
+  persistSnapshot(next)
+  lastPersistedSignature = signature
+}
+
+function schedulePersistSnapshot(next: PluginMarketplaceCacheSnapshot): void {
+  pendingPersist = next
+  if (typeof window === 'undefined') {
+    persistIfChanged(next)
+    pendingPersist = null
+    return
+  }
+  bindPersistFlush()
+  clearPersistTimer()
+  persistTimeoutId = window.setTimeout(() => {
+    persistTimeoutId = null
+    if (!pendingPersist) return
+    persistIfChanged(pendingPersist)
+    pendingPersist = null
+  }, PERSIST_DEBOUNCE_MS)
+}
+
+function bindPersistFlush(): void {
+  if (persistFlushBound || typeof window === 'undefined') return
+  persistFlushBound = true
+  window.addEventListener('pagehide', flushPluginMarketplaceCachePersist)
+  window.addEventListener('beforeunload', flushPluginMarketplaceCachePersist)
+}
+
+export function flushPluginMarketplaceCachePersist(): void {
+  clearPersistTimer()
+  if (!pendingPersist) return
+  persistIfChanged(pendingPersist)
+  pendingPersist = null
+}
+
 /**
  * Resolve a warm marketplace snapshot by exact cache key only. Do not reuse an
  * authenticated in-memory/disk entry under `anon` — token clear / account switch
@@ -319,14 +381,26 @@ export function getPluginMarketplaceCache(cacheKey: string): PluginMarketplaceCa
   return null
 }
 
-export function setPluginMarketplaceCache(next: PluginMarketplaceCacheSnapshot): void {
+export function setPluginMarketplaceCache(
+  next: PluginMarketplaceCacheSnapshot,
+  options?: { persistImmediately?: boolean }
+): void {
   // Memory always keeps full-fidelity logos for the current session.
   snapshot = { ...next, logosStripped: false }
-  persistSnapshot(next)
+  if (options?.persistImmediately) {
+    clearPersistTimer()
+    pendingPersist = null
+    persistIfChanged(next)
+  } else {
+    schedulePersistSnapshot(next)
+  }
   for (const listener of listeners) listener(snapshot)
 }
 
 export function clearPluginMarketplaceCache(): void {
+  clearPersistTimer()
+  pendingPersist = null
+  lastPersistedSignature = ''
   snapshot = null
   if (typeof window !== 'undefined') {
     try {
@@ -350,6 +424,7 @@ export function subscribePluginMarketplaceCache(listener: MarketplaceCacheListen
 
 /** Test helper: drop memory without clearing durable storage. */
 export function resetPluginMarketplaceCacheMemory(): void {
+  flushPluginMarketplaceCachePersist()
   snapshot = null
 }
 

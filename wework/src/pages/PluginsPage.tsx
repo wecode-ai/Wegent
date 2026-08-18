@@ -20,6 +20,7 @@ import { getRuntimeConfig } from '@/config/runtime'
 import { parsePluginDetailRoute } from '@/features/plugins/pluginNavigation'
 import { track } from '@/telemetry/client'
 import { createPluginRouteRuntimeTaskOpener } from './plugin-route-navigation'
+import { prefetchPluginsWorkspace } from '@/components/plugins/workspace/prefetchPluginsWorkspace'
 
 const PluginsWorkspace = lazy(() =>
   import('@/components/plugins/PluginsWorkspace').then(module => ({
@@ -128,6 +129,9 @@ export function PluginsPage({ routeSearch = '' }: { routeSearch?: string }) {
 
   useEffect(() => {
     track('plugin_center_opened', { surface: 'catalog' })
+    if (!isTauriRuntime()) return
+    const timeoutId = window.setTimeout(() => prefetchPluginsWorkspace(), 400)
+    return () => window.clearTimeout(timeoutId)
   }, [])
 
   const handleSelectProject = (projectId: number) => {

@@ -6,6 +6,7 @@ import {
   collectInstalledPluginIdsNeedingDeviceStatusReport,
   hasAttemptedPluginDeviceAutoSync,
   hasAttemptedPluginDeviceStatusReport,
+  hasInFlightPluginDeviceSync,
   hasSettledPluginDeviceAutoSync,
   marketplaceItemNeedsDeviceSync,
   marketplaceItemOffersDeviceSyncRetry,
@@ -48,6 +49,16 @@ function item(
 describe('pluginDeviceAutoSync', () => {
   beforeEach(() => {
     clearPluginDeviceAutoSyncAttempts()
+  })
+
+  test('tracks an in-flight per-device sync lock', () => {
+    expect(hasInFlightPluginDeviceSync('device-a')).toBe(false)
+    const finish = beginPluginDeviceSync('device-a')
+    expect(finish).not.toBeNull()
+    expect(hasInFlightPluginDeviceSync('device-a')).toBe(true)
+    expect(beginPluginDeviceSync('device-a')).toBeNull()
+    finish?.()
+    expect(hasInFlightPluginDeviceSync('device-a')).toBe(false)
   })
 
   test('detects account installs that are missing on the current device', () => {

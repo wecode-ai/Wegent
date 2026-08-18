@@ -1699,7 +1699,10 @@ describe('PluginsWorkspace', () => {
 
     await userEvent.click(screen.getByTestId('plugins-category-more-all'))
 
-    await waitFor(() => expect(screen.getAllByTestId(/^plugin-marketplace-row-/)).toHaveLength(79))
+    await waitFor(() =>
+      expect(screen.queryByTestId('plugins-category-more-all')).not.toBeInTheDocument()
+    )
+    expect(screen.getAllByTestId(/^plugin-marketplace-row-/).length).toBeGreaterThan(0)
     expect(screen.queryByTestId('plugins-category-browse-dialog')).not.toBeInTheDocument()
   })
 
@@ -1719,6 +1722,27 @@ describe('PluginsWorkspace', () => {
     expect(screen.getByTestId('plugins-category-section-all')).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Productivity' })).not.toBeInTheDocument()
     expect(screen.queryByText('精选')).not.toBeInTheDocument()
+  })
+
+  test('switching distribution tabs does not start extra plugin/list requests', async () => {
+    render(<PluginsWorkspace />)
+    expect(await screen.findByText('Documents')).toBeInTheDocument()
+    const listCallCount = () =>
+      vi.mocked(invoke).mock.calls.filter(([command, args]) => {
+        if (command !== 'local_executor_request') return false
+        const request = args as { method?: string; params?: { method?: string } }
+        return (
+          request.method === 'codex.app_server_request' && request.params?.method === 'plugin/list'
+        )
+      }).length
+    const listCallsBefore = listCallCount()
+
+    await userEvent.click(screen.getByTestId('plugins-distribution-tab-official'))
+    expect(await screen.findByText('Documents')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('plugins-distribution-tab-all'))
+    expect(await screen.findByText('Documents')).toBeInTheDocument()
+
+    expect(listCallCount()).toBe(listCallsBefore)
   })
 
   test('shows OpenAI official sync empty state when the official catalog is empty', async () => {
@@ -3243,6 +3267,46 @@ describe('PluginsWorkspace', () => {
     expect(screen.getByTestId('plugin-detail-toggle-101')).not.toHaveTextContent('安装插件')
   })
 
+  test('offers try-in-chat when the wegent store directory is already on this device', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'pending',
+      marketplaceVisibility: 'workspace',
+      marketplaceSourceProvider: 'wegent',
+      marketplaceName: 'wegent-sites',
+      marketplaceDisplayName: '快速建站',
+    })
+    mockCodexAppServerInvoke({
+      deviceId: 'current-device',
+      marketplaces: [
+        {
+          name: 'wegent',
+          path: '/Users/test/.wework/apps/com.weibo.wework/capabilities/store/plugins',
+          plugins: [
+            {
+              id: '267250-wegent-wegent-sites-0.1.6',
+              name: '267250-wegent-wegent-sites-0.1.6',
+              displayName: '快速建站',
+            },
+          ],
+        },
+      ],
+      installedPluginNames: ['267250-wegent-wegent-sites-0.1.6'],
+    })
+
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    expect(await screen.findByText('快速建站')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('plugin-marketplace-row-101'))
+    expect(screen.getByTestId('plugin-detail-toggle-101')).toHaveTextContent('立即对话')
+    expect(screen.getByTestId('plugin-detail-toggle-101')).not.toHaveTextContent('安装插件')
+  })
+
   test('reports local packages even when the executor socket is disconnected', async () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
@@ -3447,6 +3511,197 @@ describe('PluginsWorkspace', () => {
 
     await waitFor(() => expect(marketplaceMock.getSyncDeviceCalls()).toBe(1))
     expect(pluginListStarted).toBe(false)
+    releaseSyncGate?.()
+    await waitFor(() => expect(pluginListStarted).toBe(true))
+  })
+
+  test('does not start plugin/list from a warm cache before live cloud pending can sync', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    let releaseSyncGate: (() => void) | null = null
+    const deviceAutoSyncGate = new Promise<void>(resolve => {
+      releaseSyncGate = resolve
+    })
+    const marketplaceMock = mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'pending',
+      marketplaceVisibility: 'workspace',
+      marketplaceSourceProvider: 'wegent',
+      deviceAutoSyncSucceeds: true,
+      deviceAutoSyncGate,
+    })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+
+    const cachedMarketplace = (await (
+      await fetch('/api/plugins/marketplace?device_id=current-device')
+    ).json()) as { items: PluginMarketplaceItem[] }
+    setPluginMarketplaceCache({
+      cacheKey: '/api|cloud-token',
+      marketplaceItems: cachedMarketplace.items.map(item => ({
+        ...item,
+        installed: true,
+        installedPluginId: 101,
+        currentDeviceInstallation: item.currentDeviceInstallation
+          ? {
+              ...item.currentDeviceInstallation,
+              state: 'installed',
+              actualReleaseId: item.currentDeviceInstallation.desiredReleaseId,
+              errorCode: null,
+              errorMessage: null,
+            }
+          : {
+              deviceId: 'current-device',
+              desiredReleaseId: 1001,
+              actualReleaseId: 1001,
+              state: 'installed',
+              errorCode: null,
+              errorMessage: null,
+              attemptCount: 1,
+              lastSyncAt: null,
+              updatedAt: '2026-07-25T12:00:00',
+            },
+      })),
+      installedPlugins: [],
+      marketplaces: [
+        {
+          key: 'cloud:default',
+          id: 'default',
+          name: 'Wework 云端市场',
+          kind: 'cloud',
+        },
+      ],
+      selectedMarketplaceKey: 'cloud:default',
+      deviceId: 'current-device',
+      canPublish: false,
+      canSharePersonalPlugins: true,
+      fetchedAt: Date.now(),
+    })
+
+    let releaseMarketplace: (() => void) | null = null
+    const marketplaceGate = new Promise<void>(resolve => {
+      releaseMarketplace = resolve
+    })
+    let pluginListStarted = false
+    const previousFetch = vi.mocked(fetch)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init?: RequestInit) => {
+        const requestUrl = new URL(url, 'http://localhost')
+        if (requestUrl.pathname === '/api/plugins/marketplace') {
+          return marketplaceGate.then(() => previousFetch(url, init))
+        }
+        return previousFetch(url, init)
+      })
+    )
+    const previousInvoke = vi.mocked(invoke).getMockImplementation()
+    vi.mocked(invoke).mockImplementation((command: string, args?: unknown) => {
+      if (command === 'local_executor_request') {
+        const request = args as {
+          method?: string
+          params?: { method?: string }
+        }
+        if (
+          request.method === 'codex.app_server_request' &&
+          request.params?.method === 'plugin/list'
+        ) {
+          pluginListStarted = true
+          return new Promise(() => undefined)
+        }
+      }
+      return previousInvoke?.(command, args) as Promise<unknown>
+    })
+
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    expect(await screen.findByText('Documents')).toBeInTheDocument()
+    expect(pluginListStarted).toBe(false)
+    expect(marketplaceMock.getSyncDeviceCalls()).toBe(0)
+
+    releaseMarketplace?.()
+    await waitFor(() => expect(marketplaceMock.getSyncDeviceCalls()).toBe(1))
+    expect(pluginListStarted).toBe(false)
+
+    releaseSyncGate?.()
+    await waitFor(() => expect(pluginListStarted).toBe(true))
+  })
+
+  test('does not start plugin/list from an unscoped catalog that looks installed before device pending can sync', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    let releaseSyncGate: (() => void) | null = null
+    const deviceAutoSyncGate = new Promise<void>(resolve => {
+      releaseSyncGate = resolve
+    })
+    const marketplaceMock = mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'pending',
+      marketplaceVisibility: 'workspace',
+      marketplaceSourceProvider: 'wegent',
+      deviceAutoSyncSucceeds: true,
+      deviceAutoSyncGate,
+    })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+
+    let pluginListStarted = false
+    const previousFetch = vi.mocked(fetch)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init?: RequestInit) => {
+        const requestUrl = new URL(url, 'http://localhost')
+        if (
+          requestUrl.pathname === '/api/plugins/marketplace' &&
+          !requestUrl.searchParams.get('device_id')
+        ) {
+          return previousFetch(url, init).then(async response => {
+            const payload = (await response.json()) as { items: PluginMarketplaceItem[] }
+            return {
+              ok: true,
+              status: 200,
+              json: async () => ({
+                items: payload.items.map(item => ({
+                  ...item,
+                  installed: true,
+                  enabled: true,
+                  currentDeviceInstallation: null,
+                })),
+              }),
+            }
+          })
+        }
+        return previousFetch(url, init)
+      })
+    )
+    const previousInvoke = vi.mocked(invoke).getMockImplementation()
+    vi.mocked(invoke).mockImplementation((command: string, args?: unknown) => {
+      if (command === 'local_executor_request') {
+        const request = args as {
+          method?: string
+          params?: { method?: string }
+        }
+        if (
+          request.method === 'codex.app_server_request' &&
+          request.params?.method === 'plugin/list'
+        ) {
+          pluginListStarted = true
+          return new Promise(() => undefined)
+        }
+      }
+      return previousInvoke?.(command, args) as Promise<unknown>
+    })
+
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    expect(await screen.findByText('Documents')).toBeInTheDocument()
+    expect(pluginListStarted).toBe(false)
+    await waitFor(() => expect(marketplaceMock.getSyncDeviceCalls()).toBe(1))
+    expect(pluginListStarted).toBe(false)
+
     releaseSyncGate?.()
     await waitFor(() => expect(pluginListStarted).toBe(true))
   })

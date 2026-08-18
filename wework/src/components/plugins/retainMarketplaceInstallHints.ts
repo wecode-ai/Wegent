@@ -17,8 +17,22 @@ export function retainMarketplaceInstallHints(
   const previousById = new Map(previousItems.map(item => [String(item.id), item]))
   const skipMarketplaceIds = options?.skipMarketplaceIds
   return nextItems.map(item => {
-    if (item.installed && item.installedPluginId != null) return item
     const previous = previousById.get(String(item.id))
+    // Unscoped marketplace lists omit device rows, so account installs look
+    // fully installed. Keep the previous device gap until a device-scoped
+    // catalog arrives — otherwise GitHub plugin/list starts first.
+    if (
+      previous?.currentDeviceInstallation &&
+      item.currentDeviceInstallation == null &&
+      (item.installedPluginId != null || previous.installedPluginId != null)
+    ) {
+      item = {
+        ...item,
+        installedPluginId: item.installedPluginId ?? previous.installedPluginId,
+        currentDeviceInstallation: previous.currentDeviceInstallation,
+      }
+    }
+    if (item.installed && item.installedPluginId != null) return item
     if (!previous?.installed || previous.installedPluginId == null) return item
     const marketplaceId = (
       marketplaceItemMarketplaceId(item) ||

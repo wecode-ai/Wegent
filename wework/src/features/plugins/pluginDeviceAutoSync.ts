@@ -53,6 +53,10 @@ export function hasSettledPluginDeviceAutoSync(deviceId: string): boolean {
   return settledDeviceIds.has(deviceId.trim())
 }
 
+export function hasInFlightPluginDeviceSync(deviceId: string): boolean {
+  return inFlightDeviceIds.has(deviceId.trim())
+}
+
 /** Account has an install record but this device still needs materialization. */
 export function marketplaceItemNeedsDeviceSync(item: PluginMarketplaceItem): boolean {
   if (item.installedLocally) return false

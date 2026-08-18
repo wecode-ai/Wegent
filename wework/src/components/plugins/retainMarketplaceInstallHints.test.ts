@@ -122,6 +122,45 @@ describe('retainMarketplaceInstallHints', () => {
     expect(retainMarketplaceInstallHints(previous, next)).toEqual(next)
   })
 
+  test('keeps a previous device gap when the next catalog omits device rows', () => {
+    const pending = {
+      deviceId: 'current-device',
+      desiredReleaseId: 1001,
+      actualReleaseId: null,
+      state: 'pending' as const,
+      errorCode: null,
+      errorMessage: null,
+      attemptCount: 1,
+      lastSyncAt: null,
+      updatedAt: '2026-07-25T12:00:00',
+    }
+    const previous = [
+      item({
+        id: 101,
+        installed: false,
+        installedPluginId: 101,
+        currentDeviceInstallation: pending,
+      }),
+    ]
+    const next = [
+      item({
+        id: 101,
+        installed: true,
+        installedPluginId: 101,
+        currentDeviceInstallation: null,
+      }),
+    ]
+
+    expect(retainMarketplaceInstallHints(previous, next)).toEqual([
+      expect.objectContaining({
+        id: 101,
+        installed: true,
+        installedPluginId: 101,
+        currentDeviceInstallation: pending,
+      }),
+    ])
+  })
+
   test('retains the matching installed row with an optimistic marketplace hint', () => {
     const previousItem = item({
       installed: true,

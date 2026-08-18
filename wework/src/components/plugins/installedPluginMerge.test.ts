@@ -206,6 +206,47 @@ describe('mergeInstalledPlugins', () => {
     expect(merged[0]?.status.devices?.[0]?.state).toBe('pending')
   })
 
+  test('matches a wegent store directory to the cloud plugin even when Codex uses the folder name', () => {
+    const cloud = cloudPlugin({
+      id: 267250,
+      installState: 'not_installed',
+      version: '0.1.6',
+    })
+    cloud.metadata = {
+      name: 'wegent-sites',
+      namespace: 'default',
+      labels: { id: 267250 },
+    }
+    cloud.spec.source = {
+      ...cloud.spec.source,
+      pluginKey: 'wegent-sites',
+      catalogItemId: '267250',
+    }
+    cloud.status.devices = [
+      {
+        deviceId: 'current-device',
+        desiredReleaseId: 6,
+        actualReleaseId: null,
+        state: 'pending',
+        attemptCount: 1,
+        updatedAt: '2026-01-01T00:00:00Z',
+      },
+    ]
+    const local = localCodexPlugin({
+      id: '267250-wegent-wegent-sites-0.1.6',
+      name: '267250-wegent-wegent-sites-0.1.6',
+      pluginKey: '267250-wegent-wegent-sites-0.1.6',
+      marketplace: 'wegent',
+      version: '0.1.6',
+    })
+
+    const merged = mergeInstalledPlugins([cloud], [local], 'current-device')
+
+    expect(merged).toHaveLength(1)
+    expect(hasLocalCodexMaterialization(merged[0]!)).toBe(true)
+    expect(merged[0]?.spec.pluginId).toBe(267250)
+  })
+
   test('prefers a locally created plugin linked to the same published cloud plugin', () => {
     const local = localCodexPlugin({
       id: 'dev-tools-local',
