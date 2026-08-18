@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 
 class WeiboMediaAttachmentStorageAdapter:
-    """Store uploaded reference video and audio on the Weibo media platform."""
+    """Store uploaded video and audio on the Weibo media platform."""
 
     @property
     def backend_type(self) -> str:
@@ -42,7 +42,7 @@ class WeiboMediaAttachmentStorageAdapter:
 
     def supports(self, mime_type: str, purpose: str) -> bool:
         return (
-            purpose == "video_reference"
+            purpose in {"default", "video_reference"}
             and video_media_settings.storage_enabled
             and mime_type.startswith(("video/", "audio/"))
         )

@@ -127,15 +127,53 @@ def test_storycut_bundle_contains_timeline_media_and_overlay_tracks(
         "image",
         "music",
     ]
-    assert all(
-        "/api/aigc-video/material-video/opencut/media/37/" in item["url"]
-        for item in bundle["media"]
+    assert all(item["url"].startswith("https://") for item in bundle["media"])
+    image_media = bundle["media"][0]
+    assert image_media["url"] == "https://wx1.sinaimg.cn/large/image-1.jpg"
+    assert image_media["metadata"]["storycut"]["browserSafeSource"] == (
+        image_media["url"]
+    )
+    assert image_media["metadata"]["storycut"]["proxySource"].startswith(
+        "http://10.2.3.4:8400/"
     )
     sticker_tracks = [
         item for item in bundle["tracks"] if item.get("type") == "sticker"
     ]
     assert len(sticker_tracks) == 2
     assert bundle["transitions"] == _timeline()["transition_tracks"]
+
+
+def test_storycut_bundle_uses_direct_https_for_weibo_video(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.api.endpoints.adapter.aigc_video.opencut.settings.WEGENT_SOCKET_URL",
+        "http://10.2.3.4:8400",
+    )
+    timeline = {
+        "id": 6,
+        "task_id": "plan-timeline-video",
+        "video_tracks": [
+            {
+                "clip_id": "video-1",
+                "kind": "video",
+                "source_path": "http://f.video.weibocdn.com/video-1.mp4",
+                "source_window": {"start": 0, "end": 3000},
+                "timeline_window": {"start": 0, "end": 3000},
+            }
+        ],
+    }
+
+    bundle = build_storycut_bundle(
+        timeline=timeline,
+        session_id="41",
+        uid="admin",
+        token="signed-token",
+    )
+
+    video = bundle["media"][0]
+    assert video["url"] == "https://f.video.weibocdn.com/video-1.mp4"
+    assert video["metadata"]["originalSourceUrl"] == video["url"]
+    assert video["metadata"]["storycut"]["browserSafeSource"] == video["url"]
+    assert "proxySource" not in video["metadata"]["storycut"]
 
 
 def test_storycut_save_payload_maps_edits_back_to_aigc_tracks() -> None:

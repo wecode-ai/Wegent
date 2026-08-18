@@ -171,7 +171,7 @@ def test_reference_upload_persists_weibo_storage_shape(monkeypatch) -> None:
     }
 
 
-def test_reference_storage_only_handles_video_generation_materials(monkeypatch) -> None:
+def test_reference_storage_handles_chat_and_video_generation_media(monkeypatch) -> None:
     adapter = WeiboMediaAttachmentStorageAdapter()
     monkeypatch.setattr(
         "wecode.service.video_generation_extension.video_media_settings."
@@ -186,7 +186,9 @@ def test_reference_storage_only_handles_video_generation_materials(monkeypatch) 
 
     assert adapter.supports("video/mp4", "video_reference") is True
     assert adapter.supports("audio/mpeg", "video_reference") is True
-    assert adapter.supports("video/mp4", "default") is False
+    assert adapter.supports("video/mp4", "default") is True
+    assert adapter.supports("audio/mpeg", "default") is True
+    assert adapter.supports("image/png", "default") is False
 
 
 def test_resolves_uploaded_video_to_fresh_playback_url(monkeypatch) -> None:

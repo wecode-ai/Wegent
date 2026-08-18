@@ -7,7 +7,7 @@
 import hashlib
 from contextlib import suppress
 from typing import Any, Optional
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, urlsplit, urlunsplit
 
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
@@ -44,6 +44,8 @@ router = APIRouter()
 
 OPENCUT_TICKS_PER_SECOND = 120000.0
 MEDIA_CHUNK_SIZE = 1024 * 1024
+DIRECT_MEDIA_HOST_SUFFIXES = {"sinaimg.cn", "weibocdn.com"}
+DIRECT_AUDIO_KINDS = {"bgm", "voiceover", "source_audio"}
 
 
 def _milliseconds(value: Any) -> int:
@@ -237,6 +239,40 @@ def _media_proxy_url(
     )
 
 
+def _is_direct_media_source(source: str) -> bool:
+    parsed = urlsplit(source)
+    host = (parsed.hostname or "").lower()
+    return parsed.scheme in {"http", "https"} and any(
+        host == suffix or host.endswith(f".{suffix}")
+        for suffix in DIRECT_MEDIA_HOST_SUFFIXES
+    )
+
+
+def _https_media_source(source: str) -> str:
+    parsed = urlsplit(source)
+    if parsed.scheme != "http":
+        return source
+    return urlunsplit(parsed._replace(scheme="https"))
+
+
+def _should_proxy_media(kind: str, source: str) -> bool:
+    if kind == "video":
+        return False
+    if kind in DIRECT_AUDIO_KINDS and _is_direct_media_source(source):
+        return False
+    return True
+
+
+def _browser_media_source(
+    *, kind: str, public_source: str, original_source: str
+) -> str:
+    if kind in {"image", "video", *DIRECT_AUDIO_KINDS}:
+        for source in (public_source, original_source):
+            if _is_direct_media_source(source):
+                return _https_media_source(source)
+    return public_source
+
+
 def _media_item(
     *,
     item: dict[str, Any],
@@ -256,6 +292,15 @@ def _media_item(
         media_id=media_id,
         token=token,
     )
+    public_source = proxy_url if _should_proxy_media(kind, source) else source
+    browser_source = _browser_media_source(
+        kind=kind,
+        public_source=public_source,
+        original_source=source,
+    )
+    browser_safe_original_source = (
+        _https_media_source(source) if _is_direct_media_source(source) else source
+    )
     source_window = _time_window(item, "source_window")
     timeline_window = _time_window(item)
     duration = source_window["duration"] or timeline_window["duration"] or 3000
@@ -264,17 +309,19 @@ def _media_item(
         "name": str(item.get("clip_id") or item.get("media_id") or media_id),
         "duration": duration / 1000,
         "media_type": kind,
-        "url": proxy_url,
-        "originalSourceUrl": source,
+        "url": browser_source,
+        "originalSourceUrl": browser_safe_original_source,
         "storycut": {
-            "source": source,
-            "sourceUrl": source,
-            "browserSafeSource": proxy_url,
-            "proxySource": proxy_url,
-            "proxySourceUrl": proxy_url,
+            "source": browser_safe_original_source,
+            "sourceUrl": browser_safe_original_source,
+            "browserSafeSource": browser_source,
             "metadata": dict(item),
         },
     }
+    if public_source != source:
+        metadata["proxySourceUrl"] = public_source
+        metadata["storycut"]["proxySource"] = public_source
+        metadata["storycut"]["proxySourceUrl"] = public_source
     if len(size) >= 2:
         metadata.update({"width": size[0], "height": size[1]})
     media_type = "music" if kind == "bgm" else kind
@@ -288,7 +335,7 @@ def _media_item(
             "mediaType": media_type,
             "status": "completed",
             "createdAt": 0,
-            "url": proxy_url,
+            "url": browser_source,
             "metadata": metadata,
         },
         {
