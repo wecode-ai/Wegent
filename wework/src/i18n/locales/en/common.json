@@ -1084,6 +1084,7 @@
     "environment_change_request_checks_pending": "Checks pending",
     "environment_change_request_checks_success": "Checks passed",
     "environment_change_request_checks_failure": "Checks failed",
+    "environment_change_request_merge_queue": "In merge queue",
     "environment_change_request_conflicting": "Merge conflicts",
     "environment_change_request_unavailable_github": "Install GitHub CLI (gh) to query pull request status",
     "environment_change_request_unauthenticated_github": "Sign in with GitHub CLI (gh auth login) to query status",
