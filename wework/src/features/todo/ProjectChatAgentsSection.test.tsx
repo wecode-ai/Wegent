@@ -380,12 +380,10 @@ describe('ProjectChatAgentsSection', () => {
         executionDeviceId: 'stale-cloud-device',
       }),
     ])
-    mock.deviceApi = {
-      listDevices: vi.fn(async () => [
-        { device_id: 'local-device', device_type: 'local', status: 'online' },
-        { device_id: 'stale-cloud-device', device_type: 'cloud', status: 'online' },
-      ]),
-    }
+    mock.deviceApi.listDevices = vi.fn(async () => [
+      { device_id: 'local-device', device_type: 'local', status: 'online' },
+      { device_id: 'stale-cloud-device', device_type: 'cloud', status: 'online' },
+    ])
     render(
       <ProjectChatAgentsSection
         project={{ ...project, project_store: 'local' }}
@@ -440,12 +438,10 @@ describe('ProjectChatAgentsSection', () => {
 
   it('lists only projects with a workspace on the selected cloud device', async () => {
     const mock = services()
-    mock.deviceApi = {
-      listDevices: vi.fn(async () => [
-        { device_id: 'local-device', device_type: 'local', status: 'online' },
-        { device_id: 'cloud-device', device_type: 'cloud', status: 'online' },
-      ]),
-    }
+    mock.deviceApi.listDevices = vi.fn(async () => [
+      { device_id: 'local-device', device_type: 'local', status: 'online' },
+      { device_id: 'cloud-device', device_type: 'cloud', status: 'online' },
+    ])
     const runtimeWork = {
       projects: [
         {
@@ -509,34 +505,33 @@ describe('ProjectChatAgentsSection', () => {
 
   it('auto-selects the preferred device when an environment has multiple devices', async () => {
     const mock = services()
-    mock.deviceApi = {
-      listDevices: vi.fn(async () => [
-        {
-          device_id: 'offline-default-device',
-          device_type: 'local',
-          status: 'offline',
-          is_default: true,
-        },
-        { device_id: 'online-device', device_type: 'app', status: 'online' },
-        {
-          device_id: 'online-default-device',
-          device_type: 'local',
-          status: 'online',
-          is_default: true,
-        },
-      ]),
-    }
+    mock.deviceApi.listDevices = vi.fn(async () => [
+      {
+        device_id: 'offline-default-device',
+        device_type: 'local',
+        status: 'offline',
+        is_default: true,
+      },
+      { device_id: 'online-device', device_type: 'app', status: 'online' },
+      {
+        device_id: 'online-default-device',
+        device_type: 'local',
+        status: 'online',
+        is_default: true,
+      },
+    ])
     renderSection(mock)
 
     await userEvent.click(await screen.findByTestId('cloud-project-chat-agent-add'))
 
-    expect(screen.getByTestId('cloud-project-chat-agent-device')).toHaveTextContent(
-      'online-default-device'
-    )
-    expect(screen.getByTestId('cloud-project-chat-agent-device').firstElementChild).toHaveAttribute(
-      'data-selection-state',
-      'selected'
-    )
+    await waitFor(() => {
+      expect(screen.getByTestId('cloud-project-chat-agent-device')).toHaveTextContent(
+        'online-default-device'
+      )
+      expect(
+        screen.getByTestId('cloud-project-chat-agent-device').firstElementChild
+      ).toHaveAttribute('data-selection-state', 'selected')
+    })
   })
 
   it('auto-selects a sole device when devices load after the editor opens', async () => {
@@ -544,14 +539,12 @@ describe('ProjectChatAgentsSection', () => {
     let resolveDevices:
       | ((devices: Array<{ device_id: string; device_type: string; status: string }>) => void)
       | undefined
-    mock.deviceApi = {
-      listDevices: vi.fn(
-        () =>
-          new Promise(resolve => {
-            resolveDevices = resolve
-          })
-      ),
-    }
+    mock.deviceApi.listDevices = vi.fn(
+      () =>
+        new Promise(resolve => {
+          resolveDevices = resolve
+        })
+    )
     renderSection(mock)
 
     await userEvent.click(await screen.findByTestId('cloud-project-chat-agent-add'))
