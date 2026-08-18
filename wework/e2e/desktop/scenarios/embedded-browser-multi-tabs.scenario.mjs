@@ -16,8 +16,12 @@ const ACTIVE_BROWSER_PANEL_SELECTOR =
 const BROWSER_INPUT_SELECTOR =
   ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-url-input"]'
 const FIRST_BROWSER_TAB_SELECTOR = '[data-testid="right-workspace-browser-tab-1"]'
+const FIRST_BROWSER_LOADING_ICON_SELECTOR =
+  FIRST_BROWSER_TAB_SELECTOR + ' [data-testid="right-workspace-browser-tab-1-loading-icon"]'
 const FIRST_BROWSER_TAB_CLOSE_SELECTOR =
   FIRST_BROWSER_TAB_SELECTOR + ' [data-testid="right-workspace-browser-tab-1-close-button"]'
+const BROWSER_RELOAD_SELECTOR =
+  ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-reload-button"]'
 const RIGHT_WORKSPACE_NEW_TAB_SELECTOR = '[data-testid="right-workspace-new-tab-button"]'
 const RIGHT_WORKSPACE_TABBAR_SELECTOR = '[data-testid="right-workspace-tabbar"]'
 const FIXTURE_A_PATH = '/embedded-browser-multi-tabs-a'
@@ -120,8 +124,11 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
     async handleHttp(request, response, url) {
       if (request.method !== 'GET') return false
       if (url.pathname === FIXTURE_A_PATH) {
+        const html = fixtureHtml(FIXTURE_A_TEXT, FIXTURE_A_TEXT)
         response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
-        response.end(fixtureHtml(FIXTURE_A_TEXT, FIXTURE_A_TEXT))
+        response.write(html.slice(0, 120))
+        await new Promise(resolve => setTimeout(resolve, 1000))
+        response.end(html.slice(120))
         return true
       }
       if (url.pathname === FIXTURE_B_PATH) {
@@ -155,6 +162,17 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
         fixtureAUrl,
         uiTimeoutMs,
         'The first browser tab did not load the A fixture'
+      )
+      await control.command('click', BROWSER_RELOAD_SELECTOR)
+      await control.command('waitFor', FIRST_BROWSER_LOADING_ICON_SELECTOR, {
+        timeoutMs: uiTimeoutMs,
+      })
+      await waitForSnapshot(
+        control,
+        snapshot => !snapshot.testIds.includes('right-workspace-browser-tab-1-loading-icon'),
+        'The first browser tab did not restore its favicon after reloading',
+        uiTimeoutMs,
+        FIRST_BROWSER_TAB_SELECTOR
       )
       const firstBrowserLabel = (await callBridge(bridgeIdentity, { action: 'status' })).label
       const secondBrowserLabel = firstBrowserLabel + '-2'

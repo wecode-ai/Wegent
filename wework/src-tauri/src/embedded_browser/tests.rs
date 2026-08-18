@@ -288,6 +288,7 @@ fn closed_agent_tab_routes_fail_without_retargeting() {
                 title: None,
                 url: None,
                 loaded_url: None,
+                is_loading: false,
                 opened_at_unix_ms: 0,
                 bootstrap_finished: false,
                 host_ready: false,
@@ -501,11 +502,13 @@ fn page_state_serializes_native_identity() {
         native_label: "workspace-browser-native-41".to_string(),
         title: Some("Example".to_string()),
         url: Some("https://example.com/".to_string()),
+        is_loading: true,
     };
 
     let serialized = serde_json::to_value(state).unwrap();
 
     assert_eq!(serialized["nativeLabel"], "workspace-browser-native-41");
+    assert_eq!(serialized["isLoading"], true);
 }
 
 #[test]

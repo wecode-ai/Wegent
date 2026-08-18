@@ -160,11 +160,13 @@ describe('WorkspaceBrowserPanel', () => {
       nativeLabel: 'workspace-browser-native-1',
       title: null,
       url: 'https://example.com/',
+      isLoading: false,
     })
     embeddedBrowserMocks.readEmbeddedBrowserPageState.mockResolvedValue({
       nativeLabel: 'workspace-browser-native-1',
       title: 'Example Domain',
       url: 'https://example.com/',
+      isLoading: false,
     })
     embeddedBrowserMocks.closeEmbeddedBrowser.mockResolvedValue(undefined)
     embeddedBrowserMocks.clearEmbeddedBrowserData.mockResolvedValue(1)
@@ -363,9 +365,11 @@ describe('WorkspaceBrowserPanel', () => {
 
   test('syncs the address bar when native browser navigation changes the page URL', async () => {
     let handlePageStateChange!: (pageState: {
+      label: string
       nativeLabel: string
       title: string | null
       url: string | null
+      isLoading: boolean
       invalidTlsCertificate?: null
     }) => void
     embeddedBrowserMocks.listenEmbeddedBrowserPageStateChanges.mockImplementation(handler => {
@@ -377,6 +381,7 @@ describe('WorkspaceBrowserPanel', () => {
       nativeLabel: 'workspace-browser-native-1',
       title: 'Users',
       url: 'file:///Users/',
+      isLoading: false,
     })
     render(<WorkspaceBrowserPanel active />)
 
@@ -388,14 +393,55 @@ describe('WorkspaceBrowserPanel', () => {
 
     act(() => {
       handlePageStateChange({
+        label: 'workspace-browser',
         nativeLabel: 'workspace-browser-native-1',
         title: 'mowei',
         url: 'file:///Users/mowei/',
+        isLoading: false,
         invalidTlsCertificate: null,
       })
     })
 
     expect(input).toHaveValue('file:///Users/mowei/')
+  })
+
+  test('reports native page loading for the owning browser tab', () => {
+    let handlePageStateChange!: (pageState: {
+      label: string
+      nativeLabel: string
+      title: string | null
+      url: string | null
+      isLoading: boolean
+    }) => void
+    const onLoadingChange = vi.fn()
+    embeddedBrowserMocks.listenEmbeddedBrowserPageStateChanges.mockImplementation(handler => {
+      handlePageStateChange = handler
+      return Promise.resolve(() => undefined)
+    })
+
+    render(<WorkspaceBrowserPanel active={false} onLoadingChange={onLoadingChange} />)
+
+    act(() => {
+      handlePageStateChange({
+        label: 'workspace-browser',
+        nativeLabel: 'workspace-browser-native-1',
+        title: null,
+        url: 'https://example.com/',
+        isLoading: true,
+      })
+    })
+    expect(onLoadingChange).toHaveBeenLastCalledWith(true)
+
+    act(() => {
+      handlePageStateChange({
+        label: 'workspace-browser',
+        nativeLabel: 'workspace-browser-native-1',
+        title: 'Example Domain',
+        url: 'https://example.com/',
+        isLoading: false,
+      })
+    })
+    expect(onLoadingChange).toHaveBeenLastCalledWith(false)
   })
 
   test('warns when the native browser accepts an invalid TLS certificate', async () => {

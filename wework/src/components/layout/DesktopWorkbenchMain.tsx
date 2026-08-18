@@ -407,6 +407,7 @@ function normalizeRightWorkspaceBrowserState(
     browserSessionId: state?.browserSessionId ?? getRightWorkspaceBrowserLabelSuffix(tab),
     title: state?.title ?? null,
     faviconUrl: state?.faviconUrl ?? null,
+    isLoading: state?.isLoading ?? false,
     hasActiveDownload: state?.hasActiveDownload ?? false,
     openRequest: state?.openRequest ?? null,
   }
@@ -1364,6 +1365,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       browserSessionId: getRightWorkspaceBrowserLabelSuffix(tab),
       title: null,
       faviconUrl: null,
+      isLoading: false,
       hasActiveDownload: false,
       openRequest: null,
       ...overrides,

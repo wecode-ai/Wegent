@@ -47,9 +47,11 @@ export interface EmbeddedBrowserBounds {
 }
 
 export interface EmbeddedBrowserPageState {
+  label?: string
   nativeLabel: string
   title: string | null
   url: string | null
+  isLoading: boolean
   invalidTlsCertificate?: EmbeddedBrowserInvalidTlsCertificateEvent | null
 }
 

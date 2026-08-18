@@ -84,7 +84,6 @@ import type {
 } from '@/types/browser-annotation'
 import { browserSnapshotToContexts } from '@/lib/browser-annotation-context'
 
-const EMBEDDED_BROWSER_READY_TIMEOUT_MS = 800
 const EMBEDDED_BROWSER_STATE_INTERVAL_MS = 1000
 const EMBEDDED_BROWSER_BOUNDS_DEBOUNCE_MS = 80
 const EMBEDDED_BROWSER_VISIBLE_HOST_TIMEOUT_MS = 12_000
@@ -163,6 +162,7 @@ export interface WorkspaceBrowserPanelProps {
   onNativeLabelChange?: (nativeLabel: string | null) => void
   onDownloadActivityChange?: (hasActiveDownload: boolean) => void
   onFaviconChange?: (faviconUrl: string | null) => void
+  onLoadingChange?: (isLoading: boolean) => void
   onTitleChange?: (title: string | null) => void
 }
 
@@ -314,6 +314,7 @@ export function WorkspaceBrowserTabPanel({
   onNativeLabelChange,
   onDownloadActivityChange,
   onFaviconChange,
+  onLoadingChange,
   onTitleChange,
 }: WorkspaceBrowserPanelProps) {
   const { t } = useTranslation('common')
@@ -397,6 +398,10 @@ export function WorkspaceBrowserTabPanel({
   const pendingCommentContextCount = Math.max(codeCommentCount, codeCommentContexts.length)
   const hasQueuedTweaks = annotations.some(annotation => annotation.adjustments.length > 0)
   const originalViewEnabled = annotationMode && hasQueuedTweaks && originalViewHeld
+
+  useEffect(() => {
+    onLoadingChange?.(status === 'loading')
+  }, [onLoadingChange, status])
 
   const applyDownloadEvent = useCallback((download: EmbeddedBrowserDownloadEvent) => {
     setDownloads(current => {
@@ -651,7 +656,10 @@ export function WorkspaceBrowserTabPanel({
 
   useEffect(() => {
     const listener = listenEmbeddedBrowserPageStateChanges(pageState => {
-      if (!activeRef.current || pageState.nativeLabel !== nativeLabelRef.current) return
+      if (pageState.label && pageState.label !== currentLabelRef.current) return
+      if (nativeLabelRef.current && pageState.nativeLabel !== nativeLabelRef.current) return
+      setStatus(pageState.isLoading ? 'loading' : 'ready')
+      if (pageState.isLoading) return
       setInvalidTlsCertificate(pageState.invalidTlsCertificate ?? null)
       const nextUrl = pageState.url || currentUrlRef.current
       if (
@@ -674,7 +682,6 @@ export function WorkspaceBrowserTabPanel({
         onTitleChange?.(pageState.title || getFallbackBrowserTitle(nextUrl))
         onFaviconChange?.(getFallbackFaviconUrl(nextUrl))
       }
-      setStatus('ready')
     })
     if (!listener) return undefined
     let disposed = false
@@ -1016,6 +1023,7 @@ export function WorkspaceBrowserTabPanel({
         return false
       }
       adoptNativeLabel(pageState.nativeLabel, label)
+      setStatus(pageState.isLoading ? 'loading' : 'ready')
       setInvalidTlsCertificate(pageState.invalidTlsCertificate ?? null)
       const nextUrl = pageState.url || currentUrlRef.current
       if (
@@ -1061,7 +1069,6 @@ export function WorkspaceBrowserTabPanel({
     }
     if (nativeBrowserOpeningRef.current) return
 
-    let readyTimer: number | null = null
     const requestId = activeOpenRequestIdRef.current
     const openingLabel = label
     const openingUrl = currentUrl
@@ -1110,7 +1117,7 @@ export function WorkspaceBrowserTabPanel({
           nativeBrowserOpenRef.current = true
           updatePageUrl(pageState.url || openingUrl)
           schedulePostOpenBoundsSync(activeRef.current)
-          setStatus('ready')
+          setStatus(pageState.isLoading ? 'loading' : 'ready')
           return true
         } catch {
           // No existing browser state to recover yet.
@@ -1139,10 +1146,6 @@ export function WorkspaceBrowserTabPanel({
           url: openingUrl,
           visible,
         })
-        readyTimer = window.setTimeout(() => {
-          if (!isAbandoned()) setStatus('ready')
-        }, EMBEDDED_BROWSER_READY_TIMEOUT_MS)
-
         logBrowserOpenDiagnostic('native_open_started', {
           active,
           label: openingLabel,
@@ -1183,8 +1186,7 @@ export function WorkspaceBrowserTabPanel({
         updatePageUrl(requestId ? openingUrl : pageState.url || openingUrl)
         await revealHiddenBrowser(visible)
         schedulePostOpenBoundsSync(activeRef.current)
-        if (readyTimer !== null) window.clearTimeout(readyTimer)
-        setStatus('ready')
+        setStatus(pageState.isLoading ? 'loading' : 'ready')
         logBrowserOpenDiagnostic('native_open_succeeded', {
           active,
           label: openingLabel,
@@ -1215,13 +1217,11 @@ export function WorkspaceBrowserTabPanel({
           url: openingUrl,
         })
         if (!abandoned) {
-          if (readyTimer !== null) window.clearTimeout(readyTimer)
           if (await recoverBrowserFromPageState()) return
           setStatus('error')
           setError(t('workbench.browser_open_failed'))
         }
       } finally {
-        if (readyTimer !== null) window.clearTimeout(readyTimer)
         nativeBrowserOpeningRef.current = false
       }
     }
@@ -1257,7 +1257,7 @@ export function WorkspaceBrowserTabPanel({
         if (pageState.title) {
           onTitleChange?.(pageState.title)
         }
-        setStatus('ready')
+        setStatus(pageState.isLoading ? 'loading' : 'ready')
         schedulePostOpenBoundsSync(active)
         if (!annotationModeRef.current) {
           void suspendAnnotationLayer(label)
@@ -1757,8 +1757,7 @@ export function WorkspaceBrowserTabPanel({
       if (!currentUrl) return
       try {
         await command()
-        if (!(await refreshPageState())) return
-        setStatus('ready')
+        await refreshPageState()
       } catch (error) {
         console.error('Failed to control embedded browser:', error)
         setStatus('error')

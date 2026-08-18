@@ -127,6 +127,7 @@ struct EmbeddedBrowserEntry {
     title: Option<String>,
     url: Option<String>,
     loaded_url: Option<String>,
+    is_loading: bool,
     opened_at_unix_ms: u128,
     bootstrap_finished: bool,
     host_ready: bool,
@@ -203,6 +204,7 @@ pub struct EmbeddedBrowserPageState {
     native_label: String,
     title: Option<String>,
     url: Option<String>,
+    is_loading: bool,
     invalid_tls_certificate: Option<EmbeddedBrowserInvalidTlsCertificate>,
 }
 
@@ -285,6 +287,7 @@ struct EmbeddedBrowserPageStateChangePayload {
     native_label: String,
     title: Option<String>,
     url: Option<String>,
+    is_loading: bool,
     invalid_tls_certificate: Option<EmbeddedBrowserInvalidTlsCertificate>,
 }
 
@@ -1015,6 +1018,7 @@ fn page_state_for_label(
         native_label: entry.native_label,
         title: entry.title,
         url: entry.url,
+        is_loading: entry.is_loading,
     })
 }
 
@@ -1024,7 +1028,7 @@ fn emit_page_state_change(
     label: String,
     native_label: String,
 ) {
-    let (title, url) = state
+    let (title, url, is_loading) = state
         .webviews
         .lock()
         .ok()
@@ -1032,9 +1036,9 @@ fn emit_page_state_change(
             webviews
                 .get(&label)
                 .filter(|entry| entry.native_label == native_label)
-                .map(|entry| (entry.title.clone(), entry.url.clone()))
+                .map(|entry| (entry.title.clone(), entry.url.clone(), entry.is_loading))
         })
-        .unwrap_or((None, None));
+        .unwrap_or((None, None, false));
     #[cfg(target_os = "macos")]
     let invalid_tls_certificate =
         crate::embedded_browser_tls::invalid_tls_certificate(&native_label);
@@ -1047,6 +1051,7 @@ fn emit_page_state_change(
             native_label,
             title,
             url,
+            is_loading,
             invalid_tls_certificate,
         },
     );
@@ -1748,6 +1753,7 @@ pub async fn embedded_browser_open(
             } else {
                 entry.url
             },
+            is_loading: entry.is_loading,
         });
     }
 
@@ -1777,6 +1783,7 @@ pub async fn embedded_browser_open(
         title: initial_title.clone(),
         url: Some(url.clone()),
         loaded_url: None,
+        is_loading: false,
         opened_at_unix_ms: current_unix_millis(),
         // macOS attaches the destination with a post-build navigate(), so its
         // initial about:blank load must finish before bridge navigation. Other
@@ -1925,6 +1932,20 @@ pub async fn embedded_browser_open(
                     "webviewUrl": webview_url.clone(),
                 }),
             );
+            if matches!(payload.event(), PageLoadEvent::Started) {
+                let _ = update_entry_for_native_label(
+                    &load_state_handle,
+                    &native_label_for_load,
+                    |entry| entry.is_loading = true,
+                );
+                emit_page_state_change(
+                    &app_for_load,
+                    &load_state_handle,
+                    owner,
+                    native_label_for_load.clone(),
+                );
+                return;
+            }
             if matches!(payload.event(), PageLoadEvent::Finished) {
                 let bootstrap_finished = mark_entry_bootstrap_finished_for_native_label(
                     &load_state_handle,
@@ -1960,13 +1981,18 @@ pub async fn embedded_browser_open(
                             entry.loaded_url = Some(loaded_url);
                         },
                     );
-                    emit_page_state_change(
-                        &app_for_load,
-                        &load_state_handle,
-                        owner.clone(),
-                        native_label_for_load.clone(),
-                    );
                 }
+                let _ = update_entry_for_native_label(
+                    &load_state_handle,
+                    &native_label_for_load,
+                    |entry| entry.is_loading = false,
+                );
+                emit_page_state_change(
+                    &app_for_load,
+                    &load_state_handle,
+                    owner.clone(),
+                    native_label_for_load.clone(),
+                );
                 log_embedded_browser_page_diagnostics(
                     load_state_handle.clone(),
                     owner,
@@ -2240,6 +2266,7 @@ pub async fn embedded_browser_open(
         native_label,
         title: initial_title,
         url: Some(url),
+        is_loading: false,
     })
 }
 
