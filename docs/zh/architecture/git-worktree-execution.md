@@ -53,15 +53,11 @@ sequenceDiagram
     U->>B: runtime.tasks.create(taskId, sourcePath, git_worktree)
     B->>E: 原样转发
     E->>E: 计算稳定 plannedPath 并持久化任务意图
-    E-->>U: accepted + plannedPath
-    U->>U: 将 plannedPath 写入当前任务地址
+    E-->>U: accepted/queued + plannedPath
+    U->>U: 用 plannedPath 水合当前任务地址和列表投影
     alt 无可用 slot
-        U->>U: 仅展示 plannedPath，不挂载目录或启动文件数据面
         S->>S: 等待 slot，不创建目录
     end
-    U->>E: runtime.tasks.list
-    E-->>U: 任务投影 + plannedPath/finalPath
-    U->>U: 用任务投影回填当前任务路径
     S->>E: 获得 slot
     E->>G: 重新校验并创建 Worktree
     G-->>E: finalPath
@@ -93,15 +89,14 @@ sequenceDiagram
     end
 ```
 
-| 边                                                 | 代码归属                                                                           |
-| -------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| DeviceWorkspace 选择、可用性、偏好和 UI            | `wework/src/features/workbench/`、`wework/src/components/chat/composer/`           |
+| 边                                                 | 代码归属                                                                                                                                |
+| -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| DeviceWorkspace 选择、可用性、偏好和 UI            | `wework/src/features/workbench/`、`wework/src/components/chat/composer/`                                                                |
 | Local/Cloud/Remote Runtime 路由和任务投影          | `wework/src/api/`、`wework/src/features/workbench/useWorkbenchRuntimeMessaging.ts`、`wework/src/features/workbench/workbenchReducer.ts` |
-| Runtime Pane 的目录和文件数据面装载                | `wework/src/lib/workspace-target.ts`、`wework/src/components/layout/useWorkbenchPaneEnvironment.ts`、`wework/src/components/layout/DesktopWorkbenchMain.tsx`、`wework/src/components/layout/useWorkbenchPaneSession.ts` |
-| 逻辑设备鉴权、持久 Runtime 身份和 Socket 解析      | `backend/app/services/device/`、`backend/app/api/ws/`                              |
-| Worktree capability、preflight、Git 生命周期和状态 | `executor/src/runtime_work/`                                                       |
-| 云设备持久卷、固定挂载路径和单写实例               | 云设备 Provider、部署配置、`docker/device/`                                        |
-| 跨层验收                                           | `wework/e2e/desktop/`、`scripts/acceptance/`、Backend 和 Executor 契约测试          |
+| 逻辑设备鉴权、持久 Runtime 身份和 Socket 解析      | `backend/app/services/device/`、`backend/app/api/ws/`                                                                                   |
+| Worktree capability、preflight、Git 生命周期和状态 | `executor/src/runtime_work/`                                                                                                            |
+| 云设备持久卷、固定挂载路径和单写实例               | 云设备 Provider、部署配置、`docker/device/`                                                                                             |
+| 跨层验收                                           | `wework/e2e/desktop/`、`scripts/acceptance/`、Backend 和 Executor 契约测试                                                              |
 
 必要不变量：
 
@@ -111,7 +106,7 @@ sequenceDiagram
 4. `runtime.worktrees.preflight` 无任务 Worktree 副作用；所有任务创建入口必须经过同一 Worktree preflight 门禁，`runtime.tasks.create` 在真正创建前再次执行关键校验。
 5. Worktree 身份包含 `deviceId` 和稳定 `taskId/worktreeId`，不得跨设备回退、恢复或删除。
 6. 请求 `workspacePath` 是源工作区；响应 `workspacePath` 是稳定计划路径或最终 Worktree 路径。`git_worktree` 响应缺少该独立路径或返回源路径时必须结构化失败，Backend 和 UI 都不得回退源目录，也不得在返回计划路径前把源目录投影成 Worktree。
-7. 排队任务不创建目录；计划路径在任务获得 slot 并完成 Worktree prepare 前只属于展示和身份元数据，不得触发 Pane、Terminal、IDE、文件树或其他目录数据面的挂载、扫描和创建；Worktree prepare 占用 Runtime slot；创建失败不启动 Runtime，也不回退主工作区。
+7. 排队任务不创建目录；Worktree prepare 占用 Runtime slot；创建失败不启动 Runtime，也不回退主工作区。
 8. 已存在目标路径只有在验证为同一源仓库、同一 Worktree ID 的合法 Git Worktree 后才能幂等接管。
 9. 阻塞 Git 和目录扫描不得运行在异步 RPC 主线程。
 10. 删除前必须获得所有关联 Runtime 的停止确认；Runtime 退出或 panic 都必须由作用域退出守卫发送停止确认。归档、快照和删除按顺序执行，任一步失败都保留可诊断数据；批量归档必须有界并发，不能按故障任务数线性累积停止超时。
@@ -127,7 +122,6 @@ sequenceDiagram
 20. `preserveSnapshot=false` 表示终态清理：Executor 必须删除已有快照引用并从 `worktrees.json` 移除记录；后续 `runtime.worktrees.list` 不得返回已清理的墓碑条目。
 21. 工作区类型判定优先使用真实 Git 元数据；只有路径中没有可解析的 Git 仓库或 Worktree 元数据时，才允许使用 `worktrees/<id>/<project>` 路径约定兜底。普通仓库不得仅因任一父目录名为 `worktrees` 被投影成 Worktree。
 22. Runtime 接受任务后，列表刷新失败只能降级为稍后对账，不能撤销已接受任务的本地可见状态或报告发送失败。
-23. 当前任务地址必须从接受响应和后续任务列表中持续回填稳定计划路径或最终路径；任务列表已经提供非空路径时，不得保留乐观任务地址中的空路径。
-24. Worktree 任务只有在 `runtime.worktrees.list`/任务列表中能找到与当前任务地址匹配的任务投影时，才允许生成该任务的 `WorkspaceTarget`；在 Worktree 任务投影尚未出现或路径尚未被 Runtime 确认前，不得用 `currentRuntimeTask.workspacePath` 作为兜底工作区去触发环境探测、Git 命令或目录创建。普通非 Worktree 任务仍可在尚未投影时使用地址中的已验证工作区路径。
+23. Worktree 乐观导航可以在计划路径返回前只携带任务身份；创建响应或任务列表首次提供计划/最终路径后，Wework 必须将该路径回填到当前任务地址。当前任务、列表投影和后续 Terminal、IDE、文件操作不得长期保留无路径的乐观地址。
 
 详细开发波次、子 Agent 写入范围和验收矩阵见 [云端 Git Worktree 目标模式与并行开发计划](../wework/developer-guide/wework-cloud-git-worktree-parallel-development-plan.md)。

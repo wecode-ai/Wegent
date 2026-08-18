@@ -12,7 +12,6 @@ import {
   isWeWorkCompatibleDevice,
 } from '@/lib/device-capabilities'
 import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
-import { buildRuntimeTaskRoute, navigateTo } from '@/lib/navigation'
 import { normalizeRuntimeWorkspacePath, runtimeProjectUiId } from '@/lib/runtime-project'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import {
@@ -380,13 +379,6 @@ export function useWorkbenchRuntimeMessaging({
       let sendRequested = false
       try {
         const outboundRequest = await prepareRuntimeSendRequest(request)
-        logIssueRuntimeContextTrace('pane-send-prepared', {
-          taskId: outboundRequest.address.taskId,
-          deviceId: outboundRequest.address.deviceId,
-          cloudProjectId: outboundRequest.cloudProjectId,
-          origin: outboundRequest.origin,
-          additionalContext: outboundRequest.additionalContext,
-        })
         if (!options?.silentBusyRetry) {
           lifecycleStore.sendRequested(outboundRequest.address)
           sendRequested = true
@@ -834,7 +826,6 @@ export function useWorkbenchRuntimeMessaging({
         openInMainPane?: boolean
         refreshWorkListsOnResolve?: boolean
         sideSource?: RuntimeTaskAddress | null
-        workspaceSource?: RuntimeTaskAddress | null
         preserveAttachments?: boolean
         launchStartedAt?: number
       }
@@ -914,12 +905,11 @@ export function useWorkbenchRuntimeMessaging({
         'projectId' | 'deviceWorkspaceId' | 'deviceId' | 'workspacePath'
       >
       let optimisticDeviceId: string
-      const inheritedWorkspaceSource = options?.workspaceSource ?? options?.sideSource
-      if (inheritedWorkspaceSource?.deviceId && inheritedWorkspaceSource.workspacePath) {
-        optimisticDeviceId = inheritedWorkspaceSource.deviceId
+      if (options?.sideSource?.deviceId && options.sideSource.workspacePath) {
+        optimisticDeviceId = options.sideSource.deviceId
         runtimeTaskTarget = {
-          deviceId: inheritedWorkspaceSource.deviceId,
-          workspacePath: inheritedWorkspaceSource.workspacePath,
+          deviceId: options.sideSource.deviceId,
+          workspacePath: options.sideSource.workspacePath,
         }
       } else if (projectId) {
         if (!selectedProjectWorkspace) {
@@ -1291,7 +1281,6 @@ export function useWorkbenchRuntimeMessaging({
           taskId: response.taskId || optimisticAddress.taskId,
           runtime: response.runtime || optimisticAddress.runtime,
           workspacePath: resolvedCreateWorkspacePath,
-          ...(requestedWorktree ? { workspaceKind: 'worktree' as const } : {}),
           ...(runtimeHandle ? { runtimeHandle } : {}),
           ...(response.taskId || optimisticAddress.taskId
             ? { taskId: response.taskId || optimisticAddress.taskId }
@@ -1356,12 +1345,12 @@ export function useWorkbenchRuntimeMessaging({
           options?.onRuntimeTaskOptimisticOpen?.(address, {
             previousAddress: optimisticAddress,
           })
-          if (options?.openInMainPane !== false) {
-            runtimeTasks.reconcileCurrentRuntimeTaskAddress(optimisticAddress, address)
-            if (optimisticTaskStillSelected) {
-              navigateTo(buildRuntimeTaskRoute(address))
-            }
-          }
+        }
+        if (options?.openInMainPane !== false && optimisticTaskStillSelected) {
+          runtimeTasks.openRuntimeTaskView(address, runtimeProject, {
+            markOpened: !resolvedSameIdentity,
+            navigate: !resolvedSameIdentity,
+          })
         }
         if (response.status === 'queued') {
           lifecycleStore.syncRuntimeTask(address, {
@@ -1798,9 +1787,6 @@ export function useWorkbenchRuntimeMessaging({
         : options.modelId
           ? { ...prepared.payload, force_override_bot_model: options.modelId }
           : prepared.payload
-      if (options.workspaceSource) {
-        delete payload.execution
-      }
       const explicitModelSelection = options.executionModel?.modelId
         ? {
             modelName: options.executionModel.modelId,
@@ -1808,12 +1794,6 @@ export function useWorkbenchRuntimeMessaging({
             options: options.executionModel.modelOptions ?? {},
           }
         : options.modelSelection
-      logIssueRuntimeContextTrace('project-task-create-prepared', {
-        deviceId: prepared.activeDeviceId,
-        cloudProjectId: options.cloudProjectId,
-        origin: options.origin,
-        additionalContext: options.additionalContext,
-      })
       return sendPreparedRuntimeMessage(message, payload, prepared.activeDeviceId, {
         ...(options.runtime ? { runtime: options.runtime } : {}),
         initialGoal: options.initialGoal,
@@ -1824,7 +1804,6 @@ export function useWorkbenchRuntimeMessaging({
         origin: options.origin,
         modelSelection: explicitModelSelection,
         additionalContext: options.additionalContext,
-        workspaceSource: options.workspaceSource,
         onError: options.onError,
         onRuntimeTaskOptimisticOpen: options.onRuntimeTaskOptimisticOpen,
         openInMainPane: false,
@@ -2119,28 +2098,6 @@ function runtimeAddressLog(address: RuntimeTaskAddress): Record<string, unknown>
     hasRuntimeHandle: Boolean(address.runtimeHandle),
     runtimeHandleKeys: address.runtimeHandle ? Object.keys(address.runtimeHandle).sort() : [],
   }
-}
-
-function logIssueRuntimeContextTrace(
-  stage: string,
-  context: {
-    taskId?: string
-    deviceId?: string
-    cloudProjectId?: string
-    origin?: RuntimeTaskCreateRequest['origin']
-    additionalContext?: RuntimeSendRequest['additionalContext']
-  }
-) {
-  if (context.origin?.type !== 'board_task') return
-  console.info('[Wework] Issue runtime context trace', {
-    stage,
-    taskId: context.taskId ?? null,
-    deviceId: context.deviceId ?? null,
-    cloudProjectId: context.cloudProjectId ?? null,
-    originCloudProjectId: context.origin.cloudProjectId,
-    loopItemId: context.origin.loopItemId,
-    additionalContextKeys: Object.keys(context.additionalContext ?? {}).sort(),
-  })
 }
 
 function debugRuntimeCreateFlow(event: string, details: Record<string, unknown>) {

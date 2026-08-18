@@ -21,7 +21,6 @@ import {
 } from '@/lib/runtime-project'
 import { workbenchDeviceMatchesId } from '@/lib/workbench-device'
 import {
-  getRuntimeTaskWorkspacePath,
   mergeRuntimeTaskHandles,
   removeRuntimeTasks,
   updateRuntimeWorkTask,
@@ -640,7 +639,7 @@ function findRuntimeTaskAddressByTaskId(
       deviceId: workspace.deviceId,
       taskId,
       ...(task.runtime !== 'codex' ? { runtime: task.runtime } : {}),
-      workspacePath: getRuntimeTaskWorkspacePath(workspace, task),
+      ...(task.workspacePath ? { workspacePath: task.workspacePath } : {}),
       ...(task.taskId ? { taskId: task.taskId } : {}),
       ...(task.threadId ? { threadId: task.threadId } : {}),
       ...(task.runtimeHandle ? { runtimeHandle: task.runtimeHandle } : {}),
@@ -675,6 +674,9 @@ function reconcileCurrentRuntimeTaskAddress(
       workspacePath: hydratedCurrentDeviceTask.workspacePath,
       ...(hydratedCurrentDeviceTask.threadId
         ? { threadId: hydratedCurrentDeviceTask.threadId }
+        : {}),
+      ...(hydratedCurrentDeviceTask.workspacePath
+        ? { workspacePath: hydratedCurrentDeviceTask.workspacePath }
         : {}),
       ...(runtimeHandle ? { runtimeHandle } : {}),
     }
