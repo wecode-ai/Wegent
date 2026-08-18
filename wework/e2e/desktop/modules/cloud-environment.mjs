@@ -618,6 +618,10 @@ class RealCloudEnvironment {
   }
 
   async waitForDevice(deviceId, logPath) {
+    await this.waitForDeviceStatus(deviceId, 'online', logPath)
+  }
+
+  async waitForDeviceStatus(deviceId, expectedStatus, logPath) {
     const startedAt = Date.now()
     while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
       try {
@@ -627,14 +631,26 @@ class RealCloudEnvironment {
         if (response.ok) {
           const devices = await response.json()
           const device = devices.items?.find(item => item.device_id === deviceId)
-          if (device?.status === 'online') return
+          if (device?.status === expectedStatus) return device
         }
       } catch {
         // The backend may briefly reset a readiness connection while executors register.
       }
       await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
     }
-    throw new Error(`Real ${deviceId} executor did not register; see ${logPath}`)
+    throw new Error(`Real ${deviceId} executor did not reach ${expectedStatus}; see ${logPath}`)
+  }
+
+  async stopRemoteDockerExecutorAndWaitOffline() {
+    assert.ok(this.remoteDockerExecutor, 'Remote Docker executor is not running')
+    const remoteDockerExecutor = this.remoteDockerExecutor
+    this.remoteDockerExecutor = null
+    await stopProcessGroup(remoteDockerExecutor)
+    await this.waitForDeviceStatus(
+      REMOTE_DOCKER_DEVICE_ID,
+      'offline',
+      this.remoteDockerExecutorLogPath
+    )
   }
 
   async waitForWorkspaceRemoved(workspacePath) {
