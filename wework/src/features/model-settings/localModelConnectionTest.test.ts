@@ -61,10 +61,74 @@ describe('localModelConnectionTest', () => {
     )
     expect(JSON.parse(fetcher.mock.calls[0][1].body)).toMatchObject({
       model: 'gpt-oss:20b',
-      max_output_tokens: 256,
+      input: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'input_text',
+              text: `Call apply_patch with this exact patch:\n${APPLY_PATCH_PROBE}`,
+            },
+          ],
+        },
+      ],
+      stream: true,
       tools: [{ type: 'custom', name: 'apply_patch' }],
     })
+    expect(JSON.parse(fetcher.mock.calls[0][1].body)).not.toHaveProperty('max_output_tokens')
     expect(JSON.parse(fetcher.mock.calls[0][1].body)).not.toHaveProperty('tool_choice')
+  })
+
+  test('accepts a streamed Responses custom tool call when the final output array is empty', async () => {
+    const stream = [
+      {
+        type: 'response.created',
+        response: { id: 'resp_1', status: 'in_progress', output: [] },
+      },
+      {
+        type: 'response.output_item.added',
+        output_index: 0,
+        item: { id: 'call_1', type: 'custom_tool_call', name: 'apply_patch' },
+      },
+      {
+        type: 'response.custom_tool_call_input.done',
+        item_id: 'call_1',
+        output_index: 0,
+        input: APPLY_PATCH_PROBE,
+      },
+      {
+        type: 'response.output_item.done',
+        output_index: 0,
+        item: {
+          id: 'call_1',
+          type: 'custom_tool_call',
+          name: 'apply_patch',
+          input: APPLY_PATCH_PROBE,
+        },
+      },
+      {
+        type: 'response.completed',
+        response: { id: 'resp_1', status: 'completed', output: [] },
+      },
+    ]
+      .map(event => `data: ${JSON.stringify(event)}\n\n`)
+      .join('')
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(stream, {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+      })
+    )
+
+    await expect(
+      testLocalModelConnection(
+        {
+          baseUrl: 'https://models.local/v1',
+          modelId: 'gpt-5',
+        },
+        { fetcher }
+      )
+    ).resolves.toEqual({ status: 200, toolCalling: true })
   })
 
   test('rejects an apply_patch response with a mismatched probe payload', async () => {
