@@ -1207,6 +1207,68 @@ describe('createRuntimeTaskStreamHandlers', () => {
     })
   })
 
+  test('ignores late chat chunks after a turn has been cancelled', () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      taskId: 'runtime-task-1',
+    }
+    const actions: RuntimePaneMessageAction[] = []
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: action => actions.push(action),
+    })
+
+    handlers.onChatError?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'subtask-9',
+      deviceId: 'device-1',
+      error: 'interrupted',
+    })
+    handlers.onChatChunk?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'subtask-9',
+      deviceId: 'device-1',
+      content: 'late content',
+      offset: 0,
+      result: {},
+    })
+
+    expect(actions).toHaveLength(1)
+    expect(actions[0]).toMatchObject({
+      type: 'assistant_cancelled',
+      subtaskId: 'subtask-9',
+    })
+  })
+
+  test('ignores a late done event after a turn has been cancelled', () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      taskId: 'runtime-task-1',
+    }
+    const actions: RuntimePaneMessageAction[] = []
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: action => actions.push(action),
+    })
+
+    handlers.onChatError?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'subtask-9',
+      deviceId: 'device-1',
+      error: 'interrupted',
+    })
+    handlers.onChatDone?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'subtask-9',
+      deviceId: 'device-1',
+      result: { value: 'late completion' },
+    })
+
+    expect(actions).toHaveLength(1)
+    expect(actions[0]).toMatchObject({
+      type: 'assistant_cancelled',
+      subtaskId: 'subtask-9',
+    })
+  })
+
   test('warns before dropping runtime stream message events without task identity', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     const address: RuntimeTaskAddress = {
