@@ -10,14 +10,23 @@ type RuntimeWorkflowStatus = 'running' | 'succeeded' | 'failed' | 'cancelled' | 
 export function instantiateIssueWorkflow(
   definition: ProjectWorkflowDefinition | null | undefined
 ): IssueWorkflowInstance | null {
-  if (!definition?.nodes.length) return null
+  if (!definition) return null
+  const stageMode = definition.stage_mode ?? (definition.nodes.length ? 'dag' : 'none')
+  const advancementPolicy = definition.advancement_policy ?? 'manual'
+  if (stageMode === 'none' && advancementPolicy === 'manual') return null
   return {
     version: 1,
     definition_version: definition.version,
-    nodes: definition.nodes.map(node => ({
+    stage_mode: stageMode,
+    advancement_policy: advancementPolicy,
+    coordinator_prompt: definition.coordinator_prompt ?? '',
+    ai_automation_rule_id: definition.ai_automation_rule_id ?? null,
+    nodes: (stageMode === 'dag' ? definition.nodes : []).map(node => ({
       ...node,
       status: node.depends_on.length === 0 ? 'ready' : 'blocked',
       task_binding_id: null,
+      task_ids: [],
+      task_statuses: {},
       execution_id: null,
     })),
   }
@@ -36,16 +45,41 @@ function releaseReadyNodes(nodes: WorkflowNodeInstance[]): WorkflowNodeInstance[
 export function updateIssueWorkflowForRuntime(
   workflow: IssueWorkflowInstance,
   workflowNodeId: string,
-  executionStatus: RuntimeWorkflowStatus
+  executionStatus: RuntimeWorkflowStatus,
+  runtimeTaskId?: string,
+  stageTaskIds: string[] = []
 ): IssueWorkflowInstance {
-  const status =
-    executionStatus === 'running'
-      ? 'running'
-      : executionStatus === 'succeeded' || executionStatus === 'archived'
-        ? 'completed'
-        : 'failed'
   const nodes = releaseReadyNodes(
-    workflow.nodes.map(node => (node.id === workflowNodeId ? { ...node, status } : node))
+    workflow.nodes.map(node => {
+      if (node.id !== workflowNodeId) return node
+      const taskStatuses = {
+        ...(node.task_statuses ?? {}),
+        ...(runtimeTaskId ? { [runtimeTaskId]: executionStatus } : {}),
+      }
+      const knownTaskIds = Array.from(
+        new Set([
+          ...(node.task_ids ?? []),
+          ...stageTaskIds,
+          ...(runtimeTaskId ? [runtimeTaskId] : []),
+        ])
+      )
+      const allCompleted =
+        knownTaskIds.length > 0 &&
+        knownTaskIds.every(taskId => ['succeeded', 'archived'].includes(taskStatuses[taskId] ?? ''))
+      const anyRunning = knownTaskIds.some(taskId => taskStatuses[taskId] === 'running')
+      const anyFailed = knownTaskIds.some(taskId =>
+        ['failed', 'cancelled'].includes(taskStatuses[taskId] ?? '')
+      )
+      const status =
+        allCompleted || (!runtimeTaskId && executionStatus === 'succeeded')
+          ? 'completed'
+          : anyRunning || executionStatus === 'running'
+            ? 'running'
+            : anyFailed
+              ? 'failed'
+              : 'queued'
+      return { ...node, status, task_ids: knownTaskIds, task_statuses: taskStatuses }
+    })
   )
   return { ...workflow, version: workflow.version + 1, nodes }
 }

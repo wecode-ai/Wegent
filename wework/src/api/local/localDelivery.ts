@@ -1066,10 +1066,16 @@ export function createLocalDeliveryApi(
           return enqueueIssueWorkflowMutation(item.id, async () => {
             const current = await api.getLoopItem(item.id)
             if (!current.workflow) return current
+            const bindings = await api.listTaskBindings(item.id)
+            const stageTaskIds = bindings
+              .filter(binding => binding.workflow_node_id === context.workflow_node_id)
+              .map(binding => `${binding.device_id}:${binding.task_id}`)
             const workflow = updateIssueWorkflowForRuntime(
               current.workflow,
               context.workflow_node_id!,
-              executionStatus
+              executionStatus,
+              `${task.deviceId}:${task.taskId}`,
+              stageTaskIds
             )
             return api.updateLoopItem(current.id, {
               version: current.version,

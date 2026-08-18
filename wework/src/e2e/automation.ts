@@ -536,7 +536,7 @@ function desktopControlElementEnabled(element: HTMLElement): boolean {
   return !('disabled' in element) || !(element as HTMLButtonElement).disabled
 }
 
-function desktopControlElementVisible(element: HTMLElement): boolean {
+function desktopControlElementRendered(element: HTMLElement): boolean {
   let current: HTMLElement | null = element
   while (current) {
     const style = window.getComputedStyle(current)
@@ -551,9 +551,14 @@ function desktopControlElementVisible(element: HTMLElement): boolean {
   }
 
   const rect = element.getBoundingClientRect()
+  return rect.width > 0 && rect.height > 0
+}
+
+function desktopControlElementVisible(element: HTMLElement): boolean {
+  if (!desktopControlElementRendered(element)) return false
+
+  const rect = element.getBoundingClientRect()
   return !(
-    rect.width <= 0 ||
-    rect.height <= 0 ||
     rect.bottom <= 0 ||
     rect.right <= 0 ||
     rect.top >= window.innerHeight ||
@@ -1308,7 +1313,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'getClipboardText':
       return getDesktopE2EClipboardText()
     case 'scrollIntoView': {
-      const element = findDesktopControlElements(command.selector)[0]
+      const elements = findDesktopControlElements(command.selector)
+      const element = command.visible ? elements.find(desktopControlElementRendered) : elements[0]
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
       element.scrollIntoView({ block: 'center', inline: 'nearest' })
       element.dispatchEvent(new Event('scroll', { bubbles: true }))

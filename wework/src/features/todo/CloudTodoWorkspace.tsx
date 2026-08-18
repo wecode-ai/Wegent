@@ -2863,6 +2863,7 @@ export function CloudTodoWorkspace({
                 selectedProjectAutomationSupported &&
                 selectedProjectApi ? (
                 <ProjectAutomationView
+                  key={selectedProject.id}
                   api={selectedProjectApi}
                   projectChatAgentApi={selectedProjectAgentApi}
                   projectAutomationApi={selectedProjectServices?.projectAutomationApi}
@@ -2885,6 +2886,7 @@ export function CloudTodoWorkspace({
                     )
                     setSelectedItem(item)
                   }}
+                  onProjectUpdated={updated => replaceProject(selectedProject, updated)}
                 />
               ) : projectView === 'manage' && selectedProjectApi ? (
                 <CloudProjectManageView
@@ -2892,7 +2894,6 @@ export function CloudTodoWorkspace({
                   aitableApi={aitableApi}
                   dwsApi={services.dwsApi}
                   incomingHookApi={selectedProjectServices?.projectIncomingHookApi}
-                  projectAutomationApi={selectedProjectServices?.projectAutomationApi}
                   project={selectedProject}
                   boardCardDisplay={boardCardDisplay}
                   onProjectUpdated={updated => replaceProject(selectedProject, updated)}
@@ -3396,7 +3397,8 @@ export function CloudTodoWorkspace({
               setTaskComposerRequest({
                 workItemId: selectedItem.id,
                 initialInput:
-                  selectedItem.workflow?.nodes.find(node => node.id === workflowNodeId)?.name ?? '',
+                  selectedItem.workflow?.nodes.find(node => node.id === workflowNodeId)?.prompt ??
+                  '',
                 autoSubmit: false,
                 workflowNodeId,
                 inheritFromTask,
@@ -3500,6 +3502,11 @@ export function CloudTodoWorkspace({
                 ? taskComposerRequest.autoSubmit
                 : false
             }
+            workflowNodeId={
+              taskComposerRequest?.workItemId === selectedItem.id
+                ? taskComposerRequest.workflowNodeId
+                : undefined
+            }
             onClose={() => {
               setSelectedTaskBinding(null)
               setTaskComposerRequest(null)
@@ -3538,7 +3545,18 @@ export function CloudTodoWorkspace({
                         ...latest.workflow,
                         version: latest.workflow.version + 1,
                         nodes: latest.workflow.nodes.map(node =>
-                          node.id === workflowNodeId ? { ...node, status: 'queued' as const } : node
+                          node.id === workflowNodeId
+                            ? {
+                                ...node,
+                                status: 'queued' as const,
+                                task_ids: Array.from(
+                                  new Set([
+                                    ...(node.task_ids ?? []),
+                                    `${address.deviceId}:${address.taskId}`,
+                                  ])
+                                ),
+                              }
+                            : node
                         ),
                       }
                     : latest.workflow

@@ -4,65 +4,94 @@ sidebar_position: 20
 
 # Issue, task, and workflow orchestration
 
-Scope: project workflow definitions, Issue workflow instances, references to existing tasks and executions, dependency readiness, workspace inheritance, and aggregated Issue status.
+Scope: Issue task organization, advancement policy, project stage DAGs, Issue stage snapshots, references to concrete tasks and executions, dependency readiness, workspace inheritance, activity projection, and aggregated Issue status.
 
 ```mermaid
 flowchart LR
-    TEMPLATE[(Project Workflow Definition)] --> SNAPSHOT[(Issue Workflow Instance)]
+    TEMPLATE[(Project Orchestration Definition)] --> SNAPSHOT[(Issue Orchestration Snapshot)]
     ISSUE[(LoopItem / Issue)] --> SNAPSHOT
-    SNAPSHOT --> NODE[Workflow Node]
-    NODE -->|manual creation| BINDING[(LoopItemTaskBinding)]
+    SNAPSHOT --> MODE{Advancement policy}
+    MODE -->|user managed| HUMAN[User plans and assigns]
+    MODE -->|AI coordinated| AI[AI reads the Issue, prompt, and stage definition]
+    SNAPSHOT --> GRAPH{Stage DAG configured?}
+    GRAPH -->|no stages| FREE[Free task set]
+    GRAPH -->|stages| STAGE[Stage / Node / Milestone]
+    STAGE --> EDGE[Dependency edge / Context contract]
+    EDGE --> STAGE
+    HUMAN --> BINDING[(LoopItemTaskBinding)]
+    AI --> BINDING
+    FREE --> BINDING
+    STAGE --> BINDING
     BINDING --> TASK[(Wework Runtime Task)]
-    NODE -->|automatic execution| EXEC[(LoopItemExecution)]
+    STAGE -->|stage automation rule| EXEC[(LoopItemExecution)]
     EXEC --> RUNTIME[Existing Runtime / Team / API activator]
     TASK --> WORKSPACE[Existing workspace / worktree / branch truth]
-    WORKSPACE -->|inherit| NEXT[Successor Wework node]
+    WORKSPACE -->|inherit| NEXT[Successor concrete task]
     TASK --> AGGREGATE[Issue status aggregator]
     EXEC --> AGGREGATE
-    NODE --> AGGREGATE
+    STAGE --> AGGREGATE
     AGGREGATE --> ISSUE
+    TASK --> ACTIVITY[Issue activity]
+    EXEC --> ACTIVITY
+    ACTIVITY --> STREAM[Streaming run card / final summary / attachment event]
 ```
 
 ```mermaid
 sequenceDiagram
-    participant U as User / AI / automation
-    participant W as Workflow service
+    participant U as User
+    participant O as Orchestration service
+    participant A as AI coordinator
     participant B as Task binding
     participant E as Execution service
     participant R as Runtime scheduler
+    participant D as Issue activity
     participant I as Issue projection
 
-    U->>W: Create or edit an Issue instance from a project definition
-    W->>W: Snapshot the version and validate the DAG
-    W->>W: Calculate dependency-ready nodes
-    alt My-task node
-        W-->>U: Open the standard task Composer inside the Issue
-        U->>B: Send, create a Runtime Task, and bind the node
-    else Automatic node
-        W->>E: Create a queued execution through the existing assignment service
+    U->>O: Create an Issue
+    O->>O: Snapshot policy, prompt, and optional stage DAG
+    O->>O: Validate the DAG, edge context contracts, and ready stages
+    alt User managed
+        U->>B: Create a concrete task, optionally in a ready stage
+    else AI coordinated
+        O->>A: Provide Issue, prompt, stage definition, edge context contracts, and execution truth
+        A->>B: Decompose and assign concrete tasks
+        Note over A,B: Every task belongs to a stage when stages exist
+    end
+    opt Stage has an automation action
+        O->>E: Create a queued execution
         E->>R: Enter the existing capacity queue
     end
-    B-->>W: Runtime Task state changes
-    E-->>W: Execution state changes
-    W->>W: Unlock successor nodes
-    W->>I: Aggregate all required-node states
+    B->>R: Concrete task enters the existing capacity queue
+    R-->>D: Stream progress, terminal result, and delivered assets
+    B-->>O: Runtime Task status changes
+    E-->>O: Execution status changes
+    O->>O: Aggregate stage tasks and unlock successors
+    O->>I: Aggregate all required stages and free tasks
 ```
 
-| Edge                              | Code ownership                                                         |
-| --------------------------------- | ---------------------------------------------------------------------- |
-| Project definition and Issue copy | Backend workflow schemas/services; Wework project-space workflow UI     |
-| Node to my task                   | Standard Wework Composer, Runtime Task creation, `LoopItemTaskBinding`  |
-| Node to automatic execution       | `project_automation_execution.py`, `loop_item_executions/service.py`    |
-| Workspace and successor inherit   | Runtime Task summary and Wework project work controls                   |
-| DAG readiness and Issue aggregate | Backend workflow service; local ProjectSpace service; live Wework projection |
+| Edge                                                  | Code ownership                                                           |
+| ----------------------------------------------------- | ------------------------------------------------------------------------ |
+| Project orchestration definition and Issue snapshot   | Backend workflow schemas/services; Wework Automation DAG UI              |
+| Dependency edge to successor context                  | Workflow node dependency context; Composer / automation instruction      |
+| User/AI coordination to concrete tasks                | Standard Wework Composer, AI manager, `LoopItemTaskBinding`               |
+| Stage to automated execution                          | `project_automation_execution.py`, `loop_item_executions/service.py`      |
+| Workspace and successor-task inheritance              | Runtime Task summary and Wework project work controls                    |
+| DAG readiness, stage, and Issue aggregation           | Backend workflow service; local ProjectSpace service; live Wework projection |
+| Execution truth to Issue activity                     | Project chat stream, task activity cards, delivery/attachment projection |
 
 Invariants:
 
 - `LoopItem` is the Issue and business aggregate, not one execution.
-- Wework Runtime Tasks, Wegent Tasks, and `LoopItemExecution` remain the task and execution truths. Workflow nodes only reference them and never duplicate state, directories, worktrees, branches, or queue fields.
-- One Issue may bind multiple heterogeneous tasks. A my-task node only creates a task owned by the current user and visible in Wework's task list.
-- Manual nodes and automation/AI-generated nodes use the same DAG, executor, dependency, and workspace-policy structure.
+- A Stage / Node / Milestone is a logical task category and dependency node, not an execution and not an executor type.
+- Wework Runtime Tasks, Wegent Tasks, and `LoopItemExecution` remain the concrete task and execution truths. Stages only reference them and never duplicate state, directories, worktrees, branches, or queue fields.
+- The stage DAG and advancement policy are orthogonal. User management and AI coordination both work with or without stages.
+- A dependency edge is both a readiness constraint and a context contract from the predecessor stage to the successor. Core Issue context is always included; the edge controls whether predecessor final results, delivered assets, and execution activity are added.
+- Edge context policy is stored as the successor node's input declaration for a direct predecessor. Removing a dependency must remove its policy as well.
+- AI advances an Issue only by creating, assigning, and starting concrete tasks. With stages, every AI-created task belongs to a stage and follows its dependencies. Without stages, AI may decompose work from the Issue and prompt.
+- One Issue may bind multiple heterogeneous tasks, and one stage may aggregate multiple concrete tasks. Tasks remain discoverable in Wework's task list.
+- Stage automation controls when and how a concrete execution is created or started; it is not an entity type parallel to Task.
 - `inherit` reads a confirmed workspace/worktree/branch only from an explicit predecessor Runtime Task. Without an inheritable source, the standard Composer must request a selection instead of guessing.
 - Queued, approval-pending, and dependency-blocked work projects to Pending. Only Runtime-confirmed running work projects to In Progress.
-- Issue completion is aggregated from every required node's trusted terminal state. Completing one task must not complete an Issue that has other required nodes.
-- The DAG must be acyclic, dependencies must be satisfied before execution, and the UI must never write running directly.
+- A stage completes from the trusted terminal state of all required tasks/executions in that stage. An Issue completes from all required stages and free tasks. Completing one task cannot complete a stage or Issue with remaining work.
+- The DAG must be acyclic. A referenced stage must exist, dependencies must be satisfied before a stage starts, edge context may reference direct predecessors only, and the UI must never write running directly.
+- Issue Activity is the unified execution projection. Streaming cards show compact Runtime truth, completed cards show a final-content summary, and attachment events reference real delivery assets.

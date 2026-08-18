@@ -1,5 +1,5 @@
 import { Bot, Code2, ListChecks, Plus, ShieldCheck, Trash2 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CloudProject } from '@/api/deliveries'
 import type { ProjectChatAgent } from '@/api/projectChatAgents'
 import type { ProjectWithTasks, RuntimeWorkListResponse } from '@/types/api'
@@ -30,6 +30,8 @@ export function ProjectChatAgentsSection({
   localProjects,
   runtimeWork,
   canManage,
+  createRequestKey = 0,
+  onAgentsChange,
 }: {
   project: CloudProject
   projectChatAgentApi?: WorkbenchServices['projectChatAgentApi']
@@ -39,6 +41,8 @@ export function ProjectChatAgentsSection({
   localProjects: ProjectWithTasks[]
   runtimeWork?: RuntimeWorkListResponse | null
   canManage: boolean
+  createRequestKey?: number
+  onAgentsChange?: (agents: ProjectChatAgent[]) => void
 }) {
   const { t } = useTranslation('common')
   // Local project spaces keep their data on this device, so their robots can
@@ -72,13 +76,19 @@ export function ProjectChatAgentsSection({
   const [availableTeams, setAvailableTeams] = useState<Team[]>([])
   const [error, setError] = useState<string | null>(null)
   const [agentSaveAttempted, setAgentSaveAttempted] = useState(false)
+  const sectionRef = useRef<HTMLElement>(null)
+  const handledCreateRequestKey = useRef(0)
 
   useEffect(() => {
     if (!projectChatAgentApi) return
     let active = true
     void projectChatAgentApi
       .list(project.id)
-      .then(agents => active && setChatAgents(agents))
+      .then(agents => {
+        if (!active) return
+        setChatAgents(agents)
+        onAgentsChange?.(agents)
+      })
       .catch(
         cause =>
           active &&
@@ -89,7 +99,7 @@ export function ProjectChatAgentsSection({
     return () => {
       active = false
     }
-  }, [project.id, projectChatAgentApi, t])
+  }, [onAgentsChange, project.id, projectChatAgentApi, t])
 
   useEffect(() => {
     if (!deviceApi?.listDevices) return
@@ -182,23 +192,35 @@ export function ProjectChatAgentsSection({
     })
   }
 
-  function openCreateChatAgent(template?: ProjectChatAgentTemplate) {
-    setAgentSaveAttempted(false)
-    setCreatingChatAgent(true)
-    setEditingChatAgent(null)
-    setAgentName(template?.name ?? t('workbench.project_chat_new_agent'))
-    setAgentModel('')
-    setAgentSystemPrompt(template?.systemPrompt ?? '')
-    setAgentCapabilityDescription(template?.capabilityDescription ?? '')
-    setAgentVisibility('creator_admin')
-    setAgentExecutionEnvironment('local')
-    setAgentRuntime('codex')
-    setAgentWegentTeamId('')
-    setAgentExecutionMode('auto')
-    setAgentMaxConcurrentExecutions(1)
-    setAgentExecutionDeviceId('')
-    setAgentLocalProjectId('')
-  }
+  const openCreateChatAgent = useCallback(
+    (template?: ProjectChatAgentTemplate) => {
+      setAgentSaveAttempted(false)
+      setCreatingChatAgent(true)
+      setEditingChatAgent(null)
+      setAgentName(template?.name ?? t('workbench.project_chat_new_agent'))
+      setAgentModel('')
+      setAgentSystemPrompt(template?.systemPrompt ?? '')
+      setAgentCapabilityDescription(template?.capabilityDescription ?? '')
+      setAgentVisibility('creator_admin')
+      setAgentExecutionEnvironment('local')
+      setAgentRuntime('codex')
+      setAgentWegentTeamId('')
+      setAgentExecutionMode('auto')
+      setAgentMaxConcurrentExecutions(1)
+      setAgentExecutionDeviceId('')
+      setAgentLocalProjectId('')
+    },
+    [t]
+  )
+
+  useEffect(() => {
+    if (createRequestKey <= handledCreateRequestKey.current) return
+    handledCreateRequestKey.current = createRequestKey
+    if (typeof sectionRef.current?.scrollIntoView === 'function') {
+      sectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+    openCreateChatAgent()
+  }, [createRequestKey, openCreateChatAgent])
 
   async function archiveChatAgent(agent: ProjectChatAgent) {
     if (agentBusy || !projectChatAgentApi) return
@@ -208,7 +230,9 @@ export function ProjectChatAgentsSection({
         version: agent.version,
         status: 'archived',
       })
-      setChatAgents(current => current.map(item => (item.id === updated.id ? updated : item)))
+      const nextAgents = chatAgents.map(item => (item.id === updated.id ? updated : item))
+      setChatAgents(nextAgents)
+      onAgentsChange?.(nextAgents)
     } catch (cause) {
       setError(
         cause instanceof Error ? cause.message : t('workbench.project_chat_agents_save_failed')
@@ -312,7 +336,9 @@ export function ProjectChatAgentsSection({
           localProjectId:
             agentRuntime === 'codex' && agentLocalProjectId !== '' ? agentLocalProjectId : null,
         })
-        setChatAgents(current => [...current, agent])
+        const nextAgents = [...chatAgents, agent]
+        setChatAgents(nextAgents)
+        onAgentsChange?.(nextAgents)
         setCreatingChatAgent(false)
       } else if (editingChatAgent) {
         const updated = await projectChatAgentApi.update(project.id, editingChatAgent.id, {
@@ -331,7 +357,9 @@ export function ProjectChatAgentsSection({
           localProjectId:
             agentRuntime === 'codex' && agentLocalProjectId !== '' ? agentLocalProjectId : null,
         })
-        setChatAgents(current => current.map(item => (item.id === updated.id ? updated : item)))
+        const nextAgents = chatAgents.map(item => (item.id === updated.id ? updated : item))
+        setChatAgents(nextAgents)
+        onAgentsChange?.(nextAgents)
         setEditingChatAgent(null)
       }
     } catch (cause) {
@@ -344,7 +372,11 @@ export function ProjectChatAgentsSection({
   }
 
   return (
-    <section data-testid="cloud-project-chat-agents" className="mt-8 border-t border-border pt-8">
+    <section
+      ref={sectionRef}
+      data-testid="cloud-project-chat-agents"
+      className="mt-8 scroll-mt-4 border-t border-border pt-8"
+    >
       <div
         className={`flex items-center justify-between gap-3${activeChatAgents.length ? ' mb-3' : ''}`}
       >

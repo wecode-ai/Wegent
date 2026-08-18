@@ -189,7 +189,10 @@ class ProjectAutomationService:
         )
         if trigger_type == "schedule":
             event_type = None
+        elif trigger_type == "event":
+            expression = None
         else:
+            event_type = None
             expression = None
         validate_trigger(trigger_type, event_type, expression)
 
@@ -340,10 +343,15 @@ class ProjectAutomationService:
     ) -> dict:
         require_cloud_project_role(db, project_id, user_id, BaseRole.Developer)
         rule = self._rule(db, project_id, automation_id)
-        if _metadata(rule).get("trigger_type") == "event":
+        trigger_type = _metadata(rule).get("trigger_type")
+        if trigger_type in {"event", "workflow"}:
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
-                "Event automations can only run from a matching event",
+                (
+                    "Event automations can only run from a matching event"
+                    if trigger_type == "event"
+                    else "Workflow automations can only run from a workflow stage"
+                ),
             )
         run = self._create_run(db, rule, "manual", utcnow())
         await project_automation_execution.dispatch(db, rule, run)
@@ -384,10 +392,10 @@ class ProjectAutomationService:
         )
         if node is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow node not found")
-        if node.get("kind") not in {"automation", "ai"}:
+        if not node.get("automation_rule_id"):
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
-                "Workflow node is not an automation",
+                "Workflow stage has no automation",
             )
         if node.get("status") not in {"ready", "failed"}:
             raise HTTPException(status.HTTP_409_CONFLICT, "Workflow node is not ready")
@@ -402,6 +410,8 @@ class ProjectAutomationService:
         run.metadata_json = {
             **(run.metadata_json or {}),
             "workflow_node_id": workflow_node_id,
+            "instruction_override": str(node.get("prompt") or ""),
+            "dependency_context": node.get("dependency_context") or {},
         }
         from app.services.project_workflow_projection import update_workflow_node
 

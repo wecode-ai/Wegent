@@ -56,26 +56,56 @@ def test_workflow_definition_rejects_invalid_dag(nodes: list[dict]) -> None:
         ProjectWorkflowDefinition.model_validate({"version": 1, "nodes": nodes})
 
 
+def test_workflow_definition_validates_dependency_context() -> None:
+    definition = ProjectWorkflowDefinition.model_validate(
+        {
+            "version": 1,
+            "stage_mode": "dag",
+            "nodes": [
+                {"id": "develop", "name": "Develop", "depends_on": []},
+                {
+                    "id": "test",
+                    "name": "Test",
+                    "depends_on": ["develop"],
+                    "dependency_context": {
+                        "develop": ["final_result", "deliveries", "activity"]
+                    },
+                },
+            ],
+        }
+    )
+
+    assert definition.nodes[1].dependency_context["develop"] == [
+        "final_result",
+        "deliveries",
+        "activity",
+    ]
+
+    with pytest.raises(ValidationError, match="non-dependencies"):
+        ProjectWorkflowDefinition.model_validate(
+            {
+                "version": 1,
+                "stage_mode": "dag",
+                "nodes": [
+                    {"id": "develop", "name": "Develop", "depends_on": []},
+                    {
+                        "id": "test",
+                        "name": "Test",
+                        "depends_on": ["develop"],
+                        "dependency_context": {"missing": ["final_result"]},
+                    },
+                ],
+            }
+        )
+
+
 @pytest.mark.parametrize(
     "node",
     [
         {
-            "id": "automation",
-            "name": "自动化",
-            "kind": "automation",
-            "workspace_policy": "none",
-        },
-        {
-            "id": "ai",
-            "name": "AI 分配",
-            "kind": "ai",
+            "id": "automated",
+            "name": "自动阶段",
             "workspace_policy": "composer",
-            "automation_rule_id": "rule-1",
-        },
-        {
-            "id": "task",
-            "name": "我的任务",
-            "kind": "my_task",
             "automation_rule_id": "rule-1",
         },
     ],
@@ -95,7 +125,6 @@ def test_workflow_definition_accepts_configured_automatic_nodes() -> None:
                 {
                     "id": "automation",
                     "name": "自动化",
-                    "kind": "automation",
                     "workspace_policy": "none",
                     "automation_rule_id": "rule-1",
                 }
@@ -104,3 +133,10 @@ def test_workflow_definition_accepts_configured_automatic_nodes() -> None:
     )
 
     assert definition.nodes[0].automation_rule_id == "rule-1"
+
+
+def test_workflow_definition_requires_a_rule_for_ai_advancement() -> None:
+    with pytest.raises(ValidationError):
+        ProjectWorkflowDefinition.model_validate(
+            {"version": 1, "advancement_policy": "ai"}
+        )

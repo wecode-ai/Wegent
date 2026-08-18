@@ -18,10 +18,8 @@ import type {
   CloudProject,
   CloudProjectMember,
   CloudUserSearchItem,
-  ProjectWorkflowDefinition,
 } from '@/api/deliveries'
 import type { createProjectIncomingHookApi, ProjectIncomingHook } from '@/api/projectIncomingHooks'
-import type { createProjectAutomationApi, ProjectAutomationRule } from '@/api/projectAutomations'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import { Tooltip } from '@/components/ui/tooltip'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
@@ -29,7 +27,6 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { track } from '@/telemetry/client'
 import { BoardLayoutEditor } from './BoardLayoutEditor'
-import { ProjectWorkflowEditor } from './ProjectWorkflowEditor'
 import type { BoardCardDisplaySettings } from './CloudTodoBoardCard'
 import { waitForDwsAuthentication } from './dwsAuth'
 import {
@@ -65,7 +62,6 @@ export function CloudProjectManageView({
   aitableApi,
   dwsApi,
   incomingHookApi,
-  projectAutomationApi,
   project,
   boardCardDisplay,
   onProjectUpdated,
@@ -74,7 +70,6 @@ export function CloudProjectManageView({
   aitableApi?: AITableApi
   dwsApi?: DwsApi
   incomingHookApi?: ReturnType<typeof createProjectIncomingHookApi>
-  projectAutomationApi?: ReturnType<typeof createProjectAutomationApi>
   project: CloudProject
   boardCardDisplay?: BoardCardDisplaySettings
   onProjectUpdated?: (project: CloudProject) => void
@@ -88,11 +83,6 @@ export function CloudProjectManageView({
   const [display, setDisplay] = useState(() => initialDisplay(project, boardCardDisplay))
   const [statuses, setStatuses] = useState<BoardStatuses>(project.board_config?.statuses ?? [])
   const [visibility, setVisibility] = useState(project.visibility ?? 'private')
-  const [workflowDefinition, setWorkflowDefinition] = useState<ProjectWorkflowDefinition>(
-    project.workflow_definition ?? { version: 1, nodes: [] }
-  )
-  const [workflowBusy, setWorkflowBusy] = useState(false)
-  const [automationRules, setAutomationRules] = useState<ProjectAutomationRule[]>([])
 
   const [membersOpen, setMembersOpen] = useState(false)
   const [memberQuery, setMemberQuery] = useState('')
@@ -141,14 +131,6 @@ export function CloudProjectManageView({
       active = false
     }
   }, [api, project.id])
-
-  useEffect(() => {
-    if (!projectAutomationApi) return
-    void projectAutomationApi
-      .list(String(project.id))
-      .then(setAutomationRules)
-      .catch(() => setAutomationRules([]))
-  }, [project.id, projectAutomationApi])
 
   useEffect(() => {
     if (!incomingHookApi || project.task_provider !== 'local') return
@@ -233,28 +215,6 @@ export function CloudProjectManageView({
       setError(cause instanceof Error ? cause.message : '更新项目权限失败')
     } finally {
       setVisibilityBusy(false)
-    }
-  }
-
-  async function saveWorkflow() {
-    if (workflowBusy) return
-    setWorkflowBusy(true)
-    setError(null)
-    try {
-      const updated = await updateProject({
-        workflow_definition: {
-          ...workflowDefinition,
-          version: workflowDefinition.version + 1,
-        },
-        version,
-      })
-      setWorkflowDefinition(
-        updated.workflow_definition ?? { version: workflowDefinition.version + 1, nodes: [] }
-      )
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : t('todo.workflow_save_failed'))
-    } finally {
-      setWorkflowBusy(false)
     }
   }
 
@@ -1043,13 +1003,6 @@ export function CloudProjectManageView({
           </section>
         )}
 
-        <ProjectWorkflowEditor
-          value={workflowDefinition}
-          busy={workflowBusy}
-          onChange={setWorkflowDefinition}
-          onSave={() => void saveWorkflow()}
-          automationRules={automationRules}
-        />
         <BoardLayoutEditor
           statuses={statuses}
           display={display}

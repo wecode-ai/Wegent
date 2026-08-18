@@ -517,7 +517,7 @@ def test_project_workflow_is_snapshotted_into_new_issue(
     assert [node["status"] for node in workflow["nodes"]] == ["ready", "blocked"]
 
 
-def test_workflow_task_binding_requires_a_ready_unoccupied_user_task_node(
+def test_workflow_task_binding_requires_a_ready_non_automated_stage(
     test_client: TestClient,
     test_db: Session,
     test_token: str,
@@ -606,7 +606,8 @@ def test_workflow_task_binding_requires_a_ready_unoccupied_user_task_node(
             "workflowNodeId": "develop",
         },
     )
-    assert duplicate.status_code == 409
+    assert duplicate.status_code == 201
+    assert duplicate.json()["workflow_node_id"] == "develop"
 
 
 def test_binding_subscription_backend_task_uses_task_store(

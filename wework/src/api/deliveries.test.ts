@@ -375,6 +375,32 @@ describe('createDeliveryApi task tracking', () => {
       releaseFirstUpdate = resolve
     })
     const get = vi.fn(async (endpoint: string) => {
+      if (endpoint.endsWith(`/loop-items/${currentItem.id}/tasks`)) {
+        return [
+          {
+            id: 1,
+            loop_item_id: currentItem.id,
+            task_user_id: 1,
+            device_id: 'local-device',
+            task_id: 'runtime-develop',
+            task_title: 'Develop',
+            backend_task_id: null,
+            workflow_node_id: 'develop',
+            linked_at: '2026-08-18T00:00:00Z',
+          },
+          {
+            id: 2,
+            loop_item_id: currentItem.id,
+            task_user_id: 1,
+            device_id: 'local-device',
+            task_id: 'runtime-docs',
+            task_title: 'Docs',
+            backend_task_id: null,
+            workflow_node_id: 'docs',
+            linked_at: '2026-08-18T00:00:00Z',
+          },
+        ]
+      }
       if (endpoint.includes('/cloud-context')) {
         const nodeId = endpoint.includes('runtime-develop') ? 'develop' : 'docs'
         return {

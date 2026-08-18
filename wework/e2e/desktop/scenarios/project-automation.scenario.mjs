@@ -1460,6 +1460,42 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       await control.command('waitFor', '[data-testid="project-automation-rules"]', {
         timeoutMs: uiTimeoutMs,
       })
+      await control.command('click', '[data-testid="project-workflow-mode-workflow"]')
+      await control.command('click', '[data-testid="project-workflow-empty-add"]')
+      await control.command(
+        'waitFor',
+        '[data-testid="project-workflow-stage-executor-human-stage-1"]',
+        { timeoutMs: uiTimeoutMs }
+      )
+      const stageInspectorSnapshot = JSON.parse(
+        await control.command(
+          'snapshot',
+          '[data-testid="project-workflow-inspector-stage-1"]'
+        )
+      )
+      assert.equal(
+        stageInspectorSnapshot.testIds.includes('project-workflow-stage-automation-stage-1'),
+        false,
+        'The human execution choice should not show a robot selector'
+      )
+      await control.command(
+        'click',
+        '[data-testid="project-workflow-stage-executor-robot-stage-1"]'
+      )
+      await control.command(
+        'waitFor',
+        '[data-testid="project-workflow-stage-automation-stage-1"]',
+        { text: AGENT.name, timeoutMs: uiTimeoutMs }
+      )
+      await control.command('click', '[data-testid="project-workflow-stage-add-robot"]')
+      await control.command('waitFor', '[data-testid="cloud-project-chat-agent-editor"]', {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await captureScreenshot(control, 'project-automation-00-workflow-robot-executor.png')
+      await control.command('click', '[data-testid="cloud-project-chat-agent-cancel"]', {
+        visible: true,
+      })
       await control.command('click', '[data-testid="project-automation-create"]')
       await control.command('fill', '[data-testid="project-automation-name"]', {
         value: '凌晨回归扫描',
@@ -1573,15 +1609,20 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       assert.equal(retryRequested, true)
       await captureScreenshot(control, 'project-automation-04-retried-run.png')
       await control.command('click', '[data-testid="cloud-todo-modal-close"]', { visible: true })
+      await control.command('click', '[data-testid="cloud-todo-detail-close"]', { visible: true })
       await control.command('click', '[data-testid="cloud-project-automation-view"]', {
+        visible: true,
+      })
+      await control.command('scrollIntoView', '[data-testid="cloud-project-chat-agents"]', {
         visible: true,
       })
       await control.command('waitFor', '[data-testid="cloud-project-chat-agents"]', {
         timeoutMs: uiTimeoutMs,
-        visible: true,
       })
 
-      await control.command('scrollIntoView', '[data-testid="cloud-project-chat-agent-add"]')
+      await control.command('scrollIntoView', '[data-testid="cloud-project-chat-agent-add"]', {
+        visible: true,
+      })
       await control.command('click', '[data-testid="cloud-project-chat-agent-add"]', {
         visible: true,
       })

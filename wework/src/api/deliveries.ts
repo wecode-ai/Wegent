@@ -281,15 +281,19 @@ export interface CloudTaskContext {
   linked_at: string
 }
 
-export type WorkflowNodeKind = 'my_task' | 'automation' | 'ai'
 export type WorkflowWorkspacePolicy = 'none' | 'composer' | 'inherit'
+export type WorkflowContextSource = 'final_result' | 'deliveries' | 'activity'
 export type WorkflowNodeStatus = 'blocked' | 'ready' | 'queued' | 'running' | 'completed' | 'failed'
+export type IssueAdvancementPolicy = 'manual' | 'ai'
+export type IssueStageMode = 'none' | 'dag'
 
 export interface WorkflowNodeDefinition {
   id: string
   name: string
-  kind: WorkflowNodeKind
+  prompt?: string
+  kind?: 'my_task' | 'automation' | 'ai' | null
   depends_on: string[]
+  dependency_context?: Record<string, WorkflowContextSource[]>
   required: boolean
   workspace_policy: WorkflowWorkspacePolicy
   automation_rule_id?: string | null
@@ -297,12 +301,18 @@ export interface WorkflowNodeDefinition {
 
 export interface ProjectWorkflowDefinition {
   version: number
+  stage_mode?: IssueStageMode
+  advancement_policy?: IssueAdvancementPolicy
+  coordinator_prompt?: string
+  ai_automation_rule_id?: string | null
   nodes: WorkflowNodeDefinition[]
 }
 
 export interface WorkflowNodeInstance extends WorkflowNodeDefinition {
   status: WorkflowNodeStatus
   task_binding_id?: string | null
+  task_ids?: string[]
+  task_statuses?: Record<string, string>
   execution_id?: number | null
   automation_run_id?: string | null
 }
@@ -310,6 +320,10 @@ export interface WorkflowNodeInstance extends WorkflowNodeDefinition {
 export interface IssueWorkflowInstance {
   version: number
   definition_version: number
+  stage_mode?: IssueStageMode
+  advancement_policy?: IssueAdvancementPolicy
+  coordinator_prompt?: string
+  ai_automation_rule_id?: string | null
   nodes: WorkflowNodeInstance[]
 }
 
@@ -866,10 +880,16 @@ export function createDeliveryApi(client: HttpClient) {
           return enqueueIssueWorkflowMutation(item.id, async () => {
             const current = await api.getLoopItem(item.id)
             if (!current.workflow) return current
+            const bindings = await api.listTaskBindings(item.id)
+            const stageTaskIds = bindings
+              .filter(binding => binding.workflow_node_id === context.workflow_node_id)
+              .map(binding => `${binding.device_id}:${binding.task_id}`)
             const workflow = updateIssueWorkflowForRuntime(
               current.workflow,
               context.workflow_node_id!,
-              executionStatus
+              executionStatus,
+              `${task.deviceId}:${task.taskId}`,
+              stageTaskIds
             )
             return api.updateLoopItem(current.id, {
               version: current.version,

@@ -448,7 +448,10 @@ class LoopItemService:
             raw_definition = project_metadata.get("workflow_definition")
             if isinstance(raw_definition, dict):
                 definition = ProjectWorkflowDefinition.model_validate(raw_definition)
-                if definition.nodes:
+                if (
+                    definition.stage_mode == "dag"
+                    or definition.advancement_policy == "ai"
+                ):
                     task_metadata["workflow"] = instantiate_workflow(
                         definition
                     ).model_dump()
@@ -1458,38 +1461,20 @@ class LoopItemService:
         )
         if node is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow node not found")
-        if node.get("kind") != "my_task":
+        if node.get("automation_rule_id"):
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
-                "Workflow node does not accept a user task",
+                "Automated workflow stage does not accept a user task",
             )
-        if active_binding is None and node.get("status") not in {"ready", "failed"}:
+        if active_binding is None and node.get("status") not in {
+            "ready",
+            "queued",
+            "running",
+            "failed",
+        }:
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
                 "Workflow node is not ready",
-            )
-        node_bindings = (
-            db.query(LoopItemTaskBinding)
-            .filter(
-                LoopItemTaskBinding.loop_item_id == item.id,
-                loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
-            )
-            .with_for_update()
-            .all()
-        )
-        occupied = next(
-            (
-                binding
-                for binding in node_bindings
-                if binding.workflow_node_id == workflow_node_id
-                and (active_binding is None or binding.id != active_binding.id)
-            ),
-            None,
-        )
-        if occupied is not None:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                "Workflow node already has a task",
             )
 
     def bind_project_task(

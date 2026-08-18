@@ -85,7 +85,7 @@ function services(initialAgents: ProjectChatAgent[] = []) {
 }
 
 function renderSection(mock: ReturnType<typeof services>) {
-  render(
+  return render(
     <ProjectChatAgentsSection
       project={project}
       projectChatAgentApi={mock.projectChatAgentApi}
@@ -99,6 +99,27 @@ function renderSection(mock: ReturnType<typeof services>) {
 }
 
 describe('ProjectChatAgentsSection', () => {
+  it('opens the robot editor when the workflow requests a new robot', async () => {
+    const mock = services()
+    const view = renderSection(mock)
+
+    await screen.findByTestId('cloud-project-chat-agent-add')
+    view.rerender(
+      <ProjectChatAgentsSection
+        project={project}
+        projectChatAgentApi={mock.projectChatAgentApi}
+        deviceApi={mock.deviceApi}
+        modelApi={mock.modelApi}
+        teamApi={mock.teamApi}
+        localProjects={[]}
+        canManage
+        createRequestKey={1}
+      />
+    )
+
+    expect(await screen.findByTestId('cloud-project-chat-agent-editor')).toBeInTheDocument()
+  })
+
   it('binds a Wegent Agent inside the board robot runtime configuration', async () => {
     const mock = services()
     renderSection(mock)

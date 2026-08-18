@@ -72,6 +72,7 @@ export function ProjectAutomationRulesSection({
   modelApi,
   teamApi,
   onOpenTask,
+  onRulesChange,
   projectTags = [],
 }: {
   projectId: string
@@ -82,11 +83,13 @@ export function ProjectAutomationRulesSection({
   modelApi?: { listModels: () => Promise<{ data: UnifiedModel[] }> }
   teamApi?: { listTeams: () => Promise<Team[]> }
   onOpenTask?: (taskId: string) => void
+  onRulesChange?: (rules: ProjectAutomationRule[]) => void
   projectTags?: string[]
 }) {
   const { t } = useTranslation('common')
   const backendUrl = getRuntimeConfig().wegentBackendUrl || window.location.origin
   const [rules, setRules] = useState<ProjectAutomationRule[]>([])
+  const visibleRules = rules.filter(rule => rule.triggerType !== 'workflow')
   const [agents, setAgents] = useState<ProjectChatAgent[]>([])
   const [devices, setDevices] = useState<DeviceInfo[]>([])
   const [models, setModels] = useState<UnifiedModel[]>([])
@@ -102,6 +105,10 @@ export function ProjectAutomationRulesSection({
     eventId: string
     secret: string
   } | null>(null)
+
+  useEffect(() => {
+    onRulesChange?.(rules)
+  }, [onRulesChange, rules])
 
   const load = useCallback(async () => {
     if (!api || !agentApi) return
@@ -169,6 +176,7 @@ export function ProjectAutomationRulesSection({
   }, [api, load, projectId, runs, selected?.id])
 
   const selectRule = async (rule: ProjectAutomationRule) => {
+    if (rule.triggerType === 'workflow') return
     setSelected(rule)
     setDraft({
       name: rule.name,
@@ -398,7 +406,9 @@ export function ProjectAutomationRulesSection({
 
   return (
     <section data-testid="project-automation-rules" className="mt-8">
-      <div className={`flex items-center justify-between gap-3${rules.length ? ' mb-3' : ''}`}>
+      <div
+        className={`flex items-center justify-between gap-3${visibleRules.length ? ' mb-3' : ''}`}
+      >
         <div>
           <h3 className="text-heading-md font-semibold">
             {t('workbench.project_automation_rules_title')}
@@ -422,8 +432,8 @@ export function ProjectAutomationRulesSection({
 
       {error && !draft ? <p className="mb-3 text-sm text-red-600">{error}</p> : null}
       <div className="space-y-2" data-testid="project-automation-rule-list">
-        {rules.length ? (
-          rules.map(rule => (
+        {visibleRules.length ? (
+          visibleRules.map(rule => (
             <div
               key={rule.id}
               role="button"

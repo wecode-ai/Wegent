@@ -262,7 +262,7 @@ describe('TaskActivityView', () => {
       />
     )
 
-    expect(screen.getByTestId('cloud-task-activity-WEG-1')).toHaveTextContent('评论 / 动态')
+    expect(screen.getByTestId('cloud-task-activity-WEG-1')).toHaveTextContent('动态')
     expect(screen.queryByTestId('cloud-task-activity-close')).not.toBeInTheDocument()
     await user.type(screen.getByTestId('cloud-task-activity-composer'), '继续处理')
     await user.click(screen.getByRole('button', { name: '发送消息' }))

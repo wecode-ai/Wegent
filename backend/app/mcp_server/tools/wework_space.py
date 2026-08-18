@@ -370,6 +370,12 @@ async def create_board_item(
                     actor_user_id=user.id,
                     payload=response.model_dump(mode="json"),
                 ),
+                automation_id=(
+                    response.workflow.ai_automation_rule_id
+                    if response.workflow
+                    and response.workflow.advancement_policy == "ai"
+                    else None
+                ),
             )
         except Exception:
             db.rollback()

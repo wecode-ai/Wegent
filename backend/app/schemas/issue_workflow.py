@@ -1,39 +1,66 @@
 # SPDX-FileCopyrightText: 2026 Weibo, Inc.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Validated project workflow definitions and per-Issue snapshots."""
+"""Validated project orchestration definitions and per-Issue snapshots."""
 
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+WorkflowContextSource = Literal["final_result", "deliveries", "activity"]
+
 
 class WorkflowNodeDefinition(BaseModel):
     id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
     name: str = Field(min_length=1, max_length=100)
-    kind: Literal["my_task", "automation", "ai"] = "my_task"
+    prompt: str = Field(default="", max_length=100_000)
+    # Kept only to read workflow definitions written by older clients. Stage
+    # nodes are task categories, not executor kinds.
+    kind: Literal["my_task", "automation", "ai"] | None = None
     depends_on: list[str] = Field(default_factory=list, max_length=50)
+    dependency_context: dict[str, list[WorkflowContextSource]] = Field(
+        default_factory=dict
+    )
     required: bool = True
     workspace_policy: Literal["none", "composer", "inherit"] = "composer"
     automation_rule_id: str | None = Field(default=None, max_length=64)
 
     @model_validator(mode="after")
     def validate_execution_configuration(self) -> "WorkflowNodeDefinition":
-        if self.kind in {"automation", "ai"} and not self.automation_rule_id:
-            raise ValueError("automatic workflow nodes require an automation rule")
-        if self.kind != "my_task" and self.workspace_policy != "none":
-            raise ValueError("automatic workflow nodes cannot use a local workspace")
-        if self.kind == "my_task" and self.automation_rule_id:
-            raise ValueError("task workflow nodes cannot reference an automation rule")
+        if self.automation_rule_id and self.workspace_policy != "none":
+            raise ValueError("automated stages cannot require a local workspace")
+        if unknown := set(self.dependency_context) - set(self.depends_on):
+            raise ValueError(
+                "workflow dependency context references non-dependencies: "
+                + ", ".join(sorted(unknown))
+            )
+        for dependency, sources in self.dependency_context.items():
+            if len(sources) != len(set(sources)):
+                raise ValueError(
+                    f"workflow dependency context contains duplicates: {dependency}"
+                )
         return self
 
 
 class ProjectWorkflowDefinition(BaseModel):
     version: int = Field(default=1, ge=1)
+    stage_mode: Literal["none", "dag"] = "none"
+    advancement_policy: Literal["manual", "ai"] = "manual"
+    coordinator_prompt: str = Field(default="", max_length=4000)
+    ai_automation_rule_id: str | None = Field(default=None, max_length=64)
     nodes: list[WorkflowNodeDefinition] = Field(default_factory=list, max_length=50)
+
+    @model_validator(mode="before")
+    @classmethod
+    def infer_legacy_stage_mode(cls, value: object) -> object:
+        if isinstance(value, dict) and "stage_mode" not in value and value.get("nodes"):
+            return {**value, "stage_mode": "dag"}
+        return value
 
     @model_validator(mode="after")
     def validate_dag(self) -> "ProjectWorkflowDefinition":
+        if self.advancement_policy == "ai" and not self.ai_automation_rule_id:
+            raise ValueError("AI advancement requires an AI automation rule")
         node_ids = [node.id for node in self.nodes]
         if len(node_ids) != len(set(node_ids)):
             raise ValueError("workflow node ids must be unique")
@@ -70,6 +97,8 @@ class WorkflowNodeInstance(WorkflowNodeDefinition):
         "blocked"
     )
     task_binding_id: str | None = Field(default=None, max_length=64)
+    task_ids: list[str] = Field(default_factory=list, max_length=100)
+    task_statuses: dict[str, str] = Field(default_factory=dict)
     execution_id: int | None = Field(default=None, ge=1)
     automation_run_id: str | None = Field(default=None, max_length=64)
 
@@ -77,18 +106,28 @@ class WorkflowNodeInstance(WorkflowNodeDefinition):
 class IssueWorkflowInstance(BaseModel):
     version: int = Field(default=1, ge=1)
     definition_version: int = Field(default=1, ge=1)
+    stage_mode: Literal["none", "dag"] = "none"
+    advancement_policy: Literal["manual", "ai"] = "manual"
+    coordinator_prompt: str = Field(default="", max_length=4000)
+    ai_automation_rule_id: str | None = Field(default=None, max_length=64)
     nodes: list[WorkflowNodeInstance] = Field(default_factory=list, max_length=50)
 
     @model_validator(mode="after")
     def validate_snapshot(self) -> "IssueWorkflowInstance":
         ProjectWorkflowDefinition(
             version=self.definition_version,
+            stage_mode=self.stage_mode,
+            advancement_policy=self.advancement_policy,
+            coordinator_prompt=self.coordinator_prompt,
+            ai_automation_rule_id=self.ai_automation_rule_id,
             nodes=[
                 WorkflowNodeDefinition(
                     id=node.id,
                     name=node.name,
+                    prompt=node.prompt,
                     kind=node.kind,
                     depends_on=node.depends_on,
+                    dependency_context=node.dependency_context,
                     required=node.required,
                     workspace_policy=node.workspace_policy,
                     automation_rule_id=node.automation_rule_id,
@@ -105,11 +144,15 @@ def instantiate_workflow(
     roots = {node.id for node in definition.nodes if not node.depends_on}
     return IssueWorkflowInstance(
         definition_version=definition.version,
+        stage_mode=definition.stage_mode,
+        advancement_policy=definition.advancement_policy,
+        coordinator_prompt=definition.coordinator_prompt,
+        ai_automation_rule_id=definition.ai_automation_rule_id,
         nodes=[
             WorkflowNodeInstance(
                 **node.model_dump(),
                 status="ready" if node.id in roots else "blocked",
             )
-            for node in definition.nodes
+            for node in (definition.nodes if definition.stage_mode == "dag" else [])
         ],
     )

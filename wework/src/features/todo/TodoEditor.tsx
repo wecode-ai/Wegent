@@ -58,6 +58,7 @@ import { TagEditor } from './TagEditor'
 import { normalizeTaskDescription } from './taskDescription'
 import { AITableTaskFields } from './AITableTaskFields'
 import { TaskActivityView } from './TaskActivityView'
+import { IssueWorkflowDag } from './IssueWorkflowDag'
 import { markdownAttachmentRows } from './attachmentMarkdown'
 import './task-detail-layout.css'
 import {
@@ -1793,93 +1794,13 @@ export function TodoEditor(props: TodoEditorProps) {
                       ) : null}
                     </div>
                     {item.workflow?.nodes.length ? (
-                      <div className="mt-1 space-y-1">
-                        {item.workflow.nodes.map((node, index) => {
-                          const task = tasks.find(
-                            candidate => candidate.workflow_node_id === node.id
-                          )
-                          const actionable =
-                            node.kind === 'my_task' &&
-                            (node.status === 'ready' || node.status === 'failed') &&
-                            !task
-                          const automaticActionable =
-                            (node.kind === 'automation' || node.kind === 'ai') &&
-                            (node.status === 'ready' || node.status === 'failed') &&
-                            Boolean(node.automation_rule_id)
-                          return (
-                            <div
-                              key={node.id}
-                              data-testid={`cloud-todo-workflow-node-${node.id}`}
-                              className="flex min-h-11 items-center gap-3 rounded-xl border border-border/70 px-3 py-2"
-                            >
-                              <span
-                                className={cn(
-                                  'flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs',
-                                  node.status === 'completed'
-                                    ? 'border-green-500/40 bg-green-500/10 text-green-600'
-                                    : node.status === 'running'
-                                      ? 'border-orange-500/40 bg-orange-500/10 text-orange-600'
-                                      : 'border-border text-text-muted'
-                                )}
-                              >
-                                {node.status === 'completed' ? '✓' : index + 1}
-                              </span>
-                              <span className="min-w-0 flex-1">
-                                <span className="block truncate text-sm font-medium text-text-primary">
-                                  {node.name}
-                                </span>
-                                <span className="block truncate text-xs text-text-muted">
-                                  {node.status === 'blocked'
-                                    ? t('todo.workflow_node_blocked')
-                                    : node.status === 'ready'
-                                      ? t('todo.workflow_node_ready')
-                                      : node.status === 'queued'
-                                        ? t('todo.workflow_node_queued')
-                                        : node.status === 'running'
-                                          ? t('todo.workflow_node_running')
-                                          : node.status === 'completed'
-                                            ? t('todo.workflow_node_completed')
-                                            : t('todo.workflow_node_failed')}
-                                  {node.workspace_policy === 'inherit'
-                                    ? ` · ${t('todo.workflow_workspace_inherit')}`
-                                    : ''}
-                                </span>
-                              </span>
-                              {task ? (
-                                <button
-                                  type="button"
-                                  data-testid={`cloud-todo-open-workflow-task-${node.id}`}
-                                  onClick={() => props.onOpenTaskConversation?.(task)}
-                                  className="flex h-7 items-center gap-1 rounded-lg px-2 text-xs text-text-secondary hover:bg-muted hover:text-text-primary"
-                                >
-                                  {t('todo.task_conversation')}
-                                  <ChevronRight className="h-3.5 w-3.5" />
-                                </button>
-                              ) : actionable && props.onCreateTask ? (
-                                <button
-                                  type="button"
-                                  data-testid={`cloud-todo-create-workflow-task-${node.id}`}
-                                  onClick={() => props.onCreateTask?.(node.id)}
-                                  className="h-7 rounded-lg bg-foreground px-2.5 text-xs text-background"
-                                >
-                                  {t('todo.create_task_tab')}
-                                </button>
-                              ) : automaticActionable && props.onRunWorkflowNode ? (
-                                <button
-                                  type="button"
-                                  data-testid={`cloud-todo-run-workflow-node-${node.id}`}
-                                  onClick={() =>
-                                    props.onRunWorkflowNode?.(node.id, node.automation_rule_id!)
-                                  }
-                                  className="h-7 rounded-lg bg-foreground px-2.5 text-xs text-background"
-                                >
-                                  {t('todo.workflow_run')}
-                                </button>
-                              ) : null}
-                            </div>
-                          )
-                        })}
-                      </div>
+                      <IssueWorkflowDag
+                        nodes={item.workflow.nodes}
+                        tasks={tasks}
+                        onCreateTask={props.onCreateTask}
+                        onRunAutomation={props.onRunWorkflowNode}
+                        onOpenTask={props.onOpenTaskConversation}
+                      />
                     ) : displayedTasks.length === 0 ? (
                       <p className="rounded-xl border border-dashed border-border px-3 py-4 text-center text-xs text-text-muted">
                         {props.showCurrentTaskOnly
@@ -2035,10 +1956,10 @@ export function TodoEditor(props: TodoEditorProps) {
                       className="task-detail-comments"
                     >
                       <header className="task-detail-comments-head">
-                        <span className="font-semibold text-text-primary">评论 / 动态</span>
+                        <span className="font-semibold text-text-primary">动态</span>
                       </header>
                       <div className="task-detail-comments-list text-sm text-text-muted">
-                        评论服务当前不可用
+                        动态服务当前不可用
                       </div>
                     </section>
                   ))
