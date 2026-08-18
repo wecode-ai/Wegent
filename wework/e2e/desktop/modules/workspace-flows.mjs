@@ -597,6 +597,7 @@ async function waitForAttribute(control, selector, name, expected, message) {
 }
 
 async function verifyWorkspaceTabIsolation(control) {
+  await ensureExperimentalFeaturesEnabled(control)
   await control.command('waitFor', '[data-testid="workspace-tab-strip"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
