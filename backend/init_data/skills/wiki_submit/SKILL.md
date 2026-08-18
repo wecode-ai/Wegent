@@ -1,6 +1,6 @@
 ---
 description: "Submit wiki documentation pages to Wegent backend API. Simplifies the HTTP POST process for wiki content submission."
-version: "1.2.0"
+version: "1.3.0"
 author: "Wegent Team"
 tags: ["wiki", "documentation", "api", "submission"]
 bindShells: ["ClaudeCode"]
@@ -24,9 +24,11 @@ insertion, so reword titles freely and move paths rarely.
 Send a page's **complete content** every time. There is no patch format; what you send
 replaces the page.
 
-A section that holds pages needs a page of its own. If you submit
+A section that holds pages needs a substantive page of its own. If you submit
 `architecture/backend`, also submit `architecture` with an overview of that section.
-Write `index` as the wiki overview.
+This is a publish requirement: `complete` refuses a version with a child path whose
+parent path is not a page. Submit the parent first where practical, and always before
+running `complete`. Write `index` as the wiki overview.
 
 Link to another wiki page by its complete page path without an extension, for example
 `[Backend](architecture/backend)`. Do not use `./architecture/backend.md` or a URL: wiki
@@ -52,9 +54,10 @@ Remove an accidental page before completing the run.
    disappeared in an incremental run.
 2. Run `complete` with the documented commit and an order that starts with `index` and
    follows the planned reading route.
-3. Read the response. If publication is refused, restore the missing coverage and run
-   `complete` again. If it reports a Mermaid warning, correct that named page at the
-   same path and run `complete` again.
+3. Read the response. If publication is refused, restore the missing coverage — in
+   particular, create every named section overview page — and run `complete` again.
+   If it reports a Mermaid warning, correct that named page at the same path and run
+   `complete` again.
 
 Do not report the generation as complete until the response says it was published, or
 use `fail` with an accurate error when the run cannot continue.

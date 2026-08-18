@@ -212,8 +212,13 @@ def test_replacing_every_path_is_reported_though_the_size_is_unchanged():
     rejection blocked deliberate restructuring outright.
     """
     renamed = [
-        PageSource(path=f"guide/page-{index}", title=f"Page {index}", content="body")
-        for index in range(10)
+        PageSource(path="guide", title="Guide", content="overview"),
+        *[
+            PageSource(
+                path=f"guide/page-{index}", title=f"Page {index}", content="body"
+            )
+            for index in range(10)
+        ],
     ]
 
     verdict = evaluate_publish_gate(renamed, published_paths=_published(10))
@@ -225,6 +230,7 @@ def test_replacing_every_path_is_reported_though_the_size_is_unchanged():
 def test_renaming_a_few_paths_is_still_allowed():
     """Moving a page is legitimate; the gate only refuses moving most of them."""
     moved = [
+        PageSource(path="guide", title="Guide", content="overview"),
         PageSource(path="guide/page-0", title="Page 0", content="body"),
         *_pages(10)[1:],
     ]
@@ -249,9 +255,8 @@ def test_a_path_kept_under_a_different_case_is_not_a_removal():
 # --- sections that hold pages but are not pages ------------------------------
 
 
-def test_a_section_with_no_page_of_its_own_is_reported_not_refused():
-    """The navigation is built from paths, so it renders as a group heading that
-    cannot be opened — worse to read, nowhere near worth discarding a version."""
+def test_a_section_with_no_page_of_its_own_is_refused():
+    """A path section without a page is an unreadable navigation node."""
     pages = [
         PageSource(path="index", title="Index", content="body"),
         PageSource(path="architecture/backend", title="Backend", content="body"),
@@ -259,7 +264,8 @@ def test_a_section_with_no_page_of_its_own_is_reported_not_refused():
 
     verdict = evaluate_publish_gate(pages, published_paths=[])
 
-    assert verdict.passed
+    assert not verdict.passed
+    assert "required section overview pages are missing" in verdict.reason
     assert any("architecture" in warning for warning in verdict.warnings)
 
 
@@ -274,9 +280,7 @@ def test_a_section_that_is_itself_a_page_draws_no_warning():
     assert verdict.warnings == ()
 
 
-def test_the_diagram_policy_does_not_reject_over_a_missing_section_page():
-    """`block_on_mermaid` is named for diagrams; letting it fire on a navigation nit
-    would make its name a lie and throw away versions nobody meant to refuse."""
+def test_a_section_page_is_required_independently_of_diagram_policy():
     pages = [
         PageSource(path="index", title="Index", content="body"),
         PageSource(path="architecture/backend", title="Backend", content="body"),
@@ -286,8 +290,8 @@ def test_the_diagram_policy_does_not_reject_over_a_missing_section_page():
         pages, published_paths=[], policy=PublishPolicy(block_on_mermaid=True)
     )
 
-    assert verdict.passed
-    assert verdict.warnings
+    assert not verdict.passed
+    assert "architecture" in verdict.reason
 
 
 # --- how loss is measured depends on how the version was made ----------------
@@ -375,7 +379,9 @@ def test_an_incremental_run_that_kept_everything_says_nothing():
 
     paths = [f"old/{index}" for index in range(20)]
     verdict = evaluate_publish_gate(
-        [_page(path) for path in paths], published_paths=paths, rebuilt=False
+        [_page("old"), *[_page(path) for path in paths]],
+        published_paths=paths,
+        rebuilt=False,
     )
 
     assert verdict.passed

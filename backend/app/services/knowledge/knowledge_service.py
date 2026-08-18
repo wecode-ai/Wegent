@@ -1045,11 +1045,17 @@ class KnowledgeService:
             .all()
         )
         generated_documents = is_code_wiki and all(
-            document.origin == ContentOrigin.GENERATED.value for document in documents
+            KnowledgeService._is_generated_code_wiki_document(document)
+            for document in documents
         )
         # Generated pages are a projection, not user-owned documents: their owner may
         # delete the whole Code Wiki, but no page-level mutation becomes available.
         if documents and not generated_documents:
+            if is_code_wiki:
+                raise ValueError(
+                    "Cannot delete Code Wiki because it contains manually added "
+                    "documents. Remove or move them first."
+                )
             raise ValueError(
                 f"Cannot delete knowledge base with {len(documents)} document(s). "
                 "Please delete all documents first."
@@ -1142,6 +1148,25 @@ class KnowledgeService:
                         exc_info=True,
                     )
         return True
+
+    @staticmethod
+    def _is_generated_code_wiki_document(document: KnowledgeDocument) -> bool:
+        """Recognize current and pre-origin Code Wiki projection rows.
+
+        The first Code Wiki release wrote its projection identity into
+        ``source_config`` before ``origin`` existed. Those rows consequently use the
+        database default of ``user`` and would otherwise prevent their owner from
+        deleting the wiki as a whole. Both markers are internal projection fields and
+        are written together, so they are a sufficiently narrow legacy signature.
+        """
+        if document.origin == ContentOrigin.GENERATED.value:
+            return True
+
+        source_config = document.source_config or {}
+        return {
+            "wiki_page_path",
+            "wiki_content_hash",
+        }.issubset(source_config)
 
     @staticmethod
     def update_knowledge_base_type(

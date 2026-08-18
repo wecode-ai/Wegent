@@ -18,8 +18,8 @@ from app.models.knowledge import ContentOrigin, KnowledgeDocument
 from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
 from app.models.user import User
 from app.schemas.knowledge import KnowledgeBaseType, KnowledgeBaseUpdate
-from app.services.knowledge.knowledge_service import KnowledgeService
 from app.services.knowledge.code_wiki.source import SourceAccessDenied
+from app.services.knowledge.knowledge_service import KnowledgeService
 
 CREATE_URL = "/api/knowledge-bases/code-wikis"
 
@@ -1575,7 +1575,8 @@ def test_deleting_a_code_wiki_removes_its_generated_pages(
     test_db.commit()
 
     with patch(
-        "app.services.context.context_service.delete_context", return_value=True
+        "app.services.context.context_service.context_service.delete_context",
+        return_value=True,
     ) as delete_attachment:
         assert KnowledgeService.delete_knowledge_base(test_db, wiki.id, test_user.id)
 
@@ -1584,6 +1585,33 @@ def test_deleting_a_code_wiki_removes_its_generated_pages(
         context_id=42,
         user_id=test_user.id,
     )
+    assert test_db.get(Kind, wiki.id) is None
+    assert test_db.get(KnowledgeDocument, page.id) is None
+
+
+def test_deleting_a_code_wiki_removes_legacy_projected_pages(
+    test_db: Session,
+    test_user: User,
+):
+    wiki = _stored_code_wiki(test_db, test_user, "legacy-removable-wiki")
+    page = KnowledgeDocument(
+        kind_id=wiki.id,
+        attachment_id=0,
+        name="Legacy overview",
+        file_extension="md",
+        file_size=100,
+        user_id=test_user.id,
+        origin=ContentOrigin.USER.value,
+        source_config={
+            "wiki_page_path": "index",
+            "wiki_content_hash": "legacy-content-hash",
+        },
+    )
+    test_db.add(page)
+    test_db.commit()
+
+    assert KnowledgeService.delete_knowledge_base(test_db, wiki.id, test_user.id)
+
     assert test_db.get(Kind, wiki.id) is None
     assert test_db.get(KnowledgeDocument, page.id) is None
 
@@ -1644,7 +1672,7 @@ def test_deleting_a_code_wiki_with_user_documents_stays_refused(
     )
     test_db.commit()
 
-    with pytest.raises(ValueError, match="Please delete all documents first"):
+    with pytest.raises(ValueError, match="contains manually added documents"):
         KnowledgeService.delete_knowledge_base(test_db, wiki.id, test_user.id)
     assert test_db.get(Kind, wiki.id) is not None
 
