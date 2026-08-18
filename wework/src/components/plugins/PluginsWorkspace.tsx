@@ -4120,7 +4120,9 @@ export function PluginsWorkspace({
           showUninstall={showDetailActionMenu}
           onBack={() => {
             setSelectedMarketplacePluginId(null)
-            if (requestedPluginName && requestedMarketplaceName) navigateTo('/plugins')
+            if (pluginReference?.pluginName && pluginReference.marketplaceName) {
+              navigateTo('/plugins')
+            }
           }}
           onToggle={() => {
             if (canUpdate) {
