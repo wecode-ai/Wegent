@@ -732,6 +732,7 @@
     "no_models": "No video models available",
     "ratio_section": "Aspect ratio",
     "duration_section": "Duration",
+    "duration_auto": "Auto",
     "resolution_section": "Resolution"
   },
   "image": {
