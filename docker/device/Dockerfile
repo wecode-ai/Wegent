@@ -99,6 +99,7 @@ RUN if [ -n "$DEVICE_APT_MIRROR" ]; then \
     git \
     python3 \
     python3-pip \
+    util-linux \
     xz-utils \
     && case "$DEVICE_IMAGE_PLATFORM" in \
         linux/amd64) node_arch=x64 ;; \
@@ -228,11 +229,83 @@ export WEGENT_BACKEND_URL="${WEGENT_BACKEND_URL:-http://localhost:8000}"
 export DEVICE_SESSION_GATEWAY_HOST="${DEVICE_SESSION_GATEWAY_HOST:-0.0.0.0}"
 export DEVICE_SESSION_GATEWAY_PORT="${DEVICE_SESSION_GATEWAY_PORT:-17888}"
 export DEVICE_CODE_SERVER_PORT="${DEVICE_CODE_SERVER_PORT:-18080}"
+EXPECTED_EXECUTOR_HOME="/home/wegent/.wecode/wegent-executor"
+
+if [[ "$WEGENT_EXECUTOR_HOME" != /* ]]; then
+    echo "WEGENT_EXECUTOR_HOME must be an absolute path" >&2
+    exit 1
+fi
+if [[ "$LOCAL_WORKSPACE_ROOT" != /* ]]; then
+    echo "LOCAL_WORKSPACE_ROOT must be an absolute path" >&2
+    exit 1
+fi
+WEGENT_EXECUTOR_HOME="$(realpath -m -- "$WEGENT_EXECUTOR_HOME")"
+LOCAL_WORKSPACE_ROOT="$(realpath -m -- "$LOCAL_WORKSPACE_ROOT")"
+if [ "$WEGENT_EXECUTOR_HOME" != "$EXPECTED_EXECUTOR_HOME" ]; then
+    echo "WEGENT_EXECUTOR_HOME must remain at the stable mount path $EXPECTED_EXECUTOR_HOME" >&2
+    exit 1
+fi
+case "$LOCAL_WORKSPACE_ROOT/" in
+    "$WEGENT_EXECUTOR_HOME/"*) ;;
+    *)
+        echo "LOCAL_WORKSPACE_ROOT must be inside WEGENT_EXECUTOR_HOME" >&2
+        exit 1
+        ;;
+esac
 DEVICE_LOG_DIR="$WEGENT_EXECUTOR_HOME/logs"
+case "${WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED:-false}" in
+    true)
+        if [ -z "${WEGENT_EXECUTOR_HOME_ID:-}" ]; then
+            echo "Verified Worktree persistence requires WEGENT_EXECUTOR_HOME_ID" >&2
+            exit 1
+        fi
+        ;;
+    false | "") ;;
+    *)
+        echo "WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED must be true or false" >&2
+        exit 1
+        ;;
+esac
 
 # A named volume mounted at WEGENT_EXECUTOR_HOME may contain an older binary.
 # Refresh only the binary from the current image and preserve the remaining data.
-mkdir -p "$WEGENT_EXECUTOR_HOME/bin" "$LOCAL_WORKSPACE_ROOT" "$DEVICE_LOG_DIR"
+mkdir -p \
+    "$WEGENT_EXECUTOR_HOME/bin" \
+    "$WEGENT_EXECUTOR_HOME/runtime-work" \
+    "$WEGENT_EXECUTOR_HOME/capabilities" \
+    "$WEGENT_EXECUTOR_HOME/sessions" \
+    "$LOCAL_WORKSPACE_ROOT/projects" \
+    "$LOCAL_WORKSPACE_ROOT/chats" \
+    "$LOCAL_WORKSPACE_ROOT/worktrees" \
+    "$DEVICE_LOG_DIR"
+
+# Hold an exclusive writer lock for the lifetime of this container. This
+# prevents two Executors from mutating the same home when the backing
+# filesystem provides normal POSIX advisory locking.
+exec 9>"$WEGENT_EXECUTOR_HOME/.writer.lock"
+if ! flock -n 9; then
+    echo "Another Executor is already using WEGENT_EXECUTOR_HOME" >&2
+    exit 1
+fi
+
+# A deployment may pin the volume identity to its logical device ID. Reusing a
+# volume belonging to another device is rejected before the Executor starts.
+if [ -n "${WEGENT_EXECUTOR_HOME_ID:-}" ]; then
+    _home_id_file="$WEGENT_EXECUTOR_HOME/.executor-home-id"
+    if [ -f "$_home_id_file" ]; then
+        _persisted_home_id="$(cat "$_home_id_file")"
+        if [ "$_persisted_home_id" != "$WEGENT_EXECUTOR_HOME_ID" ]; then
+            echo "Executor Home identity does not match WEGENT_EXECUTOR_HOME_ID" >&2
+            exit 1
+        fi
+    else
+        printf '%s' "$WEGENT_EXECUTOR_HOME_ID" >"$_home_id_file"
+    fi
+fi
+
+_write_probe="$WEGENT_EXECUTOR_HOME/.write-probe.$$"
+printf 'ok' >"$_write_probe"
+rm -f "$_write_probe"
 install -m 0755 /app/executor "$WEGENT_EXECUTOR_HOME/bin/wegent-executor"
 
 # Auto-detect public base URL if not explicitly set.

@@ -1,5 +1,5 @@
 import { CircleCheck, Loader2, RefreshCw, X } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import type {
@@ -9,6 +9,7 @@ import type {
   RuntimeWorktreeConversation,
   RuntimeWorktreeSettings,
 } from '@/types/api'
+import { deviceSupportsManagedWorktrees } from '@/lib/worktree-availability'
 import {
   SettingsGroup,
   SettingsPage,
@@ -21,7 +22,9 @@ type RuntimeWorkApi = NonNullable<WorkbenchServices['runtimeWorkApi']>
 
 interface WorktreesSettingsPageProps {
   api?: RuntimeWorkApi
-  devices?: Array<Pick<DeviceInfo, 'device_id' | 'name' | 'status'>>
+  devices?: Array<
+    Pick<DeviceInfo, 'device_id' | 'name' | 'status' | 'device_type' | 'runtime_features'>
+  >
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void>
   onRefreshWorkLists?: () => Promise<void>
   onLeaveSettings?: () => void
@@ -125,11 +128,18 @@ export function WorktreesSettingsPage({
 }: WorktreesSettingsPageProps) {
   const { t } = useTranslation('common')
   const availableDevices = useMemo(
-    () => devices.filter(device => device.status === 'online'),
+    () =>
+      devices.filter(
+        device =>
+          (device.status === 'online' || device.status === 'busy') &&
+          deviceSupportsManagedWorktrees(device)
+      ),
     [devices]
   )
   const [deviceId, setDeviceId] = useState(availableDevices[0]?.device_id ?? '')
-  const selectedDeviceId = deviceId || availableDevices[0]?.device_id || ''
+  const selectedDeviceId = availableDevices.some(device => device.device_id === deviceId)
+    ? deviceId
+    : (availableDevices[0]?.device_id ?? '')
   const [settings, setSettings] = useState<RuntimeWorktreeSettings | null>(null)
   const [rootDraft, setRootDraft] = useState('')
   const [keepCountDraft, setKeepCountDraft] = useState('15')
@@ -141,12 +151,19 @@ export function WorktreesSettingsPage({
   const [pendingDisableCleanup, setPendingDisableCleanup] = useState(false)
   const [savedNotice, setSavedNotice] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const loadSequence = useRef(0)
 
   const load = useCallback(async () => {
+    const sequence = loadSequence.current + 1
+    loadSequence.current = sequence
     if (!api || !selectedDeviceId) {
+      setSettings(null)
+      setItems([])
       setLoading(false)
       return
     }
+    setSettings(null)
+    setItems([])
     setLoading(true)
     setError(null)
     try {
@@ -154,16 +171,18 @@ export function WorktreesSettingsPage({
         api.getWorktreeSettings({ deviceId: selectedDeviceId }),
         api.listWorktrees({ deviceId: selectedDeviceId }),
       ])
+      if (loadSequence.current !== sequence) return
       setSettings(nextSettings)
       setRootDraft(nextSettings.worktreeRoot)
       setKeepCountDraft(String(nextSettings.keepCount))
       setItems(response.items)
     } catch (loadError) {
+      if (loadSequence.current !== sequence) return
       setError(
         loadError instanceof Error ? loadError.message : t('workbench.worktrees_load_failed')
       )
     } finally {
-      setLoading(false)
+      if (loadSequence.current === sequence) setLoading(false)
     }
   }, [api, selectedDeviceId, t])
 

@@ -78,8 +78,12 @@ import type {
   RuntimeWorkspaceSearchRequest,
   RuntimeWorkspaceSearchResponse,
   RuntimeWorktreeDeleteRequest,
+  RuntimeWorktreeCapabilitiesRequest,
+  RuntimeWorktreeCapabilitiesResponse,
   RuntimeWorktreeListResponse,
   RuntimeWorktreeMutationResponse,
+  RuntimeWorktreePreflightRequest,
+  RuntimeWorktreePreflightResponse,
   RuntimeWorktreePrepareRequest,
   RuntimeWorktreeSettings,
   RuntimeWorktreeSettingsPatch,
@@ -2668,6 +2672,16 @@ export function createRuntimeWorkApiFromIpc(
     },
     setRuntimeTaskPinned(data: RuntimeTaskPinRequest): Promise<RuntimeSidebarMutationResponse> {
       return requestWithLocalDevice('runtime.sidebar.tasks.pin', data)
+    },
+    getWorktreeCapabilities(
+      data: RuntimeWorktreeCapabilitiesRequest
+    ): Promise<RuntimeWorktreeCapabilitiesResponse> {
+      return requestWithLocalDevice('runtime.worktrees.capabilities', data)
+    },
+    preflightWorktree(
+      data: RuntimeWorktreePreflightRequest
+    ): Promise<RuntimeWorktreePreflightResponse> {
+      return requestWithLocalDevice('runtime.worktrees.preflight', data)
     },
     getWorktreeSettings(data: { deviceId: string }): Promise<RuntimeWorktreeSettings> {
       return requestWithLocalDevice('runtime.worktrees.settings.get', data)

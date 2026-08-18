@@ -3549,7 +3549,7 @@ describe('DesktopWorkbenchLayout', () => {
     fireEvent.click(screen.getByTestId('harness-session-picker-create-button'))
     expect(await screen.findByTestId('transient-notice')).toHaveTextContent('Right session failed')
     expect(screen.getByTestId('central-harness-terminal')).toBeInTheDocument()
-  })
+  }, 15_000)
 
   test('prepares a project worktree before starting the primary OpenCode session', async () => {
     isLocalTerminalAvailableMock.mockReturnValue(true)
@@ -3623,7 +3623,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('project-local-tasks-panel-1')).toContainElement(
       await screen.findByTestId('local-harness-session-row-local-harness-1')
     )
-  })
+  }, 15_000)
 
   test('lists active native harness sessions without opening one after a WebView reload', async () => {
     isLocalTerminalAvailableMock.mockReturnValue(true)

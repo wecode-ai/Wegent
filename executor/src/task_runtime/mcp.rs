@@ -1920,6 +1920,7 @@ mod tests {
 
     #[test]
     fn falls_back_to_device_backend_env_for_space_mcp() {
+        let _lock = crate::test_env::lock();
         let previous_url = env::var("WEGENT_BACKEND_URL").ok();
         let previous_token = env::var("WEGENT_AUTH_TOKEN").ok();
         env::set_var("WEGENT_BACKEND_URL", "https://wework.example.com");

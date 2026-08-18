@@ -21,6 +21,8 @@ const mocks = vi.hoisted(() => {
   const cloudListTeams = vi.fn()
   const cloudGetDefaultWorkbenchTeam = vi.fn()
   const localSearchRuntimeWork = vi.fn()
+  const localGetWorktreeCapabilities = vi.fn()
+  const localPreflightWorktree = vi.fn()
   const localGetWorktreeSettings = vi.fn()
   const cloudSearchRuntimeWork = vi.fn()
   const cloudCreateDockerRemoteDeviceCommand = vi.fn()
@@ -88,6 +90,8 @@ const mocks = vi.hoisted(() => {
       rollbackRuntimeTask: vi.fn(),
       compactRuntimeTask: vi.fn(),
       searchRuntimeWork: localSearchRuntimeWork,
+      getWorktreeCapabilities: localGetWorktreeCapabilities,
+      preflightWorktree: localPreflightWorktree,
       getWorktreeSettings: localGetWorktreeSettings,
       listArchivedConversations: localListArchivedConversations,
       archiveAllConversations: localArchiveAllConversations,
@@ -165,6 +169,8 @@ const mocks = vi.hoisted(() => {
     cloudListTeams,
     cloudGetDefaultWorkbenchTeam,
     localSearchRuntimeWork,
+    localGetWorktreeCapabilities,
+    localPreflightWorktree,
     localGetWorktreeSettings,
     cloudSearchRuntimeWork,
     cloudCreateDockerRemoteDeviceCommand,
@@ -263,6 +269,12 @@ vi.mock('@/api/local/localServices', () => ({
           data,
           String(data.deviceId ?? (await getDefaultDeviceId()))
         )
+      },
+      getWorktreeCapabilities(data: Record<string, unknown>) {
+        return request('runtime.worktrees.capabilities', data, String(data.deviceId))
+      },
+      preflightWorktree(data: Record<string, unknown>) {
+        return request('runtime.worktrees.preflight', data, String(data.deviceId))
       },
       getWorktreeSettings(data: Record<string, unknown>) {
         return request('runtime.worktrees.settings.get', data, String(data.deviceId))
@@ -417,6 +429,32 @@ describe('createHybridWorkbenchServices', () => {
     mocks.localListModels.mockResolvedValue({ data: [codexModel] })
     mocks.cloudListModels.mockResolvedValue({ data: [synthesizedCodexModel] })
     mocks.localSearchRuntimeWork.mockResolvedValue({ items: [] })
+    mocks.localGetWorktreeCapabilities.mockResolvedValue({
+      success: true,
+      deviceId: 'local-device',
+      runtimeWorktrees: {
+        version: 1,
+        managed: true,
+        deferredPrepare: true,
+        snapshots: true,
+        restore: true,
+        preflight: true,
+      },
+    })
+    mocks.localPreflightWorktree.mockResolvedValue({
+      success: true,
+      deviceId: 'local-device',
+      supported: true,
+      sourcePath: '/tmp/local',
+      sourceExists: true,
+      sourceDirectory: true,
+      gitRepository: true,
+      gitCommonDirValid: true,
+      gitCommonDirWritable: true,
+      writable: true,
+      repoRoot: '/tmp/local',
+      resolvedWorktreeRoot: '/tmp/local-worktrees',
+    })
     mocks.localGetWorktreeSettings.mockResolvedValue({
       deviceId: 'local-device',
       worktreeRoot: '',
@@ -789,6 +827,105 @@ describe('createHybridWorkbenchServices', () => {
     )
   })
 
+  it('routes Worktree capabilities and preflight to local, cloud, and remote devices', async () => {
+    mocks.cloudListDevices.mockResolvedValue([
+      {
+        id: 1,
+        device_id: 'cloud-device',
+        socket_device_id: 'cloud-runtime-device',
+        name: 'Cloud Executor',
+        status: 'online',
+        is_default: false,
+        device_type: 'cloud',
+        bind_shell: 'claudecode',
+      },
+      {
+        id: 2,
+        device_id: 'remote-device',
+        socket_device_id: 'remote-runtime-device',
+        name: 'Remote Executor',
+        status: 'busy',
+        is_default: false,
+        device_type: 'remote',
+        bind_shell: 'claudecode',
+      },
+    ])
+    const services = createServices()
+    await services.cloudBackgroundApi?.listDevices?.()
+
+    await services.runtimeWorkApi?.getWorktreeCapabilities({
+      deviceId: 'local-device',
+    })
+    await services.runtimeWorkApi?.preflightWorktree({
+      deviceId: 'cloud-device',
+      sourcePath: '/workspace/cloud',
+    })
+    await services.runtimeWorkApi?.preflightWorktree({
+      deviceId: 'remote-device',
+      sourcePath: '/workspace/remote',
+    })
+
+    expect(mocks.localGetWorktreeCapabilities).toHaveBeenCalledWith({
+      deviceId: 'local-device',
+    })
+    expect(mocks.cloudRuntimeIpcRequest).toHaveBeenCalledWith(
+      'runtime.worktrees.preflight',
+      {
+        deviceId: 'cloud-device',
+        sourcePath: '/workspace/cloud',
+      },
+      'cloud-device'
+    )
+    expect(mocks.cloudRuntimeIpcRequest).toHaveBeenCalledWith(
+      'runtime.worktrees.preflight',
+      {
+        deviceId: 'remote-device',
+        sourcePath: '/workspace/remote',
+      },
+      'remote-device'
+    )
+  })
+
+  it('rejects unknown and offline Worktree targets without falling back to local IPC', async () => {
+    mocks.cloudListDevices.mockResolvedValue([
+      {
+        id: 1,
+        device_id: 'offline-device',
+        name: 'Offline Executor',
+        status: 'offline',
+        is_default: false,
+        device_type: 'cloud',
+        bind_shell: 'claudecode',
+      },
+    ])
+    const services = createServices()
+
+    await expect(
+      services.runtimeWorkApi?.getWorktreeCapabilities({
+        deviceId: 'missing-device',
+      })
+    ).rejects.toThrow('executor-not-found:missing-device')
+    await expect(
+      services.runtimeWorkApi?.preflightWorktree({
+        deviceId: 'offline-device',
+        sourcePath: '/workspace/offline',
+      })
+    ).rejects.toThrow('executor-offline:offline-device')
+
+    expect(mocks.localGetWorktreeCapabilities).not.toHaveBeenCalled()
+    expect(mocks.localPreflightWorktree).not.toHaveBeenCalled()
+    expect(mocks.cloudRuntimeIpcRequest).not.toHaveBeenCalledWith(
+      'runtime.worktrees.capabilities',
+      expect.anything(),
+      expect.anything()
+    )
+    expect(mocks.cloudRuntimeIpcRequest).not.toHaveBeenCalledWith(
+      'runtime.worktrees.preflight',
+      expect.anything(),
+      expect.anything()
+    )
+  })
+
   it('routes cloud device commands through runtime IPC instead of the restricted REST API', async () => {
     mocks.cloudListDevices.mockResolvedValue([
       {
@@ -825,7 +962,7 @@ describe('createHybridWorkbenchServices', () => {
     expect(mocks.cloudRuntimeIpcRequest).toHaveBeenCalledWith(
       'device.execute_command',
       { command_key: 'git_branch', cwd: '/workspace/cloud' },
-      'cloud-runtime-device'
+      'cloud-device'
     )
     expect(mocks.cloudServices.deviceApi.executeCommand).not.toHaveBeenCalled()
   })
@@ -867,7 +1004,7 @@ describe('createHybridWorkbenchServices', () => {
         command_key: 'git_branch',
         cwd: '/home/ubuntu/workspace/hello',
       },
-      'cloud-runtime-device'
+      '9562a3b4-61a3-4217-9655-0341b231eb06'
     )
   })
 
@@ -1141,6 +1278,81 @@ describe('createHybridWorkbenchServices', () => {
     )
   })
 
+  it('routes remote task creation through the logical remote device id', async () => {
+    mocks.cloudListDevices.mockResolvedValue([
+      {
+        id: 2,
+        device_id: 'remote-device',
+        socket_device_id: 'remote-runtime-device',
+        name: 'Remote Executor',
+        status: 'online',
+        is_default: false,
+        device_type: 'remote',
+        bind_shell: 'claudecode',
+      },
+    ])
+    const services = createServices()
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      deviceId: 'remote-device',
+      workspacePath: '/workspace/remote',
+      teamId: 1,
+      runtime: 'codex',
+      message: 'remote',
+    })
+
+    expect(mocks.localCreateRuntimeTask).not.toHaveBeenCalled()
+    expect(mocks.cloudRuntimeIpcRequest).toHaveBeenCalledWith(
+      'runtime.tasks.create',
+      expect.objectContaining({
+        deviceId: 'remote-device',
+        workspacePath: '/workspace/remote',
+      }),
+      'remote-device'
+    )
+  })
+
+  it('rejects unknown and offline task targets without creating a local task', async () => {
+    mocks.cloudListDevices.mockResolvedValue([
+      {
+        id: 2,
+        device_id: 'offline-device',
+        name: 'Offline Executor',
+        status: 'offline',
+        is_default: false,
+        device_type: 'remote',
+        bind_shell: 'claudecode',
+      },
+    ])
+    const services = createServices()
+    const request = {
+      workspacePath: '/workspace/remote',
+      teamId: 1,
+      runtime: 'codex',
+      message: 'remote',
+    } as const
+
+    await expect(
+      services.runtimeWorkApi?.createRuntimeTask({
+        ...request,
+        deviceId: 'missing-device',
+      })
+    ).rejects.toThrow('executor-not-found:missing-device')
+    await expect(
+      services.runtimeWorkApi?.createRuntimeTask({
+        ...request,
+        deviceId: 'offline-device',
+      })
+    ).rejects.toThrow('executor-offline:offline-device')
+
+    expect(mocks.localCreateRuntimeTask).not.toHaveBeenCalled()
+    expect(mocks.cloudRuntimeIpcRequest).not.toHaveBeenCalledWith(
+      'runtime.tasks.create',
+      expect.anything(),
+      expect.anything()
+    )
+  })
+
   it('configures the cloud model gateway for cloud device runtime tasks', async () => {
     const services = createServices()
     await services.deviceApi.listDevices()
@@ -1197,7 +1409,7 @@ describe('createHybridWorkbenchServices', () => {
     expect(mocks.cloudRuntimeIpcRequest).not.toHaveBeenCalled()
   })
 
-  it('routes cloud runtime IPC through socket_device_id when provided', async () => {
+  it('routes cloud runtime IPC through the logical device id when a socket id is present', async () => {
     mocks.cloudListDevices.mockResolvedValue([
       {
         id: 1,
@@ -1224,7 +1436,7 @@ describe('createHybridWorkbenchServices', () => {
     expect(mocks.cloudRuntimeIpcRequest).toHaveBeenCalledWith(
       'runtime.tasks.create',
       expect.objectContaining({ deviceId: 'cloud-device' }),
-      'socket-device'
+      'cloud-device'
     )
   })
 
