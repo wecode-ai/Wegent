@@ -115,6 +115,10 @@ classify_wework_path() {
       desktop_runner_changed=true
       return
       ;;
+    wework/e2e/utils/mcp-elicitation-server.mjs)
+      select_target "core:permission-modes"
+      return
+      ;;
 
     # Plugin features have independently bootstrapped desktop segments.
     wework/src/components/plugins/* | \

@@ -130,6 +130,13 @@ import {
   LOCAL_MODEL_SWITCH_INVALID_CALL_ID,
   LOCAL_VISION_SIDECAR_CASE,
   MEMORY_PROMPT,
+  MCP_ELICITATION_ACCEPTED_MARKER,
+  MCP_ELICITATION_CALL_ID,
+  MCP_ELICITATION_COMPLETION_TEXT,
+  MCP_ELICITATION_NAMESPACE,
+  MCP_ELICITATION_PROMPT,
+  MCP_ELICITATION_SEARCH_ID,
+  MCP_ELICITATION_TOOL_NAME,
   MESSAGE_EDIT_ORIGINAL_COMPLETION_TEXT,
   MESSAGE_EDIT_ORIGINAL_PROMPT,
   MESSAGE_EDIT_UPDATED_COMPLETION_TEXT,
@@ -576,6 +583,7 @@ class DesktopE2EServer {
         'fork_follow_up',
         'task_plan',
         'request_user_input',
+        'mcp_elicitation',
         'window_lifecycle',
         'background_completion_restore',
         'background_follow_up_restore',
@@ -2608,6 +2616,57 @@ class DesktopE2EServer {
         responseCompleted(responseId),
       ])
       this.resolveRequestUserInputResponseWritten()
+      return
+    }
+
+    if (this.scenario === 'mcp_elicitation') {
+      this.recordScenarioRequest('mcp_elicitation', modelRequest)
+      const requestNumber = this.scenarioRequests.get('mcp_elicitation').length
+      const requestText = JSON.stringify(body)
+
+      if (requestNumber === 1) {
+        assert.ok(
+          requestText.includes(MCP_ELICITATION_PROMPT),
+          'The real Codex request did not contain the MCP elicitation prompt'
+        )
+        const search = selectToolSearch(body, MCP_ELICITATION_TOOL_NAME)
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...toolSearchResponseEvents(MCP_ELICITATION_SEARCH_ID, search),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+
+      if (requestNumber === 2) {
+        const tool = selectMcpTool(body, MCP_ELICITATION_NAMESPACE, MCP_ELICITATION_TOOL_NAME, {})
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...namespacedFunctionCall(
+            MCP_ELICITATION_CALL_ID,
+            tool.namespace,
+            tool.name,
+            tool.arguments
+          ),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+
+      assert.equal(requestNumber, 3, `Unexpected MCP elicitation request ${requestNumber}`)
+      assert.ok(
+        requestContainsToolOutput(body, MCP_ELICITATION_CALL_ID),
+        'The MCP elicitation tool output did not return to the real model request'
+      )
+      assert.ok(
+        requestText.includes(MCP_ELICITATION_ACCEPTED_MARKER),
+        'The MCP server did not return the accepted audience marker to the model'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(MCP_ELICITATION_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
       return
     }
 

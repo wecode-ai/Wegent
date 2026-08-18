@@ -4316,6 +4316,59 @@ mod tests {
     }
 
     #[test]
+    fn maps_mcp_form_elicitation_to_interactive_tool_block() {
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+        let request = ExecutionRequest {
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
+            ..ExecutionRequest::default()
+        };
+
+        map_codex_notification(
+            &Some(event_tx),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "id": 73,
+                "method": "mcpServer/elicitation/request",
+                "params": {
+                    "serverName": "wegent-sites",
+                    "mode": "form",
+                    "message": "请选择内网访问范围。",
+                    "requestedSchema": {
+                        "type": "object",
+                        "properties": {
+                            "audience": {
+                                "type": "string",
+                                "title": "访问范围",
+                                "enum": ["all", "owner"],
+                                "enumNames": ["所有人", "仅自己"]
+                            }
+                        },
+                        "required": ["audience"]
+                    }
+                }
+            }),
+        );
+
+        let event = event_rx
+            .try_recv()
+            .expect("MCP form elicitation event should be emitted");
+        let block = &event["payload"]["data"]["block"];
+        assert_eq!(event["event"], "response.block.created");
+        assert_eq!(block["id"], "request-user-input-73");
+        assert_eq!(block["tool_name"], "request_user_input");
+        assert_eq!(block["status"], "pending");
+        assert_eq!(block["render_payload"]["kind"], "request_user_input");
+        assert_eq!(block["render_payload"]["serverName"], "wegent-sites");
+        assert_eq!(
+            block["render_payload"]["questions"][0]["options"][1],
+            json!({"label": "仅自己", "description": "owner"})
+        );
+    }
+
+    #[test]
     fn maps_codex_command_approval_to_interactive_tool_block() {
         let (event_tx, mut event_rx) = broadcast::channel(4);
         let request = ExecutionRequest {
