@@ -1,5 +1,5 @@
 import { Bot, CheckSquare2, CloudOff, Columns3, Plus, X } from 'lucide-react'
-import { useEffect, useRef, useState, type DragEvent, type RefObject } from 'react'
+import { useEffect, useMemo, useRef, useState, type DragEvent, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
@@ -17,6 +17,12 @@ interface MenuPosition {
 
 interface TabContextMenuState extends MenuPosition {
   tabId: string
+}
+
+const DEFAULT_AVAILABLE_KINDS: WorkspaceTabKind[] = ['task', 'board', 'agent', 'auxiliary']
+
+interface WorkspaceTabStripProps {
+  availableKinds?: readonly WorkspaceTabKind[]
 }
 
 function tabKindIcon(kind: WorkspaceTabKind, unavailable = false) {
@@ -181,7 +187,9 @@ function WorkspaceTabButton({
   )
 }
 
-export function WorkspaceTabStrip() {
+export function WorkspaceTabStrip({
+  availableKinds = DEFAULT_AVAILABLE_KINDS,
+}: WorkspaceTabStripProps) {
   const { t } = useTranslation('common')
   const cloud = useOptionalCloudConnection()
   const {
@@ -202,15 +210,41 @@ export function WorkspaceTabStrip() {
   const [draggedTabId, setDraggedTabId] = useState<string | null>(null)
   const [cloudConnectionOpen, setCloudConnectionOpen] = useState(false)
   const agentAvailable = Boolean(cloud.isConnected && cloud.webUrl)
+  const availableKindSet = useMemo(() => new Set(availableKinds), [availableKinds])
+  const visibleTabs = useMemo(
+    () => tabs.filter(tab => availableKindSet.has(tab.kind)),
+    [availableKindSet, tabs]
+  )
+  const visibleActiveTabId =
+    visibleTabs.find(tab => tab.id === activeTabId)?.id ?? visibleTabs[0]?.id ?? activeTabId
   useOutsideMenu(Boolean(addMenuPosition), addMenuRef, () => setAddMenuPosition(null))
   useOutsideMenu(Boolean(contextMenu), contextMenuRef, () => setContextMenu(null))
+
+  useEffect(() => {
+    if (tabs.length > 0 && visibleTabs.length === 0) {
+      const fallbackKind =
+        availableKinds.find(kind => kind !== 'auxiliary' && kind !== 'board') ?? availableKinds[0]
+      if (fallbackKind) openTab(fallbackKind)
+      return
+    }
+    if (visibleActiveTabId === activeTabId) return
+    selectTab(visibleActiveTabId)
+  }, [
+    activeTabId,
+    availableKinds,
+    openTab,
+    selectTab,
+    tabs.length,
+    visibleActiveTabId,
+    visibleTabs.length,
+  ])
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey) || event.altKey) return
       if (event.key.toLowerCase() === 'w' && !event.shiftKey) {
         event.preventDefault()
-        closeTab(activeTabId)
+        closeTab(visibleActiveTabId)
         return
       }
       if (event.key.toLowerCase() === 't' && event.shiftKey) {
@@ -219,8 +253,8 @@ export function WorkspaceTabStrip() {
         return
       }
       if (!event.shiftKey && /^[1-9]$/.test(event.key)) {
-        const index = event.key === '9' ? tabs.length - 1 : Number(event.key) - 1
-        const tab = tabs[index]
+        const index = event.key === '9' ? visibleTabs.length - 1 : Number(event.key) - 1
+        const tab = visibleTabs[index]
         if (!tab) return
         event.preventDefault()
         selectTab(tab.id)
@@ -228,13 +262,21 @@ export function WorkspaceTabStrip() {
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [activeTabId, closeTab, restoreClosedTab, selectTab, tabs])
+  }, [activeTabId, closeTab, restoreClosedTab, selectTab, visibleActiveTabId, visibleTabs])
 
   const openNewTab = (kind: WorkspaceTabKind) => {
+    if (!availableKindSet.has(kind)) return
     openTab(kind)
     setAddMenuPosition(null)
   }
-  const contextTab = tabs.find(tab => tab.id === contextMenu?.tabId) ?? null
+  const contextTab = visibleTabs.find(tab => tab.id === contextMenu?.tabId) ?? null
+  const addMenuKinds = (
+    [
+      ['task', CheckSquare2, t('workbench.workspace_tab_task', '任务')],
+      ['board', Columns3, t('workbench.workspace_tab_board', '工作空间视图')],
+      ['agent', Bot, t('workbench.workspace_tab_agent', '智能体')],
+    ] as const
+  ).filter(([kind]) => availableKindSet.has(kind))
 
   return (
     <>
@@ -248,11 +290,11 @@ export function WorkspaceTabStrip() {
           aria-label={t('workbench.workspace_tabs', '工作区标签页')}
           className="workspace-tab-strip-scrollbar flex h-full min-w-0 max-w-[calc(100%-2rem)] flex-none items-center gap-0.5 overflow-x-auto overflow-y-hidden"
         >
-          {tabs.map(tab => (
+          {visibleTabs.map(tab => (
             <WorkspaceTabButton
               key={tab.id}
               tab={tab}
-              active={tab.id === activeTabId}
+              active={tab.id === visibleActiveTabId}
               draggedTabId={draggedTabId}
               onDragStartTab={setDraggedTabId}
               onDragEndTab={() => setDraggedTabId(null)}
@@ -295,13 +337,7 @@ export function WorkspaceTabStrip() {
               className="fixed z-system-popover w-[184px] rounded-xl border border-border/70 bg-popover/95 p-1 shadow-lg backdrop-blur-md"
               style={addMenuPosition}
             >
-              {(
-                [
-                  ['task', CheckSquare2, t('workbench.workspace_tab_task', '任务')],
-                  ['board', Columns3, t('workbench.workspace_tab_board', '工作空间视图')],
-                  ['agent', Bot, t('workbench.workspace_tab_agent', '智能体')],
-                ] as const
-              ).map(([kind, Icon, label]) => (
+              {addMenuKinds.map(([kind, Icon, label]) => (
                 <button
                   key={kind}
                   type="button"
