@@ -21,6 +21,7 @@ import {
   streamingTextEvents,
   toolSearchResponseEvents,
 } from '../modules/response-protocol.mjs'
+import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 
 const PROJECT_ID = '700000000000000001'
 const AGENT_ID = 'agent-project-automation'
@@ -529,6 +530,85 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       timeoutMs: uiTimeoutMs,
     })
 
+    await control.command('click', '[data-testid="project-workflow-mode-workflow"]')
+    await control.command('click', '[data-testid="project-workflow-empty-add"]')
+    await control.command('fill', '[data-testid="project-workflow-stage-name-stage-1"]', {
+      value: '真实后端开发阶段',
+    })
+    await control.command('fill', '[data-testid="project-workflow-stage-prompt-stage-1"]', {
+      value: '实现 Issue 中描述的功能并完成验证。',
+    })
+    await control.command('clickWhenEnabled', '[data-testid="project-workflow-save"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    const persistedWorkflowProject = await waitForValue(
+      () => cloudRequest(`/api/v1/cloud-projects/${projectId}`),
+      project =>
+        project.workflow_definition?.nodes?.some(
+          node =>
+            node.id === 'stage-1' &&
+            node.name === '真实后端开发阶段' &&
+            node.workspace_policy === 'composer' &&
+            node.automation_rule_id === null
+        ),
+      'The workflow definition was not persisted by the real backend',
+      uiTimeoutMs
+    )
+    assert.equal(persistedWorkflowProject.workflow_definition.stage_mode, 'dag')
+    assert.equal(persistedWorkflowProject.workflow_definition.advancement_policy, 'manual')
+
+    await control.command('click', '[data-testid="cloud-project-board-view"]')
+    if ((await control.command('getElementCount', '[data-testid="cloud-todo-detail-close"]')) > 0) {
+      await control.command('click', '[data-testid="cloud-todo-detail-close"]')
+    }
+    await control.command('click', `${activeBoard} [data-testid="cloud-todo-add"]`)
+    await control.command('waitFor', `${activeBoard} [data-testid="workspace-issue-input"]`, {
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('fill', `${activeBoard} [data-testid="workspace-issue-input"]`, {
+      value: '真实后端阶段任务绑定',
+    })
+    await control.command('click', `${activeBoard} [data-testid="workspace-issue-submit"]`)
+    await control.command('waitFor', `${activeBoard} [data-testid="cloud-todo-detail-title"]`, {
+      text: '真实后端阶段任务绑定',
+      timeoutMs: uiTimeoutMs,
+    })
+    const workflowIssue = await waitForValue(
+      () => cloudRequest(`/api/v1/cloud-projects/${projectId}/loop-items`),
+      response =>
+        (response.items ?? []).find(item => item.title === '真实后端阶段任务绑定')?.workflow
+          ?.nodes?.[0]?.status === 'ready',
+      'The UI-created Issue did not persist its workflow snapshot',
+      uiTimeoutMs
+    ).then(response => response.items.find(item => item.title === '真实后端阶段任务绑定'))
+    assert.equal(workflowIssue.workflow?.nodes?.[0]?.id, 'stage-1')
+    await control.command('waitFor', '[data-testid="cloud-todo-create-workflow-task-stage-1"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('click', '[data-testid="cloud-todo-create-workflow-task-stage-1"]')
+    await control.command('waitFor', '[data-testid="ai-chat-modal"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    const workflowTaskInput = '[data-testid="ai-chat-modal"] [data-testid="chat-message-input"]'
+    await control.command('fill', workflowTaskInput, {
+      value: '执行真实后端阶段任务绑定验证',
+    })
+    await control.command('press', workflowTaskInput, { key: 'Enter' })
+    const workflowBindings = await waitForValue(
+      () => cloudRequest(`/api/v1/loop-items/${workflowIssue.id}/tasks`),
+      bindings => bindings.some(binding => binding.workflow_node_id === 'stage-1'),
+      'The created task was not persisted against workflow stage-1',
+      uiTimeoutMs * 2
+    )
+    assert.ok(workflowBindings.some(binding => binding.workflow_node_id === 'stage-1'))
+    await captureScreenshot(control, 'project-automation-00-real-workflow-task-binding.png')
+    await control.command('click', '[data-testid="ai-chat-modal-close"]')
+    await control.command('click', '[data-testid="cloud-todo-detail-close"]')
+    await control.command('click', '[data-testid="cloud-project-automation-view"]')
+    await control.command('waitFor', '[data-testid="project-automation-rules"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+
     await control.command('click', '[data-testid="project-automation-create"]')
     await control.command('fill', '[data-testid="project-automation-name"]', {
       value: '凌晨回归扫描',
@@ -635,7 +715,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       timeoutMs: uiTimeoutMs,
       visible: true,
     })
-    await control.command('click', `[data-testid="cloud-project-chat-agent-${cloudAgent.id}"]`, {
+    const cloudAgentSelector = `${activeBoard} [data-testid="cloud-project-chat-agent-${cloudAgent.id}"]`
+    await control.command('scrollIntoView', cloudAgentSelector)
+    await control.command('waitFor', cloudAgentSelector, {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('click', cloudAgentSelector, {
       visible: true,
     })
     assert.equal(
@@ -1322,6 +1408,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
     },
 
     async verify(control) {
+      await control.command('waitFor', '[data-testid="settings-button"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await ensureExperimentalFeaturesEnabled(control)
       if (cloudApi) {
         await verifyRealCloud(control)
         return
@@ -1468,10 +1558,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         { timeoutMs: uiTimeoutMs }
       )
       const stageInspectorSnapshot = JSON.parse(
-        await control.command(
-          'snapshot',
-          '[data-testid="project-workflow-inspector-stage-1"]'
-        )
+        await control.command('snapshot', '[data-testid="project-workflow-inspector-stage-1"]')
       )
       assert.equal(
         stageInspectorSnapshot.testIds.includes('project-workflow-stage-automation-stage-1'),
