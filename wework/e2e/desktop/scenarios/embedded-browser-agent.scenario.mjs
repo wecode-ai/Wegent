@@ -834,6 +834,21 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         true,
         `The HTTP localhost fixture did not load: ${JSON.stringify(localhostWait)}`
       )
+      const localhostLocation = await bridgeCall({
+        action: 'evaluate',
+        expression: 'location.href',
+        timeoutMs: 5_000,
+      })
+      assert.equal(
+        localhostLocation.ok,
+        true,
+        `HTTP localhost location evaluation failed: ${JSON.stringify(localhostLocation)}`
+      )
+      assert.equal(
+        localhostLocation.value,
+        normalizedLocalhostUrl,
+        'The embedded browser did not navigate to the normalized HTTP URL'
+      )
       await new Promise(resolve => setTimeout(resolve, 300))
 
       const pendingAgentWait = bridgeCall({
