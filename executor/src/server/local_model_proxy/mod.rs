@@ -57,6 +57,24 @@ const RATE_LIMIT_RETRY_DELAYS: [Duration; 5] = [
 const MAX_RATE_LIMIT_RETRIES: u32 = RATE_LIMIT_RETRY_DELAYS.len() as u32;
 const MAX_RATE_LIMIT_RETRY_DELAY: Duration = Duration::from_secs(60);
 const LOCAL_MODEL_PROXY_REQUEST_TIMEOUT_SECONDS: u64 = 300;
+const FORWARDED_CODEX_REQUEST_HEADERS: [&str; 16] = [
+    "user-agent",
+    "originator",
+    "session-id",
+    "thread-id",
+    "x-client-request-id",
+    "x-codex-installation-id",
+    "x-codex-turn-state",
+    "x-codex-turn-metadata",
+    "x-codex-parent-thread-id",
+    "x-codex-window-id",
+    "x-codex-beta-features",
+    "x-openai-subagent",
+    "x-openai-memgen-request",
+    "x-openai-internal-codex-responses-lite",
+    "openai-beta",
+    "x-responsesapi-include-timing-metrics",
+];
 
 pub(crate) fn route<S>() -> MethodRouter<S>
 where
@@ -506,16 +524,13 @@ async fn handle_harness_messages(
             ("body_bytes", request_body.len().to_string()),
         ],
     );
-    let user_agent = headers
-        .get(header::USER_AGENT)
-        .and_then(|value| value.to_str().ok());
     let client = proxy_client(upstream.proxy_url.as_deref())?;
     let upstream_response = send_upstream_request_with_rate_limit_retry(
         &client,
         &upstream,
         &request_url,
         &request_body,
-        user_agent,
+        &headers,
     )
     .await?;
     let status = upstream_response.status();
@@ -717,17 +732,13 @@ async fn handle_for_token(
     }
     log_executor_event("local model proxy request started", &request_log_fields);
 
-    let user_agent = headers
-        .get(header::USER_AGENT)
-        .and_then(|value| value.to_str().ok())
-        .map(str::to_owned);
     let client = proxy_client(upstream.proxy_url.as_deref())?;
     let upstream_response = send_upstream_request_with_rate_limit_retry(
         &client,
         &upstream,
         &request_url,
         &request_body,
-        user_agent.as_deref(),
+        &headers,
     )
     .await?;
     let status = upstream_response.status();
@@ -1429,9 +1440,9 @@ fn prepare_request_with_model_hint(
         detail: format!("Invalid Codex Responses request: {error}"),
     })?;
     normalize_responses_request_ids(&mut responses_body);
-    apply_default_max_output_tokens(&mut responses_body, max_output_tokens);
 
     if api_format == "openai-responses" {
+        apply_configured_max_output_tokens(&mut responses_body, max_output_tokens);
         let (converted, context) = chat::responses_to_responses(
             &responses_body,
             tool_capabilities.convert_custom_tools,
@@ -1451,6 +1462,7 @@ fn prepare_request_with_model_hint(
         })?;
         return Ok((body, conversion, expanded_browser_tools));
     }
+    apply_default_max_output_tokens(&mut responses_body, max_output_tokens);
     let (converted, context) = match api_format {
         "openai-chat-completions" => {
             chat::responses_to_chat_with_model_hint(&responses_body, model_hint)
@@ -1471,7 +1483,18 @@ fn prepare_request_with_model_hint(
     Ok((body, Some(context), HashSet::new()))
 }
 
+fn apply_configured_max_output_tokens(body: &mut Value, max_output_tokens: Option<u64>) {
+    let Some(max_output_tokens) = max_output_tokens else {
+        return;
+    };
+    apply_max_output_tokens(body, max_output_tokens);
+}
+
 fn apply_default_max_output_tokens(body: &mut Value, max_output_tokens: Option<u64>) {
+    apply_max_output_tokens(body, max_output_tokens.unwrap_or(DEFAULT_MAX_OUTPUT_TOKENS));
+}
+
+fn apply_max_output_tokens(body: &mut Value, max_output_tokens: u64) {
     let Some(object) = body.as_object_mut() else {
         return;
     };
@@ -1483,11 +1506,7 @@ fn apply_default_max_output_tokens(body: &mut Value, max_output_tokens: Option<u
     }
     object.insert(
         "max_output_tokens".to_owned(),
-        Value::Number(
-            max_output_tokens
-                .unwrap_or(DEFAULT_MAX_OUTPUT_TOKENS)
-                .into(),
-        ),
+        Value::Number(max_output_tokens.into()),
     );
 }
 
@@ -1631,17 +1650,22 @@ async fn send_upstream_request_with_rate_limit_retry(
     upstream: &LocalModelProxyUpstream,
     request_url: &str,
     request_body: &[u8],
-    user_agent: Option<&str>,
+    incoming_headers: &HeaderMap,
 ) -> Result<reqwest::Response, HttpError> {
     for retry_count in 0..=MAX_RATE_LIMIT_RETRIES {
-        let response =
-            build_upstream_request(client, upstream, request_url, request_body, user_agent)
-                .send()
-                .await
-                .map_err(|error| HttpError {
-                    status: StatusCode::BAD_GATEWAY,
-                    detail: format!("Local model proxy request failed: {error}"),
-                })?;
+        let response = build_upstream_request(
+            client,
+            upstream,
+            request_url,
+            request_body,
+            incoming_headers,
+        )
+        .send()
+        .await
+        .map_err(|error| HttpError {
+            status: StatusCode::BAD_GATEWAY,
+            detail: format!("Local model proxy request failed: {error}"),
+        })?;
         if response.status() != reqwest::StatusCode::TOO_MANY_REQUESTS
             || retry_count == MAX_RATE_LIMIT_RETRIES
         {
@@ -1669,7 +1693,7 @@ fn build_upstream_request(
     upstream: &LocalModelProxyUpstream,
     request_url: &str,
     request_body: &[u8],
-    user_agent: Option<&str>,
+    incoming_headers: &HeaderMap,
 ) -> reqwest::RequestBuilder {
     let mut request = client
         .post(request_url)
@@ -1682,8 +1706,10 @@ fn build_upstream_request(
             .header("x-api-key", &upstream.api_key)
             .header("anthropic-version", "2023-06-01");
     }
-    if let Some(user_agent) = user_agent {
-        request = request.header(reqwest::header::USER_AGENT, user_agent);
+    for name in FORWARDED_CODEX_REQUEST_HEADERS {
+        if let Some(value) = incoming_headers.get(name) {
+            request = request.header(name, value);
+        }
     }
     for (key, value) in &upstream.default_headers {
         request = request.header(key, value);
@@ -2172,6 +2198,90 @@ fn ensure_usage_detail(usage: &mut Map<String, Value>, details_key: &str, field:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn upstream_request_preserves_codex_headers_without_forwarding_proxy_credentials() {
+        let upstream = LocalModelProxyUpstream {
+            base_url: "https://example.com/v1".to_owned(),
+            request_url: None,
+            api_format: "openai-responses".to_owned(),
+            convert_custom_tools: false,
+            native_tool_search: true,
+            native_namespace_tools: true,
+            api_key: "upstream-secret".to_owned(),
+            default_headers: Vec::new(),
+            proxy_url: None,
+            model_id: Some("gpt-5.6-sol".to_owned()),
+            routing_model_id: None,
+            max_output_tokens: None,
+        };
+        let mut incoming_headers = HeaderMap::new();
+        incoming_headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer local-router-secret"),
+        );
+        incoming_headers.insert(header::COOKIE, HeaderValue::from_static("session=secret"));
+        incoming_headers.insert(
+            header::USER_AGENT,
+            HeaderValue::from_static("codex-cli-test"),
+        );
+        incoming_headers.insert("originator", HeaderValue::from_static("codex_cli_rs"));
+        incoming_headers.insert("session-id", HeaderValue::from_static("session-123"));
+        incoming_headers.insert("thread-id", HeaderValue::from_static("thread-123"));
+        incoming_headers.insert(
+            "x-client-request-id",
+            HeaderValue::from_static("thread-123"),
+        );
+        incoming_headers.insert(
+            "x-codex-turn-metadata",
+            HeaderValue::from_static("{\"turn_id\":\"turn-123\"}"),
+        );
+        incoming_headers.insert(
+            "x-oai-attestation",
+            HeaderValue::from_static("private-attestation"),
+        );
+
+        let request = build_upstream_request(
+            &reqwest::Client::new(),
+            &upstream,
+            "https://example.com/v1/responses",
+            br#"{"model":"gpt-5.6-sol"}"#,
+            &incoming_headers,
+        )
+        .build()
+        .expect("upstream request");
+
+        assert_eq!(
+            request.headers().get(header::AUTHORIZATION),
+            Some(&HeaderValue::from_static("Bearer upstream-secret"))
+        );
+        assert_eq!(
+            request.headers().get(header::USER_AGENT),
+            Some(&HeaderValue::from_static("codex-cli-test"))
+        );
+        assert_eq!(
+            request.headers().get("originator"),
+            Some(&HeaderValue::from_static("codex_cli_rs"))
+        );
+        assert_eq!(
+            request.headers().get("session-id"),
+            Some(&HeaderValue::from_static("session-123"))
+        );
+        assert_eq!(
+            request.headers().get("thread-id"),
+            Some(&HeaderValue::from_static("thread-123"))
+        );
+        assert_eq!(
+            request.headers().get("x-client-request-id"),
+            Some(&HeaderValue::from_static("thread-123"))
+        );
+        assert_eq!(
+            request.headers().get("x-codex-turn-metadata"),
+            Some(&HeaderValue::from_static("{\"turn_id\":\"turn-123\"}"))
+        );
+        assert!(!request.headers().contains_key(header::COOKIE));
+        assert!(!request.headers().contains_key("x-oai-attestation"));
+    }
 
     #[test]
     fn tool_diagnostics_find_wework_tools_without_logging_schema_values() {
@@ -2784,6 +2894,36 @@ mod tests {
         let prepared: Value = serde_json::from_slice(&prepared).expect("prepared JSON");
 
         assert_eq!(prepared["max_tokens"], 96_000);
+    }
+
+    #[test]
+    fn native_responses_do_not_add_max_output_tokens_by_default() {
+        let body = serde_json::to_vec(&json!({
+            "model": "gpt-5.6-sol",
+            "input": [{"role": "user", "content": "finish the task"}]
+        }))
+        .expect("request body");
+
+        let (prepared, _, _) =
+            prepare_request("openai-responses", false, None, &body).expect("Responses request");
+        let prepared: Value = serde_json::from_slice(&prepared).expect("prepared JSON");
+
+        assert!(prepared.get("max_output_tokens").is_none());
+    }
+
+    #[test]
+    fn native_responses_add_configured_max_output_tokens() {
+        let body = serde_json::to_vec(&json!({
+            "model": "gpt-5.6-sol",
+            "input": [{"role": "user", "content": "finish the task"}]
+        }))
+        .expect("request body");
+
+        let (prepared, _, _) = prepare_request("openai-responses", false, Some(12_345), &body)
+            .expect("Responses request");
+        let prepared: Value = serde_json::from_slice(&prepared).expect("prepared JSON");
+
+        assert_eq!(prepared["max_output_tokens"], 12_345);
     }
 
     #[test]

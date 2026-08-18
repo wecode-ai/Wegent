@@ -81,7 +81,7 @@ async function waitForCurrentTask(control, taskId, message) {
     async () => {
       const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
       const task = snapshot.workbench?.currentRuntimeTask
-      return task?.taskId === taskId ? task : null
+      return task?.taskId === taskId && task.workspacePath ? task : null
     },
     WORKBENCH_READY_TIMEOUT_MS,
     message
