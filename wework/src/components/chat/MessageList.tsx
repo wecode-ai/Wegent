@@ -803,6 +803,7 @@ function areMessageListPropsEqual(previous: MessageListProps, next: MessageListP
       ? 'onAskSelectionInSidebar'
       : null,
     previous.onVirtualLayoutChange !== next.onVirtualLayoutChange ? 'onVirtualLayoutChange' : null,
+    previous.virtualAnchorToEnd !== next.virtualAnchorToEnd ? 'virtualAnchorToEnd' : null,
     previous.renderGapAfterMessage !== next.renderGapAfterMessage ? 'renderGapAfterMessage' : null,
   ].filter((key): key is string => key !== null)
 
