@@ -1152,19 +1152,16 @@ export function ProjectWorkBar({
             onSelectBranch={onWorktreeBranchChange}
           />
         )}
-      {currentProject &&
-        projectExecutionUi.supportsWorktree &&
-        executionModeLocked &&
-        branchName && (
-          <div
-            data-testid="project-work-branch-readonly"
-            className="flex h-9 min-w-0 max-w-[18rem] items-center gap-2 rounded-full px-2 text-sm font-normal leading-[18px] text-text-secondary"
-            title={branchName}
-          >
-            <GitBranch className="h-4 w-4 shrink-0" />
-            <span className="truncate">{branchName}</span>
-          </div>
-        )}
+      {currentProject && executionModeLocked && branchName && (
+        <div
+          data-testid="project-work-branch-readonly"
+          className="flex h-9 min-w-0 max-w-[18rem] items-center gap-2 rounded-full px-2 text-sm font-normal leading-[18px] text-text-secondary"
+          title={branchName}
+        >
+          <GitBranch className="h-4 w-4 shrink-0" />
+          <span className="truncate">{branchName}</span>
+        </div>
+      )}
       {endContext}
       {selectedWorkspaceIsRemote && selectedWorkspaceDeviceIp && (
         <div
