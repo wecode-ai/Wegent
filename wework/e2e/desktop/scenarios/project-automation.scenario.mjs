@@ -1467,6 +1467,41 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         '[data-testid="project-workflow-stage-executor-human-stage-1"]',
         { timeoutMs: uiTimeoutMs }
       )
+      await control.command('click', '[data-testid="project-workflow-add"]')
+      await control.command('waitFor', '[data-testid="project-workflow-stage-stage-2"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('press', '[data-testid="project-workflow-edge-stage-1-stage-2"]', {
+        key: 'Enter',
+      })
+      await control.command('press', 'body', { key: 'Delete' })
+      await control.command('waitFor', '[data-testid="project-workflow-edge-stage-1-stage-2"]', {
+        visible: false,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', '[data-testid="project-workflow-stage-stage-1"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', '[data-testid="project-workflow-stage-stage-2"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', '[data-testid="project-workflow-add"]')
+      await control.command('waitFor', '[data-testid="project-workflow-stage-stage-3"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('press', '[data-testid="project-workflow-edge-stage-2-stage-3"]', {
+        key: 'Enter',
+      })
+      await control.command('click', '[data-testid="project-workflow-stage-stage-3"]')
+      await control.command('press', 'body', { key: 'Backspace' })
+      await control.command('waitFor', '[data-testid="project-workflow-stage-stage-3"]', {
+        visible: false,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', '[data-testid="project-workflow-stage-stage-2"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', '[data-testid="project-workflow-stage-stage-1"]')
       const stageInspectorSnapshot = JSON.parse(
         await control.command(
           'snapshot',

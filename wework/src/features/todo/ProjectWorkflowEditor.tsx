@@ -417,6 +417,7 @@ export function ProjectWorkflowEditor({
         type: 'workflow',
         source: dependency,
         target: node.id,
+        selected: selectedEdge?.source === dependency && selectedEdge.target === node.id,
         markerEnd: { type: MarkerType.ArrowClosed },
         style: { stroke: 'rgb(var(--color-text-muted))', strokeWidth: 1.5 },
         data: {
@@ -477,22 +478,29 @@ export function ProjectWorkflowEditor({
     [updateNode, value.nodes]
   )
 
-  const handleEdgesDelete = useCallback(
-    (edges: Edge[]) => {
-      const removed = new Set(edges.map(edge => `${edge.source}-${edge.target}`))
+  const handleDelete = useCallback(
+    ({ nodes, edges }: { nodes: Node[]; edges: Edge[] }) => {
+      const removedNodeIds = new Set(nodes.map(node => node.id))
+      const removedEdges = new Set(edges.map(edge => `${edge.source}-${edge.target}`))
       updateDefinition({
-        nodes: value.nodes.map(node => ({
-          ...node,
-          depends_on: node.depends_on.filter(
-            dependency => !removed.has(`${dependency}-${node.id}`)
-          ),
-          dependency_context: Object.fromEntries(
-            Object.entries(node.dependency_context ?? {}).filter(
-              ([dependency]) => !removed.has(`${dependency}-${node.id}`)
-            )
-          ),
-        })),
+        nodes: value.nodes
+          .filter(node => !removedNodeIds.has(node.id))
+          .map(node => {
+            const shouldRemoveDependency = (dependency: string) =>
+              removedNodeIds.has(dependency) || removedEdges.has(`${dependency}-${node.id}`)
+            if (!node.depends_on.some(shouldRemoveDependency)) return node
+            return {
+              ...node,
+              depends_on: node.depends_on.filter(dependency => !shouldRemoveDependency(dependency)),
+              dependency_context: Object.fromEntries(
+                Object.entries(node.dependency_context ?? {}).filter(
+                  ([dependency]) => !shouldRemoveDependency(dependency)
+                )
+              ),
+            }
+          }),
       })
+      setSelectedNodeId(null)
       setSelectedEdge(null)
     },
     [updateDefinition, value.nodes]
@@ -715,7 +723,7 @@ export function ProjectWorkflowEditor({
                     setSelectedEdge(null)
                   }}
                   onConnect={handleConnect}
-                  onEdgesDelete={handleEdgesDelete}
+                  onDelete={handleDelete}
                   fitView
                   fitViewOptions={{ padding: 0.25, maxZoom: 1 }}
                   minZoom={0.35}

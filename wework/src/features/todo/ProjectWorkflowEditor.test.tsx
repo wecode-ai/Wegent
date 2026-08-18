@@ -30,6 +30,7 @@ vi.mock('@xyflow/react', () => ({
     nodeTypes,
     edgeTypes,
     onNodeClick,
+    onDelete,
     children,
   }: {
     nodes: Array<{
@@ -43,14 +44,32 @@ vi.mock('@xyflow/react', () => ({
       type: string
       source: string
       target: string
+      selected?: boolean
       data?: Record<string, unknown>
     }>
     nodeTypes: Record<string, ComponentType<Record<string, unknown>>>
     edgeTypes: Record<string, ComponentType<Record<string, unknown>>>
     onNodeClick?: (event: unknown, node: { id: string }) => void
+    onDelete?: (elements: {
+      nodes: Array<{ id: string }>
+      edges: Array<{ id: string; source: string; target: string }>
+    }) => void
     children?: ReactNode
   }) => (
-    <div>
+    <div
+      data-testid="mock-react-flow"
+      tabIndex={0}
+      onKeyDown={event => {
+        if (event.key !== 'Backspace' && event.key !== 'Delete') return
+        const selectedNodes = nodes.filter(node => node.selected)
+        const selectedNodeIds = new Set(selectedNodes.map(node => node.id))
+        const selectedEdges = edges.filter(
+          edge =>
+            edge.selected || selectedNodeIds.has(edge.source) || selectedNodeIds.has(edge.target)
+        )
+        onDelete?.({ nodes: selectedNodes, edges: selectedEdges })
+      }}
+    >
       {nodes.map(node => {
         const NodeComponent = nodeTypes[node.type]
         return (
@@ -215,6 +234,29 @@ describe('ProjectWorkflowEditor', () => {
     expect(onChange).toHaveBeenCalledWith(
       expect.objectContaining({ advancement_policy: 'ai', stage_mode: 'none' })
     )
+  })
+
+  test('deletes exactly the selected graph element with the keyboard', () => {
+    const onChange = vi.fn()
+    render(
+      <ProjectWorkflowEditor value={workflow} busy={false} onChange={onChange} onSave={vi.fn()} />
+    )
+
+    fireEvent.click(screen.getByTestId('project-workflow-edge-develop-test'))
+    fireEvent.keyDown(screen.getByTestId('mock-react-flow'), { key: 'Delete' })
+    expect(onChange).toHaveBeenLastCalledWith({
+      ...workflow,
+      nodes: [workflow.nodes[0], { ...workflow.nodes[1], depends_on: [], dependency_context: {} }],
+    })
+
+    onChange.mockClear()
+    fireEvent.click(screen.getByTestId('project-workflow-edge-develop-test'))
+    fireEvent.click(screen.getByTestId('project-workflow-stage-test'))
+    fireEvent.keyDown(screen.getByTestId('mock-react-flow'), { key: 'Backspace' })
+    expect(onChange).toHaveBeenLastCalledWith({
+      ...workflow,
+      nodes: [workflow.nodes[0]],
+    })
   })
 
   test('presents AI advancement as a concrete dispatcher instead of an automation rule', () => {
