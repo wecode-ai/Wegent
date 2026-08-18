@@ -1275,12 +1275,15 @@ class DockerExecutor(Executor):
                 "error_msg": f"Error deleting container: {str(e)}",
             }
 
-    def cancel_task(self, task_id: int) -> Dict[str, Any]:
+    def cancel_task(
+        self, task_id: int, subtask_id: Optional[int] = None
+    ) -> Dict[str, Any]:
         """
         Cancel a running task by calling the executor's cancel API.
 
         Args:
             task_id (int): Task ID to cancel.
+            subtask_id (Optional[int]): Exact Subtask ID to cancel when known.
 
         Returns:
             Dict[str, Any]: Cancellation result with unified structure.
@@ -1313,8 +1316,6 @@ class DockerExecutor(Executor):
                 }
             task_ids = result.get("task_ids", [])
 
-            task_ids = result.get("task_ids", [])
-
             container_name = container_detail.get("container_name")
             if not container_name:
                 logger.error(f"Could not find executor name for task {task_id}")
@@ -1335,7 +1336,12 @@ class DockerExecutor(Executor):
                     or f"Could not find port for container {container_name}",
                 }
 
-            cancel_url = f"http://{DEFAULT_DOCKER_HOST}:{port}/api/tasks/cancel?task_id={task_id}"
+            cancel_url = (
+                f"http://{DEFAULT_DOCKER_HOST}:{port}/api/tasks/cancel"
+                f"?task_id={task_id}"
+            )
+            if subtask_id is not None:
+                cancel_url += f"&subtask_id={subtask_id}"
 
             # Call the executor's cancel API
             logger.info(f"Calling cancel API for task {task_id} at {cancel_url}")

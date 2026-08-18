@@ -253,7 +253,12 @@ async fn app_ipc_manages_local_projects_and_nested_todos() {
     assert!(todos.as_array().unwrap().is_empty());
 
     let projects = server.dispatch("projects.list", json!({})).await.unwrap();
-    let current_project = &projects.as_array().unwrap()[0];
+    let current_project = projects
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|project| project["id"] == project_id)
+        .expect("created project should be listed");
     server
         .dispatch(
             "projects.archive",
@@ -262,7 +267,9 @@ async fn app_ipc_manages_local_projects_and_nested_todos() {
         .await
         .unwrap();
     let projects = server.dispatch("projects.list", json!({})).await.unwrap();
-    assert!(projects.as_array().unwrap().is_empty());
+    assert_eq!(projects.as_array().unwrap().len(), 1);
+    assert_eq!(projects[0]["id"], "default-work-items");
+    assert_eq!(projects[0]["name"], "我的任务");
     assert!(executor_home.path().join("data/tasks.sqlite").is_file());
 }
 
@@ -431,7 +438,9 @@ async fn app_ipc_reclaims_expired_local_robot_runs() {
         "WEGENT_EXECUTOR_HOME",
         &executor_home.path().display().to_string(),
     );
-    let server = AppIpcServer::new();
+    let server = AppIpcServer::new()
+        .with_runtime_instance_id("runtime-1")
+        .with_runtime_work_handler(CapacityRuntimeHandler);
 
     let project = server
         .dispatch(
@@ -503,7 +512,6 @@ async fn app_ipc_reclaims_expired_local_robot_runs() {
             json!({
                 "claim": {
                     "execution_device_id": "local-device",
-                    "device_capacity": 5,
                     "lease_seconds": 300
                 }
             }),
@@ -511,7 +519,8 @@ async fn app_ipc_reclaims_expired_local_robot_runs() {
         .await
         .unwrap();
     let execution_id = claimed["id"].as_i64().unwrap();
-    assert_eq!(claimed["status"], "running");
+    assert_eq!(claimed["status"], "claimed");
+    assert_eq!(claimed["display_state"], "starting");
 
     // Crash the run out-of-band: expire the lease without a terminal event.
     let connection =
@@ -531,7 +540,25 @@ async fn app_ipc_reclaims_expired_local_robot_runs() {
         .await
         .unwrap();
     assert_eq!(recovered["requeued"], 1);
-    assert_eq!(recovered["failed"], 0);
+    assert_eq!(recovered["unknown"], 0);
+    let stale = server
+        .dispatch("executions.list_stale", json!({}))
+        .await
+        .unwrap();
+    assert!(stale.as_array().unwrap().is_empty());
+    let reconciled = server
+        .dispatch(
+            "executions.reconcile",
+            json!({
+                "execution_id": execution_id,
+                "runtime_status": "missing",
+                "running": false,
+                "turn_status": null
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(reconciled["status"], "queued");
 
     let executions = server
         .dispatch(
@@ -547,7 +574,21 @@ async fn app_ipc_reclaims_expired_local_robot_runs() {
         .unwrap();
     let list = executions.as_array().unwrap();
     assert_eq!(list[0]["status"], "queued");
-    assert_eq!(list[0]["retry_attempt"], 1);
+    assert_eq!(list[0]["retry_attempt"], 0);
+
+    let cancelled = server
+        .dispatch(
+            "executions.cancel",
+            json!({
+                "execution_id": execution_id,
+                "note": "stopped from the queue"
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(cancelled["status"], "cancelled");
+    assert_eq!(cancelled["display_state"], "cancelled");
+    assert_eq!(cancelled["termination_reason"], "cancelled_before_start");
 }
 
 #[tokio::test]
@@ -1523,6 +1564,31 @@ impl RuntimeWorkHandler for RuntimeHandler {
                 })
             );
             Ok(json!({"success": true, "workspaces": []}))
+        })
+    }
+}
+
+struct CapacityRuntimeHandler;
+
+impl RuntimeWorkHandler for CapacityRuntimeHandler {
+    fn handle_runtime_rpc<'a>(
+        &'a self,
+        data: Value,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
+        Box::pin(async move {
+            assert_eq!(
+                data,
+                json!({
+                    "method": "runtime.capacity.get",
+                    "payload": {}
+                })
+            );
+            Ok(json!({
+                "limit": 5,
+                "active": 0,
+                "active_task_ids": [],
+                "queued": 0
+            }))
         })
     }
 }

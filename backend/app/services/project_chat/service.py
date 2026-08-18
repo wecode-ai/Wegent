@@ -30,6 +30,7 @@ from app.schemas.project_chat import (
     ProjectChatAgentStart,
     ProjectChatAgentUpdate,
     ProjectChatAgentView,
+    ProjectChatAutomationManagerContinuation,
     ProjectChatMessageView,
     ProjectChatSend,
     ProjectChatSubscribe,
@@ -96,10 +97,22 @@ _EXECUTION_STATE_FROM_AI_STATUS = {
 BOT_VISIBILITY_KEY = "visibility"
 BOT_EXECUTION_ENVIRONMENT_KEY = "execution_environment"
 BOT_EXECUTION_MODE_KEY = "execution_mode"
+BOT_MAX_CONCURRENT_EXECUTIONS_KEY = "max_concurrent_executions"
+BOT_RUNTIME_KEY = "runtime"
+BOT_WEGENT_TEAM_ID_KEY = "wegent_team_id"
 BOT_DEFAULT_VISIBILITY = "creator_admin"
 BOT_DEFAULT_EXECUTION_ENVIRONMENT = "local"
 BOT_DEFAULT_EXECUTION_MODE = "auto"
+BOT_DEFAULT_MAX_CONCURRENT_EXECUTIONS = 1
 BOT_ADMIN_ROLES = {BaseRole.Owner, BaseRole.Maintainer}
+
+
+def bot_max_concurrent_executions(row: ProjectChatAgent) -> int:
+    metadata = row.metadata_json if isinstance(row.metadata_json, dict) else {}
+    value = metadata.get(BOT_MAX_CONCURRENT_EXECUTIONS_KEY)
+    if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 20:
+        return value
+    return BOT_DEFAULT_MAX_CONCURRENT_EXECUTIONS
 
 
 def bot_config(row: ProjectChatAgent) -> dict[str, object]:
@@ -107,6 +120,8 @@ def bot_config(row: ProjectChatAgent) -> dict[str, object]:
 
     metadata = row.metadata_json if isinstance(row.metadata_json, dict) else {}
     return {
+        "runtime": metadata.get(BOT_RUNTIME_KEY, "codex"),
+        "wegent_team_id": metadata.get(BOT_WEGENT_TEAM_ID_KEY),
         "visibility": metadata.get(BOT_VISIBILITY_KEY, BOT_DEFAULT_VISIBILITY),
         "execution_environment": metadata.get(
             BOT_EXECUTION_ENVIRONMENT_KEY, BOT_DEFAULT_EXECUTION_ENVIRONMENT
@@ -116,7 +131,8 @@ def bot_config(row: ProjectChatAgent) -> dict[str, object]:
         ),
         "execution_device_id": row.device_id,
         "model": metadata.get("model"),
-        "system_prompt": metadata.get("system_prompt", ""),
+        "execution_prompt": metadata.get("system_prompt", ""),
+        "max_concurrent_executions": bot_max_concurrent_executions(row),
     }
 
 
@@ -164,12 +180,17 @@ class ProjectChatService:
             task_id=None,
             required_role=BaseRole.Reporter,
         )
-        self._validate_execution_device(
-            db,
-            user_id=user_id,
-            environment=request.execution_environment,
-            execution_device_id=request.execution_device_id,
-        )
+        if request.runtime == "wegent":
+            from app.services.project_automation_domain import runnable_wegent_team
+
+            runnable_wegent_team(db, user_id, request.wegent_team_id)
+        else:
+            self._validate_execution_device(
+                db,
+                user_id=user_id,
+                environment=request.execution_environment,
+                execution_device_id=request.execution_device_id,
+            )
         row = ProjectChatAgent(
             cloud_project_id=project_id,
             title=request.name,
@@ -178,15 +199,21 @@ class ProjectChatService:
             updated_by_user_id=user_id,
             status="active",
             description=request.capability_description.strip(),
-            device_id=request.execution_device_id,
-            local_project_id=request.local_project_id,
+            device_id=(
+                request.execution_device_id if request.runtime == "codex" else None
+            ),
+            local_project_id=(
+                request.local_project_id if request.runtime == "codex" else None
+            ),
             metadata_json={
                 "runtime": request.runtime,
+                BOT_WEGENT_TEAM_ID_KEY: request.wegent_team_id,
                 "model": request.model,
                 "system_prompt": request.system_prompt,
                 BOT_VISIBILITY_KEY: request.visibility,
                 BOT_EXECUTION_ENVIRONMENT_KEY: request.execution_environment,
                 BOT_EXECUTION_MODE_KEY: request.execution_mode,
+                BOT_MAX_CONCURRENT_EXECUTIONS_KEY: request.max_concurrent_executions,
             },
         )
         db.add(row)
@@ -218,13 +245,27 @@ class ProjectChatService:
             row.name = request.name
             row.title = request.name
         metadata = dict(row.metadata_json or {})
-        if request.model is not None:
+        runtime = request.runtime or str(metadata.get(BOT_RUNTIME_KEY) or "codex")
+        team_id = (
+            request.wegent_team_id
+            if "wegent_team_id" in request.model_fields_set
+            else metadata.get(BOT_WEGENT_TEAM_ID_KEY)
+        )
+        if runtime == "wegent":
+            from app.services.project_automation_domain import runnable_wegent_team
+
+            runnable_wegent_team(db, row.created_by_user_id or user_id, team_id)
+            row.device_id = None
+            row.local_project_id = None
+        metadata[BOT_RUNTIME_KEY] = runtime
+        metadata[BOT_WEGENT_TEAM_ID_KEY] = team_id if runtime == "wegent" else None
+        if "model" in request.model_fields_set:
             metadata["model"] = request.model
         if request.system_prompt is not None:
             metadata["system_prompt"] = request.system_prompt
         if request.capability_description is not None:
             row.description = request.capability_description.strip()
-        if request.execution_device_id is not None:
+        if runtime == "codex" and request.execution_device_id is not None:
             self._validate_execution_device(
                 db,
                 user_id=row.created_by_user_id or user_id,
@@ -238,7 +279,7 @@ class ProjectChatService:
             row.device_id = request.execution_device_id
         if request.visibility is not None:
             metadata[BOT_VISIBILITY_KEY] = request.visibility
-        if request.execution_environment is not None:
+        if runtime == "codex" and request.execution_environment is not None:
             if row.device_id:
                 self._validate_execution_device(
                     db,
@@ -249,7 +290,11 @@ class ProjectChatService:
             metadata[BOT_EXECUTION_ENVIRONMENT_KEY] = request.execution_environment
         if request.execution_mode is not None:
             metadata[BOT_EXECUTION_MODE_KEY] = request.execution_mode
-        if "local_project_id" in request.model_fields_set:
+        if request.max_concurrent_executions is not None:
+            metadata[BOT_MAX_CONCURRENT_EXECUTIONS_KEY] = (
+                request.max_concurrent_executions
+            )
+        if runtime == "codex" and "local_project_id" in request.model_fields_set:
             row.local_project_id = request.local_project_id
         row.metadata_json = metadata
         if request.status is not None:
@@ -539,6 +584,195 @@ class ProjectChatService:
             return self.to_view(existing)
         db.refresh(row)
         return self.to_view(row)
+
+    def start_automation_manager_response(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        request: ProjectChatAutomationManagerContinuation,
+    ) -> ProjectChatMessageView:
+        """Open a new reply in the custom manager's existing Runtime session."""
+
+        self._require_scope(
+            db,
+            user_id=user_id,
+            project_id=request.project_id,
+            task_id=request.task_id,
+            required_role=BaseRole.Developer,
+        )
+        trigger = self._user_trigger(
+            db,
+            user_id=user_id,
+            project_id=request.project_id,
+            task_id=request.task_id,
+            message_id=request.trigger_message_id,
+        )
+        manager = self._custom_manager_reply_target(
+            db,
+            project_id=request.project_id,
+            task_id=request.task_id,
+            message_id=request.manager_message_id,
+        )
+        if trigger.reply_to_message_id != manager.message_id:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Reply does not target this custom AI manager comment",
+            )
+        existing = (
+            db.query(ProjectChatMessage)
+            .filter(
+                ProjectChatMessage.trigger_message_id == trigger.message_id,
+                ProjectChatMessage.sender_id == manager.sender_id,
+                ProjectChatMessage.runtime_device_id == manager.runtime_device_id,
+                ProjectChatMessage.runtime_task_id == manager.runtime_task_id,
+                loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+            )
+            .first()
+        )
+        if existing is not None:
+            return self.to_view(existing)
+
+        message_id = str(uuid.uuid7()) if hasattr(uuid, "uuid7") else str(uuid.uuid4())
+        manager_metadata = (
+            manager.metadata_json if isinstance(manager.metadata_json, dict) else {}
+        )
+        metadata = {
+            "kind": "automation_manager_continuation",
+            "manager_type": "custom",
+            "manager_root_message_id": manager.message_id,
+            "run_id": (
+                str(uuid.uuid7()) if hasattr(uuid, "uuid7") else str(uuid.uuid4())
+            ),
+            "run_status": "running",
+            "conversation_only": True,
+        }
+        model = manager_metadata.get("model")
+        if isinstance(model, str) and model:
+            metadata["model"] = model
+        row = ProjectChatMessage(
+            message_id=message_id,
+            client_message_id=message_id,
+            runtime_activity_key=self._runtime_activity_key(
+                manager.runtime_device_id,
+                manager.runtime_task_id,
+                trigger.message_id,
+            ),
+            project_id=request.project_id,
+            task_id=request.task_id,
+            sender_type="agent",
+            sender_id=manager.sender_id,
+            sender_name=manager.sender_name,
+            message_type="agent_chunk",
+            content="",
+            metadata_json=metadata,
+            trigger_message_id=trigger.message_id,
+            reply_to_message_id=trigger.message_id,
+            thread_root_message_id=manager.message_id,
+            agent_id="",
+            runtime_device_id=manager.runtime_device_id,
+            runtime_task_id=manager.runtime_task_id,
+            status="streaming",
+        )
+        try:
+            db.add(row)
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            existing = (
+                db.query(ProjectChatMessage)
+                .filter(
+                    ProjectChatMessage.trigger_message_id == trigger.message_id,
+                    ProjectChatMessage.sender_id == manager.sender_id,
+                    ProjectChatMessage.runtime_device_id == manager.runtime_device_id,
+                    ProjectChatMessage.runtime_task_id == manager.runtime_task_id,
+                    loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+                )
+                .first()
+            )
+            if existing is None:
+                raise
+            return self.to_view(existing)
+        db.refresh(row)
+        return self.to_view(row)
+
+    @staticmethod
+    def _user_trigger(
+        db: Session,
+        *,
+        user_id: int,
+        project_id: str,
+        task_id: str,
+        message_id: str,
+    ) -> ProjectChatMessage:
+        row = (
+            db.query(ProjectChatMessage)
+            .filter(
+                ProjectChatMessage.message_id == message_id,
+                ProjectChatMessage.project_id == project_id,
+                ProjectChatMessage.task_id == task_id,
+                ProjectChatMessage.sender_type == "user",
+                ProjectChatMessage.sender_id == str(user_id),
+                loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+            )
+            .one_or_none()
+        )
+        if row is None:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Custom AI manager continuation requires your task comment",
+            )
+        return row
+
+    @staticmethod
+    def _custom_manager_reply_target(
+        db: Session,
+        *,
+        project_id: str,
+        task_id: str,
+        message_id: str,
+    ) -> ProjectChatMessage:
+        row = (
+            db.query(ProjectChatMessage)
+            .filter(
+                ProjectChatMessage.message_id == message_id,
+                ProjectChatMessage.project_id == project_id,
+                ProjectChatMessage.task_id == task_id,
+                ProjectChatMessage.sender_type == "agent",
+                loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+            )
+            .one_or_none()
+        )
+        metadata = (
+            row.metadata_json
+            if row is not None and isinstance(row.metadata_json, dict)
+            else {}
+        )
+        try:
+            execution_id = int(metadata["execution_id"])
+        except (KeyError, TypeError, ValueError):
+            execution_id = 0
+        from app.models.loop_item_execution import LoopItemExecution
+
+        execution = db.get(LoopItemExecution, execution_id) if execution_id else None
+        if (
+            row is None
+            or metadata.get("executor_type") != "automation_manager"
+            or metadata.get("manager_type") != "custom"
+            or not row.runtime_device_id
+            or not row.runtime_task_id
+            or execution is None
+            or execution.executor_type != "automation_manager"
+            or execution.cloud_project_id != project_id
+            or execution.loop_item_id != task_id
+            or execution.runtime_device_id != row.runtime_device_id
+            or execution.runtime_task_id != row.runtime_task_id
+        ):
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Reply target is not a custom AI manager execution",
+            )
+        return row
 
     @staticmethod
     def _runtime_activity_key(
@@ -1104,6 +1338,8 @@ class ProjectChatService:
             run_id = str(uuid.uuid7()) if hasattr(uuid, "uuid7") else str(uuid.uuid4())
 
         row.metadata_json = {**metadata, "run_id": run_id, "run_status": status_value}
+        if metadata.get("conversation_only") is True:
+            return
         if not row.task_id:
             return
 
@@ -1519,11 +1755,16 @@ class ProjectChatService:
             id=row.id,
             project_id=row.cloud_project_id,
             name=row.title or row.name or "AI",
-            runtime="codex",
+            runtime=str(config.get("runtime") or "codex"),
+            wegent_team_id=(
+                int(config["wegent_team_id"])
+                if config.get("wegent_team_id") is not None
+                else None
+            ),
             model=config.get("model") if isinstance(config.get("model"), str) else None,
             system_prompt=(
-                config.get("system_prompt")
-                if isinstance(config.get("system_prompt"), str)
+                config.get("execution_prompt")
+                if isinstance(config.get("execution_prompt"), str)
                 else ""
             ),
             capability_description=row.description or "",
@@ -1533,8 +1774,12 @@ class ProjectChatService:
                 config.get("execution_environment") or BOT_DEFAULT_EXECUTION_ENVIRONMENT
             ),
             execution_mode=config.get("execution_mode") or BOT_DEFAULT_EXECUTION_MODE,
-            execution_device_id=row.device_id,
-            local_project_id=row.local_project_id,
+            execution_device_id=row.device_id or None,
+            local_project_id=row.local_project_id or None,
+            max_concurrent_executions=int(
+                config.get("max_concurrent_executions")
+                or BOT_DEFAULT_MAX_CONCURRENT_EXECUTIONS
+            ),
             created_by_user_id=row.created_by_user_id,
             created_by_user_name=created_by_user_name,
             version=row.version,

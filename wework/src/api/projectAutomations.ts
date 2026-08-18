@@ -141,8 +141,26 @@ function cloudExecution(row: Record<string, unknown>): LocalLoopItemExecution {
     assigner_user_id: Number(row.assignerUserId ?? 0),
     execution_environment: String(row.executionEnvironment ?? ''),
     execution_device_id: row.executionDeviceId == null ? null : String(row.executionDeviceId),
+    runtime_instance_id: row.runtimeInstanceId == null ? null : String(row.runtimeInstanceId),
     status: String(row.status ?? ''),
+    display_state: String(row.displayState ?? 'unknown'),
+    observed_state: String(row.observedState ?? 'unconfirmed'),
+    sync_state: String(row.syncState ?? 'pending'),
     priority_weight: Number(row.priorityWeight ?? 0),
+    queued_at: row.queuedAt == null ? null : String(row.queuedAt),
+    started_at: row.startedAt == null ? null : String(row.startedAt),
+    completed_at: row.completedAt == null ? null : String(row.completedAt),
+    lease_expires_at: row.leaseExpiresAt == null ? null : String(row.leaseExpiresAt),
+    heartbeat_at: row.heartbeatAt == null ? null : String(row.heartbeatAt),
+    claimed_at: row.claimedAt == null ? null : String(row.claimedAt),
+    start_requested_at: row.startRequestedAt == null ? null : String(row.startRequestedAt),
+    observed_at: row.observedAt == null ? null : String(row.observedAt),
+    cancel_requested_at: row.cancelRequestedAt == null ? null : String(row.cancelRequestedAt),
+    attempt_no: Number(row.attemptNo ?? 1),
+    previous_execution_id: row.previousExecutionId == null ? null : Number(row.previousExecutionId),
+    execution_scope: String(row.executionScope ?? ''),
+    last_event_seq: Number(row.lastEventSeq ?? 0),
+    termination_reason: String(row.terminationReason ?? ''),
     retry_attempt: Number(row.retryAttempt ?? 0),
     error_message: String(row.errorMessage ?? ''),
     execution_note: String(row.executionNote ?? ''),
@@ -154,17 +172,14 @@ function cloudExecution(row: Record<string, unknown>): LocalLoopItemExecution {
     agent_name: String(bot.name ?? 'AI'),
     agent_system_prompt: String(bot.system_prompt ?? bot.systemPrompt ?? ''),
     agent_model: payload?.modelId == null ? null : String(payload.modelId),
+    agent_max_concurrent_executions: Number(row.agentMaxConcurrentExecutions ?? 1),
     runtime_payload: payload,
   }
 }
 
 export function createProjectAutomationApi(client: HttpClient) {
   return {
-    claimNext(claim: {
-      execution_device_id: string
-      device_capacity: number
-      lease_seconds: number
-    }) {
+    claimNext(claim: { execution_device_id: string; lease_seconds: number }) {
       return client
         .post<Record<string, unknown> | null>('/v1/loop-item-executions/claim-my-next', claim)
         .then(row => (row ? cloudExecution(row) : null))
@@ -181,6 +196,34 @@ export function createProjectAutomationApi(client: HttpClient) {
           runtime_device_id: runtimeDeviceId,
           runtime_task_id: runtimeTaskId,
           lease_seconds: leaseSeconds,
+        }
+      )
+    },
+    startRequested(
+      execution: Pick<LocalLoopItemExecution, 'id' | 'cloud_project_id'>,
+      runtimeDeviceId: string,
+      runtimeTaskId: string
+    ) {
+      return client.post<LocalLoopItemExecution | null>(
+        `/v1/cloud-projects/${execution.cloud_project_id}/executions/${execution.id}/start-requested`,
+        {
+          runtime_device_id: runtimeDeviceId,
+          runtime_task_id: runtimeTaskId,
+        }
+      )
+    },
+    dispatchUnknown(
+      execution: Pick<LocalLoopItemExecution, 'id' | 'cloud_project_id'>,
+      runtimeDeviceId: string,
+      runtimeTaskId: string,
+      error: string
+    ) {
+      return client.post<LocalLoopItemExecution | null>(
+        `/v1/cloud-projects/${execution.cloud_project_id}/executions/${execution.id}/dispatch-unknown`,
+        {
+          runtime_device_id: runtimeDeviceId,
+          runtime_task_id: runtimeTaskId,
+          error,
         }
       )
     },
@@ -201,19 +244,13 @@ export function createProjectAutomationApi(client: HttpClient) {
         }
       )
     },
-    fail(execution: Pick<LocalLoopItemExecution, 'id' | 'cloud_project_id'>, error: string) {
-      return client.post<LocalLoopItemExecution | null>(
-        `/v1/cloud-projects/${execution.cloud_project_id}/executions/${execution.id}/fail`,
-        { error, requeue: false }
-      )
-    },
-    complete(
+    dispatchFailed(
       execution: Pick<LocalLoopItemExecution, 'id' | 'cloud_project_id'>,
-      note?: string | null
+      error: string
     ) {
       return client.post<LocalLoopItemExecution | null>(
-        `/v1/cloud-projects/${execution.cloud_project_id}/executions/${execution.id}/complete`,
-        { note: note ?? null }
+        `/v1/cloud-projects/${execution.cloud_project_id}/executions/${execution.id}/dispatch-failed`,
+        { error }
       )
     },
     list(projectId: string) {

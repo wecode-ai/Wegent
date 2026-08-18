@@ -1,46 +1,57 @@
 import { describe, expect, it } from 'vitest'
-import { executionDisplayStatus, isExecutionFailed, isExecutionRunning } from './executionStatus'
+import {
+  executionDisplayStatus,
+  isExecutionActive,
+  isExecutionCancellable,
+  isExecutionFailed,
+  isExecutionTerminal,
+} from './executionStatus'
 
 describe('executionStatus', () => {
-  it('maps every automation run status to one of two display states', () => {
-    expect(executionDisplayStatus('pending')).toBe('running')
-    expect(executionDisplayStatus('waiting_device')).toBe('running')
+  it('preserves distinct automation lifecycle and terminal outcomes', () => {
+    expect(executionDisplayStatus('pending')).toBe('queued')
+    expect(executionDisplayStatus('waiting_device')).toBe('waiting_runtime')
     expect(executionDisplayStatus('running')).toBe('running')
-    expect(executionDisplayStatus('succeeded')).toBe('completed')
-    expect(executionDisplayStatus('failed')).toBe('completed')
-    expect(executionDisplayStatus('skipped')).toBe('completed')
-    expect(executionDisplayStatus('cancelled')).toBe('completed')
+    expect(executionDisplayStatus('succeeded')).toBe('succeeded')
+    expect(executionDisplayStatus('failed')).toBe('failed')
+    expect(executionDisplayStatus('skipped')).toBe('skipped')
+    expect(executionDisplayStatus('cancelled')).toBe('cancelled')
   })
 
-  it('maps message and ai_state statuses to the same two states', () => {
+  it('maps message and execution aliases without hiding state boundaries', () => {
     expect(executionDisplayStatus('streaming')).toBe('running')
-    expect(executionDisplayStatus('queued')).toBe('running')
-    expect(executionDisplayStatus('claimed')).toBe('running')
-    expect(executionDisplayStatus('assigned')).toBe('running')
-    expect(executionDisplayStatus('pending_approval')).toBe('running')
+    expect(executionDisplayStatus('queued')).toBe('queued')
+    expect(executionDisplayStatus('claimed')).toBe('starting')
+    expect(executionDisplayStatus('assigned')).toBe('queued')
+    expect(executionDisplayStatus('pending_approval')).toBe('waiting_approval')
+    expect(executionDisplayStatus('waiting_approval')).toBe('waiting_approval')
     expect(executionDisplayStatus('in_progress')).toBe('running')
-    expect(executionDisplayStatus('completed')).toBe('completed')
-    expect(executionDisplayStatus('canceled')).toBe('completed')
-    expect(executionDisplayStatus('interrupted')).toBe('completed')
-    expect(executionDisplayStatus('stalled')).toBe('completed')
-    expect(executionDisplayStatus('done')).toBe('completed')
-    expect(executionDisplayStatus('idle')).toBe('completed')
+    expect(executionDisplayStatus('completed')).toBe('succeeded')
+    expect(executionDisplayStatus('canceled')).toBe('cancelled')
+    expect(executionDisplayStatus('interrupted')).toBe('failed')
+    expect(executionDisplayStatus('stalled')).toBe('failed')
+    expect(executionDisplayStatus('done')).toBe('succeeded')
   })
 
-  it('treats unknown statuses as running and null as no status', () => {
-    expect(executionDisplayStatus('future-unknown-state')).toBe('running')
+  it('surfaces unknown statuses explicitly and null as no status', () => {
+    expect(executionDisplayStatus('future-unknown-state')).toBe('unknown')
     expect(executionDisplayStatus(null)).toBeNull()
     expect(executionDisplayStatus(undefined)).toBeNull()
     expect(executionDisplayStatus('')).toBeNull()
   })
 
-  it('keeps failure detection for recovery actions without a third status', () => {
+  it('keeps active, terminal, cancellable and failed decisions independent', () => {
     expect(isExecutionFailed('failed')).toBe(true)
-    expect(isExecutionFailed('cancelled')).toBe(true)
+    expect(isExecutionFailed('cancelled')).toBe(false)
     expect(isExecutionFailed('interrupted')).toBe(true)
     expect(isExecutionFailed('completed')).toBe(false)
     expect(isExecutionFailed(null)).toBe(false)
-    expect(isExecutionRunning('queued')).toBe(true)
-    expect(isExecutionRunning('completed')).toBe(false)
+    expect(isExecutionActive('queued')).toBe(true)
+    expect(isExecutionActive('unknown')).toBe(true)
+    expect(isExecutionActive('completed')).toBe(false)
+    expect(isExecutionTerminal('cancelled')).toBe(true)
+    expect(isExecutionTerminal('unknown')).toBe(false)
+    expect(isExecutionCancellable('running')).toBe(true)
+    expect(isExecutionCancellable('cancelling')).toBe(false)
   })
 })

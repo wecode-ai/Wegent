@@ -191,10 +191,13 @@ class RealCloudEnvironment {
       REDIS_URL: `redis://127.0.0.1:${this.redisPort}/0`,
       SECRET_KEY: `wework-desktop-e2e-${process.pid}`,
       INTERNAL_SERVICE_TOKEN: `wework-desktop-e2e-internal-${process.pid}`,
+      BACKEND_INTERNAL_URL: this.backendUrl,
+      WEGENT_BACKEND_PUBLIC_URL: this.backendUrl,
       GIT_TOKEN_AES_KEY: '12345678901234567890123456789012',
       GIT_TOKEN_AES_IV: '1234567890123456',
       FRONTEND_URL: this.modelServerUrl,
       CHAT_SHELL_URL: this.modelServerUrl,
+      CHAT_SHELL_MODE: 'package',
       CHAT_SHELL_TOKEN: MODEL_API_KEY,
       WEGENT_BACKEND_PUBLIC_URL: this.backendUrl,
       WEGENT_SOCKET_URL: this.socketUrl,
@@ -617,13 +620,17 @@ class RealCloudEnvironment {
   async waitForDevice(deviceId, logPath) {
     const startedAt = Date.now()
     while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
-      const response = await fetch(`${this.backendUrl}/api/devices`, {
-        headers: { Authorization: `Bearer ${this.authToken}` },
-      })
-      if (response.ok) {
-        const devices = await response.json()
-        const device = devices.items?.find(item => item.device_id === deviceId)
-        if (device?.status === 'online') return
+      try {
+        const response = await fetch(`${this.backendUrl}/api/devices`, {
+          headers: { Authorization: `Bearer ${this.authToken}` },
+        })
+        if (response.ok) {
+          const devices = await response.json()
+          const device = devices.items?.find(item => item.device_id === deviceId)
+          if (device?.status === 'online') return
+        }
+      } catch {
+        // The backend may briefly reset a readiness connection while executors register.
       }
       await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
     }

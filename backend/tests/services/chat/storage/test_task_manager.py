@@ -401,6 +401,61 @@ async def test_create_task_and_subtasks_persists_resolved_device_for_existing_ta
     assert result.task.json["spec"]["device_id"] == "project-device"
 
 
+@pytest.mark.asyncio
+async def test_create_task_and_subtasks_can_defer_commit_for_atomic_binding(
+    test_db: Session,
+    test_user: User,
+):
+    task = _build_existing_task(task_id=2502, user_id=test_user.id)
+    task.client_origin = CLIENT_ORIGIN_FRONTEND
+    test_db.add(task)
+    test_db.commit()
+    test_db.refresh(task)
+    team = SimpleNamespace(
+        id=1256,
+        user_id=test_user.id,
+        name="quickstart",
+        namespace="default",
+    )
+    params = TaskCreationParams(
+        message="run atomically",
+        task_type="task",
+        client_origin=CLIENT_ORIGIN_FRONTEND,
+        pipeline_bot_ids=[1255],
+    )
+
+    with (
+        patch.object(test_db, "commit", wraps=test_db.commit) as commit,
+        patch.object(test_db, "flush", wraps=test_db.flush) as flush,
+        patch(
+            "app.services.chat.storage.task_manager.initialize_redis_chat_history",
+            new=AsyncMock(),
+        ),
+        patch(
+            "app.services.memory.is_memory_enabled_for_user",
+            return_value=False,
+        ),
+        patch(
+            "app.services.chat.trigger.group_chat.is_task_group_chat",
+            return_value=False,
+        ),
+    ):
+        result = await create_task_and_subtasks(
+            db=test_db,
+            user=test_user,
+            team=team,
+            message=params.message,
+            params=params,
+            task_id=task.id,
+            should_trigger_ai=True,
+            commit=False,
+        )
+
+    assert result.assistant_subtask is not None
+    commit.assert_not_called()
+    flush.assert_called()
+
+
 def test_create_new_task_uses_real_task_row_without_placeholder(
     test_db: Session,
     test_user: User,

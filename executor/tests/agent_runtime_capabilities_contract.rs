@@ -361,10 +361,85 @@ async fn claude_runtime_does_not_start_when_required_skill_download_fails() {
     assert_eq!(
         outcome,
         ExecutionOutcome::Failed {
-            message: "required Skill deployment failed: abtest-file-analyzer".to_owned()
+            message: "required Skill deployment failed: abtest-file-analyzer (backend download failed with HTTP 404)".to_owned()
         }
     );
     assert!(!log_path.exists());
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn claude_runtime_reports_wrong_skill_zip_root_without_exposing_token() {
+    let _lock = env_lock().await;
+    let home = unique_dir("claude-wrong-skill-root-home");
+    let workspace_root = unique_dir("claude-wrong-skill-root-workspace");
+    let log_path = unique_dir("claude-wrong-skill-root-log").join("args.json");
+    let fake_claude = write_fake_claude(&log_path);
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let backend_url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let request = read_http_request_headers(&mut stream).await;
+        assert!(request_has_header(
+            &request,
+            "authorization",
+            "Bearer secret-task-token"
+        ));
+        let archive = skill_zip("unexpected-root/SKILL.md", "# Test Skill\n");
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/zip\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            archive.len()
+        );
+        stream.write_all(response.as_bytes()).await.unwrap();
+        stream.write_all(&archive).await.unwrap();
+    });
+    let _home = EnvGuard::set("HOME", &home.display().to_string());
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let _mode = EnvGuard::set("EXECUTOR_MODE", "docker");
+    let _backend = EnvGuard::set("WEGENT_BACKEND_URL", &backend_url);
+    let _api = EnvGuard::set("TASK_API_DOMAIN", &backend_url);
+    let engine = AgentProcessEngine::new(AgentCommandPlanner::new(
+        fake_claude.display().to_string(),
+        "codex",
+    ));
+    let request = ExecutionRequest {
+        task_id: "7791".to_owned(),
+        subtask_id: "102".to_owned(),
+        prompt: json!("use required skill"),
+        auth_token: Some("secret-task-token".to_owned()),
+        bot: json!([{
+            "id": 7,
+            "shell_type": "ClaudeCode",
+            "skills": ["requested-skill"]
+        }]),
+        extra: serde_json::Map::from_iter([
+            (
+                "skill_refs".to_owned(),
+                json!({
+                    "requested-skill": {
+                        "skill_id": 196659,
+                        "namespace": "default"
+                    }
+                }),
+            ),
+            ("preload_skills".to_owned(), json!(["requested-skill"])),
+        ]),
+        model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
+        ..ExecutionRequest::default()
+    };
+
+    let outcome = engine.run(request).await;
+    let ExecutionOutcome::Failed { message } = outcome else {
+        panic!("expected required Skill deployment to fail");
+    };
+
+    assert_eq!(
+        message,
+        "required Skill deployment failed: requested-skill (downloaded Skill ZIP is missing expected entry requested-skill/SKILL.md)"
+    );
+    assert!(!message.contains("secret-task-token"));
+    assert!(!log_path.exists());
+    assert!(!home.join(".claude/skills/unexpected-root").exists());
     server.await.unwrap();
 }
 

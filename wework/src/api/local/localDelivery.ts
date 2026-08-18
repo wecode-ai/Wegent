@@ -2,13 +2,17 @@ import { convertFileSrc } from '@tauri-apps/api/core'
 
 import {
   createProjectTaskTrackingSingleFlight,
+  enqueueTaskTrackingMutation,
+  isDefaultWorkItemProject,
   nextTaskTrackingStatus,
   type CloudLoopItemAttachment,
   type CloudLoopItem,
+  type CloudLoopItemExecution,
   type CloudProject,
   type CloudProjectFile,
   type CloudProjectId,
   type CloudProjectMember,
+  type CloudTaskContext,
   type Delivery,
   type DeliveryAsset,
   type DeliveryCreateInput,
@@ -97,6 +101,7 @@ export interface LocalProjectChatAgent {
   executionMode: 'auto' | 'manual_approval'
   executionDeviceId: string | null
   localProjectId: number | null
+  maxConcurrentExecutions: number
   createdByUserId: number | null
   createdByUserName?: string | null
   version: number
@@ -115,14 +120,28 @@ export interface LocalLoopItemExecution {
   assigner_user_id: number
   execution_environment: string
   execution_device_id?: string | null
+  runtime_instance_id?: string | null
   status: string
+  display_state: string
+  observed_state: string
+  sync_state: string
   priority_weight: number
   queued_at?: string | null
   started_at?: string | null
   completed_at?: string | null
   lease_expires_at?: string | null
   heartbeat_at?: string | null
+  claimed_at?: string | null
+  start_requested_at?: string | null
+  observed_at?: string | null
+  cancel_requested_at?: string | null
+  attempt_no: number
+  previous_execution_id?: number | null
+  execution_scope: string
+  last_event_seq: number
+  termination_reason: string
   retry_attempt: number
+  max_retries?: number
   error_message: string
   execution_note: string
   approval_status?: string | null
@@ -136,6 +155,7 @@ export interface LocalLoopItemExecution {
   agent_name: string
   agent_system_prompt: string
   agent_model?: string | null
+  agent_max_concurrent_executions: number
   /** Available only on a successful claim and never persisted with the queue row. */
   runtime_payload?: Record<string, unknown> | null
 }
@@ -294,6 +314,7 @@ type LocalAgentRecord = Record<string, unknown> & {
   execution_mode?: string
   execution_device_id?: string | null
   local_project_id?: number | null
+  max_concurrent_executions?: number
   created_by_user_id?: number | null
   version?: number
   created_at?: string
@@ -301,6 +322,13 @@ type LocalAgentRecord = Record<string, unknown> & {
 }
 
 function localAgent(record: LocalAgentRecord): LocalProjectChatAgent {
+  const maxConcurrentExecutions =
+    typeof record.max_concurrent_executions === 'number' &&
+    Number.isInteger(record.max_concurrent_executions) &&
+    record.max_concurrent_executions >= 1 &&
+    record.max_concurrent_executions <= 20
+      ? record.max_concurrent_executions
+      : 1
   return {
     id: record.id,
     projectId: record.project_id ?? '',
@@ -315,6 +343,7 @@ function localAgent(record: LocalAgentRecord): LocalProjectChatAgent {
     executionMode: (record.execution_mode as LocalProjectChatAgent['executionMode']) ?? 'auto',
     executionDeviceId: record.execution_device_id ?? null,
     localProjectId: record.local_project_id ?? null,
+    maxConcurrentExecutions,
     createdByUserId: record.created_by_user_id ?? null,
     version: record.version ?? 1,
     createdAt: record.created_at ?? '',
@@ -334,7 +363,8 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
       projectId: string,
       input: {
         name: string
-        runtime: 'codex'
+        runtime: 'codex' | 'wegent'
+        wegentTeamId?: number | null
         model?: string | null
         systemPrompt?: string
         visibility?: LocalProjectChatAgent['visibility']
@@ -342,8 +372,12 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
         executionMode?: LocalProjectChatAgent['executionMode']
         executionDeviceId?: string | null
         localProjectId?: number | null
+        maxConcurrentExecutions?: number
       }
     ): Promise<LocalProjectChatAgent> {
+      if (input.runtime !== 'codex') {
+        throw new Error('Local project robots only support the Wework runtime')
+      }
       const record = await request<LocalAgentRecord>('chat_agents.create', {
         project_id: projectId,
         agent: {
@@ -355,6 +389,7 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
           execution_mode: input.executionMode ?? 'auto',
           execution_device_id: input.executionDeviceId ?? null,
           local_project_id: input.localProjectId ?? null,
+          max_concurrent_executions: input.maxConcurrentExecutions ?? 1,
           created_by_user_id: currentUserId ?? null,
         },
       })
@@ -365,6 +400,8 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
       agentId: string,
       input: {
         version: number
+        runtime?: 'codex' | 'wegent'
+        wegentTeamId?: number | null
         name?: string
         model?: string | null
         systemPrompt?: string
@@ -374,8 +411,12 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
         executionMode?: LocalProjectChatAgent['executionMode']
         executionDeviceId?: string | null
         localProjectId?: number | null
+        maxConcurrentExecutions?: number
       }
     ): Promise<LocalProjectChatAgent> {
+      if (input.runtime && input.runtime !== 'codex') {
+        throw new Error('Local project robots only support the Wework runtime')
+      }
       const record = await request<LocalAgentRecord>('chat_agents.update', {
         project_id: projectId,
         agent_id: agentId,
@@ -390,6 +431,7 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
           execution_mode: input.executionMode,
           execution_device_id: input.executionDeviceId,
           local_project_id: input.localProjectId,
+          max_concurrent_executions: input.maxConcurrentExecutions,
         },
       })
       return localAgent(record)
@@ -429,9 +471,14 @@ export function createLocalLoopItemExecutionApi(request: LocalRequest) {
         reason: reason ?? null,
       })
     },
+    async cancel(executionId: number, note?: string) {
+      return request<LocalLoopItemExecution>('executions.cancel', {
+        execution_id: executionId,
+        note: note ?? null,
+      })
+    },
     async claimNext(claim: {
       execution_device_id?: string | null
-      device_capacity?: number
       lease_seconds?: number
     }): Promise<LocalLoopItemExecution | null> {
       return request<LocalLoopItemExecution | null>('executions.claim_next', { claim })
@@ -449,21 +496,65 @@ export function createLocalLoopItemExecutionApi(request: LocalRequest) {
         lease_seconds: leaseSeconds,
       })
     },
-    async complete(executionId: number, note?: string | null) {
-      return request<LocalLoopItemExecution>('executions.complete', {
+    async startRequested(
+      executionId: number,
+      runtimeDeviceId: string,
+      runtimeTaskId: string,
+      leaseSeconds = 300
+    ) {
+      return request<LocalLoopItemExecution | null>('executions.start_requested', {
         execution_id: executionId,
-        note: note ?? null,
+        runtime_device_id: runtimeDeviceId,
+        runtime_task_id: runtimeTaskId,
+        lease_seconds: leaseSeconds,
       })
     },
-    async fail(executionId: number, error: string, requeue = true) {
-      return request<LocalLoopItemExecution>('executions.fail', {
+    async runtimeStart(
+      executionId: number,
+      runtimeDeviceId: string,
+      runtimeTaskId: string,
+      leaseSeconds = 300
+    ) {
+      return request<LocalLoopItemExecution | null>('executions.runtime_start', {
+        execution_id: executionId,
+        runtime_device_id: runtimeDeviceId,
+        runtime_task_id: runtimeTaskId,
+        lease_seconds: leaseSeconds,
+      })
+    },
+    async dispatchUnknown(
+      executionId: number,
+      runtimeDeviceId: string,
+      runtimeTaskId: string,
+      error: string
+    ) {
+      return request<LocalLoopItemExecution | null>('executions.dispatch_unknown', {
+        execution_id: executionId,
+        runtime_device_id: runtimeDeviceId,
+        runtime_task_id: runtimeTaskId,
+        error,
+      })
+    },
+    async dispatchFailed(executionId: number, error: string) {
+      return request<LocalLoopItemExecution>('executions.dispatch_failed', {
         execution_id: executionId,
         error,
-        requeue,
       })
     },
-    async recoverStale(): Promise<{ requeued: number; failed: number }> {
-      return request<{ requeued: number; failed: number }>('executions.recover_stale', {})
+    async recoverStale(): Promise<{ requeued: number; unknown: number }> {
+      return request<{ requeued: number; unknown: number }>('executions.recover_stale', {})
+    },
+    async listStale(): Promise<LocalLoopItemExecution[]> {
+      return request<LocalLoopItemExecution[]>('executions.list_stale', {})
+    },
+    async reconcile(
+      executionId: number,
+      snapshot: { runtime_status: string; running: boolean; turn_status?: string | null }
+    ) {
+      return request<LocalLoopItemExecution | null>('executions.reconcile', {
+        execution_id: executionId,
+        ...snapshot,
+      })
     },
   }
 }
@@ -666,6 +757,25 @@ export function createLocalDeliveryApi(
       }
       return { items }
     },
+    async listLoopItemExecutions(
+      projectId: CloudProjectId,
+      options: { agent_id?: string; status?: string } = {}
+    ): Promise<{ items: CloudLoopItemExecution[] }> {
+      const records = await request<LocalLoopItemExecution[]>('executions.list', {
+        project_id: String(projectId),
+        agent_id: options.agent_id ?? null,
+        status: options.status ?? null,
+      })
+      return {
+        items: records.map(record => ({
+          ...record,
+          executor_type: 'project_robot',
+          team_id: null,
+          backend_task_id: null,
+          automation_run_id: '',
+        })),
+      }
+    },
     async getLoopItem(itemId: string) {
       const projectId = await resolveProjectId(itemId)
       const record = await request<LocalLoopItemRecord>('todos.get', {
@@ -849,39 +959,42 @@ export function createLocalDeliveryApi(
     },
     async updateTaskTrackingStatus(
       task: RuntimeTaskAddress,
-      executionStatus: 'running' | 'succeeded' | 'failed' | 'cancelled'
+      executionStatus: 'running' | 'succeeded' | 'failed' | 'cancelled' | 'archived'
     ) {
-      let binding: LocalTaskBindingRecord
-      try {
-        binding = await request<LocalTaskBindingRecord>('runtime_tasks.context', {
-          device_id: task.deviceId,
-          task_id: task.taskId,
+      return enqueueTaskTrackingMutation(task, async () => {
+        let context: CloudTaskContext
+        try {
+          context = await api.findCloudContextForTask(task)
+        } catch {
+          return null
+        }
+        if (!context.loop_item_id || !context.loop_item) return null
+        const item = context.loop_item
+        const nextStatus = nextTaskTrackingStatus(item.status, executionStatus, {
+          completeOnSuccess: isDefaultWorkItemProject(context.project),
         })
-      } catch {
-        return null
-      }
-      if (!binding.loop_item_id) return null
-      const item = await api.getLoopItem(binding.loop_item_id)
-      const nextStatus = nextTaskTrackingStatus(item.status, executionStatus)
-      return nextStatus
-        ? api.updateLoopItem(item.id, { version: item.version, status: nextStatus })
-        : item
+        return nextStatus
+          ? api.updateLoopItem(item.id, { version: item.version, status: nextStatus })
+          : item
+      })
     },
     async updateTaskTrackingTitle(task: RuntimeTaskAddress, title: string) {
-      let binding: LocalTaskBindingRecord
-      try {
-        binding = await request<LocalTaskBindingRecord>('runtime_tasks.context', {
-          device_id: task.deviceId,
-          task_id: task.taskId,
-        })
-      } catch {
-        return null
-      }
-      if (!binding.loop_item_id) return null
-      const item = await api.getLoopItem(binding.loop_item_id)
-      return item.title === title
-        ? item
-        : api.updateLoopItem(item.id, { version: item.version, title })
+      return enqueueTaskTrackingMutation(task, async () => {
+        let binding: LocalTaskBindingRecord
+        try {
+          binding = await request<LocalTaskBindingRecord>('runtime_tasks.context', {
+            device_id: task.deviceId,
+            task_id: task.taskId,
+          })
+        } catch {
+          return null
+        }
+        if (!binding.loop_item_id) return null
+        const item = await api.getLoopItem(binding.loop_item_id)
+        return item.title === title
+          ? item
+          : api.updateLoopItem(item.id, { version: item.version, title })
+      })
     },
     async unbindCloudContext(task: RuntimeTaskAddress) {
       await request('runtime_tasks.unbind', {

@@ -334,7 +334,11 @@ impl RuntimeWorkRpcHandler {
         });
         self.merge_active_codex_transcript(&local_task_id, &mut thread);
         self.repair_legacy_task_activity_time(&local_task_id, &thread);
-        let workspace_path = string_field(&thread, "cwd")
+        let workspace_path = local_link
+            .as_ref()
+            .map(|link| link.workspace_path.clone())
+            .filter(|path| !path.trim().is_empty())
+            .or_else(|| string_field(&thread, "cwd"))
             .or_else(|| string_field(&payload, "workspacePath"))
             .or_else(|| string_field(&payload, "workspace_path"))
             .unwrap_or_default();

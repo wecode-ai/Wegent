@@ -260,6 +260,23 @@ async function assertPaneConversation(control, paneSelector, expectedText) {
   assert.ok(metrics.width > 0 && metrics.height > 0, `${expectedText} pane has no visible area`)
 }
 
+async function assertCompletedPanesStayIdle(control, paneSelectors, durationMs) {
+  const thinkingSelector = paneSelectors
+    .map(paneSelector => `${paneSelector} [data-testid="thinking-indicator"]`)
+    .join(', ')
+  const sample = JSON.parse(
+    await control.command('sampleElementPresence', thinkingSelector, {
+      value: String(durationMs),
+      timeoutMs: durationMs + 5_000,
+    })
+  )
+  assert.equal(
+    sample.observed,
+    false,
+    `A completed split-pane task periodically returned to the thinking state: ${JSON.stringify(sample)}`
+  )
+}
+
 async function assertIndependentTitlebar(control, paneSelector, title) {
   assert.equal(
     Number(
@@ -516,6 +533,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       const secondPane = await paneSelectorForTitle(control, SECOND_PROMPT)
       await assertPaneConversation(control, firstPane, `${FIRST_PROMPT}_COMPLETE`)
       await assertPaneConversation(control, secondPane, `${SECOND_PROMPT}_COMPLETE`)
+      await assertCompletedPanesStayIdle(control, [firstPane, secondPane], 4_000)
       await assertIndependentTitlebar(control, firstPane, FIRST_PROMPT)
       await assertIndependentTitlebar(control, secondPane, SECOND_PROMPT)
       await captureScreenshot(control, '03-split-two-independent-panes.png', 'body')

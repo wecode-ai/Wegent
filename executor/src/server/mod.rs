@@ -9,6 +9,7 @@ use std::{
     io::Read,
     net::SocketAddr,
     path::{Path, PathBuf},
+    pin::Pin,
     process::Stdio,
     sync::{Mutex, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -52,6 +53,14 @@ pub trait TaskRunner: Clone + Send + Sync + 'static {
     type SubmitFuture: Future<Output = RunnerResult> + Send + 'static;
 
     fn submit(&self, request: ExecutionRequest) -> Self::SubmitFuture;
+
+    fn cancel(
+        &self,
+        _task_id: String,
+        _subtask_id: Option<String>,
+    ) -> Pin<Box<dyn Future<Output = bool> + Send>> {
+        Box::pin(async { false })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -123,6 +132,7 @@ where
         .route("/init", post(envd_init))
         .route("/envs", get(envd_envs))
         .route("/v1/responses", post(openai_responses::<R>))
+        .route("/api/tasks/cancel", post(cancel_task::<R>))
         .route(codex_model_catalog::ROUTE, get(codex_model_catalog::handle))
         .route(local_model_proxy::ROUTE, local_model_proxy::route())
         .route(
@@ -154,6 +164,36 @@ where
         .route("/api/archive", post(archive_workspace))
         .route("/api/restore", post(restore_workspace))
         .with_state(state)
+}
+
+#[derive(Debug, Deserialize)]
+struct CancelTaskQuery {
+    task_id: String,
+    subtask_id: Option<String>,
+}
+
+async fn cancel_task<R>(
+    State(state): State<AppState<R>>,
+    Query(request): Query<CancelTaskQuery>,
+) -> Result<Json<Value>, HttpError>
+where
+    R: TaskRunner,
+{
+    let cancelled = state
+        .runner
+        .cancel(request.task_id.clone(), request.subtask_id.clone())
+        .await;
+    if !cancelled {
+        return Err(HttpError {
+            status: StatusCode::NOT_FOUND,
+            detail: format!("task {} is not running", request.task_id),
+        });
+    }
+    Ok(Json(json!({
+        "status": "success",
+        "task_id": request.task_id,
+        "subtask_id": request.subtask_id,
+    })))
 }
 
 async fn bind_runtime<R>(

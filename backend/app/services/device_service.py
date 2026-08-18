@@ -111,6 +111,8 @@ class DeviceService:
         running_task_ids: list[int] = None,
         executor_version: Optional[str] = None,
         runtime_transfer_host: Optional[str] = None,
+        runtime_instance_id: Optional[str] = None,
+        runtime_capacity: Optional[Dict[str, Any]] = None,
     ) -> bool:
         """Refresh device heartbeat in Redis (extend TTL) and update running task IDs.
 
@@ -130,6 +132,8 @@ class DeviceService:
             running_task_ids=running_task_ids,
             executor_version=executor_version,
             runtime_transfer_host=runtime_transfer_host,
+            runtime_instance_id=runtime_instance_id,
+            runtime_capacity=runtime_capacity,
         )
 
     @staticmethod

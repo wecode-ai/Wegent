@@ -228,10 +228,9 @@ def test_a_knowledge_base_without_a_source_reads_as_none():
         "https://[fe80::1]/owner/repo.git",
         "https://127.0.0.1/owner/repo.git",
         "https://localhost/owner/repo.git",
-        # Written the long way round. The first two rely on the standard library
-        # folding IPv4-mapped forms into is_loopback/is_link_local, which is worth
-        # pinning because it is not this module's behaviour to keep. The last two
-        # are neither loopback nor link-local, and still reach the local host.
+        # Written the long way round. IPv4-mapped forms must be normalized before
+        # classification because standard-library behaviour differs by Python
+        # version. The last two still reach the local host via unspecified binds.
         "https://[::ffff:127.0.0.1]/owner/repo.git",
         "https://[::ffff:169.254.169.254]/owner/repo.git",
         "https://0.0.0.0/owner/repo.git",

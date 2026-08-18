@@ -29,6 +29,7 @@ function TabsState() {
       <div data-testid="active-tab-kind">{activeTab.kind}</div>
       <div data-testid="active-tab-title">{activeTab.title}</div>
       <div data-testid="active-tab-route">{activeTab.contentRoute}</div>
+      <div data-testid="board-tab-title">{boardTab?.title}</div>
       <button type="button" onClick={() => openTab('board')}>
         新建项目空间标签
       </button>
@@ -140,6 +141,35 @@ describe('WorkspaceTabsProvider routing', () => {
     expect(screen.getByTestId('tab-count')).toHaveTextContent('2')
     expect(screen.getByTestId('active-tab-kind')).toHaveTextContent('board')
     expect(screen.getByTestId('active-tab-route')).toHaveTextContent('/todo')
+  })
+
+  test('renames the persisted default board tab without changing named project tabs', () => {
+    localStorage.setItem(
+      'wework.workspaceTabs.v3:context-test',
+      JSON.stringify({
+        activeTabId: 'board-default',
+        tabs: [
+          {
+            id: 'board-default',
+            kind: 'board',
+            title: '工作项',
+            contentRoute: '/todo',
+          },
+          {
+            id: 'board-project',
+            kind: 'board',
+            title: '产品规划',
+            contentRoute: '/todo?projectId=project-1',
+          },
+        ],
+      })
+    )
+    window.history.replaceState({}, '', '/todo?workspaceTab=board-default')
+
+    render(<RoutingHarness />)
+
+    expect(screen.getByTestId('active-tab-title')).toHaveTextContent('项目空间')
+    expect(screen.getByTestId('tab-count')).toHaveTextContent('2')
   })
 
   test('the explicit new-tab action still opens a separate tab', () => {
