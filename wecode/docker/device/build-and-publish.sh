@@ -5,7 +5,7 @@ set -euo pipefail
 DEVICE_IMAGE_REPOSITORY="${DEVICE_IMAGE_REPOSITORY:-registry.api.weibo.com/ci/wegent-device}"
 DEVICE_IMAGE_PUSH_REPOSITORY="${DEVICE_IMAGE_PUSH_REPOSITORY:-pushregistry.api.weibo.com/ci/wegent-device}"
 BUILDKIT_IMAGE="${BUILDKIT_IMAGE:-registry.api.weibo.com/ci/moby/buildkit:buildx-stable-1}"
-DEVICE_IMAGE_VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' executor/Cargo.toml | head -1)"
+DEVICE_IMAGE_VERSION="${DEVICE_IMAGE_VERSION:-$(sed -n 's/^version = "\([^"]*\)"/\1/p' executor/Cargo.toml | head -1)}"
 
 if [[ -z "$DEVICE_IMAGE_VERSION" ]]; then
   echo "Unable to read the executor version from executor/Cargo.toml" >&2

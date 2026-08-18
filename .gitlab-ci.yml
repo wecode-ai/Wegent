@@ -143,12 +143,16 @@ wegent-device:
   stage: package
   retry: 1
   resource_group: wegent-device-image
+  variables:
+    DEVICE_IMAGE_VERSION: ""
   script:
     - bash wecode/docker/device/build-and-publish.sh
   rules:
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "develop"'
       when: never
     - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
+      allow_failure: true
       changes:
         - docker/device/**/*
         - wecode/docker/device/**/*
@@ -156,11 +160,13 @@ wegent-device:
         - shared/assets/**/*
         - .gitlab-ci.yml
     - changes:
-        - docker/device/**/*
-        - wecode/docker/device/**/*
-        - executor/**/*
-        - shared/assets/**/*
-        - .gitlab-ci.yml
+      - docker/device/**/*
+      - wecode/docker/device/**/*
+      - executor/**/*
+      - shared/assets/**/*
+      - .gitlab-ci.yml
+      when: manual
+      allow_failure: true
 
 trigger_update_executor:
     stage: production
