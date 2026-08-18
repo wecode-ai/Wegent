@@ -2836,27 +2836,28 @@ mod tests {
     }
 
     #[test]
-    fn extract_skill_zip_reports_expected_entry_without_extracting_wrong_root() {
+    fn extract_skill_zip_remaps_mismatched_root_to_requested_skill() {
         let temp = env::temp_dir().join(format!("skill-wrong-root-{}", std::process::id()));
         let skills_dir = temp.join("skills");
 
-        let error = extract_skill_zip(
+        let extracted = extract_skill_zip(
             "requested-skill",
             &skill_zip_bytes("unexpected-root"),
             &skills_dir,
         )
-        .unwrap_err();
+        .unwrap();
 
+        assert!(extracted);
         assert_eq!(
-            error,
-            "downloaded Skill ZIP is missing expected entry requested-skill/SKILL.md"
+            fs::read_to_string(skills_dir.join("requested-skill/SKILL.md")).unwrap(),
+            "# Skill"
         );
         assert!(!skills_dir.join("unexpected-root").exists());
         let _ = fs::remove_dir_all(temp);
     }
 
     #[test]
-    fn extract_skill_zip_rejects_entries_outside_requested_root_before_writing() {
+    fn extract_skill_zip_rejects_missing_skill_md_before_writing() {
         let temp = env::temp_dir().join(format!("skill-extra-root-{}", std::process::id()));
         let skills_dir = temp.join("skills");
         let archive = skill_zip_entries(&[
@@ -2868,7 +2869,7 @@ mod tests {
 
         assert_eq!(
             error,
-            "downloaded Skill ZIP contains entries outside expected root requested-skill/"
+            "downloaded Skill ZIP is missing required SKILL.md for skill requested-skill"
         );
         assert!(!skills_dir.join("requested-skill").exists());
         assert!(!skills_dir.join("other-skill").exists());
