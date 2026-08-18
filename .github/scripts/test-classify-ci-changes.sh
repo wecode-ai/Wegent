@@ -386,7 +386,7 @@ assert_desktop_case "Core artifact changes retain full coverage" \
 assert_desktop_case "skill mention files select plugin and core coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"core-task-flow"},{"id":"core-5","name":"Core / shard 5","segments":"workspace-attachments"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"core-task-flow"}]}
 wework_desktop_other_e2e=true
 wework_desktop_other_e2e_matrix={"include":[{"id":"plugins-skill-mention-rendering","name":"Plugins / skill-mention-rendering","command":"e2e:desktop:plugins","segment":"skill-mention-rendering"}]}' \
   "wework/src/components/chat/composer/ComposerMentionMenu.tsx"
@@ -446,7 +446,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "worktree UI changes select local launch and cloud lifecycle coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"core-task-flow"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"core-task-flow"},{"id":"core-5","name":"Core / shard 5","segments":"workspace-attachments"}]}
 wework_desktop_cloud_e2e=true
 wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shard 1","segments":"cloud-worktree-create"},{"id":"cloud-2","name":"Cloud / shard 2","segments":"cloud-worktree-capability,cloud-worktree-tools"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"cloud-worktree-queued-cancel"},{"id":"cloud-4","name":"Cloud / shard 4","segments":"cloud-worktree-device-restart"},{"id":"cloud-5","name":"Cloud / shard 5","segments":"cloud-worktree-archive-restore"}]}
 wework_desktop_other_e2e=false
