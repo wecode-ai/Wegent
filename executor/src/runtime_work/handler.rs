@@ -698,10 +698,9 @@ impl RuntimeWorkRpcHandler {
         if !matches!(
             method,
             "runtime.worktrees.capabilities" | "runtime.worktrees.preflight"
-        ) {
-            if self.reconcile_worktrees_once().await {
-                self.resume_persisted_turns().await;
-            }
+        ) && self.reconcile_worktrees_once().await
+        {
+            self.resume_persisted_turns().await;
         }
         match method {
             "runtime.tasks.list" => self.list_tasks().await,

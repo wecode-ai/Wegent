@@ -864,46 +864,6 @@ impl RuntimeWorkRpcHandler {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn handler_uses_the_frozen_manager_storage_capability_and_gate() {
-        let root = tempfile::tempdir().expect("temporary runtime work directory");
-        let mut handler = RuntimeWorkRpcHandler::new("device-cloud", "/bin/false");
-        handler.worktrees = WorktreeManager::new_for_device_with_storage(
-            root.path().join("worktrees.json"),
-            "device-cloud",
-            false,
-        );
-
-        let capabilities = handler.get_worktree_capabilities().await.unwrap();
-        let preflight = handler
-            .preflight_worktree(json!({"sourcePath": root.path().join("source")}))
-            .await
-            .unwrap();
-        let prepare_error = handler
-            .prepare_worktree(json!({
-                "sourcePath": root.path().join("source"),
-                "worktreeId": "task-1",
-            }))
-            .await
-            .unwrap_err();
-
-        assert_eq!(
-            capabilities["runtimeWorktrees"]["persistentStorageVerified"],
-            false
-        );
-        assert_eq!(preflight["supported"], false);
-        assert_eq!(
-            preflight["errorCode"],
-            "worktree_persistent_storage_unverified"
-        );
-        assert_eq!(prepare_error.code, "worktree_persistent_storage_unverified");
-    }
-}
-
 fn runtime_settings_path() -> PathBuf {
     runtime_work_dir().join("settings.json")
 }
@@ -964,4 +924,44 @@ fn write_runtime_settings(settings: &RuntimeSettings) -> Result<(), AppIpcError>
             format!("Failed to write {}: {error}", path.display()),
         )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn handler_uses_the_frozen_manager_storage_capability_and_gate() {
+        let root = tempfile::tempdir().expect("temporary runtime work directory");
+        let mut handler = RuntimeWorkRpcHandler::new("device-cloud", "/bin/false");
+        handler.worktrees = WorktreeManager::new_for_device_with_storage(
+            root.path().join("worktrees.json"),
+            "device-cloud",
+            false,
+        );
+
+        let capabilities = handler.get_worktree_capabilities().await.unwrap();
+        let preflight = handler
+            .preflight_worktree(json!({"sourcePath": root.path().join("source")}))
+            .await
+            .unwrap();
+        let prepare_error = handler
+            .prepare_worktree(json!({
+                "sourcePath": root.path().join("source"),
+                "worktreeId": "task-1",
+            }))
+            .await
+            .unwrap_err();
+
+        assert_eq!(
+            capabilities["runtimeWorktrees"]["persistentStorageVerified"],
+            false
+        );
+        assert_eq!(preflight["supported"], false);
+        assert_eq!(
+            preflight["errorCode"],
+            "worktree_persistent_storage_unverified"
+        );
+        assert_eq!(prepare_error.code, "worktree_persistent_storage_unverified");
+    }
 }

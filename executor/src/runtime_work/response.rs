@@ -866,9 +866,7 @@ fn merged_task_status(thread: &Value, running: bool, archived: bool) -> String {
 }
 
 fn local_settled_error_or_cancellation_status(link: &RuntimeTaskLink) -> Option<String> {
-    if link.completed_at.is_none() {
-        return None;
-    }
+    link.completed_at?;
     match link
         .status
         .replace(['_', '-'], "")

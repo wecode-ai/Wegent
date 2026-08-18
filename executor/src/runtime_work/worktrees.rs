@@ -839,7 +839,7 @@ impl WorktreeManager {
         let mut state = fs::read_to_string(&self.state_path)
             .ok()
             .and_then(|content| serde_json::from_str::<WorktreeState>(&content).ok())
-            .unwrap_or_default();
+            .unwrap_or_else(|| initial_worktree_state(&self.state_path));
         state.version = STATE_VERSION;
         state.settings.resolved_worktree_root =
             resolve_worktree_root(&state.settings.worktree_root)
@@ -882,6 +882,24 @@ impl WorktreeManager {
         }
         result
     }
+}
+
+#[cfg(not(test))]
+fn initial_worktree_state(_state_path: &Path) -> WorktreeState {
+    WorktreeState::default()
+}
+
+#[cfg(test)]
+fn initial_worktree_state(state_path: &Path) -> WorktreeState {
+    let mut state = WorktreeState::default();
+    let root = state_path
+        .parent()
+        .and_then(Path::parent)
+        .unwrap_or_else(|| Path::new("."))
+        .join("workspace/worktrees");
+    state.settings.worktree_root = root.display().to_string();
+    state.settings.resolved_worktree_root = root.display().to_string();
+    state
 }
 
 struct Snapshot {

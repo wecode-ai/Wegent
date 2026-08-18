@@ -545,7 +545,7 @@ fn worktree_restore_helper_keeps_the_async_runtime_responsive() {
     };
     worker.join().unwrap();
 
-    assert_eq!(result.unwrap(), true);
+    assert!(result.unwrap());
 }
 
 #[tokio::test]
