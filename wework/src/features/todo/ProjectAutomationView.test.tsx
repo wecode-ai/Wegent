@@ -146,4 +146,56 @@ describe('ProjectAutomationView', () => {
 
     expect(screen.getByTestId('workflow-node-count')).toHaveTextContent('1')
   })
+
+  test('adopts a project update while the view is mounted', async () => {
+    const updatedProject: CloudProject = {
+      ...initialProject,
+      version: 2,
+      workflow_definition: {
+        version: 2,
+        stage_mode: 'dag',
+        advancement_policy: 'manual',
+        nodes: [
+          {
+            id: 'stage-1',
+            name: '设计',
+            prompt: '',
+            depends_on: [],
+            dependency_context: {},
+            required: true,
+            workspace_policy: 'composer',
+            automation_rule_id: null,
+          },
+        ],
+      },
+    }
+    const { rerender } = render(
+      <ProjectAutomationView
+        api={
+          {
+            updateCloudProject: vi.fn(),
+          } as unknown as NonNullable<WorkbenchServices['deliveryApi']>
+        }
+        project={initialProject}
+        localProjects={[]}
+        canManageAgents
+      />
+    )
+
+    expect(screen.getByTestId('workflow-node-count')).toHaveTextContent('0')
+    rerender(
+      <ProjectAutomationView
+        api={
+          {
+            updateCloudProject: vi.fn(),
+          } as unknown as NonNullable<WorkbenchServices['deliveryApi']>
+        }
+        project={updatedProject}
+        localProjects={[]}
+        canManageAgents
+      />
+    )
+
+    expect(screen.getByTestId('workflow-node-count')).toHaveTextContent('1')
+  })
 })

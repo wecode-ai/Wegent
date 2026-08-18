@@ -2210,6 +2210,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       })
       await control.command('waitFor', '[data-testid="project-workflow-stage-stage-1"]', {
         timeoutMs: uiTimeoutMs,
+      })
+      await control.command(
+        'scrollIntoView',
+        '[data-testid="project-workflow-stage-stage-1"]'
+      )
+      await control.command('waitFor', '[data-testid="project-workflow-stage-stage-1"]', {
+        timeoutMs: uiTimeoutMs,
         visible: true,
       })
     },

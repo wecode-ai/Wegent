@@ -486,10 +486,15 @@ async function verifyWorkspaceIssueCreation(control) {
     'waitFor',
     `${boardContentSelector} [data-testid="cloud-todo-detail-title"]`,
     {
-      text: 'WEWORK_DESKTOP_E2E_ISSUE Workspace fullscreen issue creation verified',
       visible: true,
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
+  )
+  await waitForControlValue(
+    control,
+    `${boardContentSelector} [data-testid="cloud-todo-detail-title"]`,
+    'WEWORK_DESKTOP_E2E_ISSUE Workspace fullscreen issue creation verified',
+    'Fullscreen Issue creation did not persist the composed title'
   )
   await captureVerificationScreenshot(
     control,
