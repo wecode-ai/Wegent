@@ -36,6 +36,34 @@ from app.services.device.display_name import (
 logger = logging.getLogger(__name__)
 
 
+class RuntimeInstanceMismatchError(ValueError):
+    """Raised when a persistent device connects from a different Runtime."""
+
+
+def validate_persistent_runtime_instance_id(
+    device_json: Dict[str, Any],
+    runtime_instance_id: Optional[str],
+    *,
+    device_id: str,
+) -> None:
+    """Keep cloud and remote devices pinned to their first Runtime instance."""
+
+    spec = device_json.get("spec", {})
+    device_type = spec.get("deviceType")
+    if device_type not in {DeviceType.CLOUD.value, DeviceType.REMOTE.value}:
+        return
+
+    persisted_runtime_instance_id = spec.get("runtimeInstanceId")
+    if (
+        persisted_runtime_instance_id
+        and runtime_instance_id != persisted_runtime_instance_id
+    ):
+        raise RuntimeInstanceMismatchError(
+            "Runtime instance ID mismatch for persistent "
+            f"{device_type} device {device_id}"
+        )
+
+
 class DeviceService:
     """Service for managing device connections and state.
 
@@ -76,6 +104,8 @@ class DeviceService:
         executor_version: Optional[str] = None,
         client_ip: Optional[str] = None,
         runtime_transfer_host: Optional[str] = None,
+        runtime_instance_id: Optional[str] = None,
+        runtime_features: Optional[Dict[str, Any]] = None,
     ) -> bool:
         """Set device online status in Redis.
 
@@ -88,6 +118,8 @@ class DeviceService:
             executor_version: Executor version (e.g., '1.0.0')
             client_ip: Device-reported or websocket-observed IP address
             runtime_transfer_host: Host peers should use for direct transfers
+            runtime_instance_id: Stable Runtime installation ID
+            runtime_features: Features implemented by the online Runtime
 
         Returns:
             True if set successfully
@@ -102,6 +134,8 @@ class DeviceService:
             executor_version=executor_version,
             client_ip=client_ip,
             runtime_transfer_host=runtime_transfer_host,
+            runtime_instance_id=runtime_instance_id,
+            runtime_features=runtime_features,
         )
 
     @staticmethod
@@ -113,6 +147,7 @@ class DeviceService:
         runtime_transfer_host: Optional[str] = None,
         runtime_instance_id: Optional[str] = None,
         runtime_capacity: Optional[Dict[str, Any]] = None,
+        runtime_features: Optional[Dict[str, Any]] = None,
     ) -> bool:
         """Refresh device heartbeat in Redis (extend TTL) and update running task IDs.
 
@@ -134,6 +169,7 @@ class DeviceService:
             runtime_transfer_host=runtime_transfer_host,
             runtime_instance_id=runtime_instance_id,
             runtime_capacity=runtime_capacity,
+            runtime_features=runtime_features,
         )
 
     @staticmethod
@@ -357,6 +393,7 @@ class DeviceService:
                     Kind.name == device_id,
                 )
             )
+            .with_for_update()
             .first()
         )
 
@@ -364,6 +401,11 @@ class DeviceService:
             # Update existing device (reactivate if soft-deleted)
             # Use deepcopy to ensure SQLAlchemy detects nested JSON changes
             device_json = copy.deepcopy(device_kind.json)
+            validate_persistent_runtime_instance_id(
+                device_json,
+                runtime_instance_id,
+                device_id=device_id,
+            )
             persisted_display_name = resolve_device_display_name(device_json, name)
             set_device_display_name(device_json, persisted_display_name)
             # Update device type if provided, otherwise preserve existing value

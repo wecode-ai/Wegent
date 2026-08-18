@@ -2,7 +2,7 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import type { DeviceInfo } from '@/types/devices'
+import type { DeviceInfo } from '@/types/api'
 import { WorktreesSettingsPage } from './WorktreesSettingsPage'
 import '@/i18n'
 
@@ -30,6 +30,17 @@ describe('WorktreesSettingsPage', () => {
       device_type: 'local',
       bind_shell: 'codex',
       is_default: true,
+      runtime_features: {
+        schemaVersion: 1,
+        worktrees: {
+          version: 1,
+          managed: true,
+          deferredPrepare: true,
+          snapshots: true,
+          restore: true,
+          preflight: true,
+        },
+      },
     },
   ] as DeviceInfo[]
 
@@ -90,6 +101,45 @@ describe('WorktreesSettingsPage', () => {
     )
     expect(screen.getByTestId('worktrees-keep-count-input')).toHaveValue(15)
     expect(screen.getByText('Fix settings')).toBeInTheDocument()
+  })
+
+  test('only lists online or busy devices with managed Worktree preflight support', async () => {
+    render(
+      <WorktreesSettingsPage
+        api={api}
+        devices={[
+          ...devices,
+          {
+            ...devices[0],
+            id: 2,
+            device_id: 'busy-device',
+            name: 'Busy Cloud',
+            status: 'busy',
+          },
+          {
+            ...devices[0],
+            id: 3,
+            device_id: 'unsupported-device',
+            name: 'Old Executor',
+            runtime_features: null,
+          },
+          {
+            ...devices[0],
+            id: 4,
+            device_id: 'offline-device',
+            name: 'Offline Cloud',
+            status: 'offline',
+          },
+        ]}
+      />
+    )
+
+    const select = await screen.findByTestId('worktrees-device-select')
+    expect(within(select).getAllByRole('option')).toHaveLength(2)
+    expect(within(select).getByRole('option', { name: 'This Mac' })).toBeInTheDocument()
+    expect(within(select).getByRole('option', { name: 'Busy Cloud' })).toBeInTheDocument()
+    expect(within(select).queryByRole('option', { name: 'Old Executor' })).not.toBeInTheDocument()
+    expect(within(select).queryByRole('option', { name: 'Offline Cloud' })).not.toBeInTheDocument()
   })
 
   test('matches the Codex project grouping and opens a linked conversation', async () => {
@@ -203,5 +253,92 @@ describe('WorktreesSettingsPage', () => {
     )
     expect(screen.getByTestId('worktrees-saved-notice')).toHaveTextContent('已保存自动删除限制')
     expect(listWorktrees).toHaveBeenCalledTimes(1)
+  })
+
+  test('ignores stale Worktree responses after switching devices', async () => {
+    let resolveLocalSettings: ((value: unknown) => void) | undefined
+    let resolveLocalWorktrees: ((value: unknown) => void) | undefined
+    getWorktreeSettings.mockImplementation(({ deviceId }) => {
+      if (deviceId === 'local-device') {
+        return new Promise(resolve => {
+          resolveLocalSettings = resolve
+        })
+      }
+      return Promise.resolve({
+        deviceId,
+        worktreeRoot: '/cloud-root',
+        resolvedWorktreeRoot: '/cloud-root',
+        autoCleanupEnabled: true,
+        keepCount: 7,
+      })
+    })
+    listWorktrees.mockImplementation(({ deviceId }) => {
+      if (deviceId === 'local-device') {
+        return new Promise(resolve => {
+          resolveLocalWorktrees = resolve
+        })
+      }
+      return Promise.resolve({
+        success: true,
+        deviceId,
+        items: [
+          {
+            deviceId,
+            worktreeId: 'cloud-task',
+            path: '/cloud-root/cloud-task/repo',
+            repositoryName: 'cloud-repo',
+            sourcePath: '/cloud/repo',
+            state: 'active',
+            conversations: [],
+          },
+        ],
+      })
+    })
+
+    render(
+      <WorktreesSettingsPage
+        api={api}
+        devices={[
+          ...devices,
+          {
+            ...devices[0],
+            id: 2,
+            device_id: 'cloud-device',
+            name: 'Cloud',
+            device_type: 'cloud',
+            is_default: false,
+            runtime_features: {
+              ...devices[0].runtime_features,
+              worktrees: {
+                ...devices[0].runtime_features?.worktrees,
+                persistentStorageVerified: true,
+              },
+            },
+          },
+        ]}
+      />
+    )
+
+    await userEvent.selectOptions(screen.getByTestId('worktrees-device-select'), 'cloud-device')
+    expect(await screen.findByText('/cloud/repo')).toBeInTheDocument()
+    expect(screen.getByTestId('worktrees-keep-count-input')).toHaveValue(7)
+
+    resolveLocalSettings?.({
+      deviceId: 'local-device',
+      worktreeRoot: '/stale-local-root',
+      resolvedWorktreeRoot: '/stale-local-root',
+      autoCleanupEnabled: false,
+      keepCount: 99,
+    })
+    resolveLocalWorktrees?.({
+      success: true,
+      deviceId: 'local-device',
+      items: [],
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText('/cloud/repo')).toBeInTheDocument()
+      expect(screen.getByTestId('worktrees-keep-count-input')).toHaveValue(7)
+    })
   })
 })

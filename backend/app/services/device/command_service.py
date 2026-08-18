@@ -34,7 +34,49 @@ MAX_COMMAND_TIMEOUT_SECONDS = 600
 DEFAULT_MAX_OUTPUT_BYTES = 1024 * 1024
 MAX_OUTPUT_BYTES = 5 * 1024 * 1024
 SOCKET_ACK_GRACE_SECONDS = 5
-REMOTE_DEVICE_COMMAND_KEYS = frozenset({"pwd", "home_dir", "ls_dirs", "mkdir_p"})
+REMOTE_READ_ONLY_COMMAND_KEYS = frozenset(
+    {
+        "pwd",
+        "home_dir",
+        "ls_dirs",
+        "workspace_tree",
+        "workspace_read_text_file",
+        "workspace_read_file_chunk",
+        "git_branch",
+        "git_branch_list",
+        "git_diff",
+        "git_branch_diff",
+        "git_diff_unstaged",
+        "git_diff_staged",
+        "git_diff_last_commit",
+        "git_branch_diff_shortstat",
+        "git_status_porcelain",
+        "git_remote_url",
+        "git_github_cli_status",
+        "git_gitlab_cli_status",
+        "git_github_pull_requests",
+        "git_gitlab_merge_requests",
+        "git_generate_commit_message",
+        "turn_file_changes_review",
+    }
+)
+REMOTE_MUTATING_COMMAND_KEYS = frozenset(
+    {
+        "mkdir_p",
+        "git_checkout",
+        "git_checkout_new",
+        "git_add_all",
+        "git_commit",
+        "git_push",
+        "turn_file_changes_revert",
+    }
+)
+REMOTE_DEVICE_COMMAND_KEYS = (
+    REMOTE_READ_ONLY_COMMAND_KEYS | REMOTE_MUTATING_COMMAND_KEYS
+)
+CLOUD_DEVICE_COMMAND_KEYS = REMOTE_DEVICE_COMMAND_KEYS | frozenset(
+    {"read_runtime_auth_file", "sync_runtime_auth_file"}
+)
 LOCAL_COMMAND_DEVICE_TYPES = frozenset({DeviceType.LOCAL, DeviceType.APP})
 
 
@@ -102,7 +144,12 @@ async def _resolve_dispatch_device_id(
             f"Device command RPC is not supported for {device_type.value} devices"
         )
 
-    if command_key not in REMOTE_DEVICE_COMMAND_KEYS:
+    supported_command_keys = (
+        CLOUD_DEVICE_COMMAND_KEYS
+        if device_type == DeviceType.CLOUD
+        else REMOTE_DEVICE_COMMAND_KEYS
+    )
+    if command_key not in supported_command_keys:
         raise DeviceCommandError(
             f"Device command key '{command_key}' is not supported for "
             f"{device_type.value} devices"

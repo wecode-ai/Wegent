@@ -10,8 +10,8 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.core.cache import cache_manager
-from app.models.kind import Kind
 from app.services.device.local_provider import LocalDeviceProvider
+from app.services.device.runtime_route import resolve_runtime_route_identity
 
 
 @dataclass(frozen=True)
@@ -26,30 +26,14 @@ class RuntimeCapacity:
 def _runtime_route(
     db: Session, owner_user_id: int, device_id: str
 ) -> tuple[str, str] | None:
-    device = (
-        db.query(Kind)
-        .filter(
-            Kind.user_id == owner_user_id,
-            Kind.kind == "Device",
-            Kind.namespace == "default",
-            Kind.name == device_id,
-            Kind.is_active == True,
-        )
-        .first()
+    identity = resolve_runtime_route_identity(
+        db,
+        user_id=owner_user_id,
+        submitted_device_id=device_id,
     )
-    if device is None:
+    if identity is None or not identity.runtime_instance_id:
         return None
-    spec = device.json.get("spec", {}) if isinstance(device.json, dict) else {}
-    expected_instance_id = str(spec.get("runtimeInstanceId") or "").strip()
-    if not expected_instance_id:
-        return None
-    cloud_config = spec.get("cloudConfig") or {}
-    runtime_device_id = str(
-        spec.get("deviceId") or cloud_config.get("deviceId") or device.name
-    ).strip()
-    if not runtime_device_id:
-        return None
-    return runtime_device_id, expected_instance_id
+    return identity.runtime_device_id, identity.runtime_instance_id
 
 
 def _parse_capacity(

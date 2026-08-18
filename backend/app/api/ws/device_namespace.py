@@ -82,7 +82,11 @@ from app.services.device.terminal_session_service import (
     TerminalSessionRecord,
     terminal_session_service,
 )
-from app.services.device_service import device_service
+from app.services.device_service import (
+    RuntimeInstanceMismatchError,
+    device_service,
+    validate_persistent_runtime_instance_id,
+)
 from app.services.execution.dispatcher import ResponsesAPIEventParser
 from app.services.execution.emitters.status_updating import StatusUpdatingEmitter
 from app.services.execution.emitters.websocket import WebSocketResultEmitter
@@ -351,9 +355,12 @@ def _match_cloud_device_sync(
                     Kind.user_id == user_id,
                     Kind.kind == "Device",
                     Kind.namespace == "default",
-                    Kind.is_active == True,
+                    Kind.is_active.is_(True),
+                    Kind.json["spec"]["deviceType"].as_string()
+                    == DeviceType.CLOUD.value,
                 )
             )
+            .with_for_update()
             .all()
         )
 
@@ -366,9 +373,6 @@ def _match_cloud_device_sync(
 
         for device in cloud_devices:
             spec = device.json.get("spec", {})
-            if spec.get("deviceType") != DeviceType.CLOUD.value:
-                continue
-
             cloud_config = spec.get("cloudConfig", {})
             sandbox_id = cloud_config.get("sandboxId", device.name)
             server_device_id = cloud_config.get("deviceId")
@@ -376,6 +380,11 @@ def _match_cloud_device_sync(
             # New logic: verify server-generated device_id matches
             if server_device_id:
                 if server_device_id == executor_device_id:
+                    validate_persistent_runtime_instance_id(
+                        device.json,
+                        runtime_instance_id,
+                        device_id=sandbox_id,
+                    )
                     if runtime_instance_id:
                         device_json = copy.deepcopy(device.json)
                         device_json.setdefault("spec", {})[
@@ -403,6 +412,11 @@ def _match_cloud_device_sync(
                 # Backward compatibility: old device without deviceId field
                 # Use legacy matching (device.name still equals sandbox_id)
                 if device.name == sandbox_id:
+                    validate_persistent_runtime_instance_id(
+                        device.json,
+                        runtime_instance_id,
+                        device_id=sandbox_id,
+                    )
                     logger.info(
                         f"[Device WS] Cloud device matched (legacy mode): "
                         f"sandbox_id={sandbox_id}, "
@@ -443,7 +457,18 @@ def _update_cloud_device_id_sync(
     from app.models.kind import Kind
 
     with get_db_session() as db:
-        device = db.query(Kind).filter(Kind.id == device_db_id).first()
+        device = (
+            db.query(Kind)
+            .filter(
+                Kind.id == device_db_id,
+                Kind.user_id == user_id,
+                Kind.kind == "Device",
+                Kind.namespace == "default",
+                Kind.is_active.is_(True),
+            )
+            .with_for_update()
+            .first()
+        )
         if not device:
             logger.error(
                 f"[Device WS] Device not found for migration: id={device_db_id}"
@@ -451,6 +476,11 @@ def _update_cloud_device_id_sync(
             return sandbox_id
 
         device_json = copy.deepcopy(device.json)
+        validate_persistent_runtime_instance_id(
+            device_json,
+            runtime_instance_id,
+            device_id=sandbox_id,
+        )
         old_device_id = device.name
         device_json["metadata"]["name"] = executor_device_id
         device_json["spec"]["deviceId"] = executor_device_id
@@ -955,6 +985,8 @@ class DeviceNamespace(socketio.AsyncNamespace):
 
             return sandbox_id
 
+        except RuntimeInstanceMismatchError:
+            raise
         except Exception as e:
             logger.error(f"[Device WS] Error matching cloud device: {e}")
 
@@ -1219,10 +1251,22 @@ class DeviceNamespace(socketio.AsyncNamespace):
         # address is advisory and must not drive transfer routing.
         client_ip = session.get("client_ip")
         is_cloud_device = False
-        if payload.device_type == DeviceType.CLOUD and client_ip:
-            cloud_device_id = await self._match_cloud_device(
-                user_id, client_ip, payload.device_id, payload.runtime_instance_id
-            )
+        if payload.device_type == DeviceType.CLOUD:
+            try:
+                cloud_device_id = await self._match_cloud_device(
+                    user_id,
+                    client_ip or "",
+                    payload.device_id,
+                    payload.runtime_instance_id,
+                )
+            except RuntimeInstanceMismatchError as exc:
+                logger.warning(
+                    "[Device WS] Rejected cloud Runtime instance mismatch: "
+                    "user=%s, device=%s",
+                    user_id,
+                    payload.device_id,
+                )
+                return {"error": f"Registration failed: {exc}"}
             if cloud_device_id:
                 is_cloud_device = True
                 logger.info(
@@ -1237,7 +1281,11 @@ class DeviceNamespace(socketio.AsyncNamespace):
             persisted_display_name = self._get_recent_registration_display_name(
                 user_id, payload.device_id
             )
-            if persisted_display_name is None:
+            requires_persistent_identity_check = payload.device_type in {
+                DeviceType.CLOUD,
+                DeviceType.REMOTE,
+            }
+            if persisted_display_name is None or requires_persistent_identity_check:
                 success, persisted_display_name, error = await run_sync_in_executor(
                     _register_device,
                     user_id,
@@ -1293,6 +1341,15 @@ class DeviceNamespace(socketio.AsyncNamespace):
             executor_version=payload.executor_version,
             client_ip=client_ip,
             runtime_transfer_host=runtime_transfer_host,
+            runtime_instance_id=payload.runtime_instance_id,
+            runtime_features=(
+                payload.runtime_features.model_dump(
+                    by_alias=True,
+                    exclude_none=True,
+                )
+                if payload.runtime_features is not None
+                else None
+            ),
         )
 
         # Broadcast device online event to user room (via chat namespace)
@@ -1478,6 +1535,22 @@ class DeviceNamespace(socketio.AsyncNamespace):
 
         if session_device_id != payload.device_id:
             return {"error": "Device ID mismatch"}
+
+        online_info = await device_service.get_device_online_info(
+            user_id, payload.device_id
+        )
+        online_socket_id = online_info.get("socket_id") if online_info else None
+        if online_socket_id and online_socket_id != sid:
+            logger.info(
+                "[Device WS] Ignoring stale heartbeat: user=%s, device=%s, "
+                "sid=%s, current_sid=%s",
+                user_id,
+                payload.device_id,
+                sid,
+                online_socket_id,
+            )
+            return {"error": "Stale device connection"}
+
         registered_runtime_instance_id = session.get("runtime_instance_id")
         if (
             registered_runtime_instance_id
@@ -1504,6 +1577,14 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 if payload.runtime_capacity is not None
                 else None
             ),
+            runtime_features=(
+                payload.runtime_features.model_dump(
+                    by_alias=True,
+                    exclude_none=True,
+                )
+                if payload.runtime_features is not None
+                else None
+            ),
         )
 
         if not success:
@@ -1521,6 +1602,15 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 executor_version=payload.executor_version,
                 client_ip=session.get("client_ip"),
                 runtime_transfer_host=runtime_transfer_host,
+                runtime_instance_id=payload.runtime_instance_id,
+                runtime_features=(
+                    payload.runtime_features.model_dump(
+                        by_alias=True,
+                        exclude_none=True,
+                    )
+                    if payload.runtime_features is not None
+                    else None
+                ),
             )
             await device_service.refresh_device_heartbeat(
                 user_id,
@@ -1532,6 +1622,14 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 runtime_capacity=(
                     payload.runtime_capacity.model_dump()
                     if payload.runtime_capacity is not None
+                    else None
+                ),
+                runtime_features=(
+                    payload.runtime_features.model_dump(
+                        by_alias=True,
+                        exclude_none=True,
+                    )
+                    if payload.runtime_features is not None
                     else None
                 ),
             )

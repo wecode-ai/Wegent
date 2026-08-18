@@ -2382,6 +2382,7 @@ function ProjectItem({
   onCloseLocalHarnessSession?: (sessionId: string) => void | Promise<void>
 }) {
   const { t } = useTranslation('common')
+  const workbench = useContext(WorkbenchContext)
   const lifecycleSnapshot = useRuntimeTaskLifecycleStoreSnapshot()
   const runtimeWorkspaces = runtimeProjectWork?.deviceWorkspaces
   const allRuntimeTaskItems = useMemo(
@@ -2545,11 +2546,18 @@ function ProjectItem({
       projectAppearance?.color as (typeof PROJECT_APPEARANCE_COLORS)[number]
     )
     const color = PROJECT_APPEARANCE_COLORS[(currentIndex + 1) % PROJECT_APPEARANCE_COLORS.length]
-    await onSetRuntimeProjectAppearance({
-      deviceId: projectStateDeviceId,
-      projectKey,
-      appearance: { ...projectAppearance, color },
-    })
+    try {
+      await onSetRuntimeProjectAppearance({
+        deviceId: projectStateDeviceId,
+        projectKey,
+        appearance: { ...projectAppearance, color },
+      })
+    } catch (error) {
+      console.error('[Wework] Failed to update project appearance', error)
+      workbench?.setWorkbenchError(
+        error instanceof Error ? error.message : t('workbench.change_project_appearance')
+      )
+    }
   }
   const closeArchiveConfirm = () => {
     if (!projectArchiving) {

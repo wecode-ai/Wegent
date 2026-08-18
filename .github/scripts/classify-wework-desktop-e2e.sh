@@ -14,6 +14,7 @@ core_segments=(
   goal-lifecycle
   supervisor-lifecycle
   resilience
+  runtime-task-queue
   conversation-state
   temporary-chat
   workspace-attachments
@@ -28,15 +29,43 @@ plugin_segments=(
   skill-mention-rendering
   sites-plugin-auto-install
 )
+cloud_worktree_segments=(
+  cloud-worktree-capability
+  cloud-worktree-create
+  cloud-worktree-queued-cancel
+  cloud-worktree-tools
+  cloud-worktree-archive-restore
+  cloud-worktree-device-restart
+)
+cloud_segments=(
+  core-task-flow
+  "${cloud_worktree_segments[@]}"
+  model-routing
+  embedded-browser
+  telemetry-consent
+  window-lifecycle
+  conversation-state
+  browser-multi-tabs
+  resilience
+  goal-lifecycle
+  supervisor-lifecycle
+  rendering-extensions
+  workspace-attachments
+  workspace-tabs
+  priority-filter
+  automation-lifecycle
+  project-automation
+  plugin-auto-update
+)
 # Group checkpoints by observed Cloud CI duration and order each shard from
 # longest to shortest so the five serial workers finish at similar times.
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 cloud_shards=(
-  core-task-flow
-  model-routing,embedded-browser,telemetry-consent
-  window-lifecycle,conversation-state,browser-multi-tabs
-  resilience,goal-lifecycle,supervisor-lifecycle
-  rendering-extensions,workspace-attachments,workspace-tabs,priority-filter,automation-lifecycle,project-automation,plugin-auto-update
+  core-task-flow,cloud-worktree-create
+  cloud-worktree-capability,cloud-worktree-tools,model-routing,embedded-browser,telemetry-consent
+  cloud-worktree-queued-cancel,window-lifecycle,conversation-state,browser-multi-tabs
+  cloud-worktree-device-restart,resilience,goal-lifecycle,supervisor-lifecycle
+  cloud-worktree-archive-restore,rendering-extensions,workspace-attachments,workspace-tabs,priority-filter,automation-lifecycle,project-automation,plugin-auto-update
 )
 # Keep the number of core desktop runners fixed as checkpoints grow. Each
 # runner reuses the same prebuilt application and executes its shard serially.
@@ -45,7 +74,7 @@ core_shards=(
   core-task-flow
   model-routing,embedded-browser,claude-runtime,local-harness
   window-lifecycle,conversation-state,temporary-chat
-  resilience,goal-lifecycle,supervisor-lifecycle
+  resilience,runtime-task-queue,goal-lifecycle,supervisor-lifecycle
   rendering-extensions,workspace-attachments,workspace-tabs,priority-filter,automation-lifecycle,project-automation,permission-modes,local-file-preview
 )
 
@@ -88,11 +117,57 @@ validate_core_shards() {
 
 validate_core_shards
 
+validate_cloud_shards() {
+  declare -A known_segments=()
+  declare -A assigned_segments=()
+  local segment
+  for segment in "${cloud_segments[@]}"; do
+    if [[ -n "${known_segments[$segment]+set}" ]]; then
+      printf 'Duplicate cloud segment in catalog: %s\n' "$segment" >&2
+      return 1
+    fi
+    known_segments["$segment"]=true
+  done
+
+  local shard
+  for shard in "${cloud_shards[@]}"; do
+    local shard_segments
+    IFS=',' read -ra shard_segments <<< "$shard"
+    for segment in "${shard_segments[@]}"; do
+      if [[ -z "${known_segments[$segment]+set}" ]]; then
+        printf 'Unknown cloud segment in cloud_shards: %s\n' "$segment" >&2
+        return 1
+      fi
+      if [[ -n "${assigned_segments[$segment]+set}" ]]; then
+        printf 'Duplicate cloud segment in cloud_shards: %s\n' "$segment" >&2
+        return 1
+      fi
+      assigned_segments["$segment"]=true
+    done
+  done
+
+  for segment in "${cloud_segments[@]}"; do
+    if [[ -z "${assigned_segments[$segment]+set}" ]]; then
+      printf 'Cloud segment missing from cloud_shards: %s\n' "$segment" >&2
+      return 1
+    fi
+  done
+}
+
+validate_cloud_shards
+
 declare -A selected=()
 desktop_runner_changed=false
 
 select_target() {
   selected["$1"]=true
+}
+
+select_cloud_worktree_checkpoints() {
+  local segment
+  for segment in "${cloud_worktree_segments[@]}"; do
+    select_target "cloud:$segment"
+  done
 }
 
 select_all_desktop_suites() {
@@ -113,6 +188,10 @@ classify_wework_path() {
       ;;
     wework/e2e/desktop/task-flow.e2e.mjs)
       desktop_runner_changed=true
+      return
+      ;;
+    wework/e2e/utils/mcp-elicitation-server.mjs)
+      select_target "core:permission-modes"
       return
       ;;
 
@@ -194,10 +273,37 @@ classify_wework_path() {
       return
       ;;
 
+    # Managed Worktree availability, routing, task projection, and settings
+    # must keep both the local launch path and the real cloud lifecycle green.
+    wework/src/api/executorAccess* | \
+      wework/src/api/hybrid/hybridServices* | \
+      wework/src/api/local/localServices* | \
+      wework/src/api/runtimeWork* | \
+      wework/src/components/chat/composer/PopoutWorkspaceMenu* | \
+      wework/src/components/chat/composer/ProjectWorkBar* | \
+      wework/src/components/chat/composer/project-work-bar-utils* | \
+      wework/src/components/layout/useWorkbenchPaneEnvironment* | \
+      wework/src/components/settings/WorktreesSettingsPage* | \
+      wework/src/features/workbench/WorkbenchProvider* | \
+      wework/src/features/workbench/projectWorkPreferences* | \
+      wework/src/features/workbench/useWorkbenchRuntimeTasks* | \
+      wework/src/lib/projectClassification* | \
+      wework/src/lib/workspace-target* | \
+      wework/src/lib/worktree-availability*)
+      select_target "core:core-task-flow"
+      select_target "core:workspace-attachments"
+      select_cloud_worktree_checkpoints
+      if [[ "$path" == wework/src/features/workbench/useWorkbenchRuntimeTasks* ]]; then
+        select_target "core:runtime-task-queue"
+      fi
+      return
+      ;;
+
     # Queueing, cancellation, retry, rate-limit, and reconnect behavior.
     wework/src/components/chat/ConversationQueuePanel* | \
       wework/src/lib/chat-error*)
       select_target "core:resilience"
+      select_target "core:runtime-task-queue"
       return
       ;;
     wework/src/features/workbench/runtimeTaskLifecycle/*)
@@ -242,7 +348,6 @@ classify_wework_path() {
     # Project/worktree creation and composer path or attachment transfer.
     wework/src/api/attachments* | \
       wework/src/api/projects* | \
-      wework/src/api/runtimeWork* | \
       wework/src/components/projects/* | \
       wework/src/features/workbench/useWorkbenchAttachments* | \
       wework/src/components/chat/composer/AttachmentBadges* | \
@@ -266,6 +371,7 @@ classify_wework_path() {
     wework/src/features/workbench/useWorkbenchRuntimeMessaging*)
       select_target "core:core-task-flow"
       select_target "core:claude-runtime"
+      select_cloud_worktree_checkpoints
       return
       ;;
 
@@ -295,6 +401,12 @@ classify_wework_path() {
       wework/src/components/chat/FileChangesReviewPanel* | \
       wework/e2e/desktop/scenarios/local-file-preview.scenario.mjs)
       select_target "core:local-file-preview"
+      return
+      ;;
+
+    # Runtime queue orchestration has an independently bootstrapped checkpoint.
+    wework/e2e/desktop/scenarios/runtime-task-queue.scenario.mjs)
+      select_target "core:runtime-task-queue"
       return
       ;;
 
@@ -330,6 +442,23 @@ classify_path() {
   local path="$1"
 
   case "$path" in
+    backend/app/api/endpoints/runtime_work.py | \
+      backend/app/api/ws/device_namespace.py | \
+      backend/app/api/ws/wework_runtime_namespace.py | \
+      backend/app/schemas/device.py | \
+      backend/app/schemas/runtime_work.py | \
+      backend/app/services/device/runtime_route.py | \
+      backend/app/services/device/runtime_rpc_service.py | \
+      backend/app/services/runtime_work_service.py | \
+      backend/tests/api/endpoints/test_runtime_work_api.py | \
+      backend/tests/api/ws/test_device_reconnect_storm.py | \
+      backend/tests/api/ws/test_wework_runtime_namespace.py | \
+      backend/tests/services/test_runtime_route.py | \
+      backend/tests/services/test_runtime_rpc_service.py | \
+      backend/tests/services/test_runtime_work_service.py | \
+      docker/device/Dockerfile)
+      select_cloud_worktree_checkpoints
+      ;;
     executor/* | packages/chat-core/* | package.json | pnpm-lock.yaml | pnpm-workspace.yaml)
       select_all_desktop_suites
       ;;
@@ -407,16 +536,30 @@ build_matrix() {
     done
   fi
 
-  if [[ "${selected[cloud:all]:-false}" == "true" ]]; then
-    local shard
-    for shard in "${!cloud_shards[@]}"; do
+  local cloud_shard_index
+  for cloud_shard_index in "${!cloud_shards[@]}"; do
+    local selected_cloud_segments=()
+    local cloud_shard_segments
+    IFS=',' read -ra cloud_shard_segments <<< "${cloud_shards[$cloud_shard_index]}"
+    local cloud_segment
+    for cloud_segment in "${cloud_shard_segments[@]}"; do
+      if [[ "${selected[cloud:all]:-false}" == "true" || \
+        "${selected[cloud:$cloud_segment]:-false}" == "true" ]]; then
+        selected_cloud_segments+=("$cloud_segment")
+      fi
+    done
+    if ((${#selected_cloud_segments[@]} > 0)); then
+      local joined_cloud_segments
+      joined_cloud_segments="$(IFS=,; printf '%s' "${selected_cloud_segments[*]}")"
       local entry
       printf -v entry \
         '{"id":"cloud-%s","name":"Cloud / shard %s","segments":"%s"}' \
-        "$((shard + 1))" "$((shard + 1))" "${cloud_shards[$shard]}"
+        "$((cloud_shard_index + 1))" \
+        "$((cloud_shard_index + 1))" \
+        "$joined_cloud_segments"
       cloud_matrix_entries+=("$entry")
-    done
-  fi
+    fi
+  done
 }
 
 if [[ "${1:-}" == "--all" ]]; then

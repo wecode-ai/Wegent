@@ -5,9 +5,14 @@
 use std::{
     cmp::Reverse,
     collections::HashMap,
-    env, fs,
+    env,
+    fs::{self, OpenOptions},
+    io::{self, Write},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex,
+    },
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -19,6 +24,7 @@ use super::response::{RuntimeTaskLink, RuntimeWorkspaceLink};
 const INDEX_VERSION: u64 = 1;
 const DELETED_ARCHIVED_TASK_ID_TTL_MS: i64 = 30 * 24 * 60 * 60 * 1_000;
 const DELETED_ARCHIVED_TASK_ID_MAX_COUNT: usize = 2_000;
+static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone)]
 pub(crate) struct RuntimeWorkStore {
@@ -161,9 +167,15 @@ impl RuntimeWorkStore {
     }
 
     fn write_index(&self, index: &RuntimeWorkIndex) {
-        if let Some(parent) = self.index_path.parent() {
-            let _ = fs::create_dir_all(parent);
+        if let Err(error) = self.persist_index(index) {
+            eprintln!(
+                "[runtime-work-store] failed to persist index {}: {error}",
+                self.index_path.display()
+            );
         }
+    }
+
+    fn persist_index(&self, index: &RuntimeWorkIndex) -> io::Result<()> {
         let now_ms = current_time_ms();
         let mut deleted_archived_task_ids = index.deleted_archived_task_ids.clone();
         prune_deleted_archived_task_ids(&mut deleted_archived_task_ids, now_ms);
@@ -172,17 +184,16 @@ impl RuntimeWorkStore {
             tasks: index.tasks.clone(),
             workspaces: index.workspaces.clone(),
             deleted_archived_task_ids,
-        });
-        if let Ok(payload) = payload {
-            let temp_path = temporary_index_path(&self.index_path);
-            if fs::write(&temp_path, payload).is_ok() {
-                if fs::rename(&temp_path, &self.index_path).is_ok() {
-                    self.update_index_signature();
-                } else {
-                    let _ = fs::remove_file(temp_path);
-                }
-            }
-        }
+        })
+        .map_err(|error| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("failed to serialize runtime work index: {error}"),
+            )
+        })?;
+        atomic_write_file(&self.index_path, &payload)?;
+        self.update_index_signature();
+        Ok(())
     }
 
     fn refresh_index_from_disk_if_changed(&self) {
@@ -373,7 +384,121 @@ fn temporary_index_path(index_path: &Path) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
         .unwrap_or_default();
-    index_path.with_file_name(format!(".{file_name}.{}.{}.tmp", std::process::id(), nanos))
+    let sequence = TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    index_path.with_file_name(format!(
+        ".{file_name}.{}.{}.{}.tmp",
+        std::process::id(),
+        nanos,
+        sequence
+    ))
+}
+
+fn atomic_write_file(index_path: &Path, payload: &[u8]) -> io::Result<()> {
+    let parent = index_parent(index_path);
+    fs::create_dir_all(parent)
+        .map_err(|error| io_error_with_context("create index parent directory", parent, error))?;
+
+    let temp_path = temporary_index_path(index_path);
+    let mut temp_file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp_path)
+        .map_err(|error| io_error_with_context("create temporary index", &temp_path, error))?;
+
+    let write_result = temp_file
+        .write_all(payload)
+        .and_then(|_| temp_file.sync_all());
+    drop(temp_file);
+    if let Err(error) = write_result {
+        return Err(clean_up_temp_file(
+            &temp_path,
+            io_error_with_context("write and sync temporary index", &temp_path, error),
+        ));
+    }
+
+    if let Err(error) = replace_file(&temp_path, index_path) {
+        return Err(clean_up_temp_file(
+            &temp_path,
+            io_error_with_context("replace runtime work index", index_path, error),
+        ));
+    }
+
+    sync_parent_directory(parent)
+        .map_err(|error| io_error_with_context("sync index parent directory", parent, error))
+}
+
+fn index_parent(index_path: &Path) -> &Path {
+    index_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+}
+
+#[cfg(not(windows))]
+fn replace_file(source: &Path, destination: &Path) -> io::Result<()> {
+    fs::rename(source, destination)
+}
+
+#[cfg(windows)]
+fn replace_file(source: &Path, destination: &Path) -> io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+
+    let source = source
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let destination = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let result = unsafe {
+        MoveFileExW(
+            source.as_ptr(),
+            destination.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if result == 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(unix)]
+fn sync_parent_directory(parent: &Path) -> io::Result<()> {
+    fs::File::open(parent)?.sync_all()
+}
+
+#[cfg(not(unix))]
+fn sync_parent_directory(_parent: &Path) -> io::Result<()> {
+    Ok(())
+}
+
+fn clean_up_temp_file(temp_path: &Path, original_error: io::Error) -> io::Error {
+    match fs::remove_file(temp_path) {
+        Ok(()) => original_error,
+        Err(cleanup_error) if cleanup_error.kind() == io::ErrorKind::NotFound => original_error,
+        Err(cleanup_error) => io::Error::new(
+            original_error.kind(),
+            format!(
+                "{original_error}; failed to clean up temporary index {}: {cleanup_error}",
+                temp_path.display()
+            ),
+        ),
+    }
+}
+
+fn io_error_with_context(action: &str, path: &Path, error: io::Error) -> io::Error {
+    io::Error::new(
+        error.kind(),
+        format!("{action} {}: {error}", path.display()),
+    )
 }
 
 fn default_index_path() -> PathBuf {
@@ -411,6 +536,85 @@ fn home_dir() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn atomic_write_replaces_existing_index() {
+        let directory = tempfile::tempdir().expect("temporary directory should be created");
+        let index_path = directory.path().join("index.json");
+        fs::write(&index_path, b"old index").expect("old index should be written");
+
+        atomic_write_file(&index_path, b"new index").expect("index replacement should succeed");
+
+        assert_eq!(
+            fs::read(&index_path).expect("replaced index should be readable"),
+            b"new index"
+        );
+        assert!(temporary_files(directory.path()).is_empty());
+    }
+
+    #[test]
+    fn atomic_write_cleans_up_temp_file_after_replace_failure() {
+        let directory = tempfile::tempdir().expect("temporary directory should be created");
+        let index_path = directory.path().join("index.json");
+        fs::create_dir(&index_path).expect("conflicting index directory should be created");
+        let sentinel_path = index_path.join("sentinel");
+        fs::write(&sentinel_path, b"existing index").expect("sentinel should be written");
+
+        let error = atomic_write_file(&index_path, b"new index")
+            .expect_err("replacing a non-empty directory should fail");
+
+        assert!(
+            error.to_string().contains("replace runtime work index"),
+            "unexpected error: {error}"
+        );
+        assert_eq!(
+            fs::read(&sentinel_path).expect("existing index should remain intact"),
+            b"existing index"
+        );
+        assert!(temporary_files(directory.path()).is_empty());
+    }
+
+    #[test]
+    fn failed_store_write_does_not_update_index_signature() {
+        let directory = tempfile::tempdir().expect("temporary directory should be created");
+        let index_path = directory.path().join("index.json");
+        fs::create_dir(&index_path).expect("conflicting index directory should be created");
+        fs::write(index_path.join("sentinel"), b"existing index")
+            .expect("sentinel should be written");
+        let store = RuntimeWorkStore::new(index_path);
+        let signature_before = *store
+            .index_signature
+            .lock()
+            .expect("index signature lock should be available");
+
+        store.upsert_task(RuntimeTaskLink::new_pending(
+            "failed-task".to_owned(),
+            "/tmp/failed".to_owned(),
+            "Failed task".to_owned(),
+        ));
+
+        assert_eq!(
+            *store
+                .index_signature
+                .lock()
+                .expect("index signature lock should be available"),
+            signature_before
+        );
+        assert!(temporary_files(directory.path()).is_empty());
+    }
+
+    fn temporary_files(directory: &Path) -> Vec<PathBuf> {
+        fs::read_dir(directory)
+            .expect("temporary directory should be readable")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with(".index.json.") && name.ends_with(".tmp"))
+            })
+            .collect()
+    }
 
     #[test]
     fn shared_index_never_persists_execution_state() {

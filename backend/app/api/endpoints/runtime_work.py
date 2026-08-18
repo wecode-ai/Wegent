@@ -55,6 +55,11 @@ from app.schemas.runtime_work import (
     RuntimeWorkspaceRenameRequest,
     RuntimeWorkspaceSearchRequest,
     RuntimeWorkspaceSearchResponse,
+    RuntimeWorktreeDeviceRequest,
+    RuntimeWorktreePathRequest,
+    RuntimeWorktreePreflightRequest,
+    RuntimeWorktreePrepareRequest,
+    RuntimeWorktreeSettingsPatch,
 )
 from app.services import runtime_work_service
 from shared.telemetry.decorators import (
@@ -64,6 +69,24 @@ from shared.telemetry.decorators import (
 )
 
 router = APIRouter()
+
+
+def _runtime_worktree_payload(request: RuntimeWorktreeDeviceRequest) -> dict:
+    return request.model_dump(by_alias=True, exclude_none=True)
+
+
+async def _runtime_worktree_rpc(
+    *,
+    current_user: User,
+    request: RuntimeWorktreeDeviceRequest,
+    method: str,
+):
+    return await runtime_work_service.call_runtime_worktree_rpc(
+        user_id=current_user.id,
+        device_id=request.device_id,
+        method=method,
+        payload=_runtime_worktree_payload(request),
+    )
 
 
 @router.get("", response_model=RuntimeWorkListResponse, response_model_by_alias=True)
@@ -76,6 +99,118 @@ async def list_runtime_work_endpoint(
     return await runtime_work_service.list_runtime_work(
         db=db,
         user_id=current_user.id,
+    )
+
+
+@router.post("/worktrees/capabilities")
+async def get_runtime_worktree_capabilities_endpoint(
+    request: RuntimeWorktreeDeviceRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Read managed Worktree capability from the addressed Runtime."""
+
+    return await _runtime_worktree_rpc(
+        current_user=current_user,
+        request=request,
+        method="runtime.worktrees.capabilities",
+    )
+
+
+@router.post("/worktrees/preflight")
+async def preflight_runtime_worktree_endpoint(
+    request: RuntimeWorktreePreflightRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Validate the addressed Runtime source workspace for Worktree use."""
+
+    return await _runtime_worktree_rpc(
+        current_user=current_user,
+        request=request,
+        method="runtime.worktrees.preflight",
+    )
+
+
+@router.post("/worktrees/settings")
+async def get_runtime_worktree_settings_endpoint(
+    request: RuntimeWorktreeDeviceRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Read managed Worktree settings from the addressed Runtime."""
+
+    return await _runtime_worktree_rpc(
+        current_user=current_user,
+        request=request,
+        method="runtime.worktrees.settings.get",
+    )
+
+
+@router.put("/worktrees/settings")
+async def update_runtime_worktree_settings_endpoint(
+    request: RuntimeWorktreeSettingsPatch,
+    current_user: User = Depends(get_current_user),
+):
+    """Update managed Worktree settings on the addressed Runtime."""
+
+    return await _runtime_worktree_rpc(
+        current_user=current_user,
+        request=request,
+        method="runtime.worktrees.settings.update",
+    )
+
+
+@router.post("/worktrees/list")
+async def list_runtime_worktrees_endpoint(
+    request: RuntimeWorktreeDeviceRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """List managed Worktrees from the addressed Runtime."""
+
+    return await _runtime_worktree_rpc(
+        current_user=current_user,
+        request=request,
+        method="runtime.worktrees.list",
+    )
+
+
+@router.post("/worktrees/prepare")
+async def prepare_runtime_worktree_endpoint(
+    request: RuntimeWorktreePrepareRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Prepare one managed Worktree on the addressed Runtime."""
+
+    return await _runtime_worktree_rpc(
+        current_user=current_user,
+        request=request,
+        method="runtime.worktrees.prepare",
+    )
+
+
+@router.post("/worktrees/delete")
+async def delete_runtime_worktree_endpoint(
+    request: RuntimeWorktreePathRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Delete one managed Worktree on the addressed Runtime."""
+
+    return await _runtime_worktree_rpc(
+        current_user=current_user,
+        request=request,
+        method="runtime.worktrees.delete",
+    )
+
+
+@router.post("/worktrees/restore")
+async def restore_runtime_worktree_endpoint(
+    request: RuntimeWorktreePathRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Restore one managed Worktree snapshot on the addressed Runtime."""
+
+    return await _runtime_worktree_rpc(
+        current_user=current_user,
+        request=request,
+        method="runtime.worktrees.restore",
     )
 
 

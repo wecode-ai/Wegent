@@ -1538,6 +1538,7 @@ tags: ["public", "api", "test"]
             assert len(matching) == 1
             assert matching[0]["id"] == skill.id
             assert matching[0]["namespace"] == skill.namespace
+            assert matching[0]["is_group_shared"] is True
             assert matching[0]["publication_status"] == "published"
 
         remove_response = test_client.delete(
@@ -1559,6 +1560,15 @@ tags: ["public", "api", "test"]
         )
         assert all(item["id"] != skill.id for item in removed_group_response.json())
         assert any(item["id"] == skill.id for item in retained_group_response.json())
+
+        all_response = test_client.get(
+            "/api/v1/kinds/skills/unified",
+            params={"scope": "all"},
+            headers={"Authorization": f"Bearer {test_token}"},
+        )
+        all_matching = [item for item in all_response.json() if item["id"] == skill.id]
+        assert len(all_matching) == 1
+        assert all_matching[0]["is_group_shared"] is True
 
     def test_unified_skills_keep_personal_and_group_skills_with_same_name(
         self,

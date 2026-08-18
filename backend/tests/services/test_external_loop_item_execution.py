@@ -9,6 +9,7 @@ execution table and never creates a local task row.
 """
 
 import uuid
+from unittest.mock import patch
 
 import pytest
 from fastapi import HTTPException
@@ -312,14 +313,29 @@ def test_assign_user_on_gitlab_creates_index_row_without_execution(
     test_db.commit()
     _mock_issue(monkeypatch)
 
-    response = external_loop_item_provider.assign(
-        test_db,
-        _item_id(project),
-        test_user.id,
-        LoopItemAssign(version=1, assignee_type="user", assignee_id=str(member.id)),
-    )
+    with patch(
+        "app.services.loop_items.external_provider.notify_project_task_assignee"
+    ) as notify:
+        response = external_loop_item_provider.assign(
+            test_db,
+            _item_id(project),
+            test_user.id,
+            LoopItemAssign(
+                version=1,
+                assignee_type="user",
+                assignee_id=str(member.id),
+            ),
+        )
 
     assert response["assignee_user_id"] == member.id
+    notify.assert_called_once_with(
+        user_id=member.id,
+        project_id=str(project.id),
+        project_name=project.name,
+        item_id=_item_id(project),
+        item_title="External task 1",
+        assigner_name=test_user.user_name,
+    )
     row = test_db.get(LoopItem, _item_id(project))
     assert row is not None
     assert row.assignee_user_id == member.id

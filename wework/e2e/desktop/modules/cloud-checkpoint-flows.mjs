@@ -11,6 +11,8 @@ import {
   verifyRetryFailureRestoration,
 } from './desktop-build-flows.mjs'
 
+import { WORKTREE_CHECKPOINTS, verifyCloudWorktreeCheckpoint } from './cloud-worktree-flows.mjs'
+
 import {
   verifyActiveGoalIdleUnreadLifecycle,
   verifyBusyTurnGoalHandoff,
@@ -71,6 +73,8 @@ const CLOUD_CHECKPOINTS = [
   'plugin-auto-update',
   'model-routing',
   'core-task-flow',
+  'cloud-git-worktree',
+  ...WORKTREE_CHECKPOINTS,
   'window-lifecycle',
   'goal-lifecycle',
   'supervisor-lifecycle',
@@ -290,6 +294,23 @@ async function verifyCloudCheckpoint({
   const executorLogPath = cloudEnvironment.remoteExecutorLogPath
 
   switch (checkpoint) {
+    case 'cloud-git-worktree':
+    case 'cloud-worktree-capability':
+    case 'cloud-worktree-create':
+    case 'cloud-worktree-queued-cancel':
+    case 'cloud-worktree-tools':
+    case 'cloud-worktree-archive-restore':
+    case 'cloud-worktree-device-restart':
+      await verifyCloudWorktreeCheckpoint({
+        checkpoint,
+        cloudEnvironment,
+        composerSelector,
+        control,
+        projectRowSelector,
+        setPhase,
+        workspacePath,
+      })
+      return
     case 'priority-filter':
       setPhase('cloud-priority-filter')
       await verifyPriorityFilter({ composerSelector, control })

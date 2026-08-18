@@ -73,6 +73,7 @@ import {
   isExecutable,
   join,
   mkdir,
+  mcpElicitationServerPath,
   randomUUID,
   readFile,
   rename,
@@ -269,6 +270,19 @@ function toolDetailsMcpConfigToml() {
     '[mcp_servers."github__issues"]',
     `command = ${command}`,
     `args = [${server}, "github__issues"]`,
+    'default_tools_approval_mode = "approve"',
+    '',
+  ].join('\n')
+}
+
+function mcpElicitationConfigToml(evidencePath) {
+  const command = JSON.stringify(process.execPath)
+  const server = JSON.stringify(mcpElicitationServerPath)
+  const evidence = JSON.stringify(evidencePath)
+  return [
+    '[mcp_servers.wegent_sites_interactions]',
+    `command = ${command}`,
+    `args = [${server}, ${evidence}]`,
     'default_tools_approval_mode = "approve"',
     '',
   ].join('\n')
@@ -1367,6 +1381,7 @@ async function waitForMatrixStage(control, model, ...expectedStages) {
 export {
   writeCodexConfig,
   toolDetailsMcpConfigToml,
+  mcpElicitationConfigToml,
   codexUpstreamApiFormat,
   buildExecutor,
   hostCodexTarget,

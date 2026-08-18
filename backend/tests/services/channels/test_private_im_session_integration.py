@@ -490,18 +490,125 @@ async def test_task_mode_runtime_message_registers_callback_without_static_ack(
         fake_send_runtime_message,
     )
 
-    handled = await handler.handle_message(_message("继续 runtime"))
+    handled = await handler.handle_message(
+        _message(
+            "继续 runtime",
+            extra_data={"message_id": "dingtalk-message-1"},
+        )
+    )
 
     assert handled is True
     assert handler.replies == []
     assert calls["callback"]["task_id"] == "runtime:device-1:codex-1"
     assert calls["callback"]["callback_info"].conversation_id == "conv-private"
     assert calls["send"]["request"].source.source == "im"
+    assert calls["send"]["request"].source.message_id == "dingtalk-message-1"
+    assert (
+        calls["send"]["request"].client_user_message_id
+        == "im:dingtalk:77:dingtalk-message-1"
+    )
     assert calls["send"]["request"].model_selection.model_name == "gpt-5.6-luna"
     assert calls["send"]["request"].model_selection.model_type == "public"
     assert calls["send"]["request"].model_selection.options == {
         "reasoningEffort": "low"
     }
+
+
+@pytest.mark.asyncio
+async def test_dingtalk_runtime_message_registers_started_card_for_cross_worker(
+    monkeypatch: pytest.MonkeyPatch,
+    test_db: Session,
+    test_user: User,
+    channel_sessionlocal,
+) -> None:
+    from app.services import runtime_work_service
+
+    handler = FakeChannelHandler(test_user)
+    session = await im_session_service.get_or_create_private_session(
+        db=test_db,
+        user_id=test_user.id,
+        channel_type="dingtalk",
+        channel_id=77,
+        conversation_id="conv-private",
+        sender_id="staff-a",
+        display_name="Alice",
+    )
+    await im_session_service.bind_active_runtime_task(
+        test_db,
+        session=session,
+        runtime_task={
+            "deviceId": "device-1",
+            "workspacePath": "/repo/Wegent",
+            "localTaskId": "codex-1",
+        },
+    )
+    calls: dict[str, Any] = {}
+
+    class FakeCallbackService:
+        async def save_callback_info(self, task_id, callback_info):
+            calls["saved"] = (task_id, callback_info)
+
+        async def register_emitter(self, task_id, emitter):
+            calls["registered"] = (task_id, emitter)
+
+    class FakeStreamingEmitter:
+        card_instance_id = "card-instance-1"
+
+        async def emit_start(self, **kwargs):
+            calls["started"] = kwargs
+
+        def set_shared_content_key(self, key: str):
+            calls["shared_content_key"] = key
+
+    emitter = FakeStreamingEmitter()
+
+    async def fake_create_streaming_emitter(message_context):
+        return emitter
+
+    async def fake_send_runtime_message(**kwargs):
+        calls["send"] = kwargs
+        return SimpleNamespace(accepted=True, local_task_id="codex-1", error=None)
+
+    monkeypatch.setattr(handler, "get_callback_service", lambda: FakeCallbackService())
+    monkeypatch.setattr(
+        handler,
+        "create_callback_info",
+        lambda context: SimpleNamespace(
+            conversation_id=context.conversation_id,
+            card_instance_id=None,
+        ),
+    )
+    monkeypatch.setattr(
+        handler,
+        "create_streaming_emitter",
+        fake_create_streaming_emitter,
+    )
+    monkeypatch.setattr(
+        runtime_work_service,
+        "send_runtime_message",
+        fake_send_runtime_message,
+    )
+
+    handled = await handler.handle_message(
+        _message(
+            "继续 runtime",
+            extra_data={"message_id": "dingtalk-message-1"},
+        )
+    )
+
+    callback_key = "runtime:device-1:codex-1"
+    assert handled is True
+    assert calls["started"] == {"task_id": callback_key, "subtask_id": 0}
+    assert calls["shared_content_key"] == (
+        "channel:streaming_content:runtime:device-1:codex-1"
+    )
+    assert calls["saved"][0] == callback_key
+    assert calls["saved"][1].card_instance_id == "card-instance-1"
+    assert calls["registered"] == (callback_key, emitter)
+    assert (
+        calls["send"]["request"].client_user_message_id
+        == "im:dingtalk:77:dingtalk-message-1"
+    )
 
 
 @pytest.mark.asyncio
@@ -795,85 +902,6 @@ async def test_task_mode_runtime_message_rejects_invalid_address_before_callback
     assert handler.replies == ["当前本地任务不可用,请回到 Wework 重新选择。"]
     refreshed = await _private_session(test_db, test_user)
     assert refreshed.active_runtime_task is None
-
-
-@pytest.mark.asyncio
-async def test_task_mode_runtime_message_emits_user_message_to_web(
-    monkeypatch: pytest.MonkeyPatch,
-    test_db: Session,
-    test_user: User,
-    channel_sessionlocal,
-) -> None:
-    from app.services import runtime_work_service
-
-    handler = FakeChannelHandler(test_user)
-    session = await im_session_service.get_or_create_private_session(
-        db=test_db,
-        user_id=test_user.id,
-        channel_type="dingtalk",
-        channel_id=77,
-        conversation_id="conv-private",
-        sender_id="staff-a",
-        display_name="Alice",
-    )
-    await im_session_service.bind_active_runtime_task(
-        test_db,
-        session=session,
-        runtime_task={
-            "deviceId": "device-1",
-            "workspacePath": "/repo/Wegent",
-            "localTaskId": "codex-1",
-        },
-    )
-    emitted: list[dict[str, Any]] = []
-
-    class FakeCallbackService:
-        async def save_callback_info(self, task_id, callback_info):
-            pass
-
-        async def delete_callback_info(self, task_id):
-            pass
-
-    class FakeSocket:
-        async def emit(self, event_name, payload, **kwargs):
-            emitted.append(
-                {
-                    "event_name": event_name,
-                    "payload": payload,
-                    "kwargs": kwargs,
-                }
-            )
-
-    async def fake_send_runtime_message(**kwargs):
-        return SimpleNamespace(accepted=True, local_task_id="codex-1", error=None)
-
-    monkeypatch.setattr(handler, "get_callback_service", lambda: FakeCallbackService())
-    monkeypatch.setattr(
-        runtime_work_service,
-        "send_runtime_message",
-        fake_send_runtime_message,
-    )
-    monkeypatch.setattr(
-        "app.services.channels.handler.get_sio",
-        lambda: FakeSocket(),
-    )
-
-    handled = await handler.handle_message(_message("继续 runtime"))
-
-    assert handled is True
-    assert len(emitted) == 1
-    assert emitted[0]["event_name"] == "chat:message"
-    assert emitted[0]["kwargs"] == {
-        "room": f"user:{test_user.id}",
-        "namespace": "/chat",
-    }
-    payload = emitted[0]["payload"]
-    assert payload["role"] == "user"
-    assert payload["content"] == "继续 runtime"
-    assert payload["device_id"] == "device-1"
-    assert payload["local_task_id"] == "codex-1"
-    assert payload["source"]["source"] == "im"
-    assert payload["source"]["channel_label"] == "钉钉"
 
 
 @pytest.mark.asyncio

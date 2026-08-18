@@ -25,6 +25,13 @@ mod worktrees;
 pub use handler::RuntimeWorkRpcHandler;
 pub(crate) use notification_mapping::codex_stream_debug_enabled;
 
+pub(crate) fn runtime_features() -> serde_json::Value {
+    serde_json::json!({
+        "schemaVersion": 1,
+        "worktrees": worktrees::WorktreeManager::capabilities_from_env(),
+    })
+}
+
 pub(crate) fn codex_workspace_roots() -> Vec<std::path::PathBuf> {
     codex_global_state::CodexGlobalProjectIndex::load()
         .projects()

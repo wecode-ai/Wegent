@@ -29,7 +29,7 @@ export interface ChangeRequestLookup {
 export interface EnvironmentInfo {
   additions: string
   deletions: string
-  executionTarget: 'local' | 'cloud'
+  executionTarget: 'local' | 'cloud' | 'remote'
   isGitRepository?: boolean
   deviceId?: string
   workspacePath?: string

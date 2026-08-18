@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { access } from 'node:fs/promises'
 
+import { createSingleRootLocalProject } from '../modules/shared.mjs'
+
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const ACTIVE_WORKSPACE_TAB_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
@@ -71,18 +73,15 @@ async function pathExists(path) {
 }
 
 async function sendNewTask(control, knownRows, prompt, timeoutMs, executionMode = 'local_path') {
-  await control.command(
-    'click',
+  await control.command('click', '[data-testid="project-new-conversation-button"]')
+  await control.command('waitFor', COMPOSER_SELECTOR)
+  await control.command('waitFor', '[data-testid="execution-mode-button"]')
+  await control.command('click', '[data-testid="execution-mode-button"]')
+  const executionModeSelector =
     executionMode === 'git_worktree'
-      ? '[data-testid="project-new-conversation-button"]'
-      : '[data-testid="new-chat-button"]'
-  )
-  await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs })
-  if (executionMode === 'git_worktree') {
-    await control.command('waitFor', '[data-testid="execution-mode-button"]', { timeoutMs })
-    await control.command('click', '[data-testid="execution-mode-button"]')
-    await control.command('click', '[data-testid="execution-mode-git-worktree-button"]')
-  }
+      ? '[data-testid="execution-mode-git-worktree-button"]'
+      : '[data-testid="execution-mode-current-workspace-button"]'
+  await control.command('clickWhenEnabled', executionModeSelector)
   await control.command('fill', COMPOSER_SELECTOR, { value: prompt })
   await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
   const rowTestId = await waitForNewTaskRow(control, knownRows, timeoutMs)
@@ -177,7 +176,7 @@ async function ensureRuntimeProjectExpanded(control, timeoutMs) {
   return { requireVisible, sidebarSelector }
 }
 
-export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
+export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspacePath }) {
   let active = false
   const requests = []
   const releases = new Map()
@@ -252,6 +251,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       await prepareScreenshot(control, null)
       await captureScreenshot(control, 'runtime-queue-01-limit-one.png', 'body')
       await control.command('click', '[data-testid="settings-back-button"]')
+      await createSingleRootLocalProject(control, workspacePath, 'runtime-task-queue')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
 
       const initialSnapshot = JSON.parse(await control.command('snapshot', 'body'))

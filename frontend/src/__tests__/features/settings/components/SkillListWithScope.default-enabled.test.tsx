@@ -223,6 +223,7 @@ function buildSkill(overrides: Partial<UnifiedSkill>): UnifiedSkill {
     is_active: overrides.is_active ?? true,
     is_public: overrides.is_public ?? false,
     user_id: overrides.user_id ?? 1,
+    is_group_shared: overrides.is_group_shared,
     publication_status: overrides.publication_status,
     availability: overrides.availability,
     source: overrides.source,
@@ -424,6 +425,28 @@ describe('SkillListWithScope default enabled skills', () => {
     )
     const privateCard = screen.getByTestId('skill-library-item-8')
     expect(within(privateCard).queryByTestId('published-skill-8-indicator')).toBeNull()
+  })
+
+  it('labels a personal source Skill shared by binding as a team Skill', async () => {
+    mockedFetchUnifiedSkillsList.mockResolvedValue([
+      buildSkill({
+        id: 9,
+        name: 'team-shared-skill',
+        displayName: 'Team Shared Skill',
+        namespace: 'default',
+        is_group_shared: true,
+      }),
+    ])
+
+    const { rerender } = render(<SkillListWithScope scope="all" sourceFilter="group" compact />)
+
+    const card = await screen.findByTestId('skill-library-item-9')
+    expect(within(card).getByText('团队技能')).toBeInTheDocument()
+    expect(within(card).queryByText('我的技能')).toBeNull()
+
+    rerender(<SkillListWithScope scope="all" sourceFilter="personal" compact />)
+
+    expect(screen.queryByTestId('skill-library-item-9')).not.toBeInTheDocument()
   })
 
   it('notifies the resource library when an external skill creation is cancelled', async () => {
