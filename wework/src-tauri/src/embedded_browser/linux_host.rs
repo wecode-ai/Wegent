@@ -101,11 +101,40 @@ fn place_webview(
     let height = size.height.round() as i32;
     embedded_webview.set_size_request(width, height);
     host.move_(&embedded_webview, x, y);
+    apply_webview_allocation(&embedded_webview, x, y, width, height);
+
+    // GtkFixed can run another allocation pass after this command returns and
+    // restore WebView's natural host-sized allocation. Re-apply the bounds in
+    // two idle passes so the final allocation follows the latest toolbar state.
+    let deferred_webview = embedded_webview.clone();
+    let deferred_host = host.clone();
+    gtk::glib::idle_add_local_once(move || {
+        deferred_host.move_(&deferred_webview, x, y);
+        apply_webview_allocation(&deferred_webview, x, y, width, height);
+
+        let deferred_webview = deferred_webview.clone();
+        let deferred_host = deferred_host.clone();
+        gtk::glib::idle_add_local_once(move || {
+            deferred_host.move_(&deferred_webview, x, y);
+            apply_webview_allocation(&deferred_webview, x, y, width, height);
+        });
+    });
+    Ok(())
+}
+
+fn apply_webview_allocation(
+    embedded_webview: &webkit2gtk::WebView,
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+) {
     // GtkFixed normally allocates a child from its natural size. Apply the
     // requested allocation explicitly so WebKit reports the device viewport
     // instead of the host's full width through window.innerWidth.
-    embedded_webview.size_allocate(&gtk::Allocation::new(x, y, width, height));
-    Ok(())
+    let allocation = gtk::Allocation::new(x, y, width, height);
+    embedded_webview.set_allocation(&allocation);
+    embedded_webview.size_allocate(&allocation);
 }
 
 pub fn apply_bounds(
