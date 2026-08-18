@@ -10,6 +10,7 @@ import pytest
 
 from app.services.context import context_service
 from app.services.execution.agents.video.materials import (
+    determine_image_mode,
     normalize_reference_materials,
     resolve_uploaded_media,
     validate_reference_materials,
@@ -130,6 +131,19 @@ def test_mode_falls_back_to_global_limits() -> None:
             [_material("first.mp4"), _material("second.mp4")],
             [],
         )
+
+
+@pytest.mark.parametrize("mode_id", ["reference", "omni_reference", "edit", "extend"])
+def test_omni_reference_modes_assign_reference_image_roles(mode_id: str) -> None:
+    assert (
+        determine_image_mode(
+            _config({}, mode_id=mode_id),
+            [_material("reference.png")],
+            [],
+            [],
+        )
+        == "reference"
+    )
 
 
 def test_normalize_reference_materials_accepts_remote_urls() -> None:

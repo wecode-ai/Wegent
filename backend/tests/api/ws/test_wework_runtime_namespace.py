@@ -195,6 +195,43 @@ async def test_runtime_request_rejects_executor_failure_envelope(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_runtime_request_relays_device_command_nonzero_exit(monkeypatch):
+    """A device command that runs but exits non-zero is a valid result.
+
+    ``device.execute_command`` is a pass-through executor command: a
+    ``success: False`` envelope means the command exited non-zero (e.g.
+    ``git_is_worktree`` intentionally exits 1 on a non-git directory), not
+    that the RPC transport failed. It must be relayed verbatim so the client
+    can interpret the exit code, matching the local Tauri IPC path.
+    """
+
+    namespace = WeworkRuntimeNamespace()
+    command_result = {"success": False, "stdout": "false", "stderr": ""}
+    monkeypatch.setattr(
+        wework_runtime_namespace,
+        "relay_ipc_request",
+        AsyncMock(return_value=command_result),
+    )
+    monkeypatch.setattr(
+        namespace,
+        "get_session",
+        AsyncMock(return_value={"user_id": 7}),
+    )
+
+    response = await namespace.on_runtime_request(
+        "browser-sid",
+        {
+            "id": "req-1",
+            "device_id": "cloud-device",
+            "method": "device.execute_command",
+            "params": {"command_key": "git_is_worktree", "args": ["/home/ubuntu"]},
+        },
+    )
+
+    assert response == {"id": "req-1", "ok": True, "result": command_result}
+
+
+@pytest.mark.asyncio
 async def test_runtime_request_requires_device_id(monkeypatch):
     namespace = WeworkRuntimeNamespace()
     monkeypatch.setattr(

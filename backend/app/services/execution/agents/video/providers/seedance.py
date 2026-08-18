@@ -6,6 +6,7 @@
 Seedance video generation provider.
 """
 
+import json
 import logging
 from typing import Any, Dict, Literal, Optional
 from urllib.parse import parse_qsl, urlsplit
@@ -20,6 +21,10 @@ from ..extensions import (
     parse_extended_status,
 )
 from .base import VideoJobResult, VideoJobStatus, VideoProvider
+from .seedance_assets import (
+    asset_library_enabled,
+    prepare_seedance_reference_images,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +39,8 @@ _CREDENTIAL_QUERY_KEY_SUFFIXES = (
     "securitytoken",
     "signature",
 )
+_SEEDANCE_25_MODEL_PREFIX = "doubao-seedance-2-5"
+_OMNI_REFERENCE_TASK_TYPES = {"reference", "edit", "extend"}
 
 
 def _is_credential_query_key(key: str) -> bool:
@@ -58,22 +65,28 @@ def _resolve_capability_value(
     return configured_value
 
 
+def _is_seedance_25_model(model: Any) -> bool:
+    """Return whether the configured model uses the Seedance 2.5 API contract."""
+    return isinstance(model, str) and model.startswith(_SEEDANCE_25_MODEL_PREFIX)
+
+
+def _seedance_25_task_type(generation_mode_id: Any) -> Optional[str]:
+    """Map Wegent generation modes to Seedance 2.5 task guidance."""
+    if generation_mode_id == "omni_reference":
+        return "auto"
+    if generation_mode_id in _OMNI_REFERENCE_TASK_TYPES:
+        return str(generation_mode_id)
+    return None
+
+
 def _extract_api_error(response: httpx.Response) -> str:
-    """Extract a user-friendly error message from an API response without exposing internal URLs."""
+    """Return the Seedance response body without friendly-message rewriting."""
+    if response.text:
+        return response.text
     try:
-        data = response.json()
-        # Try common error response formats
-        if isinstance(data, dict):
-            for key in ("error", "message", "detail", "msg"):
-                if key in data:
-                    err = data[key]
-                    if isinstance(err, dict) and "message" in err:
-                        return err["message"]
-                    return str(err)
-        return str(data)
+        return json.dumps(response.json(), ensure_ascii=False)
     except Exception:
-        text = response.text[:200] if response.text else "Unknown error"
-        return text
+        return "Unknown error"
 
 
 def _media_url_for_log(item: dict[str, Any]) -> Optional[str]:
@@ -165,7 +178,7 @@ def _response_value_for_log(value: Any) -> Any:
 
 
 class SeedanceProvider(VideoProvider):
-    """Seedance 1.5 video generation provider."""
+    """Seedance video generation provider."""
 
     def __init__(
         self,
@@ -216,6 +229,25 @@ class SeedanceProvider(VideoProvider):
         Returns:
             Job ID
         """
+        wecode_user = next(
+            (
+                str(value)
+                for key, value in self.default_headers.items()
+                if key.lower() == "wecode-user" and value
+            ),
+            None,
+        )
+        if asset_library_enabled():
+            async with httpx.AsyncClient(timeout=30.0) as asset_client:
+                reference_images, reference_image = (
+                    await prepare_seedance_reference_images(
+                        client=asset_client,
+                        reference_images=reference_images,
+                        reference_image=reference_image,
+                        wecode_user=wecode_user,
+                    )
+                )
+
         # Build content array
         content = [{"type": "text", "text": prompt}]
 
@@ -281,18 +313,29 @@ class SeedanceProvider(VideoProvider):
                 )
 
         capabilities = self.video_config.get("capabilities") or {}
+        model = self.video_config.get("model", "doubao-seedance-1-5-pro-251215")
+        is_seedance_25 = _is_seedance_25_model(model)
         payload = {
-            "model": self.video_config.get("model", "doubao-seedance-1-5-pro-251215"),
+            "model": model,
             "content": content,
             "resolution": _resolve_capability_value(
-                self.video_config.get("resolution", "480p"),
+                self.video_config.get(
+                    "resolution",
+                    "720p" if is_seedance_25 else "480p",
+                ),
                 capabilities.get("resolutions") or [],
             ),
             "ratio": _resolve_capability_value(
-                self.video_config.get("ratio", "16:9"),
+                self.video_config.get(
+                    "ratio",
+                    "adaptive" if is_seedance_25 else "16:9",
+                ),
                 capabilities.get("aspect_ratios") or [],
             ),
-            "duration": self.video_config.get("duration", 5),
+            "duration": self.video_config.get(
+                "duration",
+                -1 if is_seedance_25 else 5,
+            ),
             "watermark": self.video_config.get("watermark", False),
         }
         generate_audio = self.video_config.get("generate_audio")
@@ -303,7 +346,16 @@ class SeedanceProvider(VideoProvider):
         if generate_audio is not None:
             payload["generate_audio"] = generate_audio
 
-        if image_mode:
+        if is_seedance_25:
+            task_type = self.video_config.get(
+                "omni_reference_task_type"
+            ) or _seedance_25_task_type(self.video_config.get("generation_mode_id"))
+            if task_type:
+                payload["omni_reference_task_type"] = task_type
+            for key in ("output_format", "priority"):
+                if self.video_config.get(key) is not None:
+                    payload[key] = self.video_config[key]
+        elif image_mode:
             payload["image_mode"] = image_mode
         _reject_credential_media_urls(content)
         request_log_payload = {

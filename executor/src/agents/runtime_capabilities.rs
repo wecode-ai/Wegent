@@ -1211,10 +1211,8 @@ async fn download_skill(
 }
 
 fn safe_skill_deployment_reason(error: &str) -> String {
-    if error.starts_with("downloaded Skill ZIP is missing expected entry ")
-        || error.starts_with("downloaded Skill ZIP contains entries outside expected root ")
-    {
-        return error.to_owned();
+    if error.starts_with("downloaded Skill ZIP is missing required SKILL.md for skill ") {
+        return "downloaded Skill ZIP is missing required SKILL.md".to_owned();
     }
     if let Some(status) = error.strip_prefix("backend download failed with HTTP ") {
         if let Some(code) = status
@@ -1379,7 +1377,8 @@ fn extract_skill_zip(skill_name: &str, content: &[u8], skills_dir: &Path) -> Res
     let cursor = Cursor::new(content);
     let mut archive = zip::ZipArchive::new(cursor)
         .map_err(|error| format!("invalid ZIP for skill {skill_name}: {error}"))?;
-    validate_skill_zip_entries(skill_name, &mut archive)?;
+    let strip_prefix = validate_skill_zip_entries(skill_name, &mut archive)?;
+    let skill_root = skills_dir.join(skill_name);
     for index in 0..archive.len() {
         let mut file = archive
             .by_index(index)
@@ -1393,7 +1392,14 @@ fn extract_skill_zip(skill_name: &str, content: &[u8], skills_dir: &Path) -> Res
         {
             return Err(format!("unsafe ZIP path for skill {skill_name}"));
         }
-        let target = skills_dir.join(enclosed);
+        let relative = match &strip_prefix {
+            Some(prefix) => enclosed.strip_prefix(prefix).unwrap_or(&enclosed),
+            None => enclosed.as_path(),
+        };
+        if relative.as_os_str().is_empty() {
+            continue;
+        }
+        let target = skill_root.join(relative);
         if file.name().ends_with('/') {
             fs::create_dir_all(&target)
                 .map_err(|error| format!("failed to create skill dir: {error}"))?;
@@ -1409,17 +1415,21 @@ fn extract_skill_zip(skill_name: &str, content: &[u8], skills_dir: &Path) -> Res
         std::io::copy(&mut file, &mut output)
             .map_err(|error| format!("failed to extract skill file: {error}"))?;
     }
-    Ok(skills_dir.join(skill_name).is_dir())
+    Ok(skill_root.join("SKILL.md").is_file())
 }
 
+/// Validates a downloaded Skill ZIP and returns the archive root prefix to strip.
+///
+/// The archive is not required to be wrapped in a directory named after the
+/// skill: historical packages use arbitrary top-level folders. When every entry
+/// shares a single top-level directory it is remapped onto
+/// `skills_dir/{skill_name}/`; otherwise entries are kept at the archive root.
+/// Only SKILL.md presence and zip-slip safety are enforced.
 fn validate_skill_zip_entries<R: std::io::Read + std::io::Seek>(
     skill_name: &str,
     archive: &mut zip::ZipArchive<R>,
-) -> Result<(), String> {
-    let skill_root = Path::new(skill_name);
-    let expected_entry = skill_root.join("SKILL.md");
-    let mut has_expected_entry = false;
-    let mut has_outside_root = false;
+) -> Result<Option<PathBuf>, String> {
+    let mut entries: Vec<PathBuf> = Vec::with_capacity(archive.len());
     for index in 0..archive.len() {
         let file = archive
             .by_index(index)
@@ -1427,23 +1437,54 @@ fn validate_skill_zip_entries<R: std::io::Read + std::io::Seek>(
         let Some(enclosed) = file.enclosed_name() else {
             return Err(format!("unsafe ZIP path for skill {skill_name}"));
         };
-        if !enclosed.starts_with(skill_root) {
-            has_outside_root = true;
+        if enclosed
+            .components()
+            .any(|component| matches!(component, Component::ParentDir | Component::RootDir))
+        {
+            return Err(format!("unsafe ZIP path for skill {skill_name}"));
         }
-        has_expected_entry |= enclosed == expected_entry;
+        entries.push(enclosed.to_path_buf());
     }
-    if !has_expected_entry {
+    let strip_prefix = skill_zip_root_prefix(&entries);
+    let has_skill_md = entries.iter().any(|entry| {
+        let relative = match &strip_prefix {
+            Some(prefix) => entry.strip_prefix(prefix).unwrap_or(entry),
+            None => entry.as_path(),
+        };
+        relative == Path::new("SKILL.md")
+    });
+    if !has_skill_md {
         return Err(format!(
-            "downloaded Skill ZIP is missing expected entry {}",
-            expected_entry.display()
+            "downloaded Skill ZIP is missing required SKILL.md for skill {skill_name}"
         ));
     }
-    if has_outside_root {
-        return Err(format!(
-            "downloaded Skill ZIP contains entries outside expected root {skill_name}/"
-        ));
+    Ok(strip_prefix)
+}
+
+/// Returns the shared top-level directory to strip when every archive entry is
+/// wrapped in the same folder, otherwise `None` to keep entries at the root.
+fn skill_zip_root_prefix(entries: &[PathBuf]) -> Option<PathBuf> {
+    let mut root: Option<std::ffi::OsString> = None;
+    let mut has_nested = false;
+    for entry in entries {
+        let mut components = entry.components();
+        let first = match components.next() {
+            Some(Component::Normal(component)) => component.to_owned(),
+            _ => return None,
+        };
+        if components.next().is_some() {
+            has_nested = true;
+        }
+        match &root {
+            Some(existing) if existing != &first => return None,
+            Some(_) => {}
+            None => root = Some(first),
+        }
     }
-    Ok(())
+    if !has_nested {
+        return None;
+    }
+    root.map(PathBuf::from)
 }
 
 fn setup_coordinate_subagents(request: &ExecutionRequest, task_dir: &Path) {
@@ -2795,27 +2836,28 @@ mod tests {
     }
 
     #[test]
-    fn extract_skill_zip_reports_expected_entry_without_extracting_wrong_root() {
+    fn extract_skill_zip_remaps_mismatched_root_to_requested_skill() {
         let temp = env::temp_dir().join(format!("skill-wrong-root-{}", std::process::id()));
         let skills_dir = temp.join("skills");
 
-        let error = extract_skill_zip(
+        let extracted = extract_skill_zip(
             "requested-skill",
             &skill_zip_bytes("unexpected-root"),
             &skills_dir,
         )
-        .unwrap_err();
+        .unwrap();
 
+        assert!(extracted);
         assert_eq!(
-            error,
-            "downloaded Skill ZIP is missing expected entry requested-skill/SKILL.md"
+            fs::read_to_string(skills_dir.join("requested-skill/SKILL.md")).unwrap(),
+            "# Skill"
         );
         assert!(!skills_dir.join("unexpected-root").exists());
         let _ = fs::remove_dir_all(temp);
     }
 
     #[test]
-    fn extract_skill_zip_rejects_entries_outside_requested_root_before_writing() {
+    fn extract_skill_zip_rejects_missing_skill_md_before_writing() {
         let temp = env::temp_dir().join(format!("skill-extra-root-{}", std::process::id()));
         let skills_dir = temp.join("skills");
         let archive = skill_zip_entries(&[
@@ -2827,7 +2869,7 @@ mod tests {
 
         assert_eq!(
             error,
-            "downloaded Skill ZIP contains entries outside expected root requested-skill/"
+            "downloaded Skill ZIP is missing required SKILL.md for skill requested-skill"
         );
         assert!(!skills_dir.join("requested-skill").exists());
         assert!(!skills_dir.join("other-skill").exists());

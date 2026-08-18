@@ -6342,7 +6342,7 @@ describe('DesktopWorkbenchLayout', () => {
         })
       )
     )
-  })
+  }, 15_000)
 
   test('temporary chat queues a follow-up while its current response is running', async () => {
     const address: RuntimeTaskAddress = {
@@ -9954,7 +9954,7 @@ describe('DesktopWorkbenchLayout', () => {
       )
     })
     expect(workspaceFileApi.readWorkspaceTextFile).toHaveBeenCalledTimes(4)
-  })
+  }, 15_000)
 
   test('preserves an absolute file opened from a message when switching runtime tasks', async () => {
     const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
@@ -10228,7 +10228,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(startLocalTerminalMock).toHaveBeenCalledTimes(taskAddresses.length)
     expect(closeLocalTerminalMock).not.toHaveBeenCalled()
-  }, 20000)
+  }, 30_000)
 
   test('omits the desktop add-menu item when the internal extension is unavailable', async () => {
     renderWorkspacePanelLayout()

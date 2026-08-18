@@ -258,7 +258,9 @@ const PROTOCOL_BY_CATEGORY: Record<
 
 // Seedance model options
 const SEEDANCE_MODEL_OPTIONS = [
-  { value: 'doubao-seedance-1-5-pro-251215', label: 'Seedance 1.5 Pro (推荐)' },
+  { value: 'doubao-seedance-2-5-260628', label: 'Seedance 2.5 (推荐)' },
+  { value: 'doubao-seedance-2-0-260128', label: 'Seedance 2.0' },
+  { value: 'doubao-seedance-1-5-pro-251215', label: 'Seedance 1.5 Pro' },
   { value: 'doubao-seedance-1-0-pro', label: 'Seedance 1.0 Pro' },
   { value: 'doubao-seedance-1-0-pro-fast', label: 'Seedance 1.0 Pro Fast' },
   { value: 'doubao-seedance-1-0-lite-t2v', label: 'Seedance 1.0 Lite (文生视频)' },
@@ -2137,7 +2139,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                     {t('common:models.video_capabilities_ratios')}
                   </Label>
                   <div className="flex flex-wrap gap-2">
-                    {['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'].map(ratio => (
+                    {['adaptive', '16:9', '9:16', '1:1', '4:3', '3:4', '21:9'].map(ratio => (
                       <button
                         key={ratio}
                         type="button"
@@ -2155,7 +2157,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                             : 'bg-base border-border text-text-secondary hover:border-text-muted'
                         )}
                       >
-                        {ratio}
+                        {ratio === 'adaptive' ? t('chat:video.ratio.adaptive') : ratio}
                       </button>
                     ))}
                   </div>
@@ -2222,7 +2224,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                     {t('common:models.video_capabilities_durations')}
                   </Label>
                   <div className="flex flex-wrap gap-2 items-center">
-                    {[5, 10].map(dur => (
+                    {[-1, 5, 10].map(dur => (
                       <button
                         key={dur}
                         type="button"
@@ -2240,12 +2242,12 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                             : 'bg-base border-border text-text-secondary hover:border-text-muted'
                         )}
                       >
-                        {dur}s
+                        {dur === -1 ? t('common:models.video_duration_auto') : `${dur}s`}
                       </button>
                     ))}
                     {/* Show custom durations that aren't predefined */}
                     {capDurations
-                      .filter(d => d !== 5 && d !== 10)
+                      .filter(d => d !== -1 && d !== 5 && d !== 10)
                       .map(dur => (
                         <button
                           key={dur}
