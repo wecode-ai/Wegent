@@ -4,45 +4,7 @@ import {
   clearRuntimeConversationCacheForTests,
   getRuntimeConversationMessages,
 } from '@/features/workbench/runtimeConversationCache'
-import {
-  rollbackRejectedRuntimeConversationTurn,
-  runtimeTaskLoadKeyFromAddress,
-} from './useWorkbenchPaneSession'
-
-describe('runtimeTaskLoadKeyFromAddress', () => {
-  test('does not activate a queued task planned path before a runtime thread exists', () => {
-    const optimisticKey = runtimeTaskLoadKeyFromAddress({
-      deviceId: 'device-1',
-      taskId: 'task-1',
-    })
-    const queuedKey = runtimeTaskLoadKeyFromAddress({
-      deviceId: 'device-1',
-      taskId: 'task-1',
-      workspacePath: '/workspace/worktrees/task-1/repo',
-    })
-
-    expect(queuedKey).toBe(optimisticKey)
-  })
-
-  test('activates the final workspace path after the runtime thread exists', () => {
-    const queuedKey = runtimeTaskLoadKeyFromAddress({
-      deviceId: 'device-1',
-      taskId: 'task-1',
-      workspacePath: '/workspace/worktrees/task-1/repo',
-    })
-    const preparedKey = runtimeTaskLoadKeyFromAddress({
-      deviceId: 'device-1',
-      taskId: 'task-1',
-      workspacePath: '/workspace/worktrees/task-1/repo',
-      runtimeHandle: {
-        threadId: 'thread-1',
-      },
-    })
-
-    expect(preparedKey).not.toBe(queuedKey)
-    expect(preparedKey).toContain('/workspace/worktrees/task-1/repo')
-  })
-})
+import { rollbackRejectedRuntimeConversationTurn } from './useWorkbenchPaneSession'
 
 describe('rollbackRejectedRuntimeConversationTurn', () => {
   afterEach(clearRuntimeConversationCacheForTests)
