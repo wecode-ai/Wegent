@@ -56,7 +56,7 @@ export function BrowserFindBar({
   return createPortal(
     <div
       data-testid="workspace-browser-find-bar"
-      className="pointer-events-none fixed right-4 top-2 z-system-popover flex justify-end"
+      className="pointer-events-none fixed right-4 top-7 z-system-popover flex justify-end"
     >
       <div className="pointer-events-auto grid w-[340px] max-w-[70vw] grid-cols-[minmax(0,1fr)_auto] overflow-hidden rounded-[20px] border border-border bg-popover shadow-[0px_8px_16px_-4px_rgba(0,0,0,0.12)]">
         <div className="col-[1/2] row-[1] flex h-[44px] min-w-0 items-center gap-2 ps-4">
