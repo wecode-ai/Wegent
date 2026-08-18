@@ -45,6 +45,7 @@ const mocks = vi.hoisted(() => {
     listAutomationRuns: vi.fn().mockResolvedValue({ items: [] }),
   }
   const captureRuntimeIpcOptions = vi.fn()
+  const captureAutomationIpcOptions = vi.fn()
   const localListArchivedConversations = vi.fn()
   const cloudListArchivedConversations = vi.fn()
   const localArchiveAllConversations = vi.fn()
@@ -183,6 +184,7 @@ const mocks = vi.hoisted(() => {
     cloudUploadAttachment,
     localAutomationApi,
     captureRuntimeIpcOptions,
+    captureAutomationIpcOptions,
     localListArchivedConversations,
     cloudListArchivedConversations,
     localArchiveAllConversations,
@@ -204,30 +206,33 @@ vi.mock('@/api/local/localServices', () => ({
       deviceId?: string
     ) => Promise<unknown>,
     _requestWithDevice: unknown,
-    _options: unknown,
+    options: unknown,
     deviceId: string,
     source: 'local' | 'cloud'
-  ) => ({
-    async listAutomations() {
-      const response = (await request('runtime.automations.list', {}, deviceId)) as {
-        items?: Record<string, unknown>[]
-      }
-      return { items: (response.items ?? []).map(item => ({ ...item, source })) }
-    },
-    async createAutomation(data: Record<string, unknown>) {
-      return request('runtime.automations.create', data, deviceId)
-    },
-    async updateAutomation(automationId: string, data: Record<string, unknown>) {
-      return request('runtime.automations.update', { automationId, ...data }, deviceId)
-    },
-    async deleteAutomation(automationId: string) {
-      return request('runtime.automations.delete', { automationId }, deviceId)
-    },
-    async toggleAutomation(automationId: string, enabled: boolean) {
-      return request('runtime.automations.toggle', { automationId, enabled }, deviceId)
-    },
-    listAutomationRuns: vi.fn().mockResolvedValue({ items: [] }),
-  }),
+  ) => {
+    mocks.captureAutomationIpcOptions(options)
+    return {
+      async listAutomations() {
+        const response = (await request('runtime.automations.list', {}, deviceId)) as {
+          items?: Record<string, unknown>[]
+        }
+        return { items: (response.items ?? []).map(item => ({ ...item, source })) }
+      },
+      async createAutomation(data: Record<string, unknown>) {
+        return request('runtime.automations.create', data, deviceId)
+      },
+      async updateAutomation(automationId: string, data: Record<string, unknown>) {
+        return request('runtime.automations.update', { automationId, ...data }, deviceId)
+      },
+      async deleteAutomation(automationId: string) {
+        return request('runtime.automations.delete', { automationId }, deviceId)
+      },
+      async toggleAutomation(automationId: string, enabled: boolean) {
+        return request('runtime.automations.toggle', { automationId, enabled }, deviceId)
+      },
+      listAutomationRuns: vi.fn().mockResolvedValue({ items: [] }),
+    }
+  },
   createRuntimeWorkApiFromIpc: (
     request: (
       method: string,
@@ -1911,5 +1916,10 @@ describe('createHybridWorkbenchServices', () => {
     )
     expect(response?.automation.source).toBe('cloud')
     expect(mocks.localAutomationApi.createAutomation).not.toHaveBeenCalled()
+    expect(mocks.captureAutomationIpcOptions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        syncConfiguredModelCatalog: true,
+      })
+    )
   })
 })

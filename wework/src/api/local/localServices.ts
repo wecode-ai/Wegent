@@ -498,8 +498,16 @@ interface RuntimeWorkIpcOptions {
   resolveDeviceName?: (deviceId: string) => string | undefined
 }
 
+interface AutomationIpcOptions extends RuntimeWorkIpcOptions {
+  prepareRuntimeModel: (data: RuntimeModelPrepareRequest) => Promise<boolean>
+}
+
 function cloudConnectionRequired(name: string): never {
   throw new Error(`${name} requires cloud connection`)
+}
+
+function modelCatalogSyncCancelled(): Error {
+  return new Error(i18n.t('workbench.cloud_model_catalog_sync_cancelled'))
 }
 
 function localDeviceFromStatus(status: LocalExecutorStatus): DeviceInfo {
@@ -956,11 +964,11 @@ function wecodeExecutorForRuntime(runtime: string): string {
 
 function localRuntimeModelConfig(
   runtime: string,
+  requireCodexCatalog: boolean,
   modelName?: string,
   modelType?: string | null,
   modelOptions?: Record<string, string>,
-  cloudModelGateway?: CloudModelGateway,
-  requireCodexCatalog = true
+  cloudModelGateway?: CloudModelGateway
 ): Record<string, unknown> {
   const localModel = findLocalModelConfigByModelName(modelName)
   if (localModel) {
@@ -1113,11 +1121,11 @@ function harnessProxyUpstream(
   const execution = selectedModelExecutionFields(option.model, option.options)
   const config = localRuntimeModelConfig(
     runtime,
+    false,
     execution.modelId,
     execution.modelType,
     execution.modelOptions,
-    cloudModelGateway,
-    false
+    cloudModelGateway
   )
   const baseUrl = recordString(config.base_url)
   const apiFormat = recordString(config.upstream_api_format)
@@ -1391,6 +1399,7 @@ interface BuildLocalRuntimeExecutionRequestInput {
   newSession: boolean
   clientUserMessageId?: string
   ephemeral?: boolean
+  requireLocalCodexCatalog: boolean
   user: User
 }
 
@@ -1445,11 +1454,11 @@ function buildLocalRuntimeExecutionRequest(
       : applyRuntimeModelOptions(
           localRuntimeModelConfig(
             input.runtime,
+            !claudeRuntime && input.requireLocalCodexCatalog,
             input.modelId,
             input.modelType,
             input.modelOptions,
-            input.cloudModelGateway,
-            !claudeRuntime
+            input.cloudModelGateway
           ),
           input.modelOptions
         ))
@@ -1623,7 +1632,8 @@ async function createLocalRuntimeTaskPayload(
   localDeviceId: string,
   requestWithLocalDevice: RequestWithLocalDevice,
   cloudModelGateway: CloudModelGateway | undefined,
-  user: User
+  user: User,
+  requireLocalCodexCatalog: boolean
 ): Promise<Record<string, unknown>> {
   const runtimeWorkspace = await prepareLocalRuntimeWorkspace(data, requestWithLocalDevice)
   const execution = runtimeWorkspace ? executionWithWorkspace(data, runtimeWorkspace) : null
@@ -1644,6 +1654,7 @@ async function createLocalRuntimeTaskPayload(
       modelConfig: applyRuntimeModelOptions(
         localRuntimeModelConfig(
           'codex',
+          requireLocalCodexCatalog,
           initialSupervisor.modelSelection.modelName,
           initialSupervisor.modelSelection.modelType,
           initialSupervisor.modelSelection.options,
@@ -1677,6 +1688,7 @@ async function createLocalRuntimeTaskPayload(
         branch: runtimeWorkspace?.branch,
         newSession: true,
         ephemeral: true,
+        requireLocalCodexCatalog,
         user,
       })
     : null
@@ -1717,6 +1729,7 @@ async function createLocalRuntimeTaskPayload(
       newSession: true,
       clientUserMessageId: normalizedData.clientUserMessageId,
       ephemeral: normalizedData.ephemeral,
+      requireLocalCodexCatalog,
       user,
     }),
   } as unknown as Record<string, unknown>
@@ -1726,7 +1739,8 @@ function createLocalRuntimeSendPayload(
   data: RuntimeSendRequest,
   localDeviceId: string,
   cloudModelGateway: CloudModelGateway | undefined,
-  user: User
+  user: User,
+  requireLocalCodexCatalog: boolean
 ): Record<string, unknown> {
   const turnSeed = createRuntimeTurnSeed()
   const normalizedData: RuntimeSendRequest = {
@@ -1784,6 +1798,7 @@ function createLocalRuntimeSendPayload(
         newSession: false,
         clientUserMessageId: normalizedData.clientUserMessageId,
         ephemeral: data.ephemeral,
+        requireLocalCodexCatalog,
         user,
       }),
     } as unknown as Record<string, unknown>
@@ -1825,6 +1840,7 @@ function createLocalRuntimeSendPayload(
       newSession: false,
       clientUserMessageId: normalizedData.clientUserMessageId,
       ephemeral: data.ephemeral,
+      requireLocalCodexCatalog,
       user,
     }),
   } as unknown as Record<string, unknown>
@@ -2089,6 +2105,7 @@ export function createRuntimeWorkApiFromIpc(
 ) {
   const transportLabel = options.transportLabel ?? 'Local'
   const user = options.user ?? LOCAL_USER
+  const requireLocalCodexCatalog = options.syncConfiguredModelCatalog !== true
   const resolveDeviceId = options.resolveDeviceId ?? (() => getDefaultDeviceId())
   const normalizeDeviceRecord = options.normalizeDeviceRecord ?? normalizeLocalDeviceRecord
   const adaptListResponse = options.adaptListResponse ?? adaptRuntimeWorkListResponse
@@ -2324,9 +2341,6 @@ export function createRuntimeWorkApiFromIpc(
     }
   }
 
-  const modelCatalogSyncCancelled = () =>
-    new Error(i18n.t('workbench.cloud_model_catalog_sync_cancelled'))
-
   return {
     prepareRuntimeModel,
     async listRuntimeWork(): Promise<RuntimeWorkListResponse> {
@@ -2435,7 +2449,8 @@ export function createRuntimeWorkApiFromIpc(
         data,
         localDeviceId,
         options.cloudModelGateway,
-        user
+        user,
+        requireLocalCodexCatalog
       )
       if (!payload.executionRequest) {
         console.warn('[Wework] Local runtime send payload missing executionRequest', {
@@ -2461,7 +2476,8 @@ export function createRuntimeWorkApiFromIpc(
         data,
         localDeviceId,
         options.cloudModelGateway,
-        user
+        user,
+        requireLocalCodexCatalog
       )
       if (!payload.executionRequest) {
         console.warn('[Wework] Local runtime rollback payload missing executionRequest', {
@@ -2522,7 +2538,8 @@ export function createRuntimeWorkApiFromIpc(
         data,
         localDeviceId,
         options.cloudModelGateway,
-        user
+        user,
+        requireLocalCodexCatalog
       )
       if (!payload.executionRequest) {
         console.warn('[Wework] Local runtime interrupt payload missing executionRequest', {
@@ -2570,6 +2587,7 @@ export function createRuntimeWorkApiFromIpc(
       const modelConfig = applyRuntimeModelOptions(
         localRuntimeModelConfig(
           'codex',
+          requireLocalCodexCatalog,
           selection.modelName,
           selection.modelType,
           selection.options,
@@ -2792,7 +2810,8 @@ export function createRuntimeWorkApiFromIpc(
         localDeviceId,
         requestWithLocalDevice,
         options.cloudModelGateway,
-        user
+        user,
+        requireLocalCodexCatalog
       )
       logRuntimeTaskCreateStage('local-payload-built', {
         taskId: data.taskId ?? null,
@@ -2928,11 +2947,12 @@ function withAutomationRunSource(
 export function createAutomationApiFromIpc(
   request: <T>(method: string, params?: Record<string, unknown>, deviceId?: string) => Promise<T>,
   requestWithLocalDevice: RequestWithLocalDevice,
-  options: RuntimeWorkIpcOptions,
+  options: AutomationIpcOptions,
   automationDeviceId = LOCAL_DEVICE_ID,
   source: AutomationSource = 'local'
 ): NonNullable<WorkbenchServices['automationApi']> {
   const user = options.user ?? LOCAL_USER
+  const requireLocalCodexCatalog = options.syncConfiguredModelCatalog !== true
   const resolveDeviceId =
     options.resolveDeviceId ??
     (async (data?: Record<string, unknown>) => stringValue(data?.deviceId) ?? LOCAL_DEVICE_ID)
@@ -2941,22 +2961,39 @@ export function createAutomationApiFromIpc(
     const localDeviceId = await resolveDeviceId(
       data.taskRequest as unknown as Record<string, unknown>
     )
+    const continuationRequest =
+      data.conversationMode === 'continue_thread' && data.continuationPayload
+        ? (data.continuationPayload as unknown as RuntimeSendRequest)
+        : null
+    const modelIds = new Set(
+      [
+        data.taskRequest.modelId,
+        data.taskRequest.initialSupervisor?.modelSelection?.modelName,
+        continuationRequest?.modelId,
+      ].filter((modelId): modelId is string => Boolean(modelId))
+    )
+    for (const modelId of modelIds) {
+      if (!(await options.prepareRuntimeModel({ deviceId: localDeviceId, modelId }))) {
+        throw modelCatalogSyncCancelled()
+      }
+    }
     const taskPayload = await createLocalRuntimeTaskPayload(
       data.taskRequest,
       localDeviceId,
       requestWithLocalDevice,
       options.cloudModelGateway,
-      user
+      user,
+      requireLocalCodexCatalog
     )
-    const continuationPayload =
-      data.conversationMode === 'continue_thread' && data.continuationPayload
-        ? createLocalRuntimeSendPayload(
-            data.continuationPayload as unknown as RuntimeSendRequest,
-            localDeviceId,
-            options.cloudModelGateway,
-            user
-          )
-        : null
+    const continuationPayload = continuationRequest
+      ? createLocalRuntimeSendPayload(
+          continuationRequest,
+          localDeviceId,
+          options.cloudModelGateway,
+          user,
+          requireLocalCodexCatalog
+        )
+      : null
     return {
       id: data.id ?? '',
       version: data.version ?? 0,
@@ -3242,6 +3279,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     {
       cloudModelGateway: deps.cloudModelGateway,
       user: deps.user,
+      prepareRuntimeModel: data => runtimeWorkApi.prepareRuntimeModel(data),
     }
   )
   const deliveryApi = createLocalDeliveryApi(request)
