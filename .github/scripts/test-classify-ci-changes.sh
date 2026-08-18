@@ -400,7 +400,7 @@ assert_desktop_case "cloud files select only the cloud suite" \
 wework_desktop_core_e2e=false
 wework_desktop_core_e2e_matrix={"include":[]}
 wework_desktop_cloud_e2e=true
-wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shard 1","segments":"core-task-flow"},{"id":"cloud-2","name":"Cloud / shard 2","segments":"model-routing,embedded-browser,telemetry-consent"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"window-lifecycle,conversation-state,browser-multi-tabs"},{"id":"cloud-4","name":"Cloud / shard 4","segments":"resilience,goal-lifecycle,supervisor-lifecycle"},{"id":"cloud-5","name":"Cloud / shard 5","segments":"rendering-extensions,workspace-attachments,workspace-tabs,priority-filter,automation-lifecycle,project-automation,plugin-auto-update"}]}
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shard 1","segments":"core-task-flow"},{"id":"cloud-2","name":"Cloud / shard 2","segments":"model-routing,embedded-browser,telemetry-consent"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"window-lifecycle,conversation-state,browser-multi-tabs,browser-toolbar-actions"},{"id":"cloud-4","name":"Cloud / shard 4","segments":"resilience,goal-lifecycle,supervisor-lifecycle"},{"id":"cloud-5","name":"Cloud / shard 5","segments":"rendering-extensions,workspace-attachments,workspace-tabs,priority-filter,automation-lifecycle,project-automation,plugin-auto-update"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/features/cloud-connection/CloudConnectionProvider.tsx"
