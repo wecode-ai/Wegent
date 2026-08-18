@@ -4,17 +4,21 @@
 
 """API tests for creating a code wiki."""
 
+from datetime import datetime
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.security import create_access_token, get_password_hash
+from app.models.kind import Kind
+from app.models.knowledge import ContentOrigin, KnowledgeDocument
 from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
 from app.models.user import User
-from app.schemas.knowledge import KnowledgeBaseType
+from app.schemas.knowledge import KnowledgeBaseType, KnowledgeBaseUpdate
+from app.services.knowledge.knowledge_service import KnowledgeService
 from app.services.knowledge.code_wiki.source import SourceAccessDenied
 
 CREATE_URL = "/api/knowledge-bases/code-wikis"
@@ -1502,6 +1506,173 @@ def test_the_registry_row_leaves_no_column_null_that_production_forbids(
     (row,) = test_db.query(WikiProject).filter(WikiProject.kind_id == result.id).all()
     for column in ("source_id", "source_domain", "description", "ext", "project_name"):
         assert getattr(row, column) is not None, column
+
+
+# --- management through the ordinary knowledge-base endpoints ----------------
+
+
+def _stored_code_wiki(test_db: Session, owner: User, name: str) -> Kind:
+    wiki = Kind(
+        kind="KnowledgeBase",
+        name=name,
+        namespace="default",
+        user_id=owner.id,
+        json={"spec": {"name": name, "kbType": "code_wiki"}},
+        is_active=True,
+    )
+    test_db.add(wiki)
+    test_db.flush()
+    return wiki
+
+
+def test_editing_a_code_wiki_persists_its_execution_model_and_task_visibility(
+    test_db: Session,
+    test_user: User,
+):
+    wiki = _stored_code_wiki(test_db, test_user, "editable-wiki")
+    model_ref = {
+        "name": "claude-opus-5",
+        "namespace": "default",
+        "type": "public",
+    }
+    from app.api.endpoints import knowledge as endpoint
+
+    update = Mock(return_value=wiki)
+    with (
+        patch.object(endpoint.knowledge_orchestrator, "update_knowledge_base", update),
+        patch.object(endpoint, "add_span_event"),
+    ):
+        endpoint.update_knowledge_base(
+            wiki.id,
+            KnowledgeBaseUpdate(
+                execution_model_ref=model_ref,
+                show_generation_task=True,
+            ),
+            test_user,
+            test_db,
+        )
+
+    assert update.call_args.kwargs["execution_model_ref"] == model_ref
+    assert update.call_args.kwargs["execution_model_ref_is_set"] is True
+    assert update.call_args.kwargs["show_generation_task"] is True
+
+
+def test_deleting_a_code_wiki_removes_its_generated_pages(
+    test_db: Session,
+    test_user: User,
+):
+    wiki = _stored_code_wiki(test_db, test_user, "removable-wiki")
+    page = KnowledgeDocument(
+        kind_id=wiki.id,
+        attachment_id=42,
+        name="Architecture",
+        file_extension="md",
+        file_size=100,
+        user_id=test_user.id,
+        origin=ContentOrigin.GENERATED.value,
+    )
+    test_db.add(page)
+    test_db.commit()
+
+    with patch(
+        "app.services.context.context_service.delete_context", return_value=True
+    ) as delete_attachment:
+        assert KnowledgeService.delete_knowledge_base(test_db, wiki.id, test_user.id)
+
+    delete_attachment.assert_called_once_with(
+        db=test_db,
+        context_id=42,
+        user_id=test_user.id,
+    )
+    assert test_db.get(Kind, wiki.id) is None
+    assert test_db.get(KnowledgeDocument, page.id) is None
+
+
+def test_code_wiki_model_update_reaches_the_stored_spec(
+    test_db: Session,
+    test_user: User,
+):
+    from app.services.knowledge.orchestrator import knowledge_orchestrator
+
+    wiki = _stored_code_wiki(test_db, test_user, "model-wiki")
+    model_ref = {
+        "name": "claude-opus-5",
+        "namespace": "default",
+        "type": "public",
+    }
+
+    knowledge_orchestrator.update_knowledge_base(
+        db=test_db,
+        user=test_user,
+        knowledge_base_id=wiki.id,
+        execution_model_ref=model_ref,
+        execution_model_ref_is_set=True,
+        show_generation_task=True,
+    )
+
+    test_db.refresh(wiki)
+    assert wiki.json["spec"]["executionModelRef"] == model_ref
+    assert wiki.json["spec"]["showGenerationTask"] is True
+
+    knowledge_orchestrator.update_knowledge_base(
+        db=test_db,
+        user=test_user,
+        knowledge_base_id=wiki.id,
+        execution_model_ref=None,
+        execution_model_ref_is_set=True,
+    )
+
+    test_db.refresh(wiki)
+    assert wiki.json["spec"]["executionModelRef"] is None
+
+
+def test_deleting_a_code_wiki_with_user_documents_stays_refused(
+    test_db: Session,
+    test_user: User,
+):
+    wiki = _stored_code_wiki(test_db, test_user, "protected-wiki")
+    test_db.add(
+        KnowledgeDocument(
+            kind_id=wiki.id,
+            attachment_id=0,
+            name="User note",
+            file_extension="md",
+            file_size=100,
+            user_id=test_user.id,
+            origin=ContentOrigin.USER.value,
+        )
+    )
+    test_db.commit()
+
+    with pytest.raises(ValueError, match="Please delete all documents first"):
+        KnowledgeService.delete_knowledge_base(test_db, wiki.id, test_user.id)
+    assert test_db.get(Kind, wiki.id) is not None
+
+
+def test_deleting_a_code_wiki_with_a_running_generation_stays_refused(
+    test_db: Session,
+    test_user: User,
+):
+    from app.models.wiki import WikiGeneration, WikiGenerationStatus
+
+    wiki = _stored_code_wiki(test_db, test_user, "running-wiki")
+    test_db.add(
+        WikiGeneration(
+            project_id=0,
+            kind_id=wiki.id,
+            user_id=test_user.id,
+            task_id=0,
+            team_id=0,
+            source_snapshot={},
+            status=WikiGenerationStatus.RUNNING,
+            completed_at=datetime(1970, 1, 1),
+        )
+    )
+    test_db.commit()
+
+    with pytest.raises(ValueError, match="generation is in progress"):
+        KnowledgeService.delete_knowledge_base(test_db, wiki.id, test_user.id)
+    assert test_db.get(Kind, wiki.id) is not None
 
 
 def test_a_failed_registration_leaves_no_knowledge_base_behind(
