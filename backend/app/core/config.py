@@ -190,6 +190,10 @@ class Settings(BaseSettings):
     VIDEO_POLL_SCHEDULE_LEASE_SECONDS: int = 10
     VIDEO_RECOVERY_STALE_SECONDS: int = 10
     VIDEO_RECOVERY_LOOKBACK_HOURS: int = 1
+    SEEDANCE_ASSET_BASE_URL: str = ""
+    SEEDANCE_ASSET_GROUP_ID: str = ""
+    SEEDANCE_ASSET_STATUS_POLL_INTERVAL_SECONDS: int = 5
+    SEEDANCE_ASSET_STATUS_TIMEOUT_SECONDS: int = 60
 
     # Default models used by image/video generation MCP tools when the current
     # task model is not a matching generation model.
