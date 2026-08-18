@@ -2386,24 +2386,6 @@ pub fn embedded_browser_go_forward(
 }
 
 #[tauri::command]
-pub fn embedded_browser_set_zoom(
-    state: tauri::State<'_, EmbeddedBrowserState>,
-    scale_factor: f64,
-    label: Option<String>,
-) -> Result<(), String> {
-    if !scale_factor.is_finite() || scale_factor <= 0.0 {
-        return Err(format!(
-            "Invalid embedded browser zoom scale factor: {scale_factor}"
-        ));
-    }
-    let label = browser_label(label);
-    let webview = get_entry(&state, &label)?.ready_webview()?;
-    webview
-        .set_zoom(scale_factor)
-        .map_err(|error| format!("Failed to set embedded browser zoom: {error}"))
-}
-
-#[tauri::command]
 pub fn embedded_browser_eval(
     state: tauri::State<'_, EmbeddedBrowserState>,
     script: String,

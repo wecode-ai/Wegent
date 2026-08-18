@@ -59,7 +59,8 @@ interface ActionMenuProps {
   triggerClassName?: string
   placement?: 'side' | 'bottom-end'
   contextMenuPosition?: MenuPosition | null
-  menuClassName?: string
+  width?: number
+  itemClassName?: string
   onContextMenuClose?: () => void
   onOpenChange?: (open: boolean) => void
 }
@@ -80,7 +81,8 @@ export function ActionMenu({
   triggerClassName,
   placement = 'side',
   contextMenuPosition,
-  menuClassName,
+  width,
+  itemClassName,
   onContextMenuClose,
   onOpenChange,
 }: ActionMenuProps) {
@@ -434,9 +436,10 @@ export function ActionMenu({
               top: menuPosition?.top ?? 0,
               visibility: menuPosition ? 'visible' : 'hidden',
             }}
-            className={`fixed z-system-popover min-w-[176px] rounded-xl border border-border bg-popover p-1 text-text-primary shadow-xl${
-              menuClassName ? ` ${menuClassName}` : ''
-            }`}
+            className={[
+              'fixed z-system-popover min-w-[176px] rounded-xl border border-border bg-popover p-1 text-text-primary shadow-xl',
+              width ? `w-[${width}px]` : '',
+            ].join(' ')}
           >
             {items.map(item => {
               const ItemIcon = item.icon
@@ -446,7 +449,7 @@ export function ActionMenu({
                     key={item.testId}
                     data-testid={item.testId}
                     role="separator"
-                    className="mx-2 my-1 h-px bg-border"
+                    className="mx-1 my-1 h-px bg-border"
                   />
                 )
               }
@@ -500,11 +503,12 @@ export function ActionMenu({
                   }}
                   onKeyDown={event => handleItemKeyDown(event, item)}
                   className={[
-                    'flex min-h-9 w-full items-center rounded-lg px-2 text-left text-sm leading-[18px]',
+                    'flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-sm leading-[18px]',
                     item.danger
                       ? 'text-red-500 hover:bg-red-50'
                       : 'text-text-primary hover:bg-muted',
                     item.disabled ? 'cursor-not-allowed opacity-45 hover:bg-transparent' : '',
+                    itemClassName ?? '',
                   ].join(' ')}
                 >
                   {ItemIcon ? <ItemIcon className="h-4 w-4 shrink-0" /> : null}
@@ -568,11 +572,12 @@ export function ActionMenu({
                     }}
                     onKeyDown={event => handleItemKeyDown(event, item, true)}
                     className={[
-                      'flex min-h-9 w-full items-center rounded-lg px-2 text-left text-sm leading-[18px]',
+                      'flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-sm leading-[18px]',
                       item.danger
                         ? 'text-red-500 hover:bg-red-50'
                         : 'text-text-primary hover:bg-muted',
                       item.disabled ? 'cursor-not-allowed opacity-45 hover:bg-transparent' : '',
+                      itemClassName ?? '',
                     ].join(' ')}
                   >
                     {ItemIcon ? <ItemIcon className="h-4 w-4 shrink-0" /> : null}

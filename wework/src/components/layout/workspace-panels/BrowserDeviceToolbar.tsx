@@ -9,17 +9,14 @@ import {
   BROWSER_DEVICE_PRESET_RESPONSIVE,
   BROWSER_DEVICE_PRESETS,
   clampDeviceDimension,
-  deviceZoomOptions,
   type BrowserDeviceToolbarState,
 } from '@/lib/browser-device-toolbar'
 
 interface BrowserDeviceToolbarProps {
   state: BrowserDeviceToolbarState
-  zoomPercent: number
   onPresetChange: (presetId: string) => void
   onDimensionsChange: (width: number, height: number) => void
   onRotate: () => void
-  onZoomPercentChange: (zoomPercent: number) => void
   onClose: () => void
 }
 
@@ -75,11 +72,9 @@ function DimensionInput({
 
 export function BrowserDeviceToolbar({
   state,
-  zoomPercent,
   onPresetChange,
   onDimensionsChange,
   onRotate,
-  onZoomPercentChange,
   onClose,
 }: BrowserDeviceToolbarProps) {
   const { t } = useTranslation('common')
@@ -93,11 +88,6 @@ export function BrowserDeviceToolbar({
           ? t(preset.labelKey)
           : preset.id,
   }))
-  const zoomOptions = deviceZoomOptions(zoomPercent).map(option => ({
-    value: String(option),
-    label: `${option}%`,
-  }))
-
   return (
     <div
       data-testid="workspace-browser-device-toolbar"
@@ -146,13 +136,6 @@ export function BrowserDeviceToolbar({
       >
         <RotateCw className="size-4" />
       </button>
-      <MenuSelect
-        testId="workspace-browser-device-zoom-select"
-        value={String(zoomPercent)}
-        options={zoomOptions}
-        onChange={value => onZoomPercentChange(Number(value))}
-        pill
-      />
       <button
         type="button"
         data-testid="workspace-browser-device-close-button"

@@ -19,11 +19,6 @@ const FIND_BAR_SELECTOR = '[data-testid="workspace-browser-find-bar"]'
 const FIND_INPUT_SELECTOR = '[data-testid="workspace-browser-find-input"]'
 const FIND_COUNT_SELECTOR = '[data-testid="workspace-browser-find-count"]'
 const FIND_CLOSE_SELECTOR = '[data-testid="workspace-browser-find-close-button"]'
-const ZOOM_LABEL_SELECTOR = '[data-testid="workspace-browser-zoom-label"]'
-const ZOOM_IN_SELECTOR = '[data-testid="workspace-browser-zoom-in-button"]'
-const ZOOM_OUT_SELECTOR = '[data-testid="workspace-browser-zoom-out-button"]'
-const ZOOM_BANNER_SELECTOR =
-  ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-zoom-banner"]'
 const DEVICE_TOOLBAR_ITEM_SELECTOR = '[data-testid="workspace-browser-device-toolbar-item"]'
 const DEVICE_TOOLBAR_SELECTOR =
   ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-device-toolbar"]'
@@ -200,33 +195,6 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
       await control.command('click', FIND_CLOSE_SELECTOR)
       const clearedFindState = await evaluateFindState(bridgeIdentity)
       assert.equal(clearedFindState.matches, 0, 'Closing the find bar did not clear highlights')
-
-      // --- Zoom ---
-      await control.command('click', BROWSER_MORE_BUTTON_SELECTOR)
-      await waitForValue(
-        control,
-        ZOOM_LABEL_SELECTOR,
-        '100%',
-        uiTimeoutMs,
-        'The zoom row did not start at 100%'
-      )
-      await control.command('click', ZOOM_IN_SELECTOR)
-      await waitForValue(
-        control,
-        ZOOM_LABEL_SELECTOR,
-        '110%',
-        uiTimeoutMs,
-        'Zoom in did not step to the next ladder level'
-      )
-      await control.command('waitFor', ZOOM_BANNER_SELECTOR, { timeoutMs: uiTimeoutMs })
-      await control.command('click', ZOOM_OUT_SELECTOR)
-      await waitForValue(
-        control,
-        ZOOM_LABEL_SELECTOR,
-        '100%',
-        uiTimeoutMs,
-        'Zoom out did not return to 100%'
-      )
 
       // --- Device toolbar ---
       await control.command('waitFor', DEVICE_TOOLBAR_ITEM_SELECTOR, {

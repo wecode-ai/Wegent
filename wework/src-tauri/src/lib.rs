@@ -5093,7 +5093,6 @@ pub fn run() {
             embedded_browser::embedded_browser_resolve_agent_approval,
             embedded_browser::embedded_browser_resume_download,
             embedded_browser::embedded_browser_set_agent_control_paused,
-            embedded_browser::embedded_browser_set_zoom,
             embedded_browser::embedded_browser_set_bounds,
             local_terminal::archive_local_harness_session,
             local_terminal::attach_local_terminal,
