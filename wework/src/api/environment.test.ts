@@ -232,6 +232,17 @@ describe('loadProjectEnvironment', () => {
         ],
         stderr: '',
       })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: {
+          data: {
+            resource: {
+              mergeQueueEntry: null,
+            },
+          },
+        },
+        stderr: '',
+      })
 
     const info = await loadProjectEnvironment(
       { executeCommand },
@@ -255,14 +266,93 @@ describe('loadProjectEnvironment', () => {
         draft: false,
         checks: 'pending',
         mergeability: 'conflicting',
+        mergeQueue: 'not_queued',
       },
     })
-    expect(executeCommand).toHaveBeenLastCalledWith('local-device', {
+    expect(executeCommand).toHaveBeenCalledWith('local-device', {
       command_key: 'git_github_pull_requests',
       path: '/workspace/Wegent',
       args: ['feature/change-request-status'],
       timeout_seconds: 20,
       max_output_bytes: 256 * 1024,
+    })
+    expect(executeCommand).toHaveBeenLastCalledWith('local-device', {
+      command_key: 'git_github_pull_request_merge_queue',
+      path: '/workspace/Wegent',
+      args: ['-F', 'url=https://github.com/wecode-ai/Wegent/pull/2631'],
+      timeout_seconds: 20,
+      max_output_bytes: 64 * 1024,
+    })
+  })
+
+  test('keeps a GitHub pull request pending while it is in the merge queue', async () => {
+    const executeCommand = vi
+      .fn()
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: 'fix/merge-queue-status\n',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: '',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: '',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: 'https://github.com/wecode-ai/Wegent.git\n',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: [
+          {
+            number: 2779,
+            url: 'https://github.com/wecode-ai/Wegent/pull/2779',
+            title: 'fix(wework): stabilize paused streaming scroll',
+            state: 'OPEN',
+            isDraft: false,
+            mergeable: 'MERGEABLE',
+            mergeStateStatus: 'CLEAN',
+            statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'SUCCESS' }],
+          },
+        ],
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: {
+          data: {
+            resource: {
+              mergeQueueEntry: {
+                id: 'merge-queue-entry',
+              },
+            },
+          },
+        },
+        stderr: '',
+      })
+
+    const info = await loadProjectEnvironment(
+      { executeCommand },
+      null,
+      {
+        deviceId: 'local-device',
+        path: '/workspace/Wegent',
+      },
+      { force: true }
+    )
+
+    expect(info.changeRequest?.changeRequest).toMatchObject({
+      number: 2779,
+      checks: 'success',
+      mergeability: 'mergeable',
+      mergeQueue: 'queued',
     })
   })
 
@@ -557,6 +647,7 @@ describe('loadProjectEnvironment', () => {
         draft: true,
         checks: 'success',
         mergeability: 'unknown',
+        mergeQueue: 'unknown',
       },
     })
   })

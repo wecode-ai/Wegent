@@ -47,6 +47,9 @@ use crate::{
     },
 };
 
+#[cfg(windows)]
+mod windows_batch;
+
 const DEFAULT_STREAM_TEXT_CHUNK_CHARS: usize = 256;
 const DEFAULT_STREAM_REASONING_CHUNK_CHARS: usize = 4_096;
 const MAX_DEFERRED_MCP_RETRIES: usize = 2;
@@ -930,13 +933,35 @@ fn command_from_spec(spec: &CommandSpec) -> Command {
         .iter()
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect::<Vec<_>>();
-    let mut command = Command::new(&spec.program);
+    let (program, prefix_args) = spawn_program_parts(&spec.program);
+    let mut command = Command::new(program);
     command
+        .args(prefix_args)
         .args(&spec.args)
         .env_clear()
         .envs(process_environment::process_env(&extra_env))
         .kill_on_drop(true);
     command
+}
+
+/// Returns the effective program and any prefix arguments for a spawn.
+///
+/// On Windows, npm/node-style batch shims are resolved to their native
+/// executable so that arguments containing newlines (common in agent prompts)
+/// can be passed through directly instead of being rejected by `cmd.exe` with
+/// `batch file arguments are invalid`. Other platforms return the program
+/// unchanged.
+pub fn spawn_program_parts(program: &str) -> (PathBuf, Vec<String>) {
+    #[cfg(windows)]
+    {
+        let program_path = Path::new(program);
+        if windows_batch::is_batch_file(program_path) {
+            if let Some(target) = windows_batch::resolve_batch_target(program_path) {
+                return (target.program, target.prefix_args);
+            }
+        }
+    }
+    (PathBuf::from(program), Vec::new())
 }
 
 async fn run_prepared_streaming_command<S>(
@@ -1457,6 +1482,11 @@ fn command_log_fields(spec: &CommandSpec) -> Vec<(&'static str, String)> {
         ("program", spec.program.clone()),
         ("arg_count", spec.args.len().to_string()),
     ];
+    let (resolved_program, prefix_args) = spawn_program_parts(&spec.program);
+    if resolved_program.to_string_lossy() != spec.program || !prefix_args.is_empty() {
+        fields.push(("resolved_program", resolved_program.display().to_string()));
+        fields.push(("prefix_arg_count", prefix_args.len().to_string()));
+    }
     if let Some(cwd) = spec.cwd.as_ref() {
         fields.push(("cwd", cwd.display().to_string()));
     }

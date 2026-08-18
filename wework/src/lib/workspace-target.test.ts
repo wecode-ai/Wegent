@@ -392,4 +392,63 @@ describe('resolveWorkspaceTarget', () => {
       },
     })
   })
+
+  test('uses the final remote Worktree path for historical task tools', () => {
+    const project: ProjectWithTasks = {
+      id: 12,
+      name: 'Wegent',
+      tasks: [],
+    }
+
+    expect(
+      resolveRuntimeWorkspaceContext({
+        currentRuntimeTask: {
+          deviceId: 'logical-cloud-device',
+          workspacePath: '/executor/worktrees/runtime-1/project-alpha',
+          taskId: 'runtime-1',
+        },
+        projects: [project],
+        runtimeWork: {
+          projects: [
+            {
+              project: { id: 12, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  id: 22,
+                  deviceId: 'logical-cloud-device',
+                  remoteHostId: 'runtime-cloud-device',
+                  workspacePath: '/executor/worktrees/runtime-1/project-alpha',
+                  workspaceSource: 'remote',
+                  workspaceKind: 'worktree',
+                  worktreeId: 'runtime-1',
+                  available: true,
+                  tasks: [
+                    {
+                      taskId: 'runtime-1',
+                      workspacePath: '/executor/worktrees/runtime-1/project-alpha',
+                      workspaceKind: 'worktree',
+                      worktreeId: 'runtime-1',
+                      title: 'Runtime task',
+                      runtime: 'codex',
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          chats: [],
+          totalTasks: 1,
+        },
+      })
+    ).toEqual({
+      project,
+      workspaceTarget: {
+        deviceId: 'runtime-cloud-device',
+        path: '/executor/worktrees/runtime-1/project-alpha',
+        source: 'runtime',
+        taskId: 'runtime-1',
+        workspaceSource: 'remote',
+      },
+    })
+  })
 })

@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Wegent platform version to release (e.g. 1.2.3 or v1.2.3). If empty, auto-increment from latest vX.Y.Z tag'
+        description: "Wegent platform version to release (e.g. 1.2.3 or v1.2.3). If empty, auto-increment from latest vX.Y.Z tag"
         type: string
         required: false
 
@@ -375,6 +375,14 @@ jobs:
           test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "$image")" = "$VERSION"
           test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image")" = "$GITHUB_SHA"
           test "$(docker run --rm --entrypoint /app/executor "$image" --version)" = "$VERSION"
+
+      - name: Validate Remote Docker Worktree persistence (amd64)
+        env:
+          VERSION: ${{ needs.prepare-release.outputs.new_version }}
+          WEGENT_REMOTE_DEVICE_ACCEPTANCE_IMAGE: ${{ env.IMAGE_PREFIX }}/wegent-device:${{ needs.prepare-release.outputs.new_version }}-amd64
+        run: |
+          set -euo pipefail
+          scripts/acceptance/remote-device-worktree-persistence.sh
 
   build-device-arm64:
     needs: prepare-release
@@ -838,7 +846,7 @@ jobs:
   # ============================================================================
   build-executor-local-macos-arm64:
     needs: prepare-release
-    runs-on: macos-14  # Apple Silicon runner
+    runs-on: macos-14 # Apple Silicon runner
     permissions:
       contents: write
     steps:
@@ -877,7 +885,7 @@ jobs:
 
   build-executor-local-macos-amd64:
     needs: prepare-release
-    runs-on: macos-14  # Apple Silicon runner with Rosetta 2 for x86_64 build
+    runs-on: macos-14 # Apple Silicon runner with Rosetta 2 for x86_64 build
     permissions:
       contents: write
     steps:

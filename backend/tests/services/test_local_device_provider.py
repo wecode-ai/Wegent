@@ -68,6 +68,10 @@ async def test_heartbeat_without_capacity_clears_previous_observation():
     previous = {
         "status": "online",
         "runtime_instance_id": "runtime-1",
+        "runtime_features": {
+            "schemaVersion": 1,
+            "worktrees": {"version": 1, "managed": True},
+        },
         "runtime_capacity": {
             "limit": 4,
             "active": 1,
@@ -94,3 +98,4 @@ async def test_heartbeat_without_capacity_clears_previous_observation():
     stored = cache_set.await_args.args[1]
     assert stored["runtime_instance_id"] is None
     assert stored["runtime_capacity"] is None
+    assert stored["runtime_features"] is None

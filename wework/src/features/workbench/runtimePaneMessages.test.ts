@@ -279,6 +279,54 @@ describe('createRuntimeTaskStreamHandlers', () => {
     ])
   })
 
+  test('inserts a DingTalk user message before its runtime assistant turn', () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      taskId: 'runtime-task-1',
+    }
+    const actions: RuntimePaneMessageAction[] = []
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: action => actions.push(action),
+    })
+
+    handlers.onChatStart?.({
+      deviceId: 'device-1',
+      taskId: 'runtime-task-1',
+      subtaskId: 'turn-1',
+      clientUserMessageId: 'im:dingtalk:77:dingtalk-message-1',
+      runtimeGeneratedUserMessage: {
+        id: 'im:dingtalk:77:dingtalk-message-1',
+        message: '继续 runtime',
+        createdAt: 1_700_000_000_000,
+        source: {
+          source: 'im',
+          channel_type: 'dingtalk',
+          channel_id: 77,
+          message_id: 'dingtalk-message-1',
+        },
+      },
+    })
+
+    expect(actions).toEqual([
+      expect.objectContaining({
+        type: 'user_added',
+        message: expect.objectContaining({
+          id: 'im:dingtalk:77:dingtalk-message-1',
+          content: '继续 runtime',
+          source: expect.objectContaining({
+            source: 'im',
+            channel_type: 'dingtalk',
+          }),
+        }),
+      }),
+      expect.objectContaining({
+        type: 'assistant_started',
+        subtaskId: 'turn-1',
+        clientUserMessageId: 'im:dingtalk:77:dingtalk-message-1',
+      }),
+    ])
+  })
+
   test('preserves completed item snapshot semantics', () => {
     const address: RuntimeTaskAddress = {
       deviceId: 'device-1',

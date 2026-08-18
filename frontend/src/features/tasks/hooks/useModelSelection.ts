@@ -35,6 +35,9 @@ import {
   type ModelPreference,
 } from '@/utils/modelPreferences'
 import type { Team, BotSummary } from '@/types/api'
+
+const MODEL_FETCH_NETWORK_RETRY_DELAY_MS = 250
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -171,6 +174,23 @@ function modelMatchesConfiguredRef(
     return false
   }
   return true
+}
+
+function isTransientNetworkError(error: unknown): boolean {
+  return (
+    error instanceof TypeError &&
+    /failed to fetch|load failed|networkerror|network request failed/i.test(error.message)
+  )
+}
+
+async function retryTransientNetworkFailure<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation()
+  } catch (error) {
+    if (!isTransientNetworkError(error)) throw error
+    await new Promise(resolve => setTimeout(resolve, MODEL_FETCH_NETWORK_RETRY_DELAY_MS))
+    return operation()
+  }
 }
 
 /** Check if all bots in a team have predefined models */
@@ -351,12 +371,14 @@ export function useModelSelection({
     try {
       // Include config for image/video models to get type-specific config (imageConfig/videoConfig)
       const shouldIncludeConfig = modelCategoryType === 'image' || modelCategoryType === 'video'
-      const response = await modelApis.getUnifiedModels(
-        undefined,
-        shouldIncludeConfig,
-        'all',
-        undefined,
-        modelCategoryType
+      const response = await retryTransientNetworkFailure(() =>
+        modelApis.getUnifiedModels(
+          undefined,
+          shouldIncludeConfig,
+          'all',
+          undefined,
+          modelCategoryType
+        )
       )
       const modelList = (response.data || []).map(unifiedToModel)
       setModels(modelList)
