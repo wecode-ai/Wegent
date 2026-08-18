@@ -401,7 +401,7 @@ class ProjectAutomationExecution:
             ),
             "请读取候选执行者并按调度要求完成分派，不要执行任务。",
         ]
-        instruction = self._run_instruction(rule, run).strip()
+        instruction = ProjectAutomationExecution._run_instruction(rule, run).strip()
         if instruction:
             sections.append(instruction)
         return "\n\n".join(sections)
