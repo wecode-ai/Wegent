@@ -730,7 +730,7 @@ describe('ComposerTextarea', () => {
     act(() => notifyLocalPluginSkillsChanged())
 
     await waitFor(() => expect(onListLocalApps).toHaveBeenCalledTimes(2))
-    const refreshedOption = screen.getByTestId('slash-command-option-app-github')
+    const refreshedOption = await screen.findByTestId('slash-command-option-app-github')
     expect(refreshedOption).toHaveTextContent(
       '检查仓库、处理拉取请求和 Issue，并通过 GitHub 工作流发布代码变更。'
     )

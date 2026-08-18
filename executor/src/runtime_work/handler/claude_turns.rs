@@ -198,6 +198,7 @@ impl RuntimeWorkRpcHandler {
             self.start_local_task_execution(local_task_id.clone(), cancel_tx, stopped_rx);
         let handler = self.clone();
         tokio::spawn(async move {
+            let _stopped_turn_guard = StoppedTurnGuard::new(stopped_tx);
             let _scheduled_turn_guard =
                 ScheduledTurnGuard::new(handler.clone(), local_task_id.clone());
             let (request, model_proxy_token) = prepare_claude_model_proxy(request);
@@ -311,7 +312,6 @@ impl RuntimeWorkRpcHandler {
             if let Some(token) = model_proxy_token {
                 local_model_proxy::unregister_harness(&token);
             }
-            let _ = stopped_tx.send(());
         });
     }
 

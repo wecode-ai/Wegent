@@ -33,6 +33,7 @@ import type {
   UnifiedSkill,
 } from '@/types/api'
 import type { GuidanceWorkbenchMessage, QueuedWorkbenchMessage } from '@/types/workbench'
+import type { ProjectWorktreeAvailability } from '@/lib/worktree-availability'
 import type { CodeCommentContext, WorkspaceFileApi, WorkspaceTarget } from '@/types/workspace-files'
 import type { CloudProject } from '@/api/deliveries'
 import type { ComposerCloudMentionCandidate } from './composer/composerMentionCandidates'
@@ -110,6 +111,7 @@ export interface ProjectWorkControls {
   pendingProjectWorkspaceProjectId?: number | null
   executionMode: ProjectExecutionMode
   executionModeLocked?: boolean
+  worktreeAvailability?: ProjectWorktreeAvailability
   isGitProject?: boolean
   onSelectProject: (projectId: number | null) => void
   onSelectStandaloneDevice: (deviceId: string | null) => void

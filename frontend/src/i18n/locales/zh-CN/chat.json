@@ -732,6 +732,7 @@
     "no_models": "暂无可用的视频模型",
     "ratio_section": "比例",
     "duration_section": "时长",
+    "duration_auto": "智能时长",
     "resolution_section": "分辨率"
   },
   "image": {

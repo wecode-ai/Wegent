@@ -283,6 +283,49 @@ fn mcp_form_elicitation_maps_enum_names_to_request_user_input_options() {
 }
 
 #[test]
+fn mcp_form_elicitation_returns_accepted_form_content() {
+    let message = json!({
+        "id": 73,
+        "method": "mcpServer/elicitation/request",
+        "params": {
+            "serverName": "wegent-sites",
+            "mode": "form",
+            "message": "请选择内网访问范围。",
+            "requestedSchema": {
+                "type": "object",
+                "properties": {
+                    "audience": {
+                        "type": "string",
+                        "title": "访问范围",
+                        "enum": ["all", "owner"],
+                        "enumNames": ["所有人", "仅自己"]
+                    }
+                },
+                "required": ["audience"]
+            }
+        }
+    });
+    let response = json!({
+        "requestId": 73,
+        "answers": {
+            "audience": {"answers": ["仅自己"]}
+        }
+    });
+
+    let result = mcp_server_elicitation_response(&message, Some(&response))
+        .expect("supported MCP form should be accepted");
+
+    assert_eq!(
+        result,
+        json!({
+            "action": "accept",
+            "content": {"audience": "owner"},
+            "_meta": Value::Null
+        })
+    );
+}
+
+#[test]
 fn wework_codex_home_defaults_to_executor_home_codex() {
     let _lock = crate::test_env::lock();
     let home = unique_test_path("wework-codex-home-default");
@@ -1296,7 +1339,7 @@ fn persistent_codex_app_server_launch_config_keeps_only_process_settings() {
     }
     assert!(launch_config
         .config_overrides
-        .contains(&"goals=true".to_owned()));
+        .contains(&"features.goals=true".to_owned()));
     assert!(launch_config
         .config_overrides
         .contains(&"features.apply_patch_freeform=true".to_owned()));
@@ -2132,7 +2175,18 @@ fn codex_full_access_permission_profile_is_applied_by_default() {
             params["permissions"],
             CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE
         );
-        assert_eq!(params["approvalPolicy"], "never");
+        assert_eq!(
+            params["approvalPolicy"],
+            json!({
+                "granular": {
+                    "sandbox_approval": false,
+                    "rules": false,
+                    "skill_approval": false,
+                    "request_permissions": false,
+                    "mcp_elicitations": true,
+                }
+            })
+        );
         assert!(params.get("sandboxPolicy").is_none());
         assert!(params.get("sandbox").is_none());
     }
@@ -2442,7 +2496,10 @@ fn codex_thread_launch_disables_tool_call_mcp_elicitation() {
             params["config"]["features.tool_call_mcp_elicitation"],
             false
         );
-        assert_eq!(params["approvalPolicy"], "never");
+        assert_eq!(
+            params["approvalPolicy"]["granular"]["mcp_elicitations"],
+            true
+        );
     }
 }
 

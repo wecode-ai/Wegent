@@ -84,6 +84,8 @@ async def test_create_docker_start_command_creates_credentials_without_device_cr
     assert response.env["WEGENT_AUTH_TOKEN"].startswith("wg-")
     assert response.env["DEVICE_TYPE"] == "remote"
     assert response.env["EXECUTOR_MODE"] == "local"
+    assert response.env["WEGENT_EXECUTOR_HOME_ID"] == response.device_id
+    assert response.env["WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED"] == "true"
     assert response.env["WEGENT_BACKEND_URL"] == "https://backend.current.example"
     assert response.env["DEVICE_PUBLIC_BASE_URL"] == "http://localhost:17888"
     assert response.image == "ghcr.io/wecode-ai/wegent-device:latest"
@@ -94,6 +96,14 @@ async def test_create_docker_start_command_creates_credentials_without_device_cr
     assert "local_executor_install.sh" in response.commands[1].command
     assert (
         "DEVICE_PUBLIC_BASE_URL=http://localhost:17888" in response.commands[1].command
+    )
+    assert (
+        "WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED=true"
+        in response.commands[0].command
+    )
+    assert (
+        "WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED"
+        not in response.commands[1].command
     )
 
     api_key = (
