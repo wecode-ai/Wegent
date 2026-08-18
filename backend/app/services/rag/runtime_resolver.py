@@ -6,7 +6,6 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.services.adapters.retriever_kinds import retriever_kinds_service
-from app.services.capability_reference_service import get_referenced_capability
 from app.services.knowledge.index_runtime import (
     KnowledgeBaseIndexInfo,
     get_kb_index_info,
@@ -30,6 +29,7 @@ from app.services.rag.runtime_specs import (
 from knowledge_engine.embedding.capabilities import (
     normalize_additional_input_modalities,
 )
+from shared.db.capability_reference import resolve_capability_kind
 from shared.models import RetrievalScope, SearchHints
 from shared.utils.crypto import decrypt_api_key
 from shared.utils.placeholder import process_custom_headers_placeholders
@@ -682,42 +682,12 @@ class RagRuntimeResolver:
         model_name: str,
         model_namespace: str,
     ):
-        if model_namespace == "default":
-            model = (
-                db.query(Kind)
-                .filter(
-                    Kind.kind == "Model",
-                    Kind.name == model_name,
-                    Kind.namespace == model_namespace,
-                    Kind.is_active.is_(True),
-                )
-                .filter((Kind.user_id == user_id) | (Kind.user_id == 0))
-                .order_by(Kind.user_id.desc())
-                .first()
-            )
-            return model or get_referenced_capability(
-                db,
-                kind="Model",
-                name=model_name,
-                user_id=user_id,
-                namespace=model_namespace,
-            )
-        model = (
-            db.query(Kind)
-            .filter(
-                Kind.kind == "Model",
-                Kind.name == model_name,
-                Kind.namespace == model_namespace,
-                Kind.is_active.is_(True),
-            )
-            .first()
-        )
-        return model or get_referenced_capability(
+        return resolve_capability_kind(
             db,
             kind="Model",
             name=model_name,
-            user_id=user_id,
             namespace=model_namespace,
+            user_id=user_id,
         )
 
     def _decrypt_optional_secret(self, value: Any) -> Any:

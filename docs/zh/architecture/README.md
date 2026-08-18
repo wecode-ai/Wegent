@@ -17,6 +17,7 @@ sidebar_position: 1
 | 工作流阶段执行路由                   | [workflow-stage-execution-routing.md](workflow-stage-execution-routing.md)   | 人工启动、云端派发、本地/云端设备路由、统一阶段执行契约               |
 | 项目空间 Agent 能力                  | [project-space-agent-capability.md](project-space-agent-capability.md)       | 本地 Gateway、ContextGrant、Codex Plugin、离线 Provider、MCP 生命周期 |
 | 项目执行状态与 Runtime 容量          | [project-execution-state.md](project-execution-state.md)                     | claim、事件顺序、取消、重试、lease、并发容量、UI 投影                 |
+| 共享能力引用解析                   | [capability-reference-resolution.md](capability-reference-resolution.md)     | 可见引用、源 Kind、共享授权、Backend 与 Runtime 一致性                    |
 | Git Worktree 执行                    | [git-worktree-execution.md](git-worktree-execution.md)                       | 设备路由、能力、preflight、排队创建、生命周期、持久化、UI 投影        |
 | 文本模型视觉委托                     | [model-vision-delegation.md](model-vision-delegation.md)                     | 显式模型引用、catalog 能力、sidecar 配置、图片替换、失败隔离          |
 | Wework 宿主插件运行时                | [workbench-plugin-runtime.md](workbench-plugin-runtime.md)                   | profile 装配、服务与 UI slot、动态模块、sidecar、卸载与恢复           |
