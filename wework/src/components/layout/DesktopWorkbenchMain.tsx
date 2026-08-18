@@ -1662,13 +1662,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           path: soleActiveDeviceWorkspacePath,
           source: 'runtime' as const,
         }
-      : null) ??
-    (currentRuntimeTask && (currentRuntimeTask.workspacePath || runtimeTaskWorkspacePath)
-      ? {
-          deviceId: currentRuntimeTask.deviceId,
-          path: currentRuntimeTask.workspacePath || runtimeTaskWorkspacePath!,
-          source: 'runtime' as const,
-        }
       : null)
   const selectedFileWorkspaceTarget =
     fileWorkspaceTargets.find(

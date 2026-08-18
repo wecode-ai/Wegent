@@ -97,7 +97,7 @@ sequenceDiagram
 | -------------------------------------------------- | ---------------------------------------------------------------------------------- |
 | DeviceWorkspace 选择、可用性、偏好和 UI            | `wework/src/features/workbench/`、`wework/src/components/chat/composer/`           |
 | Local/Cloud/Remote Runtime 路由和任务投影          | `wework/src/api/`、`wework/src/features/workbench/useWorkbenchRuntimeMessaging.ts`、`wework/src/features/workbench/workbenchReducer.ts` |
-| Runtime Pane 的目录和文件数据面装载                | `wework/src/components/layout/useWorkbenchPaneSession.ts`                          |
+| Runtime Pane 的目录和文件数据面装载                | `wework/src/lib/workspace-target.ts`、`wework/src/components/layout/useWorkbenchPaneEnvironment.ts`、`wework/src/components/layout/DesktopWorkbenchMain.tsx`、`wework/src/components/layout/useWorkbenchPaneSession.ts` |
 | 逻辑设备鉴权、持久 Runtime 身份和 Socket 解析      | `backend/app/services/device/`、`backend/app/api/ws/`                              |
 | Worktree capability、preflight、Git 生命周期和状态 | `executor/src/runtime_work/`                                                       |
 | 云设备持久卷、固定挂载路径和单写实例               | 云设备 Provider、部署配置、`docker/device/`                                        |

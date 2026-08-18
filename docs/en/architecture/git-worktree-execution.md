@@ -97,7 +97,7 @@ sequenceDiagram
 | ------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
 | DeviceWorkspace selection, availability, preferences, and UI  | `wework/src/features/workbench/`, `wework/src/components/chat/composer/`           |
 | Local/Cloud/Remote Runtime routing and task projection        | `wework/src/api/`, `wework/src/features/workbench/useWorkbenchRuntimeMessaging.ts`, `wework/src/features/workbench/workbenchReducer.ts` |
-| Runtime Pane directory and file data-plane loading            | `wework/src/components/layout/useWorkbenchPaneSession.ts`                          |
+| Runtime Pane directory and file data-plane loading            | `wework/src/lib/workspace-target.ts`, `wework/src/components/layout/useWorkbenchPaneEnvironment.ts`, `wework/src/components/layout/DesktopWorkbenchMain.tsx`, `wework/src/components/layout/useWorkbenchPaneSession.ts` |
 | Logical-device authorization, persistent Runtime identity, and socket resolution | `backend/app/services/device/`, `backend/app/api/ws/`                              |
 | Worktree capability, preflight, Git lifecycle, and state      | `executor/src/runtime_work/`                                                       |
 | Cloud persistent volume, stable mount path, and single writer | cloud device provider, deployment configuration, `docker/device/`                  |

@@ -39,7 +39,7 @@ interface ResolveProjectRuntimeWorkspaceTargetsOptions {
 
 export interface RuntimeWorkspaceContext {
   project: ProjectWithTasks | null
-  workspaceTarget: WorkspaceTarget
+  workspaceTarget: WorkspaceTarget | null
 }
 
 export function createLocalFileWorkspaceTarget(
@@ -161,15 +161,28 @@ export function resolveProjectRuntimeWorkspaceTargets({
 function workspaceTargetFromRuntimeTask(
   workspace: RuntimeDeviceWorkspace,
   task: RuntimeTaskSummary
-): WorkspaceTarget {
-  const workspacePath =
+): WorkspaceTarget | null {
+  const taskWorkspacePath = task.workspacePath.trim()
+  const groupWorkspacePath = workspace.workspacePath.trim()
+  const queuedIndependentWorkspace =
+    task.status === 'queued' &&
+    (task.workspaceKind === 'worktree' ||
+      workspace.workspaceKind === 'worktree' ||
+      Boolean(task.worktreeId) ||
+      Boolean(workspace.worktreeId) ||
+      (Boolean(taskWorkspacePath) &&
+        Boolean(groupWorkspacePath) &&
+        taskWorkspacePath !== groupWorkspacePath))
+  if (queuedIndependentWorkspace) return null
+
+  const resolvedWorkspacePath =
     workspace.workspaceKind === 'worktree' || workspace.worktreeId
       ? workspace.workspacePath
       : task.workspacePath || workspace.workspacePath
 
   return {
     deviceId: workspaceTargetDeviceId(workspace),
-    path: workspacePath,
+    path: resolvedWorkspacePath,
     source: 'runtime',
     taskId: task.taskId,
     ...(workspace.workspaceSource !== undefined
