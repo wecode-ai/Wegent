@@ -74,14 +74,14 @@ async function pathExists(path) {
 
 async function sendNewTask(control, knownRows, prompt, timeoutMs, executionMode = 'local_path') {
   await control.command('click', '[data-testid="project-new-conversation-button"]')
-  await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs })
-  await control.command('waitFor', '[data-testid="execution-mode-button"]', { timeoutMs })
+  await control.command('waitFor', COMPOSER_SELECTOR)
+  await control.command('waitFor', '[data-testid="execution-mode-button"]')
   await control.command('click', '[data-testid="execution-mode-button"]')
   const executionModeSelector =
     executionMode === 'git_worktree'
       ? '[data-testid="execution-mode-git-worktree-button"]'
       : '[data-testid="execution-mode-current-workspace-button"]'
-  await control.command('clickWhenEnabled', executionModeSelector, { timeoutMs })
+  await control.command('clickWhenEnabled', executionModeSelector)
   await control.command('fill', COMPOSER_SELECTOR, { value: prompt })
   await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
   const rowTestId = await waitForNewTaskRow(control, knownRows, timeoutMs)

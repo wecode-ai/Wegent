@@ -191,14 +191,24 @@ impl RuntimeWorkRpcHandler {
         let requested_count = links.len();
         let mut accepted_count = 0_usize;
         let mut results = Vec::new();
-        for link in links {
-            let result = self
-                .archive_task(json!({
-                    "taskId": link.local_task_id,
-                    "workspacePath": link.workspace_path,
-                    "runtimeHandle": link.runtime_handle,
-                }))
-                .await?;
+        let archive_results = stream::iter(links)
+            .map(|link| {
+                let handler = self.clone();
+                async move {
+                    handler
+                        .archive_task(json!({
+                            "taskId": link.local_task_id,
+                            "workspacePath": link.workspace_path,
+                            "runtimeHandle": link.runtime_handle,
+                        }))
+                        .await
+                }
+            })
+            .buffered(8)
+            .collect::<Vec<_>>()
+            .await;
+        for result in archive_results {
+            let result = result?;
             if result["accepted"].as_bool() == Some(true) {
                 accepted_count += 1;
             }

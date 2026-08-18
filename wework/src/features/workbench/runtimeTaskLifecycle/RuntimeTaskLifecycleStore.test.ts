@@ -934,7 +934,7 @@ describe('RuntimeTaskLifecycleStore', () => {
   test('migrates optimistic lifecycle state when the executor resolves a new task identity', () => {
     const store = new RuntimeTaskLifecycleStore('test')
     const resolved = { ...address, taskId: 'resolved-task' }
-    store.sendRequested(address)
+    store.sendRequested(address, { workspaceCreationKind: 'worktree' })
 
     store.rename(address, resolved)
     store.sendAccepted(resolved)
@@ -942,6 +942,7 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(store.getTask(address)).toBeNull()
     expect(store.getTask(resolved)?.execution.running).toBe(true)
     expect(store.getTask(resolved)?.turn.phase).toBe('awaiting')
+    expect(store.getTask(resolved)?.workspaceCreationKind).toBe('worktree')
   })
 
   test('migrates Goal status when the executor resolves a new task identity', () => {

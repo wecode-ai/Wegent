@@ -101,7 +101,7 @@ pub(super) fn write_runtime_turn_queue(
     let _write_guard = RUNTIME_TURN_QUEUE_WRITE_LOCK
         .get_or_init(|| StdMutex::new(()))
         .lock()
-        .map_err(|_| "Runtime turn queue write lock is unavailable".to_owned())?;
+        .unwrap_or_else(|error| error.into_inner());
     let parent = queue_path
         .parent()
         .ok_or_else(|| "Runtime turn queue path has no parent".to_owned())?;
@@ -636,6 +636,7 @@ impl RuntimeWorkRpcHandler {
         let handler = self.clone();
         let turn_local_task_id = local_task_id.clone();
         let turn_handle = tokio::spawn(async move {
+            let _stopped_turn_guard = StoppedTurnGuard::new(stopped_tx);
             let _scheduled_turn_guard =
                 ScheduledTurnGuard::new(handler.clone(), turn_local_task_id.clone());
             handler.ensure_notification_router().await;
@@ -814,7 +815,6 @@ impl RuntimeWorkRpcHandler {
                 handler.clear_active_codex_turn(&turn_local_task_id, execution_id);
                 handler.mark_thread_event_routes_idle_for_local_task(&turn_local_task_id);
                 handler.clear_active_request_user_input(&turn_local_task_id, execution_id);
-                let _ = stopped_tx.send(());
                 return;
             }
 
@@ -833,7 +833,6 @@ impl RuntimeWorkRpcHandler {
             );
             handler.clear_active_codex_turn(&turn_local_task_id, execution_id);
             handler.clear_active_request_user_input(&turn_local_task_id, execution_id);
-            let _ = stopped_tx.send(());
         });
         drop(turn_handle);
     }

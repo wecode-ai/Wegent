@@ -10,7 +10,14 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 
 class DeviceStatusEnum(str, Enum):
@@ -88,6 +95,17 @@ class RuntimeFeatures(BaseModel):
 
     schema_version: int = Field(..., ge=1, alias="schemaVersion")
     worktrees: Optional[RuntimeWorktreeFeatures] = None
+
+
+def _normalize_runtime_features(value: Any) -> Optional[RuntimeFeatures]:
+    """Treat malformed optional Runtime feature metadata as absent."""
+
+    if value is None:
+        return None
+    try:
+        return RuntimeFeatures.model_validate(value)
+    except ValidationError:
+        return None
 
 
 class DeviceInfo(BaseModel):
@@ -335,6 +353,10 @@ class DeviceRegisterPayload(BaseModel):
         None,
         description="Features implemented by this connected Runtime",
     )
+    _validate_runtime_features = field_validator(
+        "runtime_features",
+        mode="before",
+    )(_normalize_runtime_features)
     bind_shell: BindShell = Field(
         BindShell.CLAUDECODE,
         description="Shell runtime binding (claudecode or openclaw)",
@@ -401,6 +423,10 @@ class DeviceHeartbeatPayload(BaseModel):
         None,
         description="Features implemented by the currently connected Runtime",
     )
+    _validate_runtime_features = field_validator(
+        "runtime_features",
+        mode="before",
+    )(_normalize_runtime_features)
 
 
 class DeviceStatusPayload(BaseModel):

@@ -460,6 +460,8 @@ async function verifyCreate(context) {
 }
 
 async function verifyQueuedCancel(context) {
+  const previousConcurrency = (await context.cloudEnvironment.runtimeSettings())
+    .max_concurrent_tasks
   await setRuntimeConcurrency(context, 1)
   context.control.holdScenarioResponse(WORKTREE_QUEUE_SCENARIO)
   try {
@@ -549,7 +551,7 @@ async function verifyQueuedCancel(context) {
     )
   } finally {
     context.control.releaseScenarioResponse(WORKTREE_QUEUE_SCENARIO)
-    await setRuntimeConcurrency(context, 10)
+    await setRuntimeConcurrency(context, previousConcurrency)
   }
 }
 

@@ -375,6 +375,19 @@ async fn closed_stopped_channel_does_not_count_as_a_stop_acknowledgement() {
 }
 
 #[tokio::test]
+async fn stopped_turn_guard_acknowledges_scope_exit() {
+    let (stopped_tx, stopped_rx) = oneshot::channel();
+
+    {
+        let _guard = StoppedTurnGuard::new(stopped_tx);
+    }
+
+    stopped_rx
+        .await
+        .expect("dropping the turn scope should acknowledge the stop");
+}
+
+#[tokio::test]
 async fn unarchive_restores_managed_worktree_before_reactivating_task() {
     let root =
         temp_runtime_work_index_path("unarchive-worktree-restore").with_extension("directory");
@@ -799,9 +812,20 @@ async fn failed_worktree_reconciliation_remains_retryable() {
     handler.worktrees = WorktreeManager::new(blocked_parent.join("worktrees.json"));
 
     assert!(!handler.reconcile_worktrees_once().await);
+    fs::remove_file(&blocked_parent).unwrap();
+    fs::create_dir_all(&blocked_parent).unwrap();
     assert!(
-        !*handler.worktree_reconciliation_completed.lock().await,
-        "a transient reconciliation failure must not disable later retries"
+        !handler.reconcile_worktrees_once().await,
+        "an immediate retry should be throttled after a persistent failure"
+    );
+    {
+        let mut reconciliation = handler.worktree_reconciliation_state.lock().await;
+        assert!(!reconciliation.completed);
+        reconciliation.last_attempt = Some(Instant::now() - WORKTREE_RECONCILIATION_RETRY_INTERVAL);
+    }
+    assert!(
+        handler.reconcile_worktrees_once().await,
+        "a transient reconciliation failure must remain retryable"
     );
 
     let _ = fs::remove_dir_all(root);

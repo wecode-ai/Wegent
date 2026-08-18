@@ -287,6 +287,7 @@ classify_wework_path() {
       wework/src/lib/workspace-target* | \
       wework/src/lib/worktree-availability*)
       select_target "core:core-task-flow"
+      select_target "core:workspace-attachments"
       select_cloud_worktree_checkpoints
       if [[ "$path" == wework/src/features/workbench/useWorkbenchRuntimeTasks* ]]; then
         select_target "core:runtime-task-queue"
@@ -343,7 +344,6 @@ classify_wework_path() {
     # Project/worktree creation and composer path or attachment transfer.
     wework/src/api/attachments* | \
       wework/src/api/projects* | \
-      wework/src/api/runtimeWork* | \
       wework/src/components/projects/* | \
       wework/src/features/workbench/useWorkbenchAttachments* | \
       wework/src/components/chat/composer/AttachmentBadges* | \

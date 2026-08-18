@@ -125,6 +125,41 @@ def test_local_task_summary_preserves_executor_status_values():
         assert task.status == status
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "expected_timeout"),
+    [
+        ("runtime.worktrees.prepare", 600),
+        ("runtime.worktrees.status", 30),
+    ],
+)
+async def test_runtime_worktree_rpc_uses_operation_timeout(
+    monkeypatch,
+    method,
+    expected_timeout,
+):
+    from app.services import runtime_work_service
+
+    rpc = AsyncMock(return_value={"success": True})
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+
+    response = await runtime_work_service.call_runtime_worktree_rpc(
+        user_id=7,
+        device_id="device-1",
+        method=method,
+        payload={"taskId": "task-1"},
+    )
+
+    assert response == {"success": True}
+    rpc.assert_awaited_once_with(
+        user_id=7,
+        device_id="device-1",
+        method=method,
+        payload={"taskId": "task-1"},
+        timeout_seconds=expected_timeout,
+    )
+
+
 def _git_status_command(
     statuses: dict[tuple[str, str], dict],
     *,

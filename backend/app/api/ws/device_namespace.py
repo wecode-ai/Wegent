@@ -355,7 +355,9 @@ def _match_cloud_device_sync(
                     Kind.user_id == user_id,
                     Kind.kind == "Device",
                     Kind.namespace == "default",
-                    Kind.is_active == True,
+                    Kind.is_active.is_(True),
+                    Kind.json["spec"]["deviceType"].as_string()
+                    == DeviceType.CLOUD.value,
                 )
             )
             .with_for_update()
@@ -371,9 +373,6 @@ def _match_cloud_device_sync(
 
         for device in cloud_devices:
             spec = device.json.get("spec", {})
-            if spec.get("deviceType") != DeviceType.CLOUD.value:
-                continue
-
             cloud_config = spec.get("cloudConfig", {})
             sandbox_id = cloud_config.get("sandboxId", device.name)
             server_device_id = cloud_config.get("deviceId")
@@ -458,7 +457,18 @@ def _update_cloud_device_id_sync(
     from app.models.kind import Kind
 
     with get_db_session() as db:
-        device = db.query(Kind).filter(Kind.id == device_db_id).first()
+        device = (
+            db.query(Kind)
+            .filter(
+                Kind.id == device_db_id,
+                Kind.user_id == user_id,
+                Kind.kind == "Device",
+                Kind.namespace == "default",
+                Kind.is_active.is_(True),
+            )
+            .with_for_update()
+            .first()
+        )
         if not device:
             logger.error(
                 f"[Device WS] Device not found for migration: id={device_db_id}"

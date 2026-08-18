@@ -410,15 +410,21 @@ export class RuntimeTaskLifecycleStore {
         goalStatus: previousState.goalStatus,
       })
     }
+    const sendRequestedEvent: RuntimeTaskLifecycleEvent = {
+      type: 'send_requested',
+      ...(previousState.workspaceCreationKind
+        ? { workspaceCreationKind: previousState.workspaceCreationKind }
+        : {}),
+    }
     if (previousState.executionPhase === 'starting') {
-      nextMachine.dispatch({ type: 'send_requested' })
+      nextMachine.dispatch(sendRequestedEvent)
     } else if (previousState.executionPhase === 'running') {
       nextMachine.dispatch({ type: 'executor_started' })
     }
     if (previousState.turnPhase === 'streaming') {
       nextMachine.dispatch({ type: 'turn_started', turnId: previousState.activeTurnId })
     } else if (previousState.turnPhase === 'submitting') {
-      nextMachine.dispatch({ type: 'send_requested' })
+      nextMachine.dispatch(sendRequestedEvent)
     } else if (previousState.turnPhase === 'awaiting') {
       nextMachine.dispatch({ type: 'send_accepted' })
     }

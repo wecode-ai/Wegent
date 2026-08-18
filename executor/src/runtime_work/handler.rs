@@ -43,6 +43,8 @@ use crate::{
     server::{executor_loopback_base_url, local_model_proxy},
 };
 
+const WORKTREE_RECONCILIATION_RETRY_INTERVAL: Duration = Duration::from_secs(5);
+
 mod archives;
 mod automation_rpc;
 mod claude_turns;
@@ -454,7 +456,7 @@ pub struct RuntimeWorkRpcHandler {
     automation_store: AutomationStore,
     store: RuntimeWorkStore,
     worktrees: WorktreeManager,
-    worktree_reconciliation_completed: Arc<AsyncMutex<bool>>,
+    worktree_reconciliation_state: Arc<AsyncMutex<WorktreeReconciliationState>>,
     worktree_cleanup_generation: Arc<AtomicU64>,
     opened_workspace_roots: Arc<Mutex<HashSet<PathBuf>>>,
     hook_service: HookService,
@@ -470,6 +472,12 @@ pub struct RuntimeWorkRpcHandler {
 struct CodexRuntimeProxyConfig {
     initialized: bool,
     proxy_url: Option<String>,
+}
+
+#[derive(Default)]
+struct WorktreeReconciliationState {
+    completed: bool,
+    last_attempt: Option<Instant>,
 }
 
 struct ActiveTurnCancellation {
@@ -513,6 +521,26 @@ struct RuntimeThreadEventRoute {
 struct ScheduledTurnGuard {
     handler: RuntimeWorkRpcHandler,
     local_task_id: String,
+}
+
+struct StoppedTurnGuard {
+    sender: Option<oneshot::Sender<()>>,
+}
+
+impl StoppedTurnGuard {
+    fn new(sender: oneshot::Sender<()>) -> Self {
+        Self {
+            sender: Some(sender),
+        }
+    }
+}
+
+impl Drop for StoppedTurnGuard {
+    fn drop(&mut self) {
+        if let Some(sender) = self.sender.take() {
+            let _ = sender.send(());
+        }
+    }
 }
 
 impl ScheduledTurnGuard {
@@ -606,7 +634,9 @@ impl RuntimeWorkRpcHandler {
             automation_store: AutomationStore::from_env(),
             store,
             worktrees,
-            worktree_reconciliation_completed: Arc::new(AsyncMutex::new(false)),
+            worktree_reconciliation_state: Arc::new(AsyncMutex::new(
+                WorktreeReconciliationState::default(),
+            )),
             worktree_cleanup_generation: Arc::new(AtomicU64::new(0)),
             opened_workspace_roots: Arc::new(Mutex::new(HashSet::new())),
             hook_service: HookService::from_env(),

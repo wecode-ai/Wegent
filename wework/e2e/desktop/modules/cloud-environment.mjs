@@ -490,6 +490,15 @@ class RealCloudEnvironment {
     )
   }
 
+  async runtimeSettings(deviceId = CLOUD_DEVICE_ID) {
+    return fetchJson(
+      `${this.backendUrl}/api/devices/${encodeURIComponent(deviceId)}/runtime-settings`,
+      {
+        headers: { Authorization: `Bearer ${this.authToken}` },
+      }
+    )
+  }
+
   terminalSessionRecords() {
     const keys = commandOutput('redis-cli', [
       '-p',

@@ -832,6 +832,7 @@ export function useWorkbenchRuntimeMessaging({
     ): Promise<RuntimeTaskAddress | false> => {
       const launchStartedAt = options?.launchStartedAt ?? runtimeLaunchNowMs()
       const projectId = payload.project_id && payload.project_id > 0 ? payload.project_id : null
+      const requestedWorktree = payload.execution?.workspace?.source === 'git_worktree'
       const hasOverrideSelection = Boolean(
         options && Object.prototype.hasOwnProperty.call(options, 'modelSelection')
       )
@@ -976,6 +977,42 @@ export function useWorkbenchRuntimeMessaging({
         }
       }
 
+      if (requestedWorktree) {
+        const worktreeProject =
+          state.projects.find(project => project.id === projectId) ??
+          (state.currentProject?.id === projectId ? state.currentProject : null)
+        const worktreeDeviceId = worktreeWorkspaceDeviceId(selectedProjectWorkspace)
+        const worktreeDevice = findWorkbenchDevice(state.devices, worktreeDeviceId)
+        const runtimeWorkApi = services.runtimeWorkApi
+        if (!runtimeWorkApi || !worktreeProject) {
+          reportSendBlocked(
+            i18n.t('workbench.worktree_unavailable_preflight_failed'),
+            { worktreeDeviceId, reason: 'runtime_api_unavailable' },
+            options
+          )
+          return false
+        }
+        const availability = await probeProjectWorktreeAvailability({
+          api: runtimeWorkApi,
+          project: worktreeProject,
+          workspace: selectedProjectWorkspace,
+          device: worktreeDevice,
+          ref: projectWorktreeBranch,
+        })
+        if (!availability.available) {
+          reportSendBlocked(
+            i18n.t(`workbench.worktree_unavailable_${availability.reason}`),
+            {
+              worktreeDeviceId,
+              reason: availability.reason,
+              sourcePath: availability.sourcePath,
+            },
+            options
+          )
+          return false
+        }
+      }
+
       logRuntimeTaskCreateStage('workbench-model-prepare-started', {
         taskId,
         deviceId: optimisticDeviceId,
@@ -1108,7 +1145,6 @@ export function useWorkbenchRuntimeMessaging({
       const createRuntimeHandle = createModelSelection
         ? { modelSelection: createModelSelection }
         : undefined
-      const requestedWorktree = payload.execution?.workspace?.source === 'git_worktree'
       const sourceWorkspacePath =
         'workspacePath' in runtimeTaskTarget ? runtimeTaskTarget.workspacePath : undefined
       const optimisticAddress: RuntimeTaskAddress = {
@@ -1343,7 +1379,15 @@ export function useWorkbenchRuntimeMessaging({
           })
         }
         if (options?.refreshWorkListsOnResolve !== false) {
-          await refreshWorkLists()
+          try {
+            await refreshWorkLists()
+          } catch (error) {
+            console.warn('[Wework] Runtime task accepted but work-list refresh failed', {
+              deviceId: address.deviceId,
+              taskId: address.taskId,
+              error,
+            })
+          }
         }
         if (options?.openInMainPane !== false) {
           dispatch({ type: 'blank_chat_committed' })
@@ -1397,6 +1441,8 @@ export function useWorkbenchRuntimeMessaging({
       runtimeTasks,
       services.attachmentApi,
       services.cloudBackgroundApi,
+      services.runtimeWorkApi,
+      projectWorktreeBranch,
       state.currentProject,
       state.devices,
       state.projects,
@@ -1519,54 +1565,13 @@ export function useWorkbenchRuntimeMessaging({
         }
       } else if (!state.currentProject) {
         const hasOnlineCompatibleDevice = state.devices.some(
-          device => device.status === 'online' && isWeWorkCompatibleDevice(device)
+          device => isWorkbenchDeviceOnline(device) && isWeWorkCompatibleDevice(device)
         )
         if (!hasOnlineCompatibleDevice) {
           reportSendBlocked(
             `暂无满足 ${WEWORK_MIN_EXECUTOR_VERSION} 的在线设备，请连接或升级设备`,
             {
               deviceCount: state.devices.length,
-            },
-            options
-          )
-          return false
-        }
-      }
-
-      if (
-        prepared.payload.execution?.workspace?.source === 'git_worktree' &&
-        state.currentProject
-      ) {
-        const selectedProjectWorkspace = findProjectDeviceWorkspace(
-          state.runtimeWork,
-          state.currentProject.id,
-          state.selectedDeviceWorkspaceId
-        )
-        const worktreeDeviceId = worktreeWorkspaceDeviceId(selectedProjectWorkspace)
-        const worktreeDevice = findWorkbenchDevice(state.devices, worktreeDeviceId)
-        const runtimeWorkApi = services.runtimeWorkApi
-        if (!runtimeWorkApi) {
-          reportSendBlocked(
-            i18n.t('workbench.worktree_unavailable_preflight_failed'),
-            { worktreeDeviceId, reason: 'runtime_api_unavailable' },
-            options
-          )
-          return false
-        }
-        const availability = await probeProjectWorktreeAvailability({
-          api: runtimeWorkApi,
-          project: state.currentProject,
-          workspace: selectedProjectWorkspace,
-          device: worktreeDevice,
-          ref: projectWorktreeBranch,
-        })
-        if (!availability.available) {
-          reportSendBlocked(
-            i18n.t(`workbench.worktree_unavailable_${availability.reason}`),
-            {
-              worktreeDeviceId,
-              reason: availability.reason,
-              sourcePath: availability.sourcePath,
             },
             options
           )
@@ -1613,14 +1618,10 @@ export function useWorkbenchRuntimeMessaging({
       reportSendBlocked,
       sendPreparedRuntimeMessage,
       sendRuntimePaneMessage,
-      services.runtimeWorkApi,
-      projectWorktreeBranch,
       state.currentProject,
       state.currentRuntimeTask,
       state.defaultTeam,
       state.devices,
-      state.runtimeWork,
-      state.selectedDeviceWorkspaceId,
     ]
   )
 

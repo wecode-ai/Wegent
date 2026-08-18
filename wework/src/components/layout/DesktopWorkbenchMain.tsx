@@ -2528,7 +2528,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     !currentProject &&
     !currentRuntimeTask &&
     !activeDeviceId &&
-    !devices.some(device => device.status === 'online' && isWeWorkCompatibleDevice(device))
+    !devices.some(device => isWorkbenchDeviceOnline(device) && isWeWorkCompatibleDevice(device))
   const composerDisabled =
     activeDeviceUnavailable || activeDeviceVersionUnsupported || noStandaloneCompatibleDevice
   const composerDisabledReason = activeDeviceUnavailable

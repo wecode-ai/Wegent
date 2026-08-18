@@ -212,8 +212,13 @@ impl RuntimeTaskLink {
         if !running {
             if let Some(local_settled_status) = local_settled_status.as_deref() {
                 status = local_settled_status.to_owned();
-                thread_status = local_settled_status.to_owned();
-                turn_status = Some(local_settled_status.to_owned());
+                if local_settled_status == "cancelled" {
+                    thread_status = "idle".to_owned();
+                    turn_status = Some("interrupted".to_owned());
+                } else {
+                    thread_status = local_settled_status.to_owned();
+                    turn_status = Some(local_settled_status.to_owned());
+                }
             } else {
                 if runtime_status_is_running(&status) {
                     status = "active".to_owned();
@@ -1352,6 +1357,35 @@ mod tests {
             link.runtime_handle["lastError"],
             "Executor restarted while the Worktree task was active"
         );
+    }
+
+    #[test]
+    fn local_cancellation_uses_runtime_summary_status_vocabulary() {
+        let local_link = RuntimeTaskLink {
+            local_task_id: "task-1".to_owned(),
+            thread_id: Some("thread-1".to_owned()),
+            workspace_path: "/workspace/project".to_owned(),
+            status: "cancelled".to_owned(),
+            completed_at: Some(1_780_000_002_000),
+            ..RuntimeTaskLink::default()
+        };
+
+        let link = RuntimeTaskLink::from_thread_metadata(
+            &json!({
+                "id": "thread-1",
+                "status": {"type": "active"},
+                "cwd": "/workspace/project",
+                "turns": [{"status": "inProgress", "startedAt": 1_780_000_001}],
+            }),
+            Some(local_link),
+            "/workspace/project".to_owned(),
+            false,
+        );
+
+        assert!(!link.running);
+        assert_eq!(link.status, "cancelled");
+        assert_eq!(link.thread_status, "idle");
+        assert_eq!(link.turn_status.as_deref(), Some("interrupted"));
     }
 
     #[test]

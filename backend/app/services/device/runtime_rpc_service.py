@@ -30,6 +30,12 @@ RUNTIME_RPC_COMPRESSED_ENCODING = "gzip+base64+json"
 RUNTIME_RPC_ENCODING_KEY = "__runtimeRpcEncoding"
 LOCAL_EXECUTOR_NAMESPACE = "/local-executor"
 DEVICE_ID_RESPONSE_KEYS = frozenset({"deviceId", "device_id"})
+RETRYABLE_RUNTIME_RPC_CODES = frozenset(
+    {
+        "device_disconnected",
+        "runtime_rpc_timeout",
+    }
+)
 
 
 class RuntimeRpcError(RuntimeError):
@@ -130,7 +136,7 @@ class RuntimeRpcService:
             raise RuntimeRpcError(
                 message,
                 code=code,
-                retryable=False,
+                retryable=code in RETRYABLE_RUNTIME_RPC_CODES,
                 details={"deviceId": route.logical_device_id},
             ) from exc
 

@@ -2878,6 +2878,10 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
   })
 
+  afterEach(async () => {
+    await i18n.changeLanguage('zh-CN')
+  })
+
   test('does not let a stale cloud refresh remove a newer local runtime task', async () => {
     const cloudRuntimeWork = deferred<RuntimeWorkListResponse>()
     const emptyRuntimeWork = createRuntimeWork({

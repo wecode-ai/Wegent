@@ -57,6 +57,21 @@ describe('projectWorkPreferences', () => {
     )
   })
 
+  test('normalizes the workspace path fallback when no fingerprint exists', () => {
+    const trailingSlash = resolveProjectWorkPreferenceScope(
+      project,
+      workspace({ id: null, workspacePath: '/workspace/wegent/' })
+    )
+    const backslashes = resolveProjectWorkPreferenceScope(
+      project,
+      workspace({ id: null, workspacePath: '\\workspace\\wegent' })
+    )
+
+    expect(getProjectWorkPreferenceKey(trailingSlash)).toBe(
+      getProjectWorkPreferenceKey(backslashes)
+    )
+  })
+
   test('reads the legacy project preference until a workspace preference exists', () => {
     const preferences: UserPreferences = {
       wework_project_work_preferences: {

@@ -5,6 +5,7 @@
 """Static contracts for the cloud/remote device Executor Home."""
 
 import os
+import shlex
 import subprocess
 from pathlib import Path
 
@@ -24,20 +25,47 @@ def _write_success_command(path: Path, name: str) -> None:
     command.chmod(0o755)
 
 
+def _write_realpath_command(path: Path) -> None:
+    command = path / "realpath"
+    command.write_text(
+        """#!/usr/bin/env python3
+import sys
+from pathlib import Path
+
+arguments = [value for value in sys.argv[1:] if value not in {"-m", "--"}]
+print(Path(arguments[-1]).resolve(strict=False))
+""",
+        encoding="utf-8",
+    )
+    command.chmod(0o755)
+
+
 def _run_entrypoint(
     *,
     tmp_path: Path,
     executor_home: Path,
     home_id: str | None,
     persistence_verified: str = "true",
+    local_workspace_root: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     fake_bin = tmp_path / "fake-bin"
     fake_bin.mkdir(exist_ok=True)
     for name in ("code-server", "flock", "install"):
         _write_success_command(fake_bin, name)
+    _write_realpath_command(fake_bin)
 
     entrypoint = tmp_path / "wegent-device-entrypoint"
-    entrypoint.write_text(_device_entrypoint(), encoding="utf-8")
+    test_entrypoint = _device_entrypoint().replace(
+        'wait -n "${pids[@]}"',
+        'wait "${pids[@]}"',
+    )
+    entrypoint.write_text(
+        test_entrypoint.replace(
+            'EXPECTED_EXECUTOR_HOME="/home/wegent/.wecode/wegent-executor"',
+            f"EXPECTED_EXECUTOR_HOME={shlex.quote(str(executor_home))}",
+        ),
+        encoding="utf-8",
+    )
     entrypoint.chmod(0o755)
 
     process_home = tmp_path / "process-home"
@@ -47,9 +75,10 @@ def _run_entrypoint(
         "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
         "HOME": str(process_home),
         "WEGENT_EXECUTOR_HOME": str(executor_home),
-        "WEGENT_EXECUTOR_HOME_EXPECTED_PATH": str(executor_home),
         "WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED": persistence_verified,
-        "LOCAL_WORKSPACE_ROOT": str(executor_home / "workspace"),
+        "LOCAL_WORKSPACE_ROOT": str(
+            local_workspace_root or executor_home / "workspace"
+        ),
         "DEVICE_PUBLIC_BASE_URL": "http://127.0.0.1:17888",
     }
     if home_id is not None:
@@ -124,6 +153,20 @@ def test_verified_worktree_persistence_requires_a_stable_home_identity(tmp_path)
         "WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED must be true or false"
         in invalid_attestation.stderr
     )
+
+
+def test_device_entrypoint_rejects_workspace_root_escape(tmp_path):
+    executor_home = tmp_path / "executor-home"
+
+    escaped = _run_entrypoint(
+        tmp_path=tmp_path,
+        executor_home=executor_home,
+        home_id="device-stable-1",
+        local_workspace_root=executor_home / ".." / "outside",
+    )
+
+    assert escaped.returncode != 0
+    assert "LOCAL_WORKSPACE_ROOT must be inside WEGENT_EXECUTOR_HOME" in escaped.stderr
 
 
 def test_device_entrypoint_preserves_home_across_instance_rebuild_and_rejects_rebind(

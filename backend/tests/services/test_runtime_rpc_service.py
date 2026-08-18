@@ -267,17 +267,18 @@ async def test_runtime_rpc_service_projects_nested_worktree_device_ids(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("socket_error_name", "expected_code"),
+    ("socket_error_name", "expected_code", "expected_retryable"),
     [
-        ("timeout", "runtime_rpc_timeout"),
-        ("disconnected", "device_disconnected"),
-        ("bad_namespace", "runtime_route_missing"),
+        ("timeout", "runtime_rpc_timeout", True),
+        ("disconnected", "device_disconnected", True),
+        ("bad_namespace", "runtime_route_missing", False),
     ],
 )
-async def test_runtime_rpc_service_classifies_socket_errors_without_retry(
+async def test_runtime_rpc_service_classifies_socket_error_retryability(
     monkeypatch,
     socket_error_name,
     expected_code,
+    expected_retryable,
 ):
     from socketio.exceptions import BadNamespaceError, DisconnectedError
     from socketio.exceptions import TimeoutError as SocketTimeoutError
@@ -307,7 +308,7 @@ async def test_runtime_rpc_service_classifies_socket_errors_without_retry(
         )
 
     assert exc_info.value.code == expected_code
-    assert exc_info.value.retryable is False
+    assert exc_info.value.retryable is expected_retryable
     assert sio_call.await_count == 1
 
 

@@ -88,7 +88,11 @@ from app.schemas.runtime_work import (
 )
 from app.schemas.turn_file_changes import TurnFileChangesSummary
 from app.services.device.command_service import execute_configured_device_command
-from app.services.device.runtime_rpc_service import RuntimeRpcError, runtime_rpc_service
+from app.services.device.runtime_rpc_service import (
+    DEFAULT_RUNTIME_RPC_TIMEOUT_SECONDS,
+    RuntimeRpcError,
+    runtime_rpc_service,
+)
 from app.services.device_service import device_service
 from app.services.im.notification_dispatcher import im_notification_dispatcher
 from app.services.im.session_service import (
@@ -190,6 +194,11 @@ async def call_runtime_worktree_rpc(
             device_id=device_id,
             method=method,
             payload=payload,
+            timeout_seconds=(
+                DEVICE_WORKSPACE_PREPARE_TIMEOUT_SECONDS
+                if method == "runtime.worktrees.prepare"
+                else DEFAULT_RUNTIME_RPC_TIMEOUT_SECONDS
+            ),
         )
     except RuntimeRpcError as exc:
         status_code = (

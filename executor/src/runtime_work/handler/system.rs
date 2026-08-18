@@ -19,10 +19,17 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn reconcile_worktrees_once(&self) -> bool {
-        let mut completed = self.worktree_reconciliation_completed.lock().await;
-        if *completed {
+        let mut reconciliation = self.worktree_reconciliation_state.lock().await;
+        if reconciliation.completed {
             return true;
         }
+        let now = Instant::now();
+        if reconciliation.last_attempt.is_some_and(|last_attempt| {
+            now.saturating_duration_since(last_attempt) < WORKTREE_RECONCILIATION_RETRY_INTERVAL
+        }) {
+            return false;
+        }
+        reconciliation.last_attempt = Some(now);
         let interrupted_worktree_turns = self
             .interrupted_worktree_turns
             .lock()
@@ -39,11 +46,7 @@ impl RuntimeWorkRpcHandler {
             .expect("runtime turn scheduler lock should not be poisoned")
             .queued_turns
             .clone();
-        let queued_task_ids = self
-            .turn_scheduler
-            .lock()
-            .expect("runtime turn scheduler lock should not be poisoned")
-            .queued_turns
+        let queued_task_ids = remaining_queued_turns
             .iter()
             .map(|turn| turn.local_task_id.clone())
             .collect::<HashSet<_>>();
@@ -153,10 +156,11 @@ impl RuntimeWorkRpcHandler {
                         "runtime turn queue reconciliation persistence failed",
                         &[("error", error.message)],
                     );
+                    reconciliation.last_attempt = Some(Instant::now());
                     return false;
                 }
                 *self.interrupted_worktree_turns.lock().await = None;
-                *completed = true;
+                reconciliation.completed = true;
                 true
             }
             Ok(Err(error)) => {
@@ -164,6 +168,7 @@ impl RuntimeWorkRpcHandler {
                     "worktree startup reconciliation failed",
                     &[("error", error)],
                 );
+                reconciliation.last_attempt = Some(Instant::now());
                 false
             }
             Err(error) => {
@@ -171,6 +176,7 @@ impl RuntimeWorkRpcHandler {
                     "worktree startup reconciliation worker failed",
                     &[("error", error.to_string())],
                 );
+                reconciliation.last_attempt = Some(Instant::now());
                 false
             }
         }

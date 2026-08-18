@@ -1091,6 +1091,13 @@ export interface RuntimeWorktreeConversation extends RuntimeTaskAddress {
   updatedAt?: number | null
 }
 
+export type RuntimeManagedWorktreeState =
+  | 'active'
+  | 'restorable'
+  | 'missing'
+  | 'deleted'
+  | (string & Record<never, never>)
+
 export interface RuntimeManagedWorktreePayload {
   worktreeId: string
   path: string
@@ -1101,7 +1108,7 @@ export interface RuntimeManagedWorktreePayload {
   updatedAt: number
   snapshotRef?: string | null
   snapshotCommit?: string | null
-  state: 'active' | 'restorable' | 'missing' | 'deleted' | string
+  state: RuntimeManagedWorktreeState
   snapshotAt?: number | null
   gitCommonDir?: string | null
   lastError?: string | null

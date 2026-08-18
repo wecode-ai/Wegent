@@ -216,3 +216,47 @@ async def test_remote_heartbeat_runtime_features_reach_provider_projection(
     assert (
         devices[0]["runtime_features"]["worktrees"]["persistentStorageVerified"] is True
     )
+
+
+@pytest.mark.asyncio
+async def test_malformed_runtime_features_do_not_block_registration_or_heartbeat(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    device_id = "remote-malformed-runtime-features"
+    test_db.add(_device(test_user.id, device_id, DeviceType.REMOTE))
+    test_db.commit()
+    _patch_device_cache(monkeypatch)
+    namespace = DeviceNamespace()
+    session = {"user_id": test_user.id, "client_ip": "198.51.100.30"}
+    _patch_namespace(monkeypatch, namespace, session)
+
+    registered = await namespace.on_device_register(
+        "socket-remote-malformed",
+        {
+            "device_id": device_id,
+            "name": "Remote Runtime",
+            "device_type": DeviceType.REMOTE.value,
+            "executor_version": "1.0.0",
+            "runtime_instance_id": "runtime-instance-malformed",
+            "runtime_features": {"schemaVersion": 0, "worktrees": "invalid"},
+        },
+    )
+    await _wait_for_registration_followups(namespace)
+    heartbeat = await namespace.on_device_heartbeat(
+        "socket-remote-malformed",
+        {
+            "device_id": device_id,
+            "executor_version": "1.0.1",
+            "runtime_instance_id": "runtime-instance-malformed",
+            "runtime_features": {"schemaVersion": "invalid"},
+        },
+    )
+    devices = await RemoteDeviceProvider().list_devices(test_db, test_user.id)
+
+    assert registered == {"success": True, "device_id": device_id}
+    assert heartbeat == {"success": True}
+    assert devices[0]["status"] == "online"
+    assert devices[0]["executor_version"] == "1.0.1"
+    assert devices[0]["runtime_features"] is None

@@ -972,6 +972,25 @@ def test_local_device_command_registry_default_includes_workspace_file_commands(
     assert "MAX_BYTES = 262144" in read_definition.command
 
 
+def test_remote_command_policy_separates_read_only_and_mutating_keys():
+    from app.services.device.command_service import (
+        REMOTE_DEVICE_COMMAND_KEYS,
+        REMOTE_MUTATING_COMMAND_KEYS,
+        REMOTE_READ_ONLY_COMMAND_KEYS,
+    )
+
+    assert REMOTE_READ_ONLY_COMMAND_KEYS.isdisjoint(REMOTE_MUTATING_COMMAND_KEYS)
+    assert {
+        "workspace_tree",
+        "workspace_read_text_file",
+        "workspace_read_file_chunk",
+    } <= REMOTE_READ_ONLY_COMMAND_KEYS
+    assert {"git_checkout", "git_commit", "git_push"} <= REMOTE_MUTATING_COMMAND_KEYS
+    assert REMOTE_DEVICE_COMMAND_KEYS == (
+        REMOTE_READ_ONLY_COMMAND_KEYS | REMOTE_MUTATING_COMMAND_KEYS
+    )
+
+
 def test_workspace_tree_script_lists_files_and_directories(
     tmp_path, monkeypatch, capsys
 ):

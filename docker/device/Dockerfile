@@ -229,13 +229,18 @@ export WEGENT_BACKEND_URL="${WEGENT_BACKEND_URL:-http://localhost:8000}"
 export DEVICE_SESSION_GATEWAY_HOST="${DEVICE_SESSION_GATEWAY_HOST:-0.0.0.0}"
 export DEVICE_SESSION_GATEWAY_PORT="${DEVICE_SESSION_GATEWAY_PORT:-17888}"
 export DEVICE_CODE_SERVER_PORT="${DEVICE_CODE_SERVER_PORT:-18080}"
-DEVICE_LOG_DIR="$WEGENT_EXECUTOR_HOME/logs"
-EXPECTED_EXECUTOR_HOME="${WEGENT_EXECUTOR_HOME_EXPECTED_PATH:-/home/wegent/.wecode/wegent-executor}"
+EXPECTED_EXECUTOR_HOME="/home/wegent/.wecode/wegent-executor"
 
 if [[ "$WEGENT_EXECUTOR_HOME" != /* ]]; then
     echo "WEGENT_EXECUTOR_HOME must be an absolute path" >&2
     exit 1
 fi
+if [[ "$LOCAL_WORKSPACE_ROOT" != /* ]]; then
+    echo "LOCAL_WORKSPACE_ROOT must be an absolute path" >&2
+    exit 1
+fi
+WEGENT_EXECUTOR_HOME="$(realpath -m -- "$WEGENT_EXECUTOR_HOME")"
+LOCAL_WORKSPACE_ROOT="$(realpath -m -- "$LOCAL_WORKSPACE_ROOT")"
 if [ "$WEGENT_EXECUTOR_HOME" != "$EXPECTED_EXECUTOR_HOME" ]; then
     echo "WEGENT_EXECUTOR_HOME must remain at the stable mount path $EXPECTED_EXECUTOR_HOME" >&2
     exit 1
@@ -247,6 +252,7 @@ case "$LOCAL_WORKSPACE_ROOT/" in
         exit 1
         ;;
 esac
+DEVICE_LOG_DIR="$WEGENT_EXECUTOR_HOME/logs"
 case "${WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED:-false}" in
     true)
         if [ -z "${WEGENT_EXECUTOR_HOME_ID:-}" ]; then

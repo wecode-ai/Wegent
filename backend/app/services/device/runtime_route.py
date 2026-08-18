@@ -90,22 +90,16 @@ def resolve_runtime_route_identity(
 ) -> RuntimeRouteIdentity | None:
     """Resolve a logical or legacy Runtime ID within one user's active devices."""
 
-    devices = (
-        db.query(Kind)
-        .filter(
-            and_(
-                Kind.user_id == user_id,
-                Kind.kind == "Device",
-                Kind.namespace == "default",
-                Kind.is_active == True,
-            )
-        )
-        .all()
+    base_filter = and_(
+        Kind.user_id == user_id,
+        Kind.kind == "Device",
+        Kind.namespace == "default",
+        Kind.is_active.is_(True),
     )
-
-    logical_match = next(
-        (device for device in devices if device.name == submitted_device_id),
-        None,
+    logical_match = (
+        db.query(Kind)
+        .filter(and_(base_filter, Kind.name == submitted_device_id))
+        .first()
     )
     if logical_match is not None:
         runtime_device_id = _runtime_device_id(logical_match)
@@ -118,6 +112,7 @@ def resolve_runtime_route_identity(
             device_type=_device_type(logical_match),
         )
 
+    devices = db.query(Kind).filter(base_filter).all()
     runtime_matches = [
         device
         for device in devices

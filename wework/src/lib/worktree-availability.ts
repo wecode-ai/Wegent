@@ -318,7 +318,8 @@ export async function probeProjectWorktreeAvailability({
       capabilities,
       preflight,
     })
-  } catch {
+  } catch (error) {
+    console.error('[Wework] Worktree availability probe failed', error)
     return failedProbeAvailability(input)
   }
 }
