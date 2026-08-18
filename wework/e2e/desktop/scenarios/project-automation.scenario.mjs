@@ -216,6 +216,26 @@ async function waitForValue(read, predicate, message, timeoutMs) {
   assert.fail(`${message}; last value: ${JSON.stringify(value)}`)
 }
 
+async function ensureExperimentalFeaturesEnabled(control, timeoutMs) {
+  const toggleSelector = '[data-testid="general-experimental-features-toggle"]'
+  await control.command('waitFor', '[data-testid="settings-button"]', { timeoutMs })
+  await control.command('click', '[data-testid="settings-button"]')
+  await control.command('click', '[data-testid="settings-menu-button"]')
+  await control.command('waitFor', toggleSelector, { timeoutMs })
+  if (
+    (await control.command('getAttribute', toggleSelector, { value: 'aria-checked' })) !== 'true'
+  ) {
+    await control.command('click', toggleSelector)
+    await waitForValue(
+      () => control.command('getAttribute', toggleSelector, { value: 'aria-checked' }),
+      value => value === 'true',
+      'Enabling experimental features was not persisted',
+      timeoutMs
+    )
+  }
+  await control.command('click', '[data-testid="settings-back-button"]')
+}
+
 function assertExecutionTruthContract(execution) {
   assert.equal(execution.runtimeTaskId, `codex-queue-${execution.id}`)
   assert.ok(execution.attemptNo >= 1)
@@ -1322,6 +1342,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
     },
 
     async verify(control) {
+      await ensureExperimentalFeaturesEnabled(control, uiTimeoutMs)
       if (cloudApi) {
         await verifyRealCloud(control)
         return
@@ -1467,7 +1488,36 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         '[data-testid="project-workflow-stage-executor-human-stage-1"]',
         { timeoutMs: uiTimeoutMs }
       )
-      await control.command('click', '[data-testid="project-workflow-add"]')
+      await control.command('waitFor', '[data-testid="project-workflow-insert-after-stage-1"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      const selectedStageSnapshot = JSON.parse(
+        await control.command('snapshot', '[data-testid="project-workflow-dag"]')
+      )
+      assert.ok(
+        selectedStageSnapshot.testIds.includes('project-workflow-insert-before-stage-1'),
+        'The selected workflow stage did not expose its predecessor insertion control'
+      )
+      assert.ok(
+        selectedStageSnapshot.testIds.includes('project-workflow-insert-after-stage-1'),
+        'The selected workflow stage did not expose its successor insertion control'
+      )
+      await control.command('click', '[data-testid="project-workflow-insert-after-stage-1"]')
+      await control.command('waitFor', '[data-testid="project-workflow-stage-stage-2"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      const insertedStageSnapshot = JSON.parse(
+        await control.command('snapshot', '[data-testid="project-workflow-dag"]')
+      )
+      assert.ok(
+        insertedStageSnapshot.testIds.includes('project-workflow-insert-after-stage-2'),
+        'The inserted workflow stage did not become selected'
+      )
+      assert.equal(
+        insertedStageSnapshot.testIds.includes('project-workflow-insert-after-stage-1'),
+        false,
+        'Insertion controls remained visible on an unselected workflow stage'
+      )
       await control.command('waitFor', '[data-testid="project-workflow-stage-stage-2"]', {
         timeoutMs: uiTimeoutMs,
       })

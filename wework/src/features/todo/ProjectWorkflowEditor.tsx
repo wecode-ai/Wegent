@@ -34,6 +34,7 @@ import type {
 } from '@/api/deliveries'
 import type { ProjectAutomationRule } from '@/api/projectAutomations'
 import type { ProjectChatAgent } from '@/api/projectChatAgents'
+import { Tooltip } from '@/components/ui/tooltip'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { layoutWorkflowGraph, wouldCreateWorkflowCycle } from './workflowGraph'
@@ -55,6 +56,8 @@ interface StageNodeData extends Record<string, unknown> {
   index: number
   actionLabel: string
   dependencyCount: number
+  onInsertBefore: () => void
+  onInsertAfter: () => void
 }
 
 interface WorkflowEdgeData extends Record<string, unknown> {
@@ -65,6 +68,7 @@ interface WorkflowEdgeData extends Record<string, unknown> {
 type StageFlowNode = Node<StageNodeData, 'stage'>
 type WorkflowFlowEdge = Edge<WorkflowEdgeData, 'workflow'>
 type OrchestrationMode = 'manual' | 'workflow' | 'ai'
+type StageInsertionDirection = 'before' | 'after'
 
 const STAGE_NODE_WIDTH = 220
 const STAGE_NODE_HEIGHT = 116
@@ -78,6 +82,31 @@ function nextNodeId(nodes: WorkflowNodeDefinition[]): string {
 
 function stageMode(value: ProjectWorkflowDefinition): IssueStageMode {
   return value.stage_mode ?? (value.nodes.length ? 'dag' : 'none')
+}
+
+function dependencyContext(
+  node: WorkflowNodeDefinition,
+  dependencyId: string
+): WorkflowContextSource[] {
+  return [...(node.dependency_context?.[dependencyId] ?? DEFAULT_DEPENDENCY_CONTEXT)]
+}
+
+function createStage(
+  id: string,
+  name: string,
+  dependsOn: string[],
+  dependencyContexts: Record<string, WorkflowContextSource[]>
+): WorkflowNodeDefinition {
+  return {
+    id,
+    name,
+    prompt: '',
+    depends_on: dependsOn,
+    dependency_context: dependencyContexts,
+    required: true,
+    workspace_policy: dependsOn.length ? 'inherit' : 'composer',
+    automation_rule_id: null,
+  }
 }
 
 const StageNodeCard = memo(function StageNodeCard({ data, selected }: NodeProps<StageFlowNode>) {
@@ -95,8 +124,30 @@ const StageNodeCard = memo(function StageNodeCard({ data, selected }: NodeProps<
       <Handle
         type="target"
         position={Position.Left}
-        className="!h-3 !w-3 !border-2 !border-background !bg-text-muted"
+        className={cn(
+          '!h-3 !w-3 !border-2 !border-background !bg-text-muted',
+          selected && '!opacity-0'
+        )}
       />
+      {selected ? (
+        <Tooltip
+          label={t('todo.workflow_insert_stage_before', '在此阶段前插入阶段')}
+          className="!absolute left-0 top-1/2 -translate-x-1/2 -translate-y-1/2"
+        >
+          <button
+            type="button"
+            data-testid={`project-workflow-insert-before-${data.stage.id}`}
+            aria-label={t('todo.workflow_insert_stage_before', '在此阶段前插入阶段')}
+            onClick={event => {
+              event.stopPropagation()
+              data.onInsertBefore()
+            }}
+            className="nodrag nopan flex h-6 w-6 items-center justify-center rounded-full border border-blue-500 bg-background text-blue-500 shadow-sm transition hover:bg-blue-500 hover:text-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+          >
+            <Plus className="h-3.5 w-3.5" />
+          </button>
+        </Tooltip>
+      ) : null}
       <div className="flex items-start gap-2">
         <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-border text-xs text-text-muted">
           {data.index + 1}
@@ -119,8 +170,30 @@ const StageNodeCard = memo(function StageNodeCard({ data, selected }: NodeProps<
       <Handle
         type="source"
         position={Position.Right}
-        className="!h-3 !w-3 !border-2 !border-background !bg-text-muted"
+        className={cn(
+          '!h-3 !w-3 !border-2 !border-background !bg-text-muted',
+          selected && '!opacity-0'
+        )}
       />
+      {selected ? (
+        <Tooltip
+          label={t('todo.workflow_insert_stage_after', '在此阶段后插入阶段')}
+          className="!absolute right-0 top-1/2 translate-x-1/2 -translate-y-1/2"
+        >
+          <button
+            type="button"
+            data-testid={`project-workflow-insert-after-${data.stage.id}`}
+            aria-label={t('todo.workflow_insert_stage_after', '在此阶段后插入阶段')}
+            onClick={event => {
+              event.stopPropagation()
+              data.onInsertAfter()
+            }}
+            className="nodrag nopan flex h-6 w-6 items-center justify-center rounded-full border border-blue-500 bg-background text-blue-500 shadow-sm transition hover:bg-blue-500 hover:text-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+          >
+            <Plus className="h-3.5 w-3.5" />
+          </button>
+        </Tooltip>
+      ) : null}
     </article>
   )
 })
@@ -359,26 +432,88 @@ export function ProjectWorkflowEditor({
     const id = nextNodeId(value.nodes)
     const stageNumber = Number(id.replace('stage-', ''))
     const previous = value.nodes.at(-1)
+    const dependsOn = previous ? [previous.id] : []
     updateDefinition({
       stage_mode: 'dag',
       nodes: [
         ...value.nodes,
-        {
+        createStage(
           id,
-          name: t('todo.workflow_new_stage_numbered', '新阶段 {{number}}', {
+          t('todo.workflow_new_stage_numbered', '新阶段 {{number}}', {
             number: stageNumber,
           }),
-          prompt: '',
-          depends_on: previous ? [previous.id] : [],
-          dependency_context: previous ? { [previous.id]: DEFAULT_DEPENDENCY_CONTEXT } : {},
-          required: true,
-          workspace_policy: previous ? 'inherit' : 'composer',
-          automation_rule_id: null,
-        },
+          dependsOn,
+          previous ? { [previous.id]: [...DEFAULT_DEPENDENCY_CONTEXT] } : {}
+        ),
       ],
     })
     setSelectedNodeId(id)
   }
+  const insertNode = useCallback(
+    (selectedId: string, direction: StageInsertionDirection) => {
+      const selectedIndex = value.nodes.findIndex(node => node.id === selectedId)
+      if (selectedIndex < 0) return
+      const selected = value.nodes[selectedIndex]
+      const id = nextNodeId(value.nodes)
+      const stageNumber = Number(id.replace('stage-', ''))
+      const name = t('todo.workflow_new_stage_numbered', '新阶段 {{number}}', {
+        number: stageNumber,
+      })
+
+      if (direction === 'before') {
+        const inserted = createStage(
+          id,
+          name,
+          [...selected.depends_on],
+          Object.fromEntries(
+            selected.depends_on.map(dependencyId => [
+              dependencyId,
+              dependencyContext(selected, dependencyId),
+            ])
+          )
+        )
+        const rewiredSelected = {
+          ...selected,
+          depends_on: [id],
+          dependency_context: { [id]: [...DEFAULT_DEPENDENCY_CONTEXT] },
+        }
+        updateDefinition({
+          stage_mode: 'dag',
+          nodes: [
+            ...value.nodes.slice(0, selectedIndex),
+            inserted,
+            rewiredSelected,
+            ...value.nodes.slice(selectedIndex + 1),
+          ],
+        })
+      } else {
+        const inserted = createStage(id, name, [selectedId], {
+          [selectedId]: [...DEFAULT_DEPENDENCY_CONTEXT],
+        })
+        const rewiredNodes = value.nodes.map(node => {
+          if (!node.depends_on.includes(selectedId)) return node
+          const nextContext = Object.fromEntries(
+            Object.entries(node.dependency_context ?? {}).filter(
+              ([dependencyId]) => dependencyId !== selectedId
+            )
+          )
+          nextContext[id] = dependencyContext(node, selectedId)
+          return {
+            ...node,
+            depends_on: node.depends_on.map(dependencyId =>
+              dependencyId === selectedId ? id : dependencyId
+            ),
+            dependency_context: nextContext,
+          }
+        })
+        rewiredNodes.splice(selectedIndex + 1, 0, inserted)
+        updateDefinition({ stage_mode: 'dag', nodes: rewiredNodes })
+      }
+      setSelectedEdge(null)
+      setSelectedNodeId(id)
+    },
+    [t, updateDefinition, value.nodes]
+  )
   const removeNode = (id: string) => {
     const remainingNodes = value.nodes.filter(node => node.id !== id)
     updateDefinition({
@@ -445,6 +580,8 @@ export function ProjectWorkflowEditor({
               })
             : t('todo.workflow_stage_human_execution', '人工执行'),
           dependencyCount: node.depends_on.length,
+          onInsertBefore: () => insertNode(node.id, 'before'),
+          onInsertAfter: () => insertNode(node.id, 'after'),
         },
       }
     })
@@ -455,7 +592,7 @@ export function ProjectWorkflowEditor({
         nodeHeight: STAGE_NODE_HEIGHT,
       }) as StageFlowNode[],
     }
-  }, [selectedEdge, selectedNodeId, stageRules, t, value.nodes])
+  }, [insertNode, selectedEdge, selectedNodeId, stageRules, t, value.nodes])
 
   const handleConnect = useCallback(
     (connection: Connection) => {

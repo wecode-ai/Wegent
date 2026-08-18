@@ -3115,6 +3115,8 @@
     "workflow_new_stage": "新阶段",
     "workflow_new_stage_numbered": "新阶段 {{number}}",
     "workflow_add_stage": "添加阶段",
+    "workflow_insert_stage_before": "在此阶段前插入阶段",
+    "workflow_insert_stage_after": "在此阶段后插入阶段",
     "workflow_saving": "保存中…",
     "workflow_save": "保存编排",
     "workflow_save_failed": "保存 Issue 编排失败",

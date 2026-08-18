@@ -73,9 +73,9 @@ vi.mock('@xyflow/react', () => ({
       {nodes.map(node => {
         const NodeComponent = nodeTypes[node.type]
         return (
-          <button key={node.id} type="button" onClick={() => onNodeClick?.({}, node)}>
+          <div key={node.id} onClick={() => onNodeClick?.({}, node)}>
             <NodeComponent data={node.data} selected={node.selected} />
-          </button>
+          </div>
         )
       })}
       {edges.map(edge => {
@@ -236,6 +236,42 @@ describe('ProjectWorkflowEditor', () => {
     )
   })
 
+  test('shows insertion controls only on the selected stage and inserts after it', () => {
+    const onChange = vi.fn()
+    render(
+      <ProjectWorkflowEditor value={workflow} busy={false} onChange={onChange} onSave={vi.fn()} />
+    )
+
+    expect(screen.getByTestId('project-workflow-insert-before-develop')).toBeInTheDocument()
+    expect(screen.getByTestId('project-workflow-insert-after-develop')).toBeInTheDocument()
+    expect(screen.queryByTestId('project-workflow-insert-before-test')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('project-workflow-insert-after-develop'))
+
+    expect(onChange).toHaveBeenCalledWith({
+      ...workflow,
+      stage_mode: 'dag',
+      nodes: [
+        workflow.nodes[0],
+        expect.objectContaining({
+          id: 'stage-3',
+          name: '新阶段 3',
+          depends_on: ['develop'],
+          dependency_context: {
+            develop: ['final_result', 'deliveries'],
+          },
+        }),
+        {
+          ...workflow.nodes[1],
+          depends_on: ['stage-3'],
+          dependency_context: {
+            'stage-3': ['final_result', 'deliveries'],
+          },
+        },
+      ],
+    })
+  })
+
   test('deletes exactly the selected graph element with the keyboard', () => {
     const onChange = vi.fn()
     render(
@@ -256,6 +292,57 @@ describe('ProjectWorkflowEditor', () => {
     expect(onChange).toHaveBeenLastCalledWith({
       ...workflow,
       nodes: [workflow.nodes[0]],
+    })
+  })
+
+  test('inserts before a selected stage and migrates its incoming edge context', () => {
+    const onChange = vi.fn()
+    const workflowWithContext: ProjectWorkflowDefinition = {
+      ...workflow,
+      nodes: [
+        workflow.nodes[0],
+        {
+          ...workflow.nodes[1],
+          dependency_context: {
+            develop: ['activity'],
+          },
+        },
+      ],
+    }
+    render(
+      <ProjectWorkflowEditor
+        value={workflowWithContext}
+        busy={false}
+        onChange={onChange}
+        onSave={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('project-workflow-stage-test'))
+    expect(screen.getByTestId('project-workflow-insert-before-test')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('project-workflow-insert-before-test'))
+
+    expect(onChange).toHaveBeenCalledWith({
+      ...workflowWithContext,
+      stage_mode: 'dag',
+      nodes: [
+        workflow.nodes[0],
+        expect.objectContaining({
+          id: 'stage-3',
+          depends_on: ['develop'],
+          dependency_context: {
+            develop: ['activity'],
+          },
+        }),
+        {
+          ...workflowWithContext.nodes[1],
+          depends_on: ['stage-3'],
+          dependency_context: {
+            'stage-3': ['final_result', 'deliveries'],
+          },
+        },
+      ],
     })
   })
 

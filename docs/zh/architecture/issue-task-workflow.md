@@ -8,7 +8,8 @@ sidebar_position: 20
 
 ```mermaid
 flowchart LR
-    TEMPLATE[(项目 Orchestration Definition)] --> SNAPSHOT[(Issue Orchestration Snapshot)]
+    EDITOR[阶段 DAG 编辑器] -->|新增 / 前后插入阶段| TEMPLATE[(项目 Orchestration Definition)]
+    TEMPLATE --> SNAPSHOT[(Issue Orchestration Snapshot)]
     ISSUE[(LoopItem / Issue)] --> SNAPSHOT
     SNAPSHOT --> MODE{推进方式}
     MODE -->|用户管理| HUMAN[用户拆解与分配]
@@ -39,6 +40,7 @@ flowchart LR
 ```mermaid
 sequenceDiagram
     participant U as 用户
+    participant G as 阶段 DAG 编辑器
     participant O as Orchestration 服务
     participant A as AI 调度员
     participant B as Task Binding
@@ -48,6 +50,10 @@ sequenceDiagram
     participant I as Issue 投影
 
     U->>O: 创建 Issue
+    opt 编辑项目阶段 DAG
+        U->>G: 选中阶段并在前方或后方插入
+        G->>G: 重连直接依赖并迁移边级上下文
+    end
     O->>O: 固化推进方式、提示词和可选阶段 DAG
     O->>O: 校验 DAG、边级上下文契约并计算 ready 阶段
     alt 用户管理
@@ -72,6 +78,7 @@ sequenceDiagram
 | 边                                  | 代码归属                                                                 |
 | ----------------------------------- | ------------------------------------------------------------------------ |
 | 项目编排定义与 Issue 快照           | Backend workflow schema/service；Wework 自动化页 DAG UI                  |
+| 阶段 DAG 编辑与相邻插入             | Wework `ProjectWorkflowEditor`；workflow node dependency context          |
 | 依赖边 → 后继阶段上下文             | Workflow node dependency context；Composer / automation instruction      |
 | 用户管理 / AI 调度 → 具体任务       | 标准 Wework Composer、AI manager、`LoopItemTaskBinding`                  |
 | 阶段 → 自动化执行                   | `project_automation_execution.py`、`loop_item_executions/service.py`     |
@@ -87,6 +94,7 @@ sequenceDiagram
 - 阶段 DAG 与推进方式正交。用户管理和 AI 调度都可在“无阶段”或“有阶段”下工作。
 - 依赖边既表示就绪约束，也定义前序阶段向后继阶段传递的上下文。Issue 基础信息始终传递；边只配置是否附加前序任务最终结果、交付附件和执行过程。
 - 边级上下文策略属于后继节点对某个前置节点的输入声明；删除依赖时必须同时删除对应策略，不能留下悬空配置。
+- 在阶段前插入时，新阶段继承原阶段的入边与边级上下文，原阶段改为依赖新阶段；在阶段后插入时，新阶段插入到该阶段与全部直接后继之间，并为每个后继保留原边级上下文。
 - AI 调度必须通过创建、指派和启动具体任务推进 Issue。有阶段时每个 AI 创建的任务必须归入一个阶段，并遵守该阶段依赖；无阶段时 AI 可根据 Issue 和提示词自由拆解。
 - 一个 Issue 可以绑定多个异构任务，一个阶段也可聚合多个具体任务。任务仍可在 Wework 任务列表中找到。
 - 阶段自动化只决定何时、如何创建或启动具体执行，不是与“任务”并列的实体类型。

@@ -8,7 +8,8 @@ Scope: Issue task organization, advancement policy, project stage DAGs, Issue st
 
 ```mermaid
 flowchart LR
-    TEMPLATE[(Project Orchestration Definition)] --> SNAPSHOT[(Issue Orchestration Snapshot)]
+    EDITOR[Stage DAG editor] -->|add / insert stage| TEMPLATE[(Project Orchestration Definition)]
+    TEMPLATE --> SNAPSHOT[(Issue Orchestration Snapshot)]
     ISSUE[(LoopItem / Issue)] --> SNAPSHOT
     SNAPSHOT --> MODE{Advancement policy}
     MODE -->|user managed| HUMAN[User plans and assigns]
@@ -39,6 +40,7 @@ flowchart LR
 ```mermaid
 sequenceDiagram
     participant U as User
+    participant G as Stage DAG editor
     participant O as Orchestration service
     participant A as AI coordinator
     participant B as Task binding
@@ -48,6 +50,10 @@ sequenceDiagram
     participant I as Issue projection
 
     U->>O: Create an Issue
+    opt Edit the project stage DAG
+        U->>G: Select a stage and insert before or after
+        G->>G: Rewire direct dependencies and migrate edge context
+    end
     O->>O: Snapshot policy, prompt, and optional stage DAG
     O->>O: Validate the DAG, edge context contracts, and ready stages
     alt User managed
@@ -72,6 +78,7 @@ sequenceDiagram
 | Edge                                                  | Code ownership                                                           |
 | ----------------------------------------------------- | ------------------------------------------------------------------------ |
 | Project orchestration definition and Issue snapshot   | Backend workflow schemas/services; Wework Automation DAG UI              |
+| Stage DAG editing and adjacent insertion              | Wework `ProjectWorkflowEditor`; workflow node dependency context          |
 | Dependency edge to successor context                  | Workflow node dependency context; Composer / automation instruction      |
 | User/AI coordination to concrete tasks                | Standard Wework Composer, AI manager, `LoopItemTaskBinding`               |
 | Stage to automated execution                          | `project_automation_execution.py`, `loop_item_executions/service.py`      |
@@ -87,6 +94,7 @@ Invariants:
 - The stage DAG and advancement policy are orthogonal. User management and AI coordination both work with or without stages.
 - A dependency edge is both a readiness constraint and a context contract from the predecessor stage to the successor. Core Issue context is always included; the edge controls whether predecessor final results, delivered assets, and execution activity are added.
 - Edge context policy is stored as the successor node's input declaration for a direct predecessor. Removing a dependency must remove its policy as well.
+- Inserting before a stage transfers its incoming dependencies and edge-context declarations to the new stage, then makes the selected stage depend on it. Inserting after a stage places the new stage between it and every direct successor, preserving each successor's edge-context declaration.
 - AI advances an Issue only by creating, assigning, and starting concrete tasks. With stages, every AI-created task belongs to a stage and follows its dependencies. Without stages, AI may decompose work from the Issue and prompt.
 - One Issue may bind multiple heterogeneous tasks, and one stage may aggregate multiple concrete tasks. Tasks remain discoverable in Wework's task list.
 - Stage automation controls when and how a concrete execution is created or started; it is not an entity type parallel to Task.
