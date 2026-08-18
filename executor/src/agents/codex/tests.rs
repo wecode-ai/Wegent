@@ -317,6 +317,49 @@ fn mcp_form_elicitation_maps_enum_names_to_request_user_input_options() {
 }
 
 #[test]
+fn mcp_form_elicitation_returns_accepted_form_content() {
+    let message = json!({
+        "id": 73,
+        "method": "mcpServer/elicitation/request",
+        "params": {
+            "serverName": "wegent-sites",
+            "mode": "form",
+            "message": "请选择内网访问范围。",
+            "requestedSchema": {
+                "type": "object",
+                "properties": {
+                    "audience": {
+                        "type": "string",
+                        "title": "访问范围",
+                        "enum": ["all", "owner"],
+                        "enumNames": ["所有人", "仅自己"]
+                    }
+                },
+                "required": ["audience"]
+            }
+        }
+    });
+    let response = json!({
+        "requestId": 73,
+        "answers": {
+            "audience": {"answers": ["仅自己"]}
+        }
+    });
+
+    let result = mcp_server_elicitation_response(&message, Some(&response))
+        .expect("supported MCP form should be accepted");
+
+    assert_eq!(
+        result,
+        json!({
+            "action": "accept",
+            "content": {"audience": "owner"},
+            "_meta": Value::Null
+        })
+    );
+}
+
+#[test]
 fn wework_codex_home_defaults_to_executor_home_codex() {
     let _lock = crate::test_env::lock();
     let home = unique_test_path("wework-codex-home-default");
@@ -1330,7 +1373,7 @@ fn persistent_codex_app_server_launch_config_keeps_only_process_settings() {
     }
     assert!(launch_config
         .config_overrides
-        .contains(&"goals=true".to_owned()));
+        .contains(&"features.goals=true".to_owned()));
     assert!(launch_config
         .config_overrides
         .contains(&"features.apply_patch_freeform=true".to_owned()));
@@ -2120,16 +2163,13 @@ fn thread_launch_params_include_execution_system_prompt_as_developer_instruction
             .starts_with("用中文回复\n\nJudge the supplied content without answering it."));
         assert!(instructions.contains("Wework 内置浏览器 routing:"));
         assert!(instructions.contains("browser_open"));
-        assert!(!instructions.contains("Wework 项目空间 routing:"));
+        assert!(instructions.contains("Wework 项目空间 routing:"));
     }
 }
 
 #[test]
-fn thread_launch_params_include_space_routing_when_space_capability_is_enabled() {
-    let mut request = ExecutionRequest::default();
-    request
-        .extra
-        .insert("cloudProjectId".to_owned(), json!("space-1"));
+fn thread_launch_params_always_include_space_routing() {
+    let request = ExecutionRequest::default();
     let launch_config = CodexLaunchConfig::default();
 
     for params in [
@@ -2161,7 +2201,18 @@ fn codex_full_access_permission_profile_is_applied_by_default() {
             params["permissions"],
             CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE
         );
-        assert_eq!(params["approvalPolicy"], "never");
+        assert_eq!(
+            params["approvalPolicy"],
+            json!({
+                "granular": {
+                    "sandbox_approval": false,
+                    "rules": false,
+                    "skill_approval": false,
+                    "request_permissions": false,
+                    "mcp_elicitations": true,
+                }
+            })
+        );
         assert!(params.get("sandboxPolicy").is_none());
         assert!(params.get("sandbox").is_none());
     }
@@ -2471,7 +2522,10 @@ fn codex_thread_launch_disables_tool_call_mcp_elicitation() {
             params["config"]["features.tool_call_mcp_elicitation"],
             false
         );
-        assert_eq!(params["approvalPolicy"], "never");
+        assert_eq!(
+            params["approvalPolicy"]["granular"]["mcp_elicitations"],
+            true
+        );
     }
 }
 
@@ -2843,7 +2897,7 @@ fn codex_thread_binds_project_space_through_context_grant() {
 }
 
 #[test]
-fn codex_thread_disables_project_space_with_valid_transport_for_generic_tasks() {
+fn codex_thread_enables_unbound_project_space_for_generic_tasks() {
     let request = ExecutionRequest::default();
 
     let launch_config =
@@ -2851,7 +2905,7 @@ fn codex_thread_disables_project_space_with_valid_transport_for_generic_tasks() 
     let params = thread_start_params(&request, &launch_config);
     let config = params["config"].as_object().expect("thread config");
 
-    assert_eq!(config["mcp_servers.wework_space.enabled"], false);
+    assert_eq!(config["mcp_servers.wework_space.enabled"], true);
     assert_eq!(
         config["mcp_servers.wework_space.command"],
         env::current_exe().unwrap().display().to_string()

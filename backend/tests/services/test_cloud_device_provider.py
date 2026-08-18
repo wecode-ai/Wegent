@@ -94,3 +94,74 @@ async def test_list_devices_preserves_app_device_id(test_db, monkeypatch):
     devices = await CloudDeviceProvider().list_devices(test_db, user_id=7)
 
     assert devices[0]["app_device_id"] == "local-device"
+
+
+@pytest.mark.asyncio
+async def test_list_devices_projects_online_runtime_features_separately(
+    test_db,
+    monkeypatch,
+):
+    device = _cloud_device("cloud-device", "claudecode")
+    device.json["spec"]["capabilities"] = ["gpu"]
+    test_db.add(device)
+    test_db.commit()
+    runtime_features = {
+        "schemaVersion": 1,
+        "worktrees": {"version": 1, "managed": True},
+    }
+
+    async def fake_mget(keys):
+        return {
+            keys[0]: {
+                "socket_id": "socket-1",
+                "status": "online",
+                "runtime_features": runtime_features,
+            }
+        }
+
+    async def fake_latest_version():
+        return "1.0.0"
+
+    monkeypatch.setattr("app.core.cache.cache_manager.mget", fake_mget)
+    monkeypatch.setattr(
+        "app.services.device.cloud_provider.executor_version_service.get_latest_version",
+        fake_latest_version,
+    )
+
+    devices = await CloudDeviceProvider().list_devices(test_db, user_id=7)
+
+    assert devices[0]["capabilities"] == ["gpu"]
+    assert devices[0]["runtime_features"] == runtime_features
+
+
+@pytest.mark.asyncio
+async def test_list_devices_does_not_expose_runtime_features_while_offline(
+    test_db,
+    monkeypatch,
+):
+    device = _cloud_device("cloud-device", "claudecode")
+    device.json["spec"]["capabilities"] = ["gpu"]
+    device.json["spec"]["runtimeFeatures"] = {
+        "schemaVersion": 1,
+        "worktrees": {"version": 1, "managed": True},
+    }
+    test_db.add(device)
+    test_db.commit()
+
+    async def fake_mget(keys):
+        return {}
+
+    async def fake_latest_version():
+        return "1.0.0"
+
+    monkeypatch.setattr("app.core.cache.cache_manager.mget", fake_mget)
+    monkeypatch.setattr(
+        "app.services.device.cloud_provider.executor_version_service.get_latest_version",
+        fake_latest_version,
+    )
+
+    devices = await CloudDeviceProvider().list_devices(test_db, user_id=7)
+
+    assert devices[0]["status"] == "offline"
+    assert devices[0]["capabilities"] == ["gpu"]
+    assert devices[0]["runtime_features"] is None

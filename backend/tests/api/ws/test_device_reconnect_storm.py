@@ -442,6 +442,61 @@ async def test_stale_disconnect_does_not_clear_newer_device_socket(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_stale_heartbeat_does_not_overwrite_newer_device_socket(monkeypatch):
+    namespace = DeviceNamespace()
+
+    monkeypatch.setattr(
+        namespace,
+        "get_session",
+        AsyncMock(
+            return_value={
+                "user_id": 7,
+                "device_id": "device-1",
+                "runtime_instance_id": "runtime-old",
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        device_namespace.device_service,
+        "get_device_online_info",
+        AsyncMock(
+            return_value={
+                "socket_id": "sid-new",
+                "runtime_instance_id": "runtime-new",
+            }
+        ),
+    )
+    refresh_heartbeat = AsyncMock()
+    monkeypatch.setattr(
+        device_namespace.device_service,
+        "refresh_device_heartbeat",
+        refresh_heartbeat,
+    )
+
+    result = await namespace.on_device_heartbeat(
+        "sid-old",
+        {
+            "device_id": "device-1",
+            "runtime_instance_id": "runtime-old",
+            "runtime_features": {
+                "schemaVersion": 1,
+                "worktrees": {
+                    "version": 1,
+                    "managed": True,
+                    "deferredPrepare": True,
+                    "snapshots": True,
+                    "restore": True,
+                    "preflight": True,
+                },
+            },
+        },
+    )
+
+    assert result == {"error": "Stale device connection"}
+    refresh_heartbeat.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_transient_disconnect_rechecks_device_before_failing_tasks(monkeypatch):
     namespace = DeviceNamespace()
 

@@ -6,6 +6,182 @@ use super::codex_config::optional_proxy_url;
 use super::*;
 
 impl RuntimeWorkRpcHandler {
+    pub(super) fn spawn_startup_worktree_reconciliation(&self) {
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let handler = self.clone();
+        runtime.spawn(async move {
+            if handler.reconcile_worktrees_once().await {
+                handler.resume_persisted_turns().await;
+            }
+        });
+    }
+
+    pub(super) async fn reconcile_worktrees_once(&self) -> bool {
+        let mut reconciliation = self.worktree_reconciliation_state.lock().await;
+        if reconciliation.completed {
+            return true;
+        }
+        let now = Instant::now();
+        if reconciliation.last_attempt.is_some_and(|last_attempt| {
+            now.saturating_duration_since(last_attempt) < WORKTREE_RECONCILIATION_RETRY_INTERVAL
+        }) {
+            return false;
+        }
+        reconciliation.last_attempt = Some(now);
+        let interrupted_worktree_turns = self
+            .interrupted_worktree_turns
+            .lock()
+            .await
+            .clone()
+            .unwrap_or_default();
+        let interrupted_worktree_task_ids = interrupted_worktree_turns
+            .iter()
+            .map(|turn| turn.local_task_id.clone())
+            .collect::<HashSet<_>>();
+        let remaining_queued_turns = self
+            .turn_scheduler
+            .lock()
+            .expect("runtime turn scheduler lock should not be poisoned")
+            .queued_turns
+            .clone();
+        let queued_task_ids = remaining_queued_turns
+            .iter()
+            .map(|turn| turn.local_task_id.clone())
+            .collect::<HashSet<_>>();
+        let worktrees = self.worktrees.clone();
+        let store = self.store.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            let reconciled = worktrees.reconcile()?;
+            let tasks = store.list_task_summaries(true);
+            let interrupted_preparation_errors = reconciled
+                .iter()
+                .filter(|outcome| outcome.interrupted_preparation)
+                .map(|outcome| {
+                    (
+                        normalize_workspace_path(&outcome.record.path),
+                        outcome.record.last_error.clone(),
+                    )
+                })
+                .collect::<HashMap<_, _>>();
+            let mut failed_task_ids = HashSet::new();
+            for task in tasks.iter().filter(|task| {
+                !queued_task_ids.contains(&task.local_task_id)
+                    && !matches!(
+                        task.status.as_str(),
+                        "archived" | "cancelled" | "done" | "failed"
+                    )
+                    && worktrees.is_managed_path(Path::new(&task.workspace_path))
+            }) {
+                let normalized_path = normalize_workspace_path(&task.workspace_path);
+                let error = interrupted_preparation_errors
+                    .get(&normalized_path)
+                    .cloned()
+                    .flatten()
+                    .unwrap_or_else(|| {
+                        "Executor restarted during Worktree preparation; runtime was not resumed"
+                            .to_owned()
+                    });
+                let error = if interrupted_preparation_errors.contains_key(&normalized_path) {
+                    error
+                } else {
+                    "Executor restarted while the Worktree task was active; runtime was not resumed"
+                        .to_owned()
+                };
+                if store
+                    .update_task(&task.local_task_id, |link| {
+                        link.running = false;
+                        link.status = "failed".to_owned();
+                        link.thread_status = "failed".to_owned();
+                        link.turn_status = Some("failed".to_owned());
+                        link.updated_at = now_ms();
+                        link.completed_at = Some(link.updated_at);
+                        if !link.runtime_handle.is_object() {
+                            link.runtime_handle = json!({});
+                        }
+                        if let Some(runtime_handle) = link.runtime_handle.as_object_mut() {
+                            runtime_handle.remove("queuePosition");
+                            runtime_handle
+                                .insert("lastError".to_owned(), Value::String(error.clone()));
+                        }
+                    })
+                    .is_some()
+                {
+                    failed_task_ids.insert(task.local_task_id.clone());
+                }
+            }
+            for task_id in interrupted_worktree_task_ids {
+                if failed_task_ids.contains(&task_id) {
+                    continue;
+                }
+                let error =
+                    "Executor restarted before the queued Worktree task began; runtime was not resumed"
+                        .to_owned();
+                if store
+                    .update_task(&task_id, |link| {
+                        link.running = false;
+                        link.status = "failed".to_owned();
+                        link.thread_status = "failed".to_owned();
+                        link.turn_status = Some("failed".to_owned());
+                        link.updated_at = now_ms();
+                        link.completed_at = Some(link.updated_at);
+                        if !link.runtime_handle.is_object() {
+                            link.runtime_handle = json!({});
+                        }
+                        if let Some(runtime_handle) = link.runtime_handle.as_object_mut() {
+                            runtime_handle.remove("queuePosition");
+                            runtime_handle
+                                .insert("lastError".to_owned(), Value::String(error.clone()));
+                        }
+                    })
+                    .is_some()
+                {
+                    failed_task_ids.insert(task_id);
+                }
+            }
+            Ok::<Vec<String>, String>(failed_task_ids.into_iter().collect())
+        })
+        .await;
+        match result {
+            Ok(Ok(failed_task_ids)) => {
+                for task_id in failed_task_ids {
+                    log_executor_event(
+                        "interrupted worktree task reconciled without runtime restart",
+                        &[("local_task_id", task_id)],
+                    );
+                }
+                if let Err(error) = self.persist_turn_queue(remaining_queued_turns).await {
+                    log_executor_event(
+                        "runtime turn queue reconciliation persistence failed",
+                        &[("error", error.message)],
+                    );
+                    reconciliation.last_attempt = Some(Instant::now());
+                    return false;
+                }
+                *self.interrupted_worktree_turns.lock().await = None;
+                reconciliation.completed = true;
+                true
+            }
+            Ok(Err(error)) => {
+                log_executor_event(
+                    "worktree startup reconciliation failed",
+                    &[("error", error)],
+                );
+                reconciliation.last_attempt = Some(Instant::now());
+                false
+            }
+            Err(error) => {
+                log_executor_event(
+                    "worktree startup reconciliation worker failed",
+                    &[("error", error.to_string())],
+                );
+                reconciliation.last_attempt = Some(Instant::now());
+                false
+            }
+        }
+    }
+
     pub(super) async fn get_runtime_capacity(&self) -> Result<Value, AppIpcError> {
         let scheduler = self
             .turn_scheduler
@@ -143,8 +319,49 @@ impl RuntimeWorkRpcHandler {
             .any(|allowed| root == allowed || root.starts_with(&allowed))
     }
 
+    pub(super) async fn get_worktree_capabilities(&self) -> Result<Value, AppIpcError> {
+        Ok(json!({
+            "success": true,
+            "deviceId": self.device_id,
+            "runtimeWorktrees": self.worktrees.capabilities(),
+        }))
+    }
+
+    pub(super) async fn preflight_worktree(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let source_path = string_field(&payload, "sourcePath")
+            .or_else(|| string_field(&payload, "source_path"))
+            .ok_or_else(|| AppIpcError::new("bad_request", "sourcePath is required"))?;
+        let git_ref = string_field(&payload, "ref")
+            .or_else(|| string_field(&payload, "gitRef"))
+            .or_else(|| string_field(&payload, "git_ref"));
+        let worktrees = self.worktrees.clone();
+        let preflight = tokio::task::spawn_blocking(move || {
+            worktrees.preflight(Path::new(&source_path), git_ref.as_deref())
+        })
+        .await
+        .map_err(|error| {
+            AppIpcError::new(
+                "worktree_preflight_failed",
+                format!("Worktree preflight task failed: {error}"),
+            )
+        })?;
+        let mut value = serde_json::to_value(preflight)
+            .map_err(|error| AppIpcError::new("worktree_preflight_failed", error.to_string()))?;
+        value["success"] = Value::Bool(true);
+        value["deviceId"] = Value::String(self.device_id.clone());
+        Ok(value)
+    }
+
     pub(super) async fn get_worktree_settings(&self) -> Result<Value, AppIpcError> {
-        let settings = self.worktrees.settings();
+        let worktrees = self.worktrees.clone();
+        let settings = tokio::task::spawn_blocking(move || worktrees.settings())
+            .await
+            .map_err(|error| {
+                AppIpcError::new(
+                    "worktree_settings_failed",
+                    format!("Worktree settings task failed: {error}"),
+                )
+            })?;
         let mut value = serde_json::to_value(settings)
             .map_err(|error| AppIpcError::new("worktree_settings_failed", error.to_string()))?;
         value["deviceId"] = Value::String(self.device_id.clone());
@@ -157,9 +374,15 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<Value, AppIpcError> {
         let patch = serde_json::from_value::<WorktreeSettingsPatch>(payload)
             .map_err(|error| AppIpcError::new("invalid_worktree_settings", error.to_string()))?;
-        let settings = self
-            .worktrees
-            .update_settings(patch)
+        let worktrees = self.worktrees.clone();
+        let settings = tokio::task::spawn_blocking(move || worktrees.update_settings(patch))
+            .await
+            .map_err(|error| {
+                AppIpcError::new(
+                    "worktree_settings_failed",
+                    format!("Worktree settings task failed: {error}"),
+                )
+            })?
             .map_err(|error| AppIpcError::new("worktree_settings_failed", error))?;
         self.schedule_worktree_prune();
         let mut value = serde_json::to_value(settings)
@@ -180,15 +403,23 @@ impl RuntimeWorkRpcHandler {
             .get("permanent")
             .and_then(Value::as_bool)
             .unwrap_or(false);
-        let record = self
-            .worktrees
-            .prepare(
+        let worktrees = self.worktrees.clone();
+        let record = tokio::task::spawn_blocking(move || {
+            worktrees.prepare(
                 Path::new(&source_path),
                 &worktree_id,
                 git_ref.as_deref(),
                 permanent,
             )
-            .map_err(|error| AppIpcError::new("worktree_prepare_failed", error))?;
+        })
+        .await
+        .map_err(|error| {
+            AppIpcError::new(
+                "worktree_prepare_failed",
+                format!("Worktree preparation task failed: {error}"),
+            )
+        })?
+        .map_err(|error| AppIpcError::new(worktree_error_code(&error), error))?;
         self.schedule_worktree_prune();
         Ok(json!({
             "success": true,
@@ -275,10 +506,18 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn list_worktrees(&self) -> Result<Value, AppIpcError> {
-        let entries = self
-            .worktrees
-            .list(&self.store.list_task_summaries(true))
-            .map_err(|error| AppIpcError::new("worktree_list_failed", error))?;
+        let worktrees = self.worktrees.clone();
+        let store = self.store.clone();
+        let entries =
+            tokio::task::spawn_blocking(move || worktrees.list(&store.list_task_summaries(true)))
+                .await
+                .map_err(|error| {
+                    AppIpcError::new(
+                        "worktree_list_failed",
+                        format!("Worktree list task failed: {error}"),
+                    )
+                })?
+                .map_err(|error| AppIpcError::new("worktree_list_failed", error))?;
         let items = entries
             .into_iter()
             .map(|(record, tasks)| {
@@ -315,14 +554,25 @@ impl RuntimeWorkRpcHandler {
         let preserve_snapshot = bool_field(&payload, "preserveSnapshot")
             .or_else(|| bool_field(&payload, "preserve_snapshot"))
             .unwrap_or(true);
-        let linked = self
-            .store
-            .list_task_summaries(true)
-            .into_iter()
-            .filter(|task| {
-                normalize_workspace_path(&task.workspace_path) == normalize_workspace_path(&path)
-            })
-            .collect::<Vec<_>>();
+        let store = self.store.clone();
+        let linked_path = path.clone();
+        let linked = tokio::task::spawn_blocking(move || {
+            store
+                .list_task_summaries(true)
+                .into_iter()
+                .filter(|task| {
+                    normalize_workspace_path(&task.workspace_path)
+                        == normalize_workspace_path(&linked_path)
+                })
+                .collect::<Vec<_>>()
+        })
+        .await
+        .map_err(|error| {
+            AppIpcError::new(
+                "worktree_list_failed",
+                format!("Worktree task lookup failed: {error}"),
+            )
+        })?;
         for task in linked.iter().filter(|task| task.status != "archived") {
             let result = self
                 .archive_task(
@@ -339,10 +589,18 @@ impl RuntimeWorkRpcHandler {
                 ));
             }
         }
-        let record = self
-            .worktrees
-            .delete(Path::new(&path), preserve_snapshot)
-            .map_err(|error| AppIpcError::new("worktree_delete_failed", error))?;
+        let worktrees = self.worktrees.clone();
+        let delete_path = PathBuf::from(&path);
+        let record =
+            tokio::task::spawn_blocking(move || worktrees.delete(&delete_path, preserve_snapshot))
+                .await
+                .map_err(|error| {
+                    AppIpcError::new(
+                        "worktree_delete_failed",
+                        format!("Worktree deletion task failed: {error}"),
+                    )
+                })?
+                .map_err(|error| AppIpcError::new("worktree_delete_failed", error))?;
         Ok(json!({
             "success": true,
             "deviceId": self.device_id,
@@ -355,18 +613,33 @@ impl RuntimeWorkRpcHandler {
         let path = string_field(&payload, "path")
             .or_else(|| workspace_path(&payload))
             .ok_or_else(|| AppIpcError::new("bad_request", "path is required"))?;
-        let record = self
-            .worktrees
-            .restore(Path::new(&path))
+        let worktrees = self.worktrees.clone();
+        let restore_path = PathBuf::from(path);
+        let record = tokio::task::spawn_blocking(move || worktrees.restore(&restore_path))
+            .await
+            .map_err(|error| {
+                AppIpcError::new(
+                    "worktree_restore_failed",
+                    format!("Worktree restore task failed: {error}"),
+                )
+            })?
             .map_err(|error| AppIpcError::new("worktree_restore_failed", error))?;
         Ok(json!({"success": true, "deviceId": self.device_id, "worktree": record}))
     }
 
     pub(super) async fn prune_worktrees(&self) -> Result<Value, AppIpcError> {
-        let removed = self
-            .worktrees
-            .prune(&self.store.list_task_summaries(true))
-            .map_err(|error| AppIpcError::new("worktree_prune_failed", error))?;
+        let worktrees = self.worktrees.clone();
+        let store = self.store.clone();
+        let removed =
+            tokio::task::spawn_blocking(move || worktrees.prune(&store.list_task_summaries(true)))
+                .await
+                .map_err(|error| {
+                    AppIpcError::new(
+                        "worktree_prune_failed",
+                        format!("Worktree prune task failed: {error}"),
+                    )
+                })?
+                .map_err(|error| AppIpcError::new("worktree_prune_failed", error))?;
         Ok(json!({"success": true, "deviceId": self.device_id, "removed": removed}))
     }
 
@@ -657,4 +930,44 @@ fn write_runtime_settings(settings: &RuntimeSettings) -> Result<(), AppIpcError>
             format!("Failed to write {}: {error}", path.display()),
         )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn handler_uses_the_frozen_manager_storage_capability_and_gate() {
+        let root = tempfile::tempdir().expect("temporary runtime work directory");
+        let mut handler = RuntimeWorkRpcHandler::new("device-cloud", "/bin/false");
+        handler.worktrees = WorktreeManager::new_for_device_with_storage(
+            root.path().join("worktrees.json"),
+            "device-cloud",
+            false,
+        );
+
+        let capabilities = handler.get_worktree_capabilities().await.unwrap();
+        let preflight = handler
+            .preflight_worktree(json!({"sourcePath": root.path().join("source")}))
+            .await
+            .unwrap();
+        let prepare_error = handler
+            .prepare_worktree(json!({
+                "sourcePath": root.path().join("source"),
+                "worktreeId": "task-1",
+            }))
+            .await
+            .unwrap_err();
+
+        assert_eq!(
+            capabilities["runtimeWorktrees"]["persistentStorageVerified"],
+            false
+        );
+        assert_eq!(preflight["supported"], false);
+        assert_eq!(
+            preflight["errorCode"],
+            "worktree_persistent_storage_unverified"
+        );
+        assert_eq!(prepare_error.code, "worktree_persistent_storage_unverified");
+    }
 }

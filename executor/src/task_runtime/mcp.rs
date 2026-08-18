@@ -138,10 +138,6 @@ pub fn encoded_space_context_grant(request: &ExecutionRequest) -> Option<String>
     Some(encoded)
 }
 
-pub fn space_capability_enabled(request: &ExecutionRequest) -> bool {
-    encoded_space_context_grant(request).is_some()
-}
-
 fn prompt_references_cloud_projects(prompt: &Value) -> bool {
     match prompt {
         Value::String(text) => text.contains("cloud://projects"),
@@ -2569,14 +2565,14 @@ mod tests {
     }
 
     #[test]
-    fn skips_space_capability_without_project_context() {
+    fn leaves_space_context_unbound_without_project_context() {
         let request = ExecutionRequest::default();
 
         assert!(encoded_space_context_grant(&request).is_none());
     }
 
     #[test]
-    fn skips_space_capability_for_non_manager_project_automation() {
+    fn leaves_space_context_unbound_for_non_manager_project_automation() {
         let mut request = ExecutionRequest::default();
         request
             .extra
@@ -2657,7 +2653,7 @@ mod tests {
     }
 
     #[test]
-    fn enables_unbound_capability_for_explicit_cloud_reference() {
+    fn creates_unbound_context_grant_for_explicit_cloud_reference() {
         let request = ExecutionRequest {
             prompt: json!("请查看 [任务:T-1](cloud://projects/cloud-42/todos/T-1)"),
             ..ExecutionRequest::default()
@@ -2670,7 +2666,7 @@ mod tests {
     }
 
     #[test]
-    fn skips_capability_when_prompt_has_no_project_reference() {
+    fn leaves_space_context_unbound_when_prompt_has_no_project_reference() {
         let request = ExecutionRequest {
             prompt: json!("帮我看一下这个仓库的代码"),
             ..ExecutionRequest::default()
@@ -2680,7 +2676,7 @@ mod tests {
     }
 
     #[test]
-    fn enables_capability_for_array_prompt_cloud_reference() {
+    fn creates_context_grant_for_array_prompt_cloud_reference() {
         let request = ExecutionRequest {
             prompt: json!([{"type": "text", "text": "参考 [整个空间](cloud://projects/proj-7)"}]),
             ..ExecutionRequest::default()

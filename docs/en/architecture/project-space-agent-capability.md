@@ -11,7 +11,7 @@ flowchart LR
     ISSUE[Issue / project conversation] --> GRANT[Session ContextGrant<br/>session_id + space_id + item_id + scopes]
     GENERIC[Generic task] --> SESSION[Agent Session]
     GRANT --> SESSION
-    SESSION --> DECLARATION[Valid fixed MCP transport declaration<br/>session-scoped enabled / ContextGrant]
+    SESSION --> DECLARATION[Default-enabled fixed MCP transport declaration<br/>optional session ContextGrant]
     DECLARATION --> ADAPTER{Harness Adapter}
     ADAPTER -->|Codex| PLUGIN[Bundled wework-space Plugin]
     ADAPTER -->|other Harness| MCP_ADAPTER[Contract-compatible MCP Adapter]
@@ -40,14 +40,13 @@ sequenceDiagram
 
     W->>G: Prepare the local Project-space Provider with the app
     W->>H: Create Agent Session
-    alt Generic task
-        W->>H: Supply a valid transport declaration with enabled=false
-    else Project or Issue conversation
-        W->>H: Supply the same transport, inject a short-lived ContextGrant, and set enabled=true
-        H->>P: Initialize MCP and negotiate the tool inventory
-        P->>G: Start the Wework-managed session adapter and validate ContextGrant
-        G-->>P: Return the bound capability scope
+    W->>H: Supply a valid default-enabled transport declaration
+    opt Project or Issue conversation
+        W->>H: Inject a short-lived ContextGrant
     end
+    H->>P: Initialize MCP and negotiate the tool inventory
+    P->>G: Start the Wework-managed session adapter and validate the optional ContextGrant
+    G-->>P: Return an unbound or bound capability scope
     H->>P: get_current_context / read_item_attachment
     P->>G: Invoke the shared tool contract
     alt Local project
@@ -71,29 +70,29 @@ sequenceDiagram
     P-->>H: MCP tool result
 ```
 
-| Edge                                                   | Code ownership                                                      |
-| ------------------------------------------------------ | ------------------------------------------------------------------- |
-| Wework startup to Local Provider lifecycle             | Wework Tauri local executor; Executor local ProjectSpace provider   |
-| Agent Session to ContextGrant                          | Wework Runtime message metadata; Executor session context registry  |
-| Agent Session to fixed MCP transport and enabled state | Executor Codex adapter; harness-specific MCP adapter                |
-| Codex to project-space capability                      | Bundled Wework `wework-space` Codex Plugin; Executor Codex adapter  |
-| Other Harness to project-space capability              | Harness-specific MCP adapter                                        |
-| Gateway to Local Provider                              | Executor `task_runtime` and local ProjectSpace provider             |
-| Gateway to Backend Provider                            | Executor authenticated Backend ProjectSpace client                  |
-| MCP to Delivery lifecycle                              | Executor `task_runtime/mcp.rs`, Delivery API, and local ProjectSpace |
-| Delivery to current workflow node                      | ContextGrant Runtime address, `LoopItemTaskBinding`, Delivery service |
-| Cloud Agent to Backend MCP                             | Backend `wework_space` MCP                                          |
-| Shared tool contract to every Adapter                  | Shared schema, tool names, permission semantics, and contract tests |
+| Edge                                                 | Code ownership                                                       |
+| ---------------------------------------------------- | -------------------------------------------------------------------- |
+| Wework startup to Local Provider lifecycle           | Wework Tauri local executor; Executor local ProjectSpace provider    |
+| Agent Session to ContextGrant                        | Wework Runtime message metadata; Executor session context registry   |
+| Agent Session to default-enabled fixed MCP transport | Executor Codex adapter; harness-specific MCP adapter                 |
+| Codex to project-space capability                    | Bundled Wework `wework-space` Codex Plugin; Executor Codex adapter   |
+| Other Harness to project-space capability            | Harness-specific MCP adapter                                         |
+| Gateway to Local Provider                            | Executor `task_runtime` and local ProjectSpace provider              |
+| Gateway to Backend Provider                          | Executor authenticated Backend ProjectSpace client                   |
+| MCP to Delivery lifecycle                            | Executor `task_runtime/mcp.rs`, Delivery API, and local ProjectSpace  |
+| Delivery to current workflow node                    | ContextGrant Runtime address, `LoopItemTaskBinding`, Delivery service |
+| Cloud Agent to Backend MCP                           | Backend `wework_space` MCP                                           |
+| Shared tool contract to every Adapter                | Shared schema, tool names, permission semantics, and contract tests  |
 
 Invariants:
 
 - MCP installation and service declaration are stable configuration; `space_id`, `item_id`, and permissions are session data. Issue context must not be represented by mutating the task's complete MCP Server list.
 - Local-project Issues, descriptions, and attachments remain available when Wework is disconnected from Backend. Backend is the cloud-project Provider, not a prerequisite for local capability.
 - The Plugin is only the Codex Adapter. Gateway, ContextGrant, and tool contracts must not depend on Codex-specific types.
-- The Plugin MCP declaration is the product packaging entry point. Runtime supplies the session ContextGrant, enabled state, and actual Executor path, so correctness cannot depend on opening the plugin marketplace UI or on asynchronous installation timing.
-- A disabled MCP configuration supplied to a Harness must still include a parseable fixed transport. `enabled=false` prevents startup; it must not be represented by an incomplete entry that omits both `command` and `url`.
+- The Plugin MCP declaration is the product packaging entry point. Runtime supplies the default-enabled state, actual Executor path, and optional session ContextGrant, so correctness cannot depend on opening the plugin marketplace UI or on asynchronous installation timing.
+- The project-space MCP is enabled by default for every Agent session. Generic tasks remain unbound and may select a project explicitly; project or Issue conversations receive default `space_id/item_id` values and out-of-scope protection through ContextGrant.
 - A ContextGrant is Agent-session scoped and hidden from the model. Its one-hour validity only limits bootstrap of a new MCP session; once accepted, the lease follows the session adapter lifecycle, so a long-running turn is not interrupted and adapter exit revokes access. Model arguments, prompt text, and a global current-project value are never authorization sources.
-- Generic tasks do not enable project-space tools. Project conversations may bind only `space_id`; Issue conversations bind `space_id + item_id`.
+- Generic tasks do not bind project context. Project conversations may bind only `space_id`; Issue conversations bind `space_id + item_id`.
 - `get_current_context` returns an explicit unbound result when no context exists. MCP startup failure, missing permission, cloud-project offline, and uncached data are distinct errors.
 - The Gateway rejects explicit `space_id/item_id` outside the ContextGrant scope and never trusts identifiers supplied by the model.
 - Delivery write tools are available only to an Issue session bound to `space_id + item_id + device_id + task_id`. `source_task` and `workflow_node_id` are derived from the ContextGrant and the active `TaskBinding`; the model cannot specify or override them.

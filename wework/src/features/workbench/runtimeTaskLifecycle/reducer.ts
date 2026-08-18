@@ -57,6 +57,9 @@ export function reduceRuntimeTaskLifecycle(
     case 'send_requested':
       return {
         ...state,
+        ...(event.workspaceCreationKind
+          ? { workspaceCreationKind: event.workspaceCreationKind }
+          : {}),
         executionPhase: 'starting',
         turnPhase: 'submitting',
         turnOutcome: null,
