@@ -278,14 +278,18 @@ export async function waitForTaskTerminal(
   await expect
     .poll(
       async () => {
-        const response = await request.get(
-          `${PROVIDER_NATIVE_API_URL}/api/tasks/${taskId}/runtime-check`,
-          { headers: authHeaders(token) }
-        )
-        if (response.status() !== 200) return `HTTP_${response.status()}`
-        const body = (await response.json()) as { task_status: string }
-        finalStatus = body.task_status.toUpperCase()
-        return finalStatus
+        try {
+          const response = await request.get(
+            `${PROVIDER_NATIVE_API_URL}/api/tasks/${taskId}/runtime-check`,
+            { headers: authHeaders(token) }
+          )
+          if (response.status() !== 200) return `HTTP_${response.status()}`
+          const body = (await response.json()) as { task_status: string }
+          finalStatus = body.task_status.toUpperCase()
+          return finalStatus
+        } catch (error) {
+          return `NETWORK_ERROR_${error instanceof Error ? error.message : String(error)}`
+        }
       },
       { timeout: 60_000, message: `Task ${taskId} should reach ${expected}` }
     )
