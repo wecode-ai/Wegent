@@ -6,6 +6,7 @@ import type {
 } from './deliveries'
 
 type RuntimeWorkflowStatus = 'running' | 'succeeded' | 'failed' | 'cancelled' | 'archived'
+export type WorkflowDecisionAction = 'approve' | 'reject' | 'force_advance'
 
 export function instantiateIssueWorkflow(
   definition: ProjectWorkflowDefinition | null | undefined
@@ -27,13 +28,19 @@ export function instantiateIssueWorkflow(
       task_binding_id: null,
       task_ids: [],
       task_statuses: {},
+      delivery_ids: [],
+      decision_history: [],
       execution_id: null,
     })),
   }
 }
 
 function releaseReadyNodes(nodes: WorkflowNodeInstance[]): WorkflowNodeInstance[] {
-  const completed = new Set(nodes.filter(node => node.status === 'completed').map(node => node.id))
+  const completed = new Set(
+    nodes
+      .filter(node => ['completed', 'forced_completed'].includes(node.status))
+      .map(node => node.id)
+  )
   return nodes.map(node => {
     if (node.status !== 'blocked') return node
     return node.depends_on.every(dependency => completed.has(dependency))
@@ -72,7 +79,9 @@ export function updateIssueWorkflowForRuntime(
       )
       const status =
         allCompleted || (!runtimeTaskId && executionStatus === 'succeeded')
-          ? 'completed'
+          ? node.automation_rule_id
+            ? 'completed'
+            : 'awaiting_approval'
           : anyRunning || executionStatus === 'running'
             ? 'running'
             : anyFailed
@@ -86,11 +95,84 @@ export function updateIssueWorkflowForRuntime(
 
 export function workflowBoardStatus(workflow: IssueWorkflowInstance): CloudLoopItem['status'] {
   const required = workflow.nodes.filter(node => node.required)
-  if (required.length > 0 && required.every(node => node.status === 'completed')) {
+  if (
+    required.length > 0 &&
+    required.every(node => ['completed', 'forced_completed'].includes(node.status))
+  ) {
     return 'in_review'
   }
-  if (workflow.nodes.some(node => node.status === 'running')) return 'in_progress'
+  if (workflow.nodes.some(node => ['running', 'changes_requested'].includes(node.status))) {
+    return 'in_progress'
+  }
   return 'pending'
+}
+
+export function decideIssueWorkflowNode(
+  workflow: IssueWorkflowInstance,
+  workflowNodeId: string,
+  action: WorkflowDecisionAction,
+  actorUserId: number,
+  reason: string
+): IssueWorkflowInstance {
+  const normalizedReason = reason.trim()
+  const nodes = releaseReadyNodes(
+    workflow.nodes.map(node => {
+      if (node.id !== workflowNodeId) return node
+      if (node.automation_rule_id) throw new Error('Automated stages do not accept decisions')
+      if (action === 'approve') {
+        if (node.status !== 'awaiting_approval') throw new Error('Stage is not awaiting approval')
+        if ((node.required_deliverables?.length ?? 0) > 0 && !node.delivery_ids?.length) {
+          throw new Error('Required deliverables are missing')
+        }
+      } else if (action === 'reject') {
+        if (node.status !== 'awaiting_approval') throw new Error('Stage is not awaiting approval')
+        if (!normalizedReason) throw new Error('Rejection requires a reason')
+      } else {
+        if (['blocked', 'completed', 'forced_completed'].includes(node.status)) {
+          throw new Error('Stage cannot be force-advanced')
+        }
+        if (!normalizedReason) throw new Error('Force advancement requires a reason')
+      }
+      return {
+        ...node,
+        status:
+          action === 'approve'
+            ? ('completed' as const)
+            : action === 'reject'
+              ? ('changes_requested' as const)
+              : ('forced_completed' as const),
+        decision_history: [
+          ...(node.decision_history ?? []),
+          {
+            action,
+            actor_user_id: actorUserId,
+            reason: normalizedReason,
+            decided_at: new Date().toISOString(),
+          },
+        ],
+      }
+    })
+  )
+  return { ...workflow, version: workflow.version + 1, nodes }
+}
+
+export function attachIssueWorkflowDelivery(
+  workflow: IssueWorkflowInstance,
+  workflowNodeId: string,
+  deliveryId: string
+): IssueWorkflowInstance {
+  return {
+    ...workflow,
+    version: workflow.version + 1,
+    nodes: workflow.nodes.map(node =>
+      node.id === workflowNodeId
+        ? {
+            ...node,
+            delivery_ids: Array.from(new Set([...(node.delivery_ids ?? []), deliveryId])),
+          }
+        : node
+    ),
+  }
 }
 
 export function workflowNodeForBinding(

@@ -6,8 +6,10 @@ import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { User } from '@/types/api'
 import { CloudTodoWorkspace } from './CloudTodoWorkspace'
 import {
+  isSelfManagedWorkItem,
   shouldDeferWorkItemMoveUntilTaskCreated,
   shouldPrepareWorkItemTask,
+  shouldRevealWorkItemWorkflowActions,
   workItemTaskInput,
 } from './workItemTaskInput'
 
@@ -41,19 +43,33 @@ vi.mock('./AiChatModal', () => ({
     onClose,
     initialAddress,
     onOpenRuntimeTask,
+    onTaskCreated,
+    workflowNodeId,
   }: {
     task?: { id: string }
     open: boolean
     onClose: () => void
     initialAddress?: { deviceId: string; taskId: string } | null
     onOpenRuntimeTask?: (address: { deviceId: string; taskId: string }) => void
+    onTaskCreated?: (address: { deviceId: string; taskId: string }) => void | Promise<void>
+    workflowNodeId?: string
   }) => (
     <div
       data-testid="ai-chat-modal"
       data-task-id={task?.id}
       data-open={open ? 'yes' : 'no'}
       data-runtime-task-id={initialAddress?.taskId}
+      data-workflow-node-id={workflowNodeId}
     >
+      <button
+        type="button"
+        data-testid="mock-create-runtime-task"
+        onClick={() =>
+          void onTaskCreated?.({ deviceId: 'local-device', taskId: 'runtime-created' })
+        }
+      >
+        创建 Runtime 任务
+      </button>
       <button
         type="button"
         data-testid="mock-open-runtime-task"
@@ -135,6 +151,122 @@ describe('shouldPrepareWorkItemTask', () => {
     expect(shouldDeferWorkItemMoveUntilTaskCreated(item, 'pending', 1)).toBe(false)
   })
 
+  it('moves preset and AI-orchestrated issues without opening the manual task composer', () => {
+    const presetWorkflowIssue = {
+      ...item,
+      status: 'inbox' as const,
+      workflow: {
+        version: 1,
+        definition_version: 1,
+        stage_mode: 'dag' as const,
+        advancement_policy: 'manual' as const,
+        nodes: [
+          {
+            id: 'develop',
+            name: '开发',
+            depends_on: [],
+            required: true,
+            workspace_policy: 'composer' as const,
+            status: 'ready' as const,
+          },
+        ],
+      },
+    }
+    const aiManagedIssue = {
+      ...item,
+      status: 'inbox' as const,
+      workflow: {
+        version: 1,
+        definition_version: 1,
+        stage_mode: 'none' as const,
+        advancement_policy: 'ai' as const,
+        ai_automation_rule_id: 'ai-manager',
+        nodes: [],
+      },
+    }
+
+    expect(isSelfManagedWorkItem(presetWorkflowIssue)).toBe(false)
+    expect(shouldDeferWorkItemMoveUntilTaskCreated(presetWorkflowIssue, 'pending', 0)).toBe(false)
+    expect(shouldPrepareWorkItemTask(presetWorkflowIssue, 'pending', 0)).toBe(false)
+    expect(shouldRevealWorkItemWorkflowActions(presetWorkflowIssue, 'pending')).toBe(true)
+    expect(isSelfManagedWorkItem(aiManagedIssue)).toBe(false)
+    expect(shouldDeferWorkItemMoveUntilTaskCreated(aiManagedIssue, 'pending', 0)).toBe(false)
+    expect(shouldPrepareWorkItemTask(aiManagedIssue, 'pending', 0)).toBe(false)
+    expect(shouldRevealWorkItemWorkflowActions(aiManagedIssue, 'pending')).toBe(false)
+  })
+
+  it('does not reveal workflow actions for automated, blocked, or already-moved stages', () => {
+    const automatedWorkflowIssue = {
+      ...item,
+      status: 'inbox' as const,
+      workflow: {
+        version: 1,
+        definition_version: 1,
+        stage_mode: 'dag' as const,
+        advancement_policy: 'manual' as const,
+        nodes: [
+          {
+            id: 'develop',
+            name: '开发',
+            depends_on: [],
+            required: true,
+            workspace_policy: 'composer' as const,
+            automation_rule_id: 'rule-1',
+            status: 'ready' as const,
+          },
+        ],
+      },
+    }
+
+    expect(shouldRevealWorkItemWorkflowActions(automatedWorkflowIssue, 'pending')).toBe(false)
+    expect(
+      shouldRevealWorkItemWorkflowActions(
+        {
+          ...automatedWorkflowIssue,
+          workflow: {
+            ...automatedWorkflowIssue.workflow,
+            nodes: [
+              {
+                ...automatedWorkflowIssue.workflow.nodes[0],
+                automation_rule_id: null,
+                status: 'blocked' as const,
+              },
+            ],
+          },
+        },
+        'pending'
+      )
+    ).toBe(false)
+    expect(
+      shouldRevealWorkItemWorkflowActions(
+        { ...automatedWorkflowIssue, status: 'pending' },
+        'pending'
+      )
+    ).toBe(false)
+  })
+
+  it('treats legacy workflows with stages as preset orchestration', () => {
+    expect(
+      isSelfManagedWorkItem({
+        workflow: {
+          version: 1,
+          definition_version: 1,
+          advancement_policy: 'manual',
+          nodes: [
+            {
+              id: 'legacy',
+              name: '旧阶段',
+              depends_on: [],
+              required: true,
+              workspace_policy: 'composer',
+              status: 'ready',
+            },
+          ],
+        },
+      })
+    ).toBe(false)
+  })
+
   it('does not recreate a task for reorder, child items, or already-bound work items', () => {
     expect(shouldPrepareWorkItemTask({ parent_id: null, status: 'pending' }, 'pending', 0)).toBe(
       false
@@ -168,6 +300,7 @@ function services(overrides: Partial<WorkbenchServices> = {}): WorkbenchServices
       })),
       archiveCloudProject: vi.fn(async () => undefined),
       archiveLoopItem: vi.fn(async () => undefined),
+      getLoopItem: vi.fn(async () => item),
       updateLoopItem: vi.fn(async (_itemId, values) => ({
         ...item,
         ...values,
@@ -347,10 +480,19 @@ function services(overrides: Partial<WorkbenchServices> = {}): WorkbenchServices
 describe('CloudTodoWorkspace', () => {
   beforeEach(() => {
     telemetryMocks.track.mockClear()
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      }
+    )
   })
 
   afterEach(() => {
     vi.restoreAllMocks()
+    vi.unstubAllGlobals()
     localStorage.clear()
   })
 
@@ -2397,6 +2539,63 @@ describe('CloudTodoWorkspace', () => {
       })
     )
     expect(screen.getByTestId('ai-chat-modal')).toBeInTheDocument()
+  })
+
+  it('binds a human workflow task without inventing an automation queue state', async () => {
+    const manualIssue = {
+      ...item,
+      status: 'pending' as const,
+      workflow: {
+        version: 1,
+        definition_version: 1,
+        stage_mode: 'dag' as const,
+        advancement_policy: 'manual' as const,
+        nodes: [
+          {
+            id: 'backend',
+            name: '后端',
+            depends_on: [],
+            required: true,
+            workspace_policy: 'composer' as const,
+            automation_rule_id: null,
+            status: 'ready' as const,
+            task_ids: [],
+          },
+        ],
+      },
+    }
+    const workbenchServices = services()
+    workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({
+      items: [manualIssue],
+    }))
+    workbenchServices.deliveryApi!.getLoopItem = vi.fn(async () => manualIssue)
+    workbenchServices.deliveryApi!.listTaskBindings = vi.fn(async () => [])
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
+    await userEvent.click(await screen.findByTestId('cloud-todo-create-workflow-task-backend'))
+    expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute('data-workflow-node-id', 'backend')
+
+    vi.mocked(workbenchServices.deliveryApi!.updateLoopItem).mockClear()
+    await userEvent.click(screen.getByTestId('mock-create-runtime-task'))
+
+    await waitFor(() =>
+      expect(workbenchServices.deliveryApi!.bindTask).toHaveBeenCalledWith(
+        'WEG-1',
+        { deviceId: 'local-device', taskId: 'runtime-created' },
+        'Implement cloud MCP',
+        'backend'
+      )
+    )
+    expect(workbenchServices.deliveryApi!.updateLoopItem).not.toHaveBeenCalled()
   })
 
   it('edits TODO metadata without changing historical deliveries', async () => {

@@ -1239,6 +1239,12 @@ describe('createLocalAppServices', () => {
       },
       message: 'continue',
       clientUserMessageId: 'runtime-local-pane-1',
+      cloudProjectId: 'cloud-project-42',
+      origin: {
+        type: 'board_task',
+        cloudProjectId: 'cloud-project-42',
+        loopItemId: 'ISSUE-42',
+      },
       modelId: 'gpt-5.4',
       modelOptions: {
         collaborationMode: 'default',
@@ -1272,6 +1278,12 @@ describe('createLocalAppServices', () => {
         },
         message: 'continue',
         clientUserMessageId: 'runtime-local-pane-1',
+        cloudProjectId: 'cloud-project-42',
+        origin: {
+          type: 'board_task',
+          cloudProjectId: 'cloud-project-42',
+          loopItemId: 'ISSUE-42',
+        },
         collaborationMode: 'default',
         modelOptions: {
           collaborationMode: 'default',
@@ -1325,6 +1337,12 @@ describe('createLocalAppServices', () => {
           execution_target_type: 'local',
           workspace_source: 'local_path',
           new_session: false,
+          cloudProjectId: 'cloud-project-42',
+          origin: {
+            type: 'board_task',
+            cloudProjectId: 'cloud-project-42',
+            loopItemId: 'ISSUE-42',
+          },
           collaborationMode: 'default',
           attachments: [
             {

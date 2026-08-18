@@ -8,22 +8,44 @@ Scope: Issue task organization, advancement policy, project stage DAGs, Issue st
 
 ```mermaid
 flowchart LR
+    COMPOSER[Issue Composer<br/>compact input / app-fullscreen editor] --> ISSUE
+    COMPOSER --> ATTACHMENT[Title / body / staged attachments]
+    ATTACHMENT --> ISSUE
     EDITOR[Stage DAG editor] -->|add / insert stage| TEMPLATE[(Project Orchestration Definition)]
+    EDITOR -->|explicit save| PROJECT_API[ProjectSpace update API]
+    PROJECT_API --> TEMPLATE
+    TEMPLATE -->|restore on re-entry| EDITOR
     TEMPLATE --> SNAPSHOT[(Issue Orchestration Snapshot)]
     ISSUE[(LoopItem / Issue)] --> SNAPSHOT
     SNAPSHOT --> MODE{Advancement policy}
     MODE -->|user managed| HUMAN[User plans and assigns]
     MODE -->|AI coordinated| AI[AI reads the Issue, prompt, and stage definition]
+    ISSUE --> ENTRY{Drag inbox to pending}
+    ENTRY -->|no stages + manual advancement| TASK_COMPOSER
+    ENTRY -->|preset workflow| START_READY[Start ready automated stages]
+    ENTRY -->|AI advancement| AI
+    START_READY --> STAGE
     SNAPSHOT --> GRAPH{Stage DAG configured?}
     GRAPH -->|no stages| FREE[Free task set]
     GRAPH -->|stages| STAGE[Stage / Node / Milestone]
     STAGE --> EDGE[Dependency edge / Context contract]
     EDGE --> STAGE
+    STAGE --> REQUIREMENT[Required deliverable contract]
     HUMAN --> BINDING[(LoopItemTaskBinding)]
     AI --> BINDING
     FREE --> BINDING
     STAGE --> BINDING
+    ISSUE --> TASK_COMPOSER[Blank task conversation sidebar]
+    TASK_COMPOSER -->|first message| BINDING
+    BINDING -->|open existing task| SIDEBAR[Task conversation sidebar]
     BINDING --> TASK[(Wework Runtime Task)]
+    TASK_COMPOSER --> CONTEXT[Structured Issue origin<br/>space_id + item_id]
+    SIDEBAR --> CONTEXT
+    CONTEXT --> TASK
+    TASK --> GRANT[Session ContextGrant]
+    GRANT --> SPACE_MCP[Stable wework-space capability]
+    SPACE_MCP --> ISSUE
+    SPACE_MCP --> ATTACHMENT
     STAGE -->|stage automation rule| EXEC[(LoopItemExecution)]
     EXEC --> RUNTIME[Existing Runtime / Team / API activator]
     TASK --> WORKSPACE[Existing workspace / worktree / branch truth]
@@ -34,30 +56,62 @@ flowchart LR
     AGGREGATE --> ISSUE
     TASK --> ACTIVITY[Issue activity]
     EXEC --> ACTIVITY
+    TASK --> DELIVERY[Stage delivery]
+    REQUIREMENT --> DELIVERY
+    DELIVERY --> REVIEW{Human review}
+    REVIEW -->|Approve| AGGREGATE
+    REVIEW -->|Reject| TASK
+    REVIEW -->|Force advance + reason| AGGREGATE
     ACTIVITY --> STREAM[Streaming run card / final summary / attachment event]
 ```
 
 ```mermaid
 sequenceDiagram
     participant U as User
+    participant C as Issue Composer
     participant G as Stage DAG editor
     participant O as Orchestration service
     participant A as AI coordinator
     participant B as Task binding
     participant E as Execution service
     participant R as Runtime scheduler
+    participant M as project-space capability
+    participant V as Delivery service
+    participant H as Human review service
     participant D as Issue activity
     participant I as Issue projection
 
-    U->>O: Create an Issue
-    opt Edit the project stage DAG
-        U->>G: Select a stage and insert before or after
-        G->>G: Rewire direct dependencies and migrate edge context
+    U->>C: Enter body and attachments
+    opt Long-form editing is needed
+        U->>C: Expand to the app-fullscreen editor
+    end
+    C->>O: Create the Issue, then upload attachments
+    opt Insert a stage before or after the selected stage
+        U->>G: Click the plus control on a stage handle
+        G->>G: Rewire direct dependencies and migrate their edge context
+    end
+    U->>G: Click Save orchestration
+    G->>O: Update the project Orchestration Definition
+    O-->>G: Return the persisted definition and new project version
+    opt Leave and re-enter Automation
+        G->>O: Read the Orchestration Definition from the project snapshot
+        O-->>G: Restore the saved policy, prompt, and stage DAG
     end
     O->>O: Snapshot policy, prompt, and optional stage DAG
     O->>O: Validate the DAG, edge context contracts, and ready stages
+    U->>O: Drag the Issue from inbox to pending
+    alt No stages and manual advancement
+        O-->>U: Defer the status move and open the new-task Composer
+    else Preset workflow or AI advancement
+        O->>O: Persist pending and enter the configured orchestration
+        O->>E: Preset workflow starts every ready automated stage
+        O->>A: AI advancement starts the configured coordinator
+        Note over O,U: Do not create a blank Runtime Task or open the new-task Composer
+    end
     alt User managed
-        U->>B: Create a concrete task, optionally in a ready stage
+        U->>O: Click New Task in Issue detail
+        O-->>U: Show a blank task conversation in the right sidebar
+        U->>B: Create a concrete task on the first message, optionally in a ready stage
     else AI coordinated
         O->>A: Provide Issue, prompt, stage definition, edge context contracts, and execution truth
         A->>B: Decompose and assign concrete tasks
@@ -68,38 +122,74 @@ sequenceDiagram
         E->>R: Enter the existing capacity queue
     end
     B->>R: Concrete task enters the existing capacity queue
+    B->>R: Carry structured space_id and item_id on every turn
+    R->>M: Enable the stable capability with a ContextGrant
+    M-->>R: Return the Issue description, attachments, and other current context
     R-->>D: Stream progress, terminal result, and delivered assets
     B-->>O: Runtime Task status changes
     E-->>O: Execution status changes
-    O->>O: Aggregate stage tasks and unlock successors
+    opt Human stage declares required deliverables
+        U->>V: Upload and submit deliverables for the node
+        V->>O: Bind delivered Delivery to the workflow node
+    end
+    O->>O: Aggregate stage tasks and required deliverables
+    alt Human-stage review prerequisites are satisfied
+        O-->>U: Move node to awaiting approval
+        U->>H: Approve / reject / force advance
+        H->>O: Record actor, time, reason, and decision
+    end
+    O->>O: Unlock successors only after approval, force advancement, or trusted automated completion
     O->>I: Aggregate all required stages and free tasks
 ```
 
-| Edge                                                  | Code ownership                                                           |
-| ----------------------------------------------------- | ------------------------------------------------------------------------ |
-| Project orchestration definition and Issue snapshot   | Backend workflow schemas/services; Wework Automation DAG UI              |
-| Stage DAG editing and adjacent insertion              | Wework `ProjectWorkflowEditor`; workflow node dependency context          |
-| Dependency edge to successor context                  | Workflow node dependency context; Composer / automation instruction      |
-| User/AI coordination to concrete tasks                | Standard Wework Composer, AI manager, `LoopItemTaskBinding`               |
-| Stage to automated execution                          | `project_automation_execution.py`, `loop_item_executions/service.py`      |
-| Workspace and successor-task inheritance              | Runtime Task summary and Wework project work controls                    |
-| DAG readiness, stage, and Issue aggregation           | Backend workflow service; local ProjectSpace service; live Wework projection |
-| Execution truth to Issue activity                     | Project chat stream, task activity cards, delivery/attachment projection |
+| Edge                                                 | Code ownership                                                                            |
+| ---------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Issue Composer to Issue, draft, and attachments      | Wework `IssueComposer` and ProjectSpace API; compact and fullscreen views share one draft |
+| Stage DAG editing and adjacent insertion             | Wework `ProjectWorkflowEditor`                                                            |
+| Explicit orchestration save and re-entry restoration | Wework `ProjectAutomationView`, `ProjectWorkflowEditor`, and ProjectSpace API             |
+| Project orchestration definition and Issue snapshot  | Backend workflow schemas/services; Wework Automation DAG UI                               |
+| Dependency edge to successor context                 | Workflow node dependency context; Composer / automation instruction                       |
+| User/AI coordination to concrete tasks               | Standard Wework Composer, AI manager, `LoopItemTaskBinding`                               |
+| Issue new/existing task to right-side conversation   | `CloudTodoWorkspace`, `TodoEditor`, `AiChatModal`                                         |
+| Runtime Task binding to stage-status synchronization | `projectSpaceSelection`, `WorkbenchProvider`, and ProjectSpace API                        |
+| Node deliverables to human review and advancement    | Delivery API, workflow decision service, and `IssueWorkflowDag`                           |
+| Issue board entry to manual task or orchestration    | `CloudTodoWorkspace`, `workItemTaskInput`, and the Issue workflow snapshot                |
+| Issue conversation to current project-space context  | Runtime metadata, ContextGrant, bundled `wework-space` Plugin, and Local Gateway          |
+| Stage to automated execution                         | `project_automation_execution.py`, `loop_item_executions/service.py`                      |
+| Workspace and successor-task inheritance             | Runtime Task summary and Wework project work controls                                     |
+| DAG readiness, stage, and Issue aggregation          | Backend workflow service; local ProjectSpace service; live Wework projection              |
+| Execution truth to Issue activity                    | Project chat stream, task activity cards, delivery/attachment projection                  |
 
 Invariants:
 
 - `LoopItem` is the Issue and business aggregate, not one execution.
+- The compact and app-fullscreen Issue creation views must edit the same body and staged attachments. Switching views must not recreate the draft, duplicate uploads, or change the create-Issue/create-task semantics.
+- The app-fullscreen editor must cover both the left project list and right task area of the current board workspace, preserve the top-level 38px tab/title chrome, and keep the standard content inset below and around that chrome.
+- The app-fullscreen collapse and close actions must be grouped on the right side of its header. The body and attachment area must use the available width with only standard page gutters instead of a fixed narrow width that creates unused space.
+- Issue text drafts persist per target project space and creation mode, while staged `File` objects remain in process memory. Ordinary close preserves the draft; only successful creation or explicit discard removes it.
+- Issue creation exposes no separate title field. Both compact and app-fullscreen views must derive the title from the body through the existing default rule. Attachments continue through the existing ProjectSpace attachment API after Issue creation.
 - A Stage / Node / Milestone is a logical task category and dependency node, not an execution and not an executor type.
 - Wework Runtime Tasks, Wegent Tasks, and `LoopItemExecution` remain the concrete task and execution truths. Stages only reference them and never duplicate state, directories, worktrees, branches, or queue fields.
 - The stage DAG and advancement policy are orthogonal. User management and AI coordination both work with or without stages.
 - A dependency edge is both a readiness constraint and a context contract from the predecessor stage to the successor. Core Issue context is always included; the edge controls whether predecessor final results, delivered assets, and execution activity are added.
 - Edge context policy is stored as the successor node's input declaration for a direct predecessor. Removing a dependency must remove its policy as well.
-- Inserting before a stage transfers its incoming dependencies and edge-context declarations to the new stage, then makes the selected stage depend on it. Inserting after a stage places the new stage between it and every direct successor, preserving each successor's edge-context declaration.
+- Inserting a stage before or after another stage must rewire every direct dependency in that direction and migrate each replaced edge's context policy to the semantically equivalent new edge. It must not drop branches, leave orphaned context, or introduce a cycle.
+- Orchestration editing is a local draft and is written to the project only after the user invokes a clearly visible Save orchestration primary action. A successful save must adopt the definition and project version returned by the service, and re-entering the page must fully restore the persisted project definition.
 - AI advances an Issue only by creating, assigning, and starting concrete tasks. With stages, every AI-created task belongs to a stage and follows its dependencies. Without stages, AI may decompose work from the Issue and prompt.
+- When an Issue is dragged from Inbox to Pending, task entry must read that Issue's orchestration snapshot. Only no stages plus manual advancement is self-managed and therefore defers the move to open the new-task Composer. A preset workflow must persist Pending and start every ready automated stage; AI advancement must start the coordinator bound by the snapshot. Neither path may open the new-task Composer or create a blank Runtime Task merely to bypass it, and repeated entry must not create duplicate runs for the same stage or AI coordinator.
+- Human stages in a preset workflow start only through an explicit user action. Issue detail must expose every ready human stage as a primary action outside the zoomable graph, label it as human execution, and provide Start work; the graph is structure and progress, never the only action entry. Start work opens the task Composer bound to that stage, and still creates no blank Runtime Task before the first message.
+- After a Runtime Task is created for a human stage, the first persistent action is only `LoopItemTaskBinding`. Runtime Task cloud context must expose that binding's `workflow_node_id`, and binding completion must replay the known Runtime lifecycle. The UI must not represent the human task as a queued `LoopItemExecution` or invent Queued/In Progress before Runtime confirms running.
+- The human-stage state machine is `blocked → ready → running → awaiting_approval → completed`. Rejection enters `changes_requested` and keeps the original task continuable; force advancement enters `forced_completed`. `queued` is reserved for an existing automated execution waiting for Runtime capacity and must never describe an unstarted human stage.
+- A node may declare zero or more required deliverables. The task Composer and Issue detail must show those requirements and how to upload them. A submitted Delivery must resolve through its source TaskBinding to exactly one `workflow_node_id`. Approval is forbidden while required deliverables are missing, while an authorized user may force advancement with a non-empty reason.
+- Once all human tasks succeed and required deliverables are submitted, the node enters `awaiting_approval`; it does not complete automatically. Only approval or force advancement unlocks successors. Rejection preserves tasks, deliverables, and prior decisions instead of rolling them back or overwriting audit history.
+- Every node decision records action, actor user id, reason, and timestamp. Force advancement requires a non-empty reason; approval may include a note; rejection requires a reason.
+- Issue detail must expose stable entries for task re-entry, deliverable upload, approval, rejection, and force advancement. A stage task row remains reopenable after the right-side conversation is closed.
+- New Task in Issue detail only opens a blank Composer in the same right sidebar used by existing task conversations. No Runtime Task or `LoopItemTaskBinding` exists before the first message is sent.
+- Every Runtime turn started or continued from an Issue carries structured `space_id` and `item_id` and converts them into a session-isolated ContextGrant. The Runtime must not inject a complete MCP Server definition per task or rely only on natural-language prompts or `cloud://` text detection. See [Project-space Agent capability](project-space-agent-capability.md) for the capability lifecycle.
 - One Issue may bind multiple heterogeneous tasks, and one stage may aggregate multiple concrete tasks. Tasks remain discoverable in Wework's task list.
 - Stage automation controls when and how a concrete execution is created or started; it is not an entity type parallel to Task.
 - `inherit` reads a confirmed workspace/worktree/branch only from an explicit predecessor Runtime Task. Without an inheritable source, the standard Composer must request a selection instead of guessing.
 - Queued, approval-pending, and dependency-blocked work projects to Pending. Only Runtime-confirmed running work projects to In Progress.
-- A stage completes from the trusted terminal state of all required tasks/executions in that stage. An Issue completes from all required stages and free tasks. Completing one task cannot complete a stage or Issue with remaining work.
+- An automated stage completes from the trusted terminal state of its executions. A human stage additionally requires approval or force advancement. An Issue completes from all required stages and free tasks. Completing one task or delivery cannot complete a stage or Issue with unreviewed work.
 - The DAG must be acyclic. A referenced stage must exist, dependencies must be satisfied before a stage starts, edge context may reference direct predecessors only, and the UI must never write running directly.
 - Issue Activity is the unified execution projection. Streaming cards show compact Runtime truth, completed cards show a final-content summary, and attachment events reference real delivery assets.

@@ -12,6 +12,7 @@ sidebar_position: 1
 | 自定义 AI 调度员评论续聊    | [automation-manager-continuation.md](automation-manager-continuation.md) | 评论身份、execution 绑定、runtime 会话续聊、任务状态隔离 |
 | 内置浏览器导航与多标签      | [embedded-browser.md](embedded-browser.md)               | bridge 路由、pending open、WebView 生命周期、导航完成、多标签 E2E |
 | Issue、任务与工作流编排     | [issue-task-workflow.md](issue-task-workflow.md)         | Issue 聚合、任务绑定、工作空间继承、DAG 就绪判断、状态聚合         |
+| 项目空间 Agent 能力         | [project-space-agent-capability.md](project-space-agent-capability.md) | 本地 Gateway、ContextGrant、Codex Plugin、离线 Provider、MCP 生命周期 |
 | 项目执行状态与 Runtime 容量 | [project-execution-state.md](project-execution-state.md) | claim、事件顺序、取消、重试、lease、并发容量、UI 投影             |
 
 详细产品说明继续放在原开发指南；本目录只保存可评审的架构真值。

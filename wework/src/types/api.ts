@@ -667,6 +667,8 @@ export interface RuntimeSendRequest {
   attachmentIds?: number[]
   attachments?: Attachment[]
   source?: RuntimeMessageSource | null
+  cloudProjectId?: string
+  origin?: RuntimeTaskCreateRequest['origin']
   requestUserInputResponse?: RequestUserInputResponse
   request_user_input_response?: RequestUserInputResponse
   additionalContext?: RuntimeAdditionalContext

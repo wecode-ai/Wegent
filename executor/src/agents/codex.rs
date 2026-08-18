@@ -1471,7 +1471,9 @@ async fn run_codex_app_server_turn_on_shared_client(
             if let Some(callback) = active_turn_started.as_ref() {
                 callback(thread_id.clone(), turn_id.clone());
             }
-            if !request.mcp_servers.is_empty() {
+            if !request.mcp_servers.is_empty()
+                || crate::task_runtime::mcp::space_capability_enabled(request)
+            {
                 let inventory_client = client.clone();
                 let inventory_request = request.clone();
                 let inventory_thread_id = thread_id.clone();
@@ -1569,6 +1571,23 @@ async fn log_codex_mcp_inventory(
     .await;
     match response {
         Ok(Ok(response)) => {
+            if crate::task_runtime::mcp::space_capability_enabled(request) {
+                let mut fields = task_fields(&request.task_id, &request.subtask_id);
+                fields.push(("thread_id", thread_id.to_owned()));
+                match validate_project_space_capability_inventory(&response) {
+                    Ok(tool_count) => {
+                        fields.push(("tool_count", tool_count.to_string()));
+                        log_executor_event("codex project-space capability ready", &fields);
+                    }
+                    Err(error) => {
+                        fields.push(("error", error));
+                        log_executor_event(
+                            "codex project-space capability diagnostic failed",
+                            &fields,
+                        );
+                    }
+                }
+            }
             let inventories = mcp_inventory_diagnostic_fields(&response);
             if inventories.is_empty() {
                 let mut fields = task_fields(&request.task_id, &request.subtask_id);
@@ -1603,6 +1622,35 @@ async fn log_codex_mcp_inventory(
             log_executor_event("codex MCP inventory timed out", &fields);
         }
     }
+}
+
+fn validate_project_space_capability_inventory(response: &Value) -> Result<usize, String> {
+    let server = response
+        .get("data")
+        .and_then(Value::as_array)
+        .and_then(|servers| {
+            servers.iter().find(|server| {
+                server.get("name").and_then(Value::as_str)
+                    == Some(crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME)
+            })
+        })
+        .ok_or_else(|| "Required project-space capability is unavailable".to_owned())?;
+    let tools = server
+        .get("tools")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "Required project-space capability exposed no tools".to_owned())?;
+    for required in ["get_current_context", "read_item_attachment"] {
+        if !tools.contains_key(required)
+            && !tools
+                .values()
+                .any(|tool| tool.get("name").and_then(Value::as_str) == Some(required))
+        {
+            return Err(format!(
+                "Required project-space capability is missing tool {required}"
+            ));
+        }
+    }
+    Ok(tools.len())
 }
 
 fn mcp_inventory_diagnostic_fields(response: &Value) -> Vec<Vec<(&'static str, String)>> {
@@ -2879,6 +2927,9 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchCo
         .extend(cdp_browser_mcp_config_overrides(request));
     launch_config
         .config_overrides
+        .extend(project_space_mcp_config_overrides(request));
+    launch_config
+        .config_overrides
         .extend(runtime_capabilities::request_mcp_config_overrides(request));
 
     Ok(launch_config)
@@ -3692,6 +3743,78 @@ fn cdp_browser_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String> {
         }
     }
 
+    overrides
+}
+
+fn project_space_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String> {
+    let server_name = crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME;
+    let key = toml_key_path(&["mcp_servers", server_name]);
+    let Some(grant) = crate::task_runtime::mcp::encoded_space_context_grant(request) else {
+        return vec![format!("{key}.enabled=false")];
+    };
+    let command = env::current_exe()
+        .unwrap_or_else(|_| executor_home().join("bin/wegent-executor"))
+        .display()
+        .to_string();
+    let mut overrides = vec![
+        format!("{key}.enabled=true"),
+        format!("{key}.command={}", toml_value(&command)),
+        format!(
+            "{key}.args={}",
+            toml_json_value(&json!(["space-mcp-server"]))
+        ),
+        format!("{key}.startup_timeout_sec=15"),
+        format!("{key}.tool_timeout_sec=60"),
+        format!(
+            "{key}.default_tools_approval_mode={}",
+            toml_value("approve")
+        ),
+        format!(
+            "{}={}",
+            toml_key_path(&[
+                "mcp_servers",
+                server_name,
+                "env",
+                crate::task_runtime::mcp::SPACE_CONTEXT_GRANT_ENV,
+            ]),
+            toml_value(&grant)
+        ),
+    ];
+    let backend_url = request
+        .backend_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| env::var("WEGENT_BACKEND_URL").ok())
+        .filter(|value| !value.trim().is_empty());
+    if let Some(backend_url) = backend_url {
+        overrides.push(format!(
+            "{}={}",
+            toml_key_path(&[
+                "mcp_servers",
+                server_name,
+                "env",
+                "WEWORK_SPACE_BACKEND_URL",
+            ]),
+            toml_value(backend_url.trim())
+        ));
+    }
+    let auth_token = request
+        .auth_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| env::var("WEGENT_AUTH_TOKEN").ok())
+        .filter(|value| !value.trim().is_empty());
+    if let Some(auth_token) = auth_token {
+        overrides.push(format!(
+            "{}={}",
+            toml_key_path(&["mcp_servers", server_name, "env", "WEWORK_SPACE_AUTH_TOKEN",]),
+            toml_value(auth_token.trim())
+        ));
+    }
     overrides
 }
 
@@ -4552,21 +4675,12 @@ fn insert_codex_developer_instructions(
     let instructions = codex_thread_developer_instructions(
         &launch_config.user_developer_instructions,
         &request.system_prompt,
-        request_has_mcp_server(request, "wework_space"),
+        crate::task_runtime::mcp::space_capability_enabled(request),
     );
     params.insert(
         "developerInstructions".to_owned(),
         Value::String(instructions),
     );
-}
-
-fn request_has_mcp_server(request: &ExecutionRequest, name: &str) -> bool {
-    request.mcp_servers.iter().any(|server| {
-        server
-            .get("name")
-            .and_then(Value::as_str)
-            .is_some_and(|server_name| server_name == name)
-    })
 }
 
 fn append_thread_launch_params(

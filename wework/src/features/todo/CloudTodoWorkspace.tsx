@@ -78,6 +78,7 @@ import { ProjectAutomationView } from './ProjectAutomationView'
 import { ProjectSpaceSettings } from './ProjectSpaceSettings'
 import {
   type LocatedProjectSpace,
+  publishProjectSpaceTaskBindingChanged,
   projectSpaceKey,
   projectSpaceRef,
   projectSupportsRobotAutomation,
@@ -103,7 +104,9 @@ import { AiChatModal } from './AiChatModal'
 import {
   shouldDeferWorkItemMoveUntilTaskCreated,
   shouldPrepareWorkItemTask,
+  shouldRevealWorkItemWorkflowActions,
   workItemTaskInput,
+  workflowStageTaskInput,
 } from './workItemTaskInput'
 
 type ProjectView = 'board' | 'table' | 'files' | 'automation' | 'manage'
@@ -2074,6 +2077,14 @@ export function CloudTodoWorkspace({
           initialInput: workItemTaskInput(locatedUpdated),
           autoSubmit: column.status === 'in_progress',
         })
+      } else if (
+        nativeGroupBy === 'status' &&
+        column.status === 'pending' &&
+        shouldRevealWorkItemWorkflowActions(item, column.status) &&
+        locatedUpdated.can_view_detail !== false
+      ) {
+        setSelectedTaskBinding(null)
+        setSelectedItem(locatedUpdated)
       }
       track('board_item_moved', {
         group_by: nativeGroupBy,
@@ -3464,9 +3475,7 @@ export function CloudTodoWorkspace({
               }
               setTaskComposerRequest({
                 workItemId: selectedItem.id,
-                initialInput:
-                  selectedItem.workflow?.nodes.find(node => node.id === workflowNodeId)?.prompt ??
-                  '',
+                initialInput: workflowNode ? workflowStageTaskInput(workflowNode) : '',
                 autoSubmit: false,
                 workflowNodeId,
                 inheritFromTask,
@@ -3494,6 +3503,61 @@ export function CloudTodoWorkspace({
                   setSelectedItem(locatedUpdated)
                 })
                 .catch(() => setBoardRefreshNonce(value => value + 1))
+            }}
+            onUploadWorkflowDeliverables={async (workflowNodeId, files) => {
+              const bindings = await selectedItemApi.listTaskBindings(selectedItem.id)
+              const source = bindings
+                .filter(binding => binding.workflow_node_id === workflowNodeId)
+                .at(-1)
+              if (!source) throw new Error('请先为当前阶段创建任务')
+              const stage = selectedItem.workflow?.nodes.find(node => node.id === workflowNodeId)
+              const delivery = await selectedItemApi.createDelivery(selectedItem.id, {
+                markdown: [
+                  `# ${stage?.name ?? workflowNodeId} 阶段交付物`,
+                  ...(stage?.required_deliverables ?? []).map(requirement => `- ${requirement}`),
+                ].join('\n'),
+                source_task: {
+                  deviceId: source.device_id,
+                  taskId: source.task_id,
+                },
+              })
+              try {
+                for (const file of files) {
+                  await selectedItemApi.addAsset(delivery.id, file, file.name)
+                }
+                await selectedItemApi.finalizeDelivery(delivery.id)
+              } catch (error) {
+                await selectedItemApi.discardDraft(delivery.id).catch(() => undefined)
+                throw error
+              }
+              const updated = await selectedItemApi.getLoopItem(selectedItem.id)
+              const locatedUpdated = {
+                ...updated,
+                project_store: selectedItem.project_store,
+              }
+              setItems(current =>
+                current.map(item => (item.id === locatedUpdated.id ? locatedUpdated : item))
+              )
+              setSelectedItem(locatedUpdated)
+              setBoardRefreshNonce(value => value + 1)
+            }}
+            onDecideWorkflowNode={async (workflowNodeId, action, reason) => {
+              const updated = await selectedItemApi.decideWorkflowNode(
+                selectedItem.id,
+                workflowNodeId,
+                action,
+                reason,
+                Number(user.id)
+              )
+              const locatedUpdated = {
+                ...updated,
+                project_store: selectedItem.project_store,
+              }
+              setItems(current =>
+                current.map(item => (item.id === locatedUpdated.id ? locatedUpdated : item))
+              )
+              setSelectedItem(locatedUpdated)
+              setBoardRefreshNonce(value => value + 1)
             }}
             onClose={() => {
               setSelectedItem(null)
@@ -3600,6 +3664,7 @@ export function CloudTodoWorkspace({
                     ? taskComposerRequest.workflowNodeId
                     : undefined
                 await itemApi.bindTask(latest.id, address, latest.title, workflowNodeId)
+                publishProjectSpaceTaskBindingChanged(address)
                 const associatedTags =
                   isMyTasksBoard && localProject
                     ? associateLoopItemTags(latest, localProject)
@@ -3607,35 +3672,12 @@ export function CloudTodoWorkspace({
                 const associationChanged =
                   associatedTags.length !== latest.tags.length ||
                   associatedTags.some((tag, index) => tag !== latest.tags[index])
-                const workflow =
-                  workflowNodeId && latest.workflow
-                    ? {
-                        ...latest.workflow,
-                        version: latest.workflow.version + 1,
-                        nodes: latest.workflow.nodes.map(node =>
-                          node.id === workflowNodeId
-                            ? {
-                                ...node,
-                                status: 'queued' as const,
-                                task_ids: Array.from(
-                                  new Set([
-                                    ...(node.task_ids ?? []),
-                                    `${address.deviceId}:${address.taskId}`,
-                                  ])
-                                ),
-                              }
-                            : node
-                        ),
-                      }
-                    : latest.workflow
-                const workflowChanged = workflow !== latest.workflow
                 const updated =
-                  latest.status === 'inbox' || associationChanged || workflowChanged
+                  latest.status === 'inbox' || associationChanged
                     ? await itemApi.updateLoopItem(latest.id, {
                         version: latest.version,
                         ...(latest.status === 'inbox' ? { status: 'pending' } : {}),
                         ...(associationChanged ? { tags: associatedTags } : {}),
-                        ...(workflowChanged ? { workflow } : {}),
                       })
                     : latest
                 const locatedUpdated = {

@@ -147,6 +147,18 @@ const robot: ProjectChatAgent = {
 }
 
 describe('ProjectWorkflowEditor', () => {
+  test('renders the save action with the visible Wework primary color', () => {
+    render(
+      <ProjectWorkflowEditor value={workflow} busy={false} onChange={vi.fn()} onSave={vi.fn()} />
+    )
+
+    expect(screen.getByTestId('project-workflow-save')).toHaveClass(
+      'bg-text-primary',
+      'text-background'
+    )
+    expect(screen.getByTestId('project-workflow-save')).not.toHaveClass('bg-foreground')
+  })
+
   test('shows a compact graph and edits the selected stage in the inspector', () => {
     const onChange = vi.fn()
     render(

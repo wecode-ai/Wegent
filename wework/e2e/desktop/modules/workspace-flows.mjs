@@ -364,18 +364,57 @@ async function verifyWorkspaceIssueCreation(control) {
   })
   await control.command('click', '[data-testid="workspace-create-issue-tab"]')
   await control.command('click', '[data-testid="workspace-issue-expand"]')
-  await control.command('waitFor', '[data-testid="workspace-issue-title"]', {
+  await control.command('waitFor', '[data-testid="workspace-issue-description"]', {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('fill', '[data-testid="workspace-issue-title"]', {
-    value: 'WEWORK_DESKTOP_E2E_ISSUE',
+  const expandedPanelClass =
+    (await control.command('getAttribute', '[data-testid="workspace-issue-composer-panel"]', {
+      value: 'class',
+    })) ?? ''
+  assert.ok(
+    expandedPanelClass.includes('fixed') &&
+      expandedPanelClass.includes('left-4') &&
+      expandedPanelClass.includes('right-4') &&
+      expandedPanelClass.includes('bottom-4') &&
+      expandedPanelClass.includes('w-auto'),
+    `Expanded Issue editor must cover the complete board workspace with outer margins: ${expandedPanelClass}`
+  )
+  assert.ok(
+    expandedPanelClass.includes('top-[54px]') &&
+      !expandedPanelClass.includes('inset-0') &&
+      !expandedPanelClass.includes('top-4'),
+    `Expanded Issue editor must preserve the 38px app tab chrome plus a 16px margin: ${expandedPanelClass}`
+  )
+  const editorBodyClass =
+    (await control.command('getAttribute', '[data-testid="workspace-issue-editor-body"]', {
+      value: 'class',
+    })) ?? ''
+  assert.ok(
+    editorBodyClass.includes('w-full') &&
+      editorBodyClass.includes('px-6') &&
+      !editorBodyClass.includes('max-w-[960px]'),
+    `Expanded Issue content must use the available width with standard gutters: ${editorBodyClass}`
+  )
+  await control.command('waitFor', '[data-testid="workspace-issue-header-actions"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('fill', '[data-testid="workspace-issue-description"]', {
-    value: 'Workspace fullscreen issue creation verified',
+    value: 'WEWORK_DESKTOP_E2E_ISSUE\nWorkspace fullscreen issue creation verified',
+  })
+  await control.command('waitFor', '[data-testid="workspace-issue-draft-status"]', {
+    text: '草稿已自动保存',
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await captureVerificationScreenshot(control, 'workspace-issue-01-ready.png')
-  await control.command('click', '[data-testid="workspace-issue-collapse"]')
+  await control.command('click', '[data-testid="workspace-issue-close"]')
+  await control.command('waitFor', '[data-testid="workspace-issue-composer"]', {
+    visible: false,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', `${boardContentSelector} [data-testid="cloud-create-issue"]`)
   await control.command('waitFor', '[data-testid="workspace-issue-input"]', {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -383,22 +422,16 @@ async function verifyWorkspaceIssueCreation(control) {
   await control.command('click', '[data-testid="workspace-issue-expand"]')
   await waitForControlValue(
     control,
-    '[data-testid="workspace-issue-title"]',
-    'WEWORK_DESKTOP_E2E_ISSUE',
-    'Fullscreen Issue title did not survive collapsing and reopening'
-  )
-  await waitForControlValue(
-    control,
     '[data-testid="workspace-issue-description"]',
-    'Workspace fullscreen issue creation verified',
-    'Fullscreen Issue content did not survive collapsing and reopening'
+    'WEWORK_DESKTOP_E2E_ISSUE\nWorkspace fullscreen issue creation verified',
+    'Fullscreen Issue content did not survive closing and reopening'
   )
   await control.command('click', '[data-testid="workspace-issue-fullscreen-submit"]')
   await control.command(
     'waitFor',
     `${boardContentSelector} [data-testid="cloud-todo-detail-title"]`,
     {
-      text: 'WEWORK_DESKTOP_E2E_ISSUE',
+      text: 'WEWORK_DESKTOP_E2E_ISSUE Workspace fullscreen issue creation verified',
       visible: true,
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
@@ -408,6 +441,29 @@ async function verifyWorkspaceIssueCreation(control) {
     'workspace-issue-02-created.png',
     boardContentSelector
   )
+  await control.command('click', `${boardContentSelector} [data-testid="cloud-todo-create-task"]`)
+  await control.command(
+    'waitFor',
+    `${boardContentSelector} [data-testid="ai-chat-modal-backdrop"][data-presentation="sidebar"]`,
+    {
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  await control.command(
+    'waitFor',
+    `${boardContentSelector} [data-testid="work-item-new-task-chat-panel"]`,
+    {
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  await captureVerificationScreenshot(
+    control,
+    'workspace-issue-03-new-task-sidebar.png',
+    boardContentSelector
+  )
+  await control.command('click', `${boardContentSelector} [data-testid="ai-chat-modal-close"]`)
 
   await control.command('click', `${boardContentSelector} [data-testid="cloud-todo-detail-close"]`)
   await control.command('click', boardTabSelector)
@@ -426,7 +482,7 @@ async function verifyWorkspaceIssueCreation(control) {
   )
   await captureVerificationScreenshot(
     control,
-    'workspace-issue-03-on-board.png',
+    'workspace-issue-04-on-board.png',
     boardContentSelector
   )
 }

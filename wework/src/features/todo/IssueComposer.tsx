@@ -40,6 +40,48 @@ interface StagedIssueAttachment {
   file: File
 }
 
+interface IssueComposerDraft {
+  boardKey: string
+  content: string
+  creationMode: 'issue' | 'task'
+  localProjectId: number | null
+}
+
+const issueDraftAttachmentStore = new Map<string, File[]>()
+
+function issueComposerDraftKey(
+  boardKey: string,
+  initialMode: IssueComposerDraft['creationMode']
+): string {
+  return `wework-issue-composer-draft:${boardKey}:${initialMode}`
+}
+
+function readIssueComposerDraft(key: string): IssueComposerDraft | null {
+  try {
+    const raw = localStorage.getItem(key)
+    if (!raw) {
+      issueDraftAttachmentStore.delete(key)
+      return null
+    }
+    const parsed = JSON.parse(raw) as Partial<IssueComposerDraft>
+    if (
+      typeof parsed.boardKey !== 'string' ||
+      typeof parsed.content !== 'string' ||
+      (parsed.creationMode !== 'issue' && parsed.creationMode !== 'task')
+    ) {
+      return null
+    }
+    return {
+      boardKey: parsed.boardKey,
+      content: parsed.content,
+      creationMode: parsed.creationMode,
+      localProjectId: typeof parsed.localProjectId === 'number' ? parsed.localProjectId : null,
+    }
+  } catch {
+    return null
+  }
+}
+
 function attachmentFromFile(file: File, id: number): Attachment {
   const extension = file.name.includes('.') ? (file.name.split('.').pop() ?? '') : ''
   return {
@@ -73,16 +115,20 @@ export function IssueComposer({
 }: IssueComposerProps) {
   const { t } = useTranslation()
   const workbench = useContext(WorkbenchPaneContext)
-  const [boardKey, setBoardKey] = useState(initialBoardKey)
-  const [content, setContent] = useState(initialContent)
-  const [title, setTitle] = useState('')
-  const [titleCustomized, setTitleCustomized] = useState(false)
+  const initialMode = initialStartExecution ? 'task' : 'issue'
+  const draftKey = issueComposerDraftKey(initialBoardKey, initialMode)
+  const [draft] = useState(() => (initialContent.trim() ? null : readIssueComposerDraft(draftKey)))
+  const [restoredFiles] = useState(() =>
+    draft ? (issueDraftAttachmentStore.get(draftKey) ?? []) : []
+  )
+  const [boardKey, setBoardKey] = useState(draft?.boardKey ?? initialBoardKey)
+  const [content, setContent] = useState(initialContent || draft?.content || '')
   const [fullScreen, setFullScreen] = useState(false)
   const [creationMode, setCreationMode] = useState<'issue' | 'task'>(
-    initialStartExecution ? 'task' : 'issue'
+    draft?.creationMode ?? initialMode
   )
   const [localProjectId, setLocalProjectId] = useState<number | null>(
-    initialLocalProjectId ?? localProjects[0]?.id ?? null
+    draft?.localProjectId ?? initialLocalProjectId ?? localProjects[0]?.id ?? null
   )
   const selectedLocalProject = localProjects.find(project => project.id === localProjectId) ?? null
   const selectedWorkItemProject =
@@ -105,9 +151,14 @@ export function IssueComposer({
     chats: [],
     totalTasks: 0,
   }
-  const [stagedAttachments, setStagedAttachments] = useState<StagedIssueAttachment[]>([])
+  const [stagedAttachments, setStagedAttachments] = useState<StagedIssueAttachment[]>(() =>
+    restoredFiles.map((file, index) => ({
+      attachment: attachmentFromFile(file, -(index + 1)),
+      file,
+    }))
+  )
   const stagedAttachmentsRef = useRef(stagedAttachments)
-  const nextAttachmentId = useRef(-1)
+  const nextAttachmentId = useRef(-(restoredFiles.length + 1))
   const panelRef = useRef<HTMLElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
@@ -135,6 +186,31 @@ export function IssueComposer({
     },
     []
   )
+
+  const hasDraft = Boolean(content.trim()) || stagedAttachments.length > 0
+
+  useEffect(() => {
+    if (!hasDraft) {
+      localStorage.removeItem(draftKey)
+      issueDraftAttachmentStore.delete(draftKey)
+      return
+    }
+    const snapshot: IssueComposerDraft = {
+      boardKey,
+      content,
+      creationMode,
+      localProjectId,
+    }
+    localStorage.setItem(draftKey, JSON.stringify(snapshot))
+    if (stagedAttachments.length > 0) {
+      issueDraftAttachmentStore.set(
+        draftKey,
+        stagedAttachments.map(item => item.file)
+      )
+    } else {
+      issueDraftAttachmentStore.delete(draftKey)
+    }
+  }, [boardKey, content, creationMode, draftKey, hasDraft, localProjectId, stagedAttachments])
 
   useEffect(() => {
     if (presentation !== 'popup') return
@@ -171,6 +247,13 @@ export function IssueComposer({
       })
     )
   }
+  const clearDraft = () => {
+    stagedAttachments.forEach(item => releaseAttachmentPreview(item.attachment))
+    localStorage.removeItem(draftKey)
+    issueDraftAttachmentStore.delete(draftKey)
+    setContent('')
+    setStagedAttachments([])
+  }
   const projectChat: ProjectChatControls = {
     ...(workbench?.projectChat ?? {
       models: [],
@@ -193,18 +276,20 @@ export function IssueComposer({
   }
   const submit = async (submittedContent?: string) => {
     const description = (submittedContent ?? content).trim()
-    const resolvedTitle = titleCustomized ? title.trim() : issueDraftFromText(description).title
-    const submittedDraft = resolvedTitle
-      ? { title: resolvedTitle, description }
-      : issueDraftFromText(description)
+    const submittedDraft = issueDraftFromText(description)
     if (!boardKey || !submittedDraft.title || busy) return false
-    return onCreate({
+    const created = await onCreate({
       boardKey,
       ...submittedDraft,
       files: stagedAttachments.map(item => item.file),
       createTask: creationMode === 'task',
       localProjectId: creationMode === 'task' ? localProjectId : null,
     })
+    if (created !== false) {
+      localStorage.removeItem(draftKey)
+      issueDraftAttachmentStore.delete(draftKey)
+    }
+    return created
   }
   const fallbackProjectWork: ProjectWorkControls | undefined =
     localProjects.length > 0
@@ -265,21 +350,21 @@ export function IssueComposer({
       }
     />
   )
-  const resolvedTitle = titleCustomized ? title : issueDraftFromText(content).title
 
   return (
     <div
       data-testid="workspace-issue-composer"
       onClick={event => {
-        if (presentation === 'popup' && event.target === event.currentTarget) {
+        if (presentation === 'popup' && !fullScreen && event.target === event.currentTarget) {
           onCancel()
         }
       }}
       className={cn(
         'flex min-h-0 flex-1 items-center justify-center overflow-y-auto px-6 py-10',
         presentation === 'popup' &&
+          !fullScreen &&
           'fixed inset-0 z-modal bg-black/30 px-6 py-10 backdrop-blur-[2px]',
-        fullScreen && 'overflow-hidden p-0'
+        fullScreen && 'overflow-hidden'
       )}
     >
       <section
@@ -312,58 +397,53 @@ export function IssueComposer({
         className={cn(
           'w-full max-w-[760px]',
           presentation === 'popup' &&
+            !fullScreen &&
             'max-h-full overflow-y-auto rounded-2xl border border-border bg-background p-6 shadow-2xl',
           fullScreen &&
-            'fixed inset-0 z-modal flex max-h-none max-w-none flex-col overflow-hidden rounded-none border-0 bg-background p-0 shadow-none'
+            'fixed bottom-4 left-4 right-4 top-[54px] z-modal flex w-auto max-h-none max-w-none flex-col overflow-hidden rounded-2xl border border-border bg-background p-0 shadow-xl'
         )}
       >
         {fullScreen ? (
           <>
-            <header className="flex h-12 shrink-0 items-center justify-between border-b border-border px-4">
-              <button
-                type="button"
-                data-testid="workspace-issue-collapse"
-                onClick={() => setFullScreen(false)}
-                className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary"
-                aria-label={t('todo.collapse_issue_editor', '收起编辑器')}
-              >
-                <Minimize2 className="h-4 w-4" />
-              </button>
+            <header className="flex h-12 shrink-0 items-center justify-between px-4">
               <span className="text-sm font-medium text-text-primary">
                 {t('todo.new_issue', '新建 Issue')}
               </span>
-              <button
-                type="button"
-                data-testid="workspace-issue-close"
-                onClick={onCancel}
-                className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary"
-                aria-label={t('common.close', '关闭')}
+              <div
+                data-testid="workspace-issue-header-actions"
+                className="ml-auto flex items-center gap-1"
               >
-                <X className="h-4 w-4" />
-              </button>
+                <button
+                  type="button"
+                  data-testid="workspace-issue-collapse"
+                  onClick={() => setFullScreen(false)}
+                  className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary"
+                  aria-label={t('todo.collapse_issue_editor', '收起编辑器')}
+                >
+                  <Minimize2 className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  data-testid="workspace-issue-close"
+                  onClick={onCancel}
+                  className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary"
+                  aria-label={t('common.close', '关闭')}
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
             </header>
             <div
-              className="mx-auto flex min-h-0 w-full max-w-[960px] flex-1 flex-col px-8 py-6"
+              data-testid="workspace-issue-editor-body"
+              className="flex min-h-0 w-full flex-1 flex-col px-6 py-4"
               onDragOver={event => event.preventDefault()}
               onDrop={event => {
                 event.preventDefault()
                 stageFiles(Array.from(event.dataTransfer.files))
               }}
             >
-              <input
-                autoFocus
-                data-testid="workspace-issue-title"
-                value={resolvedTitle}
-                maxLength={255}
-                disabled={busy}
-                onChange={event => {
-                  setTitle(event.target.value)
-                  setTitleCustomized(true)
-                }}
-                placeholder={t('todo.issue_title_placeholder', 'Issue 标题')}
-                className="w-full shrink-0 bg-transparent pb-4 text-heading-lg font-medium text-text-primary outline-none placeholder:text-text-muted"
-              />
               <textarea
+                autoFocus
                 data-testid="workspace-issue-description"
                 value={content}
                 disabled={busy}
@@ -414,11 +494,30 @@ export function IssueComposer({
                   <span className="text-xs text-text-muted">
                     {t('todo.issue_drop_files_hint', '支持拖拽、粘贴图片或文件')}
                   </span>
+                  {hasDraft ? (
+                    <>
+                      <span
+                        data-testid="workspace-issue-draft-status"
+                        className="text-xs text-text-muted"
+                      >
+                        {t('todo.issue_draft_saved', '草稿已自动保存')}
+                      </span>
+                      <button
+                        type="button"
+                        data-testid="workspace-issue-clear-draft"
+                        disabled={busy}
+                        onClick={clearDraft}
+                        className="h-8 rounded-lg px-2 text-xs text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-50"
+                      >
+                        {t('todo.clear_issue_draft', '清除草稿')}
+                      </button>
+                    </>
+                  ) : null}
                 </div>
                 <button
                   type="button"
                   data-testid="workspace-issue-fullscreen-submit"
-                  disabled={busy || !boardKey || !resolvedTitle.trim()}
+                  disabled={busy || !boardKey || !issueDraftFromText(content).title}
                   onClick={() => void submit()}
                   className="flex h-9 items-center gap-2 rounded-lg bg-text-primary px-4 text-sm font-medium text-background hover:opacity-90 disabled:opacity-40"
                 >
@@ -490,6 +589,25 @@ export function IssueComposer({
             ) : (
               renderComposer(fallbackProjectWork)
             )}
+            {hasDraft ? (
+              <div className="mt-2 flex items-center justify-end gap-2">
+                <span
+                  data-testid="workspace-issue-draft-status"
+                  className="text-xs text-text-muted"
+                >
+                  {t('todo.issue_draft_saved', '草稿已自动保存')}
+                </span>
+                <button
+                  type="button"
+                  data-testid="workspace-issue-clear-draft"
+                  disabled={busy}
+                  onClick={clearDraft}
+                  className="h-7 rounded-lg px-2 text-xs text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-50"
+                >
+                  {t('todo.clear_issue_draft', '清除草稿')}
+                </button>
+              </div>
+            ) : null}
           </>
         )}
       </section>

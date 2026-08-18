@@ -104,6 +104,7 @@ function createStage(
     depends_on: dependsOn,
     dependency_context: dependencyContexts,
     required: true,
+    required_deliverables: [],
     workspace_policy: dependsOn.length ? 'inherit' : 'composer',
     automation_rule_id: null,
   }
@@ -694,7 +695,7 @@ export function ProjectWorkflowEditor({
           data-testid="project-workflow-save"
           disabled={busy || !canSave}
           onClick={onSave}
-          className="h-8 rounded-lg bg-foreground px-3 text-sm text-background disabled:opacity-40"
+          className="h-8 rounded-lg bg-text-primary px-3 text-sm font-medium text-background disabled:opacity-40"
         >
           {busy ? t('todo.workflow_saving', '保存中…') : t('todo.workflow_save', '保存编排')}
         </button>
@@ -938,6 +939,32 @@ export function ProjectWorkflowEditor({
                         )}
                         className="mt-1.5 min-h-28 w-full resize-y rounded-lg border border-border bg-background px-2.5 py-2 text-sm outline-none focus:border-blue-500"
                       />
+                    </label>
+                    <label className="mt-4 block text-xs font-medium text-text-secondary">
+                      {t('todo.workflow_stage_deliverables_label', '必要交付物')}
+                      <textarea
+                        value={(selectedNode.required_deliverables ?? []).join('\n')}
+                        data-testid={`project-workflow-stage-deliverables-${selectedNode.id}`}
+                        onChange={event =>
+                          updateNode(selectedNode.id, {
+                            required_deliverables: event.target.value
+                              .split('\n')
+                              .map(value => value.trim())
+                              .filter(Boolean),
+                          })
+                        }
+                        placeholder={t(
+                          'todo.workflow_stage_deliverables_placeholder',
+                          '每行一个，例如：测试报告'
+                        )}
+                        className="mt-1.5 min-h-20 w-full resize-y rounded-lg border border-border bg-background px-2.5 py-2 text-sm outline-none focus:border-blue-500"
+                      />
+                      <span className="mt-1.5 block text-xs font-normal text-text-muted">
+                        {t(
+                          'todo.workflow_stage_deliverables_hint',
+                          '任务完成后上传交付物，经人工批准才会进入下一阶段。'
+                        )}
+                      </span>
                     </label>
                     <fieldset className="mt-4">
                       <legend className="text-xs font-medium text-text-secondary">

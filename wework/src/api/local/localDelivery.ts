@@ -19,7 +19,12 @@ import {
   type DeliveryCreateInput,
   type DeliveryDetail,
 } from '@/api/deliveries'
-import { updateIssueWorkflowForRuntime, workflowBoardStatus } from '@/api/issueWorkflow'
+import {
+  attachIssueWorkflowDelivery,
+  decideIssueWorkflowNode,
+  updateIssueWorkflowForRuntime,
+  workflowBoardStatus,
+} from '@/api/issueWorkflow'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { openLocalFile } from '@/lib/local-terminal'
 import type { RuntimeTaskAddress } from '@/types/api'
@@ -1214,10 +1219,30 @@ export function createLocalDeliveryApi(
     },
     async finalizeDelivery(deliveryId: string) {
       const delivery = await api.getDelivery(deliveryId)
-      return request<Delivery>('deliveries.finalize', {
+      const finalized = await request<Delivery>('deliveries.finalize', {
         item_id: delivery.loop_item_id,
         delivery_id: deliveryId,
       })
+      if (delivery.source_task_binding_id) {
+        const bindings = await api.listTaskBindings(delivery.loop_item_id)
+        const binding = bindings.find(candidate => candidate.id === delivery.source_task_binding_id)
+        if (binding?.workflow_node_id) {
+          const item = await api.getLoopItem(delivery.loop_item_id)
+          if (item.workflow) {
+            const workflow = attachIssueWorkflowDelivery(
+              item.workflow,
+              binding.workflow_node_id,
+              deliveryId
+            )
+            await api.updateLoopItem(item.id, {
+              version: item.version,
+              workflow,
+              status: workflowBoardStatus(workflow),
+            })
+          }
+        }
+      }
+      return finalized
     },
     async discardDraft(deliveryId: string) {
       await request('deliveries.discard', { delivery_id: deliveryId })
@@ -1228,6 +1253,28 @@ export function createLocalDeliveryApi(
     },
     async getDelivery(deliveryId: string) {
       return request<DeliveryDetail>('deliveries.get', { delivery_id: deliveryId })
+    },
+    async decideWorkflowNode(
+      itemId: string,
+      workflowNodeId: string,
+      action: 'approve' | 'reject' | 'force_advance',
+      reason = '',
+      actorUserId?: number
+    ) {
+      const item = await api.getLoopItem(itemId)
+      if (!item.workflow) throw new Error('Issue has no workflow')
+      const workflow = decideIssueWorkflowNode(
+        item.workflow,
+        workflowNodeId,
+        action,
+        actorUserId ?? Number(item.created_by_user_id),
+        reason
+      )
+      return api.updateLoopItem(item.id, {
+        version: item.version,
+        workflow,
+        status: workflowBoardStatus(workflow),
+      })
     },
   }
   return api as unknown as NonNullable<WorkbenchServices['deliveryApi']>

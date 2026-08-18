@@ -352,6 +352,13 @@ export function useWorkbenchRuntimeMessaging({
       let sendRequested = false
       try {
         const outboundRequest = await prepareRuntimeSendRequest(request)
+        logIssueRuntimeContextTrace('pane-send-prepared', {
+          taskId: outboundRequest.address.taskId,
+          deviceId: outboundRequest.address.deviceId,
+          cloudProjectId: outboundRequest.cloudProjectId,
+          origin: outboundRequest.origin,
+          additionalContext: outboundRequest.additionalContext,
+        })
         if (!options?.silentBusyRetry) {
           lifecycleStore.sendRequested(outboundRequest.address)
           sendRequested = true
@@ -1718,6 +1725,12 @@ export function useWorkbenchRuntimeMessaging({
             options: options.executionModel.modelOptions ?? {},
           }
         : options.modelSelection
+      logIssueRuntimeContextTrace('project-task-create-prepared', {
+        deviceId: prepared.activeDeviceId,
+        cloudProjectId: options.cloudProjectId,
+        origin: options.origin,
+        additionalContext: options.additionalContext,
+      })
       return sendPreparedRuntimeMessage(message, payload, prepared.activeDeviceId, {
         ...(options.runtime ? { runtime: options.runtime } : {}),
         initialGoal: options.initialGoal,
@@ -2023,6 +2036,28 @@ function runtimeAddressLog(address: RuntimeTaskAddress): Record<string, unknown>
     hasRuntimeHandle: Boolean(address.runtimeHandle),
     runtimeHandleKeys: address.runtimeHandle ? Object.keys(address.runtimeHandle).sort() : [],
   }
+}
+
+function logIssueRuntimeContextTrace(
+  stage: string,
+  context: {
+    taskId?: string
+    deviceId?: string
+    cloudProjectId?: string
+    origin?: RuntimeTaskCreateRequest['origin']
+    additionalContext?: RuntimeSendRequest['additionalContext']
+  }
+) {
+  if (context.origin?.type !== 'board_task') return
+  console.info('[Wework] Issue runtime context trace', {
+    stage,
+    taskId: context.taskId ?? null,
+    deviceId: context.deviceId ?? null,
+    cloudProjectId: context.cloudProjectId ?? null,
+    originCloudProjectId: context.origin.cloudProjectId,
+    loopItemId: context.origin.loopItemId,
+    additionalContextKeys: Object.keys(context.additionalContext ?? {}).sort(),
+  })
 }
 
 function debugRuntimeCreateFlow(event: string, details: Record<string, unknown>) {

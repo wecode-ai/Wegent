@@ -7,6 +7,46 @@ from sqlalchemy.orm import Session
 
 from app.models.delivery import LoopItem, ProjectAutomationRun
 
+COMPLETED_NODE_STATUSES = {"completed", "forced_completed"}
+
+
+def apply_workflow_nodes(
+    item: LoopItem,
+    *,
+    workflow: dict,
+    nodes: list[dict],
+) -> LoopItem:
+    completed = {
+        str(node.get("id"))
+        for node in nodes
+        if node.get("status") in COMPLETED_NODE_STATUSES and node.get("id")
+    }
+    for node in nodes:
+        dependencies = node.get("depends_on")
+        dependencies = dependencies if isinstance(dependencies, list) else []
+        if node.get("status") == "blocked" and all(
+            str(dependency) in completed for dependency in dependencies
+        ):
+            node["status"] = "ready"
+
+    next_workflow = dict(workflow)
+    next_workflow["version"] = int(workflow.get("version") or 1) + 1
+    next_workflow["nodes"] = nodes
+    metadata = dict(item.metadata_json or {})
+    metadata["workflow"] = next_workflow
+    item.metadata_json = metadata
+    required = [node for node in nodes if node.get("required", True)]
+    if required and all(
+        node.get("status") in COMPLETED_NODE_STATUSES for node in required
+    ):
+        item.status = "in_review"
+    elif any(node.get("status") in {"running", "changes_requested"} for node in nodes):
+        item.status = "in_progress"
+    else:
+        item.status = "pending"
+    item.version += 1
+    return item
+
 
 def update_workflow_node(
     db: Session,
@@ -40,36 +80,9 @@ def update_workflow_node(
                 changed = True
         nodes.append(node)
 
-    completed = {
-        str(node.get("id"))
-        for node in nodes
-        if node.get("status") == "completed" and node.get("id")
-    }
-    for node in nodes:
-        dependencies = node.get("depends_on")
-        dependencies = dependencies if isinstance(dependencies, list) else []
-        if node.get("status") == "blocked" and all(
-            str(dependency) in completed for dependency in dependencies
-        ):
-            node["status"] = "ready"
-            changed = True
-
     if not changed:
         return item
-    next_workflow = dict(workflow)
-    next_workflow["version"] = int(workflow.get("version") or 1) + 1
-    next_workflow["nodes"] = nodes
-    metadata["workflow"] = next_workflow
-    item.metadata_json = metadata
-    required = [node for node in nodes if node.get("required", True)]
-    if required and all(node.get("status") == "completed" for node in required):
-        item.status = "in_review"
-    elif any(node.get("status") == "running" for node in nodes):
-        item.status = "in_progress"
-    else:
-        item.status = "pending"
-    item.version += 1
-    return item
+    return apply_workflow_nodes(item, workflow=workflow, nodes=nodes)
 
 
 def sync_automation_workflow_node(

@@ -490,7 +490,6 @@ impl RuntimeWorkRpcHandler {
             return;
         }
         self.apply_backend_connection(&mut turn.request);
-        crate::task_runtime::mcp::ensure_space_mcp_server(&mut turn.request);
         let SpawnTurnRequest {
             local_task_id,
             runtime: _,
