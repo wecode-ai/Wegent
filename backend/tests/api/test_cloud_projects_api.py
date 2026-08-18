@@ -2107,6 +2107,13 @@ def test_cloud_workspace_file_round_trip(
     ]
     assert accessed.status_code == 200
     assert accessed.json()["url"].endswith("/shared/research/notes.md")
+    read_content = test_client.get(
+        f"/api/v1/cloud-projects/files/{file_id}/content",
+        headers=_auth(test_token),
+    )
+    assert read_content.status_code == 200
+    assert read_content.content == b"# Notes"
+    assert read_content.headers["content-type"].startswith("text/markdown")
 
     moved = test_client.patch(
         f"/api/v1/cloud-projects/files/{folder.json()['id']}",
@@ -2202,3 +2209,10 @@ def test_cloud_workspace_lists_immutable_delivery_files(
     ]
     assert accessed.status_code == 200
     assert accessed.json()["url"].endswith("/snapshot/files/report.pdf")
+    read_content = test_client.get(
+        f"/api/v1/delivery-assets/{asset.id}/content",
+        headers=_auth(test_token),
+    )
+    assert read_content.status_code == 200
+    assert read_content.content == b"report"
+    assert read_content.headers["content-type"] == "application/pdf"
