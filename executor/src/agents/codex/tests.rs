@@ -2843,7 +2843,7 @@ fn codex_thread_binds_project_space_through_context_grant() {
 }
 
 #[test]
-fn codex_thread_disables_project_space_for_generic_tasks() {
+fn codex_thread_disables_project_space_with_valid_transport_for_generic_tasks() {
     let request = ExecutionRequest::default();
 
     let launch_config =
@@ -2852,7 +2852,14 @@ fn codex_thread_disables_project_space_for_generic_tasks() {
     let config = params["config"].as_object().expect("thread config");
 
     assert_eq!(config["mcp_servers.wework_space.enabled"], false);
-    assert!(!config.contains_key("mcp_servers.wework_space.command"));
+    assert_eq!(
+        config["mcp_servers.wework_space.command"],
+        env::current_exe().unwrap().display().to_string()
+    );
+    assert_eq!(
+        config["mcp_servers.wework_space.args"],
+        json!(["space-mcp-server"])
+    );
     assert!(!config.contains_key("mcp_servers.wework_space.env.WEWORK_SPACE_CONTEXT_GRANT"));
 }
 

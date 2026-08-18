@@ -11,7 +11,8 @@ flowchart LR
     ISSUE[Issue / 项目会话] --> GRANT[Session ContextGrant<br/>session_id + space_id + item_id + scopes]
     GENERIC[普通任务] --> SESSION[Agent Session]
     GRANT --> SESSION
-    SESSION --> ADAPTER{Harness Adapter}
+    SESSION --> DECLARATION[合法的固定 MCP transport 声明<br/>按会话切换 enabled / ContextGrant]
+    DECLARATION --> ADAPTER{Harness Adapter}
     ADAPTER -->|Codex| PLUGIN[内置 wework-space Plugin]
     ADAPTER -->|其他 Harness| MCP_ADAPTER[同契约 MCP Adapter]
     PLUGIN --> GATEWAY[Wework Local Project-space Gateway]
@@ -38,9 +39,9 @@ sequenceDiagram
     W->>G: App 启动时准备本地 Project-space Provider
     W->>H: 创建 Agent Session
     alt 普通任务
-        W->>H: 不启用 project-space capability
+        W->>H: 提供合法 transport 声明并设置 enabled=false
     else 项目或 Issue 会话
-        W->>H: 注入短期 ContextGrant 并启用固定的 wework-space capability
+        W->>H: 提供相同 transport，注入短期 ContextGrant 并设置 enabled=true
         H->>P: 初始化 MCP 并完成工具清单协商
         P->>G: 启动 Wework 管理的会话 Adapter 并校验 ContextGrant
         G-->>P: 返回绑定的 capability scope
@@ -60,16 +61,17 @@ sequenceDiagram
     P-->>H: MCP tool result
 ```
 
-| 边 | 代码归属 |
-| --- | --- |
-| Wework 启动 → Local Provider 生命周期 | Wework Tauri local executor；Executor local ProjectSpace provider |
-| Agent Session → ContextGrant | Wework Runtime 消息元数据；Executor session context registry |
-| Codex → project-space capability | Wework 内置 `wework-space` Codex Plugin；Executor Codex adapter |
-| 其他 Harness → project-space capability | Harness-specific MCP adapter |
-| Gateway → Local Provider | Executor `task_runtime` 与本地 ProjectSpace provider |
-| Gateway → Backend Provider | Executor authenticated Backend ProjectSpace client |
-| 云端 Agent → Backend MCP | Backend `wework_space` MCP |
-| 统一工具契约 → 全部 Adapter | 共享 schema、工具名、权限语义与契约测试 |
+| 边                                            | 代码归属                                                          |
+| --------------------------------------------- | ----------------------------------------------------------------- |
+| Wework 启动 → Local Provider 生命周期         | Wework Tauri local executor；Executor local ProjectSpace provider |
+| Agent Session → ContextGrant                  | Wework Runtime 消息元数据；Executor session context registry      |
+| Agent Session → 固定 MCP transport 与启用状态 | Executor Codex adapter；Harness-specific MCP adapter              |
+| Codex → project-space capability              | Wework 内置 `wework-space` Codex Plugin；Executor Codex adapter   |
+| 其他 Harness → project-space capability       | Harness-specific MCP adapter                                      |
+| Gateway → Local Provider                      | Executor `task_runtime` 与本地 ProjectSpace provider              |
+| Gateway → Backend Provider                    | Executor authenticated Backend ProjectSpace client                |
+| 云端 Agent → Backend MCP                      | Backend `wework_space` MCP                                        |
+| 统一工具契约 → 全部 Adapter                   | 共享 schema、工具名、权限语义与契约测试                           |
 
 不变量：
 
@@ -77,6 +79,7 @@ sequenceDiagram
 - Wework 不连接 Backend 时，本地项目的 Issue、描述和附件读取必须可用；Backend 是云项目 Provider，不是本地能力成立的前提。
 - Plugin 只是 Codex Adapter。Gateway、ContextGrant 和工具契约不得依赖 Codex 专有类型。
 - Plugin 的 MCP 声明是产品打包入口；Runtime 负责按会话提供 ContextGrant、启用状态和实际 Executor 路径，不能依赖插件市场页面曾被打开或异步安装时序。
+- Harness 收到的禁用 MCP 配置仍必须包含可解析的固定 transport；`enabled=false` 只阻止服务启动，不能用缺少 `command`/`url` 的残缺条目表达禁用状态。
 - ContextGrant 必须按 Agent session 隔离且不向模型暴露。其一小时有效期只限制新 MCP 会话的启动，启动后租约跟随该会话 Adapter 生命周期；长任务不会在执行中断权，Adapter 退出即撤销。模型参数、prompt 文本和全局“当前项目”均不是授权来源。
 - 普通任务不启用项目空间工具；项目会话可只绑定 `space_id`，Issue 会话绑定 `space_id + item_id`。
 - `get_current_context` 在无绑定时返回明确的未绑定结果；MCP 启动失败、无权限、云项目离线和未缓存必须是不同错误。

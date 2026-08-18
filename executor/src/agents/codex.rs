@@ -3749,15 +3749,13 @@ fn cdp_browser_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String> {
 fn project_space_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String> {
     let server_name = crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME;
     let key = toml_key_path(&["mcp_servers", server_name]);
-    let Some(grant) = crate::task_runtime::mcp::encoded_space_context_grant(request) else {
-        return vec![format!("{key}.enabled=false")];
-    };
+    let grant = crate::task_runtime::mcp::encoded_space_context_grant(request);
     let command = env::current_exe()
         .unwrap_or_else(|_| executor_home().join("bin/wegent-executor"))
         .display()
         .to_string();
     let mut overrides = vec![
-        format!("{key}.enabled=true"),
+        format!("{key}.enabled={}", grant.is_some()),
         format!("{key}.command={}", toml_value(&command)),
         format!(
             "{key}.args={}",
@@ -3765,6 +3763,11 @@ fn project_space_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String>
         ),
         format!("{key}.startup_timeout_sec=15"),
         format!("{key}.tool_timeout_sec=60"),
+    ];
+    let Some(grant) = grant else {
+        return overrides;
+    };
+    overrides.extend([
         format!(
             "{key}.default_tools_approval_mode={}",
             toml_value("approve")
@@ -3779,7 +3782,7 @@ fn project_space_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String>
             ]),
             toml_value(&grant)
         ),
-    ];
+    ]);
     let backend_url = request
         .backend_url
         .as_deref()
