@@ -120,6 +120,40 @@ describe('WorkspaceTabsProvider routing', () => {
     expect(window.location.pathname).toBe('/plugins')
   })
 
+  test('uses an explicit runtime task route instead of a persisted active workspace tab', () => {
+    localStorage.setItem(
+      'wework.workspaceTabs.v3:context-test',
+      JSON.stringify({
+        activeTabId: 'board-persisted',
+        tabs: [
+          {
+            id: 'task-persisted',
+            kind: 'task',
+            title: '任务',
+            contentRoute: '/',
+          },
+          {
+            id: 'board-persisted',
+            kind: 'board',
+            title: '项目空间',
+            contentRoute: '/todo',
+          },
+        ],
+      })
+    )
+    window.history.replaceState({}, '', '/runtime-tasks?deviceId=local-device&taskId=runtime-123')
+
+    render(<RoutingHarness />)
+
+    expect(screen.getByTestId('active-tab-id')).toHaveTextContent('task-persisted')
+    expect(screen.getByTestId('active-tab-kind')).toHaveTextContent('task')
+    expect(screen.getByTestId('active-tab-route')).toHaveTextContent(
+      '/runtime-tasks?deviceId=local-device&taskId=runtime-123'
+    )
+    expect(window.location.pathname).toBe('/runtime-tasks')
+    expect(window.location.search).toContain('taskId=runtime-123')
+  })
+
   test('recreates the preferred startup tab when the persisted list no longer contains it', () => {
     localStorage.setItem(
       'wework.workspaceTabs.v3:context-test',

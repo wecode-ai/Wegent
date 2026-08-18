@@ -1,6 +1,9 @@
 import { waitForSnapshot } from './conversation-layout.mjs'
 
-import { ensureExperimentalFeaturesEnabled } from './preferences-automation-flows.mjs'
+import {
+  ensureExperimentalFeaturesDisabled,
+  ensureExperimentalFeaturesEnabled,
+} from './preferences-automation-flows.mjs'
 
 import {
   ACTIVE_COMPOSER_SELECTOR,
@@ -173,6 +176,7 @@ async function captureVerificationScreenshot(control, name, selector = 'body') {
 }
 
 async function verifyWorkspaceDocumentTabs(control) {
+  await ensureExperimentalFeaturesEnabled(control)
   await control.command('waitFor', '[data-testid="workspace-tab-strip"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
@@ -244,7 +248,53 @@ async function reloadMainWindow(control, errorMessage) {
   )
 }
 
+async function verifyWorkspaceTabsWithoutExperiments(control) {
+  await ensureExperimentalFeaturesDisabled(control)
+  await control.command('waitFor', '[data-testid="workspace-tab-strip"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  const tabStripSnapshot = JSON.parse(
+    await control.command('snapshot', '[data-testid="workspace-tab-strip"]')
+  )
+  assert.ok(
+    tabStripSnapshot.testIds.some(testId => testId.startsWith('workspace-tab-task-')),
+    'Disabling experiments removed the task tab'
+  )
+  assert.ok(
+    tabStripSnapshot.testIds.some(testId => testId.startsWith('workspace-tab-agent-')),
+    'Disabling experiments removed the Agent tab'
+  )
+  assert.ok(
+    !tabStripSnapshot.testIds.some(testId => testId.startsWith('workspace-tab-board-')),
+    'The project-space tab remained visible while experiments were disabled'
+  )
+
+  await control.command('click', '[data-testid="workspace-tab-add"]')
+  await control.command('waitFor', '[data-testid="workspace-tab-add-menu"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const addMenuSnapshot = JSON.parse(
+    await control.command('snapshot', '[data-testid="workspace-tab-add-menu"]')
+  )
+  assert.ok(
+    addMenuSnapshot.testIds.includes('workspace-tab-add-task'),
+    'The new-tab menu removed task creation while experiments were disabled'
+  )
+  assert.ok(
+    addMenuSnapshot.testIds.includes('workspace-tab-add-agent'),
+    'The new-tab menu removed Agent creation while experiments were disabled'
+  )
+  assert.ok(
+    !addMenuSnapshot.testIds.includes('workspace-tab-add-board'),
+    'The new-tab menu exposed project spaces while experiments were disabled'
+  )
+  await captureVerificationScreenshot(control, 'workspace-tabs-00-experiments-disabled.png')
+  await control.command('click', '[data-testid="workspace-tab-add"]')
+}
+
 async function verifyDefaultWorkspaceStartupTab(control) {
+  await verifyWorkspaceTabsWithoutExperiments(control)
+  await ensureExperimentalFeaturesEnabled(control)
   await control.command('navigate', 'body', { value: '/settings' })
   await control.command('waitFor', '[data-testid="general-settings-page"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -677,6 +727,7 @@ async function waitForAttribute(control, selector, name, expected, message) {
 }
 
 async function verifyWorkspaceTabIsolation(control) {
+  await ensureExperimentalFeaturesEnabled(control)
   await control.command('waitFor', '[data-testid="workspace-tab-strip"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })

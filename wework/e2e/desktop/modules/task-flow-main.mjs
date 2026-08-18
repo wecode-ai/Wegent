@@ -87,6 +87,7 @@ import {
 
 import {
   declineInitialTelemetryConsent,
+  ensureExperimentalFeaturesEnabled,
   verifyAutomationLifecycle,
   verifyInitialTelemetryConsent,
   verifySitesPluginAutoInstall,
@@ -2314,6 +2315,7 @@ last_updated = "2026-07-30T00:00:00Z"`
     }
 
     if (shouldRunDesktopCheckpoint('conversation-state')) {
+      await ensureExperimentalFeaturesEnabled(control)
       if (!taskRowTestId) {
         taskRowTestId = await createCheckpointTaskFixture(control, composerSelector)
         taskRowCompletionText = CHECKPOINT_TASK_COMPLETION_TEXT
@@ -2483,7 +2485,7 @@ last_updated = "2026-07-30T00:00:00Z"`
       phase = 'workspace-resources-across-conversation-switch'
       await writeFile(
         join(workspacePath, GIT_SEED_NAME),
-        `${GIT_SEED_CONTENT}${FILE_PREVIEW_RESTORE_MARKER}\n`
+        `${GIT_SEED_CONTENT}${FILE_PREVIEW_RESTORE_MARKER}\n${REVIEW_RESTORE_MARKER}\n`
       )
       const firstTaskDebugSnapshot = JSON.parse(
         await control.command('getWorkbenchDebugSnapshot', 'body')
@@ -2512,11 +2514,6 @@ last_updated = "2026-07-30T00:00:00Z"`
       const activeTaskWorkbenchSelector =
         `[data-testid="workspace-tab-content-${activeWorkspaceTabId}"] ` +
         '[data-testid="desktop-workbench-main"]'
-      const firstTaskReadme = join(firstTaskWorkspacePath, GIT_SEED_NAME)
-      await writeFile(
-        firstTaskReadme,
-        `${await readFile(firstTaskReadme, 'utf8')}${REVIEW_RESTORE_MARKER}\n`
-      )
       const activeBrowserInputSelector = `${activeTaskWorkbenchSelector} [data-testid="workspace-browser-url-input"]`
       const activeTerminalSelector = `${activeTaskWorkbenchSelector} [data-testid="workspace-terminal-window"]`
       const bottomPanelToggleSelector = '[data-testid="toggle-bottom-workspace-panel-button"]'

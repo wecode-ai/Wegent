@@ -8,6 +8,7 @@ from app.services.execution.agents.video.providers import get_video_provider
 from app.services.execution.agents.video.providers.seedance import (
     SeedanceProvider,
     _content_item_for_log,
+    _extract_api_error,
     _media_url_diagnostics,
     _media_url_for_log,
     _reject_credential_media_urls,
@@ -16,11 +17,10 @@ from app.services.execution.agents.video.providers.seedance import (
 
 
 class _Response:
-    status_code = 200
-    text = ""
-
-    def __init__(self, data):
+    def __init__(self, data, status_code=200, text=""):
         self._data = data
+        self.status_code = status_code
+        self.text = text
 
     def json(self):
         return self._data
@@ -57,6 +57,38 @@ def test_factory_does_not_override_default_model_with_none() -> None:
     )
 
     assert "model" not in provider.video_config
+
+
+def test_factory_passes_generation_mode_to_seedance_provider() -> None:
+    provider = get_video_provider(
+        "seedance",
+        {
+            "base_url": "https://example.com",
+            "api_key": "test-key",
+            "generation_mode_id": "edit",
+            "videoConfig": {
+                "model": "doubao-seedance-2-5-260628",
+            },
+        },
+    )
+
+    assert provider.video_config["generation_mode_id"] == "edit"
+
+
+def test_extract_api_error_returns_raw_seedance_response() -> None:
+    raw_error = (
+        '{"error":{"code":'
+        '"InputImageSensitiveContentDetected.PrivacyInformation",'
+        '"message":"The input image may contain real person.",'
+        '"type":"BadRequest"}}'
+    )
+    response = _Response(
+        {"error": {"message": "server error"}},
+        status_code=500,
+        text=raw_error,
+    )
+
+    assert _extract_api_error(response) == raw_error  # type: ignore[arg-type]
 
 
 def test_media_url_for_log_removes_signed_query() -> None:
@@ -239,6 +271,118 @@ async def test_seedance_assigns_extra_images_as_references(monkeypatch) -> None:
         "last_frame",
         "reference_image",
     ]
+
+
+@pytest.mark.asyncio
+async def test_seedance_25_uses_model_defaults_and_edit_guidance(monkeypatch) -> None:
+    client = _Client()
+    monkeypatch.setattr(
+        "app.services.execution.agents.video.providers.seedance.httpx.AsyncClient",
+        lambda **kwargs: client,
+    )
+    provider = SeedanceProvider(
+        base_url="https://example.com",
+        api_key="test-key",
+        video_config={
+            "model": "doubao-seedance-2-5-260628",
+            "generation_mode_id": "edit",
+        },
+    )
+
+    await provider.create_job(
+        prompt="Edit the video",
+        reference_images=[{"url": "https://example.com/reference.png"}],
+        reference_videos=["https://example.com/reference.mp4"],
+        image_mode="reference",
+    )
+
+    payload = client.post_kwargs["json"]
+    assert payload["resolution"] == "720p"
+    assert payload["ratio"] == "adaptive"
+    assert payload["duration"] == -1
+    assert payload["omni_reference_task_type"] == "edit"
+    assert "image_mode" not in payload
+    assert payload["content"][1]["role"] == "reference_image"
+
+
+@pytest.mark.asyncio
+async def test_seedance_25_supports_explicit_output_options(monkeypatch) -> None:
+    client = _Client()
+    monkeypatch.setattr(
+        "app.services.execution.agents.video.providers.seedance.httpx.AsyncClient",
+        lambda **kwargs: client,
+    )
+    provider = SeedanceProvider(
+        base_url="https://example.com",
+        api_key="test-key",
+        video_config={
+            "model": "doubao-seedance-2-5-260628",
+            "resolution": "1080p",
+            "ratio": "16:9",
+            "duration": 30,
+            "omni_reference_task_type": "reference",
+            "output_format": "mov",
+            "priority": 9,
+        },
+    )
+
+    await provider.create_job(prompt="Generate a video")
+
+    payload = client.post_kwargs["json"]
+    assert payload["resolution"] == "1080p"
+    assert payload["ratio"] == "16:9"
+    assert payload["duration"] == 30
+    assert payload["omni_reference_task_type"] == "reference"
+    assert payload["output_format"] == "mov"
+    assert payload["priority"] == 9
+
+
+@pytest.mark.asyncio
+async def test_seedance_25_uses_configured_asset_library(monkeypatch) -> None:
+    from app.core.config import settings
+
+    class _AssetClient(_Client):
+        def __init__(self):
+            super().__init__()
+            self.post_calls = []
+
+        async def post(self, url, **kwargs):
+            self.post_calls.append({"url": url, **kwargs})
+            if url.endswith("/CreateAsset"):
+                return _Response({"Id": "asset-1", "Status": "Active"})
+            return _Response({"id": "job-1"})
+
+    client = _AssetClient()
+    monkeypatch.setattr(settings, "SEEDANCE_ASSET_GROUP_ID", "group-1")
+    monkeypatch.setattr(
+        settings,
+        "SEEDANCE_ASSET_BASE_URL",
+        "https://asset.example.com/seedance",
+    )
+    monkeypatch.setattr(
+        "app.services.execution.agents.video.providers.seedance.httpx.AsyncClient",
+        lambda **kwargs: client,
+    )
+    provider = SeedanceProvider(
+        base_url="https://example.com",
+        api_key="test-key",
+        video_config={
+            "model": "doubao-seedance-2-5-260628",
+            "generation_mode_id": "edit",
+        },
+        default_headers={"wecode-user": "yansheng3"},
+    )
+
+    await provider.create_job(
+        prompt="Edit the video",
+        reference_images=[{"url": "https://example.com/reference.png"}],
+        image_mode="reference",
+    )
+
+    payload = client.post_calls[1]["json"]
+    assert client.post_calls[0]["json"]["GroupId"] == "group-1"
+    assert payload["content"][1]["image_url"]["url"] == "asset://asset-1"
+    assert payload["omni_reference_task_type"] == "edit"
 
 
 @pytest.mark.asyncio

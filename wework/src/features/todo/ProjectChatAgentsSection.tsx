@@ -78,14 +78,16 @@ export function ProjectChatAgentsSection({
   const [agentSaveAttempted, setAgentSaveAttempted] = useState(false)
   const sectionRef = useRef<HTMLElement>(null)
   const handledCreateRequestKey = useRef(0)
+  const collectionRevision = useRef(0)
 
   useEffect(() => {
     if (!projectChatAgentApi) return
     let active = true
+    const requestedAtRevision = collectionRevision.current
     void projectChatAgentApi
       .list(project.id)
       .then(agents => {
-        if (!active) return
+        if (!active || requestedAtRevision !== collectionRevision.current) return
         setChatAgents(agents)
         onAgentsChange?.(agents)
       })
@@ -231,6 +233,7 @@ export function ProjectChatAgentsSection({
         status: 'archived',
       })
       const nextAgents = chatAgents.map(item => (item.id === updated.id ? updated : item))
+      collectionRevision.current += 1
       setChatAgents(nextAgents)
       onAgentsChange?.(nextAgents)
     } catch (cause) {
@@ -337,6 +340,7 @@ export function ProjectChatAgentsSection({
             agentRuntime === 'codex' && agentLocalProjectId !== '' ? agentLocalProjectId : null,
         })
         const nextAgents = [...chatAgents, agent]
+        collectionRevision.current += 1
         setChatAgents(nextAgents)
         onAgentsChange?.(nextAgents)
         setCreatingChatAgent(false)
@@ -358,6 +362,7 @@ export function ProjectChatAgentsSection({
             agentRuntime === 'codex' && agentLocalProjectId !== '' ? agentLocalProjectId : null,
         })
         const nextAgents = chatAgents.map(item => (item.id === updated.id ? updated : item))
+        collectionRevision.current += 1
         setChatAgents(nextAgents)
         onAgentsChange?.(nextAgents)
         setEditingChatAgent(null)

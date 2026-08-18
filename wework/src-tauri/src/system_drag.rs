@@ -1,4 +1,7 @@
-use std::sync::Mutex;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Mutex,
+};
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 const PANEL_LABEL: &str = "system-drag-panel";
@@ -26,6 +29,7 @@ struct NativeTextDropPayload {
 #[derive(Default)]
 pub struct SystemDragState {
     pending: Mutex<Vec<SystemDragDropPayload>>,
+    drag_in_progress: AtomicBool,
 }
 
 fn ensure_panel(app: &AppHandle) -> Result<tauri::WebviewWindow, String> {
@@ -47,17 +51,15 @@ fn ensure_panel(app: &AppHandle) -> Result<tauri::WebviewWindow, String> {
         .map_err(|error| format!("Failed to create system drag panel: {error}"))
 }
 
-fn show_panel(app: &AppHandle) {
-    let Ok(window) = ensure_panel(app) else {
-        return;
-    };
-    if let Err(error) = position_panel_at_mouse_screen(&window) {
-        log::warn!("Failed to position system drag panel: {error}");
-        return;
-    }
+fn show_panel(app: &AppHandle) -> Result<(), String> {
+    let window = ensure_panel(app)?;
+    position_panel_at_mouse_screen(&window)?;
     if !window.is_visible().unwrap_or(false) {
-        let _ = window.show();
+        window
+            .show()
+            .map_err(|error| format!("Failed to show system drag panel: {error}"))?;
     }
+    Ok(())
 }
 
 fn panel_top_left_for_visible_frame(
@@ -136,24 +138,28 @@ fn cursor_is_inside(window: &tauri::WebviewWindow) -> bool {
 }
 
 #[cfg(target_os = "macos")]
-fn take_drag_in_progress(drag_in_progress: &std::sync::atomic::AtomicBool) -> bool {
-    drag_in_progress.swap(false, std::sync::atomic::Ordering::SeqCst)
+fn take_drag_in_progress(state: &SystemDragState) -> bool {
+    state.drag_in_progress.swap(false, Ordering::SeqCst)
+}
+
+#[cfg(target_os = "macos")]
+fn begin_drag(state: &SystemDragState) {
+    state.drag_in_progress.store(true, Ordering::SeqCst);
 }
 
 #[cfg(target_os = "macos")]
 fn handle_drag_event(
     app: &AppHandle,
     last_change_count: &std::sync::atomic::AtomicIsize,
-    drag_in_progress: &std::sync::atomic::AtomicBool,
     event_type: objc2_app_kit::NSEventType,
 ) {
     use objc2_app_kit::{NSEventType, NSPasteboard, NSPasteboardNameDrag};
-    use std::sync::atomic::Ordering;
+    let state = app.state::<SystemDragState>();
 
     if event_type == NSEventType::LeftMouseUp {
         // The drag pasteboard keeps its previous content after a drag finishes. A plain click
         // must not consume that stale content as a new drop.
-        if !take_drag_in_progress(drag_in_progress) {
+        if !take_drag_in_progress(&state) {
             return;
         }
         if let Some(panel) = app.get_webview_window(PANEL_LABEL) {
@@ -196,6 +202,7 @@ fn handle_drag_event(
                 }
             } else {
                 let _ = panel.hide();
+                return;
             }
         }
         return;
@@ -205,16 +212,18 @@ fn handle_drag_event(
     let previous = last_change_count.swap(change_count, Ordering::SeqCst);
     if change_count != previous && pasteboard.types().is_some_and(|types| !types.is_empty()) {
         if !crate::read_app_preferences_impl(app).system_drag_enabled {
-            drag_in_progress.store(false, Ordering::SeqCst);
+            state.drag_in_progress.store(false, Ordering::SeqCst);
             if let Some(panel) = app.get_webview_window(PANEL_LABEL) {
                 let _ = panel.hide();
             }
             return;
         }
-        drag_in_progress.store(true, Ordering::SeqCst);
+        begin_drag(&state);
     }
-    if drag_in_progress.load(Ordering::SeqCst) {
-        show_panel(app);
+    if state.drag_in_progress.load(Ordering::SeqCst) {
+        if let Err(error) = show_panel(app) {
+            log::warn!("Failed to show system drag panel: {error}");
+        }
     }
 }
 
@@ -222,26 +231,20 @@ fn handle_drag_event(
 pub fn setup(app: AppHandle) {
     use block2::RcBlock;
     use objc2_app_kit::{NSEvent, NSEventMask, NSPasteboard, NSPasteboardNameDrag};
-    use std::sync::{
-        atomic::{AtomicBool, AtomicIsize},
-        Arc,
-    };
+    use std::sync::{atomic::AtomicIsize, Arc};
 
     if let Err(error) = ensure_panel(&app) {
         log::warn!("Failed to prepare system drag panel: {error}");
     }
     let drag_pasteboard = NSPasteboard::pasteboardWithName(unsafe { NSPasteboardNameDrag });
     let last_change_count = Arc::new(AtomicIsize::new(drag_pasteboard.changeCount()));
-    let drag_in_progress = Arc::new(AtomicBool::new(false));
 
     let global_app = app.clone();
     let global_change_count = last_change_count.clone();
-    let global_drag_in_progress = drag_in_progress.clone();
     let global_handler = RcBlock::new(move |event: std::ptr::NonNull<NSEvent>| {
         handle_drag_event(
             &global_app,
             &global_change_count,
-            &global_drag_in_progress,
             unsafe { event.as_ref() }.r#type(),
         );
     });
@@ -254,12 +257,10 @@ pub fn setup(app: AppHandle) {
     }
 
     let local_change_count = last_change_count.clone();
-    let local_drag_in_progress = drag_in_progress.clone();
     let local_handler = RcBlock::new(move |event: std::ptr::NonNull<NSEvent>| {
         handle_drag_event(
             &app,
             &local_change_count,
-            &local_drag_in_progress,
             unsafe { event.as_ref() }.r#type(),
         );
         event.as_ptr()
@@ -360,10 +361,34 @@ pub fn take_pending_system_drag_drops(
 }
 
 #[tauri::command]
-pub fn dismiss_system_drag_panel(app: AppHandle) {
+pub fn dismiss_system_drag_panel(app: AppHandle, state: tauri::State<'_, SystemDragState>) {
+    state.drag_in_progress.store(false, Ordering::SeqCst);
     if let Some(panel) = app.get_webview_window(PANEL_LABEL) {
         let _ = panel.hide();
     }
+}
+
+fn require_desktop_e2e() -> Result<(), String> {
+    if std::env::var("VITE_WEWORK_E2E").as_deref() == Ok("true") {
+        Ok(())
+    } else {
+        Err("System drag panel test control is only available during desktop E2E".to_string())
+    }
+}
+
+#[tauri::command]
+pub fn show_system_drag_panel_for_e2e(app: AppHandle) -> Result<(), String> {
+    require_desktop_e2e()?;
+    show_panel(&app)
+}
+
+#[tauri::command]
+pub fn get_system_drag_panel_visibility_for_e2e(app: AppHandle) -> Result<bool, String> {
+    require_desktop_e2e()?;
+    app.get_webview_window(PANEL_LABEL)
+        .ok_or_else(|| "System drag panel window is unavailable".to_string())?
+        .is_visible()
+        .map_err(|error| format!("Failed to read system drag panel visibility: {error}"))
 }
 
 #[cfg(test)]
@@ -391,22 +416,22 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     mod macos {
-        use super::super::take_drag_in_progress;
-        use std::sync::atomic::AtomicBool;
+        use super::super::{begin_drag, take_drag_in_progress, SystemDragState};
 
         #[test]
         fn plain_mouse_up_does_not_consume_a_drop() {
-            let drag_in_progress = AtomicBool::new(false);
+            let state = SystemDragState::default();
 
-            assert!(!take_drag_in_progress(&drag_in_progress));
+            assert!(!take_drag_in_progress(&state));
         }
 
         #[test]
         fn mouse_up_consumes_only_the_current_drag() {
-            let drag_in_progress = AtomicBool::new(true);
+            let state = SystemDragState::default();
+            begin_drag(&state);
 
-            assert!(take_drag_in_progress(&drag_in_progress));
-            assert!(!take_drag_in_progress(&drag_in_progress));
+            assert!(take_drag_in_progress(&state));
+            assert!(!take_drag_in_progress(&state));
         }
     }
 }

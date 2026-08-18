@@ -7,7 +7,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::logging::log_executor_event;
 use crate::protocol::ExecutionRequest;
@@ -145,6 +145,12 @@ pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, pay
             .extra
             .insert("client_user_message_id".to_owned(), client_user_message_id);
     }
+    if let Some(generated_user_message) = runtime_generated_user_message(payload) {
+        request.extra.insert(
+            "runtime_generated_user_message".to_owned(),
+            generated_user_message,
+        );
+    }
     if let Some(collaboration_mode) = payload
         .get("collaborationMode")
         .or_else(|| payload.get("collaboration_mode"))
@@ -176,6 +182,27 @@ fn id_value(value: &Value) -> Option<String> {
         Value::Number(value) => Some(value.to_string()),
         _ => None,
     }
+}
+
+fn runtime_generated_user_message(payload: &Value) -> Option<Value> {
+    let source = payload.get("source").filter(|value| value.is_object())?;
+    if string_field(source, "source").as_deref() != Some("im") {
+        return None;
+    }
+    let id = string_field(payload, "clientUserMessageId")
+        .or_else(|| string_field(payload, "client_user_message_id"))?;
+    let message = string_field(payload, "message").or_else(|| string_field(payload, "content"))?;
+    let created_at = payload
+        .get("createdAt")
+        .or_else(|| payload.get("created_at"))
+        .cloned()
+        .unwrap_or_else(|| json!(now_ms()));
+    Some(json!({
+        "id": id,
+        "message": message,
+        "createdAt": created_at,
+        "source": source,
+    }))
 }
 
 pub(crate) fn cloud_project_id(request: &ExecutionRequest) -> Option<Value> {
@@ -796,6 +823,56 @@ mod tests {
             request.extra.get("origin"),
             Some(&json!({"type": "project_automation", "run_id": "run-1"}))
         );
+    }
+
+    #[test]
+    fn generates_visible_user_message_for_external_im_runtime_send() {
+        let mut request = ExecutionRequest::default();
+
+        apply_runtime_payload_metadata(
+            &mut request,
+            &json!({
+                "message": "continue from dingtalk",
+                "clientUserMessageId": "im:dingtalk:77:dingtalk-message-1",
+                "createdAt": 1_780_000_000_000_i64,
+                "source": {
+                    "source": "im",
+                    "channel_type": "dingtalk",
+                    "channel_id": 77,
+                    "message_id": "dingtalk-message-1"
+                }
+            }),
+        );
+
+        assert_eq!(
+            request.extra.get("runtime_generated_user_message"),
+            Some(&json!({
+                "id": "im:dingtalk:77:dingtalk-message-1",
+                "message": "continue from dingtalk",
+                "createdAt": 1_780_000_000_000_i64,
+                "source": {
+                    "source": "im",
+                    "channel_type": "dingtalk",
+                    "channel_id": 77,
+                    "message_id": "dingtalk-message-1"
+                }
+            }))
+        );
+    }
+
+    #[test]
+    fn does_not_generate_external_user_message_without_im_source() {
+        let mut request = ExecutionRequest::default();
+
+        apply_runtime_payload_metadata(
+            &mut request,
+            &json!({
+                "message": "continue from wework",
+                "clientUserMessageId": "runtime-local-pane-1"
+            }),
+        );
+
+        assert!(!request.extra.contains_key("runtime_generated_user_message"));
     }
 
     #[test]

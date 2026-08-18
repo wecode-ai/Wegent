@@ -482,7 +482,9 @@ export function AiChatModal({
               <div className="text-xs text-text-muted">
                 {task?.id} · {t('workbench.runtime_task', '任务')}
               </div>
-              <div className="truncate text-sm font-medium text-text-primary">新建任务</div>
+              <div className="truncate text-sm font-medium text-text-primary">
+                {t('todo.new_task')}
+              </div>
             </div>
           </header>
           {renderNewTaskComposer(

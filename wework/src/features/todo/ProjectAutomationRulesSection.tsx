@@ -222,17 +222,21 @@ export function ProjectAutomationRulesSection({
 
   useEffect(() => {
     if (createAiCoordinatorRequestKey === handledAiCoordinatorRequestKey.current) return
+    if (!canManage) return
     handledAiCoordinatorRequestKey.current = createAiCoordinatorRequestKey
-    createRule({
-      name: t('workbench.project_automation_template_board_managed_name'),
-      prompt: t(DEFAULT_AI_MANAGED_PROMPT_KEY),
-      triggerType: 'event',
-      eventType: 'task.created',
-      assignmentMode: 'ai_managed',
-      managerType: 'custom',
-      agentId: null,
-    })
-  }, [createAiCoordinatorRequestKey, createRule, t])
+    const timer = window.setTimeout(() => {
+      createRule({
+        name: t('workbench.project_automation_template_board_managed_name'),
+        prompt: t(DEFAULT_AI_MANAGED_PROMPT_KEY),
+        triggerType: 'event',
+        eventType: 'task.created',
+        assignmentMode: 'ai_managed',
+        managerType: 'custom',
+        agentId: null,
+      })
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [canManage, createAiCoordinatorRequestKey, createRule, t])
 
   const save = async () => {
     if (!api || !draft) return

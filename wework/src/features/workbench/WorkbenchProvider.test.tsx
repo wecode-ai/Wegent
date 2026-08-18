@@ -1280,6 +1280,7 @@ function RuntimeProjectMutationProbe() {
           .map(projectWork => projectWork.project.name)
           .join('|') ?? ''}
       </span>
+      <span data-testid="mutation-error">{workbench.state.error ?? ''}</span>
       <button
         type="button"
         onClick={() =>
@@ -1310,7 +1311,7 @@ function RuntimeProjectMutationProbe() {
       <button type="button" onClick={() => void workbench.updateProjectName(7, 'Hello project')}>
         rename runtime project
       </button>
-      <button type="button" onClick={() => void workbench.removeProject(7)}>
+      <button type="button" onClick={() => void workbench.removeProject(7).catch(() => undefined)}>
         remove runtime project
       </button>
       <button type="button" onClick={() => void workbench.refreshWorkLists()}>
@@ -7246,6 +7247,255 @@ describe('WorkbenchProvider runtime tasks', () => {
       runtime: 'codex',
     })
     expect(services.projectApi.deleteProject).not.toHaveBeenCalled()
+  })
+
+  test('removes an offline cloud project locally without calling the target device', async () => {
+    const offlineCloudRuntimeWork = createRuntimeWork({
+      projects: [
+        {
+          project: { id: 7, key: '/cloud/project-alpha', name: 'Offline Cloud Project' },
+          deviceWorkspaces: [
+            {
+              id: 22,
+              projectId: 7,
+              deviceId: 'cloud-device',
+              remoteHostId: 'cloud-device',
+              deviceName: 'Cloud Device',
+              deviceStatus: 'offline',
+              workspacePath: '/cloud/project-alpha',
+              workspaceSource: 'remote',
+              mapped: true,
+              available: false,
+              tasks: [],
+            },
+          ],
+          totalTasks: 0,
+        },
+      ],
+      totalTasks: 0,
+    })
+    const emptyRuntimeWork = createRuntimeWork({ projects: [], totalTasks: 0 })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(emptyRuntimeWork),
+    })
+    const services = createWorkbenchServices({
+      deviceApi: {
+        listDevices: vi
+          .fn()
+          .mockResolvedValue([createDevice({ device_id: 'local-device', device_type: 'local' })]),
+      } as Partial<WorkbenchServices['deviceApi']> as WorkbenchServices['deviceApi'],
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      cloudBackgroundApi: {
+        listTeams: vi.fn().mockResolvedValue([]),
+        listDevices: vi.fn().mockResolvedValue([
+          createDevice({
+            device_id: 'cloud-device',
+            device_type: 'cloud',
+            is_default: false,
+            status: 'offline',
+          }),
+        ]),
+        listRuntimeWork: vi.fn().mockResolvedValue(offlineCloudRuntimeWork),
+      },
+    })
+
+    renderWorkbench(<RuntimeProjectMutationProbe />, services)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('mutation-project-order')).toHaveTextContent(
+        'Offline Cloud Project'
+      )
+    )
+    await userEvent.click(screen.getByText('remove runtime project'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('mutation-project-order')).toHaveTextContent(/^$/)
+    )
+    expect(runtimeWorkApi.removeRuntimeWorkspace).not.toHaveBeenCalled()
+    expect(runtimeWorkApi.listRuntimeWork.mock.calls.length).toBeGreaterThan(1)
+    expect(
+      JSON.parse(localStorage.getItem('wework.workbench.remoteRuntimeWork.v1.1') ?? '{}')
+        .runtimeWork.projects
+    ).toEqual([])
+  })
+
+  test('removes an offline remote project only from the local Codex index', async () => {
+    const offlineRemoteRuntimeWork = createRuntimeWork({
+      projects: [
+        {
+          project: {
+            id: 7,
+            key: '/srv/project-alpha',
+            sidebarStateKey: 'remote-project-id',
+            name: 'Offline Remote Project',
+            kind: 'remote',
+            source: 'remote_project',
+            stateDeviceId: 'local-device',
+          },
+          deviceWorkspaces: [
+            {
+              id: 22,
+              projectId: 7,
+              deviceId: 'remote-device',
+              remoteHostId: 'remote-device',
+              deviceName: 'Remote Device',
+              deviceStatus: 'offline',
+              workspacePath: '/srv/project-alpha',
+              workspaceSource: 'remote',
+              mapped: true,
+              available: false,
+              tasks: [],
+            },
+          ],
+          totalTasks: 0,
+        },
+      ],
+      totalTasks: 0,
+    })
+    const emptyRuntimeWork = createRuntimeWork({ projects: [], totalTasks: 0 })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi
+        .fn()
+        .mockResolvedValueOnce(offlineRemoteRuntimeWork)
+        .mockResolvedValue(emptyRuntimeWork),
+    })
+    const services = createWorkbenchServices({
+      deviceApi: {
+        listDevices: vi.fn().mockResolvedValue([
+          createDevice({ device_id: 'local-device', device_type: 'local' }),
+          createDevice({
+            device_id: 'remote-device',
+            device_type: 'remote',
+            is_default: false,
+            status: 'offline',
+          }),
+        ]),
+      } as Partial<WorkbenchServices['deviceApi']> as WorkbenchServices['deviceApi'],
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      cloudBackgroundApi: {
+        listTeams: vi.fn().mockResolvedValue([]),
+        listDevices: vi.fn().mockResolvedValue([
+          createDevice({
+            device_id: 'remote-device',
+            device_type: 'remote',
+            is_default: false,
+            status: 'offline',
+          }),
+        ]),
+        listRuntimeWork: vi.fn().mockResolvedValue(emptyRuntimeWork),
+      },
+    })
+
+    render(
+      <WorkbenchProvider
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        services={services}
+        syncRemoteProjects={false}
+      >
+        <RuntimeProjectMutationProbe />
+      </WorkbenchProvider>
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('mutation-project-order')).toHaveTextContent(
+        'Offline Remote Project'
+      )
+    )
+    await userEvent.click(screen.getByText('remove runtime project'))
+
+    await waitFor(() => expect(runtimeWorkApi.removeRuntimeWorkspace).toHaveBeenCalledTimes(1))
+    expect(runtimeWorkApi.removeRuntimeWorkspace).toHaveBeenCalledWith({
+      deviceId: 'local-device',
+      projectKey: 'remote-project-id',
+      workspacePath: '/srv/project-alpha',
+      runtime: 'codex',
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('mutation-project-order')).toHaveTextContent(/^$/)
+    )
+    expect(runtimeWorkApi.listRuntimeWork.mock.calls.length).toBeGreaterThan(1)
+  })
+
+  test('keeps an offline remote project visible when the local index removal fails', async () => {
+    const offlineRemoteRuntimeWork = createRuntimeWork({
+      projects: [
+        {
+          project: {
+            id: 7,
+            key: '/srv/project-alpha',
+            sidebarStateKey: 'remote-project-id',
+            name: 'Offline Remote Project',
+            kind: 'remote',
+            source: 'remote_project',
+            stateDeviceId: 'local-device',
+          },
+          deviceWorkspaces: [
+            {
+              id: 22,
+              projectId: 7,
+              deviceId: 'remote-device',
+              remoteHostId: 'remote-device',
+              deviceStatus: 'offline',
+              workspacePath: '/srv/project-alpha',
+              workspaceSource: 'remote',
+              available: false,
+              tasks: [],
+            },
+          ],
+          totalTasks: 0,
+        },
+      ],
+      totalTasks: 0,
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(offlineRemoteRuntimeWork),
+      removeRuntimeWorkspace: vi.fn().mockResolvedValue({
+        accepted: false,
+        deviceId: 'local-device',
+        workspacePath: '/srv/project-alpha',
+        runtime: 'codex',
+        error: 'Failed to write local Codex state',
+      }),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      cloudBackgroundApi: {
+        listTeams: vi.fn().mockResolvedValue([]),
+        listDevices: vi.fn().mockResolvedValue([]),
+        listRuntimeWork: vi.fn().mockResolvedValue(createRuntimeWork({ projects: [] })),
+      },
+    })
+
+    render(
+      <WorkbenchProvider
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        services={services}
+        syncRemoteProjects={false}
+      >
+        <RuntimeProjectMutationProbe />
+      </WorkbenchProvider>
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('mutation-project-order')).toHaveTextContent(
+        'Offline Remote Project'
+      )
+    )
+    await userEvent.click(screen.getByText('remove runtime project'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('mutation-error')).toHaveTextContent(
+        'Failed to write local Codex state'
+      )
+    )
+    expect(runtimeWorkApi.removeRuntimeWorkspace).toHaveBeenCalledTimes(1)
+    expect(runtimeWorkApi.removeRuntimeWorkspace).toHaveBeenCalledWith({
+      deviceId: 'local-device',
+      projectKey: 'remote-project-id',
+      workspacePath: '/srv/project-alpha',
+      runtime: 'codex',
+    })
+    expect(screen.getByTestId('mutation-project-order')).toHaveTextContent('Offline Remote Project')
   })
 
   test('renames and removes remote projects from both the remote executor and local Codex index', async () => {

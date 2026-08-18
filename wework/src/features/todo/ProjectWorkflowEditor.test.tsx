@@ -431,4 +431,28 @@ describe('ProjectWorkflowEditor', () => {
       ],
     })
   })
+
+  test('returns a stage to human execution when robot rule creation fails', async () => {
+    const onChange = vi.fn()
+    render(
+      <ProjectWorkflowEditor
+        value={workflow}
+        busy={false}
+        onChange={onChange}
+        onSave={vi.fn()}
+        projectAgents={[robot]}
+        onEnsureStageRobotRule={vi.fn().mockRejectedValue(new Error('offline'))}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('project-workflow-stage-executor-robot-develop'))
+    fireEvent.change(screen.getByTestId('project-workflow-stage-automation-develop'), {
+      target: { value: robot.id },
+    })
+
+    await waitFor(() =>
+      expect(screen.getByTestId('project-workflow-stage-executor-human-develop')).toBeChecked()
+    )
+    expect(onChange).toHaveBeenLastCalledWith(workflow)
+  })
 })
