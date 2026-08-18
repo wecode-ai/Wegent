@@ -51,6 +51,11 @@ async function verifyReconnectRecovery({ composerSelector, control }) {
     'reconnect-02-reconnecting.png',
     ACTIVE_WORKBENCH_SELECTOR
   )
+  const reconnectingSnapshot = JSON.parse(
+    await control.command('getWorkbenchDebugSnapshot', 'body')
+  )
+  const reconnectingTaskId = reconnectingSnapshot.workbench?.currentRuntimeTask?.taskId
+  assert.ok(reconnectingTaskId, 'The reconnecting task did not expose its runtime task ID')
 
   const readyCountBeforeReload = control.readyCount
   await control.command('reloadMainWindow', 'body')
@@ -64,6 +69,14 @@ async function verifyReconnectRecovery({ composerSelector, control }) {
     control.awaitScenarioRequestCount('reconnect', 2),
     DEFAULT_STEP_TIMEOUT_MS,
     'Codex did not retry the disconnected response stream'
+  )
+  await waitForWorkbenchDebugState(
+    control,
+    snapshot =>
+      snapshot.workbench?.currentRuntimeTask?.taskId === reconnectingTaskId &&
+      snapshot.pane?.transcript?.loading === false,
+    'Reloading did not restore the reconnecting conversation before response recovery',
+    WORKBENCH_READY_TIMEOUT_MS
   )
   control.releaseReconnectResponse()
   await control.command(
