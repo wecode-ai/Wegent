@@ -219,6 +219,7 @@ GitHub Actions 的 Executor E2E job 会在恢复 Python、Node.js 和 Playwright
 `wework/e2e/utils/mock-response-api-server.mjs` 提供真实 HTTP 服务，用于验证本地模型能力探针请求：
 
 - `POST /v1/responses`：返回非流式 Responses API JSON。
+- `POST /v1/responses` 能力探针：返回 `text/event-stream` 工具调用事件，例如 `response.output_item.added` 和 `response.output_item.done`。
 - `POST /v1/responses` 且 `stream: true`：返回 `text/event-stream`，事件包含 `response.created`、`response.output_text.delta` 和 `response.completed`。
 - `POST /v1/chat/completions`：校验并返回 Chat Completions function tool call。
 - `POST /v1/messages`：校验并返回 Anthropic Messages `tool_use`。
