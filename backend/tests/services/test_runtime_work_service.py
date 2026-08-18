@@ -1942,6 +1942,73 @@ async def test_send_runtime_message_normalizes_runtime_rpc_failure_without_task_
 
 
 @pytest.mark.asyncio
+async def test_send_runtime_message_forwards_external_user_message_identity(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.schemas.runtime_work import (
+        RuntimeMessageSource,
+        RuntimeSendRequest,
+        RuntimeTaskAddress,
+    )
+    from app.services import runtime_work_service
+
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+    monkeypatch.setattr(runtime_work_service.time, "time", lambda: 1_780_000_000)
+    monkeypatch.setattr(
+        runtime_work_service,
+        "_build_runtime_send_execution_request",
+        lambda **kwargs: SimpleNamespace(to_dict=lambda: {"prompt": kwargs["message"]}),
+    )
+    rpc = AsyncMock(return_value={"success": True, "accepted": True})
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+
+    response = await runtime_work_service.send_runtime_message(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeSendRequest.model_validate(
+            {
+                "address": {
+                    "deviceId": "device-1",
+                    "taskId": "codex-1",
+                },
+                "message": "continue from dingtalk",
+                "clientUserMessageId": "im:dingtalk:77:dingtalk-message-1",
+                "source": RuntimeMessageSource(
+                    source="im",
+                    external_id="session-1",
+                    channel_type="dingtalk",
+                    channel_id=77,
+                    conversation_id="conv-private",
+                    sender_id="staff-a",
+                    message_id="dingtalk-message-1",
+                ),
+            }
+        ),
+    )
+
+    assert response.accepted is True
+    payload = rpc.await_args.kwargs["payload"]
+    assert payload["clientUserMessageId"] == ("im:dingtalk:77:dingtalk-message-1")
+    assert payload["createdAt"] == 1_780_000_000_000
+    assert payload["source"] == {
+        "source": "im",
+        "external_id": "session-1",
+        "channel_type": "dingtalk",
+        "channel_id": 77,
+        "conversation_id": "conv-private",
+        "sender_id": "staff-a",
+        "message_id": "dingtalk-message-1",
+    }
+    assert payload["executionRequest"] == {"prompt": "continue from dingtalk"}
+
+
+@pytest.mark.asyncio
 async def test_send_runtime_guidance_dispatches_to_owned_device_without_task_rows(
     test_db,
     test_user,

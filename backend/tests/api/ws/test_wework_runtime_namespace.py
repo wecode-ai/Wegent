@@ -322,6 +322,43 @@ async def test_device_command_relay_resolves_logical_device_route(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_runtime_request_relays_device_command_nonzero_exit(monkeypatch):
+    """A device command that runs but exits non-zero is a valid result.
+
+    ``device.execute_command`` is a pass-through executor command: a
+    ``success: False`` envelope means the command exited non-zero (e.g.
+    ``git_is_worktree`` intentionally exits 1 on a non-git directory), not
+    that the RPC transport failed. It must be relayed verbatim so the client
+    can interpret the exit code, matching the local Tauri IPC path.
+    """
+
+    namespace = WeworkRuntimeNamespace()
+    command_result = {"success": False, "stdout": "false", "stderr": ""}
+    monkeypatch.setattr(
+        wework_runtime_namespace,
+        "relay_ipc_request",
+        AsyncMock(return_value=command_result),
+    )
+    monkeypatch.setattr(
+        namespace,
+        "get_session",
+        AsyncMock(return_value={"user_id": 7}),
+    )
+
+    response = await namespace.on_runtime_request(
+        "browser-sid",
+        {
+            "id": "req-1",
+            "device_id": "cloud-device",
+            "method": "device.execute_command",
+            "params": {"command_key": "git_is_worktree", "args": ["/home/ubuntu"]},
+        },
+    )
+
+    assert response == {"id": "req-1", "ok": True, "result": command_result}
+
+
+@pytest.mark.asyncio
 async def test_runtime_request_requires_device_id(monkeypatch):
     namespace = WeworkRuntimeNamespace()
     monkeypatch.setattr(
@@ -489,6 +526,48 @@ async def test_project_chat_wegent_continue_dispatches_native_turn(monkeypatch):
             "taskId": "task-1",
             "triggerMessageId": "user-message-6",
             "agentId": "agent-1",
+        },
+    )
+
+    assert response == {"ok": True, "result": message}
+    start.assert_awaited_once()
+    namespace.emit.assert_awaited_once_with(
+        "wework:project_chat:message:created",
+        message,
+        room="wework-project-chat:task:project-1:task-1",
+    )
+
+
+@pytest.mark.asyncio
+async def test_project_chat_manager_continue_opens_custom_manager_reply(monkeypatch):
+    namespace = WeworkRuntimeNamespace()
+    assert (
+        namespace._event_handlers["wework:project_chat:manager:continue"]
+        == "on_project_chat_manager_continue"
+    )
+    message = {
+        "sequenceNumber": 8,
+        "messageId": "manager-continuation-8",
+        "projectId": "project-1",
+        "taskId": "task-1",
+        "status": "streaming",
+    }
+    monkeypatch.setattr(
+        namespace,
+        "get_session",
+        AsyncMock(return_value={"user_id": 7, "user_name": "Ada"}),
+    )
+    monkeypatch.setattr(namespace, "emit", AsyncMock())
+    start = AsyncMock(return_value=message)
+    monkeypatch.setattr(wework_runtime_namespace, "run_sync_in_executor", start)
+
+    response = await namespace.on_project_chat_manager_continue(
+        "browser-sid",
+        {
+            "projectId": "project-1",
+            "taskId": "task-1",
+            "triggerMessageId": "user-message-7",
+            "managerMessageId": "manager-message-1",
         },
     )
 

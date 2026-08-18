@@ -250,6 +250,8 @@ class ResourceLibraryService:
                 _resource_json_text(db, "$.metadata.displayName"),
                 _resource_json_text(db, "$.spec.capability.description"),
                 _resource_json_text(db, "$.spec.description"),
+                _resource_json_text(db, "$.spec.capability.tags"),
+                _resource_json_text(db, "$.spec.tags"),
             ]
             keyword_filter = or_(
                 *[

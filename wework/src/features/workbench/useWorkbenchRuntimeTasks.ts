@@ -244,6 +244,31 @@ export function useWorkbenchRuntimeTasks({
     [dispatch, services.runtimeWorkApi, t]
   )
 
+  const completeArchivedBoardTasks = useCallback(
+    async (addresses: RuntimeTaskAddress[]) => {
+      const trackingApis = [
+        services.projectSpaceApis?.local,
+        services.projectSpaceApis?.cloud ?? services.deliveryApi,
+      ].filter((api, index, values) => Boolean(api) && values.indexOf(api) === index)
+      if (trackingApis.length === 0) return
+
+      await Promise.all(
+        addresses.map(async address => {
+          const results = await Promise.allSettled(
+            trackingApis.map(api => api!.updateTaskTrackingStatus(address, 'archived'))
+          )
+          if (results.every(result => result.status === 'rejected')) {
+            console.warn('[Wework] Failed to complete archived task on project board', {
+              address: runtimeAddressDebug(address),
+              errors: results.map(result => (result.status === 'rejected' ? result.reason : null)),
+            })
+          }
+        })
+      )
+    },
+    [services.deliveryApi, services.projectSpaceApis]
+  )
+
   const archiveRuntimeConversations = useCallback(
     async (
       addresses: RuntimeTaskAddress[],
@@ -265,6 +290,7 @@ export function useWorkbenchRuntimeTasks({
       )
       let worktreeCleanupSucceeded = true
       if (archivedAddresses.length > 0) {
+        await completeArchivedBoardTasks(archivedAddresses)
         archivedAddresses.forEach(evictRuntimeConversation)
         archivedAddresses.forEach(address => lifecycleStore.remove(address))
         markRuntimeTasksArchived(archivedAddresses)
@@ -293,6 +319,7 @@ export function useWorkbenchRuntimeTasks({
     },
     [
       clearCurrentRuntimeTaskIfArchived,
+      completeArchivedBoardTasks,
       dispatch,
       executorClient,
       lifecycleStore,

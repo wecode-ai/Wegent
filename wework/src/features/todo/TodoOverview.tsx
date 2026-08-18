@@ -63,7 +63,7 @@ export function TodoOverview({
           <div className="min-w-0">
             <h1 className="heading-base truncate text-text-primary">{projectName}</h1>
             <p className="mt-1 text-xs text-text-muted">
-              {t('todo.overview_description', '汇总当前项目的工作项状态，不改变原任务执行流程')}
+              {t('todo.overview_description', '汇总当前项目的工作空间状态，不改变原任务执行流程')}
             </p>
           </div>
           <div className="w-[260px] shrink-0">
@@ -99,7 +99,7 @@ export function TodoOverview({
                 </div>
                 <div className="mt-2 text-heading-md font-medium text-text-primary">{count}</div>
                 <div className="mt-1 text-xs text-text-muted">
-                  {t('todo.work_item_count', { defaultValue: '{{count}} 个工作项', count })}
+                  {t('todo.work_item_count', { defaultValue: '{{count}} 个工作空间', count })}
                 </div>
               </article>
             )
@@ -110,7 +110,7 @@ export function TodoOverview({
           <div className="overflow-hidden rounded-lg border border-border bg-surface">
             <header className="flex h-11 items-center justify-between border-b border-border px-3.5">
               <h2 className="text-xs font-semibold text-text-primary">
-                {t('todo.recent_work_items', '最近工作项')}
+                {t('todo.recent_work_items', '最近工作空间')}
               </h2>
               <button
                 type="button"
@@ -126,7 +126,7 @@ export function TodoOverview({
               <div className="flex h-[260px] flex-col items-center justify-center text-center">
                 <CircleDot className="h-5 w-5 text-text-muted" />
                 <p className="mt-2 text-sm font-medium text-text-secondary">
-                  {t('todo.no_work_items', '当前项目还没有工作项')}
+                  {t('todo.no_work_items', '当前项目还没有工作空间')}
                 </p>
                 <button
                   type="button"
@@ -134,7 +134,7 @@ export function TodoOverview({
                   onClick={onOpenWorkItems}
                   className="mt-2 h-8 rounded-md px-2 text-xs font-medium text-primary hover:bg-primary/10"
                 >
-                  {t('todo.open_work_items', '打开 Work items')}
+                  {t('todo.open_work_items', '打开工作空间')}
                 </button>
               </div>
             ) : (
@@ -194,7 +194,7 @@ export function TodoOverview({
                   icon={Bot}
                   name={t('todo.assignee_ai', 'AI 智能体')}
                   detail={t('todo.ai_work_item_count', {
-                    defaultValue: '执行 {{count}} 个工作项',
+                    defaultValue: '执行 {{count}} 个工作空间',
                     count: aiItemCount,
                   })}
                   accent

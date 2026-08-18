@@ -96,7 +96,7 @@ test.describe('Provider-native ClaudeCode access', () => {
     const taskId = await knowledge.waitForTaskId()
     const dispatchedTask = await getTask(request, resources.token, taskId)
     expect((dispatchedTask as { model_id?: string }).model_id).toBe(CLAUDE_MODEL_NAME)
-    await waitForTaskTerminal(request, resources.token, taskId)
+    await waitForTaskTerminal(resources.token, taskId)
     const task = await getTask(request, resources.token, taskId)
     const bodies = await getScenarioModelBodies(request, prompt)
     const requestText = modelRequestText(bodies)
@@ -143,7 +143,7 @@ test.describe('Provider-native ClaudeCode access', () => {
     await knowledge.selectDingTalkDocuments(['doc-d1'])
     await knowledge.sendMessage(prompt)
     const taskId = await knowledge.waitForTaskId()
-    await waitForTaskTerminal(request, resources.token, taskId)
+    await waitForTaskTerminal(resources.token, taskId)
     const task = await getTask(request, resources.token, taskId)
     const requestText = modelRequestText(await getScenarioModelBodies(request, prompt))
 

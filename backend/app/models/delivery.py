@@ -239,6 +239,18 @@ class ProjectAutomationRun(LoopNode):
     __mapper_args__ = {"polymorphic_identity": "automation_run"}
 
 
+class ProjectIncomingHook(LoopNode):
+    """An opaque project endpoint that turns external events into loop items."""
+
+    __mapper_args__ = {"polymorphic_identity": "incoming_hook"}
+
+
+class ProjectIncomingEvent(LoopNode):
+    """One deduplicated delivery received by a project incoming hook."""
+
+    __mapper_args__ = {"polymorphic_identity": "incoming_event"}
+
+
 class CloudProjectLocalBinding(LoopNode):
     __mapper_args__ = {"polymorphic_identity": "local_binding"}
 
@@ -298,6 +310,7 @@ _MYSQL_NON_NULL_DEFAULTS: dict[str, object] = {
     "created_by_user_id": 0,
     "updated_by_user_id": 0,
     "assignee_user_id": 0,
+    "assignee_team_id": 0,
     "user_id": 0,
     "added_by_user_id": 0,
     "source": "",

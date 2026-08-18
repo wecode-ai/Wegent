@@ -81,6 +81,39 @@ describe('projectSpaceSelection', () => {
     ).resolves.toEqual(context)
   })
 
+  test('preserves API priority when more than one store returns a context', async () => {
+    const localContext = {
+      id: 'local-context',
+      device_id: 'device-1',
+      task_id: 'task-1',
+      cloud_project_id: 'space-local',
+      loop_item_id: 'todo-local',
+      project: project('space-local', 'Local board', 'local'),
+      loop_item: null,
+    }
+    const cloudContext = {
+      ...localContext,
+      id: 'cloud-context',
+      cloud_project_id: 'space-cloud',
+      loop_item_id: 'todo-cloud',
+      project: project('space-cloud', 'Cloud board', 'backend'),
+    }
+    const localApi = {
+      findCloudContextForTask: vi.fn().mockResolvedValue(localContext),
+    } as unknown as ProjectSpaceApi
+    const cloudApi = {
+      findCloudContextForTask: vi.fn().mockResolvedValue(cloudContext),
+    } as unknown as ProjectSpaceApi
+
+    await expect(
+      findProjectSpaceContextForTask([localApi, cloudApi], {
+        deviceId: 'device-1',
+        taskId: 'task-1',
+      })
+    ).resolves.toEqual(localContext)
+    expect(cloudApi.findCloudContextForTask).not.toHaveBeenCalled()
+  })
+
   test('only scopes runtime creation to backend project spaces', () => {
     expect(runtimeCloudProjectId(project('space-local', 'Local board', 'local'))).toBeUndefined()
     expect(runtimeCloudProjectId(project('space-cloud', 'Cloud board', 'backend'))).toBe(

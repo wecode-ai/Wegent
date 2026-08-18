@@ -927,6 +927,19 @@ class DesktopE2EServer {
       return
     }
 
+    if (
+      request.method === 'POST' &&
+      url.pathname === '/api/v1/loop-item-executions/claim-my-next'
+    ) {
+      json(response, 200, null)
+      return
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/apps/installed') {
+      json(response, 200, { apps: [] })
+      return
+    }
+
     if (request.method === 'GET' && url.pathname === '/api/im/private-sessions') {
       json(response, 200, {
         total: 1,
@@ -3191,18 +3204,6 @@ class DesktopE2EServer {
     if (this.scenario === 'queue_management') {
       this.recordScenarioRequest('queue_management', modelRequest)
       const latestInput = latestModelInputText(body)
-      const initialPrompts = [QUEUE_DIRECT_INITIAL, QUEUE_PRESERVE_INITIAL, QUEUE_CLEAR_INITIAL]
-      if (initialPrompts.some(prompt => latestInput.includes(prompt))) {
-        response.writeHead(200, {
-          'Access-Control-Allow-Origin': '*',
-          'Cache-Control': 'no-cache',
-          Connection: 'keep-alive',
-          'Content-Type': 'text/event-stream; charset=utf-8',
-        })
-        response.write(createSse([responseCreated(responseId)]))
-        return
-      }
-
       const followUpPrompts = [
         QUEUE_DIRECT_FIRST,
         QUEUE_DIRECT_SECOND,
@@ -3212,8 +3213,15 @@ class DesktopE2EServer {
         QUEUE_CLEAR_MANUAL,
       ]
       const prompt = followUpPrompts.find(candidate => latestInput.includes(candidate))
-      assert.ok(prompt, `Unexpected queue management request: ${latestInput}`)
-      if (prompt === QUEUE_DIRECT_THIRD) {
+      if (prompt) {
+        if (prompt !== QUEUE_DIRECT_THIRD) {
+          this.writeSse(response, [
+            responseCreated(responseId),
+            assistantMessage(`${QUEUE_MANAGEMENT_COMPLETION_PREFIX}:${prompt}`),
+            responseCompleted(responseId),
+          ])
+          return
+        }
         response.writeHead(200, {
           'Access-Control-Allow-Origin': '*',
           'Cache-Control': 'no-cache',
@@ -3231,11 +3239,19 @@ class DesktopE2EServer {
         )
         return
       }
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(`${QUEUE_MANAGEMENT_COMPLETION_PREFIX}:${prompt}`),
-        responseCompleted(responseId),
-      ])
+
+      const initialPrompts = [QUEUE_DIRECT_INITIAL, QUEUE_PRESERVE_INITIAL, QUEUE_CLEAR_INITIAL]
+      assert.ok(
+        initialPrompts.some(candidate => latestInput.includes(candidate)),
+        `Unexpected queue management request: ${latestInput}`
+      )
+      response.writeHead(200, {
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'Content-Type': 'text/event-stream; charset=utf-8',
+      })
+      response.write(createSse([responseCreated(responseId)]))
       return
     }
 

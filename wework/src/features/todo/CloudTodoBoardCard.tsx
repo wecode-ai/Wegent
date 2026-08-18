@@ -127,7 +127,12 @@ export function CloudTodoCardContent({ item, display, agentNames }: CloudTodoCar
 
 interface CloudTodoBoardCardProps {
   item: CloudLoopItem
-  childCount: number
+  children: CloudLoopItem[]
+  taskBindings?: Array<{
+    id: number
+    task_id: string
+    task_title: string | null
+  }>
   onClick: () => void
   onAddChild: () => void
   onOpenChildren: () => void
@@ -141,7 +146,8 @@ interface CloudTodoBoardCardProps {
 
 export function CloudTodoBoardCard({
   item,
-  childCount,
+  children,
+  taskBindings = [],
   onClick,
   onAddChild,
   onOpenChildren,
@@ -153,6 +159,8 @@ export function CloudTodoBoardCard({
 }: CloudTodoBoardCardProps) {
   const { t } = useTranslation('common')
   const [menuOpen, setMenuOpen] = useState(false)
+  const visibleChildren = children.slice(0, 2)
+  const visibleTaskBindings = taskBindings.slice(0, 2)
   const {
     attributes,
     listeners,
@@ -230,28 +238,79 @@ export function CloudTodoBoardCard({
         <CloudTodoCardContent item={item} display={display} agentNames={agentNames} />
       </button>
 
+      {visibleTaskBindings.length > 0 ? (
+        <div
+          data-testid={`cloud-todo-card-tasks-${item.id}`}
+          className="border-t border-border/60 px-3.5 py-2"
+        >
+          <div className="mb-1 flex items-center gap-1.5 text-xs font-medium text-text-muted">
+            <ListTodo className="h-3.5 w-3.5" />
+            <span>{t('workbench.related_tasks', '关联任务')}</span>
+            <span>{taskBindings.length}</span>
+          </div>
+          <div className="space-y-0.5">
+            {visibleTaskBindings.map(binding => (
+              <div
+                key={binding.id}
+                data-testid={`cloud-todo-card-task-${item.id}-${binding.id}`}
+                className="flex h-6 min-w-0 items-center gap-2 text-xs text-text-secondary"
+              >
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-text-muted/60" />
+                <span className="truncate">{binding.task_title || binding.task_id}</span>
+              </div>
+            ))}
+            {taskBindings.length > visibleTaskBindings.length ? (
+              <div className="pl-3.5 text-xs text-text-muted">
+                +{taskBindings.length - visibleTaskBindings.length}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
       <div className="relative border-t border-dashed border-text-primary/15 bg-muted/30 px-3.5 py-2 transition-colors hover:bg-muted/50 focus-within:bg-muted/50 before:pointer-events-none before:absolute before:-left-2 before:-top-2 before:z-10 before:h-4 before:w-4 before:rounded-full before:bg-muted after:pointer-events-none after:absolute after:-right-2 after:-top-2 after:z-10 after:h-4 after:w-4 after:rounded-full after:bg-muted">
-        {childCount > 0 ? (
-          <div className="flex items-center gap-3">
+        {children.length > 0 ? (
+          <div>
             <button
               type="button"
               data-testid={`cloud-todo-open-children-${item.id}`}
               onClick={onOpenChildren}
-              className="flex h-8 min-w-0 flex-1 items-center gap-1.5 px-0.5 text-xs font-medium text-text-secondary transition-colors hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/50"
+              className="flex h-7 w-full min-w-0 items-center gap-1.5 px-0.5 text-xs font-medium text-text-secondary transition-colors hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/50"
             >
               <ListTodo className="h-3.5 w-3.5 shrink-0" />
               <span className="truncate">子任务 </span>
               <span className="inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-text-primary/5 px-1 text-xs font-medium text-text-secondary">
-                {childCount}
+                {children.length}
               </span>
               <ChevronRight className="ml-auto h-3.5 w-3.5 shrink-0" />
             </button>
+            <div className="mt-0.5 space-y-0.5">
+              {visibleChildren.map(child => (
+                <button
+                  key={child.id}
+                  type="button"
+                  data-testid={`cloud-todo-card-child-${child.id}`}
+                  onClick={onOpenChildren}
+                  className="flex h-6 w-full min-w-0 items-center gap-2 rounded-md px-0.5 text-left text-xs text-text-secondary hover:text-text-primary"
+                >
+                  <span
+                    className={cn(
+                      'flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border border-border text-text-muted',
+                      child.status === 'completed' && 'bg-text-primary text-background'
+                    )}
+                  >
+                    {child.status === 'completed' ? '✓' : null}
+                  </span>
+                  <span className="truncate">{child.title}</span>
+                </button>
+              ))}
+            </div>
             <button
               type="button"
               data-testid={`cloud-todo-card-add-child-${item.id}`}
               disabled={item.can_edit === false}
               onClick={onAddChild}
-              className="flex h-7 shrink-0 items-center gap-1 border-l border-border/60 pl-3 text-xs text-text-muted transition-colors hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/50 disabled:hidden"
+              className="mt-1 flex h-7 items-center gap-1 px-0.5 text-xs text-text-muted transition-colors hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/50 disabled:hidden"
               aria-label="新建子任务"
             >
               <Plus className="h-3.5 w-3.5" />

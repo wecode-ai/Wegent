@@ -35,6 +35,7 @@ import { createHttpClient } from '@/api/http'
 import { createPluginApi } from '@/api/plugins'
 import { listWegentInstalledConnectorApps } from '@/api/cloud/connectorApps'
 import { startLocalRobotQueueDispatcher } from '@/features/todo/localRobotQueueDispatcher'
+import { publishProjectSpaceTaskContextChanged } from '@/features/todo/projectSpaceSelection'
 import {
   getComposerApps,
   publishComposerApps,
@@ -297,7 +298,8 @@ export function WorkbenchProvider({
     ].filter((api, index, values) => Boolean(api) && values.indexOf(api) === index)
     if (!trackingApis.length) return
     for (const [key, lifecycle] of lifecycleSnapshot.tasks) {
-      const executionStatus = lifecycle.derived.isRunning ? 'running' : lifecycle.turn.outcome
+      const executionStatus =
+        lifecycle.turn.outcome ?? (lifecycle.derived.isRunning ? 'running' : null)
       if (!executionStatus) continue
       const signature = executionStatus
       if (trackingStatusSignaturesRef.current.get(key) === signature) continue
@@ -312,7 +314,9 @@ export function WorkbenchProvider({
             executionStatus,
             errors: results.map(result => (result.status === 'rejected' ? result.reason : null)),
           })
+          return
         }
+        publishProjectSpaceTaskContextChanged(lifecycle.address)
       })
     }
   }, [lifecycleSnapshot, resolvedServices.deliveryApi, resolvedServices.projectSpaceApis])
@@ -1007,6 +1011,10 @@ export function WorkbenchProvider({
   ])
 
   useEffect(() => {
+    if (state.currentRuntimeTask) {
+      projectActivationSignatureRef.current = ''
+      return
+    }
     const activation = getRuntimeProjectActivation(
       state.runtimeWork,
       state.currentProject?.id,
@@ -1023,7 +1031,13 @@ export function WorkbenchProvider({
       projectActivationSignatureRef.current = ''
       console.warn('[Wework] Failed to save the active Codex project', error)
     })
-  }, [executorClient, localRuntimeStateDeviceId, state.currentProject?.id, state.runtimeWork])
+  }, [
+    executorClient,
+    localRuntimeStateDeviceId,
+    state.currentProject?.id,
+    state.currentRuntimeTask,
+    state.runtimeWork,
+  ])
 
   useEffect(() => {
     let timeout: number | null = null

@@ -298,7 +298,7 @@ export function WorkspaceTabStrip() {
               {(
                 [
                   ['task', CheckSquare2, t('workbench.workspace_tab_task', '任务')],
-                  ['board', Columns3, t('workbench.workspace_tab_board', '项目空间')],
+                  ['board', Columns3, t('workbench.workspace_tab_board', '工作空间视图')],
                   ['agent', Bot, t('workbench.workspace_tab_agent', '智能体')],
                 ] as const
               ).map(([kind, Icon, label]) => (

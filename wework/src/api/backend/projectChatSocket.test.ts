@@ -206,4 +206,31 @@ describe('createProjectChatClient', () => {
       })
     ).resolves.toEqual(message)
   })
+
+  it('opens a reply in a custom automation manager session', async () => {
+    socket.emit.mockImplementation((event, payload, ack) => {
+      expect(event).toBe('wework:project_chat:manager:continue')
+      expect(payload).toEqual({
+        projectId: 'project-1',
+        taskId: 'task-1',
+        triggerMessageId: 'message-7',
+        managerMessageId: 'manager-1',
+      })
+      ack({ ok: true, result: message })
+    })
+    const client = createProjectChatClient({
+      socketBaseUrl: 'https://cloud.example.com',
+      socketPath: '/socket.io',
+      getToken: () => 'token',
+    })
+
+    await expect(
+      client.continueAutomationManager!({
+        projectId: 'project-1',
+        taskId: 'task-1',
+        triggerMessageId: 'message-7',
+        managerMessageId: 'manager-1',
+      })
+    ).resolves.toEqual(message)
+  })
 })

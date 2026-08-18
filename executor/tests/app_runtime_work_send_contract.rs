@@ -84,6 +84,20 @@ fn execution_request_with_model_config(
 }
 
 fn seed_persisted_runtime_task(executor_home: &Path, local_task_id: &str, thread_id: &str) {
+    seed_persisted_runtime_task_at_workspace(
+        executor_home,
+        local_task_id,
+        thread_id,
+        "/tmp/project",
+    )
+}
+
+fn seed_persisted_runtime_task_at_workspace(
+    executor_home: &Path,
+    local_task_id: &str,
+    thread_id: &str,
+    workspace_path: &str,
+) {
     let index_path = executor_home.join("runtime-work").join("index.json");
     fs::create_dir_all(index_path.parent().unwrap()).unwrap();
     fs::write(
@@ -94,7 +108,7 @@ fn seed_persisted_runtime_task(executor_home: &Path, local_task_id: &str, thread
                 local_task_id: {
                     "local_task_id": local_task_id,
                     "thread_id": thread_id,
-                    "workspace_path": "/tmp/project",
+                    "workspace_path": workspace_path,
                     "title": "Persisted runtime task",
                     "runtime": "codex",
                     "status": "active",
@@ -2199,6 +2213,72 @@ async fn runtime_tasks_send_rejects_provider_active_turn_after_local_execution_s
         calls.iter().all(|call| call["method"] != "turn/start"),
         "send must not create an overlapping Codex turn: {calls:?}"
     );
+}
+
+#[tokio::test]
+async fn runtime_tasks_send_keeps_the_persisted_workspace_when_payload_project_changes() {
+    let _lock = env_lock().await;
+    let executor_home = temp_path("runtime-send-workspace-authority-home", "dir");
+    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-send-workspace-authority-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    seed_persisted_runtime_task_at_workspace(
+        &executor_home,
+        "local-task-1",
+        "thread-1",
+        "/tmp/task-workspace",
+    );
+    let log_path = temp_path("runtime-send-workspace-authority-log", "jsonl");
+    let fake_codex = write_fake_codex(&log_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let sent = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.send",
+            "payload": {
+                "workspacePath": "/tmp/current-project",
+                "taskId": "local-task-1",
+                "message": "continue the existing task",
+                "executionRequest": codex_execution_request(
+                    "continue the existing task",
+                    "/tmp/current-project",
+                    "gpt-5.5"
+                )
+            }
+        }))
+        .await
+        .expect("send should be accepted");
+
+    assert_eq!(sent["accepted"], true);
+    wait_for_method_count(&log_path, "thread/resume", 1).await;
+    let calls = read_json_lines(&log_path);
+    let resume = calls
+        .iter()
+        .find(|call| call["method"] == "thread/resume")
+        .expect("send should resume the existing thread");
+    assert_eq!(resume["params"]["cwd"], "/tmp/task-workspace");
+
+    let listed = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.list",
+            "payload": {"runtime": "codex"}
+        }))
+        .await
+        .expect("task list should load");
+    let task = listed["workspaces"]
+        .as_array()
+        .and_then(|workspaces| {
+            workspaces
+                .iter()
+                .flat_map(|workspace| workspace["tasks"].as_array().into_iter().flatten())
+                .find(|task| task["taskId"] == "local-task-1")
+        })
+        .expect("persisted task should remain listed");
+    assert_eq!(task["workspacePath"], "/tmp/task-workspace");
 }
 
 #[tokio::test]

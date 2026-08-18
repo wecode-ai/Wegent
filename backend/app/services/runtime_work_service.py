@@ -619,6 +619,7 @@ async def send_runtime_message(
         **_runtime_task_address_payload(address),
         "message": request.message,
     }
+    _apply_runtime_user_message_identity(payload, request)
     attachments = _runtime_attachment_payloads(db, user_id, request.attachment_ids)
     if attachments:
         payload["attachments"] = attachments
@@ -653,6 +654,7 @@ async def interrupt_and_send_runtime_message(
         **_runtime_task_address_payload(address),
         "message": request.message,
     }
+    _apply_runtime_user_message_identity(payload, request)
     attachments = _runtime_attachment_payloads(db, user_id, request.attachment_ids)
     if attachments:
         payload["attachments"] = attachments
@@ -668,6 +670,19 @@ async def interrupt_and_send_runtime_message(
         request=request,
         rpc_method="runtime.tasks.interrupt_and_send",
     )
+
+
+def _apply_runtime_user_message_identity(
+    payload: dict[str, Any],
+    request: RuntimeSendRequest,
+) -> None:
+    """Forward the stable identity used to correlate a runtime user turn."""
+
+    client_user_message_id = str(request.client_user_message_id or "").strip()
+    if not client_user_message_id:
+        return
+    payload["clientUserMessageId"] = client_user_message_id
+    payload["createdAt"] = int(time.time() * 1000)
 
 
 async def _dispatch_runtime_send(

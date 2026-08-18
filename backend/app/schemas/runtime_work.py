@@ -499,6 +499,10 @@ class RuntimeSendRequest(BaseModel):
 
     address: RuntimeTaskAddress
     message: str = Field(..., min_length=1)
+    client_user_message_id: Optional[str] = Field(
+        default=None,
+        alias="clientUserMessageId",
+    )
     attachment_ids: list[int] = Field(default_factory=list, alias="attachmentIds")
     model_selection: Optional[RuntimeModelSelection] = Field(
         default=None,
