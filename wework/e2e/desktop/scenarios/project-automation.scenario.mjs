@@ -1777,7 +1777,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         value: '预置流程直接开始',
       })
       await control.command('click', `${activeBoard} [data-testid="workspace-issue-submit"]`)
-      assert.ok(orchestratedItemId, 'Preset workflow Issue was not created')
+      const createdOrchestratedItemId = await waitForValue(
+        () => Promise.resolve(orchestratedItemId),
+        Boolean,
+        'Preset workflow Issue was not created',
+        uiTimeoutMs
+      )
       await control.command('waitFor', `${activeBoard} [data-testid="cloud-todo-detail-title"]`, {
         text: '预置流程直接开始',
         timeoutMs: uiTimeoutMs,
@@ -1785,7 +1790,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       await control.command('click', `${activeBoard} [data-testid="cloud-todo-detail-close"]`)
       await control.command(
         'drag',
-        `${activeBoard} [data-testid="cloud-todo-card-${orchestratedItemId}"]`,
+        `${activeBoard} [data-testid="cloud-todo-card-${createdOrchestratedItemId}"]`,
         {
           target: `${activeBoard} [data-testid="cloud-todo-column-dropzone-pending"]`,
         }

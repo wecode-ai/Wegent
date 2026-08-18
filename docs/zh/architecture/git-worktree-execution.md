@@ -56,6 +56,7 @@ sequenceDiagram
     E-->>U: accepted + plannedPath
     U->>U: 将 plannedPath 写入当前任务地址
     alt 无可用 slot
+        U->>U: 仅展示 plannedPath，不挂载目录或启动文件数据面
         S->>S: 等待 slot，不创建目录
     end
     U->>E: runtime.tasks.list
@@ -96,6 +97,7 @@ sequenceDiagram
 | -------------------------------------------------- | ---------------------------------------------------------------------------------- |
 | DeviceWorkspace 选择、可用性、偏好和 UI            | `wework/src/features/workbench/`、`wework/src/components/chat/composer/`           |
 | Local/Cloud/Remote Runtime 路由和任务投影          | `wework/src/api/`、`wework/src/features/workbench/useWorkbenchRuntimeMessaging.ts`、`wework/src/features/workbench/workbenchReducer.ts` |
+| Runtime Pane 的目录和文件数据面装载                | `wework/src/components/layout/useWorkbenchPaneSession.ts`                          |
 | 逻辑设备鉴权、持久 Runtime 身份和 Socket 解析      | `backend/app/services/device/`、`backend/app/api/ws/`                              |
 | Worktree capability、preflight、Git 生命周期和状态 | `executor/src/runtime_work/`                                                       |
 | 云设备持久卷、固定挂载路径和单写实例               | 云设备 Provider、部署配置、`docker/device/`                                        |
@@ -109,7 +111,7 @@ sequenceDiagram
 4. `runtime.worktrees.preflight` 无任务 Worktree 副作用；所有任务创建入口必须经过同一 Worktree preflight 门禁，`runtime.tasks.create` 在真正创建前再次执行关键校验。
 5. Worktree 身份包含 `deviceId` 和稳定 `taskId/worktreeId`，不得跨设备回退、恢复或删除。
 6. 请求 `workspacePath` 是源工作区；响应 `workspacePath` 是稳定计划路径或最终 Worktree 路径。`git_worktree` 响应缺少该独立路径或返回源路径时必须结构化失败，Backend 和 UI 都不得回退源目录，也不得在返回计划路径前把源目录投影成 Worktree。
-7. 排队任务不创建目录；Worktree prepare 占用 Runtime slot；创建失败不启动 Runtime，也不回退主工作区。
+7. 排队任务不创建目录；计划路径在任务获得 slot 并完成 Worktree prepare 前只属于展示和身份元数据，不得触发 Pane、Terminal、IDE、文件树或其他目录数据面的挂载、扫描和创建；Worktree prepare 占用 Runtime slot；创建失败不启动 Runtime，也不回退主工作区。
 8. 已存在目标路径只有在验证为同一源仓库、同一 Worktree ID 的合法 Git Worktree 后才能幂等接管。
 9. 阻塞 Git 和目录扫描不得运行在异步 RPC 主线程。
 10. 删除前必须获得所有关联 Runtime 的停止确认；Runtime 退出或 panic 都必须由作用域退出守卫发送停止确认。归档、快照和删除按顺序执行，任一步失败都保留可诊断数据；批量归档必须有界并发，不能按故障任务数线性累积停止超时。

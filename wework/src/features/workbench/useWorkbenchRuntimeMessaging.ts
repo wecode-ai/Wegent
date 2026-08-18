@@ -12,6 +12,7 @@ import {
   isWeWorkCompatibleDevice,
 } from '@/lib/device-capabilities'
 import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
+import { buildRuntimeTaskRoute, navigateTo } from '@/lib/navigation'
 import { normalizeRuntimeWorkspacePath, runtimeProjectUiId } from '@/lib/runtime-project'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import {
@@ -1354,8 +1355,11 @@ export function useWorkbenchRuntimeMessaging({
           options?.onRuntimeTaskOptimisticOpen?.(address, {
             previousAddress: optimisticAddress,
           })
-          if (options?.openInMainPane !== false && optimisticTaskStillSelected) {
-            runtimeTasks.openRuntimeTaskView(address, runtimeProject, { navigate: true })
+          if (options?.openInMainPane !== false) {
+            runtimeTasks.reconcileCurrentRuntimeTaskAddress(optimisticAddress, address)
+            if (optimisticTaskStillSelected) {
+              navigateTo(buildRuntimeTaskRoute(address))
+            }
           }
         }
         if (response.status === 'queued') {

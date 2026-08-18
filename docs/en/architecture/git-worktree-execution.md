@@ -56,6 +56,7 @@ sequenceDiagram
     E-->>U: accepted + plannedPath
     U->>U: store plannedPath in the current task address
     alt no slot available
+        U->>U: display plannedPath only; do not mount directories or start file data planes
         S->>S: wait without creating a directory
     end
     U->>E: runtime.tasks.list
@@ -96,6 +97,7 @@ sequenceDiagram
 | ------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
 | DeviceWorkspace selection, availability, preferences, and UI  | `wework/src/features/workbench/`, `wework/src/components/chat/composer/`           |
 | Local/Cloud/Remote Runtime routing and task projection        | `wework/src/api/`, `wework/src/features/workbench/useWorkbenchRuntimeMessaging.ts`, `wework/src/features/workbench/workbenchReducer.ts` |
+| Runtime Pane directory and file data-plane loading            | `wework/src/components/layout/useWorkbenchPaneSession.ts`                          |
 | Logical-device authorization, persistent Runtime identity, and socket resolution | `backend/app/services/device/`, `backend/app/api/ws/`                              |
 | Worktree capability, preflight, Git lifecycle, and state      | `executor/src/runtime_work/`                                                       |
 | Cloud persistent volume, stable mount path, and single writer | cloud device provider, deployment configuration, `docker/device/`                  |
@@ -109,7 +111,7 @@ Essential invariants:
 4. `runtime.worktrees.preflight` creates no task Worktree. Every task-creation entry point passes through the same Worktree preflight gate, and `runtime.tasks.create` repeats the critical checks immediately before creation.
 5. Worktree identity includes `deviceId` and stable `taskId/worktreeId`; no cross-device fallback, restoration, or deletion is implicit.
 6. Request `workspacePath` is the base workspace. Response `workspacePath` is the stable planned or final Worktree path. A `git_worktree` response with no independent path, or with the base path, fails structurally. Backend and UI never fall back to the base directory or project it as a Worktree before receiving the planned path.
-7. Queued tasks create no directory. Worktree preparation consumes a Runtime slot. Failure starts no Runtime and never falls back to the base workspace.
+7. Queued tasks create no directory. Until the task acquires a slot and completes Worktree preparation, the planned path is presentation and identity metadata only; it must not mount, scan, or create a directory through the Pane, Terminal, IDE, file tree, or any other file data plane. Worktree preparation consumes a Runtime slot. Failure starts no Runtime and never falls back to the base workspace.
 8. An existing target path is adopted only after proving that it is the expected Git Worktree for the same repository and Worktree ID.
 9. Blocking Git and directory scans never run on the asynchronous RPC worker.
 10. Deletion requires stop acknowledgement from every linked Runtime. Runtime exit or panic sends that acknowledgement through a scope-exit guard. Archive, snapshot, and removal happen in order, every failure preserves diagnosable data, and bulk archive uses bounded concurrency instead of accumulating stop timeouts linearly per stuck task.

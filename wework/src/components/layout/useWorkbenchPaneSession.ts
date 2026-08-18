@@ -2639,10 +2639,21 @@ function isInterruptedGuidance(message: RuntimePaneQueuedMessage): boolean {
 
 function runtimeTaskLoadTargetFromAddress(address: RuntimeTaskAddress): RuntimeTaskLoadTarget {
   return {
-    key: `${runtimeTranscriptPaneKey(address)}:${address.workspacePath ?? ''}`,
+    key: runtimeTaskLoadKeyFromAddress(address),
     identityKey: runtimeTranscriptPaneIdentityKey(address),
     address,
   }
+}
+
+export function runtimeTaskLoadKeyFromAddress(address: RuntimeTaskAddress): string {
+  const runtimeHandleThreadId = address.runtimeHandle?.threadId
+  const hasPreparedRuntimeThread =
+    Boolean(address.threadId?.trim()) ||
+    (typeof runtimeHandleThreadId === 'string' && Boolean(runtimeHandleThreadId.trim()))
+  const loadableWorkspacePath = hasPreparedRuntimeThread
+    ? (address.workspacePath?.trim() ?? '')
+    : ''
+  return `${runtimeTranscriptPaneKey(address)}:${loadableWorkspacePath}`
 }
 
 const runtimeTranscriptPaneKey = runtimeConversationKey
