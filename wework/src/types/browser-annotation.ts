@@ -35,6 +35,7 @@ export interface BrowserAnnotationScope {
 
 export interface BrowserAnnotationTargetSnapshot {
   tagName: string
+  html?: string
   text: string
   isSimpleText?: boolean
   role?: string

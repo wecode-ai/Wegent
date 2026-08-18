@@ -3,7 +3,14 @@ import { browserAnnotationInjectionScript } from './browser-annotation/injection
 
 interface RuntimeApi {
   scope: { browserTabId: string; pageSessionId: string; url: string }
-  getSnapshot: () => { revision: number; annotations: Array<{ comment: string; number: number }> }
+  getSnapshot: () => {
+    revision: number
+    annotations: Array<{
+      comment: string
+      number: number
+      target: { html?: string; tagName: string; text: string }
+    }>
+  }
   setOriginalViewEnabled: (enabled: boolean) => {
     revision: number
     annotations: Array<{ comment: string; number: number }>
@@ -40,6 +47,7 @@ function openEditor(target: HTMLElement) {
   elementsFromPointTarget = target
   const blocker = document.querySelector<HTMLElement>('[data-wework-annotation="blocker"]')!
   blocker.dispatchEvent(new MouseEvent('mousemove', { bubbles: true }))
+  blocker.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }))
   click(blocker)
   return document.querySelector<HTMLInputElement>('[data-wework-annotation="comment-input"]')
 }
@@ -85,9 +93,73 @@ describe('browser annotation injection', () => {
     expect(first).toEqual(second)
     expect(first).toMatchObject({
       revision: 1,
-      annotations: [{ comment: 'First comment', number: 1 }],
+      annotations: [
+        {
+          comment: 'First comment',
+          number: 1,
+          target: {
+            html: '<button id="first-target">First target</button>',
+            tagName: 'button',
+            text: 'First target',
+          },
+        },
+      ],
     })
     expect(document.querySelectorAll('[data-wework-annotation="marker"]')).toHaveLength(1)
+  })
+
+  test('keeps comment focus when the page dialog traps focus', () => {
+    const dialog = document.createElement('div')
+    dialog.setAttribute('role', 'dialog')
+    dialog.setAttribute('aria-modal', 'true')
+    const fallbackInput = document.createElement('input')
+    dialog.append(fallbackInput, document.querySelector('#first-target')!)
+    document.body.appendChild(dialog)
+    const trapFocus = (event: FocusEvent) => {
+      if (!dialog.contains(event.target as Node)) fallbackInput.focus()
+    }
+    document.addEventListener('focusin', trapFocus)
+
+    try {
+      fallbackInput.focus()
+      const input = openEditor(document.querySelector('#first-target')!)
+
+      expect(document.activeElement).toBe(input)
+    } finally {
+      document.removeEventListener('focusin', trapFocus)
+    }
+  })
+
+  test('keeps the page dialog open when selecting an annotation target', () => {
+    const dialog = document.createElement('div')
+    dialog.setAttribute('role', 'dialog')
+    dialog.setAttribute('aria-modal', 'true')
+    dialog.appendChild(document.querySelector('#first-target')!)
+    document.body.appendChild(dialog)
+    let dismissed = false
+    const dismissOutside = (event: PointerEvent) => {
+      if (!dialog.contains(event.target as Node)) dismissed = true
+    }
+    document.addEventListener('pointerdown', dismissOutside)
+
+    try {
+      const target = document.querySelector<HTMLElement>('#first-target')!
+      elementsFromPointTarget = target
+      const blocker = document.querySelector<HTMLElement>('[data-wework-annotation="blocker"]')!
+      blocker.dispatchEvent(new MouseEvent('mousemove', { bubbles: true }))
+      const pointerDown = new PointerEvent('pointerdown', {
+        bubbles: true,
+        cancelable: true,
+      })
+      blocker.dispatchEvent(pointerDown)
+      click(blocker)
+
+      expect(dismissed).toBe(false)
+      expect(pointerDown.defaultPrevented).toBe(false)
+      expect(document.querySelector('[data-wework-annotation="editor"]')).not.toBeNull()
+    } finally {
+      document.removeEventListener('pointerdown', dismissOutside)
+    }
   })
 
   test('edits a published annotation without changing its number', () => {

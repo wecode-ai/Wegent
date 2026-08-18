@@ -171,35 +171,6 @@ function browserDataCacheFixtureHtml() {
 </html>`
 }
 
-function annotationFixtureHtml({ secondPage = false } = {}) {
-  const heading = secondPage ? ANNOTATION_SECOND_READY_TEXT : ANNOTATION_READY_TEXT
-  return `<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8" />
-    <title>${heading}</title>
-    <style>
-      body { font-family: system-ui, sans-serif; margin: 0; padding: 48px; }
-      h1 { margin: 0 0 32px; font-size: 24px; }
-      #annotation-target {
-        display: block;
-        width: 280px;
-        padding: 16px;
-        border: 1px solid #9ca3af;
-        border-radius: 6px;
-        background: #f8fafc;
-        color: #111827;
-        font-size: 16px;
-      }
-    </style>
-  </head>
-  <body>
-    <h1>${heading}</h1>
-    <button id="annotation-target" type="button">${ANNOTATION_TARGET_TEXT}</button>
-  </body>
-</html>`
-}
-
 async function waitForBridgeIdentity(executorHome, timeoutMs) {
   const runtimePath = join(executorHome, 'runtime', BRIDGE_RUNTIME_FILE)
   const startedAt = Date.now()
@@ -497,12 +468,18 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       }
       if (request.method === 'GET' && url.pathname === ANNOTATION_FIXTURE_PATH) {
         response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
-        response.end(annotationFixtureHtml())
+        response.end(
+          await readFile(join(repoDir, 'wework/e2e/fixtures/annotation-dialog.html'), 'utf8')
+        )
         return true
       }
       if (request.method === 'GET' && url.pathname === ANNOTATION_SECOND_FIXTURE_PATH) {
         response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
-        response.end(annotationFixtureHtml({ secondPage: true }))
+        response.end(
+          (
+            await readFile(join(repoDir, 'wework/e2e/fixtures/annotation-dialog.html'), 'utf8')
+          ).replaceAll(ANNOTATION_READY_TEXT, ANNOTATION_SECOND_READY_TEXT)
+        )
         return true
       }
       if (request.method !== 'GET' || url.pathname !== FIXTURE_PATH) return false
@@ -922,13 +899,24 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
           const blocker = document.querySelector('[data-wework-annotation="blocker"]')
           if (!target || !blocker) return false
           const rect = target.getBoundingClientRect()
+          const pointerDown = new PointerEvent('pointerdown', {
+            bubbles: true,
+            cancelable: true,
+            clientX: rect.x + rect.width / 2,
+            clientY: rect.y + rect.height / 2,
+          })
+          blocker.dispatchEvent(pointerDown)
           blocker.dispatchEvent(new MouseEvent('click', {
             bubbles: true,
             cancelable: true,
             clientX: rect.x + rect.width / 2,
             clientY: rect.y + rect.height / 2,
           }))
-          return Boolean(document.querySelector('[data-wework-annotation="editor"]'))
+          return {
+            dialogOpen: Boolean(document.querySelector('#annotation-dialog')),
+            editorOpen: Boolean(document.querySelector('[data-wework-annotation="editor"]')),
+            pointerDefaultPrevented: pointerDown.defaultPrevented,
+          }
         })()`,
         timeoutMs: 5_000,
       })
@@ -937,7 +925,21 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         true,
         `Annotation target click failed: ${JSON.stringify(createAnnotation)}`
       )
-      assert.equal(createAnnotation.value, true, 'Annotation target click did not open the editor')
+      assert.deepEqual(createAnnotation.value, {
+        dialogOpen: true,
+        editorOpen: true,
+        pointerDefaultPrevented: false,
+      })
+      const focusAnnotationComment = await bridgeCall({
+        action: 'focus',
+        selector: '[data-wework-annotation="comment-input"]',
+        timeoutMs: 5_000,
+      })
+      assert.equal(
+        focusAnnotationComment.ok,
+        true,
+        `Annotation comment focus failed inside a page dialog: ${JSON.stringify(focusAnnotationComment)}`
+      )
       const fillAnnotationComment = await bridgeCall({
         action: 'fill',
         selector: '[data-wework-annotation="comment-input"]',
@@ -1016,9 +1018,27 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         `Annotation snapshot evaluation failed: ${JSON.stringify(annotationSnapshotResult)}`
       )
       assert.equal(annotationSnapshotResult.value?.annotations?.length, 1)
-      assert.equal(annotationSnapshotResult.value.annotations[0]?.comment, ANNOTATION_COMMENT)
+      const savedAnnotation = annotationSnapshotResult.value.annotations[0]
+      assert.equal(savedAnnotation?.comment, ANNOTATION_COMMENT)
+      assert.equal(savedAnnotation?.target?.tagName, 'button')
+      assert.equal(
+        savedAnnotation?.target?.html,
+        '<button id="annotation-target" type="button">Annotation target text</button>'
+      )
+      assert.equal(savedAnnotation?.target?.text, ANNOTATION_TARGET_TEXT)
+      assert.equal(savedAnnotation?.target?.name, ANNOTATION_TARGET_TEXT)
+      assert.equal(savedAnnotation?.target?.isSimpleText, true)
+      assert.equal(savedAnnotation?.target?.role, undefined)
+      assert.equal(annotationSnapshotResult.value?.scope?.url, annotationFixtureUrl)
       assert.ok(
-        annotationSnapshotResult.value.annotations[0]?.adjustments?.some(
+        Number.isFinite(savedAnnotation?.target?.rect?.x) &&
+          Number.isFinite(savedAnnotation?.target?.rect?.y) &&
+          savedAnnotation.target.rect.width > 0 &&
+          savedAnnotation.target.rect.height > 0,
+        `Annotation snapshot included an invalid target rect: ${JSON.stringify(savedAnnotation?.target)}`
+      )
+      assert.ok(
+        savedAnnotation?.adjustments?.some(
           adjustment => adjustment.property === 'color' && adjustment.after === '#ef4444'
         ),
         `Annotation snapshot omitted saved color adjustment: ${JSON.stringify(annotationSnapshotResult.value)}`
