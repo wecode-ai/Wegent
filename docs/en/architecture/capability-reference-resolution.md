@@ -32,7 +32,7 @@ sequenceDiagram
     alt Direct Model does not exist
         C->>R: name, visible namespace, user_id
         R->>DB: Find an active namespace and approved reference
-        DB-->>R: Active referenced source Kind
+        DB-->>R: Active source Kind with the smallest id
         R-->>C: Source Kind or unavailable
     else Direct Model exists
         DB-->>C: Direct Model
@@ -53,5 +53,6 @@ sequenceDiagram
 - `Kind` is the only source of truth for capability configuration; sharing must not copy configuration or secrets.
 - `ResourceMember` is the source of truth for sharing grants; a reference resolves only when its target namespace is active and its grant is approved.
 - The namespace in a reference is the caller-visible scope and does not have to match the source Kind namespace.
+- When a visible scope has multiple referenced Models with the same name, the `Kind` with the smallest id is treated as the earliest and selected.
 - Callers retain their existing direct Model lookup and resolve a shared reference only when it is not found.
 - Backend RAG and Knowledge Runtime must use the same shared Model reference resolver; removing a grant or disabling its source makes it unavailable immediately.

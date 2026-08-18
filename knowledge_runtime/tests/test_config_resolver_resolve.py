@@ -7,7 +7,6 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-from sqlalchemy import Boolean, Column, Integer, MetaData, String, Table, create_engine
 from sqlalchemy.orm import Session
 
 from knowledge_runtime.services.config_resolver import (
@@ -21,7 +20,6 @@ from shared.models import (
     RuntimeRetrievalConfig,
     RuntimeRetrieverConfig,
 )
-from shared.models.db import Kind, User
 
 from .conftest import (
     _make_kb_kind,
@@ -195,139 +193,31 @@ class TestResolveQueryConfig:
         assert result.retrieval_config.retrieval_mode == "vector"
 
     def test_resolves_embedding_model_shared_into_kb_namespace(
-        self, resolver: ConfigResolver
+        self,
+        resolver: ConfigResolver,
+        shared_model_db: Session,
     ) -> None:
         """A group-visible model reference resolves to its source Model Kind."""
-        engine = create_engine("sqlite:///:memory:")
-        Kind.__table__.create(engine)
-        User.__table__.create(engine)
-        metadata = MetaData()
-        namespace = Table(
-            "namespace",
-            metadata,
-            Column("id", Integer, primary_key=True),
-            Column("name", String(100), nullable=False),
-            Column("is_active", Boolean, nullable=False),
+        query_config = resolver.resolve_query_config(
+            shared_model_db,
+            knowledge_base_id=1,
+            user_id=42,
         )
-        resource_members = Table(
-            "resource_members",
-            metadata,
-            Column("id", Integer, primary_key=True),
-            Column("resource_type", String(50), nullable=False),
-            Column("resource_id", Integer, nullable=False),
-            Column("entity_type", String(20), nullable=False),
-            Column("entity_id", String(100), nullable=False),
-            Column("status", String(20), nullable=False),
+        index_config = resolver.resolve_index_config(
+            shared_model_db,
+            knowledge_base_id=1,
+            user_id=42,
         )
-        metadata.create_all(engine)
 
-        with Session(engine) as db:
-            db.add(
-                User(
-                    id=42,
-                    user_name="kb-owner",
-                    password_hash="unused",
-                )
-            )
-            db.add_all(
-                [
-                    Kind(
-                        id=1,
-                        user_id=42,
-                        kind="KnowledgeBase",
-                        name="team-kb",
-                        namespace="search-team",
-                        is_active=True,
-                        json={
-                            "spec": {
-                                "retrievalConfig": {
-                                    "retriever_name": "test-retriever",
-                                    "retriever_namespace": "default",
-                                    "embedding_config": {
-                                        "model_name": "shared-embedding",
-                                        "model_namespace": "search-team",
-                                    },
-                                }
-                            }
-                        },
-                    ),
-                    Kind(
-                        id=2,
-                        user_id=42,
-                        kind="Retriever",
-                        name="test-retriever",
-                        namespace="default",
-                        is_active=True,
-                        json={
-                            "spec": {
-                                "storageConfig": {
-                                    "type": "qdrant",
-                                    "url": "http://qdrant:6333",
-                                }
-                            }
-                        },
-                    ),
-                    Kind(
-                        id=3,
-                        user_id=77,
-                        kind="Model",
-                        name="shared-embedding",
-                        namespace="default",
-                        is_active=True,
-                        json={
-                            "spec": {
-                                "protocol": "openai",
-                                "modelConfig": {
-                                    "env": {
-                                        "base_url": "http://embedding:8000/v1",
-                                        "model_id": "provider-embedding-id",
-                                    }
-                                },
-                                "embeddingConfig": {"dimensions": 1024},
-                            }
-                        },
-                    ),
-                ]
-            )
-            db.execute(
-                namespace.insert().values(
-                    id=7,
-                    name="search-team",
-                    is_active=True,
-                )
-            )
-            db.execute(
-                resource_members.insert().values(
-                    id=1,
-                    resource_type="Model",
-                    resource_id=3,
-                    entity_type="namespace",
-                    entity_id="7",
-                    status="approved",
-                )
-            )
-            db.commit()
-
-            query_config = resolver.resolve_query_config(
-                db,
-                knowledge_base_id=1,
-                user_id=42,
-            )
-            index_config = resolver.resolve_index_config(
-                db,
-                knowledge_base_id=1,
-                user_id=42,
-            )
-
-            assert query_config.embedding_model_config.model_name == "shared-embedding"
-            assert query_config.embedding_model_config.model_namespace == "search-team"
-            assert (
-                query_config.embedding_model_config.resolved_config["model_id"]
-                == "provider-embedding-id"
-            )
-            assert index_config.embedding_model_config == (
-                query_config.embedding_model_config
-            )
+        assert query_config.embedding_model_config.model_name == "shared-embedding"
+        assert query_config.embedding_model_config.model_namespace == "search-team"
+        assert (
+            query_config.embedding_model_config.resolved_config["model_id"]
+            == "provider-embedding-id"
+        )
+        assert index_config.embedding_model_config == (
+            query_config.embedding_model_config
+        )
 
     def test_hybrid_retrieval_mode(
         self, resolver: ConfigResolver, mock_db: MagicMock

@@ -31,7 +31,7 @@ sequenceDiagram
     alt 未找到直接 Model
         C->>R: name、可见 namespace、user_id
         R->>DB: 查有效 namespace 与 approved 引用
-        DB-->>R: 引用指向的有效源 Kind
+        DB-->>R: id 最小的有效源 Kind
         R-->>C: 源 Kind 或不可用
     else 找到直接 Model
         DB-->>C: 直接 Model
@@ -52,5 +52,6 @@ sequenceDiagram
 - `Kind` 是能力配置的唯一事实源；共享不得复制配置或密钥。
 - `ResourceMember` 是共享授权事实源；共享引用仅在目标 namespace 有效且为 approved 时可解析。
 - 引用中的 namespace 表示调用方可见范围，不要求等于源 Kind 的 namespace。
+- 同一可见范围存在多个同名共享 Model 时，选择 `Kind.id` 最小的记录，视为最早创建的 Model。
 - 调用方保留既有直接 Model 查询；仅在未找到时解析共享引用。
 - Backend RAG 与 Knowledge Runtime 必须复用同一个共享 Model 引用解析器；解绑或停用后必须立即不可用。

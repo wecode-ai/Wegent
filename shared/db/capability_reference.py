@@ -32,7 +32,7 @@ def resolve_referenced_model_kind(
     namespace: str,
     user_id: int,
 ) -> Kind | None:
-    """Resolve an approved Model reference in a caller-visible scope."""
+    """Resolve the smallest-id approved Model in a caller-visible scope."""
     entity_type = "user"
     entity_id = str(user_id)
     if namespace != "default":
@@ -62,5 +62,6 @@ def resolve_referenced_model_kind(
             Kind.user_id != 0,
             Kind.is_active.is_(True),
         )
+        .order_by(Kind.id.asc())
         .first()
     )
