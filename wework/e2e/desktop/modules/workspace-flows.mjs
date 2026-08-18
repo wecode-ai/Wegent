@@ -363,11 +363,37 @@ async function verifyWorkspaceIssueCreation(control) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('click', '[data-testid="workspace-create-issue-tab"]')
-  await control.command('fill', '[data-testid="workspace-issue-input"]', {
-    value: 'WEWORK_DESKTOP_E2E_ISSUE\nWorkspace issue creation verified',
+  await control.command('click', '[data-testid="workspace-issue-expand"]')
+  await control.command('waitFor', '[data-testid="workspace-issue-title"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('fill', '[data-testid="workspace-issue-title"]', {
+    value: 'WEWORK_DESKTOP_E2E_ISSUE',
+  })
+  await control.command('fill', '[data-testid="workspace-issue-description"]', {
+    value: 'Workspace fullscreen issue creation verified',
   })
   await captureVerificationScreenshot(control, 'workspace-issue-01-ready.png')
-  await control.command('click', '[data-testid="workspace-issue-submit"]')
+  await control.command('click', '[data-testid="workspace-issue-collapse"]')
+  await control.command('waitFor', '[data-testid="workspace-issue-input"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="workspace-issue-expand"]')
+  await waitForControlValue(
+    control,
+    '[data-testid="workspace-issue-title"]',
+    'WEWORK_DESKTOP_E2E_ISSUE',
+    'Fullscreen Issue title did not survive collapsing and reopening'
+  )
+  await waitForControlValue(
+    control,
+    '[data-testid="workspace-issue-description"]',
+    'Workspace fullscreen issue creation verified',
+    'Fullscreen Issue content did not survive collapsing and reopening'
+  )
+  await control.command('click', '[data-testid="workspace-issue-fullscreen-submit"]')
   await control.command(
     'waitFor',
     `${boardContentSelector} [data-testid="cloud-todo-detail-title"]`,

@@ -241,6 +241,71 @@ describe('IssueComposer', () => {
     })
   })
 
+  it('expands into an app-fullscreen editor with explicit title, content, and attachments', async () => {
+    const onCreate = vi.fn()
+    const file = new File(['image'], 'context.png', { type: 'image/png' })
+    render(
+      <IssueComposer
+        projects={[workItemProject]}
+        initialBoardKey="backend:1"
+        onCancel={vi.fn()}
+        onCreate={onCreate}
+      />
+    )
+
+    await userEvent.type(screen.getByTestId('workspace-issue-input'), '自动生成的标题')
+    await userEvent.click(screen.getByTestId('workspace-issue-expand'))
+
+    expect(screen.getByTestId('workspace-issue-composer-panel')).toHaveClass('fixed', 'inset-0')
+    expect(screen.getByTestId('workspace-issue-title')).toHaveValue('自动生成的标题')
+    expect(screen.getByTestId('workspace-issue-description')).toHaveValue('自动生成的标题')
+
+    fireEvent.change(screen.getByTestId('workspace-issue-title'), {
+      target: { value: '显式 Issue 标题' },
+    })
+    fireEvent.change(screen.getByTestId('workspace-issue-description'), {
+      target: { value: '完整 Issue 内容' },
+    })
+    fireEvent.change(screen.getByTestId('workspace-issue-file-input'), {
+      target: { files: [file] },
+    })
+    await userEvent.click(screen.getByTestId('workspace-issue-collapse'))
+    await userEvent.click(screen.getByTestId('workspace-issue-expand'))
+
+    expect(screen.getByTestId('workspace-issue-title')).toHaveValue('显式 Issue 标题')
+    expect(screen.getByTestId('workspace-issue-description')).toHaveValue('完整 Issue 内容')
+    expect(screen.getByRole('button', { name: 'context.png' })).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('workspace-issue-fullscreen-submit'))
+
+    expect(onCreate).toHaveBeenCalledWith({
+      boardKey: 'backend:1',
+      title: '显式 Issue 标题',
+      description: '完整 Issue 内容',
+      files: [file],
+      createTask: false,
+      localProjectId: null,
+    })
+  })
+
+  it('collapses fullscreen editing with Escape before closing the composer', async () => {
+    const onCancel = vi.fn()
+    render(
+      <IssueComposer
+        projects={[workItemProject]}
+        initialBoardKey="backend:1"
+        onCancel={onCancel}
+        onCreate={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('workspace-issue-expand'))
+    fireEvent.keyDown(screen.getByTestId('workspace-issue-title'), { key: 'Escape' })
+
+    expect(screen.queryByTestId('workspace-issue-title')).not.toBeInTheDocument()
+    expect(onCancel).not.toHaveBeenCalled()
+  })
+
   it('closes with Escape without showing a duplicate cancel action', () => {
     const onCancel = vi.fn()
     render(
