@@ -4,6 +4,7 @@ import {
   decideIssueWorkflowNode,
   instantiateIssueWorkflow,
   preferNewestLoopItemSnapshot,
+  reconcileIssueWorkflowForTaskBindings,
   updateIssueWorkflowForRuntime,
   workflowBoardStatus,
 } from '@/api/issueWorkflow'
@@ -108,5 +109,71 @@ describe('Issue workflow projection', () => {
     workflow = attachIssueWorkflowDelivery(workflow, 'develop', 'delivery-1')
     workflow = decideIssueWorkflowNode(workflow, 'develop', 'approve', 1, '')
     expect(workflow.nodes[0].status).toBe('completed')
+  })
+
+  it('uses the latest bound task terminal state while preserving older task history', () => {
+    let workflow = instantiateIssueWorkflow(definition)!
+    const olderTask = 'device:task-1'
+    const latestTask = 'device:task-2'
+
+    workflow = updateIssueWorkflowForRuntime(workflow, 'develop', 'failed', olderTask, [olderTask])
+    expect(workflow.nodes[0].status).toBe('failed')
+
+    workflow = updateIssueWorkflowForRuntime(workflow, 'develop', 'running', latestTask, [
+      latestTask,
+      olderTask,
+    ])
+    expect(workflow.nodes[0].status).toBe('running')
+
+    workflow = updateIssueWorkflowForRuntime(workflow, 'develop', 'succeeded', latestTask, [
+      latestTask,
+      olderTask,
+    ])
+    expect(workflow.nodes[0]).toMatchObject({
+      status: 'awaiting_approval',
+      task_statuses: {
+        [olderTask]: 'failed',
+        [latestTask]: 'succeeded',
+      },
+    })
+
+    workflow = updateIssueWorkflowForRuntime(workflow, 'develop', 'failed', olderTask, [
+      latestTask,
+      olderTask,
+    ])
+    expect(workflow.nodes[0].status).toBe('awaiting_approval')
+  })
+
+  it('repairs a stale failed stage from the latest bound task truth', () => {
+    const workflow = instantiateIssueWorkflow(definition)!
+    workflow.nodes[0] = {
+      ...workflow.nodes[0],
+      status: 'failed',
+      task_ids: ['device:task-1', 'device:task-2'],
+      task_statuses: {
+        'device:task-1': 'failed',
+        'device:task-2': 'succeeded',
+      },
+    }
+
+    const reconciled = reconcileIssueWorkflowForTaskBindings(workflow, [
+      {
+        device_id: 'device',
+        task_id: 'task-1',
+        workflow_node_id: 'develop',
+        linked_at: '2026-08-18T10:00:00Z',
+      },
+      {
+        device_id: 'device',
+        task_id: 'task-2',
+        workflow_node_id: 'develop',
+        linked_at: '2026-08-18T11:00:00Z',
+      },
+    ])
+
+    expect(reconciled.nodes[0]).toMatchObject({
+      status: 'awaiting_approval',
+      task_ids: ['device:task-2', 'device:task-1'],
+    })
   })
 })

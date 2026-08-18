@@ -20,6 +20,8 @@ flowchart LR
     GATEWAY -->|local project| LOCAL[Local ProjectSpace Provider]
     GATEWAY -->|cloud project while online| REMOTE[Backend ProjectSpace Provider]
     REMOTE --> BACKEND[Wegent Backend]
+    GATEWAY --> DELIVERY[Delivery lifecycle<br/>create / upload / download / finalize / discard]
+    DELIVERY -->|source TaskBinding| ISSUE_STAGE[Current Issue workflow node]
     CLOUD[Wegent cloud Agent] --> BACKEND_MCP[Backend wework_space MCP]
     BACKEND_MCP --> BACKEND
     CONTRACT[Shared tool contract and contract tests] --> PLUGIN
@@ -57,6 +59,14 @@ sequenceDiagram
     else Uncached cloud project while offline
         G-->>P: Return an explicit offline/not-cached error
     end
+    opt Current session is bound to an Issue TaskBinding
+        H->>P: get_delivery_requirements
+        P->>G: Resolve the current stage from ContextGrant device_id + task_id
+        H->>P: create_delivery / upload_delivery_asset
+        P->>G: Create a Delivery draft bound to the current TaskBinding and add assets
+        H->>P: finalize_delivery
+        P->>G: Freeze the snapshot and bind delivery_id to the current workflow node
+    end
     G-->>P: Return the scope-checked result
     P-->>H: MCP tool result
 ```
@@ -70,6 +80,8 @@ sequenceDiagram
 | Other Harness to project-space capability              | Harness-specific MCP adapter                                        |
 | Gateway to Local Provider                              | Executor `task_runtime` and local ProjectSpace provider             |
 | Gateway to Backend Provider                            | Executor authenticated Backend ProjectSpace client                  |
+| MCP to Delivery lifecycle                              | Executor `task_runtime/mcp.rs`, Delivery API, and local ProjectSpace |
+| Delivery to current workflow node                      | ContextGrant Runtime address, `LoopItemTaskBinding`, Delivery service |
 | Cloud Agent to Backend MCP                             | Backend `wework_space` MCP                                          |
 | Shared tool contract to every Adapter                  | Shared schema, tool names, permission semantics, and contract tests |
 
@@ -84,6 +96,10 @@ Invariants:
 - Generic tasks do not enable project-space tools. Project conversations may bind only `space_id`; Issue conversations bind `space_id + item_id`.
 - `get_current_context` returns an explicit unbound result when no context exists. MCP startup failure, missing permission, cloud-project offline, and uncached data are distinct errors.
 - The Gateway rejects explicit `space_id/item_id` outside the ContextGrant scope and never trusts identifiers supplied by the model.
+- Delivery write tools are available only to an Issue session bound to `space_id + item_id + device_id + task_id`. `source_task` and `workflow_node_id` are derived from the ContextGrant and the active `TaskBinding`; the model cannot specify or override them.
+- Local and cloud Providers expose the same semantics for `get_delivery_requirements`, `create_delivery`, `upload_delivery_asset`, `list_deliveries`, `read_delivery`, `download_delivery_asset`, `finalize_delivery`, and `discard_delivery_draft`. Ordinary Issue-attachment tools never substitute for Delivery tools.
+- `create_delivery` chat selection is resolved server-side from the current Issue timeline and supports all messages, the latest N messages, or explicit message IDs; model-supplied message content is never trusted as the result of a selection.
+- Delivery-asset download verifies that the asset belongs to a Delivery visible under the current Issue. Upload and discard operate only on a still-draft Delivery created by the current session. `finalize_delivery` reuses the immutable snapshot boundary and binds the Delivery to the unique workflow node of its source TaskBinding.
 - Before the first model turn, Runtime validates only the fixed capability configuration and ContextGrant; it must not block the model on a global MCP inventory request. Tool-inventory diagnostics run asynchronously, and capability failures must produce an explicit error while the conversation UI preserves both the user message and failed assistant response.
 - Local, remote, and Backend MCP implementations share the same tool schema and contract tests. Providers choose data location without changing tool semantics.
 - After migration, the per-task `ensure_space_mcp_server` service-injection path is removed; two primary paths must not remain.

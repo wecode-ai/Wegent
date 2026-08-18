@@ -530,6 +530,43 @@ fn map_task_attachment(row: &Row<'_>) -> rusqlite::Result<TaskAttachment> {
     })
 }
 
+fn attach_delivery_to_workflow(
+    mut metadata: serde_json::Value,
+    workflow_node_id: &str,
+    delivery_id: &str,
+) -> Result<serde_json::Value, TaskRuntimeError> {
+    let workflow = metadata
+        .get_mut("workflow")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| TaskRuntimeError::Invalid("Issue has no workflow".to_owned()))?;
+    let nodes = workflow
+        .get_mut("nodes")
+        .and_then(serde_json::Value::as_array_mut)
+        .ok_or_else(|| TaskRuntimeError::Invalid("Issue has no workflow nodes".to_owned()))?;
+    let node = nodes
+        .iter_mut()
+        .find(|node| node.get("id").and_then(serde_json::Value::as_str) == Some(workflow_node_id))
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| TaskRuntimeError::Invalid("Workflow node not found".to_owned()))?;
+    let deliveries = node
+        .entry("delivery_ids")
+        .or_insert_with(|| json!([]))
+        .as_array_mut()
+        .ok_or_else(|| TaskRuntimeError::Invalid("Workflow delivery_ids is invalid".to_owned()))?;
+    if !deliveries
+        .iter()
+        .any(|value| value.as_str() == Some(delivery_id))
+    {
+        deliveries.push(json!(delivery_id));
+    }
+    let version = workflow
+        .get("version")
+        .and_then(serde_json::Value::as_i64)
+        .unwrap_or(1);
+    workflow.insert("version".to_owned(), json!(version + 1));
+    Ok(metadata)
+}
+
 impl LocalTaskStore {
     pub fn create_delivery(
         &self,
@@ -559,12 +596,20 @@ impl LocalTaskStore {
                 Ok::<_, TaskRuntimeError>(key)
             })
             .transpose()?;
-        let source_binding_id = input
+        let source_binding = input
             .source_task
             .as_ref()
             .map(|task| self.find_task_binding(&task.device_id, &task.task_id))
-            .transpose()?
-            .map(|binding| binding.id);
+            .transpose()?;
+        if source_binding.as_ref().is_some_and(|binding| {
+            binding.cloud_project_id != project_id
+                || binding.loop_item_id.as_deref() != Some(item_id)
+        }) {
+            return Err(TaskRuntimeError::Invalid(
+                "source Runtime task is not bound to this Issue".to_owned(),
+            ));
+        }
+        let source_binding_id = source_binding.map(|binding| binding.id);
         let source_snapshot = input
             .source_task
             .as_ref()
@@ -669,21 +714,78 @@ impl LocalTaskStore {
     ) -> Result<Delivery, TaskRuntimeError> {
         self.get_delivery(item_id, delivery_id)?;
         let timestamp = now();
-        let connection = self.connection()?;
-        connection.execute(
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let source_binding_id: Option<String> = transaction.query_row(
+            "SELECT source_task_binding_id FROM loop_items
+             WHERE id = ?1 AND resource_type = 'delivery' AND status = 'draft'",
+            [delivery_id],
+            |row| row.get(0),
+        )?;
+        let workflow_node_id = source_binding_id
+            .as_deref()
+            .map(|binding_id| {
+                transaction.query_row(
+                    "SELECT json_extract(metadata, '$.workflow_node_id')
+                     FROM loop_items
+                     WHERE id = ?1 AND resource_type = 'execution' AND unlinked_at IS NULL",
+                    [binding_id],
+                    |row| row.get::<_, Option<String>>(0),
+                )
+            })
+            .transpose()?
+            .flatten();
+        let next_metadata = workflow_node_id
+            .as_deref()
+            .map(|node_id| {
+                transaction
+                    .query_row(
+                        "SELECT metadata FROM loop_items
+                     WHERE id = ?1 AND resource_type = 'task' AND deleted_at IS NULL",
+                        [item_id],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .and_then(|metadata| {
+                        serde_json::from_str::<serde_json::Value>(&metadata).map_err(|error| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                metadata.len(),
+                                rusqlite::types::Type::Text,
+                                Box::new(error),
+                            )
+                        })
+                    })
+                    .and_then(|metadata| {
+                        attach_delivery_to_workflow(metadata, node_id, delivery_id).map_err(
+                            |error| rusqlite::Error::InvalidParameterName(error.to_string()),
+                        )
+                    })
+            })
+            .transpose()?;
+        transaction.execute(
             "UPDATE loop_items SET status = 'delivered', delivered_at = ?1, updated_at = ?1
              WHERE id = ?2 AND resource_type = 'delivery'",
             params![timestamp, delivery_id],
         )?;
-        connection.execute(
+        transaction.execute(
             "UPDATE loop_items SET status = 'delivered', updated_at = ?1
              WHERE delivery_id = ?2 AND resource_type = 'delivery_asset'",
             params![timestamp, delivery_id],
         )?;
-        connection.execute(
-            "UPDATE loop_items SET current_delivery_id = ?1, updated_at = ?2 WHERE id = ?3",
-            params![delivery_id, timestamp, item_id],
-        )?;
+        if let Some(metadata) = next_metadata {
+            transaction.execute(
+                "UPDATE loop_items
+                 SET current_delivery_id = ?1, metadata = ?2, version = version + 1,
+                     updated_at = ?3
+                 WHERE id = ?4",
+                params![delivery_id, metadata.to_string(), timestamp, item_id],
+            )?;
+        } else {
+            transaction.execute(
+                "UPDATE loop_items SET current_delivery_id = ?1, updated_at = ?2 WHERE id = ?3",
+                params![delivery_id, timestamp, item_id],
+            )?;
+        }
+        transaction.commit()?;
         drop(connection);
         self.get_delivery(item_id, delivery_id)
     }

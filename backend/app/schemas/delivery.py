@@ -386,10 +386,35 @@ class CloudTaskContextResponse(LoopItemTaskBindingResponse):
     loop_item: LoopItemResponse | None = None
 
 
+class DeliveryChatSelection(BaseModel):
+    mode: Literal["all", "latest", "message_ids"]
+    count: int | None = Field(default=None, ge=1, le=500)
+    message_ids: list[str] = Field(default_factory=list, max_length=500)
+
+    @model_validator(mode="after")
+    def validate_selection(self) -> "DeliveryChatSelection":
+        if self.mode == "latest" and self.count is None:
+            raise ValueError("count is required when mode is latest")
+        if self.mode == "message_ids" and not self.message_ids:
+            raise ValueError("message_ids is required when mode is message_ids")
+        if self.mode != "message_ids" and self.message_ids:
+            raise ValueError("message_ids is only valid when mode is message_ids")
+        if self.mode != "latest" and self.count is not None:
+            raise ValueError("count is only valid when mode is latest")
+        return self
+
+
 class DeliveryCreate(BaseModel):
     markdown: str = ""
     chat: dict[str, Any] | None = None
+    chat_selection: DeliveryChatSelection | None = None
     source_task: LoopItemTaskBind | None = None
+
+    @model_validator(mode="after")
+    def validate_chat_source(self) -> "DeliveryCreate":
+        if self.chat is not None and self.chat_selection is not None:
+            raise ValueError("chat and chat_selection are mutually exclusive")
+        return self
 
 
 class DeliveryAssetResponse(BaseModel):

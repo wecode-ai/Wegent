@@ -5,9 +5,64 @@
 
 from sqlalchemy.orm import Session
 
-from app.models.delivery import LoopItem, ProjectAutomationRun
+from app.models.delivery import LoopItem, LoopItemTaskBinding, ProjectAutomationRun
 
 COMPLETED_NODE_STATUSES = {"completed", "forced_completed"}
+SUCCESS_TASK_STATUSES = {"succeeded", "archived"}
+FAILED_TASK_STATUSES = {"failed", "cancelled"}
+
+
+def reconcile_workflow_task_nodes(
+    nodes: list[dict],
+    bindings: list[LoopItemTaskBinding],
+) -> list[dict]:
+    task_ids_by_node: dict[str, list[str]] = {}
+    for binding in bindings:
+        node_id = binding.workflow_node_id
+        if not node_id or not binding.device_id or not binding.task_id:
+            continue
+        task_ids_by_node.setdefault(node_id, []).append(
+            f"{binding.device_id}:{binding.task_id}"
+        )
+
+    reconciled: list[dict] = []
+    for raw_node in nodes:
+        node = dict(raw_node)
+        if node.get("status") in COMPLETED_NODE_STATUSES:
+            reconciled.append(node)
+            continue
+        task_statuses = node.get("task_statuses")
+        if not isinstance(task_statuses, dict):
+            reconciled.append(node)
+            continue
+        ordered_task_ids = list(
+            dict.fromkeys(
+                [
+                    *task_ids_by_node.get(str(node.get("id")), []),
+                    *(node.get("task_ids") or []),
+                ]
+            )
+        )
+        if not any(task_id in task_statuses for task_id in ordered_task_ids):
+            reconciled.append(node)
+            continue
+        if any(task_statuses.get(task_id) == "running" for task_id in ordered_task_ids):
+            node["status"] = "running"
+        else:
+            latest_status = task_statuses.get(ordered_task_ids[0])
+            if latest_status in SUCCESS_TASK_STATUSES:
+                node["status"] = (
+                    "completed"
+                    if node.get("automation_rule_id")
+                    else "awaiting_approval"
+                )
+            elif latest_status in FAILED_TASK_STATUSES:
+                node["status"] = "failed"
+            else:
+                node["status"] = "queued"
+        node["task_ids"] = ordered_task_ids
+        reconciled.append(node)
+    return reconciled
 
 
 def apply_workflow_nodes(

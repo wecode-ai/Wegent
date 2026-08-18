@@ -2,13 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import uuid
+from datetime import datetime, timezone
 
 import pytest
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.cloud_project import CloudProject
-from app.models.delivery import LoopItem
+from app.models.delivery import LoopItem, LoopItemTaskBinding
 from app.models.user import User
 from app.schemas.issue_workflow import WorkflowNodeDecisionRequest
 from app.services.issue_workflow_decision import issue_workflow_decision_service
@@ -122,3 +123,57 @@ def test_force_advance_requires_reason(
     )
 
     assert updated.metadata_json["workflow"]["nodes"][0]["status"] == "forced_completed"
+
+
+def test_approval_reconciles_stale_failure_from_latest_task(
+    test_db: Session,
+    test_user: User,
+    workflow_item: LoopItem,
+) -> None:
+    workflow = workflow_item.metadata_json["workflow"]
+    workflow["nodes"][0].update(
+        {
+            "status": "failed",
+            "required_deliverables": [],
+            "task_ids": ["device:task-1", "device:task-2"],
+            "task_statuses": {
+                "device:task-1": "failed",
+                "device:task-2": "succeeded",
+            },
+        }
+    )
+    test_db.add_all(
+        [
+            LoopItemTaskBinding(
+                cloud_project_id=str(workflow_item.cloud_project_id),
+                loop_item_id=workflow_item.id,
+                task_user_id=test_user.id,
+                device_id="device",
+                task_id="task-1",
+                linked_by_user_id=test_user.id,
+                linked_at=datetime(2026, 8, 18, 10, tzinfo=timezone.utc),
+                metadata_json={"workflow_node_id": "develop"},
+            ),
+            LoopItemTaskBinding(
+                cloud_project_id=str(workflow_item.cloud_project_id),
+                loop_item_id=workflow_item.id,
+                task_user_id=test_user.id,
+                device_id="device",
+                task_id="task-2",
+                linked_by_user_id=test_user.id,
+                linked_at=datetime(2026, 8, 18, 11, tzinfo=timezone.utc),
+                metadata_json={"workflow_node_id": "develop"},
+            ),
+        ]
+    )
+    test_db.commit()
+
+    updated = issue_workflow_decision_service.decide(
+        test_db,
+        item_id=workflow_item.id,
+        workflow_node_id="develop",
+        values=WorkflowNodeDecisionRequest(action="approve"),
+        user_id=test_user.id,
+    )
+
+    assert updated.metadata_json["workflow"]["nodes"][0]["status"] == "completed"

@@ -18,6 +18,7 @@ import {
   FastForward,
   Play,
   Plus,
+  RefreshCw,
   Upload,
   UserRound,
   XCircle,
@@ -53,13 +54,12 @@ interface RuntimeStageNodeData extends Record<string, unknown> {
   stage: WorkflowNodeInstance
   index: number
   tasks: WorkflowTaskBinding[]
-  onOpenTask?: (task: WorkflowTaskBinding) => void
 }
 
 type RuntimeStageFlowNode = Node<RuntimeStageNodeData, 'runtimeStage'>
 
-const NODE_WIDTH = 228
-const NODE_HEIGHT = 180
+const NODE_WIDTH = 208
+const NODE_HEIGHT = 112
 const CURRENT_STAGE_STATUS_PRIORITY: WorkflowNodeInstance['status'][] = [
   'running',
   'awaiting_approval',
@@ -100,6 +100,15 @@ function workflowNodeStatusLabel(
   return t('todo.workflow_node_failed')
 }
 
+function workflowTaskStatusLabel(t: (key: string) => string, status?: string): string {
+  if (status === 'running') return t('todo.workflow_task_status_running')
+  if (status === 'succeeded') return t('todo.workflow_task_status_succeeded')
+  if (status === 'failed') return t('todo.workflow_task_status_failed')
+  if (status === 'cancelled') return t('todo.workflow_task_status_cancelled')
+  if (status === 'archived') return t('todo.workflow_task_status_archived')
+  return t('todo.workflow_task_status_pending')
+}
+
 const RuntimeStageNodeCard = memo(function RuntimeStageNodeCard({
   data,
 }: NodeProps<RuntimeStageFlowNode>) {
@@ -110,7 +119,7 @@ const RuntimeStageNodeCard = memo(function RuntimeStageNodeCard({
   return (
     <article
       data-testid={`cloud-todo-workflow-node-${stage.id}`}
-      className="relative flex h-[180px] w-[228px] flex-col rounded-xl border border-border bg-background p-3 shadow-sm"
+      className="relative flex h-[112px] w-[208px] flex-col rounded-xl border border-border bg-background p-3 shadow-sm"
     >
       <Handle type="target" position={Position.Left} className="!invisible" />
       <header className="flex items-start gap-2">
@@ -131,35 +140,20 @@ const RuntimeStageNodeCard = memo(function RuntimeStageNodeCard({
           <span className="block text-xs text-text-muted">{statusLabel}</span>
         </span>
       </header>
-      <div className="mt-2 min-h-0 flex-1 space-y-1 overflow-hidden">
-        {tasks.slice(0, 2).map(task => (
-          <button
-            key={task.id}
-            type="button"
-            data-testid={`cloud-todo-open-workflow-task-${stage.id}-${task.id}`}
-            onClick={() => data.onOpenTask?.(task)}
-            className="nodrag flex h-7 w-full items-center gap-1.5 rounded-md bg-muted/60 px-2 text-left text-xs text-text-secondary hover:bg-muted hover:text-text-primary"
-          >
-            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-text-muted" />
-            <span className="min-w-0 flex-1 truncate">{task.task_title || task.task_id}</span>
-            <ChevronRight className="h-3 w-3 shrink-0" />
-          </button>
-        ))}
-        {tasks.length > 2 ? (
-          <p className="px-2 text-xs text-text-muted">
-            {t('todo.workflow_more_tasks', '另有 {{count}} 个任务', {
-              count: tasks.length - 2,
-            })}
-          </p>
-        ) : null}
-        {tasks.length === 0 ? (
-          <p className="px-2 py-1 text-xs text-text-muted">
-            {stage.status === 'blocked'
-              ? t('todo.workflow_wait_dependencies', '等待前置阶段')
-              : t('todo.workflow_no_stage_tasks', '尚无具体任务')}
-          </p>
-        ) : null}
-      </div>
+      <footer className="mt-auto flex items-center gap-1.5 text-xs text-text-muted">
+        {tasks.length > 0 ? (
+          <>
+            <span>{t('todo.workflow_task_executions')}</span>
+            <span className="rounded bg-muted px-1.5 py-0.5 text-text-secondary">
+              {tasks.length}
+            </span>
+          </>
+        ) : stage.status === 'blocked' ? (
+          t('todo.workflow_wait_dependencies')
+        ) : (
+          t('todo.workflow_no_stage_tasks')
+        )}
+      </footer>
       <Handle type="source" position={Position.Right} className="!invisible" />
     </article>
   )
@@ -204,7 +198,6 @@ export function IssueWorkflowDag({
         stage,
         index,
         tasks: tasks.filter(task => task.workflow_node_id === stage.id),
-        onOpenTask,
       },
     }))
     return {
@@ -214,7 +207,7 @@ export function IssueWorkflowDag({
         nodeHeight: NODE_HEIGHT,
       }) as RuntimeStageFlowNode[],
     }
-  }, [nodes, onOpenTask, tasks])
+  }, [nodes, tasks])
   const focusCurrentStage = useCallback(
     (instance: ReactFlowInstance<RuntimeStageFlowNode, Edge>, duration = 0) => {
       void instance.fitView({
@@ -262,10 +255,12 @@ export function IssueWorkflowDag({
       {actionableStages.length > 0 ? (
         <section
           data-testid="cloud-todo-workflow-actions"
-          className="mt-2 rounded-xl border border-border bg-background p-3"
+          className="mt-2 overflow-hidden rounded-xl border border-border bg-background"
         >
-          <h4 className="text-xs font-medium text-text-muted">{t('todo.workflow_next_actions')}</h4>
-          <div className="mt-2 space-y-2">
+          <h4 className="border-b border-border px-3 py-2.5 text-xs font-medium text-text-muted">
+            {t('todo.workflow_active_stages')}
+          </h4>
+          <div className="divide-y divide-border">
             {actionableStages.map(stage => {
               const stageTasks = tasks.filter(task => task.workflow_node_id === stage.id)
               const automated = Boolean(stage.automation_rule_id)
@@ -274,34 +269,14 @@ export function IssueWorkflowDag({
               const missingDeliverables =
                 (stage.required_deliverables?.length ?? 0) > 0 &&
                 (stage.delivery_ids?.length ?? 0) === 0
-              const actionLabel = automated
-                ? t('todo.workflow_run')
-                : startHumanStage
-                  ? t('todo.workflow_start_work')
-                  : t('todo.workflow_add_stage_task')
               return (
-                <div
+                <article
                   key={stage.id}
                   data-testid={`cloud-todo-workflow-action-${stage.id}`}
-                  className="rounded-lg"
+                  className="p-3"
                 >
-                  <button
-                    type="button"
-                    data-testid={
-                      automated
-                        ? `cloud-todo-run-workflow-node-${stage.id}`
-                        : `cloud-todo-create-workflow-task-${stage.id}`
-                    }
-                    onClick={() =>
-                      automated
-                        ? onRunAutomation?.(stage.id, stage.automation_rule_id!)
-                        : awaitingApproval
-                          ? undefined
-                          : onCreateTask?.(stage.id)
-                    }
-                    className="group flex w-full items-center gap-3 rounded-lg bg-muted/50 px-3 py-2 text-left transition hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  >
-                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-background text-text-secondary">
+                  <header className="flex flex-wrap items-center gap-2">
+                    <span className="flex h-7 w-7 shrink-0 items-center justify-center text-text-secondary">
                       {automated ? <Bot className="h-4 w-4" /> : <UserRound className="h-4 w-4" />}
                     </span>
                     <span className="min-w-0 flex-1">
@@ -316,18 +291,116 @@ export function IssueWorkflowDag({
                         {workflowNodeStatusLabel(t, stage.status)}
                       </span>
                     </span>
-                    {!awaitingApproval ? (
-                      <span className="flex shrink-0 items-center gap-1 text-xs font-medium text-text-secondary transition group-hover:text-text-primary">
-                        {automated || startHumanStage ? (
-                          <Play className="h-3.5 w-3.5" />
-                        ) : (
-                          <Plus className="h-3.5 w-3.5" />
-                        )}
-                        {actionLabel}
-                        <ChevronRight className="h-3.5 w-3.5" />
-                      </span>
-                    ) : null}
-                  </button>
+                    <span className="ml-auto flex flex-wrap items-center justify-end gap-1">
+                      {automated ? (
+                        <button
+                          type="button"
+                          data-testid={`cloud-todo-run-workflow-node-${stage.id}`}
+                          onClick={() => onRunAutomation?.(stage.id, stage.automation_rule_id!)}
+                          className="flex h-7 items-center gap-1 rounded-lg px-2 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
+                        >
+                          {stage.status === 'failed' ? (
+                            <RefreshCw className="h-3.5 w-3.5" />
+                          ) : (
+                            <Play className="h-3.5 w-3.5" />
+                          )}
+                          {stage.status === 'failed'
+                            ? t('todo.workflow_run_again')
+                            : t('todo.workflow_run')}
+                        </button>
+                      ) : !awaitingApproval && onCreateTask ? (
+                        <button
+                          type="button"
+                          data-testid={`cloud-todo-create-workflow-task-${stage.id}`}
+                          onClick={() => onCreateTask(stage.id)}
+                          className="flex h-7 items-center gap-1 rounded-lg px-2 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
+                        >
+                          {startHumanStage ? (
+                            <Play className="h-3.5 w-3.5" />
+                          ) : (
+                            <Plus className="h-3.5 w-3.5" />
+                          )}
+                          {startHumanStage
+                            ? t('todo.workflow_start_work')
+                            : t('todo.workflow_add_stage_task')}
+                        </button>
+                      ) : null}
+                      {!automated &&
+                      onDecide &&
+                      !['blocked', 'completed', 'forced_completed'].includes(stage.status) ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setDecisionDraft({
+                              stageId: stage.id,
+                              action: 'force_advance',
+                              reason: '',
+                            })
+                          }
+                          className="flex h-7 items-center gap-1 rounded-lg px-2 text-xs text-text-muted hover:bg-muted hover:text-text-primary"
+                        >
+                          <FastForward className="h-3.5 w-3.5" />
+                          {t('todo.workflow_force_advance')}
+                        </button>
+                      ) : null}
+                    </span>
+                  </header>
+                  {stageTasks.length > 0 ? (
+                    <div className="mt-3" data-testid={`cloud-todo-workflow-task-list-${stage.id}`}>
+                      <div className="flex items-center gap-1.5 px-1 text-xs text-text-muted">
+                        <span>{t('todo.workflow_task_executions')}</span>
+                        <span>{stageTasks.length}</span>
+                      </div>
+                      <div className="mt-1 max-h-40 divide-y divide-border overflow-y-auto border-y border-border">
+                        {stageTasks.map((task, index) => {
+                          const taskStatus =
+                            stage.task_statuses?.[`${task.device_id}:${task.task_id}`]
+                          const successful = ['succeeded', 'archived'].includes(taskStatus ?? '')
+                          const failed = ['failed', 'cancelled'].includes(taskStatus ?? '')
+                          return (
+                            <button
+                              key={task.id}
+                              type="button"
+                              data-testid={`cloud-todo-open-workflow-task-${stage.id}-${task.id}`}
+                              disabled={!onOpenTask}
+                              onClick={() => onOpenTask?.(task)}
+                              className="group flex h-9 w-full items-center gap-2 px-1 text-left transition hover:bg-muted/50 disabled:cursor-default"
+                            >
+                              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-muted text-xs text-text-muted">
+                                {stageTasks.length - index}
+                              </span>
+                              <span className="min-w-0 flex-1 truncate text-sm text-text-primary">
+                                {task.task_title || task.task_id}
+                              </span>
+                              <span
+                                data-testid={`cloud-todo-workflow-task-status-${stage.id}-${task.id}`}
+                                data-status={taskStatus ?? 'pending'}
+                                className={cn(
+                                  'flex shrink-0 items-center gap-1 text-xs',
+                                  successful
+                                    ? 'text-green-600'
+                                    : failed
+                                      ? 'text-destructive'
+                                      : taskStatus === 'running'
+                                        ? 'text-orange-600'
+                                        : 'text-text-muted'
+                                )}
+                              >
+                                <span className="h-1.5 w-1.5 rounded-full bg-current" />
+                                {workflowTaskStatusLabel(t, taskStatus)}
+                              </span>
+                              {onOpenTask ? (
+                                <span className="flex shrink-0 items-center gap-0.5 text-xs text-text-muted group-hover:text-text-primary">
+                                  {t('todo.workflow_view_execution_short')}
+                                  <ChevronRight className="h-3.5 w-3.5" />
+                                </span>
+                              ) : null}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  ) : null}
                   {!automated && (stage.required_deliverables?.length ?? 0) > 0 ? (
                     <div className="mt-2 rounded-lg bg-muted/40 px-3 py-2">
                       <p className="text-xs font-medium text-text-secondary">
@@ -400,22 +473,6 @@ export function IssueWorkflowDag({
                           </button>
                         </>
                       ) : null}
-                      {!['blocked', 'completed', 'forced_completed'].includes(stage.status) ? (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setDecisionDraft({
-                              stageId: stage.id,
-                              action: 'force_advance',
-                              reason: '',
-                            })
-                          }
-                          className="flex h-7 items-center gap-1 rounded-lg px-2 text-xs text-text-muted hover:bg-muted hover:text-text-primary"
-                        >
-                          <FastForward className="h-3.5 w-3.5" />
-                          {t('todo.workflow_force_advance')}
-                        </button>
-                      ) : null}
                     </div>
                   ) : null}
                   {decisionDraft?.stageId === stage.id ? (
@@ -453,11 +510,15 @@ export function IssueWorkflowDag({
                       </div>
                     </div>
                   ) : null}
-                </div>
+                </article>
               )
             })}
           </div>
-          {actionError ? <p className="mt-2 text-xs text-destructive">{actionError}</p> : null}
+          {actionError ? (
+            <p className="border-t border-border px-3 py-2 text-xs text-destructive">
+              {actionError}
+            </p>
+          ) : null}
         </section>
       ) : null}
       <div

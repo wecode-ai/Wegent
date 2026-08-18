@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
+    collections::HashSet,
     env, fs,
     io::Write,
     path::{Path, PathBuf},
@@ -21,7 +22,9 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use crate::logging::log_executor_event;
 use crate::protocol::ExecutionRequest;
 
-use super::{BinaryInput, ProjectCreate, TaskRuntime, TaskSearch};
+use super::{
+    BinaryInput, DeliveryCreate, ProjectCreate, RuntimeTaskAddress, TaskRuntime, TaskSearch,
+};
 
 pub const SPACE_MCP_SERVER_NAME: &str = "wework_space";
 const SPACE_MCP_LOG_FILE: &str = "space-mcp.log";
@@ -37,6 +40,7 @@ struct SpaceContextGrant {
     task_id: String,
     space_id: Option<String>,
     item_id: Option<String>,
+    device_id: Option<String>,
     automation_run_id: Option<String>,
     automation_manager: bool,
     expires_at_unix: i64,
@@ -113,6 +117,7 @@ pub fn encoded_space_context_grant(request: &ExecutionRequest) -> Option<String>
         task_id: request.task_id.clone(),
         space_id,
         item_id,
+        device_id: request.device_id.clone().filter(|value| !value.is_empty()),
         automation_run_id: automation_origin
             .and_then(|origin| origin.get("run_id"))
             .and_then(id_value)
@@ -381,14 +386,201 @@ fn context_scope_error(grant: &SpaceContextGrant, arguments: &Value) -> Option<S
     None
 }
 
-async fn call_tool(runtime: &TaskRuntime, name: &str, mut arguments: Value) -> Value {
+fn delivery_address(
+    grant: Option<&SpaceContextGrant>,
+) -> Result<RuntimeTaskAddress, super::TaskRuntimeError> {
+    let grant = grant.ok_or_else(|| {
+        super::TaskRuntimeError::Invalid(
+            "Delivery writes require an Issue-bound Agent session".to_owned(),
+        )
+    })?;
+    let device_id = grant
+        .device_id
+        .as_ref()
+        .filter(|value| !value.is_empty())
+        .cloned()
+        .ok_or_else(|| {
+            super::TaskRuntimeError::Invalid(
+                "Delivery writes require a bound Runtime device".to_owned(),
+            )
+        })?;
+    if grant.task_id.is_empty() {
+        return Err(super::TaskRuntimeError::Invalid(
+            "Delivery writes require a bound Runtime task".to_owned(),
+        ));
+    }
+    Ok(RuntimeTaskAddress {
+        device_id,
+        task_id: grant.task_id.clone(),
+        task_title: None,
+        backend_task_id: None,
+        workflow_node_id: None,
+    })
+}
+
+fn current_delivery_address() -> Result<RuntimeTaskAddress, super::TaskRuntimeError> {
+    let grant = current_space_context_grant();
+    delivery_address(grant.as_ref())
+}
+
+fn delivery_scope_error(
+    delivery: &Value,
+    address: &RuntimeTaskAddress,
+    item_id: &str,
+) -> Option<String> {
+    if delivery.get("loop_item_id").and_then(Value::as_str) != Some(item_id) {
+        return Some("The requested Delivery is outside this Agent session".to_owned());
+    }
+    if delivery.get("status").and_then(Value::as_str) != Some("draft") {
+        return Some("Only a Delivery draft can be changed".to_owned());
+    }
+    let Some(source) = delivery.get("source_task_snapshot") else {
+        return Some("The requested Delivery is not bound to a Runtime task".to_owned());
+    };
+    let source_device = source
+        .get("deviceId")
+        .or_else(|| source.get("device_id"))
+        .and_then(Value::as_str);
+    let source_task = source
+        .get("taskId")
+        .or_else(|| source.get("task_id"))
+        .and_then(Value::as_str);
+    if source_device != Some(address.device_id.as_str())
+        || source_task != Some(address.task_id.as_str())
+    {
+        return Some("The requested Delivery belongs to another Runtime task".to_owned());
+    }
+    None
+}
+
+fn delivery_requirements(item: &Value, workflow_node_id: Option<&str>) -> Value {
+    let workflow = item
+        .get("workflow")
+        .or_else(|| item.pointer("/metadata/workflow"));
+    let node = workflow_node_id.and_then(|node_id| {
+        workflow
+            .and_then(|value| value.get("nodes"))
+            .and_then(Value::as_array)
+            .and_then(|nodes| {
+                nodes
+                    .iter()
+                    .find(|node| node.get("id").and_then(Value::as_str) == Some(node_id))
+            })
+    });
+    json!({
+        "workflow_node_id": workflow_node_id,
+        "workflow_node": node,
+        "required_deliverables": node
+            .and_then(|value| value.get("required_deliverables"))
+            .cloned()
+            .unwrap_or_else(|| json!([])),
+        "delivery_ids": node
+            .and_then(|value| value.get("delivery_ids"))
+            .cloned()
+            .unwrap_or_else(|| json!([])),
+    })
+}
+
+fn selected_local_delivery_chat(
+    runtime: &TaskRuntime,
+    project_id: &str,
+    item_id: &str,
+    arguments: &Value,
+) -> Result<Option<Value>, super::TaskRuntimeError> {
+    let explicit = arguments.get("chat").filter(|value| !value.is_null());
+    let selection = arguments
+        .get("chat_selection")
+        .filter(|value| !value.is_null());
+    if explicit.is_some() && selection.is_some() {
+        return Err(super::TaskRuntimeError::Invalid(
+            "chat and chat_selection are mutually exclusive".to_owned(),
+        ));
+    }
+    let Some(selection) = selection else {
+        return Ok(explicit.cloned());
+    };
+    let mode = selection
+        .get("mode")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            super::TaskRuntimeError::Invalid("chat_selection.mode is required".to_owned())
+        })?;
+    let mut comments = runtime.list_comments(project_id, item_id, 0)?;
+    match mode {
+        "all" => {}
+        "latest" => {
+            let count = selection
+                .get("count")
+                .and_then(Value::as_u64)
+                .filter(|count| (1..=500).contains(count))
+                .ok_or_else(|| {
+                    super::TaskRuntimeError::Invalid(
+                        "chat_selection.count must be between 1 and 500".to_owned(),
+                    )
+                })? as usize;
+            if comments.len() > count {
+                comments.drain(..comments.len() - count);
+            }
+        }
+        "message_ids" => {
+            let ids = selection
+                .get("message_ids")
+                .and_then(Value::as_array)
+                .filter(|ids| !ids.is_empty() && ids.len() <= 500)
+                .ok_or_else(|| {
+                    super::TaskRuntimeError::Invalid(
+                        "chat_selection.message_ids must contain 1 to 500 IDs".to_owned(),
+                    )
+                })?
+                .iter()
+                .map(|value| {
+                    value.as_str().map(ToOwned::to_owned).ok_or_else(|| {
+                        super::TaskRuntimeError::Invalid(
+                            "chat_selection.message_ids must contain strings".to_owned(),
+                        )
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let available = comments
+                .iter()
+                .map(|comment| comment.message_id.as_str())
+                .collect::<HashSet<_>>();
+            if ids.iter().any(|id| !available.contains(id.as_str())) {
+                return Err(super::TaskRuntimeError::Invalid(
+                    "One or more selected chat messages do not exist on this Issue".to_owned(),
+                ));
+            }
+            comments.retain(|comment| ids.contains(&comment.message_id));
+        }
+        _ => {
+            return Err(super::TaskRuntimeError::Invalid(
+                "chat_selection.mode must be all, latest, or message_ids".to_owned(),
+            ));
+        }
+    }
+    Ok(Some(json!({
+        "selection": selection,
+        "messages": comments,
+    })))
+}
+
+async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value {
+    let grant = current_space_context_grant();
+    call_tool_with_grant(runtime, name, arguments, grant).await
+}
+
+async fn call_tool_with_grant(
+    runtime: &TaskRuntime,
+    name: &str,
+    mut arguments: Value,
+    grant: Option<SpaceContextGrant>,
+) -> Value {
     if is_automation_manager() && !is_automation_manager_tool(name) {
         return text_result(
             format!("AI-managed automation cannot call wework_space tool: {name}"),
             true,
         );
     }
-    let grant = current_space_context_grant();
     if let Some(error) = grant
         .as_ref()
         .and_then(|grant| context_scope_error(grant, &arguments))
@@ -656,6 +848,183 @@ async fn call_tool(runtime: &TaskRuntime, name: &str, mut arguments: Value) -> V
                     .delete_task_attachment(project_id, task_id, attachment_id)
                     .await
                     .map(|_| json!({"deleted": true})),
+                (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => Err(error),
+            }
+        }
+        "get_delivery_requirements" => {
+            let project_id = string_argument(&arguments, "space_id");
+            let item_id = string_argument(&arguments, "item_id");
+            let address = delivery_address(grant.as_ref());
+            match (project_id, item_id, address) {
+                (Ok(project_id), Ok(item_id), Ok(address)) => {
+                    match runtime.find_task_binding(&address.device_id, &address.task_id) {
+                        Ok(binding)
+                            if binding.cloud_project_id == project_id
+                                && binding.loop_item_id.as_deref() == Some(item_id) =>
+                        {
+                            runtime
+                                .get_task(project_id, item_id)
+                                .await
+                                .and_then(|item| serde_json::to_value(item).map_err(invalid_json))
+                                .map(|item| {
+                                    delivery_requirements(
+                                        &item,
+                                        binding.workflow_node_id.as_deref(),
+                                    )
+                                })
+                        }
+                        Ok(_) => Err(super::TaskRuntimeError::Invalid(
+                            "The current Runtime task is not bound to this Issue".to_owned(),
+                        )),
+                        Err(error) => Err(error),
+                    }
+                }
+                (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => Err(error),
+            }
+        }
+        "create_delivery" => {
+            let project_id = string_argument(&arguments, "space_id");
+            let item_id = string_argument(&arguments, "item_id");
+            let address = delivery_address(grant.as_ref());
+            match (project_id, item_id, address) {
+                (Ok(project_id), Ok(item_id), Ok(address)) => {
+                    match selected_local_delivery_chat(runtime, project_id, item_id, &arguments) {
+                        Ok(chat) => runtime
+                            .create_delivery(
+                                project_id,
+                                item_id,
+                                DeliveryCreate {
+                                    markdown: arguments
+                                        .get("markdown")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or_default()
+                                        .to_owned(),
+                                    chat,
+                                    source_task: Some(address),
+                                },
+                            )
+                            .await
+                            .and_then(|value| serde_json::to_value(value).map_err(invalid_json)),
+                        Err(error) => Err(error),
+                    }
+                }
+                (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => Err(error),
+            }
+        }
+        "upload_delivery_asset" => {
+            let item_id = string_argument(&arguments, "item_id");
+            let delivery_id = string_argument(&arguments, "delivery_id");
+            let file_path = string_argument(&arguments, "file_path");
+            let address = delivery_address(grant.as_ref());
+            match (item_id, delivery_id, file_path, address) {
+                (Ok(item_id), Ok(delivery_id), Ok(file_path), Ok(address)) => {
+                    let relative_path = arguments
+                        .get("relative_path")
+                        .and_then(Value::as_str)
+                        .or_else(|| {
+                            Path::new(file_path)
+                                .file_name()
+                                .and_then(|value| value.to_str())
+                        })
+                        .ok_or_else(|| {
+                            super::TaskRuntimeError::Invalid("relative_path is required".to_owned())
+                        });
+                    let relative_path = match relative_path {
+                        Ok(value) => value,
+                        Err(error) => return text_result(error.to_string(), true),
+                    };
+                    runtime.delivery_detail(delivery_id).and_then(|delivery| {
+                        let serialized = serde_json::to_value(&delivery).map_err(invalid_json)?;
+                        if let Some(error) = delivery_scope_error(&serialized, &address, item_id) {
+                            return Err(super::TaskRuntimeError::Invalid(error));
+                        }
+                        runtime
+                            .add_delivery_asset(
+                                delivery_id,
+                                relative_path,
+                                binary_input_from_path(&arguments, file_path)?,
+                            )
+                            .and_then(|value| serde_json::to_value(value).map_err(invalid_json))
+                    })
+                }
+                (Err(error), _, _, _)
+                | (_, Err(error), _, _)
+                | (_, _, Err(error), _)
+                | (_, _, _, Err(error)) => Err(error),
+            }
+        }
+        "list_deliveries" => match string_argument(&arguments, "item_id") {
+            Ok(item_id) => runtime
+                .list_deliveries(item_id)
+                .and_then(|value| serde_json::to_value(value).map_err(invalid_json)),
+            Err(error) => Err(error),
+        },
+        "read_delivery" => {
+            let item_id = string_argument(&arguments, "item_id");
+            let delivery_id = string_argument(&arguments, "delivery_id");
+            match (item_id, delivery_id) {
+                (Ok(item_id), Ok(delivery_id)) => {
+                    runtime.delivery_detail(delivery_id).and_then(|delivery| {
+                        if delivery.delivery.loop_item_id != item_id {
+                            return Err(super::TaskRuntimeError::Invalid(
+                                "The requested Delivery is outside this Agent session".to_owned(),
+                            ));
+                        }
+                        serde_json::to_value(delivery).map_err(invalid_json)
+                    })
+                }
+                (Err(error), _) | (_, Err(error)) => Err(error),
+            }
+        }
+        "download_delivery_asset" => {
+            let item_id = string_argument(&arguments, "item_id");
+            let delivery_id = string_argument(&arguments, "delivery_id");
+            let asset_id = string_argument(&arguments, "asset_id");
+            match (item_id, delivery_id, asset_id) {
+                (Ok(item_id), Ok(delivery_id), Ok(asset_id)) => {
+                    runtime.delivery_detail(delivery_id).and_then(|delivery| {
+                        if delivery.delivery.loop_item_id != item_id
+                            || !delivery
+                                .delivery
+                                .assets
+                                .iter()
+                                .any(|asset| asset.id == asset_id)
+                        {
+                            return Err(super::TaskRuntimeError::Invalid(
+                                "The requested Delivery asset is outside this Agent session"
+                                    .to_owned(),
+                            ));
+                        }
+                        runtime
+                            .delivery_asset_path(asset_id)
+                            .and_then(|path| copy_attachment_if_requested(&arguments, &path))
+                            .map(|path| json!({"path": path}))
+                    })
+                }
+                (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => Err(error),
+            }
+        }
+        "finalize_delivery" | "discard_delivery_draft" => {
+            let item_id = string_argument(&arguments, "item_id");
+            let delivery_id = string_argument(&arguments, "delivery_id");
+            let address = delivery_address(grant.as_ref());
+            match (item_id, delivery_id, address) {
+                (Ok(item_id), Ok(delivery_id), Ok(address)) => {
+                    runtime.delivery_detail(delivery_id).and_then(|delivery| {
+                        let serialized = serde_json::to_value(&delivery).map_err(invalid_json)?;
+                        if let Some(error) = delivery_scope_error(&serialized, &address, item_id) {
+                            return Err(super::TaskRuntimeError::Invalid(error));
+                        }
+                        if name == "finalize_delivery" {
+                            runtime
+                                .finalize_delivery(item_id, delivery_id)
+                                .and_then(|value| serde_json::to_value(value).map_err(invalid_json))
+                        } else {
+                            runtime.discard_delivery(delivery_id)?;
+                            Ok(json!({"discarded": true}))
+                        }
+                    })
+                }
                 (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => Err(error),
             }
         }
@@ -1014,6 +1383,107 @@ async fn call_backend_tool(
             "{base}/loop-items/{}/attachments",
             encode_segment(task_id()?)
         )),
+        "get_delivery_requirements" => {
+            let item_id = task_id()?;
+            let address = current_delivery_address().map_err(|error| error.to_string())?;
+            let item = backend_json(
+                client
+                    .get(format!("{base}/loop-items/{}", encode_segment(item_id)))
+                    .bearer_auth(auth_token)
+                    .send()
+                    .await
+                    .map_err(|error| error.to_string())?,
+            )
+            .await?;
+            let bindings = backend_json(
+                client
+                    .get(format!("{base}/loop-items/{}/tasks", encode_segment(item_id)))
+                    .bearer_auth(auth_token)
+                    .send()
+                    .await
+                    .map_err(|error| error.to_string())?,
+            )
+            .await?;
+            let binding = bindings
+                .as_array()
+                .and_then(|bindings| {
+                    bindings.iter().find(|binding| {
+                        binding.get("device_id").and_then(Value::as_str)
+                            == Some(address.device_id.as_str())
+                            && binding.get("task_id").and_then(Value::as_str)
+                                == Some(address.task_id.as_str())
+                    })
+                })
+                .ok_or_else(|| {
+                    "The current Runtime task is not bound to this Issue".to_owned()
+                })?;
+            let node_id = binding
+                .get("workflow_node_id")
+                .and_then(Value::as_str);
+            return Ok(delivery_requirements(&item, node_id));
+        }
+        "create_delivery" => {
+            let address = current_delivery_address().map_err(|error| error.to_string())?;
+            client
+                .post(format!(
+                    "{base}/loop-items/{}/deliveries",
+                    encode_segment(task_id()?)
+                ))
+                .json(&json!({
+                    "markdown": arguments.get("markdown").and_then(Value::as_str).unwrap_or_default(),
+                    "chat": arguments.get("chat").cloned().unwrap_or(Value::Null),
+                    "chat_selection": arguments
+                        .get("chat_selection")
+                        .cloned()
+                        .unwrap_or(Value::Null),
+                    "source_task": {
+                        "deviceId": address.device_id,
+                        "taskId": address.task_id,
+                    }
+                }))
+        }
+        "upload_delivery_asset" => {
+            let item_id = task_id()?;
+            let delivery_id =
+                string_argument(arguments, "delivery_id").map_err(|error| error.to_string())?;
+            let file_path =
+                string_argument(arguments, "file_path").map_err(|error| error.to_string())?;
+            let address = current_delivery_address().map_err(|error| error.to_string())?;
+            let delivery =
+                backend_delivery_detail(&client, &base, auth_token, delivery_id).await?;
+            if let Some(error) = delivery_scope_error(&delivery, &address, item_id) {
+                return Err(error);
+            }
+            let bytes = fs::read(file_path).map_err(|error| error.to_string())?;
+            let relative_path = arguments
+                .get("relative_path")
+                .and_then(Value::as_str)
+                .or_else(|| Path::new(file_path).file_name().and_then(|value| value.to_str()))
+                .ok_or_else(|| "relative_path is required".to_owned())?;
+            let display_name = arguments
+                .get("display_name")
+                .and_then(Value::as_str)
+                .unwrap_or(relative_path);
+            let mut part = reqwest::multipart::Part::bytes(bytes).file_name(display_name.to_owned());
+            if let Some(content_type) = arguments.get("content_type").and_then(Value::as_str) {
+                part = part.mime_str(content_type).map_err(|error| error.to_string())?;
+            }
+            let response = client
+                .post(format!(
+                    "{base}/deliveries/{}/assets",
+                    encode_segment(delivery_id)
+                ))
+                .bearer_auth(auth_token)
+                .multipart(
+                    reqwest::multipart::Form::new()
+                        .text("relative_path", relative_path.to_owned())
+                        .part("file", part),
+                )
+                .send()
+                .await
+                .map_err(|error| error.to_string())?;
+            return backend_json(response).await;
+        }
         "list_deliveries" => client.get(format!(
             "{base}/loop-items/{}/deliveries",
             encode_segment(task_id()?)
@@ -1021,10 +1491,80 @@ async fn call_backend_tool(
         "read_delivery" => {
             let delivery_id = string_argument(arguments, "delivery_id")
                 .map_err(|error| error.to_string())?;
-            client.get(format!(
-                "{base}/deliveries/{}",
-                encode_segment(delivery_id)
-            ))
+            let delivery =
+                backend_delivery_detail(&client, &base, auth_token, delivery_id).await?;
+            if delivery.get("loop_item_id").and_then(Value::as_str) != Some(task_id()?) {
+                return Err("The requested Delivery is outside this Agent session".to_owned());
+            }
+            return Ok(delivery);
+        }
+        "download_delivery_asset" => {
+            let delivery_id =
+                string_argument(arguments, "delivery_id").map_err(|error| error.to_string())?;
+            let asset_id =
+                string_argument(arguments, "asset_id").map_err(|error| error.to_string())?;
+            let delivery =
+                backend_delivery_detail(&client, &base, auth_token, delivery_id).await?;
+            if delivery.get("loop_item_id").and_then(Value::as_str) != Some(task_id()?)
+                || !delivery
+                    .get("assets")
+                    .and_then(Value::as_array)
+                    .is_some_and(|assets| {
+                        assets
+                            .iter()
+                            .any(|asset| asset.get("id").and_then(Value::as_str) == Some(asset_id))
+                    })
+            {
+                return Err(
+                    "The requested Delivery asset is outside this Agent session".to_owned(),
+                );
+            }
+            let output_path =
+                attachment_output_path(arguments, asset_id).map_err(|error| error.to_string())?;
+            let access = backend_json(
+                client
+                    .get(format!(
+                        "{base}/delivery-assets/{}/access",
+                        encode_segment(asset_id)
+                    ))
+                    .bearer_auth(auth_token)
+                    .send()
+                    .await
+                    .map_err(|error| error.to_string())?,
+            )
+            .await?;
+            download_backend_object(&client, &access, &output_path).await?;
+            return Ok(json!({"path": output_path}));
+        }
+        "finalize_delivery" | "discard_delivery_draft" => {
+            let item_id = task_id()?;
+            let delivery_id =
+                string_argument(arguments, "delivery_id").map_err(|error| error.to_string())?;
+            let address = current_delivery_address().map_err(|error| error.to_string())?;
+            let delivery =
+                backend_delivery_detail(&client, &base, auth_token, delivery_id).await?;
+            if let Some(error) = delivery_scope_error(&delivery, &address, item_id) {
+                return Err(error);
+            }
+            let response = if name == "finalize_delivery" {
+                client
+                    .post(format!(
+                        "{base}/deliveries/{}/finalize",
+                        encode_segment(delivery_id)
+                    ))
+                    .bearer_auth(auth_token)
+                    .send()
+                    .await
+                    .map_err(|error| error.to_string())?
+            } else {
+                client
+                    .delete(format!("{base}/deliveries/{}", encode_segment(delivery_id)))
+                    .bearer_auth(auth_token)
+                    .send()
+                    .await
+                    .map_err(|error| error.to_string())?
+            };
+            return backend_json(response).await;
         }
         "reorder_board_items" => client
             .post(format!(
@@ -1206,7 +1746,7 @@ async fn call_backend_tool(
                 .unwrap_or_default(),
         ));
     }
-    if name == "list_board_items" {
+    if name == "list_board_items" || name == "list_deliveries" {
         return Ok(value.get("items").cloned().unwrap_or_else(|| json!([])));
     }
     Ok(value)
@@ -1233,6 +1773,23 @@ async fn download_backend_object(
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
     fs::write(output_path, bytes).map_err(|error| error.to_string())
+}
+
+async fn backend_delivery_detail(
+    client: &reqwest::Client,
+    base: &str,
+    auth_token: &str,
+    delivery_id: &str,
+) -> Result<Value, String> {
+    backend_json(
+        client
+            .get(format!("{base}/deliveries/{}", encode_segment(delivery_id)))
+            .bearer_auth(auth_token)
+            .send()
+            .await
+            .map_err(|error| error.to_string())?,
+    )
+    .await
 }
 
 async fn backend_json(response: reqwest::Response) -> Result<Value, String> {
@@ -1569,6 +2126,74 @@ fn tools() -> Vec<Value> {
             }),
         ),
         tool(
+            "get_delivery_requirements",
+            "Get the current workflow stage and its required and submitted deliverables",
+            json!({
+                "type": "object",
+                "properties": {
+                    "space_id": {"type": "string"},
+                    "item_id": {"type": "string"}
+                },
+                "required": ["space_id", "item_id"]
+            }),
+        ),
+        tool(
+            "create_delivery",
+            "Create a Delivery draft bound to the current Runtime task and workflow stage",
+            json!({
+                "type": "object",
+                "properties": {
+                    "space_id": {"type": "string"},
+                    "item_id": {"type": "string"},
+                    "markdown": {"type": "string"},
+                    "chat": {
+                        "type": ["object", "null"],
+                        "description": "Optional structured chat snapshot to preserve with the Delivery"
+                    },
+                    "chat_selection": {
+                        "type": ["object", "null"],
+                        "description": "Server-resolved Issue chat selection: all, latest N, or explicit message IDs",
+                        "properties": {
+                            "mode": {
+                                "type": "string",
+                                "enum": ["all", "latest", "message_ids"]
+                            },
+                            "count": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 500
+                            },
+                            "message_ids": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "minItems": 1,
+                                "maxItems": 500
+                            }
+                        },
+                        "required": ["mode"]
+                    }
+                },
+                "required": ["space_id", "item_id"]
+            }),
+        ),
+        tool(
+            "upload_delivery_asset",
+            "Upload a local file into a Delivery draft",
+            json!({
+                "type": "object",
+                "properties": {
+                    "space_id": {"type": "string"},
+                    "item_id": {"type": "string"},
+                    "delivery_id": {"type": "string"},
+                    "file_path": {"type": "string"},
+                    "relative_path": {"type": "string"},
+                    "display_name": {"type": "string"},
+                    "content_type": {"type": "string"}
+                },
+                "required": ["space_id", "item_id", "delivery_id", "file_path"]
+            }),
+        ),
+        tool(
             "list_deliveries",
             "List deliveries associated with a board item",
             json!({
@@ -1582,14 +2207,56 @@ fn tools() -> Vec<Value> {
         ),
         tool(
             "read_delivery",
-            "Read a delivery and its Markdown handoff content",
+            "Read a Delivery, its Markdown handoff, structured chat snapshot, and asset list",
             json!({
                 "type": "object",
                 "properties": {
                     "space_id": {"type": "string"},
+                    "item_id": {"type": "string"},
                     "delivery_id": {"type": "string"}
                 },
-                "required": ["space_id", "delivery_id"]
+                "required": ["space_id", "item_id", "delivery_id"]
+            }),
+        ),
+        tool(
+            "download_delivery_asset",
+            "Download a Delivery asset into the Runtime workspace and return its local path",
+            json!({
+                "type": "object",
+                "properties": {
+                    "space_id": {"type": "string"},
+                    "item_id": {"type": "string"},
+                    "delivery_id": {"type": "string"},
+                    "asset_id": {"type": "string"},
+                    "output_path": {"type": "string"}
+                },
+                "required": ["space_id", "item_id", "delivery_id", "asset_id"]
+            }),
+        ),
+        tool(
+            "finalize_delivery",
+            "Finalize the current Runtime task's Delivery draft as an immutable snapshot",
+            json!({
+                "type": "object",
+                "properties": {
+                    "space_id": {"type": "string"},
+                    "item_id": {"type": "string"},
+                    "delivery_id": {"type": "string"}
+                },
+                "required": ["space_id", "item_id", "delivery_id"]
+            }),
+        ),
+        tool(
+            "discard_delivery_draft",
+            "Discard the current Runtime task's unfinished Delivery draft",
+            json!({
+                "type": "object",
+                "properties": {
+                    "space_id": {"type": "string"},
+                    "item_id": {"type": "string"},
+                    "delivery_id": {"type": "string"}
+                },
+                "required": ["space_id", "item_id", "delivery_id"]
             }),
         ),
         tool(
@@ -1891,7 +2558,8 @@ fn error_response(id: Value, code: i64, message: &str) -> Value {
 mod tests {
     use super::*;
     use crate::task_runtime::{
-        LocalTaskStore, ProjectDescriptor, ProjectStoreKind, TaskCreate, TaskProviderKind,
+        LocalCommentCreate, LocalTaskStore, ProjectDescriptor, ProjectStoreKind, TaskCreate,
+        TaskProviderKind,
     };
 
     fn decode_grant(request: &ExecutionRequest) -> SpaceContextGrant {
@@ -1944,7 +2612,11 @@ mod tests {
 
     #[test]
     fn binds_issue_context_from_origin() {
-        let mut request = ExecutionRequest::default();
+        let mut request = ExecutionRequest {
+            task_id: "runtime-7".to_owned(),
+            device_id: Some("device-3".to_owned()),
+            ..ExecutionRequest::default()
+        };
         request.extra.insert(
             "origin".to_owned(),
             json!({
@@ -1958,6 +2630,8 @@ mod tests {
 
         assert_eq!(grant.space_id.as_deref(), Some("cloud-42"));
         assert_eq!(grant.item_id.as_deref(), Some("ISSUE-7"));
+        assert_eq!(grant.task_id, "runtime-7");
+        assert_eq!(grant.device_id.as_deref(), Some("device-3"));
     }
 
     #[test]
@@ -2032,6 +2706,7 @@ mod tests {
             task_id: "task-1".to_owned(),
             space_id: Some("space-1".to_owned()),
             item_id: Some("item-1".to_owned()),
+            device_id: Some("device-1".to_owned()),
             automation_run_id: None,
             automation_manager: false,
             expires_at_unix: Local::now().timestamp() + 60,
@@ -2058,6 +2733,7 @@ mod tests {
             task_id: "task-1".to_owned(),
             space_id: Some("space-1".to_owned()),
             item_id: Some("item-1".to_owned()),
+            device_id: Some("device-1".to_owned()),
             automation_run_id: None,
             automation_manager: false,
             expires_at_unix: Local::now().timestamp() - 1,
@@ -2173,6 +2849,35 @@ mod tests {
         ] {
             assert!(names.iter().any(|candidate| candidate == name));
         }
+    }
+
+    #[test]
+    fn exposes_complete_delivery_lifecycle_tools() {
+        let names = tools()
+            .into_iter()
+            .filter_map(|tool| tool["name"].as_str().map(ToOwned::to_owned))
+            .collect::<Vec<_>>();
+
+        for name in [
+            "get_delivery_requirements",
+            "create_delivery",
+            "upload_delivery_asset",
+            "list_deliveries",
+            "read_delivery",
+            "download_delivery_asset",
+            "finalize_delivery",
+            "discard_delivery_draft",
+        ] {
+            assert!(names.iter().any(|candidate| candidate == name));
+        }
+        let create = tools()
+            .into_iter()
+            .find(|tool| tool["name"] == "create_delivery")
+            .unwrap();
+        assert_eq!(
+            create["inputSchema"]["properties"]["chat"]["type"],
+            json!(["object", "null"])
+        );
     }
 
     #[test]
@@ -2525,5 +3230,209 @@ mod tests {
             .await
             .unwrap()
             .is_empty());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn delivery_tools_complete_the_bound_local_workflow_stage() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+        let project = store
+            .create_project(ProjectCreate {
+                name: "Local delivery".to_owned(),
+                project_key: Some("DELIVERY".to_owned()),
+                description: String::new(),
+                task_provider: TaskProviderKind::Local,
+                provider_config: json!({}),
+            })
+            .unwrap();
+        let task = store
+            .create_task(
+                &project.id,
+                TaskCreate {
+                    title: "Implement stage".to_owned(),
+                    description: String::new(),
+                    status: "pending".to_owned(),
+                    priority: "none".to_owned(),
+                    parent_id: None,
+                    tags: vec![],
+                    workflow: Some(json!({
+                        "version": 1,
+                        "nodes": [{
+                            "id": "implement",
+                            "name": "Implement",
+                            "kind": "my_task",
+                            "status": "ready",
+                            "depends_on": [],
+                            "required": true,
+                            "required_deliverables": ["result.txt"],
+                            "delivery_ids": []
+                        }]
+                    })),
+                },
+            )
+            .unwrap();
+        store
+            .bind_task(
+                &project.id,
+                Some(&task.id),
+                None,
+                RuntimeTaskAddress {
+                    device_id: "device-1".to_owned(),
+                    task_id: "runtime-1".to_owned(),
+                    task_title: Some("Implement".to_owned()),
+                    backend_task_id: None,
+                    workflow_node_id: Some("implement".to_owned()),
+                },
+            )
+            .unwrap();
+        let message_ids = ["first", "second", "third"]
+            .into_iter()
+            .map(|content| {
+                store
+                    .create_comment(&LocalCommentCreate {
+                        project_id: project.id.clone(),
+                        task_id: task.id.clone(),
+                        client_message_id: None,
+                        sender_type: "user".to_owned(),
+                        sender_id: "7".to_owned(),
+                        sender_name: "User".to_owned(),
+                        content: content.to_owned(),
+                        metadata: json!({}),
+                        reply_to_message_id: None,
+                    })
+                    .unwrap()
+                    .message_id
+            })
+            .collect::<Vec<_>>();
+        let runtime = TaskRuntime::new(store).unwrap();
+        let grant = SpaceContextGrant {
+            version: 1,
+            task_id: "runtime-1".to_owned(),
+            space_id: Some(project.id.clone()),
+            item_id: Some(task.id.clone()),
+            device_id: Some("device-1".to_owned()),
+            automation_run_id: None,
+            automation_manager: false,
+            expires_at_unix: Local::now().timestamp() + 60,
+        };
+
+        let requirements = call_tool_with_grant(
+            &runtime,
+            "get_delivery_requirements",
+            json!({}),
+            Some(grant.clone()),
+        )
+        .await;
+        let requirements: Value =
+            serde_json::from_str(requirements["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(requirements["workflow_node_id"], "implement");
+        assert_eq!(requirements["required_deliverables"], json!(["result.txt"]));
+
+        let created = call_tool_with_grant(
+            &runtime,
+            "create_delivery",
+            json!({
+                "markdown": "# Result",
+                "chat_selection": {"mode": "latest", "count": 2}
+            }),
+            Some(grant.clone()),
+        )
+        .await;
+        assert_eq!(created["isError"], false);
+        let delivery: Value =
+            serde_json::from_str(created["content"][0]["text"].as_str().unwrap()).unwrap();
+        let delivery_id = delivery["id"].as_str().unwrap().to_owned();
+
+        let source = directory.path().join("result.txt");
+        fs::write(&source, "delivery content").unwrap();
+        let uploaded = call_tool_with_grant(
+            &runtime,
+            "upload_delivery_asset",
+            json!({
+                "delivery_id": delivery_id,
+                "file_path": source,
+                "content_type": "text/plain"
+            }),
+            Some(grant.clone()),
+        )
+        .await;
+        assert_eq!(uploaded["isError"], false);
+        let asset: Value =
+            serde_json::from_str(uploaded["content"][0]["text"].as_str().unwrap()).unwrap();
+        let asset_id = asset["id"].as_str().unwrap().to_owned();
+
+        let output = directory.path().join("downloaded-result.txt");
+        let downloaded = call_tool_with_grant(
+            &runtime,
+            "download_delivery_asset",
+            json!({
+                "delivery_id": delivery_id,
+                "asset_id": asset_id,
+                "output_path": output
+            }),
+            Some(grant.clone()),
+        )
+        .await;
+        assert_eq!(downloaded["isError"], false);
+        assert_eq!(
+            fs::read_to_string(directory.path().join("downloaded-result.txt")).unwrap(),
+            "delivery content"
+        );
+
+        let finalized = call_tool_with_grant(
+            &runtime,
+            "finalize_delivery",
+            json!({"delivery_id": delivery_id}),
+            Some(grant.clone()),
+        )
+        .await;
+        assert_eq!(finalized["isError"], false);
+        let detail = runtime.delivery_detail(&delivery_id).unwrap();
+        assert_eq!(detail.delivery.status, "delivered");
+        assert_eq!(
+            detail.chat.unwrap()["messages"].as_array().unwrap().len(),
+            2
+        );
+        let updated = runtime.get_task(&project.id, &task.id).await.unwrap();
+        assert_eq!(
+            updated.metadata["workflow"]["nodes"][0]["delivery_ids"],
+            json!([delivery_id])
+        );
+
+        let draft = call_tool_with_grant(
+            &runtime,
+            "create_delivery",
+            json!({
+                "markdown": "discard me",
+                "chat_selection": {
+                    "mode": "message_ids",
+                    "message_ids": [message_ids[0]]
+                }
+            }),
+            Some(grant.clone()),
+        )
+        .await;
+        let draft: Value =
+            serde_json::from_str(draft["content"][0]["text"].as_str().unwrap()).unwrap();
+        let draft_id = draft["id"].as_str().unwrap();
+        let discarded = call_tool_with_grant(
+            &runtime,
+            "discard_delivery_draft",
+            json!({"delivery_id": draft_id}),
+            Some(grant),
+        )
+        .await;
+        assert_eq!(discarded["isError"], false);
+        assert!(runtime.delivery_detail(draft_id).is_err());
+
+        let all = selected_local_delivery_chat(
+            &runtime,
+            &project.id,
+            &task.id,
+            &json!({"chat_selection": {"mode": "all"}}),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(all["messages"].as_array().unwrap().len(), 3);
     }
 }

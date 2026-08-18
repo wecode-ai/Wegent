@@ -8,6 +8,13 @@ import type {
 type RuntimeWorkflowStatus = 'running' | 'succeeded' | 'failed' | 'cancelled' | 'archived'
 export type WorkflowDecisionAction = 'approve' | 'reject' | 'force_advance'
 
+export interface WorkflowTaskBinding {
+  device_id: string
+  task_id: string
+  workflow_node_id?: string | null
+  linked_at?: string
+}
+
 export function instantiateIssueWorkflow(
   definition: ProjectWorkflowDefinition | null | undefined
 ): IssueWorkflowInstance | null {
@@ -49,6 +56,52 @@ function releaseReadyNodes(nodes: WorkflowNodeInstance[]): WorkflowNodeInstance[
   })
 }
 
+function projectWorkflowNodeTaskStatus(
+  node: WorkflowNodeInstance,
+  taskStatuses: Record<string, string>,
+  orderedTaskIds: string[],
+  fallbackStatus?: RuntimeWorkflowStatus
+): WorkflowNodeInstance['status'] {
+  if (['completed', 'forced_completed'].includes(node.status)) return node.status
+  if (orderedTaskIds.some(taskId => taskStatuses[taskId] === 'running')) return 'running'
+  const latestStatus = orderedTaskIds[0] ? taskStatuses[orderedTaskIds[0]] : fallbackStatus
+  if (latestStatus === 'running') return 'running'
+  if (['succeeded', 'archived'].includes(latestStatus ?? '')) {
+    return node.automation_rule_id ? 'completed' : 'awaiting_approval'
+  }
+  if (['failed', 'cancelled'].includes(latestStatus ?? '')) return 'failed'
+  return orderedTaskIds.length > 0 ? 'queued' : node.status
+}
+
+export function reconcileIssueWorkflowForTaskBindings(
+  workflow: IssueWorkflowInstance,
+  bindings: WorkflowTaskBinding[]
+): IssueWorkflowInstance {
+  const orderedBindings = [...bindings].sort((left, right) =>
+    (right.linked_at ?? '').localeCompare(left.linked_at ?? '')
+  )
+  let changed = false
+  const nodes = workflow.nodes.map(node => {
+    const stageTaskIds = orderedBindings
+      .filter(binding => binding.workflow_node_id === node.id)
+      .map(binding => `${binding.device_id}:${binding.task_id}`)
+    const knownTaskIds = Array.from(new Set([...stageTaskIds, ...(node.task_ids ?? [])]))
+    const taskStatuses = node.task_statuses ?? {}
+    if (knownTaskIds.every(taskId => taskStatuses[taskId] === undefined)) return node
+    const status = projectWorkflowNodeTaskStatus(node, taskStatuses, knownTaskIds)
+    if (
+      status === node.status &&
+      knownTaskIds.length === (node.task_ids?.length ?? 0) &&
+      knownTaskIds.every((taskId, index) => taskId === node.task_ids?.[index])
+    ) {
+      return node
+    }
+    changed = true
+    return { ...node, status, task_ids: knownTaskIds }
+  })
+  return changed ? { ...workflow, nodes } : workflow
+}
+
 export function updateIssueWorkflowForRuntime(
   workflow: IssueWorkflowInstance,
   workflowNodeId: string,
@@ -65,28 +118,23 @@ export function updateIssueWorkflowForRuntime(
       }
       const knownTaskIds = Array.from(
         new Set([
-          ...(node.task_ids ?? []),
           ...stageTaskIds,
+          ...(node.task_ids ?? []),
           ...(runtimeTaskId ? [runtimeTaskId] : []),
         ])
       )
-      const allCompleted =
-        knownTaskIds.length > 0 &&
-        knownTaskIds.every(taskId => ['succeeded', 'archived'].includes(taskStatuses[taskId] ?? ''))
-      const anyRunning = knownTaskIds.some(taskId => taskStatuses[taskId] === 'running')
-      const anyFailed = knownTaskIds.some(taskId =>
-        ['failed', 'cancelled'].includes(taskStatuses[taskId] ?? '')
+      const orderedTaskIds = Array.from(
+        new Set([
+          ...(stageTaskIds.length > 0 ? stageTaskIds : runtimeTaskId ? [runtimeTaskId] : []),
+          ...knownTaskIds,
+        ])
       )
-      const status =
-        allCompleted || (!runtimeTaskId && executionStatus === 'succeeded')
-          ? node.automation_rule_id
-            ? 'completed'
-            : 'awaiting_approval'
-          : anyRunning || executionStatus === 'running'
-            ? 'running'
-            : anyFailed
-              ? 'failed'
-              : 'queued'
+      const status = projectWorkflowNodeTaskStatus(
+        node,
+        taskStatuses,
+        orderedTaskIds,
+        executionStatus
+      )
       return { ...node, status, task_ids: knownTaskIds, task_statuses: taskStatuses }
     })
   )

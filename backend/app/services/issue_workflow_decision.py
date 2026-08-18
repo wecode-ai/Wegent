@@ -8,11 +8,14 @@ from datetime import datetime, timezone
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.models.delivery import LoopItem
+from app.models.delivery import LoopItem, LoopItemTaskBinding, loop_datetime_is_unset
 from app.schemas.base_role import BaseRole
 from app.schemas.issue_workflow import WorkflowNodeDecisionRequest
 from app.services.delivery.access import require_loop_item_access
-from app.services.project_workflow_projection import apply_workflow_nodes
+from app.services.project_workflow_projection import (
+    apply_workflow_nodes,
+    reconcile_workflow_task_nodes,
+)
 
 
 class IssueWorkflowDecisionService:
@@ -36,7 +39,19 @@ class IssueWorkflowDecisionService:
         raw_nodes = workflow.get("nodes") if isinstance(workflow, dict) else None
         if not isinstance(raw_nodes, list):
             raise HTTPException(status.HTTP_409_CONFLICT, "Issue has no workflow")
-        nodes = [dict(node) for node in raw_nodes if isinstance(node, dict)]
+        bindings = (
+            db.query(LoopItemTaskBinding)
+            .filter(
+                LoopItemTaskBinding.loop_item_id == item_id,
+                loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
+            )
+            .order_by(LoopItemTaskBinding.linked_at.desc())
+            .all()
+        )
+        nodes = reconcile_workflow_task_nodes(
+            [dict(node) for node in raw_nodes if isinstance(node, dict)],
+            bindings,
+        )
         node = next(
             (
                 candidate

@@ -22,6 +22,7 @@ import {
 import {
   attachIssueWorkflowDelivery,
   decideIssueWorkflowNode,
+  reconcileIssueWorkflowForTaskBindings,
   updateIssueWorkflowForRuntime,
   workflowBoardStatus,
 } from '@/api/issueWorkflow'
@@ -1229,6 +1230,8 @@ export function createLocalDeliveryApi(
         if (binding?.workflow_node_id) {
           const item = await api.getLoopItem(delivery.loop_item_id)
           if (item.workflow) {
+            const stage = item.workflow.nodes.find(node => node.id === binding.workflow_node_id)
+            if (stage?.delivery_ids?.includes(deliveryId)) return finalized
             const workflow = attachIssueWorkflowDelivery(
               item.workflow,
               binding.workflow_node_id,
@@ -1263,8 +1266,9 @@ export function createLocalDeliveryApi(
     ) {
       const item = await api.getLoopItem(itemId)
       if (!item.workflow) throw new Error('Issue has no workflow')
+      const bindings = await api.listTaskBindings(itemId)
       const workflow = decideIssueWorkflowNode(
-        item.workflow,
+        reconcileIssueWorkflowForTaskBindings(item.workflow, bindings),
         workflowNodeId,
         action,
         actorUserId ?? Number(item.created_by_user_id),

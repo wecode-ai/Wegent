@@ -5949,6 +5949,72 @@ mod tests {
     }
 
     #[test]
+    fn finalized_delivery_is_bound_to_the_source_workflow_node() {
+        let (_directory, store) = store();
+        let project = local_project(&store);
+        let task = store
+            .create_task(
+                &project.id,
+                TaskCreate {
+                    title: "Workflow delivery".to_owned(),
+                    description: String::new(),
+                    status: "pending".to_owned(),
+                    priority: "none".to_owned(),
+                    parent_id: None,
+                    tags: vec![],
+                    workflow: Some(json!({
+                        "version": 1,
+                        "nodes": [{
+                            "id": "develop",
+                            "name": "Develop",
+                            "kind": "my_task",
+                            "status": "ready",
+                            "depends_on": [],
+                            "required": true,
+                            "required_deliverables": ["result.txt"],
+                            "delivery_ids": []
+                        }]
+                    })),
+                },
+            )
+            .unwrap();
+        let address = RuntimeTaskAddress {
+            device_id: "device-1".to_owned(),
+            task_id: "runtime-1".to_owned(),
+            task_title: Some("Implement".to_owned()),
+            backend_task_id: None,
+            workflow_node_id: Some("develop".to_owned()),
+        };
+        store
+            .bind_task(&project.id, Some(&task.id), None, address.clone())
+            .unwrap();
+        let delivery = store
+            .create_delivery(
+                &project.id,
+                &task.id,
+                true,
+                DeliveryCreate {
+                    markdown: "# Done".to_owned(),
+                    chat: Some(json!({"messages": [{"role": "assistant", "content": "done"}]})),
+                    source_task: Some(address),
+                },
+            )
+            .unwrap();
+
+        store.finalize_delivery(&task.id, &delivery.id).unwrap();
+
+        let updated = store.get_task(&project.id, &task.id).unwrap();
+        assert_eq!(
+            updated.metadata["workflow"]["nodes"][0]["delivery_ids"],
+            json!([delivery.id])
+        );
+        assert_eq!(
+            store.delivery_detail(&delivery.id).unwrap().chat,
+            Some(json!({"messages": [{"role": "assistant", "content": "done"}]}))
+        );
+    }
+
+    #[test]
     fn external_provider_projects_do_not_create_local_task_rows() {
         let (_directory, store) = store();
         let project = store

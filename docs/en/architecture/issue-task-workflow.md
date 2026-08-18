@@ -35,6 +35,8 @@ flowchart LR
     AI --> BINDING
     FREE --> BINDING
     STAGE --> BINDING
+    BINDING --> TASK_STATUS[Persist Runtime status per task]
+    TASK_STATUS --> STAGE
     ISSUE --> TASK_COMPOSER[Blank task conversation sidebar]
     TASK_COMPOSER -->|first message| BINDING
     BINDING -->|open existing task| SIDEBAR[Task conversation sidebar]
@@ -46,6 +48,7 @@ flowchart LR
     GRANT --> SPACE_MCP[Stable wework-space capability]
     SPACE_MCP --> ISSUE
     SPACE_MCP --> ATTACHMENT
+    SPACE_MCP --> DELIVERY
     STAGE -->|stage automation rule| EXEC[(LoopItemExecution)]
     EXEC --> RUNTIME[Existing Runtime / Team / API activator]
     TASK --> WORKSPACE[Existing workspace / worktree / branch truth]
@@ -132,7 +135,7 @@ sequenceDiagram
         U->>V: Upload and submit deliverables for the node
         V->>O: Bind delivered Delivery to the workflow node
     end
-    O->>O: Aggregate stage tasks and required deliverables
+    O->>O: Persist each task status; running wins, otherwise aggregate the latest task terminal state
     alt Human-stage review prerequisites are satisfied
         O-->>U: Move node to awaiting approval
         U->>H: Approve / reject / force advance
@@ -142,23 +145,24 @@ sequenceDiagram
     O->>I: Aggregate all required stages and free tasks
 ```
 
-| Edge                                                 | Code ownership                                                                            |
-| ---------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| Issue Composer to Issue, draft, and attachments      | Wework `IssueComposer` and ProjectSpace API; compact and fullscreen views share one draft |
-| Stage DAG editing and adjacent insertion             | Wework `ProjectWorkflowEditor`                                                            |
-| Explicit orchestration save and re-entry restoration | Wework `ProjectAutomationView`, `ProjectWorkflowEditor`, and ProjectSpace API             |
-| Project orchestration definition and Issue snapshot  | Backend workflow schemas/services; Wework Automation DAG UI                               |
-| Dependency edge to successor context                 | Workflow node dependency context; Composer / automation instruction                       |
-| User/AI coordination to concrete tasks               | Standard Wework Composer, AI manager, `LoopItemTaskBinding`                               |
-| Issue new/existing task to right-side conversation   | `CloudTodoWorkspace`, `TodoEditor`, `AiChatModal`                                         |
-| Runtime Task binding to stage-status synchronization | `projectSpaceSelection`, `WorkbenchProvider`, and ProjectSpace API                        |
-| Node deliverables to human review and advancement    | Delivery API, workflow decision service, and `IssueWorkflowDag`                           |
-| Issue board entry to manual task or orchestration    | `CloudTodoWorkspace`, `workItemTaskInput`, and the Issue workflow snapshot                |
-| Issue conversation to current project-space context  | Runtime metadata, ContextGrant, bundled `wework-space` Plugin, and Local Gateway          |
-| Stage to automated execution                         | `project_automation_execution.py`, `loop_item_executions/service.py`                      |
-| Workspace and successor-task inheritance             | Runtime Task summary and Wework project work controls                                     |
-| DAG readiness, stage, and Issue aggregation          | Backend workflow service; local ProjectSpace service; live Wework projection              |
-| Execution truth to Issue activity                    | Project chat stream, task activity cards, delivery/attachment projection                  |
+| Edge                                                      | Code ownership                                                                            |
+| --------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Issue Composer to Issue, draft, and attachments           | Wework `IssueComposer` and ProjectSpace API; compact and fullscreen views share one draft |
+| Stage DAG editing and adjacent insertion                  | Wework `ProjectWorkflowEditor`                                                            |
+| Explicit orchestration save and re-entry restoration      | Wework `ProjectAutomationView`, `ProjectWorkflowEditor`, and ProjectSpace API             |
+| Project orchestration definition and Issue snapshot       | Backend workflow schemas/services; Wework Automation DAG UI                               |
+| Dependency edge to successor context                      | Workflow node dependency context; Composer / automation instruction                       |
+| User/AI coordination to concrete tasks                    | Standard Wework Composer, AI manager, `LoopItemTaskBinding`                               |
+| Issue new/existing task to right-side conversation        | `CloudTodoWorkspace`, `TodoEditor`, `AiChatModal`                                         |
+| Runtime Task binding to stage-status synchronization      | `projectSpaceSelection`, `WorkbenchProvider`, and ProjectSpace API                        |
+| Stage task status history and latest-terminal aggregation | Wework `issueWorkflow`, `IssueWorkflowDag`, and the Issue workflow snapshot               |
+| Node deliverables to human review and advancement         | Delivery API, workflow decision service, and `IssueWorkflowDag`                           |
+| Issue board entry to manual task or orchestration         | `CloudTodoWorkspace`, `workItemTaskInput`, and the Issue workflow snapshot                |
+| Issue conversation to current project-space context       | Runtime metadata, ContextGrant, bundled `wework-space` Plugin, and Local Gateway          |
+| Stage to automated execution                              | `project_automation_execution.py`, `loop_item_executions/service.py`                      |
+| Workspace and successor-task inheritance                  | Runtime Task summary and Wework project work controls                                     |
+| DAG readiness, stage, and Issue aggregation               | Backend workflow service; local ProjectSpace service; live Wework projection              |
+| Execution truth to Issue activity                         | Project chat stream, task activity cards, delivery/attachment projection                  |
 
 Invariants:
 
@@ -181,7 +185,10 @@ Invariants:
 - After a Runtime Task is created for a human stage, the first persistent action is only `LoopItemTaskBinding`. Runtime Task cloud context must expose that binding's `workflow_node_id`, and binding completion must replay the known Runtime lifecycle. The UI must not represent the human task as a queued `LoopItemExecution` or invent Queued/In Progress before Runtime confirms running.
 - The human-stage state machine is `blocked → ready → running → awaiting_approval → completed`. Rejection enters `changes_requested` and keeps the original task continuable; force advancement enters `forced_completed`. `queued` is reserved for an existing automated execution waiting for Runtime capacity and must never describe an unstarted human stage.
 - A node may declare zero or more required deliverables. The task Composer and Issue detail must show those requirements and how to upload them. A submitted Delivery must resolve through its source TaskBinding to exactly one `workflow_node_id`. Approval is forbidden while required deliverables are missing, while an authorized user may force advancement with a non-empty reason.
-- Once all human tasks succeed and required deliverables are submitted, the node enters `awaiting_approval`; it does not complete automatically. Only approval or force advancement unlocks successors. Rejection preserves tasks, deliverables, and prior decisions instead of rolling them back or overwriting audit history.
+- An Agent bound to an Issue stage uses the shared `wework-space` MCP for the same Delivery creation, asset upload/download, read, finalize, and draft-discard capabilities available to a user. Write operations resolve the source TaskBinding from the ContextGrant Runtime address and never accept model-selected stage ownership.
+- Each stage task's Runtime state is persisted in `task_statuses` under stable `device_id:task_id`, and Issue detail displays that state per task instead of exposing only the stage aggregate.
+- A stage is `running` while any bound task is running. Otherwise, the trusted terminal state of the most recently bound task determines the current stage result. A later success supersedes an older failure for stage aggregation, while the old task remains visibly failed in task history. Issue detail rendering and human-decision validation must recompute the stage from task truth instead of trusting a potentially stale stage snapshot. Human-stage success enters `awaiting_approval`; it never completes automatically.
+- Only approval or force advancement unlocks successors. Rejection preserves tasks, deliverables, and prior decisions instead of rolling them back or overwriting audit history.
 - Every node decision records action, actor user id, reason, and timestamp. Force advancement requires a non-empty reason; approval may include a note; rejection requires a reason.
 - Issue detail must expose stable entries for task re-entry, deliverable upload, approval, rejection, and force advancement. A stage task row remains reopenable after the right-side conversation is closed.
 - New Task in Issue detail only opens a blank Composer in the same right sidebar used by existing task conversations. No Runtime Task or `LoopItemTaskBinding` exists before the first message is sent.

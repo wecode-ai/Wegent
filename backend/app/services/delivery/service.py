@@ -23,8 +23,9 @@ from app.models.delivery import (
     LoopItem,
     loop_datetime_is_unset,
 )
+from app.models.project_chat_message import ProjectChatMessage
 from app.schemas.base_role import BaseRole
-from app.schemas.delivery import DeliveryCreate, LoopItemTaskBind
+from app.schemas.delivery import DeliveryChatSelection, DeliveryCreate, LoopItemTaskBind
 from app.services.delivery.access import require_loop_item_access
 from app.services.delivery.storage import (
     DeliveryStorage,
@@ -71,9 +72,12 @@ class DeliveryService:
         if item.status == "completed":
             raise HTTPException(status.HTTP_409_CONFLICT, "TODO is already completed")
         markdown = values.markdown.encode()
+        chat_snapshot = values.chat or self._select_chat_messages(
+            db, item, values.chat_selection
+        )
         chat = (
-            json.dumps(values.chat, ensure_ascii=False).encode()
-            if values.chat
+            json.dumps(chat_snapshot, ensure_ascii=False).encode()
+            if chat_snapshot is not None
             else None
         )
         if len(markdown) > MAX_MARKDOWN_BYTES or (chat and len(chat) > MAX_CHAT_BYTES):
@@ -134,6 +138,55 @@ class DeliveryService:
             if written:
                 self.storage.remove_objects(written)
             raise
+
+    @staticmethod
+    def _select_chat_messages(
+        db: Session,
+        item: LoopItem,
+        selection: DeliveryChatSelection | None,
+    ) -> dict[str, Any] | None:
+        if selection is None:
+            return None
+        query = db.query(ProjectChatMessage).filter(
+            ProjectChatMessage.project_id == str(item.cloud_project_id),
+            ProjectChatMessage.task_id == item.id,
+            loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+        )
+        if selection.mode == "latest":
+            rows = (
+                query.order_by(ProjectChatMessage.id.desc())
+                .limit(selection.count or 1)
+                .all()
+            )
+            rows.reverse()
+        elif selection.mode == "message_ids":
+            rows = (
+                query.filter(ProjectChatMessage.message_id.in_(selection.message_ids))
+                .order_by(ProjectChatMessage.id.asc())
+                .all()
+            )
+            found = {row.message_id for row in rows}
+            missing = [
+                message_id
+                for message_id in selection.message_ids
+                if message_id not in found
+            ]
+            if missing:
+                raise HTTPException(
+                    status.HTTP_404_NOT_FOUND,
+                    f"Chat messages not found: {', '.join(missing)}",
+                )
+        else:
+            rows = query.order_by(ProjectChatMessage.id.asc()).all()
+        from app.services.project_chat.service import project_chat_service
+
+        return {
+            "selection": selection.model_dump(mode="json"),
+            "messages": [
+                project_chat_service.to_view(row).model_dump(mode="json")
+                for row in rows
+            ],
+        }
 
     def add_asset(
         self,

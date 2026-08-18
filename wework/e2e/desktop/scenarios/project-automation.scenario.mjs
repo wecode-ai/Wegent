@@ -295,6 +295,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
   let nextBoardItemSequence = 201
   let orchestratedItemId = null
   let orchestratedMovePayload = null
+  let workflowTaskBindings = []
 
   const cloudRequest = (pathname, options) => {
     assert.ok(cloudApi, 'Real cloud API was not prepared')
@@ -1202,6 +1203,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         return true
       }
       if (
+        request.method === 'GET' &&
+        url.pathname === `/api/v1/loop-items/${orchestratedItemId}/tasks`
+      ) {
+        json(response, 200, workflowTaskBindings)
+        return true
+      }
+      if (
         request.method === 'POST' &&
         url.pathname === `/api/v1/cloud-projects/${PROJECT_ID}/loop-items`
       ) {
@@ -1783,6 +1791,56 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         timeoutMs: uiTimeoutMs,
       })
       await control.command('click', `${activeBoard} [data-testid="cloud-todo-detail-close"]`)
+      workflowTaskBindings = [
+        {
+          id: 9102,
+          cloud_project_id: PROJECT_ID,
+          loop_item_id: orchestratedItemId,
+          task_user_id: 9001,
+          device_id: 'local-device',
+          task_id: 'workflow-task-2',
+          task_title: '第二次执行',
+          backend_task_id: null,
+          workflow_node_id: 'stage-1',
+          linked_by_user_id: 9001,
+          linked_at: '2026-08-18T08:42:00Z',
+          unlinked_at: null,
+        },
+        {
+          id: 9101,
+          cloud_project_id: PROJECT_ID,
+          loop_item_id: orchestratedItemId,
+          task_user_id: 9001,
+          device_id: 'local-device',
+          task_id: 'workflow-task-1',
+          task_title: '第一次执行',
+          backend_task_id: null,
+          workflow_node_id: 'stage-1',
+          linked_by_user_id: 9001,
+          linked_at: '2026-08-18T08:41:00Z',
+          unlinked_at: null,
+        },
+      ]
+      createdBoardItem = {
+        ...createdBoardItem,
+        workflow: {
+          ...createdBoardItem.workflow,
+          version: createdBoardItem.workflow.version + 1,
+          nodes: createdBoardItem.workflow.nodes.map(node =>
+            node.id === 'stage-1'
+              ? {
+                  ...node,
+                  status: 'failed',
+                  task_ids: ['local-device:workflow-task-2', 'local-device:workflow-task-1'],
+                  task_statuses: {
+                    'local-device:workflow-task-2': 'succeeded',
+                    'local-device:workflow-task-1': 'failed',
+                  },
+                }
+              : node
+          ),
+        },
+      }
       await control.command(
         'drag',
         `${activeBoard} [data-testid="cloud-todo-card-${orchestratedItemId}"]`,
@@ -1806,16 +1864,25 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         'waitFor',
         `${activeBoard} [data-testid="cloud-todo-workflow-action-stage-1"]`,
         {
-          text: '人工执行',
+          text: '人工执行 · 待人工批准',
           timeoutMs: uiTimeoutMs,
           visible: true,
         }
       )
       await control.command(
         'waitFor',
-        `${activeBoard} [data-testid="cloud-todo-create-workflow-task-stage-1"]`,
+        `${activeBoard} [data-testid="cloud-todo-workflow-task-status-stage-1-9102"]`,
         {
-          text: '开始处理',
+          text: '成功',
+          timeoutMs: uiTimeoutMs,
+          visible: true,
+        }
+      )
+      await control.command(
+        'waitFor',
+        `${activeBoard} [data-testid="cloud-todo-workflow-task-status-stage-1-9101"]`,
+        {
+          text: '失败',
           timeoutMs: uiTimeoutMs,
           visible: true,
         }
@@ -1836,20 +1903,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
           timeoutMs: uiTimeoutMs,
         }
       )
-      await control.command(
-        'click',
-        `${activeBoard} [data-testid="cloud-todo-create-workflow-task-stage-1"]`,
-        {
-          visible: true,
-        }
-      )
-      await control.command('waitFor', '[data-testid="ai-chat-modal"]', {
-        timeoutMs: uiTimeoutMs,
-        visible: true,
-      })
-      await control.command('click', '[data-testid="ai-chat-modal-close"]', {
-        visible: true,
-      })
+      await captureScreenshot(control, 'project-automation-00-workflow-task-statuses.png')
       await control.command(
         'waitFor',
         `${activeBoard} [data-testid="cloud-project-automation-view"]`,

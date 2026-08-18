@@ -10,11 +10,20 @@ vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
     t: (key: string): string =>
       ({
-        'todo.workflow_next_actions': '下一步',
+        'todo.workflow_active_stages': '当前阶段',
         'todo.workflow_stage_human_execution': '人工执行',
         'todo.workflow_ai_execution': 'AI 执行',
         'todo.workflow_start_work': '开始处理',
         'todo.workflow_add_stage_task': '添加任务',
+        'todo.workflow_view_execution_short': '查看',
+        'todo.workflow_task_executions': '任务执行',
+        'todo.workflow_task_status_running': '执行中',
+        'todo.workflow_task_status_succeeded': '成功',
+        'todo.workflow_task_status_failed': '失败',
+        'todo.workflow_task_status_cancelled': '已取消',
+        'todo.workflow_task_status_archived': '已归档',
+        'todo.workflow_task_status_pending': '等待执行',
+        'todo.workflow_run_again': '重新运行',
         'todo.workflow_run': '运行',
         'todo.workflow_node_blocked': '等待前置任务',
         'todo.workflow_node_ready': '可开始',
@@ -141,7 +150,7 @@ describe('IssueWorkflowDag', () => {
       />
     )
 
-    expect(screen.getByTestId('cloud-todo-workflow-actions')).toHaveTextContent('下一步')
+    expect(screen.getByTestId('cloud-todo-workflow-actions')).toHaveTextContent('当前阶段')
     expect(screen.getByTestId('cloud-todo-workflow-action-编辑')).toHaveTextContent(
       '人工执行 · 可开始'
     )
@@ -150,10 +159,10 @@ describe('IssueWorkflowDag', () => {
     )
     expect(screen.queryByTestId('cloud-todo-workflow-action-交付')).not.toBeInTheDocument()
 
-    fireEvent.click(within(screen.getByTestId('cloud-todo-workflow-action-编辑')).getByText('编辑'))
+    fireEvent.click(screen.getByTestId('cloud-todo-create-workflow-task-编辑'))
     expect(onCreateTask).toHaveBeenCalledWith('编辑')
 
-    fireEvent.click(within(screen.getByTestId('cloud-todo-workflow-action-审阅')).getByText('审阅'))
+    fireEvent.click(screen.getByTestId('cloud-todo-run-workflow-node-审阅'))
     expect(onRunAutomation).toHaveBeenCalledWith('审阅', 'rule-1')
   })
 
@@ -175,6 +184,61 @@ describe('IssueWorkflowDag', () => {
     )
 
     expect(screen.getByTestId('cloud-todo-create-workflow-task-编辑')).toHaveTextContent('添加任务')
+  })
+
+  test('lists every task execution for a failed stage and keeps the add task action', () => {
+    const onOpenTask = vi.fn()
+    const onCreateTask = vi.fn()
+    const latestTask = {
+      id: 2,
+      device_id: 'device-1',
+      task_id: 'task-2',
+      task_title: '最近失败的任务',
+      workflow_node_id: '编辑',
+    }
+
+    render(
+      <IssueWorkflowDag
+        nodes={[
+          stage('编辑', {
+            status: 'failed',
+            task_statuses: {
+              'device-1:task-1': 'failed',
+              'device-1:task-2': 'succeeded',
+            },
+          }),
+        ]}
+        tasks={[
+          latestTask,
+          {
+            id: 1,
+            device_id: 'device-1',
+            task_id: 'task-1',
+            task_title: '较早的任务',
+            workflow_node_id: '编辑',
+          },
+        ]}
+        onCreateTask={onCreateTask}
+        onOpenTask={onOpenTask}
+      />
+    )
+
+    const taskList = screen.getByTestId('cloud-todo-workflow-task-list-编辑')
+    expect(within(taskList).getAllByRole('button')).toHaveLength(2)
+    expect(taskList).toHaveTextContent('最近失败的任务')
+    expect(taskList).toHaveTextContent('较早的任务')
+    expect(screen.getByTestId('cloud-todo-workflow-task-status-编辑-2')).toHaveTextContent('成功')
+    expect(screen.getByTestId('cloud-todo-workflow-task-status-编辑-1')).toHaveTextContent('失败')
+
+    fireEvent.click(screen.getByTestId('cloud-todo-open-workflow-task-编辑-2'))
+    expect(onOpenTask).toHaveBeenCalledWith(latestTask)
+
+    const graphNode = screen.getByTestId('cloud-todo-workflow-node-编辑')
+    expect(graphNode).toHaveTextContent('任务执行2')
+    expect(within(graphNode).queryByText('最近失败的任务')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('cloud-todo-create-workflow-task-编辑'))
+    expect(onCreateTask).toHaveBeenCalledWith('编辑')
   })
 
   test('exposes deliverable upload and approval for a completed human task', () => {
