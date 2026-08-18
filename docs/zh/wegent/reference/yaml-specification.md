@@ -189,7 +189,7 @@ spec:
 
 ### 视觉委托模型引用
 
-纯文本模型可以在 `modelConfig.visionSidecarModel` 中显式引用一个声明 `supportsImage: true` 的模型。引用必须使用模型列表返回的完整资源身份和协议；Wework 不会根据登录状态或模型名称自动选择默认视觉模型。引用缺失或结构无效时，不会进行图片预处理或额外模型调用。
+纯文本模型可以在 `modelConfig.visionSidecarModel` 中显式引用一个声明 `supportsImage: true` 的模型。引用必须使用 Backend 授权模型列表返回的完整资源身份和 `apiFormat`；只有目标仍存在、已启用、可访问、支持图片且 API 格式一致时，Wework 才接受该引用，并且不会根据登录状态或模型名称自动选择默认视觉模型。引用缺失或被拒绝时，主模型保持纯文本，不会进行图片预处理或额外模型调用。
 
 ```yaml
 spec:

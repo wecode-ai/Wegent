@@ -189,7 +189,7 @@ spec:
 
 ### Vision delegation model reference
 
-A text-only model can explicitly reference a model that declares `supportsImage: true` in `modelConfig.visionSidecarModel`. The reference must use the complete resource identity and protocol returned by the model list. Wework never selects a default vision model from sign-in state or model names. When the reference is absent or structurally invalid, no image preprocessing or additional model call occurs.
+A text-only model can explicitly reference a model that declares `supportsImage: true` in `modelConfig.visionSidecarModel`. The reference must use the complete resource identity and `apiFormat` returned by the Backend's authorized model list. Wework accepts it only when the exact target remains present, active, accessible, image-capable, and API-format-compatible; it never selects a default vision model from sign-in state or model names. When the reference is absent or rejected, the primary model remains text-only and no image preprocessing or additional model call occurs.
 
 ```yaml
 spec:

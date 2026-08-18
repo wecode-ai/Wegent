@@ -59,6 +59,6 @@ sequenceDiagram
 | 代理注册与主请求转发                   | `executor/src/server/local_model_proxy/mod.rs`           |
 | 云端 Model 到 Codex catalog 的身份映射 | Wework 运行时选择与 Backend 触发链路                     |
 
-不变量：视觉模型只能来自 `modelConfig.visionSidecarModel` 的显式引用，不按登录态、模型名称或默认模型自动选择；引用缺失或结构无效时不得配置 sidecar、提升图片能力或发起额外模型调用；显式引用必须包含模型名称、类型、命名空间、资源所有者和协议，Wework 不接收凭据；只有配置 sidecar 的 DeepSeek V4 Pro/Flash 才使用对应的视觉 catalog，未配置时保持纯文本 catalog；原始图片只发送给引用的视觉模型，主模型只能收到文字；sidecar 超时、无效图片或上游失败必须移除原图并插入明确失败描述；日志不得包含图片、密钥或提示词正文。
+不变量：视觉模型只能来自 `modelConfig.visionSidecarModel` 的显式引用，不按登录态、模型名称或默认模型自动选择；引用缺失、结构无效、过期、不可访问、未启用、不支持图片或 `apiFormat` 不匹配时，不得配置 sidecar、提升图片能力、预处理图片或发起额外模型调用；显式引用必须包含模型名称、类型、命名空间、资源所有者和 `apiFormat`，但不携带供应商凭据；运行时配置只携带适用的网关凭据或绑定在 executor 内的本地凭据，二者都不会暴露给 Codex 或日志；只有配置 sidecar 的 DeepSeek V4 Pro/Flash 才使用对应的视觉 catalog，未配置时保持纯文本 catalog；原始图片只发送给引用的视觉模型，主模型只能收到文字；sidecar 超时、无效图片或上游失败必须移除原图并插入明确失败描述；日志不得包含图片、密钥或提示词正文。
 
 详细配置和限制见 [Wework 设置](../wework/settings.md)。
