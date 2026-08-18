@@ -1202,6 +1202,7 @@ function ScrollableMessagePaneContent({
                 onAddSelectionToConversation={onAddSelectionToConversation}
                 onAskSelectionInSidebar={onAskSelectionInSidebar}
                 onVirtualLayoutChange={handleContentLayoutChange}
+                virtualAnchorToEnd={!showScrollButton}
                 renderGapAfterMessage={renderTranscriptGapAfterMessage}
               />
               {contentFooter ? (
