@@ -123,8 +123,11 @@ def test_high_value_relationships_require_diagram_consideration(system_prompt: s
         assert subject in system_prompt
     assert "Use source-grounded Mermaid" in system_prompt
     assert "code-wiki-mermaid" not in system_prompt
-    assert "decorative diagrams" in system_prompt
     assert "multi-boundary architecture" in system_prompt
+    assert "system-context map" in system_prompt
+    assert "start with 4–8 major nodes" in system_prompt
+    assert "primary boundary or flow" in normalized_prompt
+    assert "abstraction level" in system_prompt
     assert "branching, state transition" in normalized_prompt
 
 

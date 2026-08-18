@@ -355,15 +355,15 @@ spec:
 
     ## Diagrams
 
-    - Use source-grounded Mermaid when architecture relationships, cross-component call
-      or data flows, lifecycles, state machines, data models or non-trivial control flow
-      are clearer as a diagram than as prose. A multi-boundary architecture should show
-      its main components and key call or data flow. A key workflow with branching,
-      state transition or more than one boundary should show its flow or state machine.
+    - Use source-grounded Mermaid when architecture relationships, cross-component flows,
+      lifecycles, state machines, data models or non-trivial control flow are clearer than prose.
+    - For a multi-boundary architecture, start with 4–8 major nodes in a system-context map at one
+      abstraction level and show only main flows. Add a node only when omitting it hides a primary
+      boundary or flow; put remaining module inventory and detailed workflow, deployment or
+      data-model views on linked pages. A key workflow with branching, state transition or more
+      than one boundary should show its flow or state machine.
     - Ground every participant and relationship in inspected source. Prefer a few strong
-      diagrams over decorative diagrams. Diagrams do not replace source entry points,
-      constraints, failure handling or validation; simple navigation and reference pages
-      need none.
+      diagrams; simple navigation and reference pages need none.
 
     ## Git history
 
