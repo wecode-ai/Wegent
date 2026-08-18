@@ -38,7 +38,7 @@ Wework sends semantic mutations such as “move project A before B” or “pin 
 
 When Codex App is not running, Executor writes a same-directory temporary file, flushes it, and atomically replaces global state. While Codex App is running, mutations are appended to a JSONL oplog. Reads overlay pending mutations on disk state for immediate UI feedback. After Codex exits, Executor merges the oplog into the latest disk state. Unknown fields are preserved by every write.
 
-Local projects are mutated by the local Executor in the local `CODEX_HOME`. Remote projects are mutated by the Executor on the owning device. Backend does not persist sidebar state.
+Local projects are mutated by the local Executor in the local `CODEX_HOME`. While a device is online, remote projects are mutated by the Executor on the owning device. Backend does not persist sidebar state.
 
 When Wework synchronizes remote-project descriptors into the local Executor, each non-empty batch is authoritative for the remote hosts represented in that batch. Executor updates the listed projects and removes stale projects for those hosts, including their order, pin, appearance, and task-assignment metadata. Hosts absent from the batch remain unchanged, and an empty batch does not clear remote projects, preventing a temporarily incomplete local view from deleting offline-device state.
 
@@ -49,6 +49,8 @@ After a cloud or remote task-list sync succeeds, Wework stores a per-user, allow
 At startup, the cached summary is merged as stale data with the local Codex remote-project descriptors. When the remote device is unavailable, the project, last known IP, and task summaries remain visible with a gray status dot. Task rows cannot be opened, pinned, renamed, subscribed, or archived. After the device reconnects, the live list becomes authoritative and updates or removes cached entries. A failed device discovery or task-list sync keeps the previous summary so a temporary network error does not empty the sidebar.
 
 An unavailable remote device and an explicitly disconnected cloud session are different states. As long as Wework remains connected to the cloud, projects for offline devices stay visible under the rules above. When the user explicitly disconnects the cloud session, Wework temporarily hides remote projects, remote tasks, and remote chats without deleting the local summary cache or `remote-projects` in Codex global state. Reconnecting first restores the saved remote projects from the cache, then refreshes them from the live device and task lists. Local projects are unaffected.
+
+Removing a cloud or remote project while its device is offline is local to the current Wework instance. Wework deletes the corresponding `remote-projects` descriptor from the local Codex global state and clears its local summary cache without contacting the offline device or deleting project state or workspace files there. The project therefore stays absent across refreshes and Wework restarts while the device remains offline. It may reappear after the device reconnects and reports the same workspace again.
 
 ## Interaction boundary
 

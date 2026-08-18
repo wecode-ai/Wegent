@@ -504,14 +504,17 @@ async fn claude_runtime_downloads_attachments_and_rewrites_prompt_before_process
         }
     );
     server.await.unwrap();
-    let raw_args = fs::read_to_string(&log_path).unwrap();
+    let query = read_json(&log_path.with_extension("stdin"));
+    let prompt = query["message"]["content"]
+        .as_str()
+        .expect("Claude stdin user message should contain text");
     let expected_path = workspace_root.join("7792/7792:executor:attachments/101/note.txt");
     assert_eq!(
         fs::read_to_string(&expected_path).unwrap(),
         "hello attachment"
     );
-    assert!(raw_args.contains(&expected_path.display().to_string()));
-    assert!(raw_args.contains("Available attachments:"));
+    assert!(prompt.contains(&expected_path.display().to_string()));
+    assert!(prompt.contains("Available attachments:"));
 }
 
 #[tokio::test]
@@ -1041,11 +1044,13 @@ fn write_fake_claude(log_path: &Path) -> PathBuf {
     if let Some(parent) = log_path.parent() {
         fs::create_dir_all(parent).unwrap();
     }
+    let stdin_log_path = log_path.with_extension("stdin");
     let path = unique_dir("fake-claude-runtime").join("claude");
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     let content = format!(
         r#"#!/bin/sh
 LOG_PATH='{}'
+STDIN_LOG_PATH='{}'
 printf '[' > "$LOG_PATH"
 first=1
 for arg in "$@"; do
@@ -1057,10 +1062,12 @@ for arg in "$@"; do
   printf '"%s"' "$escaped" >> "$LOG_PATH"
 done
 printf ']\n' >> "$LOG_PATH"
+cat > "$STDIN_LOG_PATH"
 printf '%s\n' '{{"type":"assistant","message":{{"content":[{{"type":"text","text":"ok"}}]}}}}'
 printf '%s\n' '{{"type":"result","is_error":false}}'
 "#,
-        log_path.display()
+        log_path.display(),
+        stdin_log_path.display()
     );
     fs::write(&path, content).unwrap();
     #[cfg(unix)]

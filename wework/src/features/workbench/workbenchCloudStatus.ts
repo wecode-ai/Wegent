@@ -363,7 +363,7 @@ export function selectRuntimeWorkView(
     : localRuntimeWork
 }
 
-function isRemoteRuntimeWorkspace(workspace: RuntimeDeviceWorkspace): boolean {
+export function isRemoteRuntimeWorkspace(workspace: RuntimeDeviceWorkspace): boolean {
   return workspace.workspaceSource === 'remote' || Boolean(workspace.remoteHostId)
 }
 
