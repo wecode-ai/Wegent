@@ -44,9 +44,28 @@ test.describe('Provider-native ClaudeCode access', () => {
     claudeTeamId = await createClaudeResources(request)
   })
 
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page }, testInfo) => {
     activePrompt = ''
+    let modelRequestCount = 0
+    if (testInfo.title.includes('E2E-A2-013')) {
+      await page.route('**/api/models/unified?**', async route => {
+        const requestUrl = new URL(route.request().url())
+        if (requestUrl.searchParams.get('model_category_type') !== 'llm') {
+          await route.continue()
+          return
+        }
+        modelRequestCount += 1
+        if (modelRequestCount === 1) {
+          await route.abort('internetdisconnected')
+          return
+        }
+        await route.continue()
+      })
+    }
     await openClaudeChat(page)
+    if (testInfo.title.includes('E2E-A2-013')) {
+      expect(modelRequestCount).toBeGreaterThanOrEqual(2)
+    }
   })
 
   test.afterEach(async ({ request }) => {
