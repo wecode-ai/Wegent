@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   CalendarClock,
   CheckCircle2,
@@ -74,6 +74,7 @@ export function ProjectAutomationRulesSection({
   onOpenTask,
   onRulesChange,
   projectTags = [],
+  createAiCoordinatorRequestKey = 0,
 }: {
   projectId: string
   api?: AutomationApi
@@ -85,6 +86,7 @@ export function ProjectAutomationRulesSection({
   onOpenTask?: (taskId: string) => void
   onRulesChange?: (rules: ProjectAutomationRule[]) => void
   projectTags?: string[]
+  createAiCoordinatorRequestKey?: number
 }) {
   const { t } = useTranslation('common')
   const backendUrl = getRuntimeConfig().wegentBackendUrl || window.location.origin
@@ -105,6 +107,7 @@ export function ProjectAutomationRulesSection({
     eventId: string
     secret: string
   } | null>(null)
+  const handledAiCoordinatorRequestKey = useRef(createAiCoordinatorRequestKey)
 
   useEffect(() => {
     onRulesChange?.(rules)
@@ -205,14 +208,31 @@ export function ProjectAutomationRulesSection({
     }
   }
 
-  const createRule = (template?: ProjectAutomationTemplate) => {
-    const next = draftFromTemplate(template, agents, models, devices)
-    setSelected(null)
-    setRuns([])
-    setCreatedWebhook(null)
-    setDraft(next.draft)
-    setSchedule(next.schedule)
-  }
+  const createRule = useCallback(
+    (template?: ProjectAutomationTemplate) => {
+      const next = draftFromTemplate(template, agents, models, devices)
+      setSelected(null)
+      setRuns([])
+      setCreatedWebhook(null)
+      setDraft(next.draft)
+      setSchedule(next.schedule)
+    },
+    [agents, devices, models]
+  )
+
+  useEffect(() => {
+    if (createAiCoordinatorRequestKey === handledAiCoordinatorRequestKey.current) return
+    handledAiCoordinatorRequestKey.current = createAiCoordinatorRequestKey
+    createRule({
+      name: t('workbench.project_automation_template_board_managed_name'),
+      prompt: t(DEFAULT_AI_MANAGED_PROMPT_KEY),
+      triggerType: 'event',
+      eventType: 'task.created',
+      assignmentMode: 'ai_managed',
+      managerType: 'custom',
+      agentId: null,
+    })
+  }, [createAiCoordinatorRequestKey, createRule, t])
 
   const save = async () => {
     if (!api || !draft) return

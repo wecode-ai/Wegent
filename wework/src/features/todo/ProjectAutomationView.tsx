@@ -52,6 +52,7 @@ export function ProjectAutomationView({
   const [automationRules, setAutomationRules] = useState<ProjectAutomationRule[]>([])
   const [projectAgents, setProjectAgents] = useState<ProjectChatAgent[]>([])
   const [robotCreateRequestKey, setRobotCreateRequestKey] = useState(0)
+  const [coordinatorCreateRequestKey, setCoordinatorCreateRequestKey] = useState(0)
 
   useEffect(() => {
     if (!projectChatAgentApi) return
@@ -155,6 +156,7 @@ export function ProjectAutomationView({
           modelApi={modelApi}
           teamApi={teamApi}
           projectTags={project.tags ?? []}
+          createAiCoordinatorRequestKey={coordinatorCreateRequestKey}
           onOpenTask={taskId => {
             void api.getLoopItem(taskId).then(item => onOpenTask?.(item))
           }}
@@ -169,6 +171,9 @@ export function ProjectAutomationView({
           projectAgents={projectAgents}
           onEnsureStageRobotRule={ensureStageRobotRule}
           onRequestCreateRobot={() => setRobotCreateRequestKey(current => current + 1)}
+          onRequestConfigureAiCoordinator={() =>
+            setCoordinatorCreateRequestKey(current => current + 1)
+          }
         />
         {workflowError ? <p className="mt-3 text-xs text-destructive">{workflowError}</p> : null}
         <ProjectChatAgentsSection

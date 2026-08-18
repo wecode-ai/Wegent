@@ -47,6 +47,7 @@ interface ProjectWorkflowEditorProps {
   projectAgents?: ProjectChatAgent[]
   onEnsureStageRobotRule?: (agentId: string) => Promise<string | null>
   onRequestCreateRobot?: () => void
+  onRequestConfigureAiCoordinator?: () => void
 }
 
 interface StageNodeData extends Record<string, unknown> {
@@ -300,6 +301,7 @@ export function ProjectWorkflowEditor({
   projectAgents = [],
   onEnsureStageRobotRule,
   onRequestCreateRobot,
+  onRequestConfigureAiCoordinator,
 }: ProjectWorkflowEditorProps) {
   const { t } = useTranslation('common')
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(value.nodes[0]?.id ?? null)
@@ -590,24 +592,50 @@ export function ProjectWorkflowEditor({
 
       {currentAdvancementPolicy === 'ai' ? (
         <div className="mt-4 grid gap-3 rounded-xl border border-border bg-muted/30 p-3 lg:grid-cols-[240px_1fr]">
-          <label className="text-xs font-medium text-text-secondary">
-            {t('todo.workflow_ai_coordinator', 'AI 调度员')}
-            <select
-              data-testid="project-workflow-ai-rule"
-              value={value.ai_automation_rule_id ?? ''}
-              onChange={event =>
-                updateDefinition({ ai_automation_rule_id: event.target.value || null })
-              }
-              className="mt-1.5 h-9 w-full rounded-lg border border-border bg-background px-2 text-sm"
-            >
-              <option value="">{t('todo.workflow_select_ai_coordinator', '选择 AI 自动化')}</option>
-              {aiRules.map(rule => (
-                <option key={rule.id} value={rule.id}>
-                  {rule.name}
-                </option>
-              ))}
-            </select>
-          </label>
+          <div>
+            <label className="text-xs font-medium text-text-secondary">
+              {t('todo.workflow_ai_coordinator', '调度 AI')}
+              <div className="mt-1.5 flex gap-2">
+                <select
+                  data-testid="project-workflow-ai-rule"
+                  value={value.ai_automation_rule_id ?? ''}
+                  onChange={event =>
+                    updateDefinition({ ai_automation_rule_id: event.target.value || null })
+                  }
+                  className="h-9 min-w-0 flex-1 rounded-lg border border-border bg-background px-2 text-sm"
+                >
+                  <option value="">
+                    {aiRules.length
+                      ? t('todo.workflow_select_ai_coordinator', '选择负责拆解和分配任务的 AI')
+                      : t('todo.workflow_no_ai_coordinator', '尚未配置调度 AI')}
+                  </option>
+                  {aiRules.map(rule => (
+                    <option key={rule.id} value={rule.id}>
+                      {rule.agentName || rule.name}
+                      {rule.agentName && rule.agentName !== rule.name ? ` · ${rule.name}` : ''}
+                    </option>
+                  ))}
+                </select>
+                {onRequestConfigureAiCoordinator ? (
+                  <button
+                    type="button"
+                    data-testid="project-workflow-configure-ai-coordinator"
+                    onClick={onRequestConfigureAiCoordinator}
+                    aria-label={t('todo.workflow_configure_ai_coordinator', '配置调度 AI')}
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border text-text-secondary hover:bg-muted"
+                  >
+                    <Plus className="h-4 w-4" />
+                  </button>
+                ) : null}
+              </div>
+            </label>
+            <p className="mt-1.5 text-xs text-text-muted">
+              {t(
+                'todo.workflow_ai_coordinator_hint',
+                '负责读取 Issue、拆解并分配具体任务，本身不执行任务。'
+              )}
+            </p>
+          </div>
           <label className="text-xs font-medium text-text-secondary">
             {t('todo.workflow_coordinator_prompt', '调度提示词')}
             <textarea

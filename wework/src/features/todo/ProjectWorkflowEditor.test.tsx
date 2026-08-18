@@ -217,6 +217,35 @@ describe('ProjectWorkflowEditor', () => {
     )
   })
 
+  test('presents AI advancement as a concrete dispatcher instead of an automation rule', () => {
+    const onRequestConfigureAiCoordinator = vi.fn()
+    render(
+      <ProjectWorkflowEditor
+        value={{
+          ...workflow,
+          stage_mode: 'none',
+          advancement_policy: 'ai',
+          ai_automation_rule_id: null,
+          nodes: [],
+        }}
+        busy={false}
+        onChange={vi.fn()}
+        onSave={vi.fn()}
+        onRequestConfigureAiCoordinator={onRequestConfigureAiCoordinator}
+      />
+    )
+
+    expect(screen.getByText('调度 AI')).toBeInTheDocument()
+    expect(screen.getByText('尚未配置调度 AI')).toBeInTheDocument()
+    expect(
+      screen.getByText('负责读取 Issue、拆解并分配具体任务，本身不执行任务。')
+    ).toBeInTheDocument()
+    expect(screen.queryByText('选择 AI 自动化')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('project-workflow-configure-ai-coordinator'))
+    expect(onRequestConfigureAiCoordinator).toHaveBeenCalledOnce()
+  })
+
   test('selects execution type with radios and binds a concrete robot separately', async () => {
     const onChange = vi.fn()
     const onEnsureStageRobotRule = vi.fn().mockResolvedValue('workflow-rule-1')
