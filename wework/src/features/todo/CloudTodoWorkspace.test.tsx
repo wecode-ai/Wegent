@@ -2257,6 +2257,73 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getAllByText('新建 Issue')).toHaveLength(1)
   })
 
+  it('keeps primary header actions usable when detail panes leave the board narrow', async () => {
+    const clientWidth = vi
+      .spyOn(HTMLElement.prototype, 'clientWidth', 'get')
+      .mockImplementation(function () {
+        return this.dataset.testid === 'cloud-project-header' ? 260 : 0
+      })
+    const boundingRect = vi
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockImplementation(function () {
+        const width =
+          this.dataset.testid === 'cloud-project-header-title'
+            ? 168
+            : this.tagName === 'NAV'
+              ? 260
+              : this.dataset.testid === 'cloud-project-ask-ai'
+                ? 92
+                : this.dataset.testid === 'cloud-project-task-search-toggle'
+                  ? 104
+                  : this.dataset.testid === 'cloud-todo-add'
+                    ? 112
+                    : 32
+        return {
+          bottom: 32,
+          height: 32,
+          left: 0,
+          right: width,
+          top: 0,
+          width,
+          x: 0,
+          y: 0,
+          toJSON: () => ({}),
+        }
+      })
+
+    try {
+      render(
+        <CloudTodoWorkspace
+          user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+          localProjects={[]}
+          services={services()}
+        />
+      )
+
+      await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+
+      await waitFor(() =>
+        expect(screen.getByTestId('cloud-project-header-title')).toHaveClass('hidden')
+      )
+      expect(screen.getByLabelText('视图切换')).toBeInTheDocument()
+      expect(screen.getByTestId('cloud-todo-add')).toHaveAccessibleName('新建 Issue')
+      expect(screen.getByTestId('cloud-todo-add')).toHaveTextContent('')
+      expect(screen.queryByTestId('cloud-project-ask-ai')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('cloud-project-task-search-toggle')).not.toBeInTheDocument()
+
+      await userEvent.click(screen.getByTestId('cloud-project-header-more'))
+      await userEvent.click(screen.getByTestId('cloud-project-header-more-search'))
+      expect(screen.getByTestId('cloud-project-task-search-panel')).toBeInTheDocument()
+
+      await userEvent.click(screen.getByTestId('cloud-project-header-more'))
+      await userEvent.click(screen.getByTestId('cloud-project-header-more-ask-ai'))
+      expect(screen.getByTestId('project-space-chat-sidebar')).toBeInTheDocument()
+    } finally {
+      clientWidth.mockRestore()
+      boundingRect.mockRestore()
+    }
+  })
+
   it('creates a top-level issue from the lightweight workspace composer', async () => {
     const workbenchServices = services()
     workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({ items: [item] }))
@@ -2406,6 +2473,14 @@ describe('CloudTodoWorkspace', () => {
     expect(await screen.findByTestId('cloud-todo-card-WEG-1')).toBeInTheDocument()
     expect(screen.getByTestId('cloud-todo-column-in_progress')).toHaveTextContent(
       'Implement cloud MCP'
+    )
+    expect(screen.getByTestId('cloud-board-toolbar')).toHaveClass(
+      'overflow-x-auto',
+      'scrollbar-none'
+    )
+    expect(screen.getByTestId('cloud-board-group-filter-label').parentElement).toHaveClass(
+      'shrink-0',
+      'whitespace-nowrap'
     )
     await userEvent.selectOptions(screen.getByTestId('cloud-board-group-filter'), 'in_progress')
     expect(screen.getByTestId('cloud-board-group-filter-label')).toHaveTextContent('进行中')

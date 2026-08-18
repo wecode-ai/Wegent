@@ -44,6 +44,7 @@ import {
   DesktopSidebarNavItem,
 } from '@/components/layout/DesktopSidebarPrimitives'
 import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
+import { ActionMenu } from '@/components/common/ActionMenu'
 import { Tooltip } from '@/components/ui/tooltip'
 import type {
   DeliveryApi,
@@ -188,7 +189,7 @@ function AITableGroupFieldPicker({
   }, [open])
 
   return (
-    <div ref={rootRef} className="relative">
+    <div ref={rootRef} className="relative shrink-0">
       <button
         type="button"
         data-testid={`${testIdPrefix}-by`}
@@ -894,13 +895,12 @@ export function CloudTodoWorkspace({
   const projectHeaderTabsRef = useRef<HTMLElement>(null)
   const projectHeaderAskAiRef = useRef<HTMLButtonElement>(null)
   const projectHeaderSearchRef = useRef<HTMLButtonElement>(null)
-  const projectHeaderTagRef = useRef<HTMLSpanElement>(null)
   const projectHeaderAddRef = useRef<HTMLButtonElement>(null)
   const projectHeaderNaturalWidthsRef = useRef({
+    content: 0,
     tabs: 0,
     askAi: 0,
     search: 0,
-    tag: 0,
     add: 0,
   })
   const [projectHeaderLevel, setProjectHeaderLevel] = useState(0)
@@ -940,7 +940,9 @@ export function CloudTodoWorkspace({
       if (header.clientWidth <= 0) return
       const style = getComputedStyle(header)
       const base =
-        header.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)
+        header.clientWidth -
+        (parseFloat(style.paddingLeft) || 0) -
+        (parseFloat(style.paddingRight) || 0)
       const rememberWidth = (
         key: keyof typeof projectHeaderNaturalWidthsRef.current,
         el: HTMLElement | null
@@ -953,22 +955,23 @@ export function CloudTodoWorkspace({
           ? projectHeaderNaturalWidthsRef.current[key] + 8
           : 0
       }
-      const contentW = content.scrollWidth
+      const contentW = rememberWidth('content', content)
       const tabsW = rememberWidth('tabs', projectHeaderTabsRef.current)
       const askAiW = projectAssistantOpen
         ? 0
         : rememberWidth('askAi', projectHeaderAskAiRef.current)
       const searchW = rememberWidth('search', projectHeaderSearchRef.current)
-      const tagW = rememberWidth('tag', projectHeaderTagRef.current)
       const addW = rememberWidth('add', projectHeaderAddRef.current)
       const tabsDropdownW = 96
       const compactControlW = 48
+      const overflowW = !projectAssistantOpen || projectView === 'board' ? compactControlW : 0
+      const compactAddW = projectView === 'board' && selectedProjectId ? compactControlW : 0
 
       const usedAt = (lv: number): number => {
-        let used = contentW + 8
+        let used = lv < 2 ? contentW + 8 : 0
         used += lv < 2 ? tabsW : tabsDropdownW
+        if (lv >= 2) return used + overflowW + compactAddW
         used += lv >= 1 ? compactControlW : searchW
-        used += lv >= 1 ? (tagW > 0 ? compactControlW : 0) : tagW
         if (!projectAssistantOpen) used += lv >= 1 ? compactControlW : askAiW
         used += lv >= 1 ? compactControlW : addW
         return used
@@ -2624,7 +2627,11 @@ export function CloudTodoWorkspace({
                 )}
                 <div
                   ref={projectHeaderContentRef}
-                  className="relative z-10 flex min-w-0 items-center"
+                  data-testid="cloud-project-header-title"
+                  className={cn(
+                    'relative z-10 min-w-0 items-center',
+                    projectHeaderLevel < 2 ? 'flex' : 'hidden'
+                  )}
                 >
                   {embedded ? (
                     <Grid3X3 className="h-4 w-4 shrink-0 text-text-muted" />
@@ -2753,7 +2760,7 @@ export function CloudTodoWorkspace({
                   </span>
                 )}
                 <span className="flex-1" />
-                {selectedProject && !projectAssistantOpen ? (
+                {selectedProject && !projectAssistantOpen && projectHeaderLevel < 2 ? (
                   <Tooltip label={t('workbench.project_chat')} side="bottom" align="end">
                     <button
                       ref={projectHeaderAskAiRef}
@@ -2770,7 +2777,7 @@ export function CloudTodoWorkspace({
                     </button>
                   </Tooltip>
                 ) : null}
-                {projectView === 'board' && (
+                {projectView === 'board' && projectHeaderLevel < 2 && (
                   <>
                     <Tooltip
                       label={
@@ -2801,24 +2808,6 @@ export function CloudTodoWorkspace({
                           : null}
                       </button>
                     </Tooltip>
-                    {projectSearchOpen && (
-                      <TaskSearchPanel
-                        items={items}
-                        members={
-                          selectedProjectKey ? (projectMembers[selectedProjectKey] ?? []) : []
-                        }
-                        query={projectSearchQuery}
-                        filters={projectSearchFilters}
-                        tags={availableTags}
-                        onQueryChange={setProjectSearchQuery}
-                        onFiltersChange={setProjectSearchFilters}
-                        onSelect={item => {
-                          if (item.can_view_detail === false) return
-                          setSelectedItem(item)
-                          setProjectSearchOpen(false)
-                        }}
-                      />
-                    )}
                     {canCreateBoardTask && (
                       <Tooltip
                         label={
@@ -2854,6 +2843,82 @@ export function CloudTodoWorkspace({
                     )}
                   </>
                 )}
+                {projectHeaderLevel >= 2 && (!projectAssistantOpen || projectView === 'board') ? (
+                  <ActionMenu
+                    ariaLabel={t('workbench.more', '更多')}
+                    testId="cloud-project-header-more"
+                    icon={Ellipsis}
+                    placement="bottom-end"
+                    triggerClassName="relative z-10 ml-2 flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-background text-text-secondary transition hover:bg-muted hover:text-text-primary"
+                    items={[
+                      ...(!projectAssistantOpen
+                        ? [
+                            {
+                              label: t('workbench.project_chat'),
+                              icon: Bot,
+                              testId: 'cloud-project-header-more-ask-ai',
+                              onSelect: () => setProjectAssistantOpen(true),
+                            },
+                          ]
+                        : []),
+                      ...(projectView === 'board'
+                        ? [
+                            {
+                              label: boardParent
+                                ? t('todo.search_tasks', '搜索任务')
+                                : t('todo.search_issues', '搜索 Issue'),
+                              icon: Search,
+                              testId: 'cloud-project-header-more-search',
+                              onSelect: () => setProjectSearchOpen(true),
+                            },
+                          ]
+                        : []),
+                    ]}
+                  />
+                ) : null}
+                {projectView === 'board' && projectHeaderLevel >= 2 && canCreateBoardTask ? (
+                  <Tooltip
+                    label={
+                      boardParent
+                        ? t('todo.new_task', '新建任务')
+                        : t('todo.new_issue', '新建 Issue')
+                    }
+                    side="bottom"
+                    align="end"
+                  >
+                    <button
+                      type="button"
+                      data-testid="cloud-todo-add"
+                      aria-label={
+                        boardParent
+                          ? t('todo.new_task', '新建任务')
+                          : t('todo.new_issue', '新建 Issue')
+                      }
+                      onClick={() =>
+                        boardParent ? openTodoCreation(boardParent) : openIssueCreation()
+                      }
+                      className="relative z-10 ml-2 flex h-8 w-8 items-center justify-center rounded-lg bg-text-primary text-background transition hover:opacity-90"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                    </button>
+                  </Tooltip>
+                ) : null}
+                {projectView === 'board' && projectSearchOpen ? (
+                  <TaskSearchPanel
+                    items={items}
+                    members={selectedProjectKey ? (projectMembers[selectedProjectKey] ?? []) : []}
+                    query={projectSearchQuery}
+                    filters={projectSearchFilters}
+                    tags={availableTags}
+                    onQueryChange={setProjectSearchQuery}
+                    onFiltersChange={setProjectSearchFilters}
+                    onSelect={item => {
+                      if (item.can_view_detail === false) return
+                      setSelectedItem(item)
+                      setProjectSearchOpen(false)
+                    }}
+                  />
+                ) : null}
               </header>
               {projectView === 'files' && selectedProjectApi ? (
                 <CloudFilesView api={selectedProjectApi} project={selectedProject} />
@@ -2943,9 +3008,12 @@ export function CloudTodoWorkspace({
                       </span>
                     </div>
                   ) : (
-                    <div className="flex shrink-0 items-center gap-2 px-6 pb-3">
+                    <div
+                      data-testid="cloud-board-toolbar"
+                      className="scrollbar-none flex shrink-0 items-center gap-2 overflow-x-auto overscroll-x-contain px-6 pb-3"
+                    >
                       {isMyTasksBoard && localProjectOptions.length > 0 ? (
-                        <label className="relative inline-flex h-8 min-w-40 cursor-pointer items-center rounded-lg border border-border bg-background pl-3 pr-8 text-xs font-medium text-text-primary hover:bg-muted">
+                        <label className="relative inline-flex h-8 min-w-40 shrink-0 cursor-pointer items-center rounded-lg border border-border bg-background pl-3 pr-8 text-xs font-medium text-text-primary hover:bg-muted">
                           <span className="sr-only">
                             {t('todo.local_project_filter', '本地项目')}
                           </span>
@@ -2985,7 +3053,7 @@ export function CloudTodoWorkspace({
                         searchPlaceholder="搜索分组字段"
                         onChange={fieldId => savePersonalGroupBy(fieldId as NativeBoardGroupBy)}
                       />
-                      <label className="relative inline-flex h-8 cursor-pointer items-center rounded-lg border border-border bg-background px-3 text-xs text-text-secondary hover:bg-muted">
+                      <label className="relative inline-flex h-8 shrink-0 cursor-pointer items-center whitespace-nowrap rounded-lg border border-border bg-background px-3 text-xs text-text-secondary hover:bg-muted">
                         <span data-testid="cloud-board-group-filter-label">
                           {nativeGroupFilter
                             ? boardColumns.find(column => column.key === nativeGroupFilter)?.label
@@ -3007,7 +3075,7 @@ export function CloudTodoWorkspace({
                           ))}
                         </select>
                       </label>
-                      <label className="flex h-8 min-w-52 items-center gap-2 rounded-lg border border-border px-2.5 text-xs text-text-muted focus-within:border-focus">
+                      <label className="flex h-8 min-w-52 shrink-0 items-center gap-2 rounded-lg border border-border px-2.5 text-xs text-text-muted focus-within:border-focus">
                         <Search className="h-3.5 w-3.5" />
                         <input
                           data-testid="cloud-board-search"
@@ -3032,7 +3100,7 @@ export function CloudTodoWorkspace({
                             )
                           }
                           onClick={() => void saveGlobalGroupBy()}
-                          className="h-8 rounded-lg border border-border bg-background px-3 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-50"
+                          className="h-8 shrink-0 whitespace-nowrap rounded-lg border border-border bg-background px-3 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-50"
                         >
                           应用到全局
                         </button>
