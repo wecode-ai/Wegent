@@ -35,6 +35,30 @@ pages are not files served at those locations.
 Anything submitted is part of the version; there is no scratch page or draft namespace.
 Remove an accidental page before completing the run.
 
+## Generation workflow
+
+### Before the first submit
+
+1. Read the run prompt and make one page-and-link plan, including stable paths and a
+   reading order.
+2. In an incremental run, use `read` before replacing an existing page. A `submit`
+   always replaces the complete page; it is not a patch.
+3. Choose stable paths before writing. If a path has descendants, submit its substantive
+   parent page as well.
+
+### Before ending the run
+
+1. Submit every planned finished page, and explicitly remove only pages whose subject
+   disappeared in an incremental run.
+2. Run `complete` with the documented commit and an order that starts with `index` and
+   follows the planned reading route.
+3. Read the response. If publication is refused, restore the missing coverage and run
+   `complete` again. If it reports a Mermaid warning, correct that named page at the
+   same path and run `complete` again.
+
+Do not report the generation as complete until the response says it was published, or
+use `fail` with an accurate error when the run cannot continue.
+
 ## Usage
 
 ### Submit a page from a markdown file

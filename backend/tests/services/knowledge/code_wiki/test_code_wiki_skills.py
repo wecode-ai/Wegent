@@ -30,5 +30,8 @@ def test_wiki_submit_owns_the_page_write_contract():
         "version was published",
         "Mermaid diagrams that do not render",
         "`complete` again",
+        "Before the first submit",
+        "Before ending the run",
+        "Do not report the generation as complete",
     ):
         assert subject in body
