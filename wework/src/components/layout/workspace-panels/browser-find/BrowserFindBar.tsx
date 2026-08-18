@@ -1,7 +1,6 @@
 import { ChevronDown, ChevronUp, Search, X } from 'lucide-react'
 import { useEffect, useRef } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
-import { cn } from '@/lib/utils'
 import type { BrowserFindState } from './browser-find-store'
 
 interface BrowserFindBarProps {
@@ -14,10 +13,11 @@ interface BrowserFindBarProps {
 }
 
 // Mirrors the Codex in-app browser find bar: a floating 340px pill anchored
-// to the top-right, with a 44px input row (search icon + borderless input +
-// divider + close) and a collapsible second row with previous/next and the
-// right-aligned match count. In Wework the pill cannot overlay the native
-// webview, so it docks into a right-aligned strip above the page instead.
+// to the top-right of the page host, with a 44px input row (search icon +
+// borderless input + divider + close) and a collapsible second row with
+// previous/next and the right-aligned match count. The pill is absolutely
+// positioned inside the browser page region (it cannot overlay the native
+// webview, so it floats above the toolbar at the top-right of the page area).
 export function BrowserFindBar({
   query,
   result,
@@ -47,16 +47,19 @@ export function BrowserFindBar({
         })
       : t('workbench.browser_find_no_results')
 
-  const navDisabled = unavailable || !query || matches === 0
+  const navDisabled = unavailable || matches === 0
 
   return (
     <div
       data-testid="workspace-browser-find-bar"
-      className="flex shrink-0 justify-end border-b border-border bg-background px-3 py-2"
+      className="pointer-events-none absolute right-0 top-0 z-40 flex justify-end px-2 py-2"
     >
-      <div className="grid w-[340px] max-w-[70vw] grid-cols-[minmax(0,1fr)_auto] overflow-hidden rounded-[20px] border border-border bg-popover shadow-[0px_8px_16px_-4px_rgba(0,0,0,0.12)]">
+      <div
+        data-embedded-browser-occlusion
+        className="pointer-events-auto grid w-[340px] max-w-[70vw] grid-cols-[minmax(0,1fr)_auto] overflow-hidden rounded-[20px] border border-border bg-popover shadow-[0px_8px_16px_-4px_rgba(0,0,0,0.12)]"
+      >
         <div className="col-[1/2] row-[1] flex h-[44px] min-w-0 items-center gap-2 ps-4">
-          <Search aria-hidden className="size-4 shrink-0 text-text-primary" />
+          <Search aria-hidden className="size-4 shrink-0 text-text-secondary" />
           <label className="sr-only" htmlFor="workspace-browser-find-input">
             {t('workbench.browser_find_in_page')}
           </label>
@@ -99,12 +102,11 @@ export function BrowserFindBar({
         </div>
         <div
           data-testid="workspace-browser-find-matches-row"
-          className={cn(
-            'col-[1/3] row-[2] flex min-w-0 items-center border-border px-4 transition-[border-width,max-height,opacity,padding] duration-200 ease-out',
+          className={
             query
-              ? 'max-h-9 border-t py-2 opacity-100'
-              : 'pointer-events-none max-h-0 border-t-0 py-0 opacity-0'
-          )}
+              ? 'col-[1/3] row-[2] flex min-w-0 items-center border-t border-border px-4 py-2'
+              : 'pointer-events-none hidden'
+          }
         >
           <div className="flex items-center gap-3">
             <button
@@ -116,7 +118,7 @@ export function BrowserFindBar({
               onClick={() => onStep(-1)}
               className="flex h-4 w-4 items-center justify-center text-text-secondary transition-colors hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
             >
-              <ChevronUp className="size-4" />
+              <ChevronDown className="size-4 -scale-y-100" />
             </button>
             <button
               type="button"
@@ -127,13 +129,13 @@ export function BrowserFindBar({
               onClick={() => onStep(1)}
               className="flex h-4 w-4 items-center justify-center text-text-secondary transition-colors hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
             >
-              <ChevronDown className="size-4" />
+              <ChevronUp className="size-4" />
             </button>
           </div>
           <span
             data-testid="workspace-browser-find-count"
             aria-live="polite"
-            className="pointer-events-none min-w-0 flex-1 truncate px-2 text-end text-base leading-6 text-text-secondary"
+            className="pointer-events-none min-w-0 flex-1 truncate px-2 text-end text-xs leading-4 text-text-secondary"
           >
             {countText}
           </span>

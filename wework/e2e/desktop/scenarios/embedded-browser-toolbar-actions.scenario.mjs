@@ -15,14 +15,10 @@ const BROWSER_INPUT_SELECTOR =
 const BROWSER_MORE_BUTTON_SELECTOR =
   ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-more-button"]'
 const FIND_ITEM_SELECTOR = '[data-testid="workspace-browser-find-item"]'
-const FIND_BAR_SELECTOR =
-  ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-find-bar"]'
-const FIND_INPUT_SELECTOR =
-  ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-find-input"]'
-const FIND_COUNT_SELECTOR =
-  ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-find-count"]'
-const FIND_CLOSE_SELECTOR =
-  ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-find-close-button"]'
+const FIND_BAR_SELECTOR = '[data-testid="workspace-browser-find-bar"]'
+const FIND_INPUT_SELECTOR = '[data-testid="workspace-browser-find-input"]'
+const FIND_COUNT_SELECTOR = '[data-testid="workspace-browser-find-count"]'
+const FIND_CLOSE_SELECTOR = '[data-testid="workspace-browser-find-close-button"]'
 const ZOOM_LABEL_SELECTOR = '[data-testid="workspace-browser-zoom-label"]'
 const ZOOM_IN_SELECTOR = '[data-testid="workspace-browser-zoom-in-button"]'
 const ZOOM_OUT_SELECTOR = '[data-testid="workspace-browser-zoom-out-button"]'

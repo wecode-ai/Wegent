@@ -1,5 +1,6 @@
 import { RotateCw, X } from 'lucide-react'
 import { useState } from 'react'
+import { MenuSelect } from '@/components/common/MenuSelect'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   BROWSER_DEVICE_MAX_DIMENSION,
@@ -83,6 +84,20 @@ export function BrowserDeviceToolbar({
 }: BrowserDeviceToolbarProps) {
   const { t } = useTranslation('common')
 
+  const presetOptions = BROWSER_DEVICE_PRESETS.map(preset => ({
+    value: preset.id,
+    label:
+      preset.id === BROWSER_DEVICE_PRESET_RESPONSIVE
+        ? t('workbench.browser_device_responsive')
+        : preset.labelKey
+          ? t(preset.labelKey)
+          : preset.id,
+  }))
+  const zoomOptions = deviceZoomOptions(zoomPercent).map(option => ({
+    value: String(option),
+    label: `${option}%`,
+  }))
+
   return (
     <div
       data-testid="workspace-browser-device-toolbar"
@@ -94,26 +109,13 @@ export function BrowserDeviceToolbar({
       >
         {t('workbench.browser_device_dimensions')}
       </label>
-      <select
-        id="workspace-browser-device-preset"
-        data-testid="workspace-browser-device-preset-select"
+      <MenuSelect
+        testId="workspace-browser-device-preset-select"
         value={state.presetId}
-        onChange={event => {
-          onPresetChange(event.target.value)
-          event.currentTarget.blur()
-        }}
-        className="h-7 min-w-[100px] max-w-44 cursor-pointer truncate rounded-md border border-transparent bg-transparent px-1 text-sm font-medium text-text-secondary outline-none hover:bg-muted focus:bg-muted"
-      >
-        {BROWSER_DEVICE_PRESETS.map(preset => (
-          <option key={preset.id} value={preset.id}>
-            {preset.id === BROWSER_DEVICE_PRESET_RESPONSIVE
-              ? t('workbench.browser_device_responsive')
-              : preset.labelKey
-                ? t(preset.labelKey)
-                : preset.id}
-          </option>
-        ))}
-      </select>
+        options={presetOptions}
+        onChange={onPresetChange}
+        pill
+      />
       <div className="flex shrink-0 items-center gap-1">
         <DimensionInput
           testId="workspace-browser-device-width-input"
@@ -144,22 +146,13 @@ export function BrowserDeviceToolbar({
       >
         <RotateCw className="size-4" />
       </button>
-      <select
-        data-testid="workspace-browser-device-zoom-select"
-        aria-label={t('workbench.browser_device_zoom')}
+      <MenuSelect
+        testId="workspace-browser-device-zoom-select"
         value={String(zoomPercent)}
-        onChange={event => {
-          onZoomPercentChange(Number(event.target.value))
-          event.currentTarget.blur()
-        }}
-        className="h-7 shrink-0 cursor-pointer rounded-md border border-transparent bg-transparent px-1 text-sm font-medium text-text-secondary outline-none hover:bg-muted focus:bg-muted"
-      >
-        {deviceZoomOptions(zoomPercent).map(option => (
-          <option key={option} value={option}>
-            {option}%
-          </option>
-        ))}
-      </select>
+        options={zoomOptions}
+        onChange={value => onZoomPercentChange(Number(value))}
+        pill
+      />
       <button
         type="button"
         data-testid="workspace-browser-device-close-button"

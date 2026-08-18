@@ -2549,55 +2549,6 @@ describe('WorkspaceBrowserPanel', () => {
     })
   })
 
-  test('steps browser zoom from the more menu zoom row', async () => {
-    await openExamplePage()
-
-    fireEvent.click(screen.getByTestId('workspace-browser-more-button'))
-    expect(screen.getByTestId('workspace-browser-zoom-label')).toHaveTextContent('100%')
-
-    fireEvent.click(screen.getByTestId('workspace-browser-zoom-in-button'))
-
-    await waitFor(() => {
-      expect(screen.getByTestId('workspace-browser-zoom-label')).toHaveTextContent('110%')
-    })
-    expect(embeddedBrowserMocks.setEmbeddedBrowserZoom).toHaveBeenCalledWith(
-      1.1,
-      'workspace-browser'
-    )
-    expect(screen.getByTestId('workspace-browser-zoom-banner')).toBeInTheDocument()
-
-    fireEvent.click(screen.getByTestId('workspace-browser-zoom-out-button'))
-    await waitFor(() => {
-      expect(screen.getByTestId('workspace-browser-zoom-label')).toHaveTextContent('100%')
-    })
-  })
-
-  test('applies zoom keyboard shortcuts to the browser page', async () => {
-    await openExamplePage()
-
-    fireEvent.keyDown(screen.getByTestId('workspace-browser-panel'), {
-      key: '=',
-      metaKey: true,
-    })
-    await waitFor(() => {
-      expect(embeddedBrowserMocks.setEmbeddedBrowserZoom).toHaveBeenCalledWith(
-        1.1,
-        'workspace-browser'
-      )
-    })
-
-    fireEvent.keyDown(screen.getByTestId('workspace-browser-panel'), {
-      key: '0',
-      metaKey: true,
-    })
-    await waitFor(() => {
-      expect(embeddedBrowserMocks.setEmbeddedBrowserZoom).toHaveBeenCalledWith(
-        1,
-        'workspace-browser'
-      )
-    })
-  })
-
   test('toggles the device toolbar and emulates the preset viewport', async () => {
     await openExamplePage()
 

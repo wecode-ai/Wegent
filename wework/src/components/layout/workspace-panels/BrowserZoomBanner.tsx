@@ -51,7 +51,7 @@ export function BrowserZoomBanner({
   if (!visible) return null
 
   const buttonClassName =
-    'flex h-6 w-6 items-center justify-center text-text-secondary transition-colors hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40'
+    'flex h-6 w-6 items-center justify-center text-text-primary transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40'
 
   return (
     <div

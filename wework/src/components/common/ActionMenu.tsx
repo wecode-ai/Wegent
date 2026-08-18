@@ -59,6 +59,7 @@ interface ActionMenuProps {
   triggerClassName?: string
   placement?: 'side' | 'bottom-end'
   contextMenuPosition?: MenuPosition | null
+  menuClassName?: string
   onContextMenuClose?: () => void
   onOpenChange?: (open: boolean) => void
 }
@@ -79,6 +80,7 @@ export function ActionMenu({
   triggerClassName,
   placement = 'side',
   contextMenuPosition,
+  menuClassName,
   onContextMenuClose,
   onOpenChange,
 }: ActionMenuProps) {
@@ -432,7 +434,9 @@ export function ActionMenu({
               top: menuPosition?.top ?? 0,
               visibility: menuPosition ? 'visible' : 'hidden',
             }}
-            className="fixed z-system-popover min-w-[176px] rounded-xl border border-border bg-popover p-1 text-text-primary shadow-xl"
+            className={`fixed z-system-popover min-w-[176px] rounded-xl border border-border bg-popover p-1 text-text-primary shadow-xl${
+              menuClassName ? ` ${menuClassName}` : ''
+            }`}
           >
             {items.map(item => {
               const ItemIcon = item.icon
@@ -442,7 +446,7 @@ export function ActionMenu({
                     key={item.testId}
                     data-testid={item.testId}
                     role="separator"
-                    className="mx-1 my-1 h-px bg-border"
+                    className="mx-2 my-1 h-px bg-border"
                   />
                 )
               }
@@ -496,7 +500,7 @@ export function ActionMenu({
                   }}
                   onKeyDown={event => handleItemKeyDown(event, item)}
                   className={[
-                    'flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-sm leading-[18px]',
+                    'flex min-h-9 w-full items-center rounded-lg px-2 text-left text-sm leading-[18px]',
                     item.danger
                       ? 'text-red-500 hover:bg-red-50'
                       : 'text-text-primary hover:bg-muted',
@@ -564,7 +568,7 @@ export function ActionMenu({
                     }}
                     onKeyDown={event => handleItemKeyDown(event, item, true)}
                     className={[
-                      'flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-sm leading-[18px]',
+                      'flex min-h-9 w-full items-center rounded-lg px-2 text-left text-sm leading-[18px]',
                       item.danger
                         ? 'text-red-500 hover:bg-red-50'
                         : 'text-text-primary hover:bg-muted',

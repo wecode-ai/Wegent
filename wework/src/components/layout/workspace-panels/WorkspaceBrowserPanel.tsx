@@ -9,15 +9,9 @@ import {
   CircleAlert,
   Loader2,
   MessageSquarePlus,
-  Minus,
   Pause,
   Play,
-  Plus,
-  RotateCcw,
   RotateCw,
-  Search,
-  Settings,
-  Smartphone,
   Trash2,
   X,
 } from 'lucide-react'
@@ -75,8 +69,6 @@ import { normalizeBrowserUrl } from '@/lib/browser-url'
 import { navigateTo } from '@/lib/navigation'
 import {
   BROWSER_ZOOM_DEFAULT_PERCENT,
-  canZoomIn,
-  canZoomOut,
   stepZoomPercent,
   zoomPercentToScaleFactor,
 } from '@/lib/browser-zoom'
@@ -2288,27 +2280,13 @@ export function WorkspaceBrowserTabPanel({
   const handleBrowserKeyDown = useCallback(
     (event: KeyboardEvent<HTMLDivElement>) => {
       if (!(event.metaKey || event.ctrlKey)) return
-      const key = event.key.toLowerCase()
-      if (key === 'f') {
-        if (canUsePageFind && embeddedBrowserAvailable) {
-          event.preventDefault()
-          openFindBar()
-        }
-        return
-      }
-      if (!embeddedBrowserAvailable || !activePageUrl) return
-      if (key === '=' || key === '+') {
+      if (event.key.toLowerCase() !== 'f') return
+      if (canUsePageFind && embeddedBrowserAvailable) {
         event.preventDefault()
-        changeBrowserZoom(stepZoomPercent(zoomPercentRef.current, 1))
-      } else if (key === '-') {
-        event.preventDefault()
-        changeBrowserZoom(stepZoomPercent(zoomPercentRef.current, -1))
-      } else if (key === '0') {
-        event.preventDefault()
-        changeBrowserZoom(BROWSER_ZOOM_DEFAULT_PERCENT)
+        openFindBar()
       }
     },
-    [activePageUrl, canUsePageFind, changeBrowserZoom, embeddedBrowserAvailable, openFindBar]
+    [canUsePageFind, embeddedBrowserAvailable, openFindBar]
   )
 
   return (
@@ -2469,13 +2447,12 @@ export function WorkspaceBrowserTabPanel({
               testId="workspace-browser-more-button"
               icon={EllipsisVertical}
               placement="bottom-end"
+              menuClassName="w-[240px]"
               triggerClassName="flex h-8 min-w-8 shrink-0 items-center justify-center gap-1.5 rounded-md px-2 text-text-secondary transition-colors hover:bg-muted hover:text-text-primary"
               items={[
                 {
                   label: t('workbench.browser_find_in_page'),
                   testId: 'workspace-browser-find-item',
-                  icon: Search,
-                  shortcut: 'Cmd+F',
                   disabled: !canUsePageFind,
                   onSelect: openFindBar,
                 },
@@ -2485,72 +2462,10 @@ export function WorkspaceBrowserTabPanel({
                   separator: true,
                 },
                 {
-                  label: t('workbench.browser_zoom'),
-                  testId: 'workspace-browser-zoom-row',
-                  custom: (
-                    <div
-                      role="group"
-                      aria-label={t('workbench.browser_zoom')}
-                      className="flex w-full items-center gap-1 rounded-lg px-3 py-0.5 text-sm leading-[18px]"
-                    >
-                      <span className="min-w-0 flex-1 truncate text-text-primary">
-                        {t('workbench.browser_zoom')}
-                      </span>
-                      <div className="flex shrink-0 items-center overflow-hidden rounded-md border border-border bg-foreground/5 text-xs">
-                        <button
-                          type="button"
-                          data-testid="workspace-browser-zoom-out-button"
-                          aria-label={t('workbench.browser_zoom_out')}
-                          title={t('workbench.browser_zoom_out')}
-                          disabled={!canZoomOut(zoomPercent)}
-                          onClick={() => changeBrowserZoom(stepZoomPercent(zoomPercent, -1))}
-                          className="flex h-6 w-6 items-center justify-center text-text-secondary transition-colors hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
-                        >
-                          <Minus className="h-3.5 w-3.5" />
-                        </button>
-                        <span
-                          data-testid="workspace-browser-zoom-label"
-                          className="w-11 border-x border-border py-0.5 text-center tabular-nums text-text-primary"
-                        >
-                          {zoomPercent}%
-                        </span>
-                        <button
-                          type="button"
-                          data-testid="workspace-browser-zoom-in-button"
-                          aria-label={t('workbench.browser_zoom_in')}
-                          title={t('workbench.browser_zoom_in')}
-                          disabled={!canZoomIn(zoomPercent)}
-                          onClick={() => changeBrowserZoom(stepZoomPercent(zoomPercent, 1))}
-                          className="flex h-6 w-6 items-center justify-center text-text-secondary transition-colors hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
-                        >
-                          <Plus className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                      <button
-                        type="button"
-                        data-testid="workspace-browser-zoom-row-reset-button"
-                        aria-label={t('workbench.browser_zoom_reset')}
-                        title={t('workbench.browser_zoom_reset')}
-                        disabled={zoomPercent === BROWSER_ZOOM_DEFAULT_PERCENT}
-                        onClick={() => changeBrowserZoom(BROWSER_ZOOM_DEFAULT_PERCENT)}
-                        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
-                      >
-                        <RotateCcw className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  ),
-                },
-                {
-                  label: '',
-                  testId: 'workspace-browser-more-separator-zoom',
-                  separator: true,
-                },
-                {
                   label: deviceToolbar.isEnabled
                     ? t('workbench.browser_device_toolbar_hide')
                     : t('workbench.browser_device_toolbar_show'),
                   testId: 'workspace-browser-device-toolbar-item',
-                  icon: Smartphone,
                   disabled: !activePageUrl || internalDesktopPage,
                   onSelect: toggleDeviceToolbar,
                 },
@@ -2586,7 +2501,6 @@ export function WorkspaceBrowserTabPanel({
                 {
                   label: t('workbench.browser_settings'),
                   testId: 'workspace-browser-settings-item',
-                  icon: Settings,
                   onSelect: () => navigateTo('/settings/browser'),
                 },
               ]}
