@@ -85,10 +85,36 @@ function loadPersistedTabs(
         const requested = location.tabId
           ? tabs.find(tab => tab.id === location.tabId)
           : tabs.find(tab => tab.contentRoute === location.contentRoute)
+        if (requested) {
+          return {
+            tabs,
+            activeTabId: requested.id,
+            closedTabs: [],
+          }
+        }
+        const hasExplicitRoute =
+          pathname !== '/' || location.contentRoute !== '/' || Boolean(location.tabId)
+        if (hasExplicitRoute) {
+          const kind = inferWorkspaceTabKind(pathname)
+          const routeTab =
+            tabs.find(tab => tab.kind === kind) ??
+            tabs.find(tab => tab.id === parsed.activeTabId) ??
+            tabs[0]
+          const updatedRouteTab = {
+            ...routeTab,
+            kind,
+            title: location.tabTitle ?? workspaceTabTitle(kind, location.contentRoute, labels),
+            contentRoute: location.contentRoute,
+          }
+          return {
+            tabs: tabs.map(tab => (tab.id === routeTab.id ? updatedRouteTab : tab)),
+            activeTabId: routeTab.id,
+            closedTabs: [],
+          }
+        }
         return {
           tabs,
-          activeTabId:
-            requested?.id ?? tabs.find(tab => tab.id === parsed.activeTabId)?.id ?? tabs[0].id,
+          activeTabId: tabs.find(tab => tab.id === parsed.activeTabId)?.id ?? tabs[0].id,
           closedTabs: [],
         }
       }
