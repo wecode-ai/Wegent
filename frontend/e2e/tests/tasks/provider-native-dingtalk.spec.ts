@@ -522,7 +522,7 @@ test.describe('Provider-native DingTalk and multi-provider access', () => {
     await select(knowledge)
     await knowledge.sendMessage(prompt)
     const taskId = await knowledge.waitForTaskId()
-    await waitForTaskTerminal(request, resources.token, taskId)
+    await waitForTaskTerminal(resources.token, taskId)
     await expect(page.getByTestId('send-button')).toBeVisible({ timeout: 30_000 })
     return getTask(request, resources.token, taskId)
   }

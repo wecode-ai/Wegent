@@ -1,4 +1,4 @@
-import { APIRequestContext, expect, Page } from '@playwright/test'
+import { APIRequestContext, expect, Page, request as playwrightRequest } from '@playwright/test'
 import { ADMIN_USER } from '../config/test-users'
 import {
   createProviderNativeKnowledgeFixture,
@@ -269,28 +269,33 @@ export async function getMcpCalls(request: APIRequestContext): Promise<RecordedP
 }
 
 export async function waitForTaskTerminal(
-  request: APIRequestContext,
   token: string,
   taskId: number,
   expected: RegExp = /^COMPLETED/
 ): Promise<string> {
+  const runtimeRequest = await playwrightRequest.newContext({
+    extraHTTPHeaders: authHeaders(token),
+  })
   let finalStatus = ''
-  await expect
-    .poll(
-      async () => {
-        const response = await request.get(
-          `${PROVIDER_NATIVE_API_URL}/api/tasks/${taskId}/runtime-check`,
-          { headers: authHeaders(token) }
-        )
-        if (response.status() !== 200) return `HTTP_${response.status()}`
-        const body = (await response.json()) as { task_status: string }
-        finalStatus = body.task_status.toUpperCase()
-        return finalStatus
-      },
-      { timeout: 60_000, message: `Task ${taskId} should reach ${expected}` }
-    )
-    .toMatch(expected)
-  return finalStatus
+  try {
+    await expect
+      .poll(
+        async () => {
+          const response = await runtimeRequest.get(
+            `${PROVIDER_NATIVE_API_URL}/api/tasks/${taskId}/runtime-check`
+          )
+          if (response.status() !== 200) return `HTTP_${response.status()}`
+          const body = (await response.json()) as { task_status: string }
+          finalStatus = body.task_status.toUpperCase()
+          return finalStatus
+        },
+        { timeout: 60_000, message: `Task ${taskId} should reach ${expected}` }
+      )
+      .toMatch(expected)
+    return finalStatus
+  } finally {
+    await runtimeRequest.dispose()
+  }
 }
 
 export async function getTask(request: APIRequestContext, token: string, taskId: number) {

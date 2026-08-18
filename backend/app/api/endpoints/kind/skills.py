@@ -339,6 +339,7 @@ class UnifiedSkillResponse(BaseModel):
     is_active: bool
     is_public: bool
     user_id: int  # ID of the user who uploaded this skill
+    is_group_shared: bool = False
     publication_status: Optional[str] = None
     availability: SkillAvailability = Field(default_factory=SkillAvailability)
     source: Optional[SkillSourceResponse] = (
@@ -1237,6 +1238,16 @@ def list_unified_skills(
     user_default_skill_ids = skill_binding_service.list_user_default_skill_ids(
         db, current_user.id
     )
+    group_namespaces: list[str] = []
+    group_shared_skill_ids: set[int] = set()
+    if scope != "group" or not group_name:
+        user_groups = get_user_groups(db, current_user.id)
+        group_namespaces = [group for group in user_groups if group != "default"]
+        group_shared_skill_ids = (
+            skill_binding_service.list_group_skill_ids_for_authorized_namespaces(
+                db, group_namespaces
+            )
+        )
     bound_skill_ids = (
         set(user_default_skill_ids) if scope in {"personal", "all"} else set()
     )
@@ -1277,17 +1288,14 @@ def list_unified_skills(
                 .order_by(Kind.created_at.desc())
                 .all()
             )
-            bound_skill_ids.update(
-                skill_binding_service.list_group_skill_ids(
-                    db,
-                    group_name,
-                    current_user.id,
+            group_shared_skill_ids = (
+                skill_binding_service.list_group_skill_ids_for_authorized_namespaces(
+                    db, [group_name]
                 )
             )
+            bound_skill_ids.update(group_shared_skill_ids)
         else:
             # Query all user's groups (excluding default)
-            user_groups = get_user_groups(db, current_user.id)
-            group_namespaces = [g for g in user_groups if g != "default"]
             if group_namespaces:
                 skill_kinds = (
                     db.query(Kind)
@@ -1301,19 +1309,9 @@ def list_unified_skills(
                 )
             else:
                 skill_kinds = []
-            for group_namespace in group_namespaces:
-                bound_skill_ids.update(
-                    skill_binding_service.list_group_skill_ids(
-                        db,
-                        group_namespace,
-                        current_user.id,
-                    )
-                )
+            bound_skill_ids.update(group_shared_skill_ids)
     else:  # scope == "all"
         # Query personal + all user's groups in a single query
-        user_groups = get_user_groups(db, current_user.id)
-        group_namespaces = [g for g in user_groups if g != "default"]
-
         # Build OR conditions for optimized single query
         conditions = [
             # Personal skills in default namespace
@@ -1334,14 +1332,7 @@ def list_unified_skills(
             .order_by(Kind.created_at.desc())
             .all()
         )
-        for group_namespace in group_namespaces:
-            bound_skill_ids.update(
-                skill_binding_service.list_group_skill_ids(
-                    db,
-                    group_namespace,
-                    current_user.id,
-                )
-            )
+        bound_skill_ids.update(group_shared_skill_ids)
 
     direct_skill_ids = {skill.id for skill in skill_kinds}
     missing_bound_skill_ids = bound_skill_ids - direct_skill_ids
@@ -1393,6 +1384,7 @@ def list_unified_skills(
                     "is_active": True,
                     "is_public": False,
                     "user_id": kind.user_id,
+                    "is_group_shared": kind.id in group_shared_skill_ids,
                     "publication_status": capability.get("publishStatus"),
                     "availability": {
                         "in_my_default": kind.id in user_default_skill_ids,
@@ -1437,6 +1429,7 @@ def list_unified_skills(
                     "is_active": True,
                     "is_public": True,
                     "user_id": kind.user_id,
+                    "is_group_shared": kind.id in group_shared_skill_ids,
                     "publication_status": capability.get("publishStatus"),
                     "availability": {
                         "in_my_default": kind.id in user_default_skill_ids,
