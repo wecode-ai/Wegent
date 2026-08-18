@@ -5,6 +5,7 @@ import {
   clampDeviceDimension,
   computeDeviceViewportPlacement,
   defaultBrowserDeviceToolbarState,
+  deviceZoomOptions,
   matchDevicePresetId,
   resolveDeviceFitScale,
   resolveDevicePreset,
@@ -33,6 +34,11 @@ describe('browser-device-toolbar', () => {
     expect(clampDeviceDimension(99999, 240)).toBe(4096)
   })
 
+  test('lists Codex zoom options plus the current zoom when custom', () => {
+    expect(deviceZoomOptions(100)).toEqual([50, 75, 100, 125, 150, 200])
+    expect(deviceZoomOptions(90)).toEqual([50, 75, 90, 100, 125, 150, 200])
+  })
+
   test('fit scale shrinks viewports larger than the host', () => {
     const host = { x: 0, y: 0, width: 400, height: 300 }
     expect(resolveDeviceFitScale(host, 390, 844)).toBeCloseTo(300 / 844)
@@ -41,14 +47,14 @@ describe('browser-device-toolbar', () => {
 
   test('centers the device viewport inside the host without scaling', () => {
     const host = { x: 500, y: 120, width: 1000, height: 1000 }
-    const placement = computeDeviceViewportPlacement(host, { width: 375, height: 667 })
+    const placement = computeDeviceViewportPlacement(host, { width: 375, height: 667 }, 100)
     expect(placement?.scale).toBe(1)
     expect(placement?.webviewBounds).toEqual({ x: 813, y: 287, width: 375, height: 667 })
   })
 
   test('scales the webview down when the device exceeds the host', () => {
     const host = { x: 500, y: 120, width: 400, height: 300 }
-    const placement = computeDeviceViewportPlacement(host, { width: 390, height: 844 })
+    const placement = computeDeviceViewportPlacement(host, { width: 390, height: 844 }, 100)
     expect(placement).not.toBeNull()
     // The webview occupies the visual rect; zoom (scale) restores the
     // device CSS viewport width.
@@ -59,6 +65,19 @@ describe('browser-device-toolbar', () => {
     expect(Math.abs(placement!.webviewBounds.width / placement!.scale - 390)).toBeLessThanOrEqual(2)
   })
 
+  test('page zoom magnifies the viewport while keeping the layout width', () => {
+    const host = { x: 0, y: 0, width: 1000, height: 1000 }
+    const placement = computeDeviceViewportPlacement(host, { width: 390, height: 844 }, 150)
+    expect(placement).not.toBeNull()
+    expect(placement!.scale).toBeCloseTo(1.5)
+    // Page zoom magnifies page content but the webview bounds stay clipped
+    // to the fit rect (390 x 844 fits inside the 1000x1000 host at scale 1).
+    expect(placement!.webviewBounds.width).toBe(390)
+    expect(placement!.webviewBounds.height).toBe(844)
+    // CSS viewport = bounds / zoom = 390 / 1.5 = 260 (page is zoomed in).
+    expect(Math.abs(placement!.webviewBounds.width / placement!.scale - 260)).toBeLessThanOrEqual(2)
+  })
+
   test('returns null for an empty host', () => {
     expect(
       computeDeviceViewportPlacement(
@@ -66,7 +85,8 @@ describe('browser-device-toolbar', () => {
         {
           width: 390,
           height: 844,
-        }
+        },
+        100
       )
     ).toBeNull()
   })

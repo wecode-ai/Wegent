@@ -1,5 +1,5 @@
-import { RotateCw, X } from 'lucide-react'
-import { useState } from 'react'
+import { X } from 'lucide-react'
+import { useState, type SVGProps } from 'react'
 import { MenuSelect } from '@/components/common/MenuSelect'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
@@ -9,14 +9,17 @@ import {
   BROWSER_DEVICE_PRESET_RESPONSIVE,
   BROWSER_DEVICE_PRESETS,
   clampDeviceDimension,
+  deviceZoomOptions,
   type BrowserDeviceToolbarState,
 } from '@/lib/browser-device-toolbar'
 
 interface BrowserDeviceToolbarProps {
   state: BrowserDeviceToolbarState
+  zoomPercent: number
   onPresetChange: (presetId: string) => void
   onDimensionsChange: (width: number, height: number) => void
   onRotate: () => void
+  onZoomPercentChange: (zoomPercent: number) => void
   onClose: () => void
 }
 
@@ -72,9 +75,11 @@ function DimensionInput({
 
 export function BrowserDeviceToolbar({
   state,
+  zoomPercent,
   onPresetChange,
   onDimensionsChange,
   onRotate,
+  onZoomPercentChange,
   onClose,
 }: BrowserDeviceToolbarProps) {
   const { t } = useTranslation('common')
@@ -88,6 +93,11 @@ export function BrowserDeviceToolbar({
           ? t(preset.labelKey)
           : preset.id,
   }))
+  const zoomOptions = deviceZoomOptions(zoomPercent).map(option => ({
+    value: String(option),
+    label: `${option}%`,
+  }))
+
   return (
     <div
       data-testid="workspace-browser-device-toolbar"
@@ -132,10 +142,22 @@ export function BrowserDeviceToolbar({
           onRotate()
           event.currentTarget.blur()
         }}
-        className="flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-text-secondary outline-none transition-transform hover:bg-muted hover:text-text-primary focus:bg-muted focus:text-text-primary active:rotate-90"
+        className="flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-text-secondary outline-none hover:bg-muted hover:text-text-primary focus:bg-muted focus:text-text-primary"
       >
-        <RotateCw className="size-4" />
+        <span
+          className="inline-flex size-4 items-center justify-center [transform-origin:50%] motion-reduce:animate-none"
+          style={{ animation: 'wework-device-rotate 0.36s ease-out' }}
+        >
+          <RotateDeviceIcon className="size-4" />
+        </span>
       </button>
+      <MenuSelect
+        testId="workspace-browser-device-zoom-select"
+        value={String(zoomPercent)}
+        options={zoomOptions}
+        onChange={value => onZoomPercentChange(Number(value))}
+        pill
+      />
       <button
         type="button"
         data-testid="workspace-browser-device-close-button"
@@ -150,5 +172,22 @@ export function BrowserDeviceToolbar({
         <X className="h-3.5 w-3.5" />
       </button>
     </div>
+  )
+}
+
+// Custom rotate icon matching Codex's device toolbar (material "screen
+// rotation" glyph). Plays a 0.36s ease-out rotate animation on each click.
+function RotateDeviceIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      xmlns="http://www.w3.org/2000/svg"
+      {...props}
+    >
+      <path d="M16.48 2.52c3.27 1.55 5.61 4.72 5.97 8.48h1.5C23.44 4.84 18.29 0 12 0l-.66.03 3.81 3.81 1.33-1.32zm-6.25-.77c-.59-.59-1.54-.59-2.12 0L1.75 8.11c-.59.59-.59 1.54 0 2.12l12.02 12.02c.59.59 1.54.59 2.12 0l6.36-6.36c.59-.59.59-1.54 0-2.12L10.23 1.75zm4.6 19.44L2.81 9.17l6.36-6.36 12.02 12.02-6.36 6.36zm-7.31.29C4.25 19.94 1.91 16.76 1.55 13H.05C.56 19.16 5.71 24 12 24l.66-.03-3.81-3.81-1.33 1.32z" />
+    </svg>
   )
 }

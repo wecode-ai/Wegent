@@ -49,6 +49,7 @@ import {
   resolveEmbeddedBrowserAgentApproval,
   setEmbeddedBrowserAgentControlPaused,
   setEmbeddedBrowserBounds,
+  setEmbeddedBrowserZoom,
   type EmbeddedBrowserAgentStateEvent,
   type EmbeddedBrowserDataKind,
   type EmbeddedBrowserBounds,
@@ -66,6 +67,7 @@ import { fileManagerRevealLabel } from '@/lib/file-manager'
 import { revealLocalFile } from '@/lib/local-terminal'
 import { normalizeBrowserUrl } from '@/lib/browser-url'
 import { navigateTo } from '@/lib/navigation'
+import { BROWSER_ZOOM_DEFAULT_PERCENT, zoomPercentToScaleFactor } from '@/lib/browser-zoom'
 import {
   clampDeviceDimension,
   computeDeviceViewportPlacement,
@@ -406,6 +408,8 @@ export function WorkspaceBrowserTabPanel({
   const [invalidTlsCertificate, setInvalidTlsCertificate] =
     useState<EmbeddedBrowserInvalidTlsCertificateEvent | null>(null)
   const deviceFitScaleRef = useRef(1)
+  const [zoomPercent, setZoomPercent] = useState(BROWSER_ZOOM_DEFAULT_PERCENT)
+  const zoomPercentRef = useRef(BROWSER_ZOOM_DEFAULT_PERCENT)
   const [findOpen, setFindOpen] = useState(false)
   const [findQuery, setFindQuery] = useState('')
   const [findResult, setFindResult] = useState<BrowserFindState | null>(null)
@@ -761,7 +765,7 @@ export function WorkspaceBrowserTabPanel({
         visible && (!embeddedBrowserOccludedRef.current || !occlusionSnapshotReadyRef.current)
       const deviceState = deviceToolbarRef.current
       const placement = deviceState.isEnabled
-        ? computeDeviceViewportPlacement(bounds, deviceState)
+        ? computeDeviceViewportPlacement(bounds, deviceState, zoomPercentRef.current)
         : null
       if (placement) {
         deviceFitScaleRef.current = placement.scale
@@ -787,10 +791,15 @@ export function WorkspaceBrowserTabPanel({
         )
         await setEmbeddedBrowserBounds(placement.webviewBounds, nativeVisible, label)
       } else {
-        deviceFitScaleRef.current = 1
+        deviceFitScaleRef.current = zoomPercentToScaleFactor(zoomPercentRef.current)
         setDeviceVisualRect(current => (current === null ? current : null))
         await setEmbeddedBrowserBounds(bounds, nativeVisible, label)
       }
+      // The native webview zoom carries the page zoom; in device mode the
+      // placement already folds it into the combined fit scale.
+      await setEmbeddedBrowserZoom(deviceFitScaleRef.current, label).catch(error => {
+        console.error('Failed to apply embedded browser zoom:', error)
+      })
     },
     [active, embeddedBrowserAvailable, label]
   )
@@ -2135,6 +2144,27 @@ export function WorkspaceBrowserTabPanel({
 
   // --- Device toolbar (viewport emulation via bounds + fit scale) ---
 
+  const changeBrowserZoom = useCallback(
+    (nextPercent: number) => {
+      zoomPercentRef.current = nextPercent
+      setZoomPercent(nextPercent)
+      // The bounds sync applies the correct combined zoom (page zoom alone,
+      // or folded into the device viewport fit scale).
+      scheduleEmbeddedBrowserBoundsSync(activeRef.current)
+    },
+    [scheduleEmbeddedBrowserBoundsSync]
+  )
+
+  // Re-apply the remembered page zoom after the webview reloads or is
+  // recreated (native zoom resets on a fresh webview).
+  useEffect(() => {
+    if (status !== 'ready') return
+    if (zoomPercentRef.current === BROWSER_ZOOM_DEFAULT_PERCENT && deviceFitScaleRef.current === 1)
+      return
+    if (!embeddedBrowserAvailable || !nativeBrowserOpenRef.current) return
+    void setEmbeddedBrowserZoom(deviceFitScaleRef.current, label).catch(() => undefined)
+  }, [status, embeddedBrowserAvailable, label])
+
   const updateDeviceToolbar = useCallback(
     (patch: Partial<BrowserDeviceToolbarState>) => {
       setDeviceToolbar(current => {
@@ -2155,6 +2185,9 @@ export function WorkspaceBrowserTabPanel({
     (presetId: string) => {
       const preset = resolveDevicePreset(presetId)
       if (!preset) return
+      // Codex resets the page zoom when the preset changes.
+      zoomPercentRef.current = BROWSER_ZOOM_DEFAULT_PERCENT
+      setZoomPercent(BROWSER_ZOOM_DEFAULT_PERCENT)
       updateDeviceToolbar({ presetId, width: preset.width, height: preset.height })
     },
     [updateDeviceToolbar]
@@ -2480,9 +2513,11 @@ export function WorkspaceBrowserTabPanel({
       {deviceToolbar.isEnabled && (!annotationMode || internalDesktopPage) ? (
         <BrowserDeviceToolbar
           state={deviceToolbar}
+          zoomPercent={zoomPercent}
           onPresetChange={handleDevicePresetChange}
           onDimensionsChange={handleDeviceDimensionsChange}
           onRotate={handleDeviceRotate}
+          onZoomPercentChange={changeBrowserZoom}
           onClose={toggleDeviceToolbar}
         />
       ) : null}
@@ -2741,7 +2776,7 @@ export function WorkspaceBrowserTabPanel({
             ref={browserHostRef}
             data-testid="workspace-browser-native-view"
             className={cn(
-              'relative h-full min-h-0 w-full',
+              'relative h-full min-h-0 w-full overflow-hidden',
               deviceToolbar.isEnabled ? 'bg-neutral-700' : 'bg-background'
             )}
             aria-label={t('workbench.browser')}
