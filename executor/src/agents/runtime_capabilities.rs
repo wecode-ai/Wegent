@@ -1387,6 +1387,9 @@ fn extract_skill_zip(skill_name: &str, content: &[u8], skills_dir: &Path) -> Res
         let Some(enclosed) = file.enclosed_name().map(PathBuf::from) else {
             return Err(format!("unsafe ZIP path for skill {skill_name}"));
         };
+        if is_macos_metadata_entry(&enclosed) {
+            continue;
+        }
         if enclosed
             .components()
             .any(|component| matches!(component, Component::ParentDir | Component::RootDir))
@@ -1427,6 +1430,9 @@ fn validate_skill_zip_entries<R: std::io::Read + std::io::Seek>(
         let Some(enclosed) = file.enclosed_name() else {
             return Err(format!("unsafe ZIP path for skill {skill_name}"));
         };
+        if is_macos_metadata_entry(enclosed) {
+            continue;
+        }
         if !enclosed.starts_with(skill_root) {
             has_outside_root = true;
         }
@@ -1444,6 +1450,12 @@ fn validate_skill_zip_entries<R: std::io::Read + std::io::Seek>(
         ));
     }
     Ok(())
+}
+
+fn is_macos_metadata_entry(path: &Path) -> bool {
+    path.components()
+        .next()
+        .is_some_and(|component| component.as_os_str() == "__MACOSX")
 }
 
 fn setup_coordinate_subagents(request: &ExecutionRequest, task_dir: &Path) {
@@ -2831,6 +2843,27 @@ mod tests {
         );
         assert!(!skills_dir.join("requested-skill").exists());
         assert!(!skills_dir.join("other-skill").exists());
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn extract_skill_zip_ignores_macos_metadata_outside_requested_root() {
+        let temp = env::temp_dir().join(format!("skill-macos-metadata-{}", std::process::id()));
+        let skills_dir = temp.join("skills");
+        let archive = skill_zip_entries(&[
+            ("requested-skill/SKILL.md", "# Requested Skill"),
+            ("__MACOSX/._requested-skill", "metadata"),
+            ("__MACOSX/requested-skill/._SKILL.md", "metadata"),
+        ]);
+
+        let extracted = extract_skill_zip("requested-skill", &archive, &skills_dir).unwrap();
+
+        assert!(extracted);
+        assert_eq!(
+            fs::read_to_string(skills_dir.join("requested-skill/SKILL.md")).unwrap(),
+            "# Requested Skill"
+        );
+        assert!(!skills_dir.join("__MACOSX").exists());
         let _ = fs::remove_dir_all(temp);
     }
 
