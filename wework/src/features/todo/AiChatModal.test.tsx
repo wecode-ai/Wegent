@@ -6,7 +6,13 @@ import { useRef } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { CloudProject } from '@/api/deliveries'
-import type { ModelOptions, ModelType, ProjectWithTasks, RuntimeTaskAddress } from '@/types/api'
+import type {
+  ModelOptions,
+  ModelType,
+  ProjectWithTasks,
+  RuntimeSendRequest,
+  RuntimeTaskAddress,
+} from '@/types/api'
 import { AiChatModal } from './AiChatModal'
 
 const mocks = vi.hoisted(() => ({
@@ -39,6 +45,7 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
     autoSubmitInitialInput,
     initialAddress,
     onAddressChange,
+    runtimeContext,
     sendEphemeral,
     testId,
   }: {
@@ -60,6 +67,7 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
     ) => Promise<RuntimeTaskAddress | false>
     initialAddress?: RuntimeTaskAddress | null
     onAddressChange?: (address: RuntimeTaskAddress | null) => void
+    runtimeContext?: Pick<RuntimeSendRequest, 'cloudProjectId' | 'origin' | 'additionalContext'>
     sendEphemeral?: boolean
     testId?: string
   }) => {
@@ -93,6 +101,8 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
           data-mount-id={mountId}
           data-has-initial-address={initialAddress ? 'yes' : 'no'}
           data-send-ephemeral={sendEphemeral === false ? 'no' : 'yes'}
+          data-cloud-project-id={runtimeContext?.cloudProjectId ?? ''}
+          data-loop-item-id={runtimeContext?.origin?.loopItemId ?? ''}
           data-panel-testid={testId}
         />
       </>
@@ -142,6 +152,31 @@ const task = {
 }
 
 describe('AiChatModal', () => {
+  it('opens a blank embedded task composer in the right sidebar', () => {
+    render(
+      <AiChatModal
+        project={project}
+        localProjects={localProjects}
+        task={task}
+        embedded
+        open
+        onClose={vi.fn()}
+      />
+    )
+
+    const sidebar = screen.getByTestId('ai-chat-modal-backdrop')
+    expect(sidebar.tagName).toBe('ASIDE')
+    expect(sidebar).toHaveAttribute('data-presentation', 'sidebar')
+    expect(sidebar).toHaveClass('relative', 'h-full', 'border-l')
+    expect(sidebar).not.toHaveClass('fixed', 'inset-0')
+    expect(screen.getByTestId('ai-chat-modal')).toHaveTextContent('新建任务')
+    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute(
+      'data-panel-testid',
+      'work-item-new-task-chat-panel'
+    )
+    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute('data-has-initial-address', 'no')
+  })
+
   it('keeps the original title as an unsent draft when a work item moves to pending', () => {
     render(
       <AiChatModal
@@ -206,6 +241,16 @@ describe('AiChatModal', () => {
           modelOptions: { reasoningEffort: 'high' },
         },
         cloudProjectId: '11',
+        origin: {
+          type: 'board_task',
+          cloudProjectId: '11',
+          loopItemId: 'WEG-1',
+        },
+        additionalContext: expect.objectContaining({
+          issueEnvironment: expect.objectContaining({
+            value: expect.stringContaining('"description":"Use the shared workspace"'),
+          }),
+        }),
       })
     )
     mocks.createProjectRuntimeTask.mockClear()
