@@ -2,14 +2,12 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Resolve caller-visible capability references to their source Kind."""
+"""Resolve caller-visible Model references to their source Kind."""
 
 from sqlalchemy import Boolean, Integer, String, column, select, table
 from sqlalchemy.orm import Session
 
 from shared.models.db import Kind
-
-REFERENCE_KINDS = frozenset({"Model", "Retriever", "Shell"})
 
 _namespace = table(
     "namespace",
@@ -27,28 +25,14 @@ _resource_members = table(
 )
 
 
-def resolve_capability_kind(
+def resolve_referenced_model_kind(
     db: Session,
     *,
-    kind: str,
     name: str,
     namespace: str,
     user_id: int,
 ) -> Kind | None:
-    """Resolve a direct or referenced capability in a caller-visible scope."""
-    if kind not in REFERENCE_KINDS:
-        return None
-
-    direct = _resolve_direct_kind(
-        db,
-        kind=kind,
-        name=name,
-        namespace=namespace,
-        user_id=user_id,
-    )
-    if direct is not None:
-        return direct
-
+    """Resolve an approved Model reference in a caller-visible scope."""
     entity_type = "user"
     entity_id = str(user_id)
     if namespace != "default":
@@ -64,7 +48,7 @@ def resolve_capability_kind(
         entity_id = str(namespace_id)
 
     referenced_ids = select(_resource_members.c.resource_id).where(
-        _resource_members.c.resource_type == kind,
+        _resource_members.c.resource_type == "Model",
         _resource_members.c.entity_type == entity_type,
         _resource_members.c.entity_id == entity_id,
         _resource_members.c.status == "approved",
@@ -73,30 +57,10 @@ def resolve_capability_kind(
         db.query(Kind)
         .filter(
             Kind.id.in_(referenced_ids),
-            Kind.kind == kind,
+            Kind.kind == "Model",
             Kind.name == name,
             Kind.user_id != 0,
             Kind.is_active.is_(True),
         )
         .first()
     )
-
-
-def _resolve_direct_kind(
-    db: Session,
-    *,
-    kind: str,
-    name: str,
-    namespace: str,
-    user_id: int,
-) -> Kind | None:
-    query = db.query(Kind).filter(
-        Kind.kind == kind,
-        Kind.name == name,
-        Kind.namespace == namespace,
-        Kind.is_active.is_(True),
-    )
-    if namespace == "default":
-        owner_filter = (Kind.user_id == user_id) | (Kind.user_id == 0)
-        query = query.filter(owner_filter).order_by(Kind.user_id.desc())
-    return query.first()

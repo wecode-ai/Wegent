@@ -15,7 +15,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Session
 
-from shared.db.capability_reference import resolve_capability_kind
+from shared.db.capability_reference import resolve_referenced_model_kind
 from shared.models.db import Kind
 
 
@@ -43,7 +43,7 @@ def _create_schema(engine) -> tuple[Table, Table]:
     return namespace, resource_members
 
 
-def test_group_model_reference_resolves_until_revoked() -> None:
+def test_group_model_reference_requires_active_target_source_and_binding() -> None:
     engine = create_engine("sqlite:///:memory:")
     namespace, resource_members = _create_schema(engine)
 
@@ -77,9 +77,8 @@ def test_group_model_reference_resolves_until_revoked() -> None:
         )
         db.commit()
 
-        resolved = resolve_capability_kind(
+        resolved = resolve_referenced_model_kind(
             db,
-            kind="Model",
             name="shared-embedding",
             namespace="search-team",
             user_id=99,
@@ -90,15 +89,38 @@ def test_group_model_reference_resolves_until_revoked() -> None:
         assert resolved.namespace == "default"
 
         db.execute(
-            resource_members.update()
-            .where(resource_members.c.id == 1)
-            .values(status="rejected")
+            namespace.update().where(namespace.c.id == 7).values(is_active=False)
         )
         db.commit()
 
-        revoked = resolve_capability_kind(
+        inactive_target = resolve_referenced_model_kind(
             db,
-            kind="Model",
+            name="shared-embedding",
+            namespace="search-team",
+            user_id=99,
+        )
+
+        assert inactive_target is None
+
+        db.execute(namespace.update().where(namespace.c.id == 7).values(is_active=True))
+        source.is_active = False
+        db.commit()
+
+        inactive_source = resolve_referenced_model_kind(
+            db,
+            name="shared-embedding",
+            namespace="search-team",
+            user_id=99,
+        )
+
+        assert inactive_source is None
+
+        source.is_active = True
+        db.execute(resource_members.delete().where(resource_members.c.id == 1))
+        db.commit()
+
+        revoked = resolve_referenced_model_kind(
+            db,
             name="shared-embedding",
             namespace="search-team",
             user_id=99,
