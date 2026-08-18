@@ -8,7 +8,7 @@ Projects group conversations that use the same codebase. A project can map to fo
 
 ## Existing folders and Git projects
 
-When the project list is empty on first use, the sidebar's **Projects** section shows **+ New project** directly. Select it to choose a **Local project** or **Cloud project**; cloud projects still require a cloud connection. Wework hides this empty-state action while project data is synchronizing so an unfinished load is not mistaken for an empty list.
+When the project list is empty, the sidebar's **Projects** section shows **+ New project** directly. Select it to choose a **Local project** or **Cloud project**; cloud projects still require a cloud connection. Wework hides this empty-state action while project data is synchronizing so an unfinished load is not mistaken for an empty list.
 
 Choose **Use existing folder** for code already on the device. Adding the same folder again restores or reuses its project and conversations.
 

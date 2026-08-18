@@ -3563,8 +3563,14 @@ export function DesktopSidebar({
     )
   }, [currentRuntimeTask, regularChatTaskItems])
   const displayedProjectsExpanded = projectsExpanded
+  const runtimeWorkCheck = cloudWorkStatus?.checks.runtimeWork
   const showEmptyProjectCreateAction =
-    sidebarProjects.length === 0 && cloudWorkStatus?.checks.runtimeWork !== 'syncing'
+    runtimeWork !== null &&
+    runtimeWork !== undefined &&
+    runtimeWorkCheck !== null &&
+    runtimeWorkCheck !== undefined &&
+    runtimeWorkCheck !== 'syncing' &&
+    sidebarProjects.length === 0
   const displayedChatsExpanded =
     chatsExpanded ||
     selectedRuntimeChatVisible ||

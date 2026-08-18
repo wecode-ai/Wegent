@@ -224,7 +224,14 @@ describe('DesktopSidebar', () => {
   })
 
   test('shows a discoverable project creation action when the project list is empty', async () => {
-    renderSidebar({ projects: [], runtimeWork: { projects: [], chats: [], totalTasks: 0 } })
+    renderSidebar({
+      projects: [],
+      runtimeWork: { projects: [], chats: [], totalTasks: 0 },
+      cloudWorkStatus: cloudWorkStatus({
+        availability: 'empty',
+        checks: { runtimeWork: 'empty' },
+      }),
+    })
 
     const createButton = screen.getByTestId('projects-empty-create-button')
     expect(createButton).toHaveTextContent('新建项目')
@@ -241,6 +248,19 @@ describe('DesktopSidebar', () => {
       cloudWorkStatus: cloudWorkStatus({
         availability: 'syncing',
         checks: { runtimeWork: 'syncing' },
+      }),
+    })
+
+    expect(screen.queryByTestId('projects-empty-create-button')).not.toBeInTheDocument()
+  })
+
+  test('does not show the empty project creation action before runtime work loads', () => {
+    renderSidebar({
+      projects: [],
+      runtimeWork: null,
+      cloudWorkStatus: cloudWorkStatus({
+        availability: 'idle',
+        checks: { runtimeWork: 'idle' },
       }),
     })
 
