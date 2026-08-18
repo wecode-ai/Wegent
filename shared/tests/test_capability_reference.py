@@ -13,13 +13,14 @@ from sqlalchemy import (
     Table,
     create_engine,
 )
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from shared.db.capability_reference import resolve_referenced_model_kind
 from shared.models.db import Kind
 
 
-def _create_schema(engine) -> tuple[Table, Table]:
+def _create_schema(engine: Engine) -> tuple[Table, Table]:
     Kind.__table__.create(engine)
     metadata = MetaData()
     namespace = Table(
