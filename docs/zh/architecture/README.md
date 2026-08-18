@@ -14,5 +14,6 @@ sidebar_position: 1
 | Issue、任务与工作流编排     | [issue-task-workflow.md](issue-task-workflow.md)         | Issue 聚合、任务绑定、工作空间继承、DAG 就绪判断、状态聚合         |
 | 项目空间 Agent 能力         | [project-space-agent-capability.md](project-space-agent-capability.md) | 本地 Gateway、ContextGrant、Codex Plugin、离线 Provider、MCP 生命周期 |
 | 项目执行状态与 Runtime 容量 | [project-execution-state.md](project-execution-state.md) | claim、事件顺序、取消、重试、lease、并发容量、UI 投影             |
+| Git Worktree 执行           | [git-worktree-execution.md](git-worktree-execution.md)   | 设备路由、能力、preflight、排队创建、生命周期、持久化、UI 投影    |
 
 详细产品说明继续放在原开发指南；本目录只保存可评审的架构真值。

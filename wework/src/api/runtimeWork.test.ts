@@ -52,6 +52,61 @@ describe('createRuntimeWorkApi', () => {
     )
   })
 
+  test('reads Worktree capabilities for a target device', async () => {
+    const response = {
+      success: true,
+      deviceId: 'device-1',
+      runtimeWorktrees: {
+        version: 1,
+        managed: true,
+        deferredPrepare: true,
+        snapshots: true,
+        restore: true,
+        preflight: true,
+      },
+    }
+    const post = vi.fn().mockResolvedValue(response)
+    const api = createRuntimeWorkApi({ post } as unknown as HttpClient)
+
+    await expect(api.getWorktreeCapabilities({ deviceId: 'device-1' })).resolves.toEqual(response)
+
+    expect(post).toHaveBeenCalledWith('/runtime-work/worktrees/capabilities', {
+      deviceId: 'device-1',
+    })
+  })
+
+  test('preflights a Worktree source path on a target device', async () => {
+    const response = {
+      success: true,
+      deviceId: 'device-1',
+      supported: true,
+      sourcePath: '/repo/Wegent',
+      sourceExists: true,
+      sourceDirectory: true,
+      gitRepository: true,
+      gitCommonDirValid: true,
+      gitCommonDirWritable: true,
+      writable: true,
+      repoRoot: '/repo/Wegent',
+      repoRootFingerprint: 'repo-fingerprint',
+      resolvedWorktreeRoot: '/runtime/worktrees',
+    }
+    const post = vi.fn().mockResolvedValue(response)
+    const api = createRuntimeWorkApi({ post } as unknown as HttpClient)
+
+    await expect(
+      api.preflightWorktree({
+        deviceId: 'device-1',
+        sourcePath: '/repo/Wegent',
+      })
+    ).resolves.toEqual(response)
+
+    expect(post).toHaveBeenCalledWith('/runtime-work/worktrees/preflight', {
+      deviceId: 'device-1',
+      sourcePath: '/repo/Wegent',
+    })
+  })
+
   test('forks a runtime task by runtime addresses', async () => {
     const post = vi.fn().mockResolvedValue({
       accepted: true,

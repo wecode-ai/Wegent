@@ -574,10 +574,7 @@ pub(crate) fn workspace_group_path(path: &str) -> String {
 
 pub(crate) fn workspace_task_path(path: &str, group_path: &str) -> String {
     let normalized = normalize_workspace_path(path);
-    if let Some((worktree_root, _)) = git_worktree_root_and_id(&normalized) {
-        return worktree_root;
-    }
-    if let Some((worktree_root, _)) = path_worktree_root_and_id(&normalized) {
+    if let Some((worktree_root, _)) = resolved_worktree_root_and_id(&normalized) {
         return worktree_root;
     }
     if infer_workspace_kind(&normalized) == "chat" {
@@ -602,9 +599,7 @@ pub(crate) fn infer_workspace_kind(path: &str) -> &'static str {
 
 pub(crate) fn infer_worktree_id(path: &str) -> Option<String> {
     let normalized = normalize_workspace_path(path);
-    git_worktree_root_and_id(&normalized)
-        .map(|(_, worktree_id)| worktree_id)
-        .or_else(|| path_worktree_root_and_id(&normalized).map(|(_, worktree_id)| worktree_id))
+    resolved_worktree_root_and_id(&normalized).map(|(_, worktree_id)| worktree_id)
 }
 
 pub(crate) fn normalize_device_id(device_id: String) -> String {
@@ -698,6 +693,16 @@ fn git_worktree_root_and_id(path: &str) -> Option<(String, String)> {
             return None;
         }
     }
+}
+
+fn resolved_worktree_root_and_id(path: &str) -> Option<(String, String)> {
+    if let Some(worktree) = git_worktree_root_and_id(path) {
+        return Some(worktree);
+    }
+    if git_common_workspace_root(path).is_some() {
+        return None;
+    }
+    path_worktree_root_and_id(path)
 }
 
 fn worktree_id_from_git_dir(git_dir: &Path) -> Option<String> {
@@ -798,6 +803,7 @@ fn codex_worktree_fallback_root(path: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
+    use tempfile::tempdir;
 
     use super::*;
 
@@ -896,6 +902,28 @@ mod tests {
         assert_eq!(
             request.extra.get("origin"),
             Some(&json!({"type": "project_automation", "run_id": "run-1"}))
+        );
+    }
+
+    #[test]
+    fn normal_repository_under_worktrees_parent_is_not_a_worktree() {
+        let directory = tempdir().expect("temporary directory");
+        let repository = directory
+            .path()
+            .join("worktrees")
+            .join("runtime-1")
+            .join("project");
+        std::fs::create_dir_all(repository.join(".git")).expect("repository metadata");
+        let source = repository.join("src");
+        std::fs::create_dir_all(&source).expect("repository source directory");
+        let repository_path = repository.display().to_string();
+        let source_path = source.display().to_string();
+
+        assert_eq!(infer_workspace_kind(&source_path), "workspace");
+        assert_eq!(infer_worktree_id(&source_path), None);
+        assert_eq!(
+            workspace_task_path(&source_path, &repository_path),
+            repository_path
         );
     }
 }

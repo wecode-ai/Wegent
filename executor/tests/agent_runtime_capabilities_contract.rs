@@ -538,6 +538,7 @@ async fn claude_runtime_downloads_attachments_and_rewrites_prompt_before_process
     });
     let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
     let _mode = EnvGuard::set("EXECUTOR_MODE", "docker");
+    let _backend = EnvGuard::remove("WEGENT_BACKEND_URL");
     let _api = EnvGuard::set("TASK_API_DOMAIN", &backend_url);
     let engine = AgentProcessEngine::new(AgentCommandPlanner::new(
         fake_claude.display().to_string(),
@@ -1236,6 +1237,7 @@ fn write_fake_claude_answer_drain_final_text_with_stale_defer(marker: &Path) -> 
 MARKER='{}'
 if [ ! -f "$MARKER" ]; then
   printf 1 > "$MARKER"
+  cat >/dev/null
   printf '%s\n' '{{"type":"system","subtype":"init","session_id":"session-answer-stale"}}'
   printf '%s\n' '{{"type":"result","subtype":"success","is_error":false,"session_id":"session-answer-stale","stop_reason":"tool_deferred","usage":{{}},"deferred_tool_use":{{"id":"tool-answered","name":"mcp__interactive_wegent-interactive-form-question__interactive_form_question","input":{{"questions":[]}}}}}}'
   exit 0
@@ -1488,6 +1490,12 @@ impl EnvGuard {
     fn set(key: &'static str, value: &str) -> Self {
         let previous = std::env::var(key).ok();
         std::env::set_var(key, value);
+        Self { key, previous }
+    }
+
+    fn remove(key: &'static str) -> Self {
+        let previous = std::env::var(key).ok();
+        std::env::remove_var(key);
         Self { key, previous }
     }
 }

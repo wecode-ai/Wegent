@@ -3,12 +3,10 @@ import type { RuntimeTaskSummary } from '@/types/api'
 
 export function isWorktreeCreationPending(
   task: RuntimeTaskSummary | null,
-  sendPhase: RuntimePaneSendPhase
+  sendPhase: RuntimePaneSendPhase,
+  workspaceCreationKind?: 'worktree'
 ): boolean {
-  return (
-    task?.optimistic === true &&
-    task.status === 'creating' &&
-    task.workspaceKind === 'worktree' &&
-    sendPhase === 'submitting'
-  )
+  if (sendPhase !== 'submitting') return false
+  if (!task) return workspaceCreationKind === 'worktree'
+  return task.optimistic === true && task.status === 'creating' && task.workspaceKind === 'worktree'
 }
