@@ -278,6 +278,27 @@ def test_a_second_run_while_one_is_live_is_a_conflict(
     assert "already running" in response.json()["detail"]
 
 
+def test_a_run_that_loses_to_wiki_deletion_is_not_found(
+    test_client: TestClient,
+    auth_headers: dict[str, str],
+    kind_services_use_test_db,
+) -> None:
+    from app.services.knowledge.code_wiki.generation import GenerationWikiNotFound
+
+    kb_id = _create_wiki(test_client, auth_headers)
+
+    with patch(
+        "app.api.endpoints.knowledge_code_wiki.start_run",
+        side_effect=GenerationWikiNotFound(
+            "code wiki was deleted before generation started"
+        ),
+    ):
+        response = test_client.post(_run_url(kb_id), json={}, headers=auth_headers)
+
+    assert response.status_code == 404
+    assert "was deleted" in response.json()["detail"]
+
+
 def test_a_knowledge_base_that_is_not_a_code_wiki_cannot_be_generated(
     test_client: TestClient,
     auth_headers: dict[str, str],
@@ -1589,7 +1610,7 @@ def test_deleting_a_code_wiki_removes_its_generated_pages(
     assert test_db.get(KnowledgeDocument, page.id) is None
 
 
-def test_deleting_a_code_wiki_removes_legacy_projected_pages(
+def test_deleting_a_code_wiki_refuses_legacy_projected_pages_without_origin(
     test_db: Session,
     test_user: User,
 ):
@@ -1610,10 +1631,11 @@ def test_deleting_a_code_wiki_removes_legacy_projected_pages(
     test_db.add(page)
     test_db.commit()
 
-    assert KnowledgeService.delete_knowledge_base(test_db, wiki.id, test_user.id)
+    with pytest.raises(ValueError, match="contains manually added documents"):
+        KnowledgeService.delete_knowledge_base(test_db, wiki.id, test_user.id)
 
-    assert test_db.get(Kind, wiki.id) is None
-    assert test_db.get(KnowledgeDocument, page.id) is None
+    assert test_db.get(Kind, wiki.id) is not None
+    assert test_db.get(KnowledgeDocument, page.id) is not None
 
 
 def test_code_wiki_model_update_reaches_the_stored_spec(

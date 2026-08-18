@@ -88,4 +88,27 @@ describe('DeleteKnowledgeBaseDialog', () => {
       'Cannot delete Code Wiki because it contains manually added documents.'
     )
   })
+
+  it('clears a deletion error when cancelled', async () => {
+    const onOpenChange = jest.fn()
+    const onConfirm = jest.fn(async () => {
+      throw new Error('Cannot delete Code Wiki because it contains manually added documents.')
+    })
+
+    render(
+      <DeleteKnowledgeBaseDialog
+        open
+        onOpenChange={onOpenChange}
+        knowledgeBase={knowledgeBase}
+        onConfirm={onConfirm}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'common:actions.delete' }))
+    await screen.findByRole('alert')
+    fireEvent.click(screen.getByRole('button', { name: 'common:actions.cancel' }))
+
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
 })

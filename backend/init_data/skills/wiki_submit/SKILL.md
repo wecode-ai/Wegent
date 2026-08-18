@@ -25,9 +25,10 @@ Send a page's **complete content** every time. There is no patch format; what yo
 replaces the page.
 
 A section that holds pages needs a substantive page of its own. If you submit
-`architecture/backend`, also submit `architecture` with an overview of that section.
-This is a publish requirement: `complete` refuses a version with a child path whose
-parent path is not a page. Submit the parent first where practical, and always before
+`architecture/backend`, also submit `architecture` with an overview of that section;
+for `architecture/backend/api`, submit both `architecture` and `architecture/backend`.
+This is a publish requirement: `complete` refuses a version with any ancestor path
+that is not a page. Submit overview pages first where practical, and always before
 running `complete`. Write `index` as the wiki overview.
 
 Link to another wiki page by its complete page path without an extension, for example

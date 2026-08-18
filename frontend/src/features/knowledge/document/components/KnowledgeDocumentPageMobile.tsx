@@ -323,7 +323,7 @@ export function KnowledgeDocumentPageMobile({
         setIsCreating(false)
       }
     },
-    [createScope, createGroupName, createKbType, router, tree]
+    [createScope, createGroupName, createKbType, t, tree]
   )
 
   // Handle open group settings

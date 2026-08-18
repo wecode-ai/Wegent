@@ -255,7 +255,7 @@ def test_a_path_kept_under_a_different_case_is_not_a_removal():
 # --- sections that hold pages but are not pages ------------------------------
 
 
-def test_a_section_with_no_page_of_its_own_is_refused():
+def test_a_section_with_no_page_of_its_own_is_refused() -> None:
     """A path section without a page is an unreadable navigation node."""
     pages = [
         PageSource(path="index", title="Index", content="body"),
@@ -269,7 +269,19 @@ def test_a_section_with_no_page_of_its_own_is_refused():
     assert any("architecture" in warning for warning in verdict.warnings)
 
 
-def test_a_section_that_is_itself_a_page_draws_no_warning():
+def test_all_missing_ancestor_pages_are_reported_together() -> None:
+    pages = [PageSource(path="architecture/backend/api", title="API", content="body")]
+
+    verdict = evaluate_publish_gate(pages, published_paths=[])
+
+    assert not verdict.passed
+    assert verdict.warnings == (
+        "architecture: holds pages but has no page of its own",
+        "architecture/backend: holds pages but has no page of its own",
+    )
+
+
+def test_a_section_that_is_itself_a_page_draws_no_warning() -> None:
     pages = [
         PageSource(path="architecture", title="Architecture", content="body"),
         PageSource(path="architecture/backend", title="Backend", content="body"),

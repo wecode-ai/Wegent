@@ -1016,6 +1016,22 @@ class KnowledgeService:
         ):
             raise ValueError("You do not have permission to manage this knowledge base")
 
+        # Serialise deletion with start_generation on the durable KB row. A generation
+        # query cannot protect the empty case: another transaction could otherwise
+        # start one after this check and before this knowledge base is deleted.
+        kb = (
+            db.query(Kind)
+            .filter(
+                Kind.id == knowledge_base_id,
+                Kind.kind == "KnowledgeBase",
+                Kind.is_active == True,
+            )
+            .with_for_update()
+            .first()
+        )
+        if not kb:
+            return False
+
         spec = (kb.json or {}).get("spec", {})
         is_code_wiki = spec.get("kbType") == KnowledgeBaseType.CODE_WIKI.value
         if is_code_wiki:
@@ -1151,22 +1167,8 @@ class KnowledgeService:
 
     @staticmethod
     def _is_generated_code_wiki_document(document: KnowledgeDocument) -> bool:
-        """Recognize current and pre-origin Code Wiki projection rows.
-
-        The first Code Wiki release wrote its projection identity into
-        ``source_config`` before ``origin`` existed. Those rows consequently use the
-        database default of ``user`` and would otherwise prevent their owner from
-        deleting the wiki as a whole. Both markers are internal projection fields and
-        are written together, so they are a sufficiently narrow legacy signature.
-        """
-        if document.origin == ContentOrigin.GENERATED.value:
-            return True
-
-        source_config = document.source_config or {}
-        return {
-            "wiki_page_path",
-            "wiki_content_hash",
-        }.issubset(source_config)
+        """Whether deletion may remove this Code Wiki document automatically."""
+        return document.origin == ContentOrigin.GENERATED.value
 
     @staticmethod
     def update_knowledge_base_type(

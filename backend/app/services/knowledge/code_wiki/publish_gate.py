@@ -223,12 +223,12 @@ def _sections_without_a_page(pages: Sequence[PageSource]) -> list[str]:
     # would report one section twice when two pages spell its prefix differently.
     missing: dict[str, str] = {}
     for page in pages:
-        if "/" not in page.path:
-            continue
-        section = page.path.rsplit("/", 1)[0]
-        key = collation_key(section)
-        if key not in present:
-            missing.setdefault(key, section)
+        section = page.path
+        while "/" in section:
+            section = section.rsplit("/", 1)[0]
+            key = collation_key(section)
+            if key not in present:
+                missing.setdefault(key, section)
     return sorted(missing.values())
 
 

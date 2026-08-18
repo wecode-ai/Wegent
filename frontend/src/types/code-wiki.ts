@@ -120,9 +120,9 @@ export interface CodeWikiRunResponse {
 /**
  * One node of the reader's navigation.
  *
- * Every node is a page. The tree is derived from page paths, and a section that holds
- * pages but has no page of its own renders as a heading that cannot be opened —
- * allowed, and reported by the publish gate as a warning.
+ * Every node is a page. New versions must give every section that holds pages a page
+ * of its own; older versions can still expose a section-only heading, which cannot be
+ * opened.
  */
 export interface CodeWikiPageNode {
   /** Stable path, e.g. `architecture/backend`. Identity, not a display value. */

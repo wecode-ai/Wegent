@@ -93,7 +93,7 @@ export function DeleteKnowledgeBaseDialog({
           </div>
         )}
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>
+          <Button variant="outline" onClick={() => handleOpenChange(false)} disabled={loading}>
             {t('common:actions.cancel')}
           </Button>
           <Button
