@@ -47,6 +47,7 @@ cloud_segments=(
   window-lifecycle
   conversation-state
   browser-multi-tabs
+  browser-toolbar-actions
   resilience
   goal-lifecycle
   supervisor-lifecycle
