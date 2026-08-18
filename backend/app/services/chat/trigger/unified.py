@@ -33,6 +33,9 @@ from app.services.chat.external_knowledge_refs import (
     validate_external_knowledge_refs,
 )
 from app.services.context import context_service
+from app.services.knowledge.task_knowledge_base_service import (
+    task_knowledge_base_service,
+)
 from app.services.runtime_codex_model import (
     CODEX_RUNTIME_MODEL_ID,
     CODEX_RUNTIME_MODEL_NAME,
@@ -1079,6 +1082,7 @@ async def build_execution_request(
         context_subtask_id = (
             user_subtask_id if user_subtask_id else processed_subtask_id
         )
+        resolved_knowledge_base_names: dict[int, str] = {}
         if context_subtask_id:
             preload_selected_kb_skill = (
                 task_labels.get("source") != KNOWLEDGE_ARTIFACT_SOURCE
@@ -1090,6 +1094,12 @@ async def build_execution_request(
                 user.id,
                 preload_selected_kb_skill=preload_selected_kb_skill,
             )
+            resolved_knowledge_base_names = (
+                task_knowledge_base_service.get_knowledge_base_display_names_by_ids(
+                    db,
+                    list(request.knowledge_base_ids or []),
+                )
+            )
 
         from app.services.chat.selected_knowledge import (
             activate_provider_native_knowledge,
@@ -1098,7 +1108,12 @@ async def build_execution_request(
 
         provider_skills = []
         if task_labels.get("source") != KNOWLEDGE_ARTIFACT_SOURCE:
-            provider_skills = apply_selected_knowledge_context(db, request, task)
+            provider_skills = apply_selected_knowledge_context(
+                db,
+                request,
+                task,
+                resolved_knowledge_base_names=resolved_knowledge_base_names,
+            )
         unresolved_provider_skills = [
             skill_name
             for skill_name in provider_skills

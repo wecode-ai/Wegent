@@ -12,9 +12,6 @@ from fastapi import HTTPException
 
 from app.models.knowledge import KnowledgeDocument, KnowledgeFolder
 from app.services.execution.skill_mcp import extract_skill_mcp_servers
-from app.services.knowledge.task_knowledge_base_service import (
-    TaskKnowledgeBaseService,
-)
 from app.services.mcp_provider_registry import get_mcp_service_by_skill_name
 from shared.models.knowledge import (
     KnowledgeScopeType,
@@ -46,9 +43,16 @@ def apply_selected_knowledge_context(
     db: "Session",
     request: "ExecutionRequest",
     task: "TaskResource",
+    *,
+    resolved_knowledge_base_names: dict[int, str] | None = None,
 ) -> list[str]:
     """Attach the selected-knowledge prompt and deterministic provider skills."""
-    refs = build_selected_knowledge_refs(db, request, task)
+    refs = build_selected_knowledge_refs(
+        db,
+        request,
+        task,
+        resolved_knowledge_base_names=resolved_knowledge_base_names,
+    )
     if not refs:
         request.selected_knowledge_prompt = ""
         request.provider_native_knowledge = False
@@ -159,9 +163,19 @@ def build_selected_knowledge_refs(
     db: "Session",
     request: "ExecutionRequest",
     task: "TaskResource",
+    *,
+    resolved_knowledge_base_names: dict[int, str] | None = None,
 ) -> list[SelectedKnowledgeRef]:
     """Normalize internal task scopes and external refs without querying content."""
-    refs = [*_build_wegent_refs(db, request, task), *_build_external_refs(request)]
+    refs = [
+        *_build_wegent_refs(
+            db,
+            request,
+            task,
+            resolved_knowledge_base_names=resolved_knowledge_base_names,
+        ),
+        *_build_external_refs(request),
+    ]
     return _merge_selected_knowledge_refs(refs)
 
 
@@ -176,13 +190,20 @@ def _merge_selected_knowledge_refs(
         if current is None:
             merged[key] = ref
             continue
+        knowledge_base_name = _prefer_knowledge_base_name(current, ref)
         if not current.resources:
+            if knowledge_base_name != current.knowledge_base_name:
+                merged[key] = SelectedKnowledgeRef(
+                    provider=current.provider,
+                    knowledge_base_id=current.knowledge_base_id,
+                    knowledge_base_name=knowledge_base_name,
+                )
             continue
         if not ref.resources:
             merged[key] = SelectedKnowledgeRef(
                 provider=ref.provider,
                 knowledge_base_id=ref.knowledge_base_id,
-                knowledge_base_name=current.knowledge_base_name,
+                knowledge_base_name=knowledge_base_name,
             )
             continue
 
@@ -198,16 +219,28 @@ def _merge_selected_knowledge_refs(
         merged[key] = SelectedKnowledgeRef(
             provider=current.provider,
             knowledge_base_id=current.knowledge_base_id,
-            knowledge_base_name=current.knowledge_base_name,
+            knowledge_base_name=knowledge_base_name,
             resources=tuple(unique_resources),
         )
     return list(merged.values())
+
+
+def _prefer_knowledge_base_name(
+    current: SelectedKnowledgeRef,
+    incoming: SelectedKnowledgeRef,
+) -> str:
+    """Prefer a resolved display name over the knowledge-base ID fallback."""
+    if current.knowledge_base_name != current.knowledge_base_id:
+        return current.knowledge_base_name
+    return incoming.knowledge_base_name
 
 
 def _build_wegent_refs(
     db: "Session",
     request: "ExecutionRequest",
     task: "TaskResource",
+    *,
+    resolved_knowledge_base_names: dict[int, str] | None,
 ) -> list[SelectedKnowledgeRef]:
     selected_ids = set(_int_values(request.knowledge_base_ids))
     if not selected_ids:
@@ -225,7 +258,7 @@ def _build_wegent_refs(
         for ref in spec.get("knowledgeBaseScopes") or []
         if isinstance(ref, dict) and ref.get("id") is not None
     }
-    current_names = _load_wegent_knowledge_base_names(db, selected_ids)
+    current_names = resolved_knowledge_base_names or {}
     prefer_request_scope = _is_knowledge_workbench_task(task_json)
 
     result: list[SelectedKnowledgeRef] = []
@@ -298,25 +331,6 @@ def _build_wegent_refs(
             )
         )
     return result
-
-
-def _load_wegent_knowledge_base_names(
-    db: "Session",
-    knowledge_base_ids: set[int],
-) -> dict[int, str]:
-    """Load current names for effective knowledge bases authorized upstream."""
-    knowledge_bases = TaskKnowledgeBaseService().get_knowledge_bases_by_ids(
-        db,
-        list(knowledge_base_ids),
-    )
-    names: dict[int, str] = {}
-    for knowledge_base in knowledge_bases.values():
-        value = knowledge_base.json if isinstance(knowledge_base.json, dict) else {}
-        spec = value.get("spec") if isinstance(value.get("spec"), dict) else {}
-        name = str(spec.get("name") or knowledge_base.name or "").strip()
-        if name:
-            names[knowledge_base.id] = name
-    return names
 
 
 def _resolve_wegent_scope(

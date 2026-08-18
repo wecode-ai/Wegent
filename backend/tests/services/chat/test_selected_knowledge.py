@@ -10,7 +10,6 @@ import pytest
 import yaml
 from fastapi import HTTPException
 
-from app.models.kind import Kind
 from app.models.knowledge import KnowledgeDocument, KnowledgeFolder
 from app.services.chat.selected_knowledge import (
     PROVIDER_SKILLS,
@@ -35,8 +34,6 @@ class _Query:
 
 class _KnowledgeMetadataDB:
     def query(self, model: object) -> _Query:
-        if model is Kind:
-            return _Query([])
         if model is KnowledgeFolder:
             return _Query([SimpleNamespace(id=3, name="设计资料")])
         if model is KnowledgeDocument:
@@ -46,16 +43,6 @@ class _KnowledgeMetadataDB:
 
 class _DefaultKnowledgeDB:
     def query(self, model: object) -> _Query:
-        if model is Kind:
-            return _Query(
-                [
-                    SimpleNamespace(
-                        id=115,
-                        name="kb-1-default-Wegent KB-A「产品知识」",
-                        json={"spec": {"name": "KB-A_产品知识"}},
-                    )
-                ]
-            )
         if model is KnowledgeFolder:
             return _Query([])
         if model is KnowledgeDocument:
@@ -167,7 +154,12 @@ def test_apply_selected_knowledge_context_resolves_default_knowledge_name() -> N
     task = SimpleNamespace(json={"spec": {}})
 
     # Act
-    apply_selected_knowledge_context(_DefaultKnowledgeDB(), request, task)
+    apply_selected_knowledge_context(
+        MagicMock(),
+        request,
+        task,
+        resolved_knowledge_base_names={115: "KB-A_产品知识"},
+    )
 
     # Assert
     assert 'knowledge_base_id="115"' in request.selected_knowledge_prompt
@@ -199,10 +191,80 @@ def test_whole_base_external_ref_preserves_resolved_wegent_name() -> None:
         }
     )
 
-    refs = build_selected_knowledge_refs(_DefaultKnowledgeDB(), request, task)
+    refs = build_selected_knowledge_refs(
+        _DefaultKnowledgeDB(),
+        request,
+        task,
+        resolved_knowledge_base_names={115: "KB-A_产品知识"},
+    )
 
     assert len(refs) == 1
     assert refs[0].resources == ()
+    assert refs[0].knowledge_base_name == "KB-A_产品知识"
+
+
+def test_whole_base_ref_uses_later_non_fallback_name() -> None:
+    # Arrange
+    request = ExecutionRequest(
+        external_knowledge_refs=[
+            {
+                "provider": "wegent",
+                "id": "115",
+                "target_type": "document",
+                "document_id": "9",
+            },
+            {
+                "provider": "wegent",
+                "id": "115",
+                "name": "KB-A_产品知识",
+                "target_type": "knowledge_base",
+            },
+        ]
+    )
+
+    # Act
+    refs = build_selected_knowledge_refs(
+        MagicMock(),
+        request,
+        SimpleNamespace(json={"spec": {}}),
+    )
+
+    # Assert
+    assert len(refs) == 1
+    assert refs[0].resources == ()
+    assert refs[0].knowledge_base_name == "KB-A_产品知识"
+
+
+def test_scoped_refs_use_later_non_fallback_name() -> None:
+    # Arrange
+    request = ExecutionRequest(
+        external_knowledge_refs=[
+            {
+                "provider": "wegent",
+                "id": "115",
+                "target_type": "document",
+                "document_id": "9",
+            },
+            {
+                "provider": "wegent",
+                "id": "115",
+                "name": "KB-A_产品知识",
+                "target_type": "document",
+                "document_id": "10",
+            },
+        ]
+    )
+
+    # Act
+    refs = build_selected_knowledge_refs(
+        MagicMock(),
+        request,
+        SimpleNamespace(json={"spec": {}}),
+    )
+
+    # Assert
+    assert len(refs) == 1
+    assert [resource.resource_id for resource in refs[0].resources] == ["9", "10"]
     assert refs[0].knowledge_base_name == "KB-A_产品知识"
 
 

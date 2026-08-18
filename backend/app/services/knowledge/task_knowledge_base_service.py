@@ -25,6 +25,13 @@ from app.stores.tasks import task_store
 logger = logging.getLogger(__name__)
 
 
+def get_knowledge_base_display_name(knowledge_base: Kind) -> str:
+    """Return the current display name for a knowledge base."""
+    value = knowledge_base.json if isinstance(knowledge_base.json, dict) else {}
+    spec = value.get("spec") if isinstance(value.get("spec"), dict) else {}
+    return str(spec.get("name") or knowledge_base.name or "").strip()
+
+
 class BoundKnowledgeBaseDetail:
     """Detail information for a bound knowledge base"""
 
@@ -206,6 +213,19 @@ class TaskKnowledgeBaseService:
         )
 
         return {kb.id: kb for kb in knowledge_bases}
+
+    def get_knowledge_base_display_names_by_ids(
+        self,
+        db: Session,
+        kb_ids: List[int],
+    ) -> dict[int, str]:
+        """Load current display names for knowledge bases resolved upstream."""
+        knowledge_bases = self.get_knowledge_bases_by_ids(db, kb_ids)
+        return {
+            kb_id: display_name
+            for kb_id, knowledge_base in knowledge_bases.items()
+            if (display_name := get_knowledge_base_display_name(knowledge_base))
+        }
 
     def get_knowledge_base_by_ref(
         self, db: Session, ref: dict

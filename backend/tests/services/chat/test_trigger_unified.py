@@ -724,27 +724,33 @@ class TestBuildExecutionRequestUserSubtaskId:
                     "_process_contexts",
                     new=AsyncMock(side_effect=_process_contexts_with_selected_kb),
                 ):
-                    task = MagicMock()
-                    task.id = 1273
-                    task.json = {}
+                    with patch.object(
+                        trigger_unified.task_knowledge_base_service,
+                        "get_knowledge_base_display_names_by_ids",
+                        return_value={1408: "产品知识"},
+                    ) as mock_get_names:
+                        task = MagicMock()
+                        task.id = 1273
+                        task.json = {}
 
-                    assistant_subtask = MagicMock()
-                    assistant_subtask.id = 1709
+                        assistant_subtask = MagicMock()
+                        assistant_subtask.id = 1709
 
-                    user = MagicMock()
-                    user.id = 7
+                        user = MagicMock()
+                        user.id = 7
 
-                    result = await trigger_unified.build_execution_request(
-                        task=task,
-                        assistant_subtask=assistant_subtask,
-                        team=team,
-                        user=user,
-                        message="save to selected kb",
-                        payload=None,
-                        user_subtask_id=1708,
-                        device_id="device-1",
-                    )
+                        result = await trigger_unified.build_execution_request(
+                            task=task,
+                            assistant_subtask=assistant_subtask,
+                            team=team,
+                            user=user,
+                            message="save to selected kb",
+                            payload=None,
+                            user_subtask_id=1708,
+                            device_id="device-1",
+                        )
 
+        mock_get_names.assert_called_once_with(mock_db, [1408])
         mock_builder.resolve_request_preload_skills.assert_called_once()
         unresolved_request = (
             mock_builder.resolve_request_preload_skills.call_args.kwargs["request"]
@@ -753,6 +759,9 @@ class TestBuildExecutionRequestUserSubtaskId:
             "wegent-knowledge",
             "demo-knowledge",
         ]
+        assert 'knowledge_base_name="产品知识"' in (
+            unresolved_request.selected_knowledge_prompt
+        )
         assert result is resolved_request
         assert result.provider_native_knowledge is True
 

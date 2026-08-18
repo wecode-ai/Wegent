@@ -26,6 +26,24 @@ from app.services.knowledge.knowledge_service import (
     KnowledgeService,
     _run_async_in_new_loop,
 )
+from app.services.knowledge.task_knowledge_base_service import (
+    get_knowledge_base_display_name,
+)
+
+
+@pytest.mark.unit
+def test_get_knowledge_base_display_name_prefers_spec_name() -> None:
+    # Arrange
+    knowledge_base = SimpleNamespace(
+        name="kb-1-default-resource-name",
+        json={"spec": {"name": "KB-A_产品知识"}},
+    )
+
+    # Act
+    display_name = get_knowledge_base_display_name(knowledge_base)
+
+    # Assert
+    assert display_name == "KB-A_产品知识"
 
 
 @pytest.mark.unit
