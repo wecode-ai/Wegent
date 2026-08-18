@@ -954,6 +954,88 @@ describe('workbenchReducer', () => {
     })
   })
 
+  test('does not hydrate a pathless optimistic task from its base workspace', () => {
+    const state = {
+      ...initialWorkbenchState,
+      currentRuntimeTask: {
+        deviceId: 'device-1',
+        taskId: 'task-1',
+      },
+    }
+
+    const optimistic = workbenchReducer(state, {
+      type: 'runtime_work_refreshed',
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 1, name: 'Project' },
+            deviceWorkspaces: [
+              {
+                deviceId: 'device-1',
+                workspacePath: '/workspace/project',
+                available: true,
+                mapped: true,
+                tasks: [
+                  {
+                    taskId: 'task-1',
+                    workspacePath: '',
+                    title: 'Queued Worktree',
+                    runtime: 'codex',
+                    status: 'queued',
+                    optimistic: true,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 1,
+      },
+    })
+
+    expect(optimistic.currentRuntimeTask).toEqual({
+      deviceId: 'device-1',
+      taskId: 'task-1',
+    })
+
+    const hydrated = workbenchReducer(optimistic, {
+      type: 'runtime_work_refreshed',
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 1, name: 'Project' },
+            deviceWorkspaces: [
+              {
+                deviceId: 'device-1',
+                workspacePath: '/workspace/project',
+                available: true,
+                mapped: true,
+                tasks: [
+                  {
+                    taskId: 'task-1',
+                    workspacePath: '/executor/worktrees/task-1/project',
+                    title: 'Queued Worktree',
+                    runtime: 'codex',
+                    status: 'queued',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 1,
+      },
+    })
+
+    expect(hydrated.currentRuntimeTask).toEqual({
+      deviceId: 'device-1',
+      taskId: 'task-1',
+      workspacePath: '/executor/worktrees/task-1/project',
+    })
+  })
+
   test('updates cached device and runtime workspace status from websocket events', () => {
     const state = workbenchReducer(initialWorkbenchState, {
       type: 'lists_refreshed',
