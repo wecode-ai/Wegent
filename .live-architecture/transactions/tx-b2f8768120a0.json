@@ -1,0 +1,126 @@
+{
+  "actor": {
+    "id": "codex",
+    "kind": "ai"
+  },
+  "authority": "ai",
+  "base_revision": "A00000020",
+  "changes": [
+    {
+      "action": "assert",
+      "change_id": "chg-a99b648a35ef",
+      "confidence": 1.0,
+      "evidence": [
+        "docs/zh/architecture/issue-task-workflow.md"
+      ],
+      "object": null,
+      "plane": "intent",
+      "predicate": null,
+      "reason": "Human stages require explicit task creation, visible deliverables, truthful runtime status, approval or reasoned force advancement",
+      "subject": "arch://wegent/flow/issue-workflow-human-approval",
+      "timestamp": "2026-08-18T11:00:26Z"
+    },
+    {
+      "action": "create",
+      "change_id": "chg-d031df61ef3b",
+      "confidence": 1.0,
+      "evidence": [
+        "docs/zh/architecture/issue-task-workflow.md"
+      ],
+      "object": null,
+      "plane": "model",
+      "predicate": null,
+      "reason": "Model the human-governed stage lifecycle and successor release rules",
+      "subject": "arch://wegent/flow/issue-workflow-human-approval",
+      "timestamp": "2026-08-18T11:00:27Z"
+    },
+    {
+      "action": "create",
+      "change_id": "chg-072234aef95f",
+      "confidence": 1.0,
+      "evidence": [
+        "docs/zh/architecture/issue-task-workflow.md"
+      ],
+      "object": null,
+      "plane": "model",
+      "predicate": null,
+      "reason": "Model required deliverables as stage acceptance criteria",
+      "subject": "arch://wegent/contract/issue-workflow-stage-deliverables",
+      "timestamp": "2026-08-18T11:00:28Z"
+    },
+    {
+      "action": "verify",
+      "change_id": "chg-23ca51fe02ed",
+      "confidence": 1.0,
+      "evidence": [
+        "backend/app/services/issue_workflow_decision.py"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Backend enforces approval, rejection, force advancement, audit history, and successor release",
+      "subject": "arch://wegent/flow/issue-workflow-human-approval",
+      "timestamp": "2026-08-18T11:00:29Z"
+    },
+    {
+      "action": "verify",
+      "change_id": "chg-0f3ee2caf914",
+      "confidence": 1.0,
+      "evidence": [
+        "backend/app/services/delivery/service.py"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Task-attributed deliveries attach to their workflow node without completing the Issue",
+      "subject": "arch://wegent/contract/issue-workflow-stage-deliverables",
+      "timestamp": "2026-08-18T11:00:30Z"
+    },
+    {
+      "action": "verify",
+      "change_id": "chg-704cd511cc53",
+      "confidence": 1.0,
+      "evidence": [
+        "wework/src/features/todo/IssueWorkflowDag.tsx"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Issue detail exposes stable task re-entry plus human stage actions and status",
+      "subject": "arch://wegent/flow/issue-task-conversation-entry",
+      "timestamp": "2026-08-18T11:00:31Z"
+    },
+    {
+      "action": "observe",
+      "change_id": "chg-3bc1e8e28416",
+      "confidence": 1.0,
+      "evidence": [
+        "wework/test-results/desktop-e2e/2026-08-18T10-49-26-225Z-45591/ui-snapshot.json"
+      ],
+      "object": null,
+      "plane": "runtime",
+      "predicate": null,
+      "reason": "Real Tauri run showed a pending Issue with first human stage ready, required deliverable visible, upload action, and task start action",
+      "subject": "arch://wegent/flow/issue-workflow-human-approval",
+      "timestamp": "2026-08-18T11:00:32Z"
+    }
+  ],
+  "created_at": "2026-08-18T10:21:04Z",
+  "id": "tx-b2f8768120a0",
+  "intent": "Implement human-governed Issue DAG stages with explicit task re-entry, required deliverables, runtime-backed node status, approval/rejection, and audited force advancement",
+  "read_set": [
+    "arch://wegent/flow/issue-runtime-project-space-binding",
+    "arch://wegent/flow/issue-task-conversation-entry",
+    "arch://wegent/flow/issue-workflow-board-entry"
+  ],
+  "resolutions": [],
+  "status": "open",
+  "updated_at": "2026-08-18T11:00:32Z",
+  "write_set": [
+    "arch://wegent/contract/issue-workflow-stage-deliverables",
+    "arch://wegent/flow/issue-runtime-project-space-binding",
+    "arch://wegent/flow/issue-task-conversation-entry",
+    "arch://wegent/flow/issue-workflow-board-entry",
+    "arch://wegent/flow/issue-workflow-human-approval"
+  ]
+}

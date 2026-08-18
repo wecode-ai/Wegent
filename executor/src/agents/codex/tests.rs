@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde_json::json;
 
 use super::*;
@@ -233,6 +234,39 @@ fn mcp_inventory_diagnostics_report_accepted_tool_names() {
     assert!(!fields
         .values()
         .any(|value| value.contains("sensitive-description")));
+}
+
+#[test]
+fn project_space_capability_requires_the_stable_server_contract() {
+    let valid = json!({
+        "data": [{
+            "name": "wework_space",
+            "tools": {
+                "get_current_context": {"name": "get_current_context"},
+                "read_item_attachment": {"name": "read_item_attachment"},
+                "get_board_item": {"name": "get_board_item"}
+            }
+        }]
+    });
+    let missing_server = json!({"data": []});
+    let missing_attachment_tool = json!({
+        "data": [{
+            "name": "wework_space",
+            "tools": {
+                "get_current_context": {"name": "get_current_context"}
+            }
+        }]
+    });
+
+    assert_eq!(validate_project_space_capability_inventory(&valid), Ok(3));
+    assert_eq!(
+        validate_project_space_capability_inventory(&missing_server),
+        Err("Required project-space capability is unavailable".to_owned())
+    );
+    assert_eq!(
+        validate_project_space_capability_inventory(&missing_attachment_tool),
+        Err("Required project-space capability is missing tool read_item_attachment".to_owned())
+    );
 }
 
 #[test]
@@ -2091,16 +2125,11 @@ fn thread_launch_params_include_execution_system_prompt_as_developer_instruction
 }
 
 #[test]
-fn thread_launch_params_include_space_routing_when_space_mcp_is_injected() {
-    let request = ExecutionRequest {
-        mcp_servers: vec![json!({
-            "name": "wework_space",
-            "type": "stdio",
-            "command": "/path/to/wegent-executor",
-            "args": ["space-mcp-server"]
-        })],
-        ..ExecutionRequest::default()
-    };
+fn thread_launch_params_include_space_routing_when_space_capability_is_enabled() {
+    let mut request = ExecutionRequest::default();
+    request
+        .extra
+        .insert("cloudProjectId".to_owned(), json!("space-1"));
     let launch_config = CodexLaunchConfig::default();
 
     for params in [
@@ -2755,6 +2784,76 @@ fn codex_launch_config_includes_cdp_browser_mcp_server() {
     } else {
         env::remove_var(WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV);
     }
+}
+
+#[test]
+fn codex_thread_binds_project_space_through_context_grant() {
+    let mut request = ExecutionRequest {
+        task_id: "runtime-task-1".to_owned(),
+        backend_url: Some("https://wework.example.com".to_owned()),
+        auth_token: Some("runtime-token".to_owned()),
+        ..ExecutionRequest::default()
+    };
+    request.extra.insert(
+        "origin".to_owned(),
+        json!({
+            "type": "board_task",
+            "cloudProjectId": "space-1",
+            "loopItemId": "issue-1",
+        }),
+    );
+
+    let launch_config =
+        build_codex_launch_config(&request).expect("Codex launch config should be built");
+    let params = thread_start_params(&request, &launch_config);
+    let config = params["config"].as_object().expect("thread config");
+
+    assert!(request.mcp_servers.is_empty());
+    assert_eq!(config["mcp_servers.wework_space.enabled"], true);
+    assert_eq!(
+        config["mcp_servers.wework_space.command"],
+        env::current_exe().unwrap().display().to_string()
+    );
+    assert_eq!(
+        config["mcp_servers.wework_space.args"],
+        json!(["space-mcp-server"])
+    );
+    assert_eq!(config["mcp_servers.wework_space.startup_timeout_sec"], 15);
+    assert_eq!(config["mcp_servers.wework_space.tool_timeout_sec"], 60);
+    assert_eq!(
+        config["mcp_servers.wework_space.default_tools_approval_mode"],
+        "approve"
+    );
+    assert_eq!(
+        config["mcp_servers.wework_space.env.WEWORK_SPACE_BACKEND_URL"],
+        "https://wework.example.com"
+    );
+    assert_eq!(
+        config["mcp_servers.wework_space.env.WEWORK_SPACE_AUTH_TOKEN"],
+        "runtime-token"
+    );
+    let encoded = config["mcp_servers.wework_space.env.WEWORK_SPACE_CONTEXT_GRANT"]
+        .as_str()
+        .expect("encoded context grant");
+    let decoded = STANDARD.decode(encoded).expect("base64 context grant");
+    let grant: Value = serde_json::from_slice(&decoded).expect("JSON context grant");
+    assert_eq!(grant["task_id"], "runtime-task-1");
+    assert_eq!(grant["space_id"], "space-1");
+    assert_eq!(grant["item_id"], "issue-1");
+}
+
+#[test]
+fn codex_thread_disables_project_space_for_generic_tasks() {
+    let request = ExecutionRequest::default();
+
+    let launch_config =
+        build_codex_launch_config(&request).expect("Codex launch config should be built");
+    let params = thread_start_params(&request, &launch_config);
+    let config = params["config"].as_object().expect("thread config");
+
+    assert_eq!(config["mcp_servers.wework_space.enabled"], false);
+    assert!(!config.contains_key("mcp_servers.wework_space.command"));
+    assert!(!config.contains_key("mcp_servers.wework_space.env.WEWORK_SPACE_CONTEXT_GRANT"));
 }
 
 #[test]

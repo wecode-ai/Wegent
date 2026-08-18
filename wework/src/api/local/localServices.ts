@@ -1527,6 +1527,7 @@ function buildLocalRuntimeExecutionRequest(
       ? { runtime_workspace_roots: input.runtimeWorkspaceRoots }
       : {}),
     ...(input.cloudProjectId ? { cloudProjectId: input.cloudProjectId } : {}),
+    ...(input.origin ? { origin: input.origin } : {}),
     execution_target_type: 'local',
     device_id: input.localDeviceId,
     new_session: input.newSession,
@@ -1788,6 +1789,8 @@ function createLocalRuntimeSendPayload(
         cloudModelGateway,
         attachments: normalizedData.attachments,
         additionalContext: normalizedData.additionalContext,
+        cloudProjectId: normalizedData.cloudProjectId,
+        origin: normalizedData.origin,
         localDeviceId,
         workspacePath,
         workspaceSource: 'local_path',
@@ -1830,6 +1833,8 @@ function createLocalRuntimeSendPayload(
       cloudModelGateway,
       attachments: normalizedData.attachments,
       additionalContext: normalizedData.additionalContext,
+      cloudProjectId: normalizedData.cloudProjectId,
+      origin: normalizedData.origin,
       localDeviceId,
       workspacePath,
       workspaceSource: 'local_path',
@@ -2448,6 +2453,7 @@ export function createRuntimeWorkApiFromIpc(
         user,
         requireLocalCodexCatalog
       )
+      logLocalIssueRuntimeContext('send-payload-built', data, payload)
       if (!payload.executionRequest) {
         console.warn('[Wework] Local runtime send payload missing executionRequest', {
           taskId: payload.taskId,
@@ -2805,6 +2811,7 @@ export function createRuntimeWorkApiFromIpc(
         elapsedMs: Date.now() - startedAt,
       })
       debugLocalRuntimeCreatePayload(data, payload)
+      logLocalIssueRuntimeContext('create-payload-built', data, payload)
       const executionRequest = recordValue(payload.executionRequest)
       console.info('[Wework] Friendly task title request', {
         taskId: data.taskId,
@@ -2892,6 +2899,34 @@ function debugLocalRuntimeCreatePayload(
     payloadCollaborationMode: stringValue(payload.collaborationMode),
     executionRequestCollaborationMode: stringValue(executionRequest.collaborationMode),
     executionRequestModelId: stringValue(recordValue(executionRequest.model_config).model_id),
+  })
+}
+
+function logLocalIssueRuntimeContext(
+  stage: string,
+  request: RuntimeTaskCreateRequest | RuntimeSendRequest,
+  payload: Record<string, unknown>
+) {
+  if (request.origin?.type !== 'board_task') return
+  const executionRequest = recordValue(payload.executionRequest)
+  const executionOrigin = recordValue(executionRequest.origin)
+  console.info('[Wework] Issue runtime context trace', {
+    stage,
+    taskId:
+      'address' in request
+        ? request.address.taskId
+        : (request.taskId ?? stringValue(executionRequest.task_id)),
+    deviceId:
+      'address' in request ? request.address.deviceId : (request.deviceId ?? payload.deviceId),
+    requestCloudProjectId: request.cloudProjectId ?? null,
+    requestOriginType: request.origin.type,
+    requestLoopItemId: request.origin.loopItemId,
+    requestAdditionalContextKeys: Object.keys(request.additionalContext ?? {}).sort(),
+    payloadCloudProjectId: stringValue(payload.cloudProjectId),
+    payloadOriginType: stringValue(recordValue(payload.origin).type),
+    executionCloudProjectId: stringValue(executionRequest.cloudProjectId),
+    executionOriginType: stringValue(executionOrigin.type),
+    executionLoopItemId: stringValue(executionOrigin.loopItemId),
   })
 }
 

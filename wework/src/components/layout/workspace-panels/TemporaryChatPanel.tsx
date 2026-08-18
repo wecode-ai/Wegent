@@ -35,6 +35,7 @@ import type {
   ModelOptions,
   ModelType,
   ProjectWithTasks,
+  RuntimeSendRequest,
   RuntimeTaskAddress,
 } from '@/types/api'
 import type { RuntimePaneQueuedMessage, WorkbenchMessage } from '@/types/workbench'
@@ -75,6 +76,7 @@ interface TemporaryChatPanelProps {
     }
   ) => Promise<RuntimeTaskAddress | false>
   onAddressChange?: (address: RuntimeTaskAddress | null) => void
+  runtimeContext?: Pick<RuntimeSendRequest, 'cloudProjectId' | 'origin' | 'additionalContext'>
   sendEphemeral?: boolean
   emptyStateText?: string
   placeholder?: string
@@ -97,6 +99,7 @@ export function TemporaryChatPanel({
   initialAddress = null,
   createTask,
   onAddressChange,
+  runtimeContext,
   sendEphemeral = true,
   emptyStateText = '临时聊天不会出现在左侧任务列表。',
   placeholder = '要求后续变更',
@@ -308,6 +311,7 @@ export function TemporaryChatPanel({
               ...(queuedMessage.modelOptions ? { modelOptions: queuedMessage.modelOptions } : {}),
               ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
               ...(attachments.length > 0 ? { attachments } : {}),
+              ...runtimeContext,
             },
             {
               onError: message => {
@@ -343,7 +347,7 @@ export function TemporaryChatPanel({
         queuedMessageSendInFlightIdsRef.current.delete(queuedMessage.id)
       }
     },
-    [address, sendEphemeral, sendRuntimePaneMessage]
+    [address, runtimeContext, sendEphemeral, sendRuntimePaneMessage]
   )
 
   useEffect(() => {
@@ -514,6 +518,7 @@ export function TemporaryChatPanel({
           ...selectedModelFields,
           ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
           ...(attachments.length > 0 ? { attachments } : {}),
+          ...runtimeContext,
         },
         {
           onError: errorMessage => {
@@ -556,6 +561,7 @@ export function TemporaryChatPanel({
       queuedMessages.length,
       sideChatProjectChat,
       selectedModelFields,
+      runtimeContext,
       sendQueuedMessageAsGuidance,
       sendRuntimePaneMessage,
       source,
