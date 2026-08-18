@@ -173,6 +173,7 @@ async function captureVerificationScreenshot(control, name, selector = 'body') {
 }
 
 async function verifyWorkspaceDocumentTabs(control) {
+  await ensureExperimentalFeaturesEnabled(control)
   await control.command('waitFor', '[data-testid="workspace-tab-strip"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
@@ -245,6 +246,7 @@ async function reloadMainWindow(control, errorMessage) {
 }
 
 async function verifyDefaultWorkspaceStartupTab(control) {
+  await ensureExperimentalFeaturesEnabled(control)
   await control.command('navigate', 'body', { value: '/settings' })
   await control.command('waitFor', '[data-testid="general-settings-page"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
