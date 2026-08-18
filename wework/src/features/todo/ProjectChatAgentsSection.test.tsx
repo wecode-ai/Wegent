@@ -372,6 +372,38 @@ describe('ProjectChatAgentsSection', () => {
     expect(screen.queryByText('旧的保存错误')).not.toBeInTheDocument()
   })
 
+  it('selects a local device when editing a local-project robot with a stale cloud device', async () => {
+    const mock = services([
+      agent({
+        model: MODEL_NAME,
+        executionEnvironment: 'cloud',
+        executionDeviceId: 'stale-cloud-device',
+      }),
+    ])
+    mock.deviceApi = {
+      listDevices: vi.fn(async () => [
+        { device_id: 'local-device', device_type: 'local', status: 'online' },
+        { device_id: 'stale-cloud-device', device_type: 'cloud', status: 'online' },
+      ]),
+    }
+    render(
+      <ProjectChatAgentsSection
+        project={{ ...project, project_store: 'local' }}
+        projectChatAgentApi={mock.projectChatAgentApi}
+        deviceApi={mock.deviceApi}
+        modelApi={mock.modelApi}
+        teamApi={mock.teamApi}
+        localProjects={[]}
+        canManage
+      />
+    )
+
+    await userEvent.click(await screen.findByTestId('cloud-project-chat-agent-agent-1'))
+
+    expect(screen.getByTestId('cloud-project-chat-agent-environment')).toHaveTextContent('我的本地')
+    expect(screen.getByTestId('cloud-project-chat-agent-device')).toHaveTextContent('local-device')
+  })
+
   it('hides local runtime models when the robot runs in the cloud', async () => {
     const mock = services()
     mock.modelApi = {

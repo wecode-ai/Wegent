@@ -302,13 +302,8 @@ export function ProjectChatAgentsSection({
     setAgentMaxConcurrentExecutions(agent.maxConcurrentExecutions)
     setAgentLocalProjectId(agent.localProjectId ?? '')
     const boundDevice = agent.executionDeviceId ?? ''
-    const deviceIsLocalCapable = availableDevices.some(
-      device =>
-        device.device_id === boundDevice &&
-        (device.device_type === 'local' || device.device_type === 'app')
-    )
     setAgentExecutionDeviceId(
-      localProjectOnly && boundDevice && !deviceIsLocalCapable ? '' : boundDevice
+      resolveExecutionDevice(boundDevice, availableDevices, executionEnvironment)
     )
   }
 
