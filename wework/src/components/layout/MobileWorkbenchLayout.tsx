@@ -178,7 +178,8 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
     'codex'
   const isCreatingWorktree = isWorktreeCreationPending(
     runtimeTaskSummary,
-    paneSession.status.sendPhase
+    paneSession.status.sendPhase,
+    paneSession.status.workspaceCreationKind
   )
   const activeConversationProject = activePaneProject
   const effectiveProjectChat = projectChat ?? {

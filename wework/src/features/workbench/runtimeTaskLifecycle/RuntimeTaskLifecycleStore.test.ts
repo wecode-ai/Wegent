@@ -258,6 +258,15 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(store.getTask(address)?.turn.phase).toBe('idle')
   })
 
+  test('records worktree creation intent without changing the task address', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+
+    store.sendRequested(address, { workspaceCreationKind: 'worktree' })
+
+    expect(store.getTask(address)?.workspaceCreationKind).toBe('worktree')
+    expect(store.getTask(address)?.address).toEqual(address)
+  })
+
   test('rejects a snapshot when a newer send starts before the response arrives', () => {
     const store = new RuntimeTaskLifecycleStore('test')
     store.syncRuntimeWork(runtimeWork(task({ running: true })))

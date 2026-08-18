@@ -64,6 +64,9 @@ fi
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --)
+      shift
+      ;;
     --profile)
       if [ "$#" -lt 2 ]; then
         echo "Error: $1 requires a profile value." >&2

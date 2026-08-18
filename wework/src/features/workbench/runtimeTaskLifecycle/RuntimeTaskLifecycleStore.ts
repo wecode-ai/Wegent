@@ -181,8 +181,16 @@ export class RuntimeTaskLifecycleStore {
     this.publish()
   }
 
-  sendRequested(address: RuntimeTaskAddress): void {
-    this.dispatch(address, { type: 'send_requested' })
+  sendRequested(
+    address: RuntimeTaskAddress,
+    options: { workspaceCreationKind?: 'worktree' } = {}
+  ): void {
+    this.dispatch(address, {
+      type: 'send_requested',
+      ...(options.workspaceCreationKind
+        ? { workspaceCreationKind: options.workspaceCreationKind }
+        : {}),
+    })
   }
 
   sendAccepted(address: RuntimeTaskAddress): void {

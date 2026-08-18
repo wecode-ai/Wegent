@@ -1149,7 +1149,9 @@ export function useWorkbenchRuntimeMessaging({
         hasSelectedProjectWorkspace: Boolean(selectedProjectWorkspace),
         optimisticWorkspacePath: optimisticWorkspacePath ?? null,
       })
-      lifecycleStore.sendRequested(optimisticAddress)
+      lifecycleStore.sendRequested(optimisticAddress, {
+        ...(requestedWorktree ? { workspaceCreationKind: 'worktree' } : {}),
+      })
       if (options?.initialGoal) {
         lifecycleStore.goalStatusReceived(optimisticAddress, options.initialGoal.status ?? 'active')
       }

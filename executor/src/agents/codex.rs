@@ -1010,7 +1010,7 @@ fn persistent_codex_app_server_launch_config(
         .config_overrides
         .extend(codex_router_provider_overrides());
     launch_config.config_overrides.extend([
-        "goals=true".to_owned(),
+        "features.goals=true".to_owned(),
         "features.code_mode_host=true".to_owned(),
     ]);
     launch_config

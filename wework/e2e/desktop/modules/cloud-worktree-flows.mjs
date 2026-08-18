@@ -184,6 +184,11 @@ async function launchTask(
   const requestCount = scenarioRequestCount(context.control, scenario)
   context.control.setScenario(scenario)
   await sendPrompt(context.control, context.composerSelector, prompt)
+  if (mode === 'git_worktree') {
+    await context.control.command('waitFor', '[data-testid="worktree-creation-status"]', {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+  }
   const rowTestId = await waitForNewTaskRow(
     context.control,
     knownRows,
