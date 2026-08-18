@@ -699,6 +699,17 @@ fn resolved_worktree_root_and_id(path: &str) -> Option<(String, String)> {
     if let Some(worktree) = git_worktree_root_and_id(path) {
         return Some(worktree);
     }
+    // A path shaped like `<root>/worktrees/<id>/<repo>` is a managed worktree even
+    // before `prepare` has created it on disk. Check that pattern before walking up
+    // to an ancestor `.git`: a parent directory (for example the repository checkout
+    // in CI) can be a Git repository without making this planned worktree path a
+    // regular workspace. A normal repository that merely lives under a `worktrees`
+    // parent still wins because its own `.git` directory is present.
+    if let Some((worktree_root, worktree_id)) = path_worktree_root_and_id(path) {
+        if !Path::new(&worktree_root).join(".git").is_dir() {
+            return Some((worktree_root, worktree_id));
+        }
+    }
     if git_common_workspace_root(path).is_some() {
         return None;
     }
@@ -924,6 +935,34 @@ mod tests {
         assert_eq!(
             workspace_task_path(&source_path, &repository_path),
             repository_path
+        );
+    }
+
+    #[test]
+    fn planned_worktree_path_under_repository_checkout_is_a_worktree() {
+        // Simulates the CI layout where WEGENT_EXECUTOR_HOME lives inside the
+        // repository checkout. The checkout has its own `.git`, but the planned
+        // worktree path below it must still be classified as a worktree rather
+        // than a workspace that shares the checkout's repository identity.
+        let checkout = tempdir().expect("temporary directory");
+        std::fs::create_dir_all(checkout.path().join(".git")).expect("checkout git metadata");
+        let planned = checkout
+            .path()
+            .join("executor-home")
+            .join("workspace")
+            .join("worktrees")
+            .join("runtime-132780333")
+            .join("workspace");
+        let planned_path = planned.display().to_string();
+
+        assert_eq!(infer_workspace_kind(&planned_path), "worktree");
+        assert_eq!(
+            infer_worktree_id(&planned_path),
+            Some("runtime-132780333".to_owned())
+        );
+        assert_eq!(
+            workspace_task_path(&planned_path, &planned_path),
+            planned_path
         );
     }
 }
