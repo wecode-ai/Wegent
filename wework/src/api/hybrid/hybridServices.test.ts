@@ -567,6 +567,29 @@ describe('createHybridWorkbenchServices', () => {
     expect(onChatChunk.mock.calls.map(([payload]) => payload.content)).toEqual(['local', 'cloud'])
   })
 
+  it('routes project assignment notifications through the cloud runtime stream only', () => {
+    const services = createServices()
+    const onProjectTaskAssigned = vi.fn()
+
+    services.chatStream.subscribe({ onProjectTaskAssigned })
+
+    const localHandlers = mocks.localChatStreamSubscribe.mock.calls.at(-1)?.[0]
+    const cloudHandlers = mocks.cloudRuntimeChatStreamSubscribe.mock.calls.at(-1)?.[0]
+    const payload = {
+      projectId: '91',
+      projectName: '运营项目',
+      itemId: 'WEG-12',
+      itemTitle: '准备周报',
+      assignerName: 'Alice',
+    }
+
+    expect(localHandlers?.onProjectTaskAssigned).toBeUndefined()
+    cloudHandlers?.onProjectTaskAssigned?.(payload)
+
+    expect(onProjectTaskAssigned).toHaveBeenCalledOnce()
+    expect(onProjectTaskAssigned).toHaveBeenCalledWith(payload)
+  })
+
   it('loads cloud models in the background without delaying local models', async () => {
     const info = vi.spyOn(console, 'info').mockImplementation(() => undefined)
     const services = createServices()

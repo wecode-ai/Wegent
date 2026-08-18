@@ -1960,6 +1960,8 @@
     "general_settings_system_tray_title": "系统托盘",
     "general_settings_task_completion_notifications": "任务完成时发送系统通知",
     "general_settings_task_completion_notifications_description": "仅在窗口失焦时提醒：后台任务完成后，若 Wework 窗口未处于焦点状态，通过系统通知发送提醒。",
+    "project_task_assigned_notification_title": "你有一个新的看板任务",
+    "project_task_assigned_notification_body": "{{assigner}} 将「{{task}}」分配给了你（{{project}}）",
     "general_settings_tray_display_content": "托盘显示内容",
     "general_settings_tray_display_content_description": "选择托盘图标和菜单里展示的状态。",
     "general_settings_tray_unread": "未读任务",
