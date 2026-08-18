@@ -23,9 +23,13 @@ export const CLOUD_MODEL_NATIVE_TOOL_SEARCH_OPTION = 'weworkCloudModelNativeTool
 export const CLOUD_MODEL_NATIVE_NAMESPACE_TOOLS_OPTION = 'weworkCloudModelNativeNamespaceTools'
 
 const KIMI_K3_CODEX_CATALOG_MODEL_ID = 'wework-kimi-k3'
+const DEEPSEEK_CODEX_CATALOG_MODEL_IDS = new Map([
+  ['deepseek-v4-flash', 'wework-deepseek-v4-flash'],
+  ['deepseek-v4-pro', 'wework-deepseek-v4-pro'],
+])
 const CLOUD_VISION_SIDECAR_CONFIG_KEY = 'visionSidecarModel'
 
-interface CloudVisionSidecarReference {
+export interface CloudVisionSidecarReference {
   modelName: string
   modelType: ModelType
   namespace: string
@@ -33,13 +37,17 @@ interface CloudVisionSidecarReference {
   apiFormat: 'openai-responses' | 'openai-chat-completions' | 'anthropic-messages'
 }
 
-function parseCloudVisionSidecarReference(value: unknown): CloudVisionSidecarReference | null {
+export function parseCloudVisionSidecarReference(
+  value: unknown
+): CloudVisionSidecarReference | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const record = value as Record<string, unknown>
   if (
     typeof record.modelName !== 'string' ||
+    !record.modelName.trim() ||
     !['public', 'user', 'group'].includes(String(record.modelType)) ||
     typeof record.namespace !== 'string' ||
+    !record.namespace.trim() ||
     typeof record.resourceUserId !== 'number' ||
     !Number.isInteger(record.resourceUserId) ||
     record.resourceUserId < 0 ||
@@ -49,7 +57,32 @@ function parseCloudVisionSidecarReference(value: unknown): CloudVisionSidecarRef
   ) {
     return null
   }
-  return record as unknown as CloudVisionSidecarReference
+  return {
+    modelName: record.modelName.trim(),
+    modelType: record.modelType as ModelType,
+    namespace: record.namespace.trim(),
+    resourceUserId: record.resourceUserId,
+    apiFormat: record.apiFormat as CloudVisionSidecarReference['apiFormat'],
+  }
+}
+
+export function resolveCloudVisionSidecarReference(
+  value: unknown,
+  models: UnifiedModel[]
+): CloudVisionSidecarReference | null {
+  const reference = parseCloudVisionSidecarReference(value)
+  if (!reference) return null
+  const target = models.find(
+    model =>
+      model.isActive !== false &&
+      model.modelCapabilities?.supportsImage === true &&
+      model.name === reference.modelName &&
+      model.type === reference.modelType &&
+      (model.namespace ?? 'default') === reference.namespace &&
+      model.resourceUserId === reference.resourceUserId &&
+      getCloudModelUpstreamApiFormat(model) === reference.apiFormat
+  )
+  return target ? reference : null
 }
 
 function getStringConfigValue(
@@ -127,20 +160,30 @@ function modelKind(model: UnifiedModel): string {
   )
 }
 
-function cloudCodexCatalogModelId(model: UnifiedModel): string {
+function cloudCodexCatalogModelId(model: UnifiedModel, upstreamApiFormat: string): string {
   const configured =
     getRawStringConfigValue(model.config, 'codex_catalog_model_id') ||
     getRawStringConfigValue(model.config, 'codexCatalogModelId')
   if (configured) return configured
 
-  const candidates = [
-    model.name,
+  const upstreamCandidates = [
     model.modelId,
     getRawStringConfigValue(model.config, 'model_id'),
     getRawStringConfigValue(model.config, 'modelId'),
     getRawStringConfigValue(model.config, 'model'),
   ]
-  return candidates.some(value => value?.trim().toLowerCase().includes('kimi-k3'))
+  const normalizedUpstreamCandidates = upstreamCandidates.flatMap(value =>
+    value?.trim() ? [value.trim().toLowerCase()] : []
+  )
+  if (upstreamApiFormat === 'openai-responses') {
+    for (const candidate of normalizedUpstreamCandidates) {
+      const deepSeekCatalogModelId = DEEPSEEK_CODEX_CATALOG_MODEL_IDS.get(candidate)
+      if (deepSeekCatalogModelId) return deepSeekCatalogModelId
+    }
+  }
+  return [model.name, ...normalizedUpstreamCandidates].some(value =>
+    value?.trim().toLowerCase().includes('kimi-k3')
+  )
     ? KIMI_K3_CODEX_CATALOG_MODEL_ID
     : ''
 }
@@ -231,7 +274,7 @@ export function selectedModelExecutionFields(
         modelOptions[CLOUD_MODEL_NATIVE_NAMESPACE_TOOLS_OPTION] = 'true'
       }
     }
-    const codexCatalogModelId = cloudCodexCatalogModelId(selectedModel)
+    const codexCatalogModelId = cloudCodexCatalogModelId(selectedModel, upstreamApiFormat ?? '')
     if (codexCatalogModelId) {
       modelOptions[CLOUD_MODEL_CODEX_CATALOG_MODEL_ID_OPTION] = codexCatalogModelId
     }

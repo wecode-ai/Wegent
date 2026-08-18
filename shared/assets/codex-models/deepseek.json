@@ -91,6 +91,20 @@
       "supports_image_detail_original": false,
       "supports_search_tool": true,
       "minimal_client_version": "0.144.0"
+    },
+    {
+      "slug": "wework-deepseek-v4-flash-vision",
+      "extends": "wework-deepseek-v4-flash",
+      "display_name": "DeepSeek-V4-Flash with vision delegation",
+      "description": "DeepSeek V4 Flash routed through an explicitly configured vision sidecar.",
+      "input_modalities": ["text", "image"]
+    },
+    {
+      "slug": "wework-deepseek-v4-pro-vision",
+      "extends": "wework-deepseek-v4-pro",
+      "display_name": "DeepSeek-V4-Pro with vision delegation",
+      "description": "DeepSeek V4 Pro routed through an explicitly configured vision sidecar.",
+      "input_modalities": ["text", "image"]
     }
   ]
 }

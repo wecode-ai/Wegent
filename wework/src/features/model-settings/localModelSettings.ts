@@ -9,10 +9,22 @@ export const KIMI_K3_CATALOG_MODEL_ID = 'wework-kimi-k3'
 export const KIMI_K27_CATALOG_MODEL_ID = 'wework-kimi-k2-7'
 export const DEEPSEEK_V4_FLASH_MODEL_ID = 'deepseek-v4-flash'
 export const DEEPSEEK_V4_FLASH_CATALOG_MODEL_ID = 'wework-deepseek-v4-flash'
+export const DEEPSEEK_V4_FLASH_VISION_CATALOG_MODEL_ID = 'wework-deepseek-v4-flash-vision'
 export const VISION_SIDECAR_CATALOG_MODEL_ID = 'wework-vision-sidecar'
 export const DEEPSEEK_V4_PRO_MODEL_ID = 'deepseek-v4-pro'
 export const DEEPSEEK_V4_PRO_CATALOG_MODEL_ID = 'wework-deepseek-v4-pro'
+export const DEEPSEEK_V4_PRO_VISION_CATALOG_MODEL_ID = 'wework-deepseek-v4-pro-vision'
 export const DEEPSEEK_V4_CONTEXT_WINDOW = 1_048_576
+
+export function visionSidecarCatalogModelId(primaryCatalogModelId: string): string {
+  if (primaryCatalogModelId === DEEPSEEK_V4_FLASH_CATALOG_MODEL_ID) {
+    return DEEPSEEK_V4_FLASH_VISION_CATALOG_MODEL_ID
+  }
+  if (primaryCatalogModelId === DEEPSEEK_V4_PRO_CATALOG_MODEL_ID) {
+    return DEEPSEEK_V4_PRO_VISION_CATALOG_MODEL_ID
+  }
+  return VISION_SIDECAR_CATALOG_MODEL_ID
+}
 
 export interface LocalModelConfig {
   id: string

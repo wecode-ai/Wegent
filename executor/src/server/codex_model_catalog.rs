@@ -36,9 +36,13 @@ pub(crate) const KIMI_K27_MODEL: &str = "wework-kimi-k2-7";
 #[cfg(test)]
 pub(crate) const DEEPSEEK_V4_FLASH_MODEL: &str = "wework-deepseek-v4-flash";
 #[cfg(test)]
+pub(crate) const DEEPSEEK_V4_FLASH_VISION_MODEL: &str = "wework-deepseek-v4-flash-vision";
+#[cfg(test)]
 pub(crate) const VISION_SIDECAR_MODEL: &str = "wework-vision-sidecar";
 #[cfg(test)]
 pub(crate) const DEEPSEEK_V4_PRO_MODEL: &str = "wework-deepseek-v4-pro";
+#[cfg(test)]
+pub(crate) const DEEPSEEK_V4_PRO_VISION_MODEL: &str = "wework-deepseek-v4-pro-vision";
 #[cfg(test)]
 const GPT_56_SOL_MODEL: &str = "gpt-5.6-sol";
 #[cfg(test)]
@@ -589,6 +593,21 @@ mod tests {
         assert_eq!(pro_model["supports_search_tool"], true);
         assert_eq!(pro_model["visibility"], "none");
         assert_eq!(pro_model["input_modalities"], json!(["text"]));
+
+        for slug in [DEEPSEEK_V4_FLASH_VISION_MODEL, DEEPSEEK_V4_PRO_VISION_MODEL] {
+            let vision_model = catalog["models"]
+                .as_array()
+                .expect("models array")
+                .iter()
+                .find(|model| model["slug"] == slug)
+                .expect("DeepSeek vision delegation entry");
+            assert_eq!(vision_model["context_window"], 1_048_576);
+            assert_eq!(vision_model["default_reasoning_level"], "high");
+            assert_eq!(vision_model["apply_patch_tool_type"], "freeform");
+            assert_eq!(vision_model["supports_parallel_tool_calls"], true);
+            assert_eq!(vision_model["multi_agent_version"], "v2");
+            assert_eq!(vision_model["input_modalities"], json!(["text", "image"]));
+        }
     }
 
     #[test]

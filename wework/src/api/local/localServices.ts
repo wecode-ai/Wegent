@@ -141,7 +141,7 @@ import {
   markLocalModelCatalogReady,
   reconcileLocalModelCatalogRuntime,
   type LocalModelConfig,
-  VISION_SIDECAR_CATALOG_MODEL_ID,
+  visionSidecarCatalogModelId,
 } from '@/features/model-settings/localModelSettings'
 import { localModelSupportsImageInput } from '@/features/model-settings/localModelProviders'
 import { getLocalProxyUrl } from '@/features/model-settings/localProxySettings'
@@ -984,9 +984,11 @@ function localRuntimeModelConfig(
       localModel.apiFormat
     )
     const visionSidecar = localVisionSidecarConfig(localModel)
+    const primaryCodexCatalogModelId =
+      localModel.codexCatalogModelId || DEFAULT_GPT_56_CATALOG_MODEL_ID
     const codexCatalogModelId = visionSidecar
-      ? VISION_SIDECAR_CATALOG_MODEL_ID
-      : localModel.codexCatalogModelId || DEFAULT_GPT_56_CATALOG_MODEL_ID
+      ? visionSidecarCatalogModelId(primaryCodexCatalogModelId)
+      : primaryCodexCatalogModelId
     return {
       model: 'openai',
       model_id: localModel.modelId,
@@ -1045,9 +1047,11 @@ function localRuntimeModelConfig(
     const nativeNamespaceTools =
       modelOptions?.[CLOUD_MODEL_NATIVE_NAMESPACE_TOOLS_OPTION]?.trim().toLowerCase() === 'true'
     const visionSidecar = cloudVisionSidecarConfig(runtime, modelOptions, cloudModelGateway)
+    const primaryCodexCatalogModelId =
+      modelOptions?.[CLOUD_MODEL_CODEX_CATALOG_MODEL_ID_OPTION] || DEFAULT_GPT_56_CATALOG_MODEL_ID
     const codexCatalogModelId = visionSidecar
-      ? VISION_SIDECAR_CATALOG_MODEL_ID
-      : modelOptions?.[CLOUD_MODEL_CODEX_CATALOG_MODEL_ID_OPTION] || DEFAULT_GPT_56_CATALOG_MODEL_ID
+      ? visionSidecarCatalogModelId(primaryCodexCatalogModelId)
+      : primaryCodexCatalogModelId
     return {
       model: 'openai',
       model_id: modelName,
