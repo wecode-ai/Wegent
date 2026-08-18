@@ -19,6 +19,7 @@ interface DiagramImageActionsProps {
   filename: string
   theme: 'dark' | 'light' | 'system'
   fullscreen?: boolean
+  fullscreenButtonRef?: RefObject<HTMLButtonElement | null>
   onToggleFullscreen?: () => void
 }
 
@@ -27,6 +28,7 @@ export function DiagramImageActions({
   filename,
   theme,
   fullscreen = false,
+  fullscreenButtonRef,
   onToggleFullscreen,
 }: DiagramImageActionsProps) {
   const { t } = useTranslation()
@@ -82,7 +84,7 @@ export function DiagramImageActions({
         title={copyLabel}
         disabled={copyState === 'busy'}
         onClick={() => void runAction(setCopyState, copyDiagramPng)}
-        className="flex h-7 w-7 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-50"
+        className="flex h-11 w-11 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-50 md:h-7 md:w-7"
       >
         <ActionIcon state={copyState} idleIcon={<Copy className="h-4 w-4" />} />
       </button>
@@ -93,19 +95,19 @@ export function DiagramImageActions({
         title={saveLabel}
         disabled={saveState === 'busy'}
         onClick={() => void runAction(setSaveState, blob => saveDiagramPng(blob, filename))}
-        className="flex h-7 w-7 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-50"
+        className="flex h-11 w-11 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-50 md:h-7 md:w-7"
       >
         <ActionIcon state={saveState} idleIcon={<Download className="h-4 w-4" />} />
       </button>
       {onToggleFullscreen ? (
         <button
+          ref={fullscreenButtonRef}
           type="button"
           data-testid={fullscreen ? 'diagram-exit-fullscreen-button' : 'diagram-fullscreen-button'}
           aria-label={fullscreenLabel}
           title={fullscreenLabel}
-          autoFocus={fullscreen}
           onClick={onToggleFullscreen}
-          className="flex h-7 w-7 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary"
+          className="flex h-11 w-11 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary md:h-7 md:w-7"
         >
           {fullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
         </button>

@@ -108,19 +108,28 @@ test('copies and saves the rendered diagram as a PNG', async () => {
   })
 })
 
-test('opens the diagram full screen and exits with Escape', async () => {
+test('traps focus in the full screen diagram and restores it after Escape', async () => {
   const user = userEvent.setup()
   render(<MarkdownDiagramPreview code={'graph LR\nA --> B'} language="mermaid" />)
 
-  await user.click(screen.getByTestId('diagram-fullscreen-button'))
+  const trigger = screen.getByTestId('diagram-fullscreen-button')
+  expect(trigger).toHaveClass('h-11', 'w-11', 'md:h-7', 'md:w-7')
+  await user.click(trigger)
 
   expect(screen.getByTestId('assistant-diagram-fullscreen')).toBeInTheDocument()
-  expect(screen.getByTestId('diagram-exit-fullscreen-button')).toHaveFocus()
+  const copyButton = screen.getByTestId('diagram-copy-image-button')
+  const exitButton = screen.getByTestId('diagram-exit-fullscreen-button')
+  await waitFor(() => expect(exitButton).toHaveFocus())
+
+  await user.tab()
+  expect(copyButton).toHaveFocus()
+  await user.tab({ shift: true })
+  expect(exitButton).toHaveFocus()
 
   await user.keyboard('{Escape}')
 
   expect(screen.queryByTestId('assistant-diagram-fullscreen')).not.toBeInTheDocument()
-  expect(screen.getByTestId('diagram-fullscreen-button')).toBeInTheDocument()
+  await waitFor(() => expect(screen.getByTestId('diagram-fullscreen-button')).toHaveFocus())
 })
 
 test('exits the diagram full screen from the collapse action', async () => {
