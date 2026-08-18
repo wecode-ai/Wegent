@@ -2197,6 +2197,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         'The workflow definition was not persisted by the project update',
         uiTimeoutMs
       )
+      await control.command('waitFor', '[data-testid="cloud-project-board-view"]', {
+        visible: true,
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('click', '[data-testid="cloud-project-board-view"]', {
         visible: true,
       })
