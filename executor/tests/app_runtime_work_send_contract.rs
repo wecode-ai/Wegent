@@ -1832,6 +1832,116 @@ async fn runtime_tasks_send_answers_pending_request_user_input_while_running() {
 }
 
 #[tokio::test]
+async fn runtime_tasks_forward_and_accept_mcp_form_elicitation() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-mcp-elicitation-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-mcp-elicitation-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let log_path = temp_path("runtime-mcp-elicitation-log", "jsonl");
+    let fake_codex = write_fake_codex_mcp_elicitation(&log_path);
+    let (event_tx, mut events) = broadcast::channel(32);
+    let handler = RuntimeWorkRpcHandler::with_event_sender(
+        "device-1",
+        fake_codex.display().to_string(),
+        event_tx,
+    );
+
+    let created = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "taskId": "local-task-mcp-elicitation",
+                "workspacePath": "/tmp/project",
+                "message": "confirm access",
+                "executionRequest": {
+                    "task_id": 3002,
+                    "subtask_id": 4002,
+                    "prompt": "confirm access",
+                    "project_workspace_path": "/tmp/project",
+                    "bot": [{"shell_type": "ClaudeCode"}],
+                    "model_config": {
+                        "model": "openai",
+                        "model_id": "gpt-5.5",
+                        "api_format": "responses"
+                    }
+                }
+            }
+        }))
+        .await
+        .expect("create should be accepted");
+    assert_eq!(created["accepted"], true);
+
+    let request_events = recv_events_until(&mut events, |runtime_events| {
+        find_runtime_event(runtime_events, "response.block.created", |event| {
+            let block = &event["payload"]["data"]["block"];
+            block["tool_name"] == "request_user_input" && block["render_payload"]["requestId"] == 99
+        })
+        .is_some()
+    })
+    .await;
+    let block_event = find_runtime_event(&request_events, "response.block.created", |event| {
+        event["payload"]["data"]["block"]["tool_name"] == "request_user_input"
+    })
+    .expect("MCP form should be emitted as request_user_input");
+    assert_eq!(
+        block_event["payload"]["data"]["block"]["render_payload"]["questions"][0]["options"][1],
+        json!({"label": "仅自己", "description": "owner"})
+    );
+
+    let sent = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.send",
+            "payload": {
+                "address": {
+                    "deviceId": "device-1",
+                    "workspacePath": "/tmp/project",
+                    "taskId": "local-task-mcp-elicitation"
+                },
+                "message": "仅自己",
+                "requestUserInputResponse": {
+                    "requestId": 99,
+                    "answers": {
+                        "audience": {"answers": ["仅自己"]}
+                    }
+                }
+            }
+        }))
+        .await
+        .expect("MCP form answer should be accepted");
+
+    assert_eq!(sent["success"], true);
+    assert_eq!(sent["accepted"], true);
+    wait_until_task_idle(&handler, "local-task-mcp-elicitation").await;
+
+    wait_for_json_call(&log_path, |call| {
+        call["id"] == 99
+            && call["result"]["action"] == "accept"
+            && call["result"]["content"]["audience"] == "owner"
+    })
+    .await;
+    let calls = read_json_lines(&log_path);
+    for method in ["thread/start", "turn/start"] {
+        let call = calls
+            .iter()
+            .find(|call| call["method"] == method)
+            .expect("thread and turn requests should be logged");
+        assert_eq!(
+            call["params"]["approvalPolicy"]["granular"]["mcp_elicitations"],
+            true
+        );
+    }
+}
+
+#[tokio::test]
 async fn runtime_tasks_interrupt_and_send_unblocks_pending_request_user_input() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
@@ -3682,7 +3792,30 @@ done
 }
 
 fn write_fake_codex_request_user_input(log_path: &Path) -> PathBuf {
-    let path = temp_path("fake-codex-request-user-input", "sh");
+    write_fake_codex_interaction(
+        log_path,
+        "fake-codex-request-user-input",
+        r#"{"id":99,"method":"item/tool/requestUserInput","params":{"threadId":"thread-input","turnId":"turn-input","itemId":"item-input","questions":[{"id":"goal","header":"工作目标","question":"你希望我接下来问你哪些问题？","options":[{"label":"Work goal","description":"Focus on one concrete task."}]}],"autoResolutionMs":null}}"#,
+        2200,
+    )
+}
+
+fn write_fake_codex_mcp_elicitation(log_path: &Path) -> PathBuf {
+    write_fake_codex_interaction(
+        log_path,
+        "fake-codex-mcp-elicitation",
+        r#"{"id":99,"method":"mcpServer/elicitation/request","params":{"threadId":"thread-input","turnId":"turn-input","serverName":"wegent-sites","mode":"form","message":"请选择内网访问范围。","requestedSchema":{"type":"object","properties":{"audience":{"type":"string","title":"访问范围","enum":["all","owner"],"enumNames":["所有人","仅自己"]}},"required":["audience"]}}}"#,
+        0,
+    )
+}
+
+fn write_fake_codex_interaction(
+    log_path: &Path,
+    executable_prefix: &str,
+    interaction_request: &str,
+    notification_count: usize,
+) -> PathBuf {
+    let path = temp_path(executable_prefix, "sh");
     let _ = fs::remove_file(log_path);
     let content = format!(
         r#"#!/bin/sh
@@ -3719,10 +3852,10 @@ while IFS= read -r line; do
   elif printf '%s\n' "$line" | grep -q '"method":"turn/start"'; then
     turn_active=true
     printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-input","status":"inProgress"}}}}}}'
-    printf '%s\n' '{{"id":99,"method":"item/tool/requestUserInput","params":{{"threadId":"thread-input","turnId":"turn-input","itemId":"item-input","questions":[{{"id":"goal","header":"工作目标","question":"你希望我接下来问你哪些问题？","options":[{{"label":"Work goal","description":"Focus on one concrete task."}}]}}],"autoResolutionMs":null}}}}'
+    printf '%s\n' '{}'
     sleep 0.1
     notification_index=0
-    while [ "$notification_index" -lt 2200 ]; do
+    while [ "$notification_index" -lt {} ]; do
       printf '%s\n' '{{"method":"thread/name/updated","params":{{"threadId":"thread-noise","name":"waiting"}}}}'
       notification_index=$((notification_index + 1))
       if [ $((notification_index % 50)) -eq 0 ]; then
@@ -3740,7 +3873,9 @@ while IFS= read -r line; do
   fi
 done
 "#,
-        log_path.display()
+        log_path.display(),
+        interaction_request,
+        notification_count
     );
     write_executable(&path, &content);
     path
