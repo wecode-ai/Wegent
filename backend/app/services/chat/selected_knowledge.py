@@ -179,7 +179,11 @@ def _merge_selected_knowledge_refs(
         if not current.resources:
             continue
         if not ref.resources:
-            merged[key] = ref
+            merged[key] = SelectedKnowledgeRef(
+                provider=ref.provider,
+                knowledge_base_id=ref.knowledge_base_id,
+                knowledge_base_name=current.knowledge_base_name,
+            )
             continue
 
         resources = [*current.resources, *ref.resources]

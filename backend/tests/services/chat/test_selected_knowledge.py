@@ -56,6 +56,10 @@ class _DefaultKnowledgeDB:
                     )
                 ]
             )
+        if model is KnowledgeFolder:
+            return _Query([])
+        if model is KnowledgeDocument:
+            return _Query([SimpleNamespace(id=9, name="接口约定")])
         raise AssertionError(f"Unexpected model: {model}")
 
 
@@ -155,16 +159,51 @@ def test_apply_selected_knowledge_context_is_idempotent(
 
 
 def test_apply_selected_knowledge_context_resolves_default_knowledge_name() -> None:
+    # Arrange
     request = ExecutionRequest(
         bot=[{"shell_type": "ClaudeCode"}],
         knowledge_base_ids=[115],
     )
     task = SimpleNamespace(json={"spec": {}})
 
+    # Act
     apply_selected_knowledge_context(_DefaultKnowledgeDB(), request, task)
 
+    # Assert
     assert 'knowledge_base_id="115"' in request.selected_knowledge_prompt
     assert 'knowledge_base_name="KB-A_产品知识"' in request.selected_knowledge_prompt
+
+
+def test_whole_base_external_ref_preserves_resolved_wegent_name() -> None:
+    request = ExecutionRequest(
+        knowledge_base_ids=[115],
+        knowledge_base_scopes=[
+            KnowledgeBaseScope(
+                knowledge_base_id=115,
+                scope_restricted=True,
+                document_ids=[9],
+            )
+        ],
+        external_knowledge_refs=[
+            {
+                "provider": "wegent",
+                "id": "115",
+                "target_type": "knowledge_base",
+            }
+        ],
+    )
+    task = SimpleNamespace(
+        json={
+            "metadata": {"labels": {"taskType": "knowledge"}},
+            "spec": {},
+        }
+    )
+
+    refs = build_selected_knowledge_refs(_DefaultKnowledgeDB(), request, task)
+
+    assert len(refs) == 1
+    assert refs[0].resources == ()
+    assert refs[0].knowledge_base_name == "KB-A_产品知识"
 
 
 def test_build_selected_knowledge_refs_groups_resources_by_knowledge_base(
