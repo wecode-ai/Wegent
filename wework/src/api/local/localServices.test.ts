@@ -3317,4 +3317,61 @@ describe('createLocalAppServices', () => {
       max_output_bytes: 5 * 1024 * 1024,
     })
   })
+
+  test('routes Worktree capabilities and preflight through the selected IPC device', async () => {
+    const request = vi.fn().mockImplementation(async method => {
+      if (method === 'runtime.worktrees.capabilities') {
+        return {
+          success: true,
+          deviceId: 'remote-device',
+          runtimeWorktrees: {
+            version: 1,
+            managed: true,
+            deferredPrepare: true,
+            snapshots: true,
+            restore: true,
+            preflight: true,
+          },
+        }
+      }
+      return {
+        success: true,
+        deviceId: 'remote-device',
+        supported: true,
+        sourcePath: '/workspace/project',
+        sourceExists: true,
+        sourceDirectory: true,
+        gitRepository: true,
+        gitCommonDirValid: true,
+        gitCommonDirWritable: true,
+        writable: true,
+        repoRoot: '/workspace/project',
+        resolvedWorktreeRoot: '/runtime/worktrees',
+      }
+    })
+    const runtimeApi = createRuntimeWorkApiFromIpc(request, async () => 'remote-device', {
+      resolveDeviceId: async () => 'remote-device',
+      transportLabel: 'Cloud',
+    })
+
+    await runtimeApi.getWorktreeCapabilities({ deviceId: 'remote-device' })
+    await runtimeApi.preflightWorktree({
+      deviceId: 'remote-device',
+      sourcePath: '/workspace/project',
+    })
+
+    expect(request).toHaveBeenCalledWith(
+      'runtime.worktrees.capabilities',
+      { deviceId: 'remote-device' },
+      'remote-device'
+    )
+    expect(request).toHaveBeenCalledWith(
+      'runtime.worktrees.preflight',
+      {
+        deviceId: 'remote-device',
+        sourcePath: '/workspace/project',
+      },
+      'remote-device'
+    )
+  })
 })

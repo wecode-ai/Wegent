@@ -4,10 +4,51 @@ import {
   friendlyTitleForTask,
   loadTemporaryChatSource,
   prepareRuntimeAttachmentsForDevice,
+  resolveRuntimeTaskCreateWorkspacePath,
   runtimeExecutablePathForTarget,
   resolveTemporaryChatSource,
   runtimeThreadId,
 } from './useWorkbenchRuntimeMessaging'
+
+describe('resolveRuntimeTaskCreateWorkspacePath', () => {
+  test('keeps the source path for a current-workspace task without a response path', () => {
+    expect(
+      resolveRuntimeTaskCreateWorkspacePath({
+        sourcePath: '/workspace/project',
+        requestedWorktree: false,
+      })
+    ).toBe('/workspace/project')
+  })
+
+  test('requires the Executor planned path for a Worktree task', () => {
+    expect(() =>
+      resolveRuntimeTaskCreateWorkspacePath({
+        sourcePath: '/workspace/project',
+        requestedWorktree: true,
+      })
+    ).toThrow('did not return a planned workspace path')
+  })
+
+  test('rejects a Worktree response that falls back to the base workspace', () => {
+    expect(() =>
+      resolveRuntimeTaskCreateWorkspacePath({
+        sourcePath: '/workspace/project/',
+        responsePath: '/workspace/project',
+        requestedWorktree: true,
+      })
+    ).toThrow('returned the base workspace path')
+  })
+
+  test('accepts a distinct planned Worktree path', () => {
+    expect(
+      resolveRuntimeTaskCreateWorkspacePath({
+        sourcePath: '/workspace/project',
+        responsePath: '/executor/worktrees/task-1/project',
+        requestedWorktree: true,
+      })
+    ).toBe('/executor/worktrees/task-1/project')
+  })
+})
 
 function attachment(overrides: Partial<Attachment> = {}): Attachment {
   return {

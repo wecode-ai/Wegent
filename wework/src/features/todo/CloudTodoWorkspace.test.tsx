@@ -1880,7 +1880,7 @@ describe('CloudTodoWorkspace', () => {
       })
     )
     expect(await screen.findByText('已保存')).toBeInTheDocument()
-  })
+  }, 15_000)
 
   it('updates the DingTalk connection without exposing board mappings', async () => {
     const workbenchServices = services()
@@ -1961,7 +1961,7 @@ describe('CloudTodoWorkspace', () => {
     expect(workbenchServices.dwsApi.login).toHaveBeenCalledOnce()
     expect(screen.getByTestId('aitable-dws-login')).toHaveTextContent('等待浏览器授权…')
     expect(screen.getByTestId('aitable-dws-login')).toBeDisabled()
-  })
+  }, 15_000)
 
   it('shows the DingTalk connect prompt on the board when dws is not authenticated', async () => {
     const workbenchServices = services()

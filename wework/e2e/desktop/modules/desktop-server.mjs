@@ -406,6 +406,7 @@ class DesktopE2EServer {
     this.automationStage = 'manual_goal'
     this.scenarioRequests = new Map()
     this.scenarioWaiters = new Map()
+    this.heldScenarioResponses = new Map()
     this.localProtocolStates = new Map(
       LOCAL_MODEL_CASES.map(model => [model.protocol, { stage: 'initial', requests: [] }])
     )
@@ -593,6 +594,8 @@ class DesktopE2EServer {
         'anthropic_empty_response',
         'reconnect',
         'checkpoint_task',
+        'worktree_queue_hold',
+        'worktree_restart_hold',
         'message_edit',
         'file_panel_anchor',
         'fresh_chat',
@@ -621,6 +624,24 @@ class DesktopE2EServer {
       `Unknown desktop E2E scenario: ${scenario}`
     )
     this.scenario = scenario
+  }
+
+  holdScenarioResponse(scenario) {
+    assert.ok(
+      ['worktree_queue_hold', 'worktree_restart_hold'].includes(scenario),
+      `Scenario "${scenario}" does not support held responses`
+    )
+    let release
+    const promise = new Promise(resolvePromise => {
+      release = resolvePromise
+    })
+    this.heldScenarioResponses.set(scenario, { promise, release })
+  }
+
+  releaseScenarioResponse(scenario) {
+    const held = this.heldScenarioResponses.get(scenario)
+    held?.release()
+    this.heldScenarioResponses.delete(scenario)
   }
 
   setMatrixCase(model) {
@@ -2757,6 +2778,31 @@ class DesktopE2EServer {
         assistantMessage(CHECKPOINT_TASK_COMPLETION_TEXT),
         responseCompleted(responseId),
       ])
+      return
+    }
+
+    if (this.scenario === 'worktree_queue_hold' || this.scenario === 'worktree_restart_hold') {
+      const scenario = this.scenario
+      const held = this.heldScenarioResponses.get(scenario)
+      assert.ok(held, `The ${scenario} response was not held before the task started`)
+      this.recordScenarioRequest(scenario, modelRequest)
+      response.writeHead(200, {
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'Content-Type': 'text/event-stream; charset=utf-8',
+      })
+      response.flushHeaders()
+      response.write(createSse([responseCreated(responseId)]))
+      await held.promise
+      if (!response.writableEnded && !response.destroyed) {
+        response.end(
+          createSse([
+            assistantMessage(`${scenario.toUpperCase()}_COMPLETE`),
+            responseCompleted(responseId),
+          ])
+        )
+      }
       return
     }
 

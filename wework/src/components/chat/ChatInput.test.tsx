@@ -4142,6 +4142,12 @@ describe('ChatInput', () => {
           isGitProject: true,
           executionMode: 'git_worktree',
           executionModeLocked: false,
+          worktreeAvailability: {
+            available: true,
+            reason: 'available',
+            deviceId: 'device-1',
+            sourcePath: '/workspace/wegent',
+          },
           onExecutionModeChange: vi.fn(),
           branchName: 'main',
           branchLoading: false,

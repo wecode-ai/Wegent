@@ -10,7 +10,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class DeviceStatusEnum(str, Enum):
@@ -64,6 +64,32 @@ class DeviceRunningTask(BaseModel):
     created_at: Optional[str] = Field(None, description="Task creation timestamp")
 
 
+class RuntimeWorktreeFeatures(BaseModel):
+    """Runtime-owned managed Worktree feature contract."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    version: int = Field(..., ge=1)
+    managed: bool = False
+    deferred_prepare: bool = Field(False, alias="deferredPrepare")
+    snapshots: bool = False
+    restore: bool = False
+    preflight: bool = False
+    persistent_storage_verified: bool = Field(
+        False,
+        alias="persistentStorageVerified",
+    )
+
+
+class RuntimeFeatures(BaseModel):
+    """Online features implemented by the currently connected Runtime."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    schema_version: int = Field(..., ge=1, alias="schemaVersion")
+    worktrees: Optional[RuntimeWorktreeFeatures] = None
+
+
 class DeviceInfo(BaseModel):
     """Response schema for device information."""
 
@@ -111,6 +137,10 @@ class DeviceInfo(BaseModel):
     )
     socket_device_id: Optional[str] = Field(
         None, description="Online WebSocket route device ID for relay-backed devices"
+    )
+    runtime_features: Optional[RuntimeFeatures] = Field(
+        None,
+        description="Features reported by the currently online Runtime instance",
     )
     # Cloud device specific config
     cloud_config: Optional[Dict[str, Any]] = Field(
@@ -301,6 +331,10 @@ class DeviceRegisterPayload(BaseModel):
         max_length=100,
         description="Desktop app IPC device ID when device_type is app",
     )
+    runtime_features: Optional[RuntimeFeatures] = Field(
+        None,
+        description="Features implemented by this connected Runtime",
+    )
     bind_shell: BindShell = Field(
         BindShell.CLAUDECODE,
         description="Shell runtime binding (claudecode or openclaw)",
@@ -362,6 +396,10 @@ class DeviceHeartbeatPayload(BaseModel):
     runtime_capacity: Optional[RuntimeCapacityObservation] = Field(
         None,
         description="Live scheduler capacity; missing observations cannot claim work",
+    )
+    runtime_features: Optional[RuntimeFeatures] = Field(
+        None,
+        description="Features implemented by the currently connected Runtime",
     )
 
 

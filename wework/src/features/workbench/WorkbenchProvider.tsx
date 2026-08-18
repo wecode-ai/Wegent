@@ -14,7 +14,6 @@ import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import { updateWorkbenchDebugSnapshot, DEBUG_SNAPSHOT_DEBOUNCE_MS } from '@/lib/debugPanel'
 import { navigateTo, parseRuntimeTaskRoute } from '@/lib/navigation'
 import { localSkillReference } from '@/lib/local-skill-reference'
-import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
 import { runtimeContextUsageMetrics } from '@/lib/runtime-context-usage'
 import { normalizeRuntimeWorkspacePath } from '@/lib/runtime-project'
 import { resolveLocalWorkbenchDeviceId } from '@/lib/workbench-device'
@@ -130,12 +129,19 @@ import {
 import {
   findSelectableProject,
   findProjectDeviceWorkspace,
+  findProjectMetadataDeviceWorkspace,
   findRuntimeTask,
   getRememberedStandaloneDeviceId,
   getDefaultProjectDeviceWorkspaceId,
   readLastProjectId,
   writeLastProjectId,
 } from './workbenchRuntimeHelpers'
+import {
+  getProjectWorkPreferenceKey,
+  mergeProjectWorkPreference,
+  readProjectWorkPreference,
+  resolveProjectWorkPreferenceScope,
+} from './projectWorkPreferences'
 import { defaultNewChatModelSelection, selectedModelExecutionFields } from './runtimeModelSelection'
 import {
   createDefaultWorkbenchServices,
@@ -154,11 +160,6 @@ export type { WorkbenchServices } from './workbenchServices'
 const LOCAL_SKILLS_CACHE_TTL_MS = 30_000
 const EMPTY_PLUGIN_TRIAL_TEMPLATES: PluginPathComponent[] = []
 
-type ProjectWorkPreferencePatch = {
-  executionMode?: ProjectExecutionMode
-  worktreeBranch?: string | null
-}
-
 function findFirstSelectableProject(
   projects: ProjectWithTasks[],
   runtimeWork: RuntimeWorkListResponse | null | undefined,
@@ -170,49 +171,6 @@ function findFirstSelectableProject(
     if (project) return project
   }
   return null
-}
-
-function getProjectWorkPreferenceKey(project: { id: number } | null | undefined): string | null {
-  return project ? `project:${project.id}` : null
-}
-
-function normalizeProjectWorkPreference(value?: {
-  executionMode?: ProjectExecutionMode | null
-  worktreeBranch?: string | null
-}): Required<ProjectWorkPreferencePatch> {
-  const executionMode =
-    value?.executionMode === 'git_worktree' ? 'git_worktree' : 'current_workspace'
-  const worktreeBranch = value?.worktreeBranch?.trim() || null
-
-  return { executionMode, worktreeBranch }
-}
-
-function readProjectWorkPreference(
-  preferences: UserPreferences | null | undefined,
-  project: { id: number } | null | undefined
-): Required<ProjectWorkPreferencePatch> {
-  const key = getProjectWorkPreferenceKey(project)
-  if (!key) return normalizeProjectWorkPreference()
-
-  return normalizeProjectWorkPreference(preferences?.wework_project_work_preferences?.[key])
-}
-
-function mergeProjectWorkPreference(
-  preferences: UserPreferences | null | undefined,
-  project: { id: number },
-  patch: ProjectWorkPreferencePatch
-): UserPreferences {
-  const key = getProjectWorkPreferenceKey(project)
-  const current = readProjectWorkPreference(preferences, project)
-  const next = normalizeProjectWorkPreference({ ...current, ...patch })
-
-  return {
-    ...(preferences ?? {}),
-    wework_project_work_preferences: {
-      ...(preferences?.wework_project_work_preferences ?? {}),
-      [key ?? `project:${project.id}`]: next,
-    },
-  }
 }
 
 export function WorkbenchProvider({
@@ -298,6 +256,7 @@ export function WorkbenchProvider({
   const remoteProjectSyncRevisionRef = useRef(0)
   const removedRemoteProjectPathsRef = useRef(new Set<string>())
   const remoteProjectMutationQueueRef = useRef<Promise<void>>(Promise.resolve())
+  const projectWorkPreferenceMutationQueueRef = useRef<Promise<void>>(Promise.resolve())
   const projectActivationSignatureRef = useRef('')
   const lastProjectRestoreAttemptedRef = useRef(false)
   const projectSelectionStartedRef = useRef(false)
@@ -368,6 +327,32 @@ export function WorkbenchProvider({
 
   const currentUser = state.user ?? user
   const activeProject = state.currentProject
+  const selectedProjectPreferenceWorkspace = useMemo(
+    () =>
+      findProjectMetadataDeviceWorkspace(
+        state.runtimeWork,
+        state.currentProject?.id,
+        state.selectedDeviceWorkspaceId
+      ),
+    [state.currentProject?.id, state.runtimeWork, state.selectedDeviceWorkspaceId]
+  )
+  const projectWorkPreferenceScope = useMemo(
+    () =>
+      resolveProjectWorkPreferenceScope(state.currentProject, selectedProjectPreferenceWorkspace),
+    [selectedProjectPreferenceWorkspace, state.currentProject]
+  )
+  const projectWorkPreferenceKey = getProjectWorkPreferenceKey(projectWorkPreferenceScope)
+  const activeProjectWorkPreferenceKeyRef = useRef<string | null>(projectWorkPreferenceKey)
+  const latestProjectWorkPreferencesRef = useRef<UserPreferences | null | undefined>(
+    currentUser.preferences
+  )
+  const projectWorkPreferenceSyncRevisionRef = useRef(0)
+  useLayoutEffect(() => {
+    activeProjectWorkPreferenceKeyRef.current = projectWorkPreferenceKey
+  }, [projectWorkPreferenceKey])
+  useLayoutEffect(() => {
+    latestProjectWorkPreferencesRef.current = currentUser.preferences
+  }, [currentUser.preferences])
   useWorkbenchTelemetry({
     currentProject: state.currentProject,
     devices: state.devices,
@@ -708,79 +693,103 @@ export function WorkbenchProvider({
     return () => projectChatClient?.dispose()
   }, [resolvedServices.projectChatClient])
 
+  const persistProjectWorkPreference = useCallback(
+    (
+      patch: {
+        executionMode?: ProjectExecutionMode
+        worktreeBranch?: string | null
+      },
+      errorMessage: string
+    ) => {
+      if (!projectWorkPreferenceScope || !projectWorkPreferenceKey) return
+
+      const preferences = mergeProjectWorkPreference(
+        latestProjectWorkPreferencesRef.current,
+        projectWorkPreferenceScope,
+        patch
+      )
+      if (!preferences) return
+
+      latestProjectWorkPreferencesRef.current = preferences
+      dispatch({ type: 'user_preferences_updated', preferences })
+
+      const userApi = resolvedServices.userApi
+      if (!userApi) return
+      const scopeKey = projectWorkPreferenceKey
+      const mutation = () =>
+        userApi
+          .updateCurrentUser({
+            preferences: {
+              wework_project_work_preferences: preferences.wework_project_work_preferences,
+            },
+          })
+          .then(() => undefined)
+      const run = projectWorkPreferenceMutationQueueRef.current
+        .catch(() => undefined)
+        .then(mutation)
+      projectWorkPreferenceMutationQueueRef.current = run.then(
+        () => undefined,
+        () => undefined
+      )
+      void run.catch(() => {
+        if (activeProjectWorkPreferenceKeyRef.current === scopeKey) {
+          dispatch({ type: 'error_set', error: errorMessage })
+        }
+      })
+    },
+    [projectWorkPreferenceKey, projectWorkPreferenceScope, resolvedServices.userApi]
+  )
+
   const selectProjectExecutionMode = useCallback(
     (mode: ProjectExecutionMode) => {
+      if (state.currentRuntimeTask) return
       const nextMode: ProjectExecutionMode =
         mode === 'git_worktree' ? 'git_worktree' : 'current_workspace'
       setProjectExecutionMode(nextMode)
-      if (!state.currentProject || !supportsGitWorktreeExecution(state.currentProject)) {
-        return
-      }
-      const preferences = mergeProjectWorkPreference(
-        currentUser.preferences,
-        state.currentProject,
+      persistProjectWorkPreference(
         {
           executionMode: nextMode,
           worktreeBranch: projectWorktreeBranch,
-        }
+        },
+        t('workbench.execution_mode_save_failed')
       )
-      dispatch({ type: 'user_preferences_updated', preferences })
-      void resolvedServices.userApi
-        ?.updateCurrentUser({
-          preferences: {
-            wework_project_work_preferences: preferences.wework_project_work_preferences,
-          },
-        })
-        .catch(() => {
-          dispatch({ type: 'error_set', error: '启动模式保存失败' })
-        })
     },
-    [currentUser.preferences, projectWorktreeBranch, resolvedServices.userApi, state.currentProject]
+    [persistProjectWorkPreference, projectWorktreeBranch, state.currentRuntimeTask, t]
   )
 
   useEffect(() => {
-    const project = state.currentProject
-    const preferences = currentUser.preferences
-    const timer = window.setTimeout(() => {
-      if (!project || !supportsGitWorktreeExecution(project)) {
-        setProjectExecutionMode('current_workspace')
-        setProjectWorktreeBranchState(null)
-        return
-      }
-
-      const preference = readProjectWorkPreference(preferences, project)
+    const revision = projectWorkPreferenceSyncRevisionRef.current + 1
+    projectWorkPreferenceSyncRevisionRef.current = revision
+    const preference = readProjectWorkPreference(
+      currentUser.preferences,
+      projectWorkPreferenceScope
+    ).preference
+    queueMicrotask(() => {
+      if (projectWorkPreferenceSyncRevisionRef.current !== revision) return
       setProjectExecutionMode(preference.executionMode)
       setProjectWorktreeBranchState(preference.worktreeBranch)
-    }, 0)
-    return () => window.clearTimeout(timer)
-  }, [currentUser.preferences, state.currentProject])
+    })
+    return () => {
+      if (projectWorkPreferenceSyncRevisionRef.current === revision) {
+        projectWorkPreferenceSyncRevisionRef.current += 1
+      }
+    }
+  }, [currentUser.preferences, projectWorkPreferenceKey, projectWorkPreferenceScope])
+
   const setProjectWorktreeBranch = useCallback(
     (branchName: string | null) => {
+      if (state.currentRuntimeTask) return
       const normalizedBranch = branchName?.trim() || null
       setProjectWorktreeBranchState(normalizedBranch)
-      if (!state.currentProject || !supportsGitWorktreeExecution(state.currentProject)) {
-        return
-      }
-      const preferences = mergeProjectWorkPreference(
-        currentUser.preferences,
-        state.currentProject,
+      persistProjectWorkPreference(
         {
           executionMode: projectExecutionMode,
           worktreeBranch: normalizedBranch,
-        }
+        },
+        t('workbench.project_worktree_branch_save_failed')
       )
-      dispatch({ type: 'user_preferences_updated', preferences })
-      void resolvedServices.userApi
-        ?.updateCurrentUser({
-          preferences: {
-            wework_project_work_preferences: preferences.wework_project_work_preferences,
-          },
-        })
-        .catch(() => {
-          dispatch({ type: 'error_set', error: '启动分支保存失败' })
-        })
     },
-    [currentUser.preferences, projectExecutionMode, resolvedServices.userApi, state.currentProject]
+    [persistProjectWorkPreference, projectExecutionMode, state.currentRuntimeTask, t]
   )
   const modelSelectionConfig = useMemo(() => {
     if (state.currentRuntimeTask) {

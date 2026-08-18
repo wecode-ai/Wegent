@@ -11,10 +11,13 @@ import {
   isDeviceBelowWeWorkVersion,
   isWeWorkCompatibleDevice,
 } from '@/lib/device-capabilities'
-import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
 import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
 import { normalizeRuntimeWorkspacePath, runtimeProjectUiId } from '@/lib/runtime-project'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
+import {
+  probeProjectWorktreeAvailability,
+  worktreeWorkspaceDeviceId,
+} from '@/lib/worktree-availability'
 import { notifyMainRuntimeWorkChanged } from '@/tauri/runtimeWorkSync'
 import type { AppPreferences } from '@/tauri/appPreferences'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
@@ -246,6 +249,30 @@ export function resolveTemporaryChatSource(
     ...(task.threadId ? { threadId: task.threadId } : {}),
     ...(runtimeHandle ? { runtimeHandle } : {}),
   }
+}
+
+export function resolveRuntimeTaskCreateWorkspacePath({
+  sourcePath,
+  responsePath,
+  requestedWorktree,
+}: {
+  sourcePath?: string
+  responsePath?: string
+  requestedWorktree: boolean
+}): string | undefined {
+  const normalizedResponsePath = responsePath?.trim()
+  if (!requestedWorktree) return normalizedResponsePath || sourcePath
+  if (!normalizedResponsePath) {
+    throw new Error('Worktree task creation did not return a planned workspace path')
+  }
+  if (
+    sourcePath &&
+    normalizeRuntimeWorkspacePath(normalizedResponsePath) ===
+      normalizeRuntimeWorkspacePath(sourcePath)
+  ) {
+    throw new Error('Worktree task creation returned the base workspace path')
+  }
+  return normalizedResponsePath
 }
 
 export async function loadTemporaryChatSource(
@@ -677,10 +704,11 @@ export function useWorkbenchRuntimeMessaging({
         activeProject?.id,
         state.selectedDeviceWorkspaceId
       )
+      const selectedProjectDeviceId = worktreeWorkspaceDeviceId(selectedProjectWorkspace)
       const activeDeviceId =
         deviceOverride ||
         (activeProject && selectedProjectWorkspace
-          ? selectedProjectWorkspace.deviceId
+          ? (selectedProjectDeviceId ?? selectedProjectWorkspace.deviceId)
           : getActiveWorkbenchDeviceId({
               currentProject: activeProject,
               standaloneDeviceId: getPreferredStandaloneDeviceId(
@@ -704,11 +732,7 @@ export function useWorkbenchRuntimeMessaging({
       const selectedModelOptions =
         modelSelection.getSelectedModelOptions?.() ?? modelSelection.selectedModelOptions
 
-      if (
-        activeProject &&
-        projectExecutionMode === 'git_worktree' &&
-        supportsGitWorktreeExecution(activeProject)
-      ) {
+      if (activeProject && projectExecutionMode === 'git_worktree') {
         const branch = projectWorktreeBranch?.trim()
         payload.execution = {
           workspace: {
@@ -850,6 +874,7 @@ export function useWorkbenchRuntimeMessaging({
         projectId,
         state.selectedDeviceWorkspaceId
       )
+      const selectedProjectDeviceId = worktreeWorkspaceDeviceId(selectedProjectWorkspace)
       const selectedRuntimeProject = projectId
         ? state.runtimeWork?.projects.find(item => runtimeProjectUiId(item.project) === projectId)
             ?.project
@@ -890,7 +915,7 @@ export function useWorkbenchRuntimeMessaging({
           reportSendBlocked('请选择任务运行位置', undefined, options)
           return false
         }
-        optimisticDeviceId = selectedProjectWorkspace.deviceId
+        optimisticDeviceId = selectedProjectDeviceId ?? selectedProjectWorkspace.deviceId
         runtimeTaskTarget =
           selectedProjectWorkspace.id != null &&
           selectedProjectWorkspace.workspaceSource !== 'local' &&
@@ -898,11 +923,11 @@ export function useWorkbenchRuntimeMessaging({
             ? {
                 projectId,
                 deviceWorkspaceId: selectedProjectWorkspace.id,
-                deviceId: selectedProjectWorkspace.deviceId,
+                deviceId: optimisticDeviceId,
                 workspacePath: selectedProjectWorkspace.workspacePath,
               }
             : {
-                deviceId: selectedProjectWorkspace.deviceId,
+                deviceId: optimisticDeviceId,
                 workspacePath: selectedProjectWorkspace.workspacePath,
               }
       } else {
@@ -1017,8 +1042,8 @@ export function useWorkbenchRuntimeMessaging({
         executablePath: options?.runtimeExecutablePath,
         targetDevice,
         workspaceSource:
-          selectedProjectWorkspace?.deviceId === optimisticDeviceId
-            ? selectedProjectWorkspace.workspaceSource
+          selectedProjectDeviceId === optimisticDeviceId
+            ? selectedProjectWorkspace?.workspaceSource
             : undefined,
       })
       const createRequest: RuntimeTaskCreateRequest = {
@@ -1083,12 +1108,14 @@ export function useWorkbenchRuntimeMessaging({
       const createRuntimeHandle = createModelSelection
         ? { modelSelection: createModelSelection }
         : undefined
+      const requestedWorktree = payload.execution?.workspace?.source === 'git_worktree'
+      const sourceWorkspacePath =
+        'workspacePath' in runtimeTaskTarget ? runtimeTaskTarget.workspacePath : undefined
       const optimisticAddress: RuntimeTaskAddress = {
         deviceId: optimisticDeviceId,
         taskId,
         runtime,
-        workspacePath:
-          'workspacePath' in runtimeTaskTarget ? runtimeTaskTarget.workspacePath : undefined,
+        workspacePath: requestedWorktree ? undefined : sourceWorkspacePath,
         ...(createRuntimeHandle ? { runtimeHandle: createRuntimeHandle } : {}),
       }
       modelSelection.setSelectionForScope?.(
@@ -1096,9 +1123,9 @@ export function useWorkbenchRuntimeMessaging({
         selectedModel,
         selectedModelOptions
       )
-      const optimisticWorkspacePath =
-        ('workspacePath' in runtimeTaskTarget ? runtimeTaskTarget.workspacePath : undefined) ??
-        selectedProjectWorkspace?.workspacePath
+      const optimisticWorkspacePath = requestedWorktree
+        ? undefined
+        : (sourceWorkspacePath ?? selectedProjectWorkspace?.workspacePath)
       const optimisticWorkspace =
         optimisticWorkspacePath && optimisticDeviceId
           ? buildOptimisticRuntimeWorkspace({
@@ -1107,8 +1134,7 @@ export function useWorkbenchRuntimeMessaging({
               deviceId: optimisticDeviceId,
               workspacePath: optimisticWorkspacePath,
               projectId,
-              workspaceKind:
-                payload.execution?.workspace?.source === 'git_worktree' ? 'worktree' : undefined,
+              workspaceKind: undefined,
             })
           : null
       const runtimeProject = projectId
@@ -1183,8 +1209,7 @@ export function useWorkbenchRuntimeMessaging({
             workspacePath: optimisticWorkspacePath,
             title: createRequest.title ?? buildRuntimeTaskTitle(displayMessage, payload.title),
             runtime,
-            workspaceKind:
-              payload.execution?.workspace?.source === 'git_worktree' ? 'worktree' : undefined,
+            workspaceKind: undefined,
             modelSelection: createModelSelection,
           }),
         })
@@ -1208,11 +1233,16 @@ export function useWorkbenchRuntimeMessaging({
           response.runtimeHandle,
           optimisticAddress.runtimeHandle
         )
+        const resolvedCreateWorkspacePath = resolveRuntimeTaskCreateWorkspacePath({
+          sourcePath: sourceWorkspacePath,
+          responsePath: response.workspacePath,
+          requestedWorktree,
+        })
         const address: RuntimeTaskAddress = {
           deviceId: response.deviceId || optimisticAddress.deviceId,
           taskId: response.taskId || optimisticAddress.taskId,
           runtime: response.runtime || optimisticAddress.runtime,
-          workspacePath: response.workspacePath || optimisticAddress.workspacePath,
+          workspacePath: resolvedCreateWorkspacePath,
           ...(runtimeHandle ? { runtimeHandle } : {}),
           ...(response.taskId || optimisticAddress.taskId
             ? { taskId: response.taskId || optimisticAddress.taskId }
@@ -1501,6 +1531,47 @@ export function useWorkbenchRuntimeMessaging({
         }
       }
 
+      if (
+        prepared.payload.execution?.workspace?.source === 'git_worktree' &&
+        state.currentProject
+      ) {
+        const selectedProjectWorkspace = findProjectDeviceWorkspace(
+          state.runtimeWork,
+          state.currentProject.id,
+          state.selectedDeviceWorkspaceId
+        )
+        const worktreeDeviceId = worktreeWorkspaceDeviceId(selectedProjectWorkspace)
+        const worktreeDevice = findWorkbenchDevice(state.devices, worktreeDeviceId)
+        const runtimeWorkApi = services.runtimeWorkApi
+        if (!runtimeWorkApi) {
+          reportSendBlocked(
+            i18n.t('workbench.worktree_unavailable_preflight_failed'),
+            { worktreeDeviceId, reason: 'runtime_api_unavailable' },
+            options
+          )
+          return false
+        }
+        const availability = await probeProjectWorktreeAvailability({
+          api: runtimeWorkApi,
+          project: state.currentProject,
+          workspace: selectedProjectWorkspace,
+          device: worktreeDevice,
+          ref: projectWorktreeBranch,
+        })
+        if (!availability.available) {
+          reportSendBlocked(
+            i18n.t(`workbench.worktree_unavailable_${availability.reason}`),
+            {
+              worktreeDeviceId,
+              reason: availability.reason,
+              sourcePath: availability.sourcePath,
+            },
+            options
+          )
+          return false
+        }
+      }
+
       const sent = await sendPreparedRuntimeMessage(
         message,
         prepared.payload,
@@ -1540,10 +1611,14 @@ export function useWorkbenchRuntimeMessaging({
       reportSendBlocked,
       sendPreparedRuntimeMessage,
       sendRuntimePaneMessage,
+      services.runtimeWorkApi,
+      projectWorktreeBranch,
       state.currentProject,
       state.currentRuntimeTask,
       state.defaultTeam,
       state.devices,
+      state.runtimeWork,
+      state.selectedDeviceWorkspaceId,
     ]
   )
 

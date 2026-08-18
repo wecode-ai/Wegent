@@ -1195,6 +1195,7 @@ mod tests {
     fn task_backend_url_falls_back_to_task_api_domain() {
         let _lock = crate::test_env::lock();
         let _backend = EnvGuard::remove("WEGENT_BACKEND_URL");
+        let _mode = EnvGuard::remove("EXECUTOR_MODE");
         let _task_api = EnvGuard::set("TASK_API_DOMAIN", "http://backend.local:8000");
 
         let request = ExecutionRequest::default();
@@ -1209,6 +1210,7 @@ mod tests {
     fn task_backend_url_prefers_env_over_payload_backend_url() {
         let _lock = crate::test_env::lock();
         let _backend = EnvGuard::remove("WEGENT_BACKEND_URL");
+        let _mode = EnvGuard::remove("EXECUTOR_MODE");
         let _task_api = EnvGuard::set("TASK_API_DOMAIN", "http://env-backend.local:8000");
 
         let request = ExecutionRequest {

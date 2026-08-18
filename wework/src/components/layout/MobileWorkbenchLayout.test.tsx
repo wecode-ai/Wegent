@@ -8,6 +8,7 @@ import type {
   WorkbenchContextValue,
   WorkbenchPaneContextValue,
 } from '@/features/workbench/workbenchContextTypes'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { RuntimeWorkListResponse, UnifiedModel } from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
 import { MobileWorkbenchLayout as ActualMobileWorkbenchLayout } from './MobileWorkbenchLayout'
@@ -161,6 +162,7 @@ type LegacyMobileWorkbenchLayoutProps = {
   onUpgradeDevice?: (...args: unknown[]) => Promise<void>
   onRequestUserInputSubmit?: (...args: unknown[]) => Promise<boolean> | void
   onRetryFailedMessage?: (message: WorkbenchMessage) => Promise<boolean>
+  runtimeWorkApi?: WorkbenchServices['runtimeWorkApi']
 }
 
 function createPendingRequestUserInputMessage(includeAdjustment = false): WorkbenchMessage {
@@ -270,6 +272,7 @@ function createWorkbenchMocks(props: LegacyMobileWorkbenchLayoutProps) {
       error: null,
       updatedAt: null,
     },
+    services: props.runtimeWorkApi ? { runtimeWorkApi: props.runtimeWorkApi } : undefined,
     projectChat,
     upgradingDevices: {},
     projectExecutionMode: projectWork.executionMode ?? 'current_workspace',
@@ -1001,8 +1004,8 @@ describe('MobileWorkbenchLayout', () => {
         mode: 'workspace',
         device_id: 'device-1',
         workspace: {
-          source: 'local_path' as const,
-          localPath: '/workspace/github_wegent',
+          source: 'git' as const,
+          checkoutPath: '/workspace/github_wegent',
         },
       },
     }
@@ -1015,6 +1018,35 @@ describe('MobileWorkbenchLayout', () => {
     const onListEnvironmentBranches = vi.fn().mockResolvedValue(['feature/mobile', 'main'])
     const onCheckoutEnvironmentBranch = vi.fn().mockResolvedValue(undefined)
     const onWorktreeBranchChange = vi.fn()
+    const runtimeWorkApi = {
+      getWorktreeCapabilities: vi.fn().mockResolvedValue({
+        success: true,
+        deviceId: 'device-1',
+        runtimeWorktrees: {
+          version: 1,
+          managed: true,
+          deferredPrepare: true,
+          snapshots: true,
+          restore: true,
+          preflight: true,
+        },
+      }),
+      preflightWorktree: vi.fn().mockResolvedValue({
+        success: true,
+        deviceId: 'device-1',
+        supported: true,
+        sourcePath: '/workspace/github_wegent',
+        sourceExists: true,
+        sourceDirectory: true,
+        gitRepository: true,
+        gitCommonDirValid: true,
+        gitCommonDirWritable: true,
+        writable: true,
+        repoRoot: '/workspace/github_wegent',
+        repoRootFingerprint: 'mobile-repo',
+        resolvedWorktreeRoot: '/executor/workspace/worktrees',
+      }),
+    } as unknown as WorkbenchServices['runtimeWorkApi']
 
     const renderLayout = (executionMode: 'current_workspace' | 'git_worktree') => (
       <MobileWorkbenchLayout
@@ -1026,7 +1058,28 @@ describe('MobileWorkbenchLayout', () => {
         projectChat={baseProjectChat}
         projectWork={{
           projects: [currentProject],
-          devices: [],
+          devices: [
+            {
+              id: 1,
+              device_id: 'device-1',
+              name: 'Local Device',
+              status: 'online',
+              is_default: true,
+              device_type: 'local',
+              executor_version: '1.8.5',
+              runtime_features: {
+                schemaVersion: 1,
+                worktrees: {
+                  version: 1,
+                  managed: true,
+                  deferredPrepare: true,
+                  snapshots: true,
+                  restore: true,
+                  preflight: true,
+                },
+              },
+            },
+          ],
           runtimeWork: runtimeWork([
             {
               id: currentProject.id,
@@ -1055,6 +1108,7 @@ describe('MobileWorkbenchLayout', () => {
         onCreateEnvironmentBranch={vi.fn().mockResolvedValue(undefined)}
         onInputChange={vi.fn()}
         onSend={vi.fn()}
+        runtimeWorkApi={runtimeWorkApi}
       />
     )
     const { rerender } = renderAtMobileWidth(renderLayout('current_workspace'))
@@ -1076,7 +1130,7 @@ describe('MobileWorkbenchLayout', () => {
 
     rerender(renderLayout('git_worktree'))
 
-    await userEvent.click(screen.getByTestId('project-worktree-branch-button'))
+    await userEvent.click(await screen.findByTestId('project-worktree-branch-button'))
     expect(await screen.findByTestId('project-worktree-branch-menu')).toHaveAttribute(
       'data-mobile',
       'true'

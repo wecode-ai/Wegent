@@ -2390,7 +2390,7 @@ async def test_execute_configured_device_command_allows_remote_directory_creatio
 async def test_execute_configured_device_command_rejects_cloud_unsupported_command_key(
     monkeypatch,
 ):
-    """Cloud directory browsing must not enable the full command registry."""
+    """Cloud workspace tooling must not enable the full command registry."""
     from app.services.device import command_service
 
     execute_mock = AsyncMock()
@@ -2430,6 +2430,78 @@ async def test_execute_configured_device_command_rejects_cloud_unsupported_comma
     assert "not supported for cloud devices" in str(exc_info.value)
     online_mock.assert_not_awaited()
     execute_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("command_key", "path", "expected_runtime_command_key"),
+    [
+        ("workspace_tree", "/workspace/repo", "workspace_tree"),
+        ("git_status_porcelain", "/workspace/repo", None),
+    ],
+)
+async def test_execute_configured_device_command_allows_cloud_workspace_tools(
+    monkeypatch,
+    command_key,
+    path,
+    expected_runtime_command_key,
+):
+    """Cloud file and Git tools should execute on the resolved Runtime."""
+    from app.services.device import command_service
+
+    execute_mock = AsyncMock(
+        return_value={
+            "success": True,
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": "",
+            "duration": 0.01,
+            "timed_out": False,
+        }
+    )
+    online_mock = AsyncMock(return_value={"socket_id": "socket-cloud"})
+    monkeypatch.setattr(
+        command_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: SimpleNamespace(
+            name="cloud-crd",
+            json={
+                "spec": {
+                    "deviceType": "cloud",
+                    "cloudConfig": {"deviceId": "runtime-cloud"},
+                }
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        command_service.device_service,
+        "get_device_online_info_by_type",
+        online_mock,
+    )
+    monkeypatch.setattr(
+        command_service.local_device_command_service,
+        "execute_command",
+        execute_mock,
+    )
+
+    await command_service.execute_configured_device_command(
+        db=object(),
+        user_id=7,
+        device_id="cloud-crd",
+        command_key=command_key,
+        path=path,
+    )
+
+    online_mock.assert_awaited_once_with(
+        7,
+        "runtime-cloud",
+        command_service.DeviceType.CLOUD,
+    )
+    execute_mock.assert_awaited_once()
+    _, kwargs = execute_mock.await_args
+    assert kwargs["device_id"] == "runtime-cloud"
+    assert kwargs["path"] == path
+    assert kwargs.get("command_key") == expected_runtime_command_key
 
 
 @pytest.mark.asyncio
@@ -2648,7 +2720,6 @@ async def test_execute_device_command_endpoint_allows_wework_local_project_works
         }
     )
     monkeypatch.setattr(devices, "execute_configured_device_command", service_mock)
-
     response = await devices.execute_device_command(
         device_id="device-abc",
         request=DeviceCommandRequest(
@@ -2691,6 +2762,10 @@ async def test_execute_device_command_endpoint_does_not_trust_client_workspace_r
         }
     )
     monkeypatch.setattr(devices, "execute_configured_device_command", service_mock)
+    runtime_rpc_mock = AsyncMock(
+        side_effect=devices.RuntimeRpcError("Device is unavailable")
+    )
+    monkeypatch.setattr(devices.runtime_rpc_service, "call", runtime_rpc_mock)
 
     response = await devices.execute_device_command(
         device_id="device-abc",
@@ -2707,6 +2782,7 @@ async def test_execute_device_command_endpoint_does_not_trust_client_workspace_r
     service_mock.assert_awaited_once()
     _, kwargs = service_mock.await_args
     assert kwargs["env"] == {"EXISTING": "1"}
+    runtime_rpc_mock.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -2914,9 +2990,9 @@ async def test_execute_device_command_endpoint_allows_runtime_rpc_workspace(
             "workspaces": [
                 {
                     "workspacePath": workspace_path,
-                    "localTasks": [
+                    "tasks": [
                         {
-                            "localTaskId": "019ef869-1dae-7b32-bb68-6407a8d43159",
+                            "taskId": "019ef869-1dae-7b32-bb68-6407a8d43159",
                             "workspacePath": workspace_path,
                         }
                     ],

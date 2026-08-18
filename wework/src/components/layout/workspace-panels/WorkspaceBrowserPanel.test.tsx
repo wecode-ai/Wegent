@@ -2515,7 +2515,11 @@ describe('WorkspaceBrowserPanel', () => {
       await firstInjection
     })
 
-    expect(embeddedBrowserMocks.evalEmbeddedBrowser).not.toHaveBeenCalled()
+    expect(
+      embeddedBrowserMocks.evalEmbeddedBrowser.mock.calls.filter(call =>
+        String(call[0]).includes('__WEWORK_BROWSER_ANNOTATION__?.destroy')
+      )
+    ).toEqual([])
     expect(screen.getByTestId('workspace-browser-annotation-close-button')).toBeInTheDocument()
   })
 

@@ -4,6 +4,14 @@
 
 use super::*;
 
+const ACTIVE_TURN_STOP_POLL_INTERVAL: Duration = Duration::from_millis(10);
+
+enum ActiveTurnStopState {
+    Missing,
+    Pending,
+    Stopped,
+}
+
 impl RuntimeWorkRpcHandler {
     pub(super) async fn collect_links(&self, archived: bool) -> Vec<RuntimeTaskLink> {
         let started_at = Instant::now();
@@ -661,6 +669,7 @@ impl RuntimeWorkRpcHandler {
         let execution_id = self.next_execution_id.fetch_add(1, Ordering::Relaxed);
         let control = ActiveTurnCancellation {
             execution_id,
+            stop_requested: false,
             cancel,
             stopped,
         };
@@ -690,7 +699,7 @@ impl RuntimeWorkRpcHandler {
             .expect("active turn cancellation map lock should not be poisoned");
         if active
             .get(local_task_id)
-            .is_some_and(|control| control.execution_id == execution_id)
+            .is_some_and(|control| control.execution_id == execution_id && !control.stop_requested)
         {
             active.remove(local_task_id);
             true
@@ -768,25 +777,65 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn abort_active_turn(&self, local_task_id: &str) -> bool {
-        let control = {
-            self.active_turn_cancellations
-                .lock()
-                .expect("active turn cancellation map lock should not be poisoned")
-                .remove(local_task_id)
-        };
-        if let Some(control) = control {
-            let _ = control.cancel.send(());
-            let stopped =
-                tokio::time::timeout(std::time::Duration::from_secs(10), control.stopped).await;
-            if stopped.is_err() {
+        self.abort_active_turn_with_timeout(local_task_id, Duration::from_secs(10))
+            .await
+    }
+
+    pub(super) async fn abort_active_turn_with_timeout(
+        &self,
+        local_task_id: &str,
+        stop_timeout: Duration,
+    ) -> bool {
+        let deadline = Instant::now() + stop_timeout;
+        loop {
+            match self.poll_active_turn_stop(local_task_id) {
+                ActiveTurnStopState::Missing | ActiveTurnStopState::Stopped => {
+                    self.active_codex_turns
+                        .lock()
+                        .expect("active codex turn map lock should not be poisoned")
+                        .remove(local_task_id);
+                    return true;
+                }
+                ActiveTurnStopState::Pending => {}
+            }
+            let now = Instant::now();
+            if now >= deadline {
                 return false;
             }
+            tokio::time::sleep(
+                ACTIVE_TURN_STOP_POLL_INTERVAL.min(deadline.saturating_duration_since(now)),
+            )
+            .await;
         }
-        self.active_codex_turns
+    }
+
+    fn poll_active_turn_stop(&self, local_task_id: &str) -> ActiveTurnStopState {
+        let mut active = self
+            .active_turn_cancellations
             .lock()
-            .expect("active codex turn map lock should not be poisoned")
-            .remove(local_task_id);
-        true
+            .expect("active turn cancellation map lock should not be poisoned");
+        let Some(control) = active.get_mut(local_task_id) else {
+            return ActiveTurnStopState::Missing;
+        };
+        if !control.stop_requested {
+            let (spent_cancel, spent_cancel_rx) = oneshot::channel();
+            drop(spent_cancel_rx);
+            let cancel = std::mem::replace(&mut control.cancel, spent_cancel);
+            control.stop_requested = true;
+            let _ = cancel.send(());
+        }
+        let stopped = match control.stopped.try_recv() {
+            Ok(()) => true,
+            Err(oneshot::error::TryRecvError::Closed | oneshot::error::TryRecvError::Empty) => {
+                false
+            }
+        };
+        if stopped {
+            active.remove(local_task_id);
+            ActiveTurnStopState::Stopped
+        } else {
+            ActiveTurnStopState::Pending
+        }
     }
 
     pub(super) fn is_active_local_task(&self, local_task_id: &str) -> bool {

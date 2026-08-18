@@ -233,7 +233,10 @@ def _runtime_workspace_roots_from_rpc_result(
                 roots.append(root)
 
         raw_tasks = (
-            raw_workspace.get("localTasks") or raw_workspace.get("local_tasks") or []
+            raw_workspace.get("tasks")
+            or raw_workspace.get("localTasks")
+            or raw_workspace.get("local_tasks")
+            or []
         )
         if not isinstance(raw_tasks, list):
             continue

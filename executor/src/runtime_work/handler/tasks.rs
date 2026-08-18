@@ -328,32 +328,51 @@ impl RuntimeWorkRpcHandler {
                 AppIpcError::new("bad_request", "workspacePath is required")
             })?;
         let workspace_path = if request.workspace_source.as_deref() == Some("git_worktree") {
-            let planned_path = self
-                .worktrees
-                .planned_path(Path::new(&source_workspace_path), &local_task_id)
-                .map_err(|error| AppIpcError::new("worktree_prepare_failed", error))?;
-            request.extra.insert(
-                "deferred_worktree_source_path".to_owned(),
-                Value::String(source_workspace_path.clone()),
-            );
-            request.extra.insert(
-                "deferred_worktree_path".to_owned(),
-                Value::String(planned_path.display().to_string()),
-            );
-            if let Some(branch) = payload
+            let git_ref = payload
                 .get("execution")
                 .and_then(|execution| execution.get("workspace"))
                 .and_then(|workspace| workspace.get("branch"))
                 .and_then(Value::as_str)
                 .map(str::trim)
                 .filter(|branch| !branch.is_empty())
-            {
-                request.extra.insert(
-                    "deferred_worktree_ref".to_owned(),
-                    Value::String(branch.to_owned()),
-                );
+                .map(ToOwned::to_owned);
+            let worktrees = self.worktrees.clone();
+            let plan_source_path = PathBuf::from(&source_workspace_path);
+            let plan_worktree_id = local_task_id.clone();
+            let plan_git_ref = git_ref.clone();
+            let plan = tokio::task::spawn_blocking(move || {
+                worktrees.plan(
+                    &plan_source_path,
+                    &plan_worktree_id,
+                    plan_git_ref.as_deref(),
+                )
+            })
+            .await
+            .map_err(|error| {
+                AppIpcError::new(
+                    "worktree_prepare_failed",
+                    format!("Worktree planning task failed: {error}"),
+                )
+            })?
+            .map_err(|error| AppIpcError::new(worktree_error_code(&error), error))?;
+            request.extra.insert(
+                "deferred_worktree_source_path".to_owned(),
+                Value::String(plan.source_path.display().to_string()),
+            );
+            request.extra.insert(
+                "deferred_worktree_path".to_owned(),
+                Value::String(plan.path.display().to_string()),
+            );
+            request.extra.insert(
+                "deferred_worktree_repo_root_fingerprint".to_owned(),
+                Value::String(plan.repo_root_fingerprint),
+            );
+            if let Some(branch) = git_ref {
+                request
+                    .extra
+                    .insert("deferred_worktree_ref".to_owned(), Value::String(branch));
             }
-            planned_path.display().to_string()
+            plan.path.display().to_string()
         } else {
             source_workspace_path
         };
@@ -437,7 +456,7 @@ impl RuntimeWorkRpcHandler {
         if is_claude_runtime(&runtime) {
             self.prepare_claude_goal(&local_task_id, &mut request, &payload);
             if let Err(error) = self.spawn_claude_turn(local_task_id.clone(), request).await {
-                self.store.delete_task(&local_task_id);
+                self.retain_failed_runtime_task(&local_task_id, &error);
                 return Err(error);
             }
         } else {
@@ -462,7 +481,7 @@ impl RuntimeWorkRpcHandler {
                 })
                 .await
             {
-                self.store.delete_task(&local_task_id);
+                self.retain_failed_runtime_task(&local_task_id, &error);
                 self.supervisor_model_configs
                     .lock()
                     .expect("supervisor model config map lock should not be poisoned")
@@ -534,6 +553,12 @@ impl RuntimeWorkRpcHandler {
             "status": if queue_position.is_some() { "queued" } else { "running" },
             "queuePosition": queue_position,
         }))
+    }
+
+    fn retain_failed_runtime_task(&self, local_task_id: &str, error: &AppIpcError) {
+        self.store.update_task(local_task_id, |link| {
+            apply_runtime_task_start_failure(link, error);
+        });
     }
 
     pub(super) fn record_runtime_turn_id(
@@ -626,7 +651,18 @@ impl RuntimeWorkRpcHandler {
                     .map(|link| link.workspace_path.clone())
             })
             .unwrap_or_default();
-        if let Err(error) = self.worktrees.restore_if_known(Path::new(&workspace_path)) {
+        let worktrees = self.worktrees.clone();
+        let restore_path = PathBuf::from(&workspace_path);
+        let restore_result =
+            tokio::task::spawn_blocking(move || worktrees.restore_if_known(&restore_path))
+                .await
+                .map_err(|error| {
+                    AppIpcError::new(
+                        "worktree_restore_required",
+                        format!("Worktree restore task failed: {error}"),
+                    )
+                })?;
+        if let Err(error) = restore_result {
             return Ok(json!({
                 "success": false,
                 "accepted": false,
@@ -1541,6 +1577,27 @@ pub(super) fn forked_task_link(
     link
 }
 
+fn apply_runtime_task_start_failure(link: &mut RuntimeTaskLink, error: &AppIpcError) {
+    link.running = false;
+    link.status = "failed".to_owned();
+    link.thread_status = "failed".to_owned();
+    link.turn_status = Some("failed".to_owned());
+    link.updated_at = now_ms();
+    link.completed_at = Some(link.updated_at);
+    normalize_settled_task_state(link);
+    if !link.runtime_handle.is_object() {
+        link.runtime_handle = json!({});
+    }
+    if let Some(runtime_handle) = link.runtime_handle.as_object_mut() {
+        runtime_handle.remove("queuePosition");
+        runtime_handle.insert("lastError".to_owned(), Value::String(error.message.clone()));
+        runtime_handle.insert(
+            "lastErrorCode".to_owned(),
+            Value::String(error.code.clone()),
+        );
+    }
+}
+
 fn normalize_friendly_title(value: &str) -> Option<String> {
     let title = value
         .lines()
@@ -1712,7 +1769,11 @@ fn completed_context_compaction(
 mod tests {
     use serde_json::json;
 
-    use super::{completed_context_compaction, normalize_friendly_title};
+    use crate::{local::app_ipc::AppIpcError, runtime_work::response::RuntimeTaskLink};
+
+    use super::{
+        apply_runtime_task_start_failure, completed_context_compaction, normalize_friendly_title,
+    };
 
     #[test]
     fn normalizes_model_title_to_one_short_line() {
@@ -1750,5 +1811,36 @@ mod tests {
             completed_context_compaction(&thread, Some("turn-compact")),
             None
         );
+    }
+
+    #[test]
+    fn failed_runtime_start_keeps_a_diagnosable_task_link() {
+        let mut link = RuntimeTaskLink::new_pending(
+            "task-1".to_owned(),
+            "/workspace/repository".to_owned(),
+            "Task".to_owned(),
+        );
+        link.runtime_handle = json!({"queuePosition": 1});
+        let error = AppIpcError::new(
+            "worktree_source_changed",
+            "Source repository identity changed after planning",
+        );
+
+        apply_runtime_task_start_failure(&mut link, &error);
+
+        assert!(!link.running);
+        assert_eq!(link.status, "failed");
+        assert_eq!(link.thread_status, "failed");
+        assert_eq!(link.turn_status.as_deref(), Some("failed"));
+        assert!(link.completed_at.is_some());
+        assert_eq!(
+            link.runtime_handle["lastError"],
+            "Source repository identity changed after planning"
+        );
+        assert_eq!(
+            link.runtime_handle["lastErrorCode"],
+            "worktree_source_changed"
+        );
+        assert!(link.runtime_handle.get("queuePosition").is_none());
     }
 }

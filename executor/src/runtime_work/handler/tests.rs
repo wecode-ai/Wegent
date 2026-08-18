@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::tasks::{forked_task_link, mark_runtime_model_switch, runtime_model_selection_changed};
+use super::turns::{read_runtime_turn_queue, write_runtime_turn_queue};
 use super::*;
 
 #[test]
@@ -87,6 +88,723 @@ fn deferred_worktree_preparation_can_be_cancelled_before_runtime_start() {
             cancellation_requested: true
         })
     );
+}
+
+#[tokio::test]
+async fn archive_stop_waits_for_worktree_preparation_ack() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    let mut turn = SpawnTurnRequest {
+        local_task_id: "task-1".to_owned(),
+        runtime: "codex".to_owned(),
+        request: ExecutionRequest::default(),
+        direct_thread_id: None,
+        fork_thread_id: None,
+        fork_thread_path: None,
+        resume_thread_id: None,
+        initial_thread_name: None,
+        initial_thread_goal: None,
+    };
+    turn.request.extra.insert(
+        "deferred_worktree_source_path".to_owned(),
+        Value::String("/tmp/source".to_owned()),
+    );
+    handler.reserve_worktree_preparation(&turn);
+
+    let waiter = {
+        let handler = handler.clone();
+        tokio::spawn(async move {
+            handler
+                .wait_for_worktree_preparation_to_finish("task-1")
+                .await
+        })
+    };
+    tokio::task::yield_now().await;
+    assert!(!waiter.is_finished());
+
+    handler
+        .preparing_worktree_turns
+        .lock()
+        .expect("preparing worktree turn map lock should not be poisoned")
+        .remove("task-1");
+
+    assert!(waiter.await.expect("preparation waiter should finish"));
+}
+
+#[tokio::test]
+async fn cancelled_deferred_worktree_is_removed_before_runtime_start() {
+    let root =
+        temp_runtime_work_index_path("cancelled-worktree-cleanup").with_extension("directory");
+    let source = root.join("source");
+    let managed_root = root.join("workspace/worktrees");
+    initialize_test_repository(&source);
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(root.join("runtime-work/index.json"));
+    handler.worktrees = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
+    handler
+        .worktrees
+        .update_settings(WorktreeSettingsPatch {
+            worktree_root: Some(managed_root.display().to_string()),
+            ..WorktreeSettingsPatch::default()
+        })
+        .unwrap();
+    let plan = handler.worktrees.plan(&source, "task-1", None).unwrap();
+    let mut request = ExecutionRequest {
+        project_workspace_path: Some(source.display().to_string()),
+        ..ExecutionRequest::default()
+    };
+    request.extra.insert(
+        "deferred_worktree_source_path".to_owned(),
+        Value::String(source.display().to_string()),
+    );
+    request.extra.insert(
+        "deferred_worktree_path".to_owned(),
+        Value::String(plan.path.display().to_string()),
+    );
+    let turn = SpawnTurnRequest {
+        local_task_id: "task-1".to_owned(),
+        runtime: "codex".to_owned(),
+        request,
+        direct_thread_id: None,
+        fork_thread_id: None,
+        fork_thread_path: None,
+        resume_thread_id: None,
+        initial_thread_name: None,
+        initial_thread_goal: None,
+    };
+    handler.upsert_local_task(RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        plan.path.display().to_string(),
+        "Task".to_owned(),
+    ));
+    handler.reserve_worktree_preparation(&turn);
+    assert!(handler.cancel_preparing_worktree_turn("task-1"));
+
+    handler
+        .prepare_and_start_reserved_turn(turn)
+        .await
+        .expect("cancelled preparation should clean up without starting a runtime");
+
+    assert!(!plan.path.exists());
+    assert!(
+        !plan.path.parent().unwrap().exists(),
+        "cancelled preparation must remove the empty task container"
+    );
+    assert!(!handler.is_active_local_task("task-1"));
+    let task = handler
+        .store
+        .get_task("task-1")
+        .expect("cancelled task should remain diagnosable");
+    assert_eq!(task.status, "cancelled");
+    let listed = handler
+        .worktrees
+        .list(&handler.store.list_task_summaries(true))
+        .unwrap();
+    assert!(
+        listed.is_empty(),
+        "terminal cleanup must not retain a Worktree tombstone"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn archive_waits_for_runtime_stopped_ack_before_marking_task_archived() {
+    let root = temp_runtime_work_index_path("archive-stopped-ack").with_extension("directory");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(root.join("runtime-work/index.json"));
+    handler.upsert_local_task(RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    ));
+    let (cancel_tx, cancel_rx) = oneshot::channel();
+    let (stopped_tx, stopped_rx) = oneshot::channel();
+    handler.start_local_task_execution("task-1".to_owned(), cancel_tx, stopped_rx);
+
+    let archive = {
+        let handler = handler.clone();
+        tokio::spawn(async move {
+            handler
+                .archive_task(json!({
+                    "taskId": "task-1",
+                    "workspacePath": "/tmp/project"
+                }))
+                .await
+        })
+    };
+
+    tokio::time::timeout(Duration::from_secs(1), cancel_rx)
+        .await
+        .expect("archive should request runtime cancellation")
+        .expect("runtime cancellation channel should remain open");
+    tokio::task::yield_now().await;
+    assert!(!archive.is_finished());
+    assert_ne!(handler.store.get_task("task-1").unwrap().status, "archived");
+
+    stopped_tx
+        .send(())
+        .expect("runtime stopped acknowledgement should be delivered");
+    let response = archive
+        .await
+        .expect("archive task should finish")
+        .expect("archive should succeed after stopped acknowledgement");
+
+    assert_eq!(response["accepted"], true);
+    assert_eq!(handler.store.get_task("task-1").unwrap().status, "archived");
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn archive_retry_after_stop_timeout_waits_for_the_original_stopped_ack() {
+    let root =
+        temp_runtime_work_index_path("archive-stop-timeout-retry").with_extension("directory");
+    let source = root.join("source");
+    let managed_root = root.join("workspace/worktrees");
+    initialize_test_repository(&source);
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(root.join("runtime-work/index.json"));
+    handler.worktrees = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
+    handler
+        .worktrees
+        .update_settings(WorktreeSettingsPatch {
+            worktree_root: Some(managed_root.display().to_string()),
+            ..WorktreeSettingsPatch::default()
+        })
+        .unwrap();
+    let worktree = handler
+        .worktrees
+        .prepare(&source, "task-1", None, false)
+        .unwrap();
+    let mut link = RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        worktree.path.clone(),
+        "Task".to_owned(),
+    );
+    link.status = "active".to_owned();
+    handler.upsert_local_task(link);
+    let (cancel_tx, cancel_rx) = oneshot::channel();
+    let (stopped_tx, stopped_rx) = oneshot::channel();
+    let execution_id =
+        handler.start_local_task_execution("task-1".to_owned(), cancel_tx, stopped_rx);
+
+    assert!(
+        !handler
+            .abort_active_turn_with_timeout("task-1", Duration::from_millis(20))
+            .await,
+        "the first stop attempt must time out while the runtime withholds its acknowledgement"
+    );
+    tokio::time::timeout(Duration::from_secs(1), cancel_rx)
+        .await
+        .expect("the first stop attempt should send cancellation")
+        .expect("the runtime cancellation receiver should remain available");
+    assert!(handler.is_active_local_task("task-1"));
+    assert!(Path::new(&worktree.path).exists());
+    assert!(
+        !handler.finish_local_task_execution("task-1", execution_id),
+        "runtime completion before the stopped acknowledgement must not clear retry state"
+    );
+
+    let mut retry = {
+        let handler = handler.clone();
+        tokio::spawn(async move {
+            handler
+                .archive_task(json!({
+                    "taskId": "task-1",
+                    "workspacePath": worktree.path,
+                }))
+                .await
+        })
+    };
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), &mut retry)
+            .await
+            .is_err(),
+        "a retry must keep waiting on the original stopped acknowledgement"
+    );
+    let retained = handler
+        .store
+        .get_task("task-1")
+        .expect("the task should remain diagnosable while stop is pending");
+    assert_ne!(retained.status, "archived");
+    assert!(handler.is_active_local_task("task-1"));
+    let listed = handler
+        .worktrees
+        .list(&handler.store.list_task_summaries(true))
+        .unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].0.state, "active");
+    assert!(listed[0].0.snapshot_ref.is_none());
+    assert!(Path::new(&listed[0].0.path).exists());
+
+    stopped_tx
+        .send(())
+        .expect("the original stopped acknowledgement should be delivered");
+    let response = tokio::time::timeout(Duration::from_secs(1), retry)
+        .await
+        .expect("archive retry should finish after the stopped acknowledgement")
+        .expect("archive retry task should not panic")
+        .expect("archive retry should return an IPC response");
+
+    assert_eq!(response["accepted"], true);
+    assert_eq!(handler.store.get_task("task-1").unwrap().status, "archived");
+    assert!(!handler.is_active_local_task("task-1"));
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn closed_stopped_channel_does_not_count_as_a_stop_acknowledgement() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    let (cancel_tx, cancel_rx) = oneshot::channel();
+    let (stopped_tx, stopped_rx) = oneshot::channel();
+    handler.start_local_task_execution("task-1".to_owned(), cancel_tx, stopped_rx);
+    drop(stopped_tx);
+
+    assert!(
+        !handler
+            .abort_active_turn_with_timeout("task-1", Duration::from_millis(20))
+            .await,
+        "a closed stopped channel must fail closed instead of impersonating an acknowledgement"
+    );
+    tokio::time::timeout(Duration::from_secs(1), cancel_rx)
+        .await
+        .expect("the stop attempt should still send cancellation")
+        .expect("the runtime cancellation receiver should remain available");
+    assert!(
+        handler.is_active_local_task("task-1"),
+        "retry state must remain active when no explicit stopped acknowledgement was received"
+    );
+}
+
+#[tokio::test]
+async fn unarchive_restores_managed_worktree_before_reactivating_task() {
+    let root =
+        temp_runtime_work_index_path("unarchive-worktree-restore").with_extension("directory");
+    let source = root.join("source");
+    let managed_root = root.join("workspace/worktrees");
+    initialize_test_repository(&source);
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(root.join("runtime-work/index.json"));
+    handler.worktrees = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
+    handler
+        .worktrees
+        .update_settings(WorktreeSettingsPatch {
+            worktree_root: Some(managed_root.display().to_string()),
+            ..WorktreeSettingsPatch::default()
+        })
+        .unwrap();
+    let worktree = handler
+        .worktrees
+        .prepare(&source, "task-1", None, false)
+        .unwrap();
+    handler
+        .worktrees
+        .delete(Path::new(&worktree.path), true)
+        .unwrap();
+    assert!(!Path::new(&worktree.path).exists());
+    let mut link = RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        worktree.path.clone(),
+        "Task".to_owned(),
+    );
+    link.status = "archived".to_owned();
+    handler.upsert_local_task(link);
+
+    let response = handler
+        .unarchive_task(json!({
+            "taskId": "task-1",
+            "workspacePath": worktree.path,
+        }))
+        .await
+        .expect("unarchive should return an IPC response");
+
+    assert_eq!(response["accepted"], true);
+    assert!(Path::new(response["workspacePath"].as_str().unwrap()).exists());
+    assert_eq!(handler.store.get_task("task-1").unwrap().status, "active");
+    let listed = handler
+        .worktrees
+        .list(&handler.store.list_task_summaries(true))
+        .unwrap();
+    assert_eq!(listed[0].0.state, "active");
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn unarchive_restore_failure_is_an_action_failure_and_keeps_task_archived() {
+    let root =
+        temp_runtime_work_index_path("unarchive-worktree-failure").with_extension("directory");
+    let source = root.join("source");
+    let managed_root = root.join("workspace/worktrees");
+    let worktree_state_path = root.join("runtime-work/worktrees.json");
+    initialize_test_repository(&source);
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(root.join("runtime-work/index.json"));
+    handler.worktrees = WorktreeManager::new(worktree_state_path.clone());
+    handler
+        .worktrees
+        .update_settings(WorktreeSettingsPatch {
+            worktree_root: Some(managed_root.display().to_string()),
+            ..WorktreeSettingsPatch::default()
+        })
+        .unwrap();
+    let worktree = handler
+        .worktrees
+        .prepare(&source, "task-1", None, false)
+        .unwrap();
+    handler
+        .worktrees
+        .delete(Path::new(&worktree.path), true)
+        .unwrap();
+    let mut worktree_state: Value =
+        serde_json::from_str(&fs::read_to_string(&worktree_state_path).unwrap()).unwrap();
+    let persisted_record = worktree_state["records"]
+        .as_object_mut()
+        .and_then(|records| records.values_mut().next())
+        .expect("snapshot deletion should persist a restorable Worktree");
+    persisted_record["snapshotRef"] = Value::Null;
+    fs::write(
+        &worktree_state_path,
+        serde_json::to_vec_pretty(&worktree_state).unwrap(),
+    )
+    .unwrap();
+    let mut link = RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        worktree.path.clone(),
+        "Task".to_owned(),
+    );
+    link.status = "archived".to_owned();
+    handler.upsert_local_task(link);
+
+    let response = handler
+        .unarchive_task(json!({
+            "taskId": "task-1",
+            "workspacePath": worktree.path,
+        }))
+        .await
+        .expect("restore failure should remain an action response");
+
+    assert_eq!(response["accepted"], false);
+    assert!(response["error"]
+        .as_str()
+        .unwrap()
+        .contains("Worktree snapshot is unavailable"));
+    assert!(!Path::new(response["workspacePath"].as_str().unwrap()).exists());
+    assert_eq!(handler.store.get_task("task-1").unwrap().status, "archived");
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn blocking_worktree_restore_join_failure_is_diagnostic() {
+    let error = super::archives::run_worktree_restore_blocking(|| {
+        panic!("simulated worktree restore panic");
+        #[allow(unreachable_code)]
+        Ok(false)
+    })
+    .await
+    .expect_err("a blocking restore panic should become a diagnostic error");
+
+    assert!(error.contains("Worktree restore task failed"));
+    assert!(error.contains("simulated worktree restore panic"));
+}
+
+#[test]
+fn worktree_restore_helper_keeps_the_async_runtime_responsive() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let runtime_progressed = Arc::new(AtomicBool::new(false));
+    let restore_progress = Arc::clone(&runtime_progressed);
+    let timeout_release = Arc::clone(&runtime_progressed);
+    let (result_tx, result_rx) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let result = runtime.block_on(async move {
+            let async_progress = Arc::clone(&restore_progress);
+            tokio::spawn(async move {
+                tokio::task::yield_now().await;
+                async_progress.store(true, Ordering::SeqCst);
+            });
+            super::archives::run_worktree_restore_blocking(move || {
+                while !restore_progress.load(Ordering::SeqCst) {
+                    std::thread::yield_now();
+                }
+                Ok(true)
+            })
+            .await
+        });
+        result_tx.send(result).unwrap();
+    });
+
+    let result = match result_rx.recv_timeout(Duration::from_secs(2)) {
+        Ok(result) => result,
+        Err(error) => {
+            timeout_release.store(true, Ordering::SeqCst);
+            worker.join().unwrap();
+            panic!("blocking restore starved the async runtime: {error}");
+        }
+    };
+    worker.join().unwrap();
+
+    assert_eq!(result.unwrap(), true);
+}
+
+#[tokio::test]
+async fn automatic_prune_removes_old_archived_worktree_and_preserves_snapshot() {
+    let root = temp_runtime_work_index_path("automatic-worktree-prune").with_extension("directory");
+    let source = root.join("source");
+    let managed_root = root.join("workspace/worktrees");
+    initialize_test_repository(&source);
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(root.join("runtime-work/index.json"));
+    handler.worktrees = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
+    handler
+        .worktrees
+        .update_settings(WorktreeSettingsPatch {
+            worktree_root: Some(managed_root.display().to_string()),
+            auto_cleanup_enabled: Some(true),
+            keep_count: Some(1),
+        })
+        .unwrap();
+    let old = handler
+        .worktrees
+        .prepare(&source, "task-old", None, false)
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(2));
+    let newest = handler
+        .worktrees
+        .prepare(&source, "task-new", None, false)
+        .unwrap();
+    for (task_id, path) in [
+        ("task-old", old.path.as_str()),
+        ("task-new", newest.path.as_str()),
+    ] {
+        let mut link =
+            RuntimeTaskLink::new_pending(task_id.to_owned(), path.to_owned(), task_id.to_owned());
+        link.status = "archived".to_owned();
+        link.updated_at = 1;
+        handler.upsert_local_task(link);
+    }
+
+    let batch = handler
+        .worktrees
+        .prune_auto_batch(&handler.store.list_task_summaries(true))
+        .expect("automatic prune batch should succeed");
+
+    assert_eq!(batch.removed.len(), 1);
+    assert_eq!(batch.removed[0].path, old.path);
+    assert_eq!(batch.removed[0].state, "restorable");
+    assert!(batch.removed[0].snapshot_ref.is_some());
+    assert!(!Path::new(&old.path).exists());
+    assert!(Path::new(&newest.path).exists());
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn restart_reconciliation_fails_interrupted_task_without_starting_runtime() {
+    let root =
+        temp_runtime_work_index_path("restart-worktree-reconciliation").with_extension("directory");
+    let source = root.join("source");
+    let managed_root = root.join("workspace/worktrees");
+    let state_path = root.join("runtime-work/worktrees.json");
+    initialize_test_repository(&source);
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(root.join("runtime-work/index.json"));
+    handler.worktrees = WorktreeManager::new(state_path.clone());
+    handler
+        .worktrees
+        .update_settings(WorktreeSettingsPatch {
+            worktree_root: Some(managed_root.display().to_string()),
+            ..WorktreeSettingsPatch::default()
+        })
+        .unwrap();
+    let record = handler
+        .worktrees
+        .prepare(&source, "task-1", None, false)
+        .unwrap();
+    let mut state = serde_json::from_slice::<Value>(&fs::read(&state_path).unwrap()).unwrap();
+    state["records"]
+        .as_object_mut()
+        .unwrap()
+        .get_mut(&record.path)
+        .expect("prepared record should be persisted")["state"] = json!("preparing");
+    fs::write(&state_path, serde_json::to_vec_pretty(&state).unwrap()).unwrap();
+    let mut link =
+        RuntimeTaskLink::new_pending("task-1".to_owned(), record.path.clone(), "Task".to_owned());
+    link.status = "running".to_owned();
+    link.running = true;
+    handler.upsert_local_task(link);
+
+    handler.reconcile_worktrees_once().await;
+
+    let task = handler
+        .store
+        .get_task("task-1")
+        .expect("interrupted task should remain stored");
+    assert_eq!(task.status, "failed");
+    assert_eq!(task.thread_status, "failed");
+    assert_eq!(task.turn_status.as_deref(), Some("failed"));
+    assert!(!task.running);
+    assert!(task.runtime_handle["lastError"]
+        .as_str()
+        .unwrap()
+        .contains("runtime was not resumed"));
+    assert!(!handler.is_active_local_task("task-1"));
+    let listed = handler
+        .worktrees
+        .list(&handler.store.list_task_summaries(true))
+        .unwrap();
+    assert_eq!(listed[0].0.state, "active");
+    assert!(listed[0]
+        .0
+        .last_error
+        .as_deref()
+        .unwrap()
+        .contains("runtime was not resumed"));
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn restart_reconciliation_fails_active_worktree_without_persisted_queue_turn() {
+    let root = temp_runtime_work_index_path("restart-active-worktree").with_extension("directory");
+    let source = root.join("source");
+    let managed_root = root.join("workspace/worktrees");
+    initialize_test_repository(&source);
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(root.join("runtime-work/index.json"));
+    handler.worktrees = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
+    handler
+        .worktrees
+        .update_settings(WorktreeSettingsPatch {
+            worktree_root: Some(managed_root.display().to_string()),
+            ..WorktreeSettingsPatch::default()
+        })
+        .unwrap();
+    let record = handler
+        .worktrees
+        .prepare(&source, "task-active", None, false)
+        .unwrap();
+    let mut link = RuntimeTaskLink::new_pending(
+        "task-active".to_owned(),
+        record.path.clone(),
+        "Active Worktree".to_owned(),
+    );
+    link.status = "running".to_owned();
+    link.running = true;
+    handler.upsert_local_task(link);
+
+    assert!(handler.reconcile_worktrees_once().await);
+
+    let task = handler
+        .store
+        .get_task("task-active")
+        .expect("active Worktree task should remain diagnosable");
+    assert_eq!(task.status, "failed");
+    assert!(!task.running);
+    assert!(task.runtime_handle["lastError"]
+        .as_str()
+        .unwrap()
+        .contains("runtime was not resumed"));
+    assert!(Path::new(&record.path).exists());
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn restart_reconciliation_fails_queued_worktree_without_starting_runtime() {
+    let root = temp_runtime_work_index_path("restart-queued-worktree").with_extension("directory");
+    let source = root.join("source");
+    let managed_root = root.join("workspace/worktrees");
+    let queue_path = root.join("runtime-work/turn-queue.json");
+    initialize_test_repository(&source);
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(root.join("runtime-work/index.json"));
+    handler.worktrees = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
+    handler.turn_queue_path = Arc::new(queue_path.clone());
+    handler
+        .worktrees
+        .update_settings(WorktreeSettingsPatch {
+            worktree_root: Some(managed_root.display().to_string()),
+            ..WorktreeSettingsPatch::default()
+        })
+        .unwrap();
+    let plan = handler
+        .worktrees
+        .plan(&source, "task-queued", None)
+        .unwrap();
+    let mut link = RuntimeTaskLink::new_pending(
+        "task-queued".to_owned(),
+        plan.path.display().to_string(),
+        "Queued Worktree".to_owned(),
+    );
+    link.runtime_handle = json!({"queuePosition": 1});
+    handler.upsert_local_task(link);
+
+    let mut request = ExecutionRequest {
+        project_workspace_path: Some(plan.path.display().to_string()),
+        ..ExecutionRequest::default()
+    };
+    request.extra.insert(
+        "deferred_worktree_source_path".to_owned(),
+        Value::String(source.display().to_string()),
+    );
+    request.extra.insert(
+        "deferred_worktree_path".to_owned(),
+        Value::String(plan.path.display().to_string()),
+    );
+    let interrupted = VecDeque::from([SpawnTurnRequest {
+        local_task_id: "task-queued".to_owned(),
+        runtime: "codex".to_owned(),
+        request,
+        direct_thread_id: None,
+        fork_thread_id: None,
+        fork_thread_path: None,
+        resume_thread_id: None,
+        initial_thread_name: None,
+        initial_thread_goal: None,
+    }]);
+    write_runtime_turn_queue(&queue_path, &interrupted).unwrap();
+    *handler.interrupted_worktree_turns.lock().await = Some(interrupted);
+
+    assert!(handler.reconcile_worktrees_once().await);
+
+    let task = handler
+        .store
+        .get_task("task-queued")
+        .expect("interrupted queued task should remain diagnosable");
+    assert_eq!(task.status, "failed");
+    assert!(!task.running);
+    assert!(task.runtime_handle.get("queuePosition").is_none());
+    assert!(task.runtime_handle["lastError"]
+        .as_str()
+        .unwrap()
+        .contains("runtime was not resumed"));
+    assert!(!handler.is_active_local_task("task-queued"));
+    assert!(!plan.path.exists());
+    assert!(
+        read_runtime_turn_queue(&queue_path)
+            .expect("reconciled queue should remain readable")
+            .is_empty(),
+        "interrupted Worktree turn must be removed from the persisted queue"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn failed_worktree_reconciliation_remains_retryable() {
+    let root =
+        temp_runtime_work_index_path("restart-reconciliation-retry").with_extension("directory");
+    fs::create_dir_all(&root).unwrap();
+    let blocked_parent = root.join("blocked");
+    fs::write(&blocked_parent, "not a directory").unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.worktrees = WorktreeManager::new(blocked_parent.join("worktrees.json"));
+
+    assert!(!handler.reconcile_worktrees_once().await);
+    assert!(
+        !*handler.worktree_reconciliation_completed.lock().await,
+        "a transient reconciliation failure must not disable later retries"
+    );
+
+    let _ = fs::remove_dir_all(root);
 }
 
 fn start_test_execution(handler: &RuntimeWorkRpcHandler, local_task_id: &str) -> u64 {
@@ -2568,4 +3286,36 @@ fn temp_runtime_work_index_path(label: &str) -> PathBuf {
         std::process::id(),
         now_ms()
     ))
+}
+
+fn initialize_test_repository(path: &Path) {
+    fs::create_dir_all(path).unwrap();
+    for args in [
+        &["init"][..],
+        &["config", "user.name", "Wegent Test"],
+        &["config", "user.email", "test@wegent.local"],
+    ] {
+        run_test_git(path, args);
+    }
+    fs::write(path.join("tracked.txt"), "base\n").unwrap();
+    run_test_git(path, &["add", "."]);
+    run_test_git(path, &["commit", "-m", "base"]);
+}
+
+fn run_test_git(path: &Path, args: &[&str]) {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(path)
+        .args(args)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git -C {} {} failed: {}",
+        path.display(),
+        args.join(" "),
+        String::from_utf8_lossy(&output.stderr)
+    );
 }

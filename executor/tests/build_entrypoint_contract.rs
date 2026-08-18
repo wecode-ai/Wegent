@@ -112,9 +112,23 @@ fn executor_build_entrypoints_use_rust_binary_build() {
     assert!(device_dockerfile
         .contains("ENV LOCAL_WORKSPACE_ROOT=/home/wegent/.wecode/wegent-executor/workspace"));
     assert!(device_dockerfile.contains("ENV WEGENT_WORKSPACE_ROOTS=/home/wegent"));
-    assert!(device_dockerfile.contains(
-        "mkdir -p \"$WEGENT_EXECUTOR_HOME/bin\" \"$LOCAL_WORKSPACE_ROOT\" \"$DEVICE_LOG_DIR\""
-    ));
+    for persistent_path in [
+        "$WEGENT_EXECUTOR_HOME/bin",
+        "$WEGENT_EXECUTOR_HOME/runtime-work",
+        "$WEGENT_EXECUTOR_HOME/capabilities",
+        "$WEGENT_EXECUTOR_HOME/sessions",
+        "$LOCAL_WORKSPACE_ROOT/projects",
+        "$LOCAL_WORKSPACE_ROOT/chats",
+        "$LOCAL_WORKSPACE_ROOT/worktrees",
+        "$DEVICE_LOG_DIR",
+    ] {
+        assert!(device_dockerfile.contains(persistent_path));
+    }
+    assert!(device_dockerfile.contains("WEGENT_EXECUTOR_HOME_EXPECTED_PATH"));
+    assert!(device_dockerfile.contains("WEGENT_EXECUTOR_HOME_ID"));
+    assert!(device_dockerfile.contains(".executor-home-id"));
+    assert!(device_dockerfile.contains("flock -n 9"));
+    assert!(device_dockerfile.contains(".write-probe.$$"));
     assert!(device_dockerfile.contains("auth: none"));
     assert!(device_dockerfile.contains("--auth none"));
     assert!(!device_dockerfile.contains("--auth password"));

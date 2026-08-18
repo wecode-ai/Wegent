@@ -132,6 +132,23 @@ const DEFAULT_MAX_CONCURRENT_TASKS: usize = 10;
 const MIN_MAX_CONCURRENT_TASKS: usize = 1;
 const MAX_MAX_CONCURRENT_TASKS: usize = 20;
 
+fn worktree_error_code(error: &str) -> &'static str {
+    [
+        "worktree_source_missing",
+        "worktree_source_not_git",
+        "worktree_source_changed",
+        "worktree_root_unwritable",
+        "worktree_git_common_dir_unwritable",
+        "worktree_ref_not_found",
+        "worktree_target_conflict",
+        "worktree_device_mismatch",
+        "worktree_persistent_storage_unverified",
+    ]
+    .into_iter()
+    .find(|code| error.starts_with(&format!("{code}:")))
+    .unwrap_or("worktree_prepare_failed")
+}
+
 #[derive(Clone, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SpawnTurnRequest {
@@ -428,6 +445,7 @@ pub struct RuntimeWorkRpcHandler {
     turn_scheduler: Arc<Mutex<RuntimeTurnScheduler>>,
     turn_queue_operation: Arc<AsyncMutex<()>>,
     turn_queue_path: Arc<PathBuf>,
+    interrupted_worktree_turns: Arc<AsyncMutex<Option<VecDeque<SpawnTurnRequest>>>>,
     preparing_worktree_turns: Arc<Mutex<HashMap<String, PreparingWorktreeTurn>>>,
     active_turn_cancellations: Arc<Mutex<HashMap<String, ActiveTurnCancellation>>>,
     active_codex_turns: Arc<Mutex<HashMap<String, ActiveCodexTurn>>>,
@@ -441,6 +459,7 @@ pub struct RuntimeWorkRpcHandler {
     automation_store: AutomationStore,
     store: RuntimeWorkStore,
     worktrees: WorktreeManager,
+    worktree_reconciliation_completed: Arc<AsyncMutex<bool>>,
     worktree_cleanup_generation: Arc<AtomicU64>,
     opened_workspace_roots: Arc<Mutex<HashSet<PathBuf>>>,
     hook_service: HookService,
@@ -460,6 +479,7 @@ struct CodexRuntimeProxyConfig {
 
 struct ActiveTurnCancellation {
     execution_id: u64,
+    stop_requested: bool,
     cancel: oneshot::Sender<()>,
     stopped: oneshot::Receiver<()>,
 }
@@ -540,17 +560,28 @@ impl RuntimeThreadEventRoute {
 impl RuntimeWorkRpcHandler {
     pub fn new(device_id: impl Into<String>, codex_binary: impl Into<String>) -> Self {
         let codex_binary = codex_binary.into();
+        let device_id = normalize_device_id(device_id.into());
         let (archived_delete_tx, archived_delete_rx) = mpsc::unbounded_channel();
         let codex_app_server = CodexAppServerClient::new(codex_binary);
         let runtime_settings = system::read_runtime_settings();
+        let store = RuntimeWorkStore::from_env();
+        let worktrees = WorktreeManager::from_env(&device_id);
         let turn_queue_path = turns::runtime_turn_queue_path();
-        let queued_turns =
+        let restored_turns =
             turns::read_runtime_turn_queue(&turn_queue_path).unwrap_or_else(|error| {
                 log_executor_event("runtime turn queue restore failed", &[("error", error)]);
                 VecDeque::new()
             });
+        let (queued_turns, interrupted_worktree_turns) =
+            turns::partition_restored_turns(&worktrees, restored_turns);
+        if !interrupted_worktree_turns.is_empty() {
+            log_executor_event(
+                "persisted worktree turns quarantined after executor restart",
+                &[("count", interrupted_worktree_turns.len().to_string())],
+            );
+        }
         let handler = Self {
-            device_id: normalize_device_id(device_id.into()),
+            device_id,
             connectors: ConnectorRuntime::new(codex_app_server.clone()),
             codex_app_server,
             claude_process_engine: AgentProcessEngine::new(AgentCommandPlanner::from_env()),
@@ -566,6 +597,7 @@ impl RuntimeWorkRpcHandler {
             ))),
             turn_queue_operation: Arc::new(AsyncMutex::new(())),
             turn_queue_path: Arc::new(turn_queue_path),
+            interrupted_worktree_turns: Arc::new(AsyncMutex::new(Some(interrupted_worktree_turns))),
             preparing_worktree_turns: Arc::new(Mutex::new(HashMap::new())),
             active_turn_cancellations: Arc::new(Mutex::new(HashMap::new())),
             active_codex_turns: Arc::new(Mutex::new(HashMap::new())),
@@ -577,8 +609,9 @@ impl RuntimeWorkRpcHandler {
             notification_router: Arc::new(Mutex::new(None)),
             archived_delete_tx,
             automation_store: AutomationStore::from_env(),
-            store: RuntimeWorkStore::from_env(),
-            worktrees: WorktreeManager::from_env(),
+            store,
+            worktrees,
+            worktree_reconciliation_completed: Arc::new(AsyncMutex::new(false)),
             worktree_cleanup_generation: Arc::new(AtomicU64::new(0)),
             opened_workspace_roots: Arc::new(Mutex::new(HashSet::new())),
             hook_service: HookService::from_env(),
@@ -600,6 +633,7 @@ impl RuntimeWorkRpcHandler {
         if let Some(sender) = handler.event_tx.clone() {
             handler.hook_service.set_event_sender(sender);
         }
+        handler.spawn_startup_worktree_reconciliation();
         handler.start_automation_scheduler();
         handler
     }
@@ -661,7 +695,14 @@ impl RuntimeWorkRpcHandler {
     }
 
     async fn dispatch(&self, method: &str, payload: Value) -> Result<Value, AppIpcError> {
-        self.resume_persisted_turns().await;
+        if !matches!(
+            method,
+            "runtime.worktrees.capabilities" | "runtime.worktrees.preflight"
+        ) {
+            if self.reconcile_worktrees_once().await {
+                self.resume_persisted_turns().await;
+            }
+        }
         match method {
             "runtime.tasks.list" => self.list_tasks().await,
             "runtime.tasks.search" => self.search_tasks(payload).await,
@@ -764,6 +805,8 @@ impl RuntimeWorkRpcHandler {
                 self.archive_project_conversations(payload).await
             }
             "runtime.archived_conversations.archive_all" => self.archive_all_conversations().await,
+            "runtime.worktrees.capabilities" => self.get_worktree_capabilities().await,
+            "runtime.worktrees.preflight" => self.preflight_worktree(payload).await,
             "runtime.worktrees.settings.get" => self.get_worktree_settings().await,
             "runtime.worktrees.settings.update" => self.update_worktree_settings(payload).await,
             "runtime.worktrees.prepare" => self.prepare_worktree(payload).await,

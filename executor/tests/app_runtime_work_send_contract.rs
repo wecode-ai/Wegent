@@ -5,7 +5,7 @@
 use std::{
     fs,
     path::{Path, PathBuf},
-    sync::{Mutex as StdMutex, MutexGuard as StdMutexGuard, OnceLock},
+    sync::{Arc, OnceLock},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -14,20 +14,21 @@ use std::os::unix::fs::PermissionsExt;
 
 use rusqlite::Connection;
 use serde_json::{json, Value};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, Mutex as AsyncMutex, OwnedMutexGuard};
 use wegent_executor::{local::app_ipc::RuntimeWorkHandler, runtime_work::RuntimeWorkRpcHandler};
 
 struct EnvLockGuard {
-    _guard: StdMutexGuard<'static, ()>,
+    _guard: OwnedMutexGuard<()>,
 }
 
 async fn env_lock() -> EnvLockGuard {
-    static LOCK: OnceLock<StdMutex<()>> = OnceLock::new();
+    static LOCK: OnceLock<Arc<AsyncMutex<()>>> = OnceLock::new();
     EnvLockGuard {
         _guard: LOCK
-            .get_or_init(|| StdMutex::new(()))
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()),
+            .get_or_init(|| Arc::new(AsyncMutex::new(())))
+            .clone()
+            .lock_owned()
+            .await,
     }
 }
 
@@ -350,7 +351,7 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
     let _sqlite_home = EnvGuard::set("CODEX_SQLITE_HOME", &sqlite_home.display().to_string());
     write_codex_state_db_thread(&sqlite_home);
     let log_path = temp_path("runtime-send-log", "jsonl");
-    let fake_codex = write_fake_codex_for_turns(&log_path, 2);
+    let fake_codex = write_fake_codex(&log_path);
     let (event_tx, mut events) = broadcast::channel(32);
     let handler = RuntimeWorkRpcHandler::with_event_sender(
         "device-1",
@@ -706,7 +707,7 @@ async fn runtime_tasks_send_goal_does_not_start_a_second_overlapping_turn() {
             .to_string(),
     );
     let log_path = temp_path("runtime-send-goal-log", "jsonl");
-    let fake_codex = write_fake_codex_for_turns(&log_path, 2);
+    let fake_codex = write_fake_codex(&log_path);
     let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
 
     handler
@@ -880,7 +881,7 @@ async fn runtime_tasks_fork_completed_turn_preserves_workspace_and_rejects_missi
             .to_string(),
     );
     let log_path = temp_path("runtime-fork-turn-log", "jsonl");
-    let fake_codex = write_fake_codex_for_turns(&log_path, 2);
+    let fake_codex = write_fake_codex(&log_path);
     let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
 
     let created = handler
@@ -1918,7 +1919,7 @@ async fn runtime_tasks_send_includes_local_text_attachment_content() {
     let _sqlite_home = EnvGuard::set("CODEX_SQLITE_HOME", &sqlite_home.display().to_string());
     write_codex_state_db_thread(&sqlite_home);
     let log_path = temp_path("runtime-send-text-log", "jsonl");
-    let fake_codex = write_fake_codex_for_turns(&log_path, 2);
+    let fake_codex = write_fake_codex(&log_path);
     let (event_tx, mut events) = broadcast::channel(32);
     let handler = RuntimeWorkRpcHandler::with_event_sender(
         "device-1",
@@ -2281,6 +2282,8 @@ async fn queued_worktree_task_does_not_create_worktree_before_slot_is_available(
     let _lock = env_lock().await;
     let executor_home = temp_path("runtime-queued-worktree-home", "dir");
     let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let _device_type = EnvGuard::set("DEVICE_TYPE", "cloud");
+    let _persistent_storage = EnvGuard::set("WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED", "true");
     let _codex_home = EnvGuard::set(
         "CODEX_HOME",
         &temp_path("runtime-queued-worktree-codex-home", "dir")
@@ -2288,7 +2291,7 @@ async fn queued_worktree_task_does_not_create_worktree_before_slot_is_available(
             .to_string(),
     );
     let source = temp_path("runtime-queued-worktree-source", "dir");
-    fs::create_dir_all(&source).unwrap();
+    initialize_git_repository(&source);
     let log_path = temp_path("runtime-queued-worktree-log", "jsonl");
     let fake_codex = write_fake_codex_hanging_turn(&log_path);
     let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
@@ -2377,6 +2380,14 @@ async fn queued_worktree_task_does_not_create_worktree_before_slot_is_available(
         }))
         .await
         .expect("queued task cleanup should succeed");
+    assert!(
+        !planned_path.exists(),
+        "cancelling a queued Worktree task must not leave its planned path"
+    );
+    assert!(
+        !planned_path.parent().unwrap().exists(),
+        "cancelling a queued Worktree task must not leave its task container"
+    );
     handler
         .handle_runtime_rpc(json!({
             "method": "runtime.tasks.cancel",
@@ -2553,7 +2564,7 @@ async fn refreshed_transcript_resumes_the_thread_before_reading_its_snapshot() {
             .to_string(),
     );
     let log_path = temp_path("runtime-transcript-refresh-log", "jsonl");
-    let fake_codex = write_fake_codex_for_turns(&log_path, 2);
+    let fake_codex = write_fake_codex(&log_path);
     let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
 
     handler
@@ -3181,10 +3192,6 @@ async fn runtime_tasks_rollback_replaces_the_source_turn_without_provider_rollba
 }
 
 fn write_fake_codex(log_path: &Path) -> PathBuf {
-    write_fake_codex_for_turns(log_path, 1)
-}
-
-fn write_fake_codex_for_turns(log_path: &Path, exit_after_turns: usize) -> PathBuf {
     let path = temp_path("fake-codex-send", "sh");
     let _ = fs::remove_file(log_path);
     let content = format!(
@@ -3272,15 +3279,11 @@ while IFS= read -r line; do
       printf '%s\n' '{{"method":"item/completed","params":{{"threadId":"thread-1","turnId":"'"$turn_id"'","item":{{"id":"'"$progress_id"'","type":"agentMessage","text":"Inspecting workspace.","phase":"commentary"}}}}}}'
       printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-1","turnId":"'"$turn_id"'","itemId":"'"$final_id"'","delta":"done","phase":"finalAnswer"}}}}'
       printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-1","turn":{{"id":"'"$turn_id"'","status":"completed"}}}}}}'
-      if [ "$turn_count" -ge {} ]; then
-        exit 0
-      fi
       ;;
   esac
 done
 "#,
-        log_path.display(),
-        exit_after_turns
+        log_path.display()
     );
     write_executable(&path, &content);
     path
@@ -4051,6 +4054,49 @@ fn temp_path(prefix: &str, extension: &str) -> PathBuf {
         "{prefix}-{}-{nanos}.{extension}",
         std::process::id(),
     ))
+}
+
+fn initialize_git_repository(path: &Path) {
+    fs::create_dir_all(path).unwrap();
+    for args in [
+        vec!["init"],
+        vec!["config", "user.name", "Wegent Test"],
+        vec!["config", "user.email", "test@wegent.local"],
+    ] {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(path)
+            .args(&args)
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git -C {} {} failed: {}",
+            path.display(),
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    fs::write(path.join("tracked.txt"), "base\n").unwrap();
+    for args in [vec!["add", "."], vec!["commit", "-m", "base"]] {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(path)
+            .args(&args)
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git -C {} {} failed: {}",
+            path.display(),
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }
 
 fn write_codex_state_db_thread(sqlite_home: &Path) {

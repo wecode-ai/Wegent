@@ -7,13 +7,13 @@ import {
   FolderX,
   GitBranch,
   HardDrive,
-  Laptop,
   Search,
   X,
 } from 'lucide-react'
 import {
   useCallback,
   useEffect,
+  useEffectEvent,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -41,15 +41,18 @@ import type {
   RuntimeDeviceWorkspace,
   RuntimeWorkListResponse,
 } from '@/types/api'
+import type { ProjectWorktreeAvailability } from '@/lib/worktree-availability'
 import type { ProjectCreateMode } from '../ChatInput'
 import {
   getMenuVisibleBounds,
   getProjectDeviceId,
   getProjectMenuDeviceLabel,
   getProjectMenuFitHeight,
+  getProjectWorktreeUnavailableMessageKey,
   isLocalProjectWorkspaceDevice,
   isLocalStandaloneDevice,
   resolveProjectExecutionUi,
+  resolveComposerWorktreeAvailability,
 } from './project-work-bar-utils'
 import { useOutsideClick } from './useOutsideClick'
 import { WorktreeBranchSelector } from './WorktreeBranchSelector'
@@ -82,6 +85,7 @@ interface ProjectWorkBarProps {
   pendingProjectWorkspaceProjectId?: number | null
   executionMode: ProjectExecutionMode
   executionModeLocked?: boolean
+  worktreeAvailability?: ProjectWorktreeAvailability
   isGitProject?: boolean
   onSelectProject: (projectId: number | null) => void
   onSelectStandaloneDevice: (deviceId: string | null) => void
@@ -120,6 +124,7 @@ export function ProjectWorkBar({
   pendingProjectWorkspaceProjectId = null,
   executionMode,
   executionModeLocked = false,
+  worktreeAvailability,
   isGitProject,
   onSelectProject,
   onSelectStandaloneDevice,
@@ -245,12 +250,18 @@ export function ProjectWorkBar({
     : null
   const desktopIsGitProject =
     isGitProject ?? Boolean(currentProject && isGitWorkspaceProject(currentProject))
+  const resolvedWorktreeAvailability = resolveComposerWorktreeAvailability({
+    project: currentProject,
+    workspace: selectedDeviceWorkspace,
+    device: selectedWorkspaceDevice,
+    isGitProject: isMobile ? undefined : desktopIsGitProject,
+    availability: worktreeAvailability,
+  })
   const projectExecutionUi = resolveProjectExecutionUi({
     project: currentProject,
     executionMode,
     executionModeLocked,
-    selectedWorkspaceIsRemote,
-    isGitProject: isMobile ? undefined : desktopIsGitProject,
+    worktreeAvailability: resolvedWorktreeAvailability,
   })
   const executionModeOpen =
     projectExecutionUi.canOpenModeMenu && executionModeOpenProjectId === currentProjectId
@@ -314,7 +325,7 @@ export function ProjectWorkBar({
     })
   }, [externalMenuAnchorElement, onCreateProjectMode, open, runtimeProjectChoices.length])
 
-  const updateExecutionModeLayout = useCallback(() => {
+  const updateExecutionModeLayout = useEffectEvent(() => {
     if (!executionModeOpen || typeof window === 'undefined') return
 
     const triggerRect = executionModeButtonRef.current?.getBoundingClientRect()
@@ -330,7 +341,7 @@ export function ProjectWorkBar({
       if (current === placement) return current
       return placement
     })
-  }, [executionModeOpen])
+  })
 
   useLayoutEffect(() => {
     updateMenuLayout()
@@ -338,7 +349,7 @@ export function ProjectWorkBar({
 
   useLayoutEffect(() => {
     updateExecutionModeLayout()
-  }, [updateExecutionModeLayout])
+  }, [executionModeOpen])
 
   useEffect(() => {
     if (!open) return
@@ -356,7 +367,7 @@ export function ProjectWorkBar({
 
     window.addEventListener('resize', updateExecutionModeLayout)
     return () => window.removeEventListener('resize', updateExecutionModeLayout)
-  }, [executionModeOpen, updateExecutionModeLayout])
+  }, [executionModeOpen])
 
   useEffect(() => {
     if (!open) return
@@ -491,6 +502,7 @@ export function ProjectWorkBar({
 
   const handleExecutionModeChange = (mode: ProjectExecutionMode) => {
     if (executionModeLocked) return
+    if (mode === 'git_worktree' && !resolvedWorktreeAvailability.available) return
     if (mode !== executionMode) {
       onExecutionModeChange(mode)
     }
@@ -525,16 +537,16 @@ export function ProjectWorkBar({
     setExecutionModeOpenProjectId(currentProjectId ?? null)
   }
 
-  const executionModeTriggerLabel = selectedWorkspaceIsRemote
-    ? t('workbench.remote_short', '远程')
-    : projectExecutionUi.displayedMode === 'git_worktree'
+  const executionModeTriggerLabel =
+    projectExecutionUi.displayedMode === 'git_worktree'
       ? t('workbench.execution_mode_git_worktree', '新工作树')
-      : t('workbench.execution_mode_current_workspace_trigger', '本地模式')
-  const ExecutionModeTriggerIcon = selectedWorkspaceIsRemote
-    ? Cloud
-    : projectExecutionUi.displayedMode === 'git_worktree'
-      ? GitBranch
-      : Laptop
+      : t('workbench.execution_mode_current_workspace', '当前工作区')
+  const ExecutionModeTriggerIcon =
+    projectExecutionUi.displayedMode === 'git_worktree' ? GitBranch : Folder
+  const worktreeUnavailableMessage =
+    resolvedWorktreeAvailability.reason === 'available'
+      ? null
+      : t(getProjectWorktreeUnavailableMessageKey(resolvedWorktreeAvailability.reason))
 
   const renderMobileSheetHeader = (title: string, subtitle: string, onClose: () => void) => (
     <>
@@ -1040,16 +1052,16 @@ export function ProjectWorkBar({
                       : 'text-text-secondary hover:bg-muted'
                   )}
                 >
-                  <Laptop className="h-4 w-4 shrink-0" />
+                  <Folder className="h-4 w-4 shrink-0" />
                   <span className="min-w-0 flex-1">
-                    {t('workbench.execution_mode_current_workspace', '在本地处理')}
+                    {t('workbench.execution_mode_current_workspace', '当前工作区')}
                   </span>
                   {executionMode === 'current_workspace' && <Check className="h-4 w-4 shrink-0" />}
                 </button>
                 <button
                   type="button"
                   data-testid="execution-mode-git-worktree-button"
-                  disabled={executionModeLocked}
+                  disabled={executionModeLocked || !resolvedWorktreeAvailability.available}
                   onClick={() => handleExecutionModeChange('git_worktree')}
                   className={cn(
                     'flex h-9 w-full items-center gap-3 rounded-lg px-2 text-left text-sm font-medium leading-[18px] disabled:cursor-not-allowed disabled:opacity-60',
@@ -1065,6 +1077,15 @@ export function ProjectWorkBar({
                   </span>
                   {executionMode === 'git_worktree' && <Check className="h-4 w-4 shrink-0" />}
                 </button>
+                {worktreeUnavailableMessage && (
+                  <p
+                    data-testid="execution-mode-worktree-unavailable-reason"
+                    className="px-2 pt-1 text-xs leading-4 text-text-muted"
+                    role="status"
+                  >
+                    {worktreeUnavailableMessage}
+                  </p>
+                )}
               </div>
             </div>
           )}
@@ -1073,12 +1094,14 @@ export function ProjectWorkBar({
             type="button"
             data-testid="execution-mode-button"
             onClick={handleToggleExecutionModeMenu}
+            disabled={executionModeLocked}
             className={cn(
               'flex h-9 min-w-[44px] items-center gap-2 rounded-full px-2 text-sm font-normal leading-[18px] text-text-secondary transition-[background-color,color,box-shadow] hover:bg-background/70 hover:text-text-primary hover:shadow-[0_8px_22px_rgba(0,0,0,0.10)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
               !isMobile && 'w-full',
               isMobile && 'text-base font-medium leading-5',
               executionModeOpen &&
-                'bg-background/70 text-text-primary shadow-[0_8px_22px_rgba(0,0,0,0.10)]'
+                'bg-background/70 text-text-primary shadow-[0_8px_22px_rgba(0,0,0,0.10)]',
+              executionModeLocked && 'cursor-not-allowed opacity-40'
             )}
             aria-expanded={executionModeOpen}
             aria-label={t('workbench.execution_mode_label', '启动模式')}
@@ -1090,10 +1113,9 @@ export function ProjectWorkBar({
         </div>
       )}
       {currentProject &&
-        projectExecutionUi.supportsWorktree &&
         projectExecutionUi.displayedMode === 'current_workspace' &&
-        !selectedWorkspaceIsRemote &&
         !executionModeLocked &&
+        desktopIsGitProject &&
         onListBranches &&
         onCheckoutBranch && (
           <BranchSelector

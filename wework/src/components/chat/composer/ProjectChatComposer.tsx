@@ -328,6 +328,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
             pendingProjectWorkspaceProjectId={projectWork.pendingProjectWorkspaceProjectId}
             executionMode={projectWork.executionMode}
             executionModeLocked={projectWork.executionModeLocked}
+            worktreeAvailability={projectWork.worktreeAvailability}
             isGitProject={projectWork.isGitProject}
             onSelectProject={projectWork.onSelectProject}
             onSelectStandaloneDevice={projectWork.onSelectStandaloneDevice}
@@ -523,6 +524,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
                     currentProjectId: projectWork.currentProjectId,
                     executionMode: projectWork.executionMode,
                     executionModeLocked: projectWork.executionModeLocked,
+                    worktreeAvailability: projectWork.worktreeAvailability,
                     isGitProject: projectWork.isGitProject,
                     projectName: projectWork.currentProject?.name,
                     projects: workspaceMenuProjects,
