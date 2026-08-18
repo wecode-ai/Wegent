@@ -73,6 +73,7 @@ import {
   isExecutable,
   join,
   mkdir,
+  mcpElicitationServerPath,
   randomUUID,
   readFile,
   rename,
@@ -120,6 +121,126 @@ async function waitForSingleProjectByTitle(control, expectedTitle, message, time
   throw new Error(message)
 }
 
+async function waitForWorkbenchDeviceStatus(control, deviceId, expectedStatus, message) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
+    const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    const device = snapshot.workbench?.devices?.find(item => item.device_id === deviceId)
+    if (device?.status === expectedStatus) return
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(message)
+}
+
+async function waitForProjectTitleToRemainAbsent(control, projectTitle, message) {
+  const startedAt = Date.now()
+  let absentSince = null
+  while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
+    const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+    const projectIds = snapshot.testIds
+      .filter(testId => testId.startsWith('project-menu-'))
+      .map(testId => testId.slice('project-menu-'.length))
+    const titles = await Promise.all(
+      projectIds.map(projectId =>
+        control.command('getText', `[data-testid="project-title-${projectId}"]`)
+      )
+    )
+    if (titles.some(title => title.trim() === projectTitle)) {
+      absentSince = null
+    } else {
+      absentSince ??= Date.now()
+      if (Date.now() - absentSince >= COMPOSER_READY_STABILITY_MS * 4) return
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(message)
+}
+
+async function verifyOfflineRemoteProjectRemoval({
+  control,
+  cloudEnvironment,
+  preservedProjectTitle,
+  restartDesktopApp,
+}) {
+  const projectTitle = 'offline-removal-workspace'
+  const workspacePath = join(resultDir, 'remote-docker-executor-home', 'offline-removal-workspace')
+  await mkdir(workspacePath, { recursive: true })
+  await control.command('click', '[data-testid="projects-create-button"]')
+  await control.command('click', '[data-testid="project-create-remote-option"]')
+  await control.command('waitFor', '[data-testid="standalone-remote-device-select"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
+    value: REMOTE_DOCKER_DEVICE_ID,
+  })
+  await waitForControlValue(
+    control,
+    '[data-testid="device-folder-path-input"]',
+    join(resultDir, 'remote-docker-executor-home'),
+    'The offline-removal picker did not load the remote Docker executor home'
+  )
+  await control.command('fill', '[data-testid="device-folder-path-input"]', {
+    value: workspacePath,
+  })
+  await control.command('press', '[data-testid="device-folder-path-input"]', { key: 'Enter' })
+  await waitForFolderPathReady(control, workspacePath)
+  await control.command('clickWhenEnabled', '[data-testid="confirm-device-folder-picker-button"]')
+  await waitForSingleProjectByTitle(
+    control,
+    projectTitle,
+    'The real remote Docker project was not created for offline removal',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
+
+  await cloudEnvironment.stopRemoteDockerExecutorAndWaitOffline()
+  await waitForWorkbenchDeviceStatus(
+    control,
+    REMOTE_DOCKER_DEVICE_ID,
+    'offline',
+    'Wework did not render the remote Docker device as offline'
+  )
+  await captureVerificationScreenshot(control, 'cloud-03a-offline-project-visible.png')
+  const { projectId: offlineProjectId } = await waitForSingleProjectByTitle(
+    control,
+    projectTitle,
+    'The offline remote Docker project changed identity without remaining visible',
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+  await control.command('click', `[data-testid="project-menu-${offlineProjectId}"]`)
+  await control.command('click', `[data-testid="remove-project-${offlineProjectId}"]`)
+  await control.command(
+    'clickWhenEnabled',
+    `[data-testid="remove-project-dialog-${offlineProjectId}-confirm-button"]`
+  )
+  await waitForProjectTitleToRemainAbsent(
+    control,
+    projectTitle,
+    'The offline remote project remained visible after local removal'
+  )
+  await captureVerificationScreenshot(control, 'cloud-03b-offline-project-removed.png')
+
+  await restartDesktopApp()
+  await waitForSingleProjectByTitle(
+    control,
+    preservedProjectTitle,
+    'The restarted Wework app did not restore the existing cloud project',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
+  await waitForWorkbenchDeviceStatus(
+    control,
+    REMOTE_DOCKER_DEVICE_ID,
+    'offline',
+    'The restarted Wework app did not restore the offline device state'
+  )
+  await waitForProjectTitleToRemainAbsent(
+    control,
+    projectTitle,
+    'Restarting Wework restored the locally removed offline project'
+  )
+  await captureVerificationScreenshot(control, 'cloud-03c-offline-project-absent-restart.png')
+  await control.command('dispatchLocalModelSettingsChanged', '')
+}
+
 async function writeCodexConfig(
   codexHome,
   modelServerUrl,
@@ -149,6 +270,19 @@ function toolDetailsMcpConfigToml() {
     '[mcp_servers."github__issues"]',
     `command = ${command}`,
     `args = [${server}, "github__issues"]`,
+    'default_tools_approval_mode = "approve"',
+    '',
+  ].join('\n')
+}
+
+function mcpElicitationConfigToml(evidencePath) {
+  const command = JSON.stringify(process.execPath)
+  const server = JSON.stringify(mcpElicitationServerPath)
+  const evidence = JSON.stringify(evidencePath)
+  return [
+    '[mcp_servers.wegent_sites_interactions]',
+    `command = ${command}`,
+    `args = [${server}, ${evidence}]`,
     'default_tools_approval_mode = "approve"',
     '',
   ].join('\n')
@@ -718,7 +852,17 @@ async function verifyCloudProjectFlow(
     1,
     'The cloud flow did not expose exactly one remote project'
   )
+  const preservedProjectId = projectMenuTestIds[0].slice('project-menu-'.length)
+  const preservedProjectTitle = (
+    await control.command('getText', `[data-testid="project-title-${preservedProjectId}"]`)
+  ).trim()
   await captureVerificationScreenshot(control, 'cloud-03-project-created.png')
+  await verifyOfflineRemoteProjectRemoval({
+    control,
+    cloudEnvironment,
+    preservedProjectTitle,
+    restartDesktopApp,
+  })
   await control.command('navigate', 'body', { value: '/plugins' })
   await control.command('waitFor', '[data-testid="plugins-workspace"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -1237,6 +1381,7 @@ async function waitForMatrixStage(control, model, ...expectedStages) {
 export {
   writeCodexConfig,
   toolDetailsMcpConfigToml,
+  mcpElicitationConfigToml,
   codexUpstreamApiFormat,
   buildExecutor,
   hostCodexTarget,

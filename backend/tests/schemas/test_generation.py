@@ -339,6 +339,24 @@ class TestVideoGenerationConfig:
         assert mode.first_frame_required is True
         assert mode.max_images_first_last == 2
 
+    def test_seedance_25_output_options(self):
+        """Seedance 2.5 request options are preserved."""
+        from app.schemas.generation import VideoGenerationConfig
+
+        config = VideoGenerationConfig(
+            duration=-1,
+            ratio="adaptive",
+            output_format="mov",
+            omni_reference_task_type="edit",
+            priority=9,
+        )
+
+        assert config.duration == -1
+        assert config.ratio == "adaptive"
+        assert config.output_format == "mov"
+        assert config.omni_reference_task_type == "edit"
+        assert config.priority == 9
+
 
 class TestModelSpecWithImageConfig:
     """Tests for ModelSpec with imageConfig field."""

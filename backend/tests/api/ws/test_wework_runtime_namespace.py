@@ -190,8 +190,172 @@ async def test_runtime_request_rejects_executor_failure_envelope(monkeypatch):
         "error": {
             "code": "runtime_rpc_failed",
             "message": "Codex app server restart failed",
+            "retryable": False,
         },
     }
+
+
+@pytest.mark.asyncio
+async def test_runtime_request_preserves_stable_runtime_rpc_error(monkeypatch):
+    namespace = WeworkRuntimeNamespace()
+    monkeypatch.setattr(
+        wework_runtime_namespace.runtime_rpc_service,
+        "call",
+        AsyncMock(
+            side_effect=wework_runtime_namespace.RuntimeRpcError(
+                "Device is offline",
+                code="device_offline",
+                retryable=True,
+                details={"deviceId": "cloud-device"},
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        namespace,
+        "get_session",
+        AsyncMock(return_value={"user_id": 7}),
+    )
+
+    response = await namespace.on_runtime_request(
+        "browser-sid",
+        {
+            "id": "req-1",
+            "device_id": "cloud-device",
+            "method": "runtime.tasks.create",
+            "params": {"message": "hello"},
+        },
+    )
+
+    assert response == {
+        "id": "req-1",
+        "ok": False,
+        "error": {
+            "code": "device_offline",
+            "message": "Device is offline",
+            "retryable": True,
+            "details": {"deviceId": "cloud-device"},
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_runtime_request_preserves_executor_error_code(monkeypatch):
+    namespace = WeworkRuntimeNamespace()
+    monkeypatch.setattr(
+        wework_runtime_namespace.runtime_rpc_service,
+        "call",
+        AsyncMock(
+            return_value={
+                "success": False,
+                "error": {
+                    "code": "workspace_not_git",
+                    "message": "Workspace is not a Git repository",
+                    "retryable": False,
+                },
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        namespace,
+        "get_session",
+        AsyncMock(return_value={"user_id": 7}),
+    )
+
+    response = await namespace.on_runtime_request(
+        "browser-sid",
+        {
+            "id": "req-1",
+            "device_id": "cloud-device",
+            "method": "runtime.worktrees.preflight",
+            "params": {"sourcePath": "/workspace/project"},
+        },
+    )
+
+    assert response["error"] == {
+        "code": "workspace_not_git",
+        "message": "Workspace is not a Git repository",
+        "retryable": False,
+    }
+
+
+@pytest.mark.asyncio
+async def test_device_command_relay_resolves_logical_device_route(monkeypatch):
+    from app.schemas.device import DeviceType
+    from app.services.device.runtime_route import RuntimeRoute
+
+    route = RuntimeRoute(
+        logical_device_id="cloud-logical",
+        runtime_device_id="runtime-cloud",
+        runtime_instance_id="runtime-instance-1",
+        device_type=DeviceType.CLOUD,
+        socket_id="socket-1",
+        online_info={"socket_id": "socket-1"},
+    )
+    monkeypatch.setattr(
+        wework_runtime_namespace.runtime_route_resolver,
+        "resolve",
+        AsyncMock(return_value=route),
+    )
+    execute = AsyncMock(return_value={"success": True, "stdout": "/workspace"})
+    monkeypatch.setattr(
+        wework_runtime_namespace.local_device_command_service,
+        "execute_command",
+        execute,
+    )
+    monkeypatch.setattr(
+        wework_runtime_namespace,
+        "resolve_local_device_command",
+        lambda *_args: SimpleNamespace(command="pwd"),
+    )
+
+    result = await wework_runtime_namespace.relay_ipc_request(
+        user_id=7,
+        device_id="cloud-logical",
+        method="device.execute_command",
+        params={"command_key": "pwd"},
+        timeout_seconds=30,
+    )
+
+    assert result == {"success": True, "stdout": "/workspace"}
+    execute.assert_awaited_once()
+    assert execute.await_args.kwargs["device_id"] == "runtime-cloud"
+
+
+@pytest.mark.asyncio
+async def test_runtime_request_relays_device_command_nonzero_exit(monkeypatch):
+    """A device command that runs but exits non-zero is a valid result.
+
+    ``device.execute_command`` is a pass-through executor command: a
+    ``success: False`` envelope means the command exited non-zero (e.g.
+    ``git_is_worktree`` intentionally exits 1 on a non-git directory), not
+    that the RPC transport failed. It must be relayed verbatim so the client
+    can interpret the exit code, matching the local Tauri IPC path.
+    """
+
+    namespace = WeworkRuntimeNamespace()
+    command_result = {"success": False, "stdout": "false", "stderr": ""}
+    monkeypatch.setattr(
+        wework_runtime_namespace,
+        "relay_ipc_request",
+        AsyncMock(return_value=command_result),
+    )
+    monkeypatch.setattr(
+        namespace,
+        "get_session",
+        AsyncMock(return_value={"user_id": 7}),
+    )
+
+    response = await namespace.on_runtime_request(
+        "browser-sid",
+        {
+            "id": "req-1",
+            "device_id": "cloud-device",
+            "method": "device.execute_command",
+            "params": {"command_key": "git_is_worktree", "args": ["/home/ubuntu"]},
+        },
+    )
+
+    assert response == {"id": "req-1", "ok": True, "result": command_result}
 
 
 @pytest.mark.asyncio
@@ -362,6 +526,48 @@ async def test_project_chat_wegent_continue_dispatches_native_turn(monkeypatch):
             "taskId": "task-1",
             "triggerMessageId": "user-message-6",
             "agentId": "agent-1",
+        },
+    )
+
+    assert response == {"ok": True, "result": message}
+    start.assert_awaited_once()
+    namespace.emit.assert_awaited_once_with(
+        "wework:project_chat:message:created",
+        message,
+        room="wework-project-chat:task:project-1:task-1",
+    )
+
+
+@pytest.mark.asyncio
+async def test_project_chat_manager_continue_opens_custom_manager_reply(monkeypatch):
+    namespace = WeworkRuntimeNamespace()
+    assert (
+        namespace._event_handlers["wework:project_chat:manager:continue"]
+        == "on_project_chat_manager_continue"
+    )
+    message = {
+        "sequenceNumber": 8,
+        "messageId": "manager-continuation-8",
+        "projectId": "project-1",
+        "taskId": "task-1",
+        "status": "streaming",
+    }
+    monkeypatch.setattr(
+        namespace,
+        "get_session",
+        AsyncMock(return_value={"user_id": 7, "user_name": "Ada"}),
+    )
+    monkeypatch.setattr(namespace, "emit", AsyncMock())
+    start = AsyncMock(return_value=message)
+    monkeypatch.setattr(wework_runtime_namespace, "run_sync_in_executor", start)
+
+    response = await namespace.on_project_chat_manager_continue(
+        "browser-sid",
+        {
+            "projectId": "project-1",
+            "taskId": "task-1",
+            "triggerMessageId": "user-message-7",
+            "managerMessageId": "manager-message-1",
         },
     )
 

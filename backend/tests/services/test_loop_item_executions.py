@@ -1155,6 +1155,9 @@ def test_recovery_scan_repairs_terminal_automation_projection(
         priority="medium",
         automation_context={"run_id": str(run.id)},
     )
+    assert execution.team_id == 0
+    assert execution.backend_task_id == 0
+    assert execution.executor_type == "automation_manager"
     run.metadata_json = {
         "trigger": "event",
         "activity_message_id": message_id,
@@ -1734,11 +1737,20 @@ def test_open_execution_activity_is_idempotent_and_opens_exactly_one_message(
     first = loop_item_execution_service.open_execution_activity(
         test_db, execution=claimed
     )
+    assert first is not None
+    original_sender = (first.sender["id"], first.sender["name"], first.agent_id)
+    bot.title = "Renamed after activity creation"
+    test_db.commit()
     second = loop_item_execution_service.open_execution_activity(
         test_db, execution=claimed
     )
-    assert first is not None and second is not None
+    assert second is not None
     assert first.message_id == second.message_id
+    assert (
+        second.sender["id"],
+        second.sender["name"],
+        second.agent_id,
+    ) == original_sender
     messages = (
         test_db.query(ProjectChatMessage)
         .filter(
@@ -3336,7 +3348,7 @@ def test_custom_manager_assignment_survives_manager_transport_failure(
     assert run.assignee_agent_id == agent.id
     assert activity.status == "completed"
     assert activity.sender_id == f"automation_manager:{rule.id}"
-    assert activity.sender_name == "Execution Bot"
+    assert activity.sender_name == "自定义 AI 调度员"
     assert activity.agent_id == ""
     assert activity.metadata_json["selected_assignee_type"] == "agent"
     assert activity.metadata_json["selected_assignee_id"] == agent.id

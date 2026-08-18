@@ -23,7 +23,12 @@ import {
   relative,
 } from './shared.mjs'
 
-import { captureVerificationScreenshot, waitForAttribute } from './workspace-flows.mjs'
+import {
+  captureVerificationScreenshot,
+  normalizeComposerText,
+  waitForAttribute,
+  waitForWorkbenchDebugState,
+} from './workspace-flows.mjs'
 
 async function waitForTelemetrySilence(control, options = {}) {
   const { intervalMs = 100, silenceMs = 500, maxWaitMs = 3_500 } = options
@@ -665,111 +670,181 @@ async function verifySitesPluginAutoInstall(control) {
   await control.command('waitFor', '[data-testid="site-row-prj_e2e_product"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await control.command('click', '[data-testid="applications-tab-miniapp"]')
-  await control.command('waitFor', '[data-testid="mini-program-row-prj_e2e_mini"]', {
-    text: 'E2E Mini Program',
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
-  await captureVerificationScreenshot(control, 'plugins-05-applications-mini-program-list.png')
 
+  const siteInstallPath = '/api/plugins/builtin/wegent-sites/ensure-installed'
+  const siteContinueCanonical =
+    '[E2E Product Site](wegent-sites-project://prj_e2e_product) 请说出你要做的改动'
+  const siteContinueVisible = 'E2E Product Site 请说出你要做的改动'
+  const continueIdentity = await captureApplicationChatIdentity(control)
+  const siteInstallRequestsBeforeContinue = applicationInstallRequestCount(control, siteInstallPath)
+  await control.command(
+    'clickWhenEnabled',
+    '[data-testid="site-continue-development-prj_e2e_product"]',
+    {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  await assertFreshApplicationDraft(control, {
+    before: continueIdentity,
+    canonical: siteContinueCanonical,
+    visible: siteContinueVisible,
+    message: 'Continuing a Site did not open a fresh task with the expected draft',
+  })
+  assert.equal(
+    applicationInstallRequestCount(control, siteInstallPath) - siteInstallRequestsBeforeContinue,
+    1,
+    'Continuing a Site did not install the Site plugin on demand'
+  )
+  const siteLinkSelector = `${ACTIVE_COMPOSER_SELECTOR} [data-testid="composer-link-chip"]`
+  assert.equal(await control.command('getText', siteLinkSelector), 'E2E Product Site')
+  assert.equal(
+    await control.command('getAttribute', siteLinkSelector, { value: 'data-composer-link-url' }),
+    'wegent-sites-project://prj_e2e_product'
+  )
+  assert.equal(
+    await control.command('getAttribute', siteLinkSelector, {
+      value: 'data-composer-link-provider',
+    }),
+    'wegent-sites-project'
+  )
+  await assertNoSitesCreateError(control)
+  await captureVerificationScreenshot(control, 'plugins-05-site-continue-fresh-task.png')
+
+  await navigateToApplications(control)
+  const siteCreateIdentity = await captureApplicationChatIdentity(control)
+  const siteInstallRequestsBeforeCreate = applicationInstallRequestCount(control, siteInstallPath)
   await control.command('clickWhenEnabled', '[data-testid="sites-create-button"]', {
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  const miniProgramInstallRequestsBefore = control.httpRequests.filter(
-    request =>
-      request.method === 'POST' &&
-      request.pathname === '/api/plugins/builtin/weibo-miniapp-h5-develop-agent/ensure-installed'
-  ).length
+  await control.command('clickWhenEnabled', '[data-testid="sites-create-site-menu-item"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await assertFreshApplicationDraft(control, {
+    before: siteCreateIdentity,
+    canonical:
+      '[$快速建站](plugin://wegent-sites@wegent) Build an internal website and validate it locally',
+    visible: '快速建站 Build an internal website and validate it locally',
+    message: 'Creating a Site did not open a fresh task with the expected plugin draft',
+  })
+  assert.equal(
+    applicationInstallRequestCount(control, siteInstallPath) - siteInstallRequestsBeforeCreate,
+    0,
+    'Creating a Site should reuse the plugin installed by Continue Developing'
+  )
+  await assertPluginComposerChip(control, 'wegent-sites')
+  await assertNoSitesCreateError(control)
+  await captureVerificationScreenshot(control, 'plugins-06-site-create-fresh-task.png')
+
+  await navigateToApplications(control, 'miniapp')
+  await control.command('waitFor', '[data-testid="mini-program-row-prj_e2e_mini"]', {
+    text: 'E2E Mini Program',
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  const miniProgramInstallPath =
+    '/api/plugins/builtin/weibo-miniapp-h5-develop-agent/ensure-installed'
+  const miniProgramIdentity = await captureApplicationChatIdentity(control)
+  const miniProgramInstallRequestsBefore = applicationInstallRequestCount(
+    control,
+    miniProgramInstallPath
+  )
+  await control.command('clickWhenEnabled', '[data-testid="sites-create-button"]', {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('clickWhenEnabled', '[data-testid="sites-create-mini-program-menu-item"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await waitForSnapshot(
-    control,
-    snapshot => snapshot.text.includes('创建并发布一个小程序'),
-    'Creating a Mini Program did not place the requested application prompt in the composer',
-    WORKBENCH_READY_TIMEOUT_MS,
-    ACTIVE_COMPOSER_SELECTOR
-  )
-  const composerText = await control.command('getText', ACTIVE_COMPOSER_SELECTOR)
-  assert.match(
-    composerText,
-    /创建并发布一个小程序/,
-    'Creating a Mini Program did not place the requested application prompt in the composer'
-  )
-  const miniProgramInstallRequestsAfter = control.httpRequests.filter(
-    request =>
-      request.method === 'POST' &&
-      request.pathname === '/api/plugins/builtin/weibo-miniapp-h5-develop-agent/ensure-installed'
-  ).length
+  await assertFreshApplicationDraft(control, {
+    before: miniProgramIdentity,
+    canonical:
+      '[$微博小程序H5开发助手](plugin://weibo-miniapp-h5-develop-agent@wegent) 创建并发布一个小程序',
+    visible: '微博小程序H5开发助手 创建并发布一个小程序',
+    message: 'Creating a Mini Program did not open a fresh task with the expected plugin draft',
+  })
   assert.equal(
-    miniProgramInstallRequestsAfter - miniProgramInstallRequestsBefore,
+    applicationInstallRequestCount(control, miniProgramInstallPath) -
+      miniProgramInstallRequestsBefore,
     1,
     'Creating a Mini Program did not install its application plugin on demand'
   )
-  await control.command('navigate', 'body', { value: '/sites' })
-  await control.command('waitFor', '[data-testid="sites-create-button"]', {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
-  await control.command('click', '[data-testid="applications-tab-miniapp"]')
-  await control.command('waitFor', '[data-testid="mini-program-row-prj_e2e_mini"]', {
-    text: 'E2E Mini Program',
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
-  const miniProgramReuseRequestsBefore = control.httpRequests.filter(
-    request =>
-      request.method === 'POST' &&
-      request.pathname === '/api/plugins/builtin/weibo-miniapp-h5-develop-agent/ensure-installed'
+  await assertPluginComposerChip(control, 'weibo-miniapp-h5-develop-agent')
+  await assertNoSitesCreateError(control)
+  await captureVerificationScreenshot(control, 'plugins-07-mini-program-create-fresh-task.png')
+}
+
+function applicationInstallRequestCount(control, pathname) {
+  return control.httpRequests.filter(
+    request => request.method === 'POST' && request.pathname === pathname
   ).length
-  await control.command('clickWhenEnabled', '[data-testid="sites-create-button"]', {
-    stableMs: COMPOSER_READY_STABILITY_MS,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+}
+
+async function captureApplicationChatIdentity(control) {
+  const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+  return {
+    currentProjectId: snapshot.workbench?.currentProject?.id ?? null,
+    currentRuntimeTaskId: snapshot.workbench?.currentRuntimeTask?.taskId ?? null,
+    scopeKey: snapshot.workbench?.composer?.scopeKey,
+    standaloneChatKey: snapshot.workbench?.composer?.standaloneChatKey,
+  }
+}
+
+async function assertFreshApplicationDraft(control, { before, canonical, visible, message }) {
+  await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await control.command('clickWhenEnabled', '[data-testid="sites-create-mini-program-menu-item"]', {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await waitForSnapshot(
+  await waitForWorkbenchDebugState(
     control,
-    reuseSnapshot => reuseSnapshot.text.includes('创建并发布一个小程序'),
-    'Recreating a Mini Program did not reuse the installed application plugin',
-    WORKBENCH_READY_TIMEOUT_MS,
-    ACTIVE_COMPOSER_SELECTOR
+    snapshot =>
+      snapshot.workbench?.composer?.standaloneChatKey === before.standaloneChatKey + 1 &&
+      snapshot.workbench?.composer?.scopeKey !== before.scopeKey &&
+      snapshot.workbench?.composer?.currentInputLength === canonical.length &&
+      snapshot.workbench?.currentRuntimeTask === null &&
+      (snapshot.workbench?.currentProject?.id ?? null) === before.currentProjectId,
+    message
   )
-  const miniProgramReuseRequestsAfter = control.httpRequests.filter(
-    request =>
-      request.method === 'POST' &&
-      request.pathname === '/api/plugins/builtin/weibo-miniapp-h5-develop-agent/ensure-installed'
-  ).length
+  const startedAt = Date.now()
+  let actual = ''
+  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    actual = normalizeComposerText(await control.command('getText', ACTIVE_COMPOSER_SELECTOR))
+    if (actual === visible) return
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  assert.equal(actual, visible, message)
+}
+
+async function assertPluginComposerChip(control, pluginName) {
+  const selector = `${ACTIVE_COMPOSER_SELECTOR} [data-testid="composer-plugin-chip-${pluginName}"]`
+  await control.command('waitFor', selector, { timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
   assert.equal(
-    miniProgramReuseRequestsAfter - miniProgramReuseRequestsBefore,
-    0,
-    'Creating a Mini Program again should reuse the installed application plugin'
+    await control.command('getAttribute', selector, { value: 'data-composer-plugin-name' }),
+    pluginName
   )
+  assert.equal(
+    await control.command('getAttribute', selector, {
+      value: 'data-composer-plugin-marketplace',
+    }),
+    'wegent'
+  )
+}
+
+async function assertNoSitesCreateError(control) {
   const snapshot = JSON.parse(await control.command('snapshot', 'body'))
   assert.equal(
     snapshot.testIds.includes('sites-create-error'),
     false,
-    'The Sites page reported an installation error after opening the plugin in chat'
+    'The Applications flow reported a plugin installation error'
   )
-  await captureVerificationScreenshot(control, 'plugins-05-application-plugin-installed.png')
+}
 
-  const miniProgramPluginSelector =
-    '[data-testid="composer-plugin-chip-weibo-miniapp-h5-develop-agent"]'
-  await control.command('waitFor', miniProgramPluginSelector, {
+async function navigateToApplications(control, tab = 'web') {
+  await control.command('navigate', 'body', { value: '/sites' })
+  await control.command('waitFor', '[data-testid="sites-create-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await control.command('click', miniProgramPluginSelector)
-  await control.command('waitFor', '[data-testid="plugin-detail-back-button"]', {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
-  await waitForSnapshot(
-    control,
-    detailSnapshot =>
-      detailSnapshot.text.includes('小程序') &&
-      detailSnapshot.testIds.includes('plugin-detail-back-button'),
-    'Clicking the Mini Program plugin mention did not open its plugin detail page'
-  )
-  await captureVerificationScreenshot(control, 'plugins-06-mini-program-detail.png')
+  if (tab === 'miniapp') {
+    await control.command('click', '[data-testid="applications-tab-miniapp"]')
+  }
 }
 
 function sitesMarketplacePlugin(installed) {
@@ -777,7 +852,7 @@ function sitesMarketplacePlugin(installed) {
     id: 501,
     remotePluginId: 'wegent~Plugin_501',
     name: 'wegent-sites',
-    displayName: '站点',
+    displayName: '快速建站',
     description: 'Build and deploy websites with Wegent Sites',
     version: '0.1.0',
     author: 'Wegent Team',
@@ -788,7 +863,7 @@ function sitesMarketplacePlugin(installed) {
     installedPluginId: installed ? 601 : null,
     sourceType: 'marketplace',
     interface: {
-      displayName: '站点',
+      displayName: '快速建站',
       shortDescription: 'Build and deploy sites with Wegent',
       category: 'Productivity',
       defaultPrompt: ['Build an internal website and validate it locally'],
@@ -832,7 +907,7 @@ function installedSitesPlugin() {
         catalogItemId: '501',
         marketplace: 'wegent',
       },
-      displayName: '站点',
+      displayName: '快速建站',
       description: marketplacePlugin.description,
       version: marketplacePlugin.version,
       author: marketplacePlugin.author,
@@ -849,7 +924,10 @@ function installedSitesPlugin() {
       },
       sourcePayload: { filename: 'wegent-sites.zip' },
     },
-    status: { state: 'Available' },
+    status: {
+      state: 'Available',
+      devices: [{ deviceId: 'local-device', state: 'installed' }],
+    },
   }
 }
 
@@ -858,7 +936,7 @@ function miniProgramMarketplacePlugin(installed) {
     id: 502,
     remotePluginId: 'wegent~Plugin_502',
     name: 'weibo-miniapp-h5-develop-agent',
-    displayName: '微博小程序开发助手',
+    displayName: '微博小程序H5开发助手',
     description: 'Build and publish mini programs',
     version: '0.1.0',
     author: 'Wegent Team',
@@ -869,7 +947,7 @@ function miniProgramMarketplacePlugin(installed) {
     installedPluginId: installed ? 602 : null,
     sourceType: 'marketplace',
     interface: {
-      displayName: '微博小程序开发助手',
+      displayName: '微博小程序H5开发助手',
       shortDescription: 'Build and publish mini programs with Wegent',
       category: 'Productivity',
       defaultPrompt: ['创建并发布一个小程序'],
@@ -913,7 +991,7 @@ function installedMiniProgramPlugin() {
         catalogItemId: '502',
         marketplace: 'wegent',
       },
-      displayName: '微博小程序开发助手',
+      displayName: '微博小程序H5开发助手',
       description: marketplacePlugin.description,
       version: marketplacePlugin.version,
       author: marketplacePlugin.author,

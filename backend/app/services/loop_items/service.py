@@ -62,6 +62,9 @@ from app.services.loop_item_status_history import (
     project_board_statuses,
     write_status_change,
 )
+from app.services.loop_items.assignment_notification import (
+    notify_project_task_assignee,
+)
 from app.services.project_automation_domain import runnable_wegent_team
 from app.services.project_chat.service import ProjectChatService, bot_config
 from app.stores.tasks import task_store
@@ -1015,12 +1018,14 @@ class LoopItemService:
         queue.
         """
 
-        self._require_internal_task_project(
+        access = self._require_internal_task_project(
             db, project_id, user_id, BaseRole.Maintainer
         )
+        project = access.project
         item = self.get(db, item_id, user_id)
         if item.cloud_project_id != str(project_id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
+        previous_assignee_user_id = item.assignee_user_id
         metadata = dict(item.metadata_json or {})
         if values.assignee_type == "agent":
             agent = db.get(ProjectChatAgent, values.assignee_id)
@@ -1159,6 +1164,20 @@ class LoopItemService:
                     project_id=str(project_id),
                     agent_id=agent.id,
                 )
+        elif (
+            values.assignee_type == "user"
+            and target_user_id != user_id
+            and previous_assignee_user_id != target_user_id
+        ):
+            assigner = db.get(User, user_id)
+            notify_project_task_assignee(
+                user_id=target_user_id,
+                project_id=str(project_id),
+                project_name=project.name or "",
+                item_id=item.id,
+                item_title=item.title or item.id,
+                assigner_name=assigner.user_name if assigner else str(user_id),
+            )
         return updated
 
     def approve_run(
@@ -1935,9 +1954,7 @@ class LoopItemService:
                 cancelled.status == "cancel_requested"
                 and cancelled.runtime_device_id
                 and cancelled.runtime_task_id
-            ) or (
-                cancelled.team_id is not None and cancelled.backend_task_id is not None
-            ):
+            ) or (cancelled.team_id and cancelled.backend_task_id):
                 cancelled_runs.append(cancelled)
         if target_type == "agent" and agent is not None:
             config = bot_config(agent)

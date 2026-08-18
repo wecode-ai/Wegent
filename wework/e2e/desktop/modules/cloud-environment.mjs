@@ -17,6 +17,7 @@ import {
   appendFile,
   appendProcessOutput,
   assert,
+  commandOutput,
   createServer,
   dirname,
   fetchJson,
@@ -166,6 +167,8 @@ class RealCloudEnvironment {
     this.redisLogPath = join(resultDir, 'cloud-redis.log')
     this.remoteExecutorLogPath = join(resultDir, 'cloud-executor.log')
     this.remoteDockerExecutorLogPath = join(resultDir, 'remote-docker-executor.log')
+    this.remoteExecutorRuntimeLogPath = join(resultDir, 'cloud-executor-runtime.log')
+    this.remoteDockerExecutorRuntimeLogPath = join(resultDir, 'remote-docker-executor-runtime.log')
     this.pluginObjectStorage = new LocalPluginObjectStorage()
     await this.pluginObjectStorage.start()
 
@@ -352,6 +355,7 @@ class RealCloudEnvironment {
       WEGENT_EXECUTOR_HOME: home,
       WEGENT_EXECUTOR_LOG_DIR: resultDir,
       WEGENT_EXECUTOR_LOG_FILE: logFile,
+      WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED: 'true',
       EXECUTOR_MODE: 'local',
       WEGENT_BACKEND_URL: this.backendUrl,
       WEGENT_SOCKET_URL: this.socketUrl,
@@ -376,7 +380,7 @@ class RealCloudEnvironment {
     this.remoteDockerCodexHome = join(remoteDockerHome, 'codex')
     await writeCodexConfig(this.remoteCodexHome, this.modelServerUrl, this.scenarioConfigToml)
     await writeCodexConfig(this.remoteDockerCodexHome, this.modelServerUrl)
-    const remoteEnv = this.executorEnv({
+    this.remoteExecutorEnv = this.executorEnv({
       deviceId: CLOUD_DEVICE_ID,
       deviceName: 'Wework E2E Cloud Device',
       deviceType: 'cloud',
@@ -384,7 +388,7 @@ class RealCloudEnvironment {
       codexHome: this.remoteCodexHome,
       logFile: 'cloud-executor-runtime.log',
     })
-    const remoteDockerEnv = this.executorEnv({
+    this.remoteDockerExecutorEnv = this.executorEnv({
       deviceId: REMOTE_DOCKER_DEVICE_ID,
       deviceName: 'Wework E2E Remote Docker Device',
       deviceType: 'remote',
@@ -392,30 +396,163 @@ class RealCloudEnvironment {
       codexHome: this.remoteDockerCodexHome,
       logFile: 'remote-docker-executor-runtime.log',
     })
-    delete remoteEnv.WEGENT_APP_IPC_DEVICE_ID
-    delete remoteDockerEnv.WEGENT_APP_IPC_DEVICE_ID
-    this.remoteExecutor = spawn(executorBinary, [], {
-      cwd: weworkDir,
-      env: remoteEnv,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      detached: process.platform !== 'win32',
-    })
-    this.remoteDockerExecutor = spawn(executorBinary, [], {
-      cwd: weworkDir,
-      env: remoteDockerEnv,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      detached: process.platform !== 'win32',
-    })
-    await Promise.all([
-      appendProcessOutput(this.remoteExecutor.stdout, this.remoteExecutorLogPath),
-      appendProcessOutput(this.remoteExecutor.stderr, this.remoteExecutorLogPath),
-      appendProcessOutput(this.remoteDockerExecutor.stdout, this.remoteDockerExecutorLogPath),
-      appendProcessOutput(this.remoteDockerExecutor.stderr, this.remoteDockerExecutorLogPath),
-    ])
+    delete this.remoteExecutorEnv.WEGENT_APP_IPC_DEVICE_ID
+    delete this.remoteDockerExecutorEnv.WEGENT_APP_IPC_DEVICE_ID
+    this.remoteExecutor = await this.spawnExecutor(
+      this.remoteExecutorEnv,
+      this.remoteExecutorLogPath
+    )
+    this.remoteDockerExecutor = await this.spawnExecutor(
+      this.remoteDockerExecutorEnv,
+      this.remoteDockerExecutorLogPath
+    )
     await Promise.all([
       this.waitForDevice(CLOUD_DEVICE_ID, this.remoteExecutorLogPath),
       this.waitForDevice(REMOTE_DOCKER_DEVICE_ID, this.remoteDockerExecutorLogPath),
     ])
+  }
+
+  async spawnExecutor(env, logPath) {
+    const executor = spawn(this.executorBinary, [], {
+      cwd: weworkDir,
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: process.platform !== 'win32',
+    })
+    await Promise.all([
+      appendProcessOutput(executor.stdout, logPath),
+      appendProcessOutput(executor.stderr, logPath),
+    ])
+    return executor
+  }
+
+  async device(deviceId) {
+    const devices = await fetchJson(`${this.backendUrl}/api/devices`, {
+      headers: { Authorization: `Bearer ${this.authToken}` },
+    })
+    return devices.items?.find(device => device.device_id === deviceId) ?? null
+  }
+
+  async worktreeCapabilities(deviceId = CLOUD_DEVICE_ID) {
+    return fetchJson(`${this.backendUrl}/api/runtime-work/worktrees/capabilities`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.authToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ deviceId }),
+    })
+  }
+
+  async worktreePreflight(sourcePath, ref = null, deviceId = CLOUD_DEVICE_ID) {
+    return fetchJson(`${this.backendUrl}/api/runtime-work/worktrees/preflight`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.authToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        deviceId,
+        sourcePath,
+        ...(ref ? { ref } : {}),
+      }),
+    })
+  }
+
+  async runtimeWork() {
+    return fetchJson(`${this.backendUrl}/api/runtime-work`, {
+      headers: { Authorization: `Bearer ${this.authToken}` },
+    })
+  }
+
+  async runtimeTask(taskId) {
+    const work = await this.runtimeWork()
+    const workspaces = [
+      ...(work.projects ?? []).flatMap(project => project.deviceWorkspaces ?? []),
+      ...(work.chats ?? []),
+    ]
+    return workspaces
+      .flatMap(workspace => workspace.tasks ?? [])
+      .find(task => task.taskId === taskId)
+  }
+
+  async updateRuntimeSettings(maxConcurrentTasks, deviceId = CLOUD_DEVICE_ID) {
+    return fetchJson(
+      `${this.backendUrl}/api/devices/${encodeURIComponent(deviceId)}/runtime-settings`,
+      {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${this.authToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ max_concurrent_tasks: maxConcurrentTasks }),
+      }
+    )
+  }
+
+  async runtimeSettings(deviceId = CLOUD_DEVICE_ID) {
+    return fetchJson(
+      `${this.backendUrl}/api/devices/${encodeURIComponent(deviceId)}/runtime-settings`,
+      {
+        headers: { Authorization: `Bearer ${this.authToken}` },
+      }
+    )
+  }
+
+  terminalSessionRecords() {
+    const keys = commandOutput('redis-cli', [
+      '-p',
+      String(this.redisPort),
+      '--raw',
+      '--scan',
+      '--pattern',
+      'terminal_session:*',
+    ])
+      .split(/\r?\n/u)
+      .map(value => value.trim())
+      .filter(Boolean)
+    return keys.map(key => {
+      const serialized = commandOutput('redis-cli', [
+        '-p',
+        String(this.redisPort),
+        '--raw',
+        'GET',
+        key,
+      ])
+      return JSON.parse(serialized)
+    })
+  }
+
+  async restartCloudExecutor() {
+    assert.ok(this.remoteExecutorEnv, 'The cloud Executor environment is not initialized')
+    const previousDevice = await this.device(CLOUD_DEVICE_ID)
+    const previousInstanceId = previousDevice?.runtime_instance_id
+    const previousLog = await readFile(this.remoteExecutorLogPath, 'utf8').catch(() => '')
+    await stopProcessGroup(this.remoteExecutor)
+    this.remoteExecutor = await this.spawnExecutor(
+      this.remoteExecutorEnv,
+      this.remoteExecutorLogPath
+    )
+
+    const startedAt = Date.now()
+    while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
+      const device = await this.device(CLOUD_DEVICE_ID)
+      const currentLog = await readFile(this.remoteExecutorLogPath, 'utf8').catch(() => '')
+      if (device?.status === 'online' && currentLog.length > previousLog.length) {
+        assert.equal(
+          device.runtime_instance_id,
+          previousInstanceId,
+          'Restarting the same cloud Executor home changed its stable runtime identity'
+        )
+        return {
+          previousInstanceId,
+          runtimeInstanceId: device.runtime_instance_id,
+          logOffset: previousLog.length,
+        }
+      }
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
+    }
+    throw new Error('The restarted cloud Executor did not reconnect with its stable identity')
   }
 
   async startGeneratedRemoteDevice({ deviceId, deviceName, authToken }) {
@@ -618,19 +755,39 @@ class RealCloudEnvironment {
   }
 
   async waitForDevice(deviceId, logPath) {
+    await this.waitForDeviceStatus(deviceId, 'online', logPath)
+  }
+
+  async waitForDeviceStatus(deviceId, expectedStatus, logPath) {
     const startedAt = Date.now()
     while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
-      const response = await fetch(`${this.backendUrl}/api/devices`, {
-        headers: { Authorization: `Bearer ${this.authToken}` },
-      })
-      if (response.ok) {
-        const devices = await response.json()
-        const device = devices.items?.find(item => item.device_id === deviceId)
-        if (device?.status === 'online') return
+      try {
+        const response = await fetch(`${this.backendUrl}/api/devices`, {
+          headers: { Authorization: `Bearer ${this.authToken}` },
+        })
+        if (response.ok) {
+          const devices = await response.json()
+          const device = devices.items?.find(item => item.device_id === deviceId)
+          if (device?.status === expectedStatus) return device
+        }
+      } catch {
+        // The backend may briefly reset a readiness connection while executors register.
       }
       await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
     }
-    throw new Error(`Real ${deviceId} executor did not register; see ${logPath}`)
+    throw new Error(`Real ${deviceId} executor did not reach ${expectedStatus}; see ${logPath}`)
+  }
+
+  async stopRemoteDockerExecutorAndWaitOffline() {
+    assert.ok(this.remoteDockerExecutor, 'Remote Docker executor is not running')
+    const remoteDockerExecutor = this.remoteDockerExecutor
+    this.remoteDockerExecutor = null
+    await stopProcessGroup(remoteDockerExecutor)
+    await this.waitForDeviceStatus(
+      REMOTE_DOCKER_DEVICE_ID,
+      'offline',
+      this.remoteDockerExecutorLogPath
+    )
   }
 
   async waitForWorkspaceRemoved(workspacePath) {

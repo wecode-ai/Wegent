@@ -154,7 +154,7 @@ test.describe('Provider-native binding state and contracts', () => {
     await knowledge.selectDingTalkDocuments(['doc-d1'])
     await knowledge.sendMessage(firstPrompt)
     const taskId = await knowledge.waitForTaskId()
-    await waitForTaskTerminal(request, resources.token, taskId)
+    await waitForTaskTerminal(resources.token, taskId)
 
     const beforeResponse = await request.get(
       `${PROVIDER_NATIVE_API_URL}/api/tasks/${taskId}/external-knowledge-refs`,
@@ -207,7 +207,7 @@ test.describe('Provider-native binding state and contracts', () => {
     )
     await knowledge.sendMessage(firstPrompt)
     const taskId = await knowledge.waitForTaskId()
-    await waitForTaskTerminal(request, resources.token, taskId)
+    await waitForTaskTerminal(resources.token, taskId)
 
     const secondPrompt = makePrompt('016-second', '所选文档的核心设计第 5 点是什么？')
     await scenario(request, secondPrompt, [
@@ -445,7 +445,7 @@ test.describe('Provider-native binding state and contracts', () => {
     await knowledge.sendMessage(prompt)
     const taskId = await knowledge.waitForTaskId()
     if (expectedTaskId) expect(taskId).toBe(expectedTaskId)
-    await waitForTaskTerminal(request, resources.token, taskId)
+    await waitForTaskTerminal(resources.token, taskId)
     return getTask(request, resources.token, taskId)
   }
 })

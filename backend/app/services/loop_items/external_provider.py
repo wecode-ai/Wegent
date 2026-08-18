@@ -39,6 +39,9 @@ from app.services.loop_item_executions.service import (
     execution_display_state,
     loop_item_execution_service,
 )
+from app.services.loop_items.assignment_notification import (
+    notify_project_task_assignee,
+)
 from app.services.project_automation_domain import runnable_wegent_team
 
 PRIORITY_PREFIX = "wegent:priority:"
@@ -641,9 +644,7 @@ class ExternalLoopItemProvider:
                 cancelled.status == "cancel_requested"
                 and cancelled.runtime_device_id
                 and cancelled.runtime_task_id
-            ) or (
-                cancelled.team_id is not None and cancelled.backend_task_id is not None
-            ):
+            ) or (cancelled.team_id and cancelled.backend_task_id):
                 cancelled_runs.append(cancelled)
         return cancelled_runs
 
@@ -781,6 +782,7 @@ class ExternalLoopItemProvider:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")
         current = self._get_issue(project, number)
         current_labels = self._labels(current)
+        previous_assignee = self._assignee_from_labels(current_labels)
         agent: ProjectChatAgent | None = None
         team: Kind | None = None
         if values.assignee_type == "agent":
@@ -896,6 +898,24 @@ class ExternalLoopItemProvider:
             )
 
             request_execution_cancellations(cancelled_runs)
+        if (
+            values.assignee_type == "user"
+            and target_user_id != user_id
+            and (
+                previous_assignee is None
+                or previous_assignee["type"] != "user"
+                or previous_assignee["id"] != str(target_user_id)
+            )
+        ):
+            assigner = db.get(User, user_id)
+            notify_project_task_assignee(
+                user_id=target_user_id,
+                project_id=str(project.id),
+                project_name=project.name or "",
+                item_id=item_id,
+                item_title=str(issue.get("title") or item_id),
+                assigner_name=assigner.user_name if assigner else str(user_id),
+            )
         return self._response(db, project, issue, access, user_id)
 
     def _ensure_index_row(

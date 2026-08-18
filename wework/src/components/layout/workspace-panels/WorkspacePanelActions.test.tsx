@@ -672,6 +672,10 @@ describe('WorkspacePanelActions', () => {
 
     await userEvent.click(screen.getByTestId('open-code-server-titlebar-button'))
 
+    expect(screen.getByTestId('open-code-server-titlebar-button')).toHaveAttribute(
+      'data-workspace-path',
+      '/workspace/worktrees/9/project38'
+    )
     await waitFor(() =>
       expect(startDeviceCodeServerMock).toHaveBeenCalledWith(
         'device-2',

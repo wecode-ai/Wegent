@@ -8,7 +8,10 @@ use std::env;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{OnceLock, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+static EFFECTIVE_DEVICE_TYPE: OnceLock<RwLock<String>> = OnceLock::new();
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeMode {
@@ -219,6 +222,25 @@ impl DeviceConfig {
     }
 }
 
+pub(crate) fn worktree_persistent_storage_verified() -> bool {
+    let device_type = EFFECTIVE_DEVICE_TYPE
+        .get()
+        .and_then(|device_type| device_type.read().ok().map(|value| value.clone()))
+        .unwrap_or_else(|| env::var("DEVICE_TYPE").unwrap_or_else(|_| default_device_type()));
+    let verification = env::var("WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED").ok();
+    worktree_persistent_storage_verified_for(&device_type, verification.as_deref())
+}
+
+fn worktree_persistent_storage_verified_for(device_type: &str, verification: Option<&str>) -> bool {
+    match device_type.trim().to_ascii_lowercase().as_str() {
+        "local" | "app" | "" => true,
+        "cloud" | "remote" => verification
+            .map(str::trim)
+            .is_some_and(|value| value.eq_ignore_ascii_case("true")),
+        _ => false,
+    }
+}
+
 pub fn load_device_config(config_path: Option<&str>) -> Result<DeviceConfig, ConfigError> {
     let path = config_path
         .map(PathBuf::from)
@@ -237,6 +259,7 @@ pub fn load_device_config(config_path: Option<&str>) -> Result<DeviceConfig, Con
     }
 
     config.apply_env_overrides();
+    remember_effective_device_type(&config.device_type);
     should_save |= ensure_stable_identity(&mut config);
 
     if should_save {
@@ -244,6 +267,13 @@ pub fn load_device_config(config_path: Option<&str>) -> Result<DeviceConfig, Con
     }
 
     Ok(config)
+}
+
+fn remember_effective_device_type(device_type: &str) {
+    let effective = EFFECTIVE_DEVICE_TYPE.get_or_init(|| RwLock::new(default_device_type()));
+    if let Ok(mut value) = effective.write() {
+        *value = device_type.trim().to_owned();
+    }
 }
 
 fn read_config_path(path: &Path) -> Result<Option<DeviceConfig>, ConfigError> {
@@ -389,4 +419,45 @@ fn default_log_max_size() -> u32 {
 
 fn default_log_backup_count() -> u32 {
     5
+}
+
+#[cfg(test)]
+mod tests {
+    use super::worktree_persistent_storage_verified_for;
+
+    #[test]
+    fn local_and_app_worktrees_default_to_verified_storage() {
+        assert!(worktree_persistent_storage_verified_for("local", None));
+        assert!(worktree_persistent_storage_verified_for(
+            "APP",
+            Some("false")
+        ));
+    }
+
+    #[test]
+    fn cloud_and_remote_worktrees_require_explicit_true_verification() {
+        for device_type in ["cloud", "remote"] {
+            assert!(!worktree_persistent_storage_verified_for(device_type, None));
+            assert!(!worktree_persistent_storage_verified_for(
+                device_type,
+                Some("false")
+            ));
+            assert!(!worktree_persistent_storage_verified_for(
+                device_type,
+                Some("1")
+            ));
+            assert!(worktree_persistent_storage_verified_for(
+                device_type,
+                Some(" TRUE ")
+            ));
+        }
+    }
+
+    #[test]
+    fn unknown_device_types_fail_closed() {
+        assert!(!worktree_persistent_storage_verified_for(
+            "future-device",
+            Some("true")
+        ));
+    }
 }

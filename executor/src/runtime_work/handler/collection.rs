@@ -4,6 +4,14 @@
 
 use super::*;
 
+const ACTIVE_TURN_STOP_POLL_INTERVAL: Duration = Duration::from_millis(10);
+
+enum ActiveTurnStopState {
+    Missing,
+    Pending,
+    Stopped,
+}
+
 impl RuntimeWorkRpcHandler {
     pub(super) async fn collect_links(&self, archived: bool) -> Vec<RuntimeTaskLink> {
         let started_at = Instant::now();
@@ -195,7 +203,7 @@ impl RuntimeWorkRpcHandler {
         links: Vec<RuntimeTaskLink>,
         project_index: &CodexGlobalProjectIndex,
     ) -> Vec<RuntimeTaskLink> {
-        let links = links
+        let mut links = links
             .into_iter()
             .map(|mut link| {
                 if !is_codex_runtime(&link.runtime) {
@@ -205,16 +213,6 @@ impl RuntimeWorkRpcHandler {
                 if let Some(thread_id) = link.thread_id.as_deref() {
                     link.pinned = project_index.is_pinned_thread(thread_id);
                     link.pinned_order = project_index.pinned_thread_order(thread_id);
-                    let project_key = runtime_task_sidebar_project_key(&link, project_index);
-                    if project_index.has_manual_thread_order(&project_key) {
-                        let order = project_index.thread_sort_order(
-                            &project_key,
-                            thread_id,
-                            link.list_order.unwrap_or(usize::MAX / 2),
-                        );
-                        link.list_order = Some(order);
-                        link.sidebar_order = Some(order);
-                    }
                 }
                 link
             })
@@ -229,6 +227,7 @@ impl RuntimeWorkRpcHandler {
             .join("|");
 
         if !project_index.has_projects() && !project_index.has_project_state() {
+            self.apply_manual_project_thread_orders(&mut links, project_index);
             log_executor_event(
                 "runtime work project filter skipped",
                 &[
@@ -373,17 +372,6 @@ impl RuntimeWorkRpcHandler {
             let project_name = project.name.clone();
             link.group_workspace_path = Some(project_workspace_path.clone());
             link.group_project_key = Some(project_key.clone());
-            if let Some(thread_id) = link.thread_id.as_deref() {
-                if project_index.has_manual_thread_order(&project_key) {
-                    let order = project_index.thread_sort_order(
-                        &project_key,
-                        thread_id,
-                        link.list_order.unwrap_or(usize::MAX / 2),
-                    );
-                    link.list_order = Some(order);
-                    link.sidebar_order = Some(order);
-                }
-            }
             kept_project += 1;
             log_runtime_project_filter_item(
                 &link,
@@ -425,7 +413,80 @@ impl RuntimeWorkRpcHandler {
             ],
         );
 
+        self.apply_manual_project_thread_orders(&mut visible_links, project_index);
         visible_links
+    }
+
+    fn apply_manual_project_thread_orders(
+        &self,
+        links: &mut [RuntimeTaskLink],
+        project_index: &CodexGlobalProjectIndex,
+    ) {
+        struct ManualProjectTaskGroups {
+            unlisted: Vec<usize>,
+            listed: Vec<usize>,
+            unlisted_before_listed: bool,
+        }
+
+        let mut groups = HashMap::<String, ManualProjectTaskGroups>::new();
+        for (index, link) in links.iter().enumerate() {
+            if !is_codex_runtime(&link.runtime) {
+                continue;
+            }
+            let Some(thread_id) = link.thread_id.as_deref() else {
+                continue;
+            };
+            let project_key = runtime_task_sidebar_project_key(link, project_index);
+            if !project_index.has_manual_thread_order(&project_key) {
+                continue;
+            }
+
+            let group =
+                groups
+                    .entry(project_key.clone())
+                    .or_insert_with(|| ManualProjectTaskGroups {
+                        unlisted: Vec::new(),
+                        listed: Vec::new(),
+                        unlisted_before_listed: link.group_project_key.is_some(),
+                    });
+            if project_index.is_thread_in_manual_order(&project_key, thread_id) {
+                group.listed.push(index);
+            } else {
+                group.unlisted.push(index);
+            }
+        }
+
+        for (project_key, mut group) in groups {
+            group.listed.sort_by(|left, right| {
+                let left_thread = links[*left].thread_id.as_deref().unwrap_or("");
+                let right_thread = links[*right].thread_id.as_deref().unwrap_or("");
+                project_index
+                    .thread_sort_order(&project_key, left_thread, 0)
+                    .cmp(&project_index.thread_sort_order(&project_key, right_thread, 0))
+            });
+            if group.unlisted_before_listed {
+                group.unlisted.sort_by(|left, right| {
+                    compare_unlisted_manual_project_links(&links[*left], &links[*right])
+                });
+            } else {
+                group.unlisted.sort_by(|left, right| {
+                    links[*left]
+                        .list_order
+                        .unwrap_or(usize::MAX / 2)
+                        .cmp(&links[*right].list_order.unwrap_or(usize::MAX / 2))
+                });
+            }
+
+            let ordered_indices = if group.unlisted_before_listed {
+                group.unlisted.into_iter().chain(group.listed)
+            } else {
+                group.listed.into_iter().chain(group.unlisted)
+            };
+            for (next_order, index) in ordered_indices.enumerate() {
+                links[index].list_order = Some(next_order);
+                links[index].sidebar_order = Some(next_order);
+            }
+        }
     }
 
     pub(super) async fn task_link_from_payload(
@@ -664,6 +725,7 @@ impl RuntimeWorkRpcHandler {
         let execution_id = self.next_execution_id.fetch_add(1, Ordering::Relaxed);
         let control = ActiveTurnCancellation {
             execution_id,
+            stop_requested: false,
             cancel,
             stopped,
         };
@@ -693,7 +755,7 @@ impl RuntimeWorkRpcHandler {
             .expect("active turn cancellation map lock should not be poisoned");
         if active
             .get(local_task_id)
-            .is_some_and(|control| control.execution_id == execution_id)
+            .is_some_and(|control| control.execution_id == execution_id && !control.stop_requested)
         {
             active.remove(local_task_id);
             true
@@ -771,25 +833,65 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn abort_active_turn(&self, local_task_id: &str) -> bool {
-        let control = {
-            self.active_turn_cancellations
-                .lock()
-                .expect("active turn cancellation map lock should not be poisoned")
-                .remove(local_task_id)
-        };
-        if let Some(control) = control {
-            let _ = control.cancel.send(());
-            let stopped =
-                tokio::time::timeout(std::time::Duration::from_secs(10), control.stopped).await;
-            if stopped.is_err() {
+        self.abort_active_turn_with_timeout(local_task_id, Duration::from_secs(10))
+            .await
+    }
+
+    pub(super) async fn abort_active_turn_with_timeout(
+        &self,
+        local_task_id: &str,
+        stop_timeout: Duration,
+    ) -> bool {
+        let deadline = Instant::now() + stop_timeout;
+        loop {
+            match self.poll_active_turn_stop(local_task_id) {
+                ActiveTurnStopState::Missing | ActiveTurnStopState::Stopped => {
+                    self.active_codex_turns
+                        .lock()
+                        .expect("active codex turn map lock should not be poisoned")
+                        .remove(local_task_id);
+                    return true;
+                }
+                ActiveTurnStopState::Pending => {}
+            }
+            let now = Instant::now();
+            if now >= deadline {
                 return false;
             }
+            tokio::time::sleep(
+                ACTIVE_TURN_STOP_POLL_INTERVAL.min(deadline.saturating_duration_since(now)),
+            )
+            .await;
         }
-        self.active_codex_turns
+    }
+
+    fn poll_active_turn_stop(&self, local_task_id: &str) -> ActiveTurnStopState {
+        let mut active = self
+            .active_turn_cancellations
             .lock()
-            .expect("active codex turn map lock should not be poisoned")
-            .remove(local_task_id);
-        true
+            .expect("active turn cancellation map lock should not be poisoned");
+        let Some(control) = active.get_mut(local_task_id) else {
+            return ActiveTurnStopState::Missing;
+        };
+        if !control.stop_requested {
+            let (spent_cancel, spent_cancel_rx) = oneshot::channel();
+            drop(spent_cancel_rx);
+            let cancel = std::mem::replace(&mut control.cancel, spent_cancel);
+            control.stop_requested = true;
+            let _ = cancel.send(());
+        }
+        let stopped = match control.stopped.try_recv() {
+            Ok(()) => true,
+            Err(oneshot::error::TryRecvError::Closed | oneshot::error::TryRecvError::Empty) => {
+                false
+            }
+        };
+        if stopped {
+            active.remove(local_task_id);
+            ActiveTurnStopState::Stopped
+        } else {
+            ActiveTurnStopState::Pending
+        }
     }
 
     pub(super) fn is_active_local_task(&self, local_task_id: &str) -> bool {
@@ -905,6 +1007,13 @@ fn runtime_task_sidebar_project_key(
     project_index: &CodexGlobalProjectIndex,
 ) -> String {
     if let Some(project_key) = link
+        .group_project_key
+        .as_deref()
+        .filter(|project_key| !project_key.trim().is_empty())
+    {
+        return project_key.to_owned();
+    }
+    if let Some(project_key) = link
         .thread_id
         .as_deref()
         .and_then(|thread_id| project_index.sidebar_project_key_for_thread(thread_id))
@@ -929,4 +1038,15 @@ fn runtime_task_sidebar_project_key(
         return "chats".to_owned();
     }
     format!("local:{}", workspace_group_path(&link.workspace_path))
+}
+
+fn compare_unlisted_manual_project_links(
+    left: &RuntimeTaskLink,
+    right: &RuntimeTaskLink,
+) -> std::cmp::Ordering {
+    right
+        .updated_at
+        .cmp(&left.updated_at)
+        .then_with(|| right.created_at.cmp(&left.created_at))
+        .then_with(|| left.local_task_id.cmp(&right.local_task_id))
 }

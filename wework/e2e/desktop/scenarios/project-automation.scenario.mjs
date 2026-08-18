@@ -765,6 +765,88 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       managerToolCalls > customToolCallsBefore,
       'Custom AI manager did not call assign_board_item'
     )
+    const readyCountBeforeBoardReload = control.readyCount
+    await control.command('reloadMainWindow', 'body')
+    await withTimeout(
+      control.awaitReadyAfter(readyCountBeforeBoardReload),
+      uiTimeoutMs * 3,
+      'The redesigned project board did not reconnect after loading API-created issues'
+    )
+    const activeBoard = '[data-workspace-tab-content][aria-hidden="false"]'
+    await control.command('waitFor', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('click', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
+      visible: true,
+    })
+    const taskSearchToggle = `${activeBoard} [data-testid="cloud-project-task-search-toggle"]`
+    await control.command('waitFor', taskSearchToggle, {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('click', taskSearchToggle, { visible: true })
+    await control.command(
+      'fill',
+      `${activeBoard} [data-testid="cloud-project-task-search-input"]`,
+      {
+        value: customManagerTask.id,
+        visible: true,
+      }
+    )
+    const customManagerTaskResult = `${activeBoard} [data-testid="cloud-task-search-result-${customManagerTask.id}"]`
+    await control.command('waitFor', customManagerTaskResult, {
+      text: customManagerTask.title,
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('click', customManagerTaskResult, { visible: true })
+    await control.command('waitFor', `${activeBoard} [data-testid="cloud-todo-detail"]`, {
+      text: customManagerTask.title,
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    const customManagerCard = `${activeBoard} [data-executor-type="automation_manager"][data-manager-type="custom"]`
+    await control.command('waitFor', customManagerCard, {
+      text: '自定义 AI 调度员',
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('scrollIntoView', customManagerCard)
+    await control.command('waitFor', customManagerCard, {
+      text: '自定义 AI 调度员',
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    const managerReplyComposer = `${customManagerCard} [data-testid^="cloud-task-activity-card-composer-"]`
+    await control.command('fill', managerReplyComposer, {
+      value: '请确认当前分派结果',
+      visible: true,
+    })
+    await control.command('press', managerReplyComposer, {
+      key: 'Enter',
+      visible: true,
+    })
+    await waitForValue(
+      () => control.command('getText', customManagerCard),
+      text =>
+        text.includes('请确认当前分派结果') &&
+        text.split('已通过看板工具完成机器人分派。').length >= 3 &&
+        text.split('自定义 AI 调度员').length >= 3,
+      'The custom manager did not append a distinct reply to its comment thread',
+      uiTimeoutMs * 3
+    )
+    await control.command('scrollIntoView', customManagerCard)
+    const managerExecutionsAfterReply = await allExecutions(projectId)
+    assert.equal(
+      managerExecutionsAfterReply.filter(
+        execution =>
+          execution.loopItemId === customManagerTask.id &&
+          execution.executorType === 'automation_manager'
+      ).length,
+      1,
+      'Manager conversation created a second board execution'
+    )
+    await captureScreenshot(control, 'project-automation-custom-manager-continuation.png')
     await disableRule(projectId, customManagerRule)
 
     const wegentManagerRule = await createRule({

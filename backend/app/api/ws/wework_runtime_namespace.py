@@ -19,6 +19,7 @@ from app.core.config import settings
 from app.schemas.project_chat import (
     ProjectChatAgentFailure,
     ProjectChatAgentStart,
+    ProjectChatAutomationManagerContinuation,
     ProjectChatSend,
     ProjectChatSubscribe,
     ProjectChatWegentContinuation,
@@ -32,6 +33,10 @@ from app.services.device.command_registry import (
 from app.services.device.command_service import (
     DeviceCommandError,
     local_device_command_service,
+)
+from app.services.device.runtime_route import (
+    RuntimeRouteError,
+    runtime_route_resolver,
 )
 from app.services.device.runtime_rpc_service import RuntimeRpcError, runtime_rpc_service
 from app.services.project_chat.service import project_chat_service
@@ -50,6 +55,7 @@ PROJECT_CHAT_SEND_EVENT = "wework:project_chat:message:send"
 PROJECT_CHAT_CREATED_EVENT = "wework:project_chat:message:created"
 PROJECT_CHAT_AGENT_CHUNK_EVENT = "wework:project_chat:agent:chunk"
 PROJECT_CHAT_AGENT_START_EVENT = "wework:project_chat:agent:start"
+PROJECT_CHAT_MANAGER_CONTINUE_EVENT = "wework:project_chat:manager:continue"
 PROJECT_CHAT_AGENT_FAILED_EVENT = "wework:project_chat:agent:failed"
 PROJECT_CHAT_WEGENT_CONTINUE_EVENT = "wework:project_chat:wegent:continue"
 PROJECT_CHAT_PROJECT_ROOM_PREFIX = "wework-project-chat:project:"
@@ -73,6 +79,7 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
             PROJECT_CHAT_UNSUBSCRIBE_EVENT: "on_project_chat_unsubscribe",
             PROJECT_CHAT_SEND_EVENT: "on_project_chat_message_send",
             PROJECT_CHAT_AGENT_START_EVENT: "on_project_chat_agent_start",
+            PROJECT_CHAT_MANAGER_CONTINUE_EVENT: "on_project_chat_manager_continue",
             PROJECT_CHAT_AGENT_FAILED_EVENT: "on_project_chat_agent_failed",
             PROJECT_CHAT_WEGENT_CONTINUE_EVENT: "on_project_chat_wegent_continue",
         }
@@ -167,15 +174,29 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
                 params=params,
                 timeout_seconds=timeout_seconds_from(data),
             )
-        except (RuntimeRpcError, DeviceCommandError) as exc:
-            return ipc_error(data, "runtime_rpc_failed", str(exc), request_id)
-
-        if result.get("success") is False:
+        except RuntimeRpcError as exc:
             return ipc_error(
                 data,
-                "runtime_rpc_failed",
-                runtime_rpc_failure_message(result, method),
+                exc.code,
+                str(exc),
                 request_id,
+                retryable=exc.retryable,
+                details=exc.details,
+            )
+        except DeviceCommandError as exc:
+            return ipc_error(data, "device_command_failed", str(exc), request_id)
+
+        # ``device.execute_command`` uses ``success`` for the command exit
+        # status, so a non-zero exit remains a valid pass-through result.
+        if method != "device.execute_command" and result.get("success") is False:
+            error = runtime_rpc_failure(result, method)
+            return ipc_error(
+                data,
+                error["code"],
+                error["message"],
+                request_id,
+                retryable=error["retryable"],
+                details=error["details"],
             )
         return {"id": request_id, "ok": True, "result": result}
 
@@ -295,6 +316,26 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
         await emit_project_chat_message(self, message)
         return {"ok": True, "result": message}
 
+    async def on_project_chat_manager_continue(self, sid: str, data: dict) -> dict:
+        """Open a reply in the custom AI manager's existing Runtime session."""
+
+        identity = await self._project_chat_identity(sid)
+        if identity is None:
+            return project_chat_error("UNAUTHENTICATED", "Not authenticated")
+        try:
+            request = ProjectChatAutomationManagerContinuation.model_validate(
+                project_chat_payload(data)
+            )
+            message = await run_sync_in_executor(
+                _start_project_chat_manager_continuation_sync,
+                int(identity["user_id"]),
+                request,
+            )
+        except (ValidationError, HTTPException) as exc:
+            return project_chat_exception_ack(exc)
+        await emit_project_chat_message(self, message)
+        return {"ok": True, "result": message}
+
     async def on_project_chat_wegent_continue(self, sid: str, data: dict) -> dict:
         """Persist and dispatch one reply into its bound native Wegent Task."""
 
@@ -343,9 +384,21 @@ async def relay_ipc_request(
             raise DeviceCommandError(str(exc)) from exc
         if command is None:
             raise DeviceCommandError("Device command key is not configured")
+        try:
+            route = await runtime_route_resolver.resolve(
+                user_id=user_id,
+                submitted_device_id=device_id,
+            )
+        except RuntimeRouteError as exc:
+            raise RuntimeRpcError(
+                str(exc),
+                code=exc.code,
+                retryable=exc.retryable,
+                details=exc.details,
+            ) from exc
         return await local_device_command_service.execute_command(
             user_id=user_id,
-            device_id=device_id,
+            device_id=route.runtime_device_id,
             command=command.command,
             path=params.get("path") if isinstance(params.get("path"), str) else None,
             cwd=params.get("cwd") if isinstance(params.get("cwd"), str) else None,
@@ -369,27 +422,59 @@ def ipc_error(
     code: str,
     message: str,
     request_id: str | None = None,
+    *,
+    retryable: Optional[bool] = None,
+    details: Optional[dict[str, Any]] = None,
 ) -> dict:
     """Build an app IPC-compatible error ACK."""
 
+    error = {"code": code, "message": message}
+    if retryable is not None:
+        error["retryable"] = retryable
+    if details:
+        error["details"] = details
     return {
         "id": request_id or request_id_from(data),
         "ok": False,
-        "error": {"code": code, "message": message},
+        "error": error,
     }
 
 
-def runtime_rpc_failure_message(result: dict, method: str) -> str:
-    """Translate an executor runtime failure envelope into an IPC error."""
+def runtime_rpc_failure(result: dict, method: str) -> dict[str, Any]:
+    """Translate an executor Runtime failure envelope without erasing its code."""
 
     error = result.get("error")
     if isinstance(error, str) and error.strip():
-        return error.strip()
+        return {
+            "code": "runtime_rpc_failed",
+            "message": error.strip(),
+            "retryable": False,
+            "details": {},
+        }
     if isinstance(error, dict):
+        code = error.get("code")
         message = error.get("message")
         if isinstance(message, str) and message.strip():
-            return message.strip()
-    return f"Runtime RPC '{method}' failed"
+            return {
+                "code": (
+                    code.strip()
+                    if isinstance(code, str) and code.strip()
+                    else "runtime_rpc_failed"
+                ),
+                "message": message.strip(),
+                "retryable": error.get("retryable") is True,
+                "details": (
+                    error.get("details")
+                    if isinstance(error.get("details"), dict)
+                    else {}
+                ),
+            }
+    return {
+        "code": "runtime_rpc_invalid_response",
+        "message": f"Runtime RPC '{method}' returned an invalid failure response",
+        "retryable": False,
+        "details": {},
+    }
 
 
 def request_id_from(data: Any) -> str:
@@ -503,6 +588,16 @@ def _start_project_chat_agent_sync(
 ) -> dict[str, Any]:
     with get_db_session() as db:
         message = project_chat_service.start_agent_response(
+            db, user_id=user_id, request=request
+        )
+        return message.model_dump(mode="json", by_alias=True)
+
+
+def _start_project_chat_manager_continuation_sync(
+    user_id: int, request: ProjectChatAutomationManagerContinuation
+) -> dict[str, Any]:
+    with get_db_session() as db:
+        message = project_chat_service.start_automation_manager_response(
             db, user_id=user_id, request=request
         )
         return message.model_dump(mode="json", by_alias=True)
