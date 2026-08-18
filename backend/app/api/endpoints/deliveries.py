@@ -600,6 +600,22 @@ def access_delivery_asset(
     )
 
 
+@router.get("/delivery-assets/{asset_id}/content")
+def read_delivery_asset(
+    asset_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    content, content_type, filename = delivery_service.read_asset_content(
+        db, asset_id, current_user.id
+    )
+    return Response(
+        content=content,
+        media_type=content_type,
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
+
+
 @router.delete("/deliveries/{delivery_id}", status_code=status.HTTP_204_NO_CONTENT)
 def discard_delivery_draft(
     delivery_id: str,

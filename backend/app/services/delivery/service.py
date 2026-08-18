@@ -307,6 +307,22 @@ class DeliveryService:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Delivery asset not found")
         return self.storage.download_url(asset.object_key)
 
+    def read_asset_content(
+        self, db: Session, asset_id: str, user_id: int
+    ) -> tuple[bytes, str, str]:
+        asset = db.get(DeliveryAsset, asset_id)
+        if asset is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Delivery asset not found")
+        delivery = self._require_delivery(db, asset.delivery_id, user_id)
+        if delivery.status != "delivered":
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Delivery asset not found")
+        content = self.storage.get_bytes(
+            asset.object_key,
+            settings.DELIVERY_MAX_ASSET_SIZE_MB * 1024 * 1024,
+        )
+        filename = asset.display_name or asset.relative_path
+        return content, asset.content_type or "application/octet-stream", filename
+
     def read_markdown(self, delivery: Delivery) -> str:
         return self.storage.get_bytes(
             delivery.markdown_object_key, MAX_MARKDOWN_BYTES

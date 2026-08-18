@@ -1641,7 +1641,16 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
     "git_github_pull_requests": LocalDeviceCommandDefinition(
         command=(
             "gh pr list --state all --limit 20 "
-            "--json number,url,title,state,isDraft,statusCheckRollup --head"
+            "--json number,url,title,state,isDraft,statusCheckRollup,"
+            "mergeable,mergeStateStatus --head"
+        ),
+        post_processor="json",
+    ),
+    "git_github_pull_request_merge_queue": LocalDeviceCommandDefinition(
+        command=(
+            "gh api graphql "
+            "-f 'query=query($url:URI!){resource(url:$url){"
+            "... on PullRequest{mergeQueueEntry{id}}}}'"
         ),
         post_processor="json",
     ),

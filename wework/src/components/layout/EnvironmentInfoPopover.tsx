@@ -172,9 +172,13 @@ export function EnvironmentInfoPopover({
     changeRequest?.mergeability === 'conflicting'
       ? t('workbench.environment_change_request_conflicting', '存在冲突')
       : ''
+  const changeRequestMergeQueueLabel =
+    changeRequest?.mergeQueue === 'queued'
+      ? t('workbench.environment_change_request_merge_queue', '合并队列中')
+      : ''
   const changeRequestStatusLabel = [
     changeRequestStateLabel,
-    changeRequestConflictLabel || changeRequestChecksLabel,
+    changeRequestConflictLabel || changeRequestMergeQueueLabel || changeRequestChecksLabel,
   ]
     .filter(Boolean)
     .join('，')
@@ -538,6 +542,7 @@ export function EnvironmentInfoPopover({
                               'relative flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary',
                               changeRequest.state === 'open' &&
                                 !changeRequest.draft &&
+                                changeRequest.mergeQueue !== 'queued' &&
                                 'text-green-500',
                               changeRequest.state === 'merged' && 'text-green-500',
                               changeRequest.state === 'closed' && 'text-red-500',
@@ -549,6 +554,10 @@ export function EnvironmentInfoPopover({
                             {changeRequest.mergeability === 'conflicting' ? (
                               <span className="absolute -bottom-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-background text-red-500">
                                 <TriangleAlert className="h-3 w-3 fill-background" />
+                              </span>
+                            ) : changeRequest.mergeQueue === 'queued' ? (
+                              <span className="absolute -bottom-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-background text-text-muted">
+                                <Clock3 className="h-3 w-3 fill-background" />
                               </span>
                             ) : changeRequest.checks === 'success' ? (
                               <span className="absolute -bottom-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-background text-green-500">
@@ -581,14 +590,20 @@ export function EnvironmentInfoPopover({
                             <span data-testid="change-request-state" className="sr-only">
                               {changeRequestStateLabel}
                             </span>
-                            {changeRequest.checks !== 'unknown' && (
-                              <span data-testid="change-request-checks" className="sr-only">
-                                {changeRequestChecksLabel}
-                              </span>
-                            )}
+                            {changeRequest.checks !== 'unknown' &&
+                              changeRequest.mergeQueue !== 'queued' && (
+                                <span data-testid="change-request-checks" className="sr-only">
+                                  {changeRequestChecksLabel}
+                                </span>
+                              )}
                             {changeRequest.mergeability === 'conflicting' && (
                               <span data-testid="change-request-conflict" className="sr-only">
                                 {changeRequestConflictLabel}
+                              </span>
+                            )}
+                            {changeRequest.mergeQueue === 'queued' && (
+                              <span data-testid="change-request-merge-queue" className="sr-only">
+                                {changeRequestMergeQueueLabel}
                               </span>
                             )}
                           </span>

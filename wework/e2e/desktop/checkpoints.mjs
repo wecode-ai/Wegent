@@ -11,6 +11,7 @@ export const DESKTOP_CHECKPOINTS = [
   'model-routing',
   'permission-modes',
   'core-task-flow',
+  'task-attachments',
   'cloud-git-worktree',
   'cloud-worktree-capability',
   'cloud-worktree-create',
