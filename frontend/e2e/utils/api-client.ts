@@ -45,6 +45,8 @@ export class ApiClient {
   ): Promise<ApiResponse<T>> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
+      // Avoid reusing sockets after the E2E Uvicorn server closes its idle connection.
+      Connection: 'close',
     }
 
     if (this.token) {
