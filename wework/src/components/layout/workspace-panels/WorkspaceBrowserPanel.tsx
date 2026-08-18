@@ -767,6 +767,7 @@ export function WorkspaceBrowserTabPanel({
       const placement = deviceState.isEnabled
         ? computeDeviceViewportPlacement(bounds, deviceState, zoomPercentRef.current)
         : null
+      let nextBounds = bounds
       if (placement) {
         deviceFitScaleRef.current = placement.scale
         const hostRect = host.getBoundingClientRect()
@@ -789,17 +790,19 @@ export function WorkspaceBrowserTabPanel({
             ? current
             : nextVisualRect
         )
-        await setEmbeddedBrowserBounds(placement.webviewBounds, nativeVisible, label)
+        nextBounds = placement.webviewBounds
       } else {
         deviceFitScaleRef.current = zoomPercentToScaleFactor(zoomPercentRef.current)
         setDeviceVisualRect(current => (current === null ? current : null))
-        await setEmbeddedBrowserBounds(bounds, nativeVisible, label)
       }
-      // The native webview zoom carries the page zoom; in device mode the
-      // placement already folds it into the combined fit scale.
+
+      // Apply zoom before the final native bounds. WebKit can trigger a GTK
+      // layout pass while changing zoom, which would otherwise restore the
+      // embedded view's natural host-sized allocation after device placement.
       await setEmbeddedBrowserZoom(deviceFitScaleRef.current, label).catch(error => {
         console.error('Failed to apply embedded browser zoom:', error)
       })
+      await setEmbeddedBrowserBounds(nextBounds, nativeVisible, label)
     },
     [active, embeddedBrowserAvailable, label]
   )
