@@ -17,17 +17,16 @@ import asyncio
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Callable, Dict, Generic, List, Optional, TypeVar
+from uuid import uuid4
 
 from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
-from app.api.ws.events import ServerEvents
 from app.core.cache import cache_manager
 from app.core.config import settings
-from app.core.socketio import get_sio
 from app.db.session import SessionLocal
 from app.models.kind import Kind
 from app.models.user import User
@@ -296,9 +295,11 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
     async def _register_streaming_emitter(
         self,
-        task_id: int,
+        task_id: int | str,
         streaming_emitter: Any,
         message_context: MessageContext,
+        *,
+        persist_without_emitter: bool = False,
     ) -> None:
         """Register a streaming emitter for callback event forwarding.
 
@@ -312,7 +313,9 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             message_context: Message context
         """
         callback_service = self.get_callback_service()
-        if not callback_service or not streaming_emitter:
+        if not callback_service or (
+            not streaming_emitter and not persist_without_emitter
+        ):
             return
 
         callback_info = self.create_callback_info(message_context)
@@ -324,9 +327,22 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         await callback_service.save_callback_info(
             task_id=task_id, callback_info=callback_info
         )
-        await callback_service.register_emitter(
-            task_id=task_id, emitter=streaming_emitter
-        )
+        if streaming_emitter and hasattr(callback_service, "register_emitter"):
+            await callback_service.register_emitter(
+                task_id=task_id, emitter=streaming_emitter
+            )
+
+    def _prepare_streaming_emitter(
+        self,
+        task_id: int | str,
+        streaming_emitter: Any,
+    ) -> None:
+        """Configure cross-worker content sharing before the first chunk."""
+
+        if streaming_emitter and hasattr(streaming_emitter, "set_shared_content_key"):
+            streaming_emitter.set_shared_content_key(
+                f"channel:streaming_content:{task_id}"
+            )
 
     def _select_dispatch_result_emitter(
         self,
@@ -1073,7 +1089,13 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             )
             return
 
-        message_source = self._build_private_im_message_source(im_session)
+        message_source = self._build_private_im_message_source(
+            im_session,
+            message_context=message_context,
+        )
+        client_user_message_id = self._private_im_runtime_client_user_message_id(
+            message_source
+        )
         callback_key = runtime_local_task_callback_key(
             address.device_id,
             address.local_task_id,
@@ -1094,6 +1116,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 request=RuntimeSendRequest(
                     address=address,
                     message=message,
+                    client_user_message_id=client_user_message_id,
                     modelSelection=(
                         runtime_task.get("modelSelection")
                         or runtime_task.get("model_selection")
@@ -1140,13 +1163,6 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             return
 
         if response.accepted:
-            await self._emit_private_im_runtime_user_message_to_web(
-                user=user,
-                runtime_task=runtime_task,
-                message=message,
-                message_context=message_context,
-                message_source=message_source,
-            )
             return
         await self._delete_private_im_runtime_callback(callback_key)
         await self._emit_private_im_runtime_stream_error(
@@ -1173,15 +1189,12 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         message_context: MessageContext,
         streaming_emitter: Any = None,
     ) -> None:
-        callback_service = self.get_callback_service()
-        if not callback_service:
-            return
-        await callback_service.save_callback_info(
+        await self._register_streaming_emitter(
             task_id=callback_key,
-            callback_info=self.create_callback_info(message_context),
+            streaming_emitter=streaming_emitter,
+            message_context=message_context,
+            persist_without_emitter=True,
         )
-        if streaming_emitter and hasattr(callback_service, "register_emitter"):
-            await callback_service.register_emitter(callback_key, streaming_emitter)
 
     async def _create_private_im_runtime_streaming_emitter(
         self,
@@ -1189,7 +1202,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         callback_key: str,
         message_context: MessageContext,
     ) -> Any:
-        if not self.should_merge_task_created_running_notice_with_stream():
+        if self._channel_type not in (ChannelType.DINGTALK, ChannelType.WEIBO):
             return None
 
         streaming_emitter = await self.create_streaming_emitter(message_context)
@@ -1197,6 +1210,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             return None
 
         await streaming_emitter.emit_start(task_id=callback_key, subtask_id=0)
+        self._prepare_streaming_emitter(callback_key, streaming_emitter)
         return streaming_emitter
 
     async def _emit_private_im_runtime_stream_error(
@@ -1221,61 +1235,6 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         if not callback_service:
             return
         await callback_service.delete_callback_info(callback_key)
-
-    async def _emit_private_im_runtime_user_message_to_web(
-        self,
-        *,
-        user: User,
-        runtime_task: dict[str, Any],
-        message: str,
-        message_context: MessageContext,
-        message_source: dict[str, Any],
-    ) -> None:
-        device_id = str(
-            runtime_task.get("deviceId") or runtime_task.get("device_id") or ""
-        ).strip()
-        local_task_id = str(
-            runtime_task.get("localTaskId") or runtime_task.get("local_task_id") or ""
-        ).strip()
-        if not device_id or not local_task_id:
-            return
-
-        now = datetime.now(timezone.utc)
-        message_id = int(now.timestamp() * 1000)
-        source = dict(message_source)
-        source["source"] = "im"
-        try:
-            await get_sio().emit(
-                ServerEvents.CHAT_MESSAGE,
-                {
-                    "subtask_id": message_id,
-                    "message_id": message_id,
-                    "role": "user",
-                    "content": message,
-                    "sender": {
-                        "user_id": user.id,
-                        "user_name": user.user_name,
-                        "im_sender_id": message_context.sender_id,
-                        "im_sender_name": message_context.sender_name,
-                    },
-                    "created_at": now.isoformat(),
-                    "device_id": device_id,
-                    "local_task_id": local_task_id,
-                    "runtime": runtime_task.get("runtime"),
-                    "source": source,
-                },
-                room=f"user:{user.id}",
-                namespace="/chat",
-            )
-        except Exception:
-            self.logger.warning(
-                "[%sHandler] Failed to emit private IM runtime user message: "
-                "user_id=%s local_task_id=%s",
-                self._channel_type.value,
-                user.id,
-                local_task_id,
-                exc_info=True,
-            )
 
     async def execute_private_im_create_task(
         self,
@@ -1365,14 +1324,39 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             initial_stream_content=initial_stream_content,
         )
 
-    def _build_private_im_message_source(self, im_session: Any) -> Dict[str, Any]:
+    def _build_private_im_message_source(
+        self,
+        im_session: Any,
+        *,
+        message_context: Optional[MessageContext] = None,
+    ) -> Dict[str, Any]:
+        message_id = None
+        if message_context is not None:
+            raw_message_id = message_context.extra_data.get("message_id")
+            normalized_message_id = str(raw_message_id or "").strip()
+            message_id = normalized_message_id or None
         return im_task_continuation_service.build_im_message_source(
             im_session,
+            message_id=message_id,
             extra={
                 "channel_label": im_session_service.get_channel_label(
                     self._channel_type.value
                 )
             },
+        )
+
+    def _private_im_runtime_client_user_message_id(
+        self,
+        message_source: dict[str, Any],
+    ) -> str:
+        message_id = str(message_source.get("message_id") or uuid4().hex).strip()
+        return ":".join(
+            (
+                "im",
+                str(message_source.get("channel_type") or self._channel_type.value),
+                str(message_source.get("channel_id") or self._channel_id),
+                message_id,
+            )
         )
 
     async def _persist_private_im_task_media(
@@ -1433,10 +1417,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 subtask_id=assistant_subtask.id,
                 content=initial_stream_content,
             )
-            if hasattr(streaming_emitter, "set_shared_content_key"):
-                streaming_emitter.set_shared_content_key(
-                    f"channel:streaming_content:{task_id}"
-                )
+            self._prepare_streaming_emitter(task_id, streaming_emitter)
         else:
             response_emitter = SyncResponseEmitter()
             if initial_stream_content:
@@ -2801,10 +2782,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 subtask_id=trigger_data["assistant_subtask"].id,
             )
             # Enable Redis-backed content sharing for multi-pod consistency
-            if hasattr(streaming_emitter, "set_shared_content_key"):
-                streaming_emitter.set_shared_content_key(
-                    f"channel:streaming_content:{task_id}"
-                )
+            self._prepare_streaming_emitter(task_id, streaming_emitter)
         else:
             response_emitter = SyncResponseEmitter()
 
@@ -3037,10 +3015,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 offset=0,
             )
             # Enable Redis-backed content sharing for multi-pod consistency
-            if hasattr(streaming_emitter, "set_shared_content_key"):
-                streaming_emitter.set_shared_content_key(
-                    f"channel:streaming_content:{result.task.id}"
-                )
+            self._prepare_streaming_emitter(result.task.id, streaming_emitter)
 
         # Build message for device: vision content if images present
         if message_context.images:
@@ -3195,10 +3170,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 offset=0,
             )
             # Enable Redis-backed content sharing for multi-pod consistency
-            if hasattr(streaming_emitter, "set_shared_content_key"):
-                streaming_emitter.set_shared_content_key(
-                    f"channel:streaming_content:{result.task.id}"
-                )
+            self._prepare_streaming_emitter(result.task.id, streaming_emitter)
             # Register emitter so callback events reuse the same AI Card
             await self._register_streaming_emitter(
                 task_id=result.task.id,

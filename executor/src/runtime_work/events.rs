@@ -2102,7 +2102,22 @@ mod tests {
         let request = ExecutionRequest {
             task_id: "task-1".to_owned(),
             subtask_id: "codex-turn-1".to_owned(),
-            extra: Map::from_iter([("client_user_message_id".to_owned(), json!("client-user-1"))]),
+            extra: Map::from_iter([
+                ("client_user_message_id".to_owned(), json!("client-user-1")),
+                (
+                    "source".to_owned(),
+                    json!({"source": "im", "channel_type": "dingtalk"}),
+                ),
+                (
+                    "runtime_generated_user_message".to_owned(),
+                    json!({
+                        "id": "client-user-1",
+                        "message": "continue from dingtalk",
+                        "createdAt": 1_780_000_000_000_i64,
+                        "source": {"source": "im", "channel_type": "dingtalk"}
+                    }),
+                ),
+            ]),
             ..ExecutionRequest::default()
         };
 
@@ -2118,6 +2133,11 @@ mod tests {
         let event = event_rx.try_recv().expect("response event");
         assert_eq!(event["payload"]["subtaskId"], "codex-turn-1");
         assert_eq!(event["payload"]["clientUserMessageId"], "client-user-1");
+        assert_eq!(event["payload"]["source"]["source"], "im");
+        assert_eq!(
+            event["payload"]["runtimeGeneratedUserMessage"]["message"],
+            "continue from dingtalk"
+        );
         assert!(event["payload"]["eventSeq"].as_u64().unwrap_or_default() > 0);
     }
 
