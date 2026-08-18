@@ -283,7 +283,16 @@ export interface CloudTaskContext {
 
 export type WorkflowWorkspacePolicy = 'none' | 'composer' | 'inherit'
 export type WorkflowContextSource = 'final_result' | 'deliveries' | 'activity'
-export type WorkflowNodeStatus = 'blocked' | 'ready' | 'queued' | 'running' | 'completed' | 'failed'
+export type WorkflowNodeStatus =
+  | 'blocked'
+  | 'ready'
+  | 'queued'
+  | 'running'
+  | 'awaiting_approval'
+  | 'changes_requested'
+  | 'completed'
+  | 'forced_completed'
+  | 'failed'
 export type IssueAdvancementPolicy = 'manual' | 'ai'
 export type IssueStageMode = 'none' | 'dag'
 
@@ -295,6 +304,7 @@ export interface WorkflowNodeDefinition {
   depends_on: string[]
   dependency_context?: Record<string, WorkflowContextSource[]>
   required: boolean
+  required_deliverables?: string[]
   workspace_policy: WorkflowWorkspacePolicy
   automation_rule_id?: string | null
 }
@@ -313,6 +323,13 @@ export interface WorkflowNodeInstance extends WorkflowNodeDefinition {
   task_binding_id?: string | null
   task_ids?: string[]
   task_statuses?: Record<string, string>
+  delivery_ids?: string[]
+  decision_history?: Array<{
+    action: 'approve' | 'reject' | 'force_advance'
+    actor_user_id: number
+    reason: string
+    decided_at: string
+  }>
   execution_id?: number | null
   automation_run_id?: string | null
 }
@@ -820,6 +837,19 @@ export function createDeliveryApi(client: HttpClient) {
         ...(taskTitle ? { taskTitle } : {}),
         ...(workflowNodeId ? { workflowNodeId } : {}),
       })
+    },
+    decideWorkflowNode(
+      itemId: string,
+      workflowNodeId: string,
+      action: 'approve' | 'reject' | 'force_advance',
+      reason = '',
+      actorUserId?: number
+    ): Promise<CloudLoopItem> {
+      void actorUserId
+      return client.post(
+        `/v1/loop-items/${encodeURIComponent(itemId)}/workflow-nodes/${encodeURIComponent(workflowNodeId)}/decision`,
+        { action, reason }
+      )
     },
     bindProjectTask(
       projectId: CloudProjectIdInput,

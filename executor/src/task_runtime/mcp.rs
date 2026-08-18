@@ -9,8 +9,12 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
+#[cfg(not(test))]
+use std::sync::OnceLock;
+
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use chrono::Local;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
@@ -19,53 +23,80 @@ use crate::protocol::ExecutionRequest;
 
 use super::{BinaryInput, ProjectCreate, TaskRuntime, TaskSearch};
 
-const SPACE_MCP_SERVER_NAME: &str = "wework_space";
+pub const SPACE_MCP_SERVER_NAME: &str = "wework_space";
 const SPACE_MCP_LOG_FILE: &str = "space-mcp.log";
+pub const SPACE_CONTEXT_GRANT_ENV: &str = "WEWORK_SPACE_CONTEXT_GRANT";
+const SPACE_CONTEXT_GRANT_TTL_SECONDS: i64 = 60 * 60;
 static SPACE_MCP_LOG_WRITE_ERROR_REPORTED: AtomicBool = AtomicBool::new(false);
+#[cfg(not(test))]
+static ACTIVE_SPACE_CONTEXT_GRANT: OnceLock<Option<SpaceContextGrant>> = OnceLock::new();
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+struct SpaceContextGrant {
+    version: u8,
+    task_id: String,
+    space_id: Option<String>,
+    item_id: Option<String>,
+    automation_run_id: Option<String>,
+    automation_manager: bool,
+    expires_at_unix: i64,
+}
 
 pub fn is_space_mcp_command() -> bool {
     env::args().nth(1).as_deref() == Some("space-mcp-server")
 }
 
-pub fn ensure_space_mcp_server(request: &mut ExecutionRequest) {
-    // Board automations receive the project, task, and trigger as application
-    // context. They deliberately reuse the ordinary Wework robot execution
-    // path and must not gain project-space tools merely because the execution
-    // is associated with a cloud project.
-    let automation_origin = request
-        .extra
-        .get("origin")
-        .and_then(Value::as_object)
+pub fn encoded_space_context_grant(request: &ExecutionRequest) -> Option<String> {
+    let origin = request.extra.get("origin").and_then(Value::as_object);
+    let automation_origin = origin
         .filter(|origin| origin.get("type").and_then(Value::as_str) == Some("project_automation"));
-    let is_automation_manager = automation_origin.is_some_and(|origin| {
+    let automation_manager = automation_origin.is_some_and(|origin| {
         origin.get("automationRole").and_then(Value::as_str) == Some("manager")
     });
-    if automation_origin.is_some() && !is_automation_manager {
+    if automation_origin.is_some() && !automation_manager {
         log_executor_event(
-            "space mcp injection skipped for project automation",
+            "space capability skipped for project automation",
             &[("task_id", request.task_id.clone())],
         );
-        return;
+        return None;
     }
-    // `wework_space` is a project-space context server. Inject it only when the
-    // request is bound to a cloud project or explicitly references one, for
-    // example through the workbench cloud mention picker that emits
-    // `cloud://projects` links. Generic coding and assistant tasks must not
-    // receive project-space tools.
-    let bound_project_id = request
+    let space_id = request
         .extra
         .get("cloudProjectId")
         .or_else(|| request.extra.get("cloud_project_id"))
         .and_then(id_value)
+        .or_else(|| {
+            origin
+                .and_then(|value| {
+                    value
+                        .get("cloudProjectId")
+                        .or_else(|| value.get("cloud_project_id"))
+                })
+                .and_then(id_value)
+        })
+        .filter(|value| !value.is_empty());
+    let item_id = origin
+        .and_then(|value| {
+            value
+                .get("loopItemId")
+                .or_else(|| value.get("loop_item_id"))
+        })
+        .and_then(id_value)
         .filter(|value| !value.is_empty());
     let prompt_has_cloud_ref = prompt_references_cloud_projects(&request.prompt);
     log_executor_event(
-        "space mcp injection decision",
+        "space capability context decision",
         &[
             ("task_id", request.task_id.clone()),
+            ("space_id", space_id.as_deref().unwrap_or("").to_owned()),
+            ("item_id", item_id.as_deref().unwrap_or("").to_owned()),
             (
-                "bound_project_id",
-                bound_project_id.as_deref().unwrap_or("").to_owned(),
+                "origin_type",
+                origin
+                    .and_then(|value| value.get("type"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_owned(),
             ),
             ("prompt_has_cloud_ref", prompt_has_cloud_ref.to_string()),
             (
@@ -74,87 +105,36 @@ pub fn ensure_space_mcp_server(request: &mut ExecutionRequest) {
             ),
         ],
     );
-    if bound_project_id.is_none() && !prompt_has_cloud_ref {
-        return;
+    if space_id.is_none() && !prompt_has_cloud_ref {
+        return None;
     }
-    let Ok(executable) = env::current_exe() else {
-        return;
+    let grant = SpaceContextGrant {
+        version: 1,
+        task_id: request.task_id.clone(),
+        space_id,
+        item_id,
+        automation_run_id: automation_origin
+            .and_then(|origin| origin.get("run_id"))
+            .and_then(id_value)
+            .filter(|value| !value.is_empty()),
+        automation_manager,
+        expires_at_unix: Local::now().timestamp() + SPACE_CONTEXT_GRANT_TTL_SECONDS,
     };
-    // The App-side payload used to carry these; the robot queue dispatchers
-    // build payloads server-side, so fall back to the device's own backend
-    // connection configuration (same source as `normalize_local_task_request`).
-    if request
-        .backend_url
-        .as_deref()
-        .map(str::trim)
-        .unwrap_or("")
-        .is_empty()
-    {
-        if let Ok(url) = env::var("WEGENT_BACKEND_URL") {
-            let url = url.trim().to_owned();
-            if !url.is_empty() {
-                request.backend_url = Some(url);
-            }
-        }
-    }
-    if request
-        .auth_token
-        .as_deref()
-        .map(str::trim)
-        .unwrap_or("")
-        .is_empty()
-    {
-        if let Ok(token) = env::var("WEGENT_AUTH_TOKEN") {
-            let token = token.trim().to_owned();
-            if !token.is_empty() {
-                request.auth_token = Some(token);
-            }
-        }
-    }
-    let mut server = json!({
-        "name": SPACE_MCP_SERVER_NAME,
-        "type": "stdio",
-        "command": executable,
-        "args": ["space-mcp-server"],
-    });
-    if let Some(project_id) = bound_project_id {
-        server["env"] = json!({"WEWORK_SPACE_ID": project_id});
-    }
-    if let Some(run_id) = automation_origin
-        .and_then(|origin| origin.get("run_id"))
-        .and_then(id_value)
-        .filter(|value| !value.is_empty())
-    {
-        server["env"]["WEWORK_AUTOMATION_RUN_ID"] = json!(run_id);
-    }
-    if let Some(backend_url) = request
-        .backend_url
-        .as_deref()
-        .filter(|value| !value.is_empty())
-    {
-        server["env"]["WEWORK_SPACE_BACKEND_URL"] = json!(backend_url);
-    }
-    if let Some(auth_token) = request
-        .auth_token
-        .as_deref()
-        .filter(|value| !value.is_empty())
-    {
-        server["env"]["WEWORK_SPACE_AUTH_TOKEN"] = json!(auth_token);
-    }
-    if let Some(existing) = request.mcp_servers.iter_mut().find(|candidate| {
-        candidate.get("name").and_then(Value::as_str) == Some(SPACE_MCP_SERVER_NAME)
-    }) {
-        *existing = server;
-    } else {
-        request.mcp_servers.push(server);
-    }
+    let encoded = serde_json::to_vec(&grant)
+        .ok()
+        .map(|bytes| STANDARD.encode(bytes))?;
     log_executor_event(
-        "space mcp server injected",
+        "space capability context prepared",
         &[
             ("task_id", request.task_id.clone()),
-            ("mcp_server_count", request.mcp_servers.len().to_string()),
+            ("grant_version", grant.version.to_string()),
         ],
     );
+    Some(encoded)
+}
+
+pub fn space_capability_enabled(request: &ExecutionRequest) -> bool {
+    encoded_space_context_grant(request).is_some()
 }
 
 fn prompt_references_cloud_projects(prompt: &Value) -> bool {
@@ -186,11 +166,15 @@ fn id_value(value: &Value) -> Option<String> {
 
 pub async fn run() -> Result<(), String> {
     let runtime = TaskRuntime::from_env().map_err(|error| error.to_string())?;
+    let grant = current_space_context_grant();
     write_space_mcp_log(&format!(
-        "[wework-space-mcp] lifecycle=start pid={} manager_mode={} space_id_present={} backend_url_present={} auth_token_present={}",
+        "[wework-space-mcp] lifecycle=start version={} pid={} grant_version={} manager_mode={} space_id_present={} item_id_present={} backend_url_present={} auth_token_present={}",
+        env!("CARGO_PKG_VERSION"),
         std::process::id(),
-        is_automation_manager(),
-        env_value_present("WEWORK_SPACE_ID"),
+        grant.as_ref().map_or(0, |grant| grant.version),
+        grant.as_ref().is_some_and(|grant| grant.automation_manager),
+        grant.as_ref().is_some_and(|grant| grant.space_id.is_some()),
+        grant.as_ref().is_some_and(|grant| grant.item_id.is_some()),
         env_value_present("WEWORK_SPACE_BACKEND_URL"),
         env_value_present("WEWORK_SPACE_AUTH_TOKEN"),
     ));
@@ -357,14 +341,86 @@ fn non_empty_env(name: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value {
+fn current_space_context_grant() -> Option<SpaceContextGrant> {
+    #[cfg(not(test))]
+    {
+        ACTIVE_SPACE_CONTEXT_GRANT
+            .get_or_init(read_initial_space_context_grant)
+            .clone()
+    }
+    #[cfg(test)]
+    read_initial_space_context_grant()
+}
+
+fn read_initial_space_context_grant() -> Option<SpaceContextGrant> {
+    let encoded = non_empty_env(SPACE_CONTEXT_GRANT_ENV)?;
+    decode_space_context_grant(&encoded)
+}
+
+fn decode_space_context_grant(encoded: &str) -> Option<SpaceContextGrant> {
+    let decoded = STANDARD.decode(encoded).ok()?;
+    let grant = serde_json::from_slice::<SpaceContextGrant>(&decoded).ok()?;
+    (grant.version == 1 && grant.expires_at_unix >= Local::now().timestamp()).then_some(grant)
+}
+
+fn context_scope_error(grant: &SpaceContextGrant, arguments: &Value) -> Option<String> {
+    if let Some(requested_space_id) = arguments.get("space_id").and_then(Value::as_str) {
+        if grant.space_id.as_deref().is_some_and(|space_id| {
+            !requested_space_id.trim().is_empty() && requested_space_id != space_id
+        }) {
+            return Some("The requested project space is outside this Agent session".to_owned());
+        }
+    }
+    if let Some(requested_item_id) = arguments.get("item_id").and_then(Value::as_str) {
+        if grant.item_id.as_deref().is_some_and(|item_id| {
+            !requested_item_id.trim().is_empty() && requested_item_id != item_id
+        }) {
+            return Some("The requested board item is outside this Agent session".to_owned());
+        }
+    }
+    None
+}
+
+async fn call_tool(runtime: &TaskRuntime, name: &str, mut arguments: Value) -> Value {
     if is_automation_manager() && !is_automation_manager_tool(name) {
         return text_result(
             format!("AI-managed automation cannot call wework_space tool: {name}"),
             true,
         );
     }
-    let default_project_id = env::var("WEWORK_SPACE_ID").ok();
+    let grant = current_space_context_grant();
+    if let Some(error) = grant
+        .as_ref()
+        .and_then(|grant| context_scope_error(grant, &arguments))
+    {
+        return text_result(error, true);
+    }
+    let default_project_id = grant.as_ref().and_then(|grant| grant.space_id.clone());
+    let default_item_id = grant.as_ref().and_then(|grant| grant.item_id.clone());
+    if let Some(object) = arguments.as_object_mut() {
+        if !object.contains_key("space_id") {
+            if let Some(project_id) = default_project_id.as_deref() {
+                object.insert("space_id".to_owned(), json!(project_id));
+            }
+        }
+        if !object.contains_key("item_id") {
+            if let Some(item_id) = default_item_id.as_deref() {
+                object.insert("item_id".to_owned(), json!(item_id));
+            }
+        }
+    }
+    if name == "get_current_context" && (default_project_id.is_none() || default_item_id.is_none())
+    {
+        return text_result(
+            json!({
+                "bound": false,
+                "space_id": default_project_id,
+                "item_id": default_item_id,
+            })
+            .to_string(),
+            false,
+        );
+    }
     let requested_project_id = arguments
         .get("space_id")
         .and_then(Value::as_str)
@@ -431,6 +487,24 @@ async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value
     }
     let result = match name {
         "list_spaces" => unreachable!("list_spaces is handled before tool routing"),
+        "get_current_context" => {
+            let project_id = string_argument(&arguments, "space_id");
+            let task_id = string_argument(&arguments, "item_id");
+            match (project_id, task_id) {
+                (Ok(project_id), Ok(task_id)) => runtime
+                    .get_task(project_id, task_id)
+                    .await
+                    .and_then(|value| serde_json::to_value(value).map_err(invalid_json))
+                    .map(|item| {
+                        json!({
+                            "space_id": project_id,
+                            "item_id": task_id,
+                            "item": item,
+                        })
+                    }),
+                (Err(error), _) | (_, Err(error)) => Err(error),
+            }
+        }
         "create_space" => parse(arguments)
             .and_then(|input: ProjectCreate| runtime.create_project(input))
             .and_then(|value| serde_json::to_value(value).map_err(invalid_json)),
@@ -787,6 +861,7 @@ fn is_task_provider_tool(name: &str) -> bool {
         name,
         "list_board_items"
             | "search_board_items"
+            | "get_current_context"
             | "get_board_item"
             | "get_assignment_candidates"
             | "assign_board_item"
@@ -865,6 +940,23 @@ async fn call_backend_tool(
             .await?;
             return Ok(filter_backend_tasks(response, arguments));
         }
+        "get_current_context" => {
+            let item_id = task_id()?;
+            let item = backend_json(
+                client
+                    .get(format!("{base}/loop-items/{}", encode_segment(item_id)))
+                    .bearer_auth(auth_token)
+                    .send()
+                    .await
+                    .map_err(|error| error.to_string())?,
+            )
+            .await?;
+            return Ok(json!({
+                "space_id": project_id,
+                "item_id": item_id,
+                "item": item,
+            }));
+        }
         "get_board_item" => client.get(format!("{base}/loop-items/{}", encode_segment(task_id()?))),
         "get_assignment_candidates" => {
             let members = backend_json(
@@ -888,9 +980,8 @@ async fn call_backend_tool(
             return Ok(normalize_assignment_candidates(members, robots));
         }
         "assign_board_item" => {
-            let run_id = env::var("WEWORK_AUTOMATION_RUN_ID")
-                .ok()
-                .filter(|value| !value.trim().is_empty())
+            let run_id = current_space_context_grant()
+                .and_then(|grant| grant.automation_run_id)
                 .ok_or_else(|| {
                     "assign_board_item is only available to an AI-managed automation"
                         .to_owned()
@@ -1257,6 +1348,11 @@ fn tools() -> Vec<Value> {
         tool(
             "list_spaces",
             "List WeWork project spaces available to the current user",
+            json!({"type": "object", "properties": {}}),
+        ),
+        tool(
+            "get_current_context",
+            "Get the project space and board item bound to this conversation, including the Issue description",
             json!({"type": "object", "properties": {}}),
         ),
         tool(
@@ -1633,18 +1729,21 @@ fn visible_tools(runtime: &TaskRuntime) -> Vec<Value> {
             })
             .collect();
     }
-    let bound_project_id = env::var("WEWORK_SPACE_ID").ok();
+    let bound_project_id = current_space_context_grant().and_then(|grant| grant.space_id);
     tools_for_bound_project(runtime, bound_project_id.as_deref())
 }
 
 fn is_automation_manager() -> bool {
-    env::var("WEWORK_AUTOMATION_RUN_ID").is_ok_and(|value| !value.trim().is_empty())
+    current_space_context_grant().is_some_and(|grant| grant.automation_manager)
 }
 
 fn is_automation_manager_tool(name: &str) -> bool {
     matches!(
         name,
-        "get_board_item" | "get_assignment_candidates" | "assign_board_item"
+        "get_current_context"
+            | "get_board_item"
+            | "get_assignment_candidates"
+            | "assign_board_item"
     )
 }
 
@@ -1795,33 +1894,21 @@ mod tests {
         LocalTaskStore, ProjectDescriptor, ProjectStoreKind, TaskCreate, TaskProviderKind,
     };
 
-    #[test]
-    fn injects_wework_space_once() {
-        let mut request = ExecutionRequest::default();
-        request
-            .extra
-            .insert("cloudProjectId".to_owned(), json!("cloud-42"));
-
-        ensure_space_mcp_server(&mut request);
-        ensure_space_mcp_server(&mut request);
-
-        assert_eq!(request.mcp_servers.len(), 1);
-        assert_eq!(request.mcp_servers[0]["name"], SPACE_MCP_SERVER_NAME);
-        assert_eq!(request.mcp_servers[0]["type"], "stdio");
-        assert_eq!(request.mcp_servers[0]["args"], json!(["space-mcp-server"]));
+    fn decode_grant(request: &ExecutionRequest) -> SpaceContextGrant {
+        let encoded = encoded_space_context_grant(request).expect("space context grant");
+        let decoded = STANDARD.decode(encoded).expect("base64 grant");
+        serde_json::from_slice(&decoded).expect("JSON grant")
     }
 
     #[test]
-    fn skips_wework_space_without_project_space_context() {
-        let mut request = ExecutionRequest::default();
+    fn skips_space_capability_without_project_context() {
+        let request = ExecutionRequest::default();
 
-        ensure_space_mcp_server(&mut request);
-
-        assert!(request.mcp_servers.is_empty());
+        assert!(encoded_space_context_grant(&request).is_none());
     }
 
     #[test]
-    fn skips_wework_space_for_project_automation_with_bound_project() {
+    fn skips_space_capability_for_non_manager_project_automation() {
         let mut request = ExecutionRequest::default();
         request
             .extra
@@ -1831,13 +1918,11 @@ mod tests {
             json!({"type": "project_automation", "run_id": "run-1"}),
         );
 
-        ensure_space_mcp_server(&mut request);
-
-        assert!(request.mcp_servers.is_empty());
+        assert!(encoded_space_context_grant(&request).is_none());
     }
 
     #[test]
-    fn injects_wework_space_for_automation_assigned_board_robot() {
+    fn binds_project_context_for_assigned_board_robot() {
         let mut request = ExecutionRequest::default();
         request
             .extra
@@ -1847,15 +1932,36 @@ mod tests {
             json!({"type": "board_task", "run_id": "run-1"}),
         );
 
-        ensure_space_mcp_server(&mut request);
+        let grant = decode_grant(&request);
 
-        assert_eq!(request.mcp_servers.len(), 1);
-        assert_eq!(request.mcp_servers[0]["env"]["WEWORK_SPACE_ID"], "cloud-42");
-        assert!(request.mcp_servers[0]["env"]["WEWORK_AUTOMATION_RUN_ID"].is_null());
+        assert_eq!(grant.version, 1);
+        assert_eq!(grant.space_id.as_deref(), Some("cloud-42"));
+        assert_eq!(grant.item_id, None);
+        assert_eq!(grant.automation_run_id, None);
+        assert!(!grant.automation_manager);
+        assert!(grant.expires_at_unix > Local::now().timestamp());
     }
 
     #[test]
-    fn injects_assignment_tools_for_project_automation_manager() {
+    fn binds_issue_context_from_origin() {
+        let mut request = ExecutionRequest::default();
+        request.extra.insert(
+            "origin".to_owned(),
+            json!({
+                "type": "board_task",
+                "cloudProjectId": "cloud-42",
+                "loopItemId": "ISSUE-7"
+            }),
+        );
+
+        let grant = decode_grant(&request);
+
+        assert_eq!(grant.space_id.as_deref(), Some("cloud-42"));
+        assert_eq!(grant.item_id.as_deref(), Some("ISSUE-7"));
+    }
+
+    #[test]
+    fn binds_automation_manager_scope() {
         let mut request = ExecutionRequest::default();
         request
             .extra
@@ -1869,145 +1975,96 @@ mod tests {
             }),
         );
 
-        ensure_space_mcp_server(&mut request);
+        let grant = decode_grant(&request);
 
-        assert_eq!(request.mcp_servers.len(), 1);
-        assert_eq!(request.mcp_servers[0]["env"]["WEWORK_SPACE_ID"], "cloud-42");
-        assert_eq!(
-            request.mcp_servers[0]["env"]["WEWORK_AUTOMATION_RUN_ID"],
-            "run-1"
-        );
+        assert_eq!(grant.space_id.as_deref(), Some("cloud-42"));
+        assert_eq!(grant.automation_run_id.as_deref(), Some("run-1"));
+        assert!(grant.automation_manager);
     }
 
     #[test]
-    fn skips_wework_space_when_prompt_lacks_a_cloud_project_reference() {
-        let mut request = ExecutionRequest {
-            prompt: json!("帮我看一下这个仓库的代码"),
-            ..ExecutionRequest::default()
-        };
-
-        ensure_space_mcp_server(&mut request);
-
-        assert!(request.mcp_servers.is_empty());
-    }
-
-    #[test]
-    fn injects_wework_space_when_prompt_references_a_cloud_project() {
-        let mut request = ExecutionRequest {
+    fn enables_unbound_capability_for_explicit_cloud_reference() {
+        let request = ExecutionRequest {
             prompt: json!("请查看 [任务:T-1](cloud://projects/cloud-42/todos/T-1)"),
             ..ExecutionRequest::default()
         };
 
-        ensure_space_mcp_server(&mut request);
+        let grant = decode_grant(&request);
 
-        assert_eq!(request.mcp_servers.len(), 1);
-        assert_eq!(request.mcp_servers[0]["name"], SPACE_MCP_SERVER_NAME);
-        assert!(request.mcp_servers[0]["env"]["WEWORK_SPACE_ID"].is_null());
+        assert_eq!(grant.space_id, None);
+        assert_eq!(grant.item_id, None);
     }
 
     #[test]
-    fn injects_wework_space_for_array_prompt_with_cloud_project_reference() {
-        let mut request = ExecutionRequest {
+    fn skips_capability_when_prompt_has_no_project_reference() {
+        let request = ExecutionRequest {
+            prompt: json!("帮我看一下这个仓库的代码"),
+            ..ExecutionRequest::default()
+        };
+
+        assert!(encoded_space_context_grant(&request).is_none());
+    }
+
+    #[test]
+    fn enables_capability_for_array_prompt_cloud_reference() {
+        let request = ExecutionRequest {
             prompt: json!([{"type": "text", "text": "参考 [整个空间](cloud://projects/proj-7)"}]),
             ..ExecutionRequest::default()
         };
 
-        ensure_space_mcp_server(&mut request);
-
-        assert_eq!(request.mcp_servers.len(), 1);
-        assert_eq!(request.mcp_servers[0]["name"], SPACE_MCP_SERVER_NAME);
+        assert!(encoded_space_context_grant(&request).is_some());
     }
 
     #[test]
-    fn falls_back_to_device_backend_env_for_space_mcp() {
-        let previous_url = env::var("WEGENT_BACKEND_URL").ok();
-        let previous_token = env::var("WEGENT_AUTH_TOKEN").ok();
-        env::set_var("WEGENT_BACKEND_URL", "https://wework.example.com");
-        env::set_var("WEGENT_AUTH_TOKEN", "device-token");
-
-        let mut request = ExecutionRequest::default();
-        request
-            .extra
-            .insert("cloudProjectId".to_owned(), json!("cloud-42"));
-        ensure_space_mcp_server(&mut request);
-
-        let server = &request.mcp_servers[0];
-        assert_eq!(
-            server["env"]["WEWORK_SPACE_BACKEND_URL"],
-            json!("https://wework.example.com")
-        );
-        assert_eq!(
-            server["env"]["WEWORK_SPACE_AUTH_TOKEN"],
-            json!("device-token")
-        );
-
-        if let Some(url) = previous_url {
-            env::set_var("WEGENT_BACKEND_URL", url);
-        } else {
-            env::remove_var("WEGENT_BACKEND_URL");
-        }
-        if let Some(token) = previous_token {
-            env::set_var("WEGENT_AUTH_TOKEN", token);
-        } else {
-            env::remove_var("WEGENT_AUTH_TOKEN");
-        }
-    }
-
-    #[test]
-    fn refreshes_stale_wework_space_config_for_a_follow_up_turn() {
-        let mut request = ExecutionRequest::default();
-        request.mcp_servers.push(json!({
-            "name": "wework_space",
-            "type": "stdio",
-            "command": "stale-executor",
-            "args": ["space-mcp-server"]
-        }));
-        request
-            .extra
-            .insert("cloudProjectId".to_owned(), json!(841738010351776815_i64));
-        request.backend_url = Some("https://wework.example.com".to_owned());
-        request.auth_token = Some("runtime-token".to_owned());
-
-        ensure_space_mcp_server(&mut request);
-
-        assert_eq!(request.mcp_servers.len(), 1);
-        assert_ne!(request.mcp_servers[0]["command"], "stale-executor");
-        assert_eq!(
-            request.mcp_servers[0]["env"]["WEWORK_SPACE_ID"],
-            "841738010351776815"
-        );
-        assert_eq!(
-            request.mcp_servers[0]["env"]["WEWORK_SPACE_BACKEND_URL"],
-            "https://wework.example.com"
-        );
-        assert_eq!(
-            request.mcp_servers[0]["env"]["WEWORK_SPACE_AUTH_TOKEN"],
-            "runtime-token"
-        );
-    }
-
-    #[test]
-    fn provides_the_bound_project_as_the_default_space() {
-        let mut request = ExecutionRequest::default();
-        request
-            .extra
-            .insert("cloudProjectId".to_owned(), json!("cloud-42"));
-
-        ensure_space_mcp_server(&mut request);
-
-        assert_eq!(request.mcp_servers[0]["env"]["WEWORK_SPACE_ID"], "cloud-42");
-    }
-
-    #[test]
-    fn provides_a_numeric_bound_project_as_the_default_space() {
+    fn preserves_numeric_project_identity_in_grant() {
         let mut request = ExecutionRequest::default();
         request
             .extra
             .insert("cloudProjectId".to_owned(), json!(9001));
 
-        ensure_space_mcp_server(&mut request);
+        assert_eq!(decode_grant(&request).space_id.as_deref(), Some("9001"));
+    }
 
-        assert_eq!(request.mcp_servers[0]["env"]["WEWORK_SPACE_ID"], "9001");
+    #[test]
+    fn rejects_arguments_outside_the_context_grant() {
+        let grant = SpaceContextGrant {
+            version: 1,
+            task_id: "task-1".to_owned(),
+            space_id: Some("space-1".to_owned()),
+            item_id: Some("item-1".to_owned()),
+            automation_run_id: None,
+            automation_manager: false,
+            expires_at_unix: Local::now().timestamp() + 60,
+        };
+
+        assert!(
+            context_scope_error(&grant, &json!({"space_id": "space-2", "item_id": "item-1"}))
+                .is_some()
+        );
+        assert!(
+            context_scope_error(&grant, &json!({"space_id": "space-1", "item_id": "item-2"}))
+                .is_some()
+        );
+        assert!(
+            context_scope_error(&grant, &json!({"space_id": "space-1", "item_id": "item-1"}))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn rejects_expired_context_grant() {
+        let grant = SpaceContextGrant {
+            version: 1,
+            task_id: "task-1".to_owned(),
+            space_id: Some("space-1".to_owned()),
+            item_id: Some("item-1".to_owned()),
+            automation_run_id: None,
+            automation_manager: false,
+            expires_at_unix: Local::now().timestamp() - 1,
+        };
+        let encoded = STANDARD.encode(serde_json::to_vec(&grant).unwrap());
+
+        assert!(decode_space_context_grant(&encoded).is_none());
     }
 
     #[test]
@@ -2119,6 +2176,19 @@ mod tests {
     }
 
     #[test]
+    fn exposes_bound_current_context_tool() {
+        let current_context = tools()
+            .into_iter()
+            .find(|tool| tool["name"] == "get_current_context")
+            .expect("get_current_context tool");
+
+        assert_eq!(
+            current_context["inputSchema"],
+            json!({"type": "object", "properties": {}})
+        );
+    }
+
+    #[test]
     fn exposes_task_search_tool() {
         let search = tools()
             .into_iter()
@@ -2197,6 +2267,7 @@ mod tests {
         assert_eq!(
             names,
             vec![
+                "get_current_context",
                 "get_board_item",
                 "get_assignment_candidates",
                 "assign_board_item",

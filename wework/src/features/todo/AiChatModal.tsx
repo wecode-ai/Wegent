@@ -8,7 +8,7 @@ import {
   Undo2,
   X,
 } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import { WorkbenchHarnessSelector } from '@/components/layout/WorkbenchHarnessSelector'
@@ -21,6 +21,7 @@ import type {
   ModelOptions,
   ModelType,
   ProjectWithTasks,
+  RuntimeSendRequest,
   RuntimeTaskAddress,
 } from '@/types/api'
 import { ConnectedIssueProjectWork } from './ConnectedIssueProjectWork'
@@ -104,6 +105,74 @@ export function AiChatModal({
   })
   const selectedLocalProject =
     localProjects.find(candidate => candidate.id === localProjectId) ?? null
+  const runtimeContext = useMemo<
+    Pick<RuntimeSendRequest, 'cloudProjectId' | 'origin' | 'additionalContext'>
+  >(
+    () => ({
+      cloudProjectId: String(project.id),
+      ...(task
+        ? {
+            origin: {
+              type: 'board_task' as const,
+              cloudProjectId: String(project.id),
+              loopItemId: String(task.id),
+            },
+          }
+        : {}),
+      additionalContext: {
+        ...projectSpaceChatRuntimeContext(project),
+        ...(task
+          ? {
+              issueEnvironment: {
+                kind: 'application' as const,
+                value: [
+                  '<issue_environment>',
+                  JSON.stringify({
+                    project: {
+                      id: String(project.id),
+                      name: project.name,
+                      description: project.description ?? '',
+                    },
+                    issue: {
+                      id: String(task.id),
+                      title: task.title,
+                      description: task.description ?? '',
+                      status: task.status,
+                      priority: task.priority,
+                      tags: task.tags ?? [],
+                      assigneeUserId: task.assignee_user_id ?? null,
+                      assigneeAgentId: task.assignee_agent_id || null,
+                      dueDate: task.due_at ?? null,
+                    },
+                    orchestration: task.workflow
+                      ? {
+                          advancementPolicy: task.workflow.advancement_policy ?? 'manual',
+                          stageMode:
+                            task.workflow.stage_mode ??
+                            (task.workflow.nodes.length ? 'dag' : 'none'),
+                          currentStageId: workflowNodeId ?? null,
+                          stages: task.workflow.nodes.map(node => ({
+                            id: node.id,
+                            name: node.name,
+                            prompt: node.prompt ?? '',
+                            status: node.status,
+                            dependsOn: node.depends_on,
+                            dependencyContext: node.dependency_context ?? {},
+                            required: node.required,
+                          })),
+                        }
+                      : null,
+                  }),
+                  '</issue_environment>',
+                  'Treat this Issue as immutable execution context. The user message is the concrete task instruction.',
+                ].join('\n'),
+              },
+            }
+          : {}),
+      },
+    }),
+    [project, task, workflowNodeId]
+  )
 
   // The task detail modal stays open underneath; Escape only closes the chat
   // first so the user never loses the task context in one keystroke.
@@ -140,58 +209,7 @@ export function AiChatModal({
         attachments: options.attachments,
         executionModel: options.executionModel,
         collaborationMode: 'default',
-        cloudProjectId: String(project.id),
-        additionalContext: {
-          ...projectSpaceChatRuntimeContext(project),
-          ...(task
-            ? {
-                issueEnvironment: {
-                  kind: 'application',
-                  value: [
-                    '<issue_environment>',
-                    JSON.stringify({
-                      project: {
-                        id: String(project.id),
-                        name: project.name,
-                        description: project.description ?? '',
-                      },
-                      issue: {
-                        id: String(task.id),
-                        title: task.title,
-                        description: task.description ?? '',
-                        status: task.status,
-                        priority: task.priority,
-                        tags: task.tags ?? [],
-                        assigneeUserId: task.assignee_user_id ?? null,
-                        assigneeAgentId: task.assignee_agent_id || null,
-                        dueDate: task.due_at ?? null,
-                      },
-                      orchestration: task.workflow
-                        ? {
-                            advancementPolicy: task.workflow.advancement_policy ?? 'manual',
-                            stageMode:
-                              task.workflow.stage_mode ??
-                              (task.workflow.nodes.length ? 'dag' : 'none'),
-                            currentStageId: workflowNodeId ?? null,
-                            stages: task.workflow.nodes.map(node => ({
-                              id: node.id,
-                              name: node.name,
-                              prompt: node.prompt ?? '',
-                              status: node.status,
-                              dependsOn: node.depends_on,
-                              dependencyContext: node.dependency_context ?? {},
-                              required: node.required,
-                            })),
-                          }
-                        : null,
-                    }),
-                    '</issue_environment>',
-                    'Treat this Issue as immutable execution context. The user message is the concrete task instruction.',
-                  ].join('\n'),
-                },
-              }
-            : {}),
-        },
+        ...runtimeContext,
         onError: options.onError,
         onRuntimeTaskOptimisticOpen: options.onRuntimeTaskOptimisticOpen,
       })
@@ -203,6 +221,7 @@ export function AiChatModal({
       inheritFromTask,
       onTaskCreated,
       project,
+      runtimeContext,
       selectedLocalProject,
       task,
       workflowNodeId,
@@ -241,6 +260,7 @@ export function AiChatModal({
         initialAddress={options.startFresh ? null : currentAddress}
         createTask={createConversation}
         onAddressChange={rememberAddress}
+        runtimeContext={runtimeContext}
         emptyStateText={t(
           'todo.issue_task_composer_empty',
           '描述这个任务要完成什么，发送后会创建任务并关联当前 Issue。'
@@ -282,6 +302,7 @@ export function AiChatModal({
       return (
         <aside
           data-testid="ai-chat-modal-backdrop"
+          data-presentation="sidebar"
           className={cn(
             'relative z-10 flex h-full min-h-0 w-[min(620px,38vw)] min-w-[460px] shrink-0 flex-col border-l border-border bg-background',
             !open && 'hidden'
@@ -325,6 +346,7 @@ export function AiChatModal({
               testId="work-item-task-chat-panel"
               initialAddress={currentAddress}
               onAddressChange={rememberAddress}
+              runtimeContext={runtimeContext}
               sendEphemeral={false}
               emptyStateText={t('workbench.task_conversation_empty', '该任务还没有对话记录。')}
               placeholder={t('workbench.quick_reply_task', '快速回复这个任务')}
@@ -423,6 +445,7 @@ export function AiChatModal({
               testId="work-item-task-chat-panel"
               initialAddress={currentAddress}
               onAddressChange={rememberAddress}
+              runtimeContext={runtimeContext}
               sendEphemeral={false}
               emptyStateText={t('workbench.task_conversation_empty', '该任务还没有对话记录。')}
               placeholder={t('workbench.quick_reply_task', '快速回复这个任务')}
@@ -436,20 +459,15 @@ export function AiChatModal({
 
   if (embedded) {
     return (
-      <div
+      <aside
         data-testid="ai-chat-modal-backdrop"
+        data-presentation="sidebar"
         className={cn(
-          'fixed inset-0 z-modal flex items-center justify-center bg-black/30 p-6 backdrop-blur-[2px]',
+          'relative z-10 flex h-full min-h-0 w-[min(620px,38vw)] min-w-[460px] shrink-0 flex-col border-l border-border bg-background',
           !open && 'hidden'
         )}
-        onClick={event => {
-          if (event.target === event.currentTarget) onClose()
-        }}
       >
-        <section
-          data-testid="ai-chat-modal"
-          className="flex h-[min(680px,calc(100vh_-_48px))] w-[min(72rem,calc(100vw_-_48px))] min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-xl"
-        >
+        <section data-testid="ai-chat-modal" className="flex h-full min-h-0 min-w-0 flex-col">
           <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3">
             <button
               type="button"
@@ -475,7 +493,7 @@ export function AiChatModal({
             { expanded: true, startFresh: true }
           )}
         </section>
-      </div>
+      </aside>
     )
   }
 
