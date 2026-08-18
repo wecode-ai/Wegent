@@ -240,7 +240,7 @@ class SkillBindingService:
             .filter(
                 Kind.kind == SKILL_BINDING_KIND,
                 Kind.namespace.in_(group_namespaces),
-                Kind.is_active == True,
+                Kind.is_active,
             )
             .all()
         )
@@ -259,7 +259,7 @@ class SkillBindingService:
             .filter(
                 Kind.id.in_(skill_ids),
                 Kind.kind == "Skill",
-                Kind.is_active == True,
+                Kind.is_active,
             )
             .all()
         }

@@ -438,11 +438,15 @@ describe('SkillListWithScope default enabled skills', () => {
       }),
     ])
 
-    render(<SkillListWithScope scope="all" compact />)
+    const { rerender } = render(<SkillListWithScope scope="all" sourceFilter="group" compact />)
 
     const card = await screen.findByTestId('skill-library-item-9')
     expect(within(card).getByText('团队技能')).toBeInTheDocument()
     expect(within(card).queryByText('我的技能')).toBeNull()
+
+    rerender(<SkillListWithScope scope="all" sourceFilter="personal" compact />)
+
+    expect(screen.queryByTestId('skill-library-item-9')).not.toBeInTheDocument()
   })
 
   it('notifies the resource library when an external skill creation is cancelled', async () => {

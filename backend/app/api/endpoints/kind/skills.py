@@ -1238,15 +1238,16 @@ def list_unified_skills(
     user_default_skill_ids = skill_binding_service.list_user_default_skill_ids(
         db, current_user.id
     )
-    user_groups = get_user_groups(db, current_user.id)
-    group_namespaces = [group for group in user_groups if group != "default"]
-    group_shared_skill_ids = (
-        skill_binding_service.list_group_skill_ids_for_authorized_namespaces(
-            db, group_namespaces
+    group_namespaces: list[str] = []
+    group_shared_skill_ids: set[int] = set()
+    if scope != "group" or not group_name:
+        user_groups = get_user_groups(db, current_user.id)
+        group_namespaces = [group for group in user_groups if group != "default"]
+        group_shared_skill_ids = (
+            skill_binding_service.list_group_skill_ids_for_authorized_namespaces(
+                db, group_namespaces
+            )
         )
-        if scope in {"personal", "all"} or (scope == "group" and not group_name)
-        else set()
-    )
     bound_skill_ids = (
         set(user_default_skill_ids) if scope in {"personal", "all"} else set()
     )
