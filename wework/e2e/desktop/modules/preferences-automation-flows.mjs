@@ -191,6 +191,16 @@ async function declineInitialTelemetryConsent(control) {
 }
 
 async function ensureExperimentalFeaturesEnabled(control) {
+  const settingsButtonCount = Number(
+    await control.command('getElementCount', '[data-testid="settings-button"]')
+  )
+  if (settingsButtonCount === 0) {
+    await control.command('setAppPreferences', 'body', {
+      value: JSON.stringify({ experimentalFeaturesEnabled: true }),
+    })
+    return
+  }
+
   const toggleSelector = '[data-testid="general-experimental-features-toggle"]'
   await control.command('click', '[data-testid="settings-button"]')
   await control.command('click', '[data-testid="settings-menu-button"]')
