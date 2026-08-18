@@ -12,6 +12,9 @@ from fastapi import HTTPException
 
 from app.models.knowledge import KnowledgeDocument, KnowledgeFolder
 from app.services.execution.skill_mcp import extract_skill_mcp_servers
+from app.services.knowledge.task_knowledge_base_service import (
+    TaskKnowledgeBaseService,
+)
 from app.services.mcp_provider_registry import get_mcp_service_by_skill_name
 from shared.models.knowledge import (
     KnowledgeScopeType,
@@ -218,12 +221,18 @@ def _build_wegent_refs(
         for ref in spec.get("knowledgeBaseScopes") or []
         if isinstance(ref, dict) and ref.get("id") is not None
     }
+    current_names = _load_wegent_knowledge_base_names(db, selected_ids)
     prefer_request_scope = _is_knowledge_workbench_task(task_json)
 
     result: list[SelectedKnowledgeRef] = []
     for kb_id in sorted(selected_ids):
         scope = scope_refs.get(kb_id) or {}
-        kb_name = str(scope.get("name") or kb_refs.get(kb_id, {}).get("name") or kb_id)
+        kb_name = str(
+            current_names.get(kb_id)
+            or scope.get("name")
+            or kb_refs.get(kb_id, {}).get("name")
+            or kb_id
+        )
         scope_restricted, folder_ids, document_ids = _resolve_wegent_scope(
             request,
             kb_id,
@@ -285,6 +294,25 @@ def _build_wegent_refs(
             )
         )
     return result
+
+
+def _load_wegent_knowledge_base_names(
+    db: "Session",
+    knowledge_base_ids: set[int],
+) -> dict[int, str]:
+    """Load current names for effective knowledge bases authorized upstream."""
+    knowledge_bases = TaskKnowledgeBaseService().get_knowledge_bases_by_ids(
+        db,
+        list(knowledge_base_ids),
+    )
+    names: dict[int, str] = {}
+    for knowledge_base in knowledge_bases.values():
+        value = knowledge_base.json if isinstance(knowledge_base.json, dict) else {}
+        spec = value.get("spec") if isinstance(value.get("spec"), dict) else {}
+        name = str(spec.get("name") or knowledge_base.name or "").strip()
+        if name:
+            names[knowledge_base.id] = name
+    return names
 
 
 def _resolve_wegent_scope(

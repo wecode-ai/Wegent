@@ -10,6 +10,7 @@ import pytest
 import yaml
 from fastapi import HTTPException
 
+from app.models.kind import Kind
 from app.models.knowledge import KnowledgeDocument, KnowledgeFolder
 from app.services.chat.selected_knowledge import (
     PROVIDER_SKILLS,
@@ -34,10 +35,27 @@ class _Query:
 
 class _KnowledgeMetadataDB:
     def query(self, model: object) -> _Query:
+        if model is Kind:
+            return _Query([])
         if model is KnowledgeFolder:
             return _Query([SimpleNamespace(id=3, name="设计资料")])
         if model is KnowledgeDocument:
             return _Query([SimpleNamespace(id=9, name="接口约定")])
+        raise AssertionError(f"Unexpected model: {model}")
+
+
+class _DefaultKnowledgeDB:
+    def query(self, model: object) -> _Query:
+        if model is Kind:
+            return _Query(
+                [
+                    SimpleNamespace(
+                        id=115,
+                        name="kb-1-default-Wegent KB-A「产品知识」",
+                        json={"spec": {"name": "KB-A_产品知识"}},
+                    )
+                ]
+            )
         raise AssertionError(f"Unexpected model: {model}")
 
 
@@ -134,6 +152,19 @@ def test_apply_selected_knowledge_context_is_idempotent(
 
     assert request.preload_skills == ["demo-knowledge"]
     assert request.user_selected_skills == ["demo-knowledge"]
+
+
+def test_apply_selected_knowledge_context_resolves_default_knowledge_name() -> None:
+    request = ExecutionRequest(
+        bot=[{"shell_type": "ClaudeCode"}],
+        knowledge_base_ids=[115],
+    )
+    task = SimpleNamespace(json={"spec": {}})
+
+    apply_selected_knowledge_context(_DefaultKnowledgeDB(), request, task)
+
+    assert 'knowledge_base_id="115"' in request.selected_knowledge_prompt
+    assert 'knowledge_base_name="KB-A_产品知识"' in request.selected_knowledge_prompt
 
 
 def test_build_selected_knowledge_refs_groups_resources_by_knowledge_base(
