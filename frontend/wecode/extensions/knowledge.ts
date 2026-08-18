@@ -52,4 +52,13 @@ export async function loadWecodeKnowledgeExtensions() {
   } catch (error) {
     console.warn('Failed to load video segment source opener', error)
   }
+
+  try {
+    const { videoChaptersOpener } = await import('@wecode/features/knowledge/video-chapters-card')
+    const { registerExternalSourceOpener } =
+      await import('@/features/tasks/components/chat/SourceReferences')
+    registerExternalSourceOpener('wegent_video_chapters', videoChaptersOpener)
+  } catch (error) {
+    console.warn('Failed to load video chapters source opener', error)
+  }
 }

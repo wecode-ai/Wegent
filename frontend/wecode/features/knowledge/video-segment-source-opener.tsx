@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState, useSyncExternalStore } from 'react'
 import { AlertCircle, Maximize, Minimize, Pause, Play } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
@@ -15,72 +15,15 @@ import {
 } from '@/features/tasks/components/chat/SourceReferences'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { SourceReference } from '@/types/socket'
+import { resolveVideoSegmentBounds, type VideoSegmentBounds } from './video-segment-bounds'
+import { formatVideoTime } from './video-time'
+import { activatePlayer, getActivePlayerId, subscribeActivePlayer } from './active-video-store'
+import { useVideoSegmentPlayback } from './use-video-segment-playback'
 
 type VideoSegment = NonNullable<SourceReference['segments']>[number]
 
-export interface VideoSegmentBounds {
-  startSec: number
-  endSec: number
-  duration: number
-}
-
-const VIDEO_DURATION_TOLERANCE_SECONDS = 2
-
-function reinterpretShiftedMinuteSecond(seconds: number): number | null {
-  if (!Number.isInteger(seconds) || seconds < 0 || seconds % 60 !== 0) return null
-  const leading = Math.floor(seconds / 3600)
-  const middle = Math.floor((seconds % 3600) / 60)
-  if (leading > 59) return null
-  return leading * 60 + middle
-}
-
-export function resolveVideoSegmentBounds(
-  segment: Pick<VideoSegment, 'start_sec' | 'end_sec'>,
-  mediaDuration?: number
-): VideoSegmentBounds | null {
-  if (segment.start_sec < 0 || segment.end_sec <= segment.start_sec) return null
-  const hasMediaDuration =
-    mediaDuration !== undefined && Number.isFinite(mediaDuration) && mediaDuration > 0
-  if (hasMediaDuration && segment.end_sec > mediaDuration) {
-    // Some multimodal models emit MM:SS:00 while claiming HH:MM:SS, e.g.
-    // 04:59:00 for 4m59s. Correct only when the standard interpretation is
-    // outside the real media duration and the conservative reinterpretation
-    // produces a valid range within it.
-    const shiftedStart = reinterpretShiftedMinuteSecond(segment.start_sec)
-    const shiftedEnd = reinterpretShiftedMinuteSecond(segment.end_sec)
-    if (
-      shiftedStart !== null &&
-      shiftedEnd !== null &&
-      shiftedStart < shiftedEnd &&
-      shiftedStart < mediaDuration &&
-      shiftedEnd <= mediaDuration + 1
-    ) {
-      const endSec = Math.min(shiftedEnd, mediaDuration)
-      return {
-        startSec: shiftedStart,
-        endSec,
-        duration: endSec - shiftedStart,
-      }
-    }
-  }
-  if (hasMediaDuration && segment.start_sec >= mediaDuration) return null
-  if (hasMediaDuration && segment.end_sec > mediaDuration + VIDEO_DURATION_TOLERANCE_SECONDS) {
-    return null
-  }
-  const endSec = hasMediaDuration ? Math.min(segment.end_sec, mediaDuration) : segment.end_sec
-  if (endSec <= segment.start_sec) return null
-  return {
-    startSec: segment.start_sec,
-    endSec,
-    duration: endSec - segment.start_sec,
-  }
-}
-
-function formatDuration(seconds: number): string {
-  const minutes = Math.floor(seconds / 60)
-  const rest = Math.floor(seconds % 60)
-  return `${minutes}:${String(rest).padStart(2, '0')}`
-}
+export { resolveVideoSegmentBounds }
+export type { VideoSegmentBounds }
 
 function VideoSegmentCard({
   segment,
@@ -107,39 +50,31 @@ function VideoSegmentCard({
 }) {
   const { t } = useTranslation('chat')
   const cardRef = useRef<HTMLElement>(null)
-  const videoRef = useRef<HTMLVideoElement>(null)
-  const [mediaDuration, setMediaDuration] = useState<number>()
-  const bounds = useMemo(
-    () => resolveVideoSegmentBounds(segment, mediaDuration),
-    [mediaDuration, segment]
-  )
+  const playback = useVideoSegmentPlayback({
+    segment,
+    active: isActive,
+    positionMode: 'relative',
+    resumeOnReactivate: true,
+  })
+  const {
+    videoRef,
+    bounds,
+    mediaDuration,
+    position,
+    isPlaying,
+    videoError,
+    handleLoadedMetadata,
+    handleTimeUpdate,
+    handlePause,
+    handleEnded,
+    handleError,
+    seekTo,
+    requestPlayWhenReady,
+    clearVideoError,
+  } = playback
   const duration = bounds?.duration ?? 0
-  const [position, setPosition] = useState(0)
-  const [isPlaying, setIsPlaying] = useState(false)
   const [isFullscreen, setIsFullscreen] = useState(false)
-  const [videoError, setVideoError] = useState(false)
-  const playWhenReadyRef = useRef(false)
   const fullscreenAvailable = typeof document !== 'undefined' && document.fullscreenEnabled
-
-  const seekToSegmentStart = useCallback(() => {
-    const video = videoRef.current
-    if (!video || !bounds) return
-    video.currentTime = bounds.startSec
-    setPosition(0)
-  }, [bounds])
-
-  useEffect(() => {
-    seekToSegmentStart()
-  }, [playUrl, seekToSegmentStart])
-
-  useEffect(() => {
-    if (isActive) return
-    playWhenReadyRef.current = false
-    setMediaDuration(undefined)
-    setPosition(0)
-    setIsPlaying(false)
-    setVideoError(false)
-  }, [isActive])
 
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -149,53 +84,19 @@ function VideoSegmentCard({
     return () => document.removeEventListener('fullscreenchange', handleFullscreenChange)
   }, [])
 
-  const handleTimeUpdate = () => {
-    const video = videoRef.current
-    if (!video || !bounds) return
-    if (video.currentTime < bounds.startSec) {
-      video.currentTime = bounds.startSec
-      return
-    }
-    if (video.currentTime >= bounds.endSec) {
-      video.pause()
-      video.currentTime = bounds.endSec
-      setPosition(duration)
-      setIsPlaying(false)
-      return
-    }
-    setPosition(Math.max(0, video.currentTime - bounds.startSec))
-  }
-
   const togglePlayback = async () => {
     if (!isActive) {
-      playWhenReadyRef.current = true
+      requestPlayWhenReady()
       onActivate()
       return
     }
-    const video = videoRef.current
-    if (!video || !bounds) return
-    if (!video.paused) {
-      video.pause()
-      setIsPlaying(false)
-      return
-    }
-    if (video.currentTime < bounds.startSec || video.currentTime >= bounds.endSec) {
-      seekToSegmentStart()
-    }
-    try {
-      await video.play()
-      setIsPlaying(true)
-    } catch {
-      setIsPlaying(false)
-    }
+    await playback.togglePlayback()
   }
 
   const seekWithinSegment = (nextPosition: number) => {
-    const video = videoRef.current
-    if (!video || !bounds) return
+    if (!bounds) return
     const boundedPosition = Math.min(Math.max(nextPosition, 0), duration)
-    video.currentTime = bounds.startSec + boundedPosition
-    setPosition(boundedPosition)
+    seekTo(bounds.startSec + boundedPosition)
   }
 
   const toggleFullscreen = async () => {
@@ -208,25 +109,6 @@ function VideoSegmentCard({
       }
     } catch {
       // The browser may reject fullscreen when blocked by user settings.
-    }
-  }
-
-  const handleLoadedMetadata = () => {
-    const video = videoRef.current
-    if (!video) return
-    const nextDuration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 0
-    if (nextDuration > 0) setMediaDuration(nextDuration)
-    const nextBounds = resolveVideoSegmentBounds(segment, nextDuration || undefined)
-    if (nextBounds) {
-      video.currentTime = nextBounds.startSec
-      setPosition(0)
-      if (playWhenReadyRef.current) {
-        playWhenReadyRef.current = false
-        void video.play().then(
-          () => setIsPlaying(true),
-          () => setIsPlaying(false)
-        )
-      }
     }
   }
 
@@ -248,9 +130,9 @@ function VideoSegmentCard({
             playsInline
             onLoadedMetadata={handleLoadedMetadata}
             onTimeUpdate={handleTimeUpdate}
-            onPause={() => setIsPlaying(false)}
-            onEnded={() => setIsPlaying(false)}
-            onError={() => setVideoError(true)}
+            onPause={handlePause}
+            onEnded={handleEnded}
+            onError={handleError}
             className={`${isFullscreen ? 'h-full min-h-0' : 'aspect-video'} w-full object-contain`}
             data-testid={`video-segment-player-${segment.start_sec}`}
           >
@@ -273,8 +155,8 @@ function VideoSegmentCard({
               variant="outline"
               size="sm"
               onClick={() => {
-                setVideoError(false)
-                playWhenReadyRef.current = true
+                clearVideoError()
+                requestPlayWhenReady()
                 onRetry()
               }}
               data-testid={`video-segment-card-retry-${segment.start_sec}`}
@@ -359,7 +241,7 @@ function VideoSegmentCard({
           >
             {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
           </Button>
-          <span>{formatDuration(position)}</span>
+          <span>{formatVideoTime(position)}</span>
           <input
             type="range"
             min={0}
@@ -372,7 +254,7 @@ function VideoSegmentCard({
             aria-label="Video segment progress"
             data-testid={`video-segment-progress-${segment.start_sec}`}
           />
-          <span>{formatDuration(duration)}</span>
+          <span>{formatVideoTime(duration)}</span>
         </div>
       </div>
     </article>
@@ -383,7 +265,19 @@ export function VideoSegmentSource({ source }: { source: SourceReference }) {
   const { t } = useTranslation('chat')
   const segments = source.segments ?? []
   const documentId = source.document_id ?? 0
-  const [activeSegmentKey, setActiveSegmentKey] = useState<string | null>(null)
+  const reactId = useId()
+  // Scope this source instance so the same video cited in multiple messages
+  // does not conflict, while the global store guarantees a single player.
+  const playerPrefix = `segment:${source.index}:${source.kb_id ?? 0}:${documentId}:${reactId}`
+  const activePlayerId = useSyncExternalStore(
+    subscribeActivePlayer,
+    getActivePlayerId,
+    getActivePlayerId
+  )
+  const activeSegmentKey =
+    activePlayerId !== null && activePlayerId.startsWith(`${playerPrefix}:`)
+      ? activePlayerId.slice(playerPrefix.length + 1)
+      : null
   const { playUrl, mimeType, isLoading, notReady, hasError, retry } = useVideoPlayUrl(
     documentId,
     documentId > 0 && segments.length > 0 && activeSegmentKey !== null
@@ -406,7 +300,7 @@ export function VideoSegmentSource({ source }: { source: SourceReference }) {
             isLoading={isLoading}
             notReady={notReady}
             hasUrlError={hasError}
-            onActivate={() => setActiveSegmentKey(segmentKey)}
+            onActivate={() => activatePlayer(`${playerPrefix}:${segmentKey}`)}
             onRetry={retry}
           />
         )

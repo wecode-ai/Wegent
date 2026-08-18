@@ -36,25 +36,19 @@ TOKEN_CHARS_PER_TOKEN = 4  # ~4 chars/token for English, 1-2 for CJK
 DEFAULT_MAX_CALLS_PER_CONVERSATION = 10
 DEFAULT_EXEMPT_CALLS_BEFORE_CHECK = 5
 
-VIDEO_CHAPTER_TITLE_PATTERN = re.compile(
-    r"^#{1,6}\s+(.*?)\s*\(\[\d{1,2}:\d{2}:\d{2}\s*-\s*" r"\d{1,2}:\d{2}:\d{2}\]\)\s*$",
-    re.MULTILINE,
-)
-VIDEO_CHAPTER_SUMMARY_PATTERN = re.compile(
-    r"^>\s*\*\*本段摘要\*\*[：:]\s*(.+?)\s*$",
-    re.MULTILINE,
-)
-
 
 def _extract_video_segment_copy(content: str) -> tuple[str | None, str | None]:
-    """Extract display copy from one generated video chapter."""
-    title_match = VIDEO_CHAPTER_TITLE_PATTERN.search(content)
-    summary_match = VIDEO_CHAPTER_SUMMARY_PATTERN.search(content)
-    title = title_match.group(1).strip() if title_match else None
-    if title:
-        title = re.sub(r"^章节\s*\d+\s*[：:]\s*", "", title)
-    summary = summary_match.group(1).strip() if summary_match else None
-    return title, summary
+    """Extract display copy from one generated video chapter.
+
+    Delegates to the shared parser so fallback copy accepts the same
+    timestamp formats as every other video parsing path.
+    """
+    from shared.knowledge.video_segments import extract_video_segment
+
+    segment = extract_video_segment(content)
+    if segment is None:
+        return None, None
+    return segment.title, segment.description
 
 
 def _chunk_source_identity(
@@ -938,6 +932,7 @@ class KnowledgeBaseTool(BaseTool):
                     "source_id": source_id,
                     "source_uri": record.get("source_uri"),
                     "source_name": record.get("source_name"),
+                    "source_media_type": record.get("source_media_type"),
                     "metadata": record.get("metadata") or {},
                 }
             )
@@ -1644,14 +1639,18 @@ class KnowledgeBaseTool(BaseTool):
 
         # Build source references from chunks_used
         source_references = []
-        seen_sources: dict[tuple[Any, str], int] = {}
+        seen_sources: dict[tuple[str, str, str], int] = {}
         source_index = 1
 
         for chunk in chunks_used:
             kb_id = chunk.get("knowledge_base_id")
             source_id = chunk.get("source_id")
             source_file = chunk.get("source", "Unknown")
-            source_key = (source_id or kb_id, source_file)
+            source_key = _chunk_source_identity(
+                chunk,
+                kb_id=kb_id,
+                source_file=source_file,
+            )
 
             if source_key not in seen_sources:
                 seen_sources[source_key] = source_index
@@ -1668,6 +1667,10 @@ class KnowledgeBaseTool(BaseTool):
                     }
                 )
                 source_index += 1
+
+        # Upgrade video sources: from full Markdown content parse all chapters
+        # (direct injection has no chunk-level metadata, so we parse content).
+        self._upgrade_direct_injection_video_sources(source_references, chunks_used)
 
         retrieval_summary = self._with_citation_counts(
             retrieval_summary, source_references
@@ -1783,6 +1786,82 @@ class KnowledgeBaseTool(BaseTool):
             ensure_ascii=False,
         )
 
+    def _upgrade_direct_injection_video_sources(
+        self,
+        source_references: list[dict[str, Any]],
+        chunks: list[dict[str, Any]],
+    ) -> None:
+        """Upgrade video sources in direct-injection mode by parsing full content.
+
+        Direct injection has no chunk-level metadata (only document_id and
+        total_length), so video chapters are parsed from the full Markdown
+        content using the shared parser.
+
+        Dual condition: ``source_media_type == "video"`` AND content must
+        contain valid timestamp headings.
+        """
+        from shared.knowledge.video_segments import extract_all_video_segments
+        from shared.knowledge.video_sources import (
+            VideoSourceIdentity,
+            VideoSourceSegment,
+            build_video_source,
+            video_source_to_payload,
+        )
+
+        sources_by_doc_id: dict[Any, dict[str, Any]] = {}
+        for source in source_references:
+            doc_id = source.get("document_id")
+            if doc_id is not None and doc_id not in sources_by_doc_id:
+                sources_by_doc_id[doc_id] = source
+
+        for chunk in chunks:
+            if chunk.get("source_media_type") != "video":
+                continue
+
+            doc_ref = (chunk.get("metadata") or {}).get("doc_ref")
+            if doc_ref is None:
+                doc_ref = chunk.get("document_id")
+            try:
+                document_id = int(doc_ref)
+            except (TypeError, ValueError):
+                continue
+
+            source = sources_by_doc_id.get(chunk.get("document_id"))
+            if source is None:
+                source = sources_by_doc_id.get(document_id)
+            if source is None:
+                continue
+
+            parse_result = extract_all_video_segments(chunk.get("content", ""))
+            built = build_video_source(
+                identity=VideoSourceIdentity(
+                    knowledge_base_id=chunk.get("knowledge_base_id") or 0,
+                    document_id=document_id,
+                    title=source.get("title") or "video",
+                ),
+                coverage="complete",
+                segments=[
+                    VideoSourceSegment(
+                        start_sec=s.start_sec,
+                        end_sec=s.end_sec,
+                        score=chunk.get("score"),
+                        title=s.title,
+                        description=s.description,
+                    )
+                    for s in parse_result.segments
+                ],
+                input_truncated=parse_result.truncated,
+            )
+            if built is None:
+                continue
+
+            payload = video_source_to_payload(built)
+            source["source_type"] = "wegent_video_chapters"
+            source["document_id"] = document_id
+            source["segments"] = payload["segments"]
+            if built.segments_truncated:
+                source["segments_truncated"] = True
+
     def _upgrade_video_source_references(
         self,
         source_references: list[dict[str, Any]],
@@ -1801,7 +1880,15 @@ class KnowledgeBaseTool(BaseTool):
             if doc_id is not None and doc_id not in sources_by_document_id:
                 sources_by_document_id[doc_id] = source
 
-        seen_segments: set[tuple[int, int, int]] = set()
+        from shared.knowledge.video_sources import (
+            VideoSourceIdentity,
+            VideoSourceSegment,
+            build_video_source,
+            merge_video_source,
+            video_source_to_payload,
+        )
+
+        built_by_document_id: dict[int, Any] = {}
         for chunk in chunks:
             metadata = chunk.get("metadata") or {}
             start_sec = metadata.get("video_start_sec")
@@ -1828,12 +1915,6 @@ class KnowledgeBaseTool(BaseTool):
             source = sources_by_document_id.get(document_id)
             if source is None:
                 continue
-            segment_key = (document_id, start_sec, end_sec)
-            if segment_key in seen_segments:
-                continue
-            seen_segments.add(segment_key)
-            source["source_type"] = "wegent_video_segment"
-            source["document_id"] = document_id
             fallback_title, fallback_description = _extract_video_segment_copy(
                 chunk.get("content", "")
             )
@@ -1841,16 +1922,38 @@ class KnowledgeBaseTool(BaseTool):
             segment_description = (
                 metadata.get("video_segment_description") or fallback_description
             )
-            source.setdefault("segments", []).append(
-                {
-                    "id": metadata.get("video_segment_id"),
-                    "start_sec": start_sec,
-                    "end_sec": end_sec,
-                    "score": chunk.get("score"),
-                    "title": segment_title,
-                    "description": segment_description,
-                }
+            built = build_video_source(
+                identity=VideoSourceIdentity(
+                    knowledge_base_id=source.get("kb_id") or 0,
+                    document_id=document_id,
+                    title=source.get("title") or "video",
+                ),
+                coverage="retrieved",
+                segments=[
+                    VideoSourceSegment(
+                        start_sec=start_sec,
+                        end_sec=end_sec,
+                        segment_id=metadata.get("video_segment_id"),
+                        score=chunk.get("score"),
+                        title=segment_title,
+                        description=segment_description,
+                    )
+                ],
             )
+            if built is None:
+                continue
+            built_by_document_id[document_id] = merge_video_source(
+                built_by_document_id.get(document_id), built
+            )
+
+        for document_id, built in built_by_document_id.items():
+            source = sources_by_document_id[document_id]
+            payload = video_source_to_payload(built)
+            source["source_type"] = "wegent_video_segment"
+            source["document_id"] = document_id
+            source["segments"] = payload["segments"]
+            if built.segments_truncated:
+                source["segments_truncated"] = True
 
     async def _format_rag_result(
         self,
