@@ -344,9 +344,9 @@ fn non_empty_env(name: &str) -> Option<String> {
 fn current_space_context_grant() -> Option<SpaceContextGrant> {
     #[cfg(not(test))]
     {
-        return ACTIVE_SPACE_CONTEXT_GRANT
+        ACTIVE_SPACE_CONTEXT_GRANT
             .get_or_init(read_initial_space_context_grant)
-            .clone();
+            .clone()
     }
     #[cfg(test)]
     read_initial_space_context_grant()

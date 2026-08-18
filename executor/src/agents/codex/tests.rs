@@ -2125,16 +2125,11 @@ fn thread_launch_params_include_execution_system_prompt_as_developer_instruction
 }
 
 #[test]
-fn thread_launch_params_include_space_routing_when_space_mcp_is_injected() {
-    let request = ExecutionRequest {
-        mcp_servers: vec![json!({
-            "name": "wework_space",
-            "type": "stdio",
-            "command": "/path/to/wegent-executor",
-            "args": ["space-mcp-server"]
-        })],
-        ..ExecutionRequest::default()
-    };
+fn thread_launch_params_include_space_routing_when_space_capability_is_enabled() {
+    let mut request = ExecutionRequest::default();
+    request
+        .extra
+        .insert("cloudProjectId".to_owned(), json!("space-1"));
     let launch_config = CodexLaunchConfig::default();
 
     for params in [
