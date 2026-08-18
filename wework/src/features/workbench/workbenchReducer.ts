@@ -667,6 +667,7 @@ function reconcileCurrentRuntimeTaskAddress(
     )
     return {
       ...currentRuntimeTask,
+      workspacePath: hydratedCurrentDeviceTask.workspacePath,
       ...(hydratedCurrentDeviceTask.threadId
         ? { threadId: hydratedCurrentDeviceTask.threadId }
         : {}),

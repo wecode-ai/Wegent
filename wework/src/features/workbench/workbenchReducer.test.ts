@@ -891,7 +891,7 @@ describe('workbenchReducer', () => {
         deviceId: 'device-uuid',
         taskId: 'task-1',
         threadId: 'direct-thread-id',
-        ...(currentDeviceId === 'local-device' ? { workspacePath: '/Users/me/chat' } : {}),
+        workspacePath: '/Users/me/chat',
         runtimeHandle: {
           threadId: '019ee7f6-456a-78a1-96b1-66451afc310e',
         },
