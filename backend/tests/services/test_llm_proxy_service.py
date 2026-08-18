@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException, Request
+from sqlalchemy.orm import Session
 from starlette.datastructures import Headers
 
 from app.models.kind import Kind
@@ -419,10 +420,10 @@ def test_build_codex_runtime_model_config_preserves_explicit_catalog(
 
 
 def test_build_wework_runtime_model_config_preserves_explicit_cloud_catalog(
-    test_db,
+    test_db: Session,
     test_user: User,
-    monkeypatch,
-):
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from app.core.config import settings
 
     model = _model_kind(
