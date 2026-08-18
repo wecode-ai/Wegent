@@ -186,6 +186,8 @@ async function declineInitialTelemetryConsent(control) {
 }
 
 async function ensureExperimentalFeaturesEnabled(control) {
+  if (control.experimentalFeaturesEnabled) return
+
   const toggleSelector = '[data-testid="general-experimental-features-toggle"]'
   await control.command('click', '[data-testid="settings-button"]')
   await control.command('click', '[data-testid="settings-menu-button"]')
@@ -204,6 +206,7 @@ async function ensureExperimentalFeaturesEnabled(control) {
       'Enabling experimental features was not persisted'
     )
   }
+  control.experimentalFeaturesEnabled = true
   await control.command('click', '[data-testid="settings-back-button"]')
 }
 
