@@ -1,8 +1,9 @@
 import { Bot, CheckSquare2, CloudOff, Columns3, Plus, X } from 'lucide-react'
-import { useEffect, useRef, useState, type DragEvent, type RefObject } from 'react'
+import { useEffect, useMemo, useRef, useState, type DragEvent, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import { cn } from '@/lib/utils'
@@ -184,6 +185,7 @@ function WorkspaceTabButton({
 export function WorkspaceTabStrip() {
   const { t } = useTranslation('common')
   const cloud = useOptionalCloudConnection()
+  const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   const {
     tabs,
     activeTabId,
@@ -202,8 +204,32 @@ export function WorkspaceTabStrip() {
   const [draggedTabId, setDraggedTabId] = useState<string | null>(null)
   const [cloudConnectionOpen, setCloudConnectionOpen] = useState(false)
   const agentAvailable = Boolean(cloud.isConnected && cloud.webUrl)
+  const visibleTabs = useMemo(
+    () => tabs.filter(tab => experimentalFeaturesEnabled || tab.kind !== 'board'),
+    [experimentalFeaturesEnabled, tabs]
+  )
+  const newTabKinds = experimentalFeaturesEnabled
+    ? ([
+        ['task', CheckSquare2, t('workbench.workspace_tab_task', '任务')],
+        ['board', Columns3, t('workbench.workspace_tab_board', '工作空间视图')],
+        ['agent', Bot, t('workbench.workspace_tab_agent', '智能体')],
+      ] as const)
+    : ([
+        ['task', CheckSquare2, t('workbench.workspace_tab_task', '任务')],
+        ['agent', Bot, t('workbench.workspace_tab_agent', '智能体')],
+      ] as const)
   useOutsideMenu(Boolean(addMenuPosition), addMenuRef, () => setAddMenuPosition(null))
   useOutsideMenu(Boolean(contextMenu), contextMenuRef, () => setContextMenu(null))
+
+  useEffect(() => {
+    if (visibleTabs.some(tab => tab.id === activeTabId)) return
+    const fallbackTab = visibleTabs[0]
+    if (fallbackTab) {
+      selectTab(fallbackTab.id)
+      return
+    }
+    openTab('task')
+  }, [activeTabId, openTab, selectTab, visibleTabs])
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -219,8 +245,8 @@ export function WorkspaceTabStrip() {
         return
       }
       if (!event.shiftKey && /^[1-9]$/.test(event.key)) {
-        const index = event.key === '9' ? tabs.length - 1 : Number(event.key) - 1
-        const tab = tabs[index]
+        const index = event.key === '9' ? visibleTabs.length - 1 : Number(event.key) - 1
+        const tab = visibleTabs[index]
         if (!tab) return
         event.preventDefault()
         selectTab(tab.id)
@@ -228,13 +254,13 @@ export function WorkspaceTabStrip() {
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [activeTabId, closeTab, restoreClosedTab, selectTab, tabs])
+  }, [activeTabId, closeTab, restoreClosedTab, selectTab, visibleTabs])
 
   const openNewTab = (kind: WorkspaceTabKind) => {
     openTab(kind)
     setAddMenuPosition(null)
   }
-  const contextTab = tabs.find(tab => tab.id === contextMenu?.tabId) ?? null
+  const contextTab = visibleTabs.find(tab => tab.id === contextMenu?.tabId) ?? null
 
   return (
     <>
@@ -248,7 +274,7 @@ export function WorkspaceTabStrip() {
           aria-label={t('workbench.workspace_tabs', '工作区标签页')}
           className="workspace-tab-strip-scrollbar flex h-full min-w-0 max-w-[calc(100%-2rem)] flex-none items-center gap-0.5 overflow-x-auto overflow-y-hidden"
         >
-          {tabs.map(tab => (
+          {visibleTabs.map(tab => (
             <WorkspaceTabButton
               key={tab.id}
               tab={tab}
@@ -295,13 +321,7 @@ export function WorkspaceTabStrip() {
               className="fixed z-system-popover w-[184px] rounded-xl border border-border/70 bg-popover/95 p-1 shadow-lg backdrop-blur-md"
               style={addMenuPosition}
             >
-              {(
-                [
-                  ['task', CheckSquare2, t('workbench.workspace_tab_task', '任务')],
-                  ['board', Columns3, t('workbench.workspace_tab_board', '工作空间视图')],
-                  ['agent', Bot, t('workbench.workspace_tab_agent', '智能体')],
-                ] as const
-              ).map(([kind, Icon, label]) => (
+              {newTabKinds.map(([kind, Icon, label]) => (
                 <button
                   key={kind}
                   type="button"

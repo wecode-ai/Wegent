@@ -91,10 +91,13 @@ describe('ChromeTitlebar', () => {
     expect(screen.getByTestId('titlebar-actions')).toHaveClass('h-full', 'gap-1', 'w-[5rem]')
   })
 
-  test('hides the workspace tab strip while experimental features are disabled', () => {
+  test('keeps task tabs but hides the workspace tab while experimental features are disabled', () => {
     experimentalFeatures.enabled = false
     renderTitlebar()
-    expect(screen.queryByTestId('workspace-tab-strip')).not.toBeInTheDocument()
+    expect(screen.getByTestId('workspace-tab-strip')).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: '任务' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: '智能体' })).toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: '项目空间' })).not.toBeInTheDocument()
   })
 
   test('shows the macOS traffic-light spacer and starts native dragging', async () => {
