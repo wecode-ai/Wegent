@@ -2,29 +2,13 @@ import {
   createDefaultLocalModelCatalogEntry,
   type LocalModelCatalogEntry,
 } from './localModelCatalog'
+import { codexCatalogModelIdForUpstream } from './codexCatalog'
 
 export const KIMI_CODING_CONTEXT_WINDOW = 262_144
 export const KIMI_K3_CONTEXT_WINDOW = 1_048_576
-export const KIMI_K3_CATALOG_MODEL_ID = 'wework-kimi-k3'
-export const KIMI_K27_CATALOG_MODEL_ID = 'wework-kimi-k2-7'
 export const DEEPSEEK_V4_FLASH_MODEL_ID = 'deepseek-v4-flash'
-export const DEEPSEEK_V4_FLASH_CATALOG_MODEL_ID = 'wework-deepseek-v4-flash'
-export const DEEPSEEK_V4_FLASH_VISION_CATALOG_MODEL_ID = 'wework-deepseek-v4-flash-vision'
-export const VISION_SIDECAR_CATALOG_MODEL_ID = 'wework-vision-sidecar'
 export const DEEPSEEK_V4_PRO_MODEL_ID = 'deepseek-v4-pro'
-export const DEEPSEEK_V4_PRO_CATALOG_MODEL_ID = 'wework-deepseek-v4-pro'
-export const DEEPSEEK_V4_PRO_VISION_CATALOG_MODEL_ID = 'wework-deepseek-v4-pro-vision'
 export const DEEPSEEK_V4_CONTEXT_WINDOW = 1_048_576
-
-export function visionSidecarCatalogModelId(primaryCatalogModelId: string): string {
-  if (primaryCatalogModelId === DEEPSEEK_V4_FLASH_CATALOG_MODEL_ID) {
-    return DEEPSEEK_V4_FLASH_VISION_CATALOG_MODEL_ID
-  }
-  if (primaryCatalogModelId === DEEPSEEK_V4_PRO_CATALOG_MODEL_ID) {
-    return DEEPSEEK_V4_PRO_VISION_CATALOG_MODEL_ID
-  }
-  return VISION_SIDECAR_CATALOG_MODEL_ID
-}
 
 export interface LocalModelConfig {
   id: string
@@ -202,9 +186,13 @@ function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelCo
       ? 'minimax-global'
       : legacyConfig.providerProfileId
   const storedApiFormat = normalizeLocalModelApiFormat(legacyConfig.apiFormat)
+  const deepSeekResponsesCatalogModelId = codexCatalogModelIdForUpstream(
+    [legacyConfig.modelId],
+    'openai-responses'
+  )
   const migrateDeepSeekResponses =
     legacyConfig.providerProfileId === 'deepseek' &&
-    deepSeekCatalogModelIdFor(legacyConfig.modelId) !== undefined &&
+    deepSeekResponsesCatalogModelId !== null &&
     legacyConfig.baseUrl.replace(/\/+$/, '') === 'https://api.deepseek.com' &&
     storedApiFormat === 'openai-chat-completions' &&
     normalizeLocalModelRequestPath(legacyConfig.requestPath, storedApiFormat) ===
@@ -233,19 +221,16 @@ function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelCo
       : undefined)
   const needsCatalogMigration = isCustomProvider && !legacyConfig.catalogEntry
   const isKimiOpenPlatformK3 = providerProfileId === 'kimi' && legacyConfig.modelId === 'kimi-k3'
-  const kimiCatalogModelId = isKimiOpenPlatformK3
-    ? KIMI_K3_CATALOG_MODEL_ID
-    : providerProfileId === 'kimi-coding'
-      ? legacyConfig.modelId === 'k3'
-        ? KIMI_K3_CATALOG_MODEL_ID
-        : legacyConfig.modelId === 'kimi-for-coding' ||
-            legacyConfig.modelId === 'kimi-for-coding-highspeed'
-          ? KIMI_K27_CATALOG_MODEL_ID
-          : undefined
-      : undefined
-  const deepSeekCatalogModelId =
-    providerProfileId === 'deepseek' ? deepSeekCatalogModelIdFor(legacyConfig.modelId) : undefined
-  const providerCatalogModelId = kimiCatalogModelId ?? deepSeekCatalogModelId
+  const providerCatalogModelId = isCustomProvider
+    ? undefined
+    : (codexCatalogModelIdForUpstream([legacyConfig.modelId], apiFormat) ?? undefined)
+  const providerContextWindow = isKimiOpenPlatformK3
+    ? KIMI_K3_CONTEXT_WINDOW
+    : providerProfileId === 'kimi-coding' && providerCatalogModelId
+      ? KIMI_CODING_CONTEXT_WINDOW
+      : providerProfileId === 'deepseek' && providerCatalogModelId
+        ? DEEPSEEK_V4_CONTEXT_WINDOW
+        : undefined
   const nextConfig: LocalModelConfig = {
     id: legacyConfig.id,
     ...(providerProfileId ? { providerProfileId } : {}),
@@ -259,14 +244,8 @@ function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelCo
       : normalizeLocalModelToolProfile(legacyConfig.toolProfile, apiFormat),
     ...(legacyConfig.apiKey ? { apiKey: legacyConfig.apiKey } : {}),
     apiKeyConfigured: legacyConfig.apiKeyConfigured ?? Boolean(legacyConfig.apiKey),
-    ...(providerCatalogModelId
-      ? {
-          contextWindow: kimiCatalogModelId
-            ? isKimiOpenPlatformK3
-              ? KIMI_K3_CONTEXT_WINDOW
-              : KIMI_CODING_CONTEXT_WINDOW
-            : DEEPSEEK_V4_CONTEXT_WINDOW,
-        }
+    ...(providerContextWindow
+      ? { contextWindow: providerContextWindow }
       : legacyConfig.contextWindow
         ? { contextWindow: legacyConfig.contextWindow }
         : {}),
@@ -302,16 +281,6 @@ function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelCo
     baseUrl: splitUrl.baseUrl,
     requestPath: normalizeLocalModelRequestPath(splitUrl.requestPath, apiFormat),
   }
-}
-
-export function deepSeekCatalogModelIdFor(modelId: string): string | undefined {
-  if (modelId === DEEPSEEK_V4_FLASH_MODEL_ID) {
-    return DEEPSEEK_V4_FLASH_CATALOG_MODEL_ID
-  }
-  if (modelId === DEEPSEEK_V4_PRO_MODEL_ID) {
-    return DEEPSEEK_V4_PRO_CATALOG_MODEL_ID
-  }
-  return undefined
 }
 
 function writeStoredConfigs(configs: LocalModelConfig[]): void {
@@ -522,6 +491,13 @@ export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalMod
       ? previous?.visionModelConfigId
       : input.visionModelConfigId?.trim() || undefined
   const enabled = input.enabled ?? previous?.enabled ?? true
+  const inferredCatalogModelId = isCustomProvider
+    ? null
+    : codexCatalogModelIdForUpstream([modelId], apiFormat)
+  const codexCatalogModelId =
+    input.codexCatalogModelId?.trim() ||
+    inferredCatalogModelId ||
+    (typeof catalogEntry?.slug === 'string' ? catalogEntry.slug : undefined)
   if (visionModelConfigId === id) {
     throw new Error('Vision proxy model must be different from the primary model')
   }
@@ -550,11 +526,7 @@ export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalMod
     webSearchMode,
     imageGenerationEnabled,
     ...(visionModelConfigId ? { visionModelConfigId } : {}),
-    ...(input.codexCatalogModelId?.trim() || typeof catalogEntry?.slug === 'string'
-      ? {
-          codexCatalogModelId: input.codexCatalogModelId?.trim() || (catalogEntry?.slug as string),
-        }
-      : {}),
+    ...(codexCatalogModelId ? { codexCatalogModelId } : {}),
     ...(catalogEntry ? { catalogEntry } : {}),
     catalogReady:
       input.catalogReady ??

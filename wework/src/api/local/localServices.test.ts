@@ -2385,7 +2385,7 @@ describe('createLocalAppServices', () => {
     const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
     expect(payload.executionRequest.model_config).toEqual(
       expect.objectContaining({
-        codex_catalog_model_id: 'wework-deepseek-v4-flash-vision',
+        codex_catalog_model_id: 'wework-deepseek-v4-flash',
         vision_sidecar: {
           enabled: true,
           request_url: 'https://vision.example/v1/responses',
@@ -2604,7 +2604,7 @@ describe('createLocalAppServices', () => {
     const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
     expect(payload.executionRequest.model_config).toEqual(
       expect.objectContaining({
-        codex_catalog_model_id: 'wework-deepseek-v4-pro-vision',
+        codex_catalog_model_id: 'wework-deepseek-v4-pro',
         vision_sidecar: {
           enabled: true,
           request_url: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy/responses',

@@ -4,6 +4,7 @@ import {
   supportsCloudExecution,
 } from '@/features/cloud-connection/modelExecution'
 import { getDefaultModelOptions, normalizeModelOptionAliases } from '@/lib/model-ui'
+import { codexCatalogModelIdForUpstream } from '@/features/model-settings/codexCatalog'
 import type {
   ModelOptions,
   ModelSelectionConfig,
@@ -22,11 +23,6 @@ export const CLOUD_MODEL_VISION_SIDECAR_OPTION = 'weworkCloudVisionSidecar'
 export const CLOUD_MODEL_NATIVE_TOOL_SEARCH_OPTION = 'weworkCloudModelNativeToolSearch'
 export const CLOUD_MODEL_NATIVE_NAMESPACE_TOOLS_OPTION = 'weworkCloudModelNativeNamespaceTools'
 
-const KIMI_K3_CODEX_CATALOG_MODEL_ID = 'wework-kimi-k3'
-const DEEPSEEK_CODEX_CATALOG_MODEL_IDS = new Map([
-  ['deepseek-v4-flash', 'wework-deepseek-v4-flash'],
-  ['deepseek-v4-pro', 'wework-deepseek-v4-pro'],
-])
 const CLOUD_VISION_SIDECAR_CONFIG_KEY = 'visionSidecarModel'
 
 export interface CloudVisionSidecarReference {
@@ -172,20 +168,10 @@ function cloudCodexCatalogModelId(model: UnifiedModel, upstreamApiFormat: string
     getRawStringConfigValue(model.config, 'modelId'),
     getRawStringConfigValue(model.config, 'model'),
   ]
-  const normalizedUpstreamCandidates = upstreamCandidates.flatMap(value =>
-    value?.trim() ? [value.trim().toLowerCase()] : []
-  )
-  if (upstreamApiFormat === 'openai-responses') {
-    for (const candidate of normalizedUpstreamCandidates) {
-      const deepSeekCatalogModelId = DEEPSEEK_CODEX_CATALOG_MODEL_IDS.get(candidate)
-      if (deepSeekCatalogModelId) return deepSeekCatalogModelId
-    }
-  }
-  return [model.name, ...normalizedUpstreamCandidates].some(value =>
-    value?.trim().toLowerCase().includes('kimi-k3')
-  )
-    ? KIMI_K3_CODEX_CATALOG_MODEL_ID
-    : ''
+  const catalogCandidates = upstreamCandidates.some(candidate => candidate?.trim())
+    ? upstreamCandidates
+    : [model.name]
+  return codexCatalogModelIdForUpstream(catalogCandidates, upstreamApiFormat) ?? ''
 }
 
 function isLocalModel(model: UnifiedModel): boolean {

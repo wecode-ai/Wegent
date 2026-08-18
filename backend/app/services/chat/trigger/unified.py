@@ -41,6 +41,7 @@ from app.services.user_runtime_config import (
     UserRuntimeConfigError,
     user_runtime_config_service,
 )
+from shared.codex_model_catalog import codex_catalog_model_id_for_upstream
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -56,10 +57,6 @@ KNOWLEDGE_ARTIFACT_SOURCE = "knowledge_artifact"
 CODEX_RUNTIME = "codex"
 RUNTIME_MODEL_TYPE = "runtime"
 EXECUTOR_ATTACHMENT_METADATA_ONLY_SHELLS = {"ClaudeCode", "Agno", "CodeX", "Codex"}
-DEEPSEEK_CODEX_CATALOG_MODEL_IDS = {
-    "deepseek-v4-flash": "wework-deepseek-v4-flash",
-    "deepseek-v4-pro": "wework-deepseek-v4-pro",
-}
 SERVICE_TIER_ALIASES = {
     "fast": "priority",
     "priority": "priority",
@@ -220,31 +217,6 @@ def _catalog_model_id_from_model_options(
     return result
 
 
-def _infer_codex_catalog_model_id(
-    model_id: Any, upstream_api_format: Any = None
-) -> Optional[str]:
-    """Return the Codex capability catalog for a known upstream model."""
-    if not isinstance(model_id, str):
-        return None
-    normalized_model_id = model_id.strip().lower()
-    if not normalized_model_id:
-        return None
-    normalized_api_format = (
-        upstream_api_format.strip().lower()
-        if isinstance(upstream_api_format, str)
-        else ""
-    )
-    if normalized_api_format == "openai-responses":
-        deepseek_catalog_model_id = DEEPSEEK_CODEX_CATALOG_MODEL_IDS.get(
-            normalized_model_id
-        )
-        if deepseek_catalog_model_id:
-            return deepseek_catalog_model_id
-    if "kimi-k2.7" in normalized_model_id:
-        return "wework-kimi-k2-7"
-    return None
-
-
 def _catalog_model_id_from_model_spec(
     model_spec: Any,
 ) -> Optional[str]:
@@ -269,7 +241,7 @@ def _catalog_model_id_from_model_spec(
             or ""
         )
     )
-    return _infer_codex_catalog_model_id(
+    return codex_catalog_model_id_for_upstream(
         env.get("model_id") or env.get("modelId"), upstream_api_format
     )
 
@@ -433,7 +405,7 @@ def _build_codex_runtime_model_config(
     effective_catalog_model_id = (
         catalog_model_id
         or resolved_config.get("codex_catalog_model_id")
-        or _infer_codex_catalog_model_id(
+        or codex_catalog_model_id_for_upstream(
             resolved_config.get("model_id"),
             resolved_config.get("upstream_api_format"),
         )
@@ -588,7 +560,7 @@ def build_wework_runtime_model_config(
         return resolved
     resolved_catalog_model_id = resolved.get(
         "codex_catalog_model_id"
-    ) or _infer_codex_catalog_model_id(
+    ) or codex_catalog_model_id_for_upstream(
         resolved.get("model_id"), resolved.get("upstream_api_format")
     )
     if resolved_catalog_model_id:

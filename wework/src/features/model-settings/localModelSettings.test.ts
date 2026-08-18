@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   clearLocalModelConfigs,
-  deepSeekCatalogModelIdFor,
   deleteLocalModelConfig,
   findLocalModelConfigByModelName,
   listLocalModelConfigs,
@@ -10,25 +9,9 @@ import {
   markLocalModelCatalogReady,
   reconcileLocalModelCatalogRuntime,
   saveLocalModelConfig,
-  visionSidecarCatalogModelId,
 } from './localModelSettings'
 
 describe('localModelSettings', () => {
-  test.each([
-    ['deepseek-v4-flash', 'wework-deepseek-v4-flash'],
-    ['deepseek-v4-pro', 'wework-deepseek-v4-pro'],
-  ])('maps %s to its managed Codex catalog entry', (modelId, catalogModelId) => {
-    expect(deepSeekCatalogModelIdFor(modelId)).toBe(catalogModelId)
-  })
-
-  test.each([
-    ['wework-deepseek-v4-flash', 'wework-deepseek-v4-flash-vision'],
-    ['wework-deepseek-v4-pro', 'wework-deepseek-v4-pro-vision'],
-    ['wework-kimi-k3', 'wework-vision-sidecar'],
-  ])('maps the %s catalog to %s only when a sidecar is configured', (primary, expected) => {
-    expect(visionSidecarCatalogModelId(primary)).toBe(expected)
-  })
-
   test('defaults tool profiles by API format and rejects incompatible combinations', () => {
     const responses = saveLocalModelConfig({
       modelId: 'responses-model',
@@ -166,6 +149,7 @@ describe('localModelSettings', () => {
     })
 
     expect(primary.visionModelConfigId).toBe('vision')
+    expect(primary.codexCatalogModelId).toBe('wework-deepseek-v4-flash')
     expect(deleteLocalModelConfig('vision')).toBe(true)
     expect(listLocalModelConfigs()).toEqual([
       expect.not.objectContaining({ visionModelConfigId: 'vision' }),

@@ -260,6 +260,14 @@ class ModelAggregationService:
                 for key, value in model_crd.spec.modelConfig.items()
                 if key != "modelCapabilities"
             }
+            codex_catalog_model_id = env.get("codex_catalog_model_id") or env.get(
+                "codexCatalogModelId"
+            )
+            if (
+                isinstance(codex_catalog_model_id, str)
+                and codex_catalog_model_id.strip()
+            ):
+                config["codex_catalog_model_id"] = codex_catalog_model_id.strip()
             if model_crd.spec.protocol:
                 config = {**config, "protocol": model_crd.spec.protocol}
             if model_crd.spec.apiFormat:

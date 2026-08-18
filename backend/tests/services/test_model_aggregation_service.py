@@ -269,6 +269,35 @@ class TestModelAggregationService:
         assert info["context_window"] is None
         assert info["max_output_tokens"] is None
 
+    def test_extract_model_info_exposes_only_safe_catalog_identity_from_env(self):
+        model_crd = {
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Model",
+            "metadata": {"name": "catalog-model", "namespace": "default"},
+            "spec": {
+                "protocol": "openai-responses",
+                "modelConfig": {
+                    "env": {
+                        "model": "openai",
+                        "model_id": "provider-model",
+                        "api_key": "secret",
+                        "codex_catalog_model_id": "operator-catalog",
+                    }
+                },
+            },
+            "status": {"state": "Available"},
+        }
+
+        info = model_aggregation_service._extract_model_info_from_crd(model_crd)
+        model = UnifiedModel(
+            name="catalog-model",
+            model_type=ModelType.PUBLIC,
+            config=info["config"],
+        ).to_dict()
+
+        assert model["config"]["codex_catalog_model_id"] == "operator-catalog"
+        assert "env" not in model["config"]
+
     def test_unified_model_exposes_runtime_family_without_env(self):
         """Test API model data exposes runtime family without sensitive env."""
         unified = UnifiedModel(
