@@ -19,6 +19,7 @@ const PHASE_FLIP_TEXT = 'WEWORK_DESKTOP_E2E_FALLBACK_FINAL_FROM_PROCESS'
 const TIMER_PROMPT = 'WEWORK_DESKTOP_E2E_RUNNING_TIMER_PERSISTS'
 const TIMER_COMPLETION = 'WEWORK_DESKTOP_E2E_RUNNING_TIMER_COMPLETE'
 const ORDER_STOP_PROMPT = 'WEWORK_DESKTOP_E2E_ORDER_STOPPED_TURN'
+const ORDER_STOP_STARTED = 'WEWORK_DESKTOP_E2E_ORDER_STOP_STARTED'
 const ORDER_FOLLOW_UP_PREFIX = 'WEWORK_DESKTOP_E2E_ORDER_FOLLOW_UP'
 const ORDER_COMPLETION_PREFIX = 'WEWORK_DESKTOP_E2E_ORDER_COMPLETION'
 const ORDER_FOLLOW_UP_COUNT = 26
@@ -658,6 +659,11 @@ export function createDesktopScenario({
     await control.command('waitFor', '[data-testid="pause-response-button"]', {
       timeoutMs: uiTimeoutMs,
     })
+    await control.command('waitFor', PROCESS_TEXT_SELECTOR, {
+      text: ORDER_STOP_STARTED,
+      stableMs: 250,
+      timeoutMs: uiTimeoutMs,
+    })
     await control.command('click', '[data-testid="pause-response-button"]')
     await control.command('waitFor', '[data-testid="assistant-stopped-notice"]', {
       timeoutMs: uiTimeoutMs,
@@ -719,13 +725,15 @@ export function createDesktopScenario({
         return true
       }
       if (latestInput.includes(ORDER_STOP_PROMPT)) {
+        const stream = streamingEvents(responseId, ORDER_STOP_STARTED)
         response.writeHead(200, {
           'Cache-Control': 'no-cache',
           Connection: 'keep-alive',
           'Content-Type': 'text/event-stream; charset=utf-8',
         })
         response.flushHeaders()
-        response.write(sse([responseCreated(responseId)]))
+        response.write(sse(stream.start))
+        await writeSseEvents(response, textDeltaEvents(stream.itemId, ORDER_STOP_STARTED))
         return true
       }
       if (timerStage === 'awaiting-tool-output' && requestContainsToolOutput(body)) {
