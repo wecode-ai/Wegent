@@ -88,6 +88,13 @@ fn place_webview(
         }
     };
 
+    // The Tauri-created WebView expands by default. In a GtkFixed host that
+    // makes the page viewport match the full host width instead of the bounds
+    // requested by the device toolbar.
+    embedded_webview.set_hexpand(false);
+    embedded_webview.set_vexpand(false);
+    embedded_webview.set_halign(gtk::Align::Start);
+    embedded_webview.set_valign(gtk::Align::Start);
     embedded_webview.set_size_request(size.width.round() as i32, size.height.round() as i32);
     host.move_(
         &embedded_webview,
