@@ -23,6 +23,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'context-compaction': './scenarios/context-compaction.scenario.mjs',
   'split-workbench': './scenarios/split-workbench.scenario.mjs',
   'project-automation': './scenarios/project-automation.scenario.mjs',
+  'project-assignment-notification': './scenarios/project-assignment-notification.scenario.mjs',
   'offline-local-project-space': './scenarios/offline-local-project-space.scenario.mjs',
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
@@ -31,6 +32,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'local-file-preview',
   'local-harness',
   'offline-local-project-space',
+  'project-assignment-notification',
   'runtime-task-queue',
   'context-compaction',
   'split-workbench',
