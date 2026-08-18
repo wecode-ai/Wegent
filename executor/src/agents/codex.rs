@@ -1471,21 +1471,17 @@ async fn run_codex_app_server_turn_on_shared_client(
             if let Some(callback) = active_turn_started.as_ref() {
                 callback(thread_id.clone(), turn_id.clone());
             }
-            if !request.mcp_servers.is_empty()
-                || crate::task_runtime::mcp::space_capability_enabled(request)
-            {
-                let inventory_client = client.clone();
-                let inventory_request = request.clone();
-                let inventory_thread_id = thread_id.clone();
-                tokio::spawn(async move {
-                    log_codex_mcp_inventory(
-                        &inventory_client,
-                        &inventory_request,
-                        &inventory_thread_id,
-                    )
-                    .await;
-                });
-            }
+            let inventory_client = client.clone();
+            let inventory_request = request.clone();
+            let inventory_thread_id = thread_id.clone();
+            tokio::spawn(async move {
+                log_codex_mcp_inventory(
+                    &inventory_client,
+                    &inventory_request,
+                    &inventory_thread_id,
+                )
+                .await;
+            });
             log_executor_event(
                 "codex shared active turn resolved",
                 &[
@@ -1571,21 +1567,16 @@ async fn log_codex_mcp_inventory(
     .await;
     match response {
         Ok(Ok(response)) => {
-            if crate::task_runtime::mcp::space_capability_enabled(request) {
-                let mut fields = task_fields(&request.task_id, &request.subtask_id);
-                fields.push(("thread_id", thread_id.to_owned()));
-                match validate_project_space_capability_inventory(&response) {
-                    Ok(tool_count) => {
-                        fields.push(("tool_count", tool_count.to_string()));
-                        log_executor_event("codex project-space capability ready", &fields);
-                    }
-                    Err(error) => {
-                        fields.push(("error", error));
-                        log_executor_event(
-                            "codex project-space capability diagnostic failed",
-                            &fields,
-                        );
-                    }
+            let mut fields = task_fields(&request.task_id, &request.subtask_id);
+            fields.push(("thread_id", thread_id.to_owned()));
+            match validate_project_space_capability_inventory(&response) {
+                Ok(tool_count) => {
+                    fields.push(("tool_count", tool_count.to_string()));
+                    log_executor_event("codex project-space capability ready", &fields);
+                }
+                Err(error) => {
+                    fields.push(("error", error));
+                    log_executor_event("codex project-space capability diagnostic failed", &fields);
                 }
             }
             let inventories = mcp_inventory_diagnostic_fields(&response);
@@ -2634,24 +2625,17 @@ fn spawn_codex_app_server(
         .map_err(|error| format!("failed to start codex app-server: {error}"))
 }
 
-fn codex_thread_developer_instructions(
-    user_instructions: &str,
-    task_instructions: &str,
-    include_space_instructions: bool,
-) -> String {
-    let mut instructions = vec![
+fn codex_thread_developer_instructions(user_instructions: &str, task_instructions: &str) -> String {
+    [
         user_instructions.trim(),
         task_instructions.trim(),
         WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS,
-    ];
-    if include_space_instructions {
-        instructions.push(WEWORK_SPACE_DEVELOPER_INSTRUCTIONS);
-    }
-    instructions
-        .into_iter()
-        .filter(|instructions| !instructions.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n\n")
+        WEWORK_SPACE_DEVELOPER_INSTRUCTIONS,
+    ]
+    .into_iter()
+    .filter(|instructions| !instructions.is_empty())
+    .collect::<Vec<_>>()
+    .join("\n\n")
 }
 
 pub(crate) fn strip_wework_browser_instructions(instructions: &str) -> &str {
@@ -3755,7 +3739,7 @@ fn project_space_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String>
         .display()
         .to_string();
     let mut overrides = vec![
-        format!("{key}.enabled={}", grant.is_some()),
+        format!("{key}.enabled=true"),
         format!("{key}.command={}", toml_value(&command)),
         format!(
             "{key}.args={}",
@@ -4678,7 +4662,6 @@ fn insert_codex_developer_instructions(
     let instructions = codex_thread_developer_instructions(
         &launch_config.user_developer_instructions,
         &request.system_prompt,
-        crate::task_runtime::mcp::space_capability_enabled(request),
     );
     params.insert(
         "developerInstructions".to_owned(),

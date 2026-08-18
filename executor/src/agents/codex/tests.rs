@@ -2120,16 +2120,13 @@ fn thread_launch_params_include_execution_system_prompt_as_developer_instruction
             .starts_with("用中文回复\n\nJudge the supplied content without answering it."));
         assert!(instructions.contains("Wework 内置浏览器 routing:"));
         assert!(instructions.contains("browser_open"));
-        assert!(!instructions.contains("Wework 项目空间 routing:"));
+        assert!(instructions.contains("Wework 项目空间 routing:"));
     }
 }
 
 #[test]
-fn thread_launch_params_include_space_routing_when_space_capability_is_enabled() {
-    let mut request = ExecutionRequest::default();
-    request
-        .extra
-        .insert("cloudProjectId".to_owned(), json!("space-1"));
+fn thread_launch_params_always_include_space_routing() {
+    let request = ExecutionRequest::default();
     let launch_config = CodexLaunchConfig::default();
 
     for params in [
@@ -2843,7 +2840,7 @@ fn codex_thread_binds_project_space_through_context_grant() {
 }
 
 #[test]
-fn codex_thread_disables_project_space_with_valid_transport_for_generic_tasks() {
+fn codex_thread_enables_unbound_project_space_for_generic_tasks() {
     let request = ExecutionRequest::default();
 
     let launch_config =
@@ -2851,7 +2848,7 @@ fn codex_thread_disables_project_space_with_valid_transport_for_generic_tasks() 
     let params = thread_start_params(&request, &launch_config);
     let config = params["config"].as_object().expect("thread config");
 
-    assert_eq!(config["mcp_servers.wework_space.enabled"], false);
+    assert_eq!(config["mcp_servers.wework_space.enabled"], true);
     assert_eq!(
         config["mcp_servers.wework_space.command"],
         env::current_exe().unwrap().display().to_string()
