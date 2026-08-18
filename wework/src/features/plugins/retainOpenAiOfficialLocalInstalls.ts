@@ -1,5 +1,11 @@
 import type { InstalledPlugin } from '@/types/api'
-import { isOpenAiOfficialMarketplaceId } from '@/features/plugins/marketplaceIdentity'
+import { isPersonalMarketplaceId } from '@/features/plugins/builtinPlugins'
+import {
+  isOpenAiOfficialBundledMarketplaceId,
+  isOpenAiOfficialMarketplaceId,
+  isOpenAiOfficialRemoteMarketplaceId,
+} from '@/features/plugins/marketplaceIdentity'
+import { isWegentCloudMarketplace } from '@/features/plugins/pluginNavigation'
 
 function installedMarketplaceId(plugin: InstalledPlugin): string | null {
   const payloadMarketplace = plugin.spec.sourcePayload?.marketplaceName
@@ -27,32 +33,106 @@ function installIdentity(plugin: InstalledPlugin): string {
   return pluginKey && marketplace ? `${pluginKey}@${marketplace}` : pluginKey
 }
 
+function isLocalCodexInstall(plugin: InstalledPlugin): boolean {
+  return typeof plugin.spec.pluginId !== 'number'
+}
+
 /** Local Codex OpenAI installs — never cloud Kind rows with numeric pluginId. */
 export function isOpenAiOfficialLocalInstall(plugin: InstalledPlugin): boolean {
-  if (typeof plugin.spec.pluginId === 'number') return false
+  if (!isLocalCodexInstall(plugin)) return false
   return (
     plugin.spec.sourceProvider === 'codex' &&
     isOpenAiOfficialMarketplaceId(installedMarketplaceId(plugin))
   )
 }
 
-/**
- * plugin/installed omits remote OpenAI 1P membership when GitHub is unreachable.
- * Keep previously painted official installs instead of treating that as "none installed".
- */
-export function retainOpenAiOfficialLocalInstalls(
+function isOpenAiOfficialBundledLocalInstall(plugin: InstalledPlugin): boolean {
+  if (!isLocalCodexInstall(plugin)) return false
+  return (
+    plugin.spec.sourceProvider === 'codex' &&
+    isOpenAiOfficialBundledMarketplaceId(installedMarketplaceId(plugin))
+  )
+}
+
+function isOpenAiOfficialRemoteLocalInstall(plugin: InstalledPlugin): boolean {
+  if (!isLocalCodexInstall(plugin)) return false
+  return (
+    plugin.spec.sourceProvider === 'codex' &&
+    isOpenAiOfficialRemoteMarketplaceId(installedMarketplaceId(plugin))
+  )
+}
+
+function normalizeInstalledMarketplaceId(plugin: InstalledPlugin): string {
+  return (installedMarketplaceId(plugin) || '').trim().toLowerCase()
+}
+
+function remoteMarketplaceFamily(marketplace: string): (plugin: InstalledPlugin) => boolean {
+  return plugin =>
+    isOpenAiOfficialRemoteLocalInstall(plugin) &&
+    normalizeInstalledMarketplaceId(plugin) === marketplace
+}
+
+function uniqueRemoteMarketplaceIds(plugins: InstalledPlugin[]): string[] {
+  const ids: string[] = []
+  const seen = new Set<string>()
+  for (const plugin of plugins) {
+    if (!isOpenAiOfficialRemoteLocalInstall(plugin)) continue
+    const marketplace = normalizeInstalledMarketplaceId(plugin)
+    if (!marketplace || seen.has(marketplace)) continue
+    seen.add(marketplace)
+    ids.push(marketplace)
+  }
+  return ids
+}
+
+function isWegentOfficialLocalInstall(plugin: InstalledPlugin): boolean {
+  if (!isLocalCodexInstall(plugin)) return false
+  const marketplace = installedMarketplaceId(plugin)
+  return Boolean(marketplace && isWegentCloudMarketplace(marketplace))
+}
+
+function isPersonalLocalInstall(plugin: InstalledPlugin): boolean {
+  if (!isLocalCodexInstall(plugin)) return false
+  const marketplace = installedMarketplaceId(plugin)
+  return Boolean(marketplace && isPersonalMarketplaceId(marketplace))
+}
+
+function retainFamily(
   liveLocal: InstalledPlugin[],
-  previousLocal: InstalledPlugin[]
+  previousLocal: InstalledPlugin[],
+  isFamily: (plugin: InstalledPlugin) => boolean
 ): InstalledPlugin[] {
-  if (liveLocal.some(isOpenAiOfficialLocalInstall)) return liveLocal
+  if (liveLocal.some(isFamily)) return liveLocal
   const seen = new Set(liveLocal.map(installIdentity).filter(Boolean))
   const retained: InstalledPlugin[] = []
   for (const plugin of previousLocal) {
-    if (!isOpenAiOfficialLocalInstall(plugin)) continue
+    if (!isFamily(plugin)) continue
     const identity = installIdentity(plugin)
     if (!identity || seen.has(identity)) continue
     seen.add(identity)
     retained.push(plugin)
   }
   return retained.length === 0 ? liveLocal : [...liveLocal, ...retained]
+}
+
+/**
+ * plugin/installed often omits a whole marketplace (OpenAI remote when GitHub is
+ * down, wegent/personal when membership is incomplete). Keep previously known
+ * local installs for that family instead of treating the omission as
+ * "not installed". Bundled OpenAI packages stay available offline, so they must
+ * not hide a missing openai-curated-remote membership.
+ */
+export function retainOpenAiOfficialLocalInstalls(
+  liveLocal: InstalledPlugin[],
+  previousLocal: InstalledPlugin[]
+): InstalledPlugin[] {
+  const remoteFamilies = uniqueRemoteMarketplaceIds([...liveLocal, ...previousLocal]).map(
+    remoteMarketplaceFamily
+  )
+  return [
+    isOpenAiOfficialBundledLocalInstall,
+    ...remoteFamilies,
+    isWegentOfficialLocalInstall,
+    isPersonalLocalInstall,
+  ].reduce((result, isFamily) => retainFamily(result, previousLocal, isFamily), liveLocal)
 }

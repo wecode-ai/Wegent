@@ -1,4 +1,6 @@
 import type { PluginMarketplaceItem } from '@/types/api'
+import { isOpenAiOfficialRemoteMarketplaceId } from '@/features/plugins/marketplaceIdentity'
+import { installedPluginMarketplaceId, marketplaceItemMarketplaceId } from './pluginDistribution'
 import type { InstalledPluginItem } from './PluginManagementRows'
 
 /**
@@ -7,15 +9,25 @@ import type { InstalledPluginItem } from './PluginManagementRows'
  */
 export function retainMarketplaceInstallHints(
   previousItems: PluginMarketplaceItem[],
-  nextItems: PluginMarketplaceItem[]
+  nextItems: PluginMarketplaceItem[],
+  options?: { skipMarketplaceIds?: ReadonlySet<string> }
 ): PluginMarketplaceItem[] {
   if (previousItems.length === 0 || nextItems.length === 0) return nextItems
 
   const previousById = new Map(previousItems.map(item => [String(item.id), item]))
+  const skipMarketplaceIds = options?.skipMarketplaceIds
   return nextItems.map(item => {
     if (item.installed && item.installedPluginId != null) return item
     const previous = previousById.get(String(item.id))
     if (!previous?.installed || previous.installedPluginId == null) return item
+    const marketplaceId = (
+      marketplaceItemMarketplaceId(item) ||
+      marketplaceItemMarketplaceId(previous) ||
+      ''
+    )
+      .trim()
+      .toLowerCase()
+    if (marketplaceId && skipMarketplaceIds?.has(marketplaceId)) return item
     return {
       ...item,
       installed: true,
@@ -38,6 +50,16 @@ export function retainMarketplaceInstallHints(
   })
 }
 
+function liveOpenAiRemoteMarketplaceIds(installed: InstalledPluginItem[]): Set<string> {
+  const ids = new Set<string>()
+  for (const plugin of installed) {
+    const marketplace = installedPluginMarketplaceId(plugin.raw)
+    if (!marketplace || !isOpenAiOfficialRemoteMarketplaceId(marketplace)) continue
+    ids.add(marketplace.trim().toLowerCase())
+  }
+  return ids
+}
+
 /**
  * Keep the installed strip and marketplace actions on the same snapshot when a
  * post-install catalog refresh temporarily lags behind the optimistic update.
@@ -52,7 +74,9 @@ export function retainMarketplaceInstalledState(input: {
   if (!input.previousStateMatchesScope) {
     return { items: input.nextItems, installed: input.nextInstalled }
   }
-  const hintedItems = retainMarketplaceInstallHints(input.previousItems, input.nextItems)
+  const hintedItems = retainMarketplaceInstallHints(input.previousItems, input.nextItems, {
+    skipMarketplaceIds: liveOpenAiRemoteMarketplaceIds(input.nextInstalled),
+  })
   const nextItemsById = new Map(input.nextItems.map(item => [String(item.id), item]))
   const retainedPluginIds = new Set(
     hintedItems.flatMap(item => {

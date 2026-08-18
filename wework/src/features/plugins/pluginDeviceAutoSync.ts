@@ -55,15 +55,11 @@ export function hasSettledPluginDeviceAutoSync(deviceId: string): boolean {
 
 /** Account has an install record but this device still needs materialization. */
 export function marketplaceItemNeedsDeviceSync(item: PluginMarketplaceItem): boolean {
+  if (item.installedLocally) return false
   if (item.installedPluginId === null || item.installedPluginId === undefined) {
     return false
   }
-  // A matching Codex/App Server install is stronger evidence than a stale cloud
-  // device state. Never reinstall a package that is already present locally.
-  if (item.installedLocally) return false
   const state = item.currentDeviceInstallation?.state
-  // Preserve failed manual updates when an older release is still usable, while
-  // allowing a normal pending update to materialize after this device reconnects.
   if (item.currentDeviceInstallation?.actualReleaseId && state === 'failed') return false
   if (!item.installed) return true
   return state === 'failed' || state === 'pending'

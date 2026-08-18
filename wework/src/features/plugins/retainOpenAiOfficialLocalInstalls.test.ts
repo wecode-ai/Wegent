@@ -13,22 +13,22 @@ const emptyComponents = {
   bins: [],
 }
 
-function officialPlugin(name = 'github'): InstalledPlugin {
+function officialPlugin(name = 'github', marketplace = 'openai-curated-remote'): InstalledPlugin {
   return {
     apiVersion: 'agent.wecode.io/v1',
     kind: 'InstalledPlugin',
     metadata: {
       name,
-      namespace: 'openai-curated-remote',
-      labels: { id: `${name}@openai-curated-remote` },
+      namespace: marketplace,
+      labels: { id: `${name}@${marketplace}` },
     },
     spec: {
       source: {
         type: 'marketplace',
-        providerKey: 'openai-curated-remote',
+        providerKey: marketplace,
         pluginKey: name,
         catalogItemId: `plugin_connector_1p_${name}`,
-        marketplace: 'openai-curated-remote',
+        marketplace,
       },
       origin: 'market',
       sourceProvider: 'codex',
@@ -44,10 +44,14 @@ function officialPlugin(name = 'github'): InstalledPlugin {
       components: emptyComponents,
       interface: null,
       packageRef: null,
-      sourcePayload: { marketplaceName: 'openai-curated-remote' },
+      sourcePayload: { marketplaceName: marketplace },
     },
     status: { state: 'enabled' },
   }
+}
+
+function bundledPlugin(name = 'documents'): InstalledPlugin {
+  return officialPlugin(name, 'openai-bundled')
 }
 
 function wegentPlugin(): InstalledPlugin {
@@ -84,6 +88,19 @@ function wegentPlugin(): InstalledPlugin {
   }
 }
 
+function localWegentPlugin(): InstalledPlugin {
+  const plugin = wegentPlugin()
+  const spec = {
+    ...plugin.spec,
+    source: {
+      ...plugin.spec.source,
+      catalogItemId: 'tianhe@wegent',
+    },
+  }
+  delete spec.pluginId
+  return { ...plugin, spec }
+}
+
 describe('retainOpenAiOfficialLocalInstalls', () => {
   test('keeps cached OpenAI installs when live plugin/installed omitted them', () => {
     const github = officialPlugin()
@@ -102,6 +119,21 @@ describe('retainOpenAiOfficialLocalInstalls', () => {
   test('does not invent official installs when neither side has them', () => {
     expect(retainOpenAiOfficialLocalInstalls([wegentPlugin()], [wegentPlugin()])).toEqual([
       wegentPlugin(),
+    ])
+  })
+
+  test('keeps cached wegent installs when live plugin/installed only returned OpenAI', () => {
+    const github = officialPlugin()
+    const tianhe = localWegentPlugin()
+    expect(retainOpenAiOfficialLocalInstalls([github], [github, tianhe])).toEqual([github, tianhe])
+  })
+
+  test('keeps cached remote OpenAI installs when live only returned bundled packages', () => {
+    const documents = bundledPlugin()
+    const github = officialPlugin()
+    expect(retainOpenAiOfficialLocalInstalls([documents], [documents, github])).toEqual([
+      documents,
+      github,
     ])
   })
 })

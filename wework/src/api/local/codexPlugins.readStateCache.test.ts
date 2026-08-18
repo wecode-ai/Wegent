@@ -881,6 +881,68 @@ describe('local codex plugin readState cache', () => {
     expect(peeked?.installedPlugins[0]?.spec.components.skills).toEqual([])
   })
 
+  test('readInstalledPluginForTrial resolves cloud numeric ids to local plugin@marketplace', async () => {
+    mocks.requestLocalExecutor.mockImplementation(
+      async (
+        method: string,
+        params: {
+          method?: string
+        }
+      ) => {
+        if (method !== 'codex.app_server_request') {
+          throw new Error(`Unexpected executor method ${method}`)
+        }
+        if (params.method === 'plugin/list' || params.method === 'plugin/installed') {
+          return {
+            marketplaces: [
+              {
+                name: 'wegent',
+                path: '/tmp/wegent',
+                interface: { displayName: 'wegent' },
+                plugins: [
+                  {
+                    id: 'documents@wegent',
+                    name: 'documents',
+                    installed: true,
+                    enabled: true,
+                    interface: { displayName: 'Documents' },
+                  },
+                ],
+              },
+            ],
+          }
+        }
+        if (params.method === 'plugin/read') {
+          return {
+            plugin: {
+              summary: {
+                id: 'documents@wegent',
+                name: 'documents',
+                installed: true,
+                enabled: true,
+                interface: { displayName: 'Documents' },
+              },
+              description: 'Documents',
+              skills: [{ name: 'documents', description: 'skill', path: 'skills/documents' }],
+              hooks: [],
+              apps: [],
+              agents: [],
+              mcps: [],
+              connectors: [],
+            },
+          }
+        }
+        throw new Error(`Unexpected app-server method ${params.method}`)
+      }
+    )
+
+    const api = createLocalCodexPluginApi()
+    await api.readState({ mergeAllMarketplaces: true })
+    const detailed = await api.readInstalledPluginForTrial('documents@wegent')
+    expect(detailed.spec.source.pluginKey).toBe('documents')
+    expect(detailed.spec.components.skills.length).toBeGreaterThan(0)
+  })
+
   test('durable localStorage snapshot strips heavy component payloads', async () => {
     mocks.requestLocalExecutor.mockImplementation(
       async (
@@ -1500,6 +1562,253 @@ describe('local codex plugin readState cache', () => {
 
     const listed = await api.listInstalledPlugins({ refresh: true })
     expect(listed.items.map(item => item.spec.source.pluginKey)).toEqual(['github'])
+  })
+
+  test('listInstalledPlugins refresh keeps cached remote OpenAI installs when live only returned bundled', async () => {
+    const githubMarketplace = {
+      name: 'openai-curated-remote',
+      path: 'openai-curated-remote',
+      interface: { displayName: 'OpenAI' },
+      plugins: [
+        {
+          id: 'github@openai-curated-remote',
+          remotePluginId: 'plugin_connector_1p_github',
+          name: 'github',
+          installed: true,
+          enabled: true,
+          interface: { displayName: 'GitHub' },
+        },
+      ],
+    }
+    const bundledMarketplace = {
+      name: 'openai-bundled',
+      path: 'openai-bundled',
+      interface: { displayName: 'Bundled' },
+      plugins: [
+        {
+          id: 'documents@openai-bundled',
+          remotePluginId: 'openai-documents',
+          name: 'documents',
+          installed: true,
+          enabled: true,
+          interface: { displayName: 'Documents' },
+        },
+      ],
+    }
+    mocks.requestLocalExecutor.mockImplementation(
+      async (
+        method: string,
+        params: {
+          method?: string
+        }
+      ) => {
+        if (method !== 'codex.app_server_request') {
+          throw new Error(`Unexpected executor method ${method}`)
+        }
+        if (params.method === 'plugin/list' || params.method === 'plugin/installed') {
+          return { marketplaces: [githubMarketplace, bundledMarketplace] }
+        }
+        throw new Error(`Unexpected app-server method ${params.method}`)
+      }
+    )
+    const api = createLocalCodexPluginApi()
+    await api.readState({ mergeAllMarketplaces: true })
+    expect(
+      peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })?.installedPlugins.map(
+        item => item.spec.source.pluginKey
+      )
+    ).toEqual(['github', 'documents'])
+
+    mocks.requestLocalExecutor.mockImplementation(
+      async (
+        method: string,
+        params: {
+          method?: string
+        }
+      ) => {
+        if (method !== 'codex.app_server_request') {
+          throw new Error(`Unexpected executor method ${method}`)
+        }
+        if (params.method === 'plugin/list') {
+          throw new Error('plugin/list must not run for listInstalledPlugins')
+        }
+        if (params.method === 'plugin/installed') {
+          return {
+            marketplaces: [bundledMarketplace, { ...githubMarketplace, plugins: [] }],
+          }
+        }
+        throw new Error(`Unexpected app-server method ${params.method}`)
+      }
+    )
+
+    const listed = await api.listInstalledPlugins({ refresh: true })
+    expect(listed.items.map(item => item.spec.source.pluginKey)).toEqual(['documents', 'github'])
+  })
+
+  test('listInstalledPlugins refresh keeps cached wegent installs when live membership omitted them', async () => {
+    const githubMarketplace = {
+      name: 'openai-curated-remote',
+      path: 'openai-curated-remote',
+      interface: { displayName: 'OpenAI' },
+      plugins: [
+        {
+          id: 'github@openai-curated-remote',
+          remotePluginId: 'plugin_connector_1p_github',
+          name: 'github',
+          installed: true,
+          enabled: true,
+          interface: { displayName: 'GitHub' },
+        },
+      ],
+    }
+    const wegentMarketplace = {
+      name: 'wegent',
+      path: '/tmp/wegent',
+      interface: { displayName: 'wegent' },
+      plugins: [
+        {
+          id: 'sina-email@wegent',
+          name: 'sina-email',
+          installed: true,
+          enabled: true,
+          interface: { displayName: '公司邮箱' },
+        },
+      ],
+    }
+    mocks.requestLocalExecutor.mockImplementation(
+      async (
+        method: string,
+        params: {
+          method?: string
+        }
+      ) => {
+        if (method !== 'codex.app_server_request') {
+          throw new Error(`Unexpected executor method ${method}`)
+        }
+        if (params.method === 'plugin/list' || params.method === 'plugin/installed') {
+          return { marketplaces: [githubMarketplace, wegentMarketplace] }
+        }
+        throw new Error(`Unexpected app-server method ${params.method}`)
+      }
+    )
+    const api = createLocalCodexPluginApi()
+    await api.readState({ mergeAllMarketplaces: true })
+    expect(
+      peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })?.installedPlugins.map(
+        item => item.spec.source.pluginKey
+      )
+    ).toEqual(['github', 'sina-email'])
+
+    mocks.requestLocalExecutor.mockImplementation(
+      async (
+        method: string,
+        params: {
+          method?: string
+        }
+      ) => {
+        if (method !== 'codex.app_server_request') {
+          throw new Error(`Unexpected executor method ${method}`)
+        }
+        if (params.method === 'plugin/list') {
+          throw new Error('plugin/list must not run for listInstalledPlugins')
+        }
+        if (params.method === 'plugin/installed') {
+          return { marketplaces: [githubMarketplace] }
+        }
+        throw new Error(`Unexpected app-server method ${params.method}`)
+      }
+    )
+
+    const listed = await api.listInstalledPlugins({ refresh: true })
+    expect(listed.items.map(item => item.spec.source.pluginKey)).toEqual(['github', 'sina-email'])
+  })
+
+  test('readState overlays cached remote OpenAI installs onto live catalog cards', async () => {
+    const githubMarketplace = {
+      name: 'openai-curated-remote',
+      path: 'openai-curated-remote',
+      interface: { displayName: 'OpenAI' },
+      plugins: [
+        {
+          id: 'github@openai-curated-remote',
+          remotePluginId: 'plugin_connector_1p_github',
+          name: 'github',
+          installed: true,
+          enabled: true,
+          interface: { displayName: 'GitHub' },
+        },
+      ],
+    }
+    const bundledMarketplace = {
+      name: 'openai-bundled',
+      path: 'openai-bundled',
+      interface: { displayName: 'Bundled' },
+      plugins: [
+        {
+          id: 'documents@openai-bundled',
+          remotePluginId: 'openai-documents',
+          name: 'documents',
+          installed: true,
+          enabled: true,
+          interface: { displayName: 'Documents' },
+        },
+      ],
+    }
+    mocks.requestLocalExecutor.mockImplementation(
+      async (
+        method: string,
+        params: {
+          method?: string
+        }
+      ) => {
+        if (method !== 'codex.app_server_request') {
+          throw new Error(`Unexpected executor method ${method}`)
+        }
+        if (params.method === 'plugin/list' || params.method === 'plugin/installed') {
+          return { marketplaces: [githubMarketplace, bundledMarketplace] }
+        }
+        throw new Error(`Unexpected app-server method ${params.method}`)
+      }
+    )
+    const api = createLocalCodexPluginApi()
+    await api.readState({ mergeAllMarketplaces: true })
+
+    mocks.requestLocalExecutor.mockImplementation(
+      async (
+        method: string,
+        params: {
+          method?: string
+        }
+      ) => {
+        if (method !== 'codex.app_server_request') {
+          throw new Error(`Unexpected executor method ${method}`)
+        }
+        if (params.method === 'plugin/list') {
+          return {
+            marketplaces: [
+              {
+                ...githubMarketplace,
+                plugins: [{ ...githubMarketplace.plugins[0], installed: false, enabled: false }],
+              },
+              bundledMarketplace,
+            ],
+          }
+        }
+        if (params.method === 'plugin/installed') {
+          return { marketplaces: [bundledMarketplace, { ...githubMarketplace, plugins: [] }] }
+        }
+        throw new Error(`Unexpected app-server method ${params.method}`)
+      }
+    )
+
+    const state = await api.readState({ mergeAllMarketplaces: true, refresh: true })
+    const github = state.marketplaceItems.find(item => item.name === 'github')
+    expect(github?.installed).toBe(true)
+    expect(github?.installedPluginId).toBe('github@openai-curated-remote')
+    expect(state.installedPlugins.map(item => item.spec.source.pluginKey)).toEqual([
+      'documents',
+      'github',
+    ])
   })
 
   test('listInstalledPlugins refreshes via plugin/installed when peek is stale', async () => {

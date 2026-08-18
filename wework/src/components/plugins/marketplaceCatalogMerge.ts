@@ -85,7 +85,11 @@ export function mergeMarketplaceCatalog(
   const cloudManagedInstalls = new Map<string, InstalledPlugin>()
   for (const plugin of installedPlugins) {
     const cloudPluginId = linkedCloudPluginId(plugin)
-    if (cloudPluginId !== null && localPluginId(plugin) !== null) {
+    if (
+      cloudPluginId !== null &&
+      localPluginId(plugin) !== null &&
+      typeof plugin.spec.pluginId !== 'number'
+    ) {
       localPublishedInstalls.set(String(cloudPluginId), plugin)
     }
     // Account installs from /installed-plugins carry spec.pluginId == catalog id.

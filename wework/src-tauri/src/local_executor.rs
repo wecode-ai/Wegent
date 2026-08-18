@@ -41,6 +41,7 @@ const BUNDLED_HOOKS_DIR_ENV: &str = "WEGENT_BUNDLED_HOOKS_DIR";
 const MANAGED_HOOKS_DIR_ENV: &str = "WEGENT_MANAGED_HOOKS_DIR";
 const BUNDLED_PLUGIN_MARKETPLACE_DIR_NAME: &str = "bundled-plugins";
 const WEWORK_PERSONAL_MARKETPLACE_ID: &str = "wework-personal";
+const CODEX_PERSONAL_MARKETPLACE_ID: &str = "personal";
 const APP_IPC_DEVICE_ID_ENV: &str = "WEGENT_APP_IPC_DEVICE_ID";
 const WEGENT_AUTH_TOKEN_ENV: &str = "WEGENT_AUTH_TOKEN";
 const WEGENT_RUNTIME_AUTH_TOKEN_ENV: &str = "WEGENT_RUNTIME_AUTH_TOKEN";
@@ -1533,9 +1534,9 @@ fn marketplace_plugin_names(manifest_path: &Path) -> Result<HashSet<String>, Str
         .map_err(|error| format!("failed to read {}: {error}", manifest_path.display()))?;
     let manifest: Value = serde_json::from_str(&content)
         .map_err(|error| format!("invalid marketplace {}: {error}", manifest_path.display()))?;
-    if manifest.get("name").and_then(Value::as_str) != Some(WEWORK_PERSONAL_MARKETPLACE_ID) {
+    if !is_personal_marketplace_name(manifest.get("name").and_then(Value::as_str)) {
         return Err(format!(
-            "marketplace {} must use the reserved name {WEWORK_PERSONAL_MARKETPLACE_ID:?}",
+            "marketplace {} must use the reserved name {WEWORK_PERSONAL_MARKETPLACE_ID:?} or {CODEX_PERSONAL_MARKETPLACE_ID:?}",
             manifest_path.display()
         ));
     }
@@ -2851,6 +2852,13 @@ pub(crate) fn resolve_local_plugin_root(
     Err("Local plugin manifest is unavailable".to_string())
 }
 
+fn is_personal_marketplace_name(name: Option<&str>) -> bool {
+    matches!(
+        name,
+        Some(WEWORK_PERSONAL_MARKETPLACE_ID) | Some(CODEX_PERSONAL_MARKETPLACE_ID)
+    )
+}
+
 fn marketplace_root_from_path(path: &Path) -> PathBuf {
     if path
         .file_name()
@@ -3035,10 +3043,7 @@ fn personal_manifest_contains_plugin(
             manifest_path.display()
         )
     })?;
-    let is_personal = manifest
-        .get("name")
-        .and_then(Value::as_str)
-        .is_some_and(|name| name == WEWORK_PERSONAL_MARKETPLACE_ID || name == "personal");
+    let is_personal = is_personal_marketplace_name(manifest.get("name").and_then(Value::as_str));
     if !is_personal {
         return Ok(false);
     }
@@ -5276,6 +5281,41 @@ mod tests {
         restore_env(LOCAL_EXECUTOR_HOME_ENV, previous_executor_home);
         restore_env(WEGENT_CODEX_HOME_ENV, previous_codex_home);
         let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(fake_home);
+    }
+
+    #[test]
+    fn lists_legacy_codex_personal_marketplace_named_personal() {
+        let _guard = env_lock();
+        let previous_home = std::env::var_os("HOME");
+        let fake_home = import_test_root("list-legacy-codex-personal-home");
+        std::env::set_var("HOME", &fake_home);
+
+        let marketplace_manifest = fake_home.join(".agents/plugins/marketplace.json");
+        let notes_manifest = fake_home.join("plugins/notes/.codex-plugin/plugin.json");
+        fs::create_dir_all(marketplace_manifest.parent().unwrap()).unwrap();
+        fs::create_dir_all(notes_manifest.parent().unwrap()).unwrap();
+        fs::write(
+            &marketplace_manifest,
+            r#"{"interface":{"displayName":"Personal"},"name":"personal","plugins":[{"name":"notes"}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            notes_manifest,
+            r#"{"name":"notes","version":"1.0.0","interface":{"displayName":"Notes"}}"#,
+        )
+        .unwrap();
+
+        let listed = list_personal_marketplace_plugins(&marketplace_manifest).unwrap();
+        assert_eq!(listed.marketplace_id, "wework-personal");
+        assert_eq!(listed.plugins.len(), 1);
+        assert_eq!(listed.plugins[0].name, "notes");
+        assert_eq!(
+            marketplace_plugin_names(&marketplace_manifest).unwrap(),
+            HashSet::from(["notes".to_string()])
+        );
+
+        restore_env("HOME", previous_home);
         let _ = fs::remove_dir_all(fake_home);
     }
 

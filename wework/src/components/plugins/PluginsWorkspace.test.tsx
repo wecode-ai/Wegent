@@ -1089,6 +1089,189 @@ function mockSystemSkillsFetch(
   }
 }
 
+const emptyPluginComponents = {
+  skills: [],
+  commands: [],
+  agents: [],
+  hooks: [],
+  mcps: [],
+  lsps: [],
+  monitors: [],
+  bins: [],
+}
+
+function seedDurableOpenAiGithubPeek(options?: { includeGmailInstall?: boolean }) {
+  const githubItem = {
+    id: 'github@openai-curated-remote',
+    remotePluginId: 'plugin_connector_1p_github',
+    name: 'github',
+    displayName: 'GitHub',
+    description: 'Connect GitHub',
+    visibility: 'public',
+    featured: false,
+    installed: true,
+    installedPluginId: 'github@openai-curated-remote',
+    installedLocally: true,
+    enabled: true,
+    sourceType: 'marketplace',
+    sourceProvider: 'codex',
+    sourceLabel: 'OpenAI 官方',
+    components: emptyPluginComponents,
+    manifest: { marketplaceId: 'openai-curated-remote' },
+    ownerUserId: 0,
+    latestReleaseId: null,
+    interface: {
+      displayName: 'GitHub',
+      shortDescription: 'Connect GitHub',
+      category: 'Developer Tools',
+    },
+  }
+  const gmailItem = {
+    ...githubItem,
+    id: 'gmail@openai-curated-remote',
+    remotePluginId: 'plugin_connector_1p_gmail',
+    name: 'gmail',
+    displayName: 'Gmail',
+    description: 'Connect Gmail',
+    installed: true,
+    installedPluginId: 'gmail@openai-curated-remote',
+    interface: {
+      displayName: 'Gmail',
+      shortDescription: 'Connect Gmail',
+      category: 'Communication',
+    },
+  }
+  const githubInstalled = {
+    apiVersion: 'agent.wecode.io/v1',
+    kind: 'InstalledPlugin',
+    metadata: {
+      name: 'github',
+      namespace: 'openai-curated-remote',
+      labels: { id: 'github@openai-curated-remote' },
+    },
+    spec: {
+      source: {
+        type: 'marketplace',
+        providerKey: 'openai-curated-remote',
+        pluginKey: 'github',
+        catalogItemId: 'plugin_connector_1p_github',
+        marketplace: 'openai-curated-remote',
+      },
+      origin: 'market',
+      sourceProvider: 'codex',
+      sourceLabel: 'OpenAI 官方',
+      visibility: 'public',
+      displayName: 'GitHub',
+      description: 'Connect GitHub',
+      version: '0.1.8',
+      installState: 'installed',
+      enabled: true,
+      componentStates: {},
+      manifest: {},
+      components: emptyPluginComponents,
+      interface: { displayName: 'GitHub' },
+      packageRef: null,
+      sourcePayload: { marketplaceName: 'openai-curated-remote' },
+    },
+    status: { state: 'enabled' },
+  }
+  const gmailInstalled = {
+    ...githubInstalled,
+    metadata: {
+      name: 'gmail',
+      namespace: 'openai-curated-remote',
+      labels: { id: 'gmail@openai-curated-remote' },
+    },
+    spec: {
+      ...githubInstalled.spec,
+      source: {
+        ...githubInstalled.spec.source,
+        pluginKey: 'gmail',
+        catalogItemId: 'plugin_connector_1p_gmail',
+      },
+      displayName: 'Gmail',
+      description: 'Connect Gmail',
+      interface: { displayName: 'Gmail' },
+    },
+  }
+  window.localStorage.setItem(
+    'wework.plugins.codexReadState.v2',
+    JSON.stringify({
+      version: 2,
+      entries: {
+        '|all': {
+          paramsKey: '|all',
+          cachedAt: Date.now() - 120_000,
+          state: {
+            marketplaceItems: options?.includeGmailInstall ? [githubItem, gmailItem] : [githubItem],
+            installedPlugins: options?.includeGmailInstall
+              ? [githubInstalled, gmailInstalled]
+              : [githubInstalled],
+            marketplaces: [{ id: 'openai-curated-remote', name: 'OpenAI', path: null }],
+            selectedMarketplaceId: 'openai-curated-remote',
+            marketplacePath: '',
+            installRegistryPath: '',
+            deviceId: 'local-device',
+          },
+        },
+      },
+    })
+  )
+}
+
+function mockEmptyCloudPluginApis() {
+  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+    const url = String(input)
+    if (url.includes('/api/plugins/marketplace')) {
+      return new Response(JSON.stringify({ items: [], total: 0 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }
+    if (url.includes('/api/plugins/installed')) {
+      return new Response(JSON.stringify({ items: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }
+    return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })
+  })
+}
+
+function officialCodexPluginSummary(plugin: {
+  id: string
+  name: string
+  displayName: string
+  installed: boolean
+}) {
+  return {
+    id: plugin.id,
+    remotePluginId: `plugin_connector_1p_${plugin.name}`,
+    localVersion: '0.1.8',
+    name: plugin.name,
+    installed: plugin.installed,
+    enabled: plugin.installed,
+    installPolicy: 'AVAILABLE',
+    authPolicy: 'ON_USE',
+    availability: 'AVAILABLE',
+    disabledReason: null,
+    interface: {
+      displayName: plugin.displayName,
+      shortDescription: plugin.displayName,
+      longDescription: plugin.displayName,
+      logo: null,
+      composerIcon: null,
+      brandColor: null,
+      category: 'Developer Tools',
+      defaultPrompt: [],
+      homepageUrl: null,
+      supportUrl: null,
+      categories: ['Developer Tools'],
+      tags: [],
+    },
+  }
+}
+
 describe('PluginsWorkspace', () => {
   beforeEach(() => {
     telemetryMocks.track.mockClear()
@@ -1669,7 +1852,8 @@ describe('PluginsWorkspace', () => {
     expect(screen.queryByTestId('plugins-openai-official-empty')).not.toBeInTheDocument()
     // Even a fresh local snapshot must revalidate when it has personal rows but no
     // OpenAI catalog; otherwise the normal one-minute cache TTL hides the sync.
-    expect(resolveList).not.toBeNull()
+    // plugin/list waits for live plugin/installed so it cannot jump wegent installs.
+    await waitFor(() => expect(resolveList).not.toBeNull())
 
     resolveList?.({
       marketplaces: [
@@ -1830,7 +2014,7 @@ describe('PluginsWorkspace', () => {
     // revalidates in the background — returning from background used to block here.
     expect(screen.queryByTestId('plugins-marketplace-loading')).not.toBeInTheDocument()
     expect(screen.getByTestId('plugins-refresh-button')).not.toBeDisabled()
-    expect(resolveList).not.toBeNull()
+    await waitFor(() => expect(resolveList).not.toBeNull())
 
     const marketplaceFetchesBeforeFocus = vi
       .mocked(fetch)
@@ -2026,6 +2210,209 @@ describe('PluginsWorkspace', () => {
     expect(
       screen.queryByTestId('plugin-marketplace-install-github@openai-curated-remote')
     ).not.toBeInTheDocument()
+  })
+
+  test('keeps OpenAI official installed strip when live plugin/installed only returns bundled', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    setPluginMarketplaceCache({
+      cacheKey: '|anon',
+      marketplaceItems: [],
+      installedPlugins: [],
+      marketplaces: [
+        {
+          key: 'cloud:default',
+          id: 'default',
+          name: 'Wework 云端市场',
+          kind: 'cloud',
+        },
+      ],
+      selectedMarketplaceKey: 'cloud:default',
+      deviceId: 'local-device',
+      canPublish: false,
+      canSharePersonalPlugins: true,
+      fetchedAt: Date.now(),
+    })
+    seedDurableOpenAiGithubPeek()
+
+    const githubCatalog = officialCodexPluginSummary({
+      id: 'github@openai-curated-remote',
+      name: 'github',
+      displayName: 'GitHub',
+      installed: false,
+    })
+    const documentsInstalled = officialCodexPluginSummary({
+      id: 'documents@openai-bundled',
+      name: 'documents',
+      displayName: 'Documents',
+      installed: true,
+    })
+    vi.mocked(invoke).mockImplementation((command: string, args?: unknown) => {
+      if (command === 'local_executor_ensure_started') {
+        return Promise.resolve({ running: true, ready: true, deviceId: 'local-device' })
+      }
+      if (command === 'local_executor_read_plugin_cloud_links') {
+        return Promise.resolve([])
+      }
+      if (command !== 'local_executor_request') return Promise.resolve(undefined)
+      const request = args as {
+        method?: string
+        params?: { method?: string }
+      }
+      if (request.method !== 'codex.app_server_request') return Promise.resolve(undefined)
+      if (request.params?.method === 'plugin/list') {
+        return Promise.resolve({
+          marketplaces: [
+            {
+              name: 'openai-curated-remote',
+              path: 'openai-curated-remote',
+              interface: { displayName: 'OpenAI' },
+              plugins: [githubCatalog],
+            },
+            {
+              name: 'openai-bundled',
+              path: 'openai-bundled',
+              interface: { displayName: 'Bundled' },
+              plugins: [documentsInstalled],
+            },
+          ],
+        })
+      }
+      if (request.params?.method === 'plugin/installed') {
+        return Promise.resolve({
+          marketplaces: [
+            {
+              name: 'openai-bundled',
+              path: 'openai-bundled',
+              interface: { displayName: 'Bundled' },
+              plugins: [documentsInstalled],
+            },
+            {
+              name: 'openai-curated-remote',
+              path: 'openai-curated-remote',
+              interface: { displayName: 'OpenAI' },
+              plugins: [],
+            },
+          ],
+        })
+      }
+      return Promise.resolve(undefined)
+    })
+    mockEmptyCloudPluginApis()
+
+    render(<PluginsWorkspace />)
+
+    await userEvent.click(await screen.findByTestId('plugins-distribution-tab-official'))
+    await waitFor(() => {
+      expect(
+        screen.getByTestId('plugins-installed-strip-item-github@openai-curated-remote')
+      ).toBeInTheDocument()
+      expect(
+        screen.queryByTestId('plugin-marketplace-install-github@openai-curated-remote')
+      ).not.toBeInTheDocument()
+    })
+    expect(screen.queryByTestId('plugins-installed-strip-empty')).not.toBeInTheDocument()
+    expect(
+      screen.getByTestId('plugin-marketplace-actions-github@openai-curated-remote')
+    ).toBeInTheDocument()
+  })
+
+  test('does not restore an uninstalled OpenAI remote plugin when live membership lists that marketplace', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    setPluginMarketplaceCache({
+      cacheKey: '|anon',
+      marketplaceItems: [],
+      installedPlugins: [],
+      marketplaces: [
+        {
+          key: 'cloud:default',
+          id: 'default',
+          name: 'Wework 云端市场',
+          kind: 'cloud',
+        },
+      ],
+      selectedMarketplaceKey: 'cloud:default',
+      deviceId: 'local-device',
+      canPublish: false,
+      canSharePersonalPlugins: true,
+      fetchedAt: Date.now(),
+    })
+    seedDurableOpenAiGithubPeek({ includeGmailInstall: true })
+
+    const githubCatalog = officialCodexPluginSummary({
+      id: 'github@openai-curated-remote',
+      name: 'github',
+      displayName: 'GitHub',
+      installed: false,
+    })
+    const gmailCatalog = officialCodexPluginSummary({
+      id: 'gmail@openai-curated-remote',
+      name: 'gmail',
+      displayName: 'Gmail',
+      installed: true,
+    })
+    vi.mocked(invoke).mockImplementation((command: string, args?: unknown) => {
+      if (command === 'local_executor_ensure_started') {
+        return Promise.resolve({ running: true, ready: true, deviceId: 'local-device' })
+      }
+      if (command === 'local_executor_read_plugin_cloud_links') {
+        return Promise.resolve([])
+      }
+      if (command !== 'local_executor_request') return Promise.resolve(undefined)
+      const request = args as {
+        method?: string
+        params?: { method?: string }
+      }
+      if (request.method !== 'codex.app_server_request') return Promise.resolve(undefined)
+      if (request.params?.method === 'plugin/list') {
+        return Promise.resolve({
+          marketplaces: [
+            {
+              name: 'openai-curated-remote',
+              path: 'openai-curated-remote',
+              interface: { displayName: 'OpenAI' },
+              plugins: [githubCatalog, gmailCatalog],
+            },
+          ],
+        })
+      }
+      if (request.params?.method === 'plugin/installed') {
+        return Promise.resolve({
+          marketplaces: [
+            {
+              name: 'openai-curated-remote',
+              path: 'openai-curated-remote',
+              interface: { displayName: 'OpenAI' },
+              plugins: [gmailCatalog],
+            },
+          ],
+        })
+      }
+      return Promise.resolve(undefined)
+    })
+    mockEmptyCloudPluginApis()
+
+    render(<PluginsWorkspace />)
+
+    await userEvent.click(await screen.findByTestId('plugins-distribution-tab-official'))
+    expect(
+      await screen.findByTestId('plugins-installed-strip-item-gmail@openai-curated-remote')
+    ).toBeInTheDocument()
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId('plugins-installed-strip-item-github@openai-curated-remote')
+      ).not.toBeInTheDocument()
+    })
+    expect(
+      await screen.findByTestId('plugin-marketplace-install-github@openai-curated-remote')
+    ).toBeInTheDocument()
   })
 
   test('keeps the warm catalog painted while live plugin/installed is still pending', async () => {
@@ -2482,7 +2869,6 @@ describe('PluginsWorkspace', () => {
     await waitFor(() =>
       expect(screen.getByTestId('plugin-marketplace-install-101')).toHaveTextContent('重试安装')
     )
-    expect(screen.queryByTestId('plugins-installed-strip-item-101')).not.toBeInTheDocument()
     await userEvent.click(screen.getByTestId('plugin-marketplace-row-101'))
 
     expect(screen.getByText('0/1 已安装 · 1 失败')).toBeInTheDocument()
@@ -2662,6 +3048,71 @@ describe('PluginsWorkspace', () => {
     await waitFor(() => expect(marketplaceMock.getReportDeviceCalls()).toBe(1))
   })
 
+  test('does not auto-sync pending wegent cards when live plugin/installed omitted local packages', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    const marketplaceMock = mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'pending',
+      marketplaceVisibility: 'workspace',
+      marketplaceSourceProvider: 'wegent',
+      deviceAutoSyncSucceeds: false,
+    })
+    const localMarketplace = {
+      name: 'wegent',
+      path: '/Users/test/.wework/capabilities/store/plugins',
+      plugins: [defaultCodexPlugin],
+    }
+    mockCodexAppServerInvoke({
+      deviceId: 'current-device',
+      marketplaces: [localMarketplace],
+      installedPluginNames: ['documents'],
+    })
+    await createLocalCodexPluginApi().readState({
+      mergeAllMarketplaces: true,
+      refresh: true,
+    })
+
+    const previousInvoke = vi.mocked(invoke).getMockImplementation()
+    vi.mocked(invoke).mockImplementation((command: string, args?: unknown) => {
+      if (command === 'local_executor_request') {
+        const request = args as {
+          method?: string
+          params?: { method?: string }
+        }
+        if (
+          request.method === 'codex.app_server_request' &&
+          request.params?.method === 'plugin/installed'
+        ) {
+          return Promise.resolve({
+            marketplaces: [
+              {
+                name: 'openai-curated-remote',
+                path: 'openai-curated-remote',
+                interface: { displayName: 'OpenAI' },
+                plugins: [],
+              },
+            ],
+          })
+        }
+      }
+      return previousInvoke?.(command, args) as Promise<unknown>
+    })
+
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    expect(await screen.findByText('Documents')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByTestId('plugin-marketplace-actions-101')).toBeInTheDocument()
+    })
+    expect(screen.queryByText('同步中')).not.toBeInTheDocument()
+    expect(marketplaceMock.getSyncDeviceCalls()).toBe(0)
+    await waitFor(() => expect(marketplaceMock.getReportDeviceCalls()).toBe(1))
+  })
+
   test('does not auto-sync before live plugin/installed membership returns', async () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
@@ -2831,7 +3282,7 @@ describe('PluginsWorkspace', () => {
     ).not.toBeInTheDocument()
   })
 
-  test('does not start plugin/list until live plugin/installed returns', async () => {
+  test('queues plugin trial from detail without calling plugin/list', async () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
       value: {},
@@ -2839,8 +3290,68 @@ describe('PluginsWorkspace', () => {
     vi.mocked(isTauri).mockReturnValue(true)
     mockSystemSkillsFetch({
       marketplaceInstalled: true,
+      marketplaceDeviceState: 'installed',
+    })
+    mockCodexAppServerInvoke({
+      deviceId: 'current-device',
+      marketplaces: [
+        {
+          name: 'wegent',
+          path: '/Users/test/.wework/capabilities/store/plugins',
+          plugins: [defaultCodexPlugin],
+        },
+      ],
+      installedPluginNames: ['documents'],
+    })
+
+    let pluginListCalls = 0
+    const previousInvoke = vi.mocked(invoke).getMockImplementation()
+    vi.mocked(invoke).mockImplementation((command: string, args?: unknown) => {
+      if (command === 'local_executor_request') {
+        const request = args as {
+          method?: string
+          params?: { method?: string }
+        }
+        if (
+          request.method === 'codex.app_server_request' &&
+          request.params?.method === 'plugin/list'
+        ) {
+          pluginListCalls += 1
+          return new Promise(() => undefined)
+        }
+      }
+      return previousInvoke?.(command, args) as Promise<unknown>
+    })
+
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    await userEvent.click(await screen.findByTestId('plugin-marketplace-row-101'))
+    const listCallsBeforeTry = pluginListCalls
+    await userEvent.click(screen.getByTestId('plugin-detail-toggle-101'))
+
+    await waitFor(() => {
+      const raw = window.sessionStorage.getItem('wework:pending-plugin-trial')
+      expect(raw).toBeTruthy()
+      expect(raw).toContain('plugin://documents@')
+    })
+    expect(pluginListCalls).toBe(listCallsBeforeTry)
+  })
+
+  test('does not start plugin/list until device package sync finishes', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    let releaseSyncGate: (() => void) | null = null
+    const deviceAutoSyncGate = new Promise<void>(resolve => {
+      releaseSyncGate = resolve
+    })
+    const marketplaceMock = mockSystemSkillsFetch({
+      marketplaceInstalled: true,
       marketplaceDeviceState: 'pending',
       deviceAutoSyncSucceeds: true,
+      deviceAutoSyncGate,
     })
     mockCodexAppServerInvoke({ deviceId: 'current-device' })
 
@@ -2888,22 +3399,32 @@ describe('PluginsWorkspace', () => {
       ],
     })
 
+    await waitFor(() => expect(marketplaceMock.getSyncDeviceCalls()).toBe(1))
+    expect(pluginListStarted).toBe(false)
+
+    releaseSyncGate?.()
     await waitFor(() => expect(pluginListStarted).toBe(true))
   })
 
-  test('auto-syncs a confirmed gap even while plugin/list is still pending', async () => {
+  test('auto-syncs a confirmed gap before plugin/list starts', async () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
       value: {},
     })
     vi.mocked(isTauri).mockReturnValue(true)
+    let releaseSyncGate: (() => void) | null = null
+    const deviceAutoSyncGate = new Promise<void>(resolve => {
+      releaseSyncGate = resolve
+    })
     const marketplaceMock = mockSystemSkillsFetch({
       marketplaceInstalled: true,
       marketplaceDeviceState: 'pending',
       deviceAutoSyncSucceeds: true,
+      deviceAutoSyncGate,
     })
     mockCodexAppServerInvoke({ deviceId: 'current-device' })
 
+    let pluginListStarted = false
     const previousInvoke = vi.mocked(invoke).getMockImplementation()
     vi.mocked(invoke).mockImplementation((command: string, args?: unknown) => {
       if (command === 'local_executor_request') {
@@ -2915,6 +3436,7 @@ describe('PluginsWorkspace', () => {
           request.method === 'codex.app_server_request' &&
           request.params?.method === 'plugin/list'
         ) {
+          pluginListStarted = true
           return new Promise(() => undefined)
         }
       }
@@ -2924,6 +3446,123 @@ describe('PluginsWorkspace', () => {
     render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
 
     await waitFor(() => expect(marketplaceMock.getSyncDeviceCalls()).toBe(1))
+    expect(pluginListStarted).toBe(false)
+    releaseSyncGate?.()
+    await waitFor(() => expect(pluginListStarted).toBe(true))
+  })
+
+  test('starts plugin/list after live inventory when no device package gap exists', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    const marketplaceMock = mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'installed',
+    })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+
+    let resolveInstalled: ((value: unknown) => void) | null = null
+    const pendingInstalled = new Promise(resolve => {
+      resolveInstalled = resolve
+    })
+    let pluginListStarted = false
+    const previousInvoke = vi.mocked(invoke).getMockImplementation()
+    vi.mocked(invoke).mockImplementation((command: string, args?: unknown) => {
+      if (command === 'local_executor_request') {
+        const request = args as {
+          method?: string
+          params?: { method?: string }
+        }
+        if (
+          request.method === 'codex.app_server_request' &&
+          request.params?.method === 'plugin/installed'
+        ) {
+          return pendingInstalled
+        }
+        if (
+          request.method === 'codex.app_server_request' &&
+          request.params?.method === 'plugin/list'
+        ) {
+          pluginListStarted = true
+        }
+      }
+      return previousInvoke?.(command, args) as Promise<unknown>
+    })
+
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    expect(await screen.findByText('Documents')).toBeInTheDocument()
+    expect(pluginListStarted).toBe(false)
+    expect(marketplaceMock.getSyncDeviceCalls()).toBe(0)
+
+    resolveInstalled?.({
+      marketplaces: [
+        {
+          name: 'wegent',
+          path: '/Users/test/.wework/capabilities/store/plugins',
+          interface: { displayName: 'wegent' },
+          plugins: [],
+        },
+      ],
+    })
+
+    await waitFor(() => expect(pluginListStarted).toBe(true))
+    expect(marketplaceMock.getSyncDeviceCalls()).toBe(0)
+  })
+
+  test('does not start plugin/list until personal-created disk listing finishes', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    const marketplaceMock = mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'installed',
+    })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+
+    let resolvePersonalDisk: ((value: unknown) => void) | null = null
+    const pendingPersonalDisk = new Promise(resolve => {
+      resolvePersonalDisk = resolve
+    })
+    let pluginListStarted = false
+    const previousInvoke = vi.mocked(invoke).getMockImplementation()
+    vi.mocked(invoke).mockImplementation((command: string, args?: unknown) => {
+      if (command === 'local_executor_list_personal_marketplace_plugins') {
+        return pendingPersonalDisk
+      }
+      if (command === 'local_executor_request') {
+        const request = args as {
+          method?: string
+          params?: { method?: string }
+        }
+        if (
+          request.method === 'codex.app_server_request' &&
+          request.params?.method === 'plugin/list'
+        ) {
+          pluginListStarted = true
+        }
+      }
+      return previousInvoke?.(command, args) as Promise<unknown>
+    })
+
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    expect(await screen.findByText('Documents')).toBeInTheDocument()
+    expect(pluginListStarted).toBe(false)
+    expect(marketplaceMock.getSyncDeviceCalls()).toBe(0)
+
+    resolvePersonalDisk?.({
+      marketplaceId: 'wework-personal',
+      marketplacePath: '/tmp/wework-personal',
+      plugins: [],
+    })
+
+    await waitFor(() => expect(pluginListStarted).toBe(true))
+    expect(marketplaceMock.getSyncDeviceCalls()).toBe(0)
   })
 
   test('restores same-device local installs from the durable snapshot on restart', async () => {
@@ -2997,7 +3636,7 @@ describe('PluginsWorkspace', () => {
       value: {},
     })
     vi.mocked(isTauri).mockReturnValue(true)
-    mockSystemSkillsFetch({
+    const marketplaceMock = mockSystemSkillsFetch({
       marketplaceInstalled: true,
       marketplaceDeviceState: 'pending',
       deviceAutoSyncSucceeds: false,
@@ -3006,6 +3645,7 @@ describe('PluginsWorkspace', () => {
 
     render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
 
+    await waitFor(() => expect(marketplaceMock.getSyncDeviceCalls()).toBe(1))
     await waitFor(() =>
       expect(screen.getByTestId('plugin-marketplace-install-101')).toHaveTextContent('重试安装')
     )
@@ -3381,7 +4021,7 @@ describe('PluginsWorkspace', () => {
     render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
 
     expect(await screen.findByTestId('plugin-marketplace-install-101')).toBeInTheDocument()
-    expect(screen.getAllByText('Documents').length).toBeGreaterThan(1)
+    await waitFor(() => expect(screen.getAllByText('Documents').length).toBeGreaterThan(1))
     await installPluginFromMarketCard('plugin-marketplace-install-101')
 
     await waitFor(() =>
@@ -3761,9 +4401,11 @@ describe('PluginsWorkspace', () => {
     })
     render(<PluginsWorkspace />)
 
-    expect(await screen.findByTestId('plugins-marketplace-tab-default')).toHaveClass('bg-surface')
+    await waitFor(() =>
+      expect(screen.getByTestId('plugins-marketplace-tab-default')).toHaveClass('bg-surface')
+    )
     expect(screen.getByTestId('plugins-marketplace-tab-existing-market')).toBeInTheDocument()
-    expectCodexAppServerRequest('plugin/list', { cwds: null })
+    await waitFor(() => expectCodexAppServerRequest('plugin/list', { cwds: null }))
   })
 
   test('treats the OpenAI curated remote marketplace as a built-in source', async () => {
@@ -3789,9 +4431,11 @@ describe('PluginsWorkspace', () => {
     expect(
       screen.queryByTestId('plugins-marketplace-tab-openai-curated-remote')
     ).not.toBeInTheDocument()
-    expectCodexAppServerRequest('plugin/list', {
-      cwds: null,
-    })
+    await waitFor(() =>
+      expectCodexAppServerRequest('plugin/list', {
+        cwds: null,
+      })
+    )
   })
 
   test('keeps openai-curated plugins under the OpenAI official filter', async () => {
@@ -3925,7 +4569,7 @@ describe('PluginsWorkspace', () => {
     render(<PluginsWorkspace />)
 
     expect(await screen.findByTestId('plugins-marketplace-tab-default')).toBeInTheDocument()
-    expect(screen.getByTestId('plugins-marketplace-tab-local-openai')).toBeInTheDocument()
+    expect(await screen.findByTestId('plugins-marketplace-tab-local-openai')).toBeInTheDocument()
     expect(screen.getByTestId('plugins-marketplace-tab-local-team')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('plugins-marketplace-tab-local-openai'))
     expect(screen.getByText('Local Docs')).toBeInTheDocument()
@@ -4122,7 +4766,7 @@ describe('PluginsWorkspace', () => {
     expect(screen.queryByTestId('plugins-publish-empty-button')).not.toBeInTheDocument()
   })
 
-  test('paints local Codex plugins before a slow cloud marketplace responds', async () => {
+  test('does not start plugin/list until the cloud marketplace can decide device sync', async () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
       value: {},
@@ -4151,6 +4795,23 @@ describe('PluginsWorkspace', () => {
     const pendingMarketplace = new Promise<Response>(resolve => {
       resolveMarketplace = resolve
     })
+    let pluginListStarted = false
+    const previousInvoke = vi.mocked(invoke).getMockImplementation()
+    vi.mocked(invoke).mockImplementation((command: string, args?: unknown) => {
+      if (command === 'local_executor_request') {
+        const request = args as {
+          method?: string
+          params?: { method?: string }
+        }
+        if (
+          request.method === 'codex.app_server_request' &&
+          request.params?.method === 'plugin/list'
+        ) {
+          pluginListStarted = true
+        }
+      }
+      return previousInvoke?.(command, args) as Promise<unknown>
+    })
     const previousFetch = vi.mocked(fetch)
     vi.stubGlobal(
       'fetch',
@@ -4165,9 +4826,9 @@ describe('PluginsWorkspace', () => {
 
     render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
 
-    expect(await screen.findByText('Linear')).toBeInTheDocument()
-    expect(screen.queryByTestId('plugins-marketplace-loading')).not.toBeInTheDocument()
-    expect(screen.queryByText('Cloud Only Plugin')).not.toBeInTheDocument()
+    expect(await screen.findByTestId('plugins-workspace')).toBeInTheDocument()
+    expect(screen.queryByText('Linear')).not.toBeInTheDocument()
+    expect(pluginListStarted).toBe(false)
 
     resolveMarketplace?.({
       ok: true,
@@ -4224,7 +4885,8 @@ describe('PluginsWorkspace', () => {
     } as Response)
 
     expect(await screen.findByText('Cloud Only Plugin')).toBeInTheDocument()
-    expect(screen.getByText('Linear')).toBeInTheDocument()
+    expect(await screen.findByText('Linear')).toBeInTheDocument()
+    expect(pluginListStarted).toBe(true)
   })
 
   test('paints personal-created plugins from disk before Codex plugin/list returns', async () => {

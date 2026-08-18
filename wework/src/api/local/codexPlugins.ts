@@ -187,6 +187,8 @@ export interface LocalCodexPluginApi {
     refresh?: boolean
   }): Promise<PluginMarketplaceListResponse>
   selectMarketplace(id: string): Promise<LocalCodexPluginsState>
+  /** Persist the active marketplace without reconciling plugin/list. */
+  rememberMarketplaceSelection(id: string): void
   readInstalledPluginForTrial(id: string | number): Promise<InstalledPlugin>
   /**
    * Enrich one installed summary via `plugin/read` only. Never calls `plugin/list`
@@ -892,6 +894,32 @@ function installedPluginId(plugin: InstalledPlugin): unknown {
   const labels = plugin.metadata.labels
   if (!labels || typeof labels !== 'object') return null
   return (labels as Record<string, unknown>).id
+}
+
+function matchesInstalledPluginTrialLookup(
+  plugin: InstalledPlugin,
+  lookupId: string | number
+): boolean {
+  const normalized = String(lookupId).trim()
+  if (!normalized) return false
+  const labelId = installedPluginId(plugin)
+  if (labelId != null && String(labelId) === normalized) return true
+
+  const payload = plugin.spec.sourcePayload
+  const payloadRecord = payload && typeof payload === 'object' ? payload : {}
+  const cloudInstalledId = payloadRecord.cloudInstalledPluginId
+  if (cloudInstalledId != null && String(cloudInstalledId) === normalized) return true
+
+  const pluginKey = plugin.spec.source.pluginKey.trim()
+  const marketplace =
+    (typeof payloadRecord.marketplaceName === 'string' && payloadRecord.marketplaceName.trim()) ||
+    (typeof plugin.metadata.namespace === 'string' && plugin.metadata.namespace.trim()) ||
+    plugin.spec.source.marketplace ||
+    plugin.spec.source.providerKey
+  if (pluginKey && typeof marketplace === 'string' && marketplace.trim()) {
+    if (`${pluginKey}@${marketplace.trim()}` === normalized) return true
+  }
+  return pluginKey.toLowerCase() === normalized.toLowerCase()
 }
 
 export function pluginEnabledConfigKeyPath(id: string | number): string {
@@ -2208,11 +2236,17 @@ async function loadReadStateSnapshot(
   // plugin/installed is authoritative for membership; summaries sometimes omit
   // `installed`/`enabled`. Also fold in plugin/list rows marked installed so a
   // briefly empty installed response cannot hide a just-installed plugin.
-  const installedPlugins = applyPluginCloudLinks(
-    preferWeworkPersonalInstalled(
-      mergeInstalledPluginSummaries(installedResponse.marketplaces, availableMarketplaces)
+  // When GitHub is down, live membership often keeps openai-bundled but drops
+  // openai-curated-remote; retain that remote family from the durable snapshot
+  // so OpenAI官方 cards do not fall back to "安装".
+  const installedPlugins = retainOpenAiOfficialLocalInstalls(
+    applyPluginCloudLinks(
+      preferWeworkPersonalInstalled(
+        mergeInstalledPluginSummaries(installedResponse.marketplaces, availableMarketplaces)
+      ),
+      cloudLinks
     ),
-    cloudLinks
+    cachedState?.installedPlugins ?? []
   )
   const marketplaceItems = applyInstalledPluginsToMarketplaceItems(
     availableMarketplaceItems,
@@ -2802,12 +2836,15 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       rememberSelectedMarketplaceId(id)
       return readState({ marketplaceId: id })
     },
+    rememberMarketplaceSelection(id) {
+      rememberSelectedMarketplaceId(id)
+    },
     async readInstalledPluginDetail(plugin) {
       return readDetailForInstalledPlugin(plugin)
     },
     async readInstalledPluginForTrial(id) {
       const findInstalled = (plugins: InstalledPlugin[]) =>
-        plugins.find(plugin => String(installedPluginId(plugin)) === String(id))
+        plugins.find(plugin => matchesInstalledPluginTrialLookup(plugin, id))
 
       // Prefer membership-only sources. Chat/composer must never wait on
       // plugin/list (~10s) just to resolve connector localAuth for one plugin.
