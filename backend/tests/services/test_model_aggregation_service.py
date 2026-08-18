@@ -23,8 +23,61 @@ from app.services.model_aggregation_service import (
 from app.services.user_runtime_config import user_runtime_config_service
 
 
+def _referenced_model(user: User, model_id: str) -> Kind:
+    return Kind(
+        user_id=user.id + 1,
+        kind="Model",
+        name="shared-embedding",
+        namespace="default",
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Model",
+            "metadata": {
+                "name": "shared-embedding",
+                "namespace": "default",
+            },
+            "spec": {"modelConfig": {"env": {"model": "openai", "model_id": model_id}}},
+        },
+        is_active=True,
+    )
+
+
 class TestModelAggregationService:
     """Tests for model_aggregation_service methods."""
+
+    def test_same_name_references_list_smallest_kind_id(
+        self, test_db: Session, test_user: User, monkeypatch
+    ):
+        """The model list must match runtime's smallest-id reference choice."""
+        smallest_id_model = _referenced_model(test_user, "smallest-id-model")
+        larger_id_model = _referenced_model(test_user, "larger-id-model")
+        test_db.add_all([smallest_id_model, larger_id_model])
+        test_db.commit()
+
+        monkeypatch.setattr(
+            "app.services.model_aggregation_service.kind_service.list_resources",
+            lambda user_id, kind, namespace: [],
+        )
+        monkeypatch.setattr(
+            "app.services.model_aggregation_service.list_referenced_capabilities",
+            lambda db, kind, user_id, namespace: [
+                larger_id_model,
+                smallest_id_model,
+            ],
+        )
+
+        models = model_aggregation_service.list_available_models(
+            db=test_db,
+            current_user=test_user,
+            scope="personal",
+        )
+
+        shared_models = [
+            model for model in models if model["name"] == "shared-embedding"
+        ]
+        assert len(shared_models) == 1
+        assert shared_models[0]["modelId"] == "smallest-id-model"
+        assert shared_models[0]["listingId"] == smallest_id_model.id
 
     def test_wework_does_not_synthesize_runtime_codex_model_when_user_auth_enabled(
         self, test_db: Session, test_user: User, monkeypatch

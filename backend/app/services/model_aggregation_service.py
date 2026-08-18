@@ -598,6 +598,7 @@ class ModelAggregationService:
                 user_id=current_user.id,
                 namespace=namespace,
             )
+            referenced_models.sort(key=lambda model: model.id)
             referenced_ids = {resource.id for resource in referenced_models}
             existing_ids = {resource.id for resource in user_model_resources}
             user_model_resources.extend(

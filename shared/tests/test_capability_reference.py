@@ -128,11 +128,11 @@ def test_group_model_reference_resolves_source(
 def test_group_model_reference_prefers_smallest_source_id(
     model_reference: ModelReferenceScenario,
 ) -> None:
-    oldest = _add_same_name_source(model_reference, source_id=100)
+    smallest_id_source = _add_same_name_source(model_reference, source_id=100)
     _bind_source(
         model_reference,
         binding_id=2,
-        source_id=oldest.id,
+        source_id=smallest_id_source.id,
         entity_type="namespace",
         entity_id="7",
     )
@@ -141,13 +141,13 @@ def test_group_model_reference_prefers_smallest_source_id(
     resolved = _resolve_model(model_reference)
 
     assert resolved is not None
-    assert resolved.id == oldest.id
+    assert resolved.id == smallest_id_source.id
 
 
 def test_personal_model_reference_prefers_smallest_source_id(
     model_reference: ModelReferenceScenario,
 ) -> None:
-    oldest = _add_same_name_source(model_reference, source_id=100)
+    smallest_id_source = _add_same_name_source(model_reference, source_id=100)
     _bind_source(
         model_reference,
         binding_id=2,
@@ -158,7 +158,7 @@ def test_personal_model_reference_prefers_smallest_source_id(
     _bind_source(
         model_reference,
         binding_id=3,
-        source_id=oldest.id,
+        source_id=smallest_id_source.id,
         entity_type="user",
         entity_id="99",
     )
@@ -172,7 +172,7 @@ def test_personal_model_reference_prefers_smallest_source_id(
     )
 
     assert resolved is not None
-    assert resolved.id == oldest.id
+    assert resolved.id == smallest_id_source.id
 
 
 def test_group_model_reference_requires_active_namespace(
