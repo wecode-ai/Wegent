@@ -637,7 +637,9 @@ describe('ConnectionsSettingsPage', () => {
     expect(visionSelect).toHaveTextContent('自动')
     expect(visionSelect).toHaveTextContent('Vision Model')
     expect(
-      screen.getByText('可选择支持图片的 profile；登录后 DeepSeek V4 默认自动使用 GPT-5.6 Luna。')
+      screen.getByText(
+        '可选择支持图片的 profile。自动委托 GPT-5.6 Luna 仅适用于符合条件的 DeepSeek V4 Pro/Flash Responses profile，并要求有效的登录云端身份、受支持的协议，以及目录中存在支持图片的 Luna profile。'
+      )
     ).toBeInTheDocument()
     await userEvent.selectOptions(visionSelect, 'vision')
     expect(visionSelect).toHaveValue('vision')

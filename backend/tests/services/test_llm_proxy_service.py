@@ -10,7 +10,10 @@ from starlette.datastructures import Headers
 
 from app.models.kind import Kind
 from app.models.user import User
-from app.services.chat.trigger.unified import _build_codex_runtime_model_config
+from app.services.chat.trigger.unified import (
+    _build_codex_runtime_model_config,
+    build_wework_runtime_model_config,
+)
 from app.services.llm_proxy_service import (
     _join_upstream_url,
     proxy_llm_responses,
@@ -412,6 +415,37 @@ def test_build_codex_runtime_model_config_preserves_explicit_catalog(
         user_id=test_user.id,
     )
 
+    assert config["codex_catalog_model_id"] == "operator-selected-catalog"
+
+
+def test_build_wework_runtime_model_config_preserves_explicit_cloud_catalog(
+    test_db,
+    test_user: User,
+    monkeypatch,
+):
+    from app.core.config import settings
+
+    model = _model_kind(
+        0,
+        name="deepseek-public-profile",
+        model_id="deepseek-v4-pro",
+    )
+    test_db.add(model)
+    test_db.commit()
+    monkeypatch.setattr(
+        settings,
+        "WEGENT_BACKEND_PUBLIC_URL",
+        "https://wegent.example.com",
+    )
+
+    config = build_wework_runtime_model_config(
+        test_db,
+        model_name=model.name,
+        creator=test_user,
+        model_options={"codex_catalog_model_id": "operator-selected-catalog"},
+    )
+
+    assert config["model_id"] == model.name
     assert config["codex_catalog_model_id"] == "operator-selected-catalog"
 
 

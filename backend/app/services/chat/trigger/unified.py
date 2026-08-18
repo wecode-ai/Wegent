@@ -551,12 +551,13 @@ def build_wework_runtime_model_config(
     )
     if gateway_config is None:
         return resolved
-    gateway_config.setdefault(
-        "codex_catalog_model_id",
-        resolved.get("codex_catalog_model_id")
-        or _infer_codex_catalog_model_id(resolved.get("model_id"))
-        or "wework-gpt-5.6-sol",
-    )
+    resolved_catalog_model_id = resolved.get(
+        "codex_catalog_model_id"
+    ) or _infer_codex_catalog_model_id(resolved.get("model_id"))
+    if resolved_catalog_model_id:
+        gateway_config["codex_catalog_model_id"] = resolved_catalog_model_id
+    else:
+        gateway_config.setdefault("codex_catalog_model_id", "wework-gpt-5.6-sol")
     gateway_config["codex_responses_compat_proxy"] = True
     return gateway_config
 

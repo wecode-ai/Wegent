@@ -166,7 +166,7 @@ describe('runtimeModelSelection', () => {
     })
   })
 
-  test('passes a configured cloud vision sidecar as a hidden execution option', () => {
+  test('normalizes and passes a configured cloud vision sidecar as a hidden option', () => {
     const cloudModel: UnifiedModel = {
       name: 'primary-cloud-model',
       type: 'user',
@@ -176,9 +176,9 @@ describe('runtimeModelSelection', () => {
       runtime: { family: 'openai.openai-responses' },
       config: {
         visionSidecarModel: {
-          modelName: 'cloud-vision',
+          modelName: '  cloud-vision  ',
           modelType: 'user',
-          namespace: 'default',
+          namespace: '  default  ',
           resourceUserId: 42,
           apiFormat: 'openai-responses',
         },

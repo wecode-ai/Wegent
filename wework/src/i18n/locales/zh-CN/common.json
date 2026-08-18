@@ -2401,7 +2401,7 @@
     "local_model_image_generation_label": "图片生成",
     "local_model_vision_proxy_label": "视觉代理模型",
     "local_model_vision_proxy_disabled": "自动",
-    "local_model_vision_proxy_hint": "可选择支持图片的 profile；登录后 DeepSeek V4 默认自动使用 GPT-5.6 Luna。",
+    "local_model_vision_proxy_hint": "可选择支持图片的 profile。自动委托 GPT-5.6 Luna 仅适用于符合条件的 DeepSeek V4 Pro/Flash Responses profile，并要求有效的登录云端身份、受支持的协议，以及目录中存在支持图片的 Luna profile。",
     "local_model_image_generation_badge": "图片生成：{{mode}}",
     "local_model_image_generation_enabled": "图片生成：开启",
     "local_model_image_generation_disabled": "图片生成：关闭",

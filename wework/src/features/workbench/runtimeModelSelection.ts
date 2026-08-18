@@ -55,7 +55,13 @@ function parseCloudVisionSidecarReference(value: unknown): CloudVisionSidecarRef
   ) {
     return null
   }
-  return record as unknown as CloudVisionSidecarReference
+  return {
+    modelName: record.modelName.trim(),
+    modelType: record.modelType as ModelType,
+    namespace: record.namespace.trim(),
+    resourceUserId: record.resourceUserId,
+    apiFormat: record.apiFormat as CloudVisionSidecarReference['apiFormat'],
+  }
 }
 
 function getStringConfigValue(

@@ -2403,7 +2403,7 @@
     "local_model_image_generation_label": "Image generation",
     "local_model_vision_proxy_label": "Vision proxy model",
     "local_model_vision_proxy_disabled": "Automatic",
-    "local_model_vision_proxy_hint": "Choose an image-capable profile, or use GPT-5.6 Luna automatically for DeepSeek V4 when signed in.",
+    "local_model_vision_proxy_hint": "Choose an image-capable profile. Automatic GPT-5.6 Luna delegation requires an eligible DeepSeek V4 Pro/Flash Responses profile, a valid signed-in cloud identity and supported protocol, and an available image-capable Luna profile.",
     "local_model_image_generation_badge": "Image Generation: {{mode}}",
     "local_model_image_generation_enabled": "Image Generation: On",
     "local_model_image_generation_disabled": "Image Generation: Off",
