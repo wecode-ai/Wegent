@@ -764,6 +764,24 @@ last_updated = "2026-07-30T00:00:00Z"`
       return
     }
 
+    if (DESKTOP_SEGMENT === 'browser-toolbar-actions') {
+      phase = 'browser-toolbar-actions-scenario'
+      assert.ok(
+        desktopScenario,
+        'The browser-toolbar-actions checkpoint requires WEWORK_E2E_DESKTOP_SCENARIO_MODULE'
+      )
+      await desktopScenario.verify(control)
+      await writeFile(
+        join(resultDir, 'model-requests.json'),
+        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+        'utf8'
+      )
+      console.log(
+        `Wework desktop browser-toolbar-actions checkpoint passed. Evidence: ${resultDir}`
+      )
+      return
+    }
+
     if (DESKTOP_SEGMENT === 'project-automation') {
       phase = 'project-automation-scenario'
       assert.ok(

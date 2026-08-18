@@ -22,6 +22,7 @@ core_segments=(
   local-file-preview
   local-harness
   embedded-browser
+  browser-toolbar-actions
 )
 plugin_segments=(
   plugin-lifecycle
@@ -34,7 +35,7 @@ plugin_segments=(
 cloud_shards=(
   core-task-flow
   model-routing,embedded-browser,telemetry-consent
-  window-lifecycle,conversation-state,browser-multi-tabs
+  window-lifecycle,conversation-state,browser-multi-tabs,browser-toolbar-actions
   resilience,goal-lifecycle,supervisor-lifecycle
   rendering-extensions,workspace-attachments,workspace-tabs,priority-filter,automation-lifecycle,project-automation,plugin-auto-update
 )
@@ -43,7 +44,7 @@ cloud_shards=(
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 core_shards=(
   core-task-flow
-  model-routing,embedded-browser,claude-runtime,local-harness
+  model-routing,embedded-browser,claude-runtime,local-harness,browser-toolbar-actions
   window-lifecycle,conversation-state,temporary-chat
   resilience,goal-lifecycle,supervisor-lifecycle
   rendering-extensions,workspace-attachments,workspace-tabs,priority-filter,automation-lifecycle,project-automation,permission-modes,local-file-preview
@@ -256,9 +257,14 @@ classify_wework_path() {
     wework/src-tauri/src/embedded_browser* | \
       wework/src/lib/embedded-browser* | \
       wework/src/lib/browser-url* | \
+      wework/src/lib/browser-device-toolbar* | \
       wework/src/components/layout/workspace-panels/WorkspaceBrowserPanel* | \
-      wework/e2e/desktop/scenarios/embedded-browser-agent.scenario.mjs)
+      wework/src/components/layout/workspace-panels/BrowserDeviceToolbar* | \
+      wework/src/components/layout/workspace-panels/browser-find/* | \
+      wework/e2e/desktop/scenarios/embedded-browser-agent.scenario.mjs | \
+      wework/e2e/desktop/scenarios/embedded-browser-toolbar-actions.scenario.mjs)
       select_target "core:embedded-browser"
+      select_target "core:browser-toolbar-actions"
       return
       ;;
 
