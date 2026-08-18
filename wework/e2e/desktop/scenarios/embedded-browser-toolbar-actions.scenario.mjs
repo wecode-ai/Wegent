@@ -197,6 +197,7 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
       assert.equal(clearedFindState.matches, 0, 'Closing the find bar did not clear highlights')
 
       // --- Device toolbar ---
+      await control.command('click', BROWSER_MORE_BUTTON_SELECTOR)
       await control.command('waitFor', DEVICE_TOOLBAR_ITEM_SELECTOR, {
         enabled: true,
         timeoutMs: uiTimeoutMs,
