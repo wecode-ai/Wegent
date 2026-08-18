@@ -39,6 +39,7 @@ const PROJECT = {
   project_key: 'AUTO',
   name: '自动化验收项目',
   description: 'Wework 项目自动化桌面验收',
+  project_store: 'backend',
   created_by_user_id: 9001,
   status: 'active',
   task_provider: 'local',
