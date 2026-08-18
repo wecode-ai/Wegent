@@ -115,12 +115,15 @@ export interface VideoCapabilities {
 export interface VideoGenerationConfig {
   resolution?: string
   ratio?: string
-  duration?: number // 4-12 seconds
-  generate_audio?: boolean // Only Seedance 1.5 pro
+  duration?: number
+  generate_audio?: boolean
   draft?: boolean // Draft mode
   seed?: number // Random seed
   camera_fixed?: boolean // Fixed camera
   watermark?: boolean // Whether to include watermark
+  output_format?: 'mp4' | 'mov'
+  omni_reference_task_type?: 'auto' | 'reference' | 'edit' | 'extend'
+  priority?: number
   max_reference_images?: number // Legacy image-only reference limit
   capabilities?: VideoCapabilities // Model-declared capabilities
 }

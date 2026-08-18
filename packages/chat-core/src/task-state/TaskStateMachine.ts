@@ -500,9 +500,20 @@ export class TaskStateMachine {
   }
 
   private getSyncAfterMessageIdBeforeSubtask(subtaskId?: number): number | undefined {
-    if (subtaskId === undefined) return undefined
-
-    const activeMessage = this.state.messages.get(generateMessageId('ai', subtaskId))
+    const activeMessage =
+      subtaskId !== undefined
+        ? this.state.messages.get(generateMessageId('ai', subtaskId))
+        : Array.from(this.state.messages.values())
+            .filter(message => {
+              if (message.type !== 'ai' || message.messageId === undefined) return false
+              if (message.status === 'streaming') return true
+              return message.result?.blocks?.some(
+                block =>
+                  (block.type === 'video' || block.type === 'image') &&
+                  block.is_placeholder === true
+              )
+            })
+            .sort((left, right) => (left.messageId ?? 0) - (right.messageId ?? 0))[0]
     const activeMessageId = activeMessage?.messageId
     if (activeMessageId === undefined) return undefined
 
