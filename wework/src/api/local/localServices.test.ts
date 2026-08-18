@@ -2078,8 +2078,71 @@ describe('createLocalAppServices', () => {
       )
       expect(payload.executionRequest.model_config).not.toHaveProperty('native_tool_search')
       expect(payload.executionRequest.model_config).not.toHaveProperty('native_namespace_tools')
+      expect(payload.executionRequest.model_config).not.toHaveProperty('vision_sidecar')
     }
   )
+
+  test('routes authenticated local DeepSeek images through the default GPT-5.6 Luna profile', async () => {
+    saveLocalModelConfig({
+      id: 'deepseek-default-vision',
+      providerProfileId: 'deepseek',
+      displayName: 'DeepSeek V4 Pro',
+      modelId: 'deepseek-v4-pro',
+      baseUrl: 'https://api.deepseek.com',
+      apiFormat: 'openai-responses',
+      requestPath: '/responses',
+      apiKey: 'deepseek-key',
+      codexCatalogModelId: 'wework-deepseek-v4-pro',
+    })
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+      cloudModelGateway: {
+        baseUrl: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy',
+        apiKey: 'cloud-login-token',
+      },
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      teamId: 0,
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      taskId: 'task-deepseek-default-vision',
+      runtime: 'codex',
+      message: 'inspect the screenshot',
+      title: 'DeepSeek Default Vision',
+      modelId: 'local-model:deepseek-default-vision',
+      modelOptions: {
+        weworkCloudVisionSidecar:
+          '{"modelName":"openai-gpt-5.6-luna(海外)","modelType":"public","namespace":"default","resourceUserId":0,"apiFormat":"openai-responses"}',
+      },
+    })
+
+    const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
+    expect(payload.executionRequest.model_config).toEqual(
+      expect.objectContaining({
+        codex_catalog_model_id: 'wework-deepseek-v4-pro-vision',
+        vision_sidecar: {
+          enabled: true,
+          request_url: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy/responses',
+          api_format: 'openai-responses',
+          api_key: 'cloud-login-token',
+          model_id: 'openai-gpt-5.6-luna(海外)',
+          default_headers: {
+            'X-Wegent-Model-Type': 'public',
+            'X-Wegent-Model-Namespace': 'default',
+            'X-Wegent-Model-User-Id': '0',
+            'X-Wegent-Upstream-Header-wecode-executor': 'codex',
+            'X-Wegent-Upstream-Header-wecode-source': 'wegent-local',
+          },
+          max_descriptions_per_turn: 8,
+          timeout_ms: 45_000,
+        },
+      })
+    )
+  })
 
   test('routes DeepSeek images through a configured vision proxy model', async () => {
     const visionCatalog = createDefaultLocalModelCatalogEntry({
@@ -2132,7 +2195,7 @@ describe('createLocalAppServices', () => {
     const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
     expect(payload.executionRequest.model_config).toEqual(
       expect.objectContaining({
-        codex_catalog_model_id: 'wework-vision-sidecar',
+        codex_catalog_model_id: 'wework-deepseek-v4-flash-vision',
         vision_sidecar: {
           enabled: true,
           request_url: 'https://vision.example/v1/responses',
@@ -2317,7 +2380,7 @@ describe('createLocalAppServices', () => {
     expect(request).not.toHaveBeenCalledWith('runtime.models.resolve', expect.anything())
   })
 
-  test('routes cloud model images through the configured cloud vision sidecar', async () => {
+  test('preserves the DeepSeek catalog when routing a cloud model through a vision sidecar', async () => {
     const request = vi.fn().mockResolvedValue({ accepted: true })
     const services = createLocalAppServices({
       ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
@@ -2337,11 +2400,12 @@ describe('createLocalAppServices', () => {
       runtime: 'codex',
       message: 'describe the image',
       title: 'Vision',
-      modelId: 'primary-cloud-model',
+      modelId: 'deepseek-v4-pro-profile',
       modelType: 'user',
       modelOptions: {
         weworkCloudModelNamespace: 'default',
         weworkCloudModelResourceUserId: '42',
+        weworkCloudModelCodexCatalogModelId: 'wework-deepseek-v4-pro',
         weworkCloudVisionSidecar:
           '{"modelName":"cloud-vision","modelType":"user","namespace":"default","resourceUserId":77,"apiFormat":"openai-responses"}',
       },
@@ -2350,7 +2414,7 @@ describe('createLocalAppServices', () => {
     const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
     expect(payload.executionRequest.model_config).toEqual(
       expect.objectContaining({
-        codex_catalog_model_id: 'wework-vision-sidecar',
+        codex_catalog_model_id: 'wework-deepseek-v4-pro-vision',
         vision_sidecar: {
           enabled: true,
           request_url: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy/responses',

@@ -1487,6 +1487,9 @@ function LocalModelSettingsSection({
                                 </option>
                               ))}
                             </select>
+                            <span className="font-normal leading-5 text-text-muted">
+                              {t('workbench.local_model_vision_proxy_hint')}
+                            </span>
                           </label>
                           <div className="flex items-center gap-3">
                             <label className="inline-flex h-9 items-center gap-2 text-sm text-text-secondary">

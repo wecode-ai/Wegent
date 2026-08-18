@@ -199,6 +199,85 @@ describe('runtimeModelSelection', () => {
     })
   })
 
+  test('passes a resolved cloud vision profile for a local DeepSeek model', () => {
+    const model: UnifiedModel = {
+      name: 'local-model:deepseek-v4-pro',
+      type: 'runtime',
+      modelId: 'deepseek-v4-pro',
+      provider: 'local',
+      runtime: { family: 'openai.openai-responses' },
+      modelCapabilities: { supportsImage: false },
+      config: {
+        visionSidecarModel: {
+          modelName: 'available-luna-profile',
+          modelType: 'public',
+          namespace: 'default',
+          resourceUserId: 0,
+          apiFormat: 'openai-responses',
+        },
+      },
+    }
+
+    expect(selectedModelExecutionFields(model, {}).modelOptions).toEqual(
+      expect.objectContaining({
+        weworkCloudVisionSidecar:
+          '{"modelName":"available-luna-profile","modelType":"public","namespace":"default","resourceUserId":0,"apiFormat":"openai-responses"}',
+      })
+    )
+  })
+
+  test('keeps an explicit vision profile for DeepSeek instead of the default', () => {
+    const model: UnifiedModel = {
+      name: 'deepseek-v4-pro-responses',
+      type: 'public',
+      modelId: 'deepseek-v4-pro',
+      namespace: 'default',
+      resourceUserId: 0,
+      provider: 'openai',
+      runtime: { family: 'openai.openai-responses' },
+      modelCapabilities: { supportsImage: false },
+      config: {
+        visionSidecarModel: {
+          modelName: 'custom-vision',
+          modelType: 'user',
+          namespace: 'default',
+          resourceUserId: 42,
+          apiFormat: 'openai-chat-completions',
+        },
+      },
+    }
+
+    expect(selectedModelExecutionFields(model, {}).modelOptions).toEqual(
+      expect.objectContaining({
+        weworkCloudVisionSidecar:
+          '{"modelName":"custom-vision","modelType":"user","namespace":"default","resourceUserId":42,"apiFormat":"openai-chat-completions"}',
+      })
+    )
+  })
+
+  test.each([
+    ['gpt-5.6-luna', 'openai-responses', false],
+    ['deepseek-v4-pro', 'openai-chat-completions', false],
+    ['deepseek-v4-pro', 'openai-responses', true],
+  ] as const)(
+    'does not add the default vision profile for model=%s protocol=%s supportsImage=%s',
+    (modelId, protocol, supportsImage) => {
+      const model: UnifiedModel = {
+        name: 'model-profile',
+        type: 'runtime',
+        modelId,
+        provider: 'local',
+        runtime: { family: `openai.${protocol}` },
+        modelCapabilities: { supportsImage },
+        config: { protocol },
+      }
+
+      expect(selectedModelExecutionFields(model, {}).modelOptions).not.toHaveProperty(
+        'weworkCloudVisionSidecar'
+      )
+    }
+  )
+
   test('enables native Responses tools for supported GPT cloud models', () => {
     const cloudModel: UnifiedModel = {
       name: 'shared-gpt-model',
@@ -223,6 +302,22 @@ describe('runtimeModelSelection', () => {
         weworkCloudModelNativeNamespaceTools: 'true',
       },
     })
+  })
+
+  test('does not infer a DeepSeek catalog from the cloud resource name alone', () => {
+    const cloudModel: UnifiedModel = {
+      name: 'deepseek-v4-pro',
+      type: 'public',
+      modelId: 'different-upstream-model',
+      namespace: 'default',
+      resourceUserId: 0,
+      provider: 'cloud',
+      config: { protocol: 'openai-responses' },
+    }
+
+    expect(selectedModelExecutionFields(cloudModel, {}).modelOptions).not.toHaveProperty(
+      'weworkCloudModelCodexCatalogModelId'
+    )
   })
 
   test.each([
@@ -337,6 +432,30 @@ describe('runtimeModelSelection', () => {
         weworkCloudModelCodexCatalogModelId: 'wework-kimi-k3',
       },
     })
+  })
+
+  test.each([
+    ['deepseek-v4-flash', 'wework-deepseek-v4-flash'],
+    ['deepseek-v4-pro', 'wework-deepseek-v4-pro'],
+  ])('selects the %s Codex catalog for a cloud DeepSeek Responses model', (modelId, catalogId) => {
+    const cloudModel: UnifiedModel = {
+      name: `${modelId}-responses`,
+      type: 'public',
+      modelId,
+      namespace: 'default',
+      resourceUserId: 0,
+      provider: 'cloud',
+      config: {
+        protocol: 'openai-responses',
+        model_id: modelId,
+      },
+    }
+
+    expect(selectedModelExecutionFields(cloudModel, {}).modelOptions).toEqual(
+      expect.objectContaining({
+        weworkCloudModelCodexCatalogModelId: catalogId,
+      })
+    )
   })
 
   test.each(['codex_catalog_model_id', 'codexCatalogModelId'] as const)(

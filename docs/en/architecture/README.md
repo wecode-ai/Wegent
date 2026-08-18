@@ -12,5 +12,6 @@ Before changing a flow below, update its connection graph, sequence diagram, cod
 | Custom AI manager comment continuation       | [automation-manager-continuation.md](automation-manager-continuation.md) | Comment identity, execution binding, runtime-session continuation, task-state isolation |
 | Embedded-browser navigation and tabs         | [embedded-browser.md](embedded-browser.md)               | Bridge routing, pending open, WebView lifecycle, navigation completion, multi-tab E2E            |
 | Project execution state and Runtime capacity | [project-execution-state.md](project-execution-state.md) | Claim, event ordering, cancellation, retry, lease, concurrency capacity, UI projection           |
+| Text-model vision delegation                 | [model-vision-delegation.md](model-vision-delegation.md) | Explicit profiles, authenticated default, model identity, image replacement, fail-closed behavior |
 
 Detailed product prose remains in the existing developer guides. This directory contains only reviewable architecture truth.

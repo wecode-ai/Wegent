@@ -256,8 +256,8 @@ const CLOUD_VISION_SIDECAR_CASE = {
   source: 'cloud',
   mainOptionId: 'desktop-e2e-cloud-vision-main',
   mainLabel: 'Desktop E2E Cloud Vision Main',
-  mainModelId: 'desktop-e2e-cloud-vision-main-upstream',
-  sidecarModelId: 'desktop-e2e-cloud-vision-sidecar-upstream',
+  mainModelId: 'deepseek-v4-pro',
+  sidecarModelId: 'gpt-5.6-luna',
 }
 const CLOUD_MULTIMODAL_VISION_CASE = {
   source: 'cloud-multimodal',

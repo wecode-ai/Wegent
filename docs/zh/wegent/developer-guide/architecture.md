@@ -392,7 +392,7 @@ Wework 的本地模型调用统一以 Codex Responses 协议进入 executor。ex
 
 Codex model catalog 中的 `supports_search_tool` 表示模型可以参与 App 延迟发现流程，不等同于上游接口原生支持 `tool_search` 或 namespace tool。Wework 对官方和自定义模型启用该 catalog 能力，使 Codex 在首轮请求中仅提供轻量 `tool_search`，而不是注入全部 Remote App Schema；搜索命中后才加载对应 App namespace。executor 在协议边界单独维护 `native_tool_search` 和 `native_namespace_tools`：支持原生工具搜索的 GPT 5.4+ Responses 云模型会直接透传。模型配置可以通过 `native_tool_search` 或 `nativeToolSearch` 以及 `native_namespace_tools` 或 `nativeNamespaceTools` 覆盖推断结果；显式配置 `false` 会关闭对应的自动推断。其他 Responses、Chat Completions 和 Anthropic Messages 上游会把 `tool_search` 与 namespace tool 转为普通 function 调用，并在返回 Codex 前恢复原始语义。第三方 Responses 兼容桥接在转换 tool-search 调用和输出 item 时，会移除其类型专属的 `id`，仅使用 `call_id` 关联调用与结果；原生 Responses 直通会保留原始 item 字段。因此 DeepSeek、Kimi 等第三方模型无需原生实现 Codex 专用工具，也能按需使用 App，同时普通消息不会承担完整 App 工具目录的上下文成本。
 
-文本模型可引用一个声明图片输入能力的视觉 sidecar。对于本地模型，该引用来自 Wework 本机模型配置；对于云端 Model CRD，该引用由 Wegent Web 写入 `modelConfig.visionSidecarModel`，Wework 只解析 Backend 聚合模型中携带的模型身份和协议，不编辑云端配置。Codex 仍按带图片的 Responses 请求工作，但 executor 会在协议转换和发送主请求前调用 sidecar，把每个 `input_image` 原位替换为受限长度的文字描述。配置 sidecar 的主模型统一使用仅内部可见、声明图片输入能力的 `wework-vision-sidecar` catalog 条目，因此该机制不依赖特定模型或提供商，且原始图片不会发送给文本主模型。sidecar 支持 Responses、Chat Completions 和 Anthropic Messages，上游密钥仍只保留在 executor 中。实现使用有界 LRU 描述缓存、进程级并发限制、单轮图片数量和内嵌数据大小限制；超时、非法图片或上游失败会生成明确的失败描述并移除原始图片，同时日志只记录协议、计数、缓存命中和耗时等聚合诊断字段。
+文本模型可引用一个声明图片输入能力的视觉 sidecar。对于本地模型，显式引用来自 Wework 本机模型配置；对于云端 Model CRD，显式引用由 Wegent Web 写入 `modelConfig.visionSidecarModel`。登录状态下，Wework 还会为没有显式引用的 DeepSeek V4 Pro/Flash Responses profile 从当前云端目录解析支持图片的 GPT-5.6 Luna 默认 profile；显式引用始终优先。Codex 仍按带图片的 Responses 请求工作，但 executor 会在协议转换和发送主请求前调用 sidecar，把每个 `input_image` 原位替换为受限长度的文字描述。DeepSeek profile 使用自身 catalog 的图片能力变体，从而保留推理、工具、上下文和输出元数据；其他文本模型使用通用 `wework-vision-sidecar` catalog。原始图片不会发送给文本主模型。sidecar 支持 Responses、Chat Completions 和 Anthropic Messages，上游密钥仍只保留在 executor 中。实现使用有界 LRU 描述缓存、进程级并发限制、单轮图片数量和内嵌数据大小限制；超时、非法图片或上游失败会生成明确的失败描述并移除原始图片，同时日志只记录协议、计数、缓存命中和耗时等聚合诊断字段。受约束的连线、时序和不变量见 [文本模型视觉委托](../../architecture/model-vision-delegation.md)。
 
 #### 任务监督与运行时就绪
 
@@ -408,7 +408,7 @@ Wework 的任务运行态按 turn 身份结算，而不是仅按 task 粗粒度�
 
 Codex fork 会重建父线程的历史请求。`reasoning`、`compaction`、`compaction_summary`、`context_compaction` 和 `agent_message` 中的 `encrypted_content` 是绑定实际上游加密上下文的非便携状态；即使逻辑模型和路由名称不变，模型网关背后的凭据或项目上下文也可能无法验证父线程生成的密文。executor 通过 Codex 的 fork 元数据识别这类请求，仅在 fork 边界递归移除上述历史条目中的 `encrypted_content`，同时保留消息、工具调用、工具结果和 reasoning summary。普通继续对话不会执行该清理，也不会通过重试、fallback 或模型切换掩盖上游错误。
 
-云端模型执行会把 Model spec 中的 `modelConfig.env.model_id` 作为独立的 Codex catalog model id 传给 executor。若该 id 与 Codex 官方 catalog 中的模型匹配，Codex 会继承其完整能力元数据和基础指令；模型网关仍使用资源名定位云端 Model CRD，因此 catalog 映射不会改变上游路由。
+云端模型执行继续使用 Model CRD 资源名做网关路由，并根据 `modelConfig.env.model_id` 独立解析 Codex 能力 catalog。显式 catalog 配置优先；否则精确的 `deepseek-v4-flash` 和 `deepseek-v4-pro` 分别映射到 `wework-deepseek-v4-flash` 和 `wework-deepseek-v4-pro`，使 App 发起的任务与 Backend 触发的执行都继承正确的工具能力、百万 token 上下文、输出限制和默认 `high` 推理等级，同时不改变上游路由。
 
 `apply_patch` 不是模型服务或系统 shell 自动提供的命令。只有 `custom` 或 `function` 工具模式生成的 Codex model catalog 才会让 Codex 在模型请求中发布该工具；直接调用 Responses API 时，调用方也必须在 `tools` 中提供相应的 custom tool 定义和 grammar。`shell` 模式不会发布它。补丁执行失败后，本地模型代理保留原始校验错误，并按错误类型补充 grammar 解释、正确的 Update/Add File 示例和重新调用要求；原生 Responses、Chat Completions 与 Anthropic Messages 转换必须保持同一纠错语义，成功结果不得追加提示。
 

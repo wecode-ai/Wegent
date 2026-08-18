@@ -10,6 +10,7 @@ import {
   markLocalModelCatalogReady,
   reconcileLocalModelCatalogRuntime,
   saveLocalModelConfig,
+  visionSidecarCatalogModelId,
 } from './localModelSettings'
 
 describe('localModelSettings', () => {
@@ -18,6 +19,14 @@ describe('localModelSettings', () => {
     ['deepseek-v4-pro', 'wework-deepseek-v4-pro'],
   ])('maps %s to its managed Codex catalog entry', (modelId, catalogModelId) => {
     expect(deepSeekCatalogModelIdFor(modelId)).toBe(catalogModelId)
+  })
+
+  test.each([
+    ['wework-deepseek-v4-flash', 'wework-deepseek-v4-flash-vision'],
+    ['wework-deepseek-v4-pro', 'wework-deepseek-v4-pro-vision'],
+    ['wework-custom-text-model', 'wework-vision-sidecar'],
+  ])('selects the image-capable catalog for %s', (catalogModelId, expected) => {
+    expect(visionSidecarCatalogModelId(catalogModelId)).toBe(expected)
   })
 
   test('defaults tool profiles by API format and rejects incompatible combinations', () => {

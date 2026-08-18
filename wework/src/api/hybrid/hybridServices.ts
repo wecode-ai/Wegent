@@ -27,7 +27,10 @@ import {
   mergeDeviceLists,
   mergeRuntimeWorkLists as mergeRuntimeWorkPair,
 } from '@/features/workbench/workbenchCloudStatus'
-import { supportsCloudExecution } from '@/features/cloud-connection/modelExecution'
+import {
+  getCloudModelUpstreamApiFormat,
+  supportsCloudExecution,
+} from '@/features/cloud-connection/modelExecution'
 import type {
   Attachment,
   ArchivedConversationItem,
@@ -141,7 +144,81 @@ function annotateLocalModels(models: UnifiedModel[]): UnifiedModel[] {
 }
 
 function annotateCloudModels(models: UnifiedModel[]): UnifiedModel[] {
-  return models.filter(supportsCloudExecution)
+  const compatibleModels = models.filter(supportsCloudExecution)
+  return applyDefaultVisionSidecar(compatibleModels, defaultVisionSidecar(compatibleModels))
+}
+
+const DEEPSEEK_V4_TEXT_MODEL_IDS = new Set(['deepseek-v4-flash', 'deepseek-v4-pro'])
+const DEFAULT_VISION_MODEL_ID = 'gpt-5.6-luna'
+
+interface CloudVisionSidecarReference {
+  modelName: string
+  modelType: 'public' | 'user' | 'group'
+  namespace: string
+  resourceUserId: number
+  apiFormat: 'openai-responses' | 'openai-chat-completions' | 'anthropic-messages'
+}
+
+function modelIdentityCandidates(model: UnifiedModel): string[] {
+  const config = recordValue(model.config)
+  return [model.modelId, config.model_id, config.modelId, config.model].flatMap(value =>
+    typeof value === 'string' && value.trim() ? [value.trim().toLowerCase()] : []
+  )
+}
+
+function isDeepSeekV4TextResponsesModel(model: UnifiedModel): boolean {
+  return (
+    getCloudModelUpstreamApiFormat(model) === 'openai-responses' &&
+    model.modelCapabilities?.supportsImage !== true &&
+    modelIdentityCandidates(model).some(modelId => DEEPSEEK_V4_TEXT_MODEL_IDS.has(modelId))
+  )
+}
+
+function defaultVisionSidecar(models: UnifiedModel[]): CloudVisionSidecarReference | null {
+  const candidates = models
+    .filter(
+      model =>
+        model.isActive !== false &&
+        model.modelCapabilities?.supportsImage === true &&
+        modelIdentityCandidates(model).includes(DEFAULT_VISION_MODEL_ID) &&
+        (model.type === 'public' || model.type === 'user' || model.type === 'group') &&
+        Boolean(model.namespace?.trim()) &&
+        typeof model.resourceUserId === 'number' &&
+        Number.isInteger(model.resourceUserId) &&
+        model.resourceUserId >= 0 &&
+        getCloudModelUpstreamApiFormat(model) !== null
+    )
+    .sort((left, right) => Number(right.type === 'public') - Number(left.type === 'public'))
+  const selected = candidates[0]
+  const apiFormat = selected ? getCloudModelUpstreamApiFormat(selected) : null
+  if (!selected || !apiFormat || !selected.namespace || selected.resourceUserId === undefined) {
+    return null
+  }
+  return {
+    modelName: selected.name,
+    modelType: selected.type as CloudVisionSidecarReference['modelType'],
+    namespace: selected.namespace,
+    resourceUserId: selected.resourceUserId,
+    apiFormat,
+  }
+}
+
+function applyDefaultVisionSidecar(
+  models: UnifiedModel[],
+  defaultSidecar: CloudVisionSidecarReference | null
+): UnifiedModel[] {
+  if (!defaultSidecar) return models
+  return models.map(model => {
+    const config = recordValue(model.config)
+    if (!isDeepSeekV4TextResponsesModel(model) || config.visionSidecarModel) return model
+    return {
+      ...model,
+      config: {
+        ...config,
+        visionSidecarModel: defaultSidecar,
+      },
+    }
+  })
 }
 
 function normalizedModelId(model: UnifiedModel): string {
@@ -161,10 +238,14 @@ function mergeModelCatalogs(
   localModels: UnifiedModel[],
   cloudModels: UnifiedModel[]
 ): UnifiedModel[] {
-  const localCodexModelIds = new Set(
-    localModels.filter(isRuntimeCodexModel).map(normalizedModelId).filter(Boolean)
+  const resolvedLocalModels = applyDefaultVisionSidecar(
+    localModels,
+    defaultVisionSidecar(cloudModels)
   )
-  const seenModelKeys = new Set(localModels.map(canonicalModelKey))
+  const localCodexModelIds = new Set(
+    resolvedLocalModels.filter(isRuntimeCodexModel).map(normalizedModelId).filter(Boolean)
+  )
+  const seenModelKeys = new Set(resolvedLocalModels.map(canonicalModelKey))
   const uniqueCloudModels = cloudModels.filter(model => {
     const key = canonicalModelKey(model)
     if (seenModelKeys.has(key)) return false
@@ -178,7 +259,7 @@ function mergeModelCatalogs(
     seenModelKeys.add(key)
     return true
   })
-  return [...localModels, ...uniqueCloudModels]
+  return [...resolvedLocalModels, ...uniqueCloudModels]
 }
 
 function modelIdentityForLog(model: UnifiedModel): Record<string, unknown> {

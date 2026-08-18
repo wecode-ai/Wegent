@@ -12,5 +12,6 @@ sidebar_position: 1
 | 自定义 AI 调度员评论续聊    | [automation-manager-continuation.md](automation-manager-continuation.md) | 评论身份、execution 绑定、runtime 会话续聊、任务状态隔离 |
 | 内置浏览器导航与多标签      | [embedded-browser.md](embedded-browser.md)               | bridge 路由、pending open、WebView 生命周期、导航完成、多标签 E2E |
 | 项目执行状态与 Runtime 容量 | [project-execution-state.md](project-execution-state.md) | claim、事件顺序、取消、重试、lease、并发容量、UI 投影             |
+| 文本模型视觉委托            | [model-vision-delegation.md](model-vision-delegation.md) | 显式 profile、登录态默认、模型身份、图片替换、失败封闭            |
 
 详细产品说明继续放在原开发指南；本目录只保存可评审的架构真值。

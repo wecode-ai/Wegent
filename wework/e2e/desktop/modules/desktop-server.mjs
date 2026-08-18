@@ -1504,21 +1504,39 @@ class DesktopE2EServer {
       )
       assert.ok(modelCase, `Unexpected vision sidecar model request: ${body.model}`)
       if (body.model === modelCase.sidecarModelId) {
-        assert.equal(protocol, 'chat', 'The vision sidecar reached the wrong protocol endpoint')
+        assert.equal(
+          protocol,
+          modelCase.source === 'cloud' ? 'responses' : 'chat',
+          'The vision sidecar reached the wrong protocol endpoint'
+        )
         assert.equal(body.stream, false, 'The vision sidecar request must not stream')
-        assert.ok(serialized.includes('image_url'), 'The vision sidecar did not receive the image')
+        assert.ok(
+          serialized.includes(modelCase.source === 'cloud' ? 'input_image' : 'image_url'),
+          'The vision sidecar did not receive the image'
+        )
         this.visionSidecarRequests.push({ kind: 'vision', body })
-        json(response, 200, {
-          id: 'desktop-e2e-vision-description',
-          object: 'chat.completion',
-          choices: [
-            {
-              index: 0,
-              message: { role: 'assistant', content: VISION_SIDECAR_DESCRIPTION },
-              finish_reason: 'stop',
-            },
-          ],
-        })
+        json(
+          response,
+          200,
+          modelCase.source === 'cloud'
+            ? {
+                id: 'desktop-e2e-vision-description',
+                object: 'response',
+                status: 'completed',
+                output_text: VISION_SIDECAR_DESCRIPTION,
+              }
+            : {
+                id: 'desktop-e2e-vision-description',
+                object: 'chat.completion',
+                choices: [
+                  {
+                    index: 0,
+                    message: { role: 'assistant', content: VISION_SIDECAR_DESCRIPTION },
+                    finish_reason: 'stop',
+                  },
+                ],
+              }
+        )
         return
       }
       if (body.model === modelCase.mainModelId) {

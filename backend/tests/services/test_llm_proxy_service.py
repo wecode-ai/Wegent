@@ -363,6 +363,58 @@ def test_build_codex_runtime_model_config_returns_provider_credentials(
     assert "codex_responses_compat_proxy" not in config
 
 
+@pytest.mark.parametrize(
+    ("model_id", "expected_catalog_model_id"),
+    [
+        ("deepseek-v4-flash", "wework-deepseek-v4-flash"),
+        ("deepseek-v4-pro", "wework-deepseek-v4-pro"),
+    ],
+)
+def test_build_codex_runtime_model_config_infers_deepseek_catalog(
+    test_db,
+    test_user: User,
+    model_id: str,
+    expected_catalog_model_id: str,
+):
+    model = _model_kind(
+        test_user.id,
+        name=f"{model_id}-profile",
+        model_id=model_id,
+    )
+    test_db.add(model)
+    test_db.commit()
+
+    config = _build_codex_runtime_model_config(
+        model.name,
+        db=test_db,
+        user_id=test_user.id,
+    )
+
+    assert config["codex_catalog_model_id"] == expected_catalog_model_id
+
+
+def test_build_codex_runtime_model_config_preserves_explicit_catalog(
+    test_db,
+    test_user: User,
+):
+    model = _model_kind(
+        test_user.id,
+        name="deepseek-explicit-profile",
+        model_id="deepseek-v4-pro",
+    )
+    test_db.add(model)
+    test_db.commit()
+
+    config = _build_codex_runtime_model_config(
+        model.name,
+        {"codex_catalog_model_id": "operator-selected-catalog"},
+        db=test_db,
+        user_id=test_user.id,
+    )
+
+    assert config["codex_catalog_model_id"] == "operator-selected-catalog"
+
+
 async def test_proxy_llm_responses_forwards_chat_completions_to_provider(
     test_db, test_user: User
 ):

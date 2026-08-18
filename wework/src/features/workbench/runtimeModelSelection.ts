@@ -23,6 +23,10 @@ export const CLOUD_MODEL_NATIVE_TOOL_SEARCH_OPTION = 'weworkCloudModelNativeTool
 export const CLOUD_MODEL_NATIVE_NAMESPACE_TOOLS_OPTION = 'weworkCloudModelNativeNamespaceTools'
 
 const KIMI_K3_CODEX_CATALOG_MODEL_ID = 'wework-kimi-k3'
+const DEEPSEEK_CODEX_CATALOG_MODEL_IDS = new Map([
+  ['deepseek-v4-flash', 'wework-deepseek-v4-flash'],
+  ['deepseek-v4-pro', 'wework-deepseek-v4-pro'],
+])
 const CLOUD_VISION_SIDECAR_CONFIG_KEY = 'visionSidecarModel'
 
 interface CloudVisionSidecarReference {
@@ -38,8 +42,10 @@ function parseCloudVisionSidecarReference(value: unknown): CloudVisionSidecarRef
   const record = value as Record<string, unknown>
   if (
     typeof record.modelName !== 'string' ||
+    !record.modelName.trim() ||
     !['public', 'user', 'group'].includes(String(record.modelType)) ||
     typeof record.namespace !== 'string' ||
+    !record.namespace.trim() ||
     typeof record.resourceUserId !== 'number' ||
     !Number.isInteger(record.resourceUserId) ||
     record.resourceUserId < 0 ||
@@ -133,14 +139,22 @@ function cloudCodexCatalogModelId(model: UnifiedModel): string {
     getRawStringConfigValue(model.config, 'codexCatalogModelId')
   if (configured) return configured
 
-  const candidates = [
-    model.name,
+  const upstreamCandidates = [
     model.modelId,
     getRawStringConfigValue(model.config, 'model_id'),
     getRawStringConfigValue(model.config, 'modelId'),
     getRawStringConfigValue(model.config, 'model'),
   ]
-  return candidates.some(value => value?.trim().toLowerCase().includes('kimi-k3'))
+  const normalizedUpstreamCandidates = upstreamCandidates.flatMap(value =>
+    value?.trim() ? [value.trim().toLowerCase()] : []
+  )
+  for (const candidate of normalizedUpstreamCandidates) {
+    const deepSeekCatalogModelId = DEEPSEEK_CODEX_CATALOG_MODEL_IDS.get(candidate)
+    if (deepSeekCatalogModelId) return deepSeekCatalogModelId
+  }
+  return [model.name, ...normalizedUpstreamCandidates].some(value =>
+    value?.trim().toLowerCase().includes('kimi-k3')
+  )
     ? KIMI_K3_CODEX_CATALOG_MODEL_ID
     : ''
 }
@@ -202,6 +216,12 @@ export function selectedModelExecutionFields(
   if (!selectedModel) {
     return { modelOptions }
   }
+  const visionSidecar = parseCloudVisionSidecarReference(
+    selectedModel.config?.[CLOUD_VISION_SIDECAR_CONFIG_KEY]
+  )
+  if (visionSidecar) {
+    modelOptions[CLOUD_MODEL_VISION_SIDECAR_OPTION] = JSON.stringify(visionSidecar)
+  }
   const codexProviderId = getRawStringConfigValue(selectedModel.config, 'codexProviderId')
   const codexProviderName = getRawStringConfigValue(selectedModel.config, 'codexProviderName')
   const codexProviderType = getRawStringConfigValue(selectedModel.config, 'codexProviderType')
@@ -235,13 +255,6 @@ export function selectedModelExecutionFields(
     if (codexCatalogModelId) {
       modelOptions[CLOUD_MODEL_CODEX_CATALOG_MODEL_ID_OPTION] = codexCatalogModelId
     }
-    const visionSidecar = parseCloudVisionSidecarReference(
-      selectedModel.config?.[CLOUD_VISION_SIDECAR_CONFIG_KEY]
-    )
-    if (visionSidecar) {
-      modelOptions[CLOUD_MODEL_VISION_SIDECAR_OPTION] = JSON.stringify(visionSidecar)
-    }
-
     const contextWindow =
       selectedModel.contextWindow ??
       selectedModel.config?.model_context_window ??

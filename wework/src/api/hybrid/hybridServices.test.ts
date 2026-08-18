@@ -622,6 +622,113 @@ describe('createHybridWorkbenchServices', () => {
     expect(response.data[1]).toEqual(responsesModel)
   })
 
+  it('binds authenticated local and cloud DeepSeek V4 profiles to the catalog Luna model', async () => {
+    const localDeepSeek = {
+      name: 'local-model:deepseek-v4-flash',
+      type: 'runtime',
+      displayName: 'Local DeepSeek V4 Flash',
+      provider: 'local',
+      modelId: 'deepseek-v4-flash',
+      config: { protocol: 'openai-responses', weworkModelKind: 'model-interface' },
+      runtime: { family: 'openai.openai-responses', provider: 'local' },
+      isActive: true,
+    }
+    const cloudDeepSeek = {
+      name: 'deepseek-v4-pro-responses',
+      type: 'user',
+      displayName: 'Cloud DeepSeek V4 Pro',
+      provider: 'openai',
+      modelId: 'deepseek-v4-pro',
+      namespace: 'default',
+      resourceUserId: 42,
+      modelCapabilities: { supportsImage: false },
+      config: { protocol: 'openai-responses' },
+      runtime: { family: 'openai.openai-responses', provider: 'openai' },
+      isActive: true,
+    }
+    const explicitDeepSeek = {
+      ...cloudDeepSeek,
+      name: 'deepseek-v4-flash-explicit',
+      modelId: 'deepseek-v4-flash',
+      config: {
+        protocol: 'openai-responses',
+        visionSidecarModel: {
+          modelName: 'operator-vision-profile',
+          modelType: 'user',
+          namespace: 'default',
+          resourceUserId: 42,
+          apiFormat: 'openai-chat-completions',
+        },
+      },
+    }
+    const userLuna = {
+      name: 'user-gpt-5.6-luna',
+      type: 'user',
+      displayName: 'User GPT 5.6 Luna',
+      provider: 'openai',
+      modelId: 'gpt-5.6-luna',
+      namespace: 'default',
+      resourceUserId: 42,
+      modelCapabilities: { supportsImage: true },
+      config: { protocol: 'openai-responses' },
+      runtime: { family: 'openai.openai-responses', provider: 'openai' },
+      isActive: true,
+    }
+    const luna = {
+      name: 'tenant-gpt-5.6-luna',
+      type: 'public',
+      displayName: 'GPT 5.6 Luna',
+      provider: 'openai',
+      modelId: 'gpt-5.6-luna',
+      namespace: 'default',
+      resourceUserId: 0,
+      modelCapabilities: { supportsImage: true },
+      config: { protocol: 'openai-responses' },
+      runtime: { family: 'openai.openai-responses', provider: 'openai' },
+      isActive: true,
+    }
+    mocks.localListModels.mockResolvedValue({ data: [localDeepSeek] })
+    mocks.cloudListModels.mockResolvedValue({
+      data: [cloudDeepSeek, explicitDeepSeek, userLuna, luna],
+    })
+    const services = createServices()
+
+    await services.modelApi.listModels()
+    await vi.waitFor(async () => {
+      const response = await services.modelApi.listModels()
+      expect(response.data).toHaveLength(5)
+    })
+    const response = await services.modelApi.listModels()
+    const expectedSidecar = {
+      modelName: 'tenant-gpt-5.6-luna',
+      modelType: 'public',
+      namespace: 'default',
+      resourceUserId: 0,
+      apiFormat: 'openai-responses',
+    }
+
+    expect(response.data.find(model => model.name === localDeepSeek.name)?.config).toMatchObject({
+      visionSidecarModel: expectedSidecar,
+    })
+    expect(response.data.find(model => model.name === cloudDeepSeek.name)?.config).toMatchObject({
+      visionSidecarModel: expectedSidecar,
+    })
+    expect(response.data.find(model => model.name === explicitDeepSeek.name)?.config).toMatchObject(
+      {
+        visionSidecarModel: {
+          modelName: 'operator-vision-profile',
+          modelType: 'user',
+          namespace: 'default',
+          resourceUserId: 42,
+          apiFormat: 'openai-chat-completions',
+        },
+      }
+    )
+    expect(response.data.find(model => model.name === luna.name)?.config).not.toHaveProperty(
+      'visionSidecarModel'
+    )
+  })
+
   it('does not wait for an unresponsive cloud model request', async () => {
     mocks.cloudListModels.mockReturnValue(new Promise(() => undefined))
     const services = createServices()

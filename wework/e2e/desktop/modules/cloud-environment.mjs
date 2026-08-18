@@ -525,8 +525,8 @@ class RealCloudEnvironment {
             api_key: MODEL_API_KEY,
           },
         },
-        protocol: 'openai',
-        apiFormat: 'chat/completions',
+        protocol: 'openai-responses',
+        apiFormat: 'responses',
         modelType: 'llm',
         isWeworkAvailable: true,
         modelCapabilities: {
@@ -534,20 +534,6 @@ class RealCloudEnvironment {
         },
       },
     })
-
-    const unifiedModels = await fetchJson(
-      `${this.backendUrl}/api/models/unified?include_config=true&scope=all&model_category_type=llm&client_origin=wework`,
-      { headers }
-    )
-    const sidecar = unifiedModels.data?.find(
-      model => model.name === 'desktop-e2e-cloud-vision-sidecar' && model.type === 'user'
-    )
-    assert.ok(sidecar, 'The cloud vision sidecar fixture was not returned by model aggregation')
-    assert.equal(
-      typeof sidecar.resourceUserId,
-      'number',
-      'The cloud vision sidecar fixture did not expose its resource owner'
-    )
 
     await createModel({
       apiVersion: 'agent.wecode.io/v1',
@@ -565,18 +551,14 @@ class RealCloudEnvironment {
             base_url: `${this.modelServerUrl}/v1`,
             api_key: MODEL_API_KEY,
           },
-          visionSidecarModel: {
-            modelName: sidecar.name,
-            modelType: sidecar.type,
-            namespace: sidecar.namespace,
-            resourceUserId: sidecar.resourceUserId,
-            apiFormat: 'openai-chat-completions',
-          },
         },
         protocol: 'openai-responses',
         apiFormat: 'responses',
         modelType: 'llm',
         isWeworkAvailable: true,
+        modelCapabilities: {
+          supportsImage: false,
+        },
       },
     })
 

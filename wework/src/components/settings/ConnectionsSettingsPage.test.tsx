@@ -634,7 +634,11 @@ describe('ConnectionsSettingsPage', () => {
     await userEvent.selectOptions(screen.getByTestId('local-model-provider-select'), 'deepseek')
 
     const visionSelect = screen.getByTestId('local-model-vision-proxy-select')
+    expect(visionSelect).toHaveTextContent('自动')
     expect(visionSelect).toHaveTextContent('Vision Model')
+    expect(
+      screen.getByText('可选择支持图片的 profile；登录后 DeepSeek V4 默认自动使用 GPT-5.6 Luna。')
+    ).toBeInTheDocument()
     await userEvent.selectOptions(visionSelect, 'vision')
     expect(visionSelect).toHaveValue('vision')
   })
