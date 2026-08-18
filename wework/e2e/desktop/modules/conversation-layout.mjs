@@ -547,12 +547,19 @@ async function waitForProcessingBlock(
 ) {
   const startedAt = Date.now()
   let diagnostics = null
+  let targetReadySince = null
 
   while (Date.now() - startedAt < timeoutMs) {
     await control.command('expandProcessingSummaries', 'body')
     const targetCount = Number(await control.command('getElementCount', selector))
+    if (targetCount > 0) {
+      targetReadySince ??= Date.now()
+    } else {
+      targetReadySince = null
+    }
     diagnostics = {
       targetCount,
+      targetStableMs: targetReadySince === null ? 0 : Date.now() - targetReadySince,
       finalProcessingExpandedCount: Number(
         await control.command(
           'getElementCount',
@@ -584,7 +591,7 @@ async function waitForProcessingBlock(
         await control.command('getElementCount', '[data-testid="processing-live-preview"]')
       ),
     }
-    if (targetCount > 0) return diagnostics
+    if (diagnostics.targetStableMs >= COMPOSER_READY_STABILITY_MS) return diagnostics
     await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
   }
 
