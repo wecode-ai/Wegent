@@ -1025,6 +1025,25 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         return pressDesktopControlKey(command.target ?? command.selector, command.key)
       }
       return ''
+    case 'getSystemNotifications':
+      return JSON.stringify(
+        (
+          globalThis as typeof globalThis & {
+            __WEWORK_E2E_SYSTEM_NOTIFICATIONS__?: {
+              notifications: Array<{ title: string; body: string }>
+            }
+          }
+        ).__WEWORK_E2E_SYSTEM_NOTIFICATIONS__?.notifications ?? []
+      )
+    case 'clearSystemNotifications': {
+      const root = globalThis as typeof globalThis & {
+        __WEWORK_E2E_SYSTEM_NOTIFICATIONS__?: {
+          notifications: Array<{ title: string; body: string }>
+        }
+      }
+      root.__WEWORK_E2E_SYSTEM_NOTIFICATIONS__ = { notifications: [] }
+      return ''
+    }
     case 'reconcileLegacyRuntimeAssistantSnapshot': {
       const payload = JSON.parse(command.value ?? '{}') as {
         address: RuntimeTaskAddress
