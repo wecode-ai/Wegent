@@ -16,7 +16,7 @@ import {
   getRuntimeTaskWorkspaceTitle,
 } from '@/components/layout/runtimeTaskSidebarHelpers'
 import { getRuntimeTaskNotificationText } from './runtimeTaskNotificationContent'
-import { sendRuntimeTaskCompletionNotification } from './runtimeTaskSystemNotifications'
+import { sendSystemNotification } from './runtimeTaskSystemNotifications'
 import { isMainWindowFocused, subscribeMainWindowFocus } from '@/tauri/windowFocus'
 import type {
   RuntimeTaskLifecycleStore,
@@ -188,7 +188,7 @@ export function useRuntimeTaskReminders({
         taskId: item.task.taskId,
         title: item.task.title,
       })
-      void getRuntimeTaskNotificationText(item).then(sendRuntimeTaskCompletionNotification)
+      void getRuntimeTaskNotificationText(item).then(sendSystemNotification)
     }
   }, [
     itemsByKey,

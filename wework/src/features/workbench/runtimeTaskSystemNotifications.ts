@@ -44,5 +44,3 @@ export async function sendSystemNotification({
     console.error('[Wework] Failed to send system notification', error)
   }
 }
-
-export const sendRuntimeTaskCompletionNotification = sendSystemNotification

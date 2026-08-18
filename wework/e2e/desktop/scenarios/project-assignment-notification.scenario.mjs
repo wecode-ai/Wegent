@@ -40,8 +40,8 @@ async function waitForNotification(control, predicate, timeoutMs) {
   assert.fail(`Expected system notification was not received: ${JSON.stringify(notifications)}`)
 }
 
-async function assertNoNotification(control, message) {
-  const deadline = Date.now() + 1_000
+async function assertNoNotification(control, message, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     const notifications = await systemNotifications(control)
     assert.equal(notifications.length, 0, message)
@@ -164,7 +164,8 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       )
       await assertNoNotification(
         control,
-        'Repeated assignment to the same person produced a notification'
+        'Repeated assignment to the same person produced a notification',
+        uiTimeoutMs
       )
 
       await control.command('clearSystemNotifications', 'body')
@@ -179,7 +180,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
           }),
         }
       )
-      await assertNoNotification(control, 'Self-assignment produced a notification')
+      await assertNoNotification(control, 'Self-assignment produced a notification', uiTimeoutMs)
     },
 
     diagnostics() {
