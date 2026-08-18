@@ -255,6 +255,8 @@ export interface RuntimeTaskAddress {
   runtime?: RuntimeName
   threadId?: string | null
   workspacePath?: string | null
+  workspaceKind?: 'workspace' | 'worktree' | 'chat' | string | null
+  worktreeId?: string | null
   runtimeHandle?: Record<string, unknown> | null
 }
 

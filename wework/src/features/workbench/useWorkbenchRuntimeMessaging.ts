@@ -1291,6 +1291,7 @@ export function useWorkbenchRuntimeMessaging({
           taskId: response.taskId || optimisticAddress.taskId,
           runtime: response.runtime || optimisticAddress.runtime,
           workspacePath: resolvedCreateWorkspacePath,
+          ...(requestedWorktree ? { workspaceKind: 'worktree' as const } : {}),
           ...(runtimeHandle ? { runtimeHandle } : {}),
           ...(response.taskId || optimisticAddress.taskId
             ? { taskId: response.taskId || optimisticAddress.taskId }

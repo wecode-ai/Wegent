@@ -128,5 +128,6 @@ sequenceDiagram
 21. 工作区类型判定优先使用真实 Git 元数据；只有路径中没有可解析的 Git 仓库或 Worktree 元数据时，才允许使用 `worktrees/<id>/<project>` 路径约定兜底。普通仓库不得仅因任一父目录名为 `worktrees` 被投影成 Worktree。
 22. Runtime 接受任务后，列表刷新失败只能降级为稍后对账，不能撤销已接受任务的本地可见状态或报告发送失败。
 23. 当前任务地址必须从接受响应和后续任务列表中持续回填稳定计划路径或最终路径；任务列表已经提供非空路径时，不得保留乐观任务地址中的空路径。
+24. Worktree 任务只有在 `runtime.worktrees.list`/任务列表中能找到与当前任务地址匹配的任务投影时，才允许生成该任务的 `WorkspaceTarget`；在 Worktree 任务投影尚未出现或路径尚未被 Runtime 确认前，不得用 `currentRuntimeTask.workspacePath` 作为兜底工作区去触发环境探测、Git 命令或目录创建。普通非 Worktree 任务仍可在尚未投影时使用地址中的已验证工作区路径。
 
 详细开发波次、子 Agent 写入范围和验收矩阵见 [云端 Git Worktree 目标模式与并行开发计划](../wework/developer-guide/wework-cloud-git-worktree-parallel-development-plan.md)。
