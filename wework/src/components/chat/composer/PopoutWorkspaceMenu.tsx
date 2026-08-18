@@ -13,6 +13,8 @@ import { createPortal } from 'react-dom'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { ProjectExecutionMode, ProjectWithTasks } from '@/types/api'
+import type { ProjectWorktreeAvailability } from '@/lib/worktree-availability'
+import { getProjectWorktreeUnavailableMessageKey } from './project-work-bar-utils'
 import { useAnchoredPortalMenu } from './useAnchoredPortalMenu'
 import { useOutsideClick } from './useOutsideClick'
 
@@ -24,6 +26,7 @@ interface PopoutWorkspaceMenuProps {
   disabled?: boolean
   executionMode: ProjectExecutionMode
   executionModeLocked?: boolean
+  worktreeAvailability?: ProjectWorktreeAvailability
   isGitProject?: boolean
   projectName?: string | null
   projects: ProjectWithTasks[]
@@ -82,6 +85,7 @@ export function PopoutWorkspaceMenu({
   disabled = false,
   executionMode,
   executionModeLocked = false,
+  worktreeAvailability,
   isGitProject = false,
   projectName,
   projects,
@@ -103,6 +107,32 @@ export function PopoutWorkspaceMenu({
   const [branchQuery, setBranchQuery] = useState('')
   const [branches, setBranches] = useState<string[]>([])
   const [branchesLoading, setBranchesLoading] = useState(false)
+  const resolvedWorktreeAvailability: ProjectWorktreeAvailability =
+    worktreeAvailability ??
+    (!projectName
+      ? {
+          available: false,
+          reason: 'no_project',
+          deviceId: null,
+          sourcePath: null,
+        }
+      : isGitProject
+        ? {
+            available: false,
+            reason: 'preflight_pending',
+            deviceId: null,
+            sourcePath: null,
+          }
+        : {
+            available: false,
+            reason: 'not_git',
+            deviceId: null,
+            sourcePath: null,
+          })
+  const worktreeUnavailableMessage =
+    resolvedWorktreeAvailability.reason === 'available'
+      ? null
+      : t(getProjectWorktreeUnavailableMessageKey(resolvedWorktreeAvailability.reason))
   const closeMenu = useCallback(() => {
     setOpen(false)
     setSubmenu(null)
@@ -226,7 +256,8 @@ export function PopoutWorkspaceMenu({
           ] as const
         ).map(([mode, label]) => {
           const modeDisabled =
-            executionModeLocked || (mode === 'git_worktree' && (!projectName || !isGitProject))
+            executionModeLocked ||
+            (mode === 'git_worktree' && !resolvedWorktreeAvailability.available)
           return (
             <button
               key={mode}
@@ -237,6 +268,7 @@ export function PopoutWorkspaceMenu({
               data-testid={`popout-workspace-launch-mode-${mode}`}
               className="flex min-h-10 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-normal text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-45"
               onClick={() => {
+                if (mode === 'git_worktree' && !resolvedWorktreeAvailability.available) return
                 onExecutionModeChange(mode)
                 closeMenu()
               }}
@@ -247,6 +279,15 @@ export function PopoutWorkspaceMenu({
             </button>
           )
         })}
+        {worktreeUnavailableMessage ? (
+          <p
+            data-testid="popout-workspace-worktree-unavailable-reason"
+            className="px-3 pt-1 text-xs leading-4 text-text-muted"
+            role="status"
+          >
+            {worktreeUnavailableMessage}
+          </p>
+        ) : null}
       </>
     ) : submenu === 'branch' ? (
       <>

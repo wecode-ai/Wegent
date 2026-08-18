@@ -176,6 +176,7 @@ export default function TaskSidebar({
     | 'wework'
   interface NavigationButton {
     label: string
+    summary?: string
     icon: typeof Workflow
     path: string
     isActive: boolean
@@ -223,6 +224,7 @@ export default function TaskSidebar({
     },
     {
       label: t('resource-library:title'),
+      summary: t('resource-library:summary'),
       icon: Library,
       path: resourceLibraryPath,
       isActive: pageType === 'resource-library' || currentPath === resourceLibraryPath,
@@ -330,14 +332,16 @@ export default function TaskSidebar({
       btn.buttonPageType === 'flow' ||
       btn.buttonPageType === 'code' ||
       btn.buttonPageType === 'wework' ||
-      btn.buttonPageType === 'knowledge'
+      btn.buttonPageType === 'knowledge' ||
+      btn.buttonPageType === 'resource-library'
   )
   const moreNavigationButtons = navigationButtons.filter(
     btn =>
       btn.buttonPageType !== 'flow' &&
       btn.buttonPageType !== 'code' &&
       btn.buttonPageType !== 'wework' &&
-      btn.buttonPageType !== 'knowledge'
+      btn.buttonPageType !== 'knowledge' &&
+      btn.buttonPageType !== 'resource-library'
   )
   const fixedSecondaryNavigationButtons = SIDEBAR_NAV_CONFIG.keepSecondaryNavFixed
     ? moreNavigationButtons
@@ -369,12 +373,20 @@ export default function TaskSidebar({
                   className={`h-4 w-4 flex-shrink-0 ${btn.isActive ? 'text-primary' : ''}`}
                 />
                 <span
-                  className={`min-w-0 truncate text-[14px] leading-5 font-medium ${
+                  className={`${btn.summary ? 'shrink-0' : 'min-w-0 truncate'} text-[14px] leading-5 font-medium ${
                     btn.isActive ? 'text-primary' : 'text-text-primary'
                   }`}
                 >
                   {btn.label}
                 </span>
+                {btn.summary && (
+                  <span
+                    data-testid={`${btn.testId ?? `task-sidebar-nav-${btn.buttonPageType}-button`}-summary`}
+                    className="min-w-0 truncate text-[11px] font-normal text-text-muted"
+                  >
+                    {btn.summary}
+                  </span>
+                )}
               </span>
               {btn.unreadCount !== undefined && btn.unreadCount > 0 && (
                 <span className="ml-auto flex items-center justify-center min-w-[18px] h-[18px] px-1.5 text-[11px] font-medium bg-red-500 text-white rounded-full">

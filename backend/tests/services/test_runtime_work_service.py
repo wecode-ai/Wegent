@@ -125,6 +125,41 @@ def test_local_task_summary_preserves_executor_status_values():
         assert task.status == status
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "expected_timeout"),
+    [
+        ("runtime.worktrees.prepare", 600),
+        ("runtime.worktrees.status", 30),
+    ],
+)
+async def test_runtime_worktree_rpc_uses_operation_timeout(
+    monkeypatch,
+    method,
+    expected_timeout,
+):
+    from app.services import runtime_work_service
+
+    rpc = AsyncMock(return_value={"success": True})
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+
+    response = await runtime_work_service.call_runtime_worktree_rpc(
+        user_id=7,
+        device_id="device-1",
+        method=method,
+        payload={"taskId": "task-1"},
+    )
+
+    assert response == {"success": True}
+    rpc.assert_awaited_once_with(
+        user_id=7,
+        device_id="device-1",
+        method=method,
+        payload={"taskId": "task-1"},
+        timeout_seconds=expected_timeout,
+    )
+
+
 def _git_status_command(
     statuses: dict[tuple[str, str], dict],
     *,
@@ -1556,12 +1591,17 @@ async def test_list_archived_conversations_dispatches_to_online_device(
                 {
                     "id": "codex-1",
                     "taskId": "codex-1",
+                    "threadId": "thread-1",
                     "title": "Archived thread",
                     "workspacePath": "/repo/Wegent",
                     "runtime": "codex",
+                    "runtimeHandle": {
+                        "runtime": "codex",
+                        "sessionId": "thread-1",
+                    },
                     "source": "local",
-                    "createdAt": "2026-06-21T02:15:37Z",
-                    "updatedAt": "2026-06-21T02:15:58Z",
+                    "createdAt": 1786987025000,
+                    "updatedAt": 1786987026000,
                 }
             ],
         }
@@ -1576,11 +1616,21 @@ async def test_list_archived_conversations_dispatches_to_online_device(
 
     assert response.total == 1
     assert response.items[0].id == "device-1:codex-1"
+    assert response.items[0].task_id == "codex-1"
+    assert response.items[0].thread_id == "thread-1"
     assert response.items[0].project_id == project.id
     assert response.items[0].project_name == project.name
     assert response.items[0].source == "local"
     assert response.items[0].device_name == "MacBook"
     assert response.items[0].device_address == "192.168.1.24"
+    assert response.items[0].runtime_handle == {
+        "runtime": "codex",
+        "sessionId": "thread-1",
+    }
+    assert response.items[0].created_at == "2026-08-17T17:17:05Z"
+    assert response.items[0].updated_at == "2026-08-17T17:17:06Z"
+    assert response.model_dump(by_alias=True)["items"][0]["taskId"] == "codex-1"
+    assert "localTaskId" not in response.model_dump(by_alias=True)["items"][0]
     assert response.project_groups[0].count == 1
     rpc.assert_awaited_once_with(
         user_id=test_user.id,
@@ -1927,6 +1977,73 @@ async def test_send_runtime_message_normalizes_runtime_rpc_failure_without_task_
 
 
 @pytest.mark.asyncio
+async def test_send_runtime_message_forwards_external_user_message_identity(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.schemas.runtime_work import (
+        RuntimeMessageSource,
+        RuntimeSendRequest,
+        RuntimeTaskAddress,
+    )
+    from app.services import runtime_work_service
+
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+    monkeypatch.setattr(runtime_work_service.time, "time", lambda: 1_780_000_000)
+    monkeypatch.setattr(
+        runtime_work_service,
+        "_build_runtime_send_execution_request",
+        lambda **kwargs: SimpleNamespace(to_dict=lambda: {"prompt": kwargs["message"]}),
+    )
+    rpc = AsyncMock(return_value={"success": True, "accepted": True})
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+
+    response = await runtime_work_service.send_runtime_message(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeSendRequest.model_validate(
+            {
+                "address": {
+                    "deviceId": "device-1",
+                    "taskId": "codex-1",
+                },
+                "message": "continue from dingtalk",
+                "clientUserMessageId": "im:dingtalk:77:dingtalk-message-1",
+                "source": RuntimeMessageSource(
+                    source="im",
+                    external_id="session-1",
+                    channel_type="dingtalk",
+                    channel_id=77,
+                    conversation_id="conv-private",
+                    sender_id="staff-a",
+                    message_id="dingtalk-message-1",
+                ),
+            }
+        ),
+    )
+
+    assert response.accepted is True
+    payload = rpc.await_args.kwargs["payload"]
+    assert payload["clientUserMessageId"] == ("im:dingtalk:77:dingtalk-message-1")
+    assert payload["createdAt"] == 1_780_000_000_000
+    assert payload["source"] == {
+        "source": "im",
+        "external_id": "session-1",
+        "channel_type": "dingtalk",
+        "channel_id": 77,
+        "conversation_id": "conv-private",
+        "sender_id": "staff-a",
+        "message_id": "dingtalk-message-1",
+    }
+    assert payload["executionRequest"] == {"prompt": "continue from dingtalk"}
+
+
+@pytest.mark.asyncio
 async def test_send_runtime_guidance_dispatches_to_owned_device_without_task_rows(
     test_db,
     test_user,
@@ -2218,6 +2335,164 @@ async def test_create_runtime_task_dispatches_to_project_device_without_task_row
         timeout_seconds=600,
     )
     assert test_db.query(TaskResource).count() == 0
+
+
+@pytest.mark.asyncio
+async def test_create_runtime_task_uses_executor_worktree_workspace_path(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.schemas.runtime_work import RuntimeTaskCreateRequest
+    from app.services import runtime_work_service
+
+    project = _local_path_project(test_db, test_user.id)
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+    observed_targets = []
+
+    def build_execution_request(**kwargs):
+        observed_targets.append(kwargs["target"])
+        return SimpleNamespace(to_dict=lambda: {"workspace_source": "git_worktree"})
+
+    monkeypatch.setattr(
+        runtime_work_service,
+        "_build_runtime_execution_request",
+        build_execution_request,
+    )
+    worktree_path = "/executor-home/workspace/worktrees/runtime-1/Wegent"
+    rpc = AsyncMock(
+        return_value={
+            "success": True,
+            "accepted": True,
+            "taskId": "runtime-1",
+            "workspacePath": worktree_path,
+            "runtime": "codex",
+        }
+    )
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+
+    response = await runtime_work_service.create_runtime_task(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeTaskCreateRequest(
+            projectId=project.id,
+            teamId=3,
+            runtime="codex",
+            message="create worktree task",
+            execution={"workspace": {"source": "git_worktree"}},
+        ),
+    )
+
+    assert observed_targets[0].workspace_source == "git_worktree"
+    assert response.accepted is True
+    assert response.workspace_path == worktree_path
+    assert response.error_code is None
+
+
+@pytest.mark.parametrize(
+    "executor_workspace_path",
+    [None, "", "   ", "/repo/Wegent", "/repo/Wegent/"],
+)
+def test_runtime_create_response_rejects_invalid_executor_worktree_path(
+    executor_workspace_path,
+):
+    from app.services import runtime_work_service
+
+    result = {
+        "success": True,
+        "accepted": True,
+        "taskId": "runtime-1",
+        "runtime": "codex",
+    }
+    if executor_workspace_path is not None:
+        result["workspacePath"] = executor_workspace_path
+
+    response = runtime_work_service._runtime_create_response(
+        result,
+        "codex",
+        "device-1",
+        "/repo/Wegent",
+        "git_worktree",
+    )
+
+    assert response.accepted is False
+    assert response.workspace_path == ""
+    assert response.error_code == "worktree_prepare_failed"
+    assert "independent workspacePath" in response.error
+    assert response.model_dump(by_alias=True)["errorCode"] == "worktree_prepare_failed"
+
+
+def test_runtime_create_response_keeps_non_worktree_workspace_fallback():
+    from app.services import runtime_work_service
+
+    response = runtime_work_service._runtime_create_response(
+        {
+            "success": True,
+            "accepted": True,
+            "taskId": "runtime-1",
+            "runtime": "codex",
+        },
+        "codex",
+        "device-1",
+        "/repo/Wegent",
+    )
+
+    assert response.accepted is True
+    assert response.workspace_path == "/repo/Wegent"
+    assert response.error_code is None
+
+
+def test_runtime_create_response_preserves_precise_executor_worktree_error_code():
+    from app.services import runtime_work_service
+
+    response = runtime_work_service._runtime_create_response(
+        {
+            "success": False,
+            "accepted": False,
+            "taskId": "runtime-1",
+            "runtime": "codex",
+            "error": "Source repository changed before preparation",
+            "errorCode": "worktree_source_changed",
+        },
+        "codex",
+        "device-1",
+        "/repo/Wegent",
+        "git_worktree",
+    )
+
+    assert response.accepted is False
+    assert response.workspace_path == ""
+    assert response.error_code == "worktree_source_changed"
+    assert response.error == "Source repository changed before preparation"
+
+
+def test_direct_runtime_task_target_applies_requested_worktree_source(
+    test_db,
+    test_user,
+):
+    from app.schemas.runtime_work import RuntimeTaskCreateRequest
+    from app.services import runtime_work_service
+
+    target = runtime_work_service._resolve_runtime_task_target(
+        test_db,
+        test_user.id,
+        RuntimeTaskCreateRequest(
+            deviceId="device-1",
+            workspacePath="/repo/Wegent",
+            teamId=3,
+            runtime="codex",
+            message="create worktree task",
+            execution={"workspace": {"source": "git_worktree"}},
+        ),
+    )
+
+    assert target.device_id == "device-1"
+    assert target.workspace_path == "/repo/Wegent"
+    assert target.workspace_source == "git_worktree"
 
 
 @pytest.mark.asyncio

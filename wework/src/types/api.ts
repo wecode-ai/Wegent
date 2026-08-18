@@ -46,12 +46,12 @@ export interface Team {
 }
 
 export interface ProjectExecutionConfig {
-  targetType: 'local' | 'cloud'
+  targetType: 'local' | 'cloud' | 'remote'
   deviceId?: string
 }
 
 export interface ProjectWorkspaceConfig {
-  source: 'git' | 'local_path'
+  source: 'git' | 'local_path' | 'device_path'
   localPath?: string
   checkoutPath?: string
 }
@@ -122,6 +122,7 @@ export interface DeviceInfo {
   socket_device_id?: string | null
   runtime_instance_id?: string | null
   runtime_routes?: DeviceRuntimeRoute[]
+  runtime_features?: RuntimeFeatureSet | null
 }
 
 export type DeviceRuntimeRouteKind = 'local-ipc' | 'cloud-relay' | 'remote-relay' | 'app-ipc'
@@ -1023,6 +1024,59 @@ export interface RuntimeWorktreeSettings {
   keepCount: number
 }
 
+export interface RuntimeWorktreeCapability {
+  version: number
+  managed: boolean
+  deferredPrepare: boolean
+  snapshots: boolean
+  restore: boolean
+  preflight: boolean
+  reconcile?: boolean
+  persistentStorageVerified?: boolean
+}
+
+export interface RuntimeFeatureSet {
+  schemaVersion: number
+  worktrees?: RuntimeWorktreeCapability | null
+}
+
+export interface RuntimeWorktreeCapabilitiesRequest {
+  deviceId: string
+}
+
+export interface RuntimeWorktreeCapabilitiesResponse {
+  success: boolean
+  deviceId: string
+  runtimeWorktrees: RuntimeWorktreeCapability | null
+}
+
+export interface RuntimeWorktreePreflightRequest {
+  deviceId: string
+  sourcePath: string
+  ref?: string | null
+}
+
+export interface RuntimeWorktreePreflightResponse {
+  success: boolean
+  deviceId: string
+  supported: boolean
+  sourcePath: string
+  sourceExists: boolean
+  sourceDirectory: boolean
+  gitRepository: boolean
+  gitCommonDirValid: boolean
+  gitCommonDirWritable: boolean
+  writable: boolean
+  repoRoot?: string | null
+  gitCommonDir?: string | null
+  repoRootFingerprint?: string | null
+  gitRef?: string | null
+  refValid?: boolean | null
+  resolvedWorktreeRoot?: string | null
+  errorCode?: string | null
+  error?: string | null
+}
+
 export interface RuntimeWorktreeSettingsPatch {
   deviceId: string
   worktreeRoot?: string
@@ -1037,18 +1091,31 @@ export interface RuntimeWorktreeConversation extends RuntimeTaskAddress {
   updatedAt?: number | null
 }
 
-export interface RuntimeManagedWorktree {
-  deviceId: string
+export type RuntimeManagedWorktreeState =
+  | 'active'
+  | 'restorable'
+  | 'missing'
+  | 'deleted'
+  | (string & Record<never, never>)
+
+export interface RuntimeManagedWorktreePayload {
   worktreeId: string
   path: string
   repositoryName: string
   sourcePath?: string | null
-  permanent?: boolean
-  createdAt?: number | null
-  updatedAt?: number | null
-  state: 'active' | 'restorable' | 'missing' | 'deleted' | string
+  permanent: boolean
+  createdAt: number
+  updatedAt: number
+  snapshotRef?: string | null
+  snapshotCommit?: string | null
+  state: RuntimeManagedWorktreeState
   snapshotAt?: number | null
+  gitCommonDir?: string | null
   lastError?: string | null
+}
+
+export interface RuntimeManagedWorktree extends RuntimeManagedWorktreePayload {
+  deviceId: string
   conversations: RuntimeWorktreeConversation[]
 }
 
@@ -1069,7 +1136,7 @@ export interface RuntimeWorktreePrepareRequest {
 export interface RuntimeWorktreeMutationResponse {
   success: boolean
   deviceId: string
-  worktree: RuntimeManagedWorktree
+  worktree: RuntimeManagedWorktreePayload
   path?: string
   archivedTaskCount?: number
 }

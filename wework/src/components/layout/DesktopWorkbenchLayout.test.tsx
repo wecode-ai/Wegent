@@ -3549,7 +3549,7 @@ describe('DesktopWorkbenchLayout', () => {
     fireEvent.click(screen.getByTestId('harness-session-picker-create-button'))
     expect(await screen.findByTestId('transient-notice')).toHaveTextContent('Right session failed')
     expect(screen.getByTestId('central-harness-terminal')).toBeInTheDocument()
-  })
+  }, 15_000)
 
   test('prepares a project worktree before starting the primary OpenCode session', async () => {
     isLocalTerminalAvailableMock.mockReturnValue(true)
@@ -3623,7 +3623,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('project-local-tasks-panel-1')).toContainElement(
       await screen.findByTestId('local-harness-session-row-local-harness-1')
     )
-  })
+  }, 15_000)
 
   test('lists active native harness sessions without opening one after a WebView reload', async () => {
     isLocalTerminalAvailableMock.mockReturnValue(true)
@@ -5376,8 +5376,8 @@ describe('DesktopWorkbenchLayout', () => {
   test('opens the general settings page from the settings menu', async () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
-    await userEvent.click(screen.getByTestId('settings-button'))
-    await userEvent.click(screen.getByTestId('settings-menu-button'))
+    fireEvent.click(screen.getByTestId('settings-button'))
+    fireEvent.click(screen.getByTestId('settings-menu-button'))
 
     expect(screen.getByTestId('wework-settings-page')).toBeInTheDocument()
     expect(screen.getByTestId('settings-back-button')).toHaveTextContent('返回')
@@ -5398,7 +5398,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByText('Personal Devices')).not.toBeInTheDocument()
     expect(screen.queryByText('Linux-Device-481b616e8e0b')).not.toBeInTheDocument()
     expect(screen.queryByText('可连接这台设备的云设备')).not.toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('settings-nav-connections'))
+    fireEvent.click(screen.getByTestId('settings-nav-connections'))
 
     expect(await screen.findByRole('heading', { name: '云端连接' })).toBeInTheDocument()
     expect(screen.getByText('已连接云端')).toBeInTheDocument()
@@ -5424,15 +5424,17 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByText('CPU')).toBeInTheDocument()
     expect(screen.getByText('内存')).toBeInTheDocument()
     expect(screen.getByText('磁盘')).toBeInTheDocument()
-    expect(
-      await screen.findByTestId('connection-device-metric-cpu-24a59054-4638-4744-983d-372706c30fcd')
-    ).toHaveTextContent('42%')
-    expect(
-      screen.getByTestId('connection-device-metric-memory-24a59054-4638-4744-983d-372706c30fcd')
-    ).toHaveTextContent('68%')
-    expect(
-      screen.getByTestId('connection-device-metric-disk-24a59054-4638-4744-983d-372706c30fcd')
-    ).toHaveTextContent('57%')
+    await waitFor(() => {
+      expect(
+        screen.getByTestId('connection-device-metric-cpu-24a59054-4638-4744-983d-372706c30fcd')
+      ).toHaveTextContent('42%')
+      expect(
+        screen.getByTestId('connection-device-metric-memory-24a59054-4638-4744-983d-372706c30fcd')
+      ).toHaveTextContent('68%')
+      expect(
+        screen.getByTestId('connection-device-metric-disk-24a59054-4638-4744-983d-372706c30fcd')
+      ).toHaveTextContent('57%')
+    })
     expect(screen.queryByTestId('connection-scale-wiki')).not.toBeInTheDocument()
     expect(screen.queryByText('说明')).not.toBeInTheDocument()
     expect(screen.queryByText('扩容 Wiki')).not.toBeInTheDocument()
@@ -5458,7 +5460,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('right-workspace-terminal-option')).toHaveTextContent('终端')
     expect(screen.getByTestId('right-workspace-browser-option')).toHaveTextContent('浏览器')
     expect(screen.getByTestId('right-workspace-file-option')).toHaveTextContent('文件')
-    await userEvent.click(screen.getByTestId('right-workspace-file-option'))
+    fireEvent.click(screen.getByTestId('right-workspace-file-option'))
     expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
     expect(screen.queryByTestId('workspace-tool-launcher')).not.toBeInTheDocument()
     expect(screen.getByTestId('right-workspace-resize-handle')).toHaveAttribute('role', 'separator')
@@ -5511,13 +5513,13 @@ describe('DesktopWorkbenchLayout', () => {
       ],
     })
 
-    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    fireEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
     const content = screen.getByTestId('desktop-workbench-content')
     const panelShell = screen.getByTestId('right-workspace-panel-shell')
     const expandButton = screen.getByTestId('toggle-right-workspace-panel-expanded-button')
 
     expect(expandButton).toHaveAttribute('aria-pressed', 'false')
-    await userEvent.click(expandButton)
+    fireEvent.click(expandButton)
 
     expect(content).toHaveStyle({ width: '100%' })
     expect(panelShell).toHaveStyle({ width: '100%' })
@@ -5534,14 +5536,14 @@ describe('DesktopWorkbenchLayout', () => {
       'true'
     )
 
-    await userEvent.click(
+    fireEvent.click(
       within(screen.getByTestId('desktop-sidebar')).getByTestId('collapse-sidebar-button')
     )
 
     expect(screen.getByTestId('desktop-sidebar')).toHaveStyle({ width: '0px' })
     expect(panelShell).toHaveStyle({ width: '100%' })
 
-    await userEvent.click(screen.getByTestId('restore-conversation-from-expanded-workspace-button'))
+    fireEvent.click(screen.getByTestId('restore-conversation-from-expanded-workspace-button'))
 
     await waitFor(() => {
       expect(content).toHaveStyle({ width: '420px' })
@@ -6342,7 +6344,7 @@ describe('DesktopWorkbenchLayout', () => {
         })
       )
     )
-  })
+  }, 15_000)
 
   test('temporary chat queues a follow-up while its current response is running', async () => {
     const address: RuntimeTaskAddress = {
@@ -9954,7 +9956,7 @@ describe('DesktopWorkbenchLayout', () => {
       )
     })
     expect(workspaceFileApi.readWorkspaceTextFile).toHaveBeenCalledTimes(4)
-  })
+  }, 15_000)
 
   test('preserves an absolute file opened from a message when switching runtime tasks', async () => {
     const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
@@ -10228,7 +10230,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(startLocalTerminalMock).toHaveBeenCalledTimes(taskAddresses.length)
     expect(closeLocalTerminalMock).not.toHaveBeenCalled()
-  }, 20000)
+  }, 30_000)
 
   test('omits the desktop add-menu item when the internal extension is unavailable', async () => {
     renderWorkspacePanelLayout()

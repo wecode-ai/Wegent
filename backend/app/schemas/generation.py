@@ -10,7 +10,7 @@ This module contains configuration schemas for:
 - Image generation (ImageGenerationConfig)
 """
 
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -113,6 +113,13 @@ class VideoGenerationConfig(BaseModel):
     seed: Optional[int] = Field(None, description="Random seed")
     camera_fixed: Optional[bool] = Field(None, description="Fixed camera")
     watermark: Optional[bool] = Field(None, description="Include watermark")
+    output_format: Optional[Literal["mp4", "mov"]] = Field(
+        None, description="Video output format"
+    )
+    omni_reference_task_type: Optional[
+        Literal["auto", "reference", "edit", "extend"]
+    ] = Field(None, description="Seedance 2.5 omni-reference task guidance")
+    priority: Optional[int] = Field(None, ge=0, le=9)
     max_reference_images: Optional[int] = Field(None, ge=0)
     capabilities: Optional[VideoCapabilities] = Field(
         None, description="Declared capabilities for this video model"

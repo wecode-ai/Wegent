@@ -78,15 +78,17 @@ executor 在启动 Codex app-server 前会解析并规范化 Wework Codex home �
 
 ## 运行时权限模式
 
-Wework Composer 为本地 Codex 任务提供三种权限模式，并把选择保存在任务的 `modelSelection.options.permissionMode` 中。新任务和缺少该字段的历史任务默认使用“工作区”，不会再隐式获得完整磁盘访问：
+Wework Composer 为本地 Codex 任务提供三种权限模式，并把选择保存在任务的 `modelSelection.options.permissionMode` 中。新任务和缺少该字段的历史任务默认使用“完整访问”；用户从其它模式主动切换到“完整访问”时，界面会显示明确的风险确认：
 
 | 权限模式 | Codex permission profile | Approval policy | 行为                                                                   |
 | -------- | ------------------------ | --------------- | ---------------------------------------------------------------------- |
 | 只读     | `:read-only`             | `on-request`    | 允许读取工作区；写文件、运行超出权限边界的命令或请求额外权限时需要审批 |
 | 工作区   | `:workspace`             | `on-request`    | 允许在工作区内读写；访问工作区之外或扩大权限时需要审批                 |
-| 完整访问 | `:danger-full-access`    | `never`         | 不经审批访问文件、终端和网络；启用前必须经过显式风险确认               |
+| 完整访问 | `:danger-full-access`    | granular        | 文件、终端和网络执行不弹审批；MCP 插件业务表单仍可以请求用户输入       |
 
 前端在每次本地运行时请求中发送 `runtime_permission_profile`。Executor 在 `thread/start`、`thread/resume`、`thread/fork` 和 `turn/start` 上同时设置对应的 `permissions` 与 `approvalPolicy`；从任务运行句柄恢复或继续会话时，也必须从保存的权限模式重建相同配置，不能回退为更高权限。
+
+完整访问使用 granular approval policy，关闭 `sandbox_approval`、`rules`、`skill_approval` 和 `request_permissions`，但保留 `mcp_elicitations: true`。MCP elicitation 是插件主动发起的业务交互，不属于命令、文件或权限提升等执行安全审批，因此不能通过 `approvalPolicy: "never"` 一并关闭。
 
 Wework 的 Claude Code 普通对话通过非交互子进程运行，无法展示或完成 Claude CLI 自带的审批提示。因此，Claude Code 设置中的 `default` 在这条执行路径上会映射为 `bypassPermissions`；用户明确选择的 `acceptEdits`、`plan`、`auto` 或 `bypassPermissions` 仍会原样传递。交互式本地终端不经过这项映射。
 

@@ -2494,7 +2494,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const hasConversation = paneMessages.length > 0 || Boolean(currentRuntimeTask)
   const isCreatingWorktree = isWorktreeCreationPending(
     runtimeTaskSummary,
-    paneSession.status.sendPhase
+    paneSession.status.sendPhase,
+    paneSession.status.workspaceCreationKind
   )
   const hasMainBackground = Boolean(background.imagePath && background.inMain)
   const activeDevice = findWorkbenchDevice(devices, activeDeviceId)
@@ -2527,7 +2528,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     !currentProject &&
     !currentRuntimeTask &&
     !activeDeviceId &&
-    !devices.some(device => device.status === 'online' && isWeWorkCompatibleDevice(device))
+    !devices.some(device => isWorkbenchDeviceOnline(device) && isWeWorkCompatibleDevice(device))
   const composerDisabled =
     activeDeviceUnavailable || activeDeviceVersionUnsupported || noStandaloneCompatibleDevice
   const composerDisabledReason = activeDeviceUnavailable

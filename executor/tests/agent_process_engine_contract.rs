@@ -577,6 +577,8 @@ printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"
     let _home = EnvGuard::set("HOME", &home.display().to_string());
     let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
     let _mode = EnvGuard::set("EXECUTOR_MODE", "local");
+    let _backend = EnvGuard::set("WEGENT_BACKEND_URL", &backend_url);
+    let _task_api = EnvGuard::set("TASK_API_DOMAIN", &backend_url);
     let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
     let engine = AgentProcessEngine::new(planner);
     let request = ExecutionRequest {
@@ -634,6 +636,8 @@ printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"
     let _home = EnvGuard::set("HOME", &home.display().to_string());
     let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
     let _mode = EnvGuard::set("EXECUTOR_MODE", "local");
+    let _backend = EnvGuard::set("WEGENT_BACKEND_URL", &backend_url);
+    let _task_api = EnvGuard::set("TASK_API_DOMAIN", &backend_url);
     let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
     let engine = AgentProcessEngine::new(planner);
     let request = ExecutionRequest {

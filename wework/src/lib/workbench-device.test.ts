@@ -32,6 +32,10 @@ describe('workbench-device', () => {
     expect(isWorkbenchDeviceOnline(device)).toBe(false)
   })
 
+  test('treats a busy device as online so new Runtime tasks can queue', () => {
+    expect(isWorkbenchDeviceOnline(createDevice({ status: 'busy' }))).toBe(true)
+  })
+
   test('uses the project configured device before standalone fallback', () => {
     expect(
       getActiveWorkbenchDeviceId({
