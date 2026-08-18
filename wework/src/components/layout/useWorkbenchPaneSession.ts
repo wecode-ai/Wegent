@@ -2639,7 +2639,7 @@ function isInterruptedGuidance(message: RuntimePaneQueuedMessage): boolean {
 
 function runtimeTaskLoadTargetFromAddress(address: RuntimeTaskAddress): RuntimeTaskLoadTarget {
   return {
-    key: `${runtimeTranscriptPaneKey(address)}:${address.workspacePath ?? ''}`,
+    key: runtimeTranscriptPaneKey(address),
     identityKey: runtimeTranscriptPaneIdentityKey(address),
     address,
   }

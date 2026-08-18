@@ -70,30 +70,4 @@ describe('useRuntimeTaskRouteRestoration', () => {
       })
     )
   })
-
-  test('restores the routed task while the workbench is still bootstrapping', async () => {
-    workbenchState.currentRuntimeTask = null
-    workbenchState.isBootstrapping = true
-    window.history.replaceState({}, '', '/runtime-tasks?deviceId=local-device&taskId=task-b')
-
-    renderHook(() => useRuntimeTaskRouteRestoration())
-
-    await waitFor(() =>
-      expect(openRuntimeTaskMock).toHaveBeenCalledWith({
-        deviceId: 'local-device',
-        taskId: 'task-b',
-      })
-    )
-  })
-
-  test('does not reopen a task from a stale navigation snapshot after starting a new chat', () => {
-    window.history.replaceState({}, '', '/runtime-tasks?deviceId=local-device&taskId=task-a')
-    const { rerender } = renderHook(() => useRuntimeTaskRouteRestoration())
-
-    window.history.replaceState({}, '', '/')
-    workbenchState.currentRuntimeTask = null
-    rerender()
-
-    expect(openRuntimeTaskMock).not.toHaveBeenCalled()
-  })
 })

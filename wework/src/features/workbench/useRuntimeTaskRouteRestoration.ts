@@ -25,7 +25,7 @@ export function useRuntimeTaskRouteRestoration(enabled = true) {
   )
 
   const routeRuntimeTask = useMemo(() => {
-    if (!enabled) return null
+    if (!enabled || state.isBootstrapping) return null
 
     const location = new URL(runtimeTaskLocation, window.location.origin)
     const route = parseRuntimeTaskRoute(stripAppBasePath(location.pathname), location.search)
@@ -36,13 +36,18 @@ export function useRuntimeTaskRouteRestoration(enabled = true) {
       ...route,
       ...(runtimeTask?.workspacePath ? { workspacePath: runtimeTask.workspacePath } : {}),
     }
-  }, [enabled, runtimeTaskLocation, state.currentRuntimeTask, state.runtimeWork])
+  }, [
+    enabled,
+    runtimeTaskLocation,
+    state.currentRuntimeTask,
+    state.isBootstrapping,
+    state.runtimeWork,
+  ])
 
   useEffect(() => {
     if (!routeRuntimeTask) return
-    if (getNavigationSnapshot() !== runtimeTaskLocation) return
     void openRuntimeTask(routeRuntimeTask)
-  }, [openRuntimeTask, routeRuntimeTask, runtimeTaskLocation])
+  }, [openRuntimeTask, routeRuntimeTask])
 
   return routeRuntimeTask
 }
