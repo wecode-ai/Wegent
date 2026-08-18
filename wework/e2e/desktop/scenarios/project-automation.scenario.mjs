@@ -2058,8 +2058,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
           '[data-testid="cloud-project-chat-agent-device"] [data-selection-state]',
           { value: 'data-selection-state', visible: true }
         ),
-        'unselected'
+        'selected'
       )
+      await control.command('waitFor', '[data-testid="cloud-project-chat-agent-device"]', {
+        text: 'local-device',
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
       assert.equal(
         await control.command(
           'getAttribute',
@@ -2083,19 +2088,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         value: '回归巡检机器人',
         visible: true,
       })
-      await control.command('click', '[data-testid="cloud-project-chat-agent-device"]', {
-        visible: true,
-      })
-      await control.command('waitFor', '[data-testid="cloud-project-chat-agent-device-menu"]', {
-        text: 'local-device',
-        timeoutMs: uiTimeoutMs,
-        visible: true,
-      })
-      await control.command(
-        'click',
-        '[data-testid="cloud-project-chat-agent-device-option-local-device"]',
-        { visible: true }
-      )
       const saveWithoutModel = await control.command(
         'getAttribute',
         '[data-testid="cloud-project-chat-agent-save"]',
