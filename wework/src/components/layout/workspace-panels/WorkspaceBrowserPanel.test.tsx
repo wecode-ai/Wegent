@@ -2496,6 +2496,9 @@ describe('WorkspaceBrowserPanel', () => {
   async function openExamplePage() {
     mockBrowserHostRect()
     render(<WorkspaceBrowserPanel active />)
+    const portalHost = document.createElement('div')
+    portalHost.id = 'titlebar-actions-portal'
+    document.body.append(portalHost)
     const input = screen.getByTestId('workspace-browser-url-input')
     fireEvent.change(input, { target: { value: 'example.com' } })
     fireEvent.submit(input.closest('form')!)

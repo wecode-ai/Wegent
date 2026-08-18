@@ -2326,7 +2326,7 @@ export function WorkspaceBrowserTabPanel({
           ) : null}
         </div>
       ) : (
-        <div className="flex h-11 shrink-0 items-center gap-1.5 border-b border-border bg-background px-2">
+        <div className="relative flex h-11 shrink-0 items-center gap-1.5 border-b border-border bg-background px-2">
           <BrowserToolbarButton
             testId="workspace-browser-back-button"
             label={t('workbench.browser_back')}
