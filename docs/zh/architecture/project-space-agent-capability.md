@@ -105,8 +105,8 @@ sequenceDiagram
 - Plugin 只是 Codex Adapter。Gateway、ContextGrant 和工具契约不得依赖 Codex 专有类型。
 - Wework 启动 Executor 时必须同时启动唯一常驻的 loopback MCP Endpoint。Codex app-server 只能连接该 Endpoint，不得再执行 `executor space-mcp-server` 创建 stdio 子进程。
 - Plugin 的 MCP 声明是产品打包入口；Runtime 负责提供默认启用状态、实际 Executor 路径和可选的会话 ContextGrant，不能依赖插件市场页面曾被打开或异步安装时序。
-- 项目空间 MCP 默认对所有 Agent session 启用。每个普通任务都必须先进入“我的任务”基础归属；Composer 选择项目空间只增加项目上下文，未选择时使用默认“我的任务”上下文。项目或 Issue 会话通过 ContextGrant 获得默认 `space_id/item_id` 和越界保护。
-- ContextGrant 必须按 Agent session 隔离且不向模型暴露。其一小时有效期只限制新 MCP 会话的启动，启动后租约跟随该会话 Adapter 生命周期；长任务不会在执行中断权，Adapter 退出即撤销。模型参数、prompt 文本和全局“当前项目”均不是授权来源。
+- 项目空间 MCP 默认对所有 Agent session 启用。每个普通任务都必须先进入“我的任务”基础归属；Composer 选择项目空间只增加项目上下文，未选择时使用默认“我的任务”上下文。项目会话通过 ContextGrant 获得默认 `space_id`，Issue 会话获得 `space_id + item_id`；两者都获得越界保护。
+- ContextGrant 必须按 Agent session 隔离且不向模型暴露。其一小时有效期只限制新 MCP 会话的启动，启动后租约跟随该会话 Adapter 生命周期；长任务不会在执行中被中断，Adapter 退出即撤销。模型参数、prompt 文本和全局“当前项目”均不是授权来源。
 - “我的任务”基础归属与项目空间上下文是两个正交维度。前者对所有任务强制存在并提供个人汇总和离线可见性；后者可以为空或指向一个所选项目空间，并用于 Agent 当前上下文。清除项目空间只能移除额外上下文，不得移除“我的任务”基础归属。项目会话可只绑定 `space_id`，Issue 会话绑定 `space_id + item_id`。
 - `get_current_context` 在无绑定时返回明确的未绑定结果；MCP 启动失败、无权限、云项目离线和未缓存必须是不同错误。
 - Gateway 必须拒绝超出 ContextGrant scope 的显式 `space_id/item_id`，不能信任模型传入的标识。

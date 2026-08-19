@@ -58,7 +58,8 @@ interface UseWorkbenchCloudProjectContextOptions {
   userId?: number
 }
 
-let pendingTodoBinding: PendingTodoBinding | null = null
+const pendingTodoBindingsByPane = new Map<string, PendingTodoBinding>()
+const pendingTodoBindingsByTask = new Map<string, PendingTodoBinding>()
 interface BoundProjectSpaceContextUpdate {
   task: RuntimeTaskAddress
   project: CloudProject
@@ -72,6 +73,33 @@ const PENDING_BINDING_CONTEXT_RETRY_MS = 100
 const PENDING_BINDING_CONTEXT_RETRY_LIMIT = 50
 const DEFAULT_WORK_ITEM_LOOKUP_TIMEOUT_MS = 1_500
 
+function runtimeTaskKey(address: RuntimeTaskAddress): string {
+  return `${address.deviceId}:${address.taskId}`
+}
+
+function pendingBindingFor(
+  address: RuntimeTaskAddress | null,
+  paneKey: string
+): PendingTodoBinding | null {
+  return address
+    ? (pendingTodoBindingsByTask.get(runtimeTaskKey(address)) ?? null)
+    : (pendingTodoBindingsByPane.get(paneKey) ?? null)
+}
+
+function storePendingBinding(binding: PendingTodoBinding) {
+  if (binding.target) {
+    pendingTodoBindingsByTask.set(runtimeTaskKey(binding.target), binding)
+    pendingTodoBindingsByPane.delete(binding.paneKey)
+    return
+  }
+  pendingTodoBindingsByPane.set(binding.paneKey, binding)
+}
+
+function clearPendingBinding(binding: PendingTodoBinding) {
+  pendingTodoBindingsByPane.delete(binding.paneKey)
+  if (binding.target) pendingTodoBindingsByTask.delete(runtimeTaskKey(binding.target))
+}
+
 function boardTabProjectKey(contentRoute: string): string | null {
   const searchIndex = contentRoute.indexOf('?')
   if (searchIndex < 0) return null
@@ -82,15 +110,12 @@ function boardTabProjectKey(contentRoute: string): string | null {
 }
 
 function pendingBindingTargetsTask(address: RuntimeTaskAddress): boolean {
-  const target = pendingTodoBinding?.target
-  return Boolean(
-    pendingTodoBinding &&
-    (!target || (target.deviceId === address.deviceId && target.taskId === address.taskId))
-  )
+  return pendingTodoBindingsByTask.has(runtimeTaskKey(address))
 }
 
 function publishBoundProjectSpaceContext(update: BoundProjectSpaceContextUpdate) {
-  if (pendingBindingTargetsTask(update.task)) pendingTodoBinding = null
+  const pendingBinding = pendingTodoBindingsByTask.get(runtimeTaskKey(update.task))
+  if (pendingBinding) clearPendingBinding(pendingBinding)
   for (const listener of boundProjectSpaceContextListeners) listener(update)
 }
 
@@ -119,29 +144,11 @@ async function waitForPendingProjectSpaceContext(
 }
 
 function pendingTodoForTask(address: RuntimeTaskAddress | null, paneKey: string) {
-  if (!pendingTodoBinding) return null
-  if (!address) {
-    return pendingTodoBinding.paneKey === paneKey && !pendingTodoBinding.target
-      ? pendingTodoBinding.item
-      : null
-  }
-  const target = pendingTodoBinding.target
-  return target?.deviceId === address.deviceId && target.taskId === address.taskId
-    ? pendingTodoBinding.item
-    : null
+  return pendingBindingFor(address, paneKey)?.item ?? null
 }
 
 function pendingProjectForTask(address: RuntimeTaskAddress | null, paneKey: string) {
-  if (!pendingTodoBinding) return null
-  if (!address) {
-    return pendingTodoBinding.paneKey === paneKey && !pendingTodoBinding.target
-      ? pendingTodoBinding.project
-      : null
-  }
-  const target = pendingTodoBinding.target
-  return target?.deviceId === address.deviceId && target.taskId === address.taskId
-    ? pendingTodoBinding.project
-    : null
+  return pendingBindingFor(address, paneKey)?.project ?? null
 }
 
 function cloudLoopItemStatusLabel(
@@ -332,13 +339,15 @@ export function useWorkbenchCloudProjectContext({
 
   const setPendingCloudContext = useCallback(
     (project: CloudProject | null, item: CloudLoopItem | null) => {
-      pendingTodoBinding = project
-        ? { paneKey, project, item, target: null, description: '' }
-        : null
+      const currentBinding = pendingBindingFor(contextRuntimeTask, paneKey)
+      if (currentBinding) clearPendingBinding(currentBinding)
+      if (project) {
+        storePendingBinding({ paneKey, project, item, target: null, description: '' })
+      }
       setPendingCloudProject(project)
       setPendingTodoItem(item)
     },
-    [paneKey]
+    [contextRuntimeTask, paneKey]
   )
 
   useEffect(() => {
@@ -421,7 +430,8 @@ export function useWorkbenchCloudProjectContext({
               : null
           )
           if (pendingBindingTargetsTask(contextRuntimeTask)) {
-            pendingTodoBinding = null
+            const pendingBinding = pendingBindingFor(contextRuntimeTask, paneKey)
+            if (pendingBinding) clearPendingBinding(pendingBinding)
             setPendingCloudContext(null, null)
           }
         })
@@ -463,16 +473,17 @@ export function useWorkbenchCloudProjectContext({
     contextActive,
     contextRefreshKey,
     contextRuntimeTask,
+    paneKey,
     setPendingCloudContext,
     todoBindingApis,
     userId,
   ])
 
   useEffect(() => {
-    const projectToBind = pendingCloudProject ?? pendingTodoBinding?.project ?? null
-    const itemToBind = pendingTodoItem ?? pendingTodoBinding?.item ?? null
+    const pendingBinding = pendingBindingFor(contextRuntimeTask, paneKey)
+    const projectToBind = pendingCloudProject ?? pendingBinding?.project ?? null
+    const itemToBind = pendingTodoItem ?? pendingBinding?.item ?? null
     if (!contextRuntimeTask || !projectToBind) return
-    const pendingBinding = pendingTodoBinding
     if (
       pendingBinding?.target &&
       (pendingBinding.target.deviceId !== contextRuntimeTask.deviceId ||
@@ -532,6 +543,7 @@ export function useWorkbenchCloudProjectContext({
     }
   }, [
     contextRuntimeTask,
+    paneKey,
     pendingCloudProject,
     pendingTodoItem,
     projectSpaceApiFor,
@@ -681,13 +693,13 @@ export function useWorkbenchCloudProjectContext({
       dismissedDefaultCloudProjectKey !== defaultCloudProjectSelectionKey &&
       (!contextRuntimeTask || pendingTargetMatchesCurrentTask)
     ) {
-      pendingTodoBinding = {
+      storePendingBinding({
         paneKey,
         project: defaultProject,
         item: null,
         target: pendingAutoJoin?.target ?? null,
         description: pendingAutoJoin?.description ?? '',
-      }
+      })
       pendingAutoJoinResolutionRef.current = null
       setPendingCloudProject(defaultProject)
       setPendingTodoItem(null)
@@ -872,8 +884,9 @@ export function useWorkbenchCloudProjectContext({
             ? { target: null, description }
             : null
       }
-      if (pendingTodoBinding) {
-        pendingTodoBinding = { ...pendingTodoBinding, description }
+      const pendingBinding = pendingBindingFor(contextRuntimeTask, paneKey)
+      if (pendingBinding) {
+        storePendingBinding({ ...pendingBinding, description })
       }
       return {
         additionalContext:
@@ -881,8 +894,9 @@ export function useWorkbenchCloudProjectContext({
           cloudAdditionalContext,
         cloudProjectId: runtimeCloudProjectId(submissionProject),
         onRuntimeTaskCreated: address => {
-          if (pendingTodoBinding) {
-            pendingTodoBinding = { ...pendingTodoBinding, target: address }
+          const pendingBinding = pendingTodoBindingsByPane.get(paneKey)
+          if (pendingBinding) {
+            storePendingBinding({ ...pendingBinding, target: address })
           }
           if (pendingAutoJoinResolutionRef.current) {
             pendingAutoJoinResolutionRef.current = {
@@ -904,6 +918,7 @@ export function useWorkbenchCloudProjectContext({
       dismissedDefaultCloudProjectKey,
       pendingCloudProject,
       pendingTodoItem,
+      paneKey,
       setPendingCloudContext,
       todoBindingApis,
     ]
