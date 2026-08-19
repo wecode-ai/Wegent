@@ -210,6 +210,7 @@ export function MobileChatInputControls({
   const { t } = useTranslation('chat')
   const [moreMenuOpen, setMoreMenuOpen] = useState(false)
   const moreMenuButtonRef = useRef<HTMLButtonElement>(null)
+  const moreMenuRef = useRef<HTMLDivElement>(null)
   const [moreMenuStyle, setMoreMenuStyle] = useState<React.CSSProperties>({})
   const showChatContexts = canUseChatContexts(taskType, selectedTeam)
   const isGenerationMode = taskType === 'image' || taskType === 'video'
@@ -241,6 +242,13 @@ export function MobileChatInputControls({
     effectiveRequiresWorkspace !== false
   const showBranchAction = showRepositoryAction && Boolean(selectedRepo)
   const hasSecondaryActions = showAttachmentAction || showChatContexts || showSkillAction
+  const handleAttachmentFileSelect = useCallback(
+    (files: File | File[]) => {
+      setMoreMenuOpen(false)
+      onFileSelect(files)
+    },
+    [onFileSelect]
+  )
 
   const updateMoreMenuPosition = useCallback(() => {
     const button = moreMenuButtonRef.current
@@ -286,6 +294,37 @@ export function MobileChatInputControls({
       viewport?.removeEventListener('scroll', updateMoreMenuPosition)
     }
   }, [moreMenuOpen, updateMoreMenuPosition])
+
+  useEffect(() => {
+    if (!moreMenuOpen) return
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target
+      if (!(target instanceof Node)) return
+      if (moreMenuButtonRef.current?.contains(target) || moreMenuRef.current?.contains(target)) {
+        return
+      }
+      if (
+        target instanceof Element &&
+        target.closest('[role="dialog"], [role="listbox"], [role="menu"]')
+      ) {
+        return
+      }
+      setMoreMenuOpen(false)
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setMoreMenuOpen(false)
+      }
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [moreMenuOpen])
 
   // Render send button based on state
   const renderSendButton = () => {
@@ -410,6 +449,7 @@ export function MobileChatInputControls({
 
         {moreMenuOpen && (
           <div
+            ref={moreMenuRef}
             data-testid="mobile-input-more-actions-menu"
             className="fixed z-50 w-56 overflow-y-auto overscroll-contain rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-md"
             style={moreMenuStyle}
@@ -418,7 +458,7 @@ export function MobileChatInputControls({
               <div className="flex flex-col">
                 {showAttachmentAction && (
                   <AttachmentButton
-                    onFileSelect={onFileSelect}
+                    onFileSelect={handleAttachmentFileSelect}
                     disabled={isStreaming}
                     accept={attachmentAccept}
                     triggerVariant="menu-item"

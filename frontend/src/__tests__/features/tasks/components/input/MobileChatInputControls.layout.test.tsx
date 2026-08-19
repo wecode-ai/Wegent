@@ -45,7 +45,11 @@ jest.mock('@/features/tasks/components/chat/ChatContextInput', () => ({
 
 jest.mock('@/features/tasks/components/AttachmentButton', () => ({
   __esModule: true,
-  default: () => <button type="button">Attach</button>,
+  default: ({ onFileSelect }: { onFileSelect: (files: File[]) => void }) => (
+    <button type="button" onClick={() => onFileSelect([new File(['content'], 'test.txt')])}>
+      Attach
+    </button>
+  ),
 }))
 
 jest.mock('@/features/tasks/components/input/SendButton', () => ({
@@ -192,5 +196,34 @@ describe('MobileChatInputControls layout', () => {
     expect(menu).toHaveClass('fixed')
     expect(menu).toHaveClass('overflow-y-auto')
     expect(menu).toHaveClass('overscroll-contain')
+  })
+
+  it('closes the more actions menu after selecting an attachment', () => {
+    const props = buildProps()
+    render(<MobileChatInputControls {...props} />)
+
+    fireEvent.click(screen.getByTestId('mobile-input-more-actions-button'))
+    fireEvent.click(screen.getByRole('button', { name: 'Attach' }))
+
+    expect(props.onFileSelect).toHaveBeenCalledWith([expect.any(File)])
+    expect(screen.queryByTestId('mobile-input-more-actions-menu')).not.toBeInTheDocument()
+  })
+
+  it('closes the more actions menu when tapping outside', () => {
+    render(<MobileChatInputControls {...buildProps()} />)
+
+    fireEvent.click(screen.getByTestId('mobile-input-more-actions-button'))
+    fireEvent.pointerDown(document.body)
+
+    expect(screen.queryByTestId('mobile-input-more-actions-menu')).not.toBeInTheDocument()
+  })
+
+  it('closes the more actions menu when pressing Escape', () => {
+    render(<MobileChatInputControls {...buildProps()} />)
+
+    fireEvent.click(screen.getByTestId('mobile-input-more-actions-button'))
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    expect(screen.queryByTestId('mobile-input-more-actions-menu')).not.toBeInTheDocument()
   })
 })
