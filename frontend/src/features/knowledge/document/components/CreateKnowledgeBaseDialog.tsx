@@ -41,6 +41,7 @@ import type {
 import { GenerationTaskRow } from '@/features/knowledge/code-wiki/GenerationTaskRow'
 import { getCodeWikiRetrievalProfile } from '@/apis/knowledge'
 import { KnowledgeBaseForm } from './KnowledgeBaseForm'
+import { createDefaultRetrievalConfig } from './retrievalConfig'
 import { useMultimodalKBConfig } from '@/features/knowledge/multimodal/hooks/useMultimodalKBConfig'
 
 /** Available group for selection */
@@ -90,18 +91,6 @@ function GroupTypeIcon({ type }: { type: 'personal' | 'group' | 'organization' |
     case 'group':
     default:
       return <Users className="w-4 h-4" />
-  }
-}
-
-function createDefaultRetrievalConfig(): RetrievalConfigDraft {
-  return {
-    retrieval_mode: 'vector',
-    top_k: 5,
-    score_threshold: 0.5,
-    hybrid_weights: {
-      vector_weight: 0.7,
-      keyword_weight: 0.3,
-    },
   }
 }
 
@@ -214,12 +203,6 @@ export function CreateKnowledgeBaseDialog({
   }, [open, initialKbType, defaultGroupId])
 
   useEffect(() => {
-    if (kind !== 'code') {
-      profileAppliedRef.current = false
-      retrievalConfigChangedRef.current = false
-      setProfileFallbackReason(null)
-      return
-    }
     if (!open || profileAppliedRef.current) return
     profileAppliedRef.current = true
     let cancelled = false
@@ -241,7 +224,7 @@ export function CreateKnowledgeBaseDialog({
     return () => {
       cancelled = true
     }
-  }, [kind, open])
+  }, [open])
 
   // Update selectedKbType when KB type changes (keep summaryEnabled unchanged)
   const handleKbTypeChange = (newType: KnowledgeBaseType) => {
@@ -426,6 +409,13 @@ export function CreateKnowledgeBaseDialog({
               </button>
             ))}
           </div>
+          {profileFallbackReason !== null && (
+            <p className="text-sm text-warning" data-testid="knowledge-retrieval-profile-fallback">
+              {t(
+                `knowledge:document.retrievalProfile.fallbackReasons.${profileFallbackReason || 'unavailable'}`
+              )}
+            </p>
+          )}
           <KnowledgeBaseForm
             advancedExtras={
               kind === 'code' ? (
@@ -465,15 +455,6 @@ export function CreateKnowledgeBaseDialog({
                         dataTestId="code-wiki-execution-model-select"
                       />
                     </SimpleConfigRow>
-                    {profileFallbackReason !== null && (
-                      <p
-                        className="text-sm text-warning"
-                        data-testid="code-wiki-retrieval-profile-fallback"
-                      >
-                        {profileFallbackReason ||
-                          t('knowledge:codeWiki.create.retrievalProfileUnavailable')}
-                      </p>
-                    )}
                   </>
                 ) : (
                   /* KB Type selector - subtle style */

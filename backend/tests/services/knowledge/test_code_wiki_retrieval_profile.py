@@ -101,3 +101,15 @@ def test_profile_health_loads_both_references_in_one_query() -> None:
 
     assert health == {"status": "valid", "fallback_reason": None}
     assert db.query_count == 1
+
+
+def test_profile_health_rejects_incomplete_stored_profile_without_query() -> None:
+    db = _Db([])
+
+    health = profile_health(
+        db,  # type: ignore[arg-type]
+        {"retriever_name": "shared-milvus"},
+    )
+
+    assert health == {"status": "invalid", "fallback_reason": "profile_incomplete"}
+    assert db.query_count == 0

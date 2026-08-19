@@ -309,6 +309,14 @@
       "batchMovePartial": "Batch move completed: {{success}} succeeded, {{failed}} failed. Failed documents remain selected and highlighted for retry"
     },
     "document": {
+      "retrievalProfile": {
+        "fallbackReasons": {
+          "retriever_unavailable": "The configured retrieval default profile is unavailable, so automatic defaults will be used.",
+          "embedding_model_unavailable": "The configured retrieval default profile is unavailable, so automatic defaults will be used.",
+          "profile_incomplete": "The configured retrieval default profile is incomplete, so automatic defaults will be used.",
+          "unavailable": "The retrieval default profile is unavailable, so automatic defaults will be used."
+        }
+      },
       "title": "Documents",
       "upload": "Add sources",
       "edit": "Edit Document",
@@ -1137,8 +1145,7 @@
       "modelDescription": "This repository's code is sent to the model. Assess the exposure yourself.",
       "modelPlaceholder": "Select a model",
       "modelRequired": "Select the model to generate with",
-      "created": "Code Wiki created. Content is generating.",
-      "retrievalProfileUnavailable": "The Code Wiki retrieval profile is unavailable, so automatic defaults will be used."
+      "created": "Code Wiki created. Content is generating."
     },
     "reader": {
       "regenerate": "Regenerate",

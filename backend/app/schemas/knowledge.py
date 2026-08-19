@@ -194,7 +194,7 @@ class RetrievalConfigCreate(BaseModel):
 
 
 class CodeWikiRetrievalProfileUpdate(BaseModel):
-    """Administrator-managed initial retrieval configuration for Code Wiki."""
+    """Administrator-managed default retrieval configuration for new knowledge bases."""
 
     retrieval_config: RetrievalConfigCreate
 
@@ -203,22 +203,28 @@ class CodeWikiRetrievalProfileUpdate(BaseModel):
         config = self.retrieval_config
         if not config.retriever_name or not config.embedding_config:
             raise ValueError(
-                "Code Wiki retrieval profile requires a retriever and embedding model"
+                "Retrieval profile requires a retriever and embedding model"
             )
         if not config.embedding_config.model_name:
             raise ValueError(
-                "Code Wiki retrieval profile requires an embedding model name"
+                "Retrieval profile requires an embedding model name"
             )
         if config.retrieval_mode not in {"vector", "keyword", "hybrid"}:
-            raise ValueError("Code Wiki retrieval profile has an unsupported retrieval mode")
+            raise ValueError("Retrieval profile has an unsupported retrieval mode")
         return self
 
 
 class CodeWikiRetrievalProfileHealth(BaseModel):
-    """Safe validation state shown to admins and Code Wiki creators."""
+    """Safe validation state shown to admins and knowledge base creators."""
 
     status: Literal["missing", "valid", "invalid"]
-    fallback_reason: Optional[str] = None
+    fallback_reason: Optional[
+        Literal[
+            "retriever_unavailable",
+            "embedding_model_unavailable",
+            "profile_incomplete",
+        ]
+    ] = None
 
 
 class CodeWikiRetrievalProfileResponse(BaseModel):

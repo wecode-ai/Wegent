@@ -320,8 +320,8 @@ def get_knowledge_config():
 def get_code_wiki_retrieval_profile(
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
-):
-    """Return the safe system baseline used by the shared Code Wiki form."""
+) -> CodeWikiRetrievalProfileResponse:
+    """Return safe public resource references for new knowledge base forms."""
     del current_user
     retrieval_config, version, health = get_profile(db)
     return {

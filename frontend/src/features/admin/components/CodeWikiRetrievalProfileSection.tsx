@@ -12,20 +12,12 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { adminApis } from '@/apis/admin'
 import type { RetrievalConfigDraft } from '@/types/knowledge'
 import { RetrievalSettingsSection } from '@/features/knowledge/document/components/RetrievalSettingsSection'
-
-const DEFAULT_PROFILE: RetrievalConfigDraft = {
-  retriever_namespace: 'default',
-  embedding_config: { model_namespace: 'default' },
-  retrieval_mode: 'vector',
-  top_k: 5,
-  score_threshold: 0.5,
-  hybrid_weights: { vector_weight: 0.7, keyword_weight: 0.3 },
-}
+import { createDefaultRetrievalProfile } from '@/features/knowledge/document/components/retrievalConfig'
 
 export function CodeWikiRetrievalProfileSection() {
   const { t } = useTranslation('admin')
   const { toast } = useToast()
-  const [profile, setProfile] = useState<RetrievalConfigDraft>(DEFAULT_PROFILE)
+  const [profile, setProfile] = useState<RetrievalConfigDraft>(createDefaultRetrievalProfile)
   const [health, setHealth] = useState<'missing' | 'valid' | 'invalid'>('missing')
   const [fallbackReason, setFallbackReason] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -63,11 +55,12 @@ export function CodeWikiRetrievalProfileSection() {
       <RetrievalSettingsSection config={profile} onChange={setProfile} scope="all" publicOnly />
       <p className={health === 'valid' ? 'text-sm text-success' : 'text-sm text-warning'}>
         {t(`system_config.code_wiki_profile_health_${health}`)}
-        {fallbackReason ? ` ${fallbackReason}` : ''}
+        {fallbackReason ? ` ${t(`system_config.retrieval_profile_reason_${fallbackReason}`)}` : ''}
       </p>
       <Button
         type="button"
         variant="primary"
+        className="h-11"
         onClick={save}
         disabled={saving}
         data-testid="save-code-wiki-retrieval-profile"

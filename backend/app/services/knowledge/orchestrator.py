@@ -48,6 +48,10 @@ from app.services.knowledge.document_read_service import (
     document_read_service,
 )
 from app.services.knowledge.knowledge_service import KnowledgeService
+from app.services.knowledge.code_wiki.retrieval_profile import (
+    get_profile,
+    merge_profile_defaults,
+)
 from app.stores.tasks import task_store
 from shared.models import SearchHints
 
@@ -296,19 +300,36 @@ class KnowledgeOrchestrator:
         if rag_config_mode == "disabled":
             return None
 
-        resolved_config = dict(retrieval_config or {})
+        caller_overrides: Dict[str, Any] = {}
+        if retriever_name:
+            caller_overrides["retriever_name"] = retriever_name
+        if retriever_namespace:
+            caller_overrides["retriever_namespace"] = retriever_namespace
+        embedding_overrides: Dict[str, str] = {}
+        if embedding_model_name:
+            embedding_overrides["model_name"] = embedding_model_name
+        if embedding_model_namespace:
+            embedding_overrides["model_namespace"] = embedding_model_namespace
+        if embedding_overrides:
+            caller_overrides["embedding_config"] = embedding_overrides
+
+        profile, _, profile_health = get_profile(db)
+        if profile_health["status"] == "valid" and profile:
+            resolved_config = merge_profile_defaults(profile, caller_overrides)
+        else:
+            resolved_config = caller_overrides
+            if profile_health["status"] == "invalid":
+                logger.warning(
+                    "[Orchestrator] Retrieval profile is unavailable; using automatic defaults: %s",
+                    profile_health["fallback_reason"],
+                )
+        resolved_config = merge_profile_defaults(resolved_config, retrieval_config)
         embedding_config = dict(resolved_config.get("embedding_config") or {})
 
-        retriever_name = resolved_config.get("retriever_name") or retriever_name
-        retriever_namespace = (
-            resolved_config.get("retriever_namespace") or retriever_namespace
-        )
-        embedding_model_name = (
-            embedding_config.get("model_name") or embedding_model_name
-        )
-        embedding_model_namespace = (
-            embedding_config.get("model_namespace") or embedding_model_namespace
-        )
+        retriever_name = resolved_config.get("retriever_name")
+        retriever_namespace = resolved_config.get("retriever_namespace")
+        embedding_model_name = embedding_config.get("model_name")
+        embedding_model_namespace = embedding_config.get("model_namespace")
 
         if not retriever_name:
             default_retriever = self.get_default_retriever(db, user.id, namespace)

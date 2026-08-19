@@ -1,4 +1,4 @@
-"""System retrieval profile used to initialize new Code Wiki forms."""
+"""System retrieval profile used to initialize new knowledge bases."""
 
 from __future__ import annotations
 
@@ -25,6 +25,8 @@ def profile_health(
     embedding_config = retrieval_config.get("embedding_config") or {}
     embedding_name = embedding_config.get("model_name")
     embedding_namespace = embedding_config.get("model_namespace", "default")
+    if not retriever_name or not embedding_name:
+        return {"status": "invalid", "fallback_reason": "profile_incomplete"}
     resources = (
         db.query(Kind)
         .filter(
@@ -47,10 +49,7 @@ def profile_health(
         ("Retriever", retriever_name, retriever_namespace)
     )
     if retriever is None:
-        return {
-            "status": "invalid",
-            "fallback_reason": "The configured public retriever is unavailable.",
-        }
+        return {"status": "invalid", "fallback_reason": "retriever_unavailable"}
 
     embedding_model = resources_by_reference.get(
         ("Model", embedding_name, embedding_namespace)
@@ -59,7 +58,7 @@ def profile_health(
     if embedding_model is None or model_spec.get("modelType") != "embedding":
         return {
             "status": "invalid",
-            "fallback_reason": "The configured public embedding model is unavailable.",
+            "fallback_reason": "embedding_model_unavailable",
         }
 
     return {"status": "valid", "fallback_reason": None}
@@ -76,7 +75,11 @@ def get_profile(db: Session) -> tuple[dict[str, Any] | None, int, dict[str, str 
     retrieval_config = value.get("retrieval_config")
     if not isinstance(retrieval_config, dict):
         retrieval_config = None
-    return retrieval_config, config.version if config else 0, profile_health(db, retrieval_config)
+    return (
+        retrieval_config,
+        config.version if config else 0,
+        profile_health(db, retrieval_config),
+    )
 
 
 def save_profile(
@@ -106,3 +109,18 @@ def save_profile(
     db.commit()
     db.refresh(config)
     return retrieval_config, config.version, profile_health(db, retrieval_config)
+
+
+def merge_profile_defaults(
+    profile: dict[str, Any], explicit_config: dict[str, Any] | None
+) -> dict[str, Any]:
+    """Fill omitted retrieval fields from a healthy profile without overriding input."""
+    resolved = dict(profile)
+    explicit = dict(explicit_config or {})
+    profile_embedding = dict(resolved.get("embedding_config") or {})
+    explicit_embedding = explicit.pop("embedding_config", None)
+    if isinstance(explicit_embedding, dict):
+        profile_embedding.update(explicit_embedding)
+    resolved["embedding_config"] = profile_embedding
+    resolved.update(explicit)
+    return resolved

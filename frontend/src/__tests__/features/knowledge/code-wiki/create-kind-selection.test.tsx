@@ -87,6 +87,12 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
     await waitFor(() => expect(onSubmit).not.toHaveBeenCalled())
   })
 
+  it('loads the retrieval profile for documents before a kind is selected', async () => {
+    render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={jest.fn()} />)
+
+    await waitFor(() => expect(getCodeWikiRetrievalProfile).toHaveBeenCalledTimes(1))
+  })
+
   it('swaps the opening-view field for repository fields when code is chosen', async () => {
     render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={jest.fn()} />)
 
@@ -96,21 +102,20 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
     expect(screen.queryByTestId('switch-kb-type')).not.toBeInTheDocument()
     expect(screen.getByTestId('repository-selector')).toBeInTheDocument()
     expect(screen.getByTestId('code-wiki-language')).toBeInTheDocument()
-    await waitFor(() => expect(getCodeWikiRetrievalProfile).toHaveBeenCalledTimes(1))
   })
 
   it('shows when an unusable profile falls back to automatic defaults', async () => {
     ;(getCodeWikiRetrievalProfile as jest.Mock).mockResolvedValue({
       version: 1,
       retrieval_config: null,
-      health: { status: 'invalid', fallback_reason: 'Public retriever is inactive.' },
+      health: { status: 'invalid', fallback_reason: 'retriever_unavailable' },
     })
     render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={jest.fn()} />)
 
-    fireEvent.click(screen.getByTestId('create-kb-kind-code'))
-
-    await screen.findByTestId('code-wiki-retrieval-profile-fallback')
-    expect(screen.getByText('Public retriever is inactive.')).toBeInTheDocument()
+    await screen.findByTestId('knowledge-retrieval-profile-fallback')
+    expect(
+      screen.getByText('knowledge:document.retrievalProfile.fallbackReasons.retriever_unavailable')
+    ).toBeInTheDocument()
   })
 
   it('shows the automatic-default notice when no profile is configured', async () => {
@@ -121,11 +126,9 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
     })
     render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={jest.fn()} />)
 
-    fireEvent.click(screen.getByTestId('create-kb-kind-code'))
-
-    await screen.findByTestId('code-wiki-retrieval-profile-fallback')
+    await screen.findByTestId('knowledge-retrieval-profile-fallback')
     expect(
-      screen.getByText('knowledge:codeWiki.create.retrievalProfileUnavailable')
+      screen.getByText('knowledge:document.retrievalProfile.fallbackReasons.unavailable')
     ).toBeInTheDocument()
   })
 

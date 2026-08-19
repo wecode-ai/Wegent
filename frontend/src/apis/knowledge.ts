@@ -445,7 +445,7 @@ export async function getKnowledgeConfig(): Promise<KnowledgeConfig> {
   return apiClient.get<KnowledgeConfig>('/knowledge-bases/config')
 }
 
-/** Get the authenticated-user-readable system baseline for new Code Wikis. */
+/** Get the authenticated-user-readable retrieval baseline for new knowledge bases. */
 export async function getCodeWikiRetrievalProfile(): Promise<CodeWikiRetrievalProfile> {
   return apiClient.get<CodeWikiRetrievalProfile>('/knowledge-bases/code-wiki-retrieval-profile')
 }

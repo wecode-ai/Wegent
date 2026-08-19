@@ -6,10 +6,27 @@ import '@testing-library/jest-dom'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import { CreateKnowledgeBaseDialog } from '@/features/knowledge/document/components/CreateKnowledgeBaseDialog'
+import { getCodeWikiRetrievalProfile } from '@/apis/knowledge'
 import type { DirectAccessRequirement, KnowledgeBaseCreate } from '@/types/knowledge'
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
+}))
+
+jest.mock('@/apis/knowledge', () => ({
+  getCodeWikiRetrievalProfile: jest.fn().mockResolvedValue({
+    version: 1,
+    retrieval_config: {
+      retriever_name: 'public-retriever',
+      retriever_namespace: 'default',
+      embedding_config: { model_name: 'public-embedding', model_namespace: 'default' },
+      retrieval_mode: 'hybrid',
+      top_k: 8,
+      score_threshold: 0.3,
+      hybrid_weights: { vector_weight: 0.6, keyword_weight: 0.4 },
+    },
+    health: { status: 'valid', fallback_reason: null },
+  }),
 }))
 
 jest.mock('@/features/knowledge/document/components/KnowledgeBaseForm', () => ({
@@ -69,6 +86,7 @@ describe('CreateKnowledgeBaseDialog direct access requirement', () => {
 
     render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={onSubmit} />)
 
+    await waitFor(() => expect(getCodeWikiRetrievalProfile).toHaveBeenCalledTimes(1))
     expect(screen.getByTestId('knowledge-base-direct-access-read')).toBeChecked()
     fireEvent.click(screen.getByRole('button', { name: 'set name' }))
     fireEvent.click(screen.getByRole('button', { name: 'disable summary' }))
@@ -77,7 +95,18 @@ describe('CreateKnowledgeBaseDialog direct access requirement', () => {
 
     await waitFor(() => {
       expect(onSubmit).toHaveBeenCalledWith(
-        expect.objectContaining({ direct_access_requirement: 'edit' })
+        expect.objectContaining({
+          direct_access_requirement: 'edit',
+          retrieval_config: {
+            retriever_name: 'public-retriever',
+            retriever_namespace: 'default',
+            embedding_config: { model_name: 'public-embedding', model_namespace: 'default' },
+            retrieval_mode: 'hybrid',
+            top_k: 8,
+            score_threshold: 0.3,
+            hybrid_weights: { vector_weight: 0.6, keyword_weight: 0.4 },
+          },
+        })
       )
     })
   })

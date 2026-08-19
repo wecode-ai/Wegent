@@ -94,7 +94,7 @@ def get_code_wiki_retrieval_profile(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),
 ) -> CodeWikiRetrievalProfileResponse:
-    """Return the Code Wiki profile and its current resource-reference health."""
+    """Return the retrieval profile and its current resource-reference health."""
     del current_user
     retrieval_config, version, health = get_profile(db)
     return CodeWikiRetrievalProfileResponse(
@@ -113,7 +113,7 @@ def update_code_wiki_retrieval_profile(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),
 ) -> CodeWikiRetrievalProfileResponse:
-    """Replace the administrator-managed Code Wiki form baseline."""
+    """Replace the administrator-managed retrieval baseline for new knowledge bases."""
     retrieval_config, version, health = save_profile(
         db,
         retrieval_config=profile.retrieval_config.model_dump(exclude_none=True),
