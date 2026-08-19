@@ -117,10 +117,15 @@ async function waitForWorkbenchTask(control, taskId, message) {
   throw new Error(message)
 }
 
-async function waitForWorkbenchDebugState(control, predicate, message) {
+async function waitForWorkbenchDebugState(
+  control,
+  predicate,
+  message,
+  timeoutMs = DEFAULT_STEP_TIMEOUT_MS
+) {
   const startedAt = Date.now()
   let lastSnapshot = null
-  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+  while (Date.now() - startedAt < timeoutMs) {
     const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
     lastSnapshot = snapshot
     if (predicate(snapshot)) return snapshot
@@ -356,6 +361,10 @@ async function verifyDefaultWorkspaceStartupTab(control) {
 }
 
 async function verifyWorkspaceIssueCreation(control) {
+  await ensureExperimentalFeaturesEnabled(control)
+  await control.command('waitFor', '[data-testid="workspace-tab-strip"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   const boardTabs = workspaceTabIds(JSON.parse(await control.command('snapshot', 'body')), 'board')
   assert.ok(boardTabs.length > 0, 'The workspace issue flow requires an existing board tab')
   const boardTabSuffix = boardTabs[0].slice('workspace-tab-board-'.length)
@@ -481,10 +490,15 @@ async function verifyWorkspaceIssueCreation(control) {
     'waitFor',
     `${boardContentSelector} [data-testid="cloud-todo-detail-title"]`,
     {
-      text: 'WEWORK_DESKTOP_E2E_ISSUE Workspace fullscreen issue creation verified',
       visible: true,
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
+  )
+  await waitForControlValue(
+    control,
+    `${boardContentSelector} [data-testid="cloud-todo-detail-title"]`,
+    'WEWORK_DESKTOP_E2E_ISSUE Workspace fullscreen issue creation verified',
+    'Fullscreen Issue creation did not persist the composed title'
   )
   await captureVerificationScreenshot(
     control,
@@ -727,6 +741,15 @@ async function waitForAttribute(control, selector, name, expected, message) {
 }
 
 async function verifyWorkspaceTabIsolation(control) {
+  await ensureExperimentalFeaturesEnabled(control)
+  await control.command('waitFor', '[data-testid="workspace-tab-strip"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid^="workspace-tab-select-task-"]')
+  await control.command('waitFor', '[data-tab-kind="task"][aria-selected="true"]', {
+    text: '任务',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await ensureExperimentalFeaturesEnabled(control)
   await control.command('waitFor', '[data-testid="workspace-tab-strip"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,

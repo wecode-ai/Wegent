@@ -67,11 +67,11 @@ describe('IssueComposer', () => {
     })
   })
 
-  it('uses the same title length limit as task mode', () => {
+  it('preserves a long issue title without truncation', () => {
     const description = '需要处理的任务'.repeat(20)
 
     expect(issueDraftFromText(description)).toEqual({
-      title: `${Array.from(description).slice(0, 59).join('')}…`,
+      title: description,
       description,
     })
   })

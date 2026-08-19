@@ -14,6 +14,7 @@ import {
   type CloudProjectId,
   type CloudProjectMember,
   type CloudTaskContext,
+  type ProjectTaskAttachment,
   type Delivery,
   type DeliveryAsset,
   type DeliveryCreateInput,
@@ -29,7 +30,8 @@ import {
 } from '@/api/issueWorkflow'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { openLocalFile } from '@/lib/local-terminal'
-import type { RuntimeTaskAddress } from '@/types/api'
+import { readDroppedFiles } from '@/tauri/droppedFiles'
+import type { Attachment, RuntimeTaskAddress } from '@/types/api'
 import {
   localProjectAssociationFromTags,
   localProjectAssociationTag,
@@ -969,6 +971,40 @@ export function createLocalDeliveryApi(
         item_id: itemId,
       })
     },
+    async listProjectTaskAttachments(projectId: CloudProjectId) {
+      const tasks = await api.listLoopItems(projectId)
+      const rows = await Promise.all(
+        tasks.items.map(async item => {
+          const attachments = await request<CloudLoopItemAttachment[]>('attachments.list', {
+            project_id: projectId,
+            item_id: item.id,
+          })
+          return attachments.map(attachment => ({
+            ...attachment,
+            loop_item_title: item.title,
+          }))
+        })
+      )
+      return {
+        items: rows
+          .flat()
+          .sort((left, right) =>
+            right.created_at.localeCompare(left.created_at)
+          ) as ProjectTaskAttachment[],
+      }
+    },
+    async importLoopItemAttachments(itemId: string, attachments: Attachment[]) {
+      const files = await readDroppedFiles(
+        attachments
+          .filter(attachment => Boolean(attachment.local_path?.trim()))
+          .map(attachment => attachment.local_path!)
+      )
+      const imported: CloudLoopItemAttachment[] = []
+      for (const file of files) {
+        imported.push(await api.addLoopItemAttachment(itemId, file))
+      }
+      return imported
+    },
     async addLoopItemAttachment(itemId: string, file: File) {
       const projectId = await resolveProjectId(itemId)
       return request<CloudLoopItemAttachment>('attachments.add', {
@@ -983,6 +1019,13 @@ export function createLocalDeliveryApi(
           attachment_id: attachmentId,
         })
       )
+    },
+    async readLoopItemAttachment(attachmentId: string) {
+      const access = await request<LocalAccessRecord>('attachments.access', {
+        attachment_id: attachmentId,
+      })
+      const [file] = await readDroppedFiles([access.path])
+      return file
     },
     async downloadLoopItemAttachment(attachmentId: string) {
       const access = await request<LocalAccessRecord>('attachments.access', {
@@ -1188,10 +1231,22 @@ export function createLocalDeliveryApi(
     async accessCloudFile(fileId: string) {
       return localAccess(await request<LocalAccessRecord>('files.access', { file_id: fileId }))
     },
+    async readCloudFile(fileId: string) {
+      const access = await request<LocalAccessRecord>('files.access', { file_id: fileId })
+      const [file] = await readDroppedFiles([access.path])
+      return file
+    },
     async accessDeliveryFile(assetId: string) {
       return localAccess(
         await request<LocalAccessRecord>('deliveries.access_asset', { asset_id: assetId })
       )
+    },
+    async readDeliveryFile(assetId: string) {
+      const access = await request<LocalAccessRecord>('deliveries.access_asset', {
+        asset_id: assetId,
+      })
+      const [file] = await readDroppedFiles([access.path])
+      return file
     },
     async moveCloudFile(fileId: string, path: string, version: number) {
       const record = await request<LocalProjectFileRecord>('files.move', {

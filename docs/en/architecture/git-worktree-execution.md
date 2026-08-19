@@ -53,14 +53,11 @@ sequenceDiagram
     U->>B: runtime.tasks.create(taskId, sourcePath, git_worktree)
     B->>E: relay unchanged
     E->>E: compute stable plannedPath and persist intent
-    E-->>U: accepted + plannedPath
-    U->>U: store plannedPath in the current task address
+    E-->>U: accepted/queued + plannedPath
+    U->>U: hydrate the current task address and list projection with plannedPath
     alt no slot available
         S->>S: wait without creating a directory
     end
-    U->>E: runtime.tasks.list
-    E-->>U: task projection + plannedPath/finalPath
-    U->>U: hydrate the current task path from the projection
     S->>E: acquire slot
     E->>G: revalidate and create Worktree
     G-->>E: finalPath
@@ -92,14 +89,14 @@ sequenceDiagram
     end
 ```
 
-| Edge                                                          | Code owner                                                                         |
-| ------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| DeviceWorkspace selection, availability, preferences, and UI  | `wework/src/features/workbench/`, `wework/src/components/chat/composer/`           |
-| Local/Cloud/Remote Runtime routing and task projection        | `wework/src/api/`, `wework/src/features/workbench/useWorkbenchRuntimeMessaging.ts`, `wework/src/features/workbench/workbenchReducer.ts` |
-| Logical-device authorization, persistent Runtime identity, and socket resolution | `backend/app/services/device/`, `backend/app/api/ws/`                              |
-| Worktree capability, preflight, Git lifecycle, and state      | `executor/src/runtime_work/`                                                       |
-| Cloud persistent volume, stable mount path, and single writer | cloud device provider, deployment configuration, `docker/device/`                  |
-| Cross-layer acceptance                                        | `wework/e2e/desktop/`, `scripts/acceptance/`, Backend and Executor contract tests   |
+| Edge                                                                             | Code owner                                                                                                                              |
+| -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| DeviceWorkspace selection, availability, preferences, and UI                     | `wework/src/features/workbench/`, `wework/src/components/chat/composer/`                                                                |
+| Local/Cloud/Remote Runtime routing and task projection                           | `wework/src/api/`, `wework/src/features/workbench/useWorkbenchRuntimeMessaging.ts`, `wework/src/features/workbench/workbenchReducer.ts` |
+| Logical-device authorization, persistent Runtime identity, and socket resolution | `backend/app/services/device/`, `backend/app/api/ws/`                                                                                   |
+| Worktree capability, preflight, Git lifecycle, and state                         | `executor/src/runtime_work/`                                                                                                            |
+| Cloud persistent volume, stable mount path, and single writer                    | cloud device provider, deployment configuration, `docker/device/`                                                                       |
+| Cross-layer acceptance                                                           | `wework/e2e/desktop/`, `scripts/acceptance/`, Backend and Executor contract tests                                                       |
 
 Essential invariants:
 
@@ -125,6 +122,6 @@ Essential invariants:
 20. `preserveSnapshot=false` is terminal cleanup: the Executor deletes any existing snapshot reference and removes the record from `worktrees.json`; later `runtime.worktrees.list` calls never return a tombstone for the cleaned Worktree.
 21. Workspace-kind detection prefers real Git metadata. The `worktrees/<id>/<project>` path convention is only a fallback when no Git repository or Worktree metadata can be resolved. A normal repository is never projected as a Worktree solely because an ancestor directory is named `worktrees`.
 22. After Runtime accepts task creation, a work-list refresh failure only defers reconciliation; it never removes the accepted task from local visibility or reports the send as failed.
-23. The current task address is continuously hydrated with the stable planned or final path from both the acceptance response and later task-list projections. Once the task list provides a non-empty path, an empty optimistic path is never retained.
+23. Optimistic Worktree navigation may carry only task identity before the planned path returns. Once the create response or task list first provides the planned or final path, Wework hydrates that path into the current task address. The current task, list projection, and later Terminal, IDE, and file operations never retain a pathless optimistic address indefinitely.
 
 See [Cloud Git Worktree Goal Mode and Parallel Development Plan](../wework/developer-guide/wework-cloud-git-worktree-parallel-development-plan.md) for delivery waves, sub-agent write scopes, and the acceptance matrix.

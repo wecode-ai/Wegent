@@ -238,6 +238,7 @@ The concurrent-memory scenario is also macOS-only. It creates and holds 10 Respo
 `wework/e2e/utils/mock-response-api-server.mjs` provides a real HTTP service that validates local-model capability probes:
 
 - `POST /v1/responses`: returns non-streaming Responses API JSON.
+- `POST /v1/responses` capability probes: returns `text/event-stream` tool-call events such as `response.output_item.added` and `response.output_item.done`.
 - `POST /v1/responses` with `stream: true`: returns `text/event-stream` events including `response.created`, `response.output_text.delta`, and `response.completed`.
 - `POST /v1/chat/completions`: validates and returns a Chat Completions function tool call.
 - `POST /v1/messages`: validates and returns an Anthropic Messages `tool_use` block.

@@ -2108,6 +2108,17 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
             ],
             Some(PostProcessor::Json),
         )),
+        "git_github_pull_request_merge_queue" => Some(command_definition(
+            "gh api graphql <pull-request-merge-queue-query>",
+            &[
+                "gh",
+                "api",
+                "graphql",
+                "-f",
+                "query=query($url:URI!){resource(url:$url){... on PullRequest{mergeQueueEntry{id}}}}",
+            ],
+            Some(PostProcessor::Json),
+        )),
         "git_gitlab_merge_requests" => Some(command_definition(
             "glab mr list --all --source-branch <branch>",
             &[

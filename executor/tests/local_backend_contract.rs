@@ -180,6 +180,7 @@ async fn local_backend_task_execute_handler_runs_agent_and_emits_events() {
     let fake_claude = write_fake_executable(
         "fake-local-backend-claude",
         r#"#!/bin/sh
+	cat >/dev/null
 	printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"local done"}]}}'
 	printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn"}'
 	"#,
@@ -223,6 +224,7 @@ async fn local_backend_task_execute_streams_claude_stdout_before_completion() {
     let fake_claude = write_fake_executable(
         "fake-local-backend-streaming-claude",
         r#"#!/bin/sh
+	cat >/dev/null
 	printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"hello"}]}}'
 	sleep 0.1
 	printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":" world"}]}}'
@@ -272,6 +274,7 @@ async fn local_backend_task_execute_streams_claude_thinking_deltas_before_text()
     let fake_claude = write_fake_executable(
         "fake-local-backend-thinking-claude",
         r#"#!/bin/sh
+	cat >/dev/null
 	printf '%s\n' '{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"checking image"}}'
 	sleep 0.1
 	printf '%s\n' '{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"visible answer"}}'
@@ -319,6 +322,7 @@ async fn local_backend_task_execute_streams_claude_assistant_thinking_blocks_as_
     let fake_claude = write_fake_executable(
         "fake-local-backend-assistant-thinking-claude",
         r#"#!/bin/sh
+	cat >/dev/null
 	printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"abcdef"},{"type":"text","text":"answer"}]}}'
 	printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn"}'
 	"#,
@@ -375,6 +379,7 @@ async fn local_backend_task_execute_streams_claude_tool_use_blocks() {
     let fake_claude = write_fake_executable(
         "fake-local-backend-tool-claude",
         r##"#!/bin/sh
+	cat >/dev/null
 	printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"Read_0","name":"Read","input":{"file_path":"README.md"}}]}}'
 	sleep 0.1
 	printf '%s\n' '{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"Read_0","content":"# Project"}]}}'
@@ -443,6 +448,7 @@ async fn local_backend_task_execute_streams_large_claude_assistant_message() {
         "fake-local-backend-large-assistant-claude",
         &format!(
             r#"#!/bin/sh
+	cat >/dev/null
 	printf '%s\n' '{}'
 	printf '%s\n' '{{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn"}}'
 	"#,

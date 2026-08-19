@@ -9,7 +9,6 @@ use std::{
 
 use serde_json::{json, Value};
 
-use crate::logging::log_executor_event;
 use crate::protocol::ExecutionRequest;
 
 pub(crate) fn execution_request(payload: &Value) -> Option<ExecutionRequest> {
@@ -95,46 +94,6 @@ pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, pay
             .extra
             .insert("additionalContext".to_owned(), additional_context);
     }
-    let origin = request.extra.get("origin").and_then(Value::as_object);
-    if origin
-        .and_then(|value| value.get("type"))
-        .and_then(Value::as_str)
-        == Some("board_task")
-    {
-        log_executor_event(
-            "issue runtime context metadata applied",
-            &[
-                ("task_id", request.task_id.clone()),
-                (
-                    "cloud_project_id",
-                    request
-                        .extra
-                        .get("cloudProjectId")
-                        .or_else(|| request.extra.get("cloud_project_id"))
-                        .and_then(id_value)
-                        .unwrap_or_default(),
-                ),
-                (
-                    "origin_cloud_project_id",
-                    origin
-                        .and_then(|value| value.get("cloudProjectId"))
-                        .and_then(id_value)
-                        .unwrap_or_default(),
-                ),
-                (
-                    "loop_item_id",
-                    origin
-                        .and_then(|value| value.get("loopItemId"))
-                        .and_then(id_value)
-                        .unwrap_or_default(),
-                ),
-                (
-                    "additional_context_present",
-                    request.extra.contains_key("additionalContext").to_string(),
-                ),
-            ],
-        );
-    }
     if let Some(client_user_message_id) = payload
         .get("clientUserMessageId")
         .or_else(|| payload.get("client_user_message_id"))
@@ -173,14 +132,6 @@ pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, pay
     }
     if let Some(turn_id) = id_field(payload, "turn_id") {
         request.subtask_id = turn_id;
-    }
-}
-
-fn id_value(value: &Value) -> Option<String> {
-    match value {
-        Value::String(value) => Some(value.clone()),
-        Value::Number(value) => Some(value.to_string()),
-        _ => None,
     }
 }
 
@@ -696,6 +647,9 @@ fn git_worktree_root_and_id(path: &str) -> Option<(String, String)> {
 }
 
 fn resolved_worktree_root_and_id(path: &str) -> Option<(String, String)> {
+    if !Path::new(path).exists() {
+        return path_worktree_root_and_id(path);
+    }
     if let Some(worktree) = git_worktree_root_and_id(path) {
         return Some(worktree);
     }
@@ -736,7 +690,7 @@ fn parse_gitdir_file(git_file: &Path, worktree_root: &Path) -> Option<PathBuf> {
 
 fn path_worktree_root_and_id(path: &str) -> Option<(String, String)> {
     let parts = Path::new(path).components().collect::<Vec<_>>();
-    for index in 0..parts.len() {
+    for index in (0..parts.len()).rev() {
         let component_text = parts[index].as_os_str().to_str()?;
         if component_text != "worktrees" && component_text != ".worktrees" {
             continue;
@@ -924,6 +878,38 @@ mod tests {
         assert_eq!(
             workspace_task_path(&source_path, &repository_path),
             repository_path
+        );
+    }
+
+    #[test]
+    fn nonexistent_planned_worktree_does_not_inherit_an_ancestor_worktree() {
+        let directory = tempdir().expect("temporary directory");
+        let common_dir = directory.path().join("repo").join(".git");
+        let outer_worktree = directory.path().join("outer");
+        let outer_git_dir = common_dir.join("worktrees").join("outer");
+        std::fs::create_dir_all(&outer_git_dir).expect("outer worktree metadata");
+        std::fs::create_dir_all(&outer_worktree).expect("outer worktree");
+        std::fs::write(
+            outer_worktree.join(".git"),
+            format!("gitdir: {}\n", outer_git_dir.display()),
+        )
+        .expect("outer worktree git file");
+
+        let planned = outer_worktree
+            .join("executor-home")
+            .join("workspace")
+            .join("worktrees")
+            .join("runtime-1")
+            .join("workspace");
+        let planned_path = planned.display().to_string();
+
+        assert_eq!(
+            workspace_task_path(&planned_path, &outer_worktree.display().to_string()),
+            planned_path
+        );
+        assert_eq!(
+            infer_worktree_id(&planned_path).as_deref(),
+            Some("runtime-1")
         );
     }
 }

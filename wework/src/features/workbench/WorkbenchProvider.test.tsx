@@ -1093,6 +1093,22 @@ function ProjectSendProbe() {
       <button
         type="button"
         onClick={() => {
+          const project =
+            workbench.state.currentProject ??
+            workbench.state.projects.find(candidate => candidate.id === 7)
+          if (!project) return
+          void workbench.createProjectRuntimeTask('修复 CI', {
+            project,
+            deviceWorkspaceId: 23,
+            runtime: 'codex',
+          })
+        }}
+      >
+        send with explicit project workspace
+      </button>
+      <button
+        type="button"
+        onClick={() => {
           const address = {
             deviceId: 'device-1',
             taskId: 'runtime-b',
@@ -4684,6 +4700,76 @@ describe('WorkbenchProvider runtime tasks', () => {
       deviceId: 'device-1',
       taskId: request.taskId,
     })
+  })
+
+  test('creates an embedded project task in its locally selected workspace', async () => {
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 7, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  id: 22,
+                  projectId: 7,
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-alpha',
+                  mapped: true,
+                  available: true,
+                  tasks: [],
+                },
+                {
+                  id: 23,
+                  projectId: 7,
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-beta',
+                  mapped: true,
+                  available: true,
+                  tasks: [],
+                },
+              ],
+            },
+          ],
+          totalTasks: 0,
+        })
+      ),
+      createRuntimeTask: vi.fn(async request => ({
+        accepted: true,
+        deviceId: request.deviceId,
+        taskId: request.taskId,
+        workspacePath: request.workspacePath,
+        runtime: 'codex',
+      })),
+      getRuntimeTranscript: vi.fn(async (address: RuntimeTranscriptRequest) => ({
+        taskId: address.taskId,
+        workspacePath: address.workspacePath,
+        runtime: 'codex',
+        messages: [],
+      })),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<ProjectSendProbe />, services)
+
+    await waitFor(() => expect(screen.getByTestId('runtime-project-count')).toHaveTextContent('1'))
+    await userEvent.click(screen.getByText('select project'))
+    await userEvent.click(screen.getByText('send with explicit project workspace'))
+
+    await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
+    expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deviceId: 'device-1',
+        workspacePath: '/workspace/project-beta',
+        message: '修复 CI',
+      })
+    )
   })
 
   test('prepares a configured model before opening a new task', async () => {

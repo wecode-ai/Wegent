@@ -1043,7 +1043,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     userId: state.user?.id,
   })
   const workItemContextAvailable = Boolean(
-    currentProjectSpaceRuntimeTask && boundCloudProject && boundCloudItem && boundProjectSpaceApi
+    experimentalFeaturesEnabled &&
+    currentProjectSpaceRuntimeTask &&
+    boundCloudProject &&
+    boundCloudItem &&
+    boundProjectSpaceApi
   )
   const supervisor = runtimeTaskSummary?.supervisor ?? null
   const defaultEmbeddedBrowserLabel = currentRuntimeTask?.taskId
@@ -1660,13 +1664,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       ? {
           deviceId: activeDeviceId,
           path: soleActiveDeviceWorkspacePath,
-          source: 'runtime' as const,
-        }
-      : null) ??
-    (currentRuntimeTask && (currentRuntimeTask.workspacePath || runtimeTaskWorkspacePath)
-      ? {
-          deviceId: currentRuntimeTask.deviceId,
-          path: currentRuntimeTask.workspacePath || runtimeTaskWorkspacePath!,
           source: 'runtime' as const,
         }
       : null)
@@ -2647,7 +2644,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       : currentWorkItemGuideProject
         ? [currentWorkItemGuideProject]
         : []
-  const projectSpaceContext =
+  const projectSpaceContext = experimentalFeaturesEnabled ? (
     currentProjectSpaceRuntimeTask && boundCloudProject && boundCloudItem ? (
       <WorkItemComposerGuide
         integrated
@@ -2683,6 +2680,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         onRemoveProject={clearPendingProjectContext}
       />
     ) : null
+  ) : null
   useEffect(() => {
     if (!rightPanelImmediateLayout || !rightPanelOpen) return
 

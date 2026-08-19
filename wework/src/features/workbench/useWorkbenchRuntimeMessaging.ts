@@ -379,13 +379,6 @@ export function useWorkbenchRuntimeMessaging({
       let sendRequested = false
       try {
         const outboundRequest = await prepareRuntimeSendRequest(request)
-        logIssueRuntimeContextTrace('pane-send-prepared', {
-          taskId: outboundRequest.address.taskId,
-          deviceId: outboundRequest.address.deviceId,
-          cloudProjectId: outboundRequest.cloudProjectId,
-          origin: outboundRequest.origin,
-          additionalContext: outboundRequest.additionalContext,
-        })
         if (!options?.silentBusyRetry) {
           lifecycleStore.sendRequested(outboundRequest.address)
           sendRequested = true
@@ -702,14 +695,17 @@ export function useWorkbenchRuntimeMessaging({
       projectOverride?: ProjectWithTasks | null,
       includeSelectedSkills = !isOptionsLocked,
       selectedSkillsOverride?: SkillRef[],
-      deviceOverride?: string | null
+      deviceOverride?: string | null,
+      deviceWorkspaceIdOverride?: number | null
     ): { payload: ChatSendPayload; activeDeviceId?: string } | null => {
       if (!state.defaultTeam) return null
       const activeProject = projectOverride === undefined ? state.currentProject : projectOverride
       const selectedProjectWorkspace = findProjectDeviceWorkspace(
         state.runtimeWork,
         activeProject?.id,
-        state.selectedDeviceWorkspaceId
+        deviceWorkspaceIdOverride === undefined
+          ? state.selectedDeviceWorkspaceId
+          : deviceWorkspaceIdOverride
       )
       const selectedProjectDeviceId = worktreeWorkspaceDeviceId(selectedProjectWorkspace)
       const activeDeviceId =
@@ -829,11 +825,11 @@ export function useWorkbenchRuntimeMessaging({
         deliveryId?: string
         cloudProjectId?: string
         origin?: RuntimeTaskCreateRequest['origin']
+        deviceWorkspaceId?: number | null
         ephemeral?: boolean
         openInMainPane?: boolean
         refreshWorkListsOnResolve?: boolean
         sideSource?: RuntimeTaskAddress | null
-        workspaceSource?: RuntimeTaskAddress | null
         preserveAttachments?: boolean
         launchStartedAt?: number
       }
@@ -881,7 +877,9 @@ export function useWorkbenchRuntimeMessaging({
       const selectedProjectWorkspace = findProjectDeviceWorkspace(
         state.runtimeWork,
         projectId,
-        state.selectedDeviceWorkspaceId
+        options?.deviceWorkspaceId === undefined
+          ? state.selectedDeviceWorkspaceId
+          : options.deviceWorkspaceId
       )
       const selectedProjectDeviceId = worktreeWorkspaceDeviceId(selectedProjectWorkspace)
       const selectedRuntimeProject = projectId
@@ -913,12 +911,11 @@ export function useWorkbenchRuntimeMessaging({
         'projectId' | 'deviceWorkspaceId' | 'deviceId' | 'workspacePath'
       >
       let optimisticDeviceId: string
-      const inheritedWorkspaceSource = options?.workspaceSource ?? options?.sideSource
-      if (inheritedWorkspaceSource?.deviceId && inheritedWorkspaceSource.workspacePath) {
-        optimisticDeviceId = inheritedWorkspaceSource.deviceId
+      if (options?.sideSource?.deviceId && options.sideSource.workspacePath) {
+        optimisticDeviceId = options.sideSource.deviceId
         runtimeTaskTarget = {
-          deviceId: inheritedWorkspaceSource.deviceId,
-          workspacePath: inheritedWorkspaceSource.workspacePath,
+          deviceId: options.sideSource.deviceId,
+          workspacePath: options.sideSource.workspacePath,
         }
       } else if (projectId) {
         if (!selectedProjectWorkspace) {
@@ -1354,9 +1351,12 @@ export function useWorkbenchRuntimeMessaging({
           options?.onRuntimeTaskOptimisticOpen?.(address, {
             previousAddress: optimisticAddress,
           })
-          if (options?.openInMainPane !== false && optimisticTaskStillSelected) {
-            runtimeTasks.openRuntimeTaskView(address, runtimeProject, { navigate: true })
-          }
+        }
+        if (options?.openInMainPane !== false && optimisticTaskStillSelected) {
+          runtimeTasks.openRuntimeTaskView(address, runtimeProject, {
+            markOpened: !resolvedSameIdentity,
+            navigate: !resolvedSameIdentity,
+          })
         }
         if (response.status === 'queued') {
           lifecycleStore.syncRuntimeTask(address, {
@@ -1759,7 +1759,8 @@ export function useWorkbenchRuntimeMessaging({
         options.project,
         undefined,
         undefined,
-        options.deviceId
+        options.deviceId,
+        options.deviceWorkspaceId
       )
       if (!prepared) {
         reportSendBlocked(
@@ -1793,9 +1794,6 @@ export function useWorkbenchRuntimeMessaging({
         : options.modelId
           ? { ...prepared.payload, force_override_bot_model: options.modelId }
           : prepared.payload
-      if (options.workspaceSource) {
-        delete payload.execution
-      }
       const explicitModelSelection = options.executionModel?.modelId
         ? {
             modelName: options.executionModel.modelId,
@@ -1803,12 +1801,6 @@ export function useWorkbenchRuntimeMessaging({
             options: options.executionModel.modelOptions ?? {},
           }
         : options.modelSelection
-      logIssueRuntimeContextTrace('project-task-create-prepared', {
-        deviceId: prepared.activeDeviceId,
-        cloudProjectId: options.cloudProjectId,
-        origin: options.origin,
-        additionalContext: options.additionalContext,
-      })
       return sendPreparedRuntimeMessage(message, payload, prepared.activeDeviceId, {
         ...(options.runtime ? { runtime: options.runtime } : {}),
         initialGoal: options.initialGoal,
@@ -1817,9 +1809,9 @@ export function useWorkbenchRuntimeMessaging({
         deliveryId: options.deliveryId,
         cloudProjectId: options.cloudProjectId,
         origin: options.origin,
+        deviceWorkspaceId: options.deviceWorkspaceId,
         modelSelection: explicitModelSelection,
         additionalContext: options.additionalContext,
-        workspaceSource: options.workspaceSource,
         onError: options.onError,
         onRuntimeTaskOptimisticOpen: options.onRuntimeTaskOptimisticOpen,
         openInMainPane: false,
@@ -2114,28 +2106,6 @@ function runtimeAddressLog(address: RuntimeTaskAddress): Record<string, unknown>
     hasRuntimeHandle: Boolean(address.runtimeHandle),
     runtimeHandleKeys: address.runtimeHandle ? Object.keys(address.runtimeHandle).sort() : [],
   }
-}
-
-function logIssueRuntimeContextTrace(
-  stage: string,
-  context: {
-    taskId?: string
-    deviceId?: string
-    cloudProjectId?: string
-    origin?: RuntimeTaskCreateRequest['origin']
-    additionalContext?: RuntimeSendRequest['additionalContext']
-  }
-) {
-  if (context.origin?.type !== 'board_task') return
-  console.info('[Wework] Issue runtime context trace', {
-    stage,
-    taskId: context.taskId ?? null,
-    deviceId: context.deviceId ?? null,
-    cloudProjectId: context.cloudProjectId ?? null,
-    originCloudProjectId: context.origin.cloudProjectId,
-    loopItemId: context.origin.loopItemId,
-    additionalContextKeys: Object.keys(context.additionalContext ?? {}).sort(),
-  })
 }
 
 function debugRuntimeCreateFlow(event: string, details: Record<string, unknown>) {

@@ -8,14 +8,18 @@ import type { ProjectWithTasks, RuntimeTaskAddress } from '@/types/api'
 
 interface ConnectedIssueProjectWorkProps {
   project: ProjectWithTasks
+  selectedDeviceWorkspaceId: number | null
   onSelectProject: (projectId: number | null) => void
+  onSelectProjectWorkspace: (projectId: number, deviceWorkspaceId: number | null) => void
   inheritFromTask?: RuntimeTaskAddress | null
   children: (projectWork: ProjectWorkControls) => ReactNode
 }
 
 export function ConnectedIssueProjectWork({
   project,
+  selectedDeviceWorkspaceId,
   onSelectProject,
+  onSelectProjectWorkspace,
   inheritFromTask = null,
   children,
 }: ConnectedIssueProjectWorkProps) {
@@ -69,6 +73,8 @@ export function ConnectedIssueProjectWork({
       ...projectWork,
       currentProject: resolvedProject,
       currentProjectId: resolvedProject.id,
+      selectedDeviceWorkspaceId,
+      pendingProjectWorkspaceProjectId: null,
       executionMode:
         inheritedWorkspace?.workspaceKind === 'worktree' || inheritedWorkspace?.worktreeId
           ? 'git_worktree'
@@ -76,13 +82,16 @@ export function ConnectedIssueProjectWork({
       isGitProject: true,
       showProjectClearButton: false,
       onSelectProject,
+      onSelectProjectWorkspace,
     }),
     [
       inheritedWorkspace?.workspaceKind,
       inheritedWorkspace?.worktreeId,
       onSelectProject,
+      onSelectProjectWorkspace,
       projectWork,
       resolvedProject,
+      selectedDeviceWorkspaceId,
     ]
   )
 
