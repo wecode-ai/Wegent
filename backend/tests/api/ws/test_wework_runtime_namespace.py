@@ -80,6 +80,8 @@ async def test_runtime_event_forwards_im_chunk_to_channel_callbacks(monkeypatch)
 async def test_runtime_event_completes_im_channel_callback_on_terminal_event(
     monkeypatch,
 ):
+    """The native runtime reports its answer as ``data.value``, not a response body."""
+
     namespace = DeviceNamespace()
     registry = MagicMock()
     registry.handle_task_completed = AsyncMock()
@@ -91,9 +93,7 @@ async def test_runtime_event_completes_im_channel_callback_on_terminal_event(
         {
             "event_type": "response.completed",
             "taskId": "runtime-375023196",
-            "data": {
-                "response": {"output_text": "Hi! What would you like to work on?"}
-            },
+            "data": {"value": "Hi! What would you like to work on?"},
             "source": _im_source(),
         },
     )
@@ -103,6 +103,33 @@ async def test_runtime_event_completes_im_channel_callback_on_terminal_event(
     kwargs = registry.handle_task_completed.await_args.kwargs
     assert kwargs["task_id"] == "runtime:local-device:runtime-375023196"
     assert kwargs["status"] == "COMPLETED"
+    assert kwargs["result"] == {"value": "Hi! What would you like to work on?"}
+
+
+@pytest.mark.asyncio
+async def test_runtime_event_fails_im_channel_callback_on_failed_event(monkeypatch):
+    """``response.failed`` must release the card instead of leaving it pending."""
+
+    namespace = DeviceNamespace()
+    registry = MagicMock()
+    registry.handle_task_completed = AsyncMock()
+    monkeypatch.setattr(local_task_responses, "get_callback_registry", lambda: registry)
+
+    result = await _relay_runtime_event(
+        namespace,
+        monkeypatch,
+        {
+            "event_type": "response.failed",
+            "taskId": "runtime-375023196",
+            "data": {"error": {"message": "model request timed out"}},
+            "source": _im_source(),
+        },
+    )
+
+    assert result == {"success": True}
+    kwargs = registry.handle_task_completed.await_args.kwargs
+    assert kwargs["status"] == "FAILED"
+    assert kwargs["error"] == "model request timed out"
 
 
 @pytest.mark.asyncio

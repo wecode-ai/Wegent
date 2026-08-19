@@ -26,6 +26,12 @@ logger = logging.getLogger(__name__)
 
 MAX_RUNTIME_SUBTASK_ID = 2_147_483_647
 
+RUNTIME_TERMINAL_EVENT_TYPES = {
+    ResponsesAPIStreamEvents.RESPONSE_COMPLETED.value: EventType.DONE,
+    ResponsesAPIStreamEvents.RESPONSE_FAILED.value: EventType.ERROR,
+    ResponsesAPIStreamEvents.RESPONSE_INCOMPLETE.value: EventType.CANCELLED,
+}
+
 
 class LocalTaskResponsesHandler:
     """Translate local-task Responses API events into chat/channel events."""
@@ -290,10 +296,16 @@ class LocalTaskResponsesHandler:
             return
 
         event_data = payload.get("data")
-        event = self.execution_event(
+        event_data = event_data if isinstance(event_data, dict) else {}
+        subtask_id = runtime_subtask_id(payload, device_id, local_task_id)
+        event = runtime_terminal_event(
             event_type=event_type,
-            event_data=event_data if isinstance(event_data, dict) else {},
-            subtask_id=runtime_subtask_id(payload, device_id, local_task_id),
+            event_data=event_data,
+            subtask_id=subtask_id,
+        ) or self.execution_event(
+            event_type=event_type,
+            event_data=event_data,
+            subtask_id=subtask_id,
             message_id=None,
         )
         if event is None:
@@ -401,6 +413,36 @@ def local_task_tool_update_payload(
             payload["tool_output"] = event.tool_output
         return payload
     return None
+
+
+def runtime_terminal_event(
+    *,
+    event_type: str,
+    event_data: dict,
+    subtask_id: int,
+) -> Optional[ExecutionEvent]:
+    """Translate a native runtime terminal event into an ``ExecutionEvent``.
+
+    The runtime reports its final answer as ``data.value`` and its failures as
+    ``data.error.message``, instead of the OpenAI Responses API response object
+    the shared parser reads.
+    """
+
+    internal_type = RUNTIME_TERMINAL_EVENT_TYPES.get(event_type)
+    if internal_type is None:
+        return None
+    error = event_data.get("error")
+    if internal_type is EventType.DONE:
+        return ExecutionEvent(
+            type=internal_type.value,
+            subtask_id=subtask_id,
+            result={"value": event_data.get("value") or ""},
+        )
+    return ExecutionEvent(
+        type=internal_type.value,
+        subtask_id=subtask_id,
+        error=error.get("message") if isinstance(error, dict) else None,
+    )
 
 
 def local_task_terminal_status(event: ExecutionEvent) -> str:
