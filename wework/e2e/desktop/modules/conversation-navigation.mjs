@@ -275,6 +275,11 @@ async function verifyQueuedFollowUpNavigation({
   runningTaskRowTestId,
 }) {
   await control.command('fill', composerSelector, { value: QUEUED_FOLLOW_UP })
+  await control.command('waitFor', composerSelector, {
+    text: QUEUED_FOLLOW_UP,
+    stableMs: 100,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('press', composerSelector, { key: 'Enter' })
   await control.command('waitFor', '[data-testid="conversation-queue-panel"]', {
     text: QUEUED_FOLLOW_UP,
