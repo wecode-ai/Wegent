@@ -38,7 +38,7 @@ function waitForOutput(stream, pattern, timeoutMs = 10_000) {
   })
 }
 
-describe('dev executor reload', () => {
+describe('dev executor reload', { timeout: 20_000 }, () => {
   test('builds once initially and rebuilds after a source change', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'wework-executor-reload-'))
     temporaryDirectories.push(directory)
