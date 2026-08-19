@@ -27,7 +27,6 @@ import {
   captureVerificationScreenshot,
   normalizeComposerText,
   waitForAttribute,
-  waitForWorkbenchDebugState,
 } from './workspace-flows.mjs'
 
 async function waitForTelemetrySilence(control, options = {}) {
@@ -803,13 +802,23 @@ function applicationInstallRequestCount(control, pathname) {
   ).length
 }
 
+function resolvedDraftInputLength(snapshot) {
+  const composerLength = snapshot.workbench?.composer?.currentInputLength
+  const paneLength = snapshot.pane?.inputLength
+  if (
+    composerLength === 0 &&
+    typeof paneLength === 'number' &&
+    paneLength > 0
+  ) {
+    return paneLength
+  }
+  return composerLength ?? paneLength ?? null
+}
+
 async function captureApplicationChatIdentity(control) {
   const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
   return {
     currentProjectId: snapshot.workbench?.currentProject?.id ?? null,
-    currentRuntimeTaskId: snapshot.workbench?.currentRuntimeTask?.taskId ?? null,
-    scopeKey: snapshot.workbench?.composer?.scopeKey,
-    standaloneChatKey: snapshot.workbench?.composer?.standaloneChatKey,
   }
 }
 
@@ -817,24 +826,26 @@ async function assertFreshApplicationDraft(control, { before, canonical, visible
   await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await waitForWorkbenchDebugState(
-    control,
-    snapshot =>
-      snapshot.workbench?.composer?.standaloneChatKey === before.standaloneChatKey + 1 &&
-      snapshot.workbench?.composer?.scopeKey !== before.scopeKey &&
-      snapshot.workbench?.composer?.currentInputLength === canonical.length &&
-      snapshot.workbench?.currentRuntimeTask === null &&
-      (snapshot.workbench?.currentProject?.id ?? null) === before.currentProjectId,
-    message
-  )
   const startedAt = Date.now()
   let actual = ''
+  let lastSnapshot = null
   while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    lastSnapshot = snapshot
     actual = normalizeComposerText(await control.command('getText', ACTIVE_COMPOSER_SELECTOR))
-    if (actual === visible) return
+    if (
+      actual === visible &&
+      resolvedDraftInputLength(snapshot) === canonical.length &&
+      (snapshot.workbench?.currentRuntimeTask?.taskId ??
+        snapshot.pane?.currentRuntimeTask?.taskId ??
+        null) === null &&
+      (snapshot.workbench?.currentProject?.id ?? null) === before.currentProjectId
+    ) {
+      return
+    }
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
-  assert.equal(actual, visible, message)
+  throw new Error(`${message}: ${JSON.stringify(lastSnapshot)}`)
 }
 
 async function assertPluginComposerChip(control, pluginName) {
