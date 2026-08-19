@@ -30,12 +30,6 @@ impl RuntimeWorkRpcHandler {
             return false;
         }
         reconciliation.last_attempt = Some(now);
-        let interrupted_worktree_turns = self
-            .interrupted_worktree_turns
-            .lock()
-            .await
-            .clone()
-            .unwrap_or_default();
         let remaining_queued_turns = self
             .turn_scheduler
             .lock()
@@ -49,12 +43,19 @@ impl RuntimeWorkRpcHandler {
             let mut failed_task_ids = HashSet::new();
             for outcome in reconciled
                 .into_iter()
-                .filter(|outcome| outcome.interrupted_preparation)
+                .filter(|outcome| {
+                    outcome.interrupted_preparation || outcome.interrupted_execution
+                })
             {
                 let task_id = outcome.record.worktree_id;
                 let error = outcome.record.last_error.unwrap_or_else(|| {
-                    "Executor restarted during Worktree preparation; runtime was not resumed"
-                        .to_owned()
+                    if outcome.interrupted_execution {
+                        "Executor restarted while the Worktree task was executing; runtime was not resumed"
+                            .to_owned()
+                    } else {
+                        "Executor restarted during Worktree preparation; runtime was not resumed"
+                            .to_owned()
+                    }
                 });
                 if store
                     .update_task(&task_id, |link| {
@@ -78,17 +79,6 @@ impl RuntimeWorkRpcHandler {
                     failed_task_ids.insert(task_id);
                 }
             }
-            for turn in interrupted_worktree_turns {
-                store.update_task(&turn.local_task_id, |link| {
-                    if let Some(runtime_handle) = link.runtime_handle.as_object_mut() {
-                        runtime_handle.remove("queuePosition");
-                    }
-                });
-                log_executor_event(
-                    "queued worktree task left idle after executor restart",
-                    &[("local_task_id", turn.local_task_id)],
-                );
-            }
             Ok::<Vec<String>, String>(failed_task_ids.into_iter().collect())
         })
         .await;
@@ -108,7 +98,6 @@ impl RuntimeWorkRpcHandler {
                     reconciliation.last_attempt = Some(Instant::now());
                     return false;
                 }
-                *self.interrupted_worktree_turns.lock().await = None;
                 reconciliation.completed = true;
                 true
             }

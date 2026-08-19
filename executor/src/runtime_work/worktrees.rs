@@ -23,7 +23,7 @@ use crate::config::device::worktree_persistent_storage_verified;
 
 use super::{response::RuntimeTaskLink, store::runtime_work_dir};
 
-const STATE_VERSION: u64 = 3;
+const STATE_VERSION: u64 = 4;
 const DEFAULT_KEEP_COUNT: usize = 15;
 const AUTO_PRUNE_BATCH_SIZE: usize = 1;
 pub(crate) const RUNTIME_WORKTREES_VERSION: u64 = 1;
@@ -96,6 +96,14 @@ pub(crate) struct WorktreePlan {
 pub(crate) struct WorktreeReconciliation {
     pub record: ManagedWorktree,
     pub interrupted_preparation: bool,
+    pub interrupted_execution: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct WorktreeExecutionLease {
+    pub execution_id: u64,
+    pub started_at: i64,
 }
 
 #[derive(Clone, Debug)]
@@ -158,6 +166,7 @@ pub(crate) struct ManagedWorktree {
     pub git_common_dir: Option<String>,
     pub state: String,
     pub last_error: Option<String>,
+    pub execution_lease: Option<WorktreeExecutionLease>,
 }
 
 impl Default for ManagedWorktree {
@@ -179,6 +188,7 @@ impl Default for ManagedWorktree {
             git_common_dir: None,
             state: STATE_ACTIVE.to_owned(),
             last_error: None,
+            execution_lease: None,
         }
     }
 }
@@ -325,6 +335,71 @@ impl WorktreeManager {
 
     pub fn is_managed_path(&self, path: &Path) -> bool {
         ensure_managed_path(path, &self.load().known_roots).is_ok()
+    }
+
+    pub fn begin_execution(
+        &self,
+        path: &Path,
+        worktree_id: &str,
+        execution_id: u64,
+    ) -> Result<(), String> {
+        self.update_execution_lease(
+            path,
+            worktree_id,
+            Some(WorktreeExecutionLease {
+                execution_id,
+                started_at: now_ms(),
+            }),
+            None,
+        )
+        .map(|_| ())
+    }
+
+    pub fn finish_execution(
+        &self,
+        path: &Path,
+        worktree_id: &str,
+        execution_id: u64,
+    ) -> Result<bool, String> {
+        self.update_execution_lease(path, worktree_id, None, Some(execution_id))
+    }
+
+    fn update_execution_lease(
+        &self,
+        path: &Path,
+        worktree_id: &str,
+        execution_lease: Option<WorktreeExecutionLease>,
+        expected_execution_id: Option<u64>,
+    ) -> Result<bool, String> {
+        let _guard = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| "Worktree execution lock is unavailable".to_owned())?;
+        let mut state = self.load();
+        let key = normalized_path_key(path);
+        let record = state
+            .records
+            .get_mut(&key)
+            .ok_or_else(|| "Managed worktree was not found".to_owned())?;
+        validate_or_bind_record_device(record, &self.device_id)?;
+        if record.worktree_id != worktree_id {
+            return Err(format!(
+                "Managed worktree {} belongs to task {}, not {worktree_id}",
+                path.display(),
+                record.worktree_id
+            ));
+        }
+        if expected_execution_id.is_some_and(|expected| {
+            !record
+                .execution_lease
+                .as_ref()
+                .is_some_and(|lease| lease.execution_id == expected)
+        }) {
+            return Ok(false);
+        }
+        record.execution_lease = execution_lease;
+        self.save(&state)?;
+        Ok(true)
     }
 
     pub fn update_settings(
@@ -552,7 +627,7 @@ impl WorktreeManager {
             .map_err(|_| "Worktree mutation lock is unavailable".to_owned())?;
         let mut state = self.load();
         discover_worktrees(&mut state, &self.device_id);
-        reconcile_worktree_state(&mut state, &self.device_id)?;
+        reconcile_worktree_state(&mut state, &self.device_id, false)?;
         let mut result = state
             .records
             .values_mut()
@@ -592,7 +667,7 @@ impl WorktreeManager {
             .map_err(|_| "Worktree mutation lock is unavailable".to_owned())?;
         let mut state = self.load();
         discover_worktrees(&mut state, &self.device_id);
-        let reconciled = reconcile_worktree_state(&mut state, &self.device_id)?;
+        let reconciled = reconcile_worktree_state(&mut state, &self.device_id, true)?;
         self.save(&state)?;
         Ok(reconciled)
     }
@@ -1567,6 +1642,7 @@ fn validate_record_worktree_identity(record: &ManagedWorktree, path: &Path) -> R
 fn reconcile_worktree_state(
     state: &mut WorktreeState,
     device_id: &str,
+    recover_interrupted_execution: bool,
 ) -> Result<Vec<WorktreeReconciliation>, String> {
     let mut reconciled = Vec::new();
     for record in state.records.values_mut() {
@@ -1596,15 +1672,30 @@ fn reconcile_worktree_state(
             reconciled.push(WorktreeReconciliation {
                 record: record.clone(),
                 interrupted_preparation: true,
+                interrupted_execution: false,
             });
             continue;
         }
+        let interrupted_execution =
+            recover_interrupted_execution && record.execution_lease.take().is_some();
         if record.state == STATE_ACTIVE && path.exists() {
             if let Err(error) = validate_record_worktree_identity(record, &path) {
                 record.state = STATE_FAILED.to_owned();
                 record.last_error = Some(error);
                 record.updated_at = now_ms();
             }
+        }
+        if interrupted_execution {
+            record.last_error = Some(
+                "Executor restarted while the Worktree task was executing; runtime was not resumed"
+                    .to_owned(),
+            );
+            record.updated_at = now_ms();
+            reconciled.push(WorktreeReconciliation {
+                record: record.clone(),
+                interrupted_preparation: false,
+                interrupted_execution: true,
+            });
         }
     }
     Ok(reconciled)

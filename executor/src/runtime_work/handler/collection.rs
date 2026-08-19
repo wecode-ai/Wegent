@@ -721,8 +721,21 @@ impl RuntimeWorkRpcHandler {
         local_task_id: String,
         cancel: oneshot::Sender<()>,
         stopped: oneshot::Receiver<()>,
-    ) -> u64 {
+    ) -> Result<u64, AppIpcError> {
         let execution_id = self.next_execution_id.fetch_add(1, Ordering::Relaxed);
+        if let Some(task) = self.store.get_task(&local_task_id) {
+            let workspace_path = Path::new(&task.workspace_path);
+            if self.worktrees.is_managed_path(workspace_path) {
+                self.worktrees
+                    .begin_execution(workspace_path, &local_task_id, execution_id)
+                    .map_err(|error| {
+                        AppIpcError::new(
+                            "worktree_execution_state_failed",
+                            format!("Failed to persist Worktree execution evidence: {error}"),
+                        )
+                    })?;
+            }
+        }
         let control = ActiveTurnCancellation {
             execution_id,
             stop_requested: false,
@@ -741,7 +754,7 @@ impl RuntimeWorkRpcHandler {
             apply_local_execution_state(link, true, None);
             link.completed_at = None;
         });
-        execution_id
+        Ok(execution_id)
     }
 
     pub(super) fn finish_local_task_execution(
@@ -749,6 +762,40 @@ impl RuntimeWorkRpcHandler {
         local_task_id: &str,
         execution_id: u64,
     ) -> bool {
+        let can_finish = {
+            let active = self
+                .active_turn_cancellations
+                .lock()
+                .expect("active turn cancellation map lock should not be poisoned");
+            active.get(local_task_id).is_some_and(|control| {
+                control.execution_id == execution_id && !control.stop_requested
+            })
+        };
+        if !can_finish {
+            return false;
+        }
+        if let Some(task) = self.store.get_task(local_task_id) {
+            let workspace_path = Path::new(&task.workspace_path);
+            if self.worktrees.is_managed_path(workspace_path) {
+                match self
+                    .worktrees
+                    .finish_execution(workspace_path, local_task_id, execution_id)
+                {
+                    Ok(true) => {}
+                    Ok(false) => return false,
+                    Err(error) => {
+                        log_executor_event(
+                            "worktree execution evidence cleanup failed",
+                            &[
+                                ("local_task_id", local_task_id.to_owned()),
+                                ("error", error),
+                            ],
+                        );
+                        return false;
+                    }
+                }
+            }
+        }
         let mut active = self
             .active_turn_cancellations
             .lock()
@@ -761,6 +808,35 @@ impl RuntimeWorkRpcHandler {
             true
         } else {
             false
+        }
+    }
+
+    pub(super) fn fail_local_task_execution_start(&self, local_task_id: &str, error: &AppIpcError) {
+        self.store.update_task(local_task_id, |link| {
+            link.updated_at = now_ms();
+            link.completed_at = Some(link.updated_at);
+            link.status = "failed".to_owned();
+            apply_local_execution_state(link, false, None);
+            if !link.runtime_handle.is_object() {
+                link.runtime_handle = json!({});
+            }
+            if let Some(runtime_handle) = link.runtime_handle.as_object_mut() {
+                runtime_handle.insert("lastError".to_owned(), Value::String(error.message.clone()));
+            }
+        });
+        log_executor_event(
+            "runtime work turn start failed",
+            &[
+                ("local_task_id", local_task_id.to_owned()),
+                ("error", error.message.clone()),
+            ],
+        );
+        let handler = self.clone();
+        let local_task_id = local_task_id.to_owned();
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move {
+                handler.finish_scheduled_turn(&local_task_id).await;
+            });
         }
     }
 

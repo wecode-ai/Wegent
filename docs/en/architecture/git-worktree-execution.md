@@ -18,7 +18,7 @@ flowchart LR
     WORKTREE[(managed Worktree)]
     STATE[(Runtime Task Metadata Store<br/>no execution status)]
     EXECUTION[(persisted turn queue<br/>queued execution intent)]
-    WORKTREE_STATE[(worktrees.json<br/>Worktree lifecycle + snapshot refs)]
+    WORKTREE_STATE[(worktrees.json<br/>Worktree lifecycle + execution lease + snapshot refs)]
     VOLUME[(stable Executor Home volume)]
     ATTEST[deployment durability attestation<br/>persistentStorageVerified]
 
@@ -93,6 +93,10 @@ sequenceDiagram
         end
         G-->>E: explicit interrupted-preparation evidence
         E->>T: mark only the linked Runtime Task failed
+    else Worktree retains an uncleared execution lease
+        G->>G: clear the lease and preserve interrupted-execution diagnostics
+        G-->>E: explicit interrupted-execution evidence
+        E->>T: mark only the linked Runtime Task failed
     else ordinary history or queue-only task
         E->>E: infer no failure and preserve task activity time
     end
@@ -149,7 +153,7 @@ Essential invariants:
 13. Launch-mode and branch preferences are scoped by DeviceWorkspace; execution location is not a launch mode.
 14. Offline, missing route, timeout, disconnect, unsupported, non-Git, path-conflict, and non-durable-storage failures have stable distinct errors. Timeout and disconnect are marked retryable, but mutating RPCs are never automatically retried.
 15. Terminal, IDE, file tree, Git, archive, restore, and settings always use the owning device and the task's final Worktree path. Remote file commands fail closed when Backend cannot authenticate an allowed workspace root; an empty root set never means unrestricted access.
-16. Whether a task was executing before restart is determined only by independent durable execution evidence, never by Runtime Task metadata, a Worktree path, non-archive state, provider history, or missing status fields. An unfinished `preparing` record in `worktrees.json` is evidence of interrupted Worktree preparation; a persisted queue entry proves only that execution had not started. Without execution evidence, restart reconciliation never writes task failure, completion time, or activity time.
+16. Whether a task was executing before restart is determined only by independent durable execution evidence, never by Runtime Task metadata, a Worktree path, non-archive state, provider history, or missing status fields. Before a Runtime actually starts, Executor writes an execution lease to `worktrees.json` and clears it after Runtime termination is acknowledged; a lease left across restart proves interrupted execution. An unfinished `preparing` record proves only interrupted Worktree preparation, while a persisted queue entry proves only that execution had not started. Without either kind of interruption evidence, restart reconciliation never writes task failure, completion time, or activity time.
 17. Cloud and Remote `runtimeInstanceId` is stored in Executor Home and becomes immutable after Backend first records it. Container or instance replacement must reuse that value. Registration of the same logical device with a new Runtime Instance ID is rejected as a persistent-storage identity mismatch; Backend never overwrites the established value or creates a bypass device record.
 18. Deferred creation persists the source-repository fingerprint captured while planning and compares it with a freshly computed fingerprint after acquiring a slot. Replacing the source directory with another repository fails as `worktree_source_changed`.
 19. A stop timeout has an unknown outcome. It never clears Runtime cancellation control or treats the task as stopped; an archive/delete retry still requires a stop acknowledgement from the same Runtime.

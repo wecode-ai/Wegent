@@ -622,7 +622,13 @@ impl RuntimeWorkRpcHandler {
         let (cancel_tx, cancel_rx) = oneshot::channel();
         let (stopped_tx, stopped_rx) = oneshot::channel();
         let execution_id =
-            self.start_local_task_execution(local_task_id.clone(), cancel_tx, stopped_rx);
+            match self.start_local_task_execution(local_task_id.clone(), cancel_tx, stopped_rx) {
+                Ok(execution_id) => execution_id,
+                Err(error) => {
+                    self.fail_local_task_execution_start(&local_task_id, &error);
+                    return;
+                }
+            };
         if let Ok(mut requests) = self.active_request_user_inputs.lock() {
             requests.insert(
                 local_task_id.clone(),

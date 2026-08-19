@@ -206,7 +206,13 @@ impl RuntimeWorkRpcHandler {
         let (cancel_tx, cancel_rx) = oneshot::channel();
         let (stopped_tx, stopped_rx) = oneshot::channel();
         let execution_id =
-            self.start_local_task_execution(local_task_id.clone(), cancel_tx, stopped_rx);
+            match self.start_local_task_execution(local_task_id.clone(), cancel_tx, stopped_rx) {
+                Ok(execution_id) => execution_id,
+                Err(error) => {
+                    self.fail_local_task_execution_start(&local_task_id, &error);
+                    return;
+                }
+            };
         let handler = self.clone();
         tokio::spawn(async move {
             let _stopped_turn_guard = StoppedTurnGuard::new(stopped_tx);
@@ -588,8 +594,9 @@ mod tests {
         handler.store = RuntimeWorkStore::new(directory.path().join("index.json"));
         let (cancel_tx, _cancel_rx) = oneshot::channel();
         let (_stopped_tx, stopped_rx) = oneshot::channel();
-        let execution_id =
-            handler.start_local_task_execution("task-1".to_owned(), cancel_tx, stopped_rx);
+        let execution_id = handler
+            .start_local_task_execution("task-1".to_owned(), cancel_tx, stopped_rx)
+            .expect("local execution should start");
         let transcript = Arc::new(Mutex::new(ClaudeTurnTranscript::default()));
         let sink = ClaudeRuntimeEventSink {
             handler: handler.clone(),
