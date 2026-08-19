@@ -42,6 +42,7 @@ mod client;
 mod config;
 mod connection_controller;
 mod extension;
+mod runtime_rpc_encoding;
 mod session_events;
 mod socket_transport;
 mod tasks;
@@ -60,6 +61,7 @@ pub use upgrade::{LocalDeviceUpgradeHandler, LocalUpgradeService};
 use cancellation::LocalCancellationRegistry;
 use capability::{default_capability_sync_handler, DefaultCapabilityReporter};
 use extension::default_extension_handler;
+use runtime_rpc_encoding::encode_runtime_rpc_response;
 use session_events::{
     default_session_handler, session_result_payload, session_start_request, value_string, value_u16,
 };
@@ -613,16 +615,14 @@ where
         Arc::new(move |payload| {
             let runtime_work_handler = runtime_work_handler.clone();
             Box::pin(async move {
+                let method = payload
+                    .get("method")
+                    .and_then(Value::as_str)
+                    .unwrap_or("<missing>")
+                    .to_owned();
                 write_executor_log_line(&format_executor_log(
                     "runtime:rpc received",
-                    &[(
-                        "method",
-                        payload
-                            .get("method")
-                            .and_then(Value::as_str)
-                            .unwrap_or("<missing>")
-                            .to_owned(),
-                    )],
+                    &[("method", method.clone())],
                 ));
                 let Some(handler) = runtime_work_handler else {
                     return Some(runtime_error_response(AppIpcError::new(
@@ -655,7 +655,7 @@ where
                         ),
                     ],
                 ));
-                Some(response)
+                Some(encode_runtime_rpc_response(&method, response))
             })
         })
     }
