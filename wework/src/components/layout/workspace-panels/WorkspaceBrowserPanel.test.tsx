@@ -1442,6 +1442,42 @@ describe('WorkspaceBrowserPanel', () => {
     })
   })
 
+  test('binds the target URL directly for user open requests', async () => {
+    mockBrowserHostRect()
+    embeddedBrowserMocks.openEmbeddedBrowser.mockResolvedValueOnce({
+      nativeLabel: 'workspace-browser-native-1',
+      title: null,
+      url: 'https://example.test/',
+    })
+    render(
+      <WorkspaceBrowserPanel
+        active
+        openRequest={{
+          id: 'test-user-1',
+          baseLabel: 'workspace-browser',
+          source: 'user',
+          disposition: 'new-tab',
+          label: 'workspace-browser',
+          url: 'https://example.test/',
+        }}
+      />
+    )
+
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledWith(
+        'https://example.test/',
+        {
+          x: 500,
+          y: 120,
+          width: 400,
+          height: 300,
+        },
+        'workspace-browser'
+      )
+    })
+    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('https://example.test/')
+  })
+
   test('opens an external request in a hidden browser while the panel is inactive', async () => {
     mockBrowserHostRect()
     const openRequest = {
