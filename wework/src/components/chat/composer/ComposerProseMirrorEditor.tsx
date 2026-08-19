@@ -329,6 +329,11 @@ export const ComposerProseMirrorEditor = forwardRef<
         event.stopImmediatePropagation()
         return
       }
+      if (moveComposerCaretToBoundary(view, event)) {
+        event.preventDefault()
+        event.stopImmediatePropagation()
+        return
+      }
       const handledByComposer = callbacksRef.current.onKeyDown(
         event,
         readComposerSnapshot(view.state)
@@ -443,7 +448,7 @@ export const ComposerProseMirrorEditor = forwardRef<
       <div ref={mountRef} />
       {!hasContent && (
         <div
-          className={`${props.className} pointer-events-none absolute inset-0 !text-text-muted/55`}
+          className={`${props.className} composer-prosemirror-placeholder pointer-events-none absolute inset-0 !text-text-muted/55`}
         >
           {props.placeholder}
         </div>
@@ -573,6 +578,28 @@ function setComposerSelection(view: EditorView, event: KeyboardEvent, position: 
   event.preventDefault()
   event.stopPropagation()
   view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, position)))
+  view.focus()
+  return true
+}
+
+function moveComposerCaretToBoundary(view: EditorView, event: KeyboardEvent): boolean {
+  if (event.key !== 'Home' && event.key !== 'End') return false
+
+  const { selection } = view.state
+  const { $head } = selection
+  const target =
+    event.metaKey || event.ctrlKey
+      ? event.key === 'Home'
+        ? TextSelection.atStart(view.state.doc).from
+        : TextSelection.atEnd(view.state.doc).to
+      : event.key === 'Home'
+        ? $head.start()
+        : $head.end()
+
+  const nextSelection = event.shiftKey
+    ? TextSelection.create(view.state.doc, selection.anchor, target)
+    : TextSelection.create(view.state.doc, target)
+  view.dispatch(view.state.tr.setSelection(nextSelection))
   view.focus()
   return true
 }

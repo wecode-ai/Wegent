@@ -15,6 +15,7 @@ from app.schemas.model import ModelBulkCreateItem, ModelCreate, ModelUpdate
 from app.services.adapters.shell_utils import find_shell_json
 from app.services.base import BaseService
 from app.services.model_capabilities import normalize_model_capabilities
+from shared.codex_model_catalog import codex_catalog_model_id_from_config
 
 
 def _split_model_config_protocol(
@@ -143,6 +144,7 @@ class ModelAdapter:
         env = config.get("env", {}) if isinstance(config, dict) else {}
         provider = env.get("model") if isinstance(env, dict) else None
         model_id_value = env.get("model_id") if isinstance(env, dict) else None
+        codex_catalog_model_id = codex_catalog_model_id_from_config(env)
 
         # Strip sensitive env from public model config
         if isinstance(config, dict) and "env" in config:
@@ -151,6 +153,8 @@ class ModelAdapter:
             config = {k: v for k, v in config.items() if k != "modelCapabilities"}
         if model_capabilities:
             config = {**config, "modelCapabilities": model_capabilities}
+        if codex_catalog_model_id:
+            config = {**config, "codex_catalog_model_id": codex_catalog_model_id}
 
         return {
             "id": kind.id,

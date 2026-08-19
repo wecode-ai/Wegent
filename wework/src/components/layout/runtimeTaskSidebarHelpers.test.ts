@@ -43,6 +43,53 @@ describe('runtimeTaskSidebarHelpers', () => {
     ])
   })
 
+  test('places a newly created unordered task before manually ordered project tasks', () => {
+    const workspace: RuntimeDeviceWorkspace = {
+      deviceId: 'device-1',
+      workspacePath: '/workspace/repo',
+      available: true,
+      tasks: [
+        ...Array.from({ length: RUNTIME_PROJECT_TASK_PREVIEW_LIMIT + 1 }, (_, index) => ({
+          taskId: `ordered-${index + 1}`,
+          workspacePath: '/workspace/repo',
+          title: `Ordered ${index + 1}`,
+          runtime: 'codex' as const,
+          sidebarOrder: index,
+          updatedAt: `2026-08-18T0${index + 1}:00:00.000Z`,
+        })),
+        {
+          taskId: 'new-task',
+          workspacePath: '/workspace/repo',
+          title: 'New task',
+          runtime: 'codex',
+          status: 'creating',
+          optimistic: true,
+          createdAt: '2026-08-19T01:00:00.000Z',
+          updatedAt: '2026-08-19T01:00:00.000Z',
+        },
+      ],
+    }
+
+    const items = getRuntimeSidebarTaskItems([workspace])
+
+    expect(items.map(item => item.task.taskId)).toEqual([
+      'new-task',
+      'ordered-1',
+      'ordered-2',
+      'ordered-3',
+      'ordered-4',
+      'ordered-5',
+      'ordered-6',
+    ])
+    expect(getVisibleRuntimeSidebarTaskItems(items).map(item => item.task.taskId)).toEqual([
+      'new-task',
+      'ordered-1',
+      'ordered-2',
+      'ordered-3',
+      'ordered-4',
+    ])
+  })
+
   test('sorts tasks without manual order by latest activity', () => {
     const workspace: RuntimeDeviceWorkspace = {
       deviceId: 'device-1',

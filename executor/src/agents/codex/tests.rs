@@ -57,6 +57,70 @@ async fn active_thread_tracking_counts_each_thread_independently() {
 }
 
 #[tokio::test]
+async fn notification_hub_isolates_thread_subscribers_from_cross_thread_bursts() {
+    let hub = CodexNotificationHub::new();
+    let mut thread_a = hub.subscribe_thread("thread-a");
+
+    for index in 0..(CODEX_THREAD_NOTIFICATION_CAPACITY + 100) {
+        hub.send(json!({
+            "method": "item/commandExecution/outputDelta",
+            "params": {
+                "threadId": "thread-b",
+                "turnId": "turn-b",
+                "delta": index.to_string()
+            }
+        }));
+    }
+    hub.send(json!({
+        "method": "turn/completed",
+        "params": {
+            "threadId": "thread-a",
+            "turn": {"id": "turn-a", "status": "completed"}
+        }
+    }));
+
+    let message = thread_a
+        .recv()
+        .await
+        .expect("cross-thread traffic must not lag the subscriber");
+    assert_eq!(message["method"], "turn/completed");
+    assert_eq!(message["params"]["threadId"], "thread-a");
+}
+
+#[tokio::test]
+async fn notification_hub_keeps_global_and_thread_scoped_delivery() {
+    let hub = CodexNotificationHub::new();
+    let mut all = hub.subscribe_all();
+    let mut thread_a = hub.subscribe_thread("thread-a");
+    let mut thread_b = hub.subscribe_thread("thread-b");
+    let message = json!({
+        "method": "item/started",
+        "params": {"threadId": "thread-a", "turnId": "turn-a"}
+    });
+
+    hub.send(message.clone());
+
+    assert_eq!(all.recv().await.unwrap(), message);
+    assert_eq!(thread_a.recv().await.unwrap(), message);
+    assert!(thread_b.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn notification_hub_delivers_unscoped_process_exit_to_each_thread() {
+    let hub = CodexNotificationHub::new();
+    let mut thread_a = hub.subscribe_thread("thread-a");
+    let mut thread_b = hub.subscribe_thread("thread-b");
+
+    notify_shared_process_closed(&hub, "app-server stopped");
+
+    for receiver in [&mut thread_a, &mut thread_b] {
+        let message = receiver.recv().await.unwrap();
+        assert_eq!(message["method"], "codex/app-server/exited");
+        assert_eq!(message["params"]["message"], "app-server stopped");
+    }
+}
+
+#[tokio::test]
 async fn interaction_answer_router_matches_reverse_order_answers() {
     let (sender, receiver) = mpsc::channel(2);
     let router = InteractionAnswerRouter::new(receiver);
@@ -790,6 +854,94 @@ fn cloud_model_uses_provider_model_id_for_catalog_capabilities() {
         codex_request_model(&request).as_deref(),
         Some("gpt-5.6-luna")
     );
+}
+
+#[test]
+fn configured_vision_sidecar_derives_catalog_from_any_base_profile() {
+    let request = ExecutionRequest {
+        model_config: json!({
+            "model_id": "provider-model",
+            "codex_catalog_model_id": "wework-kimi-k2-7",
+            "codex_responses_compat_proxy": true,
+            "vision_sidecar": {
+                "enabled": true,
+                "request_url": "https://vision.example/v1/responses",
+                "model_id": "vision-model"
+            }
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    assert_eq!(
+        codex_request_model(&request).as_deref(),
+        Some("wework-kimi-k2-7-vision-sidecar")
+    );
+}
+
+#[test]
+fn disabled_vision_sidecar_keeps_the_base_catalog_profile() {
+    let request = ExecutionRequest {
+        model_config: json!({
+            "model_id": "provider-model",
+            "codex_catalog_model_id": "operator-catalog",
+            "codex_responses_compat_proxy": true,
+            "vision_sidecar": {"enabled": false}
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    assert_eq!(
+        codex_request_model(&request).as_deref(),
+        Some("operator-catalog")
+    );
+}
+
+#[test]
+fn malformed_vision_sidecar_keeps_the_base_catalog_profile() {
+    let request = ExecutionRequest {
+        model_config: json!({
+            "model_id": "provider-model",
+            "codex_catalog_model_id": "operator-catalog",
+            "codex_responses_compat_proxy": true,
+            "vision_sidecar": "invalid"
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    assert_eq!(
+        codex_request_model(&request).as_deref(),
+        Some("operator-catalog")
+    );
+}
+
+#[test]
+fn incomplete_vision_sidecar_keeps_the_base_catalog_profile() {
+    let invalid_sidecars = [
+        json!({"model_id": "vision-model"}),
+        json!({"request_url": "https://vision.example/v1/responses"}),
+        json!({
+            "request_url": "https://vision.example/v1/responses",
+            "model_id": "vision-model",
+            "api_format": "openai-embeddings"
+        }),
+    ];
+
+    for vision_sidecar in invalid_sidecars {
+        let request = ExecutionRequest {
+            model_config: json!({
+                "model_id": "provider-model",
+                "codex_catalog_model_id": "operator-catalog",
+                "codex_responses_compat_proxy": true,
+                "vision_sidecar": vision_sidecar
+            }),
+            ..ExecutionRequest::default()
+        };
+
+        assert_eq!(
+            codex_request_model(&request).as_deref(),
+            Some("operator-catalog")
+        );
+    }
 }
 
 #[test]

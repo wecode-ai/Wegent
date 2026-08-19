@@ -131,6 +131,10 @@ class GenerationInFlight(RuntimeError):
     """Raised when a run is already working on this wiki."""
 
 
+class GenerationWikiNotFound(RuntimeError):
+    """Raised when deletion won the lock race before a run could start."""
+
+
 @dataclass(frozen=True)
 class StartedGeneration:
     """A run that has been created and is ready for the agent."""
@@ -193,6 +197,7 @@ def start_generation(
 
     Raises:
         GenerationInFlight: If a live run already owns this wiki.
+        GenerationWikiNotFound: If the wiki was deleted while waiting to start.
     """
     reclaimed = reclaim_stale_generations(db, kind_id=knowledge_base.id, now=now)
     if reclaimed:
@@ -208,7 +213,24 @@ def start_generation(
     # seeded versions, and whichever finishes last silently overwrites the other.
     # The knowledge base row always exists, so locking it serialises starts per wiki
     # without depending on gap-lock behaviour that the isolation level can turn off.
-    db.query(Kind).filter(Kind.id == knowledge_base.id).with_for_update().first()
+    locked_knowledge_base = (
+        db.query(Kind)
+        .filter(
+            Kind.id == knowledge_base.id,
+            Kind.kind == "KnowledgeBase",
+            Kind.namespace == knowledge_base.namespace,
+            Kind.name == knowledge_base.name,
+            Kind.user_id == knowledge_base.user_id,
+            Kind.is_active.is_(True),
+        )
+        .with_for_update()
+        .first()
+    )
+    if locked_knowledge_base is None:
+        raise GenerationWikiNotFound(
+            f"code wiki {knowledge_base.id} was deleted before generation started"
+        )
+    knowledge_base = locked_knowledge_base
 
     in_flight = (
         db.query(WikiGeneration)

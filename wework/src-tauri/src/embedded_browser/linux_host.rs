@@ -88,12 +88,23 @@ fn place_webview(
         }
     };
 
-    embedded_webview.set_size_request(size.width.round() as i32, size.height.round() as i32);
-    host.move_(
-        &embedded_webview,
-        position.x.round() as i32,
-        position.y.round() as i32,
-    );
+    // The Tauri-created WebView expands by default. In a GtkFixed host that
+    // makes the page viewport match the full host width instead of the bounds
+    // requested by the device toolbar.
+    embedded_webview.set_hexpand(false);
+    embedded_webview.set_vexpand(false);
+    embedded_webview.set_halign(gtk::Align::Start);
+    embedded_webview.set_valign(gtk::Align::Start);
+    let x = position.x.round() as i32;
+    let y = position.y.round() as i32;
+    let width = size.width.round() as i32;
+    let height = size.height.round() as i32;
+    embedded_webview.set_size_request(width, height);
+    host.move_(&embedded_webview, x, y);
+    // GtkFixed normally allocates a child from its natural size. Apply the
+    // requested allocation explicitly so WebKit reports the device viewport
+    // instead of the host's full width through window.innerWidth.
+    embedded_webview.size_allocate(&gtk::Allocation::new(x, y, width, height));
     Ok(())
 }
 

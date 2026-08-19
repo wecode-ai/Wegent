@@ -27,6 +27,7 @@ Before changing a Wework flow, identify the affected product area and trace its 
 - Follow the Codex-derived, neutral-first visual system in `DESIGN.md`: grayscale surfaces, `14px` default desktop UI text, sparse hairlines and shadows, inverse-neutral primary actions, and blue only for focus, links, or narrow selection accents. Green and teal are restricted to semantic success/addition states and must never define product chrome or default actions.
 - Use the Codex component density documented in `DESIGN.md`: `30px` sidebar rows, `28px` app-shell tabs and composer actions, `16px` standard desktop icons, and `4px–8px` action-group gaps. Reuse the shared component's established size instead of inventing a local height.
 - Use the shared typography scale and semantic `heading-*`, `text-chat`, and `text-code` roles. Never add arbitrary `text-[Npx]`, literal CSS `font-size`, or literal inline `fontSize` values; `pnpm lint` enforces this rule.
+- Custom Markdown renderers must preserve semantic attributes supplied by the parser, such as an ordered list's `start` value.
 - Preserve platform text-navigation semantics in the ProseMirror chat composer. Register only composer-specific key bindings instead of the document-level `baseKeymap`, and scope mention caret workarounds to unmodified arrow keys.
 
 ## i18n
@@ -76,6 +77,7 @@ Any Wework UI, Tauri command, local-runtime, IPC, or desktop integration behavio
 pnpm --filter wework ai:verify start
 pnpm --filter wework ai:verify snapshot --session <session-path>
 pnpm --filter wework ai:verify debug --session <session-path>
+pnpm --filter wework ai:verify active-element --session <session-path>
 pnpm --filter wework ai:verify click --session <session-path> --selector '[data-testid="..."]'
 pnpm --filter wework ai:verify click-at --session <session-path> --value '{"x":640,"y":360}'
 pnpm --filter wework ai:verify click-then-macrotask --session <session-path> --selector '[data-testid="..."]' --target '[data-testid="..."]'

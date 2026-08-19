@@ -42,6 +42,10 @@ export interface ActionMenuItem {
   disabled?: boolean
   shortcut?: string
   children?: ActionMenuItem[]
+  /** Renders a static separator row instead of an interactive item. */
+  separator?: boolean
+  /** Renders a custom non-button row (e.g. inline zoom controls). */
+  custom?: ReactNode
 }
 
 interface ActionMenuProps {
@@ -55,6 +59,8 @@ interface ActionMenuProps {
   triggerClassName?: string
   placement?: 'side' | 'bottom-end'
   contextMenuPosition?: MenuPosition | null
+  width?: number
+  itemClassName?: string
   onContextMenuClose?: () => void
   onOpenChange?: (open: boolean) => void
 }
@@ -75,6 +81,8 @@ export function ActionMenu({
   triggerClassName,
   placement = 'side',
   contextMenuPosition,
+  width,
+  itemClassName,
   onContextMenuClose,
   onOpenChange,
 }: ActionMenuProps) {
@@ -183,7 +191,9 @@ export function ActionMenu({
     refs: MutableRefObject<Record<string, HTMLButtonElement | null>>,
     direction: 1 | -1
   ) => {
-    const availableItems = menuItems.filter(item => !item.disabled)
+    const availableItems = menuItems.filter(
+      item => !item.disabled && !item.separator && !item.custom
+    )
     const currentIndex = availableItems.findIndex(item => item.testId === currentId)
     if (currentIndex < 0 || availableItems.length === 0) return
     const nextIndex = (currentIndex + direction + availableItems.length) % availableItems.length
@@ -204,7 +214,9 @@ export function ActionMenu({
     ) {
       event.preventDefault()
       const menuItems = submenu ? (openSubmenuItem?.children ?? []) : items
-      const availableItems = menuItems.filter(menuItem => !menuItem.disabled)
+      const availableItems = menuItems.filter(
+        menuItem => !menuItem.disabled && !menuItem.separator && !menuItem.custom
+      )
       if (availableItems.length === 0) return
       const targetId =
         event.key === 'Home'
@@ -424,10 +436,30 @@ export function ActionMenu({
               top: menuPosition?.top ?? 0,
               visibility: menuPosition ? 'visible' : 'hidden',
             }}
-            className="fixed z-system-popover min-w-[176px] rounded-xl border border-border bg-popover p-1 text-text-primary shadow-xl"
+            className={[
+              'fixed z-system-popover min-w-[176px] rounded-xl border border-border bg-popover p-1 text-text-primary shadow-xl',
+              width ? `w-[${width}px]` : '',
+            ].join(' ')}
           >
             {items.map(item => {
               const ItemIcon = item.icon
+              if (item.separator) {
+                return (
+                  <div
+                    key={item.testId}
+                    data-testid={item.testId}
+                    role="separator"
+                    className="mx-1 my-1 h-px bg-border"
+                  />
+                )
+              }
+              if (item.custom) {
+                return (
+                  <div key={item.testId} data-testid={item.testId} role="group">
+                    {item.custom}
+                  </div>
+                )
+              }
               return (
                 <button
                   key={item.testId}
@@ -476,6 +508,7 @@ export function ActionMenu({
                       ? 'text-red-500 hover:bg-red-50'
                       : 'text-text-primary hover:bg-muted',
                     item.disabled ? 'cursor-not-allowed opacity-45 hover:bg-transparent' : '',
+                    itemClassName ?? '',
                   ].join(' ')}
                 >
                   {ItemIcon ? <ItemIcon className="h-4 w-4 shrink-0" /> : null}
@@ -544,6 +577,7 @@ export function ActionMenu({
                         ? 'text-red-500 hover:bg-red-50'
                         : 'text-text-primary hover:bg-muted',
                       item.disabled ? 'cursor-not-allowed opacity-45 hover:bg-transparent' : '',
+                      itemClassName ?? '',
                     ].join(' ')}
                   >
                     {ItemIcon ? <ItemIcon className="h-4 w-4 shrink-0" /> : null}

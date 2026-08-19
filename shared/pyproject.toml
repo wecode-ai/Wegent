@@ -56,6 +56,9 @@ packages = ["shared", "shared.models", "shared.models.db", "shared.db", "shared.
 [tool.setuptools.package-dir]
 shared = "."
 
+[tool.setuptools.package-data]
+shared = ["assets/codex-models/*.json"]
+
 [tool.black]
 line-length = 88
 target-version = ['py310']

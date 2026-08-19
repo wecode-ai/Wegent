@@ -847,21 +847,11 @@ where
         {
             Ok(true) => {
                 self.refresh_runtime_capacity().await;
-                match self
-                    .client
-                    .send_heartbeat(self.client.config.heartbeat_timeout)
-                    .await
-                {
-                    Ok(true) => Ok(()),
-                    Ok(false) => {
-                        let _ = self.client.disconnect().await;
-                        Err("initial device heartbeat was rejected by backend".to_owned())
-                    }
-                    Err(error) => {
-                        let _ = self.client.disconnect().await;
-                        Err(error)
-                    }
+                if let Err(error) = self.client.emit_liveness_heartbeat().await {
+                    let _ = self.client.disconnect().await;
+                    return Err(error);
                 }
+                Ok(())
             }
             Ok(false) => {
                 let _ = self.client.disconnect().await;
@@ -886,17 +876,12 @@ where
                 }
             }
             self.refresh_runtime_capacity().await;
-            let failure = match self
-                .client
-                .send_heartbeat(self.client.config.heartbeat_timeout)
-                .await
-            {
-                Ok(true) => {
+            let failure = match self.client.emit_liveness_heartbeat().await {
+                Ok(()) => {
                     consecutive_failures = 0;
                     next_heartbeat_at = Instant::now() + self.client.config.heartbeat_interval;
                     continue;
                 }
-                Ok(false) => "heartbeat was rejected by backend".to_owned(),
                 Err(error) => error,
             };
 

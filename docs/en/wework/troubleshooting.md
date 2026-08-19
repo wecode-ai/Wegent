@@ -9,9 +9,10 @@ sidebar_position: 10
 - Check Codex sign-in or the local model URL under **Settings → Models**.
 - Confirm that the selected model can run on the selected device.
 - Restart Codex when prompted after changing a proxy.
-- When a local official ChatGPT model reconnects because the network is unreachable, the
-  conversation identifies the active model and network problem. Select **Configure proxy** to
-  open **Settings → Proxy**, save the local proxy, and restart Codex when prompted.
+- When a local official ChatGPT model keeps reconnecting for 10 seconds or longer because the
+  network is unreachable, the conversation identifies the active model and network problem.
+  Interruptions that recover within 10 seconds do not show this notice. Select **Configure proxy**
+  to open **Settings → Proxy**, save the local proxy, and restart Codex when prompted.
 - For task or terminal failures, check whether the device is online, busy, or requires an update.
 
 ### A new task is missing from the sidebar

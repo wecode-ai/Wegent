@@ -5,7 +5,7 @@ import {
   deleteProviderNativeKnowledgeFixture,
   ProviderNativeKnowledgeFixture,
 } from '../fixtures/provider-native-knowledge'
-import { ApiClient, createApiClient } from './api-client'
+import { ApiClient, createApiClient, createBackendRequestHeaders } from './api-client'
 
 export const PROVIDER_NATIVE_API_URL = process.env.E2E_API_URL || 'http://localhost:8000'
 export const PROVIDER_NATIVE_MOCK_URL = process.env.MOCK_MODEL_SERVER_URL || 'http://localhost:9999'
@@ -387,5 +387,5 @@ export function modelToolNames(bodies: Record<string, unknown>[]): string[] {
 }
 
 export function authHeaders(token: string): Record<string, string> {
-  return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
+  return createBackendRequestHeaders(token)
 }

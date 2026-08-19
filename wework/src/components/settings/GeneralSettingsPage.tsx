@@ -347,6 +347,14 @@ export function GeneralSettingsPage() {
         maxConcurrentTasks: value,
       })
       setMaxConcurrentTasks(settings?.maxConcurrentTasks ?? value)
+      try {
+        await workbench?.refreshWorkLists()
+      } catch (refreshError) {
+        console.warn(
+          '[Wework] Failed to refresh runtime tasks after updating concurrency settings',
+          refreshError
+        )
+      }
     } catch (saveError) {
       console.error('[Wework] Failed to update runtime concurrency settings', saveError)
       setMaxConcurrentTasks(previousValue)

@@ -793,11 +793,14 @@ export function cacheRuntimeConversationQueuePaused(address: RuntimeTaskAddress,
 }
 
 export function cacheRuntimeConversationQueuePausedByKey(key: string, paused: boolean) {
+  const previous = queuedMessagesPausedByConversation.get(key) ?? false
+  if (previous === paused) return
   if (!paused) {
     queuedMessagesPausedByConversation.delete(key)
-    return
+  } else {
+    cacheBoundedEntry(queuedMessagesPausedByConversation, key, true)
   }
-  cacheBoundedEntry(queuedMessagesPausedByConversation, key, true)
+  notifyRuntimeConversation(key)
 }
 
 export function runtimeConversationKey(address: RuntimeTaskAddress): string {

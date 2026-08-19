@@ -125,9 +125,12 @@ async fn runner_reconnects_after_two_consecutive_heartbeat_failures_to_preserve_
     let transport = ScriptedTransport::with_call_results(vec![
         Ok(json!({"success": true})),
         Ok(json!({"success": true})),
+    ])
+    .with_emit_results(vec![
+        Ok(()),
         Err("heartbeat timeout 1".to_owned()),
         Err("heartbeat timeout 2".to_owned()),
-        Ok(json!({"success": true})),
+        Ok(()),
     ]);
     let mut config = local_backend_config();
     config.heartbeat_interval = Duration::from_millis(80);
@@ -144,11 +147,11 @@ async fn runner_reconnects_after_two_consecutive_heartbeat_failures_to_preserve_
 
     assert!(transport.connects() >= 2);
     assert!(transport.disconnects() >= 1);
-    let heartbeat_calls = transport.calls_for_event("device:heartbeat");
-    assert!(heartbeat_calls.len() >= 3);
-    let retry_gap = heartbeat_calls[2]
+    let heartbeat_emits = transport.emits_for_event("device:heartbeat");
+    assert!(heartbeat_emits.len() >= 3);
+    let retry_gap = heartbeat_emits[2]
         .recorded_at
-        .duration_since(heartbeat_calls[1].recorded_at);
+        .duration_since(heartbeat_emits[1].recorded_at);
     assert!(
         retry_gap < Duration::from_millis(40),
         "expected retry gap to be shorter than the regular heartbeat interval, got {retry_gap:?}"
@@ -159,6 +162,11 @@ async fn runner_reconnects_after_two_consecutive_heartbeat_failures_to_preserve_
 struct RecordedCall {
     event: String,
     timeout: Duration,
+}
+
+#[derive(Clone, Debug)]
+struct RecordedEmit {
+    event: String,
     recorded_at: Instant,
 }
 
@@ -166,6 +174,8 @@ struct RecordedCall {
 struct ScriptedTransport {
     calls: Arc<Mutex<Vec<RecordedCall>>>,
     call_results: Arc<Mutex<VecDeque<Result<Value, String>>>>,
+    emits: Arc<Mutex<Vec<RecordedEmit>>>,
+    emit_results: Arc<Mutex<VecDeque<Result<(), String>>>>,
     handlers: Arc<Mutex<Vec<(String, EventHandler)>>>,
     connects: Arc<Mutex<usize>>,
     disconnects: Arc<Mutex<usize>>,
@@ -180,6 +190,11 @@ impl ScriptedTransport {
         }
     }
 
+    fn with_emit_results(mut self, results: Vec<Result<(), String>>) -> Self {
+        self.emit_results = Arc::new(Mutex::new(results.into()));
+        self
+    }
+
     fn calls(&self) -> Vec<RecordedCall> {
         self.calls.lock().unwrap().clone()
     }
@@ -192,10 +207,13 @@ impl ScriptedTransport {
         *self.disconnects.lock().unwrap()
     }
 
-    fn calls_for_event(&self, event: &str) -> Vec<RecordedCall> {
-        self.calls()
-            .into_iter()
-            .filter(|call| call.event == event)
+    fn emits_for_event(&self, event: &str) -> Vec<RecordedEmit> {
+        self.emits
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|emit| emit.event == event)
+            .cloned()
             .collect()
     }
 
@@ -243,7 +261,6 @@ impl LocalBackendTransport for ScriptedTransport {
             self.calls.lock().unwrap().push(RecordedCall {
                 event: event.to_owned(),
                 timeout,
-                recorded_at: Instant::now(),
             });
             self.notify.notify_waiters();
             self.call_results
@@ -256,10 +273,21 @@ impl LocalBackendTransport for ScriptedTransport {
 
     fn emit<'a>(
         &'a self,
-        _event: &'a str,
+        event: &'a str,
         _payload: Value,
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
-        Box::pin(async { Ok(()) })
+        Box::pin(async move {
+            self.emits.lock().unwrap().push(RecordedEmit {
+                event: event.to_owned(),
+                recorded_at: Instant::now(),
+            });
+            self.notify.notify_waiters();
+            self.emit_results
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or(Ok(()))
+        })
     }
 
     fn on(&self, event: &str, handler: EventHandler) {
