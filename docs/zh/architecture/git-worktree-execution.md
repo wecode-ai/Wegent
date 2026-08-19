@@ -85,8 +85,14 @@ sequenceDiagram
     E->>Q: 恢复排队执行意图
     E->>G: 对账 Worktree 生命周期
     alt Worktree 上次停在 preparing
+        G->>G: 校验记录中的 Worktree 身份
+        alt 合法 Worktree 已存在
+            G->>G: preparing 转为 active，并保留恢复诊断
+        else Worktree 缺失或身份无效
+            G->>G: preparing 转为 failed，并保留校验错误
+        end
         G-->>E: 明确的中断准备证据
-        E->>G: 记录准备失败并保留诊断
+        E->>T: 仅将关联的 Runtime Task 标记为失败
     else 普通历史任务或仅排队任务
         E->>E: 不推导失败、不改任务活动时间
     end
@@ -138,7 +144,7 @@ sequenceDiagram
 8. 已存在目标路径只有在验证为同一源仓库、同一 Worktree ID 的合法 Git Worktree 后才能幂等接管。
 9. 阻塞 Git 和目录扫描不得运行在异步 RPC 主线程。
 10. 删除前必须获得所有关联 Runtime 的停止确认；Runtime 退出或 panic 都必须由作用域退出守卫发送停止确认。归档、快照和删除按顺序执行，任一步失败都保留可诊断数据；批量归档必须有界并发，不能按故障任务数线性累积停止超时。
-11. Executor 重启对账可以恢复 Worktree 的可管理状态，但不得自动续跑中断的 Agent；Runtime Task Store 只持久化任务身份、路径、线程、归档和展示元数据，不持久化 `status`、`running`、`threadStatus` 或 `turnStatus`。持续失败的对账必须按固定间隔限流，同时保留后续重试能力。
+11. Executor 重启对账可以恢复 Worktree 的可管理状态，但不得自动续跑中断的 Agent；Runtime Task Store 持久化耐久任务元数据，但不持久化 `status`、`running`、`threadStatus` 或 `turnStatus`。持续失败的对账必须按固定间隔限流，同时保留后续重试能力。
 12. 一个 Executor Home 同一时刻只能有一个写入 Executor；Cloud 和 Remote 的 Executor Home、主仓库、Worktree、Runtime Store 和绝对挂载路径必须稳定持久化。
 13. 启动模式和分支偏好按 DeviceWorkspace 隔离；运行位置不是启动模式。
 14. 离线、路由缺失、超时、断开、不支持、非 Git、路径冲突和存储不持久使用稳定可区分错误；超时和断开必须标记为可重试，但有副作用的 RPC 不自动重试。

@@ -85,8 +85,14 @@ sequenceDiagram
     E->>Q: restore queued execution intent
     E->>G: reconcile Worktree lifecycle
     alt Worktree was left in preparing
+        G->>G: validate the recorded Worktree identity
+        alt valid Worktree exists
+            G->>G: move preparing to active and preserve recovery diagnostics
+        else missing or invalid Worktree
+            G->>G: move preparing to failed and preserve the validation error
+        end
         G-->>E: explicit interrupted-preparation evidence
-        E->>G: record preparation failure and preserve diagnostics
+        E->>T: mark only the linked Runtime Task failed
     else ordinary history or queue-only task
         E->>E: infer no failure and preserve task activity time
     end
@@ -138,7 +144,7 @@ Essential invariants:
 8. An existing target path is adopted only after proving that it is the expected Git Worktree for the same repository and Worktree ID.
 9. Blocking Git and directory scans never run on the asynchronous RPC worker.
 10. Deletion requires stop acknowledgement from every linked Runtime. Runtime exit or panic sends that acknowledgement through a scope-exit guard. Archive, snapshot, and removal happen in order, every failure preserves diagnosable data, and bulk archive uses bounded concurrency instead of accumulating stop timeouts linearly per stuck task.
-11. Restart reconciliation may recover a manageable Worktree, but never auto-resumes an interrupted agent. The Runtime Task Store persists only task identity, path, thread, archive, and presentation metadata; it never persists `status`, `running`, `threadStatus`, or `turnStatus`. Persistent reconciliation failures are throttled with a fixed retry interval while preserving later retries.
+11. Restart reconciliation may recover a manageable Worktree, but never auto-resumes an interrupted agent. The Runtime Task Store persists durable task metadata, but never persists `status`, `running`, `threadStatus`, or `turnStatus`. Persistent reconciliation failures are throttled with a fixed retry interval while preserving later retries.
 12. One Executor process writes an Executor Home at a time. Cloud and Remote Executor Home, repositories, Worktrees, Runtime Store, and absolute mount path remain durably stable.
 13. Launch-mode and branch preferences are scoped by DeviceWorkspace; execution location is not a launch mode.
 14. Offline, missing route, timeout, disconnect, unsupported, non-Git, path-conflict, and non-durable-storage failures have stable distinct errors. Timeout and disconnect are marked retryable, but mutating RPCs are never automatically retried.
