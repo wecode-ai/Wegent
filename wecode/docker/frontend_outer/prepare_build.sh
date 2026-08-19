@@ -4,11 +4,12 @@
 
 set -eu
 
-rm -rf frontend packages package.json pnpm-lock.yaml pnpm-workspace.yaml
+rm -rf frontend packages patches package.json pnpm-lock.yaml pnpm-workspace.yaml
 
 cp -R ../../../frontend ./frontend
 mkdir -p ./packages
 cp -R ../../../packages/chat-core ./packages/chat-core
+cp -R ../../../patches ./patches
 cp ../../../package.json ../../../pnpm-lock.yaml ../../../pnpm-workspace.yaml ./
 cp -f .env.local ./frontend/.env.local
 
