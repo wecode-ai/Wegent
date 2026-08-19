@@ -17,6 +17,7 @@ from app.services.chat.selected_knowledge import (
     activate_provider_native_knowledge,
     apply_selected_knowledge_context,
     build_selected_knowledge_refs,
+    should_prepare_provider_native_knowledge,
 )
 from app.services.execution.skill_mcp import extract_skill_mcp_servers
 from shared.models import ExecutionRequest, KnowledgeBaseScope
@@ -320,6 +321,90 @@ def test_explicit_empty_wegent_scope_keeps_other_provider_refs(
     assert "explicitly selected by the user" in request.selected_knowledge_prompt
 
 
+def test_empty_wegent_scope_keeps_other_valid_wegent_scope() -> None:
+    contexts = [
+        SimpleNamespace(
+            context_type=ContextType.KNOWLEDGE_BASE.value,
+            status=ContextStatus.READY.value,
+            name="空范围",
+            type_data={
+                "knowledge_id": 12,
+                "scope_restricted": True,
+                "document_ids": [],
+            },
+        ),
+        SimpleNamespace(
+            context_type=ContextType.KNOWLEDGE_BASE.value,
+            status=ContextStatus.READY.value,
+            name="有效范围",
+            type_data={
+                "knowledge_id": 13,
+                "scope_restricted": True,
+                "document_ids": [9],
+            },
+        ),
+    ]
+    request = ExecutionRequest(knowledge_base_ids=[12, 13], is_user_selected_kb=True)
+
+    skills = apply_selected_knowledge_context(
+        _KnowledgeMetadataDB(),
+        request,
+        SimpleNamespace(json={"spec": {}}),
+        current_contexts=contexts,
+    )
+    should_prepare = should_prepare_provider_native_knowledge(
+        knowledge_base_ids=[12, 13],
+        knowledge_base_scopes=[
+            KnowledgeBaseScope(
+                knowledge_base_id=12,
+                scope_restricted=True,
+                document_ids=[],
+            ),
+            KnowledgeBaseScope(
+                knowledge_base_id=13,
+                scope_restricted=True,
+                document_ids=[9],
+            ),
+        ],
+        access_mode="full",
+        current_contexts=contexts,
+        preload_selected_kb_skill=True,
+        shell_type="Chat",
+    )
+
+    assert skills == ["wegent-knowledge"]
+    assert 'knowledge_base_id="12"' not in request.selected_knowledge_prompt
+    assert 'knowledge_base_id="13"' in request.selected_knowledge_prompt
+    assert should_prepare is True
+
+
+def test_current_wegent_folder_preserves_include_subfolders_false() -> None:
+    request = ExecutionRequest(knowledge_base_ids=[12], is_user_selected_kb=True)
+    contexts = [
+        SimpleNamespace(
+            context_type=ContextType.KNOWLEDGE_BASE.value,
+            status=ContextStatus.READY.value,
+            name="当前目录",
+            type_data={
+                "knowledge_id": 12,
+                "scope_restricted": True,
+                "folder_ids": [3],
+                "include_subfolders": False,
+            },
+        )
+    ]
+
+    apply_selected_knowledge_context(
+        _KnowledgeMetadataDB(),
+        request,
+        SimpleNamespace(json={"spec": {}}),
+        current_contexts=contexts,
+    )
+
+    assert 'resource_id="3"' in request.selected_knowledge_prompt
+    assert 'include_descendants="false"' in request.selected_knowledge_prompt
+
+
 def test_build_selected_knowledge_refs_groups_resources_by_knowledge_base(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -433,7 +518,8 @@ def test_chat_preserves_persisted_folder_and_document_scope() -> None:
         "设计资料",
         "接口约定",
     ]
-    assert "folder and its descendants" in request.selected_knowledge_prompt
+    assert 'include_descendants="false"' in request.selected_knowledge_prompt
+    assert "honor include_descendants exactly" in request.selected_knowledge_prompt
 
 
 def test_workbench_prefers_request_scope_over_whole_task_binding() -> None:

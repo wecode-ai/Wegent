@@ -28,6 +28,7 @@ def test_render_selected_knowledge_prompt_preserves_provider_scopes() -> None:
                             scope_type="folder",
                             resource_id="folder-1",
                             resource_name="评审资料",
+                            include_descendants=False,
                         ),
                     ),
                 ),
@@ -54,6 +55,8 @@ def test_render_selected_knowledge_prompt_preserves_provider_scopes() -> None:
     assert 'provider="wegent"' in prompt
     assert 'scope_type="folder"' in prompt
     assert 'resource_id="folder-1"' in prompt
+    assert 'include_descendants="false"' in prompt
+    assert "honor include_descendants exactly" in prompt
     assert "AP &amp; Docs" in prompt
     assert "A &lt; B &quot;说明&quot;" in prompt
     assert "id=1&amp;view=full" in prompt

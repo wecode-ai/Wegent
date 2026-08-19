@@ -213,13 +213,21 @@ def has_explicit_empty_wegent_scope(contexts: Iterable[Any]) -> bool:
     return False
 
 
-def has_empty_restricted_knowledge_scope(scopes: Iterable[Any]) -> bool:
-    """Return whether resolved Wegent scopes contain no accessible documents."""
-    return any(
-        bool(getattr(scope, "scope_restricted", False))
-        and not list(getattr(scope, "document_ids", None) or [])
-        for scope in scopes
-    )
+def has_usable_wegent_scope(
+    knowledge_base_ids: Iterable[Any] | None,
+    scopes: Iterable[Any] | None,
+) -> bool:
+    """Return whether at least one selected Wegent scope is usable."""
+    scope_by_id = {
+        str(getattr(scope, "knowledge_base_id", "")): scope for scope in scopes or ()
+    }
+    for knowledge_base_id in knowledge_base_ids or ():
+        scope = scope_by_id.get(str(knowledge_base_id))
+        if scope is None or not bool(getattr(scope, "scope_restricted", False)):
+            return True
+        if list(getattr(scope, "document_ids", None) or []):
+            return True
+    return False
 
 
 def has_supported_explicit_external_context(contexts: Iterable[Any]) -> bool:
@@ -243,8 +251,9 @@ def should_prepare_provider_native_knowledge(
         or access_mode == KnowledgeBaseToolAccessMode.RESTRICTED_SEARCH_ONLY
     ):
         return False
-    has_wegent_source = bool(tuple(knowledge_base_ids)) and not (
-        has_empty_restricted_knowledge_scope(knowledge_base_scopes)
+    has_wegent_source = has_usable_wegent_scope(
+        knowledge_base_ids,
+        knowledge_base_scopes,
     )
     return has_wegent_source or has_supported_explicit_external_context(
         current_contexts
@@ -306,13 +315,22 @@ def _build_current_wegent_refs(
             else []
         )
         document_ids = _int_values(data.get("document_ids"))
+        include_descendants = (
+            bool(data.get("include_subfolders", True)) if folder_ids else None
+        )
         scope_restricted = bool(data.get("scope_restricted")) or bool(
             folder_ids or document_ids
         )
         if scope_restricted and not (folder_ids or document_ids):
             continue
         resources = (
-            _load_wegent_resources(db, kb_id, folder_ids, document_ids)
+            _load_wegent_resources(
+                db,
+                kb_id,
+                folder_ids,
+                document_ids,
+                include_descendants=include_descendants,
+            )
             if scope_restricted
             else ()
         )
@@ -365,7 +383,12 @@ def _build_wegent_refs(
     for kb_id in sorted(selected_ids):
         scope = scope_refs.get(kb_id) or {}
         kb_name = str(scope.get("name") or kb_refs.get(kb_id, {}).get("name") or kb_id)
-        scope_restricted, folder_ids, document_ids = _resolve_wegent_scope(
+        (
+            scope_restricted,
+            folder_ids,
+            document_ids,
+            include_descendants,
+        ) = _resolve_wegent_scope(
             request,
             kb_id,
             scope,
@@ -381,7 +404,13 @@ def _build_wegent_refs(
             )
             continue
 
-        resources = _load_wegent_resources(db, kb_id, folder_ids, document_ids)
+        resources = _load_wegent_resources(
+            db,
+            kb_id,
+            folder_ids,
+            document_ids,
+            include_descendants=include_descendants,
+        )
         result.append(
             SelectedKnowledgeRef(
                 provider="wegent",
@@ -398,6 +427,8 @@ def _load_wegent_resources(
     kb_id: int,
     folder_ids: list[int],
     document_ids: list[int],
+    *,
+    include_descendants: bool | None = None,
 ) -> tuple[SelectedKnowledgeResource, ...]:
     folders = (
         {
@@ -431,6 +462,7 @@ def _load_wegent_resources(
                 scope_type=KnowledgeScopeType.FOLDER,
                 resource_id=str(folder_id),
                 resource_name=folders.get(folder_id, str(folder_id)),
+                include_descendants=include_descendants,
             )
             for folder_id in folder_ids
         ]
@@ -451,7 +483,7 @@ def _resolve_wegent_scope(
     persisted_scope: dict[str, Any],
     *,
     prefer_request_scope: bool,
-) -> tuple[bool, list[int], list[int]]:
+) -> tuple[bool, list[int], list[int], bool | None]:
     if prefer_request_scope:
         for request_scope in request.knowledge_base_scopes or []:
             if request_scope.knowledge_base_id != kb_id:
@@ -460,12 +492,15 @@ def _resolve_wegent_scope(
                 request_scope.scope_restricted,
                 [],
                 _int_values(request_scope.document_ids),
+                None,
             )
 
+    folder_ids = _int_values(persisted_scope.get("folderIds"))
     return (
         bool(persisted_scope.get("scopeRestricted")),
-        _int_values(persisted_scope.get("folderIds")),
+        folder_ids,
         _int_values(persisted_scope.get("explicitDocumentIds")),
+        (bool(persisted_scope.get("includeSubfolders", True)) if folder_ids else None),
     )
 
 
@@ -500,12 +535,21 @@ def _build_external_refs_from_values(
             resource_id = value.get("document_id") or value.get("node_id")
         resources: tuple[SelectedKnowledgeResource, ...] = ()
         if scope_type != KnowledgeScopeType.KNOWLEDGE_BASE:
+            include_descendants = None
+            if scope_type == KnowledgeScopeType.FOLDER:
+                raw_include_descendants = value.get(
+                    "include_descendants",
+                    value.get("include_subfolders"),
+                )
+                if isinstance(raw_include_descendants, bool):
+                    include_descendants = raw_include_descendants
             resources = (
                 SelectedKnowledgeResource(
                     scope_type=scope_type,
                     resource_id=(str(resource_id) if resource_id is not None else None),
                     resource_name=value.get("target_name"),
                     resource_url=value.get("resource_url"),
+                    include_descendants=include_descendants,
                 ),
             )
         result.append(

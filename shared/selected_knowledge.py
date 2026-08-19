@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import replace
 
 from shared.models.knowledge import (
     SelectedKnowledgeContext,
@@ -55,13 +56,40 @@ def _merge_refs(
 def _merge_resources(
     *resource_groups: Iterable[SelectedKnowledgeResource],
 ) -> tuple[SelectedKnowledgeResource, ...]:
-    seen: set[tuple[str, str | None]] = set()
+    indexes: dict[tuple[str, str | None], int] = {}
     resources: list[SelectedKnowledgeResource] = []
     for group in resource_groups:
         for resource in group:
             key = (resource.scope_type, resource.resource_id)
-            if key in seen:
+            index = indexes.get(key)
+            if index is not None:
+                resources[index] = _merge_resource(resources[index], resource)
                 continue
-            seen.add(key)
+            indexes[key] = len(resources)
             resources.append(resource)
     return tuple(resources)
+
+
+def _merge_resource(
+    current: SelectedKnowledgeResource,
+    incoming: SelectedKnowledgeResource,
+) -> SelectedKnowledgeResource:
+    """Merge duplicate resource scopes using union semantics."""
+    if current.scope_type != "folder":
+        return current
+    include_descendants = _merge_include_descendants(
+        current.include_descendants,
+        incoming.include_descendants,
+    )
+    return replace(current, include_descendants=include_descendants)
+
+
+def _merge_include_descendants(
+    current: bool | None,
+    incoming: bool | None,
+) -> bool | None:
+    if current is True or incoming is True:
+        return True
+    if current is False and incoming is False:
+        return False
+    return None

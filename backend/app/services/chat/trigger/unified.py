@@ -1142,20 +1142,20 @@ async def build_execution_request(
         from app.services.chat.selected_knowledge import (
             activate_provider_native_knowledge,
             apply_selected_knowledge_context,
-            has_empty_restricted_knowledge_scope,
             has_supported_explicit_external_context,
+            has_usable_wegent_scope,
         )
 
         provider_skills = []
-        has_empty_wegent_scope = has_empty_restricted_knowledge_scope(
-            request.knowledge_base_scopes
+        has_usable_wegent = has_usable_wegent_scope(
+            request.knowledge_base_ids, request.knowledge_base_scopes
         )
         if (
             task_labels.get("source") != KNOWLEDGE_ARTIFACT_SOURCE
             and request.kb_tool_access_mode
             != KnowledgeBaseToolAccessMode.RESTRICTED_SEARCH_ONLY
             and (
-                not has_empty_wegent_scope
+                has_usable_wegent
                 or has_supported_explicit_external_context(current_contexts)
             )
         ):
@@ -1239,7 +1239,7 @@ async def _process_contexts(
     # DB queries needed.
     request.prompt = ctx.final_message
     from app.services.chat.selected_knowledge import (
-        has_empty_restricted_knowledge_scope,
+        has_usable_wegent_scope,
         should_prepare_provider_native_knowledge,
     )
 
@@ -1279,8 +1279,9 @@ async def _process_contexts(
         request.kb_tool_access_mode = ctx.kb.kb_tool_access_mode
         if ctx.kb.document_ids and not ctx.kb.knowledge_base_scopes:
             request.document_ids = ctx.kb.document_ids
-        if prepare_provider_native_knowledge and not (
-            has_empty_restricted_knowledge_scope(ctx.kb.knowledge_base_scopes)
+        if prepare_provider_native_knowledge and has_usable_wegent_scope(
+            ctx.kb.knowledge_base_ids,
+            ctx.kb.knowledge_base_scopes,
         ):
             _ensure_selected_kb_skill_priority(request)
 
