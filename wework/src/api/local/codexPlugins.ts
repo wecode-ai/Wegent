@@ -36,7 +36,6 @@ import {
 import { rankMarketplaceSearchResults } from '@/features/plugins/marketplaceSearch'
 import { preferWeworkPersonalInstalled } from '@/features/plugins/personalPluginMigration'
 import { isWegentCloudMarketplace } from '@/features/plugins/pluginNavigation'
-import { retainOpenAiOfficialLocalInstalls } from '@/features/plugins/retainOpenAiOfficialLocalInstalls'
 import { slimPluginComponentsForCache } from '@/features/plugins/slimPluginComponents'
 import { mergeLocalInstalledWithStorePackages } from '@/components/plugins/installedPluginMerge'
 
@@ -2357,23 +2356,16 @@ async function loadReadStateSnapshot(
   const availableMarketplaceItems = selectedMarketplaces.flatMap(marketplace =>
     marketplace.plugins.map(plugin => toMarketplaceItem(marketplace, plugin, null, featuredIds))
   )
-  // plugin/installed is authoritative for membership; summaries sometimes omit
-  // `installed`/`enabled`. Also fold in plugin/list rows marked installed so a
-  // briefly empty installed response cannot hide a just-installed plugin.
-  // When GitHub is down, live membership often keeps openai-bundled but drops
-  // openai-curated-remote; retain that remote family from the durable snapshot
-  // so OpenAI官方 cards do not fall back to "安装".
-  const installedPlugins = retainOpenAiOfficialLocalInstalls(
-    mergeLocalInstalledWithStorePackages(
-      applyPluginCloudLinks(
-        preferWeworkPersonalInstalled(
-          mergeInstalledPluginSummaries(installedResponse.marketplaces, availableMarketplaces)
-        ),
-        cloudLinks
+  // plugin/installed is authoritative for membership. Fold in the device store
+  // inventory from the same live read, but never revive rows from an older cache.
+  const installedPlugins = mergeLocalInstalledWithStorePackages(
+    applyPluginCloudLinks(
+      preferWeworkPersonalInstalled(
+        mergeInstalledPluginSummaries(installedResponse.marketplaces, availableMarketplaces)
       ),
-      await storePluginsPromise
+      cloudLinks
     ),
-    cachedState?.installedPlugins ?? []
+    await storePluginsPromise
   )
   const marketplaceItems = applyInstalledPluginsToMarketplaceItems(
     availableMarketplaceItems,
@@ -2950,10 +2942,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         }
       }
       const loaded = await loadInstalledPluginsOnly()
-      const installedPlugins = retainOpenAiOfficialLocalInstalls(
-        loaded.installedPlugins,
-        cachedState?.installedPlugins ?? peeked?.installedPlugins ?? []
-      )
+      const installedPlugins = loaded.installedPlugins
       if (cachedState) {
         cachedState = {
           ...cachedState,

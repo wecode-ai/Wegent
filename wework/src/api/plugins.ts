@@ -9,6 +9,7 @@ import type {
   PluginDeleteImpactResponse,
   PluginDeleteRequest,
   PluginDeleteResponse,
+  PluginDeviceReportItem,
   PluginDeviceReportResponse,
   PluginDeviceSyncResponse,
   PluginMarketplaceInstallResponse,
@@ -53,10 +54,10 @@ export function createPluginApi(client: HttpClient) {
     },
     reportInstalledPluginsOnDevice(
       deviceId: string,
-      installedPluginIds: number[]
+      plugins: PluginDeviceReportItem[]
     ): Promise<PluginDeviceReportResponse> {
       return client.post(`/plugins/installed/report-device${deviceQuery(deviceId)}`, {
-        installedPluginIds,
+        plugins,
       })
     },
     autoUpdateInstalledPlugins(): Promise<PluginAutoUpdateBatchResponse> {

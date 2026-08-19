@@ -59,7 +59,7 @@ import { InstalledPluginStrip } from './workspace/InstalledPluginStrip'
 import { MarketplaceCatalogView } from './workspace/MarketplaceCatalogView'
 import {
   beginPluginDeviceSync,
-  collectInstalledPluginIdsNeedingDeviceStatusReport,
+  collectPluginDeviceStatusReports,
   hasAttemptedPluginDeviceAutoSync,
   hasAttemptedPluginDeviceStatusReport,
   hasSettledPluginDeviceAutoSync,
@@ -107,7 +107,6 @@ import {
   resolveProgressiveLocalInstalledRaw,
   storeDirMatchesPluginKey,
 } from './installedPluginMerge'
-import { retainOpenAiOfficialLocalInstalls } from '@/features/plugins/retainOpenAiOfficialLocalInstalls'
 import { findMarketplaceItemForInstalled } from './findMarketplaceItemForInstalled'
 import {
   isLocalMarketplaceItem,
@@ -194,6 +193,9 @@ interface PendingMarketplaceInstall {
   requiredConnectionNames: string[]
   promptAfterInstall?: string
 }
+
+const DEVICE_STATUS_REPORT_MAX_RETRIES = 3
+const DEVICE_STATUS_REPORT_RETRY_BASE_MS = 1000
 
 export function PluginsWorkspace({
   sidebarCollapsed = false,
@@ -301,6 +303,8 @@ export function PluginsWorkspace({
   const marketplaceReturnScrollTopRef = useRef<number | null>(null)
   const preparingInstallPluginIdsRef = useRef(new Set<string | number>())
   const autoUpdateAttemptKeysRef = useRef(new Set<string>())
+  const deviceStatusReportFailureCountsRef = useRef(new Map<string, number>())
+  const deviceStatusReportRetryTimerRef = useRef<number | null>(null)
   // Durable peek / warm cache already paints the catalog — do not start in a
   // "refreshing" skeleton state just because Codex plugin/list will revalidate.
   const [isMarketplaceRefreshing, setIsMarketplaceRefreshing] = useState(false)
@@ -436,6 +440,15 @@ export function PluginsWorkspace({
     initialMarketplaceLoadKeyRef.current = null
   }, [cloudMarketplaceAvailable, marketplaceCacheKeyValue, t])
   const lastMarketplaceRefreshTickRef = useRef(0)
+
+  useEffect(
+    () => () => {
+      if (deviceStatusReportRetryTimerRef.current !== null) {
+        window.clearTimeout(deviceStatusReportRetryTimerRef.current)
+      }
+    },
+    []
+  )
   usePluginMarketplaceCatalog({
     installedPlugins,
     setPluginMarketplaceState,
@@ -568,10 +581,7 @@ export function PluginsWorkspace({
           .filter(plugin => typeof plugin.spec.pluginId === 'number')
         const nextInstalledRaw = mergeInstalledPlugins(
           cloudInstalledRaw,
-          retainOpenAiOfficialLocalInstalls(localState.installedPlugins, [
-            ...localState.installedPlugins,
-            ...installedPluginsRef.current.map(plugin => plugin.raw),
-          ]),
+          localState.installedPlugins,
           localState.deviceId || currentDeviceIdRef.current || ''
         ).map(toInstalledPluginItem)
         // Keep existing cloud rows (device pending/failed inclusive). Only refresh the
@@ -2391,11 +2401,7 @@ export function PluginsWorkspace({
             installedPluginsRef.current.map(plugin => plugin.raw))
       const nextInstalledRaw = mergeInstalledPlugins(
         cloudInstalled,
-        retainOpenAiOfficialLocalInstalls(preferredLocal, [
-          ...(localState?.installedPlugins ?? []),
-          ...(peekedLocalState?.installedPlugins ?? []),
-          ...installedPluginsRef.current.map(plugin => plugin.raw),
-        ]),
+        preferredLocal,
         localState?.deviceId || deviceIdHint || currentDeviceIdRef.current || ''
       ).map(toInstalledPluginItem)
 
@@ -2527,20 +2533,10 @@ export function PluginsWorkspace({
       }
       if (localState) {
         localStateForMerge = localState
-        // A live readState snapshot includes cloud links; prefer it over a
-        // membership-only plugin/installed result that raced ahead of bundled init.
-        // Retain omitted remote OpenAI families from peek so GitHub does not
-        // vanish when plugin/list still has openai-bundled.
+        // A successful live readState snapshot is authoritative, including an
+        // empty install list after the user uninstalls the last package.
         if (peekedLocalState == null || localState !== peekedLocalState) {
-          liveLocalInstalledForMerge = retainOpenAiOfficialLocalInstalls(
-            localState.installedPlugins,
-            [
-              ...(liveLocalInstalledForMerge ?? []),
-              ...localState.installedPlugins,
-              ...(peekedLocalState?.installedPlugins ?? []),
-              ...installedPluginsRef.current.map(plugin => plugin.raw),
-            ]
-          )
+          liveLocalInstalledForMerge = localState.installedPlugins
         }
         setCurrentDeviceId(localState.deviceId)
         applyLocalMarketplaceState(localState)
@@ -2631,26 +2627,19 @@ export function PluginsWorkspace({
       const previousInstalledRaw = hasCachedSnapshot
         ? cachedInstalledRaw
         : (localStateForMerge?.installedPlugins ?? [])
-      const localInstalledForMerge = retainOpenAiOfficialLocalInstalls(
+      const localInstalledForMerge =
         liveLocalInstalledForMerge ??
-          resolveProgressiveLocalInstalledRaw({
-            hasCachedSnapshot,
-            cachedInstalledRaw,
-            localInstalledRaw: localStateForMerge?.installedPlugins,
-            localStateIsPeek:
-              peekedLocalState != null &&
-              localStateForMerge != null &&
-              localStateForMerge === peekedLocalState,
-            cachedDeviceId: cachedSnapshot?.deviceId,
-            localDeviceId: localStateForMerge?.deviceId,
-          }),
-        [
-          ...(localStateForMerge?.installedPlugins ?? []),
-          ...(peekedLocalState?.installedPlugins ?? []),
-          ...installedPluginsRef.current.map(plugin => plugin.raw),
-          ...cachedInstalledRaw,
-        ]
-      )
+        resolveProgressiveLocalInstalledRaw({
+          hasCachedSnapshot,
+          cachedInstalledRaw,
+          localInstalledRaw: localStateForMerge?.installedPlugins,
+          localStateIsPeek:
+            peekedLocalState != null &&
+            localStateForMerge != null &&
+            localStateForMerge === peekedLocalState,
+          cachedDeviceId: cachedSnapshot?.deviceId,
+          localDeviceId: localStateForMerge?.deviceId,
+        })
       // Local-first paint must not blank cloud installs for THIS account. Never keep
       // prior-account strip rows when the current key has no warm snapshot.
       const cloudInstalled =
@@ -2768,25 +2757,17 @@ export function PluginsWorkspace({
             diskPersonalItems
           )
           const cachedInstalledRaw = (cached?.installedPlugins ?? []).map(plugin => plugin.raw)
-          const localInstalledForMerge = retainOpenAiOfficialLocalInstalls(
-            resolveProgressiveLocalInstalledRaw({
-              hasCachedSnapshot: cached != null,
-              cachedInstalledRaw,
-              localInstalledRaw: localStateForMerge?.installedPlugins,
-              localStateIsPeek:
-                peekedLocalState != null &&
-                localStateForMerge != null &&
-                localStateForMerge === peekedLocalState,
-              cachedDeviceId: cached?.deviceId,
-              localDeviceId: localStateForMerge?.deviceId,
-            }),
-            [
-              ...(localStateForMerge?.installedPlugins ?? []),
-              ...(peekedLocalState?.installedPlugins ?? []),
-              ...installedPluginsRef.current.map(plugin => plugin.raw),
-              ...cachedInstalledRaw,
-            ]
-          )
+          const localInstalledForMerge = resolveProgressiveLocalInstalledRaw({
+            hasCachedSnapshot: cached != null,
+            cachedInstalledRaw,
+            localInstalledRaw: localStateForMerge?.installedPlugins,
+            localStateIsPeek:
+              peekedLocalState != null &&
+              localStateForMerge != null &&
+              localStateForMerge === peekedLocalState,
+            cachedDeviceId: cached?.deviceId,
+            localDeviceId: localStateForMerge?.deviceId,
+          })
           const nextInstalledRaw = mergeInstalledPlugins(
             cloudInstalledForMerge ??
               (cloudMarketplaceAvailable && cached != null
@@ -3162,11 +3143,12 @@ export function PluginsWorkspace({
     if (localInstalledStateReadyKey !== marketplaceCacheKeyValue) return
     if (pluginMarketplaceState.isLoading) return
     const deviceId = currentDeviceId
-    const reportIds = collectInstalledPluginIdsNeedingDeviceStatusReport(
+    const reports = collectPluginDeviceStatusReports(
       installedPlugins.map(plugin => plugin.raw),
       pluginMarketplaceState.items,
       deviceId
     )
+    const reportIds = reports.map(report => report.installedPluginId)
     const needsPackageSync = marketplaceNeedsDeviceSync(pluginMarketplaceState.items)
     if (reportIds.length === 0 && !needsPackageSync) {
       if (
@@ -3219,27 +3201,57 @@ export function PluginsWorkspace({
       })
     }
 
-    if (reportIds.length > 0 && !hasAttemptedPluginDeviceStatusReport(deviceId)) {
+    if (reports.length > 0 && !hasAttemptedPluginDeviceStatusReport(deviceId, reports)) {
       const finishDeviceSync = beginPluginDeviceSync(deviceId)
       if (!finishDeviceSync) return
-      markPluginDeviceStatusReportAttempted(deviceId)
-      setInstalledPlugins(previous => {
-        const next = withAcknowledgedDeviceInstallations(
-          previous.map(plugin => plugin.raw),
-          deviceId,
-          reportIds
-        ).map(toInstalledPluginItem)
-        return sameInstalledPlugins(previous, next) ? previous : next
-      })
-      setPluginMarketplaceState(previous => ({
-        ...previous,
-        items: withAcknowledgedMarketplaceDeviceState(previous.items, deviceId, reportIds),
-      }))
       void pluginApi
-        .reportInstalledPluginsOnDevice(deviceId, reportIds)
-        .catch(() => undefined)
-        .then(refreshCatalog)
-        .catch(() => undefined)
+        .reportInstalledPluginsOnDevice(deviceId, reports)
+        .then(response => {
+          if (currentDeviceIdRef.current !== deviceId) return
+          markPluginDeviceStatusReportAttempted(deviceId, reports)
+          deviceStatusReportFailureCountsRef.current.delete(deviceId)
+          if (deviceStatusReportRetryTimerRef.current !== null) {
+            window.clearTimeout(deviceStatusReportRetryTimerRef.current)
+            deviceStatusReportRetryTimerRef.current = null
+          }
+          const acknowledgedIds = response.acknowledgedInstalledPluginIds
+          if (acknowledgedIds.length > 0) {
+            setInstalledPlugins(previous => {
+              const next = withAcknowledgedDeviceInstallations(
+                previous.map(plugin => plugin.raw),
+                deviceId,
+                acknowledgedIds
+              ).map(toInstalledPluginItem)
+              return sameInstalledPlugins(previous, next) ? previous : next
+            })
+            setPluginMarketplaceState(previous => ({
+              ...previous,
+              items: withAcknowledgedMarketplaceDeviceState(
+                previous.items,
+                deviceId,
+                acknowledgedIds
+              ),
+            }))
+          }
+          return refreshCatalog().catch(() => undefined)
+        })
+        .catch(() => {
+          if (currentDeviceIdRef.current !== deviceId) return
+          const failureCount = (deviceStatusReportFailureCountsRef.current.get(deviceId) ?? 0) + 1
+          deviceStatusReportFailureCountsRef.current.set(deviceId, failureCount)
+          if (
+            failureCount <= DEVICE_STATUS_REPORT_MAX_RETRIES &&
+            deviceStatusReportRetryTimerRef.current === null
+          ) {
+            const delay = DEVICE_STATUS_REPORT_RETRY_BASE_MS * 2 ** (failureCount - 1)
+            deviceStatusReportRetryTimerRef.current = window.setTimeout(() => {
+              deviceStatusReportRetryTimerRef.current = null
+              if (currentDeviceIdRef.current === deviceId) {
+                setMarketplaceRefreshTick(previous => previous + 1)
+              }
+            }, delay)
+          }
+        })
         .finally(finishDeviceSync)
       return
     }

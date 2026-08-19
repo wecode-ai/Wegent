@@ -418,6 +418,8 @@ function mockSystemSkillsFetch(
     marketplaceName: string
     marketplaceDisplayName: string
     deviceAutoSyncSucceeds: boolean
+    reportDeviceFailures: number
+    localVersionEvidence: string
     marketplaceUpdateAvailable: boolean
     marketplaceUpdatePolicy: 'manual' | 'auto'
     autoUpdateBatchSizes: number[]
@@ -434,6 +436,7 @@ function mockSystemSkillsFetch(
     overrides.marketplaceDeviceState ?? 'installed'
   let syncDeviceCalls = 0
   let reportDeviceCalls = 0
+  let remainingReportDeviceFailures = overrides.reportDeviceFailures ?? 0
   const deviceAutoSyncSucceeds = Boolean(overrides.deviceAutoSyncSucceeds)
   const personalSkillsResponse = {
     items: [
@@ -776,7 +779,13 @@ function mockSystemSkillsFetch(
           logo: overrides.installedMarketplaceLogo ?? marketplaceRow.interface.logo,
         },
         packageRef: null,
-        sourcePayload: null,
+        sourcePayload: overrides.localVersionEvidence
+          ? {
+              localPresent: true,
+              localVersion: overrides.localVersionEvidence,
+              cloudInstalledPluginId: '101',
+            }
+          : null,
       },
       status: {
         state: marketplaceDeviceState,
@@ -912,6 +921,14 @@ function mockSystemSkillsFetch(
       }
       if (requestUrl.pathname === '/api/plugins/installed/report-device') {
         reportDeviceCalls += 1
+        if (remainingReportDeviceFailures > 0) {
+          remainingReportDeviceFailures -= 1
+          return Promise.resolve({
+            ok: false,
+            status: 503,
+            json: () => Promise.resolve({ detail: 'temporarily unavailable' }),
+          })
+        }
         marketplaceDeviceState = 'installed'
         return Promise.resolve({
           ok: true,
@@ -920,6 +937,7 @@ function mockSystemSkillsFetch(
             Promise.resolve({
               deviceId: requestUrl.searchParams.get('device_id') || 'current-device',
               acknowledgedCount: 1,
+              acknowledgedInstalledPluginIds: [101],
             }),
         })
       }
@@ -3369,6 +3387,7 @@ describe('PluginsWorkspace', () => {
       marketplaceVisibility: 'workspace',
       marketplaceSourceProvider: 'wegent',
       deviceAutoSyncSucceeds: false,
+      localVersionEvidence: '1.0.0',
     })
     const localMarketplace = {
       name: 'wegent',
@@ -3431,6 +3450,77 @@ describe('PluginsWorkspace', () => {
     await userEvent.click(screen.getByTestId('plugin-marketplace-row-101'))
     expect(screen.getByTestId('plugin-detail-toggle-101')).toHaveTextContent('立即对话')
     expect(screen.getByTestId('plugin-detail-toggle-101')).not.toHaveTextContent('安装插件')
+  })
+
+  test('retries a failed device status report before acknowledging the local package', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    const marketplaceMock = mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'pending',
+      marketplaceVisibility: 'workspace',
+      marketplaceSourceProvider: 'wegent',
+      reportDeviceFailures: 1,
+      localVersionEvidence: '1.0.0',
+    })
+    const localMarketplace = {
+      name: 'wegent',
+      path: '/Users/test/.wework/capabilities/store/plugins',
+      plugins: [defaultCodexPlugin],
+    }
+    mockCodexAppServerInvoke({
+      deviceId: 'current-device',
+      marketplaces: [localMarketplace],
+      installedPluginNames: ['documents'],
+    })
+
+    let resolveLocalList: ((value: unknown) => void) | null = null
+    const pendingLocalList = new Promise(resolve => {
+      resolveLocalList = resolve
+    })
+    const previousInvoke = vi.mocked(invoke).getMockImplementation()
+    vi.mocked(invoke).mockImplementation((command: string, args?: unknown) => {
+      if (command === 'local_executor_request') {
+        const request = args as {
+          method?: string
+          params?: { method?: string }
+        }
+        if (
+          request.method === 'codex.app_server_request' &&
+          request.params?.method === 'plugin/list'
+        ) {
+          return pendingLocalList
+        }
+      }
+      return previousInvoke?.(command, args) as Promise<unknown>
+    })
+
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    expect(await screen.findByText('Documents')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByTestId('plugin-marketplace-actions-101')).toBeInTheDocument()
+    })
+    await waitFor(() => expect(marketplaceMock.getReportDeviceCalls()).toBe(1))
+    await waitFor(() => expect(marketplaceMock.getReportDeviceCalls()).toBe(2), {
+      timeout: 3000,
+    })
+    resolveLocalList?.({
+      marketplaces: [
+        codexMarketplaceResponse(
+          localMarketplace,
+          new Set(['documents']),
+          false,
+          new Map([['101', true]])
+        ),
+      ],
+    })
+    await waitFor(() => {
+      expect(screen.getByTestId('plugins-installed-strip-item-101')).toBeInTheDocument()
+    })
   })
 
   test('offers try-in-chat when the wegent store directory is already on this device', async () => {

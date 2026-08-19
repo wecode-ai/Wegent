@@ -1590,7 +1590,7 @@ describe('local codex plugin readState cache', () => {
     ).toHaveLength(1)
   })
 
-  test('listInstalledPlugins refresh keeps cached OpenAI installs when live membership omits them', async () => {
+  test('listInstalledPlugins refresh treats an empty live membership as authoritative', async () => {
     const githubMarketplace = {
       name: 'openai-curated-remote',
       path: 'openai-curated-remote',
@@ -1651,10 +1651,10 @@ describe('local codex plugin readState cache', () => {
     )
 
     const listed = await api.listInstalledPlugins({ refresh: true })
-    expect(listed.items.map(item => item.spec.source.pluginKey)).toEqual(['github'])
+    expect(listed.items.map(item => item.spec.source.pluginKey)).toEqual([])
   })
 
-  test('listInstalledPlugins refresh keeps cached remote OpenAI installs when live only returned bundled', async () => {
+  test('listInstalledPlugins refresh removes cached remote installs omitted by live membership', async () => {
     const githubMarketplace = {
       name: 'openai-curated-remote',
       path: 'openai-curated-remote',
@@ -1732,10 +1732,10 @@ describe('local codex plugin readState cache', () => {
     )
 
     const listed = await api.listInstalledPlugins({ refresh: true })
-    expect(listed.items.map(item => item.spec.source.pluginKey)).toEqual(['documents', 'github'])
+    expect(listed.items.map(item => item.spec.source.pluginKey)).toEqual(['documents'])
   })
 
-  test('listInstalledPlugins refresh keeps cached wegent installs when live membership omitted them', async () => {
+  test('listInstalledPlugins refresh removes cached Wegent installs omitted by live membership', async () => {
     const githubMarketplace = {
       name: 'openai-curated-remote',
       path: 'openai-curated-remote',
@@ -1810,10 +1810,10 @@ describe('local codex plugin readState cache', () => {
     )
 
     const listed = await api.listInstalledPlugins({ refresh: true })
-    expect(listed.items.map(item => item.spec.source.pluginKey)).toEqual(['github', 'sina-email'])
+    expect(listed.items.map(item => item.spec.source.pluginKey)).toEqual(['github'])
   })
 
-  test('readState overlays cached remote OpenAI installs onto live catalog cards', async () => {
+  test('readState does not overlay cached installs onto an authoritative live catalog', async () => {
     const githubMarketplace = {
       name: 'openai-curated-remote',
       path: 'openai-curated-remote',
@@ -1893,12 +1893,9 @@ describe('local codex plugin readState cache', () => {
 
     const state = await api.readState({ mergeAllMarketplaces: true, refresh: true })
     const github = state.marketplaceItems.find(item => item.name === 'github')
-    expect(github?.installed).toBe(true)
-    expect(github?.installedPluginId).toBe('github@openai-curated-remote')
-    expect(state.installedPlugins.map(item => item.spec.source.pluginKey)).toEqual([
-      'documents',
-      'github',
-    ])
+    expect(github?.installed).toBe(false)
+    expect(github?.installedPluginId).toBeNull()
+    expect(state.installedPlugins.map(item => item.spec.source.pluginKey)).toEqual(['documents'])
   })
 
   test('listInstalledPlugins refreshes via plugin/installed when peek is stale', async () => {

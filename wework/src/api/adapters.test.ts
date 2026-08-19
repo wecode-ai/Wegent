@@ -253,13 +253,25 @@ describe('REST adapters', () => {
 
   test('reports locally present plugins without syncing packages', async () => {
     const client = mockClient()
-    vi.mocked(client.post).mockResolvedValueOnce({ deviceId: 'device-1', acknowledgedCount: 2 })
+    vi.mocked(client.post).mockResolvedValueOnce({
+      deviceId: 'device-1',
+      acknowledgedCount: 2,
+      acknowledgedInstalledPluginIds: [101, 202],
+    })
 
-    await createPluginApi(client).reportInstalledPluginsOnDevice('device-1', [101, 202])
+    await createPluginApi(client).reportInstalledPluginsOnDevice('device-1', [
+      { installedPluginId: 101, releaseId: 1001, version: '1.0.0' },
+      { installedPluginId: 202, releaseId: 2001, version: '2.0.0' },
+    ])
 
     expect(client.post).toHaveBeenCalledWith(
       '/plugins/installed/report-device?device_id=device-1',
-      { installedPluginIds: [101, 202] }
+      {
+        plugins: [
+          { installedPluginId: 101, releaseId: 1001, version: '1.0.0' },
+          { installedPluginId: 202, releaseId: 2001, version: '2.0.0' },
+        ],
+      }
     )
   })
 

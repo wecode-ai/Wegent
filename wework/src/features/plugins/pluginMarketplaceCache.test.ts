@@ -311,6 +311,22 @@ describe('pluginMarketplaceCache', () => {
     expect(sameMarketplaceItems(left, rightName)).toBe(false)
   })
 
+  test('detects marketplace component changes via signature', () => {
+    const left = [item({ id: 1, name: 'a' })]
+    const right = [
+      item({
+        id: 1,
+        name: 'a',
+        components: {
+          ...left[0]!.components,
+          skills: [{ name: 'review', description: 'Review code', path: 'skills/review' }],
+        },
+      }),
+    ]
+
+    expect(sameMarketplaceItems(left, right)).toBe(false)
+  })
+
   test('detects device installation state changes via signature', () => {
     const base = item({ id: 1, name: 'a', installed: false })
     const failed = item({
@@ -399,6 +415,12 @@ describe('pluginMarketplaceCache', () => {
     const right = [{ ...left[0], name: 'Dev Tools 2', distribution: 'public' as const }]
     expect(sameInstalledPlugins(left, left)).toBe(true)
     expect(sameInstalledPlugins(left, right)).toBe(false)
+
+    const componentsChanged = structuredClone(left)
+    componentsChanged[0]!.raw.spec.components.skills = [
+      { name: 'review', description: 'Review code', path: 'skills/review' },
+    ]
+    expect(sameInstalledPlugins(left, componentsChanged)).toBe(false)
   })
 
   test('keeps memory and listeners immediate while delaying durable persist', () => {
@@ -455,6 +477,47 @@ describe('pluginMarketplaceCache', () => {
       }
     )
     expect(setItem).not.toHaveBeenCalled()
+  })
+
+  test('persists a component-only catalog change', () => {
+    const key = pluginMarketplaceCacheKey('http://api', 'token-components')
+    const snapshot = {
+      cacheKey: key,
+      marketplaceItems: [item({ id: 1, name: 'a' })],
+      installedPlugins: [],
+      marketplaces: [],
+      selectedMarketplaceKey: '',
+      deviceId: 'device-1',
+      canPublish: false,
+      canSharePersonalPlugins: true,
+      fetchedAt: Date.now(),
+    }
+    setPluginMarketplaceCache(snapshot, { persistImmediately: true })
+    const setItem = vi.spyOn(Storage.prototype, 'setItem')
+    setItem.mockClear()
+
+    setPluginMarketplaceCache(
+      {
+        ...snapshot,
+        marketplaceItems: [
+          item({
+            id: 1,
+            name: 'a',
+            components: {
+              ...snapshot.marketplaceItems[0]!.components,
+              skills: [{ name: 'review', description: 'Review code', path: 'skills/review' }],
+            },
+          }),
+        ],
+      },
+      { persistImmediately: true }
+    )
+
+    expect(setItem).toHaveBeenCalled()
+    resetPluginMarketplaceCacheMemory()
+    expect(getPluginMarketplaceCache(key)?.marketplaceItems[0]?.components.skills).toEqual([
+      { name: 'review', description: 'Review code', path: 'review' },
+    ])
   })
 
   test('flushPluginMarketplaceCachePersist writes the pending snapshot immediately', () => {

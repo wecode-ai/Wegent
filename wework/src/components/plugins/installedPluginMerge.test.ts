@@ -321,6 +321,25 @@ describe('mergeInstalledPlugins', () => {
     ])
   })
 
+  test('keeps same-name store packages from different marketplaces', () => {
+    const bundled = localCodexPlugin({
+      id: 'documents-bundled',
+      name: 'documents',
+      pluginKey: 'documents',
+      marketplace: 'openai-bundled',
+    })
+    const remote = localCodexPlugin({
+      id: 'documents-remote',
+      name: 'documents',
+      pluginKey: 'documents',
+      marketplace: 'openai-curated-remote',
+    })
+
+    const merged = mergeLocalInstalledWithStorePackages([bundled], [remote])
+
+    expect(merged).toEqual([bundled, remote])
+  })
+
   test('does not append a manifest-backed store package already listed by Codex', () => {
     const membership = localCodexPlugin({
       id: 'sina-email',

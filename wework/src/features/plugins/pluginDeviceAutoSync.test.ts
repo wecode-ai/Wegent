@@ -3,7 +3,7 @@ import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
 import {
   beginPluginDeviceSync,
   clearPluginDeviceAutoSyncAttempts,
-  collectInstalledPluginIdsNeedingDeviceStatusReport,
+  collectPluginDeviceStatusReports,
   hasAttemptedPluginDeviceAutoSync,
   hasAttemptedPluginDeviceStatusReport,
   hasInFlightPluginDeviceSync,
@@ -272,6 +272,7 @@ describe('pluginDeviceAutoSync', () => {
         source: { type: 'marketplace', providerKey: 'wegent', pluginKey: 'mail' },
         displayName: 'Mail',
         description: '',
+        version: '1.0.0',
         installState: 'not_installed',
         enabled: true,
         manifest: {},
@@ -288,7 +289,7 @@ describe('pluginDeviceAutoSync', () => {
         },
         pluginId: 7,
         releaseId: 9,
-        sourcePayload: { localPresent: true },
+        sourcePayload: { localPresent: true, localVersion: '1.0.0' },
       },
       status: {
         state: 'pending',
@@ -304,7 +305,9 @@ describe('pluginDeviceAutoSync', () => {
         ],
       },
     }
-    expect(collectInstalledPluginIdsNeedingDeviceStatusReport([plugin], [], 'd1')).toEqual([101])
+    expect(collectPluginDeviceStatusReports([plugin], [], 'd1')).toEqual([
+      { installedPluginId: 101, releaseId: 9, version: '1.0.0' },
+    ])
     expect(
       marketplaceItemNeedsDeviceSync(
         item({
@@ -362,7 +365,7 @@ describe('pluginDeviceAutoSync', () => {
       },
     }
     expect(
-      collectInstalledPluginIdsNeedingDeviceStatusReport(
+      collectPluginDeviceStatusReports(
         [plugin],
         [
           item({
@@ -378,6 +381,52 @@ describe('pluginDeviceAutoSync', () => {
         'd1'
       )
     ).toEqual([])
+  })
+
+  test('does not acknowledge a package without an observed local version', () => {
+    const plugin: InstalledPlugin = {
+      apiVersion: 'agent.wecode.io/v1',
+      kind: 'InstalledPlugin',
+      metadata: { name: 'mail', labels: { id: '101' } },
+      spec: {
+        source: { type: 'marketplace', providerKey: 'wegent', pluginKey: 'mail' },
+        displayName: 'Mail',
+        description: '',
+        version: '1.0.0',
+        installState: 'not_installed',
+        enabled: true,
+        manifest: {},
+        components: {
+          skills: [],
+          commands: [],
+          agents: [],
+          hooks: [],
+          mcps: [],
+          connectors: [],
+          lsps: [],
+          monitors: [],
+          bins: [],
+        },
+        pluginId: 7,
+        releaseId: 9,
+        sourcePayload: { localPresent: true },
+      },
+      status: {
+        state: 'pending',
+        devices: [
+          {
+            deviceId: 'd1',
+            desiredReleaseId: 9,
+            actualReleaseId: null,
+            state: 'pending',
+            attemptCount: 0,
+            updatedAt: '2026-01-01T00:00:00Z',
+          },
+        ],
+      },
+    }
+
+    expect(collectPluginDeviceStatusReports([plugin], [], 'd1')).toEqual([])
   })
 
   test('does not report a newer desired release as already installed', () => {
@@ -421,13 +470,19 @@ describe('pluginDeviceAutoSync', () => {
         ],
       },
     }
-    expect(collectInstalledPluginIdsNeedingDeviceStatusReport([plugin], [], 'd1')).toEqual([])
+    expect(collectPluginDeviceStatusReports([plugin], [], 'd1')).toEqual([])
   })
 
   test('tracks one status report attempt per device id', () => {
-    expect(hasAttemptedPluginDeviceStatusReport('device-a')).toBe(false)
-    markPluginDeviceStatusReportAttempted('device-a')
-    expect(hasAttemptedPluginDeviceStatusReport('device-a')).toBe(true)
+    const reports = [{ installedPluginId: 101, releaseId: 9, version: '1.0.0' }]
+    expect(hasAttemptedPluginDeviceStatusReport('device-a', reports)).toBe(false)
+    markPluginDeviceStatusReportAttempted('device-a', reports)
+    expect(hasAttemptedPluginDeviceStatusReport('device-a', reports)).toBe(true)
+    expect(
+      hasAttemptedPluginDeviceStatusReport('device-a', [
+        { installedPluginId: 101, releaseId: 10, version: '1.1.0' },
+      ])
+    ).toBe(false)
     expect(hasAttemptedPluginDeviceStatusReport('device-b')).toBe(false)
   })
 })

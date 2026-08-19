@@ -420,6 +420,10 @@ export function resetPluginMarketplaceCacheMemory(): void {
   snapshot = null
 }
 
+function pluginComponentsSignature(components: PluginMarketplaceItem['components']): string {
+  return JSON.stringify(slimPluginComponentsForCache(components))
+}
+
 export function marketplaceItemsSignature(items: PluginMarketplaceItem[]): string {
   return items
     .map(item =>
@@ -450,6 +454,7 @@ export function marketplaceItemsSignature(items: PluginMarketplaceItem[]): strin
         typeof item.manifest?.installPolicy === 'string' ? item.manifest.installPolicy : '',
         item.localPersonalSource?.marketplacePath ?? '',
         item.localPersonalSource?.pluginName ?? '',
+        pluginComponentsSignature(item.components),
       ].join(':')
     )
     .join('|')
@@ -467,6 +472,7 @@ export function installedPluginsSignature(items: InstalledPluginItem[]): string 
         item.origin,
         item.sourceLabel,
         item.distribution,
+        pluginComponentsSignature(item.raw.spec.components),
       ].join(':')
     )
     .join('|')

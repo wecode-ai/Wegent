@@ -410,6 +410,21 @@ describe('mergeMarketplaceCatalog', () => {
       },
     })
   })
+
+  test('does not transfer local version evidence across same-name catalog ids', () => {
+    const sameNameFromAnotherMarketplace: PluginMarketplaceItem = {
+      ...localCatalogPlugin(),
+      id: 'dev-tools@openai-bundled',
+      installedLocally: true,
+      installedVersion: '9.9.9',
+      manifest: { marketplaceId: 'openai-bundled' },
+    }
+
+    const merged = mergeMarketplaceCatalog([cloudPlugin()], [sameNameFromAnotherMarketplace], [])
+
+    expect(merged[0]?.installedLocally).not.toBe(true)
+    expect(merged[0]?.installedVersion).not.toBe('9.9.9')
+  })
 })
 
 describe('mergeDiskPersonalIntoLocalRows', () => {

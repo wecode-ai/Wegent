@@ -44,6 +44,7 @@ from app.schemas.installed_plugin import (
     InstalledPluginUpdateRequest,
     PluginAccessTarget,
     PluginAccessUpdateRequest,
+    PluginDeviceReportItem,
     PluginDeviceReportRequest,
     PluginSubmissionInitRequest,
     PluginUpstreamCreateRequest,
@@ -280,6 +281,7 @@ def _device_install(test_db, user_id: int) -> tuple[Kind, PluginRelease]:
             "spec": {
                 "pluginId": plugin.id,
                 "releaseId": release.id,
+                "version": release.version,
                 "enabled": True,
                 "installState": "installed",
             }
@@ -2146,7 +2148,15 @@ def test_report_installed_plugins_on_device_acks_without_pushing_packages(
     monkeypatch.setattr(device_capability_sync_service, "sync_device_payload", boom)
 
     response = report_installed_plugins_on_device(
-        payload=PluginDeviceReportRequest(installedPluginIds=[installed.id]),
+        payload=PluginDeviceReportRequest(
+            plugins=[
+                PluginDeviceReportItem(
+                    installedPluginId=installed.id,
+                    releaseId=release.id,
+                    version=release.version,
+                )
+            ]
+        ),
         device_id="current-device",
         db=test_db,
         current_user=test_user,
@@ -2154,6 +2164,7 @@ def test_report_installed_plugins_on_device_acks_without_pushing_packages(
 
     assert response.deviceId == "current-device"
     assert response.acknowledgedCount == 1
+    assert response.acknowledgedInstalledPluginIds == [installed.id]
     row = test_db.query(PluginDeviceInstallation).one()
     assert row.device_id == "current-device"
     assert row.state == "installed"
@@ -2162,7 +2173,9 @@ def test_report_installed_plugins_on_device_acks_without_pushing_packages(
     assert row.attempt_count == 0
 
 
-def test_report_installed_plugins_on_device_skips_release_gaps(test_db, test_user):
+def test_report_installed_plugins_on_device_rejects_stale_release_evidence(
+    test_db, test_user
+):
     installed, release = _device_install(test_db, test_user.id)
     test_db.add(
         PluginDeviceInstallation(
@@ -2170,23 +2183,31 @@ def test_report_installed_plugins_on_device_skips_release_gaps(test_db, test_use
             user_id=test_user.id,
             device_id="current-device",
             desired_release_id=release.id,
-            actual_release_id=release.id + 100,
             state="pending",
         )
     )
     test_db.commit()
 
     response = report_installed_plugins_on_device(
-        payload=PluginDeviceReportRequest(installedPluginIds=[installed.id]),
+        payload=PluginDeviceReportRequest(
+            plugins=[
+                PluginDeviceReportItem(
+                    installedPluginId=installed.id,
+                    releaseId=release.id + 100,
+                    version=release.version,
+                )
+            ]
+        ),
         device_id="current-device",
         db=test_db,
         current_user=test_user,
     )
 
     assert response.acknowledgedCount == 0
+    assert response.acknowledgedInstalledPluginIds == []
     row = test_db.query(PluginDeviceInstallation).one()
     assert row.state == "pending"
-    assert row.actual_release_id == release.id + 100
+    assert row.actual_release_id == 0
 
 
 def test_device_sync_keeps_disabled_plugin_materialized(test_db, test_user):

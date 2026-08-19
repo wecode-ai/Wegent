@@ -322,10 +322,18 @@ class PluginDeviceSyncResponse(BaseModel):
     sync: DeviceCapabilitySyncResponse
 
 
+class PluginDeviceReportItem(BaseModel):
+    """One package version observed on the reporting device."""
+
+    installedPluginId: int = Field(gt=0)
+    releaseId: int = Field(gt=0)
+    version: str = Field(min_length=1)
+
+
 class PluginDeviceReportRequest(BaseModel):
     """Local packages already present on a device; do not push installs."""
 
-    installedPluginIds: List[int] = Field(default_factory=list)
+    plugins: List[PluginDeviceReportItem] = Field(default_factory=list)
 
 
 class PluginDeviceReportResponse(BaseModel):
@@ -333,6 +341,7 @@ class PluginDeviceReportResponse(BaseModel):
 
     deviceId: str
     acknowledgedCount: int = 0
+    acknowledgedInstalledPluginIds: List[int] = Field(default_factory=list)
 
 
 class PluginAutoUpdateItem(BaseModel):

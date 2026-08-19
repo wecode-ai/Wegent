@@ -16,6 +16,7 @@ from app.schemas.device import (
     DeviceCapabilitySyncResponse,
     DeviceCapabilitySyncResult,
 )
+from app.schemas.installed_plugin import PluginDeviceReportItem
 from app.services.device_service import device_service
 
 
@@ -149,31 +150,32 @@ class PluginDeviceInstallationService:
         *,
         user_id: int,
         device_id: str,
-        installed_plugin_ids: list[int],
-    ) -> int:
+        reported_plugins: list[PluginDeviceReportItem],
+    ) -> list[int]:
         """Mark locally present plugins as installed without pushing packages."""
         normalized_device_id = device_id.strip()
-        requested_ids = {
-            plugin_id
-            for plugin_id in installed_plugin_ids
-            if isinstance(plugin_id, int)
+        reports_by_id = {
+            report.installedPluginId: report for report in reported_plugins
         }
-        if not normalized_device_id or not requested_ids:
-            return 0
-        acknowledged = 0
+        if not normalized_device_id or not reports_by_id:
+            return []
+        acknowledged_ids: list[int] = []
         for installed in self._desired_installs(db, user_id):
-            if installed.id not in requested_ids:
+            report = reports_by_id.get(installed.id)
+            if report is None:
                 continue
             if self._acknowledge_local_install(
                 db,
                 user_id=user_id,
                 device_id=normalized_device_id,
                 installed=installed,
+                reported_release_id=report.releaseId,
+                reported_version=report.version,
             ):
-                acknowledged += 1
-        if acknowledged:
+                acknowledged_ids.append(installed.id)
+        if acknowledged_ids:
             db.commit()
-        return acknowledged
+        return acknowledged_ids
 
     def _record_device_sync_result(
         self,
@@ -205,17 +207,23 @@ class PluginDeviceInstallationService:
         user_id: int,
         device_id: str,
         installed: Kind,
+        reported_release_id: int,
+        reported_version: str,
     ) -> bool:
-        release_id = installed.json.get("spec", {}).get("releaseId")
-        if not isinstance(release_id, int):
+        spec = installed.json.get("spec", {})
+        release_id = spec.get("releaseId")
+        desired_version = str(spec.get("version") or "").strip()
+        if (
+            not isinstance(release_id, int)
+            or reported_release_id != release_id
+            or not desired_version
+            or reported_version.strip() != desired_version
+        ):
             return False
         row = self._device_row(db, installed.id, device_id)
         if row and row.state == "uninstalling":
             return False
         if row and self._auto_update_blocked(row, desired_release_id=release_id):
-            return False
-        if row and row.actual_release_id and row.actual_release_id != release_id:
-            # A newer desired release is a real package gap, not a stale ack.
             return False
         if not row:
             row = PluginDeviceInstallation(

@@ -93,19 +93,17 @@ export function mergeLocalInstalledWithStorePackages(
   storePackages: InstalledPlugin[]
 ): InstalledPlugin[] {
   if (storePackages.length === 0) return localItems
-  const existing = new Set(
-    localItems.flatMap(item => {
-      const id = localPluginId(item)
-      const name = String(item.metadata.name || '').trim()
-      return [id, name].filter(Boolean)
-    })
-  )
+  const existingIds = new Set(localItems.map(localPluginId).filter(Boolean))
+  const existingIdentities = new Set(localItems.map(pluginIdentity).filter(Boolean))
   const extra = storePackages.filter(item => {
     const id = localPluginId(item)
-    const name = String(item.metadata.name || '').trim()
-    if (id && existing.has(id)) return false
-    if (name && existing.has(name)) return false
-    return Boolean(id || name)
+    const identity = pluginIdentity(item)
+    if (id && existingIds.has(id)) return false
+    if (identity && existingIdentities.has(identity)) return false
+    if (!id && !identity) return false
+    if (id) existingIds.add(id)
+    if (identity) existingIdentities.add(identity)
+    return true
   })
   return extra.length === 0 ? localItems : [...localItems, ...extra]
 }

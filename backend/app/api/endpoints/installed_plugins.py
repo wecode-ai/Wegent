@@ -175,21 +175,22 @@ def report_installed_plugins_on_device(
     normalized_device_id = device_id.strip()
     if not normalized_device_id:
         raise HTTPException(status_code=400, detail="device_id is required")
-    acknowledged_count = plugin_device_installation_service.acknowledge_local_installs(
+    acknowledged_ids = plugin_device_installation_service.acknowledge_local_installs(
         db,
         user_id=current_user.id,
         device_id=normalized_device_id,
-        installed_plugin_ids=payload.installedPluginIds,
+        reported_plugins=payload.plugins,
     )
     logger.info(
         "Device plugin status reported: user_id=%s device_id=%s acknowledged=%s",
         current_user.id,
         normalized_device_id,
-        acknowledged_count,
+        len(acknowledged_ids),
     )
     return PluginDeviceReportResponse(
         deviceId=normalized_device_id,
-        acknowledgedCount=acknowledged_count,
+        acknowledgedCount=len(acknowledged_ids),
+        acknowledgedInstalledPluginIds=acknowledged_ids,
     )
 
 

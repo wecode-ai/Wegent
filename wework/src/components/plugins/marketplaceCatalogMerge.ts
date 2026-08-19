@@ -103,13 +103,17 @@ export function mergeMarketplaceCatalog(
 
   const merged = new Map<string, PluginMarketplaceItem>()
   const cloudNames = new Set<string>()
+  const cloudKeysByCatalogId = new Map<string, string>()
   const ownedCloudKeysByName = new Map<string, string>()
   for (const item of cloudItems) {
     const localInstall = localPublishedInstalls.get(String(item.id))
     const cloudInstall = localInstall ? undefined : cloudManagedInstalls.get(String(item.id))
     const matchedInstall = localInstall ?? cloudInstall
     const installedVersion = matchedInstall
-      ? localMaterializedVersion(matchedInstall) || matchedInstall.spec.version?.trim() || null
+      ? localMaterializedVersion(matchedInstall) ||
+        (typeof matchedInstall.spec.pluginId !== 'number'
+          ? matchedInstall.spec.version?.trim() || null
+          : null)
       : null
     const catalogVersion = (item.version ?? '').trim()
     const localVersionLags = Boolean(
@@ -139,6 +143,7 @@ export function mergeMarketplaceCatalog(
     })
     const normalizedName = item.name.toLowerCase()
     cloudNames.add(normalizedName)
+    cloudKeysByCatalogId.set(String(item.id), cloudKey)
     if (item.accessRole === 'owner') ownedCloudKeysByName.set(normalizedName, cloudKey)
   }
   for (const item of localItems) {
@@ -152,6 +157,17 @@ export function mergeMarketplaceCatalog(
     // Built-in local mirrors of a cloud listing are already represented above.
     const normalizedName = item.name.toLowerCase()
     if (cloudNames.has(normalizedName)) {
+      const matchingCloudKey = cloudKeysByCatalogId.get(String(item.id))
+      if (matchingCloudKey) {
+        const cloudItem = merged.get(matchingCloudKey)
+        if (cloudItem && item.installedLocally && item.installedVersion) {
+          merged.set(matchingCloudKey, {
+            ...cloudItem,
+            installedLocally: true,
+            installedVersion: item.installedVersion,
+          })
+        }
+      }
       const ownedCloudKey = ownedCloudKeysByName.get(normalizedName)
       const marketplacePath = item.manifest?.marketplacePath
       if (

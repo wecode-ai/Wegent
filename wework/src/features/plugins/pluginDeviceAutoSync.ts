@@ -1,4 +1,4 @@
-import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
+import type { InstalledPlugin, PluginDeviceReportItem, PluginMarketplaceItem } from '@/types/api'
 import {
   hasLocalCodexMaterialization,
   localMaterializedVersion,
@@ -7,12 +7,14 @@ import {
 
 const attemptedDeviceIds = new Set<string>()
 const reportedDeviceIds = new Set<string>()
+const reportedPayloadKeys = new Set<string>()
 const settledDeviceIds = new Set<string>()
 const inFlightDeviceIds = new Set<string>()
 
 export function clearPluginDeviceAutoSyncAttempts() {
   attemptedDeviceIds.clear()
   reportedDeviceIds.clear()
+  reportedPayloadKeys.clear()
   settledDeviceIds.clear()
   inFlightDeviceIds.clear()
 }
@@ -34,13 +36,31 @@ export function markPluginDeviceAutoSyncAttempted(deviceId: string): void {
   if (normalized) attemptedDeviceIds.add(normalized)
 }
 
-export function hasAttemptedPluginDeviceStatusReport(deviceId: string): boolean {
+function deviceReportPayloadKey(deviceId: string, plugins: PluginDeviceReportItem[]): string {
+  const normalized = deviceId.trim()
+  const payload = [...plugins]
+    .sort((left, right) => left.installedPluginId - right.installedPluginId)
+    .map(plugin => `${plugin.installedPluginId}:${plugin.releaseId}:${plugin.version}`)
+    .join(',')
+  return `${normalized}|${payload}`
+}
+
+export function hasAttemptedPluginDeviceStatusReport(
+  deviceId: string,
+  plugins?: PluginDeviceReportItem[]
+): boolean {
+  if (plugins) return reportedPayloadKeys.has(deviceReportPayloadKey(deviceId, plugins))
   return reportedDeviceIds.has(deviceId.trim())
 }
 
-export function markPluginDeviceStatusReportAttempted(deviceId: string): void {
+export function markPluginDeviceStatusReportAttempted(
+  deviceId: string,
+  plugins: PluginDeviceReportItem[]
+): void {
   const normalized = deviceId.trim()
-  if (normalized) reportedDeviceIds.add(normalized)
+  if (!normalized) return
+  reportedDeviceIds.add(normalized)
+  reportedPayloadKeys.add(deviceReportPayloadKey(normalized, plugins))
 }
 
 /** Auto-sync request finished (success or failure) and catalog was refreshed. */
@@ -146,16 +166,6 @@ function numericInstalledPluginId(plugin: InstalledPlugin): number | null {
   )
 }
 
-function localVersionMatchesDesired(
-  plugin: InstalledPlugin,
-  desiredVersion?: string | null
-): boolean {
-  const localVersion = localMaterializedVersion(plugin)
-  const desired = (desiredVersion ?? plugin.spec.version ?? '').trim()
-  if (!localVersion || !desired) return true
-  return localVersion === desired
-}
-
 function hasReleaseGap(device: {
   actualReleaseId?: number | null
   desiredReleaseId: number
@@ -171,7 +181,6 @@ export function installedPluginNeedsDeviceStatusReport(
   if (typeof plugin.spec.pluginId !== 'number') return false
   if (plugin.spec.installState === 'update_available') return false
   if (numericInstalledPluginId(plugin) === null) return false
-  if (!localVersionMatchesDesired(plugin)) return false
   const device = plugin.status.devices?.find(row => row.deviceId === deviceId)
   if (device?.state === 'uninstalling' || device?.state === 'installed') return false
   if (device && hasReleaseGap(device)) return false
@@ -192,16 +201,67 @@ export function marketplaceItemNeedsDeviceStatusReport(item: PluginMarketplaceIt
   )
 }
 
-export function collectInstalledPluginIdsNeedingDeviceStatusReport(
+function deviceStatusReport(
+  plugin: InstalledPlugin,
+  deviceId: string,
+  desiredVersion?: string | null,
+  observedReleaseId?: number | null
+): PluginDeviceReportItem | null {
+  if (!installedPluginNeedsDeviceStatusReport(plugin, deviceId)) return null
+  const installedPluginId = numericInstalledPluginId(plugin)
+  const version = localMaterializedVersion(plugin)
+  const desired = (desiredVersion ?? plugin.spec.version ?? '').trim()
+  const device = plugin.status.devices?.find(row => row.deviceId === deviceId)
+  const releaseId = firstPositiveIntegerId(
+    observedReleaseId,
+    device?.desiredReleaseId,
+    plugin.spec.releaseId
+  )
+  if (installedPluginId === null || !version || version !== desired || releaseId === null) {
+    return null
+  }
+  return { installedPluginId, releaseId, version }
+}
+
+function marketplaceDeviceStatusReport(
+  item: PluginMarketplaceItem,
+  plugin: InstalledPlugin,
+  deviceId: string
+): PluginDeviceReportItem | null {
+  if (!marketplaceItemNeedsDeviceStatusReport(item)) return null
+  if (plugin.spec.installState === 'update_available') return null
+  const installedPluginId = numericInstalledPluginId(plugin)
+  const expectedInstalledPluginId = firstPositiveIntegerId(item.installedPluginId)
+  const version = (item.installedVersion ?? '').trim()
+  const desiredVersion = (item.version ?? plugin.spec.version ?? '').trim()
+  const device = plugin.status.devices?.find(row => row.deviceId === deviceId)
+  const releaseId = firstPositiveIntegerId(
+    item.currentDeviceInstallation?.desiredReleaseId,
+    item.latestReleaseId,
+    device?.desiredReleaseId,
+    plugin.spec.releaseId
+  )
+  if (
+    installedPluginId === null ||
+    installedPluginId !== expectedInstalledPluginId ||
+    !version ||
+    version !== desiredVersion ||
+    releaseId === null
+  ) {
+    return null
+  }
+  return { installedPluginId, releaseId, version }
+}
+
+export function collectPluginDeviceStatusReports(
   installedPlugins: InstalledPlugin[],
   marketplaceItems: PluginMarketplaceItem[],
   deviceId: string
-): number[] {
-  const ids = new Set<number>()
+): PluginDeviceReportItem[] {
+  const reports = new Map<number, PluginDeviceReportItem>()
   for (const plugin of installedPlugins) {
-    if (!installedPluginNeedsDeviceStatusReport(plugin, deviceId)) continue
-    const id = numericInstalledPluginId(plugin)
-    if (id !== null) ids.add(id)
+    const report = deviceStatusReport(plugin, deviceId)
+    if (report) reports.set(report.installedPluginId, report)
   }
   const installedById = new Map(
     installedPlugins.flatMap(plugin => {
@@ -210,12 +270,12 @@ export function collectInstalledPluginIdsNeedingDeviceStatusReport(
     })
   )
   for (const item of marketplaceItems) {
-    if (!marketplaceItemNeedsDeviceStatusReport(item)) continue
     const plugin = installedById.get(Number(item.installedPluginId))
-    if (plugin && !localVersionMatchesDesired(plugin, item.version)) continue
-    ids.add(Number(item.installedPluginId))
+    if (!plugin) continue
+    const report = marketplaceDeviceStatusReport(item, plugin, deviceId)
+    if (report) reports.set(report.installedPluginId, report)
   }
-  return Array.from(ids)
+  return Array.from(reports.values())
 }
 
 export function withAcknowledgedDeviceInstallations(
