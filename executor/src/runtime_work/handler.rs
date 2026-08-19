@@ -482,6 +482,7 @@ struct WorktreeReconciliationState {
 struct ActiveTurnCancellation {
     execution_id: u64,
     stop_requested: bool,
+    stop_acknowledged: bool,
     managed_worktree_path: Option<PathBuf>,
     cancel: oneshot::Sender<()>,
     stopped: oneshot::Receiver<()>,

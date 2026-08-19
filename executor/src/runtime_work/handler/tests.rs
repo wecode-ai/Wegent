@@ -276,6 +276,7 @@ async fn archive_retry_after_stop_timeout_waits_for_the_original_stopped_ack() {
         .worktrees
         .prepare(&source, "task-1", None, false)
         .unwrap();
+    let worktree_path = worktree.path.clone();
     let mut link = RuntimeTaskLink::new_pending(
         "task-1".to_owned(),
         worktree.path.clone(),
@@ -321,7 +322,7 @@ async fn archive_retry_after_stop_timeout_waits_for_the_original_stopped_ack() {
             handler
                 .archive_task(json!({
                     "taskId": "task-1",
-                    "workspacePath": worktree.path,
+                    "workspacePath": worktree_path,
                 }))
                 .await
         })
@@ -359,6 +360,20 @@ async fn archive_retry_after_stop_timeout_waits_for_the_original_stopped_ack() {
     assert_eq!(response["accepted"], true);
     assert_eq!(handler.store.get_task("task-1").unwrap().status, "archived");
     assert!(!handler.is_active_local_task("task-1"));
+    let archived_worktree = handler
+        .worktrees
+        .delete(Path::new(&worktree.path), true)
+        .expect("snapshot-preserving cleanup should succeed");
+    assert!(archived_worktree.execution_lease.is_none());
+    let restarted = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
+    assert!(
+        restarted
+            .reconcile()
+            .expect("restart reconciliation should succeed")
+            .iter()
+            .all(|outcome| !outcome.interrupted_execution),
+        "a stopped and archived task must not retain interrupted execution evidence"
+    );
     let _ = fs::remove_dir_all(root);
 }
 
