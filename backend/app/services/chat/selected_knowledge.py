@@ -41,6 +41,10 @@ SUPPORTED_PROVIDER_NATIVE_SHELLS = {"Chat", "ClaudeCode"}
 
 def register_provider_skill(provider_id: str, skill_name: str) -> None:
     """Register a deployment-specific provider Skill before execution."""
+    provider_id = provider_id.strip().lower()
+    skill_name = skill_name.strip()
+    if not provider_id or not skill_name:
+        raise ValueError("Provider ID and Skill name must not be empty")
     PROVIDER_SKILLS[provider_id] = skill_name
 
 

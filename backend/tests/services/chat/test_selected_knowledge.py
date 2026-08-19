@@ -17,6 +17,7 @@ from app.services.chat.selected_knowledge import (
     activate_provider_native_knowledge,
     apply_selected_knowledge_context,
     build_selected_knowledge_refs,
+    register_provider_skill,
     should_prepare_provider_native_knowledge,
 )
 from app.services.execution.skill_mcp import extract_skill_mcp_servers
@@ -41,6 +42,33 @@ class _KnowledgeMetadataDB:
         if model is KnowledgeDocument:
             return _Query([SimpleNamespace(id=9, name="接口约定")])
         raise AssertionError(f"Unexpected model: {model}")
+
+
+def test_register_provider_skill_normalizes_provider_and_skill_names(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delitem(PROVIDER_SKILLS, "demo", raising=False)
+
+    register_provider_skill(" Demo ", " demo-knowledge ")
+
+    assert PROVIDER_SKILLS.get("demo") == "demo-knowledge"
+
+
+@pytest.mark.parametrize(
+    ("provider_id", "skill_name"),
+    [
+        ("", "demo-knowledge"),
+        ("   ", "demo-knowledge"),
+        ("demo", ""),
+        ("demo", "   "),
+    ],
+)
+def test_register_provider_skill_rejects_empty_names(
+    provider_id: str,
+    skill_name: str,
+) -> None:
+    with pytest.raises(ValueError, match="must not be empty"):
+        register_provider_skill(provider_id, skill_name)
 
 
 def test_apply_selected_knowledge_context_deduplicates_provider_skills(
