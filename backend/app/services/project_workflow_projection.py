@@ -203,7 +203,13 @@ def apply_workflow_nodes(
         if node.get("status") == "blocked" and all(
             str(dependency) in completed for dependency in dependencies
         ):
-            node["status"] = "ready"
+            if node.get("node_type") == "wait":
+                node["status"] = "waiting"
+            elif node.get("node_type") == "end":
+                node["status"] = "completed"
+                completed.add(str(node.get("id")))
+            else:
+                node["status"] = "ready"
 
     next_workflow = dict(workflow)
     next_workflow["version"] = int(workflow.get("version") or 1) + 1
@@ -216,7 +222,10 @@ def apply_workflow_nodes(
         node.get("status") in COMPLETED_NODE_STATUSES for node in required
     ):
         item.status = "in_review"
-    elif any(node.get("status") in {"running", "changes_requested"} for node in nodes):
+    elif any(
+        node.get("status") in {"running", "waiting", "changes_requested"}
+        for node in nodes
+    ):
         item.status = "in_progress"
     else:
         item.status = "pending"

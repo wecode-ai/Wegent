@@ -56,6 +56,9 @@ from app.services.loop_items.provider_router import (
 from app.services.loop_items.service import loop_item_service
 from app.services.project_automation_execution import project_automation_execution
 from app.services.project_chat.service import project_chat_service
+from app.services.external_events.binding import external_event_binding_service
+from app.services.external_events.evaluate import external_event_evaluation_service
+from app.services.project_workflow_projection import update_workflow_node
 from app.services.workflow_deliverables import (
     fulfilled_requirement_ids,
     missing_requirement_ids,
@@ -879,6 +882,98 @@ def list_deliveries(
                 db, resolved_item_id, token_info.user_id
             )
         ]
+
+
+@mcp_tool(server="wework_space")
+def register_external_reference(
+    token_info: MCPAuthInfo,
+    provider: str,
+    opaque_ref: str,
+    space_id: str = "",
+    item_id: str = "",
+) -> dict[str, Any]:
+    """Register an external reference so a waiting workflow node can receive
+    provider events (e.g. the GitLab MR that this task just opened).
+
+    Only the task that is executing a preset workflow with a wait node may
+    register. The provider and opaque reference are opaque to Wegent; the
+    wait node rules decide which event types end the wait or rerun the task.
+    """
+
+    provider = provider.strip()
+    opaque_ref = opaque_ref.strip()
+    if not provider or not opaque_ref:
+        raise ValueError("provider and opaque_ref are required")
+    with SessionLocal() as db:
+        context = _board_context(db, token_info)
+        if not context:
+            raise ValueError(
+                "External references can only be registered by a board task"
+            )
+        run_id = context.get("project_automation_run_id")
+        if not run_id:
+            raise ValueError(
+                "External references require a workflow automation execution"
+            )
+        project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
+        resolved_item_id = _item_id(db, token_info, item_id)
+        item = db.get(LoopItem, resolved_item_id)
+        if item is None or str(item.cloud_project_id) != str(project.id):
+            raise ValueError("Board item not found in this space")
+        issue = item
+        if item.parent_id:
+            parent = db.get(LoopItem, item.parent_id)
+            if parent is not None and str(parent.cloud_project_id) == str(project.id):
+                issue = parent
+        metadata = issue.metadata_json if isinstance(issue.metadata_json, dict) else {}
+        workflow = metadata.get("workflow")
+        nodes = workflow.get("nodes") if isinstance(workflow, dict) else None
+        wait_node = next(
+            (
+                candidate
+                for candidate in nodes or []
+                if isinstance(candidate, dict)
+                and candidate.get("node_type") == "wait"
+                and candidate.get("status") in {"ready", "waiting"}
+            ),
+            None,
+        )
+        if wait_node is None:
+            raise ValueError(
+                "This task is not bound to a ready wait node in a preset workflow"
+            )
+        binding = external_event_binding_service.create(
+            db,
+            provider=provider,
+            opaque_ref=opaque_ref,
+            cloud_project_id=str(project.id),
+            loop_item_id=item.id,
+            issue_item_id=issue.id,
+            workflow_node_id=str(wait_node.get("id")),
+            automation_run_id=run_id,
+            created_by_user_id=token_info.user_id,
+        )
+        if wait_node.get("status") == "ready":
+            update_workflow_node(
+                db,
+                item_id=issue.id,
+                node_id=str(wait_node.get("id")),
+                node_status="waiting",
+            )
+        db.flush()
+        compensated = external_event_evaluation_service.compensate(
+            db, binding=binding
+        )
+        db.commit()
+        return {
+            "binding_id": str(binding.id),
+            "provider": provider,
+            "opaque_ref": opaque_ref,
+            "task_id": item.id,
+            "issue_id": issue.id,
+            "workflow_node_id": str(wait_node.get("id")),
+            "compensated_event_count": compensated,
+        }
 
 
 @mcp_tool(server="wework_space")

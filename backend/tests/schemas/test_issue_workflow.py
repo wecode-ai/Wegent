@@ -138,3 +138,120 @@ def test_workflow_definition_requires_a_rule_for_ai_advancement() -> None:
         ProjectWorkflowDefinition.model_validate(
             {"version": 1, "advancement_policy": "ai"}
         )
+
+
+def test_workflow_definition_accepts_wait_nodes_with_rules() -> None:
+    definition = ProjectWorkflowDefinition.model_validate(
+        {
+            "version": 1,
+            "stage_mode": "dag",
+            "nodes": [
+                {"id": "start", "name": "Start", "node_type": "start"},
+                {"id": "develop", "name": "Develop", "node_type": "stage"},
+                {
+                    "id": "wait",
+                    "name": "Wait",
+                    "node_type": "wait",
+                    "depends_on": ["develop"],
+                    "wait_config": {
+                        "rules": [
+                            {
+                                "id": "merged",
+                                "event_type": "merged",
+                                "mode": "trigger",
+                                "action": "complete",
+                            },
+                            {
+                                "id": "ci",
+                                "event_type": "ci_failed",
+                                "mode": "debounce",
+                                "action": "rerun",
+                                "rerun_prompt": "Fix the pipeline",
+                            },
+                        ]
+                    },
+                },
+                {
+                    "id": "end",
+                    "name": "End",
+                    "node_type": "end",
+                    "depends_on": ["wait"],
+                },
+            ],
+        }
+    )
+
+    assert [node.node_type for node in definition.nodes] == [
+        "start",
+        "stage",
+        "wait",
+        "end",
+    ]
+    wait = definition.nodes[2]
+    assert wait.wait_config is not None
+    assert [rule.event_type for rule in wait.wait_config.rules] == [
+        "merged",
+        "ci_failed",
+    ]
+
+
+def test_workflow_definition_rejects_wait_node_without_config() -> None:
+    with pytest.raises(ValidationError):
+        ProjectWorkflowDefinition.model_validate(
+            {
+                "version": 1,
+                "nodes": [
+                    {"id": "wait", "name": "Wait", "node_type": "wait"},
+                ],
+            }
+        )
+
+
+def test_workflow_definition_rejects_config_on_stage_nodes() -> None:
+    with pytest.raises(ValidationError):
+        ProjectWorkflowDefinition.model_validate(
+            {
+                "version": 1,
+                "nodes": [
+                    {
+                        "id": "stage",
+                        "name": "Stage",
+                        "wait_config": {
+                            "rules": [
+                                {
+                                    "id": "r",
+                                    "event_type": "merged",
+                                    "action": "complete",
+                                }
+                            ]
+                        },
+                    },
+                ],
+            }
+        )
+
+
+def test_workflow_definition_rejects_multiple_start_nodes() -> None:
+    with pytest.raises(ValidationError):
+        ProjectWorkflowDefinition.model_validate(
+            {
+                "version": 1,
+                "nodes": [
+                    {"id": "s1", "name": "S1", "node_type": "start"},
+                    {"id": "s2", "name": "S2", "node_type": "start"},
+                ],
+            }
+        )
+
+
+def test_workflow_definition_rejects_dependency_on_end_node() -> None:
+    with pytest.raises(ValidationError):
+        ProjectWorkflowDefinition.model_validate(
+            {
+                "version": 1,
+                "nodes": [
+                    {"id": "end", "name": "End", "node_type": "end"},
+                    {"id": "later", "name": "Later", "depends_on": ["end"]},
+                ],
+            }
+        )

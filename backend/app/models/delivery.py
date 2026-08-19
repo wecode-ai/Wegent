@@ -121,6 +121,8 @@ class LoopNode(Base):
     linked_by_user_id = Column(Integer, nullable=True)
     linked_at = Column(DateTime, nullable=True)
     unlinked_at = Column(DateTime, nullable=True)
+    provider = Column(String(64), nullable=True)
+    opaque_ref = Column(String(512), nullable=True)
     path = Column(String(700), nullable=True)
     kind = Column(String(32), nullable=True)
     display_name = Column(String(255), nullable=True)
@@ -149,6 +151,7 @@ class LoopNode(Base):
         Index("idx_loop_items_project_type", "cloud_project_id", "resource_type"),
         Index("idx_loop_items_parent_type", "parent_id", "resource_type", "sort_order"),
         Index("idx_loop_items_project_path", "cloud_project_id", "path"),
+        Index("idx_loop_items_provider_ref", "provider", "opaque_ref"),
         Index("idx_loop_items_assignee_agent_id", "assignee_agent_id"),
         {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"},
     )
@@ -249,6 +252,19 @@ class ProjectIncomingEvent(LoopNode):
     """One deduplicated delivery received by a project incoming hook."""
 
     __mapper_args__ = {"polymorphic_identity": "incoming_event"}
+
+
+class ExternalEventBinding(LoopNode):
+    """Routes one provider opaque reference to a waiting workflow node.
+
+    The binding row is the single join point between the registration line
+    (an agent delivers an external reference) and the event line (an inbound
+    event is routed to the card that owns the reference). The provider and
+    opaque reference semantics are owned by the registering party; the system
+    only uses them as an exact-match routing key.
+    """
+
+    __mapper_args__ = {"polymorphic_identity": "external_event_binding"}
 
 
 class CloudProjectLocalBinding(LoopNode):

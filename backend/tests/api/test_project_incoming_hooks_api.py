@@ -23,7 +23,7 @@ def _project(test_client: TestClient, token: str) -> dict[str, object]:
     return response.json()
 
 
-def test_incoming_hook_creates_unassigned_issue_and_deduplicates(
+def test_incoming_hook_buffers_unmatched_event_and_deduplicates(
     test_client: TestClient,
     test_db: Session,
     test_token: str,
@@ -32,58 +32,52 @@ def test_incoming_hook_creates_unassigned_issue_and_deduplicates(
     created_hook = test_client.post(
         f"/api/v1/cloud-projects/{project['id']}/incoming-hooks",
         headers=_auth(test_token),
-        json={"name": "GitHub"},
+        json={"name": "GitLab"},
     )
     assert created_hook.status_code == 201
     hook = created_hook.json()
-    assert hook["name"] == "GitHub"
+    assert hook["name"] == "GitLab"
     assert hook["status"] == "active"
     assert "/api/v1/incoming-hooks/" in hook["webhook_url"]
 
     payload = {
-        "action": "opened",
-        "issue": {
+        "object_kind": "merge_request",
+        "object_attributes": {
             "id": 42,
-            "number": 7,
-            "title": "External issue",
-            "body": "Created outside Wework",
-            "html_url": "https://github.example/acme/app/issues/7",
+            "iid": 7,
+            "action": "merge",
+            "url": "https://gitlab.example/acme/app/-/merge_requests/7",
         },
-        "repository": {"full_name": "acme/app"},
+        "project": {"path_with_namespace": "acme/app"},
     }
     first = test_client.post(
         hook["webhook_url"],
-        headers={"X-GitHub-Event": "issues", "X-GitHub-Delivery": "delivery-1"},
+        headers={"X-GitLab-Event": "Merge Request Hook", "X-GitLab-Event-UUID": "delivery-1"},
         json=payload,
     )
     assert first.status_code == 202
     receipt = first.json()
-    assert receipt["status"] == "created"
-    assert receipt["provider"] == "github"
-    assert receipt["loop_item_id"].startswith("HOOK-")
-
-    item = test_db.get(LoopItem, receipt["loop_item_id"])
-    assert item is not None
-    assert item.title == "External issue"
-    assert item.status == "inbox"
-    assert item.assignee_user_id is None
-    assert "https://github.example/acme/app/issues/7" in item.description
+    assert receipt["status"] == "buffered"
+    assert receipt["provider"] == "gitlab"
+    assert receipt["loop_item_id"] is None
 
     duplicate = test_client.post(
         hook["webhook_url"],
-        headers={"X-GitHub-Event": "issues", "X-GitHub-Delivery": "delivery-1"},
+        headers={"X-GitLab-Event": "Merge Request Hook", "X-GitLab-Event-UUID": "delivery-1"},
         json=payload,
     )
     assert duplicate.status_code == 202
     assert duplicate.json()["status"] == "duplicate"
-    assert duplicate.json()["loop_item_id"] == receipt["loop_item_id"]
-    assert (
-        test_db.query(LoopItem)
-        .filter(LoopItem.cloud_project_id == project["id"])
-        .count()
-        == 1
-    )
-    assert test_db.query(ProjectIncomingEvent).count() == 1
+    assert duplicate.json()["event_id"] == receipt["event_id"]
+    assert test_db.query(LoopItem).count() == 0
+    event = test_db.query(ProjectIncomingEvent).one()
+    assert event.status == "buffered"
+    assert event.title == "MR !7 merged"
+    assert event.metadata_json.get("event_type") == "merged"
+    assert event.metadata_json.get("opaque_ref") == "acme/app!7"
+    from app.services.external_events.buffer import external_event_buffer
+
+    external_event_buffer.clear()
 
 
 def test_incoming_hook_records_unrecognized_payload_without_creating_issue(
@@ -102,7 +96,7 @@ def test_incoming_hook_records_unrecognized_payload_without_creating_issue(
 
     assert response.status_code == 202
     assert response.json()["status"] == "ignored"
-    assert response.json()["reason"] == "no deterministic title field found"
+    assert response.json()["reason"] == "no supported external event detected"
     assert test_db.query(LoopItem).count() == 0
     event = test_db.query(ProjectIncomingEvent).one()
     assert event.status == "ignored"
