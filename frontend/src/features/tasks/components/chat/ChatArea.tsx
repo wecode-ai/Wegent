@@ -93,6 +93,7 @@ import {
   resolveReferenceMaterialLimits,
 } from './referenceMaterialLimits'
 import { formatAspectRatioLimit, formatVideoPixelLimit } from './generationFormatting'
+import { buildExternalContextId } from './selectedKnowledge'
 import {
   formatsToAcceptString,
   getFileExtension,
@@ -132,15 +133,6 @@ function buildExternalRefFromContext(context: SubtaskContextBrief): ExternalKnow
     parent_id: context.external_parent_id ?? undefined,
     include_descendants: context.external_include_descendants ?? undefined,
   }
-}
-
-function buildExternalContextId(ref: ExternalKnowledgeRef) {
-  const targetType = ref.target_type ?? 'knowledge_base'
-  if (targetType !== 'knowledge_base') {
-    const targetId = ref.node_id ?? ref.document_id ?? 'unknown'
-    return `external:${ref.provider}:${ref.mode}:${ref.id}:${targetType}:${targetId}`
-  }
-  return `external:${ref.provider}:${ref.mode}:${ref.id}`
 }
 
 /** Generation mode type - video or image */
