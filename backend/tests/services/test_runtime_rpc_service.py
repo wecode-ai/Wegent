@@ -164,7 +164,9 @@ async def test_runtime_rpc_service_decodes_compressed_ack(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_runtime_rpc_service_preserves_oversized_response_error(monkeypatch):
+async def test_runtime_rpc_service_preserves_oversized_response_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from app.services.device import runtime_rpc_service as module
 
     expected = {
