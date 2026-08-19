@@ -12,6 +12,7 @@ from llama_index.core import Document
 
 from knowledge_engine.excel import (
     ExcelCellFragment,
+    dumps_excel_value,
     format_excel_retrieval_prefix,
     format_excel_sheet_header,
     parse_excel_fragment_line,
@@ -455,3 +456,96 @@ def test_random_rows_stay_bounded_parseable_and_complete() -> None:
 
         _assert_lines_intact_and_bounded(nodes, budget)
         assert _collect_cells(nodes) == inputs
+
+
+def test_corrupted_line_fails_without_degraded_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A parse failure is data corruption and must not retry against a
+    degraded context: the first failure propagates after one parse pass."""
+    import knowledge_engine.splitter.excel_rows as excel_rows_module
+
+    parse_calls = 0
+    real_parse = excel_rows_module.parse_excel_row_line
+
+    def counting_parse(line: str):
+        nonlocal parse_calls
+        parse_calls += 1
+        return real_parse(line)
+
+    monkeypatch.setattr(excel_rows_module, "parse_excel_row_line", counting_parse)
+    # Not canonical serializer output, so the strict parser rejects it.
+    document = _document('{"source_row": 1, "cells": [[1, "v"]]}')
+
+    with pytest.raises(ValueError, match="not canonical"):
+        build_excel_row_nodes(documents=[document], chunk_size=1024)
+
+    # One pass over the corrupted line only: no degraded-context re-parse.
+    assert parse_calls == 1
+
+
+def test_starving_prefix_retries_exactly_once_per_document(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Budget starvation retries once against the degraded context."""
+    import knowledge_engine.splitter.excel_rows as excel_rows_module
+
+    parse_calls = 0
+    real_parse = excel_rows_module.parse_excel_row_line
+
+    def counting_parse(line: str):
+        nonlocal parse_calls
+        parse_calls += 1
+        return real_parse(line)
+
+    monkeypatch.setattr(excel_rows_module, "parse_excel_row_line", counting_parse)
+    # The overlong sheet name starves the budget until prefixes degrade.
+    document = _document(_row_line(2, (3, "x" * 300)), sheet_name="表" * 80)
+
+    nodes = build_excel_row_nodes(documents=[document], chunk_size=128)
+
+    assert nodes
+    # First attempt plus one degraded retry: each pass parses the line once.
+    assert parse_calls == 2
+
+
+def test_escaped_char_length_matches_direct_encoding() -> None:
+    """The memoized length equals the per-character json.dumps length."""
+    from knowledge_engine.splitter.excel_rows import _escaped_char_length
+
+    # Every escape class: control chars, quote, backslash, DEL, CJK, emoji,
+    # combining marks, and the plain ASCII range.
+    samples = [
+        '"',
+        "\\",
+        "\n",
+        "\t",
+        "\r",
+        "\x00",
+        "\x1f",
+        "\x7f",
+        "a",
+        "0",
+        "中",
+        "🎉",
+        "é",
+    ]
+    for char in samples:
+        assert _escaped_char_length(char) == len(dumps_excel_value(char)) - 2
+
+
+def test_large_mixed_escape_value_fragments_rebuild() -> None:
+    """Fragments of a large value with mixed escapes reconstruct exactly."""
+    alphabet = 'ab中文🎉;:\n"\\\x00\x1f\x7f'
+    value = "".join(alphabet[i % len(alphabet)] for i in range(10_000))
+    document = _document(_row_line(1, (2, value)))
+
+    nodes = build_excel_row_nodes(documents=[document], chunk_size=160)
+
+    _assert_lines_intact_and_bounded(nodes, 160)
+    fragments = [
+        parse_excel_fragment_line(line)
+        for node in nodes
+        for line in node.text.split("\n")
+    ]
+    assert "".join(fragment.value for fragment in fragments) == value

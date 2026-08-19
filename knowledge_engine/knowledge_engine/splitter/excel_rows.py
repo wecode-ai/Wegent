@@ -46,6 +46,16 @@ EXCEL_ROWS_PARSER_SUBTYPE = "excel_rows"
 MIN_EXCEL_CHUNK_BUDGET = 128
 
 
+class _BudgetExhausted(ValueError):
+    """A fragment cannot fit under the current budget.
+
+    Only this signal may trigger the prefix-degradation retry in
+    `_document_lines_with_context`: a shorter prefix frees fragment room.
+    Upstream data corruption also raises ValueError and must propagate
+    instead of being retried against a degraded context.
+    """
+
+
 @dataclass(frozen=True)
 class _ChunkLine:
     """One atomic chunk line in both canonical and readable form."""
@@ -116,7 +126,9 @@ def _document_lines_with_context(
                 context.retrieval_prefix, context.display_prefix
             ),
         )
-    except ValueError:
+    except _BudgetExhausted:
+        # Only budget starvation is retried against a degraded context;
+        # parse failures are data corruption and propagate unchanged.
         context = _sheet_context(document, name_cap=0)
         lines = _document_lines(
             document,
@@ -314,6 +326,24 @@ def _cell_fragment_lines(
     ]
 
 
+# Memoized escaped lengths for _split_value: overlong cell values repeat a
+# small alphabet of characters, so the per-character json.dumps cost drops
+# to one call per distinct character. Bounded so pathological inputs cannot
+# grow the cache without limit; beyond the cap it recomputes, still correct.
+_ESCAPED_CHAR_LENGTHS: dict[str, int] = {}
+_ESCAPED_CHAR_CACHE_CAP = 4096
+
+
+def _escaped_char_length(char: str) -> int:
+    """Return len(json.dumps(char)) - 2, memoized per distinct character."""
+    length = _ESCAPED_CHAR_LENGTHS.get(char)
+    if length is None:
+        length = len(dumps_excel_value(char)) - 2  # strip the quotes
+        if len(_ESCAPED_CHAR_LENGTHS) < _ESCAPED_CHAR_CACHE_CAP:
+            _ESCAPED_CHAR_LENGTHS[char] = length
+    return length
+
+
 def _split_value(
     value: str,
     source_row: int,
@@ -331,7 +361,7 @@ def _split_value(
         - _fragment_overhead(source_row, source_column, digits, form="readable"),
     )
     if value_budget < 16:
-        raise ValueError(
+        raise _BudgetExhausted(
             f"chunk budget canonical={budget.canonical} "
             f"retrieval={budget.retrieval} leaves no room for a fragment "
             f"of row {source_row} column {source_column}"
@@ -341,7 +371,7 @@ def _split_value(
     current_escaped_len = 0
     for char in value:
         # JSON escaping is per-character independent under ensure_ascii=False.
-        char_escaped_len = len(dumps_excel_value(char)) - 2  # strip quotes
+        char_escaped_len = _escaped_char_length(char)
         if current and current_escaped_len + char_escaped_len > value_budget - 2:
             pieces.append(current)
             current = ""
@@ -370,7 +400,7 @@ def _fragment_line(fragment: ExcelCellFragment, budget: _Budget) -> _ChunkLine:
     canonical = serialize_excel_fragment(fragment)
     readable = format_excel_fragment_readable(fragment)
     if len(canonical) > budget.canonical or len(readable) > budget.retrieval:
-        raise ValueError(
+        raise _BudgetExhausted(
             f"Excel fragment at row {fragment.source_row} "
             f"column {fragment.source_column} exceeds the chunk budget "
             f"canonical={budget.canonical} retrieval={budget.retrieval}"
