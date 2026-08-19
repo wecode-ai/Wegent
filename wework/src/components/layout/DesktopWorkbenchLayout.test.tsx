@@ -5656,7 +5656,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(browserTab).toHaveTextContent(/^example.com$/)
     expect(screen.getByTestId('workspace-browser-frame')).toHaveAttribute(
       'src',
-      'https://example.com/'
+      'http://example.com/'
     )
     expect(screen.getByTestId('workspace-browser-frame')).toHaveClass('bg-background')
   })
@@ -5709,7 +5709,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
     await userEvent.click(screen.getByTestId('right-workspace-browser-option'))
-    await userEvent.type(screen.getByTestId('workspace-browser-url-input'), 'weibo.com{Enter}')
+    await userEvent.type(screen.getByTestId('workspace-browser-url-input'), 'example.com{Enter}')
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
 
@@ -5718,10 +5718,10 @@ describe('DesktopWorkbenchLayout', () => {
     expect(rightPanelShell).toHaveStyle({ width: '0px' })
     expect(screen.getByTestId('right-workspace-panel')).toBeInTheDocument()
     expect(screen.getByTestId('workspace-browser-panel')).toHaveClass('hidden')
-    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('https://weibo.com/')
+    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('http://example.com/')
     expect(screen.getByTestId('workspace-browser-frame')).toHaveAttribute(
       'src',
-      'https://weibo.com/'
+      'http://example.com/'
     )
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
@@ -5732,10 +5732,10 @@ describe('DesktopWorkbenchLayout', () => {
       'true'
     )
     expect(screen.getByTestId('workspace-browser-panel')).not.toHaveClass('hidden')
-    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('https://weibo.com/')
+    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('http://example.com/')
     expect(screen.getByTestId('workspace-browser-frame')).toHaveAttribute(
       'src',
-      'https://weibo.com/'
+      'http://example.com/'
     )
   })
 
@@ -5744,7 +5744,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
     await userEvent.click(screen.getByTestId('right-workspace-browser-option'))
-    await userEvent.type(screen.getByTestId('workspace-browser-url-input'), 'weibo.com{Enter}')
+    await userEvent.type(screen.getByTestId('workspace-browser-url-input'), 'example.com{Enter}')
 
     vi.spyOn(getDesktopWorkbenchMainElement(), 'getBoundingClientRect').mockReturnValue(
       createRect({ left: 0, top: 0, width: 1000, height: 720 })
@@ -5773,7 +5773,7 @@ describe('DesktopWorkbenchLayout', () => {
       expect(rightPanelShell).toHaveStyle({ width: '0px' })
       expect(screen.queryByTestId('right-workspace-resize-handle')).not.toBeInTheDocument()
     })
-    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('https://weibo.com/')
+    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('http://example.com/')
     expect(document.body.style.cursor).toBe('')
     expect(document.body.style.userSelect).toBe('')
 
@@ -5781,7 +5781,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(content).toHaveStyle({ width: '420px' })
     expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 420px)' })
-    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('https://weibo.com/')
+    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('http://example.com/')
   })
 
   test('does not leave the browser loading when submitting the current URL again', async () => {
@@ -5791,10 +5791,10 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('right-workspace-browser-option'))
 
     const urlInput = screen.getByTestId('workspace-browser-url-input')
-    await userEvent.type(urlInput, 'weibo.com{Enter}')
+    await userEvent.type(urlInput, 'example.com{Enter}')
     expect(screen.getByTestId('workspace-browser-frame')).toHaveAttribute(
       'src',
-      'https://weibo.com/'
+      'http://example.com/'
     )
 
     await userEvent.type(urlInput, '{Enter}')
@@ -5802,7 +5802,7 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() =>
       expect(screen.getByTestId('workspace-browser-frame')).toHaveAttribute(
         'src',
-        'https://weibo.com/'
+        'http://example.com/'
       )
     )
     expect(screen.queryByTestId('workspace-browser-loading')).not.toBeInTheDocument()
@@ -5813,7 +5813,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
     await userEvent.click(screen.getByTestId('right-workspace-browser-option'))
-    await userEvent.type(screen.getByTestId('workspace-browser-url-input'), 'weibo.com{Enter}')
+    await userEvent.type(screen.getByTestId('workspace-browser-url-input'), 'example.com{Enter}')
 
     await userEvent.click(screen.getByTestId('right-workspace-new-tab-button'))
     const menu = screen.getByTestId('right-workspace-new-tab-menu')
@@ -5832,7 +5832,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('right-workspace-browser-tab-1'))
     expect(screen.getAllByTestId('workspace-browser-url-input')[0]).toHaveValue(
-      'https://weibo.com/'
+      'http://example.com/'
     )
   })
 
@@ -5879,7 +5879,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
     await userEvent.click(screen.getByTestId('right-workspace-browser-option'))
-    await userEvent.type(screen.getByTestId('workspace-browser-url-input'), 'weibo.com{Enter}')
+    await userEvent.type(screen.getByTestId('workspace-browser-url-input'), 'example.com{Enter}')
 
     await userEvent.click(screen.getByTestId('right-workspace-new-tab-button'))
 
@@ -5893,10 +5893,10 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('right-workspace-new-tab-menu')).not.toBeInTheDocument()
     expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute('aria-selected', 'true')
     expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
-    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('https://weibo.com/')
+    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('http://example.com/')
     expect(screen.getByTestId('workspace-browser-frame')).toHaveAttribute(
       'src',
-      'https://weibo.com/'
+      'http://example.com/'
     )
 
     await userEvent.click(screen.getByTestId('right-workspace-browser-tab-1'))
@@ -5905,10 +5905,10 @@ describe('DesktopWorkbenchLayout', () => {
       'aria-selected',
       'true'
     )
-    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('https://weibo.com/')
+    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('http://example.com/')
     expect(screen.getByTestId('workspace-browser-frame')).toHaveAttribute(
       'src',
-      'https://weibo.com/'
+      'http://example.com/'
     )
   })
 
@@ -9770,7 +9770,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(activePane().getByTestId('workspace-browser-url-input')).toHaveValue(
-      'https://example.com/'
+      'http://example.com/'
     )
 
     rerender(<DesktopWorkbenchLayout {...propsForTask(taskB)} />)
@@ -9791,11 +9791,11 @@ describe('DesktopWorkbenchLayout', () => {
       'true'
     )
     expect(activePane().getByTestId('workspace-browser-url-input')).toHaveValue(
-      'https://example.com/'
+      'http://example.com/'
     )
     expect(activePane().getByTestId('workspace-browser-frame')).toHaveAttribute(
       'src',
-      'https://example.com/'
+      'http://example.com/'
     )
   })
 

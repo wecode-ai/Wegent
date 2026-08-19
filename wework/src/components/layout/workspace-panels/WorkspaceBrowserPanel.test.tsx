@@ -180,6 +180,18 @@ describe('WorkspaceBrowserPanel', () => {
     embeddedBrowserMocks.setEmbeddedBrowserBounds.mockResolvedValue(undefined)
   })
 
+  test('disables text correction in the browser address bar', () => {
+    render(<WorkspaceBrowserPanel active />)
+
+    expect(screen.getByTestId('workspace-browser-url-input')).toHaveAttribute(
+      'autocapitalize',
+      'none'
+    )
+    expect(screen.getByTestId('workspace-browser-url-input')).toHaveAttribute('autocomplete', 'off')
+    expect(screen.getByTestId('workspace-browser-url-input')).toHaveAttribute('autocorrect', 'off')
+    expect(screen.getByTestId('workspace-browser-url-input')).toHaveAttribute('spellcheck', 'false')
+  })
+
   test('clears cookies from the browser actions submenu and reports completion', async () => {
     render(<WorkspaceBrowserPanel active />)
 
@@ -252,7 +264,7 @@ describe('WorkspaceBrowserPanel', () => {
 
     await waitFor(() => {
       expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledWith(
-        'https://example.com/',
+        'http://example.com/',
         {
           x: 500,
           y: 120,
