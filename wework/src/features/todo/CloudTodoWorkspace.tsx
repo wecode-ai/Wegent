@@ -3558,6 +3558,18 @@ export function CloudTodoWorkspace({
             allItems={detailAllItems}
             showChildren={false}
             taskRefreshKey={boardRefreshNonce}
+            onWorkflowPlanChanged={() => {
+              setBoardRefreshNonce(value => value + 1)
+            }}
+            onOpenChildTask={child => {
+              const locatedChild = {
+                ...child,
+                project_store: selectedItem.project_store,
+              }
+              setSelectedTaskBinding(null)
+              setTaskComposerRequest(null)
+              setSelectedItem(locatedChild)
+            }}
             onCreateTask={async workflowNodeId => {
               setSelectedTaskBinding(null)
               let inheritFromTask: RuntimeTaskAddress | null = null

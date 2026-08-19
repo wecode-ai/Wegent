@@ -444,7 +444,7 @@ class LoopItemService:
         task_metadata: dict = {}
         if explicit_workflow is not None:
             task_metadata["workflow"] = explicit_workflow.model_dump()
-        else:
+        elif values.parent_id is None:
             project_metadata = (
                 project.metadata_json if isinstance(project.metadata_json, dict) else {}
             )
@@ -467,7 +467,7 @@ class LoopItemService:
             agent = db.get(ProjectChatAgent, agent_id)
             if (
                 agent is None
-                or agent.cloud_project_id != cloud_project_id
+                or str(agent.cloud_project_id) != str(cloud_project_id)
                 or agent.status != "active"
             ):
                 raise HTTPException(

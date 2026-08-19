@@ -885,8 +885,11 @@ async fn call_tool_with_runtime_context(
                 (Err(error), _) | (_, Err(error)) => Err(error),
             }
         }
-        "get_assignment_candidates" | "assign_board_item" => Err(super::TaskRuntimeError::Invalid(
-            "AI-managed assignment requires a backend project space".to_owned(),
+        "get_assignment_candidates"
+        | "submit_workflow_plan"
+        | "report_workflow_outcome"
+        | "assign_board_item" => Err(super::TaskRuntimeError::Invalid(
+            "AI-managed orchestration requires a backend project space".to_owned(),
         )),
         "create_board_item" => {
             let project_id = string_argument(&arguments, "space_id");
@@ -1409,6 +1412,8 @@ fn is_task_provider_tool(name: &str) -> bool {
             | "get_current_context"
             | "get_board_item"
             | "get_assignment_candidates"
+            | "submit_workflow_plan"
+            | "report_workflow_outcome"
             | "assign_board_item"
             | "create_board_item"
             | "update_board_item"
@@ -1525,6 +1530,22 @@ async fn call_backend_tool(
             .await?;
             return Ok(normalize_assignment_candidates(members, robots));
         }
+        "submit_workflow_plan" => client
+            .post(format!(
+                "{base}/loop-items/{}/workflow-plan",
+                encode_segment(task_id()?)
+            ))
+            .json(arguments.get("plan").unwrap_or(arguments)),
+        "report_workflow_outcome" => client
+            .post(format!(
+                "{base}/loop-items/{}/workflow-outcome",
+                encode_segment(task_id()?)
+            ))
+            .json(&json!({
+                "verdict": arguments.get("verdict").and_then(Value::as_str).unwrap_or_default(),
+                "summary": arguments.get("summary").and_then(Value::as_str).unwrap_or_default(),
+                "findings": arguments.get("findings").cloned().unwrap_or_else(|| json!([])),
+            })),
         "assign_board_item" => {
             let run_id = grant
                 .and_then(|grant| grant.automation_run_id.clone())
@@ -2334,6 +2355,64 @@ fn tools() -> Vec<Value> {
             }),
         ),
         tool(
+            "submit_workflow_plan",
+            "Submit the AI manager's structured child-task plan",
+            json!({
+                "type": "object",
+                "properties": {
+                    "space_id": {"type": "string"},
+                    "item_id": {"type": "string"},
+                    "plan": {
+                        "type": "object",
+                        "properties": {
+                            "summary": {"type": "string"},
+                            "items": {
+                                "type": "array",
+                                "minItems": 1,
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "client_key": {"type": "string"},
+                                        "stage_id": {"type": "string"},
+                                        "title": {"type": "string"},
+                                        "description": {"type": "string"},
+                                        "assignee_type": {"enum": ["user", "agent", "team"]},
+                                        "assignee_id": {"type": "string"},
+                                        "assignee_name": {"type": "string"},
+                                        "rationale": {"type": "string"}
+                                    },
+                                    "required": [
+                                        "client_key",
+                                        "stage_id",
+                                        "title",
+                                        "assignee_type",
+                                        "assignee_id"
+                                    ]
+                                }
+                            }
+                        },
+                        "required": ["items"]
+                    }
+                },
+                "required": ["space_id", "item_id", "plan"]
+            }),
+        ),
+        tool(
+            "report_workflow_outcome",
+            "Report the current workflow child task as passed or needing replanning",
+            json!({
+                "type": "object",
+                "properties": {
+                    "space_id": {"type": "string"},
+                    "item_id": {"type": "string"},
+                    "verdict": {"enum": ["passed", "needs_rework"]},
+                    "summary": {"type": "string"},
+                    "findings": {"type": "array", "items": {"type": "string"}}
+                },
+                "required": ["space_id", "item_id", "verdict", "summary"]
+            }),
+        ),
+        tool(
             "assign_board_item",
             "Assign the current AI-managed board item to one project member or robot",
             json!({
@@ -2727,7 +2806,7 @@ fn is_automation_manager_tool(name: &str) -> bool {
         "get_current_context"
             | "get_board_item"
             | "get_assignment_candidates"
-            | "assign_board_item"
+            | "submit_workflow_plan"
     )
 }
 
@@ -3310,6 +3389,8 @@ mod tests {
             "list_spaces",
             "get_board_item",
             "get_assignment_candidates",
+            "submit_workflow_plan",
+            "report_workflow_outcome",
             "assign_board_item",
             "list_item_attachments",
             "read_item_attachment",
@@ -3321,7 +3402,7 @@ mod tests {
     }
 
     #[test]
-    fn automation_manager_has_only_read_and_assign_tools() {
+    fn automation_manager_has_only_read_and_plan_tools() {
         let names = tools()
             .into_iter()
             .filter_map(|tool| tool["name"].as_str().map(ToOwned::to_owned))
@@ -3334,7 +3415,7 @@ mod tests {
                 "get_current_context",
                 "get_board_item",
                 "get_assignment_candidates",
-                "assign_board_item",
+                "submit_workflow_plan",
             ]
         );
         for forbidden in [

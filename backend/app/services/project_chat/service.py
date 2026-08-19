@@ -1568,6 +1568,14 @@ class ProjectChatService:
         task.completed_at = ProjectChatService._loop_unset_datetime(db)
         task.sort_order = 0
         task.version += 1
+        from app.services.issue_workflow_planning import (
+            issue_workflow_planning_service,
+        )
+
+        issue_workflow_planning_service.sync_from_child(
+            db,
+            child_id=task.id,
+        )
 
     def fail_agent_response(
         self,

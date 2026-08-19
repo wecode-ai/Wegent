@@ -15,7 +15,6 @@ import {
 import {
   assistantMessage,
   createSse,
-  functionCall,
   namespacedFunctionCall,
   requestContainsToolOutput,
   responseCompleted,
@@ -290,6 +289,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
   const remoteProjectChatRequests = []
   let boardTeamAssignmentPayload = null
   let createdBoardItem = null
+  let createdChildItem = null
   let cloudApi = null
   let cloudProject = null
   let cloudAgent = null
@@ -868,6 +868,34 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         method: 'POST',
         body: JSON.stringify(values),
       })
+    const aiWorkflow = automationRuleId => ({
+      version: 1,
+      definition_version: 1,
+      stage_mode: 'none',
+      advancement_policy: 'ai',
+      coordinator_prompt: '',
+      approval_policy: 'automatic',
+      ai_automation_rule_id: automationRuleId,
+      orchestration_status: 'idle',
+      active_run_id: null,
+      active_plan_version: null,
+      current_stage_id: null,
+      nodes: [],
+    })
+    const workflowChild = parentId =>
+      waitForValue(
+        () => cloudRequest(`/api/v1/cloud-projects/${projectId}/loop-items`),
+        response =>
+          (response.items ?? []).find(
+            item => item.parent_id === parentId && item.assignee_agent_id === cloudAgent.id
+          ),
+        `AI workflow did not create a robot child task for ${parentId}`,
+        uiTimeoutMs * 3
+      ).then(response =>
+        response.items.find(
+          item => item.parent_id === parentId && item.assignee_agent_id === cloudAgent.id
+        )
+      )
 
     const directTeamTask = await createTask('API · Wegent runtime 机器人执行', {
       assignee_agent_id: wegentAgent.id,
@@ -920,7 +948,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       enabled: true,
     })
     const customToolCallsBefore = managerToolCalls
-    const customManagerTask = await createTask('API · task.created 自定义 AI 调度')
+    const customManagerTask = await createTask('API · task.created 自定义 AI 调度', {
+      workflow: aiWorkflow(customManagerRule.id),
+    })
     const customManagerRun = await waitForSucceededRun(
       projectId,
       customManagerRule.id,
@@ -931,16 +961,17 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       customManagerTask.id,
       'automation_manager'
     )
+    const customChildTask = await workflowChild(customManagerTask.id)
     const customRobotExecution = await waitForCompletedExecution(
       projectId,
-      customManagerTask.id,
+      customChildTask.id,
       'project_robot'
     )
     assert.equal(customManagerExecution.automationRunId, customManagerRun.id)
     assert.equal(customRobotExecution.automationRunId, customManagerRun.id)
     assert.ok(
       managerToolCalls > customToolCallsBefore,
-      'Custom AI manager did not call assign_board_item'
+      'Custom AI manager did not call submit_workflow_plan'
     )
     const readyCountBeforeBoardReload = control.readyCount
     await control.command('reloadMainWindow', 'body')
@@ -983,6 +1014,15 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       timeoutMs: uiTimeoutMs,
       visible: true,
     })
+    await control.command(
+      'waitFor',
+      `${activeBoard} [data-testid="cloud-todo-open-child-task-${customChildTask.id}"]`,
+      {
+        text: customChildTask.title,
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      }
+    )
     const customManagerCard = `${activeBoard} [data-executor-type="automation_manager"][data-manager-type="custom"]`
     await control.command('waitFor', customManagerCard, {
       text: '自定义 AI 调度员',
@@ -1007,7 +1047,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       () => control.command('getText', customManagerCard),
       text =>
         text.includes('请确认当前分派结果') &&
-        text.split('已通过看板工具完成机器人分派。').length >= 3 &&
+        text.split('已通过看板工具提交编排方案。').length >= 3 &&
         text.split('自定义 AI 调度员').length >= 3,
       'The custom manager did not append a distinct reply to its comment thread',
       uiTimeoutMs * 3
@@ -1038,22 +1078,25 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       enabled: true,
     })
     const wegentToolCallsBefore = managerToolCalls
-    const wegentManagerTask = await createTask('API · task.created Wegent 智能体调度')
+    const wegentManagerTask = await createTask('API · task.created Wegent 智能体调度', {
+      workflow: aiWorkflow(wegentManagerRule.id),
+    })
     const wegentManagerRun = await waitForSucceededRun(
       projectId,
       wegentManagerRule.id,
       wegentManagerTask.id
     )
     assert.ok(wegentManagerRun.backendTaskId > 0, 'Wegent manager did not persist its Backend Task')
+    const wegentChildTask = await workflowChild(wegentManagerTask.id)
     const wegentRobotExecution = await waitForCompletedExecution(
       projectId,
-      wegentManagerTask.id,
+      wegentChildTask.id,
       'project_robot'
     )
     assert.equal(wegentRobotExecution.automationRunId, wegentManagerRun.id)
     assert.ok(
       managerToolCalls > wegentToolCallsBefore,
-      'Wegent manager did not call assign_board_item'
+      'Wegent manager did not call submit_workflow_plan'
     )
     await disableRule(projectId, wegentManagerRule)
 
@@ -1191,87 +1234,113 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           )
           return true
         }
-        const isManagerRequest = serialized.includes(
-          '请读取候选执行者并按调度要求完成分派，不要执行任务。'
-        )
+        if (serialized.includes('请确认当前分派结果')) {
+          writeEvents([
+            responseCreated(responseId),
+            assistantMessage('已通过看板工具提交编排方案。'),
+            responseCompleted(responseId),
+          ])
+          return true
+        }
+        const isManagerRequest = serialized.includes('你是看板的 AI 管家')
         if (isManagerRequest) {
           assert.ok(cloudAgent?.id, 'AI manager ran before the project robot was prepared')
-          const assignment = {
-            assignee_type: 'agent',
-            assignee_id: cloudAgent.id,
+          const plan = {
+            summary: '创建一个可独立验收的开发子任务。',
+            items: [
+              {
+                client_key: 'implement',
+                stage_id: '__issue__',
+                title: '实现并验证自动化任务',
+                description: '完成 Issue 中的工作并提交可复核结果。',
+                assignee_type: 'agent',
+                assignee_id: cloudAgent.id,
+                assignee_name: cloudAgent.name,
+                rationale: '该机器人具备对应的软件开发能力。',
+              },
+            ],
           }
-          const searchCallId = 'project-automation-search-assignee'
-          const assignCallId = 'project-automation-assign-board-item'
-          if (requestContainsToolOutput(payload, assignCallId)) {
+          const searchItemCallId = 'project-automation-search-board-item'
+          const readItemCallId = 'project-automation-read-board-item'
+          const searchCandidatesCallId = 'project-automation-search-candidates'
+          const candidatesCallId = 'project-automation-read-candidates'
+          const searchSubmitCallId = 'project-automation-search-submit-plan'
+          const submitCallId = 'project-automation-submit-workflow-plan'
+          if (requestContainsToolOutput(payload, submitCallId)) {
             writeEvents([
               responseCreated(responseId),
-              assistantMessage('已通过看板工具完成机器人分派。'),
+              assistantMessage('已通过看板工具提交编排方案。'),
               responseCompleted(responseId),
             ])
             return true
           }
-          if (requestContainsToolOutput(payload, searchCallId)) {
-            const tool = selectMcpTool(payload, 'wework_space', 'assign_board_item', assignment)
+          if (requestContainsToolOutput(payload, searchSubmitCallId)) {
+            const tool = selectMcpTool(payload, 'wework_space', 'submit_workflow_plan', {
+              plan,
+            })
             managerToolCalls += 1
             writeEvents([
               responseCreated(responseId),
-              ...namespacedFunctionCall(assignCallId, tool.namespace, tool.name, tool.arguments),
+              ...namespacedFunctionCall(submitCallId, tool.namespace, tool.name, tool.arguments),
               responseCompleted(responseId),
             ])
             return true
           }
-          const namespace = payload.tools?.find(
-            tool =>
-              tool?.type === 'namespace' &&
-              tool.name === 'wework_space' &&
-              tool.tools?.some(candidate => candidate?.name === 'assign_board_item')
-          )
-          const convertedName = payload.tools
-            ?.map(tool => tool?.name ?? tool?.function?.name)
-            .find(
-              name =>
-                name === 'assign_board_item' ||
-                name?.endsWith('_assign_board_item') ||
-                name === 'assign_task' ||
-                name?.endsWith('_assign_task')
+          if (requestContainsToolOutput(payload, candidatesCallId)) {
+            const search = selectToolSearch(payload, 'submit_workflow_plan')
+            writeEvents([
+              responseCreated(responseId),
+              ...toolSearchResponseEvents(searchSubmitCallId, search),
+              responseCompleted(responseId),
+            ])
+            return true
+          }
+          if (requestContainsToolOutput(payload, searchCandidatesCallId)) {
+            const tool = selectMcpTool(
+              payload,
+              'wework_space',
+              'get_assignment_candidates',
+              {}
             )
-          if (namespace) {
-            managerToolCalls += 1
             writeEvents([
               responseCreated(responseId),
               ...namespacedFunctionCall(
-                assignCallId,
-                namespace.name,
-                'assign_board_item',
-                assignment
+                candidatesCallId,
+                tool.namespace,
+                tool.name,
+                tool.arguments
               ),
               responseCompleted(responseId),
             ])
             return true
           }
-          if (convertedName) {
-            let convertedArguments = assignment
-            if (convertedName.endsWith('assign_task')) {
-              const taskId = serialized.match(/AUTO-\d+/g)?.at(-1)
-              assert.ok(taskId, 'Chat manager request did not retain its board task id')
-              convertedArguments = {
-                project_id: String(cloudProject.id),
-                task_id: taskId,
-                ...assignment,
-              }
-            }
-            managerToolCalls += 1
+          if (requestContainsToolOutput(payload, readItemCallId)) {
+            const search = selectToolSearch(payload, 'get_assignment_candidates')
             writeEvents([
               responseCreated(responseId),
-              ...functionCall(assignCallId, convertedName, convertedArguments),
+              ...toolSearchResponseEvents(searchCandidatesCallId, search),
               responseCompleted(responseId),
             ])
             return true
           }
-          const search = selectToolSearch(payload, 'assign_board_item')
+          if (requestContainsToolOutput(payload, searchItemCallId)) {
+            const tool = selectMcpTool(payload, 'wework_space', 'get_board_item', {})
+            writeEvents([
+              responseCreated(responseId),
+              ...namespacedFunctionCall(
+                readItemCallId,
+                tool.namespace,
+                tool.name,
+                tool.arguments
+              ),
+              responseCompleted(responseId),
+            ])
+            return true
+          }
+          const search = selectToolSearch(payload, 'get_board_item')
           writeEvents([
             responseCreated(responseId),
-            ...toolSearchResponseEvents(searchCallId, search),
+            ...toolSearchResponseEvents(searchItemCallId, search),
             responseCompleted(responseId),
           ])
           return true
@@ -1303,14 +1372,14 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         request.method === 'GET' &&
         url.pathname === `/api/v1/cloud-projects/${PROJECT_ID}/loop-items`
       ) {
-        json(response, 200, { items: createdBoardItem ? [createdBoardItem] : [] })
+        json(response, 200, {
+          items: [createdBoardItem, createdChildItem].filter(Boolean),
+        })
         return true
       }
-      if (
-        request.method === 'GET' &&
-        url.pathname === `/api/v1/loop-items/${orchestratedItemId}/tasks`
-      ) {
-        json(response, 200, workflowTaskBindings)
+      const taskBindingsMatch = url.pathname.match(/^\/api\/v1\/loop-items\/(AUTO-\d+)\/tasks$/)
+      if (request.method === 'GET' && taskBindingsMatch) {
+        json(response, 200, taskBindingsMatch[1] === orchestratedItemId ? workflowTaskBindings : [])
         return true
       }
       if (
@@ -1404,7 +1473,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         const payload = await readJson(request)
         assert.equal(payload.status, createdBoardItem?.status)
         assert.ok(payload.item_ids.includes(createdBoardItem?.id))
-        json(response, 200, { items: createdBoardItem ? [createdBoardItem] : [] })
+        json(response, 200, {
+          items: [createdBoardItem, createdChildItem].filter(Boolean),
+        })
         return true
       }
       if (
@@ -2101,6 +2172,20 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           unlinked_at: null,
         },
       ]
+      const childSequenceNumber = nextBoardItemSequence
+      nextBoardItemSequence += 1
+      createdChildItem = {
+        ...createdBoardItem,
+        id: `AUTO-${childSequenceNumber}`,
+        sequence_number: childSequenceNumber,
+        parent_id: orchestratedItemId,
+        title: 'AI 拆解的实现任务',
+        status: 'pending',
+        assignee_user_id: null,
+        assignee_agent_id: AGENT_ID,
+        assignee_agent_name: AGENT.name,
+        workflow: null,
+      }
       createdBoardItem = {
         ...createdBoardItem,
         workflow: {
@@ -2125,6 +2210,29 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           ),
         },
       }
+      const readyCountBeforeChildTaskReload = control.readyCount
+      await control.command('reloadMainWindow', 'body')
+      await withTimeout(
+        control.awaitReadyAfter(readyCountBeforeChildTaskReload),
+        uiTimeoutMs * 3,
+        'The project board did not reconnect after adding the workflow child task'
+      )
+      await control.command('waitFor', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await control.command('click', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
+        visible: true,
+      })
+      await control.command(
+        'waitFor',
+        `${activeBoard} [data-testid="cloud-todo-card-${createdOrchestratedItemId}"]`,
+        {
+          text: '预置流程直接开始',
+          timeoutMs: uiTimeoutMs,
+          visible: true,
+        }
+      )
       await control.command(
         'drag',
         `${activeBoard} [data-testid="cloud-todo-card-${createdOrchestratedItemId}"]`,
@@ -2145,10 +2253,40 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         'Preset workflow drag opened the manual task Composer'
       )
       await control.command(
+        'click',
+        `${activeBoard} [data-testid="cloud-todo-card-${createdOrchestratedItemId}"]`,
+        {
+          visible: true,
+        }
+      )
+      await control.command('waitFor', `${activeBoard} [data-testid="cloud-todo-detail"]`, {
+        text: '预置流程直接开始',
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await control.command(
         'waitFor',
         `${activeBoard} [data-testid="cloud-todo-workflow-action-stage-1"]`,
         {
           text: '人工执行 · 待人工批准',
+          timeoutMs: uiTimeoutMs,
+          visible: true,
+        }
+      )
+      await control.command(
+        'waitFor',
+        `${activeBoard} [data-testid="cloud-todo-open-child-task-${createdChildItem.id}"]`,
+        {
+          text: 'AI 拆解的实现任务',
+          timeoutMs: uiTimeoutMs,
+          visible: true,
+        }
+      )
+      await control.command(
+        'waitFor',
+        `${activeBoard} [data-testid="cloud-todo-execution-task-count"]`,
+        {
+          text: '4',
           timeoutMs: uiTimeoutMs,
           visible: true,
         }
@@ -2171,15 +2309,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           visible: true,
         }
       )
-      await control.command(
-        'waitFor',
-        `${activeBoard} [data-testid="cloud-todo-workflow-task-status-stage-1-9101"]`,
-        {
-          text: '失败',
-          timeoutMs: uiTimeoutMs,
-          visible: true,
-        }
-      )
+      const failedWorkflowTaskStatus = `${activeBoard} [data-testid="cloud-todo-workflow-task-status-stage-1-9101"]`
+      await control.command('scrollIntoView', failedWorkflowTaskStatus)
+      await control.command('waitFor', failedWorkflowTaskStatus, {
+        text: '失败',
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
       await control.command(
         'waitFor',
         `${activeBoard} [data-testid="cloud-todo-workflow-action-stage-1"]`,

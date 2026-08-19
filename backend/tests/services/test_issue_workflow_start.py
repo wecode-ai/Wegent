@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from app.services.issue_workflow_planning import issue_workflow_planning_service
 from app.services.issue_workflow_start import issue_workflow_start_service
 from app.services.project_automations import (
     project_automation_processor,
@@ -91,7 +92,16 @@ async def test_start_dispatches_ai_coordinator_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     process = AsyncMock(return_value=1)
+    planning_run = SimpleNamespace(
+        id="workflow-run-1",
+        metadata_json={"plan_version": 1},
+    )
     monkeypatch.setattr(project_automation_processor, "process", process)
+    monkeypatch.setattr(
+        issue_workflow_planning_service,
+        "ensure_run",
+        lambda *_args, **_kwargs: planning_run,
+    )
     monkeypatch.setattr(issue_workflow_start_service, "_has_run", lambda *_args: False)
     item = SimpleNamespace(
         id="ISSUE-2",
@@ -114,6 +124,7 @@ async def test_start_dispatches_ai_coordinator_once(
     assert started == 1
     process.assert_awaited_once()
     assert process.await_args.kwargs["automation_id"] == "ai-manager-rule"
+    assert process.await_args.args[1].payload["workflow_run_id"] == planning_run.id
 
     monkeypatch.setattr(issue_workflow_start_service, "_has_run", lambda *_args: True)
     assert (

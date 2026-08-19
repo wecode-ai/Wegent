@@ -27,6 +27,7 @@ import {
   Minimize2,
   Paperclip,
   Plus,
+  Sparkles,
   Tag,
   Trash2,
   Upload,
@@ -41,6 +42,7 @@ import type {
   CloudProjectMember,
   Delivery,
   DeliveryDetail,
+  WorkflowPlan,
 } from '@/api/deliveries'
 import type { ProjectChatClient } from '@/api/backend/projectChatSocket'
 import type { ProjectChatAgent } from '@/api/projectChatAgents'
@@ -522,6 +524,8 @@ export type TodoEditorProps = {
     task_id: string
     task_title: string | null
   }) => void
+  onOpenChildTask?: (task: CloudLoopItem) => void
+  onWorkflowPlanChanged?: () => void | Promise<void>
 } & (TodoEditorCreateProps | TodoEditorEditProps)
 
 // Single panel for creating, viewing, and editing a todo. Create mode keeps a
@@ -656,6 +660,15 @@ export function TodoEditor(props: TodoEditorProps) {
   const [projectMembers, setProjectMembers] = useState<CloudProjectMember[]>([])
   const [projectAgents, setProjectAgents] = useState<ProjectChatAgent[]>([])
   const [wegentTeams, setWegentTeams] = useState<Team[]>([])
+  const [workflowPlanState, setWorkflowPlanState] = useState<{
+    itemId: string
+    plan: WorkflowPlan | null
+  } | null>(null)
+  const [workflowPlanBusy, setWorkflowPlanBusy] = useState(false)
+  const [workflowPlanErrorState, setWorkflowPlanErrorState] = useState<{
+    itemId: string
+    error: string | null
+  } | null>(null)
   const [addingCollaborator, setAddingCollaborator] = useState(false)
   const [selectedCollaboratorId, setSelectedCollaboratorId] = useState<number | null>(null)
   const [collaboratorBusy, setCollaboratorBusy] = useState(false)
@@ -676,6 +689,9 @@ export function TodoEditor(props: TodoEditorProps) {
   const editItemId = item?.id ?? null
   const editProjectId = item?.cloud_project_id ?? null
   const createProjectId = createProps?.project.id ?? null
+  const workflowPlan = workflowPlanState?.itemId === editItemId ? workflowPlanState.plan : null
+  const workflowPlanError =
+    workflowPlanErrorState?.itemId === editItemId ? workflowPlanErrorState.error : null
   const visibleAttachments = useMemo(() => {
     const merged = new Map<string, AttachmentRow>()
     markdownAttachmentRows(description).forEach(attachment => merged.set(attachment.id, attachment))
@@ -736,6 +752,35 @@ export function TodoEditor(props: TodoEditorProps) {
     props.teamApi,
   ])
 
+  useEffect(() => {
+    if (editItemId == null || item?.workflow?.advancement_policy !== 'ai') return
+    const getWorkflowPlan = (
+      api as DeliveryApi & {
+        getWorkflowPlan?: (itemId: string) => Promise<WorkflowPlan | null>
+      }
+    ).getWorkflowPlan
+    if (!getWorkflowPlan) return
+    let active = true
+    void getWorkflowPlan(editItemId)
+      .then(plan => {
+        if (active) {
+          setWorkflowPlanState({ itemId: editItemId, plan })
+          setWorkflowPlanErrorState({ itemId: editItemId, error: null })
+        }
+      })
+      .catch(error => {
+        if (active) {
+          setWorkflowPlanErrorState({
+            itemId: editItemId,
+            error: error instanceof Error ? error.message : String(error),
+          })
+        }
+      })
+    return () => {
+      active = false
+    }
+  }, [api, editItemId, item?.workflow?.advancement_policy, props.taskRefreshKey])
+
   // Assignee sources are independent: one unavailable directory must not hide
   // otherwise valid members, robots, or Wegent Teams.
   useEffect(() => {
@@ -785,6 +830,20 @@ export function TodoEditor(props: TodoEditorProps) {
       ? tasks.slice(0, 1)
       : []
     : tasks
+  const executionTaskCount = childItems.length + displayedTasks.length
+  const workflowPlanStatus = workflowPlan?.status ?? item?.workflow?.orchestration_status ?? 'idle'
+  const workflowPlanStatusLabel = {
+    idle: t('todo.workflow_plan_idle', '等待触发'),
+    planning: t('todo.workflow_plan_planning', 'AI 正在生成方案'),
+    awaiting_approval: t('todo.workflow_plan_awaiting_approval', '等待人工确认'),
+    dispatching: t('todo.workflow_plan_dispatching', '正在创建并分配任务'),
+    running: t('todo.workflow_plan_running', '子任务执行中'),
+    awaiting_review: t('todo.workflow_plan_awaiting_review', '等待统一验收'),
+    paused: t('todo.workflow_plan_paused', '已暂停'),
+    completed: t('todo.workflow_plan_completed', '已完成'),
+    failed: t('todo.workflow_plan_failed', '生成方案失败'),
+  }[workflowPlanStatus]
+  const proposedPlanItems = workflowPlan?.items.filter(planItem => !planItem.task_id) ?? []
   const itemTags = item?.tags ?? []
   const tagsDirty =
     tags.length !== itemTags.length || tags.some((tag, index) => tag !== itemTags[index])
@@ -842,6 +901,36 @@ export function TodoEditor(props: TodoEditorProps) {
       : item
         ? memberNameById(projectMembers, item.created_by_user_id)
         : null)
+
+  async function mutateWorkflowPlan(
+    action:
+      | 'approveWorkflowPlan'
+      | 'approveWorkflowReview'
+      | 'pauseWorkflowPlan'
+      | 'resumeWorkflowPlan'
+      | 'replanWorkflowPlan'
+  ) {
+    if (!item || workflowPlanBusy) return
+    const method = (
+      api as DeliveryApi &
+        Record<typeof action, ((itemId: string) => Promise<WorkflowPlan>) | undefined>
+    )[action]
+    if (!method) return
+    setWorkflowPlanBusy(true)
+    setWorkflowPlanErrorState({ itemId: item.id, error: null })
+    try {
+      setWorkflowPlanState({ itemId: item.id, plan: await method(item.id) })
+      await props.onWorkflowPlanChanged?.()
+      editProps?.onUpdated(await api.getLoopItem(item.id))
+    } catch (error) {
+      setWorkflowPlanErrorState({
+        itemId: item.id,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    } finally {
+      setWorkflowPlanBusy(false)
+    }
+  }
 
   async function submitCreate() {
     if (props.mode !== 'create' || !title.trim() || saving) return
@@ -1787,6 +1876,146 @@ export function TodoEditor(props: TodoEditorProps) {
 
               {workspacePanel && item ? (
                 <>
+                  {item.workflow?.advancement_policy === 'ai' ? (
+                    <section
+                      className="mt-6 rounded-xl border border-border bg-muted/20 p-3"
+                      data-testid="cloud-todo-workflow-plan"
+                    >
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="h-4 w-4 text-text-secondary" />
+                        <h3 className="text-sm font-semibold text-text-primary">
+                          {t('todo.workflow_plan_title', 'AI 编排方案')}
+                        </h3>
+                        <span
+                          className="text-xs text-text-muted"
+                          data-testid="cloud-todo-workflow-plan-status"
+                        >
+                          {workflowPlanStatusLabel}
+                        </span>
+                        <div className="ml-auto flex items-center gap-1.5">
+                          {workflowPlanStatus === 'awaiting_approval' ? (
+                            <>
+                              <button
+                                type="button"
+                                data-testid="cloud-todo-workflow-replan"
+                                disabled={workflowPlanBusy}
+                                onClick={() => void mutateWorkflowPlan('replanWorkflowPlan')}
+                                className="h-7 rounded-lg px-2 text-xs text-text-secondary hover:bg-muted disabled:opacity-40"
+                              >
+                                {t('todo.workflow_plan_replan', '要求重规划')}
+                              </button>
+                              <button
+                                type="button"
+                                data-testid="cloud-todo-workflow-approve"
+                                disabled={workflowPlanBusy}
+                                onClick={() => void mutateWorkflowPlan('approveWorkflowPlan')}
+                                className="h-7 rounded-lg bg-text-primary px-2.5 text-xs font-medium text-background disabled:opacity-40"
+                              >
+                                {t('todo.workflow_plan_approve', '确认并执行')}
+                              </button>
+                            </>
+                          ) : workflowPlanStatus === 'awaiting_review' ? (
+                            <>
+                              <button
+                                type="button"
+                                data-testid="cloud-todo-workflow-replan"
+                                disabled={workflowPlanBusy}
+                                onClick={() => void mutateWorkflowPlan('replanWorkflowPlan')}
+                                className="h-7 rounded-lg px-2 text-xs text-text-secondary hover:bg-muted disabled:opacity-40"
+                              >
+                                {t('todo.workflow_plan_replan', '要求重规划')}
+                              </button>
+                              <button
+                                type="button"
+                                data-testid="cloud-todo-workflow-review"
+                                disabled={workflowPlanBusy}
+                                onClick={() => void mutateWorkflowPlan('approveWorkflowReview')}
+                                className="h-7 rounded-lg bg-text-primary px-2.5 text-xs font-medium text-background disabled:opacity-40"
+                              >
+                                {t('todo.workflow_plan_review', '验收并完成')}
+                              </button>
+                            </>
+                          ) : workflowPlanStatus === 'paused' ? (
+                            <button
+                              type="button"
+                              data-testid="cloud-todo-workflow-resume"
+                              disabled={workflowPlanBusy}
+                              onClick={() => void mutateWorkflowPlan('resumeWorkflowPlan')}
+                              className="h-7 rounded-lg bg-text-primary px-2.5 text-xs font-medium text-background disabled:opacity-40"
+                            >
+                              {t('todo.workflow_plan_resume', '继续执行')}
+                            </button>
+                          ) : workflowPlanStatus === 'planning' ||
+                            workflowPlanStatus === 'running' ? (
+                            <button
+                              type="button"
+                              data-testid="cloud-todo-workflow-pause"
+                              disabled={workflowPlanBusy}
+                              onClick={() => void mutateWorkflowPlan('pauseWorkflowPlan')}
+                              className="h-7 rounded-lg px-2 text-xs text-text-secondary hover:bg-muted disabled:opacity-40"
+                            >
+                              {t('todo.workflow_plan_pause', '暂停')}
+                            </button>
+                          ) : workflowPlanStatus === 'failed' ? (
+                            <button
+                              type="button"
+                              data-testid="cloud-todo-workflow-replan"
+                              disabled={workflowPlanBusy}
+                              onClick={() => void mutateWorkflowPlan('replanWorkflowPlan')}
+                              className="h-7 rounded-lg bg-text-primary px-2.5 text-xs font-medium text-background disabled:opacity-40"
+                            >
+                              {t('todo.workflow_plan_retry', '重新生成')}
+                            </button>
+                          ) : workflowPlanStatus === 'completed' ? (
+                            <button
+                              type="button"
+                              data-testid="cloud-todo-workflow-rerun"
+                              disabled={workflowPlanBusy}
+                              onClick={() => void mutateWorkflowPlan('replanWorkflowPlan')}
+                              className="h-7 rounded-lg px-2 text-xs text-text-secondary hover:bg-muted disabled:opacity-40"
+                            >
+                              {t('todo.workflow_plan_rerun', '再次执行')}
+                            </button>
+                          ) : null}
+                        </div>
+                      </div>
+                      {workflowPlan?.summary ? (
+                        <p className="mt-2 text-xs leading-5 text-text-secondary">
+                          {workflowPlan.summary}
+                        </p>
+                      ) : null}
+                      {proposedPlanItems.length > 0 ? (
+                        <div className="mt-2 divide-y divide-border rounded-lg border border-border bg-background">
+                          {proposedPlanItems.map((planItem, index) => (
+                            <div
+                              key={planItem.id}
+                              data-testid={`cloud-todo-workflow-plan-item-${planItem.id}`}
+                              className="flex gap-2 px-3 py-2"
+                            >
+                              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-muted text-xs text-text-muted">
+                                {index + 1}
+                              </span>
+                              <div className="min-w-0 flex-1">
+                                <p className="text-sm font-medium text-text-primary">
+                                  {planItem.title}
+                                </p>
+                                <p className="mt-0.5 line-clamp-2 text-xs text-text-muted">
+                                  {planItem.description}
+                                </p>
+                                <p className="mt-1 text-xs text-text-secondary">
+                                  {planItem.assignee_name || planItem.assignee_id}
+                                  {planItem.rationale ? ` · ${planItem.rationale}` : ''}
+                                </p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                      {workflowPlanError ? (
+                        <p className="mt-2 text-xs text-destructive">{workflowPlanError}</p>
+                      ) : null}
+                    </section>
+                  ) : null}
                   <section className="mt-6" data-testid="cloud-todo-tasks">
                     <div className="flex h-8 items-center gap-2">
                       <h3 className="text-sm font-semibold text-text-primary">
@@ -1794,10 +2023,13 @@ export function TodoEditor(props: TodoEditorProps) {
                           ? t('todo.workflow_runtime_title')
                           : props.showCurrentTaskOnly
                             ? t('todo.current_running_task')
-                            : t('todo.tasks')}
+                            : t('todo.execution_tasks')}
                       </h3>
-                      <span className="text-xs text-text-muted">
-                        {displayedWorkflow?.nodes.length ?? displayedTasks.length}
+                      <span
+                        className="text-xs text-text-muted"
+                        data-testid="cloud-todo-execution-task-count"
+                      >
+                        {executionTaskCount}
                       </span>
                       {props.onCreateTask && !displayedWorkflow?.nodes.length ? (
                         <button
@@ -1811,6 +2043,97 @@ export function TodoEditor(props: TodoEditorProps) {
                         </button>
                       ) : null}
                     </div>
+                    {childItems.length > 0 ||
+                    (!displayedWorkflow?.nodes.length && displayedTasks.length > 0) ? (
+                      <div
+                        data-testid="cloud-todo-task-list"
+                        className="mt-1 max-h-[280px] space-y-1 overflow-y-auto overscroll-contain pr-1"
+                      >
+                        {childItems.map(child => {
+                          const assignee =
+                            child.assignee_agent_name ??
+                            child.assignee_team_name ??
+                            child.assignee_name
+                          const childStatus =
+                            statusOptions.find(option => option.id === child.status)?.name ??
+                            child.status
+                          return (
+                            <button
+                              key={child.id}
+                              type="button"
+                              data-testid={`cloud-todo-open-child-task-${child.id}`}
+                              disabled={!props.onOpenChildTask || child.can_view_detail === false}
+                              onClick={() => props.onOpenChildTask?.(child)}
+                              className="flex w-full items-center gap-2.5 rounded-xl border border-transparent px-3 py-2.5 text-left transition hover:bg-muted disabled:cursor-default"
+                            >
+                              <span
+                                className={cn(
+                                  'h-2 w-2 shrink-0 rounded-full',
+                                  columnDotClasses[child.status]
+                                )}
+                              />
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-sm font-medium text-text-primary">
+                                  {child.title}
+                                </span>
+                                <span className="mt-0.5 block truncate text-xs text-text-muted">
+                                  {childStatus}
+                                  {assignee ? ` · ${assignee}` : ''}
+                                </span>
+                              </span>
+                              {props.onOpenChildTask && child.can_view_detail !== false ? (
+                                <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" />
+                              ) : null}
+                            </button>
+                          )
+                        })}
+                        {!displayedWorkflow?.nodes.length
+                          ? displayedTasks.map(task => {
+                              const selected = props.selectedTaskId === task.task_id
+                              return (
+                                <button
+                                  key={task.id}
+                                  type="button"
+                                  data-testid={`cloud-todo-open-task-conversation-${task.id}`}
+                                  data-selected={selected ? 'true' : 'false'}
+                                  onClick={() => props.onOpenTaskConversation?.(task)}
+                                  className={cn(
+                                    'flex w-full items-center gap-2.5 rounded-xl border px-3 py-2.5 text-left transition',
+                                    selected
+                                      ? 'border-blue-500/50 bg-blue-500/5'
+                                      : 'border-transparent hover:bg-muted'
+                                  )}
+                                >
+                                  <span
+                                    className={cn(
+                                      'h-2 w-2 shrink-0 rounded-full',
+                                      selected ? 'bg-blue-500' : 'bg-text-muted'
+                                    )}
+                                  />
+                                  <span className="min-w-0 flex-1">
+                                    <span
+                                      className="block truncate text-sm font-medium text-text-primary"
+                                      title={task.task_title || task.task_id}
+                                    >
+                                      {task.task_title || task.task_id}
+                                    </span>
+                                    <span className="mt-0.5 block truncate text-xs text-text-muted">
+                                      {task.device_id} · {selected ? '当前会话' : '点击展开会话'}
+                                    </span>
+                                  </span>
+                                  <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" />
+                                </button>
+                              )
+                            })
+                          : null}
+                      </div>
+                    ) : !displayedWorkflow?.nodes.length ? (
+                      <p className="rounded-xl border border-dashed border-border px-3 py-4 text-center text-xs text-text-muted">
+                        {props.showCurrentTaskOnly
+                          ? t('todo.no_running_task')
+                          : t('todo.no_execution_tasks')}
+                      </p>
+                    ) : null}
                     {displayedWorkflow?.nodes.length ? (
                       <IssueWorkflowDag
                         nodes={displayedWorkflow.nodes}
@@ -1825,102 +2148,8 @@ export function TodoEditor(props: TodoEditorProps) {
                         onCompleteStage={props.onCompleteWorkflowStage}
                         onDecide={props.onDecideWorkflowNode}
                       />
-                    ) : displayedTasks.length === 0 ? (
-                      <p className="rounded-xl border border-dashed border-border px-3 py-4 text-center text-xs text-text-muted">
-                        {props.showCurrentTaskOnly
-                          ? t('todo.no_running_task')
-                          : t('todo.no_linked_task')}
-                      </p>
-                    ) : (
-                      <div
-                        data-testid="cloud-todo-task-list"
-                        className="mt-1 max-h-[280px] space-y-1 overflow-y-auto overscroll-contain pr-1"
-                      >
-                        {displayedTasks.map(task => {
-                          const selected = props.selectedTaskId === task.task_id
-                          return (
-                            <button
-                              key={task.id}
-                              type="button"
-                              data-testid={`cloud-todo-open-task-conversation-${task.id}`}
-                              data-selected={selected ? 'true' : 'false'}
-                              onClick={() => props.onOpenTaskConversation?.(task)}
-                              className={cn(
-                                'flex w-full items-center gap-2.5 rounded-xl border px-3 py-2.5 text-left transition',
-                                selected
-                                  ? 'border-blue-500/50 bg-blue-500/5'
-                                  : 'border-transparent hover:bg-muted'
-                              )}
-                            >
-                              <span
-                                className={cn(
-                                  'h-2 w-2 shrink-0 rounded-full',
-                                  selected ? 'bg-blue-500' : 'bg-text-muted'
-                                )}
-                              />
-                              <span className="min-w-0 flex-1">
-                                <span
-                                  className="block truncate text-sm font-medium text-text-primary"
-                                  title={task.task_title || task.task_id}
-                                >
-                                  {task.task_title || task.task_id}
-                                </span>
-                                <span className="mt-0.5 block truncate text-xs text-text-muted">
-                                  {task.device_id} · {selected ? '当前会话' : '点击展开会话'}
-                                </span>
-                              </span>
-                              <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" />
-                            </button>
-                          )
-                        })}
-                      </div>
-                    )}
+                    ) : null}
                   </section>
-
-                  {showChildren ? (
-                    <section className="mt-6" data-testid="cloud-todo-children">
-                      <div className="flex h-8 items-center gap-2">
-                        <h3 className="text-sm font-semibold text-text-primary">子 Issue</h3>
-                        <span className="text-xs text-text-muted">
-                          {childItems.length > 0
-                            ? `${completedChildCount}/${childItems.length}`
-                            : childItems.length}
-                        </span>
-                        {editProps?.onAddChild ? (
-                          <button
-                            type="button"
-                            data-testid="cloud-todo-detail-add-child"
-                            onClick={editProps.onAddChild}
-                            className="ml-auto flex h-7 items-center gap-1 rounded-lg px-2 text-xs text-text-secondary transition hover:bg-muted hover:text-text-primary"
-                          >
-                            <Plus className="h-3.5 w-3.5" />
-                            添加
-                          </button>
-                        ) : null}
-                      </div>
-                      {childItems.length > 0 ? (
-                        <div className="mt-1 space-y-1">
-                          {childItems.map(child => (
-                            <div
-                              key={child.id}
-                              className="flex min-h-9 items-center gap-2 rounded-lg px-2 text-sm hover:bg-muted"
-                            >
-                              <span
-                                className={cn(
-                                  'h-2 w-2 shrink-0 rounded-full',
-                                  columnDotClasses[child.status]
-                                )}
-                              />
-                              <span className="min-w-0 flex-1 truncate">{child.title}</span>
-                              <span className="shrink-0 text-xs text-text-muted">
-                                {columns.find(column => column.status === child.status)?.label}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      ) : null}
-                    </section>
-                  ) : null}
 
                   <details className="mt-6 border-t border-border pt-3">
                     <summary className="flex h-8 cursor-pointer list-none items-center gap-2 rounded-lg px-2 text-sm font-medium text-text-secondary hover:bg-muted hover:text-text-primary">

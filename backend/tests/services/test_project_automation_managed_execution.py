@@ -1048,11 +1048,11 @@ async def test_completion_handler_persists_comment_and_run_once(
 
     test_db.refresh(run)
     test_db.refresh(message)
-    assert run.status == "skipped"
+    assert run.status == "failed"
     assert run.backend_task_id == task.id
     assert run.completed_at is not None
     assert run.version == 2
-    assert message.status == "completed"
+    assert message.status == "failed"
     assert message.message_type == "text"
     assert message.content == "No suitable project assignee"
     assert message.metadata_json["backend_task_id"] == task.id
@@ -1321,9 +1321,9 @@ async def test_executor_callback_projects_managed_parent_comment(
     test_db.refresh(run)
     test_db.refresh(message)
     assert response.status == "ok"
-    assert run.status == "skipped"
+    assert run.status == "failed"
     assert run.backend_task_id == task.id
-    assert message.status == "completed"
+    assert message.status == "failed"
     assert message.message_type == "text"
     assert message.content == "No suitable project assignee"
     assert message.metadata_json["backend_task_id"] == task.id
