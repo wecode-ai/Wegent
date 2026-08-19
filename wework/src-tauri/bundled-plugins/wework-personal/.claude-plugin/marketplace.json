@@ -5,5 +5,12 @@
   "owner": {
     "name": "WeWork"
   },
-  "plugins": []
+  "plugins": [
+    {
+      "name": "wework-space",
+      "description": "Provides project-space, Issue, attachment, and delivery tools to Wework Agent sessions.",
+      "source": "./plugins/wework-space",
+      "version": "0.1.0"
+    }
+  ]
 }

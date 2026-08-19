@@ -1,0 +1,66 @@
+{
+  "actor": {
+    "id": "codex",
+    "kind": "ai"
+  },
+  "authority": "ai",
+  "base_revision": "A00000011",
+  "changes": [
+    {
+      "action": "create",
+      "change_id": "chg-385b98351020",
+      "confidence": 1.0,
+      "evidence": [
+        "wework/src/features/workbench/useWorkbenchRuntimeMessaging.ts"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Trace structured Issue identity before Runtime task creation and continuation transport",
+      "subject": "arch://wegent/diagnostic/issue-runtime-context-trace",
+      "timestamp": "2026-08-18T09:10:12Z"
+    },
+    {
+      "action": "verify",
+      "change_id": "chg-27cf7945b15d",
+      "confidence": 1.0,
+      "evidence": [
+        "executor/src/runtime_work/util.rs"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Trace project and Issue metadata after IPC payload normalization without logging content or credentials",
+      "subject": "arch://wegent/diagnostic/issue-runtime-context-trace",
+      "timestamp": "2026-08-18T09:10:12Z"
+    },
+    {
+      "action": "verify",
+      "change_id": "chg-32b68364c434",
+      "confidence": 1.0,
+      "evidence": [
+        "executor/src/task_runtime/mcp.rs"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Trace MCP injection decision, server version, and bound space/item environment presence",
+      "subject": "arch://wegent/diagnostic/issue-runtime-context-trace",
+      "timestamp": "2026-08-18T09:10:12Z"
+    }
+  ],
+  "created_at": "2026-08-18T09:02:20Z",
+  "id": "tx-4cfb6fceaa2b",
+  "intent": "Add focused diagnostics across the Issue chat Runtime metadata and wework_space injection path to identify where project and Issue binding is lost",
+  "merged_revision": "A00000012",
+  "read_set": [
+    "arch://wegent/contract/issue-runtime-current-context",
+    "arch://wegent/flow/issue-runtime-project-space-binding"
+  ],
+  "resolutions": [],
+  "status": "merged",
+  "updated_at": "2026-08-18T09:10:18Z",
+  "write_set": [
+    "arch://wegent/diagnostic/issue-runtime-context-trace"
+  ]
+}

@@ -623,6 +623,6 @@ describe('TodoEditor comments by provider', () => {
     render(editorElement(baseItem))
 
     expect(screen.getByTestId('cloud-todo-detail-activity-rail-empty')).toBeInTheDocument()
-    expect(screen.getByText('评论 / 动态')).toBeInTheDocument()
+    expect(screen.getByText('动态')).toBeInTheDocument()
   })
 })

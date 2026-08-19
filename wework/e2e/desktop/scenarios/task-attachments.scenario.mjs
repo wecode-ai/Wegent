@@ -63,6 +63,7 @@ const DELIVERY_FILE = {
   content_type: 'application/pdf',
   size_bytes: 256,
   delivered_at: '2026-08-17T10:00:00',
+  loop_item_path: [{ id: 'TA-1', title: '整理附件' }],
 }
 
 function json(response, status, body) {
@@ -137,23 +138,53 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       await control.command('waitFor', '[data-testid="cloud-todo-workspace"]', {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('click', `[data-testid="cloud-sidebar-project-${PROJECT.id}"]`)
-      await control.command('waitFor', `[data-testid="cloud-todo-card-TA-1"]`, {
-        timeoutMs: uiTimeoutMs,
-      })
-
-      await control.command('click', '[data-testid="cloud-project-files-view"]')
-      await control.command('waitFor', `[data-testid="delivery-file-${DELIVERY_FILE.asset_id}"]`, {
-        timeoutMs: uiTimeoutMs,
-      })
-
-      const deliveryText = await control.command(
-        'getText',
-        `[data-testid="delivery-file-${DELIVERY_FILE.asset_id}"]`
+      const activeBoard = '[data-workspace-tab-content][aria-hidden="false"]'
+      await control.command(
+        'click',
+        `${activeBoard} [data-testid="cloud-sidebar-project-${PROJECT.id}"]`,
+        { visible: true }
       )
-      assert.match(deliveryText, /TA-1/)
-      assert.match(deliveryText, /整理附件/)
-      assert.match(deliveryText, /reports\/result\.pdf/)
+      await control.command('waitFor', `${activeBoard} [data-testid="cloud-todo-card-TA-1"]`, {
+        timeoutMs: uiTimeoutMs,
+      })
+
+      await control.command(
+        'click',
+        `${activeBoard} [data-testid="cloud-project-files-view"]`,
+        { visible: true }
+      )
+      await captureScreenshot(control, 'task-attachments-after-files-click.png')
+      const filesView = `${activeBoard} [data-testid="cloud-files-view"]`
+      await control.command('waitFor', filesView, {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await captureScreenshot(control, 'task-attachments-files-view.png')
+      for (const entryTestId of [
+        'cloud-file-browser-entry-root:issues',
+        'cloud-file-browser-entry-delivery-item:TA-1',
+        'cloud-file-browser-entry-delivery-path:TA-1:reports',
+      ]) {
+        const entrySelector = `${filesView} [data-testid="${entryTestId}"]`
+        await control.command('waitFor', entrySelector, { timeoutMs: uiTimeoutMs })
+        await control.command('click', `${entrySelector} button`)
+      }
+      const deliveryFileSelector =
+        `${filesView} [data-testid="delivery-file-${DELIVERY_FILE.asset_id}"]`
+      await control.command('waitFor', deliveryFileSelector, {
+        timeoutMs: uiTimeoutMs,
+      })
+      await captureScreenshot(control, 'task-attachments-delivery-file.png')
+
+      const deliveryText = await control.command('getText', deliveryFileSelector)
+      assert.match(deliveryText, /result\.pdf/)
+      const breadcrumbText = await control.command(
+        'getText',
+        `${filesView} [data-testid="cloud-file-breadcrumbs"]`
+      )
+      assert.match(breadcrumbText, /Issues/)
+      assert.match(breadcrumbText, /整理附件/)
+      assert.match(breadcrumbText, /reports/)
 
       const taskAttachmentCount = Number(
         await control.command('getElementCount', '[data-testid^="task-attachment-"]', {
@@ -164,7 +195,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
 
       await control.command(
         'click',
-        `[data-testid="delivery-file-preview-${DELIVERY_FILE.asset_id}"]`
+        `${filesView} [data-testid="delivery-file-preview-${DELIVERY_FILE.asset_id}"]`
       )
       await control.command('waitFor', '[data-testid="cloud-file-preview-sidebar"]', {
         timeoutMs: uiTimeoutMs,

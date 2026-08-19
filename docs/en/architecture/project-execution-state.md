@@ -51,7 +51,12 @@ sequenceDiagram
         S->>R: cancel command
         R->>R: close this attempt's event output first
         R->>P: abort
-        R-->>S: stopped ACK
+        alt direct stop ACK arrives
+            R-->>S: stopped ACK
+        else ACK response is lost
+            S->>R: query the Runtime task list
+            R-->>S: exact runtime_task_id is absent
+        end
         S->>S: write cancelled and release slot
     else lease expiry
         S->>R: reconcile
@@ -60,14 +65,14 @@ sequenceDiagram
     S-->>U: normalize 0 to null and return a read-only projection
 ```
 
-| Edge                                  | Code owner                                                      |
-| ------------------------------------- | --------------------------------------------------------------- |
-| Claim, attempt, and state transitions | `backend/app/services/loop_item_executions/service.py`          |
+| Edge                                   | Code owner                                                        |
+| -------------------------------------- | ----------------------------------------------------------------- |
+| Claim, attempt, and state transitions  | `backend/app/services/loop_item_executions/service.py`            |
 | Execution ID storage and normalization | `backend/app/models/loop_item_execution.py`, execution API/schema |
 | Scheduler, slots, real process, and cancellation event fence | `executor/src/runner/`, `executor/src/runtime_work/`, `executor/src/local/backend/tasks.rs` |
-| Local IPC and Runtime RPC             | `executor/src/local/app_ipc.rs`, Backend device runtime service |
-| UI projection                         | Wework workbench stores and board queries                       |
+| Local IPC and Runtime RPC              | `executor/src/local/app_ipc.rs`, Backend device runtime service   |
+| UI projection                          | Wework workbench stores and board queries                         |
 
-Invariants: attempt identity and event sequence must match; late events cannot overwrite a newer attempt; terminal state and slot release are atomic; sending cancellation is not cancellation success. Runtime atomically closes that attempt's event output before aborting the task and emits exactly one cancellation terminal event; detached streaming callbacks cannot project more content after cancellation begins, and Runtime scope exit still guarantees the stopped acknowledgement. `loop_item_executions.team_id/backend_task_id=0` means unbound only, existence checks must use positive-ID semantics, and APIs/UI must normalize the sentinel to `null`; capacity belongs to each device Runtime scheduler and aggregate capacity is not execution truth; persisted queue state and queued task IDs come from one scheduler snapshot; Run now may temporarily push a selected queued execution beyond `slot_max`, in which case `slot_used` is projected exactly from active task IDs and no other queued execution starts automatically until active usage drops below the limit; UI never derives or writes runtime state.
+Invariants: attempt identity and event sequence must match; late events cannot overwrite a newer attempt; terminal state and slot release are atomic; sending cancellation is not cancellation success. Runtime atomically closes that attempt's event output before aborting the task and emits exactly one cancellation terminal event; detached streaming callbacks cannot project more content after cancellation begins, and Runtime scope exit still guarantees the stopped acknowledgement. Cancelled plus slot release requires either that stop ACK or, after `cancel_requested`, an authoritative Runtime task list proving that the exact `runtime_task_id` is absent. `loop_item_executions.team_id/backend_task_id=0` means unbound only, existence checks must use positive-ID semantics, and APIs/UI must normalize the sentinel to `null`; capacity belongs to each device Runtime scheduler and aggregate capacity is not execution truth; persisted queue state and queued task IDs come from one scheduler snapshot; Run now may temporarily push a selected queued execution beyond `slot_max`, in which case `slot_used` is projected exactly from active task IDs and no other queued execution starts automatically until active usage drops below the limit; UI never derives or writes runtime state.
 
 See [project execution state-of-truth refactoring](../wework/developer-guide/wework-project-execution-state-truth-refactoring.md) for the detailed state matrix and acceptance coverage.

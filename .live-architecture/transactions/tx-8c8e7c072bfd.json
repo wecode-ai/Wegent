@@ -1,0 +1,141 @@
+{
+  "actor": {
+    "id": "codex",
+    "kind": "ai"
+  },
+  "authority": "ai",
+  "base_revision": "A00000024",
+  "changes": [
+    {
+      "action": "assert",
+      "change_id": "chg-4b95a41dcc81",
+      "confidence": 1.0,
+      "evidence": [
+        "user-approved plan 2026-08-18"
+      ],
+      "object": null,
+      "plane": "intent",
+      "predicate": null,
+      "reason": "Every workflow stage may declare typed deliverables and advancement must be gated by requirement-level fulfillment",
+      "subject": "arch://wegent/contract/workflow-stage-deliverable-contract",
+      "timestamp": "2026-08-18T16:32:02Z"
+    },
+    {
+      "action": "create",
+      "change_id": "chg-ffc95e0facbf",
+      "confidence": 1.0,
+      "evidence": [
+        "docs/zh/architecture/workflow-stage-deliverables.md"
+      ],
+      "object": null,
+      "plane": "model",
+      "predicate": null,
+      "reason": "Define stable requirement identities, typed fulfillment values, manual and automated completion gates, and immutable evidence",
+      "subject": "arch://wegent/contract/workflow-stage-deliverable-contract",
+      "timestamp": "2026-08-18T16:32:02Z"
+    },
+    {
+      "action": "create",
+      "change_id": "chg-04bd92234396",
+      "confidence": 1.0,
+      "evidence": [
+        "docs/zh/architecture/workflow-stage-deliverables.md"
+      ],
+      "object": null,
+      "plane": "model",
+      "predicate": null,
+      "reason": "Define frozen predecessor context snapshots for successor tasks",
+      "subject": "arch://wegent/flow/issue-workflow-dependency-context",
+      "timestamp": "2026-08-18T16:32:02Z"
+    },
+    {
+      "action": "verify",
+      "change_id": "chg-fee701eae1a9",
+      "confidence": 1.0,
+      "evidence": [
+        "backend/app/services/delivery/service.py"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Backend validates requirement IDs, value kinds, file constraints, immutable fulfillments, and stage advancement",
+      "subject": "arch://wegent/contract/workflow-stage-deliverable-contract",
+      "timestamp": "2026-08-18T16:32:02Z"
+    },
+    {
+      "action": "verify",
+      "change_id": "chg-a2dbd89ed4da",
+      "confidence": 1.0,
+      "evidence": [
+        "backend/app/services/workflow_stage_context.py"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Backend resolves and freezes selected predecessor results, deliveries, and activity for task bindings",
+      "subject": "arch://wegent/flow/issue-workflow-dependency-context",
+      "timestamp": "2026-08-18T16:32:03Z"
+    },
+    {
+      "action": "verify",
+      "change_id": "chg-55eadb58a6a3",
+      "confidence": 1.0,
+      "evidence": [
+        "wework/src/features/todo/WorkflowStageCompletionDialog.tsx"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Wework collects typed actual deliverables at continue or force-continue time",
+      "subject": "arch://wegent/flow/issue-task-conversation-entry",
+      "timestamp": "2026-08-18T16:32:03Z"
+    },
+    {
+      "action": "verify",
+      "change_id": "chg-39c9451dfd4f",
+      "confidence": 1.0,
+      "evidence": [
+        "executor/src/task_runtime/mcp.rs"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Runtime MCP exposes stage context and sends typed fulfillments through local and backend delivery finalization",
+      "subject": "arch://wegent/flow/issue-delivery-mcp-lifecycle",
+      "timestamp": "2026-08-18T16:32:03Z"
+    },
+    {
+      "action": "verify",
+      "change_id": "chg-d4b523168348",
+      "confidence": 1.0,
+      "evidence": [
+        "backend tests: 33 passed; Wework tests: 37 passed; executor store tests: 35 passed"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Focused cross-layer tests verify schema, gating, UI submission, local persistence, and MCP delivery behavior",
+      "subject": "arch://wegent/contract/workflow-stage-deliverable-contract",
+      "timestamp": "2026-08-18T16:32:47Z"
+    }
+  ],
+  "created_at": "2026-08-18T15:59:09Z",
+  "id": "tx-8c8e7c072bfd",
+  "intent": "Implement a complete workflow deliverable contract: structured requirements and fulfillments, manual and AI stage completion gates, immutable code evidence, and dependency-context delivery into successor tasks",
+  "merged_revision": "A00000025",
+  "read_set": [
+    "arch://wegent/contract/issue-delivery-scope",
+    "arch://wegent/flow/issue-delivery-mcp-lifecycle",
+    "arch://wegent/flow/issue-runtime-project-space-binding",
+    "arch://wegent/flow/issue-task-conversation-entry"
+  ],
+  "resolutions": [],
+  "status": "merged",
+  "updated_at": "2026-08-18T16:32:48Z",
+  "write_set": [
+    "arch://wegent/contract/workflow-stage-deliverable-contract",
+    "arch://wegent/flow/issue-delivery-mcp-lifecycle",
+    "arch://wegent/flow/issue-task-conversation-entry",
+    "arch://wegent/flow/issue-workflow-dependency-context"
+  ]
+}

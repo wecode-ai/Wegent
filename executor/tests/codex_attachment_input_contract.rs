@@ -15,14 +15,28 @@ use std::os::unix::fs::PermissionsExt;
 
 use image::{DynamicImage, ImageBuffer, ImageFormat, Rgb};
 use serde_json::{json, Value};
-use tokio::sync::{Mutex, MutexGuard};
+use tokio::{
+    runtime::Runtime,
+    sync::{Mutex, MutexGuard},
+};
 use wegent_executor::{
     agents::CodexAppServerEngine,
     protocol::ExecutionRequest,
     runner::{AgentEngine, ExecutionOutcome},
 };
 
-#[tokio::test]
+macro_rules! shared_runtime_tests {
+    ($(async fn $name:ident() $body:block)*) => {
+        $(
+            #[test]
+            fn $name() {
+                shared_test_runtime().block_on(async $body)
+            }
+        )*
+    };
+}
+
+shared_runtime_tests! {
 async fn codex_app_server_includes_pasted_zip_in_model_input() {
     let _lock = env_lock().await;
     let workspace = unique_dir("codex-zip-attachment");
@@ -70,7 +84,6 @@ async fn codex_app_server_includes_pasted_zip_in_model_input() {
     assert!(input_text.contains(&archive.display().to_string()));
 }
 
-#[tokio::test]
 async fn codex_app_server_replaces_downloaded_image_blocks_with_local_images() {
     let _lock = env_lock().await;
     let workspace = unique_dir("codex-attachment-local");
@@ -145,7 +158,6 @@ async fn codex_app_server_replaces_downloaded_image_blocks_with_local_images() {
     assert!(!input[0]["text"].as_str().unwrap().contains(sandbox_path));
 }
 
-#[tokio::test]
 async fn codex_app_server_keeps_failed_download_placeholder_order() {
     let _lock = env_lock().await;
     let workspace = unique_dir("codex-attachment-failed-order");
@@ -221,7 +233,6 @@ async fn codex_app_server_keeps_failed_download_placeholder_order() {
     );
 }
 
-#[tokio::test]
 async fn codex_app_server_cleans_generated_model_input_images() {
     let _lock = env_lock().await;
     let workspace = unique_dir("codex-attachment-cleanup");
@@ -291,7 +302,6 @@ async fn codex_app_server_cleans_generated_model_input_images() {
     assert!(!Path::new(&generated_path).exists());
 }
 
-#[tokio::test]
 async fn codex_app_server_keeps_official_model_images_at_original_size() {
     let _lock = env_lock().await;
     let workspace = unique_dir("codex-official-image");
@@ -346,6 +356,17 @@ async fn codex_app_server_keeps_official_model_images_at_original_size() {
         png_dimensions(&fs::read(&large_image).unwrap()),
         Some((3000, 1500))
     );
+}
+}
+
+fn shared_test_runtime() -> &'static Runtime {
+    static RUNTIME: OnceLock<Runtime> = OnceLock::new();
+    RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("shared Codex attachment test runtime should initialize")
+    })
 }
 
 fn png_bytes(width: u32, height: u32) -> Vec<u8> {

@@ -17,6 +17,7 @@ from app.models.delivery import ProjectAutomationRun
 from app.models.project_chat_message import ProjectChatMessage
 from app.services.project_chat.push import push_project_chat_message
 from app.services.project_chat.service import project_chat_service
+from app.services.project_workflow_projection import sync_automation_workflow_node
 from app.stores.tasks import task_store
 
 logger = logging.getLogger(__name__)
@@ -185,6 +186,7 @@ def _apply_terminal_state(
     run.version += 1
     if normalized == "FAILED" and content:
         run.description = content
+    sync_automation_workflow_node(db, run)
     return True
 
 
@@ -314,6 +316,7 @@ def mark_project_automation_dispatch_started(*, task_id: int) -> bool:
             activity.run.backend_task_id = task_id
             activity.run.version += 1
             changed = True
+        sync_automation_workflow_node(db, activity.run)
         metadata = dict(activity.message.metadata_json or {})
         next_metadata = {
             **metadata,

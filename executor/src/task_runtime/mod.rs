@@ -7,16 +7,17 @@ mod content;
 mod credentials;
 mod issue_provider;
 pub mod mcp;
+pub(crate) mod mcp_http;
 mod model;
 mod router;
 mod store;
 
 pub use model::{
     BinaryInput, ChatAgent, ChatAgentCreate, ChatAgentUpdate, Delivery, DeliveryAsset,
-    DeliveryCreate, DeliveryDetail, IssueComment, LocalComment, LocalCommentCreate, LocalExecution,
-    LocalExecutionClaim, LoopItem, ProjectCreate, ProjectDescriptor, ProjectFile, ProjectStoreKind,
-    ProjectUpdate, RuntimeTaskAddress, TaskAttachment, TaskBinding, TaskCreate, TaskProviderKind,
-    TaskReorder, TaskSearch, TaskUpdate,
+    DeliveryCreate, DeliveryDetail, DeliveryFinalize, IssueComment, LocalComment,
+    LocalCommentCreate, LocalExecution, LocalExecutionClaim, LoopItem, ProjectCreate,
+    ProjectDescriptor, ProjectFile, ProjectStoreKind, ProjectUpdate, RuntimeTaskAddress,
+    TaskAttachment, TaskBinding, TaskCreate, TaskProviderKind, TaskReorder, TaskSearch, TaskUpdate,
 };
 pub use router::TaskRuntime;
 pub use store::{LocalTaskStore, TaskRuntimeError};

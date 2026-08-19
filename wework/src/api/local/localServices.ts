@@ -376,6 +376,8 @@ const catalogReconciliationTrackers = new WeakMap<
   LocalExecutorRequest,
   CatalogReconciliationTracker
 >()
+const CATALOG_IDLE_RESTART_RETRY_DELAY_MS = 100
+const CATALOG_IDLE_RESTART_MAX_ATTEMPTS = 20
 
 function catalogReconciliationTracker(request: LocalExecutorRequest): CatalogReconciliationTracker {
   const existing = catalogReconciliationTrackers.get(request)
@@ -418,27 +420,46 @@ async function reconcilePendingLocalModelCatalog(
     await request('runtime.codex.catalog.custom.write', {
       models: catalogModels.flatMap(model => (model.catalogEntry ? [model.catalogEntry] : [])),
     })
-    const restart = await request<{
+    let restart = await request<{
       restarted?: boolean
+      activeTaskCount?: number
+      pendingRequestCount?: number
     }>('runtime.codex.app_server.restart', { ifIdle: true })
     if (restart.restarted) {
       markLocalModelCatalogReady(pendingCatalogModels)
       return
     }
-    const models = await request<{
-      data?: Array<{ id?: string }>
-    }>('runtime.codex.models.list', { includeHidden: true })
-    const loadedModelIds = new Set(
-      (models.data ?? []).flatMap(model => (typeof model.id === 'string' ? [model.id] : []))
-    )
-    const loadedPendingModels = pendingCatalogModels.filter(model => {
-      const catalogModelId =
-        model.codexCatalogModelId ??
-        (typeof model.catalogEntry?.slug === 'string' ? model.catalogEntry.slug : null)
-      return Boolean(catalogModelId && loadedModelIds.has(catalogModelId))
-    })
-    if (loadedPendingModels.length > 0) {
-      markLocalModelCatalogReady(loadedPendingModels)
+
+    for (let attempt = 0; attempt < CATALOG_IDLE_RESTART_MAX_ATTEMPTS; attempt += 1) {
+      const models = await request<{
+        data?: Array<{ id?: string }>
+      }>('runtime.codex.models.list', { includeHidden: true })
+      const loadedModelIds = new Set(
+        (models.data ?? []).flatMap(model => (typeof model.id === 'string' ? [model.id] : []))
+      )
+      const loadedPendingModels = pendingCatalogModels.filter(model => {
+        const catalogModelId =
+          model.codexCatalogModelId ??
+          (typeof model.catalogEntry?.slug === 'string' ? model.catalogEntry.slug : null)
+        return Boolean(catalogModelId && loadedModelIds.has(catalogModelId))
+      })
+      if (loadedPendingModels.length > 0) {
+        markLocalModelCatalogReady(loadedPendingModels)
+      }
+      if (
+        loadedPendingModels.length === pendingCatalogModels.length ||
+        (restart.activeTaskCount ?? 0) > 0 ||
+        (restart.pendingRequestCount ?? 0) <= 0
+      ) {
+        return
+      }
+
+      await new Promise(resolve => setTimeout(resolve, CATALOG_IDLE_RESTART_RETRY_DELAY_MS))
+      restart = await request('runtime.codex.app_server.restart', { ifIdle: true })
+      if (restart.restarted) {
+        markLocalModelCatalogReady(pendingCatalogModels)
+        return
+      }
     }
   })()
   tracker.inFlight = reconciliation
@@ -1505,6 +1526,7 @@ function buildLocalRuntimeExecutionRequest(
       ? { runtime_workspace_roots: input.runtimeWorkspaceRoots }
       : {}),
     ...(input.cloudProjectId ? { cloudProjectId: input.cloudProjectId } : {}),
+    ...(input.origin ? { origin: input.origin } : {}),
     execution_target_type: 'local',
     device_id: input.localDeviceId,
     new_session: input.newSession,
@@ -1766,6 +1788,8 @@ function createLocalRuntimeSendPayload(
         cloudModelGateway,
         attachments: normalizedData.attachments,
         additionalContext: normalizedData.additionalContext,
+        cloudProjectId: normalizedData.cloudProjectId,
+        origin: normalizedData.origin,
         localDeviceId,
         workspacePath,
         workspaceSource: 'local_path',
@@ -1808,6 +1832,8 @@ function createLocalRuntimeSendPayload(
       cloudModelGateway,
       attachments: normalizedData.attachments,
       additionalContext: normalizedData.additionalContext,
+      cloudProjectId: normalizedData.cloudProjectId,
+      origin: normalizedData.origin,
       localDeviceId,
       workspacePath,
       workspaceSource: 'local_path',
@@ -2426,6 +2452,7 @@ export function createRuntimeWorkApiFromIpc(
         user,
         requireLocalCodexCatalog
       )
+      logLocalIssueRuntimeContext('send-payload-built', data, payload)
       if (!payload.executionRequest) {
         console.warn('[Wework] Local runtime send payload missing executionRequest', {
           taskId: payload.taskId,
@@ -2793,6 +2820,7 @@ export function createRuntimeWorkApiFromIpc(
         elapsedMs: Date.now() - startedAt,
       })
       debugLocalRuntimeCreatePayload(data, payload)
+      logLocalIssueRuntimeContext('create-payload-built', data, payload)
       const executionRequest = recordValue(payload.executionRequest)
       console.info('[Wework] Friendly task title request', {
         taskId: data.taskId,
@@ -2880,6 +2908,34 @@ function debugLocalRuntimeCreatePayload(
     payloadCollaborationMode: stringValue(payload.collaborationMode),
     executionRequestCollaborationMode: stringValue(executionRequest.collaborationMode),
     executionRequestModelId: stringValue(recordValue(executionRequest.model_config).model_id),
+  })
+}
+
+function logLocalIssueRuntimeContext(
+  stage: string,
+  request: RuntimeTaskCreateRequest | RuntimeSendRequest,
+  payload: Record<string, unknown>
+) {
+  if (request.origin?.type !== 'board_task') return
+  const executionRequest = recordValue(payload.executionRequest)
+  const executionOrigin = recordValue(executionRequest.origin)
+  console.info('[Wework] Issue runtime context trace', {
+    stage,
+    taskId:
+      'address' in request
+        ? request.address.taskId
+        : (request.taskId ?? stringValue(executionRequest.task_id)),
+    deviceId:
+      'address' in request ? request.address.deviceId : (request.deviceId ?? payload.deviceId),
+    requestCloudProjectId: request.cloudProjectId ?? null,
+    requestOriginType: request.origin.type,
+    requestLoopItemId: request.origin.loopItemId,
+    requestAdditionalContextKeys: Object.keys(request.additionalContext ?? {}).sort(),
+    payloadCloudProjectId: stringValue(payload.cloudProjectId),
+    payloadOriginType: stringValue(recordValue(payload.origin).type),
+    executionCloudProjectId: stringValue(executionRequest.cloudProjectId),
+    executionOriginType: stringValue(executionOrigin.type),
+    executionLoopItemId: stringValue(executionOrigin.loopItemId),
   })
 }
 
