@@ -46,7 +46,6 @@ WEWORK_PLUGIN_MANIFEST_PATH = ".wework-plugin/plugin.json"
 PLUGIN_MANIFEST_PATHS = (
     CODEX_PLUGIN_MANIFEST_PATH,
     CLAUDE_PLUGIN_MANIFEST_PATH,
-    WEWORK_PLUGIN_MANIFEST_PATH,
 )
 CODEX_MANIFEST_FIELDS = {
     "name",
@@ -296,7 +295,7 @@ class PluginPackageParser:
         if len(set(names.values())) > 1:
             raise HTTPException(
                 status_code=400,
-                detail="Codex, Claude Code, and Wework plugin manifest names must match",
+                detail="Codex and Claude Code plugin manifest names must match",
             )
 
     @staticmethod

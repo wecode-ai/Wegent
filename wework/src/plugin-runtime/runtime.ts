@@ -139,7 +139,8 @@ export class WorkbenchPluginRuntime {
     try {
       await fiber.await()
     } catch (error) {
-      this.fibers.splice(this.fibers.indexOf(fiber), 1)
+      const index = this.fibers.indexOf(fiber)
+      if (index >= 0) this.fibers.splice(index, 1)
       await fiber.dispose()
       throw error
     }

@@ -282,10 +282,14 @@ export function SitesWorkspace({
   }, [])
 
   useEffect(() => {
+    if (activeAppType === 'smart_app' && !smartAppsEnabled) {
+      selectAppType(activeDefinition.appType)
+      return
+    }
     if (activeAppType !== 'smart_app' && activeDefinition.appType !== activeAppType) {
       selectAppType(activeDefinition.appType)
     }
-  }, [activeAppType, activeDefinition.appType, selectAppType])
+  }, [activeAppType, activeDefinition.appType, selectAppType, smartAppsEnabled])
 
   const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
     const appTypes: ApplicationWorkspaceType[] = [

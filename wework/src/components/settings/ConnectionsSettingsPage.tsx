@@ -1303,8 +1303,11 @@ export function ConnectionsSettingsPage({
   const [activeNav, setActiveNav] = useState(() =>
     getSettingsNavFromPath(window.location.pathname, settingsContributions)
   )
-  const effectiveActiveNav =
-    activeNav === 'harnesses' && !experimentalFeaturesEnabled ? 'general' : activeNav
+  const effectiveActiveNav = visibleSettingsNavItems.some(item => item.key === activeNav)
+    ? activeNav
+    : (visibleSettingsNavItems.find(item => item.key === 'general')?.key ??
+      visibleSettingsNavItems[0]?.key ??
+      'general')
 
   useEffect(() => {
     const handlePopState = () => {

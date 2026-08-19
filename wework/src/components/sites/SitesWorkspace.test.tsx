@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import '@/i18n'
 import { ApiError } from '@/api/http'
 import type { MiniProgram, Site, SiteListItem, SitesApi } from '@/api/sites'
@@ -15,6 +15,10 @@ vi.mock('@/lib/clipboard', () => ({
 vi.mock('@/lib/external-links', () => ({
   openExternalUrl: vi.fn().mockResolvedValue(true),
 }))
+
+afterEach(() => {
+  window.history.replaceState({}, '', '/sites')
+})
 
 const unpublishedSite: Site = {
   app_type: 'web',

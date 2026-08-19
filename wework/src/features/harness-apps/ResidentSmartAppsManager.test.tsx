@@ -26,6 +26,12 @@ vi.mock('@/api/local/harnessApps', () => ({
 }))
 
 vi.mock('@/features/harness-apps/harnessAppTabs', () => ({
+  takeHarnessAppProxyToken: (installationId: string) => {
+    const key = `wework:harness-app:${installationId}:proxy-token`
+    const token = sessionStorage.getItem(key)
+    sessionStorage.removeItem(key)
+    return token
+  },
   openHarnessAppTab: (_tabs: unknown, installation: HarnessAppInstallation) =>
     mocks.openTab(installation),
   registerHarnessAppTab: (installation: HarnessAppInstallation) => mocks.register(installation),
@@ -119,6 +125,15 @@ describe('ResidentSmartAppsManager', () => {
         { id: 'agent-app', contentRoute: '/app/wegent' },
         { id: 'applications', contentRoute: '/sites?app_type=smart_app&view=installed' },
         { id: 'smart-app', contentRoute: '/app/harness-resident-app' },
+      ])
+    ).toBe('applications')
+  })
+
+  test('strips the runtime base path before selecting a resident host tab', () => {
+    expect(
+      findResidentSmartAppsHostTabId([
+        { id: 'agent-app', contentRoute: '/app/wegent' },
+        { id: 'applications', contentRoute: '/sites?app_type=smart_app' },
       ])
     ).toBe('applications')
   })

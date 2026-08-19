@@ -1,15 +1,22 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tauri::State;
 
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 const MANIFEST_PATH: &str = ".wework-plugin/plugin.json";
+const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -60,11 +67,12 @@ struct RunningSidecar {
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
     next_request_id: u64,
+    capabilities: HashSet<String>,
 }
 
 #[derive(Default)]
 pub struct WorkbenchPluginState {
-    sidecars: Mutex<HashMap<String, RunningSidecar>>,
+    sidecars: Mutex<HashMap<String, Arc<Mutex<RunningSidecar>>>>,
 }
 
 fn default_api_version() -> String {
@@ -206,17 +214,21 @@ fn collect_plugin_roots(directory: &Path, depth: usize, output: &mut Vec<PathBuf
 }
 
 #[tauri::command]
-pub fn workbench_plugin_list() -> Vec<InspectedWorkbenchPlugin> {
-    let mut roots = Vec::new();
-    for search_root in plugin_search_roots() {
-        collect_plugin_roots(&search_root, 6, &mut roots);
-    }
-    roots.sort();
-    roots.dedup();
-    roots
-        .into_iter()
-        .filter_map(|root| inspect_plugin(root.to_string_lossy().as_ref()).ok())
-        .collect()
+pub async fn workbench_plugin_list() -> Result<Vec<InspectedWorkbenchPlugin>, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let mut roots = Vec::new();
+        for search_root in plugin_search_roots() {
+            collect_plugin_roots(&search_root, 6, &mut roots);
+        }
+        roots.sort();
+        roots.dedup();
+        roots
+            .into_iter()
+            .filter_map(|root| inspect_plugin(root.to_string_lossy().as_ref()).ok())
+            .collect()
+    })
+    .await
+    .map_err(|error| format!("Failed to scan workbench plugins: {error}"))
 }
 
 #[tauri::command]
@@ -225,13 +237,88 @@ pub fn workbench_plugin_inspect(plugin_root: String) -> Result<InspectedWorkbenc
 }
 
 #[tauri::command]
-pub fn workbench_plugin_start(
+pub async fn workbench_plugin_start(
     state: State<'_, WorkbenchPluginState>,
     plugin_id: String,
     plugin_root: String,
 ) -> Result<(), String> {
     let plugin_id = normalize_plugin_id(&plugin_id)?;
-    let inspected = inspect_plugin(&plugin_root)?;
+    {
+        let sidecars = state
+            .sidecars
+            .lock()
+            .map_err(|_| "Workbench plugin state lock is poisoned".to_string())?;
+        if sidecars.contains_key(&plugin_id) {
+            return Err(format!("Workbench plugin '{plugin_id}' is already running"));
+        }
+    }
+    let spawn_plugin_id = plugin_id.clone();
+    let sidecar =
+        tauri::async_runtime::spawn_blocking(move || spawn_sidecar(&spawn_plugin_id, &plugin_root))
+            .await
+            .map_err(|error| format!("Failed to join workbench plugin startup: {error}"))??;
+    let sidecar = Arc::new(Mutex::new(sidecar));
+    let replaced = {
+        let mut sidecars = state
+            .sidecars
+            .lock()
+            .map_err(|_| "Workbench plugin state lock is poisoned".to_string())?;
+        if sidecars.contains_key(&plugin_id) {
+            true
+        } else {
+            sidecars.insert(plugin_id.clone(), Arc::clone(&sidecar));
+            false
+        }
+    };
+    if replaced {
+        if let Ok(mut sidecar) = sidecar.lock() {
+            terminate_process_tree(&mut sidecar.child);
+        }
+        return Err(format!("Workbench plugin '{plugin_id}' is already running"));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn workbench_plugin_request(
+    state: State<'_, WorkbenchPluginState>,
+    plugin_id: String,
+    capability: String,
+    method: String,
+    params: Value,
+) -> Result<Value, String> {
+    let plugin_id = normalize_plugin_id(&plugin_id)?;
+    let capability = capability.trim().to_string();
+    if capability.is_empty() {
+        return Err("Plugin capability is required".to_string());
+    }
+    let method = method.trim().to_string();
+    if method.is_empty() {
+        return Err("JSON-RPC method is required".to_string());
+    }
+    let sidecar = {
+        let sidecars = state
+            .sidecars
+            .lock()
+            .map_err(|_| "Workbench plugin state lock is poisoned".to_string())?;
+        Arc::clone(
+            sidecars
+                .get(&plugin_id)
+                .ok_or_else(|| format!("Workbench plugin '{plugin_id}' is not running"))?,
+        )
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut sidecar = sidecar
+            .lock()
+            .map_err(|_| format!("Workbench plugin '{plugin_id}' lock is poisoned"))?;
+        request_sidecar(&plugin_id, &capability, &method, params, &mut sidecar)
+    })
+    .await
+    .map_err(|error| format!("Failed to join workbench plugin request: {error}"))?
+}
+
+fn spawn_sidecar(plugin_id: &str, plugin_root: &str) -> Result<RunningSidecar, String> {
+    let inspected = inspect_plugin(plugin_root)?;
     if inspected.manifest.name != plugin_id {
         return Err("Plugin id must match the package manifest name".to_string());
     }
@@ -242,63 +329,48 @@ pub fn workbench_plugin_start(
     let command = inspected
         .desktop_path
         .ok_or_else(|| "Plugin desktop command was not resolved".to_string())?;
-    let mut sidecars = state
-        .sidecars
-        .lock()
-        .map_err(|_| "Workbench plugin state lock is poisoned".to_string())?;
-    if sidecars.contains_key(&plugin_id) {
-        return Err(format!("Workbench plugin '{plugin_id}' is already running"));
-    }
-
-    let mut child = Command::new(command)
+    let mut command = Command::new(command);
+    command
         .args(&desktop.args)
         .current_dir(&inspected.root)
-        .env("WEWORK_PLUGIN_ID", &plugin_id)
+        .env("WEWORK_PLUGIN_ID", plugin_id)
         .env("WEWORK_PLUGIN_ROOT", &inspected.root)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::null());
+    configure_process_group(&mut command);
+    let mut child = command
         .spawn()
         .map_err(|error| format!("Failed to start workbench plugin '{plugin_id}': {error}"))?;
-    let stdin = child
-        .stdin
-        .take()
-        .ok_or_else(|| "Plugin sidecar stdin was not created".to_string())?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| "Plugin sidecar stdout was not created".to_string())?;
-    sidecars.insert(
-        plugin_id,
-        RunningSidecar {
-            child,
-            stdin,
-            stdout: BufReader::new(stdout),
-            next_request_id: 1,
-        },
-    );
-    Ok(())
+    let Some(stdin) = child.stdin.take() else {
+        terminate_process_tree(&mut child);
+        return Err("Plugin sidecar stdin was not created".to_string());
+    };
+    let Some(stdout) = child.stdout.take() else {
+        terminate_process_tree(&mut child);
+        return Err("Plugin sidecar stdout was not created".to_string());
+    };
+    Ok(RunningSidecar {
+        child,
+        stdin,
+        stdout: BufReader::new(stdout),
+        next_request_id: 1,
+        capabilities: desktop.capabilities.into_iter().collect(),
+    })
 }
 
-#[tauri::command]
-pub fn workbench_plugin_request(
-    state: State<'_, WorkbenchPluginState>,
-    plugin_id: String,
-    method: String,
+fn request_sidecar(
+    plugin_id: &str,
+    capability: &str,
+    method: &str,
     params: Value,
+    sidecar: &mut RunningSidecar,
 ) -> Result<Value, String> {
-    let plugin_id = normalize_plugin_id(&plugin_id)?;
-    let method = method.trim();
-    if method.is_empty() {
-        return Err("JSON-RPC method is required".to_string());
+    if !sidecar.capabilities.contains(capability) {
+        return Err(format!(
+            "Workbench plugin '{plugin_id}' is not authorized for capability '{capability}'"
+        ));
     }
-    let mut sidecars = state
-        .sidecars
-        .lock()
-        .map_err(|_| "Workbench plugin state lock is poisoned".to_string())?;
-    let sidecar = sidecars
-        .get_mut(&plugin_id)
-        .ok_or_else(|| format!("Workbench plugin '{plugin_id}' is not running"))?;
     let request_id = sidecar.next_request_id;
     sidecar.next_request_id += 1;
     let request = serde_json::json!({
@@ -315,17 +387,11 @@ pub fn workbench_plugin_request(
         .and_then(|_| sidecar.stdin.flush())
         .map_err(|error| format!("Failed to flush plugin request: {error}"))?;
 
-    let mut response_line = String::new();
-    let read = sidecar
-        .stdout
-        .read_line(&mut response_line)
-        .map_err(|error| format!("Failed to read plugin response: {error}"))?;
-    if read == 0 {
-        return Err(format!(
-            "Workbench plugin '{plugin_id}' exited before responding"
-        ));
-    }
-    let response: Value = serde_json::from_str(&response_line)
+    let response_frame = read_response_frame(&mut sidecar.stdout).map_err(|error| {
+        terminate_process_tree(&mut sidecar.child);
+        format!("Failed to read plugin response: {error}")
+    })?;
+    let response: Value = serde_json::from_slice(&response_frame)
         .map_err(|error| format!("Plugin returned invalid JSON-RPC: {error}"))?;
     if response.get("id").and_then(Value::as_u64) != Some(request_id) {
         return Err("Plugin returned a mismatched JSON-RPC response id".to_string());
@@ -336,19 +402,58 @@ pub fn workbench_plugin_request(
     Ok(response.get("result").cloned().unwrap_or(Value::Null))
 }
 
+fn read_response_frame(reader: &mut impl BufRead) -> Result<Vec<u8>, String> {
+    let mut frame = Vec::new();
+    loop {
+        let (consumed, complete) = {
+            let available = reader
+                .fill_buf()
+                .map_err(|error| format!("I/O error: {error}"))?;
+            if available.is_empty() {
+                if frame.is_empty() {
+                    return Err("plugin exited before responding".to_string());
+                }
+                return Err("plugin response ended before a newline delimiter".to_string());
+            }
+            let consumed = available
+                .iter()
+                .position(|byte| *byte == b'\n')
+                .map_or(available.len(), |index| index + 1);
+            if frame.len() + consumed > MAX_RESPONSE_BYTES {
+                return Err(format!(
+                    "plugin response exceeds {} bytes",
+                    MAX_RESPONSE_BYTES
+                ));
+            }
+            frame.extend_from_slice(&available[..consumed]);
+            (consumed, available[consumed - 1] == b'\n')
+        };
+        reader.consume(consumed);
+        if complete {
+            return Ok(frame);
+        }
+    }
+}
+
 #[tauri::command]
-pub fn workbench_plugin_stop(
+pub async fn workbench_plugin_stop(
     state: State<'_, WorkbenchPluginState>,
     plugin_id: String,
 ) -> Result<(), String> {
     let plugin_id = normalize_plugin_id(&plugin_id)?;
-    let mut sidecars = state
+    let sidecar = state
         .sidecars
         .lock()
-        .map_err(|_| "Workbench plugin state lock is poisoned".to_string())?;
-    if let Some(mut sidecar) = sidecars.remove(&plugin_id) {
-        let _ = sidecar.child.kill();
-        let _ = sidecar.child.wait();
+        .map_err(|_| "Workbench plugin state lock is poisoned".to_string())?
+        .remove(&plugin_id);
+    if let Some(sidecar) = sidecar {
+        tauri::async_runtime::spawn_blocking(move || {
+            if let Ok(mut sidecar) = sidecar.lock() {
+                terminate_process_tree(&mut sidecar.child);
+            }
+        })
+        .await
+        .map_err(|error| format!("Failed to join workbench plugin shutdown: {error}"))?;
     }
     Ok(())
 }
@@ -368,12 +473,66 @@ pub fn workbench_plugin_authorize_capability(
 }
 
 pub fn shutdown(state: &WorkbenchPluginState) {
-    let Ok(mut sidecars) = state.sidecars.lock() else {
+    let Ok(mut registry) = state.sidecars.lock() else {
         return;
     };
-    for (_, mut sidecar) in sidecars.drain() {
-        let _ = sidecar.child.kill();
-        let _ = sidecar.child.wait();
+    let sidecars = registry
+        .drain()
+        .map(|(_, sidecar)| sidecar)
+        .collect::<Vec<_>>();
+    drop(registry);
+    for sidecar in sidecars {
+        if let Ok(mut sidecar) = sidecar.lock() {
+            terminate_process_tree(&mut sidecar.child);
+        }
+    }
+}
+
+fn configure_process_group(command: &mut Command) {
+    #[cfg(unix)]
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setpgid(0, 0) == 0 {
+                Ok(())
+            } else {
+                Err(std::io::Error::last_os_error())
+            }
+        });
+    }
+    #[cfg(windows)]
+    {
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
+    }
+}
+
+fn terminate_process_tree(child: &mut Child) {
+    #[cfg(unix)]
+    unsafe {
+        let process_group = child.id() as libc::pid_t;
+        let _ = libc::kill(-process_group, libc::SIGTERM);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            if child.try_wait().ok().flatten().is_some() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let _ = libc::kill(-process_group, libc::SIGKILL);
+        let _ = child.wait();
+    }
+    #[cfg(windows)]
+    {
+        let _ = Command::new("taskkill")
+            .args(["/PID", &child.id().to_string(), "/T", "/F"])
+            .status();
+        let _ = child.wait();
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = child.kill();
+        let _ = child.wait();
     }
 }
 
@@ -414,5 +573,24 @@ mod tests {
                 .unwrap_err()
                 .contains("inside the plugin package")
         );
+    }
+
+    #[test]
+    fn response_frame_is_bounded() {
+        let payload = vec![b'a'; MAX_RESPONSE_BYTES + 1];
+        let mut reader = BufReader::new(payload.as_slice());
+
+        assert!(read_response_frame(&mut reader)
+            .unwrap_err()
+            .contains("exceeds"));
+    }
+
+    #[test]
+    fn response_frame_requires_newline() {
+        let mut reader = BufReader::new(br#"{"jsonrpc":"2.0"}"#.as_slice());
+
+        assert!(read_response_frame(&mut reader)
+            .unwrap_err()
+            .contains("newline delimiter"));
     }
 }

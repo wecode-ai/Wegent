@@ -129,17 +129,19 @@ export function DesktopAppSwitcher({
   const options = useMemo<AppOption[]>(() => {
     const apps: readonly WorkbenchAppContribution[] =
       registeredApps.length > 0 ? registeredApps : CORE_WORKBENCH_APPS
-    return apps.map(app => ({
-      key: app.key,
-      label: t(app.labelKey, app.label),
-      description: t(app.descriptionKey, app.description),
-      availabilityLabel:
-        app.requiresCloud && !cloudConnection?.isConnected
-          ? t('workbench.app_wegent_requires_cloud', '连接云端后可用')
-          : undefined,
-      disabled:
-        Boolean(app.requiresCloud) && !cloudConnection?.isConnected && activeApp !== app.key,
-    }))
+    return apps
+      .filter(app => !app.hiddenInSwitcher)
+      .map(app => ({
+        key: app.key,
+        label: t(app.labelKey, app.label),
+        description: t(app.descriptionKey, app.description),
+        availabilityLabel:
+          app.requiresCloud && !cloudConnection?.isConnected
+            ? t('workbench.app_wegent_requires_cloud', '连接云端后可用')
+            : undefined,
+        disabled:
+          Boolean(app.requiresCloud) && !cloudConnection?.isConnected && activeApp !== app.key,
+      }))
   }, [activeApp, cloudConnection?.isConnected, registeredApps, t])
   const displayedAppKey = rollingLabel ? displayedKey : activeApp
   const selected =

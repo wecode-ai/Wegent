@@ -36,7 +36,7 @@ export interface InspectedWorkbenchPlugin {
 
 export interface WorkbenchDesktopClient {
   authorize(capability: string): Promise<boolean>
-  request<T = unknown>(method: string, params?: unknown): Promise<T>
+  request<T = unknown>(capability: string, method: string, params?: unknown): Promise<T>
   start(): Promise<void>
   stop(): Promise<void>
 }
@@ -66,9 +66,10 @@ function createDesktopClient(plugin: InspectedWorkbenchPlugin): WorkbenchDesktop
         capability,
       })
     },
-    request<T>(method: string, params: unknown = {}): Promise<T> {
+    request<T>(capability: string, method: string, params: unknown = {}): Promise<T> {
       return invoke<T>('workbench_plugin_request', {
         pluginId: plugin.manifest.name,
+        capability,
         method,
         params,
       })
@@ -131,30 +132,37 @@ export class ExternalWorkbenchPluginLoader {
           `current client is ${__WEWORK_APP_VERSION__}`
       )
     }
-    if (!plugin.frontendPath || !plugin.manifest.frontend) {
-      return
-    }
-
-    const url = convertFileSrc(plugin.frontendPath)
-    const namespace = await this.importer(url)
-    const module = resolveFrontendModule(
-      namespace,
-      plugin.manifest.frontend.export?.trim() || 'default'
-    )
     const desktop = createDesktopClient(plugin)
+    const module =
+      plugin.frontendPath && plugin.manifest.frontend
+        ? resolveFrontendModule(
+            await this.importer(convertFileSrc(plugin.frontendPath)),
+            plugin.manifest.frontend.export?.trim() || 'default'
+          )
+        : null
+    if (!module && !desktop) return
     const cordisPlugin: Plugin.Object<void> = {
       name: `external:${id}`,
       inject: ['workbenchRoutes', 'workbenchSlots', 'workbenchSettings', 'workbenchApps'],
       async apply(ctx) {
-        const dispose = await module.activate({
-          id,
-          manifest: plugin.manifest,
-          routes: ctx.workbenchRoutes,
-          slots: ctx.workbenchSlots,
-          settings: ctx.workbenchSettings,
-          apps: ctx.workbenchApps,
-          desktop,
-        })
+        await desktop?.start()
+        let dispose: void | (() => void)
+        try {
+          dispose = module
+            ? await module.activate({
+                id,
+                manifest: plugin.manifest,
+                routes: ctx.workbenchRoutes,
+                slots: ctx.workbenchSlots,
+                settings: ctx.workbenchSettings,
+                apps: ctx.workbenchApps,
+                desktop,
+              })
+            : undefined
+        } catch (error) {
+          await desktop?.stop()
+          throw error
+        }
         return async () => {
           dispose?.()
           await desktop?.stop()
@@ -179,7 +187,11 @@ export class ExternalWorkbenchPluginLoader {
         .map(id => this.unload(id))
     )
     for (const plugin of plugins) {
-      await this.load(plugin)
+      try {
+        await this.load(plugin)
+      } catch (error) {
+        console.error(`[Wework] Failed to load plugin '${plugin.manifest.name}':`, error)
+      }
     }
   }
 

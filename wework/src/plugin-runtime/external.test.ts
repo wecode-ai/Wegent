@@ -3,9 +3,11 @@ import { describe, expect, test, vi } from 'vitest'
 import { WorkbenchPluginRuntime } from './runtime'
 import { ExternalWorkbenchPluginLoader, type InspectedWorkbenchPlugin } from './external'
 
+const tauriInvoke = vi.hoisted(() => vi.fn())
+
 vi.mock('@tauri-apps/api/core', () => ({
   convertFileSrc: (path: string) => `asset://localhost/${path}`,
-  invoke: vi.fn(),
+  invoke: tauriInvoke,
   isTauri: () => true,
 }))
 
@@ -30,6 +32,35 @@ function inspectedPlugin(): InspectedWorkbenchPlugin {
 }
 
 describe('ExternalWorkbenchPluginLoader', () => {
+  test('runs and stops a desktop-only plugin without importing a frontend module', async () => {
+    const runtime = new WorkbenchPluginRuntime()
+    await runtime.initialize({ id: 'test', entries: [] })
+    const importer = vi.fn()
+    const loader = new ExternalWorkbenchPluginLoader(runtime, importer)
+    const plugin = inspectedPlugin()
+    plugin.frontendPath = null
+    plugin.manifest.frontend = null
+    plugin.desktopPath = '/plugins/example/sidecar'
+    plugin.manifest.desktop = {
+      command: 'sidecar',
+      args: [],
+      sha256: '1'.repeat(64),
+      capabilities: ['workspace.read'],
+    }
+
+    await loader.load(plugin)
+    expect(importer).not.toHaveBeenCalled()
+    expect(tauriInvoke).toHaveBeenCalledWith('workbench_plugin_start', {
+      pluginId: 'example',
+      pluginRoot: '/plugins/example',
+    })
+
+    await loader.unload('example')
+    expect(tauriInvoke).toHaveBeenCalledWith('workbench_plugin_stop', {
+      pluginId: 'example',
+    })
+  })
+
   test('loads and unloads same-realm frontend contributions transactionally', async () => {
     const runtime = new WorkbenchPluginRuntime()
     await runtime.initialize({ id: 'test', entries: [] })
@@ -108,5 +139,28 @@ describe('ExternalWorkbenchPluginLoader', () => {
       `Wework plugin 'example' requires client 0.0.0-invalid`
     )
     expect(importer).not.toHaveBeenCalled()
+  })
+
+  test('continues reconciling after one plugin fails to load', async () => {
+    const runtime = new WorkbenchPluginRuntime()
+    await runtime.initialize({ id: 'test', entries: [] })
+    const importer = vi.fn(async (url: string) => {
+      if (url.includes('/broken/')) throw new Error('broken module')
+      return { default: { activate: vi.fn() } }
+    })
+    const loader = new ExternalWorkbenchPluginLoader(runtime, importer)
+    const broken = inspectedPlugin()
+    broken.root = '/plugins/broken'
+    broken.frontendPath = '/plugins/broken/frontend.js'
+    broken.manifest.name = 'broken'
+    const healthy = inspectedPlugin()
+    healthy.root = '/plugins/healthy'
+    healthy.frontendPath = '/plugins/healthy/frontend.js'
+    healthy.manifest.name = 'healthy'
+
+    await loader.reconcile([broken, healthy])
+
+    expect(importer).toHaveBeenCalledTimes(2)
+    await loader.unload('healthy')
   })
 })

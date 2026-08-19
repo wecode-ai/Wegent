@@ -1,13 +1,7 @@
 #!/usr/bin/env node
 
 import { execFileSync, spawnSync } from 'node:child_process'
-import {
-  existsSync,
-  lstatSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-} from 'node:fs'
+import { existsSync, lstatSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path'
 
 const REQUIRED_FILES = ['plugin-manifest.json', 'PLUGIN.md', 'INSTALL.zh-CN.md']
@@ -166,25 +160,27 @@ function pack(rootArgument, outputArgument) {
   }
   rmSync(output, { force: true })
   if (process.platform === 'win32') {
-    const script = [
-      `$source = ${JSON.stringify(`${root}\\*`)}`,
-      `$destination = ${JSON.stringify(output)}`,
-      'Compress-Archive -Path $source -DestinationPath $destination -Force',
-    ].join('; ')
-    execFileSync('powershell.exe', ['-NoProfile', '-Command', script], { stdio: 'inherit' })
+    execFileSync(
+      'tar.exe',
+      [
+        '-a',
+        '-c',
+        '-f',
+        output,
+        '--exclude=node_modules',
+        '--exclude=.git',
+        '--exclude=test-results',
+        '--exclude=.DS_Store',
+        '-C',
+        root,
+        '.',
+      ],
+      { stdio: 'inherit' }
+    )
   } else {
     execFileSync(
       'zip',
-      [
-        '-qr',
-        output,
-        '.',
-        '-x',
-        'node_modules/*',
-        '.git/*',
-        'test-results/*',
-        '*.DS_Store',
-      ],
+      ['-qr', output, '.', '-x', 'node_modules/*', '.git/*', 'test-results/*', '*.DS_Store'],
       { cwd: root, stdio: 'inherit' }
     )
   }

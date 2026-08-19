@@ -270,6 +270,7 @@ describe('HarnessAppsPage', () => {
     mocks.api.list
       .mockResolvedValueOnce([installed])
       .mockRejectedValueOnce(new Error('refresh failed'))
+      .mockResolvedValueOnce([running])
     mocks.api.start.mockResolvedValue(running)
     mocks.api.stop.mockRejectedValue(new Error('stop failed'))
 
@@ -282,6 +283,11 @@ describe('HarnessAppsPage', () => {
     expect(sessionStorage.getItem(`wework:harness-app:${installed.id}:proxy-token`)).toBe(
       'proxy-token'
     )
+    expect(mocks.register).toHaveBeenCalledWith(running)
+    expect(mocks.openTab).toHaveBeenCalledWith('auxiliary', {
+      title: running.manifest.displayName,
+      contentRoute: `/app/harness-${running.id}`,
+    })
   })
 
   test('clears an old preview when replacement package inspection fails', async () => {

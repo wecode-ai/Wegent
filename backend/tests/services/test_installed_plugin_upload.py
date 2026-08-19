@@ -190,8 +190,9 @@ def test_upload_plugin_rejects_mismatched_runtime_manifest_names(test_db, test_u
         )
 
     assert exc_info.value.status_code == 400
-    assert exc_info.value.detail == (
-        "Codex, Claude Code, and Wework plugin manifest names must match"
+    assert (
+        exc_info.value.detail
+        == "Codex and Claude Code plugin manifest names must match"
     )
 
 
@@ -217,6 +218,10 @@ def test_upload_plugin_parses_wework_frontend_and_desktop_components(
     }
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr(
+            ".codex-plugin/plugin.json",
+            '{"name":"workbench-tools","version":"1.0.0"}',
+        )
         archive.writestr(".wework-plugin/plugin.json", json.dumps(manifest))
         archive.writestr("dist/frontend.js", frontend)
         archive.writestr("bin/sidecar", desktop)
@@ -248,6 +253,10 @@ def test_upload_plugin_rejects_invalid_wework_integrity(test_db, test_user):
     }
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr(
+            ".codex-plugin/plugin.json",
+            '{"name":"workbench-tools"}',
+        )
         archive.writestr(".wework-plugin/plugin.json", json.dumps(manifest))
         archive.writestr("dist/frontend.js", "export default function activate() {}")
 
@@ -294,6 +303,10 @@ def test_upload_plugin_rejects_unpinned_required_wework_components(
     }
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr(
+            ".codex-plugin/plugin.json",
+            '{"name":"workbench-tools"}',
+        )
         archive.writestr(".wework-plugin/plugin.json", json.dumps(manifest))
         archive.writestr("dist/frontend.js", frontend)
 
@@ -307,6 +320,42 @@ def test_upload_plugin_rejects_unpinned_required_wework_components(
 
     assert exc_info.value.status_code == 400
     assert expected_detail in exc_info.value.detail
+
+
+def test_workbench_companion_manifest_cannot_define_package_identity(
+    test_db,
+    test_user,
+):
+    frontend = b"export default function activate() {}"
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr(
+            ".wework-plugin/plugin.json",
+            json.dumps(
+                {
+                    "apiVersion": "1",
+                    "frontend": {
+                        "entry": "dist/frontend.js",
+                        "sha256": hashlib.sha256(frontend).hexdigest(),
+                    },
+                }
+            ),
+        )
+        archive.writestr(
+            ".codex-plugin/plugin.json",
+            '{"name":"canonical-plugin","version":"1.0.0"}',
+        )
+        archive.writestr("dist/frontend.js", frontend)
+
+    installed = InstalledPluginService().upload_plugin(
+        db=test_db,
+        user_id=test_user.id,
+        package_bytes=buffer.getvalue(),
+        filename="canonical-plugin.zip",
+    )
+
+    assert installed.spec.source.pluginKey == "canonical-plugin"
+    assert installed.spec.components.workbench is not None
 
 
 def test_publish_and_install_marketplace_plugin(test_db, test_user):

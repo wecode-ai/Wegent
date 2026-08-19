@@ -21,6 +21,8 @@ function filterDesiredPlugins(
   )
 }
 
+let reconciliationQueue: Promise<void> = Promise.resolve()
+
 export function DynamicWorkbenchPluginHost() {
   const cloud = useCloudConnection()
 
@@ -32,37 +34,46 @@ export function DynamicWorkbenchPluginHost() {
       const localPlugins = await listDeviceWorkbenchPlugins()
       let desiredNames: Set<string> | null = null
       if (cloud.isConnected && cloud.apiBaseUrl) {
-        const api = createPluginApi(
-          createHttpClient({
-            baseUrl: cloud.apiBaseUrl,
-            getToken: () => cloud.token,
-            redirectOnUnauthorized: false,
-          })
-        )
-        const installed = await api.listInstalledPlugins()
-        desiredNames = new Set(
-          installed.items
-            .filter(
-              plugin =>
-                plugin.spec.enabled &&
-                plugin.spec.installState !== 'uninstalled' &&
-                plugin.spec.components.workbench
-            )
-            .map(plugin => plugin.spec.source.pluginKey)
-        )
+        try {
+          const api = createPluginApi(
+            createHttpClient({
+              baseUrl: cloud.apiBaseUrl,
+              getToken: () => cloud.token,
+              redirectOnUnauthorized: false,
+            })
+          )
+          const installed = await api.listInstalledPlugins()
+          desiredNames = new Set(
+            installed.items
+              .filter(
+                plugin =>
+                  plugin.spec.enabled &&
+                  plugin.spec.installState !== 'uninstalled' &&
+                  plugin.spec.components.workbench
+              )
+              .map(plugin => plugin.spec.source.pluginKey)
+          )
+        } catch (error) {
+          console.error('[Wework] Failed to load cloud plugin state; loading local plugins:', error)
+        }
       }
       if (!cancelled) {
         await loader.reconcile(filterDesiredPlugins(localPlugins, desiredNames))
       }
     }
 
-    void load().catch(error => {
+    const pending = reconciliationQueue.then(load).catch(error => {
       console.error('[Wework] Failed to load workbench plugins:', error)
     })
+    reconciliationQueue = pending
 
     return () => {
       cancelled = true
-      void loader.dispose()
+      reconciliationQueue = pending
+        .then(() => loader.dispose())
+        .catch(error => {
+          console.error('[Wework] Failed to dispose workbench plugins:', error)
+        })
     }
   }, [cloud.apiBaseUrl, cloud.isConnected, cloud.serviceKey, cloud.token])
 

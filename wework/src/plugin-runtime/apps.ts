@@ -7,6 +7,7 @@ export interface WorkbenchAppContribution {
   url?: string
   requiresAuth?: boolean
   hidden?: boolean
+  hiddenInSwitcher?: boolean
   experimental?: boolean
   requiresCloud?: boolean
   labelKey: string

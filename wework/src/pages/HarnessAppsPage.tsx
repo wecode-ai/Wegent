@@ -26,6 +26,7 @@ import {
   openHarnessAppTab,
   registerHarnessAppTab,
   storeHarnessAppProxyToken,
+  takeHarnessAppProxyToken,
   unregisterHarnessAppTab,
 } from '@/features/harness-apps/harnessAppTabs'
 import { HarnessAppInstallDialog } from '@/features/harness-apps/HarnessAppInstallDialog'
@@ -58,17 +59,6 @@ export function HarnessAppsPage({ importRequested = false }: HarnessAppsPageProp
   const installModelKey = modelKey || modelOptions[0]?.key || ''
 
   const refresh = async () => setItems(await harnessAppsApi.list())
-
-  function proxyTokenKey(installationId: string) {
-    return `wework:harness-app:${installationId}:proxy-token`
-  }
-
-  function takeProxyToken(installationId: string): string | null {
-    const key = proxyTokenKey(installationId)
-    const token = sessionStorage.getItem(key)
-    sessionStorage.removeItem(key)
-    return token
-  }
 
   function closeAppTabs(installationId: string) {
     if (!workspaceTabs) return
@@ -202,11 +192,22 @@ export function HarnessAppsPage({ importRequested = false }: HarnessAppsPageProp
           proxyCanBeRevoked = true
         } catch (rollbackError) {
           console.warn('[Wework] failed to roll back started Harness app', rollbackError)
+          try {
+            const installations = await harnessAppsApi.list()
+            const running = installations.find(installation => installation.id === item.id)
+            if (running?.state === 'running' && running.webUrl) {
+              registerHarnessAppTab(running)
+              if (workspaceTabs) openHarnessAppTab(workspaceTabs, running)
+            }
+            setItems(installations)
+          } catch (recoveryError) {
+            console.warn('[Wework] failed to recover running Harness app', recoveryError)
+          }
         }
         if (proxyCanBeRevoked) {
           unregisterHarnessAppTab(item.id)
           closeAppTabs(item.id)
-          takeProxyToken(item.id)
+          takeHarnessAppProxyToken(item.id)
           try {
             await refresh()
           } catch (refreshError) {
@@ -233,7 +234,7 @@ export function HarnessAppsPage({ importRequested = false }: HarnessAppsPageProp
       await harnessAppsApi.stop(item.id)
       unregisterHarnessAppTab(item.id)
       closeAppTabs(item.id)
-      const token = takeProxyToken(item.id)
+      const token = takeHarnessAppProxyToken(item.id)
       if (token) await services.localHarnessModelApi?.unregisterProxy(token)
       await refresh()
     } catch (stopError) {

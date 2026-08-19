@@ -155,6 +155,24 @@ describe('bundled plugin resources', () => {
     ).toBe(true)
   })
 
+  test('packages Smart apps on Windows without evaluating path text', () => {
+    const script = readFileSync(
+      resolve(
+        process.cwd(),
+        'src-tauri',
+        bundledSmartAppBuilderDirectory,
+        'scripts/smart-app-tool.mjs'
+      ),
+      'utf8'
+    )
+
+    expect(script).toMatch(/execFileSync\(\s*'tar\.exe'/)
+    expect(script).not.toMatch(/execFileSync\(\s*'powershell\.exe'/)
+    expect(script).toContain("'--exclude=node_modules'")
+    expect(script).toContain("'--exclude=.git'")
+    expect(script).toContain("'--exclude=test-results'")
+  })
+
   test('uses the shared release config generator in GitHub macOS releases', () => {
     const workflow = readFileSync(
       resolve(process.cwd(), '../.github/workflows/wework-app.yml'),

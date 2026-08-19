@@ -208,6 +208,7 @@ fn inspect_archive(
         let _ = fs::remove_dir_all(destination);
         fs::create_dir_all(destination)
             .map_err(|error| format!("Failed to create Harness app staging directory: {error}"))?;
+        let mut written = 0_u64;
         for index in 0..archive.len() {
             let mut entry = archive
                 .by_index(index)
@@ -237,8 +238,13 @@ fn inspect_archive(
                 }
                 let mut file = fs::File::create(&output)
                     .map_err(|error| format!("Failed to create Harness app file: {error}"))?;
-                std::io::copy(&mut entry, &mut file)
+                let remaining = MAX_EXTRACTED_BYTES.saturating_sub(written);
+                let copied = std::io::copy(&mut entry.by_ref().take(remaining + 1), &mut file)
                     .map_err(|error| format!("Failed to extract Harness app file: {error}"))?;
+                if copied > remaining {
+                    return Err("Harness app ZIP expands beyond 250 MB".to_string());
+                }
+                written += copied;
             }
         }
     }
@@ -410,14 +416,21 @@ pub fn update_harness_app(
     model_key: Option<String>,
     resident: Option<bool>,
 ) -> Result<HarnessAppInstallation, String> {
-    if model_key.is_some()
-        && state
+    if model_key.is_some() {
+        let mut children = state
             .children
             .lock()
-            .map_err(|_| "Harness app runtime lock failed")?
-            .contains_key(&installation_id)
-    {
-        return Err("Stop the Smart app before changing its model".to_string());
+            .map_err(|_| "Harness app runtime lock failed")?;
+        if let Some(child) = children.get_mut(&installation_id) {
+            if child
+                .try_wait()
+                .map_err(|error| format!("Failed to inspect Smart app process: {error}"))?
+                .is_none()
+            {
+                return Err("Stop the Smart app before changing its model".to_string());
+            }
+            children.remove(&installation_id);
+        }
     }
     let _registry = state
         .registry
@@ -941,8 +954,14 @@ pub async fn start_harness_app(
         .map_err(|error| format!("Failed to start Harness app: {error}"))?;
     let web_url = format!("http://127.0.0.1:{port}/");
     let deadline = Instant::now() + Duration::from_secs(30);
+    let readiness_client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(2))
+        .build()
+        .map_err(|error| format!("Failed to create Harness readiness client: {error}"))?;
     while Instant::now() < deadline {
-        if reqwest::get(&web_url)
+        if readiness_client
+            .get(&web_url)
+            .send()
             .await
             .is_ok_and(|response| response.status().is_success())
         {

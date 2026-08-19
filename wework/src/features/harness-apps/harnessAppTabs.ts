@@ -54,6 +54,17 @@ export function openHarnessAppTab(
   })
 }
 
+export function harnessAppProxyTokenKey(installationId: string): string {
+  return `wework:harness-app:${installationId}:proxy-token`
+}
+
+export function takeHarnessAppProxyToken(installationId: string): string | null {
+  const key = harnessAppProxyTokenKey(installationId)
+  const token = sessionStorage.getItem(key)
+  sessionStorage.removeItem(key)
+  return token
+}
+
 export function storeHarnessAppProxyToken(installationId: string, token: string): void {
-  sessionStorage.setItem(`wework:harness-app:${installationId}:proxy-token`, token)
+  sessionStorage.setItem(harnessAppProxyTokenKey(installationId), token)
 }
