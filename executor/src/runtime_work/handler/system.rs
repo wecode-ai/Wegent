@@ -36,88 +36,26 @@ impl RuntimeWorkRpcHandler {
             .await
             .clone()
             .unwrap_or_default();
-        let interrupted_worktree_task_ids = interrupted_worktree_turns
-            .iter()
-            .map(|turn| turn.local_task_id.clone())
-            .collect::<HashSet<_>>();
         let remaining_queued_turns = self
             .turn_scheduler
             .lock()
             .expect("runtime turn scheduler lock should not be poisoned")
             .queued_turns
             .clone();
-        let queued_task_ids = remaining_queued_turns
-            .iter()
-            .map(|turn| turn.local_task_id.clone())
-            .collect::<HashSet<_>>();
         let worktrees = self.worktrees.clone();
         let store = self.store.clone();
         let result = tokio::task::spawn_blocking(move || {
             let reconciled = worktrees.reconcile()?;
-            let tasks = store.list_task_summaries(true);
-            let interrupted_preparation_errors = reconciled
-                .iter()
-                .filter(|outcome| outcome.interrupted_preparation)
-                .map(|outcome| {
-                    (
-                        normalize_workspace_path(&outcome.record.path),
-                        outcome.record.last_error.clone(),
-                    )
-                })
-                .collect::<HashMap<_, _>>();
             let mut failed_task_ids = HashSet::new();
-            for task in tasks.iter().filter(|task| {
-                !queued_task_ids.contains(&task.local_task_id)
-                    && !matches!(
-                        task.status.as_str(),
-                        "archived" | "cancelled" | "done" | "failed"
-                    )
-                    && worktrees.is_managed_path(Path::new(&task.workspace_path))
-            }) {
-                let normalized_path = normalize_workspace_path(&task.workspace_path);
-                let error = interrupted_preparation_errors
-                    .get(&normalized_path)
-                    .cloned()
-                    .flatten()
-                    .unwrap_or_else(|| {
-                        "Executor restarted during Worktree preparation; runtime was not resumed"
-                            .to_owned()
-                    });
-                let error = if interrupted_preparation_errors.contains_key(&normalized_path) {
-                    error
-                } else {
-                    "Executor restarted while the Worktree task was active; runtime was not resumed"
+            for outcome in reconciled
+                .into_iter()
+                .filter(|outcome| outcome.interrupted_preparation)
+            {
+                let task_id = outcome.record.worktree_id;
+                let error = outcome.record.last_error.unwrap_or_else(|| {
+                    "Executor restarted during Worktree preparation; runtime was not resumed"
                         .to_owned()
-                };
-                if store
-                    .update_task(&task.local_task_id, |link| {
-                        link.running = false;
-                        link.status = "failed".to_owned();
-                        link.thread_status = "failed".to_owned();
-                        link.turn_status = Some("failed".to_owned());
-                        link.updated_at = now_ms();
-                        link.completed_at = Some(link.updated_at);
-                        if !link.runtime_handle.is_object() {
-                            link.runtime_handle = json!({});
-                        }
-                        if let Some(runtime_handle) = link.runtime_handle.as_object_mut() {
-                            runtime_handle.remove("queuePosition");
-                            runtime_handle
-                                .insert("lastError".to_owned(), Value::String(error.clone()));
-                        }
-                    })
-                    .is_some()
-                {
-                    failed_task_ids.insert(task.local_task_id.clone());
-                }
-            }
-            for task_id in interrupted_worktree_task_ids {
-                if failed_task_ids.contains(&task_id) {
-                    continue;
-                }
-                let error =
-                    "Executor restarted before the queued Worktree task began; runtime was not resumed"
-                        .to_owned();
+                });
                 if store
                     .update_task(&task_id, |link| {
                         link.running = false;
@@ -140,6 +78,17 @@ impl RuntimeWorkRpcHandler {
                     failed_task_ids.insert(task_id);
                 }
             }
+            for turn in interrupted_worktree_turns {
+                store.update_task(&turn.local_task_id, |link| {
+                    if let Some(runtime_handle) = link.runtime_handle.as_object_mut() {
+                        runtime_handle.remove("queuePosition");
+                    }
+                });
+                log_executor_event(
+                    "queued worktree task left idle after executor restart",
+                    &[("local_task_id", turn.local_task_id)],
+                );
+            }
             Ok::<Vec<String>, String>(failed_task_ids.into_iter().collect())
         })
         .await;
@@ -147,7 +96,7 @@ impl RuntimeWorkRpcHandler {
             Ok(Ok(failed_task_ids)) => {
                 for task_id in failed_task_ids {
                     log_executor_event(
-                        "interrupted worktree task reconciled without runtime restart",
+                        "interrupted worktree preparation reconciled",
                         &[("local_task_id", task_id)],
                     );
                 }

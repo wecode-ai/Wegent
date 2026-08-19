@@ -677,13 +677,14 @@ async fn restart_reconciliation_fails_interrupted_task_without_starting_runtime(
 }
 
 #[tokio::test]
-async fn restart_reconciliation_fails_active_worktree_without_persisted_queue_turn() {
+async fn restart_reconciliation_leaves_history_without_execution_evidence_unchanged() {
     let root = temp_runtime_work_index_path("restart-active-worktree").with_extension("directory");
     let source = root.join("source");
     let managed_root = root.join("workspace/worktrees");
     initialize_test_repository(&source);
+    let index_path = root.join("runtime-work/index.json");
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    handler.store = RuntimeWorkStore::new(root.join("runtime-work/index.json"));
+    handler.store = RuntimeWorkStore::new(index_path.clone());
     handler.worktrees = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
     handler
         .worktrees
@@ -703,26 +704,28 @@ async fn restart_reconciliation_fails_active_worktree_without_persisted_queue_tu
     );
     link.status = "running".to_owned();
     link.running = true;
+    link.updated_at = 1_780_000_000_000;
+    link.completed_at = Some(1_780_000_000_000);
     handler.upsert_local_task(link);
 
+    handler.store = RuntimeWorkStore::new(index_path);
     assert!(handler.reconcile_worktrees_once().await);
 
     let task = handler
         .store
         .get_task("task-active")
-        .expect("active Worktree task should remain diagnosable");
-    assert_eq!(task.status, "failed");
+        .expect("historical Worktree task should remain available");
+    assert_eq!(task.status, "active");
     assert!(!task.running);
-    assert!(task.runtime_handle["lastError"]
-        .as_str()
-        .unwrap()
-        .contains("runtime was not resumed"));
+    assert_eq!(task.updated_at, 1_780_000_000_000);
+    assert_eq!(task.completed_at, None);
+    assert!(task.runtime_handle.get("lastError").is_none());
     assert!(Path::new(&record.path).exists());
     let _ = fs::remove_dir_all(root);
 }
 
 #[tokio::test]
-async fn restart_reconciliation_fails_queued_worktree_without_starting_runtime() {
+async fn restart_reconciliation_leaves_queued_worktree_idle_without_failure() {
     let root = temp_runtime_work_index_path("restart-queued-worktree").with_extension("directory");
     let source = root.join("source");
     let managed_root = root.join("workspace/worktrees");
@@ -748,6 +751,7 @@ async fn restart_reconciliation_fails_queued_worktree_without_starting_runtime()
         plan.path.display().to_string(),
         "Queued Worktree".to_owned(),
     );
+    link.updated_at = 1_780_000_000_000;
     link.runtime_handle = json!({"queuePosition": 1});
     handler.upsert_local_task(link);
 
@@ -782,14 +786,13 @@ async fn restart_reconciliation_fails_queued_worktree_without_starting_runtime()
     let task = handler
         .store
         .get_task("task-queued")
-        .expect("interrupted queued task should remain diagnosable");
-    assert_eq!(task.status, "failed");
+        .expect("queued task should remain available");
+    assert_eq!(task.status, "active");
     assert!(!task.running);
+    assert_eq!(task.updated_at, 1_780_000_000_000);
+    assert_eq!(task.completed_at, None);
     assert!(task.runtime_handle.get("queuePosition").is_none());
-    assert!(task.runtime_handle["lastError"]
-        .as_str()
-        .unwrap()
-        .contains("runtime was not resumed"));
+    assert!(task.runtime_handle.get("lastError").is_none());
     assert!(!handler.is_active_local_task("task-queued"));
     assert!(!plan.path.exists());
     assert!(
