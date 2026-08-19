@@ -13,7 +13,7 @@ use serde_json::Value;
 use tokio::task::JoinHandle;
 
 use crate::{
-    emitter::ResponsesEventBuilder,
+    emitter::{EventEnvelope, ResponsesEventBuilder},
     protocol::{ExecutionRequest, TaskStatus},
     runner::{AgentEngine, EventSink, ExecutionOutcome},
     server::{RunnerResult, TaskRunner},
@@ -86,8 +86,51 @@ where
 }
 
 struct ManagedTaskHandle {
+    identity: Arc<()>,
     builder: ResponsesEventBuilder,
+    cancellation: Arc<CancellationState>,
     handle: JoinHandle<()>,
+}
+
+struct CancellationState {
+    cancelled: tokio::sync::RwLock<bool>,
+}
+
+impl CancellationState {
+    fn new() -> Self {
+        Self {
+            cancelled: tokio::sync::RwLock::new(false),
+        }
+    }
+
+    async fn cancel(&self) {
+        *self.cancelled.write().await = true;
+    }
+}
+
+#[derive(Clone)]
+struct CancellationAwareEventSink<S> {
+    inner: S,
+    cancellation: Arc<CancellationState>,
+}
+
+impl<S> EventSink for CancellationAwareEventSink<S>
+where
+    S: EventSink,
+{
+    type SendFuture = Pin<Box<dyn Future<Output = Result<(), String>> + Send>>;
+
+    fn send(&self, event: EventEnvelope) -> Self::SendFuture {
+        let inner = self.inner.clone();
+        let cancellation = Arc::clone(&self.cancellation);
+        Box::pin(async move {
+            let cancelled = cancellation.cancelled.read().await;
+            if *cancelled {
+                return Ok(());
+            }
+            inner.send(event).await
+        })
+    }
 }
 
 impl<E, S> ManagedLocalTaskRunner<E, S>
@@ -114,6 +157,7 @@ where
             self.running_tasks.remove(&task_id);
             return false;
         };
+        state.cancellation.cancel().await;
         state.handle.abort();
         let _ = state.handle.await;
         self.running_tasks.remove(&task_id);
@@ -175,19 +219,37 @@ where
             }
 
             running_tasks.add(task_id.clone());
-            let mut guard = handles.lock().expect("managed task lock");
+            let identity = Arc::new(());
+            let cancellation = Arc::new(CancellationState::new());
+            let task_sink = CancellationAwareEventSink {
+                inner: sink,
+                cancellation: Arc::clone(&cancellation),
+            };
             let handle = tokio::spawn(run_managed_task(
                 engine,
-                sink,
+                task_sink,
                 builder.clone(),
                 request,
                 running_tasks.clone(),
                 Arc::clone(&handles),
+                Arc::clone(&identity),
             ));
-            if let Some(previous) = guard.insert(task_id, ManagedTaskHandle { builder, handle }) {
+            let previous = {
+                let mut guard = handles.lock().expect("managed task lock");
+                guard.insert(
+                    task_id,
+                    ManagedTaskHandle {
+                        identity,
+                        builder,
+                        cancellation,
+                        handle,
+                    },
+                )
+            };
+            if let Some(previous) = previous {
+                previous.cancellation.cancel().await;
                 previous.handle.abort();
             }
-            drop(guard);
 
             RunnerResult::accepted(TaskStatus::Running)
         })
@@ -201,6 +263,7 @@ async fn run_managed_task<E, S>(
     request: ExecutionRequest,
     running_tasks: LocalRunningTaskTracker,
     handles: Arc<Mutex<BTreeMap<String, ManagedTaskHandle>>>,
+    identity: Arc<()>,
 ) where
     E: AgentEngine,
     S: EventSink,
@@ -210,7 +273,15 @@ async fn run_managed_task<E, S>(
         .run_with_events(request, sink.clone(), builder.clone())
         .await;
     running_tasks.remove(&task_id);
-    handles.lock().expect("managed task lock").remove(&task_id);
+    {
+        let mut guard = handles.lock().expect("managed task lock");
+        if guard
+            .get(&task_id)
+            .is_some_and(|state| Arc::ptr_eq(&state.identity, &identity))
+        {
+            guard.remove(&task_id);
+        }
+    }
 
     let event = match outcome {
         ExecutionOutcome::Completed { content } => builder.response_completed(&content),
@@ -241,4 +312,87 @@ fn local_event_builder(request: &ExecutionRequest) -> ResponsesEventBuilder {
             request.executor_namespace.as_deref(),
         )
         .with_validation_id(validation_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::sync::Notify;
+
+    use super::*;
+
+    #[derive(Clone)]
+    struct DetachedLateEventEngine {
+        release_late_event: Arc<Notify>,
+    }
+
+    impl AgentEngine for DetachedLateEventEngine {
+        type RunFuture = std::future::Pending<ExecutionOutcome>;
+
+        fn run(&self, _request: ExecutionRequest) -> Self::RunFuture {
+            std::future::pending()
+        }
+
+        fn run_with_events<T>(
+            &self,
+            _request: ExecutionRequest,
+            sink: T,
+            builder: ResponsesEventBuilder,
+        ) -> Pin<Box<dyn Future<Output = ExecutionOutcome> + Send>>
+        where
+            T: EventSink,
+        {
+            let release_late_event = Arc::clone(&self.release_late_event);
+            tokio::spawn(async move {
+                release_late_event.notified().await;
+                let _ = sink
+                    .send(builder.response_text_delta("late output", 0))
+                    .await;
+            });
+            Box::pin(std::future::pending())
+        }
+    }
+
+    #[derive(Clone, Default)]
+    struct RecordingSink {
+        events: Arc<Mutex<Vec<EventEnvelope>>>,
+    }
+
+    impl EventSink for RecordingSink {
+        type SendFuture = std::future::Ready<Result<(), String>>;
+
+        fn send(&self, event: EventEnvelope) -> Self::SendFuture {
+            self.events.lock().expect("event sink lock").push(event);
+            std::future::ready(Ok(()))
+        }
+    }
+
+    #[tokio::test]
+    async fn cancellation_blocks_events_from_detached_streaming_callbacks() {
+        let release_late_event = Arc::new(Notify::new());
+        let sink = RecordingSink::default();
+        let runner = ManagedLocalTaskRunner::new(
+            DetachedLateEventEngine {
+                release_late_event: Arc::clone(&release_late_event),
+            },
+            sink.clone(),
+            LocalRunningTaskTracker::default(),
+        );
+        let request = ExecutionRequest {
+            task_id: "282".to_owned(),
+            subtask_id: "536".to_owned(),
+            ..ExecutionRequest::default()
+        };
+
+        let accepted = runner.submit(request).await;
+        assert_eq!(accepted.status, TaskStatus::Running);
+        assert!(runner.cancel_task("282".to_owned(), None).await);
+        release_late_event.notify_one();
+        tokio::task::yield_now().await;
+
+        let events = sink.events.lock().expect("event sink lock");
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].event_type, "response.created");
+        assert_eq!(events[1].event_type, "response.incomplete");
+        assert_eq!(events[1].data["response"]["status"], "cancelled");
+    }
 }
