@@ -56,6 +56,7 @@ const NO_CHANGES_TO_COMMIT_MESSAGE = 'No changes to commit'
 type EnvironmentInfoCacheEntry = {
   expiresAt: number
   promise: Promise<EnvironmentInfo>
+  settled: boolean
 }
 
 const environmentInfoCaches = new WeakMap<
@@ -815,15 +816,27 @@ export async function loadProjectEnvironment(
   const now = Date.now()
   const environmentInfoCache = getEnvironmentInfoCache(api)
   const cached = environmentInfoCache.get(cacheKey)
-  if (!options.force && cached && cached.expiresAt > now) {
+  // Forced polling must still share an in-flight load. Replacing a slow request
+  // on every poll prevents any result from settling the environment loading state.
+  if (cached && (!cached.settled || (!options.force && cached.expiresAt > now))) {
     return cloneEnvironmentInfo(await cached.promise)
   }
 
   const promise = loadProjectEnvironmentUncached(api, project, target)
-  environmentInfoCache.set(cacheKey, {
+  const entry: EnvironmentInfoCacheEntry = {
     expiresAt: now + ENVIRONMENT_INFO_CACHE_TTL_MS,
     promise,
-  })
+    settled: false,
+  }
+  environmentInfoCache.set(cacheKey, entry)
+  void promise.then(
+    () => {
+      entry.settled = true
+    },
+    () => {
+      entry.settled = true
+    }
+  )
 
   try {
     return cloneEnvironmentInfo(await promise)

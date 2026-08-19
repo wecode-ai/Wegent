@@ -162,4 +162,56 @@ describe('ActionMenu', () => {
     fireEvent.click(screen.getByTestId('clear-data'))
     await screen.findByTestId('clear-data-submenu')
   })
+
+  test('renders separator and custom rows without making them menu items', () => {
+    render(
+      <ActionMenu
+        ariaLabel="More actions"
+        testId="more-actions"
+        items={[
+          {
+            label: 'Zoom',
+            testId: 'zoom-row',
+            custom: <span data-testid="zoom-row-content">100%</span>,
+          },
+          { label: '', testId: 'menu-separator', separator: true },
+          { label: 'Settings', testId: 'settings-item', onSelect: vi.fn() },
+        ]}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('more-actions'))
+
+    expect(screen.getByTestId('zoom-row-content')).toBeInTheDocument()
+    expect(screen.getByTestId('zoom-row')).not.toHaveAttribute('role', 'menuitem')
+    expect(screen.getByTestId('menu-separator')).toHaveAttribute('role', 'separator')
+    expect(screen.getByTestId('settings-item')).toHaveAttribute('role', 'menuitem')
+  })
+
+  test('keeps the menu open when interacting with a custom row', () => {
+    const zoomIn = vi.fn()
+    render(
+      <ActionMenu
+        ariaLabel="More actions"
+        testId="more-actions"
+        items={[
+          {
+            label: 'Zoom',
+            testId: 'zoom-row',
+            custom: (
+              <button type="button" data-testid="zoom-in-control" onClick={zoomIn}>
+                Zoom in
+              </button>
+            ),
+          },
+        ]}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('more-actions'))
+    fireEvent.click(screen.getByTestId('zoom-in-control'))
+
+    expect(zoomIn).toHaveBeenCalledOnce()
+    expect(screen.getByTestId('more-actions-menu')).toBeInTheDocument()
+  })
 })

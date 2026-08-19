@@ -11,6 +11,8 @@ const PROMPTS = {
   first: 'QUEUE_1_RUNNING_WEWORK_DESKTOP_E2E',
   second: 'QUEUE_2_WAITING_WEWORK_DESKTOP_E2E',
   third: 'QUEUE_3_WAITING_WEWORK_DESKTOP_E2E',
+  fourth: 'QUEUE_4_RUNNING_BEFORE_LIMIT_INCREASE_WEWORK_DESKTOP_E2E',
+  fifth: 'QUEUE_5_STARTS_AFTER_LIMIT_INCREASE_WEWORK_DESKTOP_E2E',
 }
 
 function sse(events) {
@@ -445,6 +447,52 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       )
       await prepareScreenshot(control)
       await captureScreenshot(control, 'runtime-queue-05-drained-in-order.png', 'body')
+
+      const fourth = await sendNewTask(control, knownRows, PROMPTS.fourth, uiTimeoutMs)
+      await waitForRequestCount(requests, 4, uiTimeoutMs)
+      await control.command(
+        'waitFor',
+        `${sidebarSelector} [data-testid="runtime-local-task-running-${fourth.taskId}"]`,
+        {
+          timeoutMs: uiTimeoutMs,
+          visible: sidebarVisible,
+        }
+      )
+      const fifth = await sendNewTask(control, knownRows, PROMPTS.fifth, uiTimeoutMs)
+      await control.command(
+        'waitFor',
+        `${sidebarSelector} [data-testid="runtime-local-task-queued-${fifth.taskId}"]`,
+        {
+          timeoutMs: uiTimeoutMs,
+          visible: sidebarVisible,
+        }
+      )
+      assert.equal(requests.length, 4, 'The regression task did not wait at concurrency one')
+
+      await control.command('click', '[data-testid="settings-button"]')
+      await control.command('click', '[data-testid="settings-menu-button"]')
+      await control.command('waitFor', '[data-testid="general-max-concurrent-tasks-select"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('select', '[data-testid="general-max-concurrent-tasks-select"]', {
+        value: '2',
+      })
+      await waitForRequestCount(requests, 5, uiTimeoutMs)
+      await control.command('click', '[data-testid="settings-back-button"]')
+      const { requireVisible: refreshedSidebarVisible, sidebarSelector: refreshedSidebarSelector } =
+        await ensureRuntimeProjectExpanded(control, uiTimeoutMs)
+      await control.command(
+        'waitFor',
+        `${refreshedSidebarSelector} [data-testid="runtime-local-task-running-${fifth.taskId}"]`,
+        {
+          timeoutMs: uiTimeoutMs,
+          visible: refreshedSidebarVisible,
+        }
+      )
+      await prepareScreenshot(control)
+      await captureScreenshot(control, 'runtime-queue-06-limit-increase-drained.png', 'body')
+      releases.get(PROMPTS.fourth)?.()
+      releases.get(PROMPTS.fifth)?.()
       active = false
     },
 

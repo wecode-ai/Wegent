@@ -1067,8 +1067,7 @@ function LocalModelSettingsSection({
           imageGenerationEnabled: form.imageGenerationEnabled,
           visionModelConfigId: model.visionModelConfigId || null,
           codexCatalogModelId:
-            providerModelDefaults?.codexCatalogModelId ??
-            (typeof catalogEntry?.slug === 'string' ? catalogEntry.slug : undefined),
+            typeof catalogEntry?.slug === 'string' ? catalogEntry.slug : undefined,
           catalogEntry,
           catalogReady: !catalogEntry,
           catalogPendingRuntimeInstanceId: catalogEntry

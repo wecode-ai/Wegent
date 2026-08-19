@@ -57,6 +57,8 @@ The issue details' **Execution history** section lists linked Wework runtime tas
 
 Select a project name to expand or collapse its runtime tasks. Collapsed projects use a closed-folder icon; expanding a project changes the icon to an open folder so its state is easy to recognize.
 
+New tasks appear immediately at the top of their project's task list. Tasks with a saved drag order continue to follow that manual order; after a new task receives its persisted order, it remains stable within the same project ordering.
+
 ## Split tasks by dragging
 
 Drag a task from the sidebar to the top, bottom, left, or right target in the workbench to create a split in that direction. Dropping on the center target replaces the task in the current area. Once the pointer enters the workbench, sidebar sorting and automatic scrolling stop so they cannot take over the split operation. Move the pointer back into the sidebar to resume task reordering.

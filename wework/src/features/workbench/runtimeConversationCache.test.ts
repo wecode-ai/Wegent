@@ -22,6 +22,7 @@ import {
   removeOptimisticRuntimeConversationGuidance,
   markRuntimeConversationAssistantStarted,
   runtimeConversationSnapshotSettlesLatestTurn,
+  subscribeRuntimeConversation,
   settleRuntimeConversationAcceptedMessage,
   settleRuntimeConversationGuidance,
   settleRuntimeConversationSubagents,
@@ -54,6 +55,20 @@ describe('runtimeConversationCache', () => {
     })
 
     expect(getRuntimeConversationMessages(address)).toHaveLength(1)
+  })
+
+  test('notifies conversation subscribers when the follow-up queue pause changes', () => {
+    let notifications = 0
+    const unsubscribe = subscribeRuntimeConversation(address, () => {
+      notifications += 1
+    })
+
+    cacheRuntimeConversationQueuePaused(address, true)
+    cacheRuntimeConversationQueuePaused(address, true)
+    cacheRuntimeConversationQueuePaused(address, false)
+
+    expect(notifications).toBe(2)
+    unsubscribe()
   })
 
   test('settles an accepted queued message when its runtime turn starts', () => {

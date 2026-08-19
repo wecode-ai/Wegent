@@ -2205,6 +2205,10 @@ class DeviceNamespace(socketio.AsyncNamespace):
             room=wework_runtime_user_room(user_id),
             namespace=WEWORK_RUNTIME_NAMESPACE,
         )
+        await self._local_task_responses.forward_runtime_event_to_channels(
+            device_id=device_id,
+            payload=payload["payload"],
+        )
         return {"success": True}
 
     async def _publish_task_completed_event(

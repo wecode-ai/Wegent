@@ -4,6 +4,7 @@
 
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { toast } from 'sonner'
 
 import { KnowledgeDocumentPageMobile } from '@/features/knowledge/document/components/KnowledgeDocumentPageMobile'
 import type { KnowledgeBase } from '@/types/knowledge'
@@ -36,6 +37,7 @@ interface KNavigationProps {
 }
 
 const mockPush = jest.fn()
+const mockToastSuccess = jest.mocked(toast.success)
 
 const mockRouter: KNavigationProps = { push: mockPush }
 
@@ -49,6 +51,10 @@ jest.mock('@/hooks/useTranslation', () => ({
 jest.mock('next/navigation', () => ({
   useRouter: () => mockRouter,
   useSearchParams: () => new URLSearchParams(),
+}))
+
+jest.mock('sonner', () => ({
+  toast: { success: jest.fn() },
 }))
 
 jest.mock('@/features/common/UserContext', () => ({
@@ -289,6 +295,7 @@ function resetMockTree() {
 describe('KnowledgeDocumentPageMobile detail view switch', () => {
   beforeEach(() => {
     mockPush.mockReset()
+    mockToastSuccess.mockReset()
     resetMockTree()
   })
 
@@ -388,7 +395,7 @@ describe('KnowledgeDocumentPageMobile detail view switch', () => {
     )
   })
 
-  it('7) mobile code wiki creation uses the dedicated coordinator and API', async () => {
+  it('7) mobile code wiki creation stays in the list after the dedicated API succeeds', async () => {
     render(<KnowledgeDocumentPageMobile />)
 
     await userEvent.click(screen.getByTestId('create-code-wiki'))
@@ -404,7 +411,11 @@ describe('KnowledgeDocumentPageMobile detail view switch', () => {
         })
       )
     })
-    expect(mockPush).toHaveBeenCalledWith('/knowledge/default/Wegent')
+    await waitFor(() => {
+      expect(mockTree.refreshPersonal).toHaveBeenCalledTimes(1)
+    })
+    expect(mockToastSuccess).toHaveBeenCalledWith('codeWiki.create.created')
+    expect(mockPush).not.toHaveBeenCalled()
   })
 
   it('8) code wiki owners can reach the existing KB configuration dialog', async () => {

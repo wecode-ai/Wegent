@@ -9,6 +9,16 @@ export interface ApiResponse<T = unknown> {
   headers: Record<string, string>
 }
 
+export function createBackendRequestHeaders(token?: string): Record<string, string> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    // Avoid reusing sockets after the E2E Uvicorn server closes its idle connection.
+    Connection: 'close',
+  }
+  if (token) headers.Authorization = `Bearer ${token}`
+  return headers
+}
+
 /**
  * API client for E2E tests
  * Provides typed methods for backend API calls
@@ -43,15 +53,7 @@ export class ApiClient {
     data?: unknown,
     timeout?: number
   ): Promise<ApiResponse<T>> {
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      // Avoid reusing sockets after the E2E Uvicorn server closes its idle connection.
-      Connection: 'close',
-    }
-
-    if (this.token) {
-      headers['Authorization'] = `Bearer ${this.token}`
-    }
+    const headers = createBackendRequestHeaders(this.token)
 
     let response: APIResponse
 

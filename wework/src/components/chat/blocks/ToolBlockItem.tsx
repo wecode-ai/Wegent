@@ -34,6 +34,7 @@ import { getWebSearchActivityItems } from './webSearchActivity'
 import { usePersistentProcessingExpansion } from './processingExpansionState'
 
 const INLINE_DIFF_MAX_LINES = 96
+const RECONNECTING_DISPLAY_DELAY_MS = 10_000
 
 interface ToolBlockItemProps {
   block: ProcessingBlock
@@ -69,6 +70,14 @@ export function ToolBlockItem({
   const { t } = useTranslation('chat')
   const [userExpanded, setUserExpanded] = usePersistentProcessingExpansion(stateKey)
   const isRunning = block.status !== 'done' && block.status !== 'error'
+  const reconnectingBlockId =
+    block.type === 'tool' && block.toolName === 'runtime_reconnecting' && isRunning
+      ? block.id
+      : null
+  const showReconnectingStatus = useDelayedBlockVisibility(
+    reconnectingBlockId,
+    RECONNECTING_DISPLAY_DELAY_MS
+  )
   const duration = useToolDuration(
     durationStartedAt ?? block.createdAt,
     durationEndAt ?? block.completedAt,
@@ -108,6 +117,7 @@ export function ToolBlockItem({
   }
 
   if (block.toolName === 'runtime_reconnecting') {
+    if (!showReconnectingStatus) return null
     const isChatGPTModel = block.toolInput?.model_kind === 'codex-official'
     if (isChatGPTModel) {
       return (
@@ -578,6 +588,21 @@ function useToolDuration(startedAt: number, fallbackEndAt: number | undefined, i
   const endedAt = isRunning ? now : (fallbackEndAt ?? completedAt ?? anchoredStartedAt)
   if (!isRunning && completedAt === null && fallbackEndAt === undefined) return ''
   return `${(Math.max(0, endedAt - durationStartedAt) / 1000).toFixed(1)}s`
+}
+
+function useDelayedBlockVisibility(blockId: string | null, delayMs: number): boolean {
+  const [visibleBlockId, setVisibleBlockId] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!blockId) return
+    const timer = window.setTimeout(() => setVisibleBlockId(blockId), delayMs)
+    return () => {
+      window.clearTimeout(timer)
+      setVisibleBlockId(null)
+    }
+  }, [blockId, delayMs])
+
+  return blockId !== null && visibleBlockId === blockId
 }
 
 function fileChangeRowLabel(
