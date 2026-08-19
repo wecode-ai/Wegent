@@ -36,6 +36,8 @@ When the main window is not visible, click the system tray icon to reopen it.
 
 Under **Settings → General → Runtime**, choose how many tasks the current device may run at the same time. The supported range is 1–20, and the default is 10. Once the limit is reached, new tasks enter the device's waiting queue without sending a model request.
 
+When the limit is increased, newly available execution slots immediately start waiting tasks in queue order, and the task list reflects their latest running state without waiting for another task to finish or requiring a manual refresh.
+
 Queued tasks show their current position in the task list. Move a task forward or backward to change the real order used when execution slots become available. **Run now** temporarily lets a selected task exceed the configured limit. It does not interrupt work that is already running, and no additional queued task starts until the active count falls below the configured limit again.
 
 The executor schedules the waiting queue in memory and stores a sealed recovery copy in the local application data directory. Pending tasks are restored in the saved order after Wework exits or restarts. The sealed file avoids plaintext exposure of queued credentials and detects tampering. Its key is stored in the same current-user-private application data directory, so it is not intended to protect against compromise of the local user account. The queue belongs only to the current device and is not uploaded or synchronized to another device.
