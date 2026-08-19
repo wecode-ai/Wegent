@@ -18,6 +18,7 @@ struct AllocationController {
     target: Cell<AllocationTarget>,
     applying: Cell<bool>,
     idle_pending: Cell<bool>,
+    requested_zoom: Cell<f64>,
 }
 
 fn find_host(container: &gtk::Box) -> Option<gtk::Fixed> {
@@ -124,6 +125,7 @@ fn place_webview(
         height,
     });
     apply_webview_allocation(&embedded_webview, x, y, width, height);
+    apply_effective_zoom(&host, &embedded_webview, &controller);
 
     Ok(())
 }
@@ -140,6 +142,7 @@ fn allocation_controller(host: &gtk::Fixed) -> Rc<AllocationController> {
         target: Cell::new(AllocationTarget::default()),
         applying: Cell::new(false),
         idle_pending: Cell::new(false),
+        requested_zoom: Cell::new(1.0),
     });
     let callback_controller = controller.clone();
     host.connect_size_allocate(move |host, _| {
@@ -199,7 +202,47 @@ fn enforce_webview_allocation(host: &gtk::Fixed, controller: &AllocationControll
     controller.applying.set(true);
     host.move_(&webview, target.x, target.y);
     apply_webview_allocation(&webview, target.x, target.y, target.width, target.height);
+    apply_effective_zoom(host, &webview, controller);
     controller.applying.set(false);
+}
+
+fn apply_effective_zoom(
+    host: &gtk::Fixed,
+    webview: &webkit2gtk::WebView,
+    controller: &AllocationController,
+) {
+    let target_width = controller.target.get().width.max(1) as f64;
+    // WebKitGTK renders this Tauri child at the GtkFixed host width even when
+    // GTK reports the temporary child allocation requested above. Use the host
+    // width as the physical viewport so browser zoom produces the requested
+    // CSS viewport rather than the host-sized 918px viewport seen in CI.
+    let actual_width = host.allocation().width().max(1) as f64;
+    let scale_factor = controller.requested_zoom.get() * actual_width / target_width;
+    webview.set_zoom_level(scale_factor.max(0.01));
+}
+
+pub fn set_zoom(webview: &Webview<Wry>, scale_factor: f64) -> Result<(), String> {
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    webview
+        .with_webview(move |platform_webview| {
+            let native_webview = platform_webview.inner();
+            if let Some(host) = native_webview
+                .parent()
+                .and_then(|parent| parent.downcast::<gtk::Fixed>().ok())
+            {
+                let controller = allocation_controller(&host);
+                controller.requested_zoom.set(scale_factor);
+                apply_effective_zoom(&host, native_webview, &controller);
+            } else {
+                native_webview.set_zoom_level(scale_factor);
+            }
+            let result: Result<(), String> = Ok(());
+            let _ = sender.send(result);
+        })
+        .map_err(|error| format!("Failed to access embedded browser webview: {error}"))?;
+    receiver
+        .recv_timeout(Duration::from_secs(5))
+        .map_err(|error| format!("Timed out setting embedded browser zoom: {error}"))?
 }
 
 fn apply_webview_allocation(

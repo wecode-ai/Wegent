@@ -2460,6 +2460,10 @@ pub fn embedded_browser_set_zoom(
     }
     let label = browser_label(label);
     let webview = get_entry(&state, &label)?.ready_webview()?;
+    #[cfg(target_os = "linux")]
+    return linux_host::set_zoom(&webview, scale_factor);
+
+    #[cfg(not(target_os = "linux"))]
     webview
         .set_zoom(scale_factor)
         .map_err(|error| format!("Failed to set embedded browser zoom: {error}"))
