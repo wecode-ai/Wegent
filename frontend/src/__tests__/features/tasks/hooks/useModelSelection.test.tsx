@@ -145,6 +145,22 @@ function mockDeferredModelsLoad(models: Model[]) {
   }
 }
 
+function mockDeferredModelFailure(error: Error) {
+  let rejectModels!: (error: Error) => void
+  const promise = new Promise<{ data: Model[] }>((_, reject) => {
+    rejectModels = reject
+  })
+  ;(modelApis.getUnifiedModels as jest.Mock).mockReturnValue(promise)
+  return {
+    async reject() {
+      await act(async () => {
+        rejectModels(error)
+        await promise.catch(() => undefined)
+      })
+    },
+  }
+}
+
 describe('useModelSelection', () => {
   beforeEach(() => {
     jest.clearAllMocks()
@@ -176,7 +192,7 @@ describe('useModelSelection', () => {
   })
 
   it('does not retry non-network model loading failures', async () => {
-    ;(modelApis.getUnifiedModels as jest.Mock).mockRejectedValue(new Error('Server rejected'))
+    const modelLoad = mockDeferredModelFailure(new Error('Server rejected'))
 
     const { result } = renderHook(() =>
       useModelSelection({
@@ -186,9 +202,10 @@ describe('useModelSelection', () => {
       })
     )
 
-    await waitFor(() => {
-      expect(result.current.error).toBe('common:models.errors.load_models_failed')
-    })
+    await modelLoad.reject()
+
+    expect(result.current.error).toBe('common:models.errors.load_models_failed')
+    expect(result.current.isLoading).toBe(false)
     expect(modelApis.getUnifiedModels).toHaveBeenCalledTimes(1)
   })
 
