@@ -436,10 +436,12 @@ async function createOfficialPluginTask({ control, installSelector, skillPath })
     errorLabel: 'The sent plugin reference degraded to its plain-text mention',
   })
   await control.awaitScenarioRequestCount('official_plugin', 2, WORKBENCH_READY_TIMEOUT_MS)
-  const taskId = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).workbench
-    ?.currentRuntimeTask?.taskId
-  assert.ok(taskId, 'The official plugin conversation did not expose its task ID')
-  return taskId
+  const taskSnapshot = await waitForWorkbenchDebugState(
+    control,
+    snapshot => Boolean(snapshot.workbench?.currentRuntimeTask?.taskId),
+    'The official plugin conversation did not expose its task ID'
+  )
+  return taskSnapshot.workbench.currentRuntimeTask.taskId
 }
 
 async function verifyPluginLifecycle({ control, fixture }) {
@@ -964,10 +966,12 @@ async function verifySkillMentionRendering({ control, fixture }) {
     text: QUALIFIED_SKILL_MENTION_COMPLETION_TEXT,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  const qualifiedSkillTaskId = JSON.parse(
-    await control.command('getWorkbenchDebugSnapshot', 'body')
-  ).workbench?.currentRuntimeTask?.taskId
-  assert.ok(qualifiedSkillTaskId, 'The qualified skill conversation did not expose its task ID')
+  const qualifiedSkillTaskSnapshot = await waitForWorkbenchDebugState(
+    control,
+    snapshot => Boolean(snapshot.workbench?.currentRuntimeTask?.taskId),
+    'The qualified skill conversation did not expose its task ID'
+  )
+  const qualifiedSkillTaskId = qualifiedSkillTaskSnapshot.workbench.currentRuntimeTask.taskId
   const officialPluginTaskRow = `[data-testid="runtime-local-task-row-${officialPluginTaskId}"]`
   const qualifiedSkillTaskRow = `[data-testid="runtime-local-task-row-${qualifiedSkillTaskId}"]`
   await control.command('waitFor', officialPluginTaskRow, {
