@@ -1332,6 +1332,27 @@ button:disabled {
     z-index: var(--z-system-popover);
   }
 
+  @keyframes wework-device-rotate {
+    0% {
+      transform: rotate(0) scale(1);
+    }
+    22% {
+      transform: rotate(44deg) scale(0.96);
+    }
+    42% {
+      transform: rotate(108deg) scale(0.98);
+    }
+    64% {
+      transform: rotate(158deg) scale(1.06);
+    }
+    84% {
+      transform: rotate(176deg) scale(1.02);
+    }
+    to {
+      transform: rotate(180deg) scale(1);
+    }
+  }
+
   .scrollbar-none {
     -ms-overflow-style: none;
     scrollbar-width: none;

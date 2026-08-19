@@ -107,18 +107,20 @@ describe('CloudFilesView', () => {
   })
 
   it('opens shared files in the reusable right-side preview component', async () => {
-    const readCloudFile = vi.fn(async () => new Blob(['# Notes'], { type: 'text/markdown' }))
+    const readCloudFile = vi.fn(
+      async () => new Blob(['void main() {}'], { type: 'application/octet-stream' })
+    )
     const api = {
       listCloudFiles: vi.fn(async () => ({
         items: [
           {
             id: 'file-1',
             cloud_project_id: 13,
-            path: 'research/notes.md',
-            name: 'notes.md',
+            path: 'src/main.zig',
+            name: 'main.zig',
             kind: 'file',
-            content_type: 'text/markdown',
-            size_bytes: 7,
+            content_type: 'application/octet-stream',
+            size_bytes: 14,
             sha256: null,
             description: '',
             created_by_user_id: 1,
@@ -137,11 +139,9 @@ describe('CloudFilesView', () => {
     render(<CloudFilesView api={api} project={project} />)
 
     await userEvent.click(await screen.findByTestId('cloud-file-preview-file-1'))
-    expect(await screen.findByTestId('cloud-file-preview-title')).toHaveTextContent(
-      'research/notes.md'
-    )
+    expect(await screen.findByTestId('cloud-file-preview-title')).toHaveTextContent('src/main.zig')
     await waitFor(() => expect(readCloudFile).toHaveBeenCalledWith('file-1'))
-    expect(await screen.findByTestId('cloud-file-preview-name')).toHaveTextContent('notes.md')
+    expect(await screen.findByTestId('cloud-file-preview-name')).toHaveTextContent('main.zig')
     expect(screen.getByTestId('cloud-file-preview-loading')).toHaveTextContent('false')
   })
 })

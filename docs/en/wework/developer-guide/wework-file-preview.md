@@ -8,7 +8,7 @@ The Wework file panel renders Markdown documents as formatted content, sends oth
 
 ## Supported Formats
 
-The viewer enables the office, lite, and engineering capabilities: PDF, Word, Excel, PowerPoint, images, HTML, Markdown, code, audio, video, Mermaid, and PlantUML diagrams. Unknown formats or rendering failures can be opened with the system default application in the macOS Tauri app.
+The viewer enables the office, lite, and engineering capabilities: PDF, Word, Excel, PowerPoint, images, HTML, Markdown, code, audio, video, Mermaid, and PlantUML diagrams. Code and text preview must not use an extension allowlist as its capability boundary. Common extensions, including Dart, enter the text-read fast path directly. Unknown extensions are inspected by content and use the code preview when they contain valid UTF-8 text without binary control bytes. Known binary formats continue directly to their specialized renderers. Unknown binary formats or rendering failures can be opened with the system default application in the macOS Tauri app.
 
 HTML must remain sandboxed and must not allow preview content to access Wework's same-origin state.
 
@@ -32,7 +32,7 @@ Both the Markdown preview and source view must own a vertical scrolling region. 
 
 ## Data Transfer
 
-For local workspaces, directory listing, text reads, and binary chunk reads access the disk directly in the Wework Tauri process instead of traversing executor IPC. Text reads are capped at 256 KiB, while `read_local_workspace_file_chunk` reads binary files in 1 MiB chunks. Every request includes the workspace root and performs canonical-path validation in Rust, rejecting escapes through symlinks or relative paths. The frontend assembles binary chunks into a `File` for the viewer.
+For local workspaces, directory listing, text reads, and binary chunk reads access the disk directly in the Wework Tauri process instead of traversing executor IPC. Text reads are capped at 256 KiB, while `read_local_workspace_file_chunk` reads binary files in 1 MiB chunks. Unknown extensions inspect the first chunk; when the content is binary, that chunk must be reused during assembly instead of being read again. Project-space cloud files are already downloaded as a `Blob`, so unknown types inspect only the first 64 KiB. Every workspace request includes the workspace root and performs canonical-path validation in Rust, rejecting escapes through symlinks or relative paths. The frontend assembles binary chunks into a `File` for the viewer.
 
 Workspaces opened through remote devices continue to use the device-side workspace API. The frontend still validates response paths, file names, and chunk offsets, and must not use the local native command as a fallback for a failed remote read.
 
@@ -50,4 +50,4 @@ The file panel determines workspace changes from the target's `deviceId`, `path`
 
 ## Validation
 
-When changing the viewer, validate Markdown's default preview, source switching, long-document scrolling, and single-header behavior, plus PDF, DOCX, XLSX, CSV, PPTX, PNG/JPEG/WebP, HTML, Mermaid, PlantUML, file switching, cancellation, directory expansion, symlinked workspaces, and workspace-boundary rejection. Image coverage must include light and dark themes and alpha transparency, confirming that neither the preview canvas nor transparent image regions retain the renderer's light background. Diagram coverage must include light and dark themes, complete SVG fitting, PNG copy, and the system save dialog. Also observe an open text preview during task streaming and confirm that rerenders with an equivalent workspace target neither reread nor flicker the preview.
+When changing the viewer, validate Markdown's default preview, source switching, long-document scrolling, and single-header behavior, plus Dart, UTF-8 source files with unknown extensions, binary files with unknown extensions, PDF, DOCX, XLSX, CSV, PPTX, PNG/JPEG/WebP, HTML, Mermaid, PlantUML, file switching, cancellation, directory expansion, symlinked workspaces, and workspace-boundary rejection. Unknown binary coverage must also confirm that the probe chunk is not read twice. Image coverage must include light and dark themes and alpha transparency, confirming that neither the preview canvas nor transparent image regions retain the renderer's light background. Diagram coverage must include light and dark themes, complete SVG fitting, PNG copy, and the system save dialog. Also observe an open text preview during task streaming and confirm that rerenders with an equivalent workspace target neither reread nor flicker the preview.

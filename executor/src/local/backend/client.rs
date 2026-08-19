@@ -107,6 +107,12 @@ where
         Ok(ack_success(&response))
     }
 
+    pub async fn emit_liveness_heartbeat(&self) -> Result<(), String> {
+        self.transport
+            .emit(HEARTBEAT_EVENT, self.heartbeat_payload())
+            .await
+    }
+
     pub async fn emit_event(&self, event: EventEnvelope) -> Result<(), String> {
         let event_type = event.event_type.clone();
         let payload = backend_event_payload(event)?;
