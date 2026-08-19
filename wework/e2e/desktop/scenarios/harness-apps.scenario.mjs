@@ -100,8 +100,7 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       await control.command('clickWhenEnabled', '[data-testid="harness-app-install-confirm"]', {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('waitFor', `[data-testid="harness-app-row-${INSTALLATION_ID}"]`, {
-        text: 'installed',
+      await control.command('waitFor', `[data-testid="harness-app-start-${INSTALLATION_ID}"]`, {
         timeoutMs: uiTimeoutMs,
       })
       await captureScreenshot(control, 'harness-apps-02-installed.png', 'body')
