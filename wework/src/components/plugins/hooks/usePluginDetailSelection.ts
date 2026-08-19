@@ -1,10 +1,39 @@
-import { useEffect, useMemo, type Dispatch, type SetStateAction } from 'react'
+import { useCallback, useEffect, useMemo, useRef, type Dispatch, type SetStateAction } from 'react'
 import type { PluginReference } from '@/features/plugins/pluginNavigation'
 import { isWegentCloudMarketplace } from '@/features/plugins/pluginNavigation'
 import type { PluginMarketplaceItem } from '@/types/api'
 import { marketplaceItemMarketplaceId } from '../pluginDistribution'
 import type { InstalledPluginItem } from '../PluginManagementRows'
 import type { PluginMarketplaceState } from '../workspace/marketplaceWorkspaceHelpers'
+
+export function findMarketplaceItemForPluginReference(
+  items: PluginMarketplaceItem[],
+  reference: PluginReference | null | undefined
+): PluginMarketplaceItem | null {
+  const pluginName = reference?.pluginName?.trim() ?? ''
+  const marketplaceName = reference?.marketplaceName?.trim() ?? ''
+  if (!pluginName || !marketplaceName) return null
+
+  const normalizedMarketplaceName = marketplaceName.toLowerCase()
+  return (
+    items.find(item => {
+      if (item.name !== pluginName) return false
+      const marketplaceId = marketplaceItemMarketplaceId(item)?.toLowerCase()
+      if (!marketplaceId) return isWegentCloudMarketplace(marketplaceName)
+      return (
+        marketplaceId === normalizedMarketplaceName ||
+        (isWegentCloudMarketplace(marketplaceId) && isWegentCloudMarketplace(marketplaceName))
+      )
+    }) ?? null
+  )
+}
+
+function pluginReferenceKey(reference: PluginReference | null | undefined): string | null {
+  const pluginName = reference?.pluginName?.trim() ?? ''
+  const marketplaceName = reference?.marketplaceName?.trim() ?? ''
+  if (!pluginName || !marketplaceName) return null
+  return `${pluginName}@${marketplaceName}`.toLowerCase()
+}
 
 export function usePluginDetailSelection({
   pluginReference,
@@ -23,6 +52,7 @@ export function usePluginDetailSelection({
   setSelectedPluginId: Dispatch<SetStateAction<string | number | null>>
   setSelectedMarketplacePluginId: Dispatch<SetStateAction<string | number | null>>
 }) {
+  const dismissedPluginReferenceKeyRef = useRef<string | null>(null)
   const selectedPlugin = useMemo(
     () =>
       selectedPluginId === null
@@ -39,24 +69,18 @@ export function usePluginDetailSelection({
     [pluginMarketplaceState.items, selectedMarketplacePluginId]
   )
 
-  const requestedPluginName = pluginReference?.pluginName ?? null
-  const requestedMarketplaceName = pluginReference?.marketplaceName ?? null
   useEffect(() => {
-    if (!requestedPluginName || !requestedMarketplaceName || pluginMarketplaceState.isLoading) {
+    const referenceKey = pluginReferenceKey(pluginReference)
+    if (!referenceKey) {
+      dismissedPluginReferenceKeyRef.current = null
       return
     }
+    if (dismissedPluginReferenceKeyRef.current === referenceKey) return
 
-    const normalizedMarketplaceName = requestedMarketplaceName.toLowerCase()
-    const requestedPlugin = pluginMarketplaceState.items.find(item => {
-      if (item.name !== requestedPluginName) return false
-      const marketplaceId = marketplaceItemMarketplaceId(item)?.toLowerCase()
-      if (!marketplaceId) return isWegentCloudMarketplace(requestedMarketplaceName)
-      return (
-        marketplaceId === normalizedMarketplaceName ||
-        (isWegentCloudMarketplace(marketplaceId) &&
-          isWegentCloudMarketplace(requestedMarketplaceName))
-      )
-    })
+    const requestedPlugin = findMarketplaceItemForPluginReference(
+      pluginMarketplaceState.items,
+      pluginReference
+    )
     if (!requestedPlugin) return
 
     setSelectedPluginId(null)
@@ -64,15 +88,19 @@ export function usePluginDetailSelection({
       current === requestedPlugin.id ? current : requestedPlugin.id
     )
   }, [
-    pluginMarketplaceState.isLoading,
     pluginMarketplaceState.items,
-    requestedMarketplaceName,
-    requestedPluginName,
+    pluginReference,
     setSelectedMarketplacePluginId,
     setSelectedPluginId,
   ])
 
-  return { selectedPlugin, selectedMarketplacePlugin }
+  const dismissPluginReferenceDetail = useCallback(() => {
+    dismissedPluginReferenceKeyRef.current = pluginReferenceKey(pluginReference)
+    setSelectedPluginId(null)
+    setSelectedMarketplacePluginId(null)
+  }, [pluginReference, setSelectedMarketplacePluginId, setSelectedPluginId])
+
+  return { selectedPlugin, selectedMarketplacePlugin, dismissPluginReferenceDetail }
 }
 
 export function openMarketplacePluginDetailSelection({

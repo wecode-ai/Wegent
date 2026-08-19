@@ -128,7 +128,7 @@ function buildComponentItems(plugin: InstalledPlugin): DetailComponentItem[] {
       componentKey: `app:${item.name}`,
       type: 'app',
       name: item.name,
-      description: item.path,
+      description: item.description || item.path,
       toggleable: false,
     })),
     ...components.agents.map(item => ({
@@ -165,7 +165,9 @@ function buildComponentItems(plugin: InstalledPlugin): DetailComponentItem[] {
       componentKey: `connector:${item.slug}`,
       type: 'connector',
       name: item.slug,
-      description: item.authPolicy === 'on_install' ? '安装和使用此插件需要授权' : '可选应用连接',
+      description:
+        item.description ||
+        (item.authPolicy === 'on_install' ? '安装和使用此插件需要授权' : '可选应用连接'),
       toggleable: false,
     })),
     ...components.lsps.map(item => ({

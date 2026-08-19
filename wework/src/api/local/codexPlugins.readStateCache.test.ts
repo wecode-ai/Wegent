@@ -877,8 +877,9 @@ describe('local codex plugin readState cache', () => {
         start: ['auth', 'login'],
       })
     )
-    // Heavy skill payloads stay out of durable storage.
-    expect(peeked?.installedPlugins[0]?.spec.components.skills).toEqual([])
+    expect(peeked?.installedPlugins[0]?.spec.components.skills).toEqual([
+      { name: 'dingtalk', description: 'skill', path: 'dingtalk' },
+    ])
   })
 
   test('readInstalledPluginForTrial resolves cloud numeric ids to local plugin@marketplace', async () => {
@@ -1012,6 +1013,95 @@ describe('local codex plugin readState cache', () => {
     )
     expect((item?.interface as { longDescription?: string } | null)?.longDescription).toBeFalsy()
     expect((item?.interface as { screenshots?: string[] } | null)?.screenshots).toBeFalsy()
+  })
+
+  test('readMarketplacePluginDetail uses plugin/read without waiting on plugin/list', async () => {
+    window.localStorage.setItem(
+      'wework.plugins.codexReadState.v2',
+      JSON.stringify({
+        version: 2,
+        entries: {
+          '|all': {
+            paramsKey: '|all',
+            cachedAt: Date.now(),
+            state: {
+              marketplaceItems: [],
+              installedPlugins: [],
+              marketplaces: [{ id: 'openai-curated-remote', name: 'OpenAI', path: null }],
+              selectedMarketplaceId: 'openai-curated-remote',
+              marketplacePath: '',
+              installRegistryPath: '',
+              deviceId: 'local-device',
+            },
+          },
+        },
+      })
+    )
+    let pluginListCalls = 0
+    mocks.requestLocalExecutor.mockImplementation(
+      async (
+        method: string,
+        params: {
+          method?: string
+          params?: { pluginName?: string; remoteMarketplaceName?: string | null }
+        }
+      ) => {
+        if (method !== 'codex.app_server_request') {
+          throw new Error(`Unexpected executor method ${method}`)
+        }
+        if (params.method === 'plugin/list') {
+          pluginListCalls += 1
+          throw new Error('plugin/list must not run for marketplace detail')
+        }
+        if (params.method === 'plugin/installed') {
+          throw new Error('plugin/installed must not run for marketplace detail')
+        }
+        if (params.method === 'plugin/read') {
+          expect(params.params?.pluginName).toBe('github')
+          expect(params.params?.remoteMarketplaceName).toBe('openai-curated-remote')
+          return {
+            plugin: {
+              marketplaceName: 'openai-curated-remote',
+              summary: {
+                id: 'github@openai-curated-remote',
+                name: 'github',
+                installed: true,
+                enabled: true,
+                interface: {
+                  displayName: 'GitHub',
+                  homepageUrl: 'https://github.com/',
+                },
+              },
+              description: 'Triage PRs and CI',
+              skills: [
+                {
+                  name: 'Review Follow-up',
+                  description: 'Address actionable PR feedback.',
+                  enabled: true,
+                },
+              ],
+              apps: [
+                {
+                  id: 'github',
+                  name: 'GitHub',
+                  description: 'Access repositories, issues, and pull requests.',
+                },
+              ],
+              hooks: [],
+              connectors: [],
+            },
+          }
+        }
+        throw new Error(`Unexpected app-server method ${params.method}`)
+      }
+    )
+
+    const api = createLocalCodexPluginApi()
+    const detailed = await api.readMarketplacePluginDetail('openai-curated-remote', 'github')
+    expect(pluginListCalls).toBe(0)
+    expect(detailed.spec.components.skills.map(skill => skill.name)).toEqual(['Review Follow-up'])
+    expect(detailed.spec.components.apps?.map(app => app.name)).toEqual(['GitHub'])
+    expect(detailed.spec.interface?.websiteUrl).toBe('https://github.com/')
   })
 
   test('durable localStorage snapshot drops oversized inlined plugin artwork', async () => {

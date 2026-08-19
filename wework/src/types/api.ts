@@ -2006,6 +2006,7 @@ export interface InstalledPluginComponents {
     slug: string
     authPolicy: 'on_install' | 'on_use' | 'optional'
     localAuth?: PluginLocalAuthDefinition | null
+    description?: string | null
   }>
   lsps: PluginPathComponent[]
   monitors: PluginPathComponent[]

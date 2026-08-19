@@ -1499,6 +1499,7 @@
     "plugins_cloud_marketplace_unavailable_hint": "Check the Wework cloud connection and try again.",
     "plugins_connector_cloud_required": "Connect your Wegent account before authorizing GitHub",
     "plugins_connector_unavailable": "The required app connection is unavailable",
+    "plugins_connector_chat_auth": "This plugin authorizes GitHub in chat. Follow the prompt when you send a message.",
     "plugin_connect_after_install": "Connect after installing",
     "plugins_wegent_cloud_marketplace": "Wegent Cloud Marketplace",
     "plugins_personal_marketplace": "Personal marketplace",

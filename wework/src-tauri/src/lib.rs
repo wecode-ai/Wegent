@@ -5133,6 +5133,7 @@ pub fn run() {
             local_executor::local_executor_package_plugin,
             local_executor::local_executor_read_plugin_cloud_links,
             local_executor::local_executor_list_personal_marketplace_plugins,
+            local_executor::local_executor_list_wegent_store_plugins,
             local_executor::local_executor_read_plugin_manifest,
             local_executor::local_executor_read_codex_local_config,
             local_executor::local_executor_read_log,

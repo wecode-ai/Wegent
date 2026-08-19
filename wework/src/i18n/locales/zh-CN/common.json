@@ -1497,6 +1497,7 @@
     "plugins_cloud_marketplace_unavailable_hint": "请检查 Wework 云端连接后重试。",
     "plugins_connector_cloud_required": "请先连接 Wegent 账户再授权 GitHub",
     "plugins_connector_unavailable": "所需应用连接暂不可用",
+    "plugins_connector_chat_auth": "此插件通过对话授权 GitHub，请在聊天中按提示完成登录。",
     "plugin_connect_after_install": "安装后可连接",
     "plugins_wegent_cloud_marketplace": "Wegent 云端市场",
     "plugins_personal_marketplace": "个人市场",

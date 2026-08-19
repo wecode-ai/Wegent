@@ -87,6 +87,29 @@ export function linkedCloudInstalledPluginId(item: InstalledPlugin): string | nu
   return typeof value === 'string' || typeof value === 'number' ? value : null
 }
 
+/** Fold unpacked Wegent store dirs into Codex membership without duplicating ids. */
+export function mergeLocalInstalledWithStorePackages(
+  localItems: InstalledPlugin[],
+  storePackages: InstalledPlugin[]
+): InstalledPlugin[] {
+  if (storePackages.length === 0) return localItems
+  const existing = new Set(
+    localItems.flatMap(item => {
+      const id = localPluginId(item)
+      const name = String(item.metadata.name || '').trim()
+      return [id, name].filter(Boolean)
+    })
+  )
+  const extra = storePackages.filter(item => {
+    const id = localPluginId(item)
+    const name = String(item.metadata.name || '').trim()
+    if (id && existing.has(id)) return false
+    if (name && existing.has(name)) return false
+    return Boolean(id || name)
+  })
+  return extra.length === 0 ? localItems : [...localItems, ...extra]
+}
+
 export function mergeInstalledPlugins(
   cloudItems: InstalledPlugin[],
   localItems: InstalledPlugin[],

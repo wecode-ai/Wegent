@@ -6,12 +6,13 @@ import {
 import { createPluginApi } from '@/api/plugins'
 import { getRuntimeConfig } from '@/config/runtime'
 import { navigateTo } from '@/lib/navigation'
+import { isPersonalMarketplaceId } from '@/features/plugins/builtinPlugins'
 import {
   isBuiltInMarketplaceId,
   isOpenAiOfficialMarketplaceId,
 } from '@/features/plugins/marketplaceIdentity'
 import { marketplaceNameForVisibility } from '@/features/plugins/pluginMarketplaceIdentity'
-import { queuePluginTrial } from '@/features/plugins/pluginTrial'
+import { queuePluginPromptTrial, queuePluginTrial } from '@/features/plugins/pluginTrial'
 import type { PluginMarketplaceCacheSnapshot } from '@/features/plugins/pluginMarketplaceCache'
 import type { InstalledPlugin, PluginAccessResponse, PluginMarketplaceItem } from '@/types/api'
 import { connectorDisplayName } from '../connectorDisplayName'
@@ -20,7 +21,6 @@ import { resolvePluginLogo } from '../plugin-assets'
 import {
   installedPluginSourceLabel,
   isCloudManagedInstalledPlugin,
-  localPluginId,
   mergeInstalledPlugins,
   storeDirMatchesPluginKey,
 } from '../installedPluginMerge'
@@ -233,10 +233,53 @@ export function withMarketplacePluginDetail(
       spec: {
         ...plugin.raw.spec,
         components: detail.spec.components,
+        componentStates: detail.spec.componentStates || plugin.raw.spec.componentStates,
         description: detail.spec.description || plugin.raw.spec.description,
+        interface: {
+          ...plugin.raw.spec.interface,
+          ...detail.spec.interface,
+        },
       },
     },
   }
+}
+
+export function pluginDetailHasVisibleComponents(plugin: InstalledPluginItem): boolean {
+  const components = plugin.raw.spec.components
+  return (
+    components.skills.length > 0 ||
+    components.commands.length > 0 ||
+    (components.apps?.length ?? 0) > 0 ||
+    components.agents.length > 0 ||
+    components.mcps.length > 0 ||
+    components.hooks.length > 0 ||
+    (components.connectors?.length ?? 0) > 0
+  )
+}
+
+export function keepRicherMarketplacePluginDetail(
+  previous: InstalledPluginItem | null,
+  next: InstalledPluginItem
+): InstalledPluginItem {
+  if (
+    previous &&
+    previous.raw.spec.source.pluginKey === next.raw.spec.source.pluginKey &&
+    pluginDetailHasVisibleComponents(previous) &&
+    !pluginDetailHasVisibleComponents(next)
+  ) {
+    return {
+      ...next,
+      raw: {
+        ...next.raw,
+        spec: {
+          ...next.raw.spec,
+          components: previous.raw.spec.components,
+          componentStates: previous.raw.spec.componentStates || next.raw.spec.componentStates,
+        },
+      },
+    }
+  }
+  return next
 }
 
 export function createDefaultPluginApi(apiBaseUrl?: string, token?: string | null) {
@@ -313,20 +356,26 @@ export function tryPluginInChat(plugin: InstalledPlugin): boolean {
   return queued
 }
 
-export function resolveMarketplaceTrialPluginId(
-  item: PluginMarketplaceItem,
-  installed: InstalledPluginItem | null | undefined
-): string | number {
-  const marketplaceId = marketplaceItemMarketplaceId(item)
-  const pluginKey = item.name.trim()
-  if (installed?.raw) {
-    const localId = localPluginId(installed.raw)
-    if (localId && String(localId).includes('@')) return localId
-    if (marketplaceId && pluginKey) return `${pluginKey}@${marketplaceId}`
-    return installed.id
+/**
+ * Start a plugin trial from catalog/installed rows already on screen.
+ * Do not wait on Codex plugin/read or GitHub plugin/list — OpenAI official
+ * plugins already have name, marketplace, and prompts in the detail payload.
+ */
+export function queueMarketplacePluginTrial(options: {
+  item: PluginMarketplaceItem
+  installed?: InstalledPluginItem | null
+  prompt?: string
+  rememberMarketplaceSelection?: (marketplaceId: string) => void
+}): boolean {
+  const marketplaceId = localMarketplaceIdFromItem(options.item)
+  if (marketplaceId) options.rememberMarketplaceSelection?.(marketplaceId)
+  const trialPlugin = (options.installed ?? toMarketplaceInstalledPluginItem(options.item)).raw
+  if (options.prompt) {
+    const queued = queuePluginPromptTrial(trialPlugin, options.prompt, { openInNewChat: true })
+    if (queued) navigateTo('/')
+    return queued
   }
-  if (marketplaceId && pluginKey) return `${pluginKey}@${marketplaceId}`
-  return item.installedPluginId ?? item.id
+  return tryPluginInChat(trialPlugin)
 }
 
 export function findInstalledPluginForMarketplaceItem(
@@ -449,6 +498,35 @@ export function isCodexCatalogItem(item: PluginMarketplaceItem): boolean {
   if (isLocalMarketplaceItem(item)) return true
   const marketplaceId = marketplaceItemMarketplaceId(item)
   return marketplaceId != null && isOpenAiOfficialMarketplaceId(marketplaceId)
+}
+
+export function pluginUsesWegentConnectorOAuth(
+  plugin?: InstalledPluginItem | PluginMarketplaceItem | null
+): boolean {
+  // OpenAI/personal connectors authorize in chat. Wegent cloud plugins use
+  // connector-apps OAuth. Missing plugin data stays on the host OAuth path.
+  if (!plugin) return true
+  if ('raw' in plugin) {
+    if (typeof plugin.raw.spec.pluginId === 'number') return true
+    const marketplace =
+      plugin.raw.spec.source.marketplace ||
+      plugin.raw.metadata.namespace ||
+      plugin.raw.spec.source.providerKey ||
+      ''
+    if (isOpenAiOfficialMarketplaceId(marketplace) || isPersonalMarketplaceId(marketplace)) {
+      return false
+    }
+    return plugin.raw.spec.sourceProvider !== 'codex'
+  }
+  return !isCodexCatalogItem(plugin)
+}
+
+export function pluginDetailActionErrorMessage(
+  error: { pluginId: string | number; message: string } | null,
+  pluginId: string | number | null | undefined
+): string | null {
+  if (!error || pluginId == null || String(pluginId).length === 0) return null
+  return String(error.pluginId) === String(pluginId) ? error.message : null
 }
 
 export function preferNonEmptyCatalogRows(

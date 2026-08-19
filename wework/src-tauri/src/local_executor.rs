@@ -624,6 +624,21 @@ pub struct PersonalMarketplaceListResult {
     plugins: Vec<PersonalMarketplacePluginSummary>,
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WegentStorePluginSummary {
+    name: String,
+    version: Option<String>,
+    plugin_path: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WegentStoreListResult {
+    store_path: String,
+    plugins: Vec<WegentStorePluginSummary>,
+}
+
 struct LocalExecutorLogTail {
     path: String,
     content: String,
@@ -5021,6 +5036,149 @@ pub async fn local_executor_list_personal_marketplace_plugins(
     .map_err(|error| format!("Failed to join personal marketplace list task: {error}"))?
 }
 
+fn version_from_store_dir_name(name: &str) -> Option<String> {
+    let version = name.rsplit_once('-')?.1;
+    let mut parts = version.splitn(3, '.');
+    let major = parts.next()?;
+    let minor = parts.next()?;
+    let patch = parts.next()?;
+    if major.is_empty()
+        || minor.is_empty()
+        || patch.is_empty()
+        || !major.chars().all(|character| character.is_ascii_digit())
+        || !minor.chars().all(|character| character.is_ascii_digit())
+    {
+        return None;
+    }
+    let patch_core = patch.split(['-', '+']).next().unwrap_or(patch);
+    if patch_core.is_empty()
+        || !patch_core
+            .chars()
+            .all(|character| character.is_ascii_digit())
+    {
+        return None;
+    }
+    Some(version.to_string())
+}
+
+fn wegent_store_plugin_summary(name: &str, plugin_root: &Path) -> WegentStorePluginSummary {
+    let manifest_path = [
+        plugin_root.join(".codex-plugin/plugin.json"),
+        plugin_root.join(".claude-plugin/plugin.json"),
+    ]
+    .into_iter()
+    .find(|path| path.is_file());
+    let mut version = None;
+    if let Some(manifest_path) = manifest_path {
+        if let Ok(content) = fs::read_to_string(&manifest_path) {
+            if let Ok(manifest) = serde_json::from_str::<Value>(&content) {
+                version = optional_trimmed_string(manifest.get("version"));
+            }
+        }
+    }
+    WegentStorePluginSummary {
+        name: name.to_string(),
+        version: version.or_else(|| version_from_store_dir_name(name)),
+        plugin_path: plugin_root.display().to_string(),
+    }
+}
+
+fn push_wegent_store_root(roots: &mut Vec<PathBuf>, seen: &mut HashSet<PathBuf>, path: PathBuf) {
+    let key = path.canonicalize().unwrap_or_else(|_| path.clone());
+    if seen.insert(key) {
+        roots.push(path);
+    }
+}
+
+fn wegent_store_plugin_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    let mut seen = HashSet::new();
+    if let Ok(home) = local_executor_home_path() {
+        push_wegent_store_root(
+            &mut roots,
+            &mut seen,
+            home.join("capabilities").join("store").join("plugins"),
+        );
+    }
+    if let Some(user_home) = dirs::home_dir() {
+        let wework = user_home.join(WEWORK_HOME_DIR);
+        push_wegent_store_root(
+            &mut roots,
+            &mut seen,
+            wework.join("capabilities").join("store").join("plugins"),
+        );
+        if let Ok(apps) = fs::read_dir(wework.join("apps")) {
+            for entry in apps.filter_map(Result::ok) {
+                let Ok(metadata) = fs::symlink_metadata(entry.path()) else {
+                    continue;
+                };
+                if !metadata.is_dir() || metadata.file_type().is_symlink() {
+                    continue;
+                }
+                push_wegent_store_root(
+                    &mut roots,
+                    &mut seen,
+                    entry
+                        .path()
+                        .join("capabilities")
+                        .join("store")
+                        .join("plugins"),
+                );
+            }
+        }
+    }
+    roots
+}
+
+fn list_wegent_store_plugins_from_roots(roots: &[PathBuf]) -> WegentStoreListResult {
+    let mut by_name: std::collections::BTreeMap<String, WegentStorePluginSummary> =
+        std::collections::BTreeMap::new();
+    let mut store_path = String::new();
+    for root in roots {
+        if store_path.is_empty() && root.is_dir() {
+            store_path = root.display().to_string();
+        }
+        let Ok(entries) = fs::read_dir(root) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let Some(name) = entry.file_name().to_str().map(str::to_string) else {
+                continue;
+            };
+            if name.starts_with('.') {
+                continue;
+            }
+            by_name
+                .entry(name.clone())
+                .or_insert_with(|| wegent_store_plugin_summary(&name, &path));
+        }
+    }
+    WegentStoreListResult {
+        store_path,
+        plugins: by_name.into_values().collect(),
+    }
+}
+
+/// Lists unpacked Wegent store packages from disk without calling Codex plugin/list.
+#[tauri::command]
+pub async fn local_executor_list_wegent_store_plugins() -> Result<WegentStoreListResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let listed = list_wegent_store_plugins_from_roots(&wegent_store_plugin_roots());
+        log::info!(
+            "Listed wegent store plugins from disk: path={}, count={}",
+            listed.store_path,
+            listed.plugins.len()
+        );
+        Ok(listed)
+    })
+    .await
+    .map_err(|error| format!("Failed to join wegent store list task: {error}"))?
+}
+
 #[tauri::command]
 pub async fn local_executor_import_external_content(
     options: ExternalContentImportOptions,
@@ -5282,6 +5440,57 @@ mod tests {
         restore_env(WEGENT_CODEX_HOME_ENV, previous_codex_home);
         let _ = fs::remove_dir_all(root);
         let _ = fs::remove_dir_all(fake_home);
+    }
+
+    #[test]
+    fn lists_wegent_store_plugins_from_disk_without_codex() {
+        let _guard = env_lock();
+        let previous_home = std::env::var_os("HOME");
+        let previous_executor_home = std::env::var_os(LOCAL_EXECUTOR_HOME_ENV);
+        let fake_home = import_test_root("list-wegent-store-home");
+        let executor_home = fake_home
+            .join(".wework")
+            .join("apps")
+            .join("com.weibo.wework");
+        let store_dir = executor_home
+            .join("capabilities")
+            .join("store")
+            .join("plugins");
+        let package_dir = store_dir.join("269646-wegent-sina-email-0.1.11");
+        fs::create_dir_all(&package_dir).unwrap();
+        fs::create_dir_all(package_dir.join(".codex-plugin")).unwrap();
+        fs::write(
+            package_dir.join(".codex-plugin/plugin.json"),
+            r#"{"name":"sina-email","version":"0.1.11"}"#,
+        )
+        .unwrap();
+        fs::create_dir_all(store_dir.join(".hidden")).unwrap();
+        fs::write(store_dir.join("not-a-plugin.txt"), "skip").unwrap();
+        std::env::set_var("HOME", &fake_home);
+        std::env::set_var(LOCAL_EXECUTOR_HOME_ENV, &executor_home);
+
+        let listed = list_wegent_store_plugins_from_roots(&wegent_store_plugin_roots());
+
+        restore_env("HOME", previous_home);
+        restore_env(LOCAL_EXECUTOR_HOME_ENV, previous_executor_home);
+        let _ = fs::remove_dir_all(fake_home);
+
+        assert_eq!(listed.plugins.len(), 1);
+        assert_eq!(listed.plugins[0].name, "269646-wegent-sina-email-0.1.11");
+        assert_eq!(listed.plugins[0].version.as_deref(), Some("0.1.11"));
+        assert!(listed
+            .store_path
+            .replace('\\', "/")
+            .ends_with("capabilities/store/plugins"));
+    }
+
+    #[test]
+    fn version_from_store_dir_name_reads_semver_suffix() {
+        assert_eq!(
+            version_from_store_dir_name("267250-wegent-wegent-sites-0.1.6").as_deref(),
+            Some("0.1.6")
+        );
+        assert_eq!(version_from_store_dir_name("notes"), None);
     }
 
     #[test]

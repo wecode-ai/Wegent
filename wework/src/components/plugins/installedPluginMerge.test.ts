@@ -4,6 +4,7 @@ import {
   hasLocalCodexMaterialization,
   isCloudManagedInstalledPlugin,
   mergeInstalledPlugins,
+  mergeLocalInstalledWithStorePackages,
   resolveProgressiveLocalInstalledRaw,
 } from './installedPluginMerge'
 
@@ -245,6 +246,25 @@ describe('mergeInstalledPlugins', () => {
     expect(merged).toHaveLength(1)
     expect(hasLocalCodexMaterialization(merged[0]!)).toBe(true)
     expect(merged[0]?.spec.pluginId).toBe(267250)
+  })
+
+  test('folds a disk store package that Codex membership omitted', () => {
+    const local = localCodexPlugin({ id: 'documents-local', name: 'documents' })
+    const store = localCodexPlugin({
+      id: '269646-wegent-sina-email-0.1.11',
+      name: '269646-wegent-sina-email-0.1.11',
+      pluginKey: '269646-wegent-sina-email-0.1.11',
+      marketplace: 'wegent',
+      version: '0.1.11',
+    })
+
+    const merged = mergeLocalInstalledWithStorePackages([local], [store, local])
+
+    expect(merged).toHaveLength(2)
+    expect(merged.map(item => item.metadata.labels?.id)).toEqual([
+      'documents-local',
+      '269646-wegent-sina-email-0.1.11',
+    ])
   })
 
   test('prefers a locally created plugin linked to the same published cloud plugin', () => {

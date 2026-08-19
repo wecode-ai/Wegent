@@ -50,7 +50,10 @@ import {
 } from '@/features/plugins/pluginMarketplaceCache'
 import { useMarketplaceFilters } from './hooks/useMarketplaceFilters'
 import { usePluginMarketplaceCatalog } from './hooks/usePluginMarketplaceCatalog'
-import { usePluginDetailSelection } from './hooks/usePluginDetailSelection'
+import {
+  findMarketplaceItemForPluginReference,
+  usePluginDetailSelection,
+} from './hooks/usePluginDetailSelection'
 import { usePluginInstallActions } from './hooks/usePluginInstallActions'
 import { InstalledPluginStrip } from './workspace/InstalledPluginStrip'
 import { MarketplaceCatalogView } from './workspace/MarketplaceCatalogView'
@@ -144,6 +147,7 @@ import {
   isCodexCatalogItem,
   isMarketplaceSourceValid,
   isUserAddedMarketplace,
+  keepRicherMarketplacePluginDetail,
   localMarketplaceIdFromItem,
   localMarketplaceKey,
   marketplaceComponentCount,
@@ -151,6 +155,8 @@ import {
   mergeWarmMarketplaceItems,
   mergeWarmMarketplaceOptions,
   nonCodexCatalogItems,
+  pluginDetailActionErrorMessage,
+  pluginUsesWegentConnectorOAuth,
   preferNonEmptyCatalogRows,
   rememberMarketplaceKey,
   rememberedMarketplaceKey,
@@ -205,9 +211,6 @@ export function PluginsWorkspace({
     localExecutorCloudConnection.connected
   const [isCreateMenuOpen, setIsCreateMenuOpen] = useState(false)
   const [selectedPluginId, setSelectedPluginId] = useState<string | number | null>(null)
-  const [selectedMarketplacePluginId, setSelectedMarketplacePluginId] = useState<
-    string | number | null
-  >(null)
   const [installingMarketplacePluginIds, setInstallingMarketplacePluginIds] = useState<
     Set<string | number>
   >(() => new Set())
@@ -247,6 +250,10 @@ export function PluginsWorkspace({
   const [localConnectorAuthBySlug, setLocalConnectorAuthBySlug] = useState<
     Record<string, 'connected' | 'disconnected'>
   >({})
+  const [pluginDetailActionError, setPluginDetailActionError] = useState<{
+    pluginId: string | number
+    message: string
+  } | null>(null)
   const [selectedRequiredConnectionNames, setSelectedRequiredConnectionNames] = useState<
     string[] | null
   >(null)
@@ -339,6 +346,15 @@ export function PluginsWorkspace({
       }
     }
   )
+  const pluginReferenceRef = useRef(pluginReference)
+  pluginReferenceRef.current = pluginReference
+  const [selectedMarketplacePluginId, setSelectedMarketplacePluginId] = useState<
+    string | number | null
+  >(
+    () =>
+      findMarketplaceItemForPluginReference(initialMarketplaceItemsWithInstalls, pluginReference)
+        ?.id ?? null
+  )
   const [deviceAutoSyncSettled, setDeviceAutoSyncSettled] = useState(() =>
     hasSettledPluginDeviceAutoSync(currentDeviceId)
   )
@@ -359,6 +375,7 @@ export function PluginsWorkspace({
   const currentDeviceIdRef = useRef(currentDeviceId)
   currentDeviceIdRef.current = currentDeviceId
   const deferredCodexCatalogRequestRef = useRef('')
+  const reconcileGithubCatalogRef = useRef(false)
   useEffect(() => {
     setDeviceAutoSyncSettled(hasSettledPluginDeviceAutoSync(currentDeviceId))
   }, [currentDeviceId])
@@ -400,6 +417,7 @@ export function PluginsWorkspace({
     setLocalInstalledStateReadyKey(null)
     setPersonalDiskSettledKey(null)
     deferredCodexCatalogRequestRef.current = ''
+    reconcileGithubCatalogRef.current = false
     setCurrentDeviceId(cached?.deviceId || durablePeek?.deviceId || '')
     setCanPublish(cached?.canPublish ?? false)
     setCanSharePersonalPlugins(cached?.canSharePersonalPlugins ?? true)
@@ -407,7 +425,10 @@ export function PluginsWorkspace({
     setIsOpenAiOfficialCatalogLoading(!hasOpenAiOfficialCatalog(items))
     setPluginMarketplaceState(nextMarketplaceState)
     setSelectedPluginId(null)
-    setSelectedMarketplacePluginId(null)
+    setSelectedMarketplacePluginId(
+      findMarketplaceItemForPluginReference(items, pluginReferenceRef.current)?.id ?? null
+    )
+    setPluginDetailActionError(null)
     setPluginShareState(null)
     setPluginPublishTarget(null)
     setPluginPublishError(null)
@@ -1247,6 +1268,7 @@ export function PluginsWorkspace({
 
   const refreshMarketplace = () => {
     setBrowsingCategoryKey(null)
+    reconcileGithubCatalogRef.current = true
     setMarketplaceRefreshTick(previous => previous + 1)
   }
 
@@ -1297,13 +1319,12 @@ export function PluginsWorkspace({
       })
   }
 
-  const { beginMarketplacePluginTrial, tryLocalInstalledPluginInChat, tryMarketplacePluginInChat } =
-    usePluginInstallActions({
-      installedPlugins,
-      localPluginApi,
-      t,
-      setPluginMarketplaceState,
-    })
+  const { beginMarketplacePluginTrial, tryMarketplacePluginInChat } = usePluginInstallActions({
+    installedPlugins,
+    localPluginApi,
+    t,
+    setPluginMarketplaceState,
+  })
 
   const prepareMarketplaceInstallItem = async (
     item: PluginMarketplaceItem
@@ -2103,6 +2124,14 @@ export function PluginsWorkspace({
     slug: string,
     plugin?: InstalledPluginItem | PluginMarketplaceItem | null
   ) => {
+    const reportDetailError = (message: string) => {
+      const pluginId =
+        selectedMarketplacePluginId ??
+        selectedPluginId ??
+        (plugin && 'id' in plugin ? plugin.id : null)
+      if (pluginId == null) return
+      setPluginDetailActionError({ pluginId, message })
+    }
     const connectors =
       plugin && 'raw' in plugin
         ? (plugin.raw.spec.components.connectors ?? [])
@@ -2151,13 +2180,11 @@ export function PluginsWorkspace({
           await localConnectorAuthLogout(target)
           setLocalConnectorAuthBySlug(previous => ({ ...previous, [slug]: 'disconnected' }))
         } catch (error) {
-          setPluginMarketplaceState(previous => ({
-            ...previous,
-            error:
-              error instanceof Error
-                ? error.message
-                : t('workbench.plugins_local_auth_logout_failed', '退出登录失败'),
-          }))
+          reportDetailError(
+            error instanceof Error
+              ? error.message
+              : t('workbench.plugins_local_auth_logout_failed', '退出登录失败')
+          )
         }
         return
       }
@@ -2177,42 +2204,52 @@ export function PluginsWorkspace({
         })
         setLocalConnectorAuthBySlug(previous => ({ ...previous, [slug]: 'connected' }))
       } catch (error) {
-        setPluginMarketplaceState(previous => ({
-          ...previous,
-          error:
-            error instanceof Error
-              ? error.message
-              : t('workbench.plugins_local_auth_cancelled', '已取消授权'),
-        }))
+        reportDetailError(
+          error instanceof Error
+            ? error.message
+            : t('workbench.plugins_local_auth_cancelled', '已取消授权')
+        )
       }
       return
     }
 
+    if (!pluginUsesWegentConnectorOAuth(plugin)) {
+      reportDetailError(
+        t(
+          'workbench.plugins_connector_chat_auth',
+          '此插件通过对话授权 GitHub，请在聊天中按提示完成登录。'
+        )
+      )
+      return
+    }
+
     if (!cloudApiBaseUrl || !cloudToken) {
-      setPluginMarketplaceState(previous => ({
-        ...previous,
-        error: t('workbench.plugins_connector_cloud_required', '请先连接 Wegent 账户再授权 GitHub'),
-      }))
+      reportDetailError(
+        t('workbench.plugins_connector_cloud_required', '请先连接 Wegent 账户再授权 GitHub')
+      )
       return
     }
     try {
       const apps = await listWegentConnectorApps(cloudApiBaseUrl, cloudToken)
-      const app = apps.find(candidate => candidate.slug === slug)
-      if (app?.connection.status === 'connected') {
+      const app = apps.find(
+        candidate => candidate.slug.trim().toLowerCase() === slug.trim().toLowerCase()
+      )
+      if (!app) {
+        reportDetailError(t('workbench.plugins_connector_unavailable', '所需应用连接暂不可用'))
+        return
+      }
+      if (app.connection.status === 'connected') {
         navigateTo('/settings/connections')
         return
       }
       await authorizeWegentConnector(
         cloudApiBaseUrl,
         cloudToken,
-        slug,
+        app.slug,
         openCloudAuthorizationWindow
       )
     } catch (error) {
-      setPluginMarketplaceState(previous => ({
-        ...previous,
-        error: error instanceof Error ? error.message : 'Connector authorization failed',
-      }))
+      reportDetailError(error instanceof Error ? error.message : 'Connector authorization failed')
     }
   }
 
@@ -3274,8 +3311,21 @@ export function PluginsWorkspace({
     if (personalDiskSettledKey !== marketplaceCacheKeyValue) return
     if (pendingDevicePackageSync) return
 
+    const shouldReconcileGithubCatalog = reconcileGithubCatalogRef.current
+    // Warm OpenAI rows already come from peek/cache. Auto plugin/list reconciles
+    // github.com/openai/plugins and holds the shared Codex lock, which stalls chat
+    // send. Only refresh after the user explicitly asks.
+    if (
+      !shouldReconcileGithubCatalog &&
+      hasOpenAiOfficialCatalog(pluginMarketplaceStateRef.current.items)
+    ) {
+      setIsOpenAiOfficialCatalogLoading(false)
+      return
+    }
+
     const requestKey = `${marketplaceCacheKeyValue}:${marketplaceRefreshTick}`
     if (deferredCodexCatalogRequestRef.current === requestKey) return
+    reconcileGithubCatalogRef.current = false
 
     deferredCodexCatalogRequestRef.current = requestKey
     let cancelled = false
@@ -3361,15 +3411,25 @@ export function PluginsWorkspace({
     }
   }, [cloudMarketplaceAvailable, currentDeviceId, marketplaceCacheKeyValue, pluginApi])
 
-  const { selectedPlugin, selectedMarketplacePlugin } = usePluginDetailSelection({
-    pluginReference,
-    pluginMarketplaceState,
-    installedPlugins,
-    selectedPluginId,
-    selectedMarketplacePluginId,
-    setSelectedPluginId,
-    setSelectedMarketplacePluginId,
-  })
+  const { selectedPlugin, selectedMarketplacePlugin, dismissPluginReferenceDetail } =
+    usePluginDetailSelection({
+      pluginReference,
+      pluginMarketplaceState,
+      installedPlugins,
+      selectedPluginId,
+      selectedMarketplacePluginId,
+      setSelectedPluginId,
+      setSelectedMarketplacePluginId,
+    })
+
+  const closePluginDetail = (clearLocalSelection: () => void) => {
+    if (pluginReference?.pluginName && pluginReference.marketplaceName) {
+      dismissPluginReferenceDetail()
+      window.history.back()
+      return
+    }
+    clearLocalSelection()
+  }
 
   useEffect(() => {
     const detailPlugin = selectedPlugin
@@ -3423,45 +3483,65 @@ export function PluginsWorkspace({
     }
   }, [installedPlugins, selectedMarketplacePlugin, selectedPlugin])
 
+  const selectedMarketplacePluginRef = useRef(selectedMarketplacePlugin)
+  selectedMarketplacePluginRef.current = selectedMarketplacePlugin
+  const installedPluginsForDetailRef = useRef(installedPlugins)
+  installedPluginsForDetailRef.current = installedPlugins
+  const selectedMarketplaceDetailKey = selectedMarketplacePlugin
+    ? `${localMarketplaceIdFromItem(selectedMarketplacePlugin) ?? ''}::${selectedMarketplacePlugin.name}`
+    : ''
+
   useEffect(() => {
-    if (!selectedMarketplacePlugin) {
+    if (!selectedMarketplaceDetailKey) {
+      setSelectedMarketplacePluginDetail(null)
+      return
+    }
+
+    const selected = selectedMarketplacePluginRef.current
+    if (!selected) {
       setSelectedMarketplacePluginDetail(null)
       return
     }
 
     const installedDetail = findInstalledPluginForMarketplaceItem(
-      selectedMarketplacePlugin,
-      installedPlugins
+      selected,
+      installedPluginsForDetailRef.current
     )
     const baseDetail = installedDetail
-      ? withMarketplaceListingInterface(installedDetail, selectedMarketplacePlugin)
-      : toMarketplaceInstalledPluginItem(selectedMarketplacePlugin)
+      ? withMarketplaceListingInterface(installedDetail, selected)
+      : toMarketplaceInstalledPluginItem(selected)
 
-    const marketplaceId = localMarketplaceIdFromItem(selectedMarketplacePlugin)
+    const marketplaceId = localMarketplaceIdFromItem(selected)
     const shouldFetchLocalDetail = Boolean(marketplaceId)
 
     if (!shouldFetchLocalDetail) {
-      setSelectedMarketplacePluginDetail(baseDetail)
+      setSelectedMarketplacePluginDetail(previous =>
+        keepRicherMarketplacePluginDetail(previous, baseDetail)
+      )
       return
     }
 
     let disposed = false
-    setSelectedMarketplacePluginDetail(baseDetail)
+    setSelectedMarketplacePluginDetail(previous =>
+      keepRicherMarketplacePluginDetail(previous, baseDetail)
+    )
     void localPluginApi
-      .readMarketplacePluginDetail(marketplaceId!, selectedMarketplacePlugin.name)
+      .readMarketplacePluginDetail(marketplaceId!, selected.name)
       .then(detail => {
         if (disposed) return
-        setSelectedMarketplacePluginDetail(withMarketplacePluginDetail(baseDetail, detail))
+        setSelectedMarketplacePluginDetail(previous =>
+          withMarketplacePluginDetail(
+            keepRicherMarketplacePluginDetail(previous, baseDetail),
+            detail
+          )
+        )
       })
-      .catch(() => {
-        if (disposed) return
-        setSelectedMarketplacePluginDetail(baseDetail)
-      })
+      .catch(() => undefined)
 
     return () => {
       disposed = true
     }
-  }, [installedPlugins, localPluginApi, selectedMarketplacePlugin])
+  }, [localPluginApi, selectedMarketplaceDetailKey])
 
   useEffect(() => {
     if (!selectedMarketplacePlugin) {
@@ -3830,7 +3910,7 @@ export function PluginsWorkspace({
         <PluginDetailView
           plugin={selectedPlugin}
           backLabel={t('workbench.plugins_back_to_marketplace', '返回插件市场')}
-          actionError={pluginMarketplaceState.error}
+          actionError={pluginDetailActionErrorMessage(pluginDetailActionError, selectedPlugin.id)}
           usableOnThisDevice={pluginDetailReadyToTry(selectedPlugin, ownedMarketplace)}
           primaryActionLabel={t('workbench.plugins_try_now', '立即对话')}
           secondaryActionLabel={ownerHeaderActionLabel(
@@ -3850,7 +3930,7 @@ export function PluginsWorkspace({
           onMenuPublish={ownerActions.showPublishNewVersionInMenu ? openOwnerPublish : undefined}
           submissionStatus={submissionStatus}
           submissionReviewNote={submissionReviewNote}
-          onBack={() => setSelectedPluginId(null)}
+          onBack={() => closePluginDetail(() => setSelectedPluginId(null))}
           editActionLabel={t('workbench.plugins_continue_editing', '继续编辑')}
           onEditAction={
             continueEditingKey
@@ -3874,18 +3954,11 @@ export function PluginsWorkspace({
               : undefined
           }
           onToggle={() => {
-            const isLocalMarketplaceOnly =
-              selectedPlugin.raw.spec.source.type === 'marketplace' &&
-              !isCloudManagedInstalledPlugin(selectedPlugin.raw)
-            if (isLocalMarketplaceOnly) {
-              tryLocalInstalledPluginInChat(selectedPlugin.id)
-              return
-            }
             if (!tryPluginInChat(selectedPlugin.raw)) {
-              setPluginMarketplaceState(previous => ({
-                ...previous,
-                error: t('workbench.plugins_trial_missing_skill', '这个插件没有可试用的技能'),
-              }))
+              setPluginDetailActionError({
+                pluginId: selectedPlugin.id,
+                message: t('workbench.plugins_trial_missing_skill', '这个插件没有可试用的技能'),
+              })
             }
           }}
           onPromptSelect={prompt => {
@@ -4078,7 +4151,7 @@ export function PluginsWorkspace({
           }
           actionError={
             (isFailed && selectedMarketplacePlugin.currentDeviceInstallation?.errorMessage) ||
-            pluginMarketplaceState.error
+            pluginDetailActionErrorMessage(pluginDetailActionError, selectedMarketplacePlugin.id)
           }
           primaryActionLabel={
             isActionPending
@@ -4118,19 +4191,14 @@ export function PluginsWorkspace({
               : undefined
           }
           showUninstall={showDetailActionMenu}
-          onBack={() => {
-            setSelectedMarketplacePluginId(null)
-            if (pluginReference?.pluginName && pluginReference.marketplaceName) {
-              navigateTo('/plugins')
-            }
-          }}
+          onBack={() => closePluginDetail(() => setSelectedMarketplacePluginId(null))}
           onToggle={() => {
             if (canUpdate) {
               installMarketplacePlugin(selectedMarketplacePlugin)
               return
             }
             if (isInstalled) {
-              beginMarketplacePluginTrial(selectedMarketplacePlugin, installedDetail)
+              beginMarketplacePluginTrial(selectedMarketplacePlugin, detailPlugin)
               return
             }
             installMarketplacePlugin(detailedMarketplacePlugin)
@@ -4163,7 +4231,7 @@ export function PluginsWorkspace({
           }}
           onPromptSelect={prompt => {
             if (isInstalled) {
-              beginMarketplacePluginTrial(selectedMarketplacePlugin, installedDetail, prompt)
+              beginMarketplacePluginTrial(selectedMarketplacePlugin, detailPlugin, prompt)
               return
             }
             installMarketplacePlugin(detailedMarketplacePlugin, prompt)

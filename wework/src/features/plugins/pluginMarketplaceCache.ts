@@ -1,5 +1,6 @@
-import type { InstalledPluginComponents, PluginInterface, PluginMarketplaceItem } from '@/types/api'
+import type { PluginInterface, PluginMarketplaceItem } from '@/types/api'
 import type { InstalledPluginItem } from '@/components/plugins/PluginManagementRows'
+import { slimPluginComponentsForCache } from '@/features/plugins/slimPluginComponents'
 import { compressToUTF16, decompressFromUTF16 } from 'lz-string'
 
 export interface PluginMarketplaceCacheSnapshot {
@@ -80,24 +81,14 @@ function slimInterface(interfaceData?: PluginInterface | null): PluginInterface 
     shortDescription: interfaceData.shortDescription ?? null,
     developerName: interfaceData.developerName ?? null,
     category: interfaceData.category ?? null,
+    capabilities: interfaceData.capabilities,
+    websiteUrl: interfaceData.websiteUrl ?? null,
+    privacyPolicyUrl: interfaceData.privacyPolicyUrl ?? null,
+    termsOfServiceUrl: interfaceData.termsOfServiceUrl ?? null,
     logo: slimLogoField(interfaceData.logo),
     logoDark: slimLogoField(interfaceData.logoDark),
     composerIcon: slimLogoField(interfaceData.composerIcon),
     brandColor: interfaceData.brandColor ?? null,
-  }
-}
-
-function emptyComponents(): InstalledPluginComponents {
-  return {
-    skills: [],
-    commands: [],
-    agents: [],
-    hooks: [],
-    mcps: [],
-    lsps: [],
-    monitors: [],
-    bins: [],
-    connectors: [],
   }
 }
 
@@ -140,7 +131,7 @@ function toPersistedSnapshot(next: PluginMarketplaceCacheSnapshot): PluginMarket
     marketplaceItems: next.marketplaceItems.map(item => ({
       ...item,
       interface: slimInterface(item.interface),
-      components: emptyComponents(),
+      components: slimPluginComponentsForCache(item.components),
       manifest: slimManifest(item.manifest),
     })),
     installedPlugins: next.installedPlugins.map(plugin => ({
@@ -150,6 +141,7 @@ function toPersistedSnapshot(next: PluginMarketplaceCacheSnapshot): PluginMarket
         spec: {
           ...plugin.raw.spec,
           interface: slimInterface(plugin.raw.spec.interface),
+          components: slimPluginComponentsForCache(plugin.raw.spec.components),
         },
       },
     })),
