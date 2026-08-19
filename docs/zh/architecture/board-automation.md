@@ -56,7 +56,7 @@ sequenceDiagram
     P->>X: 校验关联 ID 后写终态
     E->>Q: 向 pending 或 streaming 的父评论会话追加消息
     Q-->>E: 保存为待发送消息
-    P->>Q: 前一轮进入终态
+    T-->>Q: 父评论 Runtime 会话进入终态
     Q->>R: 按顺序继续同一父评论会话
     X-->>E: UI 只读取 execution 真值
 ```

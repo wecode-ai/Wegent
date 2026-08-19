@@ -56,7 +56,7 @@ sequenceDiagram
     P->>X: validate linked IDs and write terminal state
     E->>Q: append to a pending or streaming parent-comment session
     Q-->>E: retain as a queued message
-    P->>Q: previous turn becomes terminal
+    T-->>Q: parent-comment Runtime session becomes terminal
     Q->>R: continue the same parent-comment session in order
     X-->>E: UI reads execution truth only
 ```

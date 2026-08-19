@@ -515,12 +515,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       uiTimeoutMs,
       'The first native Wegent continuation did not reach the model service'
     )
-    await control.command(
-      'waitFor',
-      '[data-testid^="cloud-task-activity-execution-badge-"][data-status="running"]',
-      { timeoutMs: uiTimeoutMs }
-    )
     try {
+      await control.command(
+        'waitFor',
+        '[data-testid^="cloud-task-activity-execution-badge-"][data-status="running"]',
+        { timeoutMs: uiTimeoutMs }
+      )
       await control.command('fill', replyComposer, { value: QUEUED_CONTINUATION_PROMPT })
       await control.command('press', replyComposer, { key: 'Enter' })
       await control.command(
