@@ -19,6 +19,7 @@ import {
   MessageCircle,
   MessageCircleOff,
   MessageSquarePlus,
+  Pause,
   Pin,
   Plus,
   RotateCw,
@@ -28,7 +29,15 @@ import {
   UserRound,
   X,
 } from 'lucide-react'
-import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react'
 import type {
   KeyboardEvent,
   MouseEvent as ReactMouseEvent,
@@ -49,6 +58,10 @@ import { SHOW_PLUGINS_NAVIGATION } from '@/features/plugins/visibility'
 import { getRuntimeTaskReminderItemKey } from '@/features/workbench/runtimeTaskReminders'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import { runtimeTaskBoardOrigin } from '@/features/workbench/runtimeTaskOrigin'
+import {
+  getRuntimeConversationQueuePaused,
+  subscribeRuntimeConversation,
+} from '@/features/workbench/runtimeConversationCache'
 import {
   getRuntimeTaskLifecycleKey,
   useRuntimeTaskLifecycle,
@@ -1561,6 +1574,7 @@ function RuntimeTaskRow({
     !workspace.available || !onArchiveRuntimeTask || archiving || archivePending
   const taskAddress = getRuntimeTaskAddress(workspace, task)
   const taskLifecycle = useRuntimeTaskLifecycle(taskAddress)
+  const queuePaused = useRuntimeTaskQueuePaused(taskAddress)
   const queued = isRuntimeTaskQueued(task)
   const queuePosition =
     queued && Number.isInteger(task.queuePosition) && Number(task.queuePosition) > 0
@@ -1933,6 +1947,19 @@ function RuntimeTaskRow({
                       </span>
                     ) : null}
                   </span>
+                ) : queuePaused ? (
+                  <span
+                    data-testid={`runtime-local-task-queue-paused-${task.taskId}`}
+                    role="status"
+                    title={t('workbench.runtime_task_queue_paused')}
+                    aria-label={t('workbench.runtime_task_queue_paused')}
+                    className="flex h-[30px] w-[30px] items-center justify-center"
+                  >
+                    <Pause
+                      className="h-3.5 w-3.5 text-[rgb(var(--color-sidebar-text-muted))]"
+                      aria-hidden="true"
+                    />
+                  </span>
                 ) : taskLifecycle?.derived.shouldShowSidebarRunning ? (
                   <span
                     data-testid={`runtime-local-task-running-${task.taskId}`}
@@ -2242,6 +2269,26 @@ function RuntimeTaskRow({
       />
     </>
   )
+}
+
+function useRuntimeTaskQueuePaused(address: RuntimeTaskAddress): boolean {
+  const stableAddress = useMemo<RuntimeTaskAddress>(
+    () => ({
+      deviceId: address.deviceId,
+      taskId: address.taskId,
+    }),
+    [address.deviceId, address.taskId]
+  )
+  const subscribe = useCallback(
+    (listener: () => void) => subscribeRuntimeConversation(stableAddress, listener),
+    [stableAddress]
+  )
+  const getSnapshot = useCallback(
+    () => getRuntimeConversationQueuePaused(stableAddress),
+    [stableAddress]
+  )
+
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
 }
 
 function LocalHarnessSessionRow({
