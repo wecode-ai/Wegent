@@ -81,8 +81,10 @@ fn atomic_builder_navigation_is_stable_without_a_load_event() {
 
 #[test]
 fn embedded_browser_devtools_are_debug_only() {
-    assert!(embedded_browser_devtools_enabled(true));
-    assert!(!embedded_browser_devtools_enabled(false));
+    assert!(embedded_browser_devtools_enabled(false, true));
+    assert!(!embedded_browser_devtools_enabled(false, false));
+    assert!(!embedded_browser_devtools_enabled(true, false));
+    assert!(!embedded_browser_devtools_enabled(true, true));
 }
 
 #[test]
