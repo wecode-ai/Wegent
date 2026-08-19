@@ -196,6 +196,7 @@ jobs:
     timeout-minutes: 20
     env:
       HOME: /root
+      WEWORK_E2E_SKIP_TYPECHECK: "true"
     container:
       image: ${{ needs.changes.outputs.desktop_image }}
       credentials:
@@ -454,6 +455,7 @@ jobs:
     timeout-minutes: 25
     env:
       HOME: /root
+      WEWORK_E2E_SKIP_TYPECHECK: "true"
     container:
       image: ${{ needs.changes.outputs.desktop_image }}
       credentials:
@@ -606,6 +608,8 @@ jobs:
     if: github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (contains(github.event.pull_request.labels.*.name, 'ci:memory') || contains(github.event.pull_request.labels.*.name, 'ci:all'))))
     runs-on: macos-14
     timeout-minutes: 30
+    env:
+      WEWORK_E2E_SKIP_TYPECHECK: "true"
 
     steps:
       - name: Checkout code

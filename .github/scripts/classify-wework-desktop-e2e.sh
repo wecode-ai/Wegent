@@ -61,11 +61,11 @@ cloud_segments=(
 # longest to shortest so the five runners keep both local workers busy.
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 cloud_shards=(
-  rendering-extensions,cloud-worktree-queued-cancel,embedded-browser,cloud-worktree-capability,priority-filter,telemetry-consent
-  cloud-worktree-create,core-task-flow,supervisor-lifecycle,browser-multi-tabs
-  cloud-worktree-archive-restore,resilience,cloud-worktree-tools,workspace-attachments,automation-lifecycle,plugin-auto-update
-  conversation-state,window-lifecycle,project-automation
-  goal-lifecycle,model-routing,cloud-worktree-device-restart,workspace-tabs
+  cloud-worktree-create,workspace-tabs,cloud-worktree-capability,core-task-flow
+  goal-lifecycle,resilience,supervisor-lifecycle,cloud-worktree-tools,plugin-auto-update
+  embedded-browser,model-routing,cloud-worktree-queued-cancel,priority-filter
+  project-automation,window-lifecycle,cloud-worktree-archive-restore,browser-multi-tabs
+  rendering-extensions,conversation-state,cloud-worktree-device-restart,workspace-attachments,automation-lifecycle,telemetry-consent
 )
 # Keep the number of core desktop runners fixed as checkpoints grow. Each
 # runner reuses the same prebuilt application with two isolated local workers.

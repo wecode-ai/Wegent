@@ -487,14 +487,16 @@ async function buildDesktopApp(
     VITE_WEWORK_RELEASE_CHANNEL: 'stable',
     VITE_WEWORK_RUNTIME_MODE: 'local-first',
   }
-  await runChecked(
-    process.execPath,
-    [join(weworkDir, 'node_modules', 'typescript', 'bin', 'tsc'), '-b'],
-    {
-      cwd: weworkDir,
-      env: buildEnv,
-    }
-  )
+  if (process.env.WEWORK_E2E_SKIP_TYPECHECK !== 'true') {
+    await runChecked(
+      process.execPath,
+      [join(weworkDir, 'node_modules', 'typescript', 'bin', 'tsc'), '-b'],
+      {
+        cwd: weworkDir,
+        env: buildEnv,
+      }
+    )
+  }
   await runChecked(
     process.execPath,
     [join(weworkDir, 'node_modules', 'vite', 'bin', 'vite.js'), 'build'],

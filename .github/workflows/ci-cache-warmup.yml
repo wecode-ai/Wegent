@@ -478,6 +478,7 @@ jobs:
       packages: read
     env:
       HOME: /root
+      WEWORK_E2E_SKIP_TYPECHECK: "true"
     container:
       image: ${{ needs.prepare-wework-desktop-image.outputs.desktop_image }}
       credentials:
