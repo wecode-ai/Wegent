@@ -2195,6 +2195,160 @@ describe('WorkbenchProvider runtime tasks', () => {
     ).toBe('owned-turn')
   })
 
+  test('finishes an owned lifecycle reconciliation after its provider becomes inactive', async () => {
+    const lifecycleStore = new RuntimeTaskLifecycleStore('test')
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      taskId: 'shared-task',
+      workspacePath: '/workspace/project-alpha',
+    }
+    const initialRuntimeWork = createRuntimeWork({
+      projects: [
+        {
+          project: { id: 7, name: 'Wegent' },
+          deviceWorkspaces: [
+            {
+              deviceId: address.deviceId,
+              workspacePath: address.workspacePath,
+              available: true,
+              tasks: [
+                {
+                  taskId: address.taskId,
+                  workspacePath: address.workspacePath,
+                  title: 'Goal task',
+                  runtime: 'codex',
+                  running: false,
+                  status: 'active',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    })
+    const completedRuntimeWork = createRuntimeWork({
+      projects: [
+        {
+          project: { id: 7, name: 'Wegent' },
+          deviceWorkspaces: [
+            {
+              deviceId: address.deviceId,
+              workspacePath: address.workspacePath,
+              available: true,
+              tasks: [
+                {
+                  taskId: address.taskId,
+                  workspacePath: address.workspacePath,
+                  title: 'Goal task',
+                  runtime: 'codex',
+                  running: false,
+                  status: 'done',
+                  turnStatus: 'completed',
+                  completedAt: '2026-08-19T13:21:32.000Z',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    })
+    const completedRuntimeWorkDeferred = deferred<RuntimeWorkListResponse>()
+    const completedGoalDeferred = deferred<RuntimeGoalGetResponse>()
+    let reconcileCompletion = false
+    let streamHandlers: ChatStreamHandlers = {}
+    const listRuntimeWork = vi.fn(() =>
+      reconcileCompletion
+        ? completedRuntimeWorkDeferred.promise
+        : Promise.resolve(initialRuntimeWork)
+    )
+    const getRuntimeGoal = vi.fn(() =>
+      reconcileCompletion
+        ? completedGoalDeferred.promise
+        : Promise.resolve({ accepted: true, goal: null })
+    )
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork,
+      getRuntimeGoal,
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      chatStream: {
+        subscribe: vi.fn((handlers: ChatStreamHandlers) => {
+          if (hasRuntimeStreamHandler(handlers)) streamHandlers = handlers
+          return vi.fn()
+        }),
+      } as unknown as WorkbenchServices['chatStream'],
+    })
+    const renderProvider = (syncRuntimeTaskLifecycle: boolean) => (
+      <WorkbenchProvider
+        lifecycleStore={lifecycleStore}
+        services={services}
+        syncRuntimeTaskLifecycle={syncRuntimeTaskLifecycle}
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+      >
+        <BootstrapProbe />
+      </WorkbenchProvider>
+    )
+
+    const { rerender } = render(renderProvider(true))
+
+    await waitFor(() => expect(streamHandlers.onChatStart).toBeDefined())
+    await waitFor(() => expect(lifecycleStore.getTask(address)).not.toBeNull())
+    const runtimeWorkCallsBeforeSettlement = listRuntimeWork.mock.calls.length
+    const goalCallsBeforeSettlement = getRuntimeGoal.mock.calls.length
+    act(() => {
+      streamHandlers.onRuntimeGoalUpdated?.({
+        taskId: address.taskId,
+        subtaskId: 'goal-turn',
+        deviceId: address.deviceId,
+        goal: createRuntimeGoal({
+          objective: 'Complete after switching tabs',
+          status: 'active',
+        }),
+      })
+      streamHandlers.onChatStart?.({
+        taskId: address.taskId,
+        subtaskId: 'goal-turn',
+        shellType: 'Codex',
+        deviceId: address.deviceId,
+      })
+    })
+    expect(lifecycleStore.getTask(address)?.derived.isRunning).toBe(true)
+
+    reconcileCompletion = true
+    act(() => {
+      streamHandlers.onChatDone?.({
+        taskId: address.taskId,
+        subtaskId: 'goal-turn',
+        deviceId: address.deviceId,
+        result: { value: 'done' },
+      })
+    })
+    await waitFor(() =>
+      expect(listRuntimeWork.mock.calls.length).toBeGreaterThan(runtimeWorkCallsBeforeSettlement)
+    )
+    await waitFor(() =>
+      expect(getRuntimeGoal.mock.calls.length).toBeGreaterThan(goalCallsBeforeSettlement)
+    )
+
+    act(() => rerender(renderProvider(false)))
+    await act(async () => {
+      completedRuntimeWorkDeferred.resolve(completedRuntimeWork)
+      completedGoalDeferred.resolve({
+        accepted: true,
+        goal: createRuntimeGoal({
+          objective: 'Complete after switching tabs',
+          status: 'complete',
+        }),
+      })
+      await Promise.all([completedRuntimeWorkDeferred.promise, completedGoalDeferred.promise])
+    })
+
+    await waitFor(() => expect(lifecycleStore.getTask(address)?.goalStatus).toBe('complete'))
+    expect(lifecycleStore.getTask(address)?.execution.phase).toBe('idle')
+    expect(lifecycleStore.getTask(address)?.derived.isRunning).toBe(false)
+  })
+
   test('keeps the runtime event subscription across connected user preference updates', async () => {
     setTauriRuntime()
     window.__WEWORK_RUNTIME_CONFIG__ = {

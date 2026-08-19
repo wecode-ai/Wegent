@@ -1700,10 +1700,11 @@ export function WorkbenchProvider({
   )
   const stableRefreshWorkLists = useStableEvent(refreshWorkLists)
   const syncRuntimeTaskSnapshot = useStableEvent((address: RuntimeTaskAddress) => {
-    const expectedLifecycle = lifecycleStore.getTask(address)
+    if (!canSyncRuntimeTaskLifecycle()) return
+    const expectedLifecycle = sharedLifecycleStore.getTask(address)
     void refreshRuntimeTask(address)
       .then(task => {
-        if (task && lifecycleStore.syncRuntimeTask(address, task, expectedLifecycle)) {
+        if (task && sharedLifecycleStore.syncRuntimeTask(address, task, expectedLifecycle)) {
           updateLocalRuntimeTaskSnapshot(address, task)
         }
       })
@@ -1716,7 +1717,8 @@ export function WorkbenchProvider({
       })
   })
   const syncRuntimeGoalSnapshot = useStableEvent((address: RuntimeTaskAddress) => {
-    const expectedGoalStatus = lifecycleStore.getTask(address)?.goalStatus
+    if (!canSyncRuntimeTaskLifecycle()) return
+    const expectedGoalStatus = sharedLifecycleStore.getTask(address)?.goalStatus
     if (expectedGoalStatus === null || expectedGoalStatus === undefined) return
 
     void runtimeTasks
@@ -1726,7 +1728,7 @@ export function WorkbenchProvider({
         const goal = response.goal
         if (!goal) return
         setRuntimeConversationGoal(address, goal)
-        lifecycleStore.goalStatusReceived(address, goal.status)
+        sharedLifecycleStore.goalStatusReceived(address, goal.status)
       })
       .catch(error => {
         console.warn('[Wework] Runtime Goal snapshot sync failed', {
