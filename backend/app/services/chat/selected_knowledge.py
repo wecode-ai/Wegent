@@ -191,6 +191,7 @@ def build_selected_knowledge_context(
 ) -> SelectedKnowledgeContext:
     """Resolve explicit message contexts over inherited task knowledge refs."""
     current_contexts = tuple(current_contexts)
+    validate_explicit_knowledge_contexts(current_contexts)
     _validate_explicit_external_contexts(current_contexts)
     task_refs = build_selected_knowledge_refs(db, request, task)
     explicit_refs = _build_current_explicit_refs(
@@ -214,9 +215,7 @@ def has_explicit_knowledge_context(contexts: Iterable[Any]) -> bool:
         ContextType.EXTERNAL_KNOWLEDGE.value,
     }
     return any(
-        getattr(context, "status", None) == ContextStatus.READY.value
-        and getattr(context, "context_type", None) in explicit_types
-        for context in contexts
+        getattr(context, "context_type", None) in explicit_types for context in contexts
     )
 
 
@@ -242,9 +241,17 @@ def has_supported_explicit_external_context(contexts: Iterable[Any]) -> bool:
     return bool(_build_external_refs_from_values(_current_external_values(contexts)))
 
 
+def has_supported_external_refs(values: Iterable[Any]) -> bool:
+    """Return whether persisted external refs contain a native adapter."""
+    return bool(_build_external_refs_from_values(values))
+
+
 def has_explicit_external_context(contexts: Iterable[Any]) -> bool:
     """Return whether this turn explicitly selected an external source."""
-    return bool(_current_external_values(contexts))
+    return any(
+        getattr(context, "context_type", None) == ContextType.EXTERNAL_KNOWLEDGE.value
+        for context in contexts
+    )
 
 
 def should_prepare_provider_native_knowledge(
@@ -253,6 +260,7 @@ def should_prepare_provider_native_knowledge(
     knowledge_base_scopes: Iterable[Any],
     access_mode: str,
     current_contexts: Iterable[Any],
+    external_refs: Iterable[Any] = (),
     preload_selected_kb_skill: bool,
     shell_type: str,
 ) -> bool:
@@ -262,7 +270,9 @@ def should_prepare_provider_native_knowledge(
         or shell_type not in SUPPORTED_PROVIDER_NATIVE_SHELLS
     ):
         return False
-    if has_supported_explicit_external_context(current_contexts):
+    if has_explicit_external_context(current_contexts) or has_supported_external_refs(
+        external_refs
+    ):
         return True
     if access_mode == KnowledgeBaseToolAccessMode.RESTRICTED_SEARCH_ONLY:
         return False
@@ -613,6 +623,35 @@ def _validate_explicit_external_contexts(contexts: Iterable[Any]) -> None:
             )
 
 
+def validate_explicit_knowledge_contexts(contexts: Iterable[Any]) -> None:
+    """Reject explicit knowledge selections that are not ready or identifiable."""
+    explicit_types = {
+        ContextType.KNOWLEDGE_BASE.value,
+        ContextType.SELECTED_DOCUMENTS.value,
+        ContextType.EXTERNAL_KNOWLEDGE.value,
+    }
+    for context in contexts:
+        context_type = getattr(context, "context_type", None)
+        if context_type not in explicit_types:
+            continue
+        status = getattr(context, "status", None)
+        if status != ContextStatus.READY.value:
+            _raise_capability_error(
+                f"Selected knowledge source is not ready: {status or '<missing>'}"
+            )
+        if context_type == ContextType.EXTERNAL_KNOWLEDGE.value:
+            continue
+        data = getattr(context, "type_data", None)
+        if (
+            not isinstance(data, dict)
+            or _current_wegent_kb_id(str(context_type), data) is None
+        ):
+            _raise_capability_error(
+                "Invalid explicit Wegent knowledge source: missing or invalid "
+                "knowledge base id"
+            )
+
+
 def _index_refs_by_integer_id(values: Any) -> dict[int, dict[str, Any]]:
     """Index valid reference mappings without trusting persisted identifiers."""
     result: dict[int, dict[str, Any]] = {}
@@ -628,9 +667,13 @@ def _index_refs_by_integer_id(values: Any) -> dict[int, dict[str, Any]]:
 def _int_values(values: Any) -> list[int]:
     result: list[int] = []
     for value in values if isinstance(values, list) else []:
+        if isinstance(value, bool):
+            continue
         try:
             normalized = int(value)
         except (TypeError, ValueError):
+            continue
+        if normalized <= 0:
             continue
         if normalized not in result:
             result.append(normalized)

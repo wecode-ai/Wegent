@@ -294,6 +294,67 @@ def test_invalid_explicit_source_rejects_other_valid_sources(
         )
 
 
+@pytest.mark.parametrize(
+    "status",
+    [
+        ContextStatus.PENDING.value,
+        ContextStatus.FAILED.value,
+        ContextStatus.EMPTY.value,
+    ],
+)
+def test_non_ready_explicit_context_does_not_restore_task_knowledge(
+    status: str,
+) -> None:
+    contexts = [
+        SimpleNamespace(
+            context_type=ContextType.EXTERNAL_KNOWLEDGE.value,
+            status=status,
+            name="未就绪来源",
+            type_data={"provider": "dingtalk", "mode": "explicit", "id": "space-1"},
+        )
+    ]
+
+    with pytest.raises(HTTPException, match="Selected knowledge source is not ready"):
+        apply_selected_knowledge_context(
+            MagicMock(),
+            ExecutionRequest(knowledge_base_ids=[12]),
+            SimpleNamespace(
+                json={"spec": {"knowledgeBaseRefs": [{"id": 12, "name": "默认知识"}]}}
+            ),
+            current_contexts=contexts,
+        )
+
+
+@pytest.mark.parametrize(
+    ("context_type", "type_data"),
+    [
+        (ContextType.KNOWLEDGE_BASE.value, {"knowledge_id": "invalid"}),
+        (ContextType.KNOWLEDGE_BASE.value, {"knowledge_id": 0}),
+        (ContextType.SELECTED_DOCUMENTS.value, {"knowledge_base_id": True}),
+    ],
+)
+def test_invalid_explicit_wegent_id_returns_capability_error(
+    context_type: str,
+    type_data: dict,
+) -> None:
+    contexts = [
+        SimpleNamespace(
+            context_type=context_type,
+            status=ContextStatus.READY.value,
+            name="无效 Wegent 来源",
+            type_data=type_data,
+        )
+    ]
+
+    with pytest.raises(HTTPException, match="Invalid explicit Wegent knowledge source"):
+        apply_selected_knowledge_context(
+            MagicMock(),
+            ExecutionRequest(),
+            SimpleNamespace(json={"spec": {}}),
+            current_contexts=contexts,
+        )
+
+
 def test_current_wegent_document_selection_replaces_all_task_refs() -> None:
     task = SimpleNamespace(
         json={"spec": {"knowledgeBaseRefs": [{"id": 12, "name": "默认知识"}]}}
@@ -516,6 +577,26 @@ def test_restricted_wegent_does_not_disable_explicit_external_provider() -> None
     assert should_prepare is True
 
 
+def test_task_external_source_enables_provider_native_without_wegent() -> None:
+    should_prepare = should_prepare_provider_native_knowledge(
+        knowledge_base_ids=[],
+        knowledge_base_scopes=[],
+        access_mode="full",
+        current_contexts=[],
+        external_refs=[
+            {
+                "provider": "dingtalk",
+                "mode": "explicit",
+                "id": "space-1",
+            }
+        ],
+        preload_selected_kb_skill=True,
+        shell_type="Chat",
+    )
+
+    assert should_prepare is True
+
+
 def test_current_wegent_folder_preserves_include_subfolders_false() -> None:
     request = ExecutionRequest(knowledge_base_ids=[12], is_user_selected_kb=True)
     contexts = [
@@ -616,11 +697,14 @@ def test_task_empty_restricted_scope_does_not_become_whole_knowledge_base() -> N
 
 
 def test_task_invalid_knowledge_base_ids_are_ignored() -> None:
-    request = ExecutionRequest(knowledge_base_ids=[12])
+    request = ExecutionRequest(knowledge_base_ids=[True, 0, -1, 12])
     task = SimpleNamespace(
         json={
             "spec": {
                 "knowledgeBaseRefs": [
+                    {"id": True, "name": "布尔值"},
+                    {"id": 0, "name": "零"},
+                    {"id": -1, "name": "负数"},
                     {"id": "invalid", "name": "损坏数据"},
                     {"id": 12, "name": "有效知识"},
                 ],

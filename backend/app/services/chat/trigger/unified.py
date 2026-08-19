@@ -45,7 +45,6 @@ from shared.codex_model_catalog import (
     codex_catalog_model_id_for_upstream,
     codex_catalog_model_id_from_config,
 )
-from shared.models.knowledge import KnowledgeBaseToolAccessMode
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -1115,23 +1114,24 @@ async def build_execution_request(
         from app.services.chat.selected_knowledge import (
             activate_provider_native_knowledge,
             apply_selected_knowledge_context,
-            has_explicit_external_context,
-            has_usable_wegent_scope,
+            should_prepare_provider_native_knowledge,
+            validate_explicit_knowledge_contexts,
         )
 
         provider_skills = []
-        has_usable_wegent = has_usable_wegent_scope(
-            request.knowledge_base_ids, request.knowledge_base_scopes
+        is_knowledge_artifact = task_labels.get("source") == KNOWLEDGE_ARTIFACT_SOURCE
+        if not is_knowledge_artifact:
+            validate_explicit_knowledge_contexts(current_contexts)
+        should_apply_provider_native = should_prepare_provider_native_knowledge(
+            knowledge_base_ids=request.knowledge_base_ids,
+            knowledge_base_scopes=request.knowledge_base_scopes,
+            access_mode=request.kb_tool_access_mode,
+            current_contexts=current_contexts,
+            external_refs=request.external_knowledge_refs or (),
+            preload_selected_kb_skill=not is_knowledge_artifact,
+            shell_type=_request_shell_type(request),
         )
-        has_external_context = has_explicit_external_context(current_contexts)
-        if task_labels.get("source") != KNOWLEDGE_ARTIFACT_SOURCE and (
-            has_external_context
-            or (
-                has_usable_wegent
-                and request.kb_tool_access_mode
-                != KnowledgeBaseToolAccessMode.RESTRICTED_SEARCH_ONLY
-            )
-        ):
+        if should_apply_provider_native:
             provider_skills = apply_selected_knowledge_context(
                 db,
                 request,
@@ -1221,6 +1221,7 @@ async def _process_contexts(
         knowledge_base_scopes=ctx.kb.knowledge_base_scopes,
         access_mode=ctx.kb.kb_tool_access_mode,
         current_contexts=current_contexts or (),
+        external_refs=request.external_knowledge_refs or (),
         preload_selected_kb_skill=preload_selected_kb_skill,
         shell_type=_request_shell_type(request),
     )
