@@ -30,6 +30,10 @@ PlantUML requests SVG from `https://www.plantuml.com/plantuml/svg` by default. D
 
 Both the Markdown preview and source view must own a vertical scrolling region. The soft scrollbar uses a transparent track and a sufficiently contrasting gray thumb so the current scroll position remains visible.
 
+## File Toolbar
+
+When a regular file is selected, the file panel provides a Copy relative path action. The copied value is relative to the active workspace root and always uses `/` separators. The action is not shown for the workspace root itself, directories, or paths outside the workspace. After a copy succeeds or fails, the button shows brief accessible feedback; selecting another file must not carry the previous file's feedback into the new selection.
+
 ## Data Transfer
 
 For local workspaces, directory listing, text reads, and binary chunk reads access the disk directly in the Wework Tauri process instead of traversing executor IPC. Text reads are capped at 256 KiB, while `read_local_workspace_file_chunk` reads binary files in 1 MiB chunks. Unknown extensions inspect the first chunk; when the content is binary, that chunk must be reused during assembly instead of being read again. Project-space cloud files are already downloaded as a `Blob`, so unknown types inspect only the first 64 KiB. Every workspace request includes the workspace root and performs canonical-path validation in Rust, rejecting escapes through symlinks or relative paths. The frontend assembles binary chunks into a `File` for the viewer.
