@@ -151,7 +151,7 @@ pub fn encoded_space_context_grant(request: &ExecutionRequest) -> Option<String>
         space_id,
         item_id,
         device_id: request.device_id.clone().filter(|value| !value.is_empty()),
-        automation_run_id: automation_origin
+        automation_run_id: origin
             .and_then(|origin| origin.get("run_id"))
             .and_then(id_value)
             .filter(|value| !value.is_empty()),
@@ -1790,6 +1790,33 @@ async fn call_backend_tool(
             };
             return backend_json(response).await;
         }
+        "register_external_reference" => {
+            let grant = current_space_context_grant().ok_or_else(|| {
+                "register_external_reference requires a workflow automation execution"
+                    .to_owned()
+            })?;
+            let run_id = grant.automation_run_id.as_deref().ok_or_else(|| {
+                "register_external_reference requires a workflow automation execution"
+                    .to_owned()
+            })?;
+            let item_id = arguments
+                .get("item_id")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
+                .or_else(|| grant.item_id.clone())
+                .ok_or_else(|| "item_id is required".to_owned())?;
+            client
+                .post(format!(
+                    "{base}/cloud-projects/{project_id}/external-references"
+                ))
+                .json(&json!({
+                    "provider": arguments.get("provider").and_then(Value::as_str).unwrap_or_default(),
+                    "opaque_ref": arguments.get("opaque_ref").and_then(Value::as_str).unwrap_or_default(),
+                    "item_id": item_id,
+                    "automation_run_id": run_id,
+                }))
+        }
         "reorder_board_items" => client
             .post(format!(
                 "{base}/cloud-projects/{project_id}/loop-items/reorder"
@@ -2575,6 +2602,20 @@ fn tools() -> Vec<Value> {
             }),
         ),
         tool(
+            "register_external_reference",
+            "Register an external reference so a waiting workflow node can receive provider events (e.g. the merge request that this task just opened). Only the task that is executing a preset workflow with a wait node may register.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "space_id": {"type": "string"},
+                    "item_id": {"type": "string"},
+                    "provider": {"type": "string", "description": "External provider name such as the code hosting platform that emitted the event"},
+                    "opaque_ref": {"type": "string", "description": "Provider-specific reference such as a merge request id"}
+                },
+                "required": ["provider", "opaque_ref"]
+            }),
+        ),
+        tool(
             "reorder_board_items",
             "Persist the order of board items in one board lane",
             json!({
@@ -2907,7 +2948,7 @@ mod tests {
     }
 
     #[test]
-    fn binds_project_context_for_assigned_board_robot() {
+    fn binds_automation_run_scope_for_assigned_board_robot() {
         let mut request = ExecutionRequest::default();
         request
             .extra
@@ -2922,7 +2963,7 @@ mod tests {
         assert_eq!(grant.version, 1);
         assert_eq!(grant.space_id.as_deref(), Some("cloud-42"));
         assert_eq!(grant.item_id, None);
-        assert_eq!(grant.automation_run_id, None);
+        assert_eq!(grant.automation_run_id.as_deref(), Some("run-1"));
         assert!(!grant.automation_manager);
         assert!(grant.expires_at_unix > Local::now().timestamp());
     }
@@ -3216,6 +3257,29 @@ mod tests {
                 ["properties"]["provider"]["enum"],
             json!(["github", "gitlab"])
         );
+    }
+
+    #[test]
+    fn exposes_external_reference_registration_tool() {
+        let registration = tools()
+            .into_iter()
+            .find(|tool| tool["name"] == "register_external_reference")
+            .expect("register_external_reference tool");
+        let properties = registration["inputSchema"]["properties"]
+            .as_object()
+            .expect("input schema properties");
+
+        for name in ["provider", "opaque_ref", "space_id", "item_id"] {
+            assert!(
+                properties.contains_key(name),
+                "missing input schema property {name}"
+            );
+        }
+        assert_eq!(
+            registration["inputSchema"]["required"],
+            json!(["provider", "opaque_ref"])
+        );
+        assert!(!is_automation_manager_tool("register_external_reference"));
     }
 
     #[test]
