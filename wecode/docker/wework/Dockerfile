@@ -18,6 +18,7 @@ RUN corepack enable && corepack prepare pnpm@10.34.3 --activate
 RUN pnpm config set registry https://registry.npmmirror.com
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY patches ./patches
 COPY wework/package.json ./wework/package.json
 COPY packages/chat-core/package.json ./packages/chat-core/package.json
 RUN pnpm --filter wework... install --frozen-lockfile
