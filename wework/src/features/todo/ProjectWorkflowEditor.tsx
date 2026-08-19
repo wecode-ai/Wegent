@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Background,
   BaseEdge,
@@ -14,6 +14,7 @@ import {
   type EdgeProps,
   type Node,
   type NodeProps,
+  type ReactFlowInstance,
 } from '@xyflow/react'
 import {
   Bot,
@@ -595,6 +596,16 @@ export function ProjectWorkflowEditor({
     }
   }, [insertNode, selectedEdge, selectedNodeId, stageRules, t, value.nodes])
 
+  const flowInstanceRef = useRef<ReactFlowInstance<StageFlowNode, WorkflowFlowEdge> | null>(null)
+  useEffect(() => {
+    const instance = flowInstanceRef.current
+    if (!instance) return
+    const frame = requestAnimationFrame(() => {
+      void instance.fitView({ padding: 0.25, maxZoom: 1 })
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [value.nodes.length])
+
   const handleConnect = useCallback(
     (connection: Connection) => {
       const { source, target } = connection
@@ -861,13 +872,17 @@ export function ProjectWorkflowEditor({
             </button>
           ) : (
             <div className="grid min-h-[420px] overflow-hidden rounded-xl border border-border bg-muted/20 lg:grid-cols-[minmax(0,1fr)_300px]">
-              <div className="min-h-[420px]" data-testid="project-workflow-dag">
+              <div className="h-[420px]" data-testid="project-workflow-dag">
                 <ReactFlow
                   className="workflow-react-flow"
                   nodes={graph.nodes}
                   edges={graph.edges}
                   nodeTypes={nodeTypes}
                   edgeTypes={edgeTypes}
+                  onInit={instance => {
+                    flowInstanceRef.current = instance
+                    void instance.fitView({ padding: 0.25, maxZoom: 1 })
+                  }}
                   onNodeClick={(_, node) => {
                     setSelectedEdge(null)
                     setSelectedNodeId(node.id)
@@ -878,8 +893,6 @@ export function ProjectWorkflowEditor({
                   }}
                   onConnect={handleConnect}
                   onDelete={handleDelete}
-                  fitView
-                  fitViewOptions={{ padding: 0.25, maxZoom: 1 }}
                   minZoom={0.35}
                   maxZoom={1.5}
                   nodesDraggable={false}
