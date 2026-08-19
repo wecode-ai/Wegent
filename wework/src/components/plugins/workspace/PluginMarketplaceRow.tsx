@@ -178,7 +178,7 @@ export const PluginMarketplaceRow = memo(function PluginMarketplaceRow({
             {isActionMenuOpen && (
               <div
                 data-testid={`plugin-marketplace-actions-menu-${item.id}`}
-                className="absolute right-0 top-[calc(50%+18px)] z-30 w-36 rounded-xl border border-border/30 bg-popover p-1 shadow-lg"
+                className="absolute right-0 top-[calc(50%+18px)] z-30 w-44 rounded-xl border border-border/30 bg-popover p-1 shadow-lg"
                 onClick={event => event.stopPropagation()}
               >
                 <button
@@ -192,6 +192,19 @@ export const PluginMarketplaceRow = memo(function PluginMarketplaceRow({
                 >
                   {labels.try}
                 </button>
+                {item.accessRole === 'recipient' && item.allowCopy ? (
+                  <button
+                    type="button"
+                    data-testid={`plugin-marketplace-copy-${item.id}`}
+                    className="flex h-8 w-full items-center rounded-lg px-3 text-left text-sm text-text-primary transition-colors hover:bg-surface"
+                    onClick={() => {
+                      setIsActionMenuOpen(false)
+                      onAction('copy', item)
+                    }}
+                  >
+                    {labels.copy}
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   data-testid={`plugin-marketplace-manage-${item.id}`}

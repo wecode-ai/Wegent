@@ -46,6 +46,7 @@ import {
 import {
   findPackableCreatedPlugin,
   isPackableCreatedPlugin,
+  marketplaceItemOwnsLocalCreatedPackage,
   resolveContinueEditingPluginKey,
 } from './pluginOwnerLocalPackage'
 import { UninstallPluginDialog } from './plugin-dialogs/UninstallPluginDialog'
@@ -491,6 +492,22 @@ export function PluginManagementWorkspace({
   }
 
   const openInstalledPluginDetail = (plugin: InstalledPluginItem) => {
+    const marketplaceItem =
+      (typeof plugin.raw.spec.pluginId === 'number'
+        ? marketplaceById.get(String(plugin.raw.spec.pluginId))
+        : undefined) ?? findMarketplaceItemForInstalled(plugin, marketplaceItems)
+    if (marketplaceItem && !marketplaceItemOwnsLocalCreatedPackage(marketplaceItem)) {
+      navigateTo(
+        buildPluginDetailRoute({
+          pluginName: marketplaceItem.name || plugin.raw.spec.source.pluginKey,
+          marketplaceName:
+            marketplaceItemMarketplaceId(marketplaceItem) ||
+            installedPluginMarketplaceId(plugin.raw) ||
+            INTERNAL_DEVICE_MARKETPLACE_ID,
+        })
+      )
+      return
+    }
     const packableCreated =
       findPackableCreatedPlugin(installedPlugins, [
         plugin.raw.spec.source.pluginKey,
@@ -501,10 +518,6 @@ export function PluginManagementWorkspace({
       setSelectedPluginId(packableCreated.id)
       return
     }
-    const marketplaceItem =
-      (typeof plugin.raw.spec.pluginId === 'number'
-        ? marketplaceById.get(String(plugin.raw.spec.pluginId))
-        : undefined) ?? findMarketplaceItemForInstalled(plugin, marketplaceItems)
     if (marketplaceItem || isCloudManagedInstalledPlugin(plugin.raw)) {
       navigateTo(
         buildPluginDetailRoute({
@@ -762,13 +775,15 @@ export function PluginManagementWorkspace({
     const isUninstalling = uninstallingPluginIds.has(selectedPlugin.id)
     const ownedMarketplace = findOwnedMarketplacePlugin(selectedPlugin)
     const packableCreated =
-      findPackableCreatedPlugin(installedPlugins, [
-        selectedPlugin.raw.spec.source.pluginKey,
-        createdPluginSlug(selectedPlugin),
-        selectedPlugin.name,
-        ownedMarketplace?.name,
-        ownedMarketplace?.displayName,
-      ]) ?? (selectedPlugin.origin === 'created' ? selectedPlugin : null)
+      ownedMarketplace && !marketplaceItemOwnsLocalCreatedPackage(ownedMarketplace)
+        ? null
+        : (findPackableCreatedPlugin(installedPlugins, [
+            selectedPlugin.raw.spec.source.pluginKey,
+            createdPluginSlug(selectedPlugin),
+            selectedPlugin.name,
+            ownedMarketplace?.name,
+            ownedMarketplace?.displayName,
+          ]) ?? (selectedPlugin.origin === 'created' ? selectedPlugin : null))
     const ownerActions = resolvePluginOwnerActions({
       isLocalCreated: Boolean(packableCreated),
       ownedListing: ownedMarketplace ?? null,
@@ -936,15 +951,19 @@ export function PluginManagementWorkspace({
               const marketplaceItem = plugin.raw.spec.pluginId
                 ? marketplaceById.get(String(plugin.raw.spec.pluginId))
                 : undefined
+              const listing =
+                marketplaceItem ?? findMarketplaceItemForInstalled(plugin, marketplaceItems)
               const ownedMarketplace = findOwnedMarketplacePlugin(plugin)
               const packableCreated =
-                findPackableCreatedPlugin(installedPlugins, [
-                  plugin.raw.spec.source.pluginKey,
-                  createdPluginSlug(plugin),
-                  plugin.name,
-                  ownedMarketplace?.name,
-                  ownedMarketplace?.displayName,
-                ]) ?? (plugin.origin === 'created' ? plugin : null)
+                listing && !marketplaceItemOwnsLocalCreatedPackage(listing)
+                  ? null
+                  : (findPackableCreatedPlugin(installedPlugins, [
+                      plugin.raw.spec.source.pluginKey,
+                      createdPluginSlug(plugin),
+                      plugin.name,
+                      ownedMarketplace?.name,
+                      ownedMarketplace?.displayName,
+                    ]) ?? (plugin.origin === 'created' ? plugin : null))
               const ownerActions = resolvePluginOwnerActions({
                 isLocalCreated: Boolean(packableCreated),
                 ownedListing: ownedMarketplace ?? null,

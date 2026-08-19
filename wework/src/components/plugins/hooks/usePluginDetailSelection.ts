@@ -4,6 +4,7 @@ import { isWegentCloudMarketplace } from '@/features/plugins/pluginNavigation'
 import type { PluginMarketplaceItem } from '@/types/api'
 import { marketplaceItemMarketplaceId } from '../pluginDistribution'
 import type { InstalledPluginItem } from '../PluginManagementRows'
+import { marketplaceItemOwnsLocalCreatedPackage } from '../pluginOwnerLocalPackage'
 import type { PluginMarketplaceState } from '../workspace/marketplaceWorkspaceHelpers'
 
 export function findMarketplaceItemForPluginReference(
@@ -124,12 +125,14 @@ export function openMarketplacePluginDetailSelection({
       ? null
       : (installedPlugins.find(plugin => String(plugin.id) === String(item.installedPluginId)) ??
         null)
-  const packableCreated = findPackableCreatedPlugin(installedPlugins, [
-    item.name,
-    item.displayName,
-    installed?.raw.spec.source.pluginKey,
-    installed?.name,
-  ])
+  const packableCreated = marketplaceItemOwnsLocalCreatedPackage(item)
+    ? findPackableCreatedPlugin(installedPlugins, [
+        item.name,
+        item.displayName,
+        installed?.raw.spec.source.pluginKey,
+        installed?.name,
+      ])
+    : null
   if (packableCreated) {
     setSelectedMarketplacePluginId(null)
     setSelectedPluginId(packableCreated.id)

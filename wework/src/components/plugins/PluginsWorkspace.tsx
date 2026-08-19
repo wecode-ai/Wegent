@@ -52,6 +52,7 @@ import { useMarketplaceFilters } from './hooks/useMarketplaceFilters'
 import { usePluginMarketplaceCatalog } from './hooks/usePluginMarketplaceCatalog'
 import {
   findMarketplaceItemForPluginReference,
+  openMarketplacePluginDetailSelection,
   usePluginDetailSelection,
 } from './hooks/usePluginDetailSelection'
 import { usePluginInstallActions } from './hooks/usePluginInstallActions'
@@ -129,6 +130,7 @@ import {
 import {
   findPackableCreatedPlugin,
   isPackableCreatedPlugin,
+  marketplaceItemOwnsLocalCreatedPackage,
   resolveContinueEditingPluginKey,
 } from './pluginOwnerLocalPackage'
 import { withPublishedPluginCloudLink } from './publishedPluginIdentity'
@@ -513,6 +515,7 @@ export function PluginsWorkspace({
       try: t('workbench.plugins_try_now', '立即对话'),
       manage: t('workbench.plugins_manage', '管理'),
       uninstall: t('workbench.plugins_uninstall', '卸载'),
+      copy: t('workbench.plugins_copy_to_personal', '复制到我的插件'),
     }),
     [t]
   )
@@ -3755,24 +3758,13 @@ export function PluginsWorkspace({
 
   const openMarketplacePluginDetail = (item: PluginMarketplaceItem) => {
     marketplaceReturnScrollTopRef.current = marketplaceScrollRegionRef.current?.scrollTop ?? 0
-    const installed =
-      item.installedPluginId === null || item.installedPluginId === undefined
-        ? null
-        : (installedPlugins.find(plugin => String(plugin.id) === String(item.installedPluginId)) ??
-          null)
-    const packableCreated = findPackableCreatedPlugin(installedPlugins, [
-      item.name,
-      item.displayName,
-      installed?.raw.spec.source.pluginKey,
-      installed?.name,
-    ])
-    if (packableCreated) {
-      setSelectedMarketplacePluginId(null)
-      setSelectedPluginId(packableCreated.id)
-      return
-    }
-    setSelectedPluginId(null)
-    setSelectedMarketplacePluginId(item.id)
+    openMarketplacePluginDetailSelection({
+      item,
+      installedPlugins,
+      findPackableCreatedPlugin,
+      setSelectedPluginId,
+      setSelectedMarketplacePluginId,
+    })
   }
 
   const openInstalledPluginDetail = (plugin: InstalledPluginItem) => {
@@ -3789,6 +3781,9 @@ export function PluginsWorkspace({
     open: openMarketplacePluginDetail,
     install: installMarketplacePlugin,
     try: tryMarketplacePluginInChat,
+    copy: (item: PluginMarketplaceItem) => {
+      void copyMarketplacePlugin(item)
+    },
     uninstall: (item: PluginMarketplaceItem) => {
       requestUninstallPlugin(marketplaceUninstallId(item), item.displayName || item.name)
     },
@@ -3797,6 +3792,9 @@ export function PluginsWorkspace({
     open: openMarketplacePluginDetail,
     install: installMarketplacePlugin,
     try: tryMarketplacePluginInChat,
+    copy: (item: PluginMarketplaceItem) => {
+      void copyMarketplacePlugin(item)
+    },
     uninstall: (item: PluginMarketplaceItem) => {
       requestUninstallPlugin(marketplaceUninstallId(item), item.displayName || item.name)
     },
@@ -3815,6 +3813,10 @@ export function PluginsWorkspace({
       if (action === 'try') {
         setBrowsingCategoryKey(null)
         marketplaceRowActionRef.current.try(item)
+        return
+      }
+      if (action === 'copy') {
+        marketplaceRowActionRef.current.copy(item)
         return
       }
       marketplaceRowActionRef.current.uninstall(item)
@@ -4056,13 +4058,14 @@ export function PluginsWorkspace({
     const detailMarketplaceId = marketplaceItemMarketplaceId(selectedMarketplacePlugin) || ''
     const ownedListing =
       selectedMarketplacePlugin.accessRole === 'owner' ? selectedMarketplacePlugin : null
-    const packableCreated =
-      findPackableCreatedPlugin(installedPlugins, [
-        selectedMarketplacePlugin.name,
-        selectedMarketplacePlugin.displayName,
-        installedDetail?.raw.spec.source.pluginKey,
-        installedDetail?.name,
-      ]) ?? (installedDetail?.origin === 'created' ? installedDetail : null)
+    const packableCreated = marketplaceItemOwnsLocalCreatedPackage(selectedMarketplacePlugin)
+      ? (findPackableCreatedPlugin(installedPlugins, [
+          selectedMarketplacePlugin.name,
+          selectedMarketplacePlugin.displayName,
+          installedDetail?.raw.spec.source.pluginKey,
+          installedDetail?.name,
+        ]) ?? (installedDetail?.origin === 'created' ? installedDetail : null))
+      : null
     const isOwnedPersonalListing =
       selectedMarketplacePlugin.accessRole === 'owner' &&
       selectedMarketplacePlugin.visibility === 'personal'

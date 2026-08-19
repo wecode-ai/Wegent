@@ -9,9 +9,16 @@ export interface PluginMarketplaceRowLabels {
   try: string
   manage: string
   uninstall: string
+  copy: string
 }
 
-export type PluginMarketplaceRowAction = 'open' | 'install' | 'try' | 'manage' | 'uninstall'
+export type PluginMarketplaceRowAction =
+  | 'open'
+  | 'install'
+  | 'try'
+  | 'manage'
+  | 'uninstall'
+  | 'copy'
 
 export interface PluginMarketplaceRowProps {
   item: PluginMarketplaceItem

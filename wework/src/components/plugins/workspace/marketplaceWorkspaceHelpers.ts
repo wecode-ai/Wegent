@@ -27,6 +27,7 @@ import {
 import { isLocalMarketplaceItem, mergeMarketplaceCatalog } from '../marketplaceCatalogMerge'
 import { installedPluginDistribution, marketplaceItemMarketplaceId } from '../pluginDistribution'
 import type { InstalledPluginItem } from '../PluginManagementRows'
+import { sharedRecipientMetaItems } from '../pluginManagementSubtitle'
 
 export type MarketplaceKind = 'local' | 'cloud'
 
@@ -332,12 +333,7 @@ export function marketplaceRowMetaItems(
   t: (key: string, fallback: string) => string
 ): string[] {
   if (item.accessRole === 'recipient') {
-    const creator = item.ownerDisplayName?.trim() || t('workbench.plugins_unknown_creator', '未知')
-    return [
-      `${t('workbench.plugins_shared_creator', '创建者')} ${creator}`,
-      t('workbench.plugins_shared_targeted', '定向分享'),
-      t('workbench.plugins_shared_use_only', '仅可使用'),
-    ]
+    return sharedRecipientMetaItems(item, t)
   }
   if (item.accessRole === 'owner' && item.visibility === 'personal') {
     const meta = [t('workbench.plugins_personal_created', '个人创建')]

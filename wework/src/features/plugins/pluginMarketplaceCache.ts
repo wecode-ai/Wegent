@@ -441,6 +441,7 @@ export function marketplaceItemsSignature(items: PluginMarketplaceItem[]): strin
         item.grantUserCount ?? 0,
         item.grantNamespaceCount ?? 0,
         item.accessRole ?? '',
+        item.allowCopy ? '1' : '0',
         item.latestReleaseId ?? '',
         item.interface?.logo ?? '',
         item.interface?.displayName ?? '',

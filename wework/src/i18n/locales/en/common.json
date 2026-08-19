@@ -1783,6 +1783,7 @@
     "plugins_shared_creator": "Creator",
     "plugins_shared_targeted": "Shared",
     "plugins_shared_use_only": "Use only",
+    "plugins_shared_copy_allowed": "Can copy",
     "plugins_share_only_self": "Only you can use this",
     "plugins_share_specified_members": "Specified members only",
     "plugins_share_department_unit": "departments",

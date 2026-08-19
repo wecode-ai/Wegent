@@ -14,6 +14,7 @@ const labels = {
   try: '立即对话',
   manage: '管理',
   uninstall: '卸载',
+  copy: '复制到我的插件',
 }
 
 function makeItem(overrides: Partial<PluginMarketplaceItem> = {}): PluginMarketplaceItem {

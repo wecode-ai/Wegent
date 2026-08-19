@@ -1781,6 +1781,7 @@
     "plugins_shared_creator": "创建者",
     "plugins_shared_targeted": "定向分享",
     "plugins_shared_use_only": "仅可使用",
+    "plugins_shared_copy_allowed": "可复制",
     "plugins_share_only_self": "仅自己可用",
     "plugins_share_specified_members": "指定成员可用",
     "plugins_share_department_unit": "个部门",
