@@ -83,6 +83,8 @@ The right workspace displays project files, previews, and change reviews. Multi-
 
 Local file and directory links in an AI response open in the Files tab. File links can jump to referenced lines, while directory links make that directory the file-tree root. In the macOS desktop app, the Files tab's **Open** and **Open location** actions support both files and directories.
 
+After selecting a regular file, select **Copy relative path** in the preview toolbar to copy its path relative to the current file-tree root. The action is hidden for directories and the file-tree root, and its result is announced both in the toolbar and to assistive technology.
+
 Press `Command+J` to open or close the bottom workspace panel. Opening the panel does not create a new terminal automatically. Existing terminals are preserved per task and restored when you return to that task.
 
 Select **+** in the bottom tab bar to choose **Terminal**, **IDE**, or **Desktop**, depending on the active device's capabilities. Terminal starts in the active project or the task's Git worktree. IDE opens in the system default browser. When available, Desktop opens in Wework's built-in browser.
