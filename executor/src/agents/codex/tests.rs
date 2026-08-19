@@ -793,6 +793,94 @@ fn cloud_model_uses_provider_model_id_for_catalog_capabilities() {
 }
 
 #[test]
+fn configured_vision_sidecar_derives_catalog_from_any_base_profile() {
+    let request = ExecutionRequest {
+        model_config: json!({
+            "model_id": "provider-model",
+            "codex_catalog_model_id": "wework-kimi-k2-7",
+            "codex_responses_compat_proxy": true,
+            "vision_sidecar": {
+                "enabled": true,
+                "request_url": "https://vision.example/v1/responses",
+                "model_id": "vision-model"
+            }
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    assert_eq!(
+        codex_request_model(&request).as_deref(),
+        Some("wework-kimi-k2-7-vision-sidecar")
+    );
+}
+
+#[test]
+fn disabled_vision_sidecar_keeps_the_base_catalog_profile() {
+    let request = ExecutionRequest {
+        model_config: json!({
+            "model_id": "provider-model",
+            "codex_catalog_model_id": "operator-catalog",
+            "codex_responses_compat_proxy": true,
+            "vision_sidecar": {"enabled": false}
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    assert_eq!(
+        codex_request_model(&request).as_deref(),
+        Some("operator-catalog")
+    );
+}
+
+#[test]
+fn malformed_vision_sidecar_keeps_the_base_catalog_profile() {
+    let request = ExecutionRequest {
+        model_config: json!({
+            "model_id": "provider-model",
+            "codex_catalog_model_id": "operator-catalog",
+            "codex_responses_compat_proxy": true,
+            "vision_sidecar": "invalid"
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    assert_eq!(
+        codex_request_model(&request).as_deref(),
+        Some("operator-catalog")
+    );
+}
+
+#[test]
+fn incomplete_vision_sidecar_keeps_the_base_catalog_profile() {
+    let invalid_sidecars = [
+        json!({"model_id": "vision-model"}),
+        json!({"request_url": "https://vision.example/v1/responses"}),
+        json!({
+            "request_url": "https://vision.example/v1/responses",
+            "model_id": "vision-model",
+            "api_format": "openai-embeddings"
+        }),
+    ];
+
+    for vision_sidecar in invalid_sidecars {
+        let request = ExecutionRequest {
+            model_config: json!({
+                "model_id": "provider-model",
+                "codex_catalog_model_id": "operator-catalog",
+                "codex_responses_compat_proxy": true,
+                "vision_sidecar": vision_sidecar
+            }),
+            ..ExecutionRequest::default()
+        };
+
+        assert_eq!(
+            codex_request_model(&request).as_deref(),
+            Some("operator-catalog")
+        );
+    }
+}
+
+#[test]
 fn shell_profile_uses_explicit_catalog_capabilities() {
     let request = ExecutionRequest {
         model_config: json!({

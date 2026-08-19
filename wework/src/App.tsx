@@ -95,7 +95,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useTranslation } from '@/hooks/useTranslation'
 import { WorkspaceTabsProvider } from '@/features/workspace-tabs/WorkspaceTabsContext'
 import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
-import type { WorkspaceTab } from '@/features/workspace-tabs/workspaceTabs'
+import type { WorkspaceTab, WorkspaceTabKind } from '@/features/workspace-tabs/workspaceTabs'
 import type { User } from '@/types/api'
 import { TelemetryBridge } from '@/telemetry/TelemetryBridge'
 import { track, useTelemetryEnabled } from '@/telemetry/client'
@@ -508,6 +508,7 @@ function browserWorkspaceTabStorageScope(): string {
 function AppShell() {
   const { t } = useTranslation('common')
   const appPreferences = useAppPreferencesState()
+  const experimentalFeatures = useExperimentalFeaturesState()
   const { pathname: path, search } = useCurrentLocation()
   const { user, isLoading } = useAuth()
   const cloudConnection = useCloudConnection()
@@ -546,6 +547,13 @@ function AppShell() {
       },
     }),
     [t]
+  )
+  const availableWorkspaceTabKinds = useMemo<readonly WorkspaceTabKind[] | undefined>(
+    () =>
+      experimentalFeatures.loaded && experimentalFeatures.enabled
+        ? undefined
+        : ['task', 'agent', 'auxiliary'],
+    [experimentalFeatures.enabled, experimentalFeatures.loaded]
   )
   const [workbenchStartupReady, setWorkbenchStartupReady] = useState(false)
   const [workbenchStartupRevealTimedOut, setWorkbenchStartupRevealTimedOut] = useState(false)
@@ -772,6 +780,7 @@ function AppShell() {
           <ChromeTitlebar
             showWorkspacePortals={activeAppKey !== 'wework'}
             showFeedback={activeAppKey !== 'wework'}
+            availableWorkspaceTabKinds={availableWorkspaceTabKinds}
           />
         )}
         {isTauri && !isPopoutWindow && !isWorkspaceWindow ? <RuntimeTaskCloseGuard /> : null}

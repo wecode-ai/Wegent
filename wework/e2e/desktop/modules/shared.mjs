@@ -263,8 +263,8 @@ const LOCAL_VISION_SIDECAR_CASE = {
 const CLOUD_VISION_SIDECAR_CASE = {
   source: 'cloud',
   mainOptionId: 'desktop-e2e-cloud-vision-main',
-  mainLabel: 'Desktop E2E Cloud Vision Main',
-  mainModelId: 'desktop-e2e-cloud-vision-main-upstream',
+  mainLabel: 'Desktop E2E DeepSeek Flash Vision Main',
+  mainModelId: 'deepseek-v4-flash',
   sidecarModelId: 'desktop-e2e-cloud-vision-sidecar-upstream',
 }
 const CLOUD_MULTIMODAL_VISION_CASE = {
