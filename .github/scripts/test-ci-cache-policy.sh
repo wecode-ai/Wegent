@@ -296,6 +296,13 @@ if ! sed -n '/^  executor-e2e-tests:/,/^  merge-reports:/p' \
   ! sed -n '/^  executor-e2e-tests:/,/^  merge-reports:/p' \
     "$workflow_dir/e2e-tests.yml" |
     grep -F -- '--network host' >/dev/null ||
+  ! sed -n '/^  executor-e2e-tests:/,/^  merge-reports:/p' \
+    "$workflow_dir/e2e-tests.yml" |
+    grep -F -- \
+      '--volume "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE"' >/dev/null ||
+  ! sed -n '/^  executor-e2e-tests:/,/^  merge-reports:/p' \
+    "$workflow_dir/e2e-tests.yml" |
+    grep -F -- '--env E2E_BOOTSTRAP_ADMIN_PASSWORD' >/dev/null ||
   sed -n '/^  executor-e2e-tests:/,/^  merge-reports:/p' \
     "$workflow_dir/e2e-tests.yml" |
     grep -E 'install-playwright-(browser|system-deps)' >/dev/null ||

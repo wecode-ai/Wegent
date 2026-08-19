@@ -836,8 +836,16 @@ jobs:
           docker run --rm \
             --network host \
             --ipc host \
-            --volume "$GITHUB_WORKSPACE:/workspace" \
-            --workdir /workspace/frontend \
+            --volume "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \
+            --workdir "$GITHUB_WORKSPACE/frontend" \
+            --env E2E_INTERNAL_SERVICE_TOKEN \
+            --env INTERNAL_SERVICE_TOKEN \
+            --env CHAT_SHELL_REMOTE_STORAGE_TOKEN \
+            --env CHAT_SHELL_INTERNAL_SERVICE_TOKEN \
+            --env E2E_BOOTSTRAP_ADMIN_PASSWORD \
+            --env E2E_ADMIN_PASSWORD \
+            --env GIT_TOKEN_AES_KEY \
+            --env GIT_TOKEN_AES_IV \
             --env E2E_BASE_URL \
             --env E2E_API_URL \
             --env E2E_USE_ISOLATED_USERS \
