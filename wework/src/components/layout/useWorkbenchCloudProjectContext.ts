@@ -29,6 +29,7 @@ import type {
 } from '@/types/api'
 
 interface PendingTodoBinding {
+  paneKey: string
   project: CloudProject
   item: CloudLoopItem | null
   target: RuntimeTaskAddress | null
@@ -117,18 +118,26 @@ async function waitForPendingProjectSpaceContext(
   throw lastError
 }
 
-function pendingTodoForTask(address: RuntimeTaskAddress | null) {
+function pendingTodoForTask(address: RuntimeTaskAddress | null, paneKey: string) {
   if (!pendingTodoBinding) return null
-  if (!address) return pendingTodoBinding.target ? null : pendingTodoBinding.item
+  if (!address) {
+    return pendingTodoBinding.paneKey === paneKey && !pendingTodoBinding.target
+      ? pendingTodoBinding.item
+      : null
+  }
   const target = pendingTodoBinding.target
   return target?.deviceId === address.deviceId && target.taskId === address.taskId
     ? pendingTodoBinding.item
     : null
 }
 
-function pendingProjectForTask(address: RuntimeTaskAddress | null) {
+function pendingProjectForTask(address: RuntimeTaskAddress | null, paneKey: string) {
   if (!pendingTodoBinding) return null
-  if (!address) return pendingTodoBinding.target ? null : pendingTodoBinding.project
+  if (!address) {
+    return pendingTodoBinding.paneKey === paneKey && !pendingTodoBinding.target
+      ? pendingTodoBinding.project
+      : null
+  }
   const target = pendingTodoBinding.target
   return target?.deviceId === address.deviceId && target.taskId === address.taskId
     ? pendingTodoBinding.project
@@ -273,10 +282,10 @@ export function useWorkbenchCloudProjectContext({
   const [contextRefreshKey, setContextRefreshKey] = useState(0)
   const [deliveryDialogOpen, setDeliveryDialogOpen] = useState(false)
   const [pendingTodoItem, setPendingTodoItem] = useState<CloudLoopItem | null>(() =>
-    pendingTodoForTask(contextRuntimeTask)
+    pendingTodoForTask(contextRuntimeTask, paneKey)
   )
   const [pendingCloudProject, setPendingCloudProject] = useState<CloudProject | null>(() =>
-    pendingProjectForTask(contextRuntimeTask)
+    pendingProjectForTask(contextRuntimeTask, paneKey)
   )
   const [todoBindingError, setTodoBindingError] = useState<string | null>(null)
   const [cloudProjects, setCloudProjects] = useState<CloudProject[]>([])
@@ -292,16 +301,27 @@ export function useWorkbenchCloudProjectContext({
   const composerCloudProject = contextRuntimeTask ? boundCloudProject : pendingCloudProject
   const composerTodoItem = contextRuntimeTask ? boundCloudItem : pendingTodoItem
   const defaultCloudProjectSelectionKey = `${paneKey}:${currentProjectId ?? 'none'}`
-  const defaultProject = useMemo(
-    () =>
-      defaultProjectSpace
-        ? (cloudProjects.find(
-            project =>
-              projectSpaceKey(projectSpaceRef(project)) === projectSpaceKey(defaultProjectSpace)
-          ) ?? null)
-        : (cloudProjects.find(isDefaultWorkItemProject) ?? null),
-    [cloudProjects, defaultProjectSpace]
+  const defaultWorkItemProject = useMemo(
+    () => cloudProjects.find(isDefaultWorkItemProject) ?? null,
+    [cloudProjects]
   )
+  const defaultProject = useMemo(() => {
+    if (dismissedDefaultCloudProjectKey === defaultCloudProjectSelectionKey) {
+      return defaultWorkItemProject
+    }
+    return defaultProjectSpace
+      ? (cloudProjects.find(
+          project =>
+            projectSpaceKey(projectSpaceRef(project)) === projectSpaceKey(defaultProjectSpace)
+        ) ?? null)
+      : (cloudProjects.find(isDefaultWorkItemProject) ?? null)
+  }, [
+    cloudProjects,
+    defaultCloudProjectSelectionKey,
+    defaultProjectSpace,
+    defaultWorkItemProject,
+    dismissedDefaultCloudProjectKey,
+  ])
   const defaultProjectOptionKey = defaultProject
     ? projectSpaceKey(projectSpaceRef(defaultProject))
     : null
@@ -312,11 +332,13 @@ export function useWorkbenchCloudProjectContext({
 
   const setPendingCloudContext = useCallback(
     (project: CloudProject | null, item: CloudLoopItem | null) => {
-      pendingTodoBinding = project ? { project, item, target: null, description: '' } : null
+      pendingTodoBinding = project
+        ? { paneKey, project, item, target: null, description: '' }
+        : null
       setPendingCloudProject(project)
       setPendingTodoItem(item)
     },
-    []
+    [paneKey]
   )
 
   useEffect(() => {
@@ -660,6 +682,7 @@ export function useWorkbenchCloudProjectContext({
       (!contextRuntimeTask || pendingTargetMatchesCurrentTask)
     ) {
       pendingTodoBinding = {
+        paneKey,
         project: defaultProject,
         item: null,
         target: pendingAutoJoin?.target ?? null,
@@ -676,6 +699,7 @@ export function useWorkbenchCloudProjectContext({
     defaultCloudProjectSelectionKey,
     defaultProject,
     dismissedDefaultCloudProjectKey,
+    paneKey,
     pendingCloudProject,
   ])
 
@@ -824,14 +848,18 @@ export function useWorkbenchCloudProjectContext({
         dismissedDefaultCloudProjectKey !== defaultCloudProjectSelectionKey
       ) {
         submissionProject = defaultProject
-        if (!submissionProject && defaultWorkItemProjectApi) {
-          submissionProject = await Promise.race([
-            loadDefaultWorkItemProject(defaultWorkItemProjectApi).catch(() => null),
-            new Promise<null>(resolve => {
-              window.setTimeout(() => resolve(null), DEFAULT_WORK_ITEM_LOOKUP_TIMEOUT_MS)
-            }),
-          ])
-        }
+      }
+      if (!contextRuntimeTask && !submissionProject) {
+        submissionProject =
+          defaultWorkItemProject ??
+          (defaultWorkItemProjectApi
+            ? await Promise.race([
+                loadDefaultWorkItemProject(defaultWorkItemProjectApi).catch(() => null),
+                new Promise<null>(resolve => {
+                  window.setTimeout(() => resolve(null), DEFAULT_WORK_ITEM_LOOKUP_TIMEOUT_MS)
+                }),
+              ])
+            : null)
       }
       const submissionItem = submissionProject ? pendingTodoItem : null
       if (!contextRuntimeTask) {
@@ -871,6 +899,7 @@ export function useWorkbenchCloudProjectContext({
       defaultCloudProjectSelectionKey,
       defaultProject,
       defaultProjectSpace,
+      defaultWorkItemProject,
       defaultWorkItemProjectApi,
       dismissedDefaultCloudProjectKey,
       pendingCloudProject,

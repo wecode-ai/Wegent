@@ -551,7 +551,7 @@ async function verifyWorkspaceIssueCreation(control) {
 }
 
 async function verifyDefaultTaskBoardAssociation(control, projectRowSelector) {
-  await ensureExperimentalFeaturesEnabled(control)
+  await ensureExperimentalFeaturesDisabled(control)
   await control.command(
     'click',
     `${projectRowSelector} [data-testid="project-new-conversation-button"]`
@@ -572,6 +572,7 @@ async function verifyDefaultTaskBoardAssociation(control, projectRowSelector) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await captureVerificationScreenshot(control, 'workspace-01-new-task.png')
+  await ensureExperimentalFeaturesEnabled(control)
   return taskTabTestId
 }
 
