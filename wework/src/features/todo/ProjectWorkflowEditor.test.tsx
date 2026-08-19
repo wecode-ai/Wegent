@@ -213,11 +213,17 @@ describe('ProjectWorkflowEditor', () => {
 
     fireEvent.click(screen.getByTestId('project-workflow-mode-ai'))
     expect(onChange).toHaveBeenCalledWith(
-      expect.objectContaining({ advancement_policy: 'ai', stage_mode: 'none' })
+      expect.objectContaining({
+        advancement_policy: 'ai',
+        approval_policy: 'required',
+        stage_mode: 'none',
+        nodes: [],
+      })
     )
   })
 
-  test('presents AI advancement as a concrete dispatcher instead of an automation rule', () => {
+  test('presents AI advancement as one cloud model with approval before execution', () => {
+    const onChange = vi.fn()
     const onRequestConfigureAiCoordinator = vi.fn()
     render(
       <ProjectWorkflowEditor
@@ -229,18 +235,27 @@ describe('ProjectWorkflowEditor', () => {
           nodes: [],
         }}
         busy={false}
-        onChange={vi.fn()}
+        onChange={onChange}
         onSave={vi.fn()}
         onRequestConfigureAiCoordinator={onRequestConfigureAiCoordinator}
       />
     )
 
-    expect(screen.getByText('调度 AI')).toBeInTheDocument()
-    expect(screen.getByText('尚未配置调度 AI')).toBeInTheDocument()
+    expect(screen.getByText('调度模型')).toBeInTheDocument()
+    expect(screen.getByText('正在准备默认云端模型')).toBeInTheDocument()
     expect(
-      screen.getByText('负责读取 Issue、拆解并分配具体任务，本身不执行任务。')
+      screen.getByText('内置调度员使用一个云端模型生成方案，本身不执行任务。')
     ).toBeInTheDocument()
+    expect(screen.getByTestId('project-workflow-ai-use-stages')).not.toBeChecked()
     expect(screen.queryByText('选择 AI 自动化')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('project-workflow-ai-use-stages'))
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stage_mode: 'dag',
+        nodes: [],
+      })
+    )
 
     fireEvent.click(screen.getByTestId('project-workflow-configure-ai-coordinator'))
     expect(onRequestConfigureAiCoordinator).toHaveBeenCalledOnce()

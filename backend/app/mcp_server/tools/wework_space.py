@@ -34,6 +34,7 @@ from app.schemas.delivery import (
     LoopItemResponse,
     LoopItemUpdate,
 )
+from app.schemas.issue_workflow import WorkflowPlanSubmit, WorkflowTaskOutcomeSubmit
 from app.schemas.project_chat import LoopItemAssign
 from app.services.cloud_files import cloud_file_service
 from app.services.cloud_projects.access import require_cloud_project_role
@@ -47,6 +48,10 @@ from app.services.loop_items.provider_router import (
 from app.services.loop_items.service import loop_item_service
 from app.services.project_automation_execution import project_automation_execution
 from app.services.project_chat.service import project_chat_service
+from app.services.project_workflow_orchestration import (
+    dispatch_workflow_replan,
+    project_workflow_orchestration_service,
+)
 from app.stores.tasks import task_store
 
 BOARD_TASK_SOURCES = {
@@ -359,8 +364,27 @@ async def create_board_item(
         )
 
         response = LoopItemResponse.model_validate(created.values)
+        if (
+            created.internal_item is not None
+            and response.workflow
+            and response.workflow.advancement_policy == "ai"
+        ):
+            project_workflow_orchestration_service.resume(
+                db,
+                issue_id=str(created.internal_item.id),
+                user_id=user.id,
+            )
+            db.refresh(created.internal_item)
+            response = LoopItemResponse.model_validate(
+                loop_item_service.response_values(
+                    db, created.internal_item, token_info.user_id
+                )
+            )
+        is_ai_workflow = bool(
+            response.workflow and response.workflow.advancement_policy == "ai"
+        )
         try:
-            await project_automation_processor.process(
+            dispatched = await project_automation_processor.process(
                 db,
                 ProjectAutomationEvent(
                     event_type="task.created",
@@ -377,8 +401,18 @@ async def create_board_item(
                     else None
                 ),
             )
+            if is_ai_workflow and dispatched != 1:
+                raise RuntimeError(
+                    "The configured workflow coordinator was not dispatched"
+                )
         except Exception:
             db.rollback()
+            if created.internal_item is not None and is_ai_workflow:
+                project_workflow_orchestration_service.fail_planning(
+                    db,
+                    issue_id=str(created.internal_item.id),
+                    user_id=user.id,
+                )
             logger.exception(
                 "Board MCP automation processing failed project=%s item=%s",
                 project.id,
@@ -437,6 +471,78 @@ def get_assignment_candidates(
                 for robot in robots
             ],
         }
+
+
+@mcp_tool(server="wework_space")
+def submit_workflow_plan(
+    token_info: MCPAuthInfo,
+    plan: dict[str, Any],
+    space_id: str = "",
+    item_id: str = "",
+) -> dict[str, Any]:
+    """Submit an AI orchestration draft for user approval without creating tasks."""
+
+    with SessionLocal() as db:
+        project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
+        issue_id = _item_id(db, token_info, item_id)
+        issue = _read_item(db, project, issue_id, token_info.user_id)
+        workflow = issue.get("workflow")
+        if not isinstance(workflow, dict) or workflow.get("advancement_policy") != "ai":
+            raise ValueError("The selected board item is not AI-coordinated")
+        view = project_workflow_orchestration_service.submit_plan(
+            db,
+            issue_id=issue_id,
+            user_id=token_info.user_id,
+            values=WorkflowPlanSubmit.model_validate(plan),
+        )
+        return view.model_dump(mode="json")
+
+
+@mcp_tool(server="wework_space")
+async def report_workflow_outcome(
+    token_info: MCPAuthInfo,
+    verdict: str,
+    summary: str = "",
+    findings: list[str] | None = None,
+    space_id: str = "",
+    item_id: str = "",
+) -> dict[str, Any]:
+    """Report passed verification or request an AI-coordinated rework plan."""
+
+    with SessionLocal() as db:
+        project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
+        result = project_workflow_orchestration_service.report_task_outcome(
+            db,
+            task_id=_item_id(db, token_info, item_id),
+            user_id=token_info.user_id,
+            values=WorkflowTaskOutcomeSubmit(
+                verdict=verdict,
+                summary=summary,
+                findings=findings or [],
+            ),
+        )
+        if result.project_id != str(project.id):
+            raise ValueError("Workflow outcome belongs to another project")
+        try:
+            await dispatch_workflow_replan(
+                db,
+                result=result,
+                user_id=token_info.user_id,
+            )
+        except Exception:
+            db.rollback()
+            project_workflow_orchestration_service.fail_planning(
+                db,
+                issue_id=result.plan.issue_id,
+                user_id=token_info.user_id,
+            )
+            raise
+        refreshed = project_workflow_orchestration_service.get_plan(
+            db,
+            issue_id=result.plan.issue_id,
+            user_id=token_info.user_id,
+        )
+        return (refreshed or result.plan).model_dump(mode="json")
 
 
 @mcp_tool(server="wework_space")

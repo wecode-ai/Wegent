@@ -20,6 +20,7 @@ from app.models.delivery import (
     ProjectAutomationRule,
     ProjectAutomationRun,
     ProjectChatAgent,
+    ProjectWorkflowRun,
     loop_datetime_is_unset,
     loop_datetime_value_is_unset,
 )
@@ -1265,6 +1266,77 @@ async def test_retry_run_redispatches_the_same_processor_record_and_task(
     test_db.refresh(failed_run)
     assert failed_run.status == "pending"
     dispatch.assert_awaited_once_with(test_db, rule, retried)
+
+
+@pytest.mark.asyncio
+async def test_workflow_replan_event_dispatches_only_the_configured_coordinator(
+    test_db: Session, test_user: User
+) -> None:
+    from app.services.project_automation_domain import ProjectAutomationEvent
+    from app.services.project_automations import project_automation_processor
+
+    project = _make_project(test_db, test_user)
+    item = _make_item(test_db, project, test_user, title="Workflow issue")
+    rule = ProjectAutomationRule(
+        id=f"rule-{uuid.uuid4().hex[:10]}",
+        cloud_project_id=project.id,
+        title="Workflow coordinator",
+        status="enabled",
+        created_by_user_id=test_user.id,
+        metadata_json={
+            "trigger_type": "event",
+            "event_type": "task.created",
+            "event_config": {"workflowCoordinator": True},
+            "assignment_mode": "ai_managed",
+            "manager_type": "custom",
+            "model": "test-model",
+            "execution_environment": "cloud",
+            "execution_device_id": "cloud-device-1",
+            "timezone": "Asia/Shanghai",
+        },
+    )
+    test_db.add(rule)
+    test_db.commit()
+    payload = {
+        "title": item.title,
+        "workflow": {"advancement_policy": "ai"},
+        "rework": {
+            "verdict": "needs_rework",
+            "summary": "Regression failed",
+            "findings": ["Login returned 500"],
+        },
+    }
+
+    with patch.object(
+        project_automation_execution,
+        "dispatch",
+        new_callable=AsyncMock,
+    ) as dispatch:
+        dispatched = await project_automation_processor.process(
+            test_db,
+            ProjectAutomationEvent(
+                event_type="workflow.replan",
+                project_id=str(project.id),
+                subject_id=item.id,
+                source="workflow",
+                actor_user_id=test_user.id,
+                payload=payload,
+            ),
+            automation_id=rule.id,
+        )
+
+    assert dispatched == 1
+    run = (
+        test_db.query(ProjectAutomationRun)
+        .filter(ProjectAutomationRun.parent_id == rule.id)
+        .one()
+    )
+    assert run.task_id == item.id
+    assert run.metadata_json["event"]["type"] == "workflow.replan"
+    assert run.metadata_json["event"]["payload"]["rework"]["summary"] == (
+        "Regression failed"
+    )
+    dispatch.assert_awaited_once_with(test_db, rule, run)
 
 
 @pytest.mark.asyncio
@@ -3620,6 +3692,61 @@ def test_manager_does_not_treat_default_creator_as_an_mcp_assignment(
     assert item.assignee_user_id == test_user.id
     assert run.status == "skipped"
     assert activity.metadata_json.get("selected_assignee_id") is None
+
+
+def test_manager_treats_a_durable_workflow_plan_as_completed_coordination(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    item = _make_item(test_db, project, test_user, title="AI workflow")
+    workflow_run = ProjectWorkflowRun(
+        cloud_project_id=project.id,
+        parent_id=item.id,
+        title="Analysis",
+        status="awaiting_approval",
+        created_by_user_id=test_user.id,
+        metadata_json={"stage_id": "analysis", "plan_version": 1},
+    )
+    rule = ProjectAutomationRule(
+        id=f"rule-{uuid.uuid4().hex[:10]}",
+        cloud_project_id=project.id,
+        title="Workflow coordinator",
+        status="enabled",
+        created_by_user_id=test_user.id,
+        metadata_json={"assignment_mode": "ai_managed", "manager_type": "custom"},
+    )
+    run = ProjectAutomationRun(
+        cloud_project_id=project.id,
+        parent_id=rule.id,
+        task_id=item.id,
+        title="Managed run",
+        status="running",
+        created_by_user_id=test_user.id,
+        metadata_json={},
+    )
+    test_db.add_all([workflow_run, rule, run])
+    test_db.flush()
+    item.metadata_json = {
+        "workflow": {
+            "advancement_policy": "ai",
+            "active_run_id": workflow_run.id,
+            "orchestration_status": "awaiting_approval",
+        }
+    }
+    test_db.commit()
+
+    assert project_automation_execution.has_recorded_manager_assignment(
+        test_db, run_id=str(run.id)
+    )
+    project_automation_execution.finalize_manager_result(
+        test_db,
+        run_id=str(run.id),
+        content=None,
+        push_activity=False,
+    )
+
+    test_db.refresh(run)
+    assert run.status == "succeeded"
 
 
 @pytest.mark.asyncio

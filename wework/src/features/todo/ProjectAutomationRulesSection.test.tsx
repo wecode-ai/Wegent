@@ -51,6 +51,53 @@ const agent = {
 }
 
 describe('ProjectAutomationRulesSection', () => {
+  it('keeps the built-in workflow coordinator out of the user automation list', async () => {
+    const coordinator = {
+      ...rule,
+      id: 'workflow-coordinator',
+      name: 'Issue AI 编排',
+      triggerType: 'event' as const,
+      eventType: 'task.created' as const,
+      eventConfig: { workflowCoordinator: true },
+      assignmentMode: 'ai_managed' as const,
+      managerType: 'custom' as const,
+      agentId: null,
+      model: 'cloud-model',
+      executionEnvironment: 'cloud' as const,
+      executionDeviceId: 'cloud-device',
+    }
+    const onRulesChange = vi.fn()
+    const api = {
+      list: vi.fn().mockResolvedValue([coordinator]),
+      create: vi.fn(),
+      update: vi.fn(),
+      delete: vi.fn(),
+      rotateWebhookSecret: vi.fn(),
+      runNow: vi.fn(),
+      listRuns: vi.fn().mockResolvedValue([]),
+      cancelRun: vi.fn(),
+      retryRun: vi.fn(),
+    }
+    const agentApi = {
+      list: vi.fn().mockResolvedValue([agent]),
+      create: vi.fn(),
+      update: vi.fn(),
+    }
+
+    render(
+      <ProjectAutomationRulesSection
+        projectId="1"
+        api={api}
+        agentApi={agentApi}
+        canManage
+        onRulesChange={onRulesChange}
+      />
+    )
+
+    await waitFor(() => expect(onRulesChange).toHaveBeenCalledWith([coordinator]))
+    expect(screen.queryByTestId('project-automation-rule-workflow-coordinator')).toBeNull()
+  })
+
   it('does not open a coordinator draft for users without management permission', async () => {
     const api = {
       list: vi.fn().mockResolvedValue([]),

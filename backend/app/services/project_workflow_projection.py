@@ -5,7 +5,64 @@
 
 from sqlalchemy.orm import Session
 
-from app.models.delivery import LoopItem, ProjectAutomationRun
+from app.models.delivery import LoopItem, ProjectAutomationRun, ProjectWorkflowRun
+
+
+def _sync_coordinator_failure(
+    db: Session,
+    run: ProjectAutomationRun,
+) -> LoopItem | None:
+    if (
+        run.status not in {"succeeded", "failed", "cancelled", "skipped"}
+        or not run.task_id
+    ):
+        return None
+    run_metadata = run.metadata_json if isinstance(run.metadata_json, dict) else {}
+    event = run_metadata.get("event")
+    payload = event.get("payload") if isinstance(event, dict) else None
+    workflow_payload = payload.get("workflow") if isinstance(payload, dict) else None
+    if (
+        not isinstance(workflow_payload, dict)
+        or workflow_payload.get("advancement_policy") != "ai"
+    ):
+        return None
+    issue = (
+        db.query(LoopItem)
+        .filter(LoopItem.id == str(run.task_id))
+        .populate_existing()
+        .with_for_update()
+        .one_or_none()
+    )
+    if issue is None or str(issue.cloud_project_id) != str(run.cloud_project_id):
+        return None
+    metadata = dict(issue.metadata_json or {})
+    workflow = metadata.get("workflow")
+    if (
+        not isinstance(workflow, dict)
+        or workflow.get("orchestration_status") != "planning"
+    ):
+        return issue
+    active_run_id = workflow.get("active_run_id")
+    active_run = (
+        db.get(ProjectWorkflowRun, active_run_id)
+        if isinstance(active_run_id, str)
+        else None
+    )
+    if (
+        active_run is None
+        or active_run.parent_id != issue.id
+        or str(active_run.cloud_project_id) != str(issue.cloud_project_id)
+    ):
+        return issue
+    active_run.status = "failed"
+    active_run.version += 1
+    next_workflow = dict(workflow)
+    next_workflow["version"] = int(workflow.get("version") or 1) + 1
+    next_workflow["orchestration_status"] = "failed"
+    metadata["workflow"] = next_workflow
+    issue.metadata_json = metadata
+    issue.version += 1
+    return issue
 
 
 def update_workflow_node(
@@ -78,7 +135,7 @@ def sync_automation_workflow_node(
     metadata = run.metadata_json if isinstance(run.metadata_json, dict) else {}
     node_id = metadata.get("workflow_node_id")
     if not isinstance(node_id, str) or not node_id or not run.task_id:
-        return None
+        return _sync_coordinator_failure(db, run)
     status_map = {
         "pending": "queued",
         "queued": "queued",

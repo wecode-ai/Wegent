@@ -303,7 +303,9 @@ export interface ProjectWorkflowDefinition {
   version: number
   stage_mode?: IssueStageMode
   advancement_policy?: IssueAdvancementPolicy
+  coordinator_model?: string | null
   coordinator_prompt?: string
+  approval_policy?: 'required'
   ai_automation_rule_id?: string | null
   nodes: WorkflowNodeDefinition[]
 }
@@ -322,9 +324,48 @@ export interface IssueWorkflowInstance {
   definition_version: number
   stage_mode?: IssueStageMode
   advancement_policy?: IssueAdvancementPolicy
+  coordinator_model?: string | null
   coordinator_prompt?: string
+  approval_policy?: 'required'
   ai_automation_rule_id?: string | null
+  orchestration_status?:
+    | 'idle'
+    | 'planning'
+    | 'awaiting_approval'
+    | 'dispatching'
+    | 'running'
+    | 'paused'
+    | 'completed'
+    | 'failed'
+  active_run_id?: string | null
+  active_plan_version?: number | null
+  current_stage_id?: string | null
   nodes: WorkflowNodeInstance[]
+}
+
+export interface WorkflowPlanItem {
+  id: string
+  client_key: string
+  stage_id: string
+  title: string
+  description: string
+  assignee_type: 'user' | 'agent' | 'team' | null
+  assignee_id: string | null
+  assignee_name: string
+  rationale: string
+  depends_on: string[]
+  task_id: string | null
+  status: 'proposed' | 'materialized' | 'superseded'
+}
+
+export interface WorkflowPlan {
+  run_id: string
+  issue_id: string
+  stage_id: string
+  plan_version: number
+  status: NonNullable<IssueWorkflowInstance['orchestration_status']>
+  summary: string
+  items: WorkflowPlanItem[]
 }
 
 export interface CloudProjectFile {
@@ -649,6 +690,21 @@ export function createDeliveryApi(client: HttpClient) {
     },
     getLoopItem(itemId: string): Promise<CloudLoopItem> {
       return client.get(`/v1/loop-items/${encodeURIComponent(itemId)}`)
+    },
+    getWorkflowPlan(itemId: string): Promise<WorkflowPlan | null> {
+      return client.get(`/v1/loop-items/${encodeURIComponent(itemId)}/workflow-plan`)
+    },
+    approveWorkflowPlan(itemId: string): Promise<WorkflowPlan> {
+      return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/workflow-plan/approve`)
+    },
+    pauseWorkflowPlan(itemId: string): Promise<WorkflowPlan | null> {
+      return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/workflow-plan/pause`)
+    },
+    resumeWorkflowPlan(itemId: string): Promise<WorkflowPlan> {
+      return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/workflow-plan/resume`)
+    },
+    replanWorkflowPlan(itemId: string): Promise<WorkflowPlan> {
+      return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/workflow-plan/replan`)
     },
     findLoopItemForTask(task: RuntimeTaskAddress): Promise<CloudLoopItem> {
       const query = new URLSearchParams({ device_id: task.deviceId, task_id: task.taskId })

@@ -441,7 +441,7 @@ class LoopItemService:
         task_metadata: dict = {}
         if explicit_workflow is not None:
             task_metadata["workflow"] = explicit_workflow.model_dump()
-        else:
+        elif values.parent_id is None:
             project_metadata = (
                 project.metadata_json if isinstance(project.metadata_json, dict) else {}
             )
@@ -883,6 +883,20 @@ class LoopItemService:
             updates["assignee_team_id"] = None
         if "parent_id" in values.model_fields_set:
             self._validate_parent_change(db, item, values.parent_id)
+        if "workflow" in values.model_fields_set:
+            current_workflow = (
+                (item.metadata_json or {}).get("workflow")
+                if isinstance(item.metadata_json, dict)
+                else None
+            )
+            if (
+                isinstance(current_workflow, dict)
+                and current_workflow.get("advancement_policy") == "ai"
+            ):
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    "AI workflow state is managed by workflow actions",
+                )
         if "tags" in values.model_fields_set or "workflow" in values.model_fields_set:
             # Tags live inside the metadata JSON column; merge so other
             # metadata keys survive the update.

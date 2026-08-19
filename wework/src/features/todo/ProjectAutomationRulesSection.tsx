@@ -91,7 +91,9 @@ export function ProjectAutomationRulesSection({
   const { t } = useTranslation('common')
   const backendUrl = getRuntimeConfig().wegentBackendUrl || window.location.origin
   const [rules, setRules] = useState<ProjectAutomationRule[]>([])
-  const visibleRules = rules.filter(rule => rule.triggerType !== 'workflow')
+  const visibleRules = rules.filter(
+    rule => rule.triggerType !== 'workflow' && rule.eventConfig.workflowCoordinator !== true
+  )
   const [agents, setAgents] = useState<ProjectChatAgent[]>([])
   const [devices, setDevices] = useState<DeviceInfo[]>([])
   const [models, setModels] = useState<UnifiedModel[]>([])

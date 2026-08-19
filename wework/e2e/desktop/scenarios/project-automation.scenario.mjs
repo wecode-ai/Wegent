@@ -530,6 +530,19 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       timeoutMs: uiTimeoutMs,
     })
 
+    await control.command('click', '[data-testid="project-workflow-mode-ai"]')
+    await control.command('waitFor', '[data-testid="project-workflow-ai-use-stages"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    assert.equal(
+      await control.command('getElementCount', '[data-testid="project-workflow-empty-add"]'),
+      0
+    )
+    await control.command('click', '[data-testid="project-workflow-ai-use-stages"]')
+    await control.command('waitFor', '[data-testid="project-workflow-empty-add"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+
     await control.command('click', '[data-testid="project-workflow-mode-workflow"]')
     await control.command('click', '[data-testid="project-workflow-empty-add"]')
     await control.command('fill', '[data-testid="project-workflow-stage-name-stage-1"]', {
@@ -604,6 +617,196 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
     await captureScreenshot(control, 'project-automation-00-real-workflow-task-binding.png')
     await control.command('click', '[data-testid="ai-chat-modal-close"]')
     await control.command('click', '[data-testid="cloud-todo-detail-close"]')
+
+    const coordinatorRule = await cloudRequest(`/api/v1/cloud-projects/${projectId}/automations`, {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'Issue AI 编排',
+        prompt: 'Plan only the current ready stage and wait for user approval.',
+        triggerType: 'event',
+        eventType: 'task.created',
+        eventConfig: { workflowCoordinator: true },
+        cronExpression: null,
+        timezone: 'Asia/Shanghai',
+        enabled: true,
+        assignmentMode: 'ai_managed',
+        managerType: 'custom',
+        agentId: null,
+        wegentTeamId: null,
+        model: CLOUD_MODEL_NAME,
+        executionEnvironment: 'cloud',
+        executionDeviceId: CLOUD_DEVICE_ID,
+      }),
+    })
+    const projectBeforeAiWorkflow = await cloudRequest(`/api/v1/cloud-projects/${projectId}`)
+    const aiWorkflowDefinition = {
+      version: projectBeforeAiWorkflow.workflow_definition.version + 1,
+      stage_mode: 'dag',
+      advancement_policy: 'ai',
+      coordinator_model: CLOUD_MODEL_NAME,
+      coordinator_prompt:
+        'Read the Issue and candidates, plan only the ready stage, and wait for approval.',
+      approval_policy: 'required',
+      ai_automation_rule_id: coordinatorRule.id,
+      nodes: [
+        {
+          id: 'analysis',
+          name: '分析规划',
+          prompt: '明确目标、约束和执行方案',
+          depends_on: [],
+          dependency_context: {},
+          required: true,
+          workspace_policy: 'composer',
+          automation_rule_id: null,
+        },
+        {
+          id: 'delivery',
+          name: '执行交付',
+          prompt: '完成具体工作并提交可验收结果',
+          depends_on: ['analysis'],
+          dependency_context: { analysis: ['final_result', 'deliveries'] },
+          required: true,
+          workspace_policy: 'inherit',
+          automation_rule_id: null,
+        },
+      ],
+    }
+    await cloudRequest(`/api/v1/cloud-projects/${projectId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        version: projectBeforeAiWorkflow.version,
+        workflow_definition: aiWorkflowDefinition,
+      }),
+    })
+    await cloudRequest(`/api/v1/cloud-projects/${projectId}/automations/${coordinatorRule.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        version: coordinatorRule.version,
+        enabled: false,
+      }),
+    })
+
+    await control.command('click', `${activeBoard} [data-testid="cloud-todo-add"]`)
+    await control.command('waitFor', `${activeBoard} [data-testid="workspace-issue-input"]`, {
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('fill', `${activeBoard} [data-testid="workspace-issue-input"]`, {
+      value: '真实后端 AI 编排恢复',
+    })
+    await control.command('click', `${activeBoard} [data-testid="workspace-issue-submit"]`)
+    const aiWorkflowIssue = await waitForValue(
+      () => cloudRequest(`/api/v1/cloud-projects/${projectId}/loop-items`),
+      response =>
+        (response.items ?? []).find(item => item.title === '真实后端 AI 编排恢复')?.workflow
+          ?.orchestration_status === 'failed',
+      'The AI workflow Issue did not expose a failed coordinator checkpoint',
+      uiTimeoutMs
+    ).then(response => response.items.find(item => item.title === '真实后端 AI 编排恢复'))
+    assert.equal(aiWorkflowIssue.workflow.current_stage_id, 'analysis')
+    assert.equal(aiWorkflowIssue.workflow.coordinator_model, CLOUD_MODEL_NAME)
+
+    const submittedPlan = await cloudRequest(
+      `/api/v1/loop-items/${aiWorkflowIssue.id}/workflow-plan`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          summary: '先完成需求分析，再进入交付阶段。',
+          items: [
+            {
+              client_key: 'analysis-1',
+              stage_id: 'analysis',
+              title: '分析需求与约束',
+              description: '输出可验收的需求分析结果。',
+              assignee_type: 'user',
+              assignee_id: String(projectBeforeAiWorkflow.created_by_user_id),
+              assignee_name: 'E2E Owner',
+              rationale: '由项目负责人确认范围。',
+              depends_on: [],
+            },
+          ],
+        }),
+      }
+    )
+    assert.equal(submittedPlan.status, 'awaiting_approval')
+    await control.command('click', '[data-testid="cloud-todo-detail-close"]')
+    await control.command(
+      'waitFor',
+      `${activeBoard} [data-testid="cloud-todo-card-${aiWorkflowIssue.id}"]`,
+      { timeoutMs: uiTimeoutMs }
+    )
+    await control.command(
+      'click',
+      `${activeBoard} [data-testid="cloud-todo-card-${aiWorkflowIssue.id}"]`
+    )
+    await control.command('waitFor', '[data-testid="issue-workflow-plan"]', {
+      text: '等待确认',
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('waitFor', '[data-testid="issue-workflow-plan-approve"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('click', '[data-testid="issue-workflow-plan-approve"]')
+    await control.command('waitFor', '[data-testid="issue-workflow-plan-pause"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    const approvedPlan = await cloudRequest(
+      `/api/v1/loop-items/${aiWorkflowIssue.id}/workflow-plan`
+    )
+    assert.equal(approvedPlan.status, 'running')
+    assert.ok(approvedPlan.items[0].task_id)
+
+    await control.command('click', '[data-testid="issue-workflow-plan-pause"]')
+    await control.command('waitFor', '[data-testid="issue-workflow-plan-resume"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('click', '[data-testid="issue-workflow-plan-resume"]')
+    await control.command('waitFor', '[data-testid="issue-workflow-plan-pause"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    const reworkResponse = await fetch(
+      `${cloudApi.backendUrl}/api/v1/loop-items/${approvedPlan.items[0].task_id}/workflow-outcome`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${cloudApi.authToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          verdict: 'needs_rework',
+          summary: 'E2E 验证发现需要返工',
+          findings: ['自动恢复应创建同阶段的新方案版本'],
+        }),
+      }
+    )
+    assert.equal(reworkResponse.status, 503)
+    await control.command('click', '[data-testid="cloud-todo-detail-close"]')
+    await control.command(
+      'waitFor',
+      `${activeBoard} [data-testid="cloud-todo-card-${aiWorkflowIssue.id}"]`,
+      { timeoutMs: uiTimeoutMs }
+    )
+    await control.command(
+      'click',
+      `${activeBoard} [data-testid="cloud-todo-card-${aiWorkflowIssue.id}"]`
+    )
+    await control.command('waitFor', '[data-testid="issue-workflow-plan"]', {
+      text: '需要处理',
+      timeoutMs: uiTimeoutMs,
+    })
+    const replanned = await cloudRequest(`/api/v1/loop-items/${aiWorkflowIssue.id}/workflow-plan`)
+    assert.equal(replanned.status, 'failed')
+    assert.equal(replanned.plan_version, 2)
+    await captureScreenshot(control, 'project-automation-ai-workflow-recovery.png')
+    await control.command('click', '[data-testid="cloud-todo-detail-close"]')
+
+    const projectAfterAiWorkflow = await cloudRequest(`/api/v1/cloud-projects/${projectId}`)
+    await cloudRequest(`/api/v1/cloud-projects/${projectId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        version: projectAfterAiWorkflow.version,
+        workflow_definition: persistedWorkflowProject.workflow_definition,
+      }),
+    })
     await control.command('click', '[data-testid="cloud-project-automation-view"]')
     await control.command('waitFor', '[data-testid="project-automation-rules"]', {
       timeoutMs: uiTimeoutMs,

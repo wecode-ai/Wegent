@@ -59,6 +59,7 @@ import { normalizeTaskDescription } from './taskDescription'
 import { AITableTaskFields } from './AITableTaskFields'
 import { TaskActivityView } from './TaskActivityView'
 import { IssueWorkflowDag } from './IssueWorkflowDag'
+import { IssueWorkflowPlan } from './IssueWorkflowPlan'
 import { markdownAttachmentRows } from './attachmentMarkdown'
 import './task-detail-layout.css'
 import {
@@ -1769,6 +1770,9 @@ export function TodoEditor(props: TodoEditorProps) {
 
               {workspacePanel && item ? (
                 <>
+                  {item.workflow?.advancement_policy === 'ai' ? (
+                    <IssueWorkflowPlan api={api} item={item} onUpdated={editProps!.onUpdated} />
+                  ) : null}
                   <section className="mt-6" data-testid="cloud-todo-tasks">
                     <div className="flex h-8 items-center gap-2">
                       <h3 className="text-sm font-semibold text-text-primary">

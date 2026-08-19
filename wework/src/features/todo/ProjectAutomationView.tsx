@@ -9,6 +9,7 @@ import { ProjectChatAgentsSection } from './ProjectChatAgentsSection'
 import { ProjectQueueView, type ExecutionListApi } from './ProjectQueueView'
 import { ProjectAutomationRulesSection } from './ProjectAutomationRulesSection'
 import { ProjectWorkflowEditor } from './ProjectWorkflowEditor'
+import { DEFAULT_AI_MANAGED_PROMPT_KEY, defaultCustomConfiguration } from './projectAutomationForm'
 
 type DeliveryApi = NonNullable<WorkbenchServices['deliveryApi']>
 
@@ -67,6 +68,67 @@ export function ProjectAutomationView({
   const handleAgentsChange = useCallback((agents: ProjectChatAgent[]) => {
     setProjectAgents(agents.filter(agent => agent.status === 'active'))
   }, [])
+
+  const ensureAiCoordinator = useCallback(async (): Promise<ProjectAutomationRule | null> => {
+    const existing = automationRules.find(
+      rule =>
+        rule.assignmentMode === 'ai_managed' &&
+        rule.triggerType === 'event' &&
+        rule.eventType === 'task.created' &&
+        rule.eventConfig.workflowCoordinator === true &&
+        rule.enabled
+    )
+    if (existing) return existing
+    if (!projectAutomationApi || !deviceApi || !modelApi) {
+      setWorkflowError(t('todo.workflow_cloud_model_unavailable', '没有可用的云端调度模型'))
+      return null
+    }
+    try {
+      const [devices, modelResponse] = await Promise.all([
+        deviceApi.listDevices(),
+        modelApi.listModels(),
+      ])
+      const cloudDevices = devices.filter(device =>
+        ['cloud', 'remote'].includes(device.device_type)
+      )
+      const configuration = defaultCustomConfiguration(modelResponse.data, cloudDevices)
+      if (
+        !configuration.model ||
+        configuration.executionEnvironment !== 'cloud' ||
+        !configuration.executionDeviceId
+      ) {
+        setWorkflowError(t('todo.workflow_cloud_model_unavailable', '没有可用的云端调度模型'))
+        return null
+      }
+      const created = await projectAutomationApi.create(String(project.id), {
+        name: t('todo.workflow_default_coordinator_name', 'Issue AI 编排'),
+        prompt: t(DEFAULT_AI_MANAGED_PROMPT_KEY),
+        triggerType: 'event',
+        eventType: 'task.created',
+        eventConfig: { workflowCoordinator: true },
+        cronExpression: null,
+        timezone: 'Asia/Shanghai',
+        enabled: true,
+        assignmentMode: 'ai_managed',
+        managerType: 'custom',
+        agentId: null,
+        wegentTeamId: null,
+        model: configuration.model,
+        executionEnvironment: 'cloud',
+        executionDeviceId: configuration.executionDeviceId,
+      })
+      setAutomationRules(current => [...current, created])
+      setWorkflowError(null)
+      return created
+    } catch (cause) {
+      setWorkflowError(
+        cause instanceof Error
+          ? cause.message
+          : t('todo.workflow_cloud_model_unavailable', '没有可用的云端调度模型')
+      )
+      return null
+    }
+  }, [automationRules, deviceApi, modelApi, project.id, projectAutomationApi, t])
 
   const ensureStageRobotRule = useCallback(
     async (agentId: string): Promise<string | null> => {
@@ -169,6 +231,7 @@ export function ProjectAutomationView({
           automationRules={automationRules}
           projectAgents={projectAgents}
           onEnsureStageRobotRule={ensureStageRobotRule}
+          onEnsureAiCoordinator={ensureAiCoordinator}
           onRequestCreateRobot={() => setRobotCreateRequestKey(current => current + 1)}
           onRequestConfigureAiCoordinator={
             canManageAgents

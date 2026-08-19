@@ -48,6 +48,11 @@ from app.schemas.delivery import (
     MyWorkItemResponse,
     MyWorkListResponse,
 )
+from app.schemas.issue_workflow import (
+    WorkflowPlanSubmit,
+    WorkflowPlanView,
+    WorkflowTaskOutcomeSubmit,
+)
 from app.services.cloud_projects import cloud_project_service
 from app.services.delivery import delivery_service
 from app.services.loop_items import loop_item_service
@@ -56,9 +61,53 @@ from app.services.loop_items.provider_router import (
     loop_item_attachment_provider_router,
     loop_item_provider_router,
 )
+from app.services.project_workflow_orchestration import (
+    dispatch_workflow_planning,
+    dispatch_workflow_replan,
+    project_workflow_orchestration_service,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+async def _dispatch_persisted_workflow_planning(
+    db: Session,
+    *,
+    item_id: str,
+    user_id: int,
+) -> WorkflowPlanView:
+    request = project_workflow_orchestration_service.dispatch_request(
+        db,
+        issue_id=item_id,
+        user_id=user_id,
+    )
+    try:
+        await dispatch_workflow_planning(
+            db,
+            request=request,
+            user_id=user_id,
+        )
+    except Exception as exc:
+        db.rollback()
+        project_workflow_orchestration_service.fail_planning(
+            db,
+            issue_id=item_id,
+            user_id=user_id,
+        )
+        logger.exception("Workflow coordinator dispatch failed issue=%s", item_id)
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Workflow coordinator could not be dispatched",
+        ) from exc
+    refreshed = project_workflow_orchestration_service.get_plan(
+        db,
+        issue_id=item_id,
+        user_id=user_id,
+    )
+    if refreshed is None:
+        raise RuntimeError("Dispatched workflow plan is unavailable")
+    return refreshed
 
 
 def _loop_item_response(
@@ -269,13 +318,28 @@ async def create_loop_item(
     project = cloud_project_service.get(db, project_id, current_user.id)
     created = loop_item_provider_router.create(db, project, current_user, values)
     response = LoopItemResponse.model_validate(created.values)
+    if (
+        created.internal_item is not None
+        and response.workflow
+        and response.workflow.advancement_policy == "ai"
+    ):
+        project_workflow_orchestration_service.resume(
+            db,
+            issue_id=str(created.internal_item.id),
+            user_id=current_user.id,
+        )
+        db.refresh(created.internal_item)
+        response = _loop_item_response(db, created.internal_item, current_user)
     from app.services.project_automations import (
         ProjectAutomationEvent,
         project_automation_processor,
     )
 
+    is_ai_workflow = bool(
+        response.workflow and response.workflow.advancement_policy == "ai"
+    )
     try:
-        await project_automation_processor.process(
+        dispatched = await project_automation_processor.process(
             db,
             ProjectAutomationEvent(
                 event_type="task.created",
@@ -291,8 +355,16 @@ async def create_loop_item(
                 else None
             ),
         )
+        if is_ai_workflow and dispatched != 1:
+            raise RuntimeError("The configured workflow coordinator was not dispatched")
     except Exception:
         db.rollback()
+        if created.internal_item is not None and is_ai_workflow:
+            project_workflow_orchestration_service.fail_planning(
+                db,
+                issue_id=str(created.internal_item.id),
+                user_id=current_user.id,
+            )
         logger.exception(
             "Project automation processing failed after task creation project=%s task=%s",
             project.id,
@@ -389,7 +461,204 @@ async def update_loop_item(
 
         await dispatch_board_team_assignment(db, item=item, user=current_user)
         db.refresh(item)
+    planning_started = project_workflow_orchestration_service.sync_parent_for_child(
+        db, item
+    )
+    db.commit()
+    db.refresh(item)
+    if planning_started and item.parent_id:
+        try:
+            await _dispatch_persisted_workflow_planning(
+                db,
+                item_id=item.parent_id,
+                user_id=current_user.id,
+            )
+        except HTTPException:
+            logger.exception(
+                "Next workflow stage coordinator dispatch failed issue=%s",
+                item.parent_id,
+            )
     return _loop_item_response(db, item, current_user)
+
+
+@router.get(
+    "/loop-items/{item_id}/workflow-plan",
+    response_model=WorkflowPlanView | None,
+)
+def get_loop_item_workflow_plan(
+    item_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> WorkflowPlanView | None:
+    try:
+        return project_workflow_orchestration_service.get_plan(
+            db, issue_id=item_id, user_id=current_user.id
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+
+
+@router.post(
+    "/loop-items/{item_id}/workflow-plan",
+    response_model=WorkflowPlanView,
+)
+def submit_loop_item_workflow_plan(
+    item_id: str,
+    values: WorkflowPlanSubmit,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_flexible_for_executor),
+) -> WorkflowPlanView:
+    try:
+        return project_workflow_orchestration_service.submit_plan(
+            db,
+            issue_id=item_id,
+            user_id=current_user.id,
+            values=values,
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+
+
+@router.post(
+    "/loop-items/{item_id}/workflow-plan/approve",
+    response_model=WorkflowPlanView,
+)
+async def approve_loop_item_workflow_plan(
+    item_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> WorkflowPlanView:
+    try:
+        plan = project_workflow_orchestration_service.approve_plan(
+            db, issue_id=item_id, user_id=current_user.id
+        )
+        from app.services.board_team_execution import dispatch_board_team_assignment
+
+        for plan_item in plan.items:
+            if not plan_item.task_id:
+                continue
+            child = db.get(LoopItem, plan_item.task_id)
+            if child is not None and child.assignee_agent_id:
+                await dispatch_board_team_assignment(db, item=child, user=current_user)
+        refreshed = project_workflow_orchestration_service.get_plan(
+            db, issue_id=item_id, user_id=current_user.id
+        )
+        if refreshed is None:
+            raise RuntimeError("Approved workflow plan is unavailable")
+        return refreshed
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+
+
+@router.post(
+    "/loop-items/{item_id}/workflow-plan/pause",
+    response_model=WorkflowPlanView | None,
+)
+def pause_loop_item_workflow_plan(
+    item_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> WorkflowPlanView | None:
+    try:
+        return project_workflow_orchestration_service.pause(
+            db, issue_id=item_id, user_id=current_user.id
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+
+
+@router.post(
+    "/loop-items/{item_id}/workflow-plan/resume",
+    response_model=WorkflowPlanView,
+)
+async def resume_loop_item_workflow_plan(
+    item_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> WorkflowPlanView:
+    try:
+        plan = project_workflow_orchestration_service.resume(
+            db, issue_id=item_id, user_id=current_user.id
+        )
+        if plan.status == "planning":
+            return await _dispatch_persisted_workflow_planning(
+                db,
+                item_id=item_id,
+                user_id=current_user.id,
+            )
+        return plan
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+
+
+@router.post(
+    "/loop-items/{item_id}/workflow-plan/replan",
+    response_model=WorkflowPlanView,
+)
+async def replan_loop_item_workflow_plan(
+    item_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> WorkflowPlanView:
+    try:
+        project_workflow_orchestration_service.replan(
+            db, issue_id=item_id, user_id=current_user.id
+        )
+        return await _dispatch_persisted_workflow_planning(
+            db,
+            item_id=item_id,
+            user_id=current_user.id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+
+
+@router.post(
+    "/loop-items/{item_id}/workflow-outcome",
+    response_model=WorkflowPlanView,
+)
+async def report_loop_item_workflow_outcome(
+    item_id: str,
+    values: WorkflowTaskOutcomeSubmit,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_flexible_for_executor),
+) -> WorkflowPlanView:
+    try:
+        result = project_workflow_orchestration_service.report_task_outcome(
+            db,
+            task_id=item_id,
+            user_id=current_user.id,
+            values=values,
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    try:
+        await dispatch_workflow_replan(
+            db,
+            result=result,
+            user_id=current_user.id,
+        )
+    except Exception as exc:
+        db.rollback()
+        project_workflow_orchestration_service.fail_planning(
+            db,
+            issue_id=result.plan.issue_id,
+            user_id=current_user.id,
+        )
+        logger.exception(
+            "Workflow coordinator replan dispatch failed issue=%s",
+            result.plan.issue_id,
+        )
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Workflow coordinator could not be dispatched",
+        ) from exc
+    refreshed = project_workflow_orchestration_service.get_plan(
+        db,
+        issue_id=result.plan.issue_id,
+        user_id=current_user.id,
+    )
+    return refreshed or result.plan
 
 
 @router.delete("/loop-items/{item_id}", status_code=status.HTTP_204_NO_CONTENT)

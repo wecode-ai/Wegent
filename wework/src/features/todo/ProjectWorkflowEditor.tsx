@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Background,
   BaseEdge,
@@ -46,6 +46,7 @@ interface ProjectWorkflowEditorProps {
   automationRules?: ProjectAutomationRule[]
   projectAgents?: ProjectChatAgent[]
   onEnsureStageRobotRule?: (agentId: string) => Promise<string | null>
+  onEnsureAiCoordinator?: () => Promise<ProjectAutomationRule | null>
   onRequestCreateRobot?: () => void
   onRequestConfigureAiCoordinator?: () => void
 }
@@ -300,6 +301,7 @@ export function ProjectWorkflowEditor({
   automationRules = [],
   projectAgents = [],
   onEnsureStageRobotRule,
+  onEnsureAiCoordinator,
   onRequestCreateRobot,
   onRequestConfigureAiCoordinator,
 }: ProjectWorkflowEditorProps) {
@@ -310,6 +312,10 @@ export function ProjectWorkflowEditor({
   const [robotModeNodeIds, setRobotModeNodeIds] = useState<Set<string>>(
     () => new Set(value.nodes.filter(node => node.automation_rule_id).map(node => node.id))
   )
+  const valueRef = useRef(value)
+  useEffect(() => {
+    valueRef.current = value
+  }, [value])
   const currentStageMode = stageMode(value)
   const currentAdvancementPolicy = value.advancement_policy ?? 'manual'
   const orchestrationMode: OrchestrationMode =
@@ -319,8 +325,12 @@ export function ProjectWorkflowEditor({
       automationRules.filter(
         rule =>
           rule.assignmentMode === 'ai_managed' &&
+          rule.managerType === 'custom' &&
+          rule.executionEnvironment === 'cloud' &&
           rule.triggerType === 'event' &&
-          rule.eventType === 'task.created'
+          rule.eventType === 'task.created' &&
+          rule.eventConfig.workflowCoordinator === true &&
+          rule.enabled
       ),
     [automationRules]
   )
@@ -590,7 +600,33 @@ export function ProjectWorkflowEditor({
               } else if (mode === 'workflow') {
                 updateDefinition({ advancement_policy: 'manual', stage_mode: 'dag' })
               } else {
-                updateDefinition({ advancement_policy: 'ai' })
+                const coordinatorRule =
+                  aiRules.find(rule => rule.id === value.ai_automation_rule_id) ?? aiRules[0]
+                const next: ProjectWorkflowDefinition = {
+                  ...value,
+                  advancement_policy: 'ai',
+                  approval_policy: 'required',
+                  coordinator_prompt:
+                    value.coordinator_prompt?.trim() ||
+                    t(
+                      'todo.workflow_default_coordinator_prompt',
+                      '读取当前 Issue 和候选执行者能力。启用阶段 DAG 时只规划当前 ready 阶段，否则围绕整个 Issue 自由拆解。将工作拆成可独立验收的任务，为每个任务推荐执行者并说明理由，然后提交方案等待确认。'
+                    ),
+                  ai_automation_rule_id: value.ai_automation_rule_id ?? coordinatorRule?.id ?? null,
+                  coordinator_model: value.coordinator_model ?? coordinatorRule?.model ?? null,
+                }
+                onChange(next)
+                if (!next.ai_automation_rule_id && onEnsureAiCoordinator) {
+                  void onEnsureAiCoordinator().then(rule => {
+                    if (rule) {
+                      onChange({
+                        ...valueRef.current,
+                        ai_automation_rule_id: rule.id,
+                        coordinator_model: rule.model,
+                      })
+                    }
+                  })
+                }
               }
             }}
             className={cn(
@@ -610,25 +646,28 @@ export function ProjectWorkflowEditor({
         <div className="mt-4 grid gap-3 rounded-xl border border-border bg-muted/30 p-3 lg:grid-cols-[240px_1fr]">
           <div>
             <label className="text-xs font-medium text-text-secondary">
-              {t('todo.workflow_ai_coordinator', '调度 AI')}
+              {t('todo.workflow_coordinator_model', '调度模型')}
               <div className="mt-1.5 flex gap-2">
                 <select
                   data-testid="project-workflow-ai-rule"
                   value={value.ai_automation_rule_id ?? ''}
-                  onChange={event =>
-                    updateDefinition({ ai_automation_rule_id: event.target.value || null })
-                  }
+                  onChange={event => {
+                    const rule = aiRules.find(candidate => candidate.id === event.target.value)
+                    updateDefinition({
+                      ai_automation_rule_id: rule?.id ?? null,
+                      coordinator_model: rule?.model ?? null,
+                    })
+                  }}
                   className="h-9 min-w-0 flex-1 rounded-lg border border-border bg-background px-2 text-sm"
                 >
                   <option value="">
                     {aiRules.length
-                      ? t('todo.workflow_select_ai_coordinator', '选择负责拆解和分配任务的 AI')
-                      : t('todo.workflow_no_ai_coordinator', '尚未配置调度 AI')}
+                      ? t('todo.workflow_select_coordinator_model', '选择云端调度模型')
+                      : t('todo.workflow_preparing_coordinator_model', '正在准备默认云端模型')}
                   </option>
                   {aiRules.map(rule => (
                     <option key={rule.id} value={rule.id}>
-                      {rule.agentName || rule.name}
-                      {rule.agentName && rule.agentName !== rule.name ? ` · ${rule.name}` : ''}
+                      {rule.model || rule.agentName || rule.name}
                     </option>
                   ))}
                 </select>
@@ -648,7 +687,7 @@ export function ProjectWorkflowEditor({
             <p className="mt-1.5 text-xs text-text-muted">
               {t(
                 'todo.workflow_ai_coordinator_hint',
-                '负责读取 Issue、拆解并分配具体任务，本身不执行任务。'
+                '内置调度员使用一个云端模型生成方案，本身不执行任务。'
               )}
             </p>
           </div>
@@ -673,6 +712,7 @@ export function ProjectWorkflowEditor({
               onChange={event =>
                 updateDefinition({ stage_mode: event.target.checked ? 'dag' : 'none' })
               }
+              className="h-4 w-4 rounded border-border"
             />
             {t('todo.workflow_ai_use_stages', '使用阶段 DAG 约束 AI 分配')}
           </label>

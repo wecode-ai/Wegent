@@ -15,7 +15,12 @@ from sqlalchemy.orm import Session
 
 from app.core.provider_credentials import store_provider_config
 from app.models.cloud_project import CloudProject
-from app.models.delivery import LoopItem, ProjectAutomationRun, loop_datetime_is_unset
+from app.models.delivery import (
+    LoopItem,
+    ProjectAutomationRule,
+    ProjectAutomationRun,
+    loop_datetime_is_unset,
+)
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.user import User
@@ -30,11 +35,42 @@ from app.schemas.cloud_project import (
 )
 from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.loop_item_status_history import write_status_change
+from app.services.project_automation_domain import metadata
 
 logger = logging.getLogger(__name__)
 
 
 class CloudProjectService:
+    @staticmethod
+    def _validate_workflow_coordinator(
+        db: Session,
+        project: CloudProject,
+        definition: object,
+    ) -> None:
+        if getattr(definition, "advancement_policy", None) != "ai":
+            return
+        rule_id = getattr(definition, "ai_automation_rule_id", None)
+        rule = db.get(ProjectAutomationRule, rule_id) if rule_id else None
+        rule_metadata = metadata(rule) if rule is not None else {}
+        event_config = rule_metadata.get("event_config")
+        valid = (
+            rule is not None
+            and str(rule.cloud_project_id) == str(project.id)
+            and rule.status == "enabled"
+            and rule_metadata.get("assignment_mode") == "ai_managed"
+            and rule_metadata.get("manager_type") == "custom"
+            and rule_metadata.get("trigger_type") == "event"
+            and rule_metadata.get("event_type") == "task.created"
+            and rule_metadata.get("execution_environment") == "cloud"
+            and isinstance(event_config, dict)
+            and event_config.get("workflowCoordinator") is True
+        )
+        if not valid:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "AI workflow requires an enabled cloud coordinator for this project",
+            )
+
     @staticmethod
     def _lock_project(db: Session, cloud_project_id: int) -> CloudProject:
         project = (
@@ -266,6 +302,11 @@ class CloudProjectService:
                 "workflow_definition" in values.model_fields_set
                 and values.workflow_definition is not None
             ):
+                self._validate_workflow_coordinator(
+                    db,
+                    project,
+                    values.workflow_definition,
+                )
                 metadata["workflow_definition"] = (
                     values.workflow_definition.model_dump()
                 )

@@ -251,6 +251,65 @@ def test_cloud_project_tag_registry(
     assert cleared.json()["tags"] == []
 
 
+def test_ai_workflow_requires_an_enabled_cloud_coordinator(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+) -> None:
+    project = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "aicoord", "name": "AI coordinator validation"},
+    ).json()
+    rule = ProjectAutomationRule(
+        id="workflow-coordinator-validation",
+        cloud_project_id=project["id"],
+        title="Issue AI orchestration",
+        status="disabled",
+        created_by_user_id=test_user.id,
+        metadata_json={
+            "assignment_mode": "ai_managed",
+            "manager_type": "custom",
+            "trigger_type": "event",
+            "event_type": "task.created",
+            "event_config": {"workflowCoordinator": True},
+            "model": "test-model",
+            "execution_environment": "cloud",
+            "execution_device_id": "cloud-device",
+        },
+    )
+    test_db.add(rule)
+    test_db.commit()
+    payload = {
+        "version": project["version"],
+        "workflow_definition": {
+            "version": 1,
+            "stage_mode": "none",
+            "advancement_policy": "ai",
+            "ai_automation_rule_id": rule.id,
+            "nodes": [],
+        },
+    }
+
+    rejected = test_client.patch(
+        f"/api/v1/cloud-projects/{project['id']}",
+        headers=_auth(test_token),
+        json=payload,
+    )
+
+    assert rejected.status_code == 422
+    rule.status = "enabled"
+    test_db.commit()
+    accepted = test_client.patch(
+        f"/api/v1/cloud-projects/{project['id']}",
+        headers=_auth(test_token),
+        json=payload,
+    )
+    assert accepted.status_code == 200
+    assert accepted.json()["workflow_definition"]["ai_automation_rule_id"] == rule.id
+
+
 def test_cloud_project_card_display_is_shared_through_project_metadata(
     test_client: TestClient, test_token: str
 ) -> None:

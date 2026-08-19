@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -20,6 +21,7 @@ from app.models.delivery import (
     ProjectAutomationRule,
     ProjectAutomationRun,
     ProjectChatAgent,
+    ProjectWorkflowRun,
     loop_datetime_is_unset,
     loop_unset_datetime_for_connection,
 )
@@ -389,6 +391,29 @@ class ProjectAutomationExecution:
     ) -> str:
         del db, owner, context
         task_id = run.task_id or ""
+        run_metadata = metadata(run)
+        event = run_metadata.get("event")
+        event_payload = event.get("payload") if isinstance(event, dict) else None
+        workflow = (
+            event_payload.get("workflow")
+            if isinstance(event_payload, dict)
+            and isinstance(event_payload.get("workflow"), dict)
+            else None
+        )
+        coordinated = bool(workflow and workflow.get("advancement_policy") == "ai")
+        uses_stage_dag = bool(workflow and workflow.get("stage_mode") == "dag")
+        coordination_instruction = (
+            (
+                "请读取当前 ready 阶段、候选执行者能力和上游上下文，"
+                "为当前阶段生成结构化任务方案，并调用 submit_workflow_plan 提交草案。"
+            )
+            if uses_stage_dag
+            else (
+                "请读取整个 Issue 和候选执行者能力，自由拆解结构化任务方案，"
+                "所有计划项的 stage_id 使用 __issue__，"
+                "并调用 submit_workflow_plan 提交草案。"
+            )
+        )
         sections = [
             (
                 f"project_id: {project.id}\n"
@@ -399,8 +424,32 @@ class ProjectAutomationExecution:
                 f"看板任务数据位于 cloud://projects/{project.id}/todos/{task_id}，"
                 "请通过看板工具自行查看。"
             ),
-            "请读取候选执行者并按调度要求完成分派，不要执行任务。",
+            (
+                coordination_instruction
+                + "等待用户确认，不要直接创建、分派或执行任务。"
+                if coordinated
+                else "请读取候选执行者并按调度要求完成分派，不要执行任务。"
+            ),
         ]
+        if coordinated:
+            coordinator_prompt = str(workflow.get("coordinator_prompt") or "").strip()
+            if coordinator_prompt:
+                sections.append(f"项目编排要求：\n{coordinator_prompt}")
+            sections.append(
+                "如果方案包含验证或测试任务，请在任务描述中要求执行者通过 "
+                "report_workflow_outcome 上报 passed 或 needs_rework。"
+            )
+            rework = (
+                event_payload.get("rework")
+                if isinstance(event_payload, dict)
+                and isinstance(event_payload.get("rework"), dict)
+                else None
+            )
+            if rework:
+                sections.append(
+                    "需要返工的执行结果：\n"
+                    + json.dumps(rework, ensure_ascii=False, indent=2)
+                )
         instruction = ProjectAutomationExecution._run_instruction(rule, run).strip()
         if instruction:
             sections.append(instruction)
@@ -610,7 +659,7 @@ class ProjectAutomationExecution:
         )
 
     def has_recorded_manager_assignment(self, db: Session, *, run_id: str) -> bool:
-        """Return whether the manager durably completed its assignment action."""
+        """Return whether the manager durably completed its coordination action."""
 
         run = db.get(ProjectAutomationRun, run_id)
         if run is None:
@@ -624,7 +673,7 @@ class ProjectAutomationExecution:
         if selected_type == "agent" and selected_id:
             execution = self._project_robot_execution_for_run(db, run_id)
             return execution is not None and execution.agent_id == selected_id
-        return False
+        return self._workflow_plan_submitted(db, run)
 
     def finalize_manager_result(
         self,
@@ -653,6 +702,7 @@ class ProjectAutomationExecution:
         )
         assignee_agent_id = task.get("assignee_agent_id")
         assignee_user_id = task.get("assignee_user_id")
+        workflow_plan_submitted = self._workflow_plan_submitted(db, run)
         activity = self._activity(db, run)
         if activity is None and activity_message_id:
             activity = (
@@ -692,7 +742,7 @@ class ProjectAutomationExecution:
                     "AI manager assignment did not create a robot execution"
                 )
         run_changed = False
-        if selected_agent_id or selected_user_id:
+        if selected_agent_id or selected_user_id or workflow_plan_submitted:
             if run.status not in TERMINAL_RUN_STATUSES:
                 run.status = "succeeded"
                 run.completed_at = utcnow()
@@ -723,9 +773,13 @@ class ProjectAutomationExecution:
             activity.status = "completed"
             activity.message_type = "text"
             activity.content = audit or (
-                "AI 调度员已完成分派。"
-                if selected_agent_id or selected_user_id
-                else "AI 调度员未找到合适的分派对象。"
+                "AI 调度员已提交编排方案，等待确认。"
+                if workflow_plan_submitted
+                else (
+                    "AI 调度员已完成分派。"
+                    if selected_agent_id or selected_user_id
+                    else "AI 调度员未找到合适的分派对象。"
+                )
             )
             activity.metadata_json = {
                 **activity_metadata,
@@ -740,6 +794,28 @@ class ProjectAutomationExecution:
         if push_activity:
             self._push_activity(db, run)
         return True
+
+    @staticmethod
+    def _workflow_plan_submitted(db: Session, run: ProjectAutomationRun) -> bool:
+        task = db.get(LoopItem, str(run.task_id or ""))
+        metadata = task.metadata_json if task is not None else {}
+        workflow = metadata.get("workflow") if isinstance(metadata, dict) else None
+        workflow_run_id = (
+            workflow.get("active_run_id") if isinstance(workflow, dict) else None
+        )
+        workflow_run = (
+            db.get(ProjectWorkflowRun, workflow_run_id)
+            if isinstance(workflow_run_id, str)
+            else None
+        )
+        return bool(
+            isinstance(workflow, dict)
+            and task is not None
+            and workflow_run is not None
+            and workflow_run.parent_id == task.id
+            and workflow.get("orchestration_status")
+            in {"awaiting_approval", "dispatching", "running", "paused", "completed"}
+        )
 
     @staticmethod
     def _task_values(
@@ -996,11 +1072,14 @@ class ProjectAutomationProcessor:
         *,
         automation_id: str | None = None,
     ) -> int:
-        if event.event_type != "task.created":
+        workflow_replan = event.event_type == "workflow.replan"
+        if event.event_type not in {"task.created", "workflow.replan"}:
             logger.info(
                 "[ProjectAutomation] Ignoring unsupported event=%s", event.event_type
             )
             return 0
+        if workflow_replan and not automation_id:
+            raise ValueError("Workflow replan requires a coordinator automation")
         query = db.query(ProjectAutomationRule).filter(
             ProjectAutomationRule.cloud_project_id == event.project_id,
             ProjectAutomationRule.status == "enabled",
@@ -1011,12 +1090,19 @@ class ProjectAutomationProcessor:
         dispatched = 0
         for rule in query.all():
             rule_metadata = metadata(rule)
-            if rule_metadata.get("trigger_type") != "event":
-                continue
-            if rule_metadata.get("event_type") != event.event_type:
-                continue
-            if not self._matches(rule_metadata.get("event_config"), event):
-                continue
+            if workflow_replan:
+                event_config = rule_metadata.get("event_config")
+                if not isinstance(event_config, dict) or not event_config.get(
+                    "workflowCoordinator"
+                ):
+                    continue
+            else:
+                if rule_metadata.get("trigger_type") != "event":
+                    continue
+                if rule_metadata.get("event_type") != event.event_type:
+                    continue
+                if not self._matches(rule_metadata.get("event_config"), event):
+                    continue
             run = self._create_run(db, rule, "event", utcnow())
             run.task_id = event.subject_id
             event_title = event.payload.get("title")

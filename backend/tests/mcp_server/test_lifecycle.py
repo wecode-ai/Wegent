@@ -152,6 +152,8 @@ def test_mounted_wework_space_streamable_http_uses_parent_asgi_lifespan(
         "get_board_item",
         "get_assignment_candidates",
         "assign_board_item",
+        "submit_workflow_plan",
+        "report_workflow_outcome",
         "update_board_item",
         "add_board_item_comment",
         "list_space_files",

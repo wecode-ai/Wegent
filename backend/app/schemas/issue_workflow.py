@@ -8,6 +8,19 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 WorkflowContextSource = Literal["final_result", "deliveries", "activity"]
+WorkflowOrchestrationStatus = Literal[
+    "idle",
+    "planning",
+    "awaiting_approval",
+    "dispatching",
+    "running",
+    "paused",
+    "completed",
+    "failed",
+]
+WorkflowPlanItemAssigneeType = Literal["user", "agent", "team"]
+WorkflowTaskOutcomeVerdict = Literal["passed", "needs_rework"]
+ISSUE_WORKFLOW_SCOPE_ID = "__issue__"
 
 
 class WorkflowNodeDefinition(BaseModel):
@@ -46,7 +59,9 @@ class ProjectWorkflowDefinition(BaseModel):
     version: int = Field(default=1, ge=1)
     stage_mode: Literal["none", "dag"] = "none"
     advancement_policy: Literal["manual", "ai"] = "manual"
+    coordinator_model: str | None = Field(default=None, max_length=255)
     coordinator_prompt: str = Field(default="", max_length=4000)
+    approval_policy: Literal["required"] = "required"
     ai_automation_rule_id: str | None = Field(default=None, max_length=64)
     nodes: list[WorkflowNodeDefinition] = Field(default_factory=list, max_length=50)
 
@@ -108,8 +123,14 @@ class IssueWorkflowInstance(BaseModel):
     definition_version: int = Field(default=1, ge=1)
     stage_mode: Literal["none", "dag"] = "none"
     advancement_policy: Literal["manual", "ai"] = "manual"
+    coordinator_model: str | None = Field(default=None, max_length=255)
     coordinator_prompt: str = Field(default="", max_length=4000)
+    approval_policy: Literal["required"] = "required"
     ai_automation_rule_id: str | None = Field(default=None, max_length=64)
+    orchestration_status: WorkflowOrchestrationStatus = "idle"
+    active_run_id: str | None = Field(default=None, max_length=64)
+    active_plan_version: int | None = Field(default=None, ge=1)
+    current_stage_id: str | None = Field(default=None, max_length=64)
     nodes: list[WorkflowNodeInstance] = Field(default_factory=list, max_length=50)
 
     @model_validator(mode="after")
@@ -118,7 +139,9 @@ class IssueWorkflowInstance(BaseModel):
             version=self.definition_version,
             stage_mode=self.stage_mode,
             advancement_policy=self.advancement_policy,
+            coordinator_model=self.coordinator_model,
             coordinator_prompt=self.coordinator_prompt,
+            approval_policy=self.approval_policy,
             ai_automation_rule_id=self.ai_automation_rule_id,
             nodes=[
                 WorkflowNodeDefinition(
@@ -146,7 +169,9 @@ def instantiate_workflow(
         definition_version=definition.version,
         stage_mode=definition.stage_mode,
         advancement_policy=definition.advancement_policy,
+        coordinator_model=definition.coordinator_model,
         coordinator_prompt=definition.coordinator_prompt,
+        approval_policy=definition.approval_policy,
         ai_automation_rule_id=definition.ai_automation_rule_id,
         nodes=[
             WorkflowNodeInstance(
@@ -156,3 +181,65 @@ def instantiate_workflow(
             for node in (definition.nodes if definition.stage_mode == "dag" else [])
         ],
     )
+
+
+class WorkflowPlanItemCreate(BaseModel):
+    client_key: str = Field(min_length=1, max_length=64)
+    stage_id: str = Field(min_length=1, max_length=64)
+    title: str = Field(min_length=1, max_length=255)
+    description: str = Field(default="", max_length=100_000)
+    assignee_type: WorkflowPlanItemAssigneeType | None = None
+    assignee_id: str | None = Field(default=None, max_length=128)
+    assignee_name: str = Field(default="", max_length=255)
+    rationale: str = Field(default="", max_length=4000)
+    depends_on: list[str] = Field(default_factory=list, max_length=50)
+
+    @model_validator(mode="after")
+    def validate_assignee(self) -> "WorkflowPlanItemCreate":
+        if bool(self.assignee_type) != bool(self.assignee_id):
+            raise ValueError("assignee_type and assignee_id must be set together")
+        return self
+
+
+class WorkflowTaskOutcomeSubmit(BaseModel):
+    verdict: WorkflowTaskOutcomeVerdict
+    summary: str = Field(default="", max_length=100_000)
+    findings: list[str] = Field(default_factory=list, max_length=50)
+
+    @model_validator(mode="after")
+    def validate_rework_summary(self) -> "WorkflowTaskOutcomeSubmit":
+        if self.verdict == "needs_rework" and not self.summary.strip():
+            raise ValueError("needs_rework outcome requires a summary")
+        return self
+
+
+class WorkflowPlanSubmit(BaseModel):
+    summary: str = Field(default="", max_length=10_000)
+    items: list[WorkflowPlanItemCreate] = Field(min_length=1, max_length=100)
+
+    @model_validator(mode="after")
+    def validate_keys(self) -> "WorkflowPlanSubmit":
+        keys = [item.client_key for item in self.items]
+        if len(keys) != len(set(keys)):
+            raise ValueError("workflow plan item keys must be unique")
+        if any(item.depends_on for item in self.items):
+            raise ValueError(
+                "workflow plan item dependencies are not supported; use workflow stages"
+            )
+        return self
+
+
+class WorkflowPlanItemView(WorkflowPlanItemCreate):
+    id: str
+    task_id: str | None = None
+    status: Literal["proposed", "materialized", "superseded"]
+
+
+class WorkflowPlanView(BaseModel):
+    run_id: str
+    issue_id: str
+    stage_id: str
+    plan_version: int
+    status: WorkflowOrchestrationStatus
+    summary: str
+    items: list[WorkflowPlanItemView]
