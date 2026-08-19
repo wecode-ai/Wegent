@@ -5137,7 +5137,8 @@ describe('DesktopWorkbenchLayout', () => {
   })
 
   test('refreshes an offline device before retrying a Git clone', async () => {
-    const onRefreshDevices = vi.fn().mockResolvedValue(undefined)
+    const refreshResult = createDeferred<void>()
+    const onRefreshDevices = vi.fn().mockReturnValue(refreshResult.promise)
     const onCloneGitRepository = vi
       .fn()
       .mockRejectedValueOnce(new Error('executor-offline:device-1'))
@@ -5186,6 +5187,8 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByRole('button', { name: '重试' }))
 
     await waitFor(() => expect(onRefreshDevices).toHaveBeenCalledTimes(refreshCountBeforeRetry + 1))
+    expect(onCloneGitRepository).toHaveBeenCalledTimes(1)
+    refreshResult.resolve()
     await waitFor(() => expect(onCloneGitRepository).toHaveBeenCalledTimes(2))
     await waitFor(() =>
       expect(onOpenStandaloneWorkspace).toHaveBeenCalledWith(
