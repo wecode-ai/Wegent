@@ -10,6 +10,7 @@ from fastapi import (
     Depends,
     File,
     Form,
+    HTTPException,
     Query,
     UploadFile,
     status,
@@ -41,6 +42,10 @@ from app.schemas.cloud_project import (
     CloudProjectUpdate,
 )
 from app.schemas.delivery import LoopItemResponse
+from app.schemas.external_event import (
+    ExternalReferenceRegister,
+    ExternalReferenceResponse,
+)
 from app.schemas.project_chat import (
     LoopItemApproval,
     LoopItemAssign,
@@ -50,6 +55,9 @@ from app.schemas.project_chat import (
 )
 from app.services.cloud_files import cloud_file_service
 from app.services.cloud_projects import cloud_project_service
+from app.services.external_events.registration import (
+    external_event_registration_service,
+)
 from app.services.loop_items import loop_item_service
 from app.services.loop_items.external_provider import external_loop_item_provider
 from app.services.project_chat.service import project_chat_service
@@ -115,6 +123,33 @@ def update_cloud_project(
 ) -> CloudProjectResponse:
     project = cloud_project_service.update(db, project_id, current_user.id, values)
     return _project_response(db, project, current_user)
+
+
+@router.post(
+    "/{project_id}/external-references",
+    response_model=ExternalReferenceResponse,
+)
+def register_external_reference(
+    project_id: int,
+    values: ExternalReferenceRegister,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_flexible_for_executor),
+) -> ExternalReferenceResponse:
+    """Register one external reference for a waiting workflow node."""
+
+    try:
+        result = external_event_registration_service.register(
+            db,
+            user_id=current_user.id,
+            cloud_project_id=str(project_id),
+            loop_item_id=values.item_id,
+            provider=values.provider,
+            opaque_ref=values.opaque_ref,
+            automation_run_id=values.automation_run_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return ExternalReferenceResponse.model_validate(result)
 
 
 @router.get("/{project_id}/chat-agents", response_model=list[ProjectChatAgentView])
