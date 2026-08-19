@@ -376,7 +376,15 @@ describe('DesktopSidebar', () => {
     expect(remoteSortable).toHaveAttribute('role', 'button')
     expect(remoteActivator).not.toHaveAttribute('data-sidebar-drag-activator')
     expect(remoteButton).toHaveAttribute('data-sidebar-drag-activator')
-    expect(remoteMetadata).toHaveClass('pointer-events-auto')
+    expect(remoteMetadata).toHaveClass(
+      'pointer-events-auto',
+      'group-hover/project:opacity-0',
+      'group-focus-within/project:opacity-0'
+    )
+    expect(remoteMetadata).not.toHaveClass(
+      'group-hover/project:invisible',
+      'group-focus-within/project:invisible'
+    )
 
     fireEvent.pointerDown(remoteMetadata, {
       button: 0,
