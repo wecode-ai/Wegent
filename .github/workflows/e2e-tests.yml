@@ -16,6 +16,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+  packages: read
+
 jobs:
   changes:
     name: Detect Platform E2E Changes
@@ -126,6 +130,69 @@ jobs:
           retention-days: 1
           compression-level: 0
 
+  prepare-platform-e2e-image:
+    name: Prepare Platform E2E Image
+    needs: [changes, build-frontend-e2e]
+    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.platform_e2e == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.image.outputs.ref }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Resolve Platform E2E image
+        id: image
+        env:
+          PLAYWRIGHT_VERSION: ${{ needs.build-frontend-e2e.outputs.playwright_version }}
+        run: |
+          dockerfile=docker/wework-e2e/browser.Dockerfile
+          image_version="$(sed -n 's#^FROM mcr.microsoft.com/playwright:v\\(.*\\)-noble$#\\1#p' "$dockerfile")"
+          if [[ "$image_version" != "$PLAYWRIGHT_VERSION" ]]; then
+            echo "Playwright image version $image_version does not match workspace version $PLAYWRIGHT_VERSION" >&2
+            exit 1
+          fi
+          digest="$(sha256sum "$dockerfile" | cut -d ' ' -f 1)"
+          echo "ref=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/wegent-wework-e2e:browser-$digest" \
+            >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+
+      - name: Check Platform E2E image
+        id: image-check
+        env:
+          IMAGE: ${{ steps.image.outputs.ref }}
+        run: |
+          if docker buildx imagetools inspect "$IMAGE" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and publish Platform E2E image
+        if: steps.image-check.outputs.exists != 'true'
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25
+        with:
+          context: .
+          file: docker/wework-e2e/browser.Dockerfile
+          push: true
+          tags: ${{ steps.image.outputs.ref }}
+          cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/wegent-wework-e2e:buildcache-browser
+          cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/wegent-wework-e2e:buildcache-browser,mode=max
+
   build-executor-e2e-runtime:
     name: Build Executor E2E Runtime Artifact
     needs: changes
@@ -174,9 +241,19 @@ jobs:
   # Runs browser and API tests with sharding. Executor-heavy coverage runs separately.
   e2e-tests:
     name: E2E Tests (Shard ${{ matrix.shardIndex }}/${{ matrix.shardTotal }})
-    needs: build-frontend-e2e
+    needs: [build-frontend-e2e, prepare-platform-e2e-image]
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    env:
+      HOME: /root
+    container:
+      image: ${{ needs.prepare-platform-e2e-image.outputs.image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    defaults:
+      run:
+        shell: bash
     strategy:
       fail-fast: false
       matrix:
@@ -189,8 +266,6 @@ jobs:
         env:
           MYSQL_ROOT_PASSWORD: test123
           MYSQL_DATABASE: wegent_test
-        ports:
-          - 3306:3306
         options: >-
           --health-cmd="mysqladmin ping"
           --health-interval=10s
@@ -200,8 +275,6 @@ jobs:
 
       redis:
         image: redis:7-alpine
-        ports:
-          - 6379:6379
         options: >-
           --health-cmd="redis-cli ping"
           --health-interval=10s
@@ -237,6 +310,8 @@ jobs:
 
       - name: Set up Node workspace
         uses: ./.github/actions/setup-node-workspace
+        with:
+          setup-toolchain: "false"
 
       - name: Set up Python 3.11 and uv
         uses: ./.github/actions/setup-python-uv-cache
@@ -266,26 +341,10 @@ jobs:
       - name: Restore frontend E2E build
         run: .github/scripts/restore-frontend-e2e-build.sh
 
-      - name: Restore shared Playwright browsers
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
-        id: playwright-cache
-        with:
-          path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-chromium-v2-${{ needs.build-frontend-e2e.outputs.playwright_version }}
-
-      - name: Install Playwright browser
-        working-directory: ./frontend
-        if: steps.playwright-cache.outputs.cache-hit != 'true'
-        run: ../.github/scripts/install-playwright-browser.sh
-
-      - name: Install Playwright system dependencies
-        working-directory: ./frontend
-        run: ../.github/scripts/install-playwright-system-deps.sh
-
       - name: Run database migrations
         working-directory: ./backend
         env:
-          DATABASE_URL: mysql+pymysql://root:test123@localhost:3306/wegent_test
+          DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
         run: |
           source .venv/bin/activate
           alembic upgrade head
@@ -293,8 +352,8 @@ jobs:
       - name: Start backend server
         working-directory: ./backend
         env:
-          DATABASE_URL: mysql+pymysql://root:test123@localhost:3306/wegent_test
-          REDIS_URL: redis://localhost:6379/0
+          DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
+          REDIS_URL: redis://redis:6379/0
           EXECUTOR_MANAGER_URL: http://localhost:8001
           SECRET_KEY: test-secret-key-for-ci-testing
           ALGORITHM: HS256

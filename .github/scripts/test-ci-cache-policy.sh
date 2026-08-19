@@ -178,13 +178,22 @@ if ! grep -Fq 'SCCACHE_BASEDIRS=$GITHUB_WORKSPACE' "$sccache_action" ||
   fail "sccache must normalize paths and allow writes only from main"
 fi
 
-if ! grep -Fq 'name: Warm Wework macOS Rust Cache' "$warmup_workflow" ||
-  ! grep -A90 'name: Warm Wework macOS Rust Cache' "$warmup_workflow" |
-    grep -Fq 'runs-on: macos-14' ||
-  ! grep -A90 'name: Warm Wework macOS Rust Cache' "$warmup_workflow" |
-    grep -Fq 'uses: ./.github/actions/setup-sccache' ||
-  ! grep -A90 'name: Warm Wework macOS Rust Cache' "$warmup_workflow" |
-    grep -Fq 'task-flow.e2e.mjs --build-only'; then
+if ! sed -n \
+  '/^  warm-wework-macos-rust:/,/^  prepare-wework-desktop-image:/p' \
+  "$warmup_workflow" |
+  grep -F 'name: Warm Wework macOS Rust Cache' >/dev/null ||
+  ! sed -n \
+    '/^  warm-wework-macos-rust:/,/^  prepare-wework-desktop-image:/p' \
+    "$warmup_workflow" |
+    grep -F 'runs-on: macos-14' >/dev/null ||
+  ! sed -n \
+    '/^  warm-wework-macos-rust:/,/^  prepare-wework-desktop-image:/p' \
+    "$warmup_workflow" |
+    grep -F 'uses: ./.github/actions/setup-sccache' >/dev/null ||
+  ! sed -n \
+    '/^  warm-wework-macos-rust:/,/^  prepare-wework-desktop-image:/p' \
+    "$warmup_workflow" |
+    grep -F 'task-flow.e2e.mjs --build-only' >/dev/null; then
   fail "Wework macOS memory builds must be prewarmed with the shared sccache"
 fi
 
@@ -264,6 +273,28 @@ if ! grep -Fq "$playwright_key" "$workflow_dir/e2e-tests.yml" ||
   fail "Platform E2E and warmup must share the Playwright browser cache"
 fi
 
+# GitHub expressions are matched literally in workflow source.
+# shellcheck disable=SC2016
+if ! sed -n '/^  e2e-tests:/,/^  executor-e2e-tests:/p' \
+  "$workflow_dir/e2e-tests.yml" |
+  grep -F 'image: ${{ needs.prepare-platform-e2e-image.outputs.image }}' \
+    >/dev/null ||
+  ! sed -n '/^  e2e-tests:/,/^  executor-e2e-tests:/p' \
+    "$workflow_dir/e2e-tests.yml" |
+    grep -F 'setup-toolchain: "false"' >/dev/null ||
+  sed -n '/^  e2e-tests:/,/^  executor-e2e-tests:/p' \
+    "$workflow_dir/e2e-tests.yml" |
+    grep -E 'install-playwright-(browser|system-deps)' >/dev/null; then
+  fail "Platform E2E shards must consume the immutable Playwright image without runtime installs"
+fi
+
+if ! grep -Fq 'docker/wework-e2e/browser.Dockerfile' \
+  "$workflow_dir/e2e-tests.yml" ||
+  ! grep -Fq 'does not match workspace version' \
+    "$workflow_dir/e2e-tests.yml"; then
+  fail "Platform E2E image preparation must pin and verify the Playwright version"
+fi
+
 wework_workflow="$workflow_dir/wework-e2e.yml"
 wework_desktop_image="$script_dir/../../docker/wework-e2e/desktop.Dockerfile"
 if ! grep -Fq 'file: docker/wework-e2e/browser.Dockerfile' "$wework_workflow" ||
@@ -286,12 +317,22 @@ if ! grep -Fq "$wework_target_key" "$workflow_dir/wework-e2e.yml" ||
   fail "Wework E2E and warmup must share the desktop Cargo target cache"
 fi
 
-if ! grep -A40 'name: Warm Wework Desktop Cargo Target' "$warmup_workflow" |
-  grep -Fq 'image: ${{ needs.prepare-wework-desktop-image.outputs.desktop_image }}' ||
-  ! grep -A40 'name: Warm Wework Desktop Cargo Target' "$warmup_workflow" |
-    grep -Fq 'HOME: /root' ||
-  grep -A40 'name: Warm Wework Desktop Cargo Target' "$warmup_workflow" |
-    grep -Eq 'install-wework-tauri-system-dependencies|dtolnay/rust-toolchain'; then
+if ! sed -n \
+  '/^  warm-wework-desktop-target:/,/^  warm-executor-e2e-image:/p' \
+  "$warmup_workflow" |
+  grep -F \
+    'image: ${{ needs.prepare-wework-desktop-image.outputs.desktop_image }}' \
+    >/dev/null ||
+  ! sed -n \
+    '/^  warm-wework-desktop-target:/,/^  warm-executor-e2e-image:/p' \
+    "$warmup_workflow" |
+    grep -F 'HOME: /root' >/dev/null ||
+  sed -n \
+    '/^  warm-wework-desktop-target:/,/^  warm-executor-e2e-image:/p' \
+    "$warmup_workflow" |
+    grep -E \
+      'install-wework-tauri-system-dependencies|dtolnay/rust-toolchain' \
+      >/dev/null; then
   fail "Wework desktop target warmup must build inside the E2E container"
 fi
 
