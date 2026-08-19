@@ -441,23 +441,8 @@ impl RuntimeWorkRpcHandler {
     fn mark_deferred_worktree_failed(&self, turn: &SpawnTurnRequest, error: &AppIpcError) {
         let local_task_id = &turn.local_task_id;
         self.persist_failed_assistant_message(local_task_id, &turn.request, &error.message);
-        self.store.update_task(local_task_id, |link| {
-            link.running = false;
-            link.status = "failed".to_owned();
-            link.thread_status = "failed".to_owned();
-            link.turn_status = Some("failed".to_owned());
-            link.updated_at = now_ms();
-            link.completed_at = Some(link.updated_at);
-            normalize_settled_task_state(link);
-            if let Some(runtime_handle) = link.runtime_handle.as_object_mut() {
-                runtime_handle.remove("queuePosition");
-                runtime_handle.insert("lastError".to_owned(), Value::String(error.message.clone()));
-                runtime_handle.insert(
-                    "lastErrorCode".to_owned(),
-                    Value::String(error.code.clone()),
-                );
-            }
-        });
+        self.store
+            .update_task(local_task_id, |link| apply_local_task_failure(link, error));
     }
 
     fn mark_deferred_worktree_cancelled(&self, local_task_id: &str) {
@@ -621,14 +606,21 @@ impl RuntimeWorkRpcHandler {
         ) = mpsc::channel(1);
         let (cancel_tx, cancel_rx) = oneshot::channel();
         let (stopped_tx, stopped_rx) = oneshot::channel();
-        let execution_id =
-            match self.start_local_task_execution(local_task_id.clone(), cancel_tx, stopped_rx) {
-                Ok(execution_id) => execution_id,
-                Err(error) => {
-                    self.fail_local_task_execution_start(&local_task_id, &error);
-                    return;
-                }
-            };
+        let execution_id = match self.start_local_task_execution(
+            local_task_id.clone(),
+            request
+                .project_workspace_path
+                .as_deref()
+                .or_else(|| request.cwd()),
+            cancel_tx,
+            stopped_rx,
+        ) {
+            Ok(execution_id) => execution_id,
+            Err(error) => {
+                self.fail_local_task_execution_start(&local_task_id, &error);
+                return;
+            }
+        };
         if let Ok(mut requests) = self.active_request_user_inputs.lock() {
             requests.insert(
                 local_task_id.clone(),

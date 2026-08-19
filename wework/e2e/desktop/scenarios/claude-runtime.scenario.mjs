@@ -388,7 +388,7 @@ export async function createDesktopScenario({
         response.flushHeaders()
         const stream = streamingTextEvents('claude-cancel-late', LOCAL_CANCELLATION_COMPLETION)
         response.write(
-          [responseCreated('claude-cancel'), ...stream.start]
+          stream.start
             .map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
             .join('')
         )

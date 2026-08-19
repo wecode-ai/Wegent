@@ -18,12 +18,13 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use uuid::Uuid;
 
 use crate::config::device::worktree_persistent_storage_verified;
 
 use super::{response::RuntimeTaskLink, store::runtime_work_dir};
 
-const STATE_VERSION: u64 = 4;
+const STATE_VERSION: u64 = 5;
 const DEFAULT_KEEP_COUNT: usize = 15;
 const AUTO_PRUNE_BATCH_SIZE: usize = 1;
 pub(crate) const RUNTIME_WORKTREES_VERSION: u64 = 1;
@@ -104,6 +105,8 @@ pub(crate) struct WorktreeReconciliation {
 pub(crate) struct WorktreeExecutionLease {
     pub execution_id: u64,
     pub started_at: i64,
+    #[serde(default)]
+    pub owner_id: String,
 }
 
 #[derive(Clone, Debug)]
@@ -206,6 +209,7 @@ struct WorktreeState {
 pub(crate) struct WorktreeManager {
     state_path: PathBuf,
     device_id: String,
+    execution_owner_id: String,
     persistent_storage_verified: bool,
     mutation_lock: Arc<Mutex<()>>,
 }
@@ -262,6 +266,7 @@ impl WorktreeManager {
         Self {
             state_path,
             device_id: normalize_device_id(device_id),
+            execution_owner_id: Uuid::new_v4().to_string(),
             persistent_storage_verified,
             mutation_lock: Arc::new(Mutex::new(())),
         }
@@ -349,6 +354,7 @@ impl WorktreeManager {
             Some(WorktreeExecutionLease {
                 execution_id,
                 started_at: now_ms(),
+                owner_id: self.execution_owner_id.clone(),
             }),
             None,
         )
@@ -627,7 +633,7 @@ impl WorktreeManager {
             .map_err(|_| "Worktree mutation lock is unavailable".to_owned())?;
         let mut state = self.load();
         discover_worktrees(&mut state, &self.device_id);
-        reconcile_worktree_state(&mut state, &self.device_id, false)?;
+        reconcile_worktree_state(&mut state, &self.device_id, &self.execution_owner_id, false)?;
         let mut result = state
             .records
             .values_mut()
@@ -667,7 +673,8 @@ impl WorktreeManager {
             .map_err(|_| "Worktree mutation lock is unavailable".to_owned())?;
         let mut state = self.load();
         discover_worktrees(&mut state, &self.device_id);
-        let reconciled = reconcile_worktree_state(&mut state, &self.device_id, true)?;
+        let reconciled =
+            reconcile_worktree_state(&mut state, &self.device_id, &self.execution_owner_id, true)?;
         self.save(&state)?;
         Ok(reconciled)
     }
@@ -1642,6 +1649,7 @@ fn validate_record_worktree_identity(record: &ManagedWorktree, path: &Path) -> R
 fn reconcile_worktree_state(
     state: &mut WorktreeState,
     device_id: &str,
+    execution_owner_id: &str,
     recover_interrupted_execution: bool,
 ) -> Result<Vec<WorktreeReconciliation>, String> {
     let mut reconciled = Vec::new();
@@ -1676,8 +1684,14 @@ fn reconcile_worktree_state(
             });
             continue;
         }
-        let interrupted_execution =
-            recover_interrupted_execution && record.execution_lease.take().is_some();
+        let interrupted_execution = recover_interrupted_execution
+            && record
+                .execution_lease
+                .as_ref()
+                .is_some_and(|lease| lease.owner_id != execution_owner_id);
+        if interrupted_execution {
+            record.execution_lease = None;
+        }
         if record.state == STATE_ACTIVE && path.exists() {
             if let Err(error) = validate_record_worktree_identity(record, &path) {
                 record.state = STATE_FAILED.to_owned();
@@ -1686,10 +1700,12 @@ fn reconcile_worktree_state(
             }
         }
         if interrupted_execution {
-            record.last_error = Some(
-                "Executor restarted while the Worktree task was executing; runtime was not resumed"
-                    .to_owned(),
-            );
+            if record.last_error.is_none() {
+                record.last_error = Some(
+                    "Executor restarted while the Worktree task was executing; runtime was not resumed"
+                        .to_owned(),
+                );
+            }
             record.updated_at = now_ms();
             reconciled.push(WorktreeReconciliation {
                 record: record.clone(),

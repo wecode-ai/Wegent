@@ -153,7 +153,7 @@ sequenceDiagram
 13. 启动模式和分支偏好按 DeviceWorkspace 隔离；运行位置不是启动模式。
 14. 离线、路由缺失、超时、断开、不支持、非 Git、路径冲突和存储不持久使用稳定可区分错误；超时和断开必须标记为可重试，但有副作用的 RPC 不自动重试。
 15. Terminal、IDE、文件树、Git、归档、恢复和设置始终使用任务所属设备及最终 Worktree 路径。远端文件命令缺少 Backend 认证出的工作区根时必须关闭访问，不能把空根集合解释为无限制。
-16. 重启前是否正在执行只能由独立的持久执行证据判断，不能从 Runtime Task 元数据、Worktree 路径、非归档状态、Provider 历史线程或缺失状态字段推导。Runtime 真正启动前，Executor 必须在 `worktrees.json` 写入 execution lease，并在 Runtime 终止确认时清除；重启时遗留 lease 证明执行被中断。未完成的 `preparing` 记录只能证明 Worktree 准备被中断，持久队列只能证明尚未运行。没有这两类中断证据时，重启对账不得写任务失败、完成时间或活动时间。
+16. 重启前是否正在执行只能由独立的持久执行证据判断，不能从 Runtime Task 元数据、Worktree 路径、非归档状态、Provider 历史线程或缺失状态字段推导。Runtime 真正启动前，Executor 必须在 `worktrees.json` 写入带当前进程 owner 的 execution lease，并在 Runtime 终止确认时清除；启动对账只消费其他进程遗留的 lease，不能把当前进程刚开始的执行误判为中断。未完成的 `preparing` 记录只能证明 Worktree 准备被中断，持久队列只能证明尚未运行。没有这两类中断证据时，重启对账不得写任务失败、完成时间或活动时间。
 17. Cloud 和 Remote 的 `runtimeInstanceId` 保存在 Executor Home，并在 Backend 首次登记后固定；容器或实例替换必须复用该值。相同逻辑设备携带新的 Runtime Instance ID 时必须拒绝注册并报告持久存储身份不匹配，不能覆盖既有值或创建旁路设备记录。
 18. 延迟创建必须持久化计划阶段的源仓库 fingerprint，并在获得 slot 后与创建前重新计算的 fingerprint 比较；源目录被替换为另一个仓库时必须以 `worktree_source_changed` 失败。
 19. 停止超时是未知结果，不得清除 Runtime 取消控制或把任务当作已停止；重试归档/删除前仍必须获得同一 Runtime 的停止 ACK。

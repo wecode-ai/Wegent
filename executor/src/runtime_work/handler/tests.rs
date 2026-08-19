@@ -219,7 +219,7 @@ async fn archive_waits_for_runtime_stopped_ack_before_marking_task_archived() {
     let (cancel_tx, cancel_rx) = oneshot::channel();
     let (stopped_tx, stopped_rx) = oneshot::channel();
     handler
-        .start_local_task_execution("task-1".to_owned(), cancel_tx, stopped_rx)
+        .start_local_task_execution("task-1".to_owned(), None, cancel_tx, stopped_rx)
         .expect("local execution should start");
 
     let archive = {
@@ -286,7 +286,7 @@ async fn archive_retry_after_stop_timeout_waits_for_the_original_stopped_ack() {
     let (cancel_tx, cancel_rx) = oneshot::channel();
     let (stopped_tx, stopped_rx) = oneshot::channel();
     let execution_id = handler
-        .start_local_task_execution("task-1".to_owned(), cancel_tx, stopped_rx)
+        .start_local_task_execution("task-1".to_owned(), None, cancel_tx, stopped_rx)
         .expect("local execution should start");
 
     assert!(
@@ -304,6 +304,15 @@ async fn archive_retry_after_stop_timeout_waits_for_the_original_stopped_ack() {
     assert!(
         !handler.finish_local_task_execution("task-1", execution_id),
         "runtime completion before the stopped acknowledgement must not clear retry state"
+    );
+    let active_state = serde_json::from_slice::<Value>(
+        &fs::read(root.join("runtime-work/worktrees.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        active_state["records"][normalize_workspace_path(&worktree.path)]["executionLease"]
+            .is_object(),
+        "a cancellation request must keep durable execution evidence until stop completes"
     );
 
     let mut retry = {
@@ -359,7 +368,7 @@ async fn closed_stopped_channel_does_not_count_as_a_stop_acknowledgement() {
     let (cancel_tx, cancel_rx) = oneshot::channel();
     let (stopped_tx, stopped_rx) = oneshot::channel();
     handler
-        .start_local_task_execution("task-1".to_owned(), cancel_tx, stopped_rx)
+        .start_local_task_execution("task-1".to_owned(), None, cancel_tx, stopped_rx)
         .expect("local execution should start");
     drop(stopped_tx);
 
@@ -716,6 +725,7 @@ async fn restart_reconciliation_fails_only_explicitly_interrupted_execution() {
         .expect("execution evidence should be persisted");
 
     handler.store = RuntimeWorkStore::new(index_path);
+    handler.worktrees = WorktreeManager::new(state_path.clone());
     assert!(handler.reconcile_worktrees_once().await);
 
     let task = handler
@@ -757,21 +767,25 @@ fn active_execution_evidence_survives_listing_and_clears_on_finish() {
         .worktrees
         .prepare(&source, "task-executing", None, false)
         .unwrap();
-    handler.upsert_local_task(RuntimeTaskLink::new_pending(
-        "task-executing".to_owned(),
-        record.path.clone(),
-        "Executing Worktree".to_owned(),
-    ));
     let (cancel, _cancelled) = oneshot::channel();
     let (_stopped, stopped) = oneshot::channel();
     let execution_id = handler
-        .start_local_task_execution("task-executing".to_owned(), cancel, stopped)
+        .start_local_task_execution(
+            "task-executing".to_owned(),
+            Some(&record.path),
+            cancel,
+            stopped,
+        )
         .expect("execution should start");
 
-    handler
+    let reconciled = handler
         .worktrees
-        .list(&handler.store.list_task_summaries(true))
+        .reconcile()
         .expect("listing should succeed");
+    assert!(
+        reconciled.is_empty(),
+        "startup reconciliation must not consume this process's live lease"
+    );
     let active_state = serde_json::from_slice::<Value>(&fs::read(&state_path).unwrap()).unwrap();
     assert_eq!(
         active_state["records"][normalize_workspace_path(&record.path)]["executionLease"]
@@ -950,7 +964,7 @@ fn start_test_execution(handler: &RuntimeWorkRpcHandler, local_task_id: &str) ->
     let (cancel, _cancelled) = oneshot::channel();
     let (_stopped, stopped) = oneshot::channel();
     handler
-        .start_local_task_execution(local_task_id.to_owned(), cancel, stopped)
+        .start_local_task_execution(local_task_id.to_owned(), None, cancel, stopped)
         .expect("test execution should start")
 }
 
