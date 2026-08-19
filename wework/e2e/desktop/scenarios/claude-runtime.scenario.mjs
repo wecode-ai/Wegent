@@ -15,11 +15,9 @@ import {
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const ACTIVE_WORKSPACE_TAB_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
-const ACTIVE_WORKSPACE_WORKBENCH_SELECTOR =
-  `${ACTIVE_WORKSPACE_TAB_SELECTOR} ${ACTIVE_WORKBENCH_SELECTOR}`
+const ACTIVE_WORKSPACE_WORKBENCH_SELECTOR = `${ACTIVE_WORKSPACE_TAB_SELECTOR} ${ACTIVE_WORKBENCH_SELECTOR}`
 const COMPOSER_SELECTOR = `${ACTIVE_WORKSPACE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"][contenteditable="true"]`
-const ACTIVE_PROJECT_WORK_BUTTON =
-  `${ACTIVE_WORKSPACE_WORKBENCH_SELECTOR} [data-testid="project-work-button"]`
+const ACTIVE_PROJECT_WORK_BUTTON = `${ACTIVE_WORKSPACE_WORKBENCH_SELECTOR} [data-testid="project-work-button"]`
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..')
 const CLAUDE_BINARY = join(
   REPOSITORY_ROOT,
@@ -263,16 +261,12 @@ async function createRemoteProject(control, workspacePath, timeoutMs, captureScr
     timeoutMs
   )
   assert.ok(remoteProjectRow, 'The remote Claude project identity was unavailable')
-  await control.command(
-    'clickDescendantInElementWithText',
-    '[data-testid^="project-row-"]',
-    {
-      text: 'claude-remote-workspace',
-      target: '[data-testid="project-new-conversation-button"]',
-      timeoutMs,
-      visible: true,
-    }
-  )
+  await control.command('clickDescendantInElementWithText', '[data-testid^="project-row-"]', {
+    text: 'claude-remote-workspace',
+    target: '[data-testid="project-new-conversation-button"]',
+    timeoutMs,
+    visible: true,
+  })
   await control.command('waitFor', ACTIVE_PROJECT_WORK_BUTTON, {
     text: 'claude-remote-workspace',
     stableMs: 300,
@@ -392,15 +386,16 @@ export async function createDesktopScenario({
           'content-type': 'text/event-stream; charset=utf-8',
         })
         response.flushHeaders()
+        const stream = streamingTextEvents('claude-cancel-late', LOCAL_CANCELLATION_COMPLETION)
         response.write(
-          `event: response.created\ndata: ${JSON.stringify(responseCreated('claude-cancel'))}\n\n`
+          [responseCreated('claude-cancel'), ...stream.start]
+            .map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
+            .join('')
         )
         await cancellationRelease
         if (!response.destroyed) {
-          const stream = streamingTextEvents('claude-cancel-late', LOCAL_CANCELLATION_COMPLETION)
           response.end(
             [
-              ...stream.start,
               ...stream.chunks.map(delta => ({
                 type: 'response.output_text.delta',
                 item_id: stream.itemId,
@@ -525,12 +520,7 @@ export async function createDesktopScenario({
         'The local Claude Code task rendered content emitted after cancellation'
       )
 
-      await createRemoteProject(
-        control,
-        remoteWorkspacePath,
-        uiTimeoutMs,
-        captureScreenshot
-      )
+      await createRemoteProject(control, remoteWorkspacePath, uiTimeoutMs, captureScreenshot)
       await selectClaudeRuntime(control, REMOTE_MODEL_LABEL, uiTimeoutMs)
       const remoteTaskRow = await sendNewClaudeTask(
         control,
