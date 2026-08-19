@@ -2,6 +2,7 @@ use std::{cell::Cell, rc::Rc, time::Duration};
 
 use gtk::prelude::*;
 use tauri::{LogicalPosition, LogicalSize, Webview, Wry};
+use webkit2gtk::WebViewExt;
 
 const HOST_NAME: &str = "wework-embedded-browser-host";
 const ALLOCATION_CONTROLLER_DATA: &str = "wework-embedded-browser-allocation-controller";
@@ -232,7 +233,7 @@ pub fn set_zoom(webview: &Webview<Wry>, scale_factor: f64) -> Result<(), String>
             {
                 let controller = allocation_controller(&host);
                 controller.requested_zoom.set(scale_factor);
-                apply_effective_zoom(&host, native_webview, &controller);
+                apply_effective_zoom(&host, &native_webview, &controller);
             } else {
                 native_webview.set_zoom_level(scale_factor);
             }
