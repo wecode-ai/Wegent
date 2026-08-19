@@ -220,6 +220,38 @@ describe('IssueWorkflowDag', () => {
     expect(onRunAutomation).toHaveBeenCalledWith('审阅', 'rule-1')
   })
 
+  test('prevents duplicate reruns and surfaces the backend rejection', async () => {
+    let rejectRun: ((reason?: unknown) => void) | undefined
+    const onRunAutomation = vi.fn(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectRun = reject
+        })
+    )
+
+    render(
+      <IssueWorkflowDag
+        nodes={[stage('部署', { automation_rule_id: 'rule-1', status: 'failed' })]}
+        tasks={[]}
+        onRunAutomation={onRunAutomation}
+      />
+    )
+
+    const rerun = screen.getByTestId('cloud-todo-run-workflow-node-部署')
+    fireEvent.click(rerun)
+    fireEvent.click(rerun)
+
+    expect(onRunAutomation).toHaveBeenCalledTimes(1)
+    expect(rerun).toBeDisabled()
+
+    rejectRun?.(new Error('执行设备当前不可用'))
+
+    await waitFor(() => {
+      expect(rerun).not.toBeDisabled()
+      expect(screen.getByText('执行设备当前不可用')).toBeInTheDocument()
+    })
+  })
+
   test('offers another task after a human stage has already started', () => {
     render(
       <IssueWorkflowDag

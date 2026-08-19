@@ -694,7 +694,7 @@ export function ProjectWorkflowEditor({
       }
       updateNode(node.id, {
         automation_rule_id: ruleId,
-        workspace_policy: 'none',
+        workspace_policy: node.workspace_policy === 'none' ? 'composer' : node.workspace_policy,
       })
     } catch {
       revertToHumanExecution()

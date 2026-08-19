@@ -47,7 +47,7 @@ interface IssueWorkflowDagProps {
   tasks: WorkflowTaskBinding[]
   deliveries?: Delivery[]
   onCreateTask?: (stageId: string) => void
-  onRunAutomation?: (stageId: string, automationRuleId: string) => void
+  onRunAutomation?: (stageId: string, automationRuleId: string) => void | Promise<void>
   onOpenTask?: (task: WorkflowTaskBinding) => void
   onOpenDelivery?: (delivery: Delivery) => void
   onCompleteStage?: (
@@ -329,6 +329,19 @@ export function IssueWorkflowDag({
       setBusyStageId(null)
     }
   }
+
+  const runAutomation = async (stageId: string, automationRuleId: string) => {
+    if (!onRunAutomation || busyStageId) return
+    setBusyStageId(stageId)
+    setActionError(null)
+    try {
+      await onRunAutomation(stageId, automationRuleId)
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : t('todo.workflow_action_failed'))
+    } finally {
+      setBusyStageId(null)
+    }
+  }
   const completionStage = completionDraft
     ? nodes.find(stage => stage.id === completionDraft.stageId)
     : undefined
@@ -426,10 +439,13 @@ export function IssueWorkflowDag({
                         <button
                           type="button"
                           data-testid={`cloud-todo-run-workflow-node-${stage.id}`}
-                          onClick={() => onRunAutomation?.(stage.id, stage.automation_rule_id!)}
-                          className="flex h-7 items-center gap-1 rounded-lg px-2 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
+                          disabled={busyStageId !== null}
+                          onClick={() => void runAutomation(stage.id, stage.automation_rule_id!)}
+                          className="flex h-7 items-center gap-1 rounded-lg px-2 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
                         >
-                          {stage.status === 'failed' ? (
+                          {busyStageId === stage.id ? (
+                            <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                          ) : stage.status === 'failed' ? (
                             <RefreshCw className="h-3.5 w-3.5" />
                           ) : (
                             <Play className="h-3.5 w-3.5" />

@@ -21,6 +21,35 @@ from app.services.workflow_deliverables import delivery_fulfillments
 DEFAULT_DEPENDENCY_CONTEXT = ["final_result", "deliveries"]
 
 
+def workflow_stage_task_instruction(stage_input: dict[str, Any]) -> str:
+    """Compile the concrete task instruction shared by every stage launcher."""
+
+    target = stage_input.get("target_stage")
+    if not isinstance(target, dict):
+        return ""
+    sections = [str(target.get("prompt") or "").strip()]
+    requirements = target.get("required_deliverables")
+    if isinstance(requirements, list) and requirements:
+        lines = ["完成任务后，必须通过 Issue 交付工具逐项提交以下交付物："]
+        for requirement in requirements:
+            if not isinstance(requirement, dict):
+                continue
+            requirement_id = str(requirement.get("id") or "")
+            name = str(requirement.get("name") or "")
+            value_type = str(requirement.get("value_type") or "")
+            description = str(requirement.get("description") or "").strip()
+            suffix = f"：{description}" if description else ""
+            lines.append(f"- [{requirement_id}] {name} ({value_type}){suffix}")
+        lines.append(
+            "上传文件后，调用 finalize_delivery 时必须传入 fulfillments，"
+            "并让每个实际结果绑定对应 requirement_id。仅创建 Delivery、"
+            "上传资产或提交空 fulfillments 都不算完成。提交后等待流程状态更新，"
+            "不要自行宣称已经进入下一阶段。"
+        )
+        sections.append("\n".join(lines))
+    return "\n\n".join(section for section in sections if section)
+
+
 def _iso(value: object) -> str | None:
     if value is None or not hasattr(value, "isoformat"):
         return None
@@ -67,6 +96,15 @@ class WorkflowStageContextResolver:
                 "stage_id": str(dependency_id),
                 "stage_name": str(dependency.get("name") or dependency_id),
                 "selected_sources": list(selected),
+                "runtime_tasks": [
+                    {
+                        "device_id": binding.device_id,
+                        "task_id": binding.task_id,
+                        "task_title": binding.task_title or binding.task_id,
+                    }
+                    for binding in bindings
+                    if binding.device_id and binding.task_id
+                ],
             }
             if "final_result" in selected:
                 value["final_results"] = self._final_results(bindings, messages)
@@ -89,6 +127,7 @@ class WorkflowStageContextResolver:
                 "name": str(target.get("name") or target_node_id),
                 "prompt": str(target.get("prompt") or ""),
                 "required_deliverables": target.get("required_deliverables") or [],
+                "workspace_policy": str(target.get("workspace_policy") or "composer"),
             },
             "dependencies": dependencies,
         }

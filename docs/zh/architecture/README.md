@@ -14,6 +14,7 @@ sidebar_position: 1
 | Issue、任务与工作流编排     | [issue-task-workflow.md](issue-task-workflow.md)         | Issue 聚合、任务绑定、工作空间继承、DAG 就绪判断、状态聚合         |
 | Issue Runtime 状态、交付与界面投影 | [issue-runtime-delivery-projection.md](issue-runtime-delivery-projection.md) | Runtime 终态写入、阶段聚合、Delivery 履约、事件失效、Issue 详情一致性 |
 | 工作流阶段交付与依赖上下文 | [workflow-stage-deliverables.md](workflow-stage-deliverables.md) | 结构化交付要求、人工与自动阶段门禁、代码证据、后继上下文快照 |
+| 工作流阶段执行路由         | [workflow-stage-execution-routing.md](workflow-stage-execution-routing.md) | 人工启动、云端派发、本地/云端设备路由、统一阶段执行契约 |
 | 项目空间 Agent 能力         | [project-space-agent-capability.md](project-space-agent-capability.md) | 本地 Gateway、ContextGrant、Codex Plugin、离线 Provider、MCP 生命周期 |
 | 项目执行状态与 Runtime 容量 | [project-execution-state.md](project-execution-state.md) | claim、事件顺序、取消、重试、lease、并发容量、UI 投影             |
 | Git Worktree 执行           | [git-worktree-execution.md](git-worktree-execution.md)   | 设备路由、能力、preflight、排队创建、生命周期、持久化、UI 投影    |

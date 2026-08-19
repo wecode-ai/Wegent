@@ -1862,6 +1862,14 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         `${activeWorkflow} [data-testid="project-workflow-stage-automation-stage-1"]`,
         { text: AGENT.name, timeoutMs: uiTimeoutMs }
       )
+      assert.equal(
+        await control.command(
+          'getValue',
+          `${activeWorkflow} [data-testid="project-workflow-stage-workspace-stage-1"]`
+        ),
+        'composer',
+        'Selecting robot execution must preserve the stage workspace contract'
+      )
       await control.command(
         'click',
         `${activeWorkflow} [data-testid="project-workflow-stage-add-robot"]`

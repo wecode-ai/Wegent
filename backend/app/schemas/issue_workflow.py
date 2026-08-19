@@ -88,8 +88,6 @@ class WorkflowNodeDefinition(BaseModel):
 
     @model_validator(mode="after")
     def validate_execution_configuration(self) -> "WorkflowNodeDefinition":
-        if self.automation_rule_id and self.workspace_policy != "none":
-            raise ValueError("automated stages cannot require a local workspace")
         if unknown := set(self.dependency_context) - set(self.depends_on):
             raise ValueError(
                 "workflow dependency context references non-dependencies: "

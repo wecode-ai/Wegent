@@ -3587,28 +3587,40 @@ export function CloudTodoWorkspace({
                 inheritFromTask,
               })
             }}
-            onRunWorkflowNode={(workflowNodeId, automationRuleId) => {
+            onRunWorkflowNode={async (workflowNodeId, automationRuleId) => {
               const automationApi = selectedProjectServices?.projectAutomationApi
-              if (!automationApi || !selectedItemProject) return
-              void automationApi
-                .runWorkflowNode(
+              if (!automationApi || !selectedItemProject) {
+                throw new Error(t('todo.workflow_action_failed', '节点操作失败'))
+              }
+              const refreshSelectedWorkflowItem = async () => {
+                const updated = await selectedItemApi.getLoopItem(selectedItem.id)
+                const locatedUpdated = {
+                  ...updated,
+                  project_store: selectedItem.project_store,
+                }
+                setItems(current =>
+                  current.map(item => (item.id === locatedUpdated.id ? locatedUpdated : item))
+                )
+                setSelectedItem(locatedUpdated)
+                return locatedUpdated
+              }
+              try {
+                await automationApi.runWorkflowNode(
                   String(selectedItemProject.id),
                   selectedItem.id,
                   workflowNodeId,
                   automationRuleId
                 )
-                .then(async () => {
-                  const updated = await selectedItemApi.getLoopItem(selectedItem.id)
-                  const locatedUpdated = {
-                    ...updated,
-                    project_store: selectedItem.project_store,
-                  }
-                  setItems(current =>
-                    current.map(item => (item.id === locatedUpdated.id ? locatedUpdated : item))
-                  )
-                  setSelectedItem(locatedUpdated)
-                })
-                .catch(() => setBoardRefreshNonce(value => value + 1))
+                await refreshSelectedWorkflowItem()
+              } catch (error) {
+                setBoardRefreshNonce(value => value + 1)
+                const refreshed = await refreshSelectedWorkflowItem().catch(() => null)
+                const stageStatus = refreshed?.workflow?.nodes.find(
+                  node => node.id === workflowNodeId
+                )?.status
+                if (stageStatus && ['queued', 'running'].includes(stageStatus)) return
+                throw error
+              }
             }}
             onCompleteWorkflowStage={async (workflowNodeId, action, reason, values) => {
               const stage = selectedItem.workflow?.nodes.find(node => node.id === workflowNodeId)

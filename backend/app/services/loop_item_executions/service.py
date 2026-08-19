@@ -34,6 +34,7 @@ from app.models.project_chat_message import ProjectChatMessage, project_chat_mes
 from app.models.user import User
 from app.services.loop_item_executions.profile import (
     WeworkExecutionProfile,
+    WeworkExecutionProfileError,
     validate_wework_execution_target,
 )
 from app.services.project_automation_domain import (
@@ -1284,8 +1285,75 @@ class LoopItemExecutionService:
                 synchronize_session=False,
             )
         )
+        db.flush()
+        if updated:
+            db.expire_all()
+            executions = (
+                db.query(LoopItemExecution)
+                .filter(
+                    LoopItemExecution.id.in_(execution_ids),
+                    LoopItemExecution.status == STATUS_CLAIMED,
+                )
+                .all()
+            )
+            for execution in executions:
+                self._bind_workflow_stage_task(db, execution=execution)
         db.commit()
         return updated
+
+    def _bind_workflow_stage_task(
+        self,
+        db: Session,
+        *,
+        execution: LoopItemExecution,
+    ) -> None:
+        """Create the stage TaskBinding before Runtime delivery."""
+
+        if (
+            execution.executor_type != "project_robot"
+            or not execution.runtime_device_id
+            or not execution.runtime_task_id
+        ):
+            return
+        run, _ = self._automation_run_and_rule(db, execution)
+        metadata = (
+            run.metadata_json
+            if run is not None and isinstance(run.metadata_json, dict)
+            else {}
+        )
+        snapshot = metadata.get("workflow_stage_input")
+        if not isinstance(snapshot, dict):
+            return
+        target = snapshot.get("target_stage")
+        workflow_node_id = (
+            str(target.get("id") or "") if isinstance(target, dict) else ""
+        )
+        if not workflow_node_id:
+            raise WeworkRuntimeConfigurationError(
+                "Workflow stage execution has no target stage"
+            )
+        item = db.get(LoopItem, execution.loop_item_id)
+        if item is None:
+            raise WeworkRuntimeConfigurationError(
+                "Workflow stage execution task is unavailable"
+            )
+        from app.schemas.delivery import LoopItemTaskBind
+        from app.services.loop_items.service import loop_item_service
+
+        loop_item_service.bind_execution_task(
+            db,
+            item_id=item.id,
+            values=LoopItemTaskBind(
+                deviceId=execution.runtime_device_id,
+                taskId=execution.runtime_task_id,
+                taskTitle=item.title or "",
+                backendTaskId=execution.backend_task_id or None,
+                workflowNodeId=workflow_node_id,
+            ),
+            user_id=execution.executor_owner_user_id,
+            stage_snapshot=snapshot,
+            commit=False,
+        )
 
     def request_runtime_start(
         self,
@@ -1584,7 +1652,9 @@ class LoopItemExecutionService:
             existing_streaming,
         )
         try:
-            profile, _ = self._runtime_profile_and_context(db, execution=execution)
+            profile, origin_context = self._runtime_profile_and_context(
+                db, execution=execution
+            )
         except WeworkRuntimeConfigurationError:
             logger.exception(
                 "[LoopItemExecution] Activity open failed: unavailable runtime "
@@ -1659,6 +1729,11 @@ class LoopItemExecutionService:
                 project_id=execution.cloud_project_id,
                 task_id=execution.loop_item_id,
                 execution_id=execution.id,
+                workflow_stage_input=(
+                    origin_context.get("workflow_stage_input")
+                    if isinstance(origin_context.get("workflow_stage_input"), dict)
+                    else None
+                ),
             )
             project_chat_service._set_task_ai_state(
                 db,
@@ -2804,8 +2879,11 @@ class LoopItemExecutionService:
                 task=task,
                 cloud_project_id=execution.cloud_project_id,
                 origin_context=origin_context,
+                execution_device_id=execution.execution_device_id or "",
                 materialize_execution_request=materialize_request,
             )
+        except WeworkExecutionProfileError as exc:
+            raise WeworkRuntimeConfigurationError(str(exc)) from exc
         except Exception as exc:
             model_label = profile.model or "the selected runtime default"
             raise WeworkRuntimeConfigurationError(
@@ -3203,6 +3281,12 @@ class LoopItemExecutionService:
             return row
         normalized = runtime_status.lower().strip()
         normalized_turn = (turn_status or "").lower().strip()
+        if normalized == "missing" and row.status == STATUS_CANCEL_REQUESTED:
+            return self.confirm_runtime_cancelled(
+                db,
+                execution_id=row.id,
+                note="Runtime no longer reports the cancelled task",
+            )
         if running or normalized in {"running", "in_progress"}:
             now = utcnow()
             next_status = (

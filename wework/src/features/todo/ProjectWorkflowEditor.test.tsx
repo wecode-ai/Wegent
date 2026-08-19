@@ -563,7 +563,7 @@ describe('ProjectWorkflowEditor', () => {
         {
           ...workflow.nodes[0],
           automation_rule_id: 'workflow-rule-1',
-          workspace_policy: 'none',
+          workspace_policy: 'composer',
         },
         workflow.nodes[1],
       ],

@@ -99,25 +99,10 @@ def test_workflow_definition_validates_dependency_context() -> None:
         )
 
 
-@pytest.mark.parametrize(
-    "node",
-    [
-        {
-            "id": "automated",
-            "name": "自动阶段",
-            "workspace_policy": "composer",
-            "automation_rule_id": "rule-1",
-        },
-    ],
-)
-def test_workflow_definition_rejects_invalid_execution_configuration(
-    node: dict,
+@pytest.mark.parametrize("workspace_policy", ["none", "composer", "inherit"])
+def test_workflow_definition_accepts_automatic_workspace_policies(
+    workspace_policy: str,
 ) -> None:
-    with pytest.raises(ValidationError):
-        ProjectWorkflowDefinition.model_validate({"version": 1, "nodes": [node]})
-
-
-def test_workflow_definition_accepts_configured_automatic_nodes() -> None:
     definition = ProjectWorkflowDefinition.model_validate(
         {
             "version": 1,
@@ -125,14 +110,27 @@ def test_workflow_definition_accepts_configured_automatic_nodes() -> None:
                 {
                     "id": "automation",
                     "name": "自动化",
-                    "workspace_policy": "none",
+                    "depends_on": ["previous"] if workspace_policy == "inherit" else [],
+                    "workspace_policy": workspace_policy,
                     "automation_rule_id": "rule-1",
-                }
+                },
+                *(
+                    [
+                        {
+                            "id": "previous",
+                            "name": "前序",
+                            "workspace_policy": "composer",
+                        }
+                    ]
+                    if workspace_policy == "inherit"
+                    else []
+                ),
             ],
         }
     )
 
     assert definition.nodes[0].automation_rule_id == "rule-1"
+    assert definition.nodes[0].workspace_policy == workspace_policy
 
 
 def test_workflow_definition_requires_a_rule_for_ai_advancement() -> None:
