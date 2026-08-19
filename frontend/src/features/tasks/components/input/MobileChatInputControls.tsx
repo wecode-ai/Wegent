@@ -298,24 +298,28 @@ export function MobileChatInputControls({
   useEffect(() => {
     if (!moreMenuOpen) return
 
+    const isOwnedPopoverTarget = (target: EventTarget | null) => {
+      if (!(target instanceof Element)) return false
+      const popoverId = target.closest('[role="dialog"]')?.id
+      if (!popoverId) return false
+
+      return Array.from(moreMenuRef.current?.querySelectorAll('[aria-controls]') ?? []).some(
+        trigger => trigger.getAttribute('aria-controls') === popoverId
+      )
+    }
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target
       if (!(target instanceof Node)) return
       if (moreMenuButtonRef.current?.contains(target) || moreMenuRef.current?.contains(target)) {
         return
       }
-      if (
-        target instanceof Element &&
-        target.closest('[role="dialog"], [role="listbox"], [role="menu"]')
-      ) {
-        return
-      }
+      if (isOwnedPopoverTarget(target)) return
       setMoreMenuOpen(false)
     }
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setMoreMenuOpen(false)
-      }
+      if (event.key !== 'Escape' || event.defaultPrevented || isOwnedPopoverTarget(event.target))
+        return
+      setMoreMenuOpen(false)
     }
 
     document.addEventListener('pointerdown', handlePointerDown)

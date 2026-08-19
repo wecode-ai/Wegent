@@ -4,6 +4,7 @@
 
 import '@testing-library/jest-dom'
 import React from 'react'
+import { createPortal } from 'react-dom'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { MobileChatInputControlsProps } from '@/features/tasks/components/input/MobileChatInputControls'
 import { MobileChatInputControls } from '@/features/tasks/components/input/MobileChatInputControls'
@@ -40,7 +41,19 @@ jest.mock('@/features/tasks/components/MobileCorrectionModeToggle', () => ({
 
 jest.mock('@/features/tasks/components/chat/ChatContextInput', () => ({
   __esModule: true,
-  default: () => <button type="button">Context</button>,
+  default: () => (
+    <>
+      <button type="button" aria-controls="context-selector-popover">
+        Context
+      </button>
+      {createPortal(
+        <div id="context-selector-popover" role="dialog" data-testid="owned-context-popover">
+          Context selector
+        </div>,
+        document.body
+      )}
+    </>
+  ),
 }))
 
 jest.mock('@/features/tasks/components/AttachmentButton', () => ({
@@ -223,6 +236,31 @@ describe('MobileChatInputControls layout', () => {
 
     fireEvent.click(screen.getByTestId('mobile-input-more-actions-button'))
     fireEvent.keyDown(document, { key: 'Escape' })
+
+    expect(screen.queryByTestId('mobile-input-more-actions-menu')).not.toBeInTheDocument()
+  })
+
+  it('keeps the menu open while interacting with a popover opened by the menu', () => {
+    render(<MobileChatInputControls {...buildProps()} />)
+
+    fireEvent.click(screen.getByTestId('mobile-input-more-actions-button'))
+    const ownedPopover = screen.getByTestId('owned-context-popover')
+    fireEvent.pointerDown(ownedPopover)
+    fireEvent.keyDown(ownedPopover, { key: 'Escape' })
+
+    expect(screen.getByTestId('mobile-input-more-actions-menu')).toBeInTheDocument()
+  })
+
+  it('closes the menu when interacting with an unrelated dialog', () => {
+    render(
+      <>
+        <MobileChatInputControls {...buildProps()} />
+        <div role="dialog" data-testid="unrelated-dialog" />
+      </>
+    )
+
+    fireEvent.click(screen.getByTestId('mobile-input-more-actions-button'))
+    fireEvent.pointerDown(screen.getByTestId('unrelated-dialog'))
 
     expect(screen.queryByTestId('mobile-input-more-actions-menu')).not.toBeInTheDocument()
   })
