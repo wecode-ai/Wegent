@@ -49,6 +49,12 @@ function renderEditor(
 }
 
 describe('ComposerProseMirrorEditor', () => {
+  test('exposes the placeholder layer for scoped composer alignment', () => {
+    renderEditor('')
+
+    expect(screen.getByText('Message')).toHaveClass('composer-prosemirror-placeholder')
+  })
+
   test('restores the controlled value after an Activity tab is hidden and shown', () => {
     function ActivityEditorHarness() {
       const [visible, setVisible] = useState(true)
