@@ -245,6 +245,8 @@
       "confirmDelete": "确定要删除这个知识库吗？删除后无法恢复。",
       "cannotDeleteWithDocuments": "该知识库包含文档，无法删除。请先删除所有文档。",
       "deleteWarning": "该知识库包含 {{count}} 个文档，请先删除所有文档后再删除知识库。",
+      "deleteCodeWikiWarning": "删除代码 Wiki 会一并删除所有生成页面和仓库关联，且无法恢复。",
+      "deleteFailed": "删除知识库失败，请稍后重试。",
       "search": "搜索知识库...",
       "noResults": "没有匹配的知识库",
       "categoryFilter": {
@@ -1134,7 +1136,8 @@
       "modelLabel": "生成模型",
       "modelDescription": "仓库代码会发送给该模型，请自行评估暴露风险。",
       "modelPlaceholder": "选择模型",
-      "modelRequired": "请选择生成模型"
+      "modelRequired": "请选择生成模型",
+      "created": "代码 Wiki 已创建，正在生成内容。"
     },
     "reader": {
       "regenerate": "重新生成",
