@@ -68,13 +68,14 @@ export function marketplaceItemNeedsDeviceSync(item: PluginMarketplaceItem): boo
   if (item.installedPluginId === null || item.installedPluginId === undefined) {
     return false
   }
-  // An older local ZIP must still sync to the desired release. Matching local
-  // packages skip sync so status report can clear a stale cloud pending row.
+  // An older local ZIP still needs sync when the account install is not yet
+  // materialized on this device. Matching local packages skip sync so status
+  // report can clear a stale cloud pending row. Catalog version bumps on an
+  // already-installed device go through update / auto-update, not this path.
   if (item.installedLocally && !localPackageLagsCatalogVersion(item)) return false
   const state = item.currentDeviceInstallation?.state
   if (item.currentDeviceInstallation?.actualReleaseId && state === 'failed') return false
   if (!item.installed) return true
-  if (localPackageLagsCatalogVersion(item)) return true
   return state === 'failed' || state === 'pending'
 }
 
