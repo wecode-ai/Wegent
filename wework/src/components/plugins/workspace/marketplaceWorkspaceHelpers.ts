@@ -508,11 +508,10 @@ export function pluginUsesWegentConnectorOAuth(
   if (!plugin) return true
   if ('raw' in plugin) {
     if (typeof plugin.raw.spec.pluginId === 'number') return true
+    const namespace =
+      typeof plugin.raw.metadata.namespace === 'string' ? plugin.raw.metadata.namespace : ''
     const marketplace =
-      plugin.raw.spec.source.marketplace ||
-      plugin.raw.metadata.namespace ||
-      plugin.raw.spec.source.providerKey ||
-      ''
+      plugin.raw.spec.source.marketplace || namespace || plugin.raw.spec.source.providerKey || ''
     if (isOpenAiOfficialMarketplaceId(marketplace) || isPersonalMarketplaceId(marketplace)) {
       return false
     }
