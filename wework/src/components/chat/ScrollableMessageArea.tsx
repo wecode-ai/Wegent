@@ -378,9 +378,18 @@ function ScrollableMessagePaneContent({
   const handleTurnNavigationScrollTargetChange = useCallback(
     (messageId: string | null) => {
       const scrolling = messageId !== null
+      const wasScrolling = turnNavigationScrollingRef.current
       turnNavigationScrollingRef.current = scrolling
       setTurnNavigationTargetMessageId(messageId)
       const element = activeScrollRefRef.current.current
+      if (wasScrolling && !scrolling && element && currentScrollKey !== null) {
+        const snapshot = createScrollSnapshot(element)
+        setConversationScrollSnapshot(currentScrollKey, snapshot)
+        followingBottomKeyRef.current = null
+        lastScrollTopRef.current = element.scrollTop
+        isAtBottomRef.current = snapshot.pinnedToBottom
+        userScrollPausedAutoFollowRef.current = !snapshot.pinnedToBottom
+      }
       console.warn('[Wework] Message turn navigation scroll ownership', {
         scrolling,
         messageId,
