@@ -4,6 +4,7 @@ import { RefreshCw, Search } from 'lucide-react'
 import type { CSSProperties } from 'react'
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
+import { workspaceRelativePath } from '@/lib/workspace-relative-path'
 import type { WorkspaceFileEntry } from '@/types/workspace-files'
 
 const PIERRE_WORKSPACE_FILE_TREE_CSS = `
@@ -101,21 +102,8 @@ interface WorkspaceTreeModel {
   expandedTreePaths: string[]
 }
 
-function normalizeWorkspacePath(path: string) {
-  return path.replace(/\\/g, '/').replace(/\/+$/, '')
-}
-
-function relativeWorkspacePath(rootPath: string, path: string) {
-  const root = normalizeWorkspacePath(rootPath)
-  const target = normalizeWorkspacePath(path)
-
-  if (!root || target === root) return ''
-  if (target.startsWith(`${root}/`)) return target.slice(root.length + 1)
-  return target.replace(/^\/+/, '')
-}
-
 function treePathForEntry(rootPath: string, entry: WorkspaceFileEntry) {
-  const relativePath = relativeWorkspacePath(rootPath, entry.path) || entry.name
+  const relativePath = workspaceRelativePath(rootPath, entry.path) || entry.name
   return entry.isDirectory ? `${relativePath.replace(/\/+$/, '')}/` : relativePath
 }
 
@@ -163,14 +151,14 @@ function createWorkspaceTreeModel({
 
   const expandedTreePaths = Array.from(expandedPaths)
     .map(path => {
-      const relativePath = relativeWorkspacePath(rootPath, path)
+      const relativePath = workspaceRelativePath(rootPath, path)
       return relativePath ? `${relativePath.replace(/\/+$/, '')}/` : null
     })
     .filter((path): path is string => Boolean(path))
 
-  const activeTreePath = relativeWorkspacePath(rootPath, activeDirectoryPath)
+  const activeTreePath = workspaceRelativePath(rootPath, activeDirectoryPath)
   const selectedTreePath = selectedPath
-    ? relativeWorkspacePath(rootPath, selectedPath)
+    ? workspaceRelativePath(rootPath, selectedPath)
     : activeTreePath
       ? `${activeTreePath.replace(/\/+$/, '')}/`
       : null

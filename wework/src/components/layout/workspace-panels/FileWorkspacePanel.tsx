@@ -3,6 +3,7 @@ import {
   Check,
   ChevronDown,
   Code2,
+  Copy,
   Eye,
   FileOutput,
   Folder,
@@ -15,7 +16,9 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isWorkspaceDirectoryCacheFresh } from '@/features/workbench/workspaceFileDirectoryCache'
+import { copyTextToClipboard } from '@/lib/clipboard'
 import { cn } from '@/lib/utils'
+import { workspaceRelativePath } from '@/lib/workspace-relative-path'
 import { track } from '@/telemetry/client'
 import {
   isLocalTerminalAvailable,
@@ -76,6 +79,13 @@ interface WorkspaceBinaryPreview {
 interface FilePreviewLoadingProgress {
   loadedBytes: number
   totalBytes: number | null
+}
+
+type CopyPathFeedbackStatus = 'copied' | 'failed'
+
+interface CopyPathFeedback {
+  path: string
+  status: CopyPathFeedbackStatus
 }
 
 function FileOpenerIcon({ opener }: { opener: LocalFileOpener }) {
@@ -212,6 +222,7 @@ export function FileWorkspacePanel({
   const [fileOpenerMenuOpen, setFileOpenerMenuOpen] = useState(false)
   const [workspaceTargetMenuOpen, setWorkspaceTargetMenuOpen] = useState(false)
   const [selectedApplicationPath, setSelectedApplicationPath] = useState<string | null>(null)
+  const [copyPathFeedback, setCopyPathFeedback] = useState<CopyPathFeedback | null>(null)
   const [, setFileOpenerIconCacheVersion] = useState(0)
   const initialSelectionRef = useRef(initialSelection)
   const treeRequestSequence = useRef(0)
@@ -221,6 +232,15 @@ export function FileWorkspacePanel({
   const fileOpenerRequestSequence = useRef(0)
   const fileOpenerMenuRef = useRef<HTMLDivElement>(null)
   const workspaceTargetMenuRef = useRef<HTMLDivElement>(null)
+  const copyPathResetTimeoutRef = useRef<number | null>(null)
+
+  const clearCopyPathFeedback = useCallback(() => {
+    setCopyPathFeedback(null)
+    if (copyPathResetTimeoutRef.current !== null) {
+      window.clearTimeout(copyPathResetTimeoutRef.current)
+      copyPathResetTimeoutRef.current = null
+    }
+  }, [])
 
   const warmFileOpenerIcons = useCallback(async (openers: LocalFileOpener[]) => {
     for (const opener of openers) {
@@ -330,6 +350,7 @@ export function FileWorkspacePanel({
       const nextLineTarget = createPreviewLineTarget(entry.path, options)
       fileRequestSequence.current = requestId
       setSelectedFilePath(entry.path)
+      clearCopyPathFeedback()
       onSelectionChange?.({ path: entry.path, isDirectory: false })
       setMarkdownMode('preview')
       setSelectedPathIsDirectory(false)
@@ -441,6 +462,7 @@ export function FileWorkspacePanel({
       }
     },
     [
+      clearCopyPathFeedback,
       loadFileOpeners,
       onSelectionChange,
       readWorkspaceFileChunk,
@@ -460,6 +482,7 @@ export function FileWorkspacePanel({
         fileRequestSequence.current += 1
         fileOpenerRequestSequence.current += 1
         setSelectedFilePath(resolvedPath)
+        clearCopyPathFeedback()
         onSelectionChange?.({ path: resolvedPath, isDirectory: true })
         setMarkdownMode('preview')
         setSelectedPathIsDirectory(true)
@@ -522,7 +545,14 @@ export function FileWorkspacePanel({
         openAsFile()
       }, openAsFile)
     },
-    [listWorkspaceEntries, loadTree, onSelectionChange, openFile, stableTarget]
+    [
+      clearCopyPathFeedback,
+      listWorkspaceEntries,
+      loadTree,
+      onSelectionChange,
+      openFile,
+      stableTarget,
+    ]
   )
 
   const dirty = editing && preview !== null && editedContent !== preview.content
@@ -565,6 +595,35 @@ export function FileWorkspacePanel({
     }
   }, [dirty, editedContent, preview, saving, stableTarget, t, writeWorkspaceTextFile])
 
+  const copySelectedRelativePath = useCallback(async () => {
+    if (!stableTarget || !selectedFilePath || selectedPathIsDirectory) return
+    const relativePath = workspaceRelativePath(stableTarget.path, selectedFilePath)
+    if (!relativePath) return
+    try {
+      await copyTextToClipboard(relativePath)
+      setCopyPathFeedback({ path: selectedFilePath, status: 'copied' })
+    } catch (error) {
+      console.error('Failed to copy workspace file relative path:', error)
+      setCopyPathFeedback({ path: selectedFilePath, status: 'failed' })
+    }
+    if (copyPathResetTimeoutRef.current !== null) {
+      window.clearTimeout(copyPathResetTimeoutRef.current)
+    }
+    copyPathResetTimeoutRef.current = window.setTimeout(() => {
+      copyPathResetTimeoutRef.current = null
+      setCopyPathFeedback(null)
+    }, 2000)
+  }, [selectedFilePath, selectedPathIsDirectory, stableTarget])
+
+  useEffect(
+    () => () => {
+      if (copyPathResetTimeoutRef.current !== null) {
+        window.clearTimeout(copyPathResetTimeoutRef.current)
+      }
+    },
+    []
+  )
+
   const navigateWithDirtyGuard = useCallback(
     (action: () => void) => {
       if (dirty) {
@@ -587,6 +646,7 @@ export function FileWorkspacePanel({
         setExpandedPaths(new Set())
         setActiveDirectoryPath(stableTarget.path)
         setSelectedFilePath(null)
+        clearCopyPathFeedback()
         setMarkdownMode('preview')
         setSelectedPathIsDirectory(false)
         setPreview(null)
@@ -603,7 +663,7 @@ export function FileWorkspacePanel({
     return () => {
       cancelled = true
     }
-  }, [loadTree, stableTarget])
+  }, [clearCopyPathFeedback, loadTree, stableTarget])
 
   useEffect(() => {
     if (!stableTarget || openFileRequest?.path) return
@@ -713,6 +773,16 @@ export function FileWorkspacePanel({
   const activePreviewLineTarget =
     previewLineTarget && previewLineTarget.filePath === preview?.path ? previewLineTarget : null
   const displayPath = selectedFilePath ?? stableTarget.path
+  const selectedRelativePath = selectedFilePath
+    ? workspaceRelativePath(stableTarget.path, selectedFilePath)
+    : ''
+  const activeCopyPathFeedback =
+    copyPathFeedback && copyPathFeedback.path === selectedFilePath ? copyPathFeedback : null
+  const canCopyRelativePath =
+    Boolean(selectedFilePath) &&
+    !selectedPathIsDirectory &&
+    selectedFilePath !== stableTarget.path &&
+    Boolean(selectedRelativePath)
   const canOpenFile =
     stableTarget.workspaceSource !== 'remote' &&
     Boolean(selectedFilePath) &&
@@ -850,6 +920,38 @@ export function FileWorkspacePanel({
               )}
             </div>
           )}
+          {canCopyRelativePath && (
+            <button
+              type="button"
+              data-testid="workspace-file-copy-relative-path-button"
+              onClick={() => void copySelectedRelativePath()}
+              className="flex h-8 items-center gap-1.5 rounded-md px-2 text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
+              title={t('workbench.workspace_file_copy_relative_path')}
+            >
+              <Copy className="h-4 w-4" />
+              {activeCopyPathFeedback?.status === 'copied'
+                ? t('workbench.workspace_file_copy_relative_path_copied')
+                : activeCopyPathFeedback?.status === 'failed'
+                  ? t('workbench.workspace_file_copy_relative_path_failed')
+                  : t('workbench.workspace_file_copy_relative_path')}
+            </button>
+          )}
+          <span
+            data-testid="workspace-file-copy-relative-path-feedback"
+            role="status"
+            aria-live="polite"
+            className="sr-only"
+          >
+            {activeCopyPathFeedback?.status === 'copied'
+              ? t('workbench.workspace_file_copy_relative_path_copied_announcement', {
+                  path: selectedRelativePath,
+                })
+              : activeCopyPathFeedback?.status === 'failed'
+                ? t('workbench.workspace_file_copy_relative_path_failed_announcement', {
+                    path: selectedRelativePath,
+                  })
+                : ''}
+          </span>
           {preview?.editable && writeWorkspaceTextFile && !editing && (
             <button
               type="button"
