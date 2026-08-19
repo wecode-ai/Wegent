@@ -589,7 +589,11 @@ fn stale_finished_navigation_does_not_replace_the_current_failure() {
     };
 
     assert_eq!(
-        super::apply_navigation_finished(&mut entry, "https://example.com/previous".to_string()),
+        super::apply_navigation_finished(
+            &mut entry,
+            "https://example.com/previous",
+            "https://example.com/previous".to_string()
+        ),
         super::NavigationFinishedOutcome::IgnoredStale
     );
     assert_eq!(entry.url.as_deref(), Some("http://localhost:3000/failing"));
@@ -617,7 +621,7 @@ fn synthetic_finished_navigation_does_not_clear_the_current_failure() {
     };
 
     assert_eq!(
-        super::apply_navigation_finished(&mut entry, failed_url),
+        super::apply_navigation_finished(&mut entry, &failed_url, failed_url.clone()),
         super::NavigationFinishedOutcome::IgnoredFailed
     );
     assert!(entry.navigation_error.is_some());
@@ -641,12 +645,38 @@ fn current_finished_navigation_completes_loading() {
     };
 
     assert_eq!(
-        super::apply_navigation_finished(&mut entry, current_url.clone()),
+        super::apply_navigation_finished(&mut entry, &current_url, current_url.clone()),
         super::NavigationFinishedOutcome::Applied
     );
     assert!(!entry.is_loading);
     assert_eq!(entry.loaded_url, Some(current_url));
     assert_eq!(entry.navigation_error, None);
+}
+
+#[test]
+fn mapped_preview_finished_navigation_completes_the_requested_url() {
+    let display_url = "file:///tmp/wework-embedded-browser/text-1.html".to_string();
+    let requested_url = "file:///workspace/readme.md".to_string();
+    let mut entry = super::EmbeddedBrowserEntry {
+        native_label: "native-1".to_string(),
+        title: None,
+        url: Some(display_url.clone()),
+        loaded_url: None,
+        is_loading: true,
+        navigation_error: None,
+        opened_at_unix_ms: 0,
+        bootstrap_finished: true,
+        host_ready: true,
+        phase: super::EmbeddedBrowserPhase::Opening,
+    };
+
+    assert_eq!(
+        super::apply_navigation_finished(&mut entry, &display_url, requested_url.clone()),
+        super::NavigationFinishedOutcome::Applied
+    );
+    assert!(!entry.is_loading);
+    assert_eq!(entry.url, Some(requested_url.clone()));
+    assert_eq!(entry.loaded_url, Some(requested_url));
 }
 
 #[test]

@@ -964,9 +964,12 @@ fn apply_navigation_failure(entry: &mut EmbeddedBrowserEntry, code: i64, message
 
 fn apply_navigation_finished(
     entry: &mut EmbeddedBrowserEntry,
-    finished_url: String,
+    finished_url: &str,
+    loaded_url: String,
 ) -> NavigationFinishedOutcome {
-    if entry.url.as_deref() != Some(finished_url.as_str()) {
+    if entry.url.as_deref() != Some(finished_url)
+        && entry.url.as_deref() != Some(loaded_url.as_str())
+    {
         return NavigationFinishedOutcome::IgnoredStale;
     }
     if entry
@@ -976,8 +979,8 @@ fn apply_navigation_finished(
     {
         return NavigationFinishedOutcome::IgnoredFailed;
     }
-    entry.url = Some(finished_url.clone());
-    entry.loaded_url = Some(finished_url);
+    entry.url = Some(loaded_url.clone());
+    entry.loaded_url = Some(loaded_url);
     entry.is_loading = false;
     entry.navigation_error = None;
     NavigationFinishedOutcome::Applied
@@ -2076,17 +2079,20 @@ pub async fn embedded_browser_open(
                     &native_label_for_load,
                     &current_url,
                 );
-                let loaded_url = webview_url
-                    .clone()
-                    .or(Some(current_url.clone()))
-                    .and_then(|url| loaded_browser_url(&load_state_handle, &url));
+                let finished_url = webview_url.clone().or(Some(current_url.clone()));
+                let loaded_url = finished_url
+                    .as_deref()
+                    .and_then(|url| loaded_browser_url(&load_state_handle, url));
                 let mut outcome = None;
-                if let Some(loaded_url) = loaded_url.clone() {
+                if let (Some(finished_url), Some(loaded_url)) =
+                    (finished_url.as_deref(), loaded_url.clone())
+                {
                     let _ = update_entry_for_native_label(
                         &load_state_handle,
                         &native_label_for_load,
                         |entry| {
-                            outcome = Some(apply_navigation_finished(entry, loaded_url));
+                            outcome =
+                                Some(apply_navigation_finished(entry, finished_url, loaded_url));
                         },
                     );
                 }
@@ -2111,7 +2117,8 @@ pub async fn embedded_browser_open(
                         &owner,
                         "page_load_finished_ignored",
                         json!({
-                            "finishedUrl": loaded_url,
+                            "finishedUrl": finished_url,
+                            "loadedUrl": loaded_url,
                             "outcome": format!("{outcome:?}"),
                         }),
                     );
