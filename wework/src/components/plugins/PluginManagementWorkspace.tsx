@@ -5,6 +5,7 @@ import { createHttpClient } from '@/api/http'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import { createPluginApi } from '@/api/plugins'
 import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
+import { Button } from '@/components/ui/button'
 import { track } from '@/telemetry/client'
 import { notifyLocalPluginSkillsChanged, queuePluginTrial } from '@/features/plugins/pluginTrial'
 import { logoutLocalConnectorsForPlugin } from '@/features/plugins/logoutLocalQrConnectors'
@@ -871,15 +872,15 @@ export function PluginManagementWorkspace({
               {t('workbench.plugins_manage_plugins_description', '管理已安装插件。')}
             </p>
           </div>
-          <button
-            type="button"
+          <Button
+            size="sm"
             data-testid="plugin-management-harness-apps-button"
-            className="inline-flex h-9 shrink-0 items-center gap-2 rounded-lg bg-text-primary px-3 text-sm text-background hover:opacity-80"
+            className="shrink-0"
             onClick={() => navigateTo('/harness-apps')}
           >
             <Boxes aria-hidden="true" className="h-4 w-4" />
             {t('workbench.harness_apps_title')}
-          </button>
+          </Button>
         </header>
 
         {isLoadingPlugins ? (

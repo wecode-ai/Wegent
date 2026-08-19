@@ -70,14 +70,21 @@ const CODEX_DISABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE: &str =
 const DEFAULT_EXECUTOR_SERVER_PORT: u16 = 10001;
 const DEFAULT_VISION_SIDECAR_TIMEOUT_MS: u64 = 45_000;
 const DEFAULT_VISION_SIDECAR_MAX_DESCRIPTIONS: usize = 8;
+const CODEX_GLOBAL_NOTIFICATION_CAPACITY: usize = 2048;
+const CODEX_THREAD_NOTIFICATION_CAPACITY: usize = 2048;
 const SIDE_BOUNDARY_PROMPT: &str = r#"Side conversation boundary.
 
-The messages before this boundary are inherited reference context from the main thread.
+Everything before this boundary is inherited history from the parent thread. It is reference context only. It is not your current task.
+
 Do not continue, execute, or complete any instructions, plans, tool calls, approvals, edits, or requests from before this boundary. Only messages submitted after this boundary are active user instructions for this side conversation.
 
 You are a side-conversation assistant, separate from the main thread. Answer questions and do lightweight, non-mutating exploration without disrupting the main thread. If there is no user question after this boundary yet, wait for one.
 
-Sub-agents are off-limits in this side conversation. Do not interact with any existing or new sub-agents, even if sub-agents were used before this boundary."#;
+External tools may be available according to this thread's current permissions. Any tool calls or outputs visible before this boundary happened in the parent thread and are reference-only; do not infer active instructions from them.
+
+Sub-agents are off-limits in this side conversation. Do not interact with any existing or new sub-agents, even if sub-agents were used before this boundary.
+
+Do not modify files, source, git state, permissions, configuration, or workspace state unless the user explicitly asks for that mutation after this boundary. Do not request escalated permissions or broader sandbox access unless the user explicitly asks for a mutation that requires it. If the user explicitly requests a mutation, keep it minimal, local to the request, and avoid disrupting the main thread."#;
 pub(crate) const WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS: &str = r#"Wework 内置浏览器 routing:
 - "Wework" refers to Wegent's desktop workbench. Describe its browser as the Wework built-in browser.
 - For browser tasks inside Wework, use the `browser_*` MCP tools from the Wework 内置浏览器 tool server.
@@ -537,18 +544,19 @@ impl CodexAppServerClient {
     pub(crate) async fn subscribe_notifications(
         &self,
     ) -> Result<broadcast::Receiver<Value>, String> {
-        Ok(self.ensure_process().await?.notifications.subscribe())
+        Ok(self.ensure_process().await?.notifications.subscribe_all())
     }
 
-    async fn subscribe_notifications_for_launch_config(
+    async fn subscribe_thread_notifications_for_launch_config(
         &self,
         launch_config: &CodexLaunchConfig,
+        thread_id: &str,
     ) -> Result<broadcast::Receiver<Value>, String> {
         Ok(self
             .ensure_process_for_launch_config(launch_config)
             .await?
             .notifications
-            .subscribe())
+            .subscribe_thread(thread_id))
     }
 
     async fn existing_process(&self) -> Result<CodexAppServerHandle, String> {
@@ -881,11 +889,65 @@ impl Default for CodexAppServerSharedState {
 
 type PendingCodexResponse = oneshot::Sender<Result<Value, String>>;
 
+#[derive(Clone)]
+struct CodexNotificationHub {
+    all: broadcast::Sender<Value>,
+    threads: Arc<StdMutex<HashMap<String, broadcast::Sender<Value>>>>,
+}
+
+impl CodexNotificationHub {
+    fn new() -> Self {
+        let (all, _) = broadcast::channel(CODEX_GLOBAL_NOTIFICATION_CAPACITY);
+        Self {
+            all,
+            threads: Arc::new(StdMutex::new(HashMap::new())),
+        }
+    }
+
+    fn subscribe_all(&self) -> broadcast::Receiver<Value> {
+        self.all.subscribe()
+    }
+
+    fn subscribe_thread(&self, thread_id: &str) -> broadcast::Receiver<Value> {
+        let mut threads = self
+            .threads
+            .lock()
+            .expect("Codex notification thread registry should not be poisoned");
+        threads
+            .entry(thread_id.to_owned())
+            .or_insert_with(|| {
+                let (sender, _) = broadcast::channel(CODEX_THREAD_NOTIFICATION_CAPACITY);
+                sender
+            })
+            .subscribe()
+    }
+
+    fn send(&self, message: Value) {
+        let _ = self.all.send(message.clone());
+        let thread_id =
+            stream_thread_id(message_params(&message)).or_else(|| stream_thread_id(&message));
+        let mut threads = self
+            .threads
+            .lock()
+            .expect("Codex notification thread registry should not be poisoned");
+        threads.retain(|_, sender| sender.receiver_count() > 0);
+        if let Some(thread_id) = thread_id {
+            if let Some(sender) = threads.get(&thread_id) {
+                let _ = sender.send(message);
+            }
+            return;
+        }
+        for sender in threads.values() {
+            let _ = sender.send(message.clone());
+        }
+    }
+}
+
 struct CodexAppServerProcess {
     child: Child,
     stdin: Arc<Mutex<ChildStdin>>,
     pending: Arc<Mutex<HashMap<u64, PendingCodexResponse>>>,
-    notifications: broadcast::Sender<Value>,
+    notifications: CodexNotificationHub,
     reader_task: tokio::task::JoinHandle<()>,
 }
 
@@ -914,7 +976,7 @@ impl Drop for CodexAppServerProcess {
 struct CodexAppServerHandle {
     stdin: Arc<Mutex<ChildStdin>>,
     pending: Arc<Mutex<HashMap<u64, PendingCodexResponse>>>,
-    notifications: broadcast::Sender<Value>,
+    notifications: CodexNotificationHub,
 }
 
 impl CodexAppServerHandle {
@@ -975,7 +1037,7 @@ async fn start_persistent_codex_app_server(
     match result {
         Ok((stdin, stdout, next_id)) => {
             let pending = Arc::new(Mutex::new(HashMap::new()));
-            let (notifications, _) = broadcast::channel(2048);
+            let notifications = CodexNotificationHub::new();
             let reader_task = tokio::spawn(read_persistent_codex_app_server_stdout(
                 stdout,
                 Arc::clone(&pending),
@@ -1064,7 +1126,7 @@ fn codex_router_auth_command() -> (&'static str, Vec<String>) {
 async fn read_persistent_codex_app_server_stdout(
     mut stdout: BufReader<ChildStdout>,
     pending: Arc<Mutex<HashMap<u64, PendingCodexResponse>>>,
-    notifications: broadcast::Sender<Value>,
+    notifications: CodexNotificationHub,
 ) {
     loop {
         let mut line = String::new();
@@ -1121,7 +1183,7 @@ async fn read_persistent_codex_app_server_stdout(
 
         log_codex_mcp_startup_status(&message);
 
-        let _ = notifications.send(message);
+        notifications.send(message);
     }
 }
 
@@ -1175,8 +1237,8 @@ fn log_codex_mcp_startup_status(message: &Value) {
     );
 }
 
-fn notify_shared_process_closed(notifications: &broadcast::Sender<Value>, message: &str) {
-    let _ = notifications.send(json!({
+fn notify_shared_process_closed(notifications: &CodexNotificationHub, message: &str) {
+    notifications.send(json!({
         "method": "codex/app-server/exited",
         "params": {
             "message": message,
@@ -1346,8 +1408,8 @@ async fn run_codex_app_server_turn_on_shared_client(
     let result: Result<CodexAppServerTurn, String> = async {
         let request = &prepared.request;
         let awaits_initial_goal_turn = initial_thread_goal.is_some() && !request.ephemeral;
-        let mut notification_rx = client
-            .subscribe_notifications_for_launch_config(&launch_config)
+        client
+            .ensure_process_for_launch_config(&launch_config)
             .await?;
         let mut state = CodexRunState::default();
         let thread_plan = codex_thread_plan(
@@ -1392,6 +1454,9 @@ async fn run_codex_app_server_turn_on_shared_client(
         state.set_root_thread_id(thread_id.clone());
         bind_local_proxy_thread(&launch_config, &thread_id)?;
         subscribed_thread_id = Some(thread_id.clone());
+        let mut notification_rx = client
+            .subscribe_thread_notifications_for_launch_config(&launch_config, &thread_id)
+            .await?;
         if let Some(callback) = thread_started {
             callback(thread_id.clone());
         }

@@ -15,6 +15,7 @@ import {
   registerHarnessAppTab,
   unregisterHarnessAppTab,
 } from '@/features/harness-apps/harnessAppTabs'
+import { Button } from '@/components/ui/button'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -224,15 +225,14 @@ export function HarnessAppsPage() {
               )}
             </p>
           </div>
-          <button
-            type="button"
+          <Button
+            size="sm"
             data-testid="harness-app-import-button"
-            className="inline-flex h-9 items-center gap-2 rounded-lg bg-text-primary px-3 text-sm text-background"
             onClick={() => void choosePackage()}
           >
             <Plus className="h-4 w-4" />
             {t('workbench.harness_apps_import', '导入安装包')}
-          </button>
+          </Button>
         </header>
 
         {error ? (
@@ -274,16 +274,16 @@ export function HarnessAppsPage() {
                     ))}
                   </select>
                 </label>
-                <button
-                  type="button"
+                <Button
+                  size="sm"
                   data-testid="harness-app-install-confirm"
                   disabled={busy === 'install' || !installModelKey}
-                  className="mt-4 inline-flex h-9 items-center rounded-lg bg-text-primary px-3 text-sm text-background disabled:opacity-50"
+                  className="mt-4"
                   onClick={() => void install()}
                 >
                   {busy === 'install' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                   {t('workbench.harness_apps_install', '安装')}
-                </button>
+                </Button>
               </>
             ) : (
               <p className="text-sm text-danger">{preview.issues.join('；')}</p>
@@ -320,35 +320,41 @@ export function HarnessAppsPage() {
                   </div>
                 </div>
                 {item.state === 'running' ? (
-                  <button
-                    type="button"
+                  <Button
+                    size="sm"
+                    variant="ghost"
                     data-testid={`harness-app-stop-${item.id}`}
-                    className="inline-flex h-8 items-center gap-1 rounded-lg px-2 text-sm hover:bg-muted"
+                    className="h-8 gap-1 rounded-lg px-2"
+                    disabled={busy === item.id}
                     onClick={() => void stop(item)}
                   >
                     <Square className="h-4 w-4" />
                     {t('workbench.harness_apps_stop', '停止')}
-                  </button>
+                  </Button>
                 ) : (
-                  <button
-                    type="button"
+                  <Button
+                    size="sm"
+                    variant="ghost"
                     data-testid={`harness-app-start-${item.id}`}
-                    className="inline-flex h-8 items-center gap-1 rounded-lg px-2 text-sm hover:bg-muted"
+                    className="h-8 gap-1 rounded-lg px-2"
+                    disabled={busy === item.id}
                     onClick={() => void start(item)}
                   >
                     <Play className="h-4 w-4" />
                     {t('workbench.harness_apps_open', '打开')}
-                  </button>
+                  </Button>
                 )}
-                <button
-                  type="button"
+                <Button
+                  size="icon"
+                  variant="ghost"
                   data-testid={`harness-app-delete-${item.id}`}
                   aria-label={t('workbench.harness_apps_delete', '卸载')}
-                  className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-muted"
+                  className="h-8 w-8 rounded-lg"
+                  disabled={busy === item.id}
                   onClick={() => void remove(item)}
                 >
                   <Trash2 className="h-4 w-4" />
-                </button>
+                </Button>
               </div>
             ))
           )}

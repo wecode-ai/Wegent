@@ -1593,6 +1593,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'getWorkbenchDebugSnapshot':
       return JSON.stringify(getWorkbenchDebugSnapshot())
+    case 'getActiveElementTestId':
+      return document.activeElement?.getAttribute('data-testid') ?? ''
     case 'getLocalExecutorStatus':
       return JSON.stringify(await invoke(LOCAL_EXECUTOR_COMMANDS.status))
     case 'getLocalExecutorLog':

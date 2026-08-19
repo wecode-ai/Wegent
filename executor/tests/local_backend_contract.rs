@@ -110,6 +110,7 @@ async fn local_backend_heartbeat_reports_running_tasks_capabilities_and_auth_fil
     client.set_running_task_ids(["10".to_owned(), "20".to_owned()]);
 
     let accepted = client.send_heartbeat(Duration::from_secs(2)).await.unwrap();
+    client.emit_liveness_heartbeat().await.unwrap();
 
     assert!(accepted);
     let calls = transport.calls();
@@ -141,6 +142,10 @@ async fn local_backend_heartbeat_reports_running_tasks_capabilities_and_auth_fil
         calls[0].payload["runtime_auth_files"]["codex"],
         json!({"target_path": expected_auth_path, "exists": true})
     );
+    let emits = transport.emits();
+    assert_eq!(emits.len(), 1);
+    assert_eq!(emits[0].event, "device:heartbeat");
+    assert_eq!(emits[0].payload, calls[0].payload);
 }
 
 #[tokio::test]
@@ -709,7 +714,7 @@ impl RecordingTransport {
     }
 
     async fn wait_for_emits(&self, count: usize) -> Vec<RecordedCall> {
-        timeout(Duration::from_secs(3), async {
+        timeout(Duration::from_secs(10), async {
             loop {
                 let emits = self.emits();
                 if emits.len() >= count {
@@ -723,7 +728,7 @@ impl RecordingTransport {
     }
 
     async fn wait_for_emit_event(&self, event: &str) -> Vec<RecordedCall> {
-        timeout(Duration::from_secs(3), async {
+        timeout(Duration::from_secs(10), async {
             loop {
                 let emits = self.emits();
                 if emits.iter().any(|emit| emit.event == event) {

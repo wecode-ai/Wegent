@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import '@/i18n'
@@ -1675,10 +1675,12 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.type(screen.getByTestId('cloud-project-name'), '钉钉需求池')
     await userEvent.click(screen.getByTestId('cloud-project-task-provider-dingtalk_aitable'))
     expect(screen.getByTestId('cloud-project-create-confirm')).toBeDisabled()
-    await userEvent.type(
-      screen.getByTestId('cloud-project-aitable-url'),
-      'https://alidocs.dingtalk.com/i/nodes/pYLaezmVN63PAZGPTPKyr2X3VrMqPxX6?iframeQuery=entrance%3Ddata%26sheetId%3DhERWDMS%26viewId%3DqvGDAH2'
-    )
+    fireEvent.change(screen.getByTestId('cloud-project-aitable-url'), {
+      target: {
+        value:
+          'https://alidocs.dingtalk.com/i/nodes/pYLaezmVN63PAZGPTPKyr2X3VrMqPxX6?iframeQuery=entrance%3Ddata%26sheetId%3DhERWDMS%26viewId%3DqvGDAH2',
+      },
+    })
     expect(screen.queryByTestId('cloud-project-aitable-token')).not.toBeInTheDocument()
     await userEvent.click(screen.getByTestId('cloud-project-create-confirm'))
 
@@ -2461,6 +2463,7 @@ describe('CloudTodoWorkspace', () => {
   })
 
   it('defaults new issues to the inbox', async () => {
+    const user = userEvent.setup()
     const workbenchServices = services()
     workbenchServices.deliveryApi!.createLoopItem = vi.fn(async (_projectId, values) => ({
       ...item,
@@ -2479,9 +2482,10 @@ describe('CloudTodoWorkspace', () => {
     )
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    await userEvent.click(screen.getByTestId('cloud-todo-add'))
-    await userEvent.type(screen.getByTestId('workspace-issue-input'), 'Inbox Issue')
-    await userEvent.click(screen.getByTestId('workspace-issue-submit'))
+    await user.click(screen.getByTestId('cloud-todo-add'))
+    await user.click(screen.getByTestId('workspace-issue-input'))
+    await user.paste('Inbox Issue')
+    await user.click(screen.getByTestId('workspace-issue-submit'))
 
     await waitFor(() =>
       expect(workbenchServices.deliveryApi?.createLoopItem).toHaveBeenCalledWith(11, {
@@ -2494,6 +2498,7 @@ describe('CloudTodoWorkspace', () => {
   })
 
   it('creates a new issue with the status of the board column entry point', async () => {
+    const user = userEvent.setup()
     const workbenchServices = services()
     workbenchServices.deliveryApi!.createLoopItem = vi.fn(async (_projectId, values) => ({
       ...item,
@@ -2512,9 +2517,10 @@ describe('CloudTodoWorkspace', () => {
     )
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    await userEvent.click(screen.getByTestId('cloud-todo-column-add-in_progress'))
-    await userEvent.type(screen.getByTestId('workspace-issue-input'), 'Active Issue')
-    await userEvent.click(screen.getByTestId('workspace-issue-submit'))
+    await user.click(screen.getByTestId('cloud-todo-column-add-in_progress'))
+    await user.click(screen.getByTestId('workspace-issue-input'))
+    await user.paste('Active Issue')
+    await user.click(screen.getByTestId('workspace-issue-submit'))
 
     await waitFor(() =>
       expect(workbenchServices.deliveryApi?.createLoopItem).toHaveBeenCalledWith(11, {

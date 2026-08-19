@@ -193,7 +193,7 @@ find_available_wework_port() {
 
   while [ "$port" -le 65535 ]; do
     if is_port_available "$port"; then
-      echo "$port"
+      AVAILABLE_WEWORK_PORT="$port"
       return 0
     fi
     port="$((port + 1))"
@@ -233,7 +233,8 @@ build_wework_dev_title() {
   echo "$worktree_name"
 }
 
-AVAILABLE_WEWORK_PORT="$(find_available_wework_port "$WEWORK_PORT")"
+AVAILABLE_WEWORK_PORT=""
+find_available_wework_port "$WEWORK_PORT"
 if [ "$AVAILABLE_WEWORK_PORT" != "$WEWORK_PORT" ]; then
   echo "WEWORK_PORT $WEWORK_PORT is already in use; using $AVAILABLE_WEWORK_PORT instead."
 fi

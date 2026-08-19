@@ -1124,6 +1124,80 @@ describe('loadProjectEnvironment', () => {
     expect(executeCommand).toHaveBeenCalledTimes(10)
   })
 
+  test('deduplicates a forced refresh while the current environment load is still pending', async () => {
+    let resolveBranch: (value: {
+      success: boolean
+      stdout: string
+      stderr: string
+    }) => void = () => {}
+    const branchResult = new Promise<{
+      success: boolean
+      stdout: string
+      stderr: string
+    }>(resolve => {
+      resolveBranch = resolve
+    })
+    const executeCommand = vi.fn((_: string, data: { command_key: string }) => {
+      if (data.command_key === 'git_branch') {
+        return branchResult
+      }
+      if (data.command_key === 'git_remote_url') {
+        return Promise.resolve({
+          success: true,
+          stdout: 'https://github.com/wecode-ai/Wegent.git\n',
+          stderr: '',
+        })
+      }
+      if (data.command_key === 'git_github_pull_requests') {
+        return Promise.resolve({
+          success: true,
+          stdout: [],
+          stderr: '',
+        })
+      }
+      return Promise.resolve({
+        success: true,
+        stdout: '',
+        stderr: '',
+      })
+    })
+    const api = { executeCommand }
+    const project = {
+      id: 1002,
+      name: 'Wegent',
+      config: {
+        mode: 'workspace' as const,
+        execution: {
+          targetType: 'local' as const,
+          deviceId: 'device-123',
+        },
+        workspace: {
+          source: 'local_path' as const,
+          localPath: '/workspace/Wegent',
+        },
+      },
+    }
+
+    const initialLoad = loadProjectEnvironment(api, project)
+    const forcedRefresh = loadProjectEnvironment(api, project, undefined, { force: true })
+
+    await vi.waitFor(() => {
+      expect(executeCommand).toHaveBeenCalledTimes(3)
+    })
+
+    resolveBranch({
+      success: true,
+      stdout: 'fix/environment-refresh\n',
+      stderr: '',
+    })
+
+    const [initialInfo, refreshedInfo] = await Promise.all([initialLoad, forcedRefresh])
+
+    expect(initialInfo).toEqual(refreshedInfo)
+    expect(initialInfo.branchName).toBe('fix/environment-refresh')
+    expect(executeCommand).toHaveBeenCalledTimes(5)
+  })
+
   test('uses git diff against HEAD for tracked uncommitted changes', async () => {
     const executeCommand = vi.fn((_: string, data: { command_key: string; args?: string[] }) => {
       if (data.command_key === 'git_branch') {

@@ -1639,7 +1639,8 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.getByTestId('processing-summary-header')).not.toHaveTextContent('秒')
   })
 
-  test('shows a subtle one-line reconnecting status for non-ChatGPT models only while active', () => {
+  test('shows a subtle one-line reconnecting status after a sustained interruption', () => {
+    vi.useFakeTimers()
     const reconnectingBlock: ProcessingBlock = {
       id: 'reconnecting-1',
       subtaskId: 1,
@@ -1653,6 +1654,15 @@ describe('ToolBlocksDisplay', () => {
       <ToolBlocksDisplay blocks={[reconnectingBlock]} isStreaming={true} />
     )
 
+    expect(screen.queryByTestId('runtime-reconnecting-status')).not.toBeInTheDocument()
+    act(() => {
+      vi.advanceTimersByTime(9999)
+    })
+    expect(screen.queryByTestId('runtime-reconnecting-status')).not.toBeInTheDocument()
+
+    act(() => {
+      vi.advanceTimersByTime(1)
+    })
     const status = screen.getByTestId('runtime-reconnecting-status')
     expect(status).toHaveTextContent('连接中断，正在重连…')
     expect(status).toHaveClass('truncate')
@@ -1664,7 +1674,8 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.queryByTestId('runtime-reconnecting-status')).not.toBeInTheDocument()
   })
 
-  test('explains the ChatGPT network failure and opens proxy settings', () => {
+  test('hides a brief ChatGPT reconnect and shows proxy guidance after ten seconds', () => {
+    vi.useFakeTimers()
     window.history.replaceState({}, '', '/')
     const reconnectingBlock: ProcessingBlock = {
       id: 'reconnecting-chatgpt',
@@ -1676,8 +1687,27 @@ describe('ToolBlocksDisplay', () => {
       createdAt: 1770000000000,
     }
 
-    render(<ToolBlocksDisplay blocks={[reconnectingBlock]} isStreaming={true} />)
+    const { rerender } = render(
+      <ToolBlocksDisplay blocks={[reconnectingBlock]} isStreaming={true} />
+    )
 
+    expect(screen.queryByTestId('runtime-reconnecting-chatgpt-status')).not.toBeInTheDocument()
+    act(() => {
+      vi.advanceTimersByTime(3000)
+    })
+    rerender(
+      <ToolBlocksDisplay blocks={[{ ...reconnectingBlock, status: 'done' }]} isStreaming={true} />
+    )
+    act(() => {
+      vi.advanceTimersByTime(7000)
+    })
+    expect(screen.queryByTestId('runtime-reconnecting-chatgpt-status')).not.toBeInTheDocument()
+
+    rerender(<ToolBlocksDisplay blocks={[reconnectingBlock]} isStreaming={true} />)
+    expect(screen.queryByTestId('runtime-reconnecting-chatgpt-status')).not.toBeInTheDocument()
+    act(() => {
+      vi.advanceTimersByTime(10_000)
+    })
     expect(screen.getByTestId('runtime-reconnecting-chatgpt-status')).toHaveTextContent(
       '当前正在使用 ChatGPT 模型，网络连接不可用。是否设置代理？'
     )
