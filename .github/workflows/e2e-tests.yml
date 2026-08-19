@@ -850,6 +850,7 @@ jobs:
             --env E2E_API_URL \
             --env E2E_USE_ISOLATED_USERS \
             --env MOCK_MODEL_SERVER_URL \
+            --env E2E_CLAUDE_MODEL_SERVER_URL \
             --env E2E_LOCAL_CLAUDE_MODEL_SERVER_URL \
             --env E2E_DEVICE_ID \
             --env CI \
