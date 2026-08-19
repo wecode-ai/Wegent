@@ -767,7 +767,6 @@ export function WorkspaceBrowserTabPanel({
       const placement = deviceState.isEnabled
         ? computeDeviceViewportPlacement(bounds, deviceState, zoomPercentRef.current)
         : null
-      let nextBounds = bounds
       if (placement) {
         deviceFitScaleRef.current = placement.scale
         const hostRect = host.getBoundingClientRect()
@@ -790,27 +789,17 @@ export function WorkspaceBrowserTabPanel({
             ? current
             : nextVisualRect
         )
-        nextBounds = placement.webviewBounds
+        await setEmbeddedBrowserBounds(placement.webviewBounds, nativeVisible, label)
       } else {
         deviceFitScaleRef.current = zoomPercentToScaleFactor(zoomPercentRef.current)
         setDeviceVisualRect(current => (current === null ? current : null))
+        await setEmbeddedBrowserBounds(bounds, nativeVisible, label)
       }
-
-      const applyZoom = () =>
-        setEmbeddedBrowserZoom(deviceFitScaleRef.current, label).catch(error => {
-          console.error('Failed to apply embedded browser zoom:', error)
-        })
-      if (placement) {
-        // Linux derives the effective native zoom from the responsive target
-        // bounds, so establish those bounds before changing zoom.
-        await setEmbeddedBrowserBounds(nextBounds, nativeVisible, label)
-        await applyZoom()
-      } else {
-        // Preserve the established navigation/annotation timing for the normal
-        // embedded browser viewport.
-        await applyZoom()
-        await setEmbeddedBrowserBounds(nextBounds, nativeVisible, label)
-      }
+      // The native webview zoom carries the page zoom; in device mode the
+      // placement already folds it into the combined fit scale.
+      await setEmbeddedBrowserZoom(deviceFitScaleRef.current, label).catch(error => {
+        console.error('Failed to apply embedded browser zoom:', error)
+      })
     },
     [active, embeddedBrowserAvailable, label]
   )
