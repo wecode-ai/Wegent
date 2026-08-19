@@ -11,7 +11,6 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
-import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { useTranslation } from '@/hooks/useTranslation'
 import { dispatchOpenSettingsShortcut } from '@/lib/keybindings'
 import { cn } from '@/lib/utils'
@@ -114,7 +113,6 @@ export function DesktopAppSwitcher({
 }: DesktopAppSwitcherProps) {
   const { t } = useTranslation('common')
   const cloudConnection = useContext(CloudConnectionContext)
-  const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   const triggerRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const timerRef = useRef<number | null>(null)
@@ -131,20 +129,18 @@ export function DesktopAppSwitcher({
   const options = useMemo<AppOption[]>(() => {
     const apps: readonly WorkbenchAppContribution[] =
       registeredApps.length > 0 ? registeredApps : CORE_WORKBENCH_APPS
-    return apps
-      .filter(app => !app.experimental || experimentalFeaturesEnabled || activeApp === app.key)
-      .map(app => ({
-        key: app.key,
-        label: t(app.labelKey, app.label),
-        description: t(app.descriptionKey, app.description),
-        availabilityLabel:
-          app.requiresCloud && !cloudConnection?.isConnected
-            ? t('workbench.app_wegent_requires_cloud', '连接云端后可用')
-            : undefined,
-        disabled:
-          Boolean(app.requiresCloud) && !cloudConnection?.isConnected && activeApp !== app.key,
-      }))
-  }, [activeApp, cloudConnection?.isConnected, experimentalFeaturesEnabled, registeredApps, t])
+    return apps.map(app => ({
+      key: app.key,
+      label: t(app.labelKey, app.label),
+      description: t(app.descriptionKey, app.description),
+      availabilityLabel:
+        app.requiresCloud && !cloudConnection?.isConnected
+          ? t('workbench.app_wegent_requires_cloud', '连接云端后可用')
+          : undefined,
+      disabled:
+        Boolean(app.requiresCloud) && !cloudConnection?.isConnected && activeApp !== app.key,
+    }))
+  }, [activeApp, cloudConnection?.isConnected, registeredApps, t])
   const displayedAppKey = rollingLabel ? displayedKey : activeApp
   const selected =
     options.find(option => option.key === displayedAppKey) ??

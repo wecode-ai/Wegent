@@ -350,7 +350,7 @@ describe('ProjectQueueView', () => {
       })
       expect(list).toHaveBeenCalledTimes(2)
       expect(screen.getByTestId('project-queue-column-me')).toBeInTheDocument()
-      expect(screen.queryByText('正在加载评论 / 动态…')).not.toBeInTheDocument()
+      expect(screen.queryByText('正在加载动态…')).not.toBeInTheDocument()
     } finally {
       vi.useRealTimers()
     }

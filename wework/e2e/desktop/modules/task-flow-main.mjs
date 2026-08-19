@@ -88,6 +88,7 @@ import {
 
 import {
   declineInitialTelemetryConsent,
+  ensureExperimentalFeaturesEnabled,
   verifyAutomationLifecycle,
   verifyInitialTelemetryConsent,
   verifySitesPluginAutoInstall,
@@ -520,8 +521,23 @@ async function main() {
     console.log(`Using real Codex: ${codexVersion}`)
     const appIdentifier = `io.wecode.wework.e2e.run${process.pid}`
     let executorBinary
+    let prebuiltDesktopApp = null
     const scenarioRequiresCloudEnvironment = desktopScenario?.requiresCloudEnvironment === true
-    if (
+    if (BUILD_ONLY) {
+      const builds = await Promise.all([
+        buildExecutor(),
+        buildDesktopApp(
+          control.controlUrl,
+          control.url,
+          'wework-desktop-e2e-cloud-token',
+          appIdentifier,
+          control.url,
+          codexBinary
+        ),
+      ])
+      executorBinary = builds[0]
+      prebuiltDesktopApp = builds[1]
+    } else if (
       CLOUD_ONLY ||
       CLOUD_FEATURES_ONLY ||
       CLOUD_VISION_ONLY ||
@@ -545,14 +561,18 @@ async function main() {
     } else {
       executorBinary = await buildExecutor()
     }
-    const desktopAppPromise = buildDesktopApp(
-      control.controlUrl,
-      cloudEnvironment?.backendUrl ?? control.url,
-      cloudEnvironment?.authToken ?? desktopScenario?.authToken ?? 'wework-desktop-e2e-cloud-token',
-      appIdentifier,
-      control.url,
-      codexBinary
-    )
+    const desktopAppPromise = prebuiltDesktopApp
+      ? Promise.resolve(prebuiltDesktopApp)
+      : buildDesktopApp(
+          control.controlUrl,
+          cloudEnvironment?.backendUrl ?? control.url,
+          cloudEnvironment?.authToken ??
+            desktopScenario?.authToken ??
+            'wework-desktop-e2e-cloud-token',
+          appIdentifier,
+          control.url,
+          codexBinary
+        )
     const desktopApp = cloudEnvironment
       ? (
           await Promise.all([
@@ -2344,6 +2364,7 @@ last_updated = "2026-07-30T00:00:00Z"`
     }
 
     if (shouldRunDesktopCheckpoint('conversation-state')) {
+      await ensureExperimentalFeaturesEnabled(control)
       if (!taskRowTestId) {
         taskRowTestId = await createCheckpointTaskFixture(control, composerSelector)
         taskRowCompletionText = CHECKPOINT_TASK_COMPLETION_TEXT
@@ -2513,7 +2534,7 @@ last_updated = "2026-07-30T00:00:00Z"`
       phase = 'workspace-resources-across-conversation-switch'
       await writeFile(
         join(workspacePath, GIT_SEED_NAME),
-        `${GIT_SEED_CONTENT}${FILE_PREVIEW_RESTORE_MARKER}\n`
+        `${GIT_SEED_CONTENT}${FILE_PREVIEW_RESTORE_MARKER}\n${REVIEW_RESTORE_MARKER}\n`
       )
       const firstTaskDebugSnapshot = JSON.parse(
         await control.command('getWorkbenchDebugSnapshot', 'body')
@@ -2542,11 +2563,6 @@ last_updated = "2026-07-30T00:00:00Z"`
       const activeTaskWorkbenchSelector =
         `[data-testid="workspace-tab-content-${activeWorkspaceTabId}"] ` +
         '[data-testid="desktop-workbench-main"]'
-      const firstTaskReadme = join(firstTaskWorkspacePath, GIT_SEED_NAME)
-      await writeFile(
-        firstTaskReadme,
-        `${await readFile(firstTaskReadme, 'utf8')}${REVIEW_RESTORE_MARKER}\n`
-      )
       const activeBrowserInputSelector = `${activeTaskWorkbenchSelector} [data-testid="workspace-browser-url-input"]`
       const activeTerminalSelector = `${activeTaskWorkbenchSelector} [data-testid="workspace-terminal-window"]`
       const bottomPanelToggleSelector = '[data-testid="toggle-bottom-workspace-panel-button"]'

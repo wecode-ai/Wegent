@@ -13,14 +13,28 @@ use std::{
 use std::os::unix::fs::PermissionsExt;
 
 use serde_json::{json, Value};
-use tokio::sync::{Mutex, MutexGuard};
+use tokio::{
+    runtime::Runtime,
+    sync::{Mutex, MutexGuard},
+};
 use wegent_executor::{
     agents::{CodexAppServerClient, CodexAppServerEngine, CodexAppServerTurnOptions},
     protocol::ExecutionRequest,
     runner::{AgentEngine, ExecutionOutcome},
 };
 
-#[tokio::test]
+macro_rules! shared_runtime_tests {
+    ($(async fn $name:ident() $body:block)*) => {
+        $(
+            #[test]
+            fn $name() {
+                shared_test_runtime().block_on(async $body)
+            }
+        )*
+    };
+}
+
+shared_runtime_tests! {
 async fn codex_app_server_engine_drives_thread_and_turn_over_json_rpc() {
     let _lock = env_lock().await;
     let log_path = std::env::temp_dir().join(format!(
@@ -124,7 +138,6 @@ async fn codex_app_server_engine_drives_thread_and_turn_over_json_rpc() {
     assert!(messages[3]["params"].get("sandboxPolicy").is_none());
 }
 
-#[tokio::test]
 async fn codex_app_server_engine_rejects_a_stale_thread_provider_before_turn_start() {
     let _lock = env_lock().await;
     let log_path = std::env::temp_dir().join(format!(
@@ -164,7 +177,6 @@ async fn codex_app_server_engine_rejects_a_stale_thread_provider_before_turn_sta
     );
 }
 
-#[tokio::test]
 async fn codex_app_server_engine_maps_vision_prompt_blocks_to_user_input() {
     let _lock = env_lock().await;
     let log_path = std::env::temp_dir().join(format!(
@@ -212,7 +224,6 @@ async fn codex_app_server_engine_maps_vision_prompt_blocks_to_user_input() {
     );
 }
 
-#[tokio::test]
 async fn codex_app_server_engine_routes_provider_overrides_through_local_proxy() {
     let _lock = env_lock().await;
     let _api_key = EnvGuard::set("WECODE_USER_API_KEY", "sk-from-executor-env");
@@ -280,7 +291,6 @@ async fn codex_app_server_engine_routes_provider_overrides_through_local_proxy()
     assert_eq!(messages[4]["params"]["effort"], "ultra");
 }
 
-#[tokio::test]
 async fn codex_app_server_engine_uses_user_runtime_proxy_without_provider_override() {
     let _lock = env_lock().await;
     let _no_proxy = EnvGuard::set("NO_PROXY", "localhost,.internal");
@@ -344,7 +354,6 @@ async fn codex_app_server_engine_uses_user_runtime_proxy_without_provider_overri
     assert_eq!(messages[3]["params"]["modelProvider"], "openai");
 }
 
-#[tokio::test]
 async fn codex_auxiliary_rpc_and_task_share_one_proxy_configured_app_server() {
     let _lock = env_lock().await;
     let log_path = std::env::temp_dir().join(format!(
@@ -404,7 +413,6 @@ async fn codex_auxiliary_rpc_and_task_share_one_proxy_configured_app_server() {
         .any(|message| message["method"] == "turn/start"));
 }
 
-#[tokio::test]
 async fn codex_app_server_receives_normalized_developer_path() {
     let _lock = env_lock().await;
     let _path = EnvGuard::set("PATH", "/usr/bin:/bin");
@@ -442,7 +450,6 @@ async fn codex_app_server_receives_normalized_developer_path() {
     assert!(path.contains("/usr/local/bin"));
 }
 
-#[tokio::test]
 async fn codex_app_server_engine_uses_isolated_wework_runtime_home() {
     let _lock = env_lock().await;
     let home = unique_dir("codex-user-home");
@@ -493,7 +500,6 @@ async fn codex_app_server_engine_uses_isolated_wework_runtime_home() {
     assert_eq!(messages[0]["env"]["HOME"], home.display().to_string());
 }
 
-#[tokio::test]
 async fn codex_app_server_engine_injects_global_mcp_config_overrides() {
     let _lock = env_lock().await;
     let executor_home = unique_dir("codex-mcp-home");
@@ -569,7 +575,6 @@ async fn codex_app_server_engine_injects_global_mcp_config_overrides() {
     assert_config_arg(args, "mcp_servers.shell.env.FOO=\"bar\"");
 }
 
-#[tokio::test]
 async fn codex_app_server_engine_injects_request_mcp_config_overrides() {
     let _lock = env_lock().await;
     let executor_home = unique_dir("codex-request-mcp-home");
@@ -669,7 +674,6 @@ async fn codex_app_server_engine_injects_request_mcp_config_overrides() {
     );
 }
 
-#[tokio::test]
 async fn codex_app_server_engine_times_out_unresponsive_rpc() {
     let _lock = env_lock().await;
     let _timeout = EnvGuard::set("WEGENT_CODEX_RPC_TIMEOUT_SECONDS", "1");
@@ -696,7 +700,6 @@ async fn codex_app_server_engine_times_out_unresponsive_rpc() {
     );
 }
 
-#[tokio::test]
 async fn codex_app_server_engine_does_not_timeout_running_turn() {
     let _lock = env_lock().await;
     let _timeout = EnvGuard::set("WEGENT_CODEX_RPC_TIMEOUT_SECONDS", "3");
@@ -724,7 +727,6 @@ async fn codex_app_server_engine_does_not_timeout_running_turn() {
     );
 }
 
-#[tokio::test]
 async fn codex_app_server_idle_restart_preserves_in_flight_requests() {
     let _lock = env_lock().await;
     let fake_codex = write_fake_codex_with_pending_request();
@@ -752,7 +754,6 @@ async fn codex_app_server_idle_restart_preserves_in_flight_requests() {
     assert_eq!(result.unwrap_err(), "codex app-server was restarted");
 }
 
-#[tokio::test]
 async fn codex_app_server_proxy_restart_settles_in_flight_requests() {
     let _lock = env_lock().await;
     let fake_codex = write_fake_codex_with_pending_request();
@@ -786,7 +787,6 @@ async fn codex_app_server_proxy_restart_settles_in_flight_requests() {
     );
 }
 
-#[tokio::test]
 async fn codex_app_server_engine_times_out_turn_without_progress() {
     let _lock = env_lock().await;
     let _timeout = EnvGuard::set("WEGENT_CODEX_TURN_STARTUP_TIMEOUT_SECONDS", "1");
@@ -823,7 +823,6 @@ async fn codex_app_server_engine_times_out_turn_without_progress() {
     );
 }
 
-#[tokio::test]
 async fn codex_shared_app_server_restarts_after_turn_startup_stalls() {
     let _lock = env_lock().await;
     let _timeout = EnvGuard::set("WEGENT_CODEX_TURN_STARTUP_TIMEOUT_SECONDS", "1");
@@ -877,7 +876,6 @@ async fn codex_shared_app_server_restarts_after_turn_startup_stalls() {
     );
 }
 
-#[tokio::test]
 async fn codex_shared_app_server_isolates_active_turns_from_cross_thread_bursts() {
     let _lock = env_lock().await;
     let fake_codex = write_fake_codex_cross_thread_burst();
@@ -910,7 +908,6 @@ async fn codex_shared_app_server_isolates_active_turns_from_cross_thread_bursts(
     }
 }
 
-#[tokio::test]
 async fn codex_app_server_engine_reports_nested_turn_error_details() {
     let _lock = env_lock().await;
     let fake_codex = write_fake_codex_nested_turn_error();
@@ -938,7 +935,6 @@ async fn codex_app_server_engine_reports_nested_turn_error_details() {
     );
 }
 
-#[tokio::test]
 async fn codex_app_server_engine_waits_for_retryable_turn_error_recovery() {
     let _lock = env_lock().await;
     let fake_codex = write_fake_codex_retryable_turn_error();
@@ -962,6 +958,17 @@ async fn codex_app_server_engine_waits_for_retryable_turn_error_recovery() {
             content: "recovered".to_owned()
         }
     );
+}
+}
+
+fn shared_test_runtime() -> &'static Runtime {
+    static RUNTIME: OnceLock<Runtime> = OnceLock::new();
+    RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("shared Codex contract test runtime should initialize")
+    })
 }
 
 async fn env_lock() -> MutexGuard<'static, ()> {

@@ -276,9 +276,7 @@ impl AgentProcessEngine {
 impl AgentEngine for AgentProcessEngine {
     type RunFuture = Pin<Box<dyn Future<Output = ExecutionOutcome> + Send>>;
 
-    fn run(&self, mut request: ExecutionRequest) -> Self::RunFuture {
-        // Project-space MCP servers belong to Codex runs only; coding agents
-        // such as Claude Code must not receive them.
+    fn run(&self, request: ExecutionRequest) -> Self::RunFuture {
         let agent_kind = request.resolved_agent_kind();
         let bot_count = request.bot.as_array().map(|bots| bots.len()).unwrap_or(0);
         log_executor_event(
@@ -289,9 +287,6 @@ impl AgentEngine for AgentProcessEngine {
                 ("bot_count", bot_count.to_string()),
             ],
         );
-        if agent_kind == AgentKind::CodeX {
-            crate::task_runtime::mcp::ensure_space_mcp_server(&mut request);
-        }
         let planner = self.planner.clone();
         Box::pin(async move {
             let agent_kind = request.resolved_agent_kind();
@@ -381,15 +376,13 @@ impl AgentEngine for AgentProcessEngine {
 
     fn run_with_events<S>(
         &self,
-        mut request: ExecutionRequest,
+        request: ExecutionRequest,
         sink: S,
         builder: ResponsesEventBuilder,
     ) -> Pin<Box<dyn Future<Output = ExecutionOutcome> + Send>>
     where
         S: EventSink,
     {
-        // Project-space MCP servers belong to Codex runs only; coding agents
-        // such as Claude Code must not receive them.
         let agent_kind = request.resolved_agent_kind();
         let bot_count = request.bot.as_array().map(|bots| bots.len()).unwrap_or(0);
         log_executor_event(
@@ -400,9 +393,6 @@ impl AgentEngine for AgentProcessEngine {
                 ("bot_count", bot_count.to_string()),
             ],
         );
-        if agent_kind == AgentKind::CodeX {
-            crate::task_runtime::mcp::ensure_space_mcp_server(&mut request);
-        }
         let planner = self.planner.clone();
         Box::pin(async move {
             let agent_kind = request.resolved_agent_kind();

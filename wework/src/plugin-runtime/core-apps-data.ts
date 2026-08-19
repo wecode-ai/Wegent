@@ -20,7 +20,6 @@ export const CORE_WORKBENCH_APPS = [
     mode: 'native',
     path: '/todo',
     requiresAuth: true,
-    experimental: true,
     hidden: true,
   },
   {

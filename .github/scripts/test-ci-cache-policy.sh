@@ -178,22 +178,15 @@ if ! grep -Fq 'SCCACHE_BASEDIRS=$GITHUB_WORKSPACE' "$sccache_action" ||
   fail "sccache must normalize paths and allow writes only from main"
 fi
 
-if ! sed -n \
-  '/^  warm-wework-macos-rust:/,/^  prepare-wework-desktop-image:/p' \
-  "$warmup_workflow" |
-  grep -F 'name: Warm Wework macOS Rust Cache' >/dev/null ||
-  ! sed -n \
+macos_warmup_section="$(
+  sed -n \
     '/^  warm-wework-macos-rust:/,/^  prepare-wework-desktop-image:/p' \
-    "$warmup_workflow" |
-    grep -F 'runs-on: macos-14' >/dev/null ||
-  ! sed -n \
-    '/^  warm-wework-macos-rust:/,/^  prepare-wework-desktop-image:/p' \
-    "$warmup_workflow" |
-    grep -F 'uses: ./.github/actions/setup-sccache' >/dev/null ||
-  ! sed -n \
-    '/^  warm-wework-macos-rust:/,/^  prepare-wework-desktop-image:/p' \
-    "$warmup_workflow" |
-    grep -F 'task-flow.e2e.mjs --build-only' >/dev/null; then
+    "$warmup_workflow"
+)"
+if [[ "$macos_warmup_section" != *'name: Warm Wework macOS Rust Cache'* ]] ||
+  [[ "$macos_warmup_section" != *'runs-on: macos-14'* ]] ||
+  [[ "$macos_warmup_section" != *'uses: ./.github/actions/setup-sccache'* ]] ||
+  [[ "$macos_warmup_section" != *'task-flow.e2e.mjs --build-only'* ]]; then
   fail "Wework macOS memory builds must be prewarmed with the shared sccache"
 fi
 
@@ -368,23 +361,20 @@ if ! grep -Fq "$wework_target_key" "$workflow_dir/wework-e2e.yml" ||
   fail "Wework E2E and warmup must share the desktop Cargo target cache"
 fi
 
-if ! sed -n \
-  '/^  warm-wework-desktop-target:/,/^  warm-executor-e2e-image:/p' \
-  "$warmup_workflow" |
-  grep -F \
-    'image: ${{ needs.prepare-wework-desktop-image.outputs.desktop_image }}' \
-    >/dev/null ||
-  ! sed -n \
-    '/^  warm-wework-desktop-target:/,/^  warm-executor-e2e-image:/p' \
-    "$warmup_workflow" |
-    grep -F 'HOME: /root' >/dev/null ||
+desktop_warmup_section="$(
   sed -n \
     '/^  warm-wework-desktop-target:/,/^  warm-executor-e2e-image:/p' \
-    "$warmup_workflow" |
-    grep -E \
-      'install-wework-tauri-system-dependencies|dtolnay/rust-toolchain' \
-      >/dev/null; then
-  fail "Wework desktop target warmup must build inside the E2E container"
+    "$warmup_workflow"
+)"
+# GitHub expressions are matched literally in workflow source.
+# shellcheck disable=SC2016
+if [[ "$desktop_warmup_section" != *'image: ${{ needs.prepare-wework-desktop-image.outputs.desktop_image }}'* ]] ||
+  [[ "$desktop_warmup_section" != *'HOME: /root'* ]] ||
+  [[ "$desktop_warmup_section" != *'uses: ./.github/actions/setup-sccache'* ]] ||
+  [[ "$desktop_warmup_section" != *'executor/target'* ]] ||
+  [[ "$desktop_warmup_section" != *'wework/src-tauri/target'* ]] ||
+  [[ "$desktop_warmup_section" =~ install-wework-tauri-system-dependencies|dtolnay/rust-toolchain ]]; then
+  fail "Wework desktop Rust warmup must use target and sccache inside the E2E container"
 fi
 
 printf 'CI cache policy tests passed\n'

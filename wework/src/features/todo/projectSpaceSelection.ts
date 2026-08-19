@@ -22,6 +22,7 @@ export function projectStoreLocation(
 }
 
 const projectSpaceTaskContextListeners = new Set<(task: RuntimeTaskAddress) => void>()
+const projectSpaceTaskBindingListeners = new Set<(task: RuntimeTaskAddress) => void>()
 
 export function publishProjectSpaceTaskContextChanged(task: RuntimeTaskAddress) {
   for (const listener of projectSpaceTaskContextListeners) listener(task)
@@ -33,6 +34,19 @@ export function subscribeProjectSpaceTaskContextChanged(
   projectSpaceTaskContextListeners.add(listener)
   return () => {
     projectSpaceTaskContextListeners.delete(listener)
+  }
+}
+
+export function publishProjectSpaceTaskBindingChanged(task: RuntimeTaskAddress) {
+  for (const listener of projectSpaceTaskBindingListeners) listener(task)
+}
+
+export function subscribeProjectSpaceTaskBindingChanged(
+  listener: (task: RuntimeTaskAddress) => void
+) {
+  projectSpaceTaskBindingListeners.add(listener)
+  return () => {
+    projectSpaceTaskBindingListeners.delete(listener)
   }
 }
 

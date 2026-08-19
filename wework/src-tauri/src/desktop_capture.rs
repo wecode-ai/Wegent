@@ -12,7 +12,7 @@ use objc2_foundation::{NSDictionary, NSError};
 use std::time::Duration;
 
 #[cfg(target_os = "macos")]
-const EMBEDDED_BROWSER_SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(2);
+const EMBEDDED_BROWSER_SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[tauri::command]
 pub async fn capture_main_webview(app: tauri::AppHandle) -> Result<String, String> {
