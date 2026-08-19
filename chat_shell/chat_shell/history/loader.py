@@ -21,6 +21,8 @@ import asyncio
 import logging
 from typing import Any, Optional
 
+import httpx
+
 from chat_shell.core.config import settings
 from chat_shell.messages.utils import group_tool_call_messages as _group_messages
 from shared.prompts.constants import parse_prompt_blocks
@@ -41,6 +43,66 @@ _CONTEXT_BLOCK_PREFIXES = (
     "<selected_documents>",
     "<system-reminder>",
 )
+_HISTORY_RETRY_DELAY_SECONDS = 0.2
+
+
+class HistoryRestoreError(RuntimeError):
+    """Raised when persisted history cannot be restored safely."""
+
+    def __init__(self, task_id: int, attempts: int):
+        super().__init__(
+            "Conversation history could not be restored. Please try again."
+        )
+        self.task_id = task_id
+        self.attempts = attempts
+
+
+def _is_retryable_history_error(error: Exception) -> bool:
+    if isinstance(error, (httpx.TimeoutException, httpx.TransportError)):
+        return True
+    return (
+        isinstance(error, httpx.HTTPStatusError) and error.response.status_code >= 500
+    )
+
+
+async def _fetch_remote_history(
+    store: Any,
+    *,
+    session_id: str,
+    task_id: int,
+    before_id: str | None,
+    is_group_chat: bool,
+    limit: int | None,
+    from_latest_compaction: bool,
+) -> list[Any]:
+    max_attempts = settings.CHAT_HISTORY_RETRY_COUNT + 1
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return await store.get_history(
+                session_id=session_id,
+                before_message_id=before_id,
+                is_group_chat=is_group_chat,
+                limit=limit,
+                from_latest_compaction=from_latest_compaction,
+            )
+        except Exception as error:
+            retryable = _is_retryable_history_error(error)
+            error_detail = str(error) or repr(error)
+            logger.warning(
+                "[history] Remote history request failed: task_id=%d attempt=%d/%d "
+                "retryable=%s error_type=%s error=%s",
+                task_id,
+                attempt,
+                max_attempts,
+                retryable,
+                type(error).__name__,
+                error_detail,
+                exc_info=True,
+            )
+            if retryable and attempt < max_attempts:
+                await asyncio.sleep(_HISTORY_RETRY_DELAY_SECONDS)
+                continue
+            raise HistoryRestoreError(task_id, attempt) from error
 
 
 def _extract_user_text(content: list[dict[str, Any]]) -> str | None:
@@ -352,9 +414,11 @@ async def _load_history_from_remote(
             limit,
         )
 
-        messages = await store.get_history(
+        messages = await _fetch_remote_history(
+            store,
             session_id=session_id,
-            before_message_id=before_id,
+            task_id=task_id,
+            before_id=before_id,
             is_group_chat=is_group_chat,
             limit=limit,
             from_latest_compaction=from_latest_compaction,
@@ -393,15 +457,24 @@ async def _load_history_from_remote(
         )
         return history
 
-    except Exception as e:
+    except HistoryRestoreError as error:
         logger.error(
-            "[history] _load_history_from_remote: FAILED task_id=%d, error=%s",
+            "[history] _load_history_from_remote: FAILED task_id=%d attempts=%d "
+            "error_type=%s",
             task_id,
-            e,
+            error.attempts,
+            type(error.__cause__).__name__ if error.__cause__ else type(error).__name__,
             exc_info=True,
         )
-        # Return empty history on error to allow conversation to continue
-        return []
+        raise
+    except Exception as error:
+        logger.error(
+            "[history] _load_history_from_remote: FAILED task_id=%d error_type=%s",
+            task_id,
+            type(error).__name__,
+            exc_info=True,
+        )
+        raise HistoryRestoreError(task_id, attempts=1) from error
 
 
 async def _load_history_from_db(

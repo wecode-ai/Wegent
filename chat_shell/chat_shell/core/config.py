@@ -81,6 +81,7 @@ class Settings(BaseSettings):
     MAX_CONCURRENT_CHATS: int = 50
     CHAT_HISTORY_EXPIRE_SECONDS: int = 7200
     CHAT_HISTORY_MAX_MESSAGES: int = 50
+    CHAT_HISTORY_RETRY_COUNT: int = Field(default=1, ge=0)
     CHAT_API_TIMEOUT_SECONDS: int = 300
 
     # Tool calling flow limits

@@ -4,6 +4,7 @@
 
 from types import SimpleNamespace
 
+import httpx
 import pytest
 
 from chat_shell.history.loader import (
@@ -263,6 +264,59 @@ async def test_get_history_sends_from_latest_compaction(monkeypatch):
 
     await store.get_history(session_id="task-1", from_latest_compaction=True)
     assert captured["params"].get("from_latest_compaction") == "true"
+
+
+@pytest.mark.asyncio
+async def test_remote_history_retries_transport_failure_then_fails_closed(monkeypatch):
+    from chat_shell.history import loader
+
+    class _FailingStore:
+        def __init__(self):
+            self.calls = 0
+
+        async def get_history(self, **kwargs):
+            del kwargs
+            self.calls += 1
+            raise httpx.ReadTimeout("Backend did not respond")
+
+    store = _FailingStore()
+    delays = []
+
+    async def _sleep(delay):
+        delays.append(delay)
+
+    monkeypatch.setattr(loader, "_get_remote_history_store", lambda: store)
+    monkeypatch.setattr(loader.settings, "CHAT_HISTORY_RETRY_COUNT", 1)
+    monkeypatch.setattr(loader.asyncio, "sleep", _sleep)
+
+    with pytest.raises(loader.HistoryRestoreError, match="Conversation history"):
+        await loader._load_history_from_remote(task_id=1, is_group_chat=False)
+
+    assert store.calls == 2
+    assert delays == [0.2]
+
+
+@pytest.mark.asyncio
+async def test_remote_history_does_not_retry_non_transport_failure(monkeypatch):
+    from chat_shell.history import loader
+
+    class _FailingStore:
+        def __init__(self):
+            self.calls = 0
+
+        async def get_history(self, **kwargs):
+            del kwargs
+            self.calls += 1
+            raise ValueError("invalid remote response")
+
+    store = _FailingStore()
+    monkeypatch.setattr(loader, "_get_remote_history_store", lambda: store)
+    monkeypatch.setattr(loader.settings, "CHAT_HISTORY_RETRY_COUNT", 1)
+
+    with pytest.raises(loader.HistoryRestoreError, match="Conversation history"):
+        await loader._load_history_from_remote(task_id=1, is_group_chat=False)
+
+    assert store.calls == 1
 
 
 @pytest.mark.asyncio

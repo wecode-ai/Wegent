@@ -29,5 +29,11 @@ def test_internal_service_token_is_remote_storage_fallback() -> None:
     assert settings.backend_internal_token == "internal-token"
 
 
+def test_chat_history_retry_count_defaults_to_one() -> None:
+    settings = Settings(_env_file=None)
+
+    assert settings.CHAT_HISTORY_RETRY_COUNT == 1
+
+
 def test_dotenv_path_is_independent_of_working_directory() -> None:
     assert Path(Settings.model_config["env_file"]).is_absolute()

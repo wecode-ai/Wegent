@@ -212,9 +212,12 @@ class RemoteHistoryStore(HistoryStoreInterface):
             return messages
         except Exception as e:
             logger.error(
-                "[RemoteHistoryStore] Request failed: url=%s, error=%s, total_ms=%.2f",
+                "[RemoteHistoryStore] Request failed: url=%s request_id=%s "
+                "error_type=%s error=%s total_ms=%.2f",
                 full_url,
-                e,
+                request_id or "",
+                type(e).__name__,
+                str(e) or repr(e),
                 (time.perf_counter() - total_start) * 1000,
                 exc_info=True,
             )
