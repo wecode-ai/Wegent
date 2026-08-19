@@ -1014,41 +1014,43 @@ export function IssueComposer({
                 </button>
               </div>
             </div>
-            <div className="mb-2">
-              <label className="relative inline-flex h-8 max-w-full cursor-pointer items-center gap-1.5 rounded-lg px-2 text-xs text-text-muted transition hover:bg-muted hover:text-text-primary">
-                <LayoutDashboard className="h-3.5 w-3.5 shrink-0" />
-                <span className="truncate">
-                  {selectedWorkItemProject?.name ??
-                    t('workbench.default_work_item_board', '我的任务')}
-                </span>
-                <ChevronDown className="h-3 w-3 shrink-0" />
-                <select
-                  data-testid="workspace-issue-project-compact"
-                  aria-label={t('todo.issue_project_label', '项目空间')}
-                  value={boardKey}
-                  disabled={busy || projects.length === 0}
-                  onChange={event => selectBoard(event.target.value)}
-                  className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
-                >
-                  {!projects.some(
-                    project => `${project.project_store}:${String(project.id)}` === boardKey
-                  ) && boardKey ? (
-                    <option value={boardKey}>
-                      {selectedWorkItemProject?.name ??
-                        t('workbench.default_work_item_board', '我的任务')}
-                    </option>
-                  ) : null}
-                  {projects.map(project => (
-                    <option
-                      key={`${project.project_store}:${String(project.id)}`}
-                      value={`${project.project_store}:${String(project.id)}`}
-                    >
-                      {project.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
+            {creationMode === 'issue' ? (
+              <div className="mb-2">
+                <label className="relative inline-flex h-8 max-w-full cursor-pointer items-center gap-1.5 rounded-lg px-2 text-xs text-text-muted transition hover:bg-muted hover:text-text-primary">
+                  <LayoutDashboard className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">
+                    {selectedWorkItemProject?.name ??
+                      t('workbench.default_work_item_board', '我的任务')}
+                  </span>
+                  <ChevronDown className="h-3 w-3 shrink-0" />
+                  <select
+                    data-testid="workspace-issue-project-compact"
+                    aria-label={t('todo.issue_project_label', '项目空间')}
+                    value={boardKey}
+                    disabled={busy || projects.length === 0}
+                    onChange={event => selectBoard(event.target.value)}
+                    className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
+                  >
+                    {!projects.some(
+                      project => `${project.project_store}:${String(project.id)}` === boardKey
+                    ) && boardKey ? (
+                      <option value={boardKey}>
+                        {selectedWorkItemProject?.name ??
+                          t('workbench.default_work_item_board', '我的任务')}
+                      </option>
+                    ) : null}
+                    {projects.map(project => (
+                      <option
+                        key={`${project.project_store}:${String(project.id)}`}
+                        value={`${project.project_store}:${String(project.id)}`}
+                      >
+                        {project.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            ) : null}
             {creationMode === 'task' && workbench?.selectProject && selectedLocalProject ? (
               <ConnectedIssueProjectWork
                 project={selectedLocalProject}

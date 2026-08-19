@@ -153,6 +153,7 @@ describe('IssueComposer', () => {
     expect(screen.getByTestId('workspace-create-task-tab')).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByTestId('workspace-issue-heading')).toHaveTextContent('要执行什么？')
     expect(screen.getByTestId('workspace-issue-input')).toHaveTextContent('修复创建流程')
+    expect(screen.queryByTestId('workspace-issue-project-compact')).not.toBeInTheDocument()
     expect(screen.getByTestId('project-work-button')).toHaveTextContent('Wegent')
     await userEvent.click(screen.getByTestId('project-work-button'))
     await userEvent.click(screen.getByTestId('project-option-92'))
