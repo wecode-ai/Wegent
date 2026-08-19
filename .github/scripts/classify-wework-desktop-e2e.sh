@@ -68,15 +68,16 @@ cloud_shards=(
   project-automation,window-lifecycle,cloud-worktree-archive-restore,browser-multi-tabs
   rendering-extensions,conversation-state,cloud-worktree-device-restart,workspace-attachments,automation-lifecycle,telemetry-consent
 )
-# Keep the number of core desktop runners fixed as checkpoints grow. Each
-# runner reuses the same prebuilt application with two isolated local workers.
+# Keep the number of core desktop runners fixed as checkpoints grow. Group
+# checkpoints by observed Core CI duration and order each shard so both local
+# workers stay balanced while reusing the same prebuilt application.
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 core_shards=(
-  core-task-flow
-  model-routing,embedded-browser,claude-runtime,local-harness
-  window-lifecycle,conversation-state,temporary-chat
-  resilience,runtime-task-queue,codex-notification-isolation,goal-lifecycle,supervisor-lifecycle
-  rendering-extensions,workspace-attachments,workspace-tabs,priority-filter,automation-lifecycle,project-automation,permission-modes,local-file-preview
+  rendering-extensions,resilience,runtime-task-queue
+  model-routing,window-lifecycle
+  core-task-flow,embedded-browser,automation-lifecycle,priority-filter,temporary-chat
+  claude-runtime,workspace-attachments,local-harness,supervisor-lifecycle,codex-notification-isolation,local-file-preview
+  conversation-state,goal-lifecycle,workspace-tabs,project-automation,permission-modes
 )
 
 validate_core_shards() {
