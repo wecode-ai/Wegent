@@ -108,6 +108,11 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: './src/test/setup.ts',
     globals: true,
+    server: {
+      deps: {
+        inline: [/@file-viewer/, /@panzoom/],
+      },
+    },
     // Keep local and pre-push runs below the resource-contention point where
     // jsdom-heavy files begin timing out nondeterministically.
     maxWorkers: 2,
