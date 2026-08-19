@@ -138,9 +138,10 @@ removing coverage, or rerunning failures. CI first builds one Core Tauri
 application, Executor, and Codex artifact. In `--build-only` mode, the
 independent Tauri and Executor builds run concurrently on the same runner. Every
 Core and Cloud shard downloads and reuses that artifact instead of rebuilding
-Vite, Tauri, and Executor. Rust builds cache Cargo sources and sccache compiler
-units rather than the large full `target/` directories whose restore latency is
-highly variable. The plugin suite requires separate build-time
+Vite, Tauri, and Executor. Rust builds reuse both the `main`-owned Cargo target
+cache and sccache compiler units: the target cache bounds PR and first-run
+latency, while sccache reduces incremental compilation after dependency or
+source changes. The plugin suite requires separate build-time
 configuration and remains an independent job alongside the shared Core build.
 Both successful and failed runs retain complete diagnostics; uploads disable
 redundant compression for PNG and other already-compressed evidence so artifact

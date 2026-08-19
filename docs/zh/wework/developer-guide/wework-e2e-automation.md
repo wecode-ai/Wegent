@@ -133,8 +133,9 @@ checkpoint。跳过上游时，每个 checkpoint 会自行建立最小前置 fix
 增加 runner、删覆盖或重跑失败用例来缩短关键路径。CI 会先构建一次 Core Tauri
 应用、Executor 和 Codex artifact，其中 `--build-only` 会在同一 runner 内并行
 编译相互独立的 Tauri 应用和 Executor；各 Core/Cloud 分片下载并复用该 artifact，
-不再重复执行 Vite、Tauri 和 Executor 构建。Rust 构建只缓存 Cargo 源码和
-sccache 编译单元，不缓存体积大且恢复耗时波动明显的完整 `target/` 目录。插件套件需要独立构建配置，仍作为
+不再重复执行 Vite、Tauri 和 Executor 构建。Rust 构建同时复用由 `main`
+维护的 Cargo target cache 和 sccache 编译单元：target cache 保障 PR 与首次
+运行的延迟，sccache 降低依赖或源码变化后的增量编译成本。插件套件需要独立构建配置，仍作为
 单独 job 与共享 Core 构建并行。成功和失败诊断都保留完整证据；PNG 等已压缩文件
 上传时禁用二次压缩，避免诊断归档延长流水线尾部。
 merge queue 会验证最终进入 `main` 的合并提交，因此合入后不再通过 `push main`
