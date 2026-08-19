@@ -50,6 +50,10 @@ interface AiChatModalProps {
     address: RuntimeTaskAddress,
     localProject: ProjectWithTasks | null
   ) => Promise<void> | void
+  prepareTask?: (
+    address: RuntimeTaskAddress,
+    localProject: ProjectWithTasks | null
+  ) => void | (() => void | Promise<void>) | Promise<void | (() => void | Promise<void>)>
   embedded?: boolean
 }
 
@@ -82,6 +86,7 @@ export function AiChatModal({
   onOpenRuntimeTask,
   onAddressChange,
   onTaskCreated,
+  prepareTask,
   embedded = false,
 }: AiChatModalProps) {
   const { t } = useTranslation('common')
@@ -224,6 +229,9 @@ export function AiChatModal({
         collaborationMode: 'default',
         ...runtimeContext,
         onError: options.onError,
+        prepareRuntimeTask: prepareTask
+          ? address => prepareTask(address, selectedLocalProject)
+          : undefined,
         onRuntimeTaskOptimisticOpen: options.onRuntimeTaskOptimisticOpen,
       })
       if (address) await onTaskCreated?.(address, selectedLocalProject)
@@ -234,6 +242,7 @@ export function AiChatModal({
       inheritFromTask,
       localDeviceWorkspaceId,
       onTaskCreated,
+      prepareTask,
       runtimeContext,
       selectedLocalProject,
     ]
@@ -317,12 +326,15 @@ export function AiChatModal({
           data-testid="ai-chat-modal-backdrop"
           data-presentation="sidebar"
           className={cn(
-            'relative z-10 flex h-full min-h-0 w-[min(620px,38vw)] min-w-[460px] shrink-0 flex-col border-l border-border bg-background',
+            'task-conversation-workspace-panel relative z-10 flex h-full min-h-0 shrink-0 flex-col rounded-2xl bg-background',
             !open && 'hidden'
           )}
         >
-          <section data-testid="ai-chat-modal" className="flex h-full min-h-0 min-w-0 flex-col">
-            <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3">
+          <section
+            data-testid="ai-chat-modal"
+            className="todo-floating-panel-surface flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background"
+          >
+            <header className="flex h-12 shrink-0 items-center gap-2 px-3">
               <button
                 type="button"
                 data-testid="ai-chat-modal-close"
@@ -332,20 +344,17 @@ export function AiChatModal({
               >
                 <ArrowLeft className="h-4 w-4" />
               </button>
-              <div className="min-w-0 flex-1">
-                <div className="text-xs text-text-muted">
-                  {task?.id} · {t('workbench.task_conversation', '任务会话')}
-                </div>
-                <div className="truncate text-sm font-medium text-text-primary">
-                  {taskTitle || initialAddress.taskId}
-                </div>
-              </div>
+              <span className="min-w-0 flex-1 truncate text-xs text-text-muted">
+                <b className="font-medium text-text-secondary">{task?.id}</b>
+                {' · '}
+                {t('workbench.task_conversation', '任务对话')}
+              </span>
               {onOpenRuntimeTask ? (
                 <button
                   type="button"
                   data-testid="ai-chat-open-runtime-task"
                   onClick={() => void onOpenRuntimeTask(initialAddress)}
-                  className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-border px-2.5 text-sm text-text-primary transition hover:bg-muted"
+                  className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-xs text-text-secondary transition hover:bg-muted hover:text-text-primary"
                 >
                   {t('workbench.open_full_task', '打开完整任务')}
                   <ArrowUpRight className="h-3.5 w-3.5" />
@@ -476,12 +485,15 @@ export function AiChatModal({
         data-testid="ai-chat-modal-backdrop"
         data-presentation="sidebar"
         className={cn(
-          'relative z-10 flex h-full min-h-0 w-[min(620px,38vw)] min-w-[460px] shrink-0 flex-col border-l border-border bg-background',
+          'task-conversation-workspace-panel relative z-10 flex h-full min-h-0 shrink-0 flex-col rounded-2xl bg-background',
           !open && 'hidden'
         )}
       >
-        <section data-testid="ai-chat-modal" className="flex h-full min-h-0 min-w-0 flex-col">
-          <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3">
+        <section
+          data-testid="ai-chat-modal"
+          className="todo-floating-panel-surface flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background"
+        >
+          <header className="flex h-12 shrink-0 items-center gap-2 px-3">
             <button
               type="button"
               data-testid="ai-chat-modal-close"
@@ -491,14 +503,11 @@ export function AiChatModal({
             >
               <ArrowLeft className="h-4 w-4" />
             </button>
-            <div className="min-w-0 flex-1">
-              <div className="text-xs text-text-muted">
-                {task?.id} · {t('workbench.runtime_task', '任务')}
-              </div>
-              <div className="truncate text-sm font-medium text-text-primary">
-                {t('todo.new_task')}
-              </div>
-            </div>
+            <span className="min-w-0 flex-1 truncate text-xs text-text-muted">
+              <b className="font-medium text-text-secondary">{task?.id}</b>
+              {' · '}
+              {t('todo.new_task')}
+            </span>
           </header>
           {renderNewTaskComposer(
             `work-item-new-task:${project.id}:${task?.id ?? 'project'}`,

@@ -3294,6 +3294,7 @@
     "workflow_add_stage_task": "添加任务",
     "workflow_view_execution_short": "查看",
     "workflow_task_executions": "任务执行",
+    "workflow_task_count": "{{count}} 个任务",
     "workflow_task_status_running": "执行中",
     "workflow_task_status_succeeded": "成功",
     "workflow_task_status_failed": "失败",

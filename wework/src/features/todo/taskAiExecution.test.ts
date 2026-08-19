@@ -55,6 +55,7 @@ function createRuntime(): TaskAiRuntimeBridge {
   return {
     createProjectRuntimeTask: vi.fn(async (_prompt, options) => {
       const address = { deviceId: 'device-1', taskId: 'runtime-task-1' }
+      await options.prepareRuntimeTask?.(address)
       await options.onRuntimeTaskOptimisticOpen?.(address)
       return address
     }),
@@ -76,11 +77,13 @@ async function run(input: Parameters<typeof startTaskAiRun>[0]) {
   const runtime = createRuntime()
   const client = createClient()
   const bindTask = vi.fn(async () => undefined)
+  const unbindTask = vi.fn(async () => undefined)
   await startTaskAiRun({
     client,
     services: {
       deliveryApi: {
         bindTask,
+        unbindTask,
         getLoopItem: vi.fn(async () => task),
       },
     },
@@ -115,6 +118,7 @@ async function runWith(
   const runtime = {
     createProjectRuntimeTask: vi.fn(async (_prompt, options) => {
       const address = { deviceId: 'device-1', taskId: 'runtime-task-1' }
+      await options.prepareRuntimeTask?.(address)
       await options.onRuntimeTaskOptimisticOpen?.(address)
       return address
     }),
@@ -128,11 +132,13 @@ async function runWith(
   }
   const client = createClient()
   const bindTask = vi.fn(async () => undefined)
+  const unbindTask = vi.fn(async () => undefined)
   await startTaskAiRun({
     client,
     services: {
       deliveryApi: {
         bindTask,
+        unbindTask,
         getLoopItem: vi.fn(async () => taskUnderRun),
       },
     },

@@ -15,14 +15,22 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token, get_password_hash
-from app.models.cloud_project import CloudProject
-from app.models.delivery import LoopItem, ProjectAutomationRule, ProjectAutomationRun
+from app.models.cloud_project import CloudProject, LoopItemTaskBinding
+from app.models.delivery import (
+    Delivery,
+    LoopItem,
+    ProjectAutomationRule,
+    ProjectAutomationRun,
+)
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.task import TaskResource
 from app.models.user import User
 from app.services.delivery import delivery_service
-from app.services.delivery.storage import DeliveryStorageUnavailableError
+from app.services.delivery.storage import (
+    DeliveryObjectNotFoundError,
+    DeliveryStorageUnavailableError,
+)
 from app.services.project_automations import project_automation_execution
 
 
@@ -46,7 +54,10 @@ class FakeDeliveryStorage:
         self.objects[object_key] = json.dumps(value).encode()
 
     def get_bytes(self, object_key: str, max_bytes: int | None = None) -> bytes:
-        value = self.objects[object_key]
+        try:
+            value = self.objects[object_key]
+        except KeyError as exc:
+            raise DeliveryObjectNotFoundError(object_key) from exc
         if max_bytes is not None and len(value) > max_bytes:
             raise ValueError("too large")
         return value
@@ -840,6 +851,105 @@ def test_workflow_task_binding_requires_a_ready_non_automated_stage(
         },
     )
     assert serialized.status_code == 200
+
+
+def test_workflow_task_binding_survives_missing_dependency_delivery_content(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+    delivery_project: CloudProject,
+    delivery_storage: FakeDeliveryStorage,
+) -> None:
+    delivery_project.metadata_json = {
+        **(delivery_project.metadata_json or {}),
+        "workflow_definition": {
+            "version": 1,
+            "stage_mode": "dag",
+            "advancement_policy": "manual",
+            "nodes": [
+                {
+                    "id": "develop",
+                    "name": "Develop",
+                    "kind": "my_task",
+                    "depends_on": [],
+                    "required": True,
+                    "workspace_policy": "composer",
+                },
+                {
+                    "id": "deploy",
+                    "name": "Deploy",
+                    "kind": "my_task",
+                    "depends_on": ["develop"],
+                    "dependency_context": {"develop": ["deliveries"]},
+                    "required": True,
+                    "workspace_policy": "inherit",
+                },
+            ],
+        },
+    }
+    test_db.commit()
+    item = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Missing dependency delivery"},
+    ).json()
+    source_task = {
+        "deviceId": "local-device",
+        "taskId": "develop-task",
+        "taskTitle": "Develop",
+        "workflowNodeId": "develop",
+    }
+    source_binding = test_client.post(
+        f"/api/v1/loop-items/{item['id']}/tasks",
+        headers=_auth(test_token),
+        json=source_task,
+    )
+    assert source_binding.status_code == 201
+    draft = test_client.post(
+        f"/api/v1/loop-items/{item['id']}/deliveries",
+        headers=_auth(test_token),
+        json={"markdown": "# Develop", "source_task": source_task},
+    ).json()
+    finalized = test_client.post(
+        f"/api/v1/deliveries/{draft['id']}/finalize",
+        headers=_auth(test_token),
+    )
+    assert finalized.status_code == 200
+
+    delivery = test_db.get(Delivery, draft["id"])
+    assert delivery is not None
+    delivery_storage.objects.pop(delivery.markdown_object_key)
+    stored_item = test_db.get(LoopItem, item["id"])
+    assert stored_item is not None
+    metadata = dict(stored_item.metadata_json or {})
+    workflow = dict(metadata["workflow"])
+    nodes = [dict(node) for node in workflow["nodes"]]
+    nodes[0]["status"] = "completed"
+    nodes[1]["status"] = "ready"
+    workflow["nodes"] = nodes
+    metadata["workflow"] = workflow
+    stored_item.metadata_json = metadata
+    test_db.commit()
+
+    response = test_client.post(
+        f"/api/v1/loop-items/{item['id']}/tasks",
+        headers=_auth(test_token),
+        json={
+            "deviceId": "local-device",
+            "taskId": "deploy-task",
+            "workflowNodeId": "deploy",
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json()["workflow_node_id"] == "deploy"
+    binding = test_db.get(LoopItemTaskBinding, response.json()["id"])
+    assert binding is not None
+    stage_input = binding.metadata_json["workflow_stage_input"]
+    dependency_delivery = stage_input["dependencies"][0]["deliveries"][0]
+    assert dependency_delivery["id"] == draft["id"]
+    assert dependency_delivery["markdown"] == ""
+    assert dependency_delivery["content_available"] is False
 
 
 def test_binding_subscription_backend_task_uses_task_store(

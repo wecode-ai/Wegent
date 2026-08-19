@@ -691,9 +691,51 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       'The created task was not persisted against workflow stage-1',
       uiTimeoutMs * 2
     )
-    assert.ok(workflowBindings.some(binding => binding.workflow_node_id === 'stage-1'))
-    await captureScreenshot(control, 'project-automation-00-real-workflow-task-binding.png')
+    const workflowBinding = workflowBindings.find(binding => binding.workflow_node_id === 'stage-1')
+    assert.ok(workflowBinding)
+    const workflowTaskRow = `[data-testid="cloud-todo-open-workflow-task-stage-1-${workflowBinding.id}"]`
     await control.command('click', '[data-testid="ai-chat-modal-close"]')
+    await control.command('scrollIntoView', workflowTaskRow)
+    await control.command('waitFor', workflowTaskRow, {
+      text: workflowBinding.task_id,
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await captureScreenshot(control, 'project-automation-00-real-workflow-task-binding.png')
+
+    const readyCountBeforeWorkflowBindingReload = control.readyCount
+    await control.command('reloadMainWindow', 'body')
+    await withTimeout(
+      control.awaitReadyAfter(readyCountBeforeWorkflowBindingReload),
+      uiTimeoutMs * 3,
+      'The Wework WebView did not reconnect while verifying persisted workflow binding'
+    )
+    await control.command('waitFor', projectSelector, { timeoutMs: uiTimeoutMs })
+    await control.command('click', projectSelector)
+    await control.command('waitFor', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('click', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
+      visible: true,
+    })
+    const workflowIssueCard = `${activeBoard} [data-testid="cloud-todo-card-${workflowIssue.id}"]`
+    await control.command('waitFor', workflowIssueCard, {
+      text: workflowIssue.title,
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('click', workflowIssueCard, { visible: true })
+    await control.command('waitFor', `${activeBoard} [data-testid="cloud-todo-detail-title"]`, {
+      text: workflowIssue.title,
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('scrollIntoView', workflowTaskRow)
+    await control.command('waitFor', workflowTaskRow, {
+      text: workflowBinding.task_id,
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
     await control.command('click', '[data-testid="cloud-todo-detail-close"]')
     await control.command('click', '[data-testid="cloud-project-automation-view"]')
     await control.command('waitFor', '[data-testid="project-automation-rules"]', {
@@ -2148,10 +2190,46 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         'waitFor',
         `${activeBoard} [data-testid="cloud-todo-workflow-action-stage-1"]`,
         {
-          text: '人工执行 · 待人工批准',
+          text: '待人工批准',
           timeoutMs: uiTimeoutMs,
           visible: true,
         }
+      )
+      await control.command(
+        'click',
+        `${activeBoard} [data-testid="cloud-todo-workflow-node-stage-3"]`,
+        {
+          visible: true,
+        }
+      )
+      await control.command(
+        'waitFor',
+        `${activeBoard} [data-testid="cloud-todo-workflow-action-stage-3"]`,
+        {
+          text: '等待前置任务',
+          timeoutMs: uiTimeoutMs,
+          visible: true,
+        }
+      )
+      await control.command(
+        'click',
+        `${activeBoard} [data-testid="cloud-todo-workflow-node-stage-1"]`,
+        {
+          visible: true,
+        }
+      )
+      await control.command(
+        'waitFor',
+        `${activeBoard} [data-testid="cloud-todo-workflow-action-stage-1"]`,
+        {
+          text: '待人工批准',
+          timeoutMs: uiTimeoutMs,
+          visible: true,
+        }
+      )
+      await control.command(
+        'scrollIntoView',
+        `${activeBoard} [data-testid="cloud-todo-workflow-task-status-stage-1-9103"]`
       )
       await control.command(
         'waitFor',
@@ -2196,7 +2274,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           timeoutMs: uiTimeoutMs,
         }
       )
-      await captureScreenshot(control, 'project-automation-00-workflow-task-statuses.png')
+      await captureScreenshot(
+        control,
+        'project-automation-00-workflow-task-statuses.png',
+        `${activeBoard} [data-testid="cloud-todo-detail"]`
+      )
       await control.command(
         'waitFor',
         `${activeBoard} [data-testid="cloud-project-automation-view"]`,

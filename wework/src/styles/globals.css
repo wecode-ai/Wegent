@@ -185,7 +185,7 @@
 .task-description-attachment-preview {
   z-index: 50;
   max-width: 320px;
-  background: rgb(var(--color-background));
+  background: rgb(var(--color-bg-base));
   border: 1px solid rgb(var(--color-border));
   border-radius: 8px;
   padding: 6px;
