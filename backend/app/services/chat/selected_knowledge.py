@@ -70,7 +70,13 @@ def apply_selected_knowledge_context(
         request.provider_native_knowledge = False
         return []
 
-    request.selected_knowledge_prompt = render_selected_knowledge_prompt(context)
+    prompt = render_selected_knowledge_prompt(context)
+    if not prompt:
+        request.selected_knowledge_prompt = ""
+        request.provider_native_knowledge = False
+        return []
+
+    request.selected_knowledge_prompt = prompt
     request.provider_native_knowledge = False
 
     request.preload_skills = list(request.preload_skills or [])
@@ -184,33 +190,33 @@ def build_selected_knowledge_context(
     current_contexts: Iterable[Any] = (),
 ) -> SelectedKnowledgeContext:
     """Resolve explicit message contexts over inherited task knowledge refs."""
+    current_contexts = tuple(current_contexts)
     task_refs = build_selected_knowledge_refs(db, request, task)
     explicit_refs = _build_current_explicit_refs(
         db,
         current_contexts=current_contexts,
     )
-    if not explicit_refs and has_explicit_empty_wegent_scope(current_contexts):
-        return SelectedKnowledgeContext()
+    if has_explicit_knowledge_context(current_contexts):
+        resolved = resolve_selected_knowledge_context((), explicit_refs)
+        return SelectedKnowledgeContext(
+            refs=resolved.refs,
+            evidence_required=True,
+        )
     return resolve_selected_knowledge_context(task_refs, explicit_refs)
 
 
-def has_explicit_empty_wegent_scope(contexts: Iterable[Any]) -> bool:
-    """Return whether this turn contains an intentionally empty Wegent scope."""
-    for context in contexts:
-        if (
-            getattr(context, "status", None) != ContextStatus.READY.value
-            or getattr(context, "context_type", None)
-            != ContextType.KNOWLEDGE_BASE.value
-        ):
-            continue
-        data = getattr(context, "type_data", None)
-        if not isinstance(data, dict) or not data.get("scope_restricted"):
-            continue
-        if not _int_values(data.get("folder_ids")) and not _int_values(
-            data.get("document_ids")
-        ):
-            return True
-    return False
+def has_explicit_knowledge_context(contexts: Iterable[Any]) -> bool:
+    """Return whether this turn explicitly selected any knowledge source."""
+    explicit_types = {
+        ContextType.KNOWLEDGE_BASE.value,
+        ContextType.SELECTED_DOCUMENTS.value,
+        ContextType.EXTERNAL_KNOWLEDGE.value,
+    }
+    return any(
+        getattr(context, "status", None) == ContextStatus.READY.value
+        and getattr(context, "context_type", None) in explicit_types
+        for context in contexts
+    )
 
 
 def has_usable_wegent_scope(
@@ -394,7 +400,7 @@ def _build_wegent_refs(
             scope,
             prefer_request_scope=prefer_request_scope,
         )
-        if not scope_restricted or not (folder_ids or document_ids):
+        if not scope_restricted:
             result.append(
                 SelectedKnowledgeRef(
                     provider="wegent",
@@ -402,6 +408,8 @@ def _build_wegent_refs(
                     knowledge_base_name=kb_name,
                 )
             )
+            continue
+        if not (folder_ids or document_ids):
             continue
 
         resources = _load_wegent_resources(
@@ -528,11 +536,19 @@ def _build_external_refs_from_values(
         if provider not in PROVIDER_SKILLS or not kb_id:
             continue
         scope_type = str(value.get("target_type") or "knowledge_base")
+        if scope_type not in {
+            KnowledgeScopeType.KNOWLEDGE_BASE,
+            KnowledgeScopeType.FOLDER,
+            KnowledgeScopeType.DOCUMENT,
+        }:
+            continue
         resource_id = None
         if scope_type == KnowledgeScopeType.FOLDER:
             resource_id = value.get("node_id") or value.get("parent_id")
         elif scope_type == KnowledgeScopeType.DOCUMENT:
             resource_id = value.get("document_id") or value.get("node_id")
+        if scope_type != KnowledgeScopeType.KNOWLEDGE_BASE and not resource_id:
+            continue
         resources: tuple[SelectedKnowledgeResource, ...] = ()
         if scope_type != KnowledgeScopeType.KNOWLEDGE_BASE:
             include_descendants = None
