@@ -296,6 +296,7 @@ if ! grep -Fq 'docker/wework-e2e/browser.Dockerfile' \
 fi
 
 wework_workflow="$workflow_dir/wework-e2e.yml"
+wework_browser_image="$script_dir/../../docker/wework-e2e/browser.Dockerfile"
 wework_desktop_image="$script_dir/../../docker/wework-e2e/desktop.Dockerfile"
 if ! grep -Fq 'file: docker/wework-e2e/browser.Dockerfile' "$wework_workflow" ||
   ! grep -Fq 'file: docker/wework-e2e/desktop.Dockerfile' "$wework_workflow" ||
@@ -303,6 +304,12 @@ if ! grep -Fq 'file: docker/wework-e2e/browser.Dockerfile' "$wework_workflow" ||
   grep -Eq 'playwright (install|install-deps)|install-wework-tauri-system-dependencies' \
     "$wework_workflow"; then
   fail "Wework E2E must consume its immutable dependency image without runtime installs"
+fi
+
+if ! grep -Fq 'apt-get install --yes --no-install-recommends zstd' \
+  "$wework_browser_image" ||
+  ! grep -Fq 'zstd --version' "$wework_browser_image"; then
+  fail "Browser E2E images must include zstd for restoring build artifacts"
 fi
 
 if ! grep -Eq '^ENV IS_SANDBOX=1$' "$wework_desktop_image"; then
