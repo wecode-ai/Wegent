@@ -41,6 +41,7 @@ from app.services.knowledge.code_wiki.generation import (
     SOURCE_COMMIT_KEY,
     FailureCode,
     GenerationInFlight,
+    GenerationWikiNotFound,
     finish_generation,
     published_commit,
     record_failure_reason,
@@ -158,6 +159,7 @@ def start_run(
     Raises:
         CodeWikiRunError: If the wiki cannot be generated, or a run is already going.
         GenerationInFlight: Propagated from the version store.
+        GenerationWikiNotFound: If the wiki is deleted before the run starts.
     """
     source = source_of(knowledge_base)
     team, task_user = _resolve_execution_context(db, knowledge_base, user)
@@ -592,7 +594,7 @@ def start_first_run(user_id: int, knowledge_base_id: int) -> None:
         if knowledge_base is None or user is None:  # pragma: no cover - just committed
             return
         start_run(db, knowledge_base=knowledge_base, user=user)
-    except (CodeWikiRunError, GenerationInFlight) as e:
+    except (CodeWikiRunError, GenerationInFlight, GenerationWikiNotFound) as e:
         logger.warning(
             "[code_wiki] first run not started for kb %s: %s", knowledge_base_id, e
         )
