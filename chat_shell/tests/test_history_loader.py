@@ -300,6 +300,70 @@ async def test_remote_history_retries_transport_failure_then_fails_closed(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [
+        httpx.ConnectError("Backend connection failed"),
+        httpx.HTTPStatusError(
+            "Backend unavailable",
+            request=httpx.Request("GET", "http://backend/chat/history/task-1"),
+            response=httpx.Response(503),
+        ),
+    ],
+)
+async def test_remote_history_retries_other_retryable_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+) -> None:
+    from chat_shell.history import loader
+
+    class _FailingStore:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def get_history(self, **kwargs: Any) -> list[Any]:
+            del kwargs
+            self.calls += 1
+            raise error
+
+    store = _FailingStore()
+    delays: list[float] = []
+
+    async def _sleep(delay: float) -> None:
+        delays.append(delay)
+
+    monkeypatch.setattr(loader, "_get_remote_history_store", lambda: store)
+    monkeypatch.setattr(loader.settings, "CHAT_HISTORY_RETRY_COUNT", 1)
+    monkeypatch.setattr(loader.asyncio, "sleep", _sleep)
+
+    with pytest.raises(loader.HistoryRestoreError, match="Conversation history"):
+        await loader._load_history_from_remote(task_id=1, is_group_chat=False)
+
+    assert store.calls == 2
+    assert delays == [0.2]
+
+
+@pytest.mark.asyncio
+async def test_remote_history_wraps_store_initialization_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from chat_shell.history import loader
+
+    def _raise_initialization_error() -> Any:
+        raise ValueError("remote history is not configured")
+
+    monkeypatch.setattr(
+        loader, "_get_remote_history_store", _raise_initialization_error
+    )
+
+    with pytest.raises(loader.HistoryRestoreError, match="Conversation history") as exc:
+        await loader._load_history_from_remote(task_id=1, is_group_chat=False)
+
+    assert isinstance(exc.value.__cause__, ValueError)
+    assert exc.value.attempts == 1
+
+
+@pytest.mark.asyncio
 async def test_remote_history_does_not_retry_non_transport_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

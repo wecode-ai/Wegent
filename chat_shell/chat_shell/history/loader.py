@@ -401,10 +401,11 @@ async def _load_history_from_remote(
         limit,
     )
 
-    store = _get_remote_history_store()
     session_id = f"task-{task_id}"
 
     try:
+        store = _get_remote_history_store()
+
         # Get history from remote API
         # Note: before_message_id needs to be string for the API
         before_id = str(exclude_after_message_id) if exclude_after_message_id else None
