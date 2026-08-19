@@ -206,17 +206,14 @@ once by `build-executor-e2e-runtime`. That artifact contains the
 `wegent/e2e-claudecode-executor:latest` Docker image and the extracted local
 executor binary used by device-mode coverage.
 
-The workflow caches Python virtualenvs, frontend `node_modules`, Playwright
-browsers, and the executor job's Claude Code CLI. Dependency install steps are
-skipped only on exact cache hits; partial restore-key matches still run install
-commands to reconcile dependencies before saving a fresh cache.
-
-Playwright browser binaries are prepared once in `build-frontend-e2e` before the
-sharded browser/API jobs and the executor E2E job start. The cache key contains
-the runner OS and resolved Playwright version, so unrelated lockfile changes do
-not invalidate the browser cache. A cache miss uses
-`.github/scripts/install-playwright-browser.sh`, which retries interrupted or
-slow downloads up to three times with a three-minute per-attempt timeout.
+The workflow caches Python virtualenvs, frontend `node_modules`, and the executor
+job's Claude Code CLI. Playwright browsers and their operating-system
+dependencies are baked into an immutable GHCR image keyed by the dependency
+Dockerfile content. Browser/API shards run inside that image, while the executor
+job runs only its Playwright command in the same image with host networking so
+it can reach the services and Docker-based executors running on the CI host.
+No E2E job invokes Playwright browser or system dependency installation at
+runtime.
 
 ### Sharded CI Users
 

@@ -2461,6 +2461,7 @@ describe('CloudTodoWorkspace', () => {
   })
 
   it('defaults new issues to the inbox', async () => {
+    const user = userEvent.setup()
     const workbenchServices = services()
     workbenchServices.deliveryApi!.createLoopItem = vi.fn(async (_projectId, values) => ({
       ...item,
@@ -2479,9 +2480,10 @@ describe('CloudTodoWorkspace', () => {
     )
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    await userEvent.click(screen.getByTestId('cloud-todo-add'))
-    await userEvent.type(screen.getByTestId('workspace-issue-input'), 'Inbox Issue')
-    await userEvent.click(screen.getByTestId('workspace-issue-submit'))
+    await user.click(screen.getByTestId('cloud-todo-add'))
+    await user.click(screen.getByTestId('workspace-issue-input'))
+    await user.paste('Inbox Issue')
+    await user.click(screen.getByTestId('workspace-issue-submit'))
 
     await waitFor(() =>
       expect(workbenchServices.deliveryApi?.createLoopItem).toHaveBeenCalledWith(11, {
@@ -2494,6 +2496,7 @@ describe('CloudTodoWorkspace', () => {
   })
 
   it('creates a new issue with the status of the board column entry point', async () => {
+    const user = userEvent.setup()
     const workbenchServices = services()
     workbenchServices.deliveryApi!.createLoopItem = vi.fn(async (_projectId, values) => ({
       ...item,
@@ -2512,9 +2515,10 @@ describe('CloudTodoWorkspace', () => {
     )
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    await userEvent.click(screen.getByTestId('cloud-todo-column-add-in_progress'))
-    await userEvent.type(screen.getByTestId('workspace-issue-input'), 'Active Issue')
-    await userEvent.click(screen.getByTestId('workspace-issue-submit'))
+    await user.click(screen.getByTestId('cloud-todo-column-add-in_progress'))
+    await user.click(screen.getByTestId('workspace-issue-input'))
+    await user.paste('Active Issue')
+    await user.click(screen.getByTestId('workspace-issue-submit'))
 
     await waitFor(() =>
       expect(workbenchServices.deliveryApi?.createLoopItem).toHaveBeenCalledWith(11, {

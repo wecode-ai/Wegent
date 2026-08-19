@@ -853,15 +853,25 @@ async fn runtime_tasks_create_ephemeral_codex_thread_hidden_from_task_list() {
         fork_call["params"]["path"],
         "/tmp/codex/parent-thread-1.jsonl"
     );
+    assert_eq!(fork_call["params"]["cwd"], "/tmp/project");
+    assert_eq!(fork_call["params"]["permissions"], ":danger-full-access");
     assert_eq!(fork_call["params"]["ephemeral"], true);
     let inject_call = calls
         .iter()
         .find(|call| call["method"] == "thread/inject_items")
         .expect("thread/inject_items should be called");
     assert_eq!(inject_call["params"]["threadId"], "thread-1");
-    assert!(inject_call["params"]["items"][0]["content"][0]["text"]
+    let boundary_prompt = inject_call["params"]["items"][0]["content"][0]["text"]
         .as_str()
-        .is_some_and(|text| text.contains("Side conversation boundary.")));
+        .expect("side conversation boundary should be text");
+    assert!(boundary_prompt.contains("Side conversation boundary."));
+    assert!(boundary_prompt.contains(
+        "Do not modify files, source, git state, permissions, configuration, or workspace state \
+         unless the user explicitly asks for that mutation after this boundary."
+    ));
+    assert!(boundary_prompt.contains(
+        "If the user explicitly requests a mutation, keep it minimal, local to the request"
+    ));
     assert!(calls.iter().all(|call| call["method"] != "thread/start"));
     assert!(calls.iter().all(|call| call["method"] != "thread/name/set"));
     assert!(calls.iter().all(|call| call["method"] != "thread/goal/set"));

@@ -175,8 +175,6 @@ echo ""
 
 # Find all heads (revisions not referenced by any down_revision)
 HEADS=""
-# Iterate words directly so a large revision list cannot fill a here-doc pipe
-# before the loop starts reading it.
 for rev in $ALL_REVISIONS; do
     [ -z "$rev" ] && continue
     if ! key_exists "$IS_REFERENCED" "$rev"; then
@@ -198,7 +196,7 @@ if [ "$NON_STANDARD_COUNT" -gt 0 ]; then
     printf '%s' "$NON_STANDARD_IDS" | while IFS= read -r id; do
         [ -z "$id" ] && continue
         echo -e "   ${YELLOW}• $id${NC}"
-    done
+    done < <(printf '%s' "$NON_STANDARD_IDS")
     echo ""
     echo -e "${YELLOW}   Recommendation: Use 'alembic revision --autogenerate' to generate${NC}"
     echo -e "${YELLOW}   standard 12-character hexadecimal revision IDs.${NC}"
@@ -225,7 +223,7 @@ else
         [ -z "$head" ] && continue
         head_file=$(get_value "$REVISIONS" "$head")
         echo -e "   ${RED}• ${head}${NC} (${head_file})"
-    done
+    done < <(printf '%s' "$HEADS")
     echo ""
 
     # Provide fix instructions

@@ -27,6 +27,10 @@ import {
   dispatchWorkbenchSidebarPaneDragCancel,
   dispatchWorkbenchSidebarPaneDragStart,
 } from './workbenchPaneDrag'
+import {
+  cacheRuntimeConversationQueuePaused,
+  clearRuntimeConversationCacheForTests,
+} from '@/features/workbench/runtimeConversationCache'
 
 const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
 
@@ -201,9 +205,11 @@ describe('DesktopSidebar', () => {
     setActiveKeybindings([])
     Element.prototype.scrollIntoView = vi.fn()
     vi.mocked(openLocalWorkspace).mockReset()
+    clearRuntimeConversationCacheForTests()
   })
 
   afterEach(() => {
+    clearRuntimeConversationCacheForTests()
     vi.useRealTimers()
     vi.unstubAllEnvs()
   })
@@ -2876,6 +2882,79 @@ describe('DesktopSidebar', () => {
     expect(runningStatus).not.toHaveTextContent('运行中')
     expect(runningStatus.querySelector('svg')).not.toBeNull()
     expect(screen.queryByTestId('runtime-local-task-running-codex-idle')).not.toBeInTheDocument()
+  })
+
+  test('shows a paused status when a running task has a paused follow-up queue', async () => {
+    renderSidebar({
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, name: 'Wegent' },
+            totalTasks: 1,
+            deviceWorkspaces: [
+              {
+                id: 91,
+                deviceId: 'local-device',
+                deviceName: 'Local Mac',
+                deviceStatus: 'online',
+                available: true,
+                workspacePath: '/repo/Wegent',
+                tasks: [
+                  {
+                    taskId: 'paused-follow-up',
+                    workspacePath: '/repo/Wegent',
+                    title: 'Paused follow-up',
+                    runtime: 'codex',
+                    running: true,
+                    updatedAt: '2026-08-19T03:00:00Z',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 1,
+      },
+    })
+
+    await userEvent.click(screen.getByTestId('project-item-button'))
+    expect(screen.getByTestId('runtime-local-task-running-paused-follow-up')).toBeInTheDocument()
+
+    act(() => {
+      cacheRuntimeConversationQueuePaused(
+        {
+          deviceId: 'local-device',
+          taskId: 'paused-follow-up',
+          workspacePath: '/repo/Wegent',
+        },
+        true
+      )
+    })
+
+    expect(screen.getByTestId('runtime-local-task-queue-paused-paused-follow-up')).toHaveAttribute(
+      'aria-label',
+      '追问队列已暂停'
+    )
+    expect(
+      screen.queryByTestId('runtime-local-task-running-paused-follow-up')
+    ).not.toBeInTheDocument()
+
+    act(() => {
+      cacheRuntimeConversationQueuePaused(
+        {
+          deviceId: 'local-device',
+          taskId: 'paused-follow-up',
+          workspacePath: '/repo/Wegent',
+        },
+        false
+      )
+    })
+
+    expect(screen.getByTestId('runtime-local-task-running-paused-follow-up')).toBeInTheDocument()
+    expect(
+      screen.queryByTestId('runtime-local-task-queue-paused-paused-follow-up')
+    ).not.toBeInTheDocument()
   })
 
   test('shows queued positions and runs queue actions through the workbench', async () => {
