@@ -101,7 +101,7 @@ sequenceDiagram
 
 1. Backend 不执行 Git；Worktree 文件、Git common dir、快照和生命周期真值只属于目标 Executor。
 2. 外部请求使用逻辑 `deviceId`；Backend 解析当前 Runtime Socket ID，并验证逻辑 ID 和 Runtime ID 都属于当前用户。
-3. Worktree 能力使用独立 `runtime.worktrees.capabilities`；可选在线投影使用 `runtime_features.worktrees`，不得复用 Skills、Plugins、MCP `capabilities`。无法解析的 `runtime_features` 必须按缺失能力处理，不能阻断设备心跳。Cloud 和 Remote 必须同时返回 `persistentStorageVerified=true`，该值只能由已经验证稳定卷、固定规范绝对挂载路径和单写约束的部署显式注入；缺失或为 `false` 时 Wework 必须以 `worktree_persistent_storage_unverified` 关闭 Worktree。
+3. Worktree 能力使用独立 `runtime.worktrees.capabilities`；可选在线投影使用 `runtime_features.worktrees`，不得复用 Skills、Plugins、MCP `capabilities`。无法解析的 `runtime_features` 必须按缺失能力处理，不能阻断设备心跳。Cloud 和 Remote 必须同时返回 `persistentStorageVerified=true`，该值只能由已经验证稳定卷、固定规范绝对挂载路径和单写约束的部署显式注入；缺失或为 `false` 时 Wework 必须以 `worktree_persistent_storage_unverified` 关闭 Worktree。托管 Nevis 云设备创建时必须把 `DEVICE_TYPE=cloud`、稳定逻辑设备 ID 对应的 `WEGENT_EXECUTOR_HOME_ID`、固定的 `WEGENT_EXECUTOR_HOME` 和 `LOCAL_WORKSPACE_ROOT`，以及 `WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED=true` 同时注入 VM 和 Executor 安装启动环境。
 4. `runtime.worktrees.preflight` 无任务 Worktree 副作用；所有任务创建入口必须经过同一 Worktree preflight 门禁，`runtime.tasks.create` 在真正创建前再次执行关键校验。
 5. Worktree 身份包含 `deviceId` 和稳定 `taskId/worktreeId`，不得跨设备回退、恢复或删除。
 6. 请求 `workspacePath` 是源工作区；响应 `workspacePath` 是稳定计划路径或最终 Worktree 路径。`git_worktree` 响应缺少该独立路径或返回源路径时必须结构化失败，Backend 和 UI 都不得回退源目录，也不得在返回计划路径前把源目录投影成 Worktree。
