@@ -152,7 +152,9 @@ jobs:
           PLAYWRIGHT_VERSION: ${{ needs.build-frontend-e2e.outputs.playwright_version }}
         run: |
           dockerfile=docker/wework-e2e/browser.Dockerfile
-          image_version="$(sed -n 's#^FROM mcr.microsoft.com/playwright:v\\(.*\\)-noble$#\\1#p' "$dockerfile")"
+          image_ref="$(awk '$1 == "FROM" { print $2 }' "$dockerfile")"
+          image_version="${image_ref#mcr.microsoft.com/playwright:v}"
+          image_version="${image_version%-noble}"
           if [[ "$image_version" != "$PLAYWRIGHT_VERSION" ]]; then
             echo "Playwright image version $image_version does not match workspace version $PLAYWRIGHT_VERSION" >&2
             exit 1
