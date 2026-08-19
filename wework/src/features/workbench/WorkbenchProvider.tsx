@@ -35,7 +35,10 @@ import { createHttpClient } from '@/api/http'
 import { createPluginApi } from '@/api/plugins'
 import { listWegentInstalledConnectorApps } from '@/api/cloud/connectorApps'
 import { startLocalRobotQueueDispatcher } from '@/features/todo/localRobotQueueDispatcher'
-import { publishProjectSpaceTaskContextChanged } from '@/features/todo/projectSpaceSelection'
+import {
+  publishProjectSpaceTaskContextChanged,
+  subscribeProjectSpaceTaskBindingChanged,
+} from '@/features/todo/projectSpaceSelection'
 import {
   getComposerApps,
   publishComposerApps,
@@ -242,6 +245,7 @@ export function WorkbenchProvider({
   )
   const lifecycleSnapshot = useRuntimeTaskLifecycleStoreSnapshot(sharedLifecycleStore)
   const trackingStatusSignaturesRef = useRef(new Map<string, string>())
+  const [trackingBindingRevision, setTrackingBindingRevision] = useState(0)
   const trackingTitleSignaturesRef = useRef(new Map<string, string>())
   const [state, dispatch] = useReducer(workbenchReducer, initialWorkbenchState)
   // The cloud connection context falls back to a synthetic "backend" user when
@@ -292,6 +296,14 @@ export function WorkbenchProvider({
   useLayoutEffect(() => {
     lifecycleStore.setCurrentTask(state.currentRuntimeTask)
   }, [lifecycleStore, state.currentRuntimeTask, syncRuntimeTaskLifecycle])
+  useEffect(
+    () =>
+      subscribeProjectSpaceTaskBindingChanged(task => {
+        trackingStatusSignaturesRef.current.delete(runtimeConversationKey(task))
+        setTrackingBindingRevision(revision => revision + 1)
+      }),
+    []
+  )
   useEffect(() => {
     const trackingApis = [
       resolvedServices.projectSpaceApis?.local,
@@ -308,19 +320,29 @@ export function WorkbenchProvider({
       void Promise.allSettled(
         trackingApis.map(api => api!.updateTaskTrackingStatus(lifecycle.address, executionStatus))
       ).then(results => {
-        if (results.every(result => result.status === 'rejected')) {
+        const synchronized = results.some(
+          result => result.status === 'fulfilled' && result.value !== null
+        )
+        if (!synchronized) {
           trackingStatusSignaturesRef.current.delete(key)
-          console.warn('[Wework] Failed to synchronize project board task status', {
-            address: lifecycle.address,
-            executionStatus,
-            errors: results.map(result => (result.status === 'rejected' ? result.reason : null)),
-          })
+          if (results.every(result => result.status === 'rejected')) {
+            console.warn('[Wework] Failed to synchronize project board task status', {
+              address: lifecycle.address,
+              executionStatus,
+              errors: results.map(result => (result.status === 'rejected' ? result.reason : null)),
+            })
+          }
           return
         }
         publishProjectSpaceTaskContextChanged(lifecycle.address)
       })
     }
-  }, [lifecycleSnapshot, resolvedServices.deliveryApi, resolvedServices.projectSpaceApis])
+  }, [
+    lifecycleSnapshot,
+    resolvedServices.deliveryApi,
+    resolvedServices.projectSpaceApis,
+    trackingBindingRevision,
+  ])
   const runtimeTaskReminders = useRuntimeTaskReminders({
     runtimeWork: state.runtimeWork,
     lifecycleStore,

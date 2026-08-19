@@ -1,0 +1,193 @@
+{
+  "actor": {
+    "id": "codex",
+    "kind": "ai"
+  },
+  "authority": "ai",
+  "base_revision": "A00000028",
+  "changes": [
+    {
+      "action": "assert",
+      "change_id": "chg-a99b648a35ef",
+      "confidence": 1.0,
+      "evidence": [
+        "docs/zh/architecture/issue-task-workflow.md"
+      ],
+      "object": null,
+      "plane": "intent",
+      "predicate": null,
+      "reason": "Human stages require explicit task creation, visible deliverables, truthful runtime status, approval or reasoned force advancement",
+      "subject": "arch://wegent/flow/issue-workflow-human-approval",
+      "timestamp": "2026-08-18T11:00:26Z"
+    },
+    {
+      "action": "create",
+      "change_id": "chg-d031df61ef3b",
+      "confidence": 1.0,
+      "evidence": [
+        "docs/zh/architecture/issue-task-workflow.md"
+      ],
+      "object": null,
+      "plane": "model",
+      "predicate": null,
+      "reason": "Model the human-governed stage lifecycle and successor release rules",
+      "subject": "arch://wegent/flow/issue-workflow-human-approval",
+      "timestamp": "2026-08-18T11:00:27Z"
+    },
+    {
+      "action": "create",
+      "change_id": "chg-072234aef95f",
+      "confidence": 1.0,
+      "evidence": [
+        "docs/zh/architecture/issue-task-workflow.md"
+      ],
+      "object": null,
+      "plane": "model",
+      "predicate": null,
+      "reason": "Model required deliverables as stage acceptance criteria",
+      "subject": "arch://wegent/contract/issue-workflow-stage-deliverables",
+      "timestamp": "2026-08-18T11:00:28Z"
+    },
+    {
+      "action": "verify",
+      "change_id": "chg-23ca51fe02ed",
+      "confidence": 1.0,
+      "evidence": [
+        "backend/app/services/issue_workflow_decision.py"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Backend enforces approval, rejection, force advancement, audit history, and successor release",
+      "subject": "arch://wegent/flow/issue-workflow-human-approval",
+      "timestamp": "2026-08-18T11:00:29Z"
+    },
+    {
+      "action": "verify",
+      "change_id": "chg-0f3ee2caf914",
+      "confidence": 1.0,
+      "evidence": [
+        "backend/app/services/delivery/service.py"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Task-attributed deliveries attach to their workflow node without completing the Issue",
+      "subject": "arch://wegent/contract/issue-workflow-stage-deliverables",
+      "timestamp": "2026-08-18T11:00:30Z"
+    },
+    {
+      "action": "verify",
+      "change_id": "chg-704cd511cc53",
+      "confidence": 1.0,
+      "evidence": [
+        "wework/src/features/todo/IssueWorkflowDag.tsx"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Issue detail exposes stable task re-entry plus human stage actions and status",
+      "subject": "arch://wegent/flow/issue-task-conversation-entry",
+      "timestamp": "2026-08-18T11:00:31Z"
+    },
+    {
+      "action": "observe",
+      "change_id": "chg-3bc1e8e28416",
+      "confidence": 1.0,
+      "evidence": [
+        "wework/test-results/desktop-e2e/2026-08-18T10-49-26-225Z-45591/ui-snapshot.json"
+      ],
+      "object": null,
+      "plane": "runtime",
+      "predicate": null,
+      "reason": "Real Tauri run showed a pending Issue with first human stage ready, required deliverable visible, upload action, and task start action",
+      "subject": "arch://wegent/flow/issue-workflow-human-approval",
+      "timestamp": "2026-08-18T11:00:32Z"
+    },
+    {
+      "action": "verify",
+      "change_id": "chg-d62b0de01916",
+      "confidence": 1.0,
+      "evidence": [
+        "backend/app/services/project_workflow_projection.py; backend/app/api/endpoints/deliveries.py; wework/src/api/deliveries.ts"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Runtime task status now uses one backend atomic command keyed by device_id:task_id instead of client whole-workflow read-modify-write.",
+      "subject": "arch://wegent/flow/issue-runtime-delivery-projection",
+      "timestamp": "2026-08-19T03:27:41Z"
+    },
+    {
+      "action": "verify",
+      "change_id": "chg-6c8060ab3739",
+      "confidence": 1.0,
+      "evidence": [
+        "backend/app/services/delivery/service.py; backend/app/services/loop_item_events.py; wework/src/api/backend/projectChatSocket.ts; wework/src/features/todo/CloudTodoWorkspace.tsx"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Delivery finalization publishes issue invalidation from the shared service boundary used by REST and MCP, and Wework refreshes the selected issue projection.",
+      "subject": "arch://wegent/flow/issue-runtime-delivery-projection",
+      "timestamp": "2026-08-19T03:27:42Z"
+    },
+    {
+      "action": "verify",
+      "change_id": "chg-122492931213",
+      "confidence": 1.0,
+      "evidence": [
+        "backend/tests/api/test_deliveries_api.py; backend/tests/services/test_issue_workflow_decision.py; wework/src/api/deliveries.test.ts; wework/src/api/backend/projectChatSocket.test.ts; wework/src/features/todo/issueWorkflow.test.ts"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Focused tests verify atomic task status projection, fulfillment gates, service-level delivery invalidation, socket subscription, and unknown-status semantics.",
+      "subject": "arch://wegent/flow/issue-runtime-delivery-projection",
+      "timestamp": "2026-08-19T03:27:42Z"
+    },
+    {
+      "action": "observe",
+      "change_id": "chg-c2927324b092",
+      "confidence": 1.0,
+      "evidence": [
+        "wework/test-results/desktop-e2e/2026-08-19T03-56-54-939Z-44828"
+      ],
+      "object": null,
+      "plane": "runtime",
+      "predicate": null,
+      "reason": "Real isolated Tauri project-automation checkpoint verified persisted deliverable configuration, unknown task status preserving awaiting approval, typed deliverable progress, and the approval action; the complete checkpoint passed.",
+      "subject": "arch://wegent/flow/issue-runtime-delivery-projection",
+      "timestamp": "2026-08-19T04:00:16Z"
+    }
+  ],
+  "created_at": "2026-08-18T10:21:04Z",
+  "id": "tx-b2f8768120a0",
+  "intent": "Implement human-governed Issue DAG stages with explicit task re-entry, required deliverables, runtime-backed node status, approval/rejection, and audited force advancement",
+  "merged_revision": "A00000030",
+  "read_set": [
+    "arch://wegent/flow/issue-runtime-delivery-projection",
+    "arch://wegent/flow/issue-runtime-project-space-binding",
+    "arch://wegent/flow/issue-task-conversation-entry",
+    "arch://wegent/flow/issue-workflow-board-entry"
+  ],
+  "resolutions": [
+    {
+      "by": "human",
+      "from": "A00000020",
+      "reason": "2026-08-19 用户确认先以独立 Runtime/Delivery 投影架构完成风险评审，再继续开发；吸收 A00000028 已合并的任务状态、交付与 UI 投影决策",
+      "timestamp": "2026-08-19T03:11:41Z",
+      "to": "A00000028"
+    }
+  ],
+  "status": "merged",
+  "updated_at": "2026-08-19T04:00:16Z",
+  "write_set": [
+    "arch://wegent/contract/issue-workflow-stage-deliverables",
+    "arch://wegent/flow/issue-runtime-delivery-projection",
+    "arch://wegent/flow/issue-runtime-project-space-binding",
+    "arch://wegent/flow/issue-task-conversation-entry",
+    "arch://wegent/flow/issue-workflow-board-entry",
+    "arch://wegent/flow/issue-workflow-human-approval"
+  ]
+}

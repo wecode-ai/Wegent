@@ -112,6 +112,7 @@ describe('ContextSettingsPage', () => {
 
     const input = await screen.findByTestId('context-compaction-threshold-input')
     expect(input).toHaveValue(85)
+    await waitFor(() => expect(input).toBeEnabled())
 
     await userEvent.clear(input)
     await userEvent.type(input, '90{Enter}')

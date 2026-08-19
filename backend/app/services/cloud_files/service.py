@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import tempfile
+from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import BinaryIO
 
@@ -21,6 +22,14 @@ from app.models.delivery import Delivery, DeliveryAsset, LoopItem
 from app.schemas.base_role import BaseRole
 from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.delivery.storage import DeliveryStorage, delivery_storage
+
+
+@dataclass(frozen=True)
+class ProjectDeliveryFile:
+    asset: DeliveryAsset
+    delivery: Delivery
+    item: LoopItem
+    item_path: tuple[LoopItem, ...]
 
 
 def normalize_cloud_path(value: str) -> str:
@@ -58,12 +67,12 @@ class CloudFileService:
 
     def list_delivery_files(
         self, db: Session, cloud_project_id: int, user_id: int
-    ) -> list[tuple[DeliveryAsset, Delivery, LoopItem]]:
+    ) -> list[ProjectDeliveryFile]:
         require_cloud_project_role(db, cloud_project_id, user_id)
         asset = aliased(DeliveryAsset)
         delivery = aliased(Delivery)
         item = aliased(LoopItem)
-        return (
+        rows = (
             db.query(asset, delivery, item)
             .join(delivery, delivery.id == asset.delivery_id)
             .join(item, item.id == delivery.loop_item_id)
@@ -78,6 +87,41 @@ class CloudFileService:
             )
             .all()
         )
+        project_items = (
+            db.query(LoopItem)
+            .filter(LoopItem.cloud_project_id == str(cloud_project_id))
+            .all()
+        )
+        item_by_id = {entry.id: entry for entry in project_items}
+        return [
+            ProjectDeliveryFile(
+                asset=entry_asset,
+                delivery=entry_delivery,
+                item=entry_item,
+                item_path=self._delivery_item_path(entry_item, item_by_id),
+            )
+            for entry_asset, entry_delivery, entry_item in rows
+        ]
+
+    @staticmethod
+    def _delivery_item_path(
+        item: LoopItem, item_by_id: dict[str, LoopItem]
+    ) -> tuple[LoopItem, ...]:
+        path: list[LoopItem] = []
+        visited: set[str] = set()
+        current: LoopItem | None = item
+        while current is not None:
+            if current.id in visited:
+                raise RuntimeError("Loop item hierarchy contains a cycle")
+            visited.add(current.id)
+            path.append(current)
+            if not current.parent_id:
+                break
+            current = item_by_id.get(current.parent_id)
+            if current is None:
+                raise RuntimeError("Loop item hierarchy is incomplete")
+        path.reverse()
+        return tuple(path)
 
     def create_folder(
         self,

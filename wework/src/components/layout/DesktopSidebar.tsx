@@ -3606,6 +3606,14 @@ export function DesktopSidebar({
     )
   }, [currentRuntimeTask, regularChatTaskItems])
   const displayedProjectsExpanded = projectsExpanded
+  const runtimeWorkCheck = cloudWorkStatus?.checks.runtimeWork
+  const showEmptyProjectCreateAction =
+    runtimeWork !== null &&
+    runtimeWork !== undefined &&
+    runtimeWorkCheck !== null &&
+    runtimeWorkCheck !== undefined &&
+    runtimeWorkCheck !== 'syncing' &&
+    sidebarProjects.length === 0
   const displayedChatsExpanded =
     chatsExpanded ||
     selectedRuntimeChatVisible ||
@@ -4342,7 +4350,15 @@ export function DesktopSidebar({
                       </div>,
                       document.body
                     )}
-                  {displayedProjectsExpanded && (
+                  {displayedProjectsExpanded && showEmptyProjectCreateAction && (
+                    <DesktopSidebarNavItem
+                      icon={Plus}
+                      label={t('workbench.new_project', '新建项目')}
+                      testId="projects-empty-create-button"
+                      onClick={openProjectCreateDialog}
+                    />
+                  )}
+                  {displayedProjectsExpanded && sidebarProjects.length > 0 && (
                     <SidebarSortableList
                       testId="runtime-project-sortable-list"
                       className="space-y-1"

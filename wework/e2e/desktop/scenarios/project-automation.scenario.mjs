@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { join } from 'node:path'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 
@@ -7,6 +8,7 @@ import {
   CHECKPOINT_TASK_PROMPT,
   DEFAULT_MODEL_ID,
   DEFAULT_MODEL_LABEL,
+  createSingleRootLocalProject,
   selectE2EModel,
   withTimeout,
 } from '../modules/shared.mjs'
@@ -42,6 +44,7 @@ const PROJECT = {
   project_key: 'AUTO',
   name: '自动化验收项目',
   description: 'Wework 项目自动化桌面验收',
+  project_store: 'backend',
   created_by_user_id: 9001,
   status: 'active',
   task_provider: 'local',
@@ -258,7 +261,7 @@ function assertExecutionTruthContract(execution) {
   }
 }
 
-export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
+export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspacePath }) {
   const rules = [RULE]
   const runs = [
     {
@@ -294,6 +297,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
   let cloudTeam = null
   let personalApiKey = null
   let managerToolCalls = 0
+  let uiProject = { ...PROJECT }
+  let nextBoardItemSequence = 201
+  let orchestratedItemId = null
+  let orchestratedMovePayload = null
+  let workflowTaskBindings = []
   let resolveFirstContinuationStarted
   let releaseFirstContinuation
   const firstContinuationStarted = new Promise(resolve => {
@@ -571,6 +579,127 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       timeoutMs: uiTimeoutMs,
     })
 
+    await control.command('click', '[data-testid="project-workflow-mode-workflow"]')
+    await control.command('click', '[data-testid="project-workflow-empty-add"]')
+    await control.command('fill', '[data-testid="project-workflow-stage-name-stage-1"]', {
+      value: '真实后端开发阶段',
+    })
+    await control.command('fill', '[data-testid="project-workflow-stage-prompt-stage-1"]', {
+      value: '实现 Issue 中描述的功能并完成验证。',
+    })
+    await control.command('clickWhenEnabled', '[data-testid="project-workflow-save"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    const persistedWorkflowProject = await waitForValue(
+      () => cloudRequest(`/api/v1/cloud-projects/${projectId}`),
+      project =>
+        project.workflow_definition?.nodes?.some(
+          node =>
+            node.id === 'stage-1' &&
+            node.name === '真实后端开发阶段' &&
+            node.workspace_policy === 'composer' &&
+            node.automation_rule_id === null
+        ),
+      'The workflow definition was not persisted by the real backend',
+      uiTimeoutMs
+    )
+    assert.equal(persistedWorkflowProject.workflow_definition.stage_mode, 'dag')
+    assert.equal(persistedWorkflowProject.workflow_definition.advancement_policy, 'manual')
+
+    await control.command('click', '[data-testid="cloud-project-board-view"]')
+    if ((await control.command('getElementCount', '[data-testid="cloud-todo-detail-close"]')) > 0) {
+      await control.command('click', '[data-testid="cloud-todo-detail-close"]')
+    }
+    await control.command('click', `${activeBoard} [data-testid="cloud-todo-add"]`)
+    await control.command('waitFor', `${activeBoard} [data-testid="workspace-issue-input"]`, {
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('fill', `${activeBoard} [data-testid="workspace-issue-input"]`, {
+      value: '真实后端阶段任务绑定',
+    })
+    await control.command('click', `${activeBoard} [data-testid="workspace-issue-submit"]`)
+    await control.command('waitFor', `${activeBoard} [data-testid="cloud-todo-detail-title"]`, {
+      text: '真实后端阶段任务绑定',
+      timeoutMs: uiTimeoutMs,
+    })
+    const workflowIssue = await waitForValue(
+      () => cloudRequest(`/api/v1/cloud-projects/${projectId}/loop-items`),
+      response =>
+        (response.items ?? []).find(item => item.title === '真实后端阶段任务绑定')?.workflow
+          ?.nodes?.[0]?.status === 'ready',
+      'The UI-created Issue did not persist its workflow snapshot',
+      uiTimeoutMs
+    ).then(response => response.items.find(item => item.title === '真实后端阶段任务绑定'))
+    assert.equal(workflowIssue.workflow?.nodes?.[0]?.id, 'stage-1')
+    await control.command('waitFor', '[data-testid="cloud-todo-create-workflow-task-stage-1"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('click', '[data-testid="cloud-todo-create-workflow-task-stage-1"]')
+    await control.command('waitFor', '[data-testid="ai-chat-modal"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    const issueComposerSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+    await control.command(
+      'waitFor',
+      '[data-testid="ai-chat-modal"] [data-testid="project-work-button"]',
+      { timeoutMs: uiTimeoutMs }
+    )
+    await control.command(
+      'click',
+      '[data-testid="ai-chat-modal"] [data-testid="project-work-button"]'
+    )
+    await control.command('waitFor', '[data-testid="project-options-list"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    const projectMenuSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+    const selectedProjectTestId = projectMenuSnapshot.testIds.find(testId =>
+      testId.startsWith('project-selected-icon-')
+    )
+    const selectedProjectId = selectedProjectTestId?.slice('project-selected-icon-'.length)
+    const targetProjectTestId = projectMenuSnapshot.testIds.find(
+      testId =>
+        testId.startsWith('project-option-') &&
+        testId !== `project-option-${selectedProjectId ?? ''}`
+    )
+    assert.ok(
+      targetProjectTestId,
+      'Issue task composer requires another runtime project for project-switch regression coverage'
+    )
+    await control.command('click', `[data-testid="${targetProjectTestId}"]`)
+    await control.command('waitFor', '[data-testid="ai-chat-modal"]', {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    const switchedComposerSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+    assert.equal(
+      switchedComposerSnapshot.location,
+      issueComposerSnapshot.location,
+      'Switching the Issue task runtime project navigated away from the board'
+    )
+    assert.ok(
+      switchedComposerSnapshot.testIds.includes('ai-chat-modal'),
+      'Switching the Issue task runtime project closed the right-side composer'
+    )
+    const workflowTaskInput = '[data-testid="ai-chat-modal"] [data-testid="chat-message-input"]'
+    await control.command('fill', workflowTaskInput, {
+      value: '执行真实后端阶段任务绑定验证',
+    })
+    await control.command('press', workflowTaskInput, { key: 'Enter' })
+    const workflowBindings = await waitForValue(
+      () => cloudRequest(`/api/v1/loop-items/${workflowIssue.id}/tasks`),
+      bindings => bindings.some(binding => binding.workflow_node_id === 'stage-1'),
+      'The created task was not persisted against workflow stage-1',
+      uiTimeoutMs * 2
+    )
+    assert.ok(workflowBindings.some(binding => binding.workflow_node_id === 'stage-1'))
+    await captureScreenshot(control, 'project-automation-00-real-workflow-task-binding.png')
+    await control.command('click', '[data-testid="ai-chat-modal-close"]')
+    await control.command('click', '[data-testid="cloud-todo-detail-close"]')
+    await control.command('click', '[data-testid="cloud-project-automation-view"]')
+    await control.command('waitFor', '[data-testid="project-automation-rules"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+
     await control.command('click', '[data-testid="project-automation-create"]')
     await control.command('fill', '[data-testid="project-automation-name"]', {
       value: '凌晨回归扫描',
@@ -677,7 +806,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       timeoutMs: uiTimeoutMs,
       visible: true,
     })
-    await control.command('click', `[data-testid="cloud-project-chat-agent-${cloudAgent.id}"]`, {
+    const cloudAgentSelector = `${activeBoard} [data-testid="cloud-project-chat-agent-${cloudAgent.id}"]`
+    await control.command('scrollIntoView', cloudAgentSelector)
+    await control.command('waitFor', cloudAgentSelector, {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('click', cloudAgentSelector, {
       visible: true,
     })
     assert.equal(
@@ -1149,7 +1284,19 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         return true
       }
       if (request.method === 'GET' && url.pathname === '/api/v1/cloud-projects') {
-        json(response, 200, { items: [PROJECT] })
+        json(response, 200, { items: [uiProject] })
+        return true
+      }
+      if (request.method === 'PATCH' && url.pathname === `/api/v1/cloud-projects/${PROJECT_ID}`) {
+        const payload = await readJson(request)
+        assert.equal(payload.version, uiProject.version)
+        uiProject = {
+          ...uiProject,
+          ...payload,
+          version: uiProject.version + 1,
+          updated_at: '2026-08-18T08:40:00Z',
+        }
+        json(response, 200, uiProject)
         return true
       }
       if (
@@ -1160,14 +1307,50 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         return true
       }
       if (
+        request.method === 'GET' &&
+        url.pathname === `/api/v1/loop-items/${orchestratedItemId}/tasks`
+      ) {
+        json(response, 200, workflowTaskBindings)
+        return true
+      }
+      if (
         request.method === 'POST' &&
         url.pathname === `/api/v1/cloud-projects/${PROJECT_ID}/loop-items`
       ) {
         const payload = await readJson(request)
+        const workflowDefinition = uiProject.workflow_definition
+        const stageMode =
+          workflowDefinition?.stage_mode ?? (workflowDefinition?.nodes?.length > 0 ? 'dag' : 'none')
+        const advancementPolicy = workflowDefinition?.advancement_policy ?? 'manual'
+        const workflow =
+          workflowDefinition && (stageMode === 'dag' || advancementPolicy === 'ai')
+            ? {
+                version: 1,
+                definition_version: workflowDefinition.version,
+                stage_mode: stageMode,
+                advancement_policy: advancementPolicy,
+                coordinator_prompt: workflowDefinition.coordinator_prompt ?? '',
+                ai_automation_rule_id: workflowDefinition.ai_automation_rule_id ?? null,
+                nodes:
+                  stageMode === 'dag'
+                    ? workflowDefinition.nodes.map(node => ({
+                        ...node,
+                        status: node.depends_on.length === 0 ? 'ready' : 'blocked',
+                        task_binding_id: null,
+                        task_ids: [],
+                        task_statuses: {},
+                        execution_id: null,
+                        automation_run_id: null,
+                      }))
+                    : [],
+              }
+            : null
+        const sequenceNumber = nextBoardItemSequence
+        nextBoardItemSequence += 1
         createdBoardItem = {
-          id: 'AUTO-201',
+          id: `AUTO-${sequenceNumber}`,
           cloud_project_id: PROJECT_ID,
-          sequence_number: 201,
+          sequence_number: sequenceNumber,
           parent_id: null,
           created_by_user_id: 9001,
           assignee_user_id: 9001,
@@ -1185,12 +1368,26 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
           created_at: '2026-08-15T00:00:00Z',
           updated_at: '2026-08-15T00:00:00Z',
           completed_at: null,
+          workflow,
+        }
+        if (payload.title === '预置流程直接开始') {
+          assert.ok(
+            workflow,
+            `Preset workflow fixture did not snapshot orchestration: ${JSON.stringify(workflowDefinition)}`
+          )
+          orchestratedItemId = createdBoardItem.id
         }
         json(response, 201, createdBoardItem)
         return true
       }
-      if (request.method === 'PATCH' && url.pathname === '/api/v1/loop-items/AUTO-201') {
+      const boardItemPatchMatch = url.pathname.match(/^\/api\/v1\/loop-items\/(AUTO-\d+)$/)
+      if (
+        request.method === 'PATCH' &&
+        boardItemPatchMatch &&
+        boardItemPatchMatch[1] === createdBoardItem?.id
+      ) {
         const payload = await readJson(request)
+        if (createdBoardItem.id === orchestratedItemId) orchestratedMovePayload = payload
         createdBoardItem = {
           ...createdBoardItem,
           ...payload,
@@ -1198,6 +1395,16 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
           updated_at: '2026-08-15T00:01:00Z',
         }
         json(response, 200, createdBoardItem)
+        return true
+      }
+      if (
+        request.method === 'POST' &&
+        url.pathname === `/api/v1/cloud-projects/${PROJECT_ID}/loop-items/reorder`
+      ) {
+        const payload = await readJson(request)
+        assert.equal(payload.status, createdBoardItem?.status)
+        assert.ok(payload.item_ids.includes(createdBoardItem?.id))
+        json(response, 200, { items: createdBoardItem ? [createdBoardItem] : [] })
         return true
       }
       if (
@@ -1384,6 +1591,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
     async verify(control) {
       await ensureExperimentalFeaturesEnabled(control)
       if (cloudApi) {
+        await createSingleRootLocalProject(control, workspacePath, 'project-automation-primary')
+        await createSingleRootLocalProject(
+          control,
+          join(workspacePath, '..', 'secondary-project-root'),
+          'project-automation-secondary'
+        )
         await verifyRealCloud(control)
         return
       }
@@ -1453,17 +1666,24 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       assert.equal(boardTeamAssignmentPayload?.assigneeType, 'team')
       assert.equal(boardTeamAssignmentPayload?.assigneeId, String(TEAM_ID))
       await captureScreenshot(control, 'project-automation-board-team-assignment.png')
-      await control.command('waitFor', '[data-testid="cloud-project-ask-ai"]', {
-        timeoutMs: uiTimeoutMs,
+      await control.command('click', `${activeBoard} [data-testid="cloud-todo-detail-close"]`, {
+        visible: true,
       })
-      await control.command('click', '[data-testid="cloud-project-ask-ai"]')
-      await control.command('waitFor', '[data-testid="project-space-chat-panel"]', {
+      await control.command('waitFor', `${activeBoard} [data-testid="cloud-project-ask-ai"]`, {
         timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await control.command('click', `${activeBoard} [data-testid="cloud-project-ask-ai"]`, {
+        visible: true,
       })
 
-      const projectChatInput =
-        '[data-testid="project-space-chat-panel"] [data-testid="chat-message-input"]'
-      const projectChatPanel = '[data-testid="project-space-chat-panel"]'
+      const projectChatSidebar = '[data-testid="project-space-chat-sidebar"]'
+      const projectChatPanel = `${projectChatSidebar} [data-testid="project-space-chat-panel"]`
+      const projectChatInput = `${projectChatPanel} [data-testid="chat-message-input"]`
+      await control.command('waitFor', projectChatPanel, {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
       await selectE2EModel(
         control,
         PROJECT_CHAT_REMOTE_MODEL_NAME,
@@ -1471,25 +1691,37 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         projectChatPanel
       )
       const remoteRequestCount = remoteProjectChatRequests.length
-      await control.command('fill', projectChatInput, { value: CHECKPOINT_TASK_PROMPT })
-      await control.command('press', projectChatInput, { key: 'Enter' })
+      await control.command('fill', projectChatInput, {
+        value: CHECKPOINT_TASK_PROMPT,
+        visible: true,
+      })
+      await control.command('press', projectChatInput, { key: 'Enter', visible: true })
       await waitForValue(
         () => Promise.resolve(remoteProjectChatRequests.length),
         count => count === remoteRequestCount + 1,
         'The Backend remote model did not receive the project-chat request',
         uiTimeoutMs
       )
-      await control.command('waitFor', '[data-testid="project-space-chat-panel"]', {
+      await control.command('waitFor', projectChatPanel, {
         text: CHECKPOINT_TASK_COMPLETION_TEXT,
         timeoutMs: uiTimeoutMs,
+        visible: true,
       })
 
-      await control.command('click', '[data-testid="project-space-chat-new"]')
+      const projectChatNew = `${projectChatSidebar} [data-testid="project-space-chat-new"]`
+      await control.command('waitFor', projectChatNew, {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await control.command('click', projectChatNew, { visible: true })
       await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL, projectChatPanel)
       control.setScenario('checkpoint_task')
       const localRequest = control.awaitScenarioRequest('checkpoint_task')
-      await control.command('fill', projectChatInput, { value: CHECKPOINT_TASK_PROMPT })
-      await control.command('press', projectChatInput, { key: 'Enter' })
+      await control.command('fill', projectChatInput, {
+        value: CHECKPOINT_TASK_PROMPT,
+        visible: true,
+      })
+      await control.command('press', projectChatInput, { key: 'Enter', visible: true })
       const localModelRequest = await withTimeout(
         localRequest,
         uiTimeoutMs,
@@ -1499,44 +1731,520 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         typeof localModelRequest.body.model === 'string' && localModelRequest.body.model.length > 0,
         'Project chat did not execute through the local Codex model server'
       )
-      await control.command('waitFor', '[data-testid="project-space-chat-panel"]', {
+      await control.command('waitFor', projectChatPanel, {
         text: CHECKPOINT_TASK_COMPLETION_TEXT,
         timeoutMs: uiTimeoutMs,
+        visible: true,
       })
       await captureScreenshot(control, 'project-chat-model-routing.png')
-      await control.command('click', '[data-testid="project-space-chat-close"]')
+      await control.command(
+        'click',
+        `${projectChatSidebar} [data-testid="project-space-chat-close"]`,
+        {
+          visible: true,
+        }
+      )
 
-      await control.command('waitFor', '[data-testid="cloud-project-automation-view"]', {
-        timeoutMs: uiTimeoutMs,
-      })
+      await control.command(
+        'waitFor',
+        `${activeBoard} [data-testid="cloud-project-automation-view"]`,
+        {
+          timeoutMs: uiTimeoutMs,
+          visible: true,
+        }
+      )
       const modelDeadline = Date.now() + uiTimeoutMs
       while (modelRequests === 0 && Date.now() < modelDeadline) {
         await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
       }
       assert.ok(modelRequests >= 1, 'cloud model catalog did not load before the automation view')
-      await control.command('click', '[data-testid="cloud-project-automation-view"]')
-      await control.command('waitFor', '[data-testid="project-automation-view"]', {
+      await control.command(
+        'click',
+        `${activeBoard} [data-testid="cloud-project-automation-view"]`,
+        { visible: true }
+      )
+      await control.command('waitFor', `${activeBoard} [data-testid="project-automation-view"]`, {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      const activeWorkflow = `${activeBoard} [data-testid="project-workflow-editor"]`
+      await control.command('waitFor', `${activeBoard} [data-testid="project-automation-rules"]`, {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      assert.match(
+        await control.command(
+          'getAttribute',
+          `${activeWorkflow} [data-testid="project-workflow-save"]`,
+          { value: 'class' }
+        ),
+        /\bbg-text-primary\b/,
+        'The workflow save action did not use the visible Wework primary color'
+      )
+      await control.command(
+        'click',
+        `${activeWorkflow} [data-testid="project-workflow-mode-workflow"]`
+      )
+      await control.command('click', `${activeWorkflow} [data-testid="project-workflow-empty-add"]`)
+      await control.command(
+        'waitFor',
+        `${activeWorkflow} [data-testid="project-workflow-stage-executor-human-stage-1"]`,
+        { timeoutMs: uiTimeoutMs }
+      )
+      await control.command(
+        'waitFor',
+        `${activeWorkflow} [data-testid="project-workflow-insert-after-stage-1"]`,
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      const selectedStageSnapshot = JSON.parse(
+        await control.command('snapshot', `${activeWorkflow} [data-testid="project-workflow-dag"]`)
+      )
+      assert.ok(
+        selectedStageSnapshot.testIds.includes('project-workflow-insert-before-stage-1'),
+        'The selected workflow stage did not expose its predecessor insertion control'
+      )
+      assert.ok(
+        selectedStageSnapshot.testIds.includes('project-workflow-insert-after-stage-1'),
+        'The selected workflow stage did not expose its successor insertion control'
+      )
+      await control.command(
+        'click',
+        `${activeWorkflow} [data-testid="project-workflow-insert-after-stage-1"]`
+      )
+      await control.command(
+        'waitFor',
+        `${activeWorkflow} [data-testid="project-workflow-stage-stage-2"]`,
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      const insertedStageSnapshot = JSON.parse(
+        await control.command('snapshot', `${activeWorkflow} [data-testid="project-workflow-dag"]`)
+      )
+      assert.ok(
+        insertedStageSnapshot.testIds.includes('project-workflow-insert-after-stage-2'),
+        'The inserted workflow stage did not become selected'
+      )
+      assert.equal(
+        insertedStageSnapshot.testIds.includes('project-workflow-insert-after-stage-1'),
+        false,
+        'Insertion controls remained visible on an unselected workflow stage'
+      )
+      await control.command(
+        'press',
+        `${activeWorkflow} [data-testid="project-workflow-edge-stage-1-stage-2"]`,
+        { key: 'Enter' }
+      )
+      await control.command(
+        'press',
+        `${activeWorkflow} [data-testid="project-workflow-edge-stage-1-stage-2"]`,
+        { key: 'Delete' }
+      )
+      await control.command(
+        'waitFor',
+        `${activeWorkflow} [data-testid="project-workflow-edge-stage-1-stage-2"]`,
+        {
+          visible: false,
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await control.command(
+        'waitFor',
+        `${activeWorkflow} [data-testid="project-workflow-stage-stage-1"]`,
+        { timeoutMs: uiTimeoutMs }
+      )
+      await control.command(
+        'waitFor',
+        `${activeWorkflow} [data-testid="project-workflow-stage-stage-2"]`,
+        { timeoutMs: uiTimeoutMs }
+      )
+      await control.command(
+        'clickThenMacrotask',
+        `${activeWorkflow} [data-testid="project-workflow-stage-stage-1"]`,
+        {
+          target: `${activeWorkflow} [data-testid="project-workflow-insert-after-stage-1"]`,
+        }
+      )
+      await control.command(
+        'waitFor',
+        `${activeWorkflow} [data-testid="project-workflow-stage-stage-3"]`,
+        { timeoutMs: uiTimeoutMs }
+      )
+      await control.command(
+        'press',
+        `${activeWorkflow} [data-testid="project-workflow-edge-stage-1-stage-3"]`,
+        { key: 'Enter' }
+      )
+      await control.command(
+        'click',
+        `${activeWorkflow} [data-testid="project-workflow-stage-stage-3"]`
+      )
+      await control.command(
+        'press',
+        `${activeWorkflow} [data-testid="project-workflow-stage-stage-3"]`,
+        { key: 'Backspace' }
+      )
+      await control.command(
+        'waitFor',
+        `${activeWorkflow} [data-testid="project-workflow-stage-stage-3"]`,
+        {
+          visible: false,
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await control.command(
+        'waitFor',
+        `${activeWorkflow} [data-testid="project-workflow-stage-stage-1"]`,
+        { timeoutMs: uiTimeoutMs }
+      )
+      await control.command(
+        'click',
+        `${activeWorkflow} [data-testid="project-workflow-stage-stage-1"]`
+      )
+      await control.command(
+        'waitFor',
+        `${activeWorkflow} [data-testid="project-workflow-stage-executor-human-stage-1"]`,
+        { timeoutMs: uiTimeoutMs }
+      )
+      const stageInspectorSnapshot = JSON.parse(
+        await control.command(
+          'snapshot',
+          `${activeWorkflow} [data-testid="project-workflow-inspector-stage-1"]`
+        )
+      )
+      assert.equal(
+        stageInspectorSnapshot.testIds.includes('project-workflow-stage-automation-stage-1'),
+        false,
+        'The human execution choice should not show a robot selector'
+      )
+      await control.command(
+        'click',
+        `${activeWorkflow} [data-testid="project-workflow-stage-executor-robot-stage-1"]`
+      )
+      await control.command(
+        'waitFor',
+        `${activeWorkflow} [data-testid="project-workflow-stage-automation-stage-1"]`,
+        { text: AGENT.name, timeoutMs: uiTimeoutMs }
+      )
+      assert.equal(
+        await control.command(
+          'getValue',
+          `${activeWorkflow} [data-testid="project-workflow-stage-workspace-stage-1"]`
+        ),
+        'composer',
+        'Selecting robot execution must preserve the stage workspace contract'
+      )
+      await control.command(
+        'click',
+        `${activeWorkflow} [data-testid="project-workflow-stage-add-robot"]`
+      )
+      await control.command('waitFor', '[data-testid="cloud-project-chat-agent-editor"]', {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await captureScreenshot(control, 'project-automation-00-workflow-robot-executor.png')
+      await control.command('click', '[data-testid="cloud-project-chat-agent-cancel"]', {
+        visible: true,
+      })
+      await control.command(
+        'click',
+        `${activeWorkflow} [data-testid="project-workflow-stage-stage-1"]`
+      )
+      await control.command(
+        'click',
+        `${activeWorkflow} [data-testid="project-workflow-add-deliverable-stage-1"]`
+      )
+      await control.command(
+        'fill',
+        '[data-testid="workflow-deliverable-requirement-name-deliverable-1"]',
+        {
+          value: '测试报告',
+        }
+      )
+      await control.command(
+        'select',
+        '[data-testid="workflow-deliverable-requirement-type-deliverable-1"]',
+        {
+          value: 'text',
+        }
+      )
+      await control.command('click', '[data-testid="workflow-deliverable-requirements-save"]')
+      await waitForValue(
+        () => Promise.resolve(uiProject.workflow_definition?.nodes?.[0]?.required_deliverables),
+        requirements =>
+          requirements?.some(
+            requirement =>
+              requirement.id === 'deliverable-1' &&
+              requirement.name === '测试报告' &&
+              requirement.value_type === 'text'
+          ),
+        'The deliverable requirement was not persisted by the project update',
+        uiTimeoutMs
+      )
+      await control.command('waitFor', `${activeWorkflow} [data-testid="project-workflow-save"]`, {
+        enabled: true,
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('waitFor', '[data-testid="project-automation-rules"]', {
+      uiProject = {
+        ...uiProject,
+        workflow_definition: {
+          version: 1,
+          stage_mode: 'dag',
+          advancement_policy: 'manual',
+          coordinator_prompt: '',
+          ai_automation_rule_id: null,
+          nodes: [
+            {
+              id: 'stage-1',
+              name: '新阶段 1',
+              prompt: '',
+              depends_on: [],
+              dependency_context: {},
+              required: true,
+              required_deliverables: [
+                {
+                  id: 'deliverable-1',
+                  name: '测试报告',
+                  description: '',
+                  value_type: 'text',
+                  file_constraints: null,
+                },
+              ],
+              workspace_policy: 'composer',
+              automation_rule_id: null,
+            },
+            {
+              id: 'stage-3',
+              name: '新阶段 3',
+              prompt: '',
+              depends_on: ['stage-1'],
+              dependency_context: {},
+              required: true,
+              required_deliverables: [],
+              workspace_policy: 'composer',
+              automation_rule_id: null,
+            },
+            {
+              id: 'stage-2',
+              name: '新阶段 2',
+              prompt: '',
+              depends_on: ['stage-3'],
+              dependency_context: {},
+              required: true,
+              required_deliverables: [],
+              workspace_policy: 'composer',
+              automation_rule_id: null,
+            },
+          ],
+        },
+      }
+      await control.command('click', `${activeBoard} [data-testid="cloud-project-board-view"]`)
+      await control.command('click', `${activeBoard} [data-testid="cloud-todo-add"]`)
+      await control.command('fill', `${activeBoard} [data-testid="workspace-issue-input"]`, {
+        value: '预置流程直接开始',
+      })
+      await control.command('click', `${activeBoard} [data-testid="workspace-issue-submit"]`)
+      const createdOrchestratedItemId = await waitForValue(
+        () => Promise.resolve(orchestratedItemId),
+        Boolean,
+        'Preset workflow Issue was not created',
+        uiTimeoutMs
+      )
+      await control.command('waitFor', `${activeBoard} [data-testid="cloud-todo-detail-title"]`, {
+        text: '预置流程直接开始',
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('click', '[data-testid="project-automation-create"]')
+      await control.command('click', `${activeBoard} [data-testid="cloud-todo-detail-close"]`)
+      workflowTaskBindings = [
+        {
+          id: 9103,
+          cloud_project_id: PROJECT_ID,
+          loop_item_id: orchestratedItemId,
+          task_user_id: 9001,
+          device_id: 'local-device',
+          task_id: 'workflow-task-3',
+          task_title: '刚创建，状态尚未同步',
+          backend_task_id: null,
+          workflow_node_id: 'stage-1',
+          linked_by_user_id: 9001,
+          linked_at: '2026-08-18T08:43:00Z',
+          unlinked_at: null,
+        },
+        {
+          id: 9102,
+          cloud_project_id: PROJECT_ID,
+          loop_item_id: orchestratedItemId,
+          task_user_id: 9001,
+          device_id: 'local-device',
+          task_id: 'workflow-task-2',
+          task_title: '第二次执行',
+          backend_task_id: null,
+          workflow_node_id: 'stage-1',
+          linked_by_user_id: 9001,
+          linked_at: '2026-08-18T08:42:00Z',
+          unlinked_at: null,
+        },
+        {
+          id: 9101,
+          cloud_project_id: PROJECT_ID,
+          loop_item_id: orchestratedItemId,
+          task_user_id: 9001,
+          device_id: 'local-device',
+          task_id: 'workflow-task-1',
+          task_title: '第一次执行',
+          backend_task_id: null,
+          workflow_node_id: 'stage-1',
+          linked_by_user_id: 9001,
+          linked_at: '2026-08-18T08:41:00Z',
+          unlinked_at: null,
+        },
+      ]
+      createdBoardItem = {
+        ...createdBoardItem,
+        workflow: {
+          ...createdBoardItem.workflow,
+          version: createdBoardItem.workflow.version + 1,
+          nodes: createdBoardItem.workflow.nodes.map(node =>
+            node.id === 'stage-1'
+              ? {
+                  ...node,
+                  status: 'awaiting_approval',
+                  task_ids: [
+                    'local-device:workflow-task-3',
+                    'local-device:workflow-task-2',
+                    'local-device:workflow-task-1',
+                  ],
+                  task_statuses: {
+                    'local-device:workflow-task-2': 'succeeded',
+                    'local-device:workflow-task-1': 'failed',
+                  },
+                }
+              : node
+          ),
+        },
+      }
+      await control.command(
+        'drag',
+        `${activeBoard} [data-testid="cloud-todo-card-${createdOrchestratedItemId}"]`,
+        {
+          target: `${activeBoard} [data-testid="cloud-todo-column-dropzone-pending"]`,
+        }
+      )
+      await waitForValue(
+        () => Promise.resolve(orchestratedMovePayload),
+        payload => payload?.status === 'pending',
+        'Preset workflow drag did not move the Issue directly to Pending',
+        uiTimeoutMs
+      )
+      const boardAfterOrchestratedMove = JSON.parse(await control.command('snapshot', activeBoard))
+      assert.equal(
+        boardAfterOrchestratedMove.testIds.includes('ai-chat-modal'),
+        false,
+        'Preset workflow drag opened the manual task Composer'
+      )
+      await control.command(
+        'waitFor',
+        `${activeBoard} [data-testid="cloud-todo-workflow-action-stage-1"]`,
+        {
+          text: '人工执行 · 待人工批准',
+          timeoutMs: uiTimeoutMs,
+          visible: true,
+        }
+      )
+      await control.command(
+        'waitFor',
+        `${activeBoard} [data-testid="cloud-todo-workflow-task-status-stage-1-9103"]`,
+        {
+          text: '等待执行',
+          timeoutMs: uiTimeoutMs,
+          visible: true,
+        }
+      )
+      await control.command(
+        'waitFor',
+        `${activeBoard} [data-testid="cloud-todo-workflow-task-status-stage-1-9102"]`,
+        {
+          text: '成功',
+          timeoutMs: uiTimeoutMs,
+          visible: true,
+        }
+      )
+      await control.command(
+        'waitFor',
+        `${activeBoard} [data-testid="cloud-todo-workflow-task-status-stage-1-9101"]`,
+        {
+          text: '失败',
+          timeoutMs: uiTimeoutMs,
+          visible: true,
+        }
+      )
+      await control.command(
+        'waitFor',
+        `${activeBoard} [data-testid="cloud-todo-workflow-action-stage-1"]`,
+        {
+          text: '测试报告',
+          timeoutMs: uiTimeoutMs,
+          visible: true,
+        }
+      )
+      await control.command(
+        'waitFor',
+        `${activeBoard} [data-testid="cloud-todo-approve-workflow-node-stage-1"]`,
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await captureScreenshot(control, 'project-automation-00-workflow-task-statuses.png')
+      await control.command(
+        'waitFor',
+        `${activeBoard} [data-testid="cloud-project-automation-view"]`,
+        {
+          timeoutMs: uiTimeoutMs,
+          visible: true,
+        }
+      )
+      await control.command(
+        'click',
+        `${activeBoard} [data-testid="cloud-project-automation-view"]`,
+        {
+          visible: true,
+        }
+      )
+      await control.command('waitFor', `${activeBoard} [data-testid="project-automation-view"]`, {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await control.command('click', '[data-testid="project-automation-create"]', {
+        visible: true,
+      })
       await control.command('fill', '[data-testid="project-automation-name"]', {
         value: '凌晨回归扫描',
+        visible: true,
       })
       await control.command('fill', '[data-testid="project-automation-prompt"]', {
         value: '扫描回归 Bug，并为每个 Bug 创建独立修复任务。',
+        visible: true,
       })
-      await control.command('click', '[data-testid="project-automation-agent"]')
-      await control.command('click', `[data-testid="project-automation-agent-option-${AGENT_ID}"]`)
+      await control.command('click', '[data-testid="project-automation-agent"]', {
+        visible: true,
+      })
+      await control.command(
+        'click',
+        `[data-testid="project-automation-agent-option-${AGENT_ID}"]`,
+        { visible: true }
+      )
       await captureScreenshot(control, 'project-automation-00-create-dialog.png')
-      await control.command('click', '[data-testid="project-automation-save"]')
+      await control.command('click', '[data-testid="project-automation-save"]', {
+        visible: true,
+      })
       await control.command(
         'waitFor',
         '[data-testid="project-automation-rule-automation-rule-created"]',
         {
           timeoutMs: uiTimeoutMs,
+          visible: true,
         }
       )
       assert.equal(createdPayloads[0]?.name, '凌晨回归扫描')
@@ -1634,15 +2342,20 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       assert.equal(retryRequested, true)
       await captureScreenshot(control, 'project-automation-04-retried-run.png')
       await control.command('click', '[data-testid="cloud-todo-modal-close"]', { visible: true })
+      await control.command('click', '[data-testid="cloud-todo-detail-close"]', { visible: true })
       await control.command('click', '[data-testid="cloud-project-automation-view"]', {
+        visible: true,
+      })
+      await control.command('scrollIntoView', '[data-testid="cloud-project-chat-agents"]', {
         visible: true,
       })
       await control.command('waitFor', '[data-testid="cloud-project-chat-agents"]', {
         timeoutMs: uiTimeoutMs,
-        visible: true,
       })
 
-      await control.command('scrollIntoView', '[data-testid="cloud-project-chat-agent-add"]')
+      await control.command('scrollIntoView', '[data-testid="cloud-project-chat-agent-add"]', {
+        visible: true,
+      })
       await control.command('click', '[data-testid="cloud-project-chat-agent-add"]', {
         visible: true,
       })
@@ -1681,13 +2394,18 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         ),
         'unselected'
       )
+      await control.command('waitFor', '[data-testid="cloud-project-chat-agent-device"]', {
+        text: 'local-device',
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
       assert.equal(
         await control.command(
           'getAttribute',
           '[data-testid="cloud-project-chat-agent-device"] [data-selection-state]',
           { value: 'data-selection-state', visible: true }
         ),
-        'unselected'
+        'selected'
       )
       assert.equal(
         await control.command(
@@ -1712,19 +2430,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         value: '回归巡检机器人',
         visible: true,
       })
-      await control.command('click', '[data-testid="cloud-project-chat-agent-device"]', {
-        visible: true,
-      })
-      await control.command('waitFor', '[data-testid="cloud-project-chat-agent-device-menu"]', {
-        text: 'local-device',
-        timeoutMs: uiTimeoutMs,
-        visible: true,
-      })
-      await control.command(
-        'click',
-        '[data-testid="cloud-project-chat-agent-device-option-local-device"]',
-        { visible: true }
-      )
       const saveWithoutModel = await control.command(
         'getAttribute',
         '[data-testid="cloud-project-chat-agent-save"]',
@@ -1794,6 +2499,53 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       assert.equal(templateCapability, '编写代码、修复问题并完成必要验证')
       assert.match(templatePrompt ?? '', /完成被指派的开发任务/)
       await captureScreenshot(control, 'project-automation-08-robot-template-dialog.png')
+      await control.command('click', '[data-testid="cloud-project-chat-agent-cancel"]', {
+        visible: true,
+      })
+      await control.command(
+        'click',
+        `${activeBoard} [data-testid="cloud-project-automation-view"]`,
+        { visible: true }
+      )
+      await control.command('waitFor', `${activeBoard} [data-testid="project-automation-view"]`, {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      const activeFinalWorkflow = `${activeBoard} [data-testid="project-workflow-editor"]`
+      const workflowSaveSelector = `${activeFinalWorkflow} [data-testid="project-workflow-save"]`
+      assert.match(
+        await control.command('getAttribute', workflowSaveSelector, {
+          value: 'class',
+        }),
+        /\bbg-text-primary\b/,
+        'The workflow save action did not use the visible Wework primary color'
+      )
+      await control.command(
+        'waitFor',
+        `${activeFinalWorkflow} [data-testid="project-workflow-stage-stage-1"]`,
+        { timeoutMs: uiTimeoutMs }
+      )
+      await control.command('waitFor', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
+        visible: true,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
+        visible: true,
+      })
+      await control.command(
+        'click',
+        `${activeBoard} [data-testid="cloud-project-automation-view"]`,
+        { visible: true }
+      )
+      const persistedStageSelector = `${activeBoard} [data-testid="project-workflow-stage-stage-1"]`
+      await control.command('waitFor', persistedStageSelector, {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('scrollIntoView', persistedStageSelector)
+      await control.command('waitFor', persistedStageSelector, {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
     },
 
     diagnostics() {

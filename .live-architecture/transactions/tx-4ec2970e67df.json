@@ -1,0 +1,79 @@
+{
+  "actor": {
+    "id": "codex",
+    "kind": "ai"
+  },
+  "authority": "ai",
+  "base_revision": "A00000017",
+  "changes": [
+    {
+      "action": "observe",
+      "change_id": "chg-56e8c9b39448",
+      "confidence": 1.0,
+      "evidence": [
+        "/Users/hongyu9/.wework/workspace/attachments/draft/1787047353958/image.png"
+      ],
+      "object": null,
+      "plane": "runtime",
+      "predicate": null,
+      "reason": "Runtime 已在思考，但人工阶段仍显示排队中，证明阶段归属未进入状态投影",
+      "subject": "arch://wegent/flow/issue-runtime-project-space-binding",
+      "timestamp": "2026-08-18T10:04:43Z"
+    },
+    {
+      "action": "update",
+      "change_id": "chg-421605d28a93",
+      "confidence": 1.0,
+      "evidence": [
+        "docs/zh/architecture/issue-task-workflow.md"
+      ],
+      "object": null,
+      "plane": "model",
+      "predicate": null,
+      "reason": "Runtime Task 云上下文必须显式携带绑定的 workflow_node_id",
+      "subject": "arch://wegent/flow/issue-runtime-project-space-binding",
+      "timestamp": "2026-08-18T10:04:43Z"
+    },
+    {
+      "action": "update",
+      "change_id": "chg-62d617a50e87",
+      "confidence": 1.0,
+      "evidence": [
+        "backend/app/api/endpoints/deliveries.py"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "云上下文响应显式序列化 workflow_node_id 计算属性",
+      "subject": "arch://wegent/flow/issue-runtime-project-space-binding",
+      "timestamp": "2026-08-18T10:04:43Z"
+    },
+    {
+      "action": "verify",
+      "change_id": "chg-237bc2edc13e",
+      "confidence": 1.0,
+      "evidence": [
+        "backend/tests/api/test_deliveries_api.py::test_workflow_task_binding_requires_a_ready_non_automated_stage"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "API 回归测试确认阶段绑定在云上下文中可见",
+      "subject": "arch://wegent/flow/issue-runtime-project-space-binding",
+      "timestamp": "2026-08-18T10:04:44Z"
+    }
+  ],
+  "created_at": "2026-08-18T10:03:14Z",
+  "id": "tx-4ec2970e67df",
+  "intent": "Runtime Task 云上下文必须返回人工阶段 workflow_node_id，使运行状态能投影回正确阶段",
+  "merged_revision": "A00000018",
+  "read_set": [
+    "arch://wegent/flow/issue-runtime-project-space-binding"
+  ],
+  "resolutions": [],
+  "status": "merged",
+  "updated_at": "2026-08-18T10:04:44Z",
+  "write_set": [
+    "arch://wegent/flow/issue-runtime-project-space-binding"
+  ]
+}

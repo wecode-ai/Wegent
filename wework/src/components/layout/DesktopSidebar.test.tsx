@@ -229,6 +229,50 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('projects-create-button')).toBeInTheDocument()
   })
 
+  test('shows a discoverable project creation action when the project list is empty', async () => {
+    renderSidebar({
+      projects: [],
+      runtimeWork: { projects: [], chats: [], totalTasks: 0 },
+      cloudWorkStatus: cloudWorkStatus({
+        availability: 'empty',
+        checks: { runtimeWork: 'empty' },
+      }),
+    })
+
+    const createButton = screen.getByTestId('projects-empty-create-button')
+    expect(createButton).toHaveTextContent('新建项目')
+
+    await userEvent.click(createButton)
+
+    expect(screen.getByTestId('projects-create-button-menu')).toBeInTheDocument()
+  })
+
+  test('does not show the empty project creation action while projects are syncing', () => {
+    renderSidebar({
+      projects: [],
+      runtimeWork: { projects: [], chats: [], totalTasks: 0 },
+      cloudWorkStatus: cloudWorkStatus({
+        availability: 'syncing',
+        checks: { runtimeWork: 'syncing' },
+      }),
+    })
+
+    expect(screen.queryByTestId('projects-empty-create-button')).not.toBeInTheDocument()
+  })
+
+  test('does not show the empty project creation action before runtime work loads', () => {
+    renderSidebar({
+      projects: [],
+      runtimeWork: null,
+      cloudWorkStatus: cloudWorkStatus({
+        availability: 'idle',
+        checks: { runtimeWork: 'idle' },
+      }),
+    })
+
+    expect(screen.queryByTestId('projects-empty-create-button')).not.toBeInTheDocument()
+  })
+
   test('keeps the sidebar color stable across browser focus changes', () => {
     Reflect.deleteProperty(window, '__TAURI_INTERNALS__')
     renderSidebar()

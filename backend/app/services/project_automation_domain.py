@@ -200,6 +200,8 @@ def validate_trigger(
         return
     if trigger_type == "event" and event_type == "task.created":
         return
+    if trigger_type == "workflow" and event_type is None and cron_expression is None:
+        return
     raise HTTPException(
         status.HTTP_422_UNPROCESSABLE_ENTITY, "Unsupported automation trigger"
     )

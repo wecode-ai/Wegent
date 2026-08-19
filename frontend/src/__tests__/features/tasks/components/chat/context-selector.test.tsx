@@ -1363,6 +1363,55 @@ describe('ContextSelector organization grouping', () => {
     })
   })
 
+  it('keeps DingTalk wikispace usable when internal knowledge bases fail to load', async () => {
+    mockGetAllGroupedKnowledgeBases.mockRejectedValueOnce(
+      new Error('internal knowledge bases unavailable')
+    )
+    mockGetDingTalkWikispaceNodes.mockResolvedValue({
+      total_count: 1,
+      nodes: [
+        {
+          id: 10,
+          dingtalk_node_id: 'space-1',
+          name: '研发空间',
+          doc_url: 'https://alidocs.dingtalk.com/i/spaces/space-1/overview',
+          parent_node_id: '',
+          node_type: 'folder',
+          workspace_id: 'space-1',
+          content_type: '',
+          source: 'wikispace',
+          is_active: true,
+          last_synced_at: '',
+          created_at: '',
+          updated_at: '',
+          children: [],
+        },
+      ],
+    })
+
+    render(
+      <ContextSelector
+        open={true}
+        onOpenChange={jest.fn()}
+        selectedContexts={[]}
+        onSelect={jest.fn()}
+        onDeselect={jest.fn()}
+      >
+        <button>trigger</button>
+      </ContextSelector>
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('knowledge-picker-dingtalk-parent')).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-parent'))
+    fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-wikispace'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('knowledge-picker-dingtalk-space-space-1')).toBeInTheDocument()
+    })
+  })
+
   it('auto-expands the folder path for selected internal documents', async () => {
     mockGetFolderTree.mockResolvedValue([
       {

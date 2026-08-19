@@ -219,7 +219,7 @@ else
     echo -e "${RED}❌ Alembic Multi-Head Check: FAILED${NC}"
     echo ""
     echo -e "${RED}${BOLD}   Multiple heads detected (${HEAD_COUNT}):${NC}"
-    while IFS= read -r head; do
+    for head in $HEADS; do
         [ -z "$head" ] && continue
         head_file=$(get_value "$REVISIONS" "$head")
         echo -e "   ${RED}• ${head}${NC} (${head_file})"

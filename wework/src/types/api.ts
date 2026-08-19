@@ -255,6 +255,8 @@ export interface RuntimeTaskAddress {
   runtime?: RuntimeName
   threadId?: string | null
   workspacePath?: string | null
+  workspaceKind?: 'workspace' | 'worktree' | 'chat' | string | null
+  worktreeId?: string | null
   runtimeHandle?: Record<string, unknown> | null
 }
 
@@ -668,6 +670,8 @@ export interface RuntimeSendRequest {
   attachmentIds?: number[]
   attachments?: Attachment[]
   source?: RuntimeMessageSource | null
+  cloudProjectId?: string
+  origin?: RuntimeTaskCreateRequest['origin']
   requestUserInputResponse?: RequestUserInputResponse
   request_user_input_response?: RequestUserInputResponse
   additionalContext?: RuntimeAdditionalContext

@@ -2699,6 +2699,21 @@ button.plugin-market-card-menu {
     transform 0.12s;
 }
 
+.workflow-react-flow {
+  --xy-controls-button-background-color-default: rgb(var(--color-bg-surface));
+  --xy-controls-button-background-color-hover-default: rgb(var(--color-muted));
+  --xy-controls-button-color-default: rgb(var(--color-text-secondary));
+  --xy-controls-button-color-hover-default: rgb(var(--color-text-primary));
+  --xy-controls-button-border-color-default: rgb(var(--color-border));
+  --xy-controls-box-shadow-default: none;
+}
+
+.workflow-react-flow .react-flow__controls {
+  overflow: hidden;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 8px;
+}
+
 button.plugin-market-card-menu:hover {
   background-color: rgb(236 236 234);
   color: rgb(21 21 21);

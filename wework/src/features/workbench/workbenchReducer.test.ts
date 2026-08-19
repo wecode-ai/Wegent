@@ -505,6 +505,79 @@ describe('workbenchReducer', () => {
     expect(opened.currentRuntimeTask?.taskId).toBe('runtime-1')
   })
 
+  test('reconciles an accepted task address without depending on work-list projection', () => {
+    const state = {
+      ...initialWorkbenchState,
+      currentRuntimeTask: {
+        deviceId: 'device-1',
+        taskId: 'runtime-1',
+        runtimeHandle: {
+          modelSelection: {
+            modelName: 'local-model:luna',
+            modelType: 'runtime',
+            options: {},
+          },
+        },
+      },
+    }
+
+    const reconciled = workbenchReducer(state, {
+      type: 'runtime_task_address_reconciled',
+      previousAddress: {
+        deviceId: 'device-1',
+        taskId: 'runtime-1',
+      },
+      address: {
+        deviceId: 'device-1',
+        taskId: 'runtime-1',
+        workspacePath: '/workspace/worktrees/runtime-1/repo',
+        runtimeHandle: {
+          threadId: 'thread-1',
+        },
+      },
+    })
+
+    expect(reconciled.currentRuntimeTask).toEqual({
+      deviceId: 'device-1',
+      taskId: 'runtime-1',
+      workspacePath: '/workspace/worktrees/runtime-1/repo',
+      runtimeHandle: {
+        modelSelection: {
+          modelName: 'local-model:luna',
+          modelType: 'runtime',
+          options: {},
+        },
+        threadId: 'thread-1',
+      },
+    })
+  })
+
+  test('does not reconcile an accepted address after the user switches tasks', () => {
+    const state = {
+      ...initialWorkbenchState,
+      currentRuntimeTask: {
+        deviceId: 'device-1',
+        taskId: 'runtime-2',
+        workspacePath: '/workspace/current',
+      },
+    }
+
+    const reconciled = workbenchReducer(state, {
+      type: 'runtime_task_address_reconciled',
+      previousAddress: {
+        deviceId: 'device-1',
+        taskId: 'runtime-1',
+      },
+      address: {
+        deviceId: 'device-1',
+        taskId: 'runtime-1',
+        workspacePath: '/workspace/worktrees/runtime-1/repo',
+      },
+    })
+
+    expect(reconciled).toBe(state)
+  })
+
   test('keeps project tasks only in the project list returned by the server', () => {
     const refreshed = workbenchReducer(initialWorkbenchState, {
       type: 'lists_refreshed',
