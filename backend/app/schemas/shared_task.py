@@ -116,6 +116,7 @@ class PublicContextData(BaseModel):
     external_node_id: Optional[str] = None
     external_document_id: Optional[str] = None
     external_parent_id: Optional[str] = None
+    external_include_descendants: Optional[bool] = None
 
     # Table-specific fields (optional)
     document_id: Optional[int] = None

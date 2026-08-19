@@ -200,11 +200,26 @@ def build_selected_knowledge_context(
     )
     if has_explicit_knowledge_context(current_contexts):
         resolved = resolve_selected_knowledge_context((), explicit_refs)
-        return SelectedKnowledgeContext(
+        context = SelectedKnowledgeContext(
             refs=resolved.refs,
             evidence_required=True,
         )
-    return resolve_selected_knowledge_context(task_refs, explicit_refs)
+    else:
+        context = resolve_selected_knowledge_context(task_refs, explicit_refs)
+    return _filter_native_refs(context, request.kb_tool_access_mode)
+
+
+def _filter_native_refs(
+    context: SelectedKnowledgeContext,
+    access_mode: str,
+) -> SelectedKnowledgeContext:
+    """Apply Provider-specific native access policies to the final context."""
+    if access_mode != KnowledgeBaseToolAccessMode.RESTRICTED_SEARCH_ONLY:
+        return context
+    return SelectedKnowledgeContext(
+        refs=tuple(ref for ref in context.refs if ref.provider != "wegent"),
+        evidence_required=context.evidence_required,
+    )
 
 
 def has_explicit_knowledge_context(contexts: Iterable[Any]) -> bool:

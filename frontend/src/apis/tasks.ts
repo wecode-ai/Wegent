@@ -149,6 +149,7 @@ export interface PublicContextData {
   external_node_id?: string | null
   external_document_id?: string | null
   external_parent_id?: string | null
+  external_include_descendants?: boolean | null
   // Table fields
   document_id?: number
   source_config?: {

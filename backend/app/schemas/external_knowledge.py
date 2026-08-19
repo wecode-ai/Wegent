@@ -25,5 +25,6 @@ class ExternalKnowledgeRef(BaseModel):
     parent_id: Optional[str] = None
     target_name: Optional[str] = None
     resource_url: Optional[str] = None
+    include_descendants: Optional[bool] = None
     boundBy: Optional[str] = None
     boundAt: Optional[str] = None

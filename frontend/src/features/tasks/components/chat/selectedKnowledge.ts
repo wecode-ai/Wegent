@@ -13,6 +13,7 @@ function externalKnowledgeTargetKey(ref: ExternalKnowledgeRef): string {
     externalKnowledgeScopeKey(ref),
     ref.target_type ?? 'knowledge_base',
     ref.node_id ?? ref.document_id ?? 'source',
+    ref.include_descendants === undefined ? 'provider-default' : String(ref.include_descendants),
   ].join(':')
 }
 

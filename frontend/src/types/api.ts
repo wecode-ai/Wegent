@@ -706,6 +706,7 @@ export interface SubtaskContextBrief {
   external_node_id?: string | null
   external_document_id?: string | null
   external_parent_id?: string | null
+  external_include_descendants?: boolean | null
   video_count?: number | null
   site?: string | null
   source_url?: string | null

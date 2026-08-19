@@ -214,4 +214,5 @@ def _target_key(ref: dict[str, Any]) -> tuple[Any, ...]:
         _target_type(ref),
         ref.get("node_id"),
         ref.get("document_id"),
+        ref.get("include_descendants"),
     )

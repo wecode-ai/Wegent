@@ -597,6 +597,51 @@ def test_task_external_source_enables_provider_native_without_wegent() -> None:
     assert should_prepare is True
 
 
+def test_restricted_wegent_is_excluded_from_final_native_context() -> None:
+    request = ExecutionRequest(
+        knowledge_base_ids=[12],
+        kb_tool_access_mode="restricted_search_only",
+        external_knowledge_refs=[
+            {
+                "provider": "dingtalk",
+                "mode": "explicit",
+                "id": "space-1",
+            }
+        ],
+    )
+    task = SimpleNamespace(
+        json={"spec": {"knowledgeBaseRefs": [{"id": 12, "name": "默认知识"}]}}
+    )
+
+    skills = apply_selected_knowledge_context(MagicMock(), request, task)
+
+    assert skills == ["dingtalk-docs"]
+    assert 'provider="dingtalk"' in request.selected_knowledge_prompt
+    assert 'provider="wegent"' not in request.selected_knowledge_prompt
+
+
+def test_external_folder_preserves_include_descendants_false() -> None:
+    request = ExecutionRequest(
+        external_knowledge_refs=[
+            {
+                "provider": "dingtalk",
+                "mode": "explicit",
+                "id": "space-1",
+                "target_type": "folder",
+                "node_id": "folder-1",
+                "include_descendants": False,
+            }
+        ]
+    )
+
+    apply_selected_knowledge_context(
+        MagicMock(), request, SimpleNamespace(json={"spec": {}})
+    )
+
+    assert 'resource_id="folder-1"' in request.selected_knowledge_prompt
+    assert 'include_descendants="false"' in request.selected_knowledge_prompt
+
+
 def test_current_wegent_folder_preserves_include_subfolders_false() -> None:
     request = ExecutionRequest(knowledge_base_ids=[12], is_user_selected_kb=True)
     contexts = [

@@ -157,6 +157,7 @@ function SharedTaskContent() {
         external_node_id: ctx.external_node_id ?? undefined,
         external_document_id: ctx.external_document_id ?? undefined,
         external_parent_id: ctx.external_parent_id ?? undefined,
+        external_include_descendants: ctx.external_include_descendants ?? undefined,
         // Table fields
         document_id: ctx.document_id,
         source_config: ctx.source_config,
