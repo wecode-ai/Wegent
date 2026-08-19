@@ -265,12 +265,15 @@ if ! sed -n '/^  e2e-tests:/,/^  executor-e2e-tests:/p' \
   grep -F 'image: ${{ needs.prepare-platform-e2e-image.outputs.image }}' \
     >/dev/null ||
   ! sed -n '/^  e2e-tests:/,/^  executor-e2e-tests:/p' \
-    "$workflow_dir/e2e-tests.yml" |
+  "$workflow_dir/e2e-tests.yml" |
     grep -F 'setup-toolchain: "false"' >/dev/null ||
+  ! sed -n '/^  e2e-tests:/,/^  executor-e2e-tests:/p' \
+    "$workflow_dir/e2e-tests.yml" |
+    grep -F 'setup-uv: "false"' >/dev/null ||
   sed -n '/^  e2e-tests:/,/^  executor-e2e-tests:/p' \
     "$workflow_dir/e2e-tests.yml" |
     grep -E 'install-playwright-(browser|system-deps)' >/dev/null; then
-  fail "Platform E2E shards must consume the immutable Playwright image without runtime installs"
+  fail "Platform E2E shards must consume the immutable dependency image without runtime installs"
 fi
 
 # GitHub expressions are matched literally in workflow source.
@@ -343,8 +346,11 @@ fi
 if ! grep -Fq 'libmagic1' "$wework_browser_image" ||
   ! grep -Fq 'zstd' \
   "$wework_browser_image" ||
+  ! grep -Fq 'ghcr.io/astral-sh/uv:0.11.17' \
+    "$wework_browser_image" ||
   ! grep -Fq "ldconfig -p | grep -q 'libmagic\\.so\\.1'" \
     "$wework_browser_image" ||
+  ! grep -Fq 'uv --version' "$wework_browser_image" ||
   ! grep -Fq 'zstd --version' "$wework_browser_image"; then
   fail "Browser E2E images must include backend and artifact runtime libraries"
 fi

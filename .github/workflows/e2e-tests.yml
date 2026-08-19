@@ -300,6 +300,7 @@ jobs:
         uses: ./.github/actions/setup-python-uv-cache
         with:
           python-version: "3.11"
+          setup-uv: "false"
 
       - name: Install shared module
         working-directory: ./shared
