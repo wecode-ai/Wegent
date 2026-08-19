@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, test, vi } from 'vitest'
 import { WorkspaceTextFileEditor } from './WorkspaceTextFileEditor'
@@ -20,10 +20,9 @@ describe('WorkspaceTextFileEditor', () => {
     expect(content).toBeInstanceOf(HTMLElement)
 
     await user.click(content as HTMLElement)
-    await user.keyboard('{Control>}a{/Control}export const authenticated = true')
-    await waitFor(() =>
-      expect(onChange).toHaveBeenLastCalledWith('export const authenticated = true')
-    )
+    await user.keyboard('{Control>}a{/Control}')
+    await user.paste('export const authenticated = true')
+    expect(onChange).toHaveBeenLastCalledWith('export const authenticated = true')
 
     rerender(
       <WorkspaceTextFileEditor
@@ -39,9 +38,7 @@ describe('WorkspaceTextFileEditor', () => {
     expect(content).toHaveTextContent('export const authenticated = true')
 
     await user.keyboard('{Control>}z{/Control}')
-    await waitFor(() =>
-      expect(onChange).toHaveBeenLastCalledWith('export const authenticated = false')
-    )
+    expect(onChange).toHaveBeenLastCalledWith('export const authenticated = false')
     expect(content).toHaveTextContent('export const authenticated = false')
   })
 })
