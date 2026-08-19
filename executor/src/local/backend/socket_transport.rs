@@ -11,13 +11,27 @@ use futures_util::FutureExt;
 use serde_json::{json, Value};
 use tf_rust_socketio::{
     asynchronous::{Client, ClientBuilder},
-    Payload, TransportType,
+    Event, Payload, TransportType,
 };
 use tokio::sync::oneshot;
 
 use super::{EventHandler, LocalBackendConfig, LocalBackendTransport, TransportFuture};
 
 const NAMESPACE: &str = "/local-executor";
+const NAMESPACE_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// The tf-rust-socketio client expects an HTTP(S) URL and upgrades the
+/// connection itself. Normalize ws(s):// schemes so the Engine.IO handshake
+/// reaches the server correctly.
+fn normalize_socket_url(url: &str) -> String {
+    if let Some(rest) = url.strip_prefix("wss://") {
+        return format!("https://{rest}");
+    }
+    if let Some(rest) = url.strip_prefix("ws://") {
+        return format!("http://{rest}");
+    }
+    url.to_owned()
+}
 
 #[derive(Clone, Default)]
 pub struct SocketIoTransport {
@@ -35,12 +49,24 @@ impl LocalBackendTransport for SocketIoTransport {
             // external requests still use the configured proxy.
             std::env::set_var("NO_PROXY", "localhost,127.0.0.1,::1");
             let handlers = self.handlers.lock().expect("handler lock").clone();
-            let mut builder = ClientBuilder::new(config.socket_url.clone())
+            let socket_url = normalize_socket_url(&config.socket_url);
+            let (connect_sender, connect_receiver) = oneshot::channel();
+            let connect_sender = Arc::new(Mutex::new(Some(connect_sender)));
+            let mut builder = ClientBuilder::new(socket_url)
                 .namespace(NAMESPACE)
                 .auth(json!({ "token": config.auth_token }))
                 .transport_type(TransportType::Websocket)
                 .reconnect(false)
                 .reconnect_on_disconnect(false)
+                .on(Event::Connect, move |_payload: Payload, _socket: Client| {
+                    let connect_sender = Arc::clone(&connect_sender);
+                    async move {
+                        if let Some(sender) = connect_sender.lock().expect("connect lock").take() {
+                            let _ = sender.send(());
+                        }
+                    }
+                    .boxed()
+                })
                 .on("error", |payload: Payload, _socket: Client| {
                     async move {
                         eprintln!("local backend socket error: {payload:?}");
@@ -66,6 +92,10 @@ impl LocalBackendTransport for SocketIoTransport {
             }
 
             let socket = builder.connect().await.map_err(|error| error.to_string())?;
+            tokio::time::timeout(NAMESPACE_CONNECT_TIMEOUT, connect_receiver)
+                .await
+                .map_err(|_| "Socket.IO namespace connection timed out".to_owned())?
+                .map_err(|_| "Socket.IO namespace connection signal was dropped".to_owned())?;
             *self.client.lock().await = Some(socket);
             Ok(())
         })
@@ -160,5 +190,34 @@ fn payload_to_value(payload: Payload) -> Value {
         }
         Payload::String(value, _) => serde_json::from_str(&value).unwrap_or(Value::String(value)),
         Payload::Binary(_, _) => Value::Null,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_socket_url;
+
+    #[test]
+    fn socket_url_normalizes_websocket_schemes_for_engine_io() {
+        assert_eq!(
+            normalize_socket_url("wss://socket.example.com"),
+            "https://socket.example.com"
+        );
+        assert_eq!(
+            normalize_socket_url("ws://localhost:8000"),
+            "http://localhost:8000"
+        );
+    }
+
+    #[test]
+    fn socket_url_preserves_http_schemes() {
+        assert_eq!(
+            normalize_socket_url("https://socket.example.com"),
+            "https://socket.example.com"
+        );
+        assert_eq!(
+            normalize_socket_url("http://localhost:8000"),
+            "http://localhost:8000"
+        );
     }
 }

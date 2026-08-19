@@ -40,7 +40,7 @@ import type {
 } from '@/types/workspace-files'
 import { WorkspaceFilePreview } from './WorkspaceFilePreview'
 import { WorkspaceFileTree } from './WorkspaceFileTree'
-import { isMarkdownFile } from './workspaceFileTypes'
+import { isLikelyTextContent, isMarkdownFile, workspaceFilePreviewKind } from './workspaceFileTypes'
 
 export interface FileWorkspacePanelSelection {
   path: string
@@ -86,13 +86,6 @@ function FileOpenerIcon({ opener }: { opener: LocalFileOpener }) {
   }
 
   return <img src={source} alt="" className="h-4 w-4 shrink-0 rounded-[3px]" />
-}
-
-const TEXT_FILE_PATTERN =
-  /\.(?:c|cc|cpp|cs|css|go|h|hpp|html|htm|java|js|json|jsx|kt|log|md|mjs|py|rb|rs|sh|sql|svg|toml|ts|tsx|txt|xml|ya?ml|zsh)$/i
-
-function isTextFile(path: string) {
-  return TEXT_FILE_PATTERN.test(path)
 }
 
 function decodeBase64(value: string): Uint8Array {
@@ -352,7 +345,25 @@ export function FileWorkspacePanel({
         void loadFileOpeners(entry.path)
       }
       try {
-        if (isTextFile(entry.path)) {
+        const previewKind = workspaceFilePreviewKind(entry.path)
+        let firstChunk: WorkspaceFileChunkResponse | null = null
+        let firstChunkBytes: Uint8Array | null = null
+        let readAsText = previewKind === 'text'
+        if (previewKind === 'unknown') {
+          if (!readWorkspaceFileChunk) {
+            throw new Error('File content detection is unavailable')
+          }
+          firstChunk = await readWorkspaceFileChunk(
+            stableTarget.deviceId,
+            entry.path,
+            0,
+            stableTarget.path
+          )
+          if (fileRequestSequence.current !== requestId) return
+          firstChunkBytes = decodeBase64(firstChunk.contentBase64)
+          readAsText = isLikelyTextContent(firstChunkBytes)
+        }
+        if (readAsText) {
           const file = await readWorkspaceTextFile(
             stableTarget.deviceId,
             entry.path,
@@ -366,25 +377,33 @@ export function FileWorkspacePanel({
         if (!readWorkspaceFileChunk) {
           throw new Error('Binary file preview is unavailable')
         }
-        const chunks: Uint8Array[] = []
-        let offset = 0
-        let chunk: WorkspaceFileChunkResponse
-        do {
-          chunk = await readWorkspaceFileChunk(
+        const chunks: Uint8Array[] = firstChunkBytes ? [firstChunkBytes] : []
+        let offset = firstChunkBytes?.byteLength ?? 0
+        let chunk = firstChunk
+        if (chunk) {
+          setPreviewLoadingProgress({
+            loadedBytes: Math.min(offset, chunk.size),
+            totalBytes: chunk.size > 0 ? chunk.size : null,
+          })
+        }
+        while (!chunk?.eof) {
+          const nextChunk = await readWorkspaceFileChunk(
             stableTarget.deviceId,
             entry.path,
             offset,
             stableTarget.path
           )
           if (fileRequestSequence.current !== requestId) return
+          chunk = nextChunk
           chunks.push(decodeBase64(chunk.contentBase64))
           offset += chunks[chunks.length - 1].byteLength
           setPreviewLoadingProgress({
             loadedBytes: Math.min(offset, chunk.size),
             totalBytes: chunk.size > 0 ? chunk.size : null,
           })
-        } while (!chunk.eof)
+        }
         if (fileRequestSequence.current !== requestId) return
+        if (!chunk) throw new Error('Failed to read workspace file')
         setPreview(null)
         setBinaryPreview({
           path: chunk.path,

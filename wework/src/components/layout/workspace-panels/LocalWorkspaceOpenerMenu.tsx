@@ -250,17 +250,15 @@ export function LocalWorkspaceOpenerIcon({
   if (opener === 'vscode' || opener === 'vscode-insiders') {
     const color = opener === 'vscode' ? '#1f7fbf' : '#4aa99d'
     return (
-      <span className={cn(wrapperClassName, 'relative bg-background')} aria-hidden="true">
-        <span
-          data-testid="local-workspace-vscode-mark"
-          className="absolute left-[4px] top-[4px] h-[8px] w-[8px] rotate-45 border-b-[2px] border-l-[2px]"
-          style={{ borderColor: color }}
-        />
-        <span
-          data-testid="local-workspace-vscode-body"
-          className="absolute right-[4px] top-[3px] h-[12px] w-[4px] rounded-sm"
-          style={{ backgroundColor: color }}
-        />
+      <span className={cn(wrapperClassName, 'bg-background')} aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" className="h-full w-full" aria-hidden="true">
+          <path
+            data-testid="local-workspace-vscode-mark"
+            d="M18.5 2.5 10.8 9.9 5.4 5.7 2 7.4v9.2l3.4 1.7 5.4-4.2 7.7 7.4 3.5-1.8V4.3l-3.5-1.8ZM5.4 15.7V8.3l4.2 3.7-4.2 3.7Zm12.9 2.1-6.5-5.8 6.5-5.8v11.6Z"
+            fill={color}
+            fillRule="evenodd"
+          />
+        </svg>
       </span>
     )
   }
