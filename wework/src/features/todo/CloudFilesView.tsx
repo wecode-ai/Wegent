@@ -18,6 +18,10 @@ import type {
   ProjectTaskAttachment,
 } from '@/api/deliveries'
 import { WorkspaceFilePreview } from '@/components/layout/workspace-panels/WorkspaceFilePreview'
+import {
+  isLikelyTextContent,
+  workspaceFilePreviewKind,
+} from '@/components/layout/workspace-panels/workspaceFileTypes'
 import { Tooltip } from '@/components/ui/tooltip'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -39,20 +43,6 @@ interface FilePreviewTarget {
   contentType: string | null
   sizeBytes: number
   load: () => Promise<Blob>
-}
-
-const TEXT_FILE_PATTERN =
-  /\.(?:c|cc|cpp|cs|css|go|h|hpp|html|htm|java|js|json|jsx|kt|log|md|markdown|mjs|py|rb|rs|sh|sql|svg|toml|ts|tsx|txt|xml|ya?ml|zsh)$/i
-
-function isPreviewableTextFile(name: string, contentType: string): boolean {
-  if (TEXT_FILE_PATTERN.test(name)) return true
-  const normalized = contentType.toLowerCase()
-  return (
-    normalized.startsWith('text/') ||
-    normalized.includes('json') ||
-    normalized.includes('xml') ||
-    normalized.includes('javascript')
-  )
 }
 
 function downloadName(path: string): string {
@@ -145,7 +135,13 @@ export function CloudFilesView({ api, project }: { api: DeliveryApi; project: Cl
       const blob = await target.load()
       if (previewRequestSequence.current !== requestId) return
       const contentType = target.contentType || blob.type || 'application/octet-stream'
-      if (isPreviewableTextFile(target.filename, contentType)) {
+      const previewKind = workspaceFilePreviewKind(target.filename, contentType)
+      const readAsText =
+        previewKind === 'text' ||
+        (previewKind === 'unknown' &&
+          isLikelyTextContent(new Uint8Array(await blob.slice(0, 64 * 1024).arrayBuffer())))
+      if (previewRequestSequence.current !== requestId) return
+      if (readAsText) {
         const content = await blob.text()
         if (previewRequestSequence.current !== requestId) return
         setPreviewText({

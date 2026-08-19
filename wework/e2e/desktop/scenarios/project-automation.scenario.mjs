@@ -33,6 +33,8 @@ const CLOUD_MODEL_NAME = 'desktop-e2e-public-model'
 const PROJECT_CHAT_REMOTE_MODEL_NAME = 'desktop-e2e-project-chat-remote'
 const PROJECT_CHAT_REMOTE_MODEL_LABEL = 'Project Chat Remote Codex'
 const TEAM_ID = 88001
+const FIRST_CONTINUATION_PROMPT = '确认继续执行'
+const QUEUED_CONTINUATION_PROMPT = '补充检查排队消息'
 
 const PROJECT = {
   id: PROJECT_ID,
@@ -298,6 +300,14 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
   let orchestratedItemId = null
   let orchestratedMovePayload = null
   let workflowTaskBindings = []
+  let resolveFirstContinuationStarted
+  let releaseFirstContinuation
+  const firstContinuationStarted = new Promise(resolve => {
+    resolveFirstContinuationStarted = resolve
+  })
+  const firstContinuationRelease = new Promise(resolve => {
+    releaseFirstContinuation = resolve
+  })
 
   const cloudRequest = (pathname, options) => {
     assert.ok(cloudApi, 'Real cloud API was not prepared')
@@ -504,20 +514,50 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       { text: wegentAgent.name, timeoutMs: uiTimeoutMs }
     )
     const replyComposer = `[data-testid="cloud-task-activity-card-composer-${rootMessageId}"]`
-    await control.command('fill', replyComposer, { value: '确认继续执行' })
+    await control.command('fill', replyComposer, { value: FIRST_CONTINUATION_PROMPT })
     await control.command('press', replyComposer, { key: 'Enter' })
+    await withTimeout(
+      firstContinuationStarted,
+      uiTimeoutMs,
+      'The first native Wegent continuation did not reach the model service'
+    )
+    try {
+      await control.command(
+        'waitFor',
+        '[data-testid^="cloud-task-activity-execution-badge-"][data-status="running"]',
+        { timeoutMs: uiTimeoutMs }
+      )
+      await control.command('fill', replyComposer, { value: QUEUED_CONTINUATION_PROMPT })
+      await control.command('press', replyComposer, { key: 'Enter' })
+      await control.command(
+        'waitFor',
+        `[data-testid="cloud-task-activity-card-queue-${rootMessageId}"]`,
+        {
+          text: QUEUED_CONTINUATION_PROMPT,
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await captureScreenshot(control, 'project-automation-board-team-queued-continuation.png')
+    } finally {
+      releaseFirstContinuation()
+    }
     const continuedTask = await waitForValue(
       () => cloudRequest(`/api/tasks/${teamExecution.backendTaskId}`),
-      task => (task.subtasks ?? []).some(subtask => subtask.prompt === '确认继续执行'),
-      'The board reply did not append a user turn to the native Wegent Task',
+      task => {
+        const prompts = (task.subtasks ?? []).map(subtask => subtask.prompt)
+        const firstReplyIndex = prompts.indexOf(FIRST_CONTINUATION_PROMPT)
+        const queuedReplyIndex = prompts.indexOf(QUEUED_CONTINUATION_PROMPT)
+        return firstReplyIndex >= 0 && queuedReplyIndex > firstReplyIndex
+      },
+      'Queued board replies were not appended to the native Wegent Task in order',
       uiTimeoutMs * 3
     )
     assert.equal(continuedTask.id, teamExecution.backendTaskId)
     const agentExecutionBadgeSelector = '[data-testid^="cloud-task-activity-execution-badge-"]'
     await waitForValue(
       () => control.command('getElementCount', agentExecutionBadgeSelector),
-      count => Number(count) === 2,
-      'The native Wegent continuation was not projected as a second agent comment',
+      count => Number(count) === 3,
+      'Queued native Wegent continuations were not projected as distinct agent comments',
       uiTimeoutMs * 3
     )
     const unchangedExecution = await waitForCompletedExecution(
@@ -1126,6 +1166,24 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
           writeEvents([responseCreated(responseId), responseCompleted(responseId)])
           return true
         }
+        if (
+          serialized.includes(FIRST_CONTINUATION_PROMPT) &&
+          !serialized.includes(QUEUED_CONTINUATION_PROMPT)
+        ) {
+          response.writeHead(200, {
+            'content-type': 'text/event-stream; charset=utf-8',
+            'cache-control': 'no-cache',
+            connection: 'keep-alive',
+          })
+          response.flushHeaders()
+          response.write(createSse([responseCreated(responseId)]))
+          resolveFirstContinuationStarted()
+          await firstContinuationRelease
+          response.end(
+            createSse([assistantMessage('首条追加执行已完成。'), responseCompleted(responseId)])
+          )
+          return true
+        }
         const isManagerRequest = serialized.includes(
           '请读取候选执行者并按调度要求完成分派，不要执行任务。'
         )
@@ -1692,14 +1750,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         `${activeBoard} [data-testid="cloud-project-automation-view"]`,
         { visible: true }
       )
-      await control.command(
-        'waitFor',
-        `${activeBoard} [data-testid="project-automation-view"]`,
-        {
-          timeoutMs: uiTimeoutMs,
-          visible: true,
-        }
-      )
+      await control.command('waitFor', `${activeBoard} [data-testid="project-automation-view"]`, {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
       const activeWorkflow = `${activeBoard} [data-testid="project-workflow-editor"]`
       await control.command('waitFor', `${activeBoard} [data-testid="project-automation-rules"]`, {
         timeoutMs: uiTimeoutMs,
@@ -1718,10 +1772,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         'click',
         `${activeWorkflow} [data-testid="project-workflow-mode-workflow"]`
       )
-      await control.command(
-        'click',
-        `${activeWorkflow} [data-testid="project-workflow-empty-add"]`
-      )
+      await control.command('click', `${activeWorkflow} [data-testid="project-workflow-empty-add"]`)
       await control.command(
         'waitFor',
         `${activeWorkflow} [data-testid="project-workflow-stage-executor-human-stage-1"]`,
@@ -1735,10 +1786,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         }
       )
       const selectedStageSnapshot = JSON.parse(
-        await control.command(
-          'snapshot',
-          `${activeWorkflow} [data-testid="project-workflow-dag"]`
-        )
+        await control.command('snapshot', `${activeWorkflow} [data-testid="project-workflow-dag"]`)
       )
       assert.ok(
         selectedStageSnapshot.testIds.includes('project-workflow-insert-before-stage-1'),
@@ -1760,10 +1808,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         }
       )
       const insertedStageSnapshot = JSON.parse(
-        await control.command(
-          'snapshot',
-          `${activeWorkflow} [data-testid="project-workflow-dag"]`
-        )
+        await control.command('snapshot', `${activeWorkflow} [data-testid="project-workflow-dag"]`)
       )
       assert.ok(
         insertedStageSnapshot.testIds.includes('project-workflow-insert-after-stage-2'),
@@ -2441,14 +2486,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         `${activeBoard} [data-testid="cloud-project-automation-view"]`,
         { visible: true }
       )
-      await control.command(
-        'waitFor',
-        `${activeBoard} [data-testid="project-automation-view"]`,
-        {
-          timeoutMs: uiTimeoutMs,
-          visible: true,
-        }
-      )
+      await control.command('waitFor', `${activeBoard} [data-testid="project-automation-view"]`, {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
       const activeFinalWorkflow = `${activeBoard} [data-testid="project-workflow-editor"]`
       const workflowSaveSelector = `${activeFinalWorkflow} [data-testid="project-workflow-save"]`
       assert.match(
