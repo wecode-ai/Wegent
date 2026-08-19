@@ -31,7 +31,7 @@ sequenceDiagram
     C->>C: Persist execution_id, executor_type, and manager_type on activity
     C-->>W: Publish manager comment with complete identity
     U->>W: Reply to a custom AI manager comment
-    W->>W: retain it in that comment-session queue while running
+    W->>W: retain it in that comment-session queue while pending or streaming
     W->>W: take the next reply in creation order after the prior turn settles
     W->>C: manager:continue(user comment, manager comment)
     C->>X: Validate execution ID, task, project, and Runtime binding
@@ -50,4 +50,4 @@ sequenceDiagram
 | Execution and comment validation      | `backend/app/services/project_chat/service.py`                                                  |
 | Runtime-session continuation          | `wework/src/features/workbench/`                                                                |
 
-Invariants: before a manager activity comment is published it must persist `execution_id`, `executor_type=automation_manager`, and the corresponding `manager_type`; neither the UI nor the continuation service may infer comment identity from the task's current assignee; continuation is selected from the replied comment's bound execution and Runtime session; only custom `automation_manager` executions may enter this path; follow-ups appended while the same manager-comment session is running must be queued and sent in creation order; the user reply and manager answer are separate new comments, and an existing comment's author identity is immutable; continuation reuses the original manager session; conversation replies must not overwrite the task's current robot execution state, assignee, or board status.
+Invariants: before a manager activity comment is published it must persist `execution_id`, `executor_type=automation_manager`, and the corresponding `manager_type`; neither the UI nor the continuation service may infer comment identity from the task's current assignee; continuation is selected from the replied comment's bound execution and Runtime session; only custom `automation_manager` executions may enter this path; follow-ups appended while the same manager-comment session is `pending` or `streaming` must be retained in its queue and sent in creation order; the user reply and manager answer are separate new comments, and an existing comment's author identity is immutable; continuation reuses the original manager session; conversation replies must not overwrite the task's current robot execution state, assignee, or board status.
