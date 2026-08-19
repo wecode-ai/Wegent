@@ -35,8 +35,15 @@ describe('listWegentStorePluginsFromDisk', () => {
       storePath: '/Users/test/.wework/apps/com.weibo.wework/capabilities/store/plugins',
       plugins: [
         {
-          name: '269646-wegent-sina-email-0.1.11',
+          name: 'sina-email',
+          packageId: '269646-wegent-sina-email-0.1.11',
+          marketplace: 'wegent',
           version: '0.1.11',
+          enabled: true,
+          displayName: 'Sina Email',
+          description: 'Read email',
+          logo: './assets/icon.png',
+          category: 'Productivity',
           pluginPath:
             '/Users/test/.wework/apps/com.weibo.wework/capabilities/store/plugins/269646-wegent-sina-email-0.1.11',
         },
@@ -48,7 +55,7 @@ describe('listWegentStorePluginsFromDisk', () => {
     expect(plugins).toHaveLength(1)
     expect(plugins[0]).toMatchObject({
       metadata: {
-        name: '269646-wegent-sina-email-0.1.11',
+        name: 'sina-email',
         namespace: 'wegent',
         labels: { id: '269646-wegent-sina-email-0.1.11' },
       },
@@ -56,11 +63,18 @@ describe('listWegentStorePluginsFromDisk', () => {
         source: {
           type: 'marketplace',
           marketplace: 'wegent',
-          pluginKey: '269646-wegent-sina-email-0.1.11',
+          pluginKey: 'sina-email',
         },
         origin: 'market',
+        displayName: 'Sina Email',
+        description: 'Read email',
         version: '0.1.11',
         installState: 'installed',
+        interface: {
+          displayName: 'Sina Email',
+          logo: '/Users/test/.wework/apps/com.weibo.wework/capabilities/store/plugins/269646-wegent-sina-email-0.1.11/assets/icon.png',
+          category: 'Productivity',
+        },
       },
     })
     expect(plugins[0]?.spec.pluginId).toBeUndefined()

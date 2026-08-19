@@ -193,7 +193,14 @@ function mockCodexAppServerInvoke(
     unlinkError?: Error
     wegentStorePlugins?: Array<{
       name: string
+      packageId: string
+      marketplace: string
       version?: string | null
+      enabled: boolean
+      displayName?: string | null
+      description?: string | null
+      logo?: string | null
+      category?: string | null
       pluginPath: string
     }>
     localConnectorAuthHealth?: () => Promise<unknown>
@@ -3466,7 +3473,7 @@ describe('PluginsWorkspace', () => {
     expect(screen.getByTestId('plugin-detail-toggle-101')).not.toHaveTextContent('安装插件')
   })
 
-  test('offers try-in-chat from a wegent store directory even when Codex membership omitted it', async () => {
+  test('offers try-in-chat from a manifest-backed package when Codex membership omitted it', async () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
       value: {},
@@ -3498,8 +3505,12 @@ describe('PluginsWorkspace', () => {
       installedPluginNames: [],
       wegentStorePlugins: [
         {
-          name: '101-wegent-wegent-sites-1.0.0',
+          name: 'wegent-sites',
+          packageId: '101-wegent-wegent-sites-1.0.0',
+          marketplace: 'wegent',
           version: '1.0.0',
+          enabled: true,
+          displayName: '快速建站',
           pluginPath:
             '/Users/test/.wework/apps/com.weibo.wework/capabilities/store/plugins/101-wegent-wegent-sites-1.0.0',
         },

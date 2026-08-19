@@ -9,7 +9,10 @@ import {
   DISCONNECTED_STATE,
   type CloudConnectionContextValue,
 } from '@/features/cloud-connection/CloudConnectionContext'
-import { LOCAL_PLUGIN_SKILLS_CHANGED_EVENT } from '@/features/plugins/pluginTrial'
+import {
+  LOCAL_PLUGIN_SKILLS_CHANGED_EVENT,
+  PLUGIN_TRIAL_QUEUED_EVENT,
+} from '@/features/plugins/pluginTrial'
 import { WorkbenchProvider, type WorkbenchServices } from './WorkbenchProvider'
 import { useWorkbench } from './useWorkbench'
 import { MessageList } from '@/components/chat/MessageList'
@@ -779,6 +782,11 @@ function RemoteRuntimeCacheProbe() {
       </span>
     </div>
   )
+}
+
+function PluginTrialInputProbe({ testId }: { testId: string }) {
+  const { paneSession } = useWorkbenchProbeSession()
+  return <span data-testid={testId}>{paneSession.input}</span>
 }
 
 function ProjectSendProbe() {
@@ -9286,6 +9294,77 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() => expect(screen.getByTestId('standalone-chat-key')).toHaveTextContent('1'))
     expect(screen.getByTestId('composer-input')).toHaveTextContent('Documents')
     expect(screen.getByTestId('trial-plugin-app')).toHaveTextContent('documents')
+    expect(sessionStorage.getItem('wework:pending-plugin-trial')).toBeNull()
+  })
+
+  test('lets only the active workspace tab consume a queued plugin trial', async () => {
+    const user = { id: 1, user_name: 'alice', email: 'a@b.c' }
+    render(
+      <>
+        <WorkbenchProvider
+          user={user}
+          services={createWorkbenchServices()}
+          consumePluginTrials={false}
+        >
+          <WorkbenchProbeSessionProvider>
+            <PluginTrialInputProbe testId="inactive-plugin-trial-input" />
+          </WorkbenchProbeSessionProvider>
+        </WorkbenchProvider>
+        <WorkbenchProvider user={user} services={createWorkbenchServices()} consumePluginTrials>
+          <WorkbenchProbeSessionProvider>
+            <PluginTrialInputProbe testId="active-plugin-trial-input" />
+          </WorkbenchProbeSessionProvider>
+        </WorkbenchProvider>
+      </>
+    )
+
+    sessionStorage.setItem(
+      'wework:pending-plugin-trial',
+      JSON.stringify({
+        input: '[$Documents](plugin://documents@wegent) ',
+        pluginName: 'Documents',
+        openInNewChat: true,
+      })
+    )
+    act(() => window.dispatchEvent(new Event(PLUGIN_TRIAL_QUEUED_EVENT)))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('active-plugin-trial-input')).toHaveTextContent('Documents')
+    )
+    expect(screen.getByTestId('inactive-plugin-trial-input')).toBeEmptyDOMElement()
+    expect(sessionStorage.getItem('wework:pending-plugin-trial')).toBeNull()
+  })
+
+  test('preserves a queued plugin trial until the workspace tab becomes active', async () => {
+    const user = { id: 1, user_name: 'alice', email: 'a@b.c' }
+    const services = createWorkbenchServices()
+    const renderProvider = (consumePluginTrials: boolean) => (
+      <WorkbenchProvider user={user} services={services} consumePluginTrials={consumePluginTrials}>
+        <WorkbenchProbeSessionProvider>
+          <PluginTrialInputProbe testId="deferred-plugin-trial-input" />
+        </WorkbenchProbeSessionProvider>
+      </WorkbenchProvider>
+    )
+    const view = render(renderProvider(false))
+
+    sessionStorage.setItem(
+      'wework:pending-plugin-trial',
+      JSON.stringify({
+        input: '[$Documents](plugin://documents@wegent) ',
+        pluginName: 'Documents',
+        openInNewChat: true,
+      })
+    )
+    act(() => window.dispatchEvent(new Event(PLUGIN_TRIAL_QUEUED_EVENT)))
+
+    expect(screen.getByTestId('deferred-plugin-trial-input')).toBeEmptyDOMElement()
+    expect(sessionStorage.getItem('wework:pending-plugin-trial')).not.toBeNull()
+
+    view.rerender(renderProvider(true))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('deferred-plugin-trial-input')).toHaveTextContent('Documents')
+    )
     expect(sessionStorage.getItem('wework:pending-plugin-trial')).toBeNull()
   })
 

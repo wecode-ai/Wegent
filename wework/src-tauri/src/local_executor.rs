@@ -628,7 +628,14 @@ pub struct PersonalMarketplaceListResult {
 #[serde(rename_all = "camelCase")]
 pub struct WegentStorePluginSummary {
     name: String,
+    package_id: String,
+    marketplace: String,
     version: Option<String>,
+    enabled: bool,
+    display_name: Option<String>,
+    description: Option<String>,
+    logo: Option<String>,
+    category: Option<String>,
     plugin_path: String,
 }
 
@@ -5036,138 +5043,120 @@ pub async fn local_executor_list_personal_marketplace_plugins(
     .map_err(|error| format!("Failed to join personal marketplace list task: {error}"))?
 }
 
-fn version_from_store_dir_name(name: &str) -> Option<String> {
-    let version = name.rsplit_once('-')?.1;
-    let mut parts = version.splitn(3, '.');
-    let major = parts.next()?;
-    let minor = parts.next()?;
-    let patch = parts.next()?;
-    if major.is_empty()
-        || minor.is_empty()
-        || patch.is_empty()
-        || !major.chars().all(|character| character.is_ascii_digit())
-        || !minor.chars().all(|character| character.is_ascii_digit())
-    {
-        return None;
-    }
-    let patch_core = patch.split(['-', '+']).next().unwrap_or(patch);
-    if patch_core.is_empty()
-        || !patch_core
-            .chars()
-            .all(|character| character.is_ascii_digit())
-    {
-        return None;
-    }
-    Some(version.to_string())
-}
-
-fn wegent_store_plugin_summary(name: &str, plugin_root: &Path) -> WegentStorePluginSummary {
+fn wegent_store_plugin_summary(
+    installed: &Value,
+    plugin_root: &Path,
+) -> Option<WegentStorePluginSummary> {
     let manifest_path = [
         plugin_root.join(".codex-plugin/plugin.json"),
         plugin_root.join(".claude-plugin/plugin.json"),
     ]
     .into_iter()
     .find(|path| path.is_file());
-    let mut version = None;
-    if let Some(manifest_path) = manifest_path {
-        if let Ok(content) = fs::read_to_string(&manifest_path) {
-            if let Ok(manifest) = serde_json::from_str::<Value>(&content) {
-                version = optional_trimmed_string(manifest.get("version"));
-            }
-        }
-    }
-    WegentStorePluginSummary {
-        name: name.to_string(),
-        version: version.or_else(|| version_from_store_dir_name(name)),
+    let manifest = manifest_path
+        .and_then(|path| fs::read_to_string(path).ok())
+        .and_then(|content| serde_json::from_str::<Value>(&content).ok())?;
+    let name = optional_trimmed_string(manifest.get("name"))
+        .or_else(|| optional_trimmed_string(installed.get("name")))?;
+    let package_id = plugin_root.file_name()?.to_str()?.to_string();
+    let interface = manifest.get("interface");
+    Some(WegentStorePluginSummary {
+        name,
+        package_id,
+        marketplace: optional_trimmed_string(installed.get("marketplace"))?,
+        version: optional_trimmed_string(manifest.get("version"))
+            .or_else(|| optional_trimmed_string(installed.get("version"))),
+        enabled: installed
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+        display_name: optional_trimmed_string(interface.and_then(|value| value.get("displayName"))),
+        description: optional_trimmed_string(manifest.get("description")).or_else(|| {
+            optional_trimmed_string(interface.and_then(|value| value.get("shortDescription")))
+        }),
+        logo: optional_trimmed_string(interface.and_then(|value| value.get("logo"))),
+        category: optional_trimmed_string(interface.and_then(|value| value.get("category"))),
         plugin_path: plugin_root.display().to_string(),
-    }
+    })
 }
 
-fn push_wegent_store_root(roots: &mut Vec<PathBuf>, seen: &mut HashSet<PathBuf>, path: PathBuf) {
-    let key = path.canonicalize().unwrap_or_else(|_| path.clone());
-    if seen.insert(key) {
-        roots.push(path);
+fn list_wegent_store_plugins(executor_home: &Path) -> Result<WegentStoreListResult, String> {
+    let capabilities_root = executor_home.join("capabilities");
+    let store_root = capabilities_root.join("store").join("plugins");
+    let store_path = store_root.display().to_string();
+    let manifest_path = capabilities_root.join("manifest.json");
+    if !manifest_path.is_file() {
+        return Ok(WegentStoreListResult {
+            store_path,
+            plugins: Vec::new(),
+        });
     }
-}
-
-fn wegent_store_plugin_roots() -> Vec<PathBuf> {
-    let mut roots = Vec::new();
-    let mut seen = HashSet::new();
-    if let Ok(home) = local_executor_home_path() {
-        push_wegent_store_root(
-            &mut roots,
-            &mut seen,
-            home.join("capabilities").join("store").join("plugins"),
-        );
-    }
-    if let Some(user_home) = dirs::home_dir() {
-        let wework = user_home.join(WEWORK_HOME_DIR);
-        push_wegent_store_root(
-            &mut roots,
-            &mut seen,
-            wework.join("capabilities").join("store").join("plugins"),
-        );
-        if let Ok(apps) = fs::read_dir(wework.join("apps")) {
-            for entry in apps.filter_map(Result::ok) {
-                let Ok(metadata) = fs::symlink_metadata(entry.path()) else {
-                    continue;
-                };
-                if !metadata.is_dir() || metadata.file_type().is_symlink() {
-                    continue;
-                }
-                push_wegent_store_root(
-                    &mut roots,
-                    &mut seen,
-                    entry
-                        .path()
-                        .join("capabilities")
-                        .join("store")
-                        .join("plugins"),
-                );
-            }
-        }
-    }
-    roots
-}
-
-fn list_wegent_store_plugins_from_roots(roots: &[PathBuf]) -> WegentStoreListResult {
-    let mut by_name: std::collections::BTreeMap<String, WegentStorePluginSummary> =
-        std::collections::BTreeMap::new();
-    let mut store_path = String::new();
-    for root in roots {
-        if store_path.is_empty() && root.is_dir() {
-            store_path = root.display().to_string();
-        }
-        let Ok(entries) = fs::read_dir(root) else {
+    let content = fs::read_to_string(&manifest_path).map_err(|error| {
+        format!(
+            "Failed to read capability manifest {}: {error}",
+            manifest_path.display()
+        )
+    })?;
+    let manifest = serde_json::from_str::<Value>(&content).map_err(|error| {
+        format!(
+            "Failed to parse capability manifest {}: {error}",
+            manifest_path.display()
+        )
+    })?;
+    let installed = manifest
+        .get("plugins")
+        .and_then(Value::as_object)
+        .ok_or_else(|| {
+            format!(
+                "Capability manifest {} is missing plugins",
+                manifest_path.display()
+            )
+        })?;
+    let Ok(canonical_store_root) = store_root.canonicalize() else {
+        return Ok(WegentStoreListResult {
+            store_path,
+            plugins: Vec::new(),
+        });
+    };
+    let mut plugins = Vec::new();
+    for entry in installed.values() {
+        let Some(path) = optional_trimmed_string(entry.get("store_path")).map(PathBuf::from) else {
             continue;
         };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_dir() {
-                continue;
-            }
-            let Some(name) = entry.file_name().to_str().map(str::to_string) else {
-                continue;
-            };
-            if name.starts_with('.') {
-                continue;
-            }
-            by_name
-                .entry(name.clone())
-                .or_insert_with(|| wegent_store_plugin_summary(&name, &path));
+        let plugin_root = if path.is_absolute() {
+            path
+        } else {
+            capabilities_root.join(path)
+        };
+        if !plugin_root.is_dir() {
+            continue;
+        }
+        let Ok(plugin_root) = plugin_root.canonicalize() else {
+            continue;
+        };
+        if !plugin_root.starts_with(&canonical_store_root) {
+            continue;
+        }
+        if let Some(summary) = wegent_store_plugin_summary(entry, &plugin_root) {
+            plugins.push(summary);
         }
     }
-    WegentStoreListResult {
+    plugins.sort_by(|left, right| {
+        left.marketplace
+            .cmp(&right.marketplace)
+            .then_with(|| left.name.cmp(&right.name))
+    });
+    Ok(WegentStoreListResult {
         store_path,
-        plugins: by_name.into_values().collect(),
-    }
+        plugins,
+    })
 }
 
-/// Lists unpacked Wegent store packages from disk without calling Codex plugin/list.
+/// Lists installed packages from the active capability manifest without calling Codex.
 #[tauri::command]
 pub async fn local_executor_list_wegent_store_plugins() -> Result<WegentStoreListResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let listed = list_wegent_store_plugins_from_roots(&wegent_store_plugin_roots());
+        let listed = list_wegent_store_plugins(&local_executor_home_path()?)?;
         log::info!(
             "Listed wegent store plugins from disk: path={}, count={}",
             listed.store_path,
@@ -5448,10 +5437,7 @@ mod tests {
         let previous_home = std::env::var_os("HOME");
         let previous_executor_home = std::env::var_os(LOCAL_EXECUTOR_HOME_ENV);
         let fake_home = import_test_root("list-wegent-store-home");
-        let executor_home = fake_home
-            .join(".wework")
-            .join("apps")
-            .join("com.weibo.wework");
+        let executor_home = fake_home.join(".wework");
         let store_dir = executor_home
             .join("capabilities")
             .join("store")
@@ -5461,36 +5447,64 @@ mod tests {
         fs::create_dir_all(package_dir.join(".codex-plugin")).unwrap();
         fs::write(
             package_dir.join(".codex-plugin/plugin.json"),
-            r#"{"name":"sina-email","version":"0.1.11"}"#,
+            r#"{"name":"sina-email","version":"0.1.11","interface":{"displayName":"Sina Email","shortDescription":"Read email","category":"Productivity","logo":"./assets/icon.png"}}"#,
         )
         .unwrap();
+        fs::create_dir_all(store_dir.join("268634-wegent-code-review-0.1.2")).unwrap();
         fs::create_dir_all(store_dir.join(".hidden")).unwrap();
         fs::write(store_dir.join("not-a-plugin.txt"), "skip").unwrap();
+        fs::write(
+            executor_home.join("capabilities/manifest.json"),
+            serde_json::to_string(&json!({
+                "version": 1,
+                "plugins": {
+                    "sina-email@wegent": {
+                        "enabled": true,
+                        "marketplace": "wegent",
+                        "name": "sina-email",
+                        "store_path": package_dir,
+                        "version": "0.1.11"
+                    }
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let stale_app_package = executor_home
+            .join("apps/com.weibo.wework/capabilities/store/plugins")
+            .join("267529-wework-lark-0.1.0");
+        fs::create_dir_all(stale_app_package.join(".codex-plugin")).unwrap();
+        fs::write(
+            stale_app_package.join(".codex-plugin/plugin.json"),
+            r#"{"name":"lark","version":"0.1.0"}"#,
+        )
+        .unwrap();
         std::env::set_var("HOME", &fake_home);
         std::env::set_var(LOCAL_EXECUTOR_HOME_ENV, &executor_home);
 
-        let listed = list_wegent_store_plugins_from_roots(&wegent_store_plugin_roots());
+        let listed = list_wegent_store_plugins(&executor_home).unwrap();
 
         restore_env("HOME", previous_home);
         restore_env(LOCAL_EXECUTOR_HOME_ENV, previous_executor_home);
         let _ = fs::remove_dir_all(fake_home);
 
         assert_eq!(listed.plugins.len(), 1);
-        assert_eq!(listed.plugins[0].name, "269646-wegent-sina-email-0.1.11");
+        assert_eq!(listed.plugins[0].name, "sina-email");
+        assert_eq!(
+            listed.plugins[0].package_id,
+            "269646-wegent-sina-email-0.1.11"
+        );
+        assert_eq!(listed.plugins[0].marketplace, "wegent");
         assert_eq!(listed.plugins[0].version.as_deref(), Some("0.1.11"));
+        assert_eq!(
+            listed.plugins[0].display_name.as_deref(),
+            Some("Sina Email")
+        );
+        assert_eq!(listed.plugins[0].description.as_deref(), Some("Read email"));
         assert!(listed
             .store_path
             .replace('\\', "/")
             .ends_with("capabilities/store/plugins"));
-    }
-
-    #[test]
-    fn version_from_store_dir_name_reads_semver_suffix() {
-        assert_eq!(
-            version_from_store_dir_name("267250-wegent-wegent-sites-0.1.6").as_deref(),
-            Some("0.1.6")
-        );
-        assert_eq!(version_from_store_dir_name("notes"), None);
     }
 
     #[test]

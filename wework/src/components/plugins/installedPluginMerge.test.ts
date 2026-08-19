@@ -306,8 +306,8 @@ describe('mergeInstalledPlugins', () => {
     const local = localCodexPlugin({ id: 'documents-local', name: 'documents' })
     const store = localCodexPlugin({
       id: '269646-wegent-sina-email-0.1.11',
-      name: '269646-wegent-sina-email-0.1.11',
-      pluginKey: '269646-wegent-sina-email-0.1.11',
+      name: 'sina-email',
+      pluginKey: 'sina-email',
       marketplace: 'wegent',
       version: '0.1.11',
     })
@@ -319,6 +319,25 @@ describe('mergeInstalledPlugins', () => {
       'documents-local',
       '269646-wegent-sina-email-0.1.11',
     ])
+  })
+
+  test('does not append a manifest-backed store package already listed by Codex', () => {
+    const membership = localCodexPlugin({
+      id: 'sina-email',
+      name: 'sina-email',
+      pluginKey: 'sina-email',
+      marketplace: 'wegent',
+      version: '0.1.11',
+    })
+    const store = localCodexPlugin({
+      id: '269646-wegent-sina-email-0.1.11',
+      name: 'sina-email',
+      pluginKey: 'sina-email',
+      marketplace: 'wegent',
+      version: '0.1.11',
+    })
+
+    expect(mergeLocalInstalledWithStorePackages([membership], [store])).toEqual([membership])
   })
 
   test('prefers a locally created plugin linked to the same published cloud plugin', () => {

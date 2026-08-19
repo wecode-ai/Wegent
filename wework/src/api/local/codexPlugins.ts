@@ -1220,7 +1220,14 @@ type PersonalMarketplaceListResult = {
 
 type WegentStorePluginSummary = {
   name: string
+  packageId: string
+  marketplace: string
   version?: string | null
+  enabled: boolean
+  displayName?: string | null
+  description?: string | null
+  logo?: string | null
+  category?: string | null
   pluginPath: string
 }
 
@@ -1765,25 +1772,38 @@ function toWegentStoreInstalledPlugin(
   plugin: WegentStorePluginSummary,
   storePath: string
 ): InstalledPlugin {
+  const marketplace = isWegentCloudMarketplace(plugin.marketplace)
+    ? INTERNAL_DEVICE_MARKETPLACE_ID
+    : plugin.marketplace
   return toInstalledPlugin(
     {
-      name: INTERNAL_DEVICE_MARKETPLACE_ID,
+      name: marketplace,
       path: storePath || plugin.pluginPath,
       plugins: [],
     },
     {
-      id: plugin.name,
+      id: plugin.packageId,
       name: plugin.name,
       installed: true,
-      enabled: true,
+      enabled: plugin.enabled,
       localVersion: plugin.version ?? undefined,
+      source: {
+        source: 'local',
+        path: plugin.pluginPath,
+      },
+      interface: {
+        displayName: plugin.displayName?.trim() || plugin.name,
+        shortDescription: plugin.description ?? null,
+        logo: plugin.logo ?? null,
+        category: plugin.category ?? null,
+      },
     }
   )
 }
 
 /**
- * Lists unpacked Wegent store packages from disk. Avoids Codex plugin/list so
- * enterprise ZIPs already on this device can paint as installed without GitHub.
+ * Lists packages referenced by the active capability manifest. Avoids Codex
+ * plugin/list so installed enterprise ZIPs can paint without scanning caches.
  */
 export async function listWegentStorePluginsFromDisk(): Promise<InstalledPlugin[]> {
   if (!isTauriRuntime()) return []

@@ -357,6 +357,27 @@ async function openOfficialPluginChat(control, installSelector) {
   const trySelector = `[data-testid="plugin-marketplace-try-${pluginId}"]`
   const detailTrySelector = `[data-testid="plugin-detail-toggle-${pluginId}"]`
   const installedStripSelector = `[data-testid="plugins-installed-strip-item-${pluginId}"]`
+  const activeTabSelector = '[data-testid^="workspace-tab-select-"][aria-selected="true"]'
+  const activeTabTestId = await control.command('getAttribute', activeTabSelector, {
+    value: 'data-testid',
+  })
+  assert.ok(activeTabTestId, 'The plugin trial did not expose its active workspace tab')
+  const activeTabId = activeTabTestId.replace('workspace-tab-select-', '')
+  await control.command('click', '[data-testid="workspace-tab-add"]')
+  await control.command('click', '[data-testid="workspace-tab-add-task"]')
+  await control.command(
+    'waitFor',
+    '[data-testid^="workspace-tab-select-task-"][aria-selected="true"]',
+    {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  await control.command('click', `[data-testid="workspace-tab-select-${activeTabId}"]`)
+  await control.command(
+    'waitFor',
+    `[data-testid="workspace-tab-select-${activeTabId}"][aria-selected="true"]`,
+    { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+  )
   await control.command('click', '[data-testid="plugins-button"]')
   await control.command('waitFor', '[data-testid="plugins-workspace"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
