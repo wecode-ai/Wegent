@@ -14,6 +14,12 @@ On the **Plugins** page, choose **Create → Import plugin** to import a standar
 
 If you do not have a package yet, choose **Download example plugin** in the import dialog and use it as the starting point for the manifest, Skills, and MCP configuration. After selecting a ZIP, Wework previews its name, version, and included capabilities. Packages with executable capabilities require an explicit trust confirmation before import and installation. When a package is invalid, the dialog identifies the missing file or unsupported ZIP type.
 
+## Install a DeepSeek Harness capability
+
+Open **Plugins → Harness capabilities**, then choose **Import package** or drop a ZIP package onto the page. The installation dialog shows the capability name, version, description, and required DeepSeek Harness and Node.js versions. If validation fails, Wework reports the package issue without writing it to the local capability directory.
+
+Choose a Wework model before installation. The model is bound only to that capability, so other Harness capabilities can use different models. After installation, each capability card shows its version, bound model, and **Installed**, **Running**, or **Failed to start** state. Choose **Open** to start an isolated Harness instance in its own workspace tab. Choose **Stop** to close that tab and reclaim the instance.
+
 ## Delete a personal plugin
 
 You can delete a plugin that you created or imported from the **…** menu in its detail page. If the plugin is installed, Wework uninstalls it before deleting the local plugin source.
