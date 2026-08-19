@@ -415,10 +415,9 @@ async function cmdComplete(args) {
 
   console.log('✅ Wiki generation completed and published')
 
-  // Printed on success too, and that is the point: broken diagrams never hold a
-  // version back, so this is the last moment anything can be done about them. Exit 0
-  // -- the run did succeed, and failing it would undo a wiki that is live and good
-  // over a figure that does not draw.
+  // A non-default policy can make diagram findings advisory. The standard Code Wiki
+  // policy rejects them before this point, but preserve the correction path for any
+  // caller that opts into the advisory mode.
   if (result.corrections) {
     console.log('')
     console.log(result.corrections)
