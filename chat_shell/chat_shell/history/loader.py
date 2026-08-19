@@ -75,6 +75,9 @@ async def _fetch_remote_history(
     limit: int | None,
     from_latest_compaction: bool,
 ) -> list[Any]:
+    # A successful empty response is valid for a first task. Only a failed
+    # request is retried or surfaced as HistoryRestoreError; never turn it into
+    # an empty history, which would make a continuation lose its context.
     max_attempts = settings.CHAT_HISTORY_RETRY_COUNT + 1
     for attempt in range(1, max_attempts + 1):
         try:

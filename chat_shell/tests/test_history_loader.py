@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from types import SimpleNamespace
+from typing import Any
 
 import httpx
 import pytest
@@ -267,22 +268,24 @@ async def test_get_history_sends_from_latest_compaction(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_remote_history_retries_transport_failure_then_fails_closed(monkeypatch):
+async def test_remote_history_retries_transport_failure_then_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from chat_shell.history import loader
 
     class _FailingStore:
-        def __init__(self):
+        def __init__(self) -> None:
             self.calls = 0
 
-        async def get_history(self, **kwargs):
+        async def get_history(self, **kwargs: Any) -> list[Any]:
             del kwargs
             self.calls += 1
             raise httpx.ReadTimeout("Backend did not respond")
 
     store = _FailingStore()
-    delays = []
+    delays: list[float] = []
 
-    async def _sleep(delay):
+    async def _sleep(delay: float) -> None:
         delays.append(delay)
 
     monkeypatch.setattr(loader, "_get_remote_history_store", lambda: store)
@@ -297,14 +300,16 @@ async def test_remote_history_retries_transport_failure_then_fails_closed(monkey
 
 
 @pytest.mark.asyncio
-async def test_remote_history_does_not_retry_non_transport_failure(monkeypatch):
+async def test_remote_history_does_not_retry_non_transport_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from chat_shell.history import loader
 
     class _FailingStore:
-        def __init__(self):
+        def __init__(self) -> None:
             self.calls = 0
 
-        async def get_history(self, **kwargs):
+        async def get_history(self, **kwargs: Any) -> list[Any]:
             del kwargs
             self.calls += 1
             raise ValueError("invalid remote response")

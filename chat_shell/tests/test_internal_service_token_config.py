@@ -6,6 +6,9 @@
 
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
 from chat_shell.core.config import Settings
 
 
@@ -33,6 +36,14 @@ def test_chat_history_retry_count_defaults_to_one() -> None:
     settings = Settings(_env_file=None)
 
     assert settings.CHAT_HISTORY_RETRY_COUNT == 1
+
+
+def test_chat_history_retry_count_is_bounded() -> None:
+    settings = Settings(_env_file=None, CHAT_HISTORY_RETRY_COUNT=5)
+
+    assert settings.CHAT_HISTORY_RETRY_COUNT == 5
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, CHAT_HISTORY_RETRY_COUNT=6)
 
 
 def test_dotenv_path_is_independent_of_working_directory() -> None:
