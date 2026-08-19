@@ -913,7 +913,6 @@ async def build_execution_request(
         # Task spec is the runtime source of truth. Message-level external
         # contexts are materialized into Task.spec before execution is built.
         task_refs = extract_task_external_knowledge_refs(task)
-        request.external_knowledge_refs = task_refs
 
         # Merge reasoning config from API/model selection into model_config.
         # Priority: explicit API reasoning_config > UI model_options > model think_config.
