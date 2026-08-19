@@ -195,9 +195,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      CARGO_INCREMENTAL: "0"
-      CARGO_PROFILE_DEV_DEBUG: "0"
-      CARGO_PROFILE_TEST_DEBUG: "0"
       HOME: /root
     container:
       image: ${{ needs.changes.outputs.desktop_image }}
@@ -231,9 +228,9 @@ jobs:
             ~/.cargo/git
             executor/target
             wework/src-tauri/target
-          key: ${{ runner.os }}-wework-desktop-e2e-v4-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-${{ hashFiles('executor/Cargo.lock', 'wework/src-tauri/Cargo.lock') }}
+          key: ${{ runner.os }}-wework-desktop-e2e-v3-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-${{ hashFiles('executor/Cargo.lock', 'wework/src-tauri/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-wework-desktop-e2e-v4-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-
+            ${{ runner.os }}-wework-desktop-e2e-v3-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-
 
       - name: Prepare bundled sidecars
         working-directory: ./wework
@@ -453,9 +450,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
-      CARGO_INCREMENTAL: "0"
-      CARGO_PROFILE_DEV_DEBUG: "0"
-      CARGO_PROFILE_TEST_DEBUG: "0"
       HOME: /root
     container:
       image: ${{ needs.changes.outputs.desktop_image }}
@@ -489,9 +483,9 @@ jobs:
             ~/.cargo/git
             executor/target
             wework/src-tauri/target
-          key: ${{ runner.os }}-wework-desktop-e2e-v4-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-${{ hashFiles('executor/Cargo.lock', 'wework/src-tauri/Cargo.lock') }}
+          key: ${{ runner.os }}-wework-desktop-e2e-v3-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-${{ hashFiles('executor/Cargo.lock', 'wework/src-tauri/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-wework-desktop-e2e-v4-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-
+            ${{ runner.os }}-wework-desktop-e2e-v3-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-
 
       - name: Prepare bundled sidecars
         working-directory: ./wework

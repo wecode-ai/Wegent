@@ -722,7 +722,7 @@ fi
 
 # GitHub expressions are matched literally in workflow source.
 # shellcheck disable=SC2016
-if ! grep -Fq '${{ runner.os }}-wework-desktop-e2e-v4-' \
+if ! grep -Fq '${{ runner.os }}-wework-desktop-e2e-v3-' \
   <<<"$desktop_cache_key" ||
   ! grep -Fq "hashFiles('docker/wework-e2e/desktop.Dockerfile')" \
     <<<"$desktop_cache_key" ||

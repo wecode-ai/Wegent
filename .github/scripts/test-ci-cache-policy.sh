@@ -279,7 +279,7 @@ fi
 
 # GitHub expressions are matched literally in workflow source.
 # shellcheck disable=SC2016
-wework_target_key='wework-desktop-e2e-v4-${{ hashFiles('\''docker/wework-e2e/desktop.Dockerfile'\'') }}-${{ hashFiles('\''executor/Cargo.lock'\'', '\''wework/src-tauri/Cargo.lock'\'') }}'
+wework_target_key='wework-desktop-e2e-v3-${{ hashFiles('\''docker/wework-e2e/desktop.Dockerfile'\'') }}-${{ hashFiles('\''executor/Cargo.lock'\'', '\''wework/src-tauri/Cargo.lock'\'') }}'
 if ! grep -Fq "$wework_target_key" "$workflow_dir/wework-e2e.yml" ||
   ! grep -Fq "$wework_target_key" "$warmup_workflow"; then
   fail "Wework E2E and warmup must share the desktop Cargo target cache"
