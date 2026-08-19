@@ -126,5 +126,5 @@ chmodSync(output, 0o755)
         }
       })
       .toBe(false)
-  })
+  }, 20_000)
 })

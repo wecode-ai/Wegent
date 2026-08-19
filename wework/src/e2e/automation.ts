@@ -34,7 +34,11 @@ import { LOCAL_EXECUTOR_COMMANDS } from '@/tauri/localExecutor'
 import { executeVerificationControlCommand } from './verification-control'
 import { evalEmbeddedBrowserJson } from '@/lib/embedded-browser'
 import { selectDesktopControlOption } from './desktop-control-select'
-import { getAppPreferences, updateAppPreferences } from '@/tauri/appPreferences'
+import {
+  getAppPreferences,
+  updateAppPreferences,
+  type AppPreferencesPatch,
+} from '@/tauri/appPreferences'
 import type { LocalHarnessId } from '@/lib/local-harness'
 import { getDesktopE2ERuntimeConfig, loadDesktopE2ERuntimeConfig } from './runtime-config'
 import { getDesktopE2EClipboardText, installDesktopE2EClipboard } from './clipboard'
@@ -1104,6 +1108,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         })),
       })
       return JSON.stringify(updated.localHarnesses)
+    }
+    case 'setAppPreferences': {
+      const patch = JSON.parse(command.value ?? '{}') as AppPreferencesPatch
+      const preferences = await updateAppPreferences(patch)
+      return JSON.stringify(preferences)
     }
     case 'toggleSidebar': {
       const event = new Event('wework:desktop-sidebar-toggle-request', { cancelable: true })

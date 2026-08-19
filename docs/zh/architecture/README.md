@@ -13,6 +13,7 @@ sidebar_position: 1
 | 内置浏览器导航与多标签      | [embedded-browser.md](embedded-browser.md)                               | bridge 路由、pending open、WebView 生命周期、导航完成、多标签 E2E |
 | 项目执行状态与 Runtime 容量 | [project-execution-state.md](project-execution-state.md)                 | claim、事件顺序、取消、重试、lease、并发容量、UI 投影             |
 | Git Worktree 执行           | [git-worktree-execution.md](git-worktree-execution.md)                   | 设备路由、能力、preflight、排队创建、生命周期、持久化、UI 投影    |
+| 文本模型视觉委托            | [model-vision-delegation.md](model-vision-delegation.md)                 | 显式模型引用、catalog 能力、sidecar 配置、图片替换、失败隔离      |
 | Wework 宿主插件运行时       | [workbench-plugin-runtime.md](workbench-plugin-runtime.md)               | profile 装配、服务与 UI slot、动态模块、sidecar、卸载与恢复       |
 
 详细产品说明继续放在原开发指南；本目录只保存可评审的架构真值。
