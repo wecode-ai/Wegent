@@ -11,6 +11,7 @@ from html import escape
 from typing import Any
 
 from shared.models.knowledge import (
+    KnowledgeAccessOutcome,
     KnowledgeScopeType,
     SelectedKnowledgeContext,
     SelectedKnowledgeRef,
@@ -47,7 +48,7 @@ def render_selected_knowledge_prompt(
         "- For a document resource, read that exact document before using broader search.",
         "- Use knowledge_base_id and resource_id as provider-native tool arguments; names, paths, and URLs are context only.",
         "- Do not broaden to other knowledge sources unless the user explicitly authorizes it.",
-        "- Distinguish no relevant result, permission denial, and tool failure. On permission denial or tool failure, you must not claim that the knowledge sources contain no relevant content.",
+        *_render_outcome_policy(),
         "- Cite the actual source when using knowledge content.",
         "- Create or update content only when the user explicitly requests a management action.",
         "- This scope guides model routing; the provider remains the authority for access control.",
@@ -57,6 +58,19 @@ def render_selected_knowledge_prompt(
         "</selected_knowledge_guidance>",
     ]
     return "\n".join([*source_lines, *guidance])
+
+
+def _render_outcome_policy() -> list[str]:
+    """Render the minimal provider-neutral failure and fallback contract."""
+    return [
+        "- Normalize provider outcomes by meaning before deciding what to do:",
+        f"  - {KnowledgeAccessOutcome.UNSUPPORTED}: search is unavailable; use native listing and exact-read capabilities.",
+        f"  - {KnowledgeAccessOutcome.DENIED}: access was refused; report the permission boundary and do not claim that no relevant content exists.",
+        f"  - {KnowledgeAccessOutcome.RATE_LIMITED}: the provider rejected further calls; stop retrying and report the temporary limit.",
+        f"  - {KnowledgeAccessOutcome.FAILED}: the tool call failed; report the failure and do not treat it as an empty result.",
+        f"  - {KnowledgeAccessOutcome.EMPTY}: the call succeeded but returned no relevant evidence; apply the explicit or inherited evidence policy above.",
+        "- On denied, rate_limited, or failed outcomes, you must not claim that the knowledge sources contain no relevant content.",
+    ]
 
 
 def _render_evidence_policy(evidence_required: bool) -> list[str]:
