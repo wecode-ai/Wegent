@@ -443,7 +443,7 @@ export const ComposerProseMirrorEditor = forwardRef<
       <div ref={mountRef} />
       {!hasContent && (
         <div
-          className={`${props.className} pointer-events-none absolute inset-0 !text-text-muted/55`}
+          className={`${props.className} composer-prosemirror-placeholder pointer-events-none absolute inset-0 !text-text-muted/55`}
         >
           {props.placeholder}
         </div>
