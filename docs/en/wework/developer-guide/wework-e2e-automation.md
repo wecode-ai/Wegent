@@ -141,7 +141,9 @@ Core and Cloud shard downloads and reuses that artifact instead of rebuilding
 Vite, Tauri, and Executor. Rust builds reuse both the `main`-owned Cargo target
 cache and sccache compiler units: the target cache bounds PR and first-run
 latency, while sccache reduces incremental compilation after dependency or
-source changes. The plugin suite requires separate build-time
+source changes. Archiving strips Linux debug symbols only from the copied
+artifact binaries, leaving the original build outputs unchanged while reducing
+upload and download time across all ten shards. The plugin suite requires separate build-time
 configuration and remains an independent job alongside the shared Core build.
 Both successful and failed runs retain complete diagnostics; uploads disable
 redundant compression for PNG and other already-compressed evidence so artifact
