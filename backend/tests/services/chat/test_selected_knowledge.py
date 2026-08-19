@@ -672,7 +672,9 @@ def test_dingtalk_skill_only_describes_provider_adapter_behavior() -> None:
 
     assert "does not guarantee workspace or folder scoping" in skill
     assert "only when the user explicitly requests a mutation" not in skill
-    assert "DingTalk is the authority for the current user's permissions" in skill
+    assert "The MCP exposes both read and write capabilities" in skill
+    assert "A selected source is a routing hint, not write authorization" in skill
+    assert "DingTalk remains the authority for permissions" in skill
 
 
 def test_activate_provider_native_knowledge_requires_skill_mcp() -> None:

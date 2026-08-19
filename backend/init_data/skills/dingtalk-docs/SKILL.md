@@ -22,4 +22,4 @@ Use the DingTalk document MCP directly. Resource IDs in `<selected_knowledge_sou
 - For a folder, call `list_nodes` with the selected folder ID and continue through descendants when needed.
 - For a document, call `get_document_content` with the selected node ID to read its Markdown body.
 - `search_documents` does not guarantee workspace or folder scoping. Do not use an unscoped search when the user selected a narrower range; traverse the hierarchy or read the exact document instead.
-- DingTalk is the authority for the current user's permissions.
+- The MCP exposes both read and write capabilities. A selected source is a routing hint, not write authorization; DingTalk remains the authority for permissions.
