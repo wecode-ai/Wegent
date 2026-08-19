@@ -180,13 +180,13 @@ function workspaceTabPath(tab: WorkspaceTab): string {
 function workspaceTabIframe(
   tab: WorkspaceTab,
   wegentUrl: string | null | undefined
-): { src: string; title: string } | null {
+): { appKey: string; src: string; title: string } | null {
   const match = workspaceTabPath(tab).match(/^\/app\/([^/]+)/)
   if (!match) return null
   const app = getWorkbenchPluginRuntime().apps.resolve(match[1])
   if (!app || app.mode !== 'iframe') return null
   const src = app.key === 'wegent' ? wegentUrl : app.url
-  return src ? { src, title: app.label } : null
+  return src ? { appKey: app.key, src, title: app.label } : null
 }
 
 function workspaceTabAuxiliaryPage(path: string, search: string) {
@@ -298,6 +298,7 @@ function WorkspaceTabSurface({
             <div className={cn('h-full', !iframe && 'hidden')} aria-hidden={!iframe}>
               <AppIframe
                 active={active && Boolean(iframe)}
+                appKey={renderedIframe.appKey}
                 src={renderedIframe.src}
                 title={renderedIframe.title}
                 workspaceTabId={tab.id}
