@@ -961,6 +961,10 @@ fn bootstrap_is_stable_at_build(post_build_navigation: bool) -> bool {
     !post_build_navigation
 }
 
+fn embedded_browser_devtools_enabled(debug_build: bool) -> bool {
+    debug_build
+}
+
 fn entry_readiness(
     state: &EmbeddedBrowserState,
     label: &str,
@@ -1817,7 +1821,7 @@ pub async fn embedded_browser_open(
         .data_directory(data_directory)
         .data_store_identifier(EMBEDDED_BROWSER_DATA_STORE_ID)
         .initialization_script(EMBEDDED_BROWSER_DIAGNOSTICS_SCRIPT)
-        .devtools(true)
+        .devtools(embedded_browser_devtools_enabled(cfg!(debug_assertions)))
         .accept_first_mouse(true)
         .on_navigation({
             let state = state.inner().clone();

@@ -11,11 +11,11 @@ use std::{
 
 use super::{
     available_logical_entry, bootstrap_is_stable_at_build, bridge_navigation_url,
-    bridge_request_authorized,
-    browser_file_url_from_path, browser_host_is_ready, browser_open_action, browser_webview_url,
-    consume_approved_agent_risk, directory_entry_modified_unix_seconds, directory_listing_html,
-    download_event_owner, file_url_path, format_directory_entry_modified, format_file_size,
-    loaded_browser_url, local_file_browser_title, logical_owner_for_native_label,
+    bridge_request_authorized, browser_file_url_from_path, browser_host_is_ready,
+    browser_open_action, browser_webview_url, consume_approved_agent_risk,
+    directory_entry_modified_unix_seconds, directory_listing_html, download_event_owner,
+    embedded_browser_devtools_enabled, file_url_path, format_directory_entry_modified,
+    format_file_size, loaded_browser_url, local_file_browser_title, logical_owner_for_native_label,
     merge_request_option, native_webview_label, read_http_request, ready_logical_entry,
     register_agent_approval, register_preview_source, relabel_logical_entry,
     remove_logical_entry_if_native_matches, resolve_agent_bridge_label,
@@ -77,6 +77,12 @@ fn browser_ready_requires_both_bootstrap_and_host_readiness() {
 fn atomic_builder_navigation_is_stable_without_a_load_event() {
     assert!(bootstrap_is_stable_at_build(false));
     assert!(!bootstrap_is_stable_at_build(true));
+}
+
+#[test]
+fn embedded_browser_devtools_are_debug_only() {
+    assert!(embedded_browser_devtools_enabled(true));
+    assert!(!embedded_browser_devtools_enabled(false));
 }
 
 #[test]
