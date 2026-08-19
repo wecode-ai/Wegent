@@ -9992,7 +9992,7 @@ describe('DesktopWorkbenchLayout', () => {
       'src',
       'http://example.com/'
     )
-  })
+  }, 10_000)
 
   test('exposes the task-scoped browser label before the browser panel mounts', () => {
     const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()

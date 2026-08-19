@@ -127,12 +127,21 @@ node e2e/utils/mock-connector-upstream-server.mjs
 checkpoint。跳过上游时，每个 checkpoint 会自行建立最小前置 fixture，不依赖只有
 完整流程才创建的任务或 UI 状态。PR CI 会根据改动的功能路径组合最小 segment
 矩阵；共享桌面基础设施、merge queue、定时任务和 `ci:all` 仍运行完整桌面套件。
-完整 Core 套件会把每个 checkpoint 展开为独立的 GitHub Actions matrix job 并行
-执行，而不是在单个 `Wework Desktop E2E (Core)` job 中串行运行。CI 会先构建一次
-带固定测试端口的 Core Tauri 应用、Executor 和 Codex artifact；各 checkpoint
-只安装桌面运行时依赖并下载复用该 artifact，不再重复安装 pnpm、Rust、Python 或
-uv，也不重复执行 Vite、Tauri 和 Executor 构建。插件与云端套件需要不同的构建时
-配置，仍作为独立 job 与 Core 构建并行。
+完整 Core 和 Cloud 套件各固定使用 5 个 GitHub Actions matrix job；每个 job
+通过隔离的 Xvfb、端口、应用数据和 Executor Home 同时运行 2 个 checkpoint。
+分片按 CI 实测耗时平衡，新增或明显变慢的 checkpoint 必须重新校准分片，不能靠
+增加 runner、删覆盖或重跑失败用例来缩短关键路径。CI 会先构建一次 Core Tauri
+应用、Executor 和 Codex artifact，其中 `--build-only` 会在同一 runner 内并行
+编译相互独立的 Tauri 应用和 Executor；各 Core/Cloud 分片下载并复用该 artifact，
+不再重复执行 Vite、Tauri 和 Executor 构建。Rust 构建同时复用由 `main`
+维护的 Cargo target cache 和 sccache 编译单元：target cache 保障 PR 与首次
+运行的延迟，sccache 降低依赖或源码变化后的增量编译成本。归档时只移除复制到
+artifact 中的 Linux debug symbols，原始构建产物保持不变，以缩短 10 个分片的
+上传和下载时间。桌面 E2E 构建跳过由并行 Lint 工作流完整执行的重复 TypeScript
+类型检查，只保留 Vite/Tauri 的真实产物构建；测试覆盖与类型门禁均保持不变。
+插件套件需要独立构建配置，仍作为
+单独 job 与共享 Core 构建并行。成功和失败诊断都保留完整证据；PNG 等已压缩文件
+上传时禁用二次压缩，避免诊断归档延长流水线尾部。
 merge queue 会验证最终进入 `main` 的合并提交，因此合入后不再通过 `push main`
 重复运行同一套 Tests、Lint、Platform E2E 和 Wework E2E。映射规则位于
 `.github/scripts/classify-wework-desktop-e2e.sh`，新增功能覆盖时

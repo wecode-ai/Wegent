@@ -129,15 +129,28 @@ checkpoint. When upstream checkpoints are skipped, each checkpoint establishes
 its own minimal fixtures instead of depending on tasks or UI state created only
 by the complete flow. PR CI builds the smallest segment matrix for the changed
 feature paths. Shared desktop infrastructure, merge queue, scheduled runs, and
-`ci:all` still run the complete desktop suites. The complete Core suite expands
-every checkpoint into an independent GitHub Actions matrix job so the
-checkpoints run in parallel instead of serially inside one
-`Wework Desktop E2E (Core)` job. CI first builds one Core Tauri application,
-Executor, and Codex artifact with fixed test ports. Each checkpoint installs
-only desktop runtime dependencies and reuses that artifact instead of
-reinstalling pnpm, Rust, Python, or uv and rebuilding Vite, Tauri, and Executor.
-The plugin and cloud suites require different build-time configuration, so they
-remain independent jobs that run alongside the Core build. Merge queue validates
+`ci:all` still run the complete desktop suites. The complete Core and Cloud
+suites each use five fixed GitHub Actions matrix jobs. Every job runs two
+checkpoints concurrently with isolated Xvfb displays, ports, application data,
+and Executor Homes. Shards are balanced from observed CI durations; a new or
+materially slower checkpoint requires rebalancing instead of adding runners,
+removing coverage, or rerunning failures. CI first builds one Core Tauri
+application, Executor, and Codex artifact. In `--build-only` mode, the
+independent Tauri and Executor builds run concurrently on the same runner. Every
+Core and Cloud shard downloads and reuses that artifact instead of rebuilding
+Vite, Tauri, and Executor. Rust builds reuse both the `main`-owned Cargo target
+cache and sccache compiler units: the target cache bounds PR and first-run
+latency, while sccache reduces incremental compilation after dependency or
+source changes. Archiving strips Linux debug symbols only from the copied
+artifact binaries, leaving the original build outputs unchanged while reducing
+upload and download time across the ten shards. Desktop E2E builds skip the
+duplicate TypeScript typecheck that the parallel Lint workflow runs in full,
+while retaining the real Vite and Tauri artifact build; test coverage and the
+type gate remain unchanged. The plugin suite requires an independent build
+configuration and continues to run in parallel with the shared Core build.
+Both successful and failed runs retain complete diagnostics; uploads disable
+redundant compression for PNG and other already-compressed evidence so artifact
+archiving does not extend the pipeline tail. Merge queue validates
 the final commit that enters `main`, so Tests, Lint, Platform E2E, and Wework E2E
 do not repeat the same validation after the merge through a `push main` trigger. The
 mapping lives in `.github/scripts/classify-wework-desktop-e2e.sh` and must be updated when new
