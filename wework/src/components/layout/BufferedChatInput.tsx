@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   ChatInput,
   type ChatInputHandle,
@@ -54,7 +54,7 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   const scopeKeyRef = useRef(scopeKey)
   scopeKeyRef.current = scopeKey
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const focusRequestedComposer = (event: Event) => {
       const detail = (event as CustomEvent<WorkbenchComposerFocusDetail>).detail
       if (props.disabled || !scopeKey || detail?.scopeKey !== scopeKey) return
