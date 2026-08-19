@@ -23,7 +23,7 @@ flowchart LR
     WEBVIEW -->|on_navigation accepts navigation| LOADING[tab loading indicator]
     LOADING --> PANEL
     WEBVIEW -->|PageLoadEvent::Finished| LOADED[loaded_url truth]
-    WEBVIEW -->|macOS navigation failure callback| FAILED[navigation error truth]
+    WEBVIEW -->|native platform navigation failure callback| FAILED[navigation error truth]
     LOADED --> BRIDGE
     LOADED --> PANEL
     FAILED --> PANEL
@@ -67,7 +67,7 @@ sequenceDiagram
         S-->>B: navigation complete
         B-->>C: success
     else page load fails
-        W-->>S: didFailNavigation(error)
+        W-->>S: native platform navigation failure callback(error)
         S->>S: navigation_error = error
         S-->>R: isLoading = false + navigationError
         R->>R: hide the native blank page and show the failure state
@@ -84,6 +84,7 @@ sequenceDiagram
 | Bridge authentication and dispatch                       | `wework/src-tauri/src/embedded_browser/bridge_server.rs`                  |
 | Logical-label routing, pending request, navigation truth | `wework/src-tauri/src/embedded_browser.rs`                                |
 | macOS TLS and navigation-failure callbacks               | `wework/src-tauri/src/embedded_browser_tls.rs`                            |
+| Linux WebKitGTK navigation-failure callback               | `wework/src-tauri/src/embedded_browser/linux_host.rs`                     |
 | Tab creation, selection, and closure                     | `wework/src/components/layout/DesktopWorkbenchMain.tsx`                   |
 | `about:blank` host creation and UI state                 | `wework/src/components/layout/workspace-panels/WorkspaceBrowserPanel.tsx` |
 | Real-desktop multi-tab regression                        | `wework/e2e/desktop/scenarios/embedded-browser-multi-tabs.scenario.mjs`   |

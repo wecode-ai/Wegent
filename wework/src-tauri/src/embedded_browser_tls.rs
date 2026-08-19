@@ -158,7 +158,7 @@ unsafe extern "C-unwind" fn handle_navigation_failure(
     let error = unsafe { &*error };
     let code: isize = unsafe { msg_send![error, code] };
     let message: Retained<NSString> = unsafe { msg_send![error, localizedDescription] };
-    crate::embedded_browser::handle_macos_navigation_failure(
+    crate::embedded_browser::handle_navigation_failure(
         &context.app,
         &native_label,
         code as i64,

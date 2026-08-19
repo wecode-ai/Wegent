@@ -23,7 +23,7 @@ flowchart LR
     WEBVIEW -->|on_navigation 接受导航| LOADING[标签加载动画]
     LOADING --> PANEL
     WEBVIEW -->|PageLoadEvent::Finished| LOADED[loaded_url 真值]
-    WEBVIEW -->|macOS 导航失败回调| FAILED[导航错误真值]
+    WEBVIEW -->|平台原生导航失败回调| FAILED[导航错误真值]
     LOADED --> BRIDGE
     LOADED --> PANEL
     FAILED --> PANEL
@@ -67,7 +67,7 @@ sequenceDiagram
         S-->>B: 导航完成
         B-->>C: success
     else 页面加载失败
-        W-->>S: didFailNavigation(error)
+        W-->>S: 平台原生导航失败回调(error)
         S->>S: navigation_error = error
         S-->>R: isLoading = false + navigationError
         R->>R: 隐藏原生空白页并显示失败提示
@@ -84,6 +84,7 @@ sequenceDiagram
 | bridge 认证与分发                             | `wework/src-tauri/src/embedded_browser/bridge_server.rs`                  |
 | logical-label 路由、pending request、导航真值 | `wework/src-tauri/src/embedded_browser.rs`                                |
 | macOS TLS 与导航失败回调                      | `wework/src-tauri/src/embedded_browser_tls.rs`                            |
+| Linux WebKitGTK 导航失败回调                  | `wework/src-tauri/src/embedded_browser/linux_host.rs`                     |
 | 标签创建、选择和关闭                          | `wework/src/components/layout/DesktopWorkbenchMain.tsx`                   |
 | `about:blank` 宿主创建与 UI 状态              | `wework/src/components/layout/workspace-panels/WorkspaceBrowserPanel.tsx` |
 | 多标签真实桌面回归                            | `wework/e2e/desktop/scenarios/embedded-browser-multi-tabs.scenario.mjs`   |

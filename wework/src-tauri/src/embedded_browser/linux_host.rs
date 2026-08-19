@@ -1,7 +1,8 @@
 use std::time::Duration;
 
 use gtk::prelude::*;
-use tauri::{LogicalPosition, LogicalSize, Webview, Wry};
+use tauri::{AppHandle, LogicalPosition, LogicalSize, Webview, Wry};
+use webkit2gtk::{glib::error::ErrorDomain, prelude::WebViewExt, NetworkError};
 
 const HOST_NAME: &str = "wework-embedded-browser-host";
 
@@ -114,4 +115,35 @@ pub fn apply_bounds(
     receiver
         .recv_timeout(Duration::from_secs(5))
         .map_err(|error| format!("Timed out positioning embedded browser webview: {error}"))?
+}
+
+pub fn register_navigation_failure_handler(
+    webview: &Webview<Wry>,
+    app: AppHandle,
+    native_label: String,
+) -> Result<(), String> {
+    webview
+        .with_webview(move |platform_webview| {
+            platform_webview.inner().connect_load_failed(
+                move |_webview, _event, _failing_uri, error| {
+                    if error.matches(NetworkError::Cancelled) {
+                        return false;
+                    }
+                    let code = error
+                        .kind::<NetworkError>()
+                        .map(ErrorDomain::code)
+                        .unwrap_or_default();
+                    crate::embedded_browser::handle_navigation_failure(
+                        &app,
+                        &native_label,
+                        i64::from(code),
+                        error.message().to_string(),
+                    );
+                    false
+                },
+            );
+        })
+        .map_err(|error| {
+            format!("Failed to register embedded browser navigation failure handler: {error}")
+        })
 }

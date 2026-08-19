@@ -955,8 +955,8 @@ fn apply_navigation_failure(entry: &mut EmbeddedBrowserEntry, code: i64, message
     true
 }
 
-#[cfg(target_os = "macos")]
-pub(crate) fn handle_macos_navigation_failure(
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub(crate) fn handle_navigation_failure(
     app: &tauri::AppHandle,
     native_label: &str,
     code: i64,
@@ -2210,6 +2210,22 @@ pub async fn embedded_browser_open(
                 "error": &error,
             }),
         );
+        if let Ok(mut webviews) = state.webviews.lock() {
+            remove_logical_entry_if_native_matches(
+                &mut webviews,
+                &label,
+                &native_label,
+                |current| current.native_label.as_str(),
+            );
+        }
+        let _ = webview.close();
+        return Err(error);
+    }
+
+    #[cfg(target_os = "linux")]
+    if let Err(error) =
+        linux_host::register_navigation_failure_handler(&webview, app.clone(), native_label.clone())
+    {
         if let Ok(mut webviews) = state.webviews.lock() {
             remove_logical_entry_if_native_matches(
                 &mut webviews,
