@@ -18,6 +18,28 @@ write_apt_config() {
     | sudo tee "$apt_conf_path" >/dev/null
 }
 
+cleanup_stale_apt_processes() {
+  echo "Cleaning up stale apt/dpkg processes..."
+
+  for pattern in '^/usr/bin/apt-get ' '^/usr/bin/apt ' '^/usr/bin/dpkg '; do
+    sudo pkill -TERM -f "$pattern" || true
+  done
+
+  sleep 2
+
+  for pattern in '^/usr/bin/apt-get ' '^/usr/bin/apt ' '^/usr/bin/dpkg '; do
+    sudo pkill -KILL -f "$pattern" || true
+  done
+
+  sudo rm -f \
+    /var/lib/apt/lists/lock \
+    /var/cache/apt/archives/lock \
+    /var/lib/dpkg/lock \
+    /var/lib/dpkg/lock-frontend
+
+  sudo dpkg --configure -a || true
+}
+
 for ((attempt = 1; attempt <= max_attempts; attempt++)); do
   echo "Installing Playwright system dependencies (attempt $attempt/$max_attempts)"
 
@@ -30,6 +52,8 @@ for ((attempt = 1; attempt <= max_attempts; attempt++)); do
     pnpm exec playwright install-deps chromium; then
     exit 0
   fi
+
+  cleanup_stale_apt_processes
 
   if [[ "$attempt" -eq "$max_attempts" ]]; then
     echo "Playwright system dependency installation failed after $max_attempts attempts" >&2

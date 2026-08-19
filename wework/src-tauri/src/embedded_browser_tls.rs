@@ -174,21 +174,21 @@ fn navigation_delegate_class(superclass: &AnyClass) -> Result<&'static AnyClass,
                 sel!(webView:didReceiveAuthenticationChallenge:completionHandler:);
             let fail_selector = sel!(webView:didFailNavigation:withError:);
             let provisional_fail_selector = sel!(webView:didFailProvisionalNavigation:withError:);
-            if superclass.instance_method(challenge_selector).is_some() {
-                return Err(format!(
-                    "Navigation delegate {} already implements TLS authentication handling",
+            let has_challenge_handler = superclass.instance_method(challenge_selector).is_some();
+            let has_failure_handler = superclass.instance_method(fail_selector).is_some();
+            let has_provisional_failure_handler =
+                superclass.instance_method(provisional_fail_selector).is_some();
+            if has_challenge_handler {
+                log::warn!(
+                    "Navigation delegate {} already implements TLS authentication handling; preserving it",
                     superclass.name().to_string_lossy()
-                ));
+                );
             }
-            if superclass.instance_method(fail_selector).is_some()
-                || superclass
-                    .instance_method(provisional_fail_selector)
-                    .is_some()
-            {
-                return Err(format!(
-                    "Navigation delegate {} already implements navigation failure handling",
+            if has_failure_handler || has_provisional_failure_handler {
+                log::warn!(
+                    "Navigation delegate {} already implements navigation failure handling; preserving existing selectors",
                     superclass.name().to_string_lossy()
-                ));
+                );
             }
             let unique_id = std::ptr::addr_of!(WEBVIEW_NATIVE_LABEL_KEY) as usize;
             let class_name = format!("WegentEmbeddedBrowserNavigationDelegate_{unique_id:x}\0");
@@ -199,18 +199,25 @@ fn navigation_delegate_class(superclass: &AnyClass) -> Result<&'static AnyClass,
                 "Failed to allocate embedded browser navigation delegate subclass".to_string()
             })?;
             unsafe {
-                builder.add_method(
-                    challenge_selector,
-                    handle_authentication_challenge as unsafe extern "C-unwind" fn(_, _, _, _, _),
-                );
-                builder.add_method(
-                    fail_selector,
-                    handle_navigation_failure as unsafe extern "C-unwind" fn(_, _, _, _, _),
-                );
-                builder.add_method(
-                    provisional_fail_selector,
-                    handle_navigation_failure as unsafe extern "C-unwind" fn(_, _, _, _, _),
-                );
+                if !has_challenge_handler {
+                    builder.add_method(
+                        challenge_selector,
+                        handle_authentication_challenge
+                            as unsafe extern "C-unwind" fn(_, _, _, _, _),
+                    );
+                }
+                if !has_failure_handler {
+                    builder.add_method(
+                        fail_selector,
+                        handle_navigation_failure as unsafe extern "C-unwind" fn(_, _, _, _, _),
+                    );
+                }
+                if !has_provisional_failure_handler {
+                    builder.add_method(
+                        provisional_fail_selector,
+                        handle_navigation_failure as unsafe extern "C-unwind" fn(_, _, _, _, _),
+                    );
+                }
             }
             Ok(builder.register())
         })

@@ -345,6 +345,16 @@ export async function goForwardEmbeddedBrowser(
   await invoke('embedded_browser_go_forward', browserArgs(label))
 }
 
+export async function setEmbeddedBrowserZoom(
+  scaleFactor: number,
+  label = DEFAULT_EMBEDDED_BROWSER_LABEL
+): Promise<void> {
+  await invoke('embedded_browser_set_zoom', {
+    ...browserArgs(label),
+    scaleFactor,
+  })
+}
+
 export async function evalEmbeddedBrowser(
   script: string,
   label = DEFAULT_EMBEDDED_BROWSER_LABEL

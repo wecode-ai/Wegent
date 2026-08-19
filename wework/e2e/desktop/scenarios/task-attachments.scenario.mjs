@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
 
+import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
+
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 
@@ -123,6 +125,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
     },
 
     async verify(control) {
+      await ensureExperimentalFeaturesEnabled(control)
       await control.command('waitFor', '[data-testid="workspace-tab-add"]', {
         timeoutMs: uiTimeoutMs,
       })

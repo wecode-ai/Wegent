@@ -688,6 +688,67 @@ describe('createHybridWorkbenchServices', () => {
     expect(response.data[1]).toEqual(responsesModel)
   })
 
+  it('keeps only explicit cloud vision references that resolve to an available image model', async () => {
+    const visionModel = {
+      name: 'cloud-vision',
+      type: 'public',
+      displayName: 'Cloud Vision',
+      namespace: 'default',
+      resourceUserId: 0,
+      modelCapabilities: { supportsImage: true },
+      config: { protocol: 'openai-responses' },
+      runtime: { family: 'openai.openai-responses' },
+      isActive: true,
+    }
+    const reference = {
+      modelName: visionModel.name,
+      modelType: visionModel.type,
+      namespace: visionModel.namespace,
+      resourceUserId: visionModel.resourceUserId,
+      apiFormat: 'openai-responses',
+    }
+    const configuredDeepSeek = {
+      name: 'deepseek-v4-pro-responses',
+      type: 'public',
+      displayName: 'DeepSeek V4 Pro',
+      modelId: 'deepseek-v4-pro',
+      namespace: 'default',
+      resourceUserId: 0,
+      modelCapabilities: { supportsImage: false },
+      config: { protocol: 'openai-responses', visionSidecarModel: reference },
+      runtime: { family: 'openai.openai-responses' },
+      isActive: true,
+    }
+    const staleDeepSeek = {
+      ...configuredDeepSeek,
+      name: 'deepseek-v4-flash-responses',
+      modelId: 'deepseek-v4-flash',
+      config: {
+        protocol: 'openai-responses',
+        visionSidecarModel: { ...reference, modelName: 'deleted-vision-model' },
+      },
+    }
+    mocks.localListModels.mockResolvedValue({ data: [] })
+    mocks.cloudListModels.mockResolvedValue({
+      data: [configuredDeepSeek, staleDeepSeek, visionModel],
+    })
+    const services = createServices()
+
+    await services.modelApi.listModels()
+    await vi.waitFor(async () => {
+      const refreshed = await services.modelApi.listModels()
+      expect(refreshed.data).toHaveLength(3)
+    })
+    const response = await services.modelApi.listModels()
+
+    expect(
+      response.data.find(model => model.name === configuredDeepSeek.name)?.config
+    ).toMatchObject({ visionSidecarModel: reference })
+    expect(
+      response.data.find(model => model.name === staleDeepSeek.name)?.config
+    ).not.toHaveProperty('visionSidecarModel')
+  })
+
   it('does not wait for an unresponsive cloud model request', async () => {
     mocks.cloudListModels.mockReturnValue(new Promise(() => undefined))
     const services = createServices()

@@ -182,9 +182,40 @@ spec:
 | `spec.modelSubGroup`   | string | 否   | `spec.modelGroup` 下的二级展示分组 |
 | `spec.modelConfig`     | object | 是   | 模型配置对象                       |
 | `spec.modelConfig.env` | object | 是   | 环境变量配置                       |
+| `spec.modelConfig.visionSidecarModel` | object | 否   | 显式引用处理图片的模型；省略时不启用视觉委托。 |
 | `spec.protocol`        | string | 否   | 上游协议（如 `openai`、`openai-responses`、`claude`）。省略时从 `env.model` 推断。 |
 | `spec.apiFormat`       | string | 否   | 上游 API 格式（如 `responses`、`chat/completions`）。省略时由 `spec.protocol` 推导。 |
 | `spec.isWeworkAvailable` | boolean | 否 | 是否将该模型分发到 wework 桌面客户端。 |
+
+### 视觉委托模型引用
+
+纯文本模型可以在 `modelConfig.visionSidecarModel` 中显式引用一个声明 `supportsImage: true` 的模型。引用必须使用 Backend 授权模型列表返回的完整资源身份和 `apiFormat`；只有目标仍存在、已启用、可访问、支持图片且 API 格式一致时，Wework 才接受该引用，并且不会根据登录状态或模型名称自动选择默认视觉模型。引用缺失或被拒绝时，主模型保持纯文本，不会进行图片预处理或额外模型调用。
+
+```yaml
+spec:
+  protocol: openai-responses
+  apiFormat: responses
+  modelConfig:
+    env:
+      model: openai
+      model_id: deepseek-v4-pro
+      base_url: https://example.com/v1
+      api_key: ${WECODE_USER_API_KEY}
+    visionSidecarModel:
+      modelName: openai-gpt-5.6-luna
+      modelType: public
+      namespace: default
+      resourceUserId: 0
+      apiFormat: openai-responses
+```
+
+| 字段             | 类型    | 必填 | 说明                                                                    |
+| ---------------- | ------- | ---- | ----------------------------------------------------------------------- |
+| `modelName`      | string  | 是   | 被引用 Model 的 `metadata.name`。                                       |
+| `modelType`      | string  | 是   | 资源来源：`public`、`user` 或 `group`。                                 |
+| `namespace`      | string  | 是   | 被引用 Model 的命名空间。                                               |
+| `resourceUserId` | integer | 是   | 被引用 Model 的资源所有者 ID。                                          |
+| `apiFormat`      | string  | 是   | `openai-responses`、`openai-chat-completions` 或 `anthropic-messages`。 |
 
 ### 模型选择器分组
 

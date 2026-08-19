@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
 
+import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
+
 const PROJECT_NAME = '离线本地项目空间'
 const TASK_NAME = '离线本地任务'
 const UPDATED_TASK_NAME = '离线本地任务（已更新）'
@@ -27,6 +29,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
     },
 
     async verify(control) {
+      await ensureExperimentalFeaturesEnabled(control)
       await control.command('waitFor', '[data-testid="workspace-tab-add"]', {
         timeoutMs: uiTimeoutMs,
       })

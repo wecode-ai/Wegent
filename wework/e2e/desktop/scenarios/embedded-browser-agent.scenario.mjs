@@ -776,6 +776,79 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         timeoutMs: 5_000,
       })
       assert.equal(readyWait.ok, true, `Bridge fixture wait failed: ${JSON.stringify(readyWait)}`)
+
+      const fixtureServerUrl = new URL(control.url)
+      const schemeLessLocalhostUrl = `localhost:${fixtureServerUrl.port}${FIXTURE_PATH}`
+      const normalizedLocalhostUrl = `http://${schemeLessLocalhostUrl}`
+      assert.equal(
+        await control.command('getAttribute', BROWSER_INPUT_SELECTOR, {
+          value: 'autocapitalize',
+        }),
+        'none',
+        'The browser address bar did not disable automatic capitalization'
+      )
+      assert.equal(
+        await control.command('getAttribute', BROWSER_INPUT_SELECTOR, {
+          value: 'autocomplete',
+        }),
+        'off',
+        'The browser address bar did not disable autocomplete'
+      )
+      assert.equal(
+        await control.command('getAttribute', BROWSER_INPUT_SELECTOR, {
+          value: 'autocorrect',
+        }),
+        'off',
+        'The browser address bar did not disable automatic correction'
+      )
+      assert.equal(
+        await control.command('getAttribute', BROWSER_INPUT_SELECTOR, {
+          value: 'spellcheck',
+        }),
+        'false',
+        'The browser address bar did not disable spell checking'
+      )
+      await control.command('fill', BROWSER_INPUT_SELECTOR, {
+        value: schemeLessLocalhostUrl,
+      })
+      assert.equal(
+        await control.command('getValue', BROWSER_INPUT_SELECTOR),
+        schemeLessLocalhostUrl,
+        'The browser address bar changed lowercase localhost before submission'
+      )
+      await control.command('submit', BROWSER_INPUT_SELECTOR)
+      await waitForControlValue(
+        control,
+        BROWSER_INPUT_SELECTOR,
+        normalizedLocalhostUrl,
+        uiTimeoutMs,
+        'The browser address bar did not default a scheme-less localhost URL to HTTP'
+      )
+      const localhostWait = await bridgeCall({
+        action: 'waitFor',
+        options: { condition: { textVisible: READY_TEXT } },
+        timeoutMs: 5_000,
+      })
+      assert.equal(
+        localhostWait.ok,
+        true,
+        `The HTTP localhost fixture did not load: ${JSON.stringify(localhostWait)}`
+      )
+      const localhostLocation = await bridgeCall({
+        action: 'evaluate',
+        expression: 'location.href',
+        timeoutMs: 5_000,
+      })
+      assert.equal(
+        localhostLocation.ok,
+        true,
+        `HTTP localhost location evaluation failed: ${JSON.stringify(localhostLocation)}`
+      )
+      assert.equal(
+        localhostLocation.value,
+        normalizedLocalhostUrl,
+        'The embedded browser did not navigate to the normalized HTTP URL'
+      )
       await new Promise(resolve => setTimeout(resolve, 300))
 
       const pendingAgentWait = bridgeCall({

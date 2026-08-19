@@ -2269,6 +2269,15 @@ pub async fn embedded_browser_open(
     if let Err(error) =
         linux_host::register_navigation_failure_handler(&webview, app.clone(), native_label.clone())
     {
+        log_embedded_browser_diagnostic(
+            &state,
+            &label,
+            "open_navigation_failure_handler_failed",
+            json!({
+                "nativeLabel": &native_label,
+                "error": &error,
+            }),
+        );
         if let Ok(mut webviews) = state.webviews.lock() {
             remove_logical_entry_if_native_matches(
                 &mut webviews,
@@ -2614,6 +2623,24 @@ pub fn embedded_browser_go_forward(
     label: Option<String>,
 ) -> Result<(), String> {
     embedded_browser_eval(state, "window.history.forward(); true".to_string(), label)
+}
+
+#[tauri::command]
+pub fn embedded_browser_set_zoom(
+    state: tauri::State<'_, EmbeddedBrowserState>,
+    scale_factor: f64,
+    label: Option<String>,
+) -> Result<(), String> {
+    if !scale_factor.is_finite() || scale_factor <= 0.0 {
+        return Err(format!(
+            "Invalid embedded browser zoom scale factor: {scale_factor}"
+        ));
+    }
+    let label = browser_label(label);
+    let webview = get_entry(&state, &label)?.ready_webview()?;
+    webview
+        .set_zoom(scale_factor)
+        .map_err(|error| format!("Failed to set embedded browser zoom: {error}"))
 }
 
 #[tauri::command]

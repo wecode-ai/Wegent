@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use gtk::prelude::*;
 use tauri::{AppHandle, LogicalPosition, LogicalSize, Webview, Wry};
-use webkit2gtk::{glib::error::ErrorDomain, NetworkError, WebViewExt};
+use webkit2gtk::{glib::error::ErrorDomain, NetworkError, PolicyError, WebViewExt};
 
 const HOST_NAME: &str = "wework-embedded-browser-host";
 
@@ -89,12 +89,23 @@ fn place_webview(
         }
     };
 
-    embedded_webview.set_size_request(size.width.round() as i32, size.height.round() as i32);
-    host.move_(
-        &embedded_webview,
-        position.x.round() as i32,
-        position.y.round() as i32,
-    );
+    // The Tauri-created WebView expands by default. In a GtkFixed host that
+    // makes the page viewport match the full host width instead of the bounds
+    // requested by the device toolbar.
+    embedded_webview.set_hexpand(false);
+    embedded_webview.set_vexpand(false);
+    embedded_webview.set_halign(gtk::Align::Start);
+    embedded_webview.set_valign(gtk::Align::Start);
+    let x = position.x.round() as i32;
+    let y = position.y.round() as i32;
+    let width = size.width.round() as i32;
+    let height = size.height.round() as i32;
+    embedded_webview.set_size_request(width, height);
+    host.move_(&embedded_webview, x, y);
+    // GtkFixed normally allocates a child from its natural size. Apply the
+    // requested allocation explicitly so WebKit reports the device viewport
+    // instead of the host's full width through window.innerWidth.
+    embedded_webview.size_allocate(&gtk::Allocation::new(x, y, width, height));
     Ok(())
 }
 
@@ -126,12 +137,15 @@ pub fn register_navigation_failure_handler(
         .with_webview(move |platform_webview| {
             platform_webview.inner().connect_load_failed(
                 move |_webview, _event, _failing_uri, error| {
-                    if error.matches(NetworkError::Cancelled) {
+                    if error.matches(NetworkError::Cancelled)
+                        || error.matches(PolicyError::FrameLoadInterruptedByPolicyChange)
+                    {
                         return false;
                     }
                     let code = error
                         .kind::<NetworkError>()
                         .map(ErrorDomain::code)
+                        .or_else(|| error.kind::<PolicyError>().map(ErrorDomain::code))
                         .unwrap_or_default();
                     crate::embedded_browser::handle_navigation_failure(
                         &app,

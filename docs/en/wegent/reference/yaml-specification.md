@@ -182,9 +182,40 @@ spec:
 | `spec.modelSubGroup`   | string | No       | Second-level display group under `spec.modelGroup` |
 | `spec.modelConfig`     | object | Yes      | Model configuration object                         |
 | `spec.modelConfig.env` | object | Yes      | Environment variables configuration                |
+| `spec.modelConfig.visionSidecarModel` | object | No   | Explicit reference to the model that processes images; omission disables vision delegation. |
 | `spec.protocol`        | string | No       | Upstream protocol (`openai`, `openai-responses`, `claude`, ...). Inferred from `env.model` when omitted. |
 | `spec.apiFormat`       | string | No       | Upstream API format (`responses`, `chat/completions`, ...). Derived from `spec.protocol` when omitted. |
 | `spec.isWeworkAvailable` | boolean | No     | Whether the model is distributed to the wework desktop client. |
+
+### Vision delegation model reference
+
+A text-only model can explicitly reference a model that declares `supportsImage: true` in `modelConfig.visionSidecarModel`. The reference must use the complete resource identity and `apiFormat` returned by the Backend's authorized model list. Wework accepts it only when the exact target remains present, active, accessible, image-capable, and API-format-compatible; it never selects a default vision model from sign-in state or model names. When the reference is absent or rejected, the primary model remains text-only and no image preprocessing or additional model call occurs.
+
+```yaml
+spec:
+  protocol: openai-responses
+  apiFormat: responses
+  modelConfig:
+    env:
+      model: openai
+      model_id: deepseek-v4-pro
+      base_url: https://example.com/v1
+      api_key: ${WECODE_USER_API_KEY}
+    visionSidecarModel:
+      modelName: openai-gpt-5.6-luna
+      modelType: public
+      namespace: default
+      resourceUserId: 0
+      apiFormat: openai-responses
+```
+
+| Field            | Type    | Required | Description                                                             |
+| ---------------- | ------- | -------- | ----------------------------------------------------------------------- |
+| `modelName`      | string  | Yes      | Referenced Model's `metadata.name`.                                     |
+| `modelType`      | string  | Yes      | Resource source: `public`, `user`, or `group`.                          |
+| `namespace`      | string  | Yes      | Referenced Model's namespace.                                           |
+| `resourceUserId` | integer | Yes      | Resource owner ID of the referenced Model.                              |
+| `apiFormat`      | string  | Yes      | `openai-responses`, `openai-chat-completions`, or `anthropic-messages`. |
 
 ### Model Selector Grouping
 

@@ -13,5 +13,6 @@ Before changing a flow below, update its connection graph, sequence diagram, cod
 | Embedded-browser navigation and tabs         | [embedded-browser.md](embedded-browser.md)               | Bridge routing, pending open, WebView lifecycle, navigation completion, multi-tab E2E            |
 | Project execution state and Runtime capacity | [project-execution-state.md](project-execution-state.md) | Claim, event ordering, cancellation, retry, lease, concurrency capacity, UI projection           |
 | Git Worktree execution                       | [git-worktree-execution.md](git-worktree-execution.md)   | Device routing, capability, preflight, queued creation, lifecycle, persistence, UI projection    |
+| Text-model vision delegation                 | [model-vision-delegation.md](model-vision-delegation.md)                 | Explicit model reference, catalog capability, sidecar configuration, image replacement, failure isolation |
 
 Detailed product prose remains in the existing developer guides. This directory contains only reviewable architecture truth.

@@ -205,6 +205,16 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
       )
       await control.command('fill', BROWSER_INPUT_SELECTOR, { value: fixtureAUrl })
       await control.command('submit', BROWSER_INPUT_SELECTOR)
+      await control.command('waitFor', FIRST_BROWSER_LOADING_ICON_SELECTOR, {
+        timeoutMs: uiTimeoutMs,
+      })
+      await waitForSnapshot(
+        control,
+        snapshot => !snapshot.testIds.includes('right-workspace-browser-tab-1-loading-icon'),
+        'The browser tab kept loading after navigation recovery',
+        uiTimeoutMs,
+        FIRST_BROWSER_TAB_SELECTOR
+      )
       await waitForValue(
         control,
         BROWSER_INPUT_SELECTOR,

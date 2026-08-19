@@ -495,12 +495,16 @@ async function verifyBackgroundTaskWindowLifecycle({
     })
   }
 
-  await control.command('waitFor', '[data-testid="message-turn-navigation-marker"]', {
+  const firstTurnMarkerSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-turn-navigation-marker"][data-turn-index="0"]`
+  await control.command('waitFor', firstTurnMarkerSelector, {
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('click', '[data-testid="message-turn-navigation-marker"]')
-  await new Promise(resolvePromise => setTimeout(resolvePromise, 2_000))
+  await control.command('click', firstTurnMarkerSelector)
+  await control.command('waitFor', `${firstTurnMarkerSelector}[data-active="true"]`, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   const navigationTopMetrics = await waitForTopMetrics(
     control,
     '[data-testid="desktop-workbench-content"]',
