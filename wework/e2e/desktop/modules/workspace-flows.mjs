@@ -114,6 +114,10 @@ async function waitForWorkbenchTask(control, taskId, message) {
   throw new Error(message)
 }
 
+function currentRuntimeTaskFromDebugSnapshot(snapshot) {
+  return snapshot?.workbench?.currentRuntimeTask ?? snapshot?.pane?.currentRuntimeTask ?? null
+}
+
 async function waitForWorkbenchDebugState(control, predicate, message) {
   const startedAt = Date.now()
   let lastSnapshot = null
@@ -777,6 +781,7 @@ export {
   waitForControlSelectionOffset,
   waitForPersistedComposerInput,
   waitForWorkbenchTask,
+  currentRuntimeTaskFromDebugSnapshot,
   waitForWorkbenchDebugState,
   captureVerificationScreenshot,
   verifyWorkspaceDocumentTabs,

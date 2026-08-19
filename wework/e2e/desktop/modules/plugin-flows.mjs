@@ -50,6 +50,7 @@ import {
 
 import {
   captureVerificationScreenshot,
+  currentRuntimeTaskFromDebugSnapshot,
   waitForControlValueIncludes,
   waitForWorkbenchDebugState,
 } from './workspace-flows.mjs'
@@ -438,10 +439,10 @@ async function createOfficialPluginTask({ control, installSelector, skillPath })
   await control.awaitScenarioRequestCount('official_plugin', 2, WORKBENCH_READY_TIMEOUT_MS)
   const taskSnapshot = await waitForWorkbenchDebugState(
     control,
-    snapshot => Boolean(snapshot.workbench?.currentRuntimeTask?.taskId),
+    snapshot => Boolean(currentRuntimeTaskFromDebugSnapshot(snapshot)?.taskId),
     'The official plugin conversation did not expose its task ID'
   )
-  return taskSnapshot.workbench.currentRuntimeTask.taskId
+  return currentRuntimeTaskFromDebugSnapshot(taskSnapshot).taskId
 }
 
 async function verifyPluginLifecycle({ control, fixture }) {
@@ -968,10 +969,12 @@ async function verifySkillMentionRendering({ control, fixture }) {
   })
   const qualifiedSkillTaskSnapshot = await waitForWorkbenchDebugState(
     control,
-    snapshot => Boolean(snapshot.workbench?.currentRuntimeTask?.taskId),
+    snapshot => Boolean(currentRuntimeTaskFromDebugSnapshot(snapshot)?.taskId),
     'The qualified skill conversation did not expose its task ID'
   )
-  const qualifiedSkillTaskId = qualifiedSkillTaskSnapshot.workbench.currentRuntimeTask.taskId
+  const qualifiedSkillTaskId = currentRuntimeTaskFromDebugSnapshot(
+    qualifiedSkillTaskSnapshot
+  ).taskId
   const officialPluginTaskRow = `[data-testid="runtime-local-task-row-${officialPluginTaskId}"]`
   const qualifiedSkillTaskRow = `[data-testid="runtime-local-task-row-${qualifiedSkillTaskId}"]`
   await control.command('waitFor', officialPluginTaskRow, {
