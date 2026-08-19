@@ -58,6 +58,70 @@ async fn active_thread_tracking_counts_each_thread_independently() {
 }
 
 #[tokio::test]
+async fn notification_hub_isolates_thread_subscribers_from_cross_thread_bursts() {
+    let hub = CodexNotificationHub::new();
+    let mut thread_a = hub.subscribe_thread("thread-a");
+
+    for index in 0..(CODEX_THREAD_NOTIFICATION_CAPACITY + 100) {
+        hub.send(json!({
+            "method": "item/commandExecution/outputDelta",
+            "params": {
+                "threadId": "thread-b",
+                "turnId": "turn-b",
+                "delta": index.to_string()
+            }
+        }));
+    }
+    hub.send(json!({
+        "method": "turn/completed",
+        "params": {
+            "threadId": "thread-a",
+            "turn": {"id": "turn-a", "status": "completed"}
+        }
+    }));
+
+    let message = thread_a
+        .recv()
+        .await
+        .expect("cross-thread traffic must not lag the subscriber");
+    assert_eq!(message["method"], "turn/completed");
+    assert_eq!(message["params"]["threadId"], "thread-a");
+}
+
+#[tokio::test]
+async fn notification_hub_keeps_global_and_thread_scoped_delivery() {
+    let hub = CodexNotificationHub::new();
+    let mut all = hub.subscribe_all();
+    let mut thread_a = hub.subscribe_thread("thread-a");
+    let mut thread_b = hub.subscribe_thread("thread-b");
+    let message = json!({
+        "method": "item/started",
+        "params": {"threadId": "thread-a", "turnId": "turn-a"}
+    });
+
+    hub.send(message.clone());
+
+    assert_eq!(all.recv().await.unwrap(), message);
+    assert_eq!(thread_a.recv().await.unwrap(), message);
+    assert!(thread_b.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn notification_hub_delivers_unscoped_process_exit_to_each_thread() {
+    let hub = CodexNotificationHub::new();
+    let mut thread_a = hub.subscribe_thread("thread-a");
+    let mut thread_b = hub.subscribe_thread("thread-b");
+
+    notify_shared_process_closed(&hub, "app-server stopped");
+
+    for receiver in [&mut thread_a, &mut thread_b] {
+        let message = receiver.recv().await.unwrap();
+        assert_eq!(message["method"], "codex/app-server/exited");
+        assert_eq!(message["params"]["message"], "app-server stopped");
+    }
+}
+
+#[tokio::test]
 async fn interaction_answer_router_matches_reverse_order_answers() {
     let (sender, receiver) = mpsc::channel(2);
     let router = InteractionAnswerRouter::new(receiver);

@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { HTMLAttributes, ReactNode } from 'react'
+import type { HTMLAttributes, OlHTMLAttributes, ReactNode } from 'react'
 import type { Element as HastElement } from 'hast'
 import { FileText, Folder, Link2 } from 'lucide-react'
 import { Streamdown } from 'streamdown'
@@ -159,8 +159,9 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
           {children}
         </ul>
       ),
-      ol: ({ children }: { children?: ReactNode }) => (
+      ol: ({ children, start }: OlHTMLAttributes<HTMLOListElement>) => (
         <ol
+          start={start}
           className={`${variant === 'process' ? 'mb-1.5 space-y-0.5 pl-5' : 'mb-3 space-y-1.5 pl-8'} list-decimal`}
         >
           {children}

@@ -2737,6 +2737,7 @@ describe('CloudTodoWorkspace', () => {
   })
 
   it('defaults new issues to the inbox', async () => {
+    const user = userEvent.setup()
     const workbenchServices = services()
     workbenchServices.deliveryApi!.createLoopItem = vi.fn(async (_projectId, values) => ({
       ...item,
@@ -2755,9 +2756,10 @@ describe('CloudTodoWorkspace', () => {
     )
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    await userEvent.click(screen.getByTestId('cloud-todo-add'))
-    await userEvent.type(screen.getByTestId('workspace-issue-input'), 'Inbox Issue')
-    await userEvent.click(screen.getByTestId('workspace-issue-submit'))
+    await user.click(screen.getByTestId('cloud-todo-add'))
+    await user.click(screen.getByTestId('workspace-issue-input'))
+    await user.paste('Inbox Issue')
+    await user.click(screen.getByTestId('workspace-issue-submit'))
 
     await waitFor(() =>
       expect(workbenchServices.deliveryApi?.createLoopItem).toHaveBeenCalledWith(11, {
@@ -2771,6 +2773,23 @@ describe('CloudTodoWorkspace', () => {
 
   it('opens task creation directly from the pending column', async () => {
     const workbenchServices = services()
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    await userEvent.click(screen.getByTestId('cloud-todo-column-add-pending'))
+    expect(screen.getByTestId('workspace-issue-composer')).toBeVisible()
+    expect(screen.getByTestId('workspace-create-task-tab')).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('creates a new issue with the status of the board column entry point', async () => {
+    const user = userEvent.setup()
+    const workbenchServices = services()
     workbenchServices.deliveryApi!.createLoopItem = vi.fn(async (_projectId, values) => ({
       ...item,
       id: 'WEG-2',
@@ -2787,10 +2806,20 @@ describe('CloudTodoWorkspace', () => {
       />
     )
 
-    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    await userEvent.click(screen.getByTestId('cloud-todo-column-add-pending'))
-    expect(screen.getByTestId('workspace-issue-composer')).toBeVisible()
-    expect(screen.getByTestId('workspace-create-task-tab')).toHaveAttribute('aria-selected', 'true')
+    await user.click((await screen.findAllByText('Wegent V4'))[0])
+    await user.click(screen.getByTestId('cloud-todo-column-add-pending'))
+    await user.click(screen.getByTestId('workspace-issue-input'))
+    await user.paste('Pending Issue')
+    await user.click(screen.getByTestId('workspace-issue-submit'))
+
+    await waitFor(() =>
+      expect(workbenchServices.deliveryApi?.createLoopItem).toHaveBeenCalledWith(11, {
+        title: 'Pending Issue',
+        description: 'Pending Issue',
+        status: 'pending',
+        parent_id: null,
+      })
+    )
   })
 
   it('opens the full issue composer popup with the quick title and lane', async () => {
