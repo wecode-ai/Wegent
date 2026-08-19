@@ -1,5 +1,5 @@
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
     Mutex,
 };
 use tauri::{
@@ -9,20 +9,25 @@ use tauri::{
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
 
 pub(crate) const WINDOW_LABEL: &str = "popout-window";
-const COLLAPSED_WINDOW_WIDTH: f64 = 680.0;
-const COLLAPSED_WINDOW_HEIGHT: f64 = 640.0;
 const COLLAPSED_SURFACE_WIDTH: f64 = 470.0;
 const COLLAPSED_SURFACE_HEIGHT: f64 = 112.0;
+const OVERLAY_WINDOW_WIDTH: f64 = 680.0;
+const OVERLAY_WINDOW_HEIGHT: f64 = 640.0;
 const EXPANDED_WIDTH: f64 = 470.0;
 const EXPANDED_HEIGHT: f64 = 640.0;
+
+#[derive(Default)]
+struct PopoutWindowLayoutState {
+    expanded: bool,
+    overlay_active: bool,
+}
 
 pub struct PopoutWindowState {
     registered_shortcut: Mutex<Option<Shortcut>>,
     previous_frontmost_pid: Mutex<Option<i32>>,
-    expanded: AtomicBool,
-    overlay_active: AtomicBool,
-    mouse_events_ignored: AtomicBool,
+    layout: Mutex<PopoutWindowLayoutState>,
     visible: AtomicBool,
+    focus_restore_generation: AtomicU64,
 }
 
 impl Default for PopoutWindowState {
@@ -30,10 +35,9 @@ impl Default for PopoutWindowState {
         Self {
             registered_shortcut: Mutex::new(None),
             previous_frontmost_pid: Mutex::new(None),
-            expanded: AtomicBool::new(false),
-            overlay_active: AtomicBool::new(false),
-            mouse_events_ignored: AtomicBool::new(false),
+            layout: Mutex::new(PopoutWindowLayoutState::default()),
             visible: AtomicBool::new(false),
+            focus_restore_generation: AtomicU64::new(0),
         }
     }
 }
@@ -45,7 +49,6 @@ pub fn setup(app: &AppHandle, shortcut: Option<&str>) {
     if let Err(error) = ensure_window(app) {
         log::warn!("Failed to prewarm Popout Window: {error}");
     }
-    setup_mouse_passthrough_monitor(app.clone());
 }
 
 pub fn configure_shortcut(app: &AppHandle, shortcut: Option<&str>) -> Result<(), String> {
@@ -97,6 +100,9 @@ pub fn matches_shortcut(app: &AppHandle, shortcut: &Shortcut) -> bool {
 }
 
 pub fn show(app: &AppHandle) -> Result<(), String> {
+    app.state::<PopoutWindowState>()
+        .focus_restore_generation
+        .fetch_add(1, Ordering::SeqCst);
     remember_frontmost_application(app);
     let window = ensure_window(app)?;
     window
@@ -108,8 +114,7 @@ pub fn show(app: &AppHandle) -> Result<(), String> {
     activate_popout_window(&window)?;
     window
         .set_focus()
-        .map_err(|error| format!("Failed to focus Popout Window: {error}"))?;
-    update_mouse_passthrough(app)
+        .map_err(|error| format!("Failed to focus Popout Window: {error}"))
 }
 
 #[cfg(target_os = "macos")]
@@ -165,7 +170,7 @@ fn ensure_window(app: &AppHandle) -> Result<tauri::WebviewWindow, String> {
 
     let window = WebviewWindowBuilder::new(app, WINDOW_LABEL, WebviewUrl::App("/popout".into()))
         .title("Wework")
-        .inner_size(COLLAPSED_WINDOW_WIDTH, COLLAPSED_WINDOW_HEIGHT)
+        .inner_size(COLLAPSED_SURFACE_WIDTH, COLLAPSED_SURFACE_HEIGHT)
         .resizable(false)
         .decorations(false)
         .transparent(true)
@@ -222,7 +227,11 @@ fn activate_application(process_id: i32) -> bool {
     )
 }
 
-fn restore_previous_frontmost_application(app: &AppHandle, process_id: Option<i32>) {
+fn restore_previous_frontmost_application(
+    app: &AppHandle,
+    process_id: Option<i32>,
+    focus_restore_generation: u64,
+) {
     #[cfg(target_os = "macos")]
     {
         let Some(process_id) = process_id else {
@@ -234,18 +243,22 @@ fn restore_previous_frontmost_application(app: &AppHandle, process_id: Option<i3
         }
 
         log::debug!("Restoring Popout Window foreground application: pid={process_id}");
-        let activated_immediately = activate_application(process_id);
         let app = app.clone();
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(40));
+            let callback_app = app.clone();
             let _ = app.run_on_main_thread(move || {
+                let state = callback_app.state::<PopoutWindowState>();
+                if !should_restore_previous_application(
+                    state.visible.load(Ordering::SeqCst),
+                    state.focus_restore_generation.load(Ordering::SeqCst),
+                    focus_restore_generation,
+                ) {
+                    return;
+                }
                 if !activate_application(process_id) {
                     log::debug!(
                         "The application that preceded Popout Window is no longer available"
-                    );
-                } else if !activated_immediately {
-                    log::debug!(
-                        "Restored Popout Window foreground application on the second attempt"
                     );
                 }
             });
@@ -257,6 +270,14 @@ fn restore_previous_frontmost_application(app: &AppHandle, process_id: Option<i3
         let _ = app;
         let _ = process_id;
     }
+}
+
+fn should_restore_previous_application(
+    popout_visible: bool,
+    current_generation: u64,
+    restore_generation: u64,
+) -> bool {
+    !popout_visible && current_generation == restore_generation
 }
 
 fn center_collapsed_surface_on_monitor(window: &tauri::WebviewWindow) -> Result<(), String> {
@@ -282,26 +303,6 @@ fn center_collapsed_surface_on_monitor(window: &tauri::WebviewWindow) -> Result<
     window
         .set_position(PhysicalPosition::new(x, y))
         .map_err(|error| format!("Failed to position Popout Window: {error}"))
-}
-
-fn cursor_is_inside_collapsed_surface(window: &tauri::WebviewWindow) -> bool {
-    let (Ok(cursor), Ok(position), Ok(size), Ok(scale_factor)) = (
-        window.cursor_position(),
-        window.outer_position(),
-        window.outer_size(),
-        window.scale_factor(),
-    ) else {
-        return false;
-    };
-    let surface_width = COLLAPSED_SURFACE_WIDTH * scale_factor;
-    let surface_height = COLLAPSED_SURFACE_HEIGHT * scale_factor;
-    let left = position.x as f64 + (size.width as f64 - surface_width) / 2.0;
-    let top = position.y as f64 + size.height as f64 - surface_height;
-
-    cursor.x >= left
-        && cursor.x < left + surface_width
-        && cursor.y >= top
-        && cursor.y < top + surface_height
 }
 
 fn visible_surface_center(
@@ -338,86 +339,6 @@ fn window_position_for_surface_center(
     (x, y)
 }
 
-fn update_mouse_passthrough(app: &AppHandle) -> Result<(), String> {
-    if !app
-        .state::<PopoutWindowState>()
-        .visible
-        .load(Ordering::Relaxed)
-    {
-        return Ok(());
-    }
-    let Some(window) = app.get_webview_window(WINDOW_LABEL) else {
-        return Ok(());
-    };
-
-    let state = app.state::<PopoutWindowState>();
-    let should_ignore = !state.expanded.load(Ordering::Relaxed)
-        && !state.overlay_active.load(Ordering::Relaxed)
-        && !cursor_is_inside_collapsed_surface(&window);
-    if state
-        .mouse_events_ignored
-        .swap(should_ignore, Ordering::SeqCst)
-        == should_ignore
-    {
-        return Ok(());
-    }
-    window
-        .set_ignore_cursor_events(should_ignore)
-        .map_err(|error| format!("Failed to update Popout Window mouse passthrough: {error}"))
-}
-
-#[cfg(target_os = "macos")]
-fn setup_mouse_passthrough_monitor(app: AppHandle) {
-    use block2::RcBlock;
-    use objc2_app_kit::{NSEvent, NSEventMask};
-
-    let global_app = app.clone();
-    let global_handler = RcBlock::new(move |_event: std::ptr::NonNull<NSEvent>| {
-        if !global_app
-            .state::<PopoutWindowState>()
-            .visible
-            .load(Ordering::Relaxed)
-        {
-            return;
-        }
-        if let Err(error) = update_mouse_passthrough(&global_app) {
-            log::debug!("Failed to update Popout Window from global mouse movement: {error}");
-        }
-    });
-    // AppKit owns the monitor until process exit; leaking the returned token keeps it active.
-    if let Some(monitor) = NSEvent::addGlobalMonitorForEventsMatchingMask_handler(
-        NSEventMask::MouseMoved,
-        &global_handler,
-    ) {
-        std::mem::forget(monitor);
-    }
-
-    let local_handler = RcBlock::new(move |event: std::ptr::NonNull<NSEvent>| {
-        if !app
-            .state::<PopoutWindowState>()
-            .visible
-            .load(Ordering::Relaxed)
-        {
-            return event.as_ptr();
-        }
-        if let Err(error) = update_mouse_passthrough(&app) {
-            log::debug!("Failed to update Popout Window from local mouse movement: {error}");
-        }
-        event.as_ptr()
-    });
-    if let Some(monitor) = unsafe {
-        NSEvent::addLocalMonitorForEventsMatchingMask_handler(
-            NSEventMask::MouseMoved,
-            &local_handler,
-        )
-    } {
-        std::mem::forget(monitor);
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-fn setup_mouse_passthrough_monitor(_app: AppHandle) {}
-
 #[tauri::command]
 pub fn show_popout_window(app: AppHandle) -> Result<(), String> {
     show(&app)
@@ -425,8 +346,8 @@ pub fn show_popout_window(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub fn dismiss_popout_window(app: AppHandle) -> Result<(), String> {
-    let previous_frontmost_pid = app
-        .state::<PopoutWindowState>()
+    let state = app.state::<PopoutWindowState>();
+    let previous_frontmost_pid = state
         .previous_frontmost_pid
         .lock()
         .map_err(|_| "Failed to lock Popout Window focus state".to_string())?
@@ -436,15 +357,18 @@ pub fn dismiss_popout_window(app: AppHandle) -> Result<(), String> {
             .hide()
             .map_err(|error| format!("Failed to hide Popout Window: {error}"))?;
     }
-    app.state::<PopoutWindowState>()
-        .visible
-        .store(false, Ordering::SeqCst);
-    restore_previous_frontmost_application(&app, previous_frontmost_pid);
+    state.visible.store(false, Ordering::SeqCst);
+    let focus_restore_generation = state
+        .focus_restore_generation
+        .fetch_add(1, Ordering::SeqCst)
+        + 1;
+    restore_previous_frontmost_application(&app, previous_frontmost_pid, focus_restore_generation);
     Ok(())
 }
 
 pub fn hide_for_main_window(app: &AppHandle) -> Result<(), String> {
-    app.state::<PopoutWindowState>()
+    let state = app.state::<PopoutWindowState>();
+    state
         .previous_frontmost_pid
         .lock()
         .map_err(|_| "Failed to lock Popout Window focus state".to_string())?
@@ -454,24 +378,35 @@ pub fn hide_for_main_window(app: &AppHandle) -> Result<(), String> {
             .hide()
             .map_err(|error| format!("Failed to hide Popout Window: {error}"))?;
     }
-    app.state::<PopoutWindowState>()
-        .visible
-        .store(false, Ordering::SeqCst);
+    state.visible.store(false, Ordering::SeqCst);
+    state
+        .focus_restore_generation
+        .fetch_add(1, Ordering::SeqCst);
     Ok(())
 }
 
 #[tauri::command]
 pub fn set_popout_window_expanded(app: AppHandle, expanded: bool) -> Result<(), String> {
     let state = app.state::<PopoutWindowState>();
-    let was_expanded = state.expanded.load(Ordering::SeqCst);
     let window = app
         .get_webview_window(WINDOW_LABEL)
         .ok_or_else(|| "Popout Window is not open".to_string())?;
-    let (width, height) = if expanded {
-        (EXPANDED_WIDTH, EXPANDED_HEIGHT)
-    } else {
-        (COLLAPSED_WINDOW_WIDTH, COLLAPSED_WINDOW_HEIGHT)
-    };
+    let mut layout = state
+        .layout
+        .lock()
+        .map_err(|_| "Failed to lock Popout Window layout state".to_string())?;
+    resize_window_for_state(&window, layout.expanded, expanded, layout.overlay_active)?;
+    layout.expanded = expanded;
+    Ok(())
+}
+
+fn resize_window_for_state(
+    window: &tauri::WebviewWindow,
+    was_expanded: bool,
+    expanded: bool,
+    overlay_active: bool,
+) -> Result<(), String> {
+    let (width, height) = window_size_for_state(expanded, overlay_active);
     let previous_position = window
         .outer_position()
         .map_err(|error| format!("Failed to read Popout Window position: {error}"))?;
@@ -508,38 +443,74 @@ pub fn set_popout_window_expanded(app: AppHandle, expanded: bool) -> Result<(), 
             next_x.round() as i32,
             next_y.round() as i32,
         ))
-        .map_err(|error| format!("Failed to preserve Popout Window position: {error}"))?;
-    state.expanded.store(expanded, Ordering::SeqCst);
-    update_mouse_passthrough(&app)
+        .map_err(|error| format!("Failed to preserve Popout Window position: {error}"))
+}
+
+fn window_size_for_state(expanded: bool, overlay_active: bool) -> (f64, f64) {
+    if expanded {
+        (EXPANDED_WIDTH, EXPANDED_HEIGHT)
+    } else if overlay_active {
+        (OVERLAY_WINDOW_WIDTH, OVERLAY_WINDOW_HEIGHT)
+    } else {
+        (COLLAPSED_SURFACE_WIDTH, COLLAPSED_SURFACE_HEIGHT)
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{visible_surface_center, window_position_for_surface_center};
+    use super::{
+        should_restore_previous_application, visible_surface_center,
+        window_position_for_surface_center, window_size_for_state,
+    };
 
     #[test]
-    fn preserves_collapsed_surface_center_when_expanding_on_retina_displays() {
-        let center = visible_surface_center(-268.0, -268.0, 1360.0, 1280.0, false, 2.0);
-        assert_eq!(center, (412.0, 900.0));
-
-        let expanded_position =
-            window_position_for_surface_center(center.0, center.1, 940.0, 1280.0, true, 2.0);
-        assert_eq!(expanded_position, (-58.0, 260.0));
+    fn cancels_a_delayed_focus_restore_after_the_popout_reopens() {
+        assert!(!should_restore_previous_application(true, 3, 2));
+        assert!(!should_restore_previous_application(false, 3, 2));
+        assert!(should_restore_previous_application(false, 2, 2));
     }
 
     #[test]
-    fn restores_the_same_surface_center_when_collapsing() {
-        let center = visible_surface_center(-58.0, 260.0, 940.0, 1280.0, true, 2.0);
-        let collapsed_position =
+    fn preserves_collapsed_surface_center_when_opening_an_overlay() {
+        let center = visible_surface_center(-58.0, 788.0, 940.0, 224.0, false, 2.0);
+        assert_eq!(center, (412.0, 900.0));
+
+        let overlay_position =
             window_position_for_surface_center(center.0, center.1, 1360.0, 1280.0, false, 2.0);
-        assert_eq!(collapsed_position, (-268.0, -268.0));
+        assert_eq!(overlay_position, (-268.0, -268.0));
+    }
+
+    #[test]
+    fn restores_the_same_surface_center_when_closing_an_overlay() {
+        let center = visible_surface_center(-268.0, -268.0, 1360.0, 1280.0, false, 2.0);
+        let collapsed_position =
+            window_position_for_surface_center(center.0, center.1, 940.0, 224.0, false, 2.0);
+        assert_eq!(collapsed_position, (-58.0, 788.0));
+    }
+
+    #[test]
+    fn only_allocates_the_overlay_canvas_while_a_collapsed_menu_is_open() {
+        assert_eq!(window_size_for_state(false, false), (470.0, 112.0));
+        assert_eq!(window_size_for_state(false, true), (680.0, 640.0));
+        assert_eq!(window_size_for_state(true, false), (470.0, 640.0));
+        assert_eq!(window_size_for_state(true, true), (470.0, 640.0));
     }
 }
 
 #[tauri::command]
 pub fn set_popout_window_overlay_active(app: AppHandle, active: bool) -> Result<(), String> {
-    app.state::<PopoutWindowState>()
-        .overlay_active
-        .store(active, Ordering::SeqCst);
-    update_mouse_passthrough(&app)
+    let state = app.state::<PopoutWindowState>();
+    let window = app
+        .get_webview_window(WINDOW_LABEL)
+        .ok_or_else(|| "Popout Window is not open".to_string())?;
+    let mut layout = state
+        .layout
+        .lock()
+        .map_err(|_| "Failed to lock Popout Window layout state".to_string())?;
+    if layout.overlay_active == active {
+        return Ok(());
+    }
+    resize_window_for_state(&window, layout.expanded, layout.expanded, active)?;
+    layout.overlay_active = active;
+    Ok(())
 }
