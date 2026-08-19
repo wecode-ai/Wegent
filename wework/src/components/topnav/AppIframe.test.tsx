@@ -64,7 +64,10 @@ describe('AppIframe', () => {
       />
     )
 
-    expect(container.querySelector('[data-testid="app-iframe-wegent"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="app-iframe-wegent"]')).toHaveAttribute(
+      'data-embedded-browser-label',
+      'app-wegent-agent-localized'
+    )
     await waitFor(() =>
       expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledWith(
         'http://localhost:3000',

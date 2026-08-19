@@ -311,6 +311,52 @@ describe('SitesWorkspace', () => {
     expect(window.location.search).toBe('?app_type=miniapp')
   })
 
+  test('shows experimental Smart apps beside Sites and Mini Programs', async () => {
+    const api = createApi()
+
+    render(
+      <SitesWorkspace
+        api={api}
+        onCreate={vi.fn()}
+        smartAppsEnabled
+        smartAppsContent={<div data-testid="smart-apps-content">智能应用市场</div>}
+      />
+    )
+    await screen.findByText('产品发布页')
+
+    expect(screen.getByTestId('applications-tab-web')).toHaveTextContent('站点')
+    expect(screen.getByTestId('applications-tab-miniapp')).toHaveTextContent('小程序')
+    expect(screen.getByTestId('applications-tab-smart-app')).toHaveTextContent('智能应用')
+
+    await userEvent.click(screen.getByTestId('applications-tab-smart-app'))
+
+    expect(screen.getByTestId('applications-tab-smart-app')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    expect(screen.getByTestId('smart-apps-content')).toBeInTheDocument()
+    expect(screen.queryByTestId('sites-search-input')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('sites-create-button')).not.toBeInTheDocument()
+    expect(window.location.search).toBe('?app_type=smart_app')
+  })
+
+  test('opens a requested Smart apps view without loading the Sites collection', async () => {
+    window.history.replaceState({}, '', '/sites?app_type=smart_app')
+    const api = createApi()
+
+    render(
+      <SitesWorkspace
+        api={api}
+        onCreate={vi.fn()}
+        smartAppsEnabled
+        smartAppsContent={<div data-testid="smart-apps-content">智能应用市场</div>}
+      />
+    )
+
+    expect(await screen.findByTestId('smart-apps-content')).toBeInTheDocument()
+    expect(api.listSites).not.toHaveBeenCalled()
+  })
+
   test('invokes the Mini Program entry from the create menu', async () => {
     const onCreate = vi.fn()
     render(<SitesWorkspace api={createApi([])} onCreate={onCreate} />)

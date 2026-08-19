@@ -2,44 +2,44 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import { cn } from '@/lib/utils'
 
-type PluginManagementSection = 'plugins' | 'harness'
+type SmartAppsSection = 'marketplace' | 'installed'
 
-interface PluginManagementSectionNavProps {
-  active: PluginManagementSection
+interface SmartAppsSectionNavProps {
+  active: SmartAppsSection
 }
 
 const sections: Array<{
-  id: PluginManagementSection
+  id: SmartAppsSection
   path: string
   testId: string
 }> = [
   {
-    id: 'plugins',
-    path: '/plugins/manage',
-    testId: 'plugin-management-section-plugins',
+    id: 'marketplace',
+    path: '/sites?app_type=smart_app',
+    testId: 'smart-apps-section-marketplace',
   },
   {
-    id: 'harness',
-    path: '/plugins/manage/harness',
-    testId: 'plugin-management-section-harness',
+    id: 'installed',
+    path: '/sites?app_type=smart_app&view=installed',
+    testId: 'smart-apps-section-installed',
   },
 ]
 
-export function PluginManagementSectionNav({ active }: PluginManagementSectionNavProps) {
+export function SmartAppsSectionNav({ active }: SmartAppsSectionNavProps) {
   const { t } = useTranslation('common')
 
   return (
     <nav
-      data-testid="plugin-management-section-nav"
-      aria-label={t('workbench.plugins_management_sections', '插件管理分区')}
+      data-testid="smart-apps-section-nav"
+      aria-label={t('workbench.smart_apps_sections', '智能应用导航')}
       className="flex gap-5 border-b border-border/40"
     >
       {sections.map(section => {
         const selected = section.id === active
         const label =
-          section.id === 'plugins'
-            ? t('workbench.plugins_section_plugins', '插件')
-            : t('workbench.harness_apps_title', 'Harness 能力')
+          section.id === 'marketplace'
+            ? t('workbench.smart_apps_marketplace', '市场')
+            : t('workbench.smart_apps_installed', '已安装')
         return (
           <button
             key={section.id}

@@ -6,6 +6,30 @@ import JSZip from 'jszip'
 
 const INSTALLATION_ID = 'dsh-e2e-smoke'
 const APP_ROUTE = `/app/harness-${INSTALLATION_ID}`
+const MODEL_LABEL = 'Desktop E2E Chat'
+
+async function setExperimentalFeatures(control, enabled, uiTimeoutMs) {
+  await control.command('navigate', 'body', { value: '/settings/general' })
+  await control.command('waitFor', '[data-testid="general-experimental-features-toggle"]', {
+    timeoutMs: uiTimeoutMs,
+  })
+  const expected = String(enabled)
+  if (
+    (await control.command('getAttribute', '[data-testid="general-experimental-features-toggle"]', {
+      value: 'aria-checked',
+    })) !== expected
+  ) {
+    await control.command('click', '[data-testid="general-experimental-features-toggle"]')
+  }
+  await control.command(
+    'waitFor',
+    `[data-testid="general-experimental-features-toggle"][aria-checked="${expected}"]`,
+    {
+      stableMs: 300,
+      timeoutMs: uiTimeoutMs,
+    }
+  )
+}
 
 async function createHarnessPackage(resultDir) {
   const packagePath = join(resultDir, 'dsh-e2e-smoke.zip')
@@ -72,26 +96,85 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
   const packagePath = await createHarnessPackage(resultDir)
   return {
     async verify(control) {
-      await control.command('navigate', 'body', { value: '/plugins/manage' })
-      await control.command('waitFor', '[data-testid="plugin-management-section-harness"]', {
+      await setExperimentalFeatures(control, false, uiTimeoutMs)
+      await control.command('navigate', 'body', { value: '/' })
+      await control.command('waitFor', '[data-testid="workspace-tab-add"]', {
         timeoutMs: uiTimeoutMs,
       })
-      await captureScreenshot(control, 'harness-apps-00-entry.png', 'body')
-      await control.command('click', '[data-testid="plugin-management-section-harness"]')
-      await control.command('waitFor', '[data-testid="harness-app-drop-zone"]', {
+      await control.command('click', '[data-testid="workspace-tab-add"]')
+      await control.command('waitFor', '[data-testid="workspace-tab-add-menu"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.equal(
+        Number(
+          await control.command('getElementCount', '[data-testid="workspace-tab-add-smart-app"]')
+        ),
+        0,
+        'Smart apps were visible before experimental features were enabled'
+      )
+      await captureScreenshot(control, 'harness-apps-00-experimental-hidden.png', 'body')
+      await control.command('click', '[data-testid="workspace-tab-add"]')
+
+      await setExperimentalFeatures(control, true, uiTimeoutMs)
+      await captureScreenshot(control, 'harness-apps-01-experimental-enabled.png', 'body')
+
+      await control.command('navigate', 'body', { value: '/' })
+      await control.command('waitFor', '[data-testid="workspace-tab-add"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', '[data-testid="workspace-tab-add"]')
+      await control.command('waitFor', '[data-testid="workspace-tab-add-smart-app"]', {
+        text: '智能应用',
+        timeoutMs: uiTimeoutMs,
+      })
+      await captureScreenshot(control, 'harness-apps-02-top-tab-entry.png', 'body')
+      await control.command('click', '[data-testid="workspace-tab-add-smart-app"]')
+      await control.command(
+        'waitFor',
+        '[data-testid="applications-tab-smart-app"][aria-selected="true"]',
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await control.command('waitFor', '[data-testid="smart-apps-marketplace-page"]', {
         timeoutMs: uiTimeoutMs,
       })
       await control.command('waitFor', '[data-testid="sidebar-worklists-scroll"]', {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('waitFor', '[data-testid="plugin-management-section-nav"]', {
-        text: 'Harness 能力',
+      await control.command('waitFor', '[data-testid="smart-apps-section-nav"]', {
+        text: '市场',
+        timeoutMs: uiTimeoutMs,
+      })
+      await captureScreenshot(control, 'harness-apps-03-marketplace.png', 'body')
+      const marketplaceSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+      assert.ok(
+        marketplaceSnapshot.location.includes('/sites?app_type=smart_app'),
+        `Smart app marketplace did not open from the top tab add menu: ${marketplaceSnapshot.location}`
+      )
+      await control.command('click', '[data-testid="smart-apps-marketplace-create"]')
+      await control.command('waitFor', '[data-testid="chat-message-input"]', {
+        text: '智能应用开发助手',
+        timeoutMs: uiTimeoutMs,
+      })
+      await captureScreenshot(control, 'harness-apps-03a-builder-chat.png', 'body')
+      await control.command('navigate', 'body', { value: '/sites?app_type=smart_app' })
+      await control.command('waitFor', '[data-testid="smart-apps-marketplace-page"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', '[data-testid="smart-apps-section-installed"]')
+      await control.command('waitFor', '[data-testid="harness-app-drop-zone"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', '[data-testid="smart-apps-section-installed"]', {
+        text: '已安装',
         timeoutMs: uiTimeoutMs,
       })
       const harnessManagementSnapshot = JSON.parse(await control.command('snapshot', 'body'))
       assert.ok(
-        harnessManagementSnapshot.location.includes('/plugins/manage/harness'),
-        `Harness management did not open inside plugin management: ${harnessManagementSnapshot.location}`
+        harnessManagementSnapshot.location.includes('app_type=smart_app') &&
+          harnessManagementSnapshot.location.includes('view=installed'),
+        `Installed Smart apps did not open: ${harnessManagementSnapshot.location}`
       )
       const managementTabId = await control.command(
         'getAttribute',
@@ -112,7 +195,7 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         text: 'DSH E2E Smoke',
         timeoutMs: uiTimeoutMs,
       })
-      await captureScreenshot(control, 'harness-apps-01-preview.png', 'body')
+      await captureScreenshot(control, 'harness-apps-04-preview.png', 'body')
 
       await control.command('clickWhenEnabled', '[data-testid="harness-app-install-confirm"]', {
         timeoutMs: uiTimeoutMs,
@@ -120,41 +203,57 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       await control.command('waitFor', `[data-testid="harness-app-start-${INSTALLATION_ID}"]`, {
         timeoutMs: uiTimeoutMs,
       })
-      await captureScreenshot(control, 'harness-apps-02-installed.png', 'body')
+      await captureScreenshot(control, 'harness-apps-05-installed.png', 'body')
+
+      const modelSelector = `[data-testid="harness-app-model-${INSTALLATION_ID}"]`
+      const initialModelKey = await control.command('getValue', modelSelector)
+      await control.command('select', modelSelector, {
+        by: 'label',
+        value: MODEL_LABEL,
+      })
+      await control.command('waitFor', modelSelector, {
+        enabled: true,
+        stableMs: 300,
+        timeoutMs: uiTimeoutMs,
+      })
+      const selectedModelKey = await control.command('getValue', modelSelector)
+      assert.notEqual(
+        selectedModelKey,
+        initialModelKey,
+        'Changing the installed Smart app model did not persist a new selection'
+      )
+      const residentButton = `[data-testid="harness-app-resident-${INSTALLATION_ID}"]`
+      await control.command('click', residentButton)
+      await control.command('waitFor', `${residentButton}[aria-pressed="true"]`, {
+        stableMs: 300,
+        timeoutMs: uiTimeoutMs,
+      })
+      await captureScreenshot(control, 'harness-apps-06-model-and-resident.png', 'body')
 
       await control.command('click', `[data-testid="harness-app-start-${INSTALLATION_ID}"]`)
-      await control.command('waitFor', `[data-testid="app-iframe-harness-${INSTALLATION_ID}"]`, {
+      await control.command('waitFor', '[data-testid="smart-app-launch-token"]', {
         timeoutMs: 120_000,
       })
-      const snapshot = JSON.parse(await control.command('snapshot', 'body'))
-      assert.ok(
-        snapshot.location.includes(APP_ROUTE),
-        `Harness app did not open in its own tab: ${snapshot.location}`
-      )
-      const workspaceTabId = await control.command(
-        'getAttribute',
-        `[data-testid="app-iframe-harness-${INSTALLATION_ID}"]`,
-        { value: 'data-workspace-tab-id' }
-      )
-      assert.ok(workspaceTabId, 'Harness app tab did not expose its workspace tab ID')
-      const nativeSnapshot = await control.command('captureEmbeddedBrowser', 'body', {
-        value: `app-harness-${INSTALLATION_ID}-${workspaceTabId}`,
-        timeoutMs: 30_000,
+      await captureScreenshot(control, 'harness-apps-07-tab-launch-motion.png', 'body')
+      const appSurface = `[data-testid="app-iframe-harness-${INSTALLATION_ID}"]`
+      const nativeSnapshot = await control.command('captureEmbeddedBrowser', appSurface, {
+        target: `[data-testid="workspace-tab-select-${managementTabId}"]`,
+        text: APP_ROUTE,
+        timeoutMs: 600_000,
       })
       assert.ok(
         nativeSnapshot.startsWith('data:image/png;base64,'),
         'Harness native WebView did not produce a screenshot'
       )
       await writeFile(
-        join(resultDir, 'harness-apps-03-native-page.png'),
+        join(resultDir, 'harness-apps-08-native-page.png'),
         Buffer.from(nativeSnapshot.slice('data:image/png;base64,'.length), 'base64')
       )
 
-      await control.command('click', `[data-testid="workspace-tab-select-${managementTabId}"]`)
       await control.command('waitFor', `[data-testid="harness-app-stop-${INSTALLATION_ID}"]`, {
         timeoutMs: uiTimeoutMs,
       })
-      await captureScreenshot(control, 'harness-apps-04-running.png', 'body')
+      await captureScreenshot(control, 'harness-apps-09-running.png', 'body')
       await control.command('click', `[data-testid="harness-app-stop-${INSTALLATION_ID}"]`)
       await control.command('waitFor', `[data-testid="harness-app-start-${INSTALLATION_ID}"]`, {
         timeoutMs: 30_000,
@@ -169,27 +268,107 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         0,
         'Stopping a Harness app left its stale app tab mounted'
       )
-      await captureScreenshot(control, 'harness-apps-05-stopped.png', 'body')
+      const readyCountBeforeReload = control.readyCount
+      const stoppedSnapshot = await control.command('reloadMainWindow', 'body', {
+        value: 'capture',
+        timeoutMs: 90_000,
+      })
+      assert.ok(
+        stoppedSnapshot.startsWith('data:image/png;base64,'),
+        'Stopped Smart app state did not produce a screenshot before reload'
+      )
+      await writeFile(
+        join(resultDir, 'harness-apps-10-stopped.png'),
+        Buffer.from(stoppedSnapshot.slice('data:image/png;base64,'.length), 'base64')
+      )
+      await control.awaitReadyAfter(readyCountBeforeReload)
+      const residentNativeSnapshot = await control.command(
+        'captureEmbeddedBrowser',
+        `[data-testid="app-iframe-harness-${INSTALLATION_ID}"]`,
+        {
+          target: `[data-testid="workspace-tab-select-${managementTabId}"]`,
+          text: APP_ROUTE,
+          timeoutMs: 600_000,
+        }
+      )
+      assert.ok(
+        residentNativeSnapshot.startsWith('data:image/png;base64,'),
+        'Resident Smart app native WebView did not produce a screenshot'
+      )
+      await writeFile(
+        join(resultDir, 'harness-apps-11-resident-auto-opened.png'),
+        Buffer.from(residentNativeSnapshot.slice('data:image/png;base64,'.length), 'base64')
+      )
 
-      await control.command('click', '[data-testid="plugin-management-section-plugins"]')
+      await control.command('waitFor', `[data-testid="harness-app-stop-${INSTALLATION_ID}"]`, {
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.equal(
+        await control.command('getValue', modelSelector),
+        selectedModelKey,
+        'The selected Smart app model was not restored after reload'
+      )
+      await control.command('waitFor', `${residentButton}[aria-pressed="true"]`, {
+        timeoutMs: uiTimeoutMs,
+      })
+      await captureScreenshot(control, 'harness-apps-13-settings-restored.png', 'body')
+      await control.command('click', residentButton)
+      await control.command('waitFor', `${residentButton}[aria-pressed="false"]`, {
+        stableMs: 300,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', `[data-testid="harness-app-stop-${INSTALLATION_ID}"]`)
+      await control.command('waitFor', `[data-testid="harness-app-start-${INSTALLATION_ID}"]`, {
+        timeoutMs: 30_000,
+      })
+      await captureScreenshot(control, 'harness-apps-14-resident-disabled.png', 'body')
+
+      await control.command('click', '[data-testid="smart-apps-section-marketplace"]')
       await control.command(
         'waitFor',
-        '[data-testid="plugin-management-section-plugins"][aria-current="page"]',
+        '[data-testid="smart-apps-section-marketplace"][aria-current="page"]',
         {
           stableMs: 1000,
           timeoutMs: uiTimeoutMs,
         }
       )
-      await control.command('waitFor', '[data-testid="plugin-management-page-content"]', {
+      await control.command('waitFor', '[data-testid="smart-apps-marketplace-page"]', {
         stableMs: 1000,
         timeoutMs: uiTimeoutMs,
       })
-      const pluginManagementSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+      const returnedMarketplaceSnapshot = JSON.parse(await control.command('snapshot', 'body'))
       assert.ok(
-        pluginManagementSnapshot.location.includes('/plugins/manage'),
-        `Harness management did not return to installed plugins: ${pluginManagementSnapshot.location}`
+        returnedMarketplaceSnapshot.location.includes('/sites?app_type=smart_app') &&
+          !returnedMarketplaceSnapshot.location.includes('view=installed'),
+        `Installed Smart apps did not return to the marketplace: ${returnedMarketplaceSnapshot.location}`
       )
-      await captureScreenshot(control, 'harness-apps-06-returned-to-plugins.png', 'body')
+      await captureScreenshot(control, 'harness-apps-15-returned-to-marketplace.png', 'body')
+
+      await setExperimentalFeatures(control, false, uiTimeoutMs)
+      await control.command('navigate', 'body', { value: '/sites' })
+      await control.command('waitFor', '[data-testid="sites-workspace"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.equal(
+        Number(
+          await control.command('getElementCount', '[data-testid="applications-tab-smart-app"]')
+        ),
+        0,
+        'Smart apps remained visible in Applications after experimental features were disabled'
+      )
+      await control.command('navigate', 'body', { value: '/' })
+      await control.command('waitFor', '[data-testid="workspace-tab-add"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', '[data-testid="workspace-tab-add"]')
+      assert.equal(
+        Number(
+          await control.command('getElementCount', '[data-testid="workspace-tab-add-smart-app"]')
+        ),
+        0,
+        'Smart apps remained visible after experimental features were disabled'
+      )
+      await captureScreenshot(control, 'harness-apps-16-experimental-disabled.png', 'body')
     },
   }
 }

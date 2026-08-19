@@ -163,13 +163,18 @@ async function getEmbeddedBrowserLocalStorageItem(command: DesktopControlCommand
 }
 
 async function captureEmbeddedBrowserWhenReady(command: DesktopControlCommand): Promise<string> {
-  const label = command.value?.trim()
-  if (!label) throw new Error('captureEmbeddedBrowser requires a label')
-
   const timeoutMs = command.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS
   const startedAt = Date.now()
-  let lastError = 'Embedded browser is not ready'
+  const configuredLabel = command.value?.trim()
+  let lastError = 'Embedded browser host is not ready'
   while (Date.now() - startedAt < timeoutMs) {
+    const label =
+      configuredLabel ||
+      document.querySelector<HTMLElement>(command.selector)?.dataset.embeddedBrowserLabel?.trim()
+    if (!label) {
+      await waitForDesktopControlTick()
+      continue
+    }
     try {
       const page = await evalEmbeddedBrowserJson<{
         readyState: string
@@ -182,7 +187,21 @@ async function captureEmbeddedBrowserWhenReady(command: DesktopControlCommand): 
         label
       )
       if (page.readyState === 'complete' && page.textLength > 0) {
-        return await invoke<string>('embedded_browser_capture_snapshot', { label })
+        if (command.text && !window.location.href.includes(command.text)) {
+          throw new Error(`current route does not include "${command.text}"`)
+        }
+        const snapshot = await invoke<string>('embedded_browser_capture_snapshot', { label })
+        const targetSelector = command.target?.trim()
+        if (targetSelector) {
+          const target = findDesktopControlElements(targetSelector)[0]
+          if (!target) throw new Error(`Unable to find target selector "${targetSelector}"`)
+          if (!desktopControlElementEnabled(target)) {
+            throw new Error(`Target selector "${targetSelector}" is disabled`)
+          }
+          target.click()
+          await waitForDesktopControlTick()
+        }
+        return snapshot
       }
       lastError = `page state is ${page.readyState} with ${page.textLength} visible text characters`
     } catch (error) {
@@ -190,7 +209,7 @@ async function captureEmbeddedBrowserWhenReady(command: DesktopControlCommand): 
     }
     await waitForDesktopControlTick()
   }
-  throw new Error(`Timed out capturing embedded browser "${label}": ${lastError}`)
+  throw new Error(`Timed out capturing embedded browser for "${command.selector}": ${lastError}`)
 }
 
 function hasTestId(testId: string): boolean {
@@ -1043,7 +1062,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'requestMainWindowClose':
       return ''
     case 'reloadMainWindow':
-      return ''
+      return command.value === 'capture' ? captureDesktopControlScreenshot(command.selector) : ''
     case 'getTestIdOrder':
       return desktopControlTestIdOrder(command.selector)
     case 'reorderRuntimeProjectTasks':

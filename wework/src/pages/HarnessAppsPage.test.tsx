@@ -13,8 +13,11 @@ const mocks = vi.hoisted(() => ({
     preview: vi.fn(),
     start: vi.fn(),
     stop: vi.fn(),
+    update: vi.fn(),
   },
   closeTab: vi.fn(),
+  dialogOpen: vi.fn(),
+  navigateTo: vi.fn(),
   openTab: vi.fn(),
   register: vi.fn(),
   resolveLaunch: vi.fn(),
@@ -26,6 +29,10 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@/api/local/harnessApps', () => ({
   harnessAppsApi: mocks.api,
+}))
+
+vi.mock('@tauri-apps/plugin-dialog', () => ({
+  open: mocks.dialogOpen,
 }))
 
 vi.mock('@/components/layout/DesktopTopBar', () => ({
@@ -50,9 +57,16 @@ const model: UnifiedModel = {
   config: { weworkModelKind: 'model-interface' },
 }
 
+const secondModel: UnifiedModel = {
+  ...model,
+  name: 'local-model:model-2',
+  displayName: 'Second Model',
+  modelId: 'local-upstream-2',
+}
+
 vi.mock('@/features/workbench/useWorkbench', () => ({
   useWorkbench: () => ({
-    projectChat: { models: [model] },
+    projectChat: { models: [model, secondModel] },
     services: {
       localHarnessModelApi: {
         resolveLaunch: mocks.resolveLaunch,
@@ -85,6 +99,10 @@ vi.mock('@/hooks/useTranslation', () => ({
   }),
 }))
 
+vi.mock('@/lib/navigation', () => ({
+  navigateTo: (path: string) => mocks.navigateTo(path),
+}))
+
 const installed: HarnessAppInstallation = {
   id: 'dsh-ops-text-classifier',
   manifest: {
@@ -103,6 +121,7 @@ const installed: HarnessAppInstallation = {
   packagePath: '/tmp/package',
   sha256: 'hash',
   modelKey: 'wework:runtime:::local-model%3Amodel-1',
+  resident: false,
   runtimeVersion: null,
   state: 'installed',
   webUrl: null,
@@ -128,6 +147,8 @@ describe('HarnessAppsPage', () => {
   beforeEach(() => {
     Object.values(mocks.api).forEach(mock => mock.mockReset())
     mocks.closeTab.mockReset()
+    mocks.dialogOpen.mockReset()
+    mocks.navigateTo.mockReset()
     mocks.openTab.mockReset()
     mocks.register.mockReset()
     mocks.resolveLaunch.mockReset()
@@ -137,6 +158,7 @@ describe('HarnessAppsPage', () => {
     sessionStorage.clear()
     workspaceTabs.tabs = []
     mocks.api.stop.mockResolvedValue(undefined)
+    mocks.dialogOpen.mockResolvedValue('/tmp/dsh-ops-text-classifier.zip')
     mocks.resolveLaunch.mockResolvedValue({
       modelId: 'wework-selected',
       env: {},
@@ -152,6 +174,20 @@ describe('HarnessAppsPage', () => {
 
     await screen.findByTestId(`harness-app-stop-${running.id}`)
     expect(mocks.register).toHaveBeenCalledWith(running)
+  })
+
+  test('opens package selection when the marketplace requests a local import', async () => {
+    mocks.api.list.mockResolvedValue([])
+    mocks.api.preview.mockResolvedValue(preview)
+
+    render(<HarnessAppsPage importRequested />)
+
+    await waitFor(() => expect(mocks.dialogOpen).toHaveBeenCalledOnce())
+    expect(mocks.navigateTo).toHaveBeenCalledWith('/sites?app_type=smart_app&view=installed')
+    await waitFor(() =>
+      expect(mocks.api.preview).toHaveBeenCalledWith('/tmp/dsh-ops-text-classifier.zip')
+    )
+    expect(await screen.findByTestId('harness-app-preview')).toBeInTheDocument()
   })
 
   test('starts an installed app, stores its proxy token, and opens one app tab', async () => {
@@ -175,6 +211,42 @@ describe('HarnessAppsPage', () => {
       title: running.manifest.displayName,
       contentRoute: `/app/harness-${running.id}`,
     })
+  })
+
+  test('changes the model of an installed Smart app', async () => {
+    const nextModelKey = 'wework:runtime:::local-model%3Amodel-2'
+    const updated = { ...installed, modelKey: nextModelKey }
+    mocks.api.list.mockResolvedValueOnce([installed]).mockResolvedValueOnce([updated])
+    mocks.api.update.mockResolvedValue(updated)
+
+    render(<HarnessAppsPage />)
+    fireEvent.change(await screen.findByTestId(`harness-app-model-${installed.id}`), {
+      target: { value: nextModelKey },
+    })
+
+    await waitFor(() =>
+      expect(mocks.api.update).toHaveBeenCalledWith(installed.id, { modelKey: nextModelKey })
+    )
+    expect(await screen.findByTestId(`harness-app-model-${installed.id}`)).toHaveValue(nextModelKey)
+  })
+
+  test('toggles whether a Smart app stays resident across launches', async () => {
+    const resident = { ...installed, resident: true }
+    mocks.api.list.mockResolvedValueOnce([installed]).mockResolvedValueOnce([resident])
+    mocks.api.update.mockResolvedValue(resident)
+
+    render(<HarnessAppsPage />)
+    const residentButton = await screen.findByTestId(`harness-app-resident-${installed.id}`)
+    expect(residentButton).toHaveAttribute('aria-pressed', 'false')
+    fireEvent.click(residentButton)
+
+    await waitFor(() =>
+      expect(mocks.api.update).toHaveBeenCalledWith(installed.id, { resident: true })
+    )
+    expect(await screen.findByTestId(`harness-app-resident-${installed.id}`)).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
   })
 
   test('rolls back a started app when the post-start refresh fails', async () => {
@@ -264,7 +336,7 @@ describe('HarnessAppsPage', () => {
         id: 'harness-tab',
         kind: 'auxiliary',
         title: running.manifest.displayName,
-        contentRoute: '/plugins/manage/harness',
+        contentRoute: '/sites?app_type=smart_app&view=installed',
       },
     ]
     mocks.api.list.mockResolvedValue([running])

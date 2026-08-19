@@ -5129,6 +5129,7 @@ pub fn run() {
             harness_apps::preview_harness_app,
             harness_apps::start_harness_app,
             harness_apps::stop_harness_app,
+            harness_apps::update_harness_app,
             local_terminal::archive_local_harness_session,
             local_terminal::attach_local_terminal,
             local_terminal::close_local_terminal,

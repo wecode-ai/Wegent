@@ -64,6 +64,24 @@ fn bare_dsh_version_is_an_exact_requirement() {
 }
 
 #[test]
+fn installation_registry_defaults_resident_for_existing_records() {
+    let installation: HarnessAppInstallation = serde_json::from_value(serde_json::json!({
+        "id": "test-capability",
+        "manifest": serde_json::from_str::<Value>(&manifest("0.1.0-rc.7")).unwrap(),
+        "packagePath": "/tmp/test-capability",
+        "sha256": "hash",
+        "modelKey": "model",
+        "runtimeVersion": null,
+        "state": "installed",
+        "webUrl": null,
+        "error": null
+    }))
+    .unwrap();
+
+    assert!(!installation.resident);
+}
+
+#[test]
 fn manifest_rejects_install_package_escape() {
     let mut parsed: HarnessAppManifest = serde_json::from_str(&manifest("0.1.0-rc.7")).unwrap();
     parsed.entry.install_package = "../outside".to_string();
@@ -93,6 +111,7 @@ fn instance_patch_binds_provider_and_model() {
         package_path: package.display().to_string(),
         sha256: "hash".to_string(),
         model_key: Some("model".to_string()),
+        resident: false,
         runtime_version: None,
         state: "installed".to_string(),
         web_url: None,

@@ -5,7 +5,6 @@ import { pluginCenterPlugin } from './plugin-center'
 import { shellPlugin } from './shell'
 import { coreAppsPlugin } from './core-apps'
 import { coreSettingsPlugin } from './core-settings'
-import { harnessAppsPlugin } from './harness-apps'
 
 import type { Plugin } from '@deepseek-ai/cordis'
 import type { WorkbenchPluginProfile, WorkbenchPluginProfileEntry } from '@/plugin-runtime/runtime'
@@ -26,7 +25,6 @@ export const baseWorkbenchProfile: WorkbenchPluginProfile = {
     required('core-apps', coreAppsPlugin),
     required('core-settings', coreSettingsPlugin),
     required('plugin-center', pluginCenterPlugin),
-    required('harness-apps', harnessAppsPlugin),
     required('applications', applicationsPlugin),
     required('automations', automationsPlugin),
     required('cloud-work', cloudWorkPlugin),

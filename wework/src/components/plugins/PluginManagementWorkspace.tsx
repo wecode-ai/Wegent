@@ -33,7 +33,6 @@ import { pluginUninstallWarningDetails, uninstallPluginIdentities } from './plug
 import { withPublishedPluginCloudLink } from './publishedPluginIdentity'
 import { PluginDetailView } from './PluginDetailView'
 import { PluginOperationNotice, type PluginOperationNoticeState } from './PluginOperationNotice'
-import { PluginManagementSectionNav } from './PluginManagementSectionNav'
 import { PluginPublishDialog, type PluginPublishRequest } from './PluginPublishDialog'
 import { PluginShareDialog } from './PluginShareDialog'
 import {
@@ -872,10 +871,6 @@ export function PluginManagementWorkspace({
             </p>
           </div>
         </header>
-        <div className="mb-5">
-          <PluginManagementSectionNav active="plugins" />
-        </div>
-
         {isLoadingPlugins ? (
           <div className="py-10 text-sm text-text-secondary">
             {t('workbench.plugins_loading_plugins', '正在加载插件')}

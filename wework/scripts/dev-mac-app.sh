@@ -355,6 +355,7 @@ if [ "$MANAGED_DEV_CODEX" = "true" ]; then
   echo "Using repository Codex: $("$DEV_CODEX_BINARY" --version)"
 fi
 WEWORK_DWS_TARGET="$(resolve_dev_codex_target)" pnpm run prepare:dws
+pnpm run prepare:deepseek-harness
 TAURI_ARGS=(dev --config "$TAURI_DEV_CONFIG")
 if [ "$WEWORK_RELEASE_UI" = "true" ]; then
   TAURI_ARGS+=(--release)

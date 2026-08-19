@@ -15,6 +15,7 @@ const bundledPluginExampleManifests = [
 ]
 
 const bundledWeworkSpaceDirectory = 'bundled-plugins/wework-personal/plugins/wework-space'
+const bundledSmartAppBuilderDirectory = 'bundled-plugins/wework-personal/plugins/smart-app-builder'
 
 const temporaryDirectories: string[] = []
 
@@ -113,6 +114,43 @@ describe('bundled plugin resources', () => {
     expect(
       existsSync(
         resolve(tauriDirectory, bundledWeworkSpaceDirectory, 'skills/wework-project-space/SKILL.md')
+      )
+    ).toBe(true)
+  })
+
+  test('installs the Smart app builder workflow by default', () => {
+    const tauriDirectory = resolve(process.cwd(), 'src-tauri')
+    const codexMarketplace = JSON.parse(
+      readFileSync(
+        resolve(tauriDirectory, 'bundled-plugins/wework-personal/.agents/plugins/marketplace.json'),
+        'utf8'
+      )
+    ) as {
+      plugins: Array<{
+        name: string
+        policy?: { installation?: string }
+      }>
+    }
+    const claudeMarketplace = JSON.parse(
+      readFileSync(
+        resolve(tauriDirectory, 'bundled-plugins/wework-personal/.claude-plugin/marketplace.json'),
+        'utf8'
+      )
+    ) as { plugins: Array<{ name: string }> }
+
+    expect(
+      codexMarketplace.plugins.find(plugin => plugin.name === 'smart-app-builder')?.policy
+        ?.installation
+    ).toBe('INSTALLED_BY_DEFAULT')
+    expect(claudeMarketplace.plugins.some(plugin => plugin.name === 'smart-app-builder')).toBe(true)
+    expect(
+      existsSync(
+        resolve(tauriDirectory, bundledSmartAppBuilderDirectory, 'skills/create-smart-app/SKILL.md')
+      )
+    ).toBe(true)
+    expect(
+      existsSync(
+        resolve(tauriDirectory, bundledSmartAppBuilderDirectory, 'scripts/smart-app-tool.mjs')
       )
     ).toBe(true)
   })

@@ -205,6 +205,7 @@ export function AppIframe({ active = true, appKey, src, title, workspaceTabId }:
       ref={hostRef}
       className="app-view-surface relative h-full overflow-hidden rounded-xl border border-border/60 bg-background shadow-[0_3px_16px_rgba(0,0,0,0.04)]"
       data-testid={`app-iframe-${appKey}`}
+      data-embedded-browser-label={label}
       data-workspace-tab-id={workspaceTabId}
       data-src={src}
     >

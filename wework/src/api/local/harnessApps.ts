@@ -24,6 +24,7 @@ export interface HarnessAppInstallation {
   packagePath: string
   sha256: string
   modelKey: string | null
+  resident: boolean
   runtimeVersion: string | null
   state: 'installed' | 'running' | 'failed'
   webUrl: string | null
@@ -60,6 +61,12 @@ export const harnessAppsApi = {
   },
   stop(installationId: string) {
     return invoke<void>('stop_harness_app', { installationId })
+  },
+  update(installationId: string, updates: { modelKey?: string; resident?: boolean }) {
+    return invoke<HarnessAppInstallation>('update_harness_app', {
+      installationId,
+      ...updates,
+    })
   },
   delete(installationId: string, deleteData = false) {
     return invoke<void>('delete_harness_app', { installationId, deleteData })

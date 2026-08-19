@@ -78,6 +78,8 @@ import {
   getWeworkDocumentTitle,
 } from '@/lib/wework-dev-instance'
 import { AppshotBridge } from '@/features/appshots/AppshotBridge'
+import { ResidentSmartAppsManager } from '@/features/harness-apps/ResidentSmartAppsManager'
+import { findResidentSmartAppsHostTabId } from '@/features/harness-apps/residentSmartAppsHost'
 import { SystemDragPanel } from '@/features/system-drag/SystemDragPanel'
 import { SystemDragBridge } from '@/features/system-drag/SystemDragBridge'
 import { installMacOSInputArrowKeyGuard } from '@/lib/macosInputArrowKeyGuard'
@@ -169,6 +171,7 @@ function telemetryFeatureForPath(path: string) {
 }
 
 interface AppRoutesProps {
+  enableResidentSmartApps?: boolean
   onWorkbenchStartupReadyChange?: (ready: boolean) => void
   onOpenWeworkForAppshot?: () => void
 }
@@ -197,6 +200,8 @@ interface WorkspaceTabSurfaceProps {
   active: boolean
   cloudWebUrl: string | null | undefined
   lifecycleStore: RuntimeTaskLifecycleStore
+  manageResidentSmartApps?: boolean
+  smartAppsEnabled?: boolean
   onOpenWeworkForAppshot?: () => void
   onWorkbenchStartupReadyChange?: (ready: boolean) => void
   services: WorkbenchServices
@@ -208,6 +213,8 @@ function WorkspaceTabSurface({
   active,
   cloudWebUrl,
   lifecycleStore,
+  manageResidentSmartApps = false,
+  smartAppsEnabled = false,
   onOpenWeworkForAppshot,
   onWorkbenchStartupReadyChange,
   services,
@@ -275,6 +282,9 @@ function WorkspaceTabSurface({
               syncRemoteProjects={active}
               syncRuntimeTaskLifecycle={active}
             >
+              {manageResidentSmartApps ? (
+                <ResidentSmartAppsManager enabled={smartAppsEnabled} />
+              ) : null}
               {onOpenWeworkForAppshot && active && !iframe ? (
                 <AppshotBridge onOpenWework={onOpenWeworkForAppshot} />
               ) : null}
@@ -311,7 +321,11 @@ function WorkspaceTabSurface({
   )
 }
 
-function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: AppRoutesProps = {}) {
+function AppRoutes({
+  enableResidentSmartApps = false,
+  onWorkbenchStartupReadyChange,
+  onOpenWeworkForAppshot,
+}: AppRoutesProps = {}) {
   const path = useCurrentPath()
   useWorkbenchRouteRegistry(getWorkbenchPluginRuntime().routes)
   const isPopoutWindow = isPopoutWindowRuntime()
@@ -417,6 +431,9 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
   }
 
   if (!workspaceTabs) return null
+  const residentManagerTabId = enableResidentSmartApps
+    ? findResidentSmartAppsHostTabId(workspaceTabs.tabs)
+    : undefined
 
   return (
     <>
@@ -428,6 +445,8 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
             key={tab.id}
             active={tab.id === workspaceTabs.activeTabId}
             lifecycleStore={lifecycleStore}
+            manageResidentSmartApps={tab.id === residentManagerTabId}
+            smartAppsEnabled={experimentalFeatures.enabled}
             services={services}
             cloudWebUrl={
               cloudConnection.webUrl
@@ -783,6 +802,7 @@ function AppShell() {
           )}
         >
           <AppRoutes
+            enableResidentSmartApps={isMainWindow && hasTauriIpc()}
             onWorkbenchStartupReadyChange={setWorkbenchStartupReady}
             onOpenWeworkForAppshot={isTauri ? openWeworkForAppshot : undefined}
           />

@@ -57,7 +57,7 @@
     "externalBin": ["binaries/wegent-executor", "binaries/dws"],
     "resources": [
       "binaries/codex/**/*",
-      "bundled-deepseek-harness/**/*",
+      "bundled-deepseek-harness/*",
       "bundled-hooks/**/*",
       "bundled-plugins/**/*",
       "bundled-plugins/wework-personal/.agents/plugins/marketplace.json",

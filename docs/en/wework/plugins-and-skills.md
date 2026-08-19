@@ -14,11 +14,15 @@ On the **Plugins** page, choose **Create → Import plugin** to import a standar
 
 If you do not have a package yet, choose **Download example plugin** in the import dialog and use it as the starting point for the manifest, Skills, and MCP configuration. After selecting a ZIP, Wework previews its name, version, and included capabilities. Packages with executable capabilities require an explicit trust confirmation before import and installation. When a package is invalid, the dialog identifies the missing file or unsupported ZIP type.
 
-## Install a DeepSeek Harness capability
+## Install a Smart app
 
-Open **Plugins → Manage plugins → Harness capabilities**, then choose **Import package** or drop a ZIP package onto the page. This section keeps the plugin-center sidebar and top-level back action, so you can switch back to **Plugins** or return to the marketplace at any time. The installation dialog shows the capability name, version, description, and required DeepSeek Harness and Node.js versions. If validation fails, Wework reports the package issue without writing it to the local capability directory.
+Smart apps are currently experimental. First enable **Settings → General → Experimental features**. The top-tab **+ → Smart apps** entry and the **Smart apps** tab beside **Sites** and **Mini Programs** in **Applications** then become available. Disabling the toggle hides those entries, closes Smart app tabs, and stops running Smart apps.
 
-Choose a Wework model before installation. The model is bound only to that capability, so other Harness capabilities can use different models. After installation, each capability card shows its version, bound model, and **Installed**, **Running**, or **Failed to start** state. Choose **Open** to start an isolated Harness instance in its own workspace tab. Choose **Stop** to close that tab and reclaim the instance.
+Open **+ → Smart apps** from the top tab bar to go directly to **Applications → Smart apps**, or open **Applications** first and switch among **Sites / Mini Programs / Smart apps**. **Marketplace** and **Installed** are sections within the Smart apps application type. **Create Smart app** starts a new chat with the bundled Smart App Builder plugin, which checks the DSH development environment, discovers and composes DSH plugins, verifies the local profile in the Wework built-in browser, and validates and packages the installation ZIP. Installation still ends in Wework's native preview so the user can confirm version compatibility and the bound model; the plugin never edits the local installation registry directly.
+
+For an existing package, choose **Import local package** from the marketplace, or switch to **Installed** and choose **Import package** or drop a ZIP package onto the page. The installation dialog shows the app name, version, description, and required DeepSeek Harness runtime and Node.js versions. If validation fails, Wework reports the package issue without writing it to the local app directory.
+
+Choose a Wework model before installation. The model is bound only to that Smart app, so other Smart apps can use different models. After installation, each app shows its version, bound model, and **Installed**, **Running**, or **Failed to start** state; you can change the bound model while the app is stopped. Choose **Open** to start an isolated Harness instance, animate it into the top tab strip, and open it in its own workspace tab. Choose **Stop** to close that tab and reclaim the instance. Enable **Resident** to start the app and open its tab automatically whenever the Wework main window starts.
 
 ## Delete a personal plugin
 

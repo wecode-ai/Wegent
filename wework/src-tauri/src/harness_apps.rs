@@ -1,3 +1,4 @@
+use flate2::read::GzDecoder;
 use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -10,6 +11,7 @@ use std::path::{Component, Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
+use tar::Archive;
 use tauri::{Manager, State};
 
 #[cfg(unix)]
@@ -19,6 +21,9 @@ use std::os::windows::process::CommandExt;
 
 const DIRECTORY: &str = "harness-apps";
 const REGISTRY: &str = "installations.json";
+const BUNDLED_RUNTIME_DIRECTORY: &str = "bundled-deepseek-harness";
+const BUNDLED_RUNTIME_ARCHIVE: &str = "runtime.tar.gz";
+const BUNDLED_RUNTIME_METADATA: &str = "runtime.json";
 const MAX_ARCHIVE_BYTES: u64 = 50 * 1024 * 1024;
 const MAX_EXTRACTED_BYTES: u64 = 250 * 1024 * 1024;
 const MAX_ENTRIES: usize = 8_000;
@@ -60,6 +65,8 @@ pub struct HarnessAppInstallation {
     package_path: String,
     sha256: String,
     model_key: Option<String>,
+    #[serde(default)]
+    resident: bool,
     runtime_version: Option<String>,
     state: String,
     web_url: Option<String>,
@@ -79,6 +86,7 @@ pub struct HarnessAppPreview {
 pub struct HarnessAppRuntimeState {
     children: Mutex<HashMap<String, Child>>,
     registry: Mutex<()>,
+    runtime: Mutex<()>,
 }
 
 impl Default for HarnessAppRuntimeState {
@@ -86,6 +94,7 @@ impl Default for HarnessAppRuntimeState {
         Self {
             children: Mutex::new(HashMap::new()),
             registry: Mutex::new(()),
+            runtime: Mutex::new(()),
         }
     }
 }
@@ -380,6 +389,7 @@ pub async fn install_harness_app(
         sha256,
         model_key: model_key
             .and_then(|value| (!value.trim().is_empty()).then(|| value.trim().to_string())),
+        resident: false,
         runtime_version: None,
         state: "installed".to_string(),
         web_url: None,
@@ -390,6 +400,47 @@ pub async fn install_harness_app(
     installations.push(installation.clone());
     write_registry(&app, &installations)?;
     Ok(installation)
+}
+
+#[tauri::command]
+pub fn update_harness_app(
+    app: tauri::AppHandle,
+    state: State<'_, HarnessAppRuntimeState>,
+    installation_id: String,
+    model_key: Option<String>,
+    resident: Option<bool>,
+) -> Result<HarnessAppInstallation, String> {
+    if model_key.is_some()
+        && state
+            .children
+            .lock()
+            .map_err(|_| "Harness app runtime lock failed")?
+            .contains_key(&installation_id)
+    {
+        return Err("Stop the Smart app before changing its model".to_string());
+    }
+    let _registry = state
+        .registry
+        .lock()
+        .map_err(|_| "Harness app registry lock failed")?;
+    let mut installations = read_registry(&app)?;
+    let installation = installations
+        .iter_mut()
+        .find(|item| item.id == installation_id)
+        .ok_or_else(|| "Harness app installation is missing".to_string())?;
+    if let Some(model_key) = model_key {
+        let model_key = model_key.trim();
+        if model_key.is_empty() {
+            return Err("Smart app model cannot be empty".to_string());
+        }
+        installation.model_key = Some(model_key.to_string());
+    }
+    if let Some(resident) = resident {
+        installation.resident = resident;
+    }
+    let updated = installation.clone();
+    write_registry(&app, &installations)?;
+    Ok(updated)
 }
 
 fn free_port() -> Result<u16, String> {
@@ -408,6 +459,12 @@ struct DshRuntime {
     version: Version,
     node_version: Version,
     uses_tsx_loader: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BundledDshRuntimeMetadata {
+    source_fingerprint: String,
 }
 
 fn read_package_version(path: &Path) -> Result<Version, String> {
@@ -461,14 +518,90 @@ fn resolve_dsh_runtime(app: &tauri::AppHandle) -> Result<DshRuntime, String> {
             uses_tsx_loader: true,
         });
     }
-    let root = match app.path().resource_dir() {
-        Ok(resource_dir) => resource_dir.join("bundled-deepseek-harness"),
-        #[cfg(debug_assertions)]
-        Err(_) => PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("bundled-deepseek-harness"),
-        #[cfg(not(debug_assertions))]
-        Err(error) => return Err(format!("Failed to resolve Wework resources: {error}")),
-    };
-    resolve_managed_dsh_runtime(root)
+    let resource_root = bundled_runtime_resource_root(app)?;
+    extract_bundled_dsh_runtime(app, &resource_root)
+}
+
+fn bundled_runtime_resource_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let resource_root = app
+        .path()
+        .resource_dir()
+        .map(|directory| directory.join(BUNDLED_RUNTIME_DIRECTORY));
+    #[cfg(debug_assertions)]
+    {
+        if let Ok(root) = &resource_root {
+            if root.join(BUNDLED_RUNTIME_ARCHIVE).is_file() {
+                return Ok(root.clone());
+            }
+        }
+        let source_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(BUNDLED_RUNTIME_DIRECTORY);
+        if source_root.join(BUNDLED_RUNTIME_ARCHIVE).is_file() {
+            return Ok(source_root);
+        }
+    }
+    resource_root.map_err(|error| format!("Failed to resolve Wework resources: {error}"))
+}
+
+fn extract_bundled_dsh_runtime(
+    app: &tauri::AppHandle,
+    resource_root: &Path,
+) -> Result<DshRuntime, String> {
+    let metadata_path = resource_root.join(BUNDLED_RUNTIME_METADATA);
+    let metadata: BundledDshRuntimeMetadata =
+        serde_json::from_slice(&fs::read(&metadata_path).map_err(|error| {
+            format!("Failed to read managed Harness runtime metadata: {error}")
+        })?)
+        .map_err(|error| format!("Managed Harness runtime metadata is invalid: {error}"))?;
+    let fingerprint = metadata.source_fingerprint.trim();
+    if fingerprint.len() != 64
+        || !fingerprint
+            .chars()
+            .all(|character| character.is_ascii_hexdigit())
+    {
+        return Err("Managed Harness runtime fingerprint is invalid".to_string());
+    }
+
+    let runtime_parent = root(app)?.join("runtime");
+    let extracted = runtime_parent.join(fingerprint);
+    if let Ok(runtime) = resolve_managed_dsh_runtime(extracted.clone()) {
+        return Ok(runtime);
+    }
+
+    let staging = runtime_parent.join(format!(".extract-{}-{fingerprint}", std::process::id()));
+    let _ = fs::remove_dir_all(&staging);
+    fs::create_dir_all(&staging)
+        .map_err(|error| format!("Failed to create managed Harness runtime staging: {error}"))?;
+    let extraction = (|| {
+        let archive_path = resource_root.join(BUNDLED_RUNTIME_ARCHIVE);
+        let archive_file = fs::File::open(&archive_path)
+            .map_err(|error| format!("Failed to open managed Harness runtime archive: {error}"))?;
+        let mut archive = Archive::new(GzDecoder::new(archive_file));
+        archive
+            .unpack(&staging)
+            .map_err(|error| format!("Failed to extract managed Harness runtime: {error}"))?;
+
+        let staged_metadata: BundledDshRuntimeMetadata =
+            serde_json::from_slice(&fs::read(staging.join(BUNDLED_RUNTIME_METADATA)).map_err(
+                |error| format!("Failed to read extracted Harness runtime metadata: {error}"),
+            )?)
+            .map_err(|error| format!("Extracted Harness runtime metadata is invalid: {error}"))?;
+        if staged_metadata.source_fingerprint != fingerprint {
+            return Err("Managed Harness runtime archive fingerprint does not match".to_string());
+        }
+        resolve_managed_dsh_runtime(staging.clone())?;
+
+        fs::create_dir_all(&runtime_parent).map_err(|error| {
+            format!("Failed to create managed Harness runtime directory: {error}")
+        })?;
+        let _ = fs::remove_dir_all(&extracted);
+        fs::rename(&staging, &extracted)
+            .map_err(|error| format!("Failed to activate managed Harness runtime: {error}"))?;
+        resolve_managed_dsh_runtime(extracted)
+    })();
+    if extraction.is_err() {
+        let _ = fs::remove_dir_all(&staging);
+    }
+    extraction
 }
 
 fn resolve_managed_dsh_runtime(root: PathBuf) -> Result<DshRuntime, String> {
@@ -715,7 +848,13 @@ pub async fn start_harness_app(
             children.remove(&installation_id);
         }
     }
-    let runtime = resolve_dsh_runtime(&app)?;
+    let runtime = {
+        let _runtime = state
+            .runtime
+            .lock()
+            .map_err(|_| "Harness app runtime preparation lock failed")?;
+        resolve_dsh_runtime(&app)?
+    };
     let installation = {
         let _registry = state
             .registry

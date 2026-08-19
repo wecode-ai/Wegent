@@ -1,4 +1,5 @@
 import type { HarnessAppInstallation } from '@/api/local/harnessApps'
+import type { WorkspaceTabsContextValue } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import { getWorkbenchPluginRuntime } from '@/plugin-runtime/bootstrap'
 
 const disposers = new Map<string, () => void>()
@@ -32,4 +33,27 @@ export function registerHarnessAppTab(installation: HarnessAppInstallation): str
 export function unregisterHarnessAppTab(installationId: string): void {
   disposers.get(installationId)?.()
   disposers.delete(installationId)
+}
+
+export function openHarnessAppTab(
+  workspaceTabs: WorkspaceTabsContextValue,
+  installation: HarnessAppInstallation
+): void {
+  const route = harnessAppRoute(installation.id)
+  const existing = workspaceTabs.tabs.find(tab => tab.contentRoute === route)
+  if (existing) {
+    workspaceTabs.selectTab(existing.id, {
+      title: installation.manifest.displayName,
+      contentRoute: route,
+    })
+    return
+  }
+  workspaceTabs.openTab('auxiliary', {
+    title: installation.manifest.displayName,
+    contentRoute: route,
+  })
+}
+
+export function storeHarnessAppProxyToken(installationId: string, token: string): void {
+  sessionStorage.setItem(`wework:harness-app:${installationId}:proxy-token`, token)
 }
