@@ -847,6 +847,12 @@ async function reopenCurrentTurnNavigationTask(
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )
+  const activeElementTestId = await control.command('getActiveElementTestId', 'body')
+  assert.equal(
+    activeElementTestId,
+    'chat-message-input',
+    'Opening a conversation from the sidebar did not transfer keyboard focus to the composer'
+  )
   if (expectedTurnCount > E2E_TRANSCRIPT_PAGE_SIZE) {
     await control.command('waitFor', '[data-testid="load-older-runtime-transcript-button"]', {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
