@@ -25,13 +25,6 @@ from app.stores.tasks import task_store
 logger = logging.getLogger(__name__)
 
 
-def get_knowledge_base_display_name(knowledge_base: Kind) -> str:
-    """Return the current display name for a knowledge base."""
-    value = knowledge_base.json if isinstance(knowledge_base.json, dict) else {}
-    spec = value.get("spec") if isinstance(value.get("spec"), dict) else {}
-    return str(spec.get("name") or knowledge_base.name or "").strip()
-
-
 class BoundKnowledgeBaseDetail:
     """Detail information for a bound knowledge base"""
 

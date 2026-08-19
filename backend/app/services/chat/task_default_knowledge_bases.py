@@ -17,9 +17,6 @@ from app.services.kind_ref_resolver import batch_load_kinds_by_refs
 from app.services.knowledge.knowledge_visibility_query import (
     get_acl_accessible_knowledge_base_ids,
 )
-from app.services.knowledge.task_knowledge_base_service import (
-    get_knowledge_base_display_name,
-)
 from app.services.readers import KindType
 from app.services.share import team_share_service
 from app.stores.tasks import task_store
@@ -47,6 +44,12 @@ def _get_active_knowledge_base(db: Session, knowledge_base_id: int) -> Kind | No
     )
 
 
+def _get_knowledge_base_display_name(knowledge_base: Kind) -> str:
+    """Return the current display name for a knowledge base."""
+    spec = knowledge_base.json.get("spec", {}) if knowledge_base.json else {}
+    return spec.get("name", knowledge_base.name)
+
+
 def _build_task_knowledge_base_ref(
     knowledge_base: Kind,
     user_name: str,
@@ -55,7 +58,7 @@ def _build_task_knowledge_base_ref(
     """Build the task-level knowledge base ref stored in Task.spec."""
     return {
         "id": knowledge_base.id,
-        "name": get_knowledge_base_display_name(knowledge_base),
+        "name": _get_knowledge_base_display_name(knowledge_base),
         "boundBy": user_name,
         "boundAt": bound_at,
     }
