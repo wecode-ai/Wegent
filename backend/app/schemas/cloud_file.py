@@ -50,6 +50,11 @@ class CloudFileListResponse(BaseModel):
     items: list[CloudFileResponse]
 
 
+class ProjectDeliveryItemPathResponse(BaseModel):
+    id: str
+    title: str
+
+
 class ProjectDeliveryFileResponse(BaseModel):
     asset_id: str
     delivery_id: str
@@ -60,6 +65,7 @@ class ProjectDeliveryFileResponse(BaseModel):
     content_type: str | None
     size_bytes: int
     delivered_at: datetime
+    loop_item_path: list[ProjectDeliveryItemPathResponse]
 
 
 class ProjectDeliveryFileListResponse(BaseModel):

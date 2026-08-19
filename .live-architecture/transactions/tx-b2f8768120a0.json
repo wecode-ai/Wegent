@@ -4,7 +4,7 @@
     "kind": "ai"
   },
   "authority": "ai",
-  "base_revision": "A00000020",
+  "base_revision": "A00000028",
   "changes": [
     {
       "action": "assert",
@@ -103,21 +103,88 @@
       "reason": "Real Tauri run showed a pending Issue with first human stage ready, required deliverable visible, upload action, and task start action",
       "subject": "arch://wegent/flow/issue-workflow-human-approval",
       "timestamp": "2026-08-18T11:00:32Z"
+    },
+    {
+      "action": "verify",
+      "change_id": "chg-d62b0de01916",
+      "confidence": 1.0,
+      "evidence": [
+        "backend/app/services/project_workflow_projection.py; backend/app/api/endpoints/deliveries.py; wework/src/api/deliveries.ts"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Runtime task status now uses one backend atomic command keyed by device_id:task_id instead of client whole-workflow read-modify-write.",
+      "subject": "arch://wegent/flow/issue-runtime-delivery-projection",
+      "timestamp": "2026-08-19T03:27:41Z"
+    },
+    {
+      "action": "verify",
+      "change_id": "chg-6c8060ab3739",
+      "confidence": 1.0,
+      "evidence": [
+        "backend/app/services/delivery/service.py; backend/app/services/loop_item_events.py; wework/src/api/backend/projectChatSocket.ts; wework/src/features/todo/CloudTodoWorkspace.tsx"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Delivery finalization publishes issue invalidation from the shared service boundary used by REST and MCP, and Wework refreshes the selected issue projection.",
+      "subject": "arch://wegent/flow/issue-runtime-delivery-projection",
+      "timestamp": "2026-08-19T03:27:42Z"
+    },
+    {
+      "action": "verify",
+      "change_id": "chg-122492931213",
+      "confidence": 1.0,
+      "evidence": [
+        "backend/tests/api/test_deliveries_api.py; backend/tests/services/test_issue_workflow_decision.py; wework/src/api/deliveries.test.ts; wework/src/api/backend/projectChatSocket.test.ts; wework/src/features/todo/issueWorkflow.test.ts"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Focused tests verify atomic task status projection, fulfillment gates, service-level delivery invalidation, socket subscription, and unknown-status semantics.",
+      "subject": "arch://wegent/flow/issue-runtime-delivery-projection",
+      "timestamp": "2026-08-19T03:27:42Z"
+    },
+    {
+      "action": "observe",
+      "change_id": "chg-c2927324b092",
+      "confidence": 1.0,
+      "evidence": [
+        "wework/test-results/desktop-e2e/2026-08-19T03-56-54-939Z-44828"
+      ],
+      "object": null,
+      "plane": "runtime",
+      "predicate": null,
+      "reason": "Real isolated Tauri project-automation checkpoint verified persisted deliverable configuration, unknown task status preserving awaiting approval, typed deliverable progress, and the approval action; the complete checkpoint passed.",
+      "subject": "arch://wegent/flow/issue-runtime-delivery-projection",
+      "timestamp": "2026-08-19T04:00:16Z"
     }
   ],
   "created_at": "2026-08-18T10:21:04Z",
   "id": "tx-b2f8768120a0",
   "intent": "Implement human-governed Issue DAG stages with explicit task re-entry, required deliverables, runtime-backed node status, approval/rejection, and audited force advancement",
+  "merged_revision": "A00000030",
   "read_set": [
+    "arch://wegent/flow/issue-runtime-delivery-projection",
     "arch://wegent/flow/issue-runtime-project-space-binding",
     "arch://wegent/flow/issue-task-conversation-entry",
     "arch://wegent/flow/issue-workflow-board-entry"
   ],
-  "resolutions": [],
-  "status": "open",
-  "updated_at": "2026-08-18T11:00:32Z",
+  "resolutions": [
+    {
+      "by": "human",
+      "from": "A00000020",
+      "reason": "2026-08-19 用户确认先以独立 Runtime/Delivery 投影架构完成风险评审，再继续开发；吸收 A00000028 已合并的任务状态、交付与 UI 投影决策",
+      "timestamp": "2026-08-19T03:11:41Z",
+      "to": "A00000028"
+    }
+  ],
+  "status": "merged",
+  "updated_at": "2026-08-19T04:00:16Z",
   "write_set": [
     "arch://wegent/contract/issue-workflow-stage-deliverables",
+    "arch://wegent/flow/issue-runtime-delivery-projection",
     "arch://wegent/flow/issue-runtime-project-space-binding",
     "arch://wegent/flow/issue-task-conversation-entry",
     "arch://wegent/flow/issue-workflow-board-entry",

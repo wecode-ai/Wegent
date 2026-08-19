@@ -380,7 +380,7 @@ Codex agent message 的实时文本必须按显式 phase 分类：只有 `final`
 
 Wework 的内置浏览器 MCP 由 Rust executor 的 `browser-mcp-server` 子命令提供，并通过每个 Tauri 实例独立分配的本地桥接地址控制右侧浏览器。打包 App 无需安装 Node.js 或单独部署 browser MCP server，多实例也不会共享固定端口。
 
-项目空间的 `wework_space` MCP 由 Rust executor 的 `space-mcp-server` 子命令提供，只注入携带项目空间上下文的 Codex 执行：请求绑定 `cloudProjectId`，或消息包含 `cloud://projects` 引用（例如工作台输入框的云空间引用选择）。Claude Code 等编码 agent 不注入项目空间 MCP，Wegent 编码任务因此不会暴露项目空间工具。
+项目空间的 `wework_space` MCP 由 Wework 启动的 Rust executor 通过动态 loopback 端口常驻提供。Codex 只接收该实例的 URL、实例凭证和可选 ContextGrant，不再启动 `space-mcp-server` stdio 子进程。普通会话保持未绑定；项目或 Issue 会话通过 ContextGrant 获得默认 `space_id/item_id` 与越界保护。
 
 Wework 的 Codex 自定义指令配置只持久化用户输入；内置浏览器路由规则不写入该字段。executor 在每次创建、继续或 fork Codex 线程前，将用户自定义指令、任务级系统指令和内置浏览器规则组合为该线程的 `developerInstructions` 请求参数。配置归一化会移除历史版本遗留的全部浏览器规则，避免设置页显示重复内容，同时新线程仍始终获得浏览器工具的使用约束。
 

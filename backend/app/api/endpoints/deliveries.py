@@ -30,6 +30,7 @@ from app.schemas.delivery import (
     DeliveryAssetResponse,
     DeliveryCreate,
     DeliveryDetailResponse,
+    DeliveryFinalize,
     DeliveryListResponse,
     DeliveryResponse,
     LoopItemAttachmentAccessResponse,
@@ -47,18 +48,22 @@ from app.schemas.delivery import (
     LoopItemUpdate,
     MyWorkItemResponse,
     MyWorkListResponse,
+    RuntimeTaskStatusUpdate,
 )
 from app.schemas.issue_workflow import WorkflowNodeDecisionRequest
 from app.services.cloud_projects import cloud_project_service
 from app.services.delivery import delivery_service
 from app.services.issue_workflow_decision import issue_workflow_decision_service
 from app.services.issue_workflow_start import issue_workflow_start_service
+from app.services.loop_item_events import publish_loop_item_changed
 from app.services.loop_items import loop_item_service
 from app.services.loop_items.external_provider import external_loop_item_provider
 from app.services.loop_items.provider_router import (
     loop_item_attachment_provider_router,
     loop_item_provider_router,
 )
+from app.services.project_workflow_projection import update_workflow_task_status
+from app.services.workflow_stage_context import workflow_stage_context_resolver
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -77,6 +82,7 @@ def _delivery_response(db: Session, delivery: Delivery) -> DeliveryResponse:
         {
             **delivery.__dict__,
             "assets": delivery_service.list_assets(db, delivery.id),
+            "fulfillments": delivery_service.fulfillment_values(delivery),
         }
     )
 
@@ -184,6 +190,35 @@ def find_runtime_task_cloud_context(
     )
 
 
+@router.patch(
+    "/runtime-tasks/cloud-context/status",
+    response_model=LoopItemResponse | None,
+)
+def update_runtime_task_cloud_status(
+    values: RuntimeTaskStatusUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> LoopItemResponse | None:
+    item = update_workflow_task_status(
+        db,
+        user_id=current_user.id,
+        device_id=values.device_id,
+        task_id=values.task_id,
+        execution_status=values.status,
+    )
+    if item is None:
+        return None
+    db.commit()
+    db.refresh(item)
+    publish_loop_item_changed(
+        db,
+        item=item,
+        reason="runtime_status",
+        actor_user_id=current_user.id,
+    )
+    return _loop_item_response(db, item, current_user)
+
+
 @router.post(
     "/cloud-projects/{project_id}/tasks",
     response_model=LoopItemTaskBindingResponse,
@@ -199,6 +234,47 @@ def bind_cloud_project_task(
         db, project_id, values, current_user.id
     )
     return LoopItemTaskBindingResponse.model_validate(binding)
+
+
+@router.get(
+    "/loop-items/{item_id}/workflow-nodes/{workflow_node_id}/input-context",
+    response_model=dict,
+)
+def get_workflow_stage_input_context(
+    item_id: str,
+    workflow_node_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    external_loop_item_provider.ensure_shadow(db, item_id, current_user.id)
+    item = loop_item_service.get(db, item_id, current_user.id)
+    binding = (
+        db.query(LoopItemTaskBinding)
+        .filter(
+            LoopItemTaskBinding.loop_item_id == item_id,
+            LoopItemTaskBinding.task_user_id == current_user.id,
+            loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
+        )
+        .order_by(LoopItemTaskBinding.linked_at.desc())
+        .all()
+    )
+    stage_binding = next(
+        (
+            candidate
+            for candidate in binding
+            if candidate.workflow_node_id == workflow_node_id
+        ),
+        None,
+    )
+    if stage_binding is not None:
+        snapshot = workflow_stage_context_resolver.binding_snapshot(stage_binding)
+        if snapshot is not None:
+            return snapshot
+    return workflow_stage_context_resolver.resolve(
+        db,
+        item=item,
+        target_node_id=workflow_node_id,
+    )
 
 
 @router.delete("/runtime-tasks/cloud-context", status_code=status.HTTP_204_NO_CONTENT)
@@ -392,6 +468,12 @@ def decide_loop_item_workflow_node(
         workflow_node_id=workflow_node_id,
         values=values,
         user_id=current_user.id,
+    )
+    publish_loop_item_changed(
+        db,
+        item=item,
+        reason="workflow_decision",
+        actor_user_id=current_user.id,
     )
     return _loop_item_response(db, item, current_user)
 
@@ -663,10 +745,16 @@ def discard_delivery_draft(
 @router.post("/deliveries/{delivery_id}/finalize", response_model=DeliveryResponse)
 def finalize_delivery(
     delivery_id: str,
+    values: DeliveryFinalize | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> DeliveryResponse:
-    delivery = delivery_service.finalize(db, delivery_id, current_user.id)
+    delivery = delivery_service.finalize(
+        db,
+        delivery_id,
+        current_user.id,
+        values or DeliveryFinalize(),
+    )
     return _delivery_response(db, delivery)
 
 

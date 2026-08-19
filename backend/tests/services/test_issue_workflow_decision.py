@@ -9,7 +9,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.cloud_project import CloudProject
-from app.models.delivery import LoopItem, LoopItemTaskBinding
+from app.models.delivery import Delivery, LoopItem, LoopItemTaskBinding
 from app.models.user import User
 from app.schemas.issue_workflow import WorkflowNodeDecisionRequest
 from app.services.issue_workflow_decision import issue_workflow_decision_service
@@ -48,7 +48,19 @@ def workflow_item(test_db: Session, test_user: User) -> LoopItem:
                         "name": "Develop",
                         "depends_on": [],
                         "required": True,
-                        "required_deliverables": ["Test report"],
+                        "required_deliverables": [
+                            {
+                                "id": "test-report",
+                                "name": "Test report",
+                                "description": "",
+                                "value_type": "file",
+                                "file_constraints": {
+                                    "accepted_types": [],
+                                    "min_files": 1,
+                                    "max_files": 1,
+                                },
+                            }
+                        ],
                         "delivery_ids": [],
                         "workspace_policy": "composer",
                         "status": "awaiting_approval",
@@ -87,7 +99,25 @@ def test_approval_requires_delivery_and_unlocks_successor(
         )
     test_db.rollback()
     workflow_item = test_db.get(LoopItem, workflow_item.id)
-    workflow_item.metadata_json["workflow"]["nodes"][0]["delivery_ids"] = ["delivery-1"]
+    delivery = Delivery(
+        id="delivery-1",
+        loop_item_id=workflow_item.id,
+        created_by_user_id=test_user.id,
+        status="delivered",
+        markdown_object_key="deliveries/delivery-1/markdown.md",
+        manifest_object_key="deliveries/delivery-1/manifest.json",
+        metadata_json={
+            "fulfillments": [
+                {
+                    "requirement_id": "test-report",
+                    "kind": "file",
+                    "asset_ids": ["asset-1"],
+                }
+            ]
+        },
+    )
+    test_db.add(delivery)
+    workflow_item.metadata_json["workflow"]["nodes"][0]["delivery_ids"] = [delivery.id]
     test_db.commit()
 
     updated = issue_workflow_decision_service.decide(

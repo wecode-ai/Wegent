@@ -2920,6 +2920,7 @@ class LoopItemExecutionService:
             "trigger": run_metadata.get("trigger") or getattr(run, "source", None),
             "scheduled_for": run_metadata.get("scheduled_for"),
             "event": run_metadata.get("event") or {},
+            "workflow_stage_input": run_metadata.get("workflow_stage_input"),
         }
 
     @staticmethod

@@ -1,0 +1,86 @@
+{
+  "actor": {
+    "id": "codex",
+    "kind": "ai"
+  },
+  "authority": "ai",
+  "base_revision": "A00000027",
+  "changes": [
+    {
+      "action": "assert",
+      "change_id": "chg-38e1c7832d4a",
+      "confidence": 1.0,
+      "evidence": [
+        "user requirement 2026-08-19"
+      ],
+      "object": null,
+      "plane": "intent",
+      "predicate": null,
+      "reason": "Runtime terminal state, workflow aggregation, Delivery fulfillment, and Issue UI freshness form one critical diagnosable flow and require dedicated connection and sequence diagrams",
+      "subject": "arch://wegent/flow/issue-runtime-delivery-projection",
+      "timestamp": "2026-08-19T03:05:18Z"
+    },
+    {
+      "action": "create",
+      "change_id": "chg-480c45958c06",
+      "confidence": 1.0,
+      "evidence": [
+        "docs/zh/architecture/issue-runtime-delivery-projection.md",
+        "docs/en/architecture/issue-runtime-delivery-projection.md"
+      ],
+      "object": null,
+      "plane": "model",
+      "predicate": null,
+      "reason": "Define atomic task-state persistence, Delivery fulfillment, Issue invalidation, consistent reload, failure semantics, ownership, and invariants as one governed flow",
+      "subject": "arch://wegent/flow/issue-runtime-delivery-projection",
+      "timestamp": "2026-08-19T03:05:19Z"
+    },
+    {
+      "action": "observe",
+      "change_id": "chg-1298f46aa302",
+      "confidence": 1.0,
+      "evidence": [
+        "wework/src/api/deliveries.ts",
+        "backend/app/services/loop_items/service.py",
+        "wework/src/api/issueWorkflow.ts",
+        "wework/src/features/todo/TodoEditor.tsx"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Current implementation spreads the flow across client whole-workflow PATCH, backend JSON persistence, client stage projection, and independently cached Delivery reads",
+      "subject": "arch://wegent/flow/issue-runtime-delivery-projection",
+      "timestamp": "2026-08-19T03:05:19Z"
+    },
+    {
+      "action": "observe",
+      "change_id": "chg-00b307beb531",
+      "confidence": 1.0,
+      "evidence": [
+        ".pids/backend.log"
+      ],
+      "object": null,
+      "plane": "runtime",
+      "predicate": null,
+      "reason": "Runtime evidence shows repeated workflow PATCH failures caused by a non-JSON-serializable datetime while the finalized Delivery remains persisted, producing divergent task and delivery projections",
+      "subject": "arch://wegent/flow/issue-runtime-delivery-projection",
+      "timestamp": "2026-08-19T03:05:19Z"
+    }
+  ],
+  "created_at": "2026-08-19T03:03:56Z",
+  "id": "tx-15246893db0f",
+  "intent": "为 Runtime 任务终态、Issue workflow 聚合、Delivery 履约与 Issue UI 刷新建立独立架构图、时序图、代码归属和失败语义",
+  "merged_revision": "A00000028",
+  "read_set": [
+    "arch://wegent/contract/workflow-stage-deliverable-contract",
+    "arch://wegent/flow/issue-delivery-mcp-lifecycle",
+    "arch://wegent/flow/issue-runtime-project-space-binding",
+    "arch://wegent/flow/issue-task-workflow"
+  ],
+  "resolutions": [],
+  "status": "merged",
+  "updated_at": "2026-08-19T03:05:34Z",
+  "write_set": [
+    "arch://wegent/flow/issue-runtime-delivery-projection"
+  ]
+}

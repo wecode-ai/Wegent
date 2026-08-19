@@ -58,6 +58,7 @@ import { TaskDescriptionEditor } from './TaskDescriptionEditor'
 import { TagEditor } from './TagEditor'
 import { normalizeTaskDescription } from './taskDescription'
 import { AITableTaskFields } from './AITableTaskFields'
+import type { WorkflowDeliverableDraft } from './WorkflowStageCompletionDialog'
 import { TaskActivityView } from './TaskActivityView'
 import { IssueWorkflowDag } from './IssueWorkflowDag'
 import { markdownAttachmentRows } from './attachmentMarkdown'
@@ -504,7 +505,12 @@ export type TodoEditorProps = {
   selectedTaskId?: string | null
   onCreateTask?: (workflowNodeId?: string) => void
   onRunWorkflowNode?: (workflowNodeId: string, automationRuleId: string) => void
-  onUploadWorkflowDeliverables?: (workflowNodeId: string, files: File[]) => Promise<void>
+  onCompleteWorkflowStage?: (
+    workflowNodeId: string,
+    action: 'submit' | 'approve' | 'force_advance',
+    reason: string,
+    values: WorkflowDeliverableDraft[]
+  ) => Promise<void>
   onDecideWorkflowNode?: (
     workflowNodeId: string,
     action: 'approve' | 'reject' | 'force_advance',
@@ -1809,10 +1815,14 @@ export function TodoEditor(props: TodoEditorProps) {
                       <IssueWorkflowDag
                         nodes={displayedWorkflow.nodes}
                         tasks={tasks}
+                        deliveries={deliveries}
                         onCreateTask={props.onCreateTask}
                         onRunAutomation={props.onRunWorkflowNode}
                         onOpenTask={props.onOpenTaskConversation}
-                        onUploadDeliverables={props.onUploadWorkflowDeliverables}
+                        onOpenDelivery={delivery =>
+                          void api.getDelivery(delivery.id).then(setSelectedDelivery)
+                        }
+                        onCompleteStage={props.onCompleteWorkflowStage}
                         onDecide={props.onDecideWorkflowNode}
                       />
                     ) : displayedTasks.length === 0 ? (

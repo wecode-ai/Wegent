@@ -892,7 +892,7 @@ class LoopItemService:
             if "workflow" in values.model_fields_set:
                 workflow = values.workflow
                 metadata["workflow"] = (
-                    workflow.model_dump() if workflow is not None else None
+                    workflow.model_dump(mode="json") if workflow is not None else None
                 )
                 updates.pop("workflow", None)
             updates["metadata_json"] = metadata
@@ -1412,6 +1412,19 @@ class LoopItemService:
                         ),
                         "workflow_node_id": values.workflow_node_id,
                     }
+                    from app.services.workflow_stage_context import (
+                        workflow_stage_context_resolver,
+                    )
+
+                    if workflow_stage_context_resolver.binding_snapshot(active) is None:
+                        workflow_stage_context_resolver.freeze_binding(
+                            active,
+                            workflow_stage_context_resolver.resolve(
+                                db,
+                                item=item,
+                                target_node_id=values.workflow_node_id,
+                            ),
+                        )
                 self.ensure_collaborator(
                     db, item, user_id, user_id, "task", commit=False
                 )
@@ -1428,12 +1441,26 @@ class LoopItemService:
             task_title=values.task_title,
             backend_task_id=values.backend_task_id,
             linked_by_user_id=user_id,
+            linked_at=self._now(),
             metadata_json=(
                 {"workflow_node_id": values.workflow_node_id}
                 if values.workflow_node_id
                 else None
             ),
         )
+        if values.workflow_node_id:
+            from app.services.workflow_stage_context import (
+                workflow_stage_context_resolver,
+            )
+
+            workflow_stage_context_resolver.freeze_binding(
+                binding,
+                workflow_stage_context_resolver.resolve(
+                    db,
+                    item=item,
+                    target_node_id=values.workflow_node_id,
+                ),
+            )
         db.add(binding)
         self.ensure_collaborator(db, item, user_id, user_id, "task", commit=False)
         db.commit()
@@ -1470,6 +1497,8 @@ class LoopItemService:
             "ready",
             "queued",
             "running",
+            "awaiting_approval",
+            "changes_requested",
             "failed",
         }:
             raise HTTPException(
@@ -1511,6 +1540,7 @@ class LoopItemService:
             task_title=values.task_title,
             backend_task_id=values.backend_task_id,
             linked_by_user_id=user_id,
+            linked_at=self._now(),
         )
         db.add(binding)
         db.commit()
@@ -1595,7 +1625,10 @@ class LoopItemService:
                 LoopItemTaskBinding.loop_item_id == item_id,
                 loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
             )
-            .order_by(LoopItemTaskBinding.linked_at.desc())
+            .order_by(
+                LoopItemTaskBinding.linked_at.desc(),
+                LoopItemTaskBinding.id.desc(),
+            )
             .all()
         )
 

@@ -1,0 +1,109 @@
+{
+  "actor": {
+    "id": "codex",
+    "kind": "ai"
+  },
+  "authority": "ai",
+  "base_revision": "A00000030",
+  "changes": [
+    {
+      "action": "assert",
+      "change_id": "chg-7060ca4ae77a",
+      "confidence": 1.0,
+      "evidence": [
+        "user decision 2026-08-19"
+      ],
+      "object": null,
+      "plane": "intent",
+      "predicate": null,
+      "reason": "Wework Executor must own one persistent project-space MCP endpoint and Codex must connect as a client without spawning a stdio MCP process",
+      "subject": "arch://wegent/flow/issue-runtime-project-space-binding",
+      "timestamp": "2026-08-19T04:17:47Z"
+    },
+    {
+      "action": "update",
+      "change_id": "chg-6cb13b7a96bf",
+      "confidence": 1.0,
+      "evidence": [
+        "docs/zh/architecture/project-space-agent-capability.md"
+      ],
+      "object": null,
+      "plane": "model",
+      "predicate": null,
+      "reason": "Codex adapter changes from a spawned stdio server to a URL connection to the Executor-owned loopback endpoint",
+      "subject": "arch://wegent/adapter/codex-project-space-plugin",
+      "timestamp": "2026-08-19T04:17:48Z"
+    },
+    {
+      "action": "update",
+      "change_id": "chg-361c3671400b",
+      "confidence": 1.0,
+      "evidence": [
+        "docs/zh/architecture/project-space-agent-capability.md"
+      ],
+      "object": null,
+      "plane": "model",
+      "predicate": null,
+      "reason": "Endpoint readiness precedes model turns and bound Issue attachment reads use a deterministic tool path without inventory or browser fallbacks",
+      "subject": "arch://wegent/flow/issue-runtime-project-space-binding",
+      "timestamp": "2026-08-19T04:17:48Z"
+    },
+    {
+      "action": "update",
+      "change_id": "chg-e99cc7b1586e",
+      "confidence": 1.0,
+      "evidence": [
+        "executor/src/task_runtime/mcp_http.rs"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Executor now owns one authenticated loopback Streamable HTTP endpoint with session-scoped ContextGrant state",
+      "subject": "arch://wegent/flow/issue-runtime-project-space-binding",
+      "timestamp": "2026-08-19T04:37:55Z"
+    },
+    {
+      "action": "update",
+      "change_id": "chg-9301b956bc9c",
+      "confidence": 1.0,
+      "evidence": [
+        "executor/src/agents/codex.rs"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Codex thread configuration connects to the Executor endpoint by URL and treats wework_space startup failure as a fatal capability error",
+      "subject": "arch://wegent/adapter/codex-project-space-plugin",
+      "timestamp": "2026-08-19T04:37:56Z"
+    },
+    {
+      "action": "update",
+      "change_id": "chg-22aa5acbadbf",
+      "confidence": 1.0,
+      "evidence": [
+        "wework/src-tauri/bundled-plugins/wework-personal/plugins/wework-space/.codex-plugin/plugin.json"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "The bundled plugin is instruction-only and no longer declares or starts an MCP server",
+      "subject": "arch://wegent/adapter/codex-project-space-plugin",
+      "timestamp": "2026-08-19T04:37:56Z"
+    }
+  ],
+  "created_at": "2026-08-19T04:09:18Z",
+  "id": "tx-c52b0321e001",
+  "intent": "Clarify and enforce single ownership of project-space MCP lifecycle: Wework owns the persistent Provider, Codex app-server alone owns each session Adapter, diagnostics must never initiate MCP startup, and bound Issue conversations use the deterministic attachment tool path",
+  "read_set": [
+    "arch://wegent/adapter/codex-project-space-plugin",
+    "arch://wegent/flow/issue-runtime-project-space-binding",
+    "arch://wegent/service/local-project-space-gateway"
+  ],
+  "resolutions": [],
+  "status": "open",
+  "updated_at": "2026-08-19T04:37:56Z",
+  "write_set": [
+    "arch://wegent/adapter/codex-project-space-plugin",
+    "arch://wegent/flow/issue-runtime-project-space-binding"
+  ]
+}

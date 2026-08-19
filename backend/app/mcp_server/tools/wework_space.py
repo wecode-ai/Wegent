@@ -35,6 +35,7 @@ from app.schemas.delivery import (
     DeliveryAssetResponse,
     DeliveryCreate,
     DeliveryDetailResponse,
+    DeliveryFinalize,
     DeliveryResponse,
     LoopItemAttachmentResponse,
     LoopItemCreate,
@@ -55,6 +56,11 @@ from app.services.loop_items.provider_router import (
 from app.services.loop_items.service import loop_item_service
 from app.services.project_automation_execution import project_automation_execution
 from app.services.project_chat.service import project_chat_service
+from app.services.workflow_deliverables import (
+    fulfilled_requirement_ids,
+    missing_requirement_ids,
+)
+from app.services.workflow_stage_context import workflow_stage_context_resolver
 from app.stores.tasks import task_store
 
 BOARD_TASK_SOURCES = {
@@ -212,7 +218,11 @@ def _content_view(content: bytes, content_type: str, filename: str) -> dict[str,
 
 def _delivery_view(db: Session, delivery: Delivery) -> dict[str, Any]:
     return DeliveryResponse.model_validate(
-        {**delivery.__dict__, "assets": delivery_service.list_assets(db, delivery.id)}
+        {
+            **delivery.__dict__,
+            "assets": delivery_service.list_assets(db, delivery.id),
+            "fulfillments": delivery_service.fulfillment_values(delivery),
+        }
     ).model_dump(mode="json")
 
 
@@ -750,7 +760,38 @@ def get_delivery_requirements(
             "workflow_node": node,
             "required_deliverables": (node or {}).get("required_deliverables", []),
             "delivery_ids": (node or {}).get("delivery_ids", []),
+            "fulfilled_requirement_ids": sorted(
+                fulfilled_requirement_ids(db, node or {})
+            ),
+            "missing_requirement_ids": missing_requirement_ids(db, node or {}),
         }
+
+
+@mcp_tool(server="wework_space")
+def get_workflow_stage_context(
+    token_info: MCPAuthInfo, space_id: str = "", item_id: str = ""
+) -> dict[str, Any]:
+    """Return the immutable predecessor context for the authenticated stage."""
+
+    with SessionLocal() as db:
+        project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
+        resolved_item_id = _item_id(db, token_info, item_id)
+        item = db.get(LoopItem, resolved_item_id)
+        if item is None or str(item.cloud_project_id) != str(project.id):
+            raise ValueError("Board item not found")
+        binding = _delivery_binding(db, token_info, resolved_item_id)
+        if not binding.workflow_node_id:
+            raise ValueError("Authenticated Task is not bound to a workflow stage")
+        snapshot = workflow_stage_context_resolver.binding_snapshot(binding)
+        if snapshot is None:
+            snapshot = workflow_stage_context_resolver.resolve(
+                db,
+                item=item,
+                target_node_id=binding.workflow_node_id,
+            )
+            workflow_stage_context_resolver.freeze_binding(binding, snapshot)
+            db.commit()
+        return snapshot
 
 
 @mcp_tool(server="wework_space")
@@ -896,14 +937,29 @@ def download_delivery_asset(
         )
 
 
-@mcp_tool(server="wework_space")
+@mcp_tool(
+    server="wework_space",
+    param_descriptions={
+        "fulfillments": (
+            "Typed results bound to required_deliverables by requirement_id. "
+            "Required when the current stage declares deliverables. Each object must use "
+            "one kind: text {requirement_id, kind, text}; file "
+            "{requirement_id, kind, asset_ids}; code_snapshot "
+            "{requirement_id, kind, asset_id, changed_files, sha256}; git_branch "
+            "{requirement_id, kind, remote_url, branch, commit_sha}; pull_request "
+            "{requirement_id, kind, provider, url, number, head_branch, base_branch, "
+            "head_commit}; url {requirement_id, kind, url, title}."
+        )
+    },
+)
 def finalize_delivery(
     token_info: MCPAuthInfo,
     delivery_id: str,
+    fulfillments: list[dict[str, Any]] | None = None,
     space_id: str = "",
     item_id: str = "",
 ) -> dict[str, Any]:
-    """Finalize the authenticated Task's Delivery draft."""
+    """Finalize a Delivery with typed requirement fulfillments."""
 
     with SessionLocal() as db:
         project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
@@ -911,7 +967,13 @@ def finalize_delivery(
         _read_item(db, project, resolved_item_id, token_info.user_id)
         _delivery_draft_for_binding(db, token_info, resolved_item_id, delivery_id)
         return _delivery_view(
-            db, delivery_service.finalize(db, delivery_id, token_info.user_id)
+            db,
+            delivery_service.finalize(
+                db,
+                delivery_id,
+                token_info.user_id,
+                DeliveryFinalize.model_validate({"fulfillments": fulfillments or []}),
+            ),
         )
 
 

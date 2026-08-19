@@ -35,7 +35,7 @@ static SPACE_MCP_LOG_WRITE_ERROR_REPORTED: AtomicBool = AtomicBool::new(false);
 static ACTIVE_SPACE_CONTEXT_GRANT: OnceLock<Option<SpaceContextGrant>> = OnceLock::new();
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
-struct SpaceContextGrant {
+pub(crate) struct SpaceContextGrant {
     version: u8,
     task_id: String,
     space_id: Option<String>,
@@ -44,6 +44,39 @@ struct SpaceContextGrant {
     automation_run_id: Option<String>,
     automation_manager: bool,
     expires_at_unix: i64,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct SpaceMcpRequestContext {
+    grant: Option<SpaceContextGrant>,
+    backend_url: Option<String>,
+    auth_token: Option<String>,
+}
+
+impl SpaceMcpRequestContext {
+    pub(crate) fn new(
+        grant: Option<SpaceContextGrant>,
+        backend_url: Option<String>,
+        auth_token: Option<String>,
+    ) -> Self {
+        Self {
+            grant,
+            backend_url,
+            auth_token,
+        }
+    }
+
+    fn from_env() -> Self {
+        Self::new(
+            current_space_context_grant(),
+            non_empty_env("WEWORK_SPACE_BACKEND_URL"),
+            non_empty_env("WEWORK_SPACE_AUTH_TOKEN"),
+        )
+    }
+
+    fn grant(&self) -> Option<&SpaceContextGrant> {
+        self.grant.as_ref()
+    }
 }
 
 pub fn is_space_mcp_command() -> bool {
@@ -167,7 +200,8 @@ fn id_value(value: &Value) -> Option<String> {
 
 pub async fn run() -> Result<(), String> {
     let runtime = TaskRuntime::from_env().map_err(|error| error.to_string())?;
-    let grant = current_space_context_grant();
+    let context = SpaceMcpRequestContext::from_env();
+    let grant = context.grant();
     write_space_mcp_log(&format!(
         "[wework-space-mcp] lifecycle=start version={} pid={} grant_version={} manager_mode={} space_id_present={} item_id_present={} backend_url_present={} auth_token_present={}",
         env!("CARGO_PKG_VERSION"),
@@ -201,7 +235,7 @@ pub async fn run() -> Result<(), String> {
                     "[wework-space-mcp] request={} stage=received method={} tool={}",
                     request_count, method, tool,
                 ));
-                handle_request(&runtime, &request).await
+                handle_request_with_context(&runtime, &request, &context).await
             }
             Err(error) => {
                 write_space_mcp_log(&format!(
@@ -233,7 +267,11 @@ fn env_value_present(key: &str) -> bool {
     env::var(key).is_ok_and(|value| !value.trim().is_empty())
 }
 
-async fn handle_request(runtime: &TaskRuntime, request: &Value) -> Option<Value> {
+pub(crate) async fn handle_request_with_context(
+    runtime: &TaskRuntime,
+    request: &Value,
+    context: &SpaceMcpRequestContext,
+) -> Option<Value> {
     let id = request.get("id").cloned();
     match request
         .get("method")
@@ -242,10 +280,14 @@ async fn handle_request(runtime: &TaskRuntime, request: &Value) -> Option<Value>
     {
         "notifications/initialized" => None,
         "initialize" => id.map(|id| {
+            let protocol_version = request
+                .pointer("/params/protocolVersion")
+                .and_then(Value::as_str)
+                .unwrap_or("2025-06-18");
             result_response(
                 id,
                 json!({
-                    "protocolVersion": "2024-11-05",
+                    "protocolVersion": protocol_version,
                     "capabilities": {"tools": {"listChanged": false}},
                     "serverInfo": {
                         "name": SPACE_MCP_SERVER_NAME,
@@ -256,7 +298,7 @@ async fn handle_request(runtime: &TaskRuntime, request: &Value) -> Option<Value>
         }),
         "ping" => id.map(|id| result_response(id, json!({}))),
         "tools/list" => id.map(|id| {
-            let tools = visible_tools(runtime);
+            let tools = visible_tools(runtime, context);
             let names = tools
                 .iter()
                 .filter_map(|tool| tool.get("name").and_then(Value::as_str))
@@ -264,7 +306,7 @@ async fn handle_request(runtime: &TaskRuntime, request: &Value) -> Option<Value>
                 .join(",");
             write_space_mcp_log(&format!(
                 "[wework-space-mcp] stage=tools_list manager_mode={} tool_count={} tools={}",
-                is_automation_manager(),
+                is_automation_manager(context.grant()),
                 tools.len(),
                 names,
             ));
@@ -287,7 +329,7 @@ async fn handle_request(runtime: &TaskRuntime, request: &Value) -> Option<Value>
             ));
             Some(result_response(
                 id,
-                call_tool(runtime, name, arguments).await,
+                call_tool_with_context(runtime, name, arguments, context).await,
             ))
         }
         method => id.map(|id| error_response(id, -32601, &format!("Unknown method: {method}"))),
@@ -358,7 +400,7 @@ fn read_initial_space_context_grant() -> Option<SpaceContextGrant> {
     decode_space_context_grant(&encoded)
 }
 
-fn decode_space_context_grant(encoded: &str) -> Option<SpaceContextGrant> {
+pub(crate) fn decode_space_context_grant(encoded: &str) -> Option<SpaceContextGrant> {
     let decoded = STANDARD.decode(encoded).ok()?;
     let grant = serde_json::from_slice::<SpaceContextGrant>(&decoded).ok()?;
     (grant.version == 1 && grant.expires_at_unix >= Local::now().timestamp()).then_some(grant)
@@ -412,11 +454,6 @@ fn delivery_address(
         backend_task_id: None,
         workflow_node_id: None,
     })
-}
-
-fn current_delivery_address() -> Result<RuntimeTaskAddress, super::TaskRuntimeError> {
-    let grant = current_space_context_grant();
-    delivery_address(grant.as_ref())
 }
 
 fn delivery_scope_error(
@@ -474,6 +511,62 @@ fn delivery_requirements(item: &Value, workflow_node_id: Option<&str>) -> Value 
             .and_then(|value| value.get("delivery_ids"))
             .cloned()
             .unwrap_or_else(|| json!([])),
+    })
+}
+
+fn local_workflow_stage_context(item: &Value, workflow_node_id: Option<&str>) -> Value {
+    let workflow = item
+        .get("workflow")
+        .or_else(|| item.pointer("/metadata/workflow"));
+    let nodes = workflow
+        .and_then(|value| value.get("nodes"))
+        .and_then(Value::as_array);
+    let target = workflow_node_id.and_then(|node_id| {
+        nodes.and_then(|values| {
+            values
+                .iter()
+                .find(|node| node.get("id").and_then(Value::as_str) == Some(node_id))
+        })
+    });
+    let dependency_ids = target
+        .and_then(|value| value.get("depends_on"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let dependencies = dependency_ids
+        .iter()
+        .filter_map(Value::as_str)
+        .filter_map(|dependency_id| {
+            nodes.and_then(|values| {
+                values
+                    .iter()
+                    .find(|node| node.get("id").and_then(Value::as_str) == Some(dependency_id))
+            })
+        })
+        .map(|node| {
+            json!({
+                "stage_id": node.get("id"),
+                "stage_name": node.get("name"),
+                "status": node.get("status"),
+                "delivery_ids": node.get("delivery_ids").cloned().unwrap_or_else(|| json!([])),
+                "selected_sources": target
+                    .and_then(|value| value.get("dependency_context"))
+                    .and_then(|value| value.get(node.get("id").and_then(Value::as_str).unwrap_or_default()))
+                    .cloned()
+                    .unwrap_or_else(|| json!(["final_result", "deliveries"])),
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "version": 1,
+        "issue": {
+            "id": item.get("id"),
+            "title": item.get("title"),
+            "description": item.get("description"),
+            "status": item.get("status"),
+        },
+        "target_stage": target,
+        "dependencies": dependencies,
     })
 }
 
@@ -560,18 +653,58 @@ fn selected_local_delivery_chat(
     })))
 }
 
-async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value {
-    let grant = current_space_context_grant();
-    call_tool_with_grant(runtime, name, arguments, grant).await
+async fn call_tool_with_context(
+    runtime: &TaskRuntime,
+    name: &str,
+    arguments: Value,
+    context: &SpaceMcpRequestContext,
+) -> Value {
+    call_tool_with_runtime_context(
+        runtime,
+        name,
+        arguments,
+        context.grant.clone(),
+        context.backend_url.as_deref(),
+        context.auth_token.as_deref(),
+    )
+    .await
 }
 
+#[cfg(test)]
+async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value {
+    let context = SpaceMcpRequestContext::from_env();
+    call_tool_with_context(runtime, name, arguments, &context).await
+}
+
+#[cfg(test)]
 async fn call_tool_with_grant(
+    runtime: &TaskRuntime,
+    name: &str,
+    arguments: Value,
+    grant: Option<SpaceContextGrant>,
+) -> Value {
+    let backend_url = non_empty_env("WEWORK_SPACE_BACKEND_URL");
+    let auth_token = non_empty_env("WEWORK_SPACE_AUTH_TOKEN");
+    call_tool_with_runtime_context(
+        runtime,
+        name,
+        arguments,
+        grant,
+        backend_url.as_deref(),
+        auth_token.as_deref(),
+    )
+    .await
+}
+
+async fn call_tool_with_runtime_context(
     runtime: &TaskRuntime,
     name: &str,
     mut arguments: Value,
     grant: Option<SpaceContextGrant>,
+    backend_url: Option<&str>,
+    auth_token: Option<&str>,
 ) -> Value {
-    if is_automation_manager() && !is_automation_manager_tool(name) {
+    if is_automation_manager(grant.as_ref()) && !is_automation_manager_tool(name) {
         return text_result(
             format!("AI-managed automation cannot call wework_space tool: {name}"),
             true,
@@ -623,8 +756,6 @@ async fn call_tool_with_grant(
     let is_locally_routed = requested_project_id
         .as_deref()
         .is_some_and(|project_id| is_locally_routed_project(runtime, project_id, name));
-    let backend_url = env::var("WEWORK_SPACE_BACKEND_URL").ok();
-    let auth_token = env::var("WEWORK_SPACE_AUTH_TOKEN").ok();
     if name == "list_spaces" {
         let local_projects = match runtime.list_projects().and_then(|mut projects| {
             projects.retain(|project| project.metadata["project_store"] != "backend");
@@ -634,11 +765,19 @@ async fn call_tool_with_grant(
             Ok(_) => Vec::new(),
             Err(error) => return text_result(error.to_string(), true),
         };
-        let Some((backend_url, auth_token)) = backend_url.as_deref().zip(auth_token.as_deref())
-        else {
+        let Some((backend_url, auth_token)) = backend_url.zip(auth_token) else {
             return text_result(Value::Array(local_projects).to_string(), false);
         };
-        return match call_backend_tool(backend_url, auth_token, "", name, &arguments).await {
+        return match call_backend_tool(
+            backend_url,
+            auth_token,
+            "",
+            name,
+            &arguments,
+            grant.as_ref(),
+        )
+        .await
+        {
             Ok(Value::Array(mut cloud_projects)) => {
                 cloud_projects.extend(local_projects);
                 text_result(Value::Array(cloud_projects).to_string(), false)
@@ -654,11 +793,12 @@ async fn call_tool_with_grant(
     if should_use_backend {
         let project_id = requested_project_id.as_deref().unwrap_or_default();
         return match call_backend_tool(
-            backend_url.as_deref().unwrap_or_default(),
-            auth_token.as_deref().unwrap_or_default(),
+            backend_url.unwrap_or_default(),
+            auth_token.unwrap_or_default(),
             project_id,
             name,
             &arguments,
+            grant.as_ref(),
         )
         .await
         {
@@ -878,6 +1018,39 @@ async fn call_tool_with_grant(
                 (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => Err(error),
             }
         }
+        "get_workflow_stage_context" => {
+            let project_id = string_argument(&arguments, "space_id");
+            let item_id = string_argument(&arguments, "item_id");
+            let address = delivery_address(grant.as_ref());
+            match (project_id, item_id, address) {
+                (Ok(project_id), Ok(item_id), Ok(address)) => {
+                    match runtime.find_task_binding(&address.device_id, &address.task_id) {
+                        Ok(binding)
+                            if binding.loop_item_id.as_deref() == Some(item_id)
+                                && binding.cloud_project_id == project_id =>
+                        {
+                            runtime
+                                .get_task(project_id, item_id)
+                                .await
+                                .and_then(|item| serde_json::to_value(item).map_err(invalid_json))
+                                .map(|item| {
+                                    binding.workflow_stage_input.clone().unwrap_or_else(|| {
+                                        local_workflow_stage_context(
+                                            &item,
+                                            binding.workflow_node_id.as_deref(),
+                                        )
+                                    })
+                                })
+                        }
+                        Ok(_) => Err(super::TaskRuntimeError::Invalid(
+                            "The current Runtime task is not bound to this Issue".to_owned(),
+                        )),
+                        Err(error) => Err(error),
+                    }
+                }
+                (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => Err(error),
+            }
+        }
         "create_delivery" => {
             let project_id = string_argument(&arguments, "space_id");
             let item_id = string_argument(&arguments, "item_id");
@@ -1012,8 +1185,15 @@ async fn call_tool_with_grant(
                             return Err(super::TaskRuntimeError::Invalid(error));
                         }
                         if name == "finalize_delivery" {
+                            let input = super::DeliveryFinalize {
+                                fulfillments: arguments
+                                    .get("fulfillments")
+                                    .and_then(Value::as_array)
+                                    .cloned()
+                                    .unwrap_or_default(),
+                            };
                             runtime
-                                .finalize_delivery(item_id, delivery_id)
+                                .finalize_delivery(item_id, delivery_id, input)
                                 .and_then(|value| serde_json::to_value(value).map_err(invalid_json))
                         } else {
                             runtime.discard_delivery(delivery_id)?;
@@ -1255,6 +1435,7 @@ async fn call_backend_tool(
     project_id: &str,
     name: &str,
     arguments: &Value,
+    grant: Option<&SpaceContextGrant>,
 ) -> Result<Value, String> {
     let client = reqwest::Client::new();
     let base = format!("{}/api/v1", backend_url.trim_end_matches('/'));
@@ -1345,8 +1526,8 @@ async fn call_backend_tool(
             return Ok(normalize_assignment_candidates(members, robots));
         }
         "assign_board_item" => {
-            let run_id = current_space_context_grant()
-                .and_then(|grant| grant.automation_run_id)
+            let run_id = grant
+                .and_then(|grant| grant.automation_run_id.clone())
                 .ok_or_else(|| {
                     "assign_board_item is only available to an AI-managed automation"
                         .to_owned()
@@ -1381,7 +1562,7 @@ async fn call_backend_tool(
         )),
         "get_delivery_requirements" => {
             let item_id = task_id()?;
-            let address = current_delivery_address().map_err(|error| error.to_string())?;
+            let address = delivery_address(grant).map_err(|error| error.to_string())?;
             let item = backend_json(
                 client
                     .get(format!("{base}/loop-items/{}", encode_segment(item_id)))
@@ -1418,8 +1599,49 @@ async fn call_backend_tool(
                 .and_then(Value::as_str);
             return Ok(delivery_requirements(&item, node_id));
         }
+        "get_workflow_stage_context" => {
+            let item_id = task_id()?;
+            let address = delivery_address(grant).map_err(|error| error.to_string())?;
+            let bindings = backend_json(
+                client
+                    .get(format!("{base}/loop-items/{}/tasks", encode_segment(item_id)))
+                    .bearer_auth(auth_token)
+                    .send()
+                    .await
+                    .map_err(|error| error.to_string())?,
+            )
+            .await?;
+            let node_id = bindings
+                .as_array()
+                .and_then(|bindings| {
+                    bindings.iter().find(|binding| {
+                        binding.get("device_id").and_then(Value::as_str)
+                            == Some(address.device_id.as_str())
+                            && binding.get("task_id").and_then(Value::as_str)
+                                == Some(address.task_id.as_str())
+                    })
+                })
+                .and_then(|binding| binding.get("workflow_node_id"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    "The current Runtime task is not bound to a workflow stage".to_owned()
+                })?;
+            return backend_json(
+                client
+                    .get(format!(
+                        "{base}/loop-items/{}/workflow-nodes/{}/input-context",
+                        encode_segment(item_id),
+                        encode_segment(node_id)
+                    ))
+                    .bearer_auth(auth_token)
+                    .send()
+                    .await
+                    .map_err(|error| error.to_string())?,
+            )
+            .await;
+        }
         "create_delivery" => {
-            let address = current_delivery_address().map_err(|error| error.to_string())?;
+            let address = delivery_address(grant).map_err(|error| error.to_string())?;
             client
                 .post(format!(
                     "{base}/loop-items/{}/deliveries",
@@ -1444,7 +1666,7 @@ async fn call_backend_tool(
                 string_argument(arguments, "delivery_id").map_err(|error| error.to_string())?;
             let file_path =
                 string_argument(arguments, "file_path").map_err(|error| error.to_string())?;
-            let address = current_delivery_address().map_err(|error| error.to_string())?;
+            let address = delivery_address(grant).map_err(|error| error.to_string())?;
             let delivery =
                 backend_delivery_detail(&client, &base, auth_token, delivery_id).await?;
             if let Some(error) = delivery_scope_error(&delivery, &address, item_id) {
@@ -1536,7 +1758,7 @@ async fn call_backend_tool(
             let item_id = task_id()?;
             let delivery_id =
                 string_argument(arguments, "delivery_id").map_err(|error| error.to_string())?;
-            let address = current_delivery_address().map_err(|error| error.to_string())?;
+            let address = delivery_address(grant).map_err(|error| error.to_string())?;
             let delivery =
                 backend_delivery_detail(&client, &base, auth_token, delivery_id).await?;
             if let Some(error) = delivery_scope_error(&delivery, &address, item_id) {
@@ -1548,6 +1770,12 @@ async fn call_backend_tool(
                         "{base}/deliveries/{}/finalize",
                         encode_segment(delivery_id)
                     ))
+                    .json(&json!({
+                        "fulfillments": arguments
+                            .get("fulfillments")
+                            .cloned()
+                            .unwrap_or_else(|| json!([]))
+                    }))
                     .bearer_auth(auth_token)
                     .send()
                     .await
@@ -1896,6 +2124,84 @@ fn encode_segment(value: &str) -> String {
     url::form_urlencoded::byte_serialize(value.as_bytes()).collect()
 }
 
+fn delivery_fulfillments_schema() -> Value {
+    json!({
+        "type": "array",
+        "description": "Typed results bound to required_deliverables by requirement_id. Required when the current stage declares deliverables.",
+        "items": {
+            "oneOf": [
+                {
+                    "type": "object",
+                    "properties": {
+                        "requirement_id": {"type": "string"},
+                        "kind": {"const": "text"},
+                        "text": {"type": "string"}
+                    },
+                    "required": ["requirement_id", "kind", "text"]
+                },
+                {
+                    "type": "object",
+                    "properties": {
+                        "requirement_id": {"type": "string"},
+                        "kind": {"const": "file"},
+                        "asset_ids": {"type": "array", "items": {"type": "string"}, "minItems": 1}
+                    },
+                    "required": ["requirement_id", "kind", "asset_ids"]
+                },
+                {
+                    "type": "object",
+                    "properties": {
+                        "requirement_id": {"type": "string"},
+                        "kind": {"const": "code_snapshot"},
+                        "asset_id": {"type": "string"},
+                        "changed_files": {"type": "array", "items": {"type": "string"}},
+                        "base_revision": {"type": ["string", "null"]},
+                        "head_revision": {"type": ["string", "null"]},
+                        "sha256": {"type": "string"}
+                    },
+                    "required": ["requirement_id", "kind", "asset_id", "changed_files", "sha256"]
+                },
+                {
+                    "type": "object",
+                    "properties": {
+                        "requirement_id": {"type": "string"},
+                        "kind": {"const": "git_branch"},
+                        "remote_url": {"type": "string"},
+                        "branch": {"type": "string"},
+                        "commit_sha": {"type": "string"}
+                    },
+                    "required": ["requirement_id", "kind", "remote_url", "branch", "commit_sha"]
+                },
+                {
+                    "type": "object",
+                    "properties": {
+                        "requirement_id": {"type": "string"},
+                        "kind": {"const": "pull_request"},
+                        "provider": {"enum": ["github", "gitlab"]},
+                        "url": {"type": "string"},
+                        "number": {"type": "integer"},
+                        "state": {"const": "draft"},
+                        "head_branch": {"type": "string"},
+                        "base_branch": {"type": "string"},
+                        "head_commit": {"type": "string"}
+                    },
+                    "required": ["requirement_id", "kind", "provider", "url", "number", "head_branch", "base_branch", "head_commit"]
+                },
+                {
+                    "type": "object",
+                    "properties": {
+                        "requirement_id": {"type": "string"},
+                        "kind": {"const": "url"},
+                        "url": {"type": "string"},
+                        "title": {"type": "string"}
+                    },
+                    "required": ["requirement_id", "kind", "url"]
+                }
+            ]
+        }
+    })
+}
+
 fn tools() -> Vec<Value> {
     vec![
         tool(
@@ -2134,6 +2440,18 @@ fn tools() -> Vec<Value> {
             }),
         ),
         tool(
+            "get_workflow_stage_context",
+            "Get the immutable upstream context selected for the current workflow stage",
+            json!({
+                "type": "object",
+                "properties": {
+                    "space_id": {"type": "string"},
+                    "item_id": {"type": "string"}
+                },
+                "required": ["space_id", "item_id"]
+            }),
+        ),
+        tool(
             "create_delivery",
             "Create a Delivery draft bound to the current Runtime task and workflow stage",
             json!({
@@ -2231,13 +2549,14 @@ fn tools() -> Vec<Value> {
         ),
         tool(
             "finalize_delivery",
-            "Finalize the current Runtime task's Delivery draft as an immutable snapshot",
+            "Finalize the current Runtime task's Delivery draft with typed requirement fulfillments",
             json!({
                 "type": "object",
                 "properties": {
                     "space_id": {"type": "string"},
                     "item_id": {"type": "string"},
-                    "delivery_id": {"type": "string"}
+                    "delivery_id": {"type": "string"},
+                    "fulfillments": delivery_fulfillments_schema()
                 },
                 "required": ["space_id", "item_id", "delivery_id"]
             }),
@@ -2381,8 +2700,8 @@ fn tools() -> Vec<Value> {
     ]
 }
 
-fn visible_tools(runtime: &TaskRuntime) -> Vec<Value> {
-    if is_automation_manager() {
+fn visible_tools(runtime: &TaskRuntime, context: &SpaceMcpRequestContext) -> Vec<Value> {
+    if is_automation_manager(context.grant()) {
         return tools()
             .into_iter()
             .filter(|tool| {
@@ -2392,12 +2711,14 @@ fn visible_tools(runtime: &TaskRuntime) -> Vec<Value> {
             })
             .collect();
     }
-    let bound_project_id = current_space_context_grant().and_then(|grant| grant.space_id);
-    tools_for_bound_project(runtime, bound_project_id.as_deref())
+    tools_for_bound_project(
+        runtime,
+        context.grant().and_then(|grant| grant.space_id.as_deref()),
+    )
 }
 
-fn is_automation_manager() -> bool {
-    current_space_context_grant().is_some_and(|grant| grant.automation_manager)
+fn is_automation_manager(grant: Option<&SpaceContextGrant>) -> bool {
+    grant.is_some_and(|grant| grant.automation_manager)
 }
 
 fn is_automation_manager_tool(name: &str) -> bool {
@@ -2849,8 +3170,9 @@ mod tests {
 
     #[test]
     fn exposes_complete_delivery_lifecycle_tools() {
-        let names = tools()
-            .into_iter()
+        let delivery_tools = tools();
+        let names = delivery_tools
+            .iter()
             .filter_map(|tool| tool["name"].as_str().map(ToOwned::to_owned))
             .collect::<Vec<_>>();
 
@@ -2866,13 +3188,28 @@ mod tests {
         ] {
             assert!(names.iter().any(|candidate| candidate == name));
         }
-        let create = tools()
-            .into_iter()
+        let create = delivery_tools
+            .iter()
             .find(|tool| tool["name"] == "create_delivery")
             .unwrap();
         assert_eq!(
             create["inputSchema"]["properties"]["chat"]["type"],
             json!(["object", "null"])
+        );
+        let finalize = delivery_tools
+            .iter()
+            .find(|tool| tool["name"] == "finalize_delivery")
+            .unwrap();
+        assert_eq!(
+            finalize["inputSchema"]["properties"]["fulfillments"]["type"],
+            "array"
+        );
+        assert_eq!(
+            finalize["inputSchema"]["properties"]["fulfillments"]["items"]["oneOf"]
+                .as_array()
+                .unwrap()
+                .len(),
+            6
         );
     }
 
@@ -3260,7 +3597,17 @@ mod tests {
                             "status": "ready",
                             "depends_on": [],
                             "required": true,
-                            "required_deliverables": ["result.txt"],
+                            "required_deliverables": [{
+                                "id": "result-file",
+                                "name": "Result",
+                                "description": "",
+                                "value_type": "file",
+                                "file_constraints": {
+                                    "accepted_types": [],
+                                    "min_files": 1,
+                                    "max_files": 1
+                                }
+                            }],
                             "delivery_ids": []
                         }]
                     })),
@@ -3322,7 +3669,10 @@ mod tests {
         let requirements: Value =
             serde_json::from_str(requirements["content"][0]["text"].as_str().unwrap()).unwrap();
         assert_eq!(requirements["workflow_node_id"], "implement");
-        assert_eq!(requirements["required_deliverables"], json!(["result.txt"]));
+        assert_eq!(
+            requirements["required_deliverables"][0]["id"],
+            "result-file"
+        );
 
         let created = call_tool_with_grant(
             &runtime,
@@ -3375,10 +3725,34 @@ mod tests {
             "delivery content"
         );
 
+        let empty_finalized = call_tool_with_grant(
+            &runtime,
+            "finalize_delivery",
+            json!({"delivery_id": delivery_id, "fulfillments": []}),
+            Some(grant.clone()),
+        )
+        .await;
+        assert_eq!(empty_finalized["isError"], true);
+        assert_eq!(
+            runtime
+                .delivery_detail(&delivery_id)
+                .unwrap()
+                .delivery
+                .status,
+            "draft"
+        );
+
         let finalized = call_tool_with_grant(
             &runtime,
             "finalize_delivery",
-            json!({"delivery_id": delivery_id}),
+            json!({
+                "delivery_id": delivery_id,
+                "fulfillments": [{
+                    "requirement_id": "result-file",
+                    "kind": "file",
+                    "asset_ids": [asset_id]
+                }]
+            }),
             Some(grant.clone()),
         )
         .await;
@@ -3393,6 +3767,10 @@ mod tests {
         assert_eq!(
             updated.metadata["workflow"]["nodes"][0]["delivery_ids"],
             json!([delivery_id])
+        );
+        assert_eq!(
+            updated.metadata["workflow"]["nodes"][0]["fulfilled_deliverable_ids"],
+            json!(["result-file"])
         );
 
         let draft = call_tool_with_grant(

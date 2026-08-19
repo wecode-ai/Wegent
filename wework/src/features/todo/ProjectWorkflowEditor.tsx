@@ -37,13 +37,18 @@ import type { ProjectChatAgent } from '@/api/projectChatAgents'
 import { Tooltip } from '@/components/ui/tooltip'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
+import { WorkflowDeliverableRequirementsDialog } from './WorkflowDeliverableRequirementsDialog'
 import { layoutWorkflowGraph, wouldCreateWorkflowCycle } from './workflowGraph'
+import {
+  createWorkflowDeliverableRequirement,
+  workflowDeliverableTypeLabel,
+} from './workflowDeliverables'
 
 interface ProjectWorkflowEditorProps {
   value: ProjectWorkflowDefinition
   busy: boolean
   onChange: (value: ProjectWorkflowDefinition) => void
-  onSave: () => void
+  onSave: (value: ProjectWorkflowDefinition) => void | Promise<void>
   automationRules?: ProjectAutomationRule[]
   projectAgents?: ProjectChatAgent[]
   onEnsureStageRobotRule?: (agentId: string) => Promise<string | null>
@@ -69,6 +74,10 @@ type StageFlowNode = Node<StageNodeData, 'stage'>
 type WorkflowFlowEdge = Edge<WorkflowEdgeData, 'workflow'>
 type OrchestrationMode = 'manual' | 'workflow' | 'ai'
 type StageInsertionDirection = 'before' | 'after'
+interface DeliverableDialogState {
+  nodeId: string
+  requirements: NonNullable<WorkflowNodeDefinition['required_deliverables']>
+}
 
 const STAGE_NODE_WIDTH = 220
 const STAGE_NODE_HEIGHT = 116
@@ -381,6 +390,7 @@ export function ProjectWorkflowEditor({
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(value.nodes[0]?.id ?? null)
   const [selectedEdge, setSelectedEdge] = useState<{ source: string; target: string } | null>(null)
   const [stageRobotBusyId, setStageRobotBusyId] = useState<string | null>(null)
+  const [deliverableDialog, setDeliverableDialog] = useState<DeliverableDialogState | null>(null)
   const [robotModeNodeIds, setRobotModeNodeIds] = useState<Set<string>>(
     () => new Set(value.nodes.filter(node => node.automation_rule_id).map(node => node.id))
   )
@@ -710,7 +720,7 @@ export function ProjectWorkflowEditor({
           type="button"
           data-testid="project-workflow-save"
           disabled={busy || !canSave}
-          onClick={onSave}
+          onClick={() => void onSave(value)}
           className="h-8 rounded-lg bg-text-primary px-3 text-sm font-medium text-background disabled:opacity-40"
         >
           {busy ? t('todo.workflow_saving', '保存中…') : t('todo.workflow_save', '保存编排')}
@@ -956,32 +966,86 @@ export function ProjectWorkflowEditor({
                         className="mt-1.5 min-h-28 w-full resize-y rounded-lg border border-border bg-background px-2.5 py-2 text-sm outline-none focus:border-blue-500"
                       />
                     </label>
-                    <label className="mt-4 block text-xs font-medium text-text-secondary">
-                      {t('todo.workflow_stage_deliverables_label', '必要交付物')}
-                      <textarea
-                        value={(selectedNode.required_deliverables ?? []).join('\n')}
-                        data-testid={`project-workflow-stage-deliverables-${selectedNode.id}`}
-                        onChange={event =>
-                          updateNode(selectedNode.id, {
-                            required_deliverables: event.target.value
-                              .split('\n')
-                              .map(value => value.trim())
-                              .filter(Boolean),
-                          })
-                        }
-                        placeholder={t(
-                          'todo.workflow_stage_deliverables_placeholder',
-                          '每行一个，例如：测试报告'
-                        )}
-                        className="mt-1.5 min-h-20 w-full resize-y rounded-lg border border-border bg-background px-2.5 py-2 text-sm outline-none focus:border-blue-500"
-                      />
+                    <fieldset className="mt-4">
+                      <div className="flex items-center justify-between gap-2">
+                        <legend className="text-xs font-medium text-text-secondary">
+                          {t('todo.workflow_stage_deliverables_label', '必要交付物')}
+                        </legend>
+                        <button
+                          type="button"
+                          data-testid={`project-workflow-add-deliverable-${selectedNode.id}`}
+                          onClick={() => {
+                            const requirements = selectedNode.required_deliverables ?? []
+                            setDeliverableDialog({
+                              nodeId: selectedNode.id,
+                              requirements: [
+                                ...requirements,
+                                createWorkflowDeliverableRequirement(requirements),
+                              ],
+                            })
+                          }}
+                          className="flex h-7 items-center gap-1 rounded-md px-2 text-xs text-text-secondary hover:bg-muted"
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                          {t('todo.workflow_add_deliverable', '添加交付物')}
+                        </button>
+                      </div>
+                      {(selectedNode.required_deliverables ?? []).length ? (
+                        <div
+                          data-testid={`project-workflow-deliverable-list-${selectedNode.id}`}
+                          className="mt-2 max-h-60 divide-y divide-border overflow-y-auto overscroll-contain rounded-lg border border-border"
+                        >
+                          {(selectedNode.required_deliverables ?? []).map(requirement => (
+                            <button
+                              key={requirement.id}
+                              type="button"
+                              data-testid={`project-workflow-deliverable-${requirement.id}`}
+                              onClick={() =>
+                                setDeliverableDialog({
+                                  nodeId: selectedNode.id,
+                                  requirements: (selectedNode.required_deliverables ?? []).map(
+                                    valueRequirement => ({ ...valueRequirement })
+                                  ),
+                                })
+                              }
+                              className="flex min-h-12 w-full min-w-0 items-center gap-3 px-3 py-2 text-left transition hover:bg-muted focus-visible:bg-muted focus-visible:outline-none"
+                            >
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-sm font-medium text-text-primary">
+                                  {requirement.name}
+                                </span>
+                                <span className="mt-0.5 block truncate text-xs text-text-muted">
+                                  {requirement.description ||
+                                    t('todo.workflow_deliverable_no_description', '暂无验收说明')}
+                                </span>
+                              </span>
+                              <span className="shrink-0 rounded-md bg-muted px-1.5 py-0.5 text-xs text-text-muted">
+                                {workflowDeliverableTypeLabel(requirement.value_type, t)}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setDeliverableDialog({
+                              nodeId: selectedNode.id,
+                              requirements: [createWorkflowDeliverableRequirement([])],
+                            })
+                          }
+                          className="mt-2 flex h-11 w-full items-center justify-center rounded-lg border border-dashed border-border px-3 text-xs text-text-muted hover:bg-muted hover:text-text-secondary"
+                        >
+                          {t('todo.workflow_deliverable_empty', '暂无交付物，点击添加')}
+                        </button>
+                      )}
                       <span className="mt-1.5 block text-xs font-normal text-text-muted">
                         {t(
                           'todo.workflow_stage_deliverables_hint',
-                          '任务完成后上传交付物，经人工批准才会进入下一阶段。'
+                          '每项交付要求都会绑定一个实际结果；全部满足后才可继续。'
                         )}
                       </span>
-                    </label>
+                    </fieldset>
                     <fieldset className="mt-4">
                       <legend className="text-xs font-medium text-text-secondary">
                         {t('todo.workflow_stage_executor_label', '任务执行方式')}
@@ -1177,6 +1241,31 @@ export function ProjectWorkflowEditor({
           </p>
         </div>
       )}
+      {deliverableDialog ? (
+        <WorkflowDeliverableRequirementsDialog
+          key={deliverableDialog.nodeId}
+          requirements={deliverableDialog.requirements ?? []}
+          onClose={() => setDeliverableDialog(null)}
+          onSave={requirements => {
+            const node = value.nodes.find(valueNode => valueNode.id === deliverableDialog.nodeId)
+            if (!node) {
+              setDeliverableDialog(null)
+              return
+            }
+            const nextDefinition = {
+              ...value,
+              nodes: value.nodes.map(valueNode =>
+                valueNode.id === node.id
+                  ? { ...valueNode, required_deliverables: requirements }
+                  : valueNode
+              ),
+            }
+            onChange(nextDefinition)
+            setDeliverableDialog(null)
+            void onSave(nextDefinition)
+          }}
+        />
+      ) : null}
     </section>
   )
 }

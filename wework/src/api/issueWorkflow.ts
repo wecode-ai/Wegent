@@ -9,6 +9,7 @@ type RuntimeWorkflowStatus = 'running' | 'succeeded' | 'failed' | 'cancelled' | 
 export type WorkflowDecisionAction = 'approve' | 'reject' | 'force_advance'
 
 export interface WorkflowTaskBinding {
+  id?: number | string
   device_id: string
   task_id: string
   workflow_node_id?: string | null
@@ -36,6 +37,7 @@ export function instantiateIssueWorkflow(
       task_ids: [],
       task_statuses: {},
       delivery_ids: [],
+      fulfilled_deliverable_ids: [],
       decision_history: [],
       execution_id: null,
     })),
@@ -67,19 +69,27 @@ function projectWorkflowNodeTaskStatus(
   const latestStatus = orderedTaskIds[0] ? taskStatuses[orderedTaskIds[0]] : fallbackStatus
   if (latestStatus === 'running') return 'running'
   if (['succeeded', 'archived'].includes(latestStatus ?? '')) {
-    return node.automation_rule_id ? 'completed' : 'awaiting_approval'
+    if (!node.automation_rule_id) return 'awaiting_approval'
+    const fulfilled = new Set(node.fulfilled_deliverable_ids ?? [])
+    return (node.required_deliverables ?? []).every(requirement => fulfilled.has(requirement.id))
+      ? 'completed'
+      : 'awaiting_deliverables'
   }
   if (['failed', 'cancelled'].includes(latestStatus ?? '')) return 'failed'
-  return orderedTaskIds.length > 0 ? 'queued' : node.status
+  return node.status
 }
 
 export function reconcileIssueWorkflowForTaskBindings(
   workflow: IssueWorkflowInstance,
   bindings: WorkflowTaskBinding[]
 ): IssueWorkflowInstance {
-  const orderedBindings = [...bindings].sort((left, right) =>
-    (right.linked_at ?? '').localeCompare(left.linked_at ?? '')
-  )
+  const orderedBindings = [...bindings].sort((left, right) => {
+    const timeOrder = (right.linked_at ?? '').localeCompare(left.linked_at ?? '')
+    if (timeOrder !== 0) return timeOrder
+    return String(right.id ?? '').localeCompare(String(left.id ?? ''), undefined, {
+      numeric: true,
+    })
+  })
   let changed = false
   const nodes = workflow.nodes.map(node => {
     const stageTaskIds = orderedBindings
@@ -169,7 +179,10 @@ export function decideIssueWorkflowNode(
       if (node.automation_rule_id) throw new Error('Automated stages do not accept decisions')
       if (action === 'approve') {
         if (node.status !== 'awaiting_approval') throw new Error('Stage is not awaiting approval')
-        if ((node.required_deliverables?.length ?? 0) > 0 && !node.delivery_ids?.length) {
+        const fulfilled = new Set(node.fulfilled_deliverable_ids ?? [])
+        if (
+          (node.required_deliverables ?? []).some(requirement => !fulfilled.has(requirement.id))
+        ) {
           throw new Error('Required deliverables are missing')
         }
       } else if (action === 'reject') {
@@ -207,19 +220,31 @@ export function decideIssueWorkflowNode(
 export function attachIssueWorkflowDelivery(
   workflow: IssueWorkflowInstance,
   workflowNodeId: string,
-  deliveryId: string
+  deliveryId: string,
+  fulfilledDeliverableIds: string[] = []
 ): IssueWorkflowInstance {
+  const nodes = workflow.nodes.map(node => {
+    if (node.id !== workflowNodeId) return node
+    const fulfilled = Array.from(
+      new Set([...(node.fulfilled_deliverable_ids ?? []), ...fulfilledDeliverableIds])
+    )
+    const allRequiredFulfilled = (node.required_deliverables ?? []).every(requirement =>
+      fulfilled.includes(requirement.id)
+    )
+    return {
+      ...node,
+      delivery_ids: Array.from(new Set([...(node.delivery_ids ?? []), deliveryId])),
+      fulfilled_deliverable_ids: fulfilled,
+      status:
+        node.automation_rule_id && node.status === 'awaiting_deliverables' && allRequiredFulfilled
+          ? ('completed' as const)
+          : node.status,
+    }
+  })
   return {
     ...workflow,
     version: workflow.version + 1,
-    nodes: workflow.nodes.map(node =>
-      node.id === workflowNodeId
-        ? {
-            ...node,
-            delivery_ids: Array.from(new Set([...(node.delivery_ids ?? []), deliveryId])),
-          }
-        : node
-    ),
+    nodes: releaseReadyNodes(nodes),
   }
 }
 

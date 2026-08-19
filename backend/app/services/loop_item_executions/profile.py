@@ -10,6 +10,7 @@ request only when an execution is claimed.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -272,6 +273,23 @@ class WeworkExecutionProfile:
         if self.local_project_id > 0 and self.max_concurrent_executions > 1:
             execution_request["workspace_source"] = "git_worktree"
         additional_context: dict[str, dict[str, str]] = {}
+        workflow_stage_input = origin_context.get("workflow_stage_input")
+        if isinstance(workflow_stage_input, dict):
+            additional_context["workflowStageInput"] = {
+                "kind": "application",
+                "value": "\n".join(
+                    [
+                        "<workflow_stage_input>",
+                        json.dumps(workflow_stage_input, ensure_ascii=False),
+                        "</workflow_stage_input>",
+                        (
+                            "This immutable snapshot is the input for the current "
+                            "workflow stage. Fulfill every required deliverable by "
+                            "its requirement ID before completing the task."
+                        ),
+                    ]
+                ),
+            }
 
         payload = {
             "taskId": runtime_task_id,

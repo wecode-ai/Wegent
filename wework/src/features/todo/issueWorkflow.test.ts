@@ -98,7 +98,24 @@ describe('Issue workflow projection', () => {
     const withDeliverables = {
       ...definition,
       nodes: definition.nodes.map(node =>
-        node.id === 'develop' ? { ...node, required_deliverables: ['测试报告'] } : node
+        node.id === 'develop'
+          ? {
+              ...node,
+              required_deliverables: [
+                {
+                  id: 'test-report',
+                  name: '测试报告',
+                  description: '',
+                  value_type: 'file' as const,
+                  file_constraints: {
+                    accepted_types: [],
+                    min_files: 1,
+                    max_files: 1,
+                  },
+                },
+              ],
+            }
+          : node
       ),
     }
     let workflow = instantiateIssueWorkflow(withDeliverables)!
@@ -106,7 +123,7 @@ describe('Issue workflow projection', () => {
     expect(() => decideIssueWorkflowNode(workflow, 'develop', 'approve', 1, '')).toThrow(
       'Required deliverables are missing'
     )
-    workflow = attachIssueWorkflowDelivery(workflow, 'develop', 'delivery-1')
+    workflow = attachIssueWorkflowDelivery(workflow, 'develop', 'delivery-1', ['test-report'])
     workflow = decideIssueWorkflowNode(workflow, 'develop', 'approve', 1, '')
     expect(workflow.nodes[0].status).toBe('completed')
   })
@@ -174,6 +191,36 @@ describe('Issue workflow projection', () => {
     expect(reconciled.nodes[0]).toMatchObject({
       status: 'awaiting_approval',
       task_ids: ['device:task-2', 'device:task-1'],
+    })
+  })
+
+  it('preserves the canonical stage state when the newest binding has no runtime status', () => {
+    const workflow = instantiateIssueWorkflow(definition)!
+    workflow.nodes[0] = {
+      ...workflow.nodes[0],
+      status: 'changes_requested',
+      task_ids: ['device:old-task'],
+      task_statuses: { 'device:old-task': 'succeeded' },
+    }
+
+    const reconciled = reconcileIssueWorkflowForTaskBindings(workflow, [
+      {
+        device_id: 'device',
+        task_id: 'new-task',
+        workflow_node_id: 'develop',
+        linked_at: '2026-08-19T10:00:00Z',
+      },
+      {
+        device_id: 'device',
+        task_id: 'old-task',
+        workflow_node_id: 'develop',
+        linked_at: '2026-08-19T09:00:00Z',
+      },
+    ])
+
+    expect(reconciled.nodes[0]).toMatchObject({
+      status: 'changes_requested',
+      task_ids: ['device:new-task', 'device:old-task'],
     })
   })
 })

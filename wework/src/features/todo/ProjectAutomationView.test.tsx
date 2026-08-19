@@ -30,7 +30,7 @@ vi.mock('./ProjectWorkflowEditor', () => ({
   }: {
     value: ProjectWorkflowDefinition
     onChange: (value: ProjectWorkflowDefinition) => void
-    onSave: () => void
+    onSave: (value: ProjectWorkflowDefinition) => void
   }) => (
     <div>
       <span data-testid="workflow-node-count">{value.nodes.length}</span>
@@ -58,7 +58,7 @@ vi.mock('./ProjectWorkflowEditor', () => ({
       >
         Add stage
       </button>
-      <button type="button" data-testid="mock-save-workflow" onClick={onSave}>
+      <button type="button" data-testid="mock-save-workflow" onClick={() => onSave(value)}>
         Save
       </button>
     </div>

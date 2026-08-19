@@ -16,6 +16,7 @@ from app.services.project_workflow_projection import (
     apply_workflow_nodes,
     reconcile_workflow_task_nodes,
 )
+from app.services.workflow_deliverables import missing_requirement_ids
 
 
 class IssueWorkflowDecisionService:
@@ -45,10 +46,14 @@ class IssueWorkflowDecisionService:
                 LoopItemTaskBinding.loop_item_id == item_id,
                 loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
             )
-            .order_by(LoopItemTaskBinding.linked_at.desc())
+            .order_by(
+                LoopItemTaskBinding.linked_at.desc(),
+                LoopItemTaskBinding.id.desc(),
+            )
             .all()
         )
         nodes = reconcile_workflow_task_nodes(
+            db,
             [dict(node) for node in raw_nodes if isinstance(node, dict)],
             bindings,
         )
@@ -68,7 +73,7 @@ class IssueWorkflowDecisionService:
                 "Automated workflow stages do not accept human decisions",
             )
 
-        self._validate_decision(node, values)
+        self._validate_decision(db, node, values)
         node["status"] = {
             "approve": "completed",
             "reject": "changes_requested",
@@ -90,7 +95,11 @@ class IssueWorkflowDecisionService:
         return item
 
     @staticmethod
-    def _validate_decision(node: dict, values: WorkflowNodeDecisionRequest) -> None:
+    def _validate_decision(
+        db: Session,
+        node: dict,
+        values: WorkflowNodeDecisionRequest,
+    ) -> None:
         node_status = node.get("status")
         if values.action == "approve":
             if node_status != "awaiting_approval":
@@ -98,9 +107,7 @@ class IssueWorkflowDecisionService:
                     status.HTTP_409_CONFLICT,
                     "Workflow node is not awaiting approval",
                 )
-            required_deliverables = node.get("required_deliverables") or []
-            delivery_ids = node.get("delivery_ids") or []
-            if required_deliverables and not delivery_ids:
+            if missing_requirement_ids(db, node):
                 raise HTTPException(
                     status.HTTP_409_CONFLICT,
                     "Required workflow deliverables are missing",

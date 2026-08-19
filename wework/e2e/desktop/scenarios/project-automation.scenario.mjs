@@ -1630,6 +1630,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       await control.command('waitFor', '[data-testid="project-automation-rules"]', {
         timeoutMs: uiTimeoutMs,
       })
+      assert.match(
+        await control.command('getAttribute', '[data-testid="project-workflow-save"]', {
+          value: 'class',
+        }),
+        /\bbg-text-primary\b/,
+        'The workflow save action did not use the visible Wework primary color'
+      )
       await control.command('click', '[data-testid="project-workflow-mode-workflow"]')
       await control.command('click', '[data-testid="project-workflow-empty-add"]')
       await control.command(
@@ -1731,9 +1738,34 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         visible: true,
       })
       await control.command('click', '[data-testid="project-workflow-stage-stage-1"]')
-      await control.command('fill', '[data-testid="project-workflow-stage-deliverables-stage-1"]', {
-        value: '测试报告',
-      })
+      await control.command('click', '[data-testid="project-workflow-add-deliverable-stage-1"]')
+      await control.command(
+        'fill',
+        '[data-testid="workflow-deliverable-requirement-name-deliverable-1"]',
+        {
+          value: '测试报告',
+        }
+      )
+      await control.command(
+        'select',
+        '[data-testid="workflow-deliverable-requirement-type-deliverable-1"]',
+        {
+          value: 'text',
+        }
+      )
+      await control.command('click', '[data-testid="workflow-deliverable-requirements-save"]')
+      await waitForValue(
+        () => Promise.resolve(uiProject.workflow_definition?.nodes?.[0]?.required_deliverables),
+        requirements =>
+          requirements?.some(
+            requirement =>
+              requirement.id === 'deliverable-1' &&
+              requirement.name === '测试报告' &&
+              requirement.value_type === 'text'
+          ),
+        'The deliverable requirement was not persisted by the project update',
+        uiTimeoutMs
+      )
       uiProject = {
         ...uiProject,
         workflow_definition: {
@@ -1750,7 +1782,15 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
               depends_on: [],
               dependency_context: {},
               required: true,
-              required_deliverables: ['测试报告'],
+              required_deliverables: [
+                {
+                  id: 'deliverable-1',
+                  name: '测试报告',
+                  description: '',
+                  value_type: 'text',
+                  file_constraints: null,
+                },
+              ],
               workspace_policy: 'composer',
               automation_rule_id: null,
             },
@@ -1785,13 +1825,32 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         value: '预置流程直接开始',
       })
       await control.command('click', `${activeBoard} [data-testid="workspace-issue-submit"]`)
-      assert.ok(orchestratedItemId, 'Preset workflow Issue was not created')
+      await waitForValue(
+        () => Promise.resolve(orchestratedItemId),
+        itemId => Boolean(itemId),
+        'Preset workflow Issue was not created',
+        uiTimeoutMs
+      )
       await control.command('waitFor', `${activeBoard} [data-testid="cloud-todo-detail-title"]`, {
         text: '预置流程直接开始',
         timeoutMs: uiTimeoutMs,
       })
       await control.command('click', `${activeBoard} [data-testid="cloud-todo-detail-close"]`)
       workflowTaskBindings = [
+        {
+          id: 9103,
+          cloud_project_id: PROJECT_ID,
+          loop_item_id: orchestratedItemId,
+          task_user_id: 9001,
+          device_id: 'local-device',
+          task_id: 'workflow-task-3',
+          task_title: '刚创建，状态尚未同步',
+          backend_task_id: null,
+          workflow_node_id: 'stage-1',
+          linked_by_user_id: 9001,
+          linked_at: '2026-08-18T08:43:00Z',
+          unlinked_at: null,
+        },
         {
           id: 9102,
           cloud_project_id: PROJECT_ID,
@@ -1830,8 +1889,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
             node.id === 'stage-1'
               ? {
                   ...node,
-                  status: 'failed',
-                  task_ids: ['local-device:workflow-task-2', 'local-device:workflow-task-1'],
+                  status: 'awaiting_approval',
+                  task_ids: [
+                    'local-device:workflow-task-3',
+                    'local-device:workflow-task-2',
+                    'local-device:workflow-task-1',
+                  ],
                   task_statuses: {
                     'local-device:workflow-task-2': 'succeeded',
                     'local-device:workflow-task-1': 'failed',
@@ -1871,6 +1934,15 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       )
       await control.command(
         'waitFor',
+        `${activeBoard} [data-testid="cloud-todo-workflow-task-status-stage-1-9103"]`,
+        {
+          text: '等待执行',
+          timeoutMs: uiTimeoutMs,
+          visible: true,
+        }
+      )
+      await control.command(
+        'waitFor',
         `${activeBoard} [data-testid="cloud-todo-workflow-task-status-stage-1-9102"]`,
         {
           text: '成功',
@@ -1898,7 +1970,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       )
       await control.command(
         'waitFor',
-        `${activeBoard} [data-testid="cloud-todo-upload-workflow-deliverables-stage-1"]`,
+        `${activeBoard} [data-testid="cloud-todo-approve-workflow-node-stage-1"]`,
         {
           timeoutMs: uiTimeoutMs,
         }
@@ -2215,45 +2287,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       assert.match(templatePrompt ?? '', /完成被指派的开发任务/)
       await captureScreenshot(control, 'project-automation-08-robot-template-dialog.png')
       await control.command('click', '[data-testid="cloud-project-chat-agent-cancel"]', {
-        visible: true,
-      })
-      await control.command('click', '[data-testid="cloud-project-automation-view"]', {
-        visible: true,
-      })
-      await control.command('waitFor', '[data-testid="project-automation-view"]', {
-        timeoutMs: uiTimeoutMs,
-        visible: true,
-      })
-      await control.command('click', '[data-testid="project-workflow-mode-workflow"]', {
-        visible: true,
-      })
-      await control.command('click', '[data-testid="project-workflow-empty-add"]', {
-        visible: true,
-      })
-      const workflowSaveSelector = '[data-testid="project-workflow-save"]'
-      assert.match(
-        await control.command('getAttribute', workflowSaveSelector, {
-          value: 'class',
-          visible: true,
-        }),
-        /\bbg-text-primary\b/,
-        'The workflow save action did not use the visible Wework primary color'
-      )
-      await control.command('click', workflowSaveSelector, { visible: true })
-      await waitForValue(
-        () => Promise.resolve(uiProject.workflow_definition?.nodes?.map(node => node.id) ?? []),
-        nodeIds => nodeIds.includes('stage-1'),
-        'The workflow definition was not persisted by the project update',
-        uiTimeoutMs
-      )
-      await control.command('click', '[data-testid="cloud-project-board-view"]', {
-        visible: true,
-      })
-      await control.command('click', '[data-testid="cloud-project-automation-view"]', {
-        visible: true,
-      })
-      await control.command('waitFor', '[data-testid="project-workflow-stage-stage-1"]', {
-        timeoutMs: uiTimeoutMs,
         visible: true,
       })
     },

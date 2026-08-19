@@ -105,7 +105,7 @@ export function ProjectAutomationView({
     [automationRules, project.id, projectAgents, projectAutomationApi]
   )
 
-  async function saveWorkflow() {
+  async function saveWorkflow(definition: ProjectWorkflowDefinition) {
     if (workflowBusy) return
     setWorkflowBusy(true)
     setWorkflowError(null)
@@ -116,8 +116,8 @@ export function ProjectAutomationView({
           : project.version
       const updated = await api.updateCloudProject(project.id, {
         workflow_definition: {
-          ...workflowDefinition,
-          version: workflowDefinition.version + 1,
+          ...definition,
+          version: definition.version + 1,
         },
         version: projectVersion,
       })
@@ -126,7 +126,7 @@ export function ProjectAutomationView({
         version: updated.version,
       }
       setWorkflowDefinition(
-        updated.workflow_definition ?? { version: workflowDefinition.version + 1, nodes: [] }
+        updated.workflow_definition ?? { version: definition.version + 1, nodes: [] }
       )
       onProjectUpdated?.(updated)
     } catch (cause) {
@@ -165,7 +165,7 @@ export function ProjectAutomationView({
           value={workflowDefinition}
           busy={workflowBusy}
           onChange={setWorkflowDefinition}
-          onSave={() => void saveWorkflow()}
+          onSave={saveWorkflow}
           automationRules={automationRules}
           projectAgents={projectAgents}
           onEnsureStageRobotRule={ensureStageRobotRule}

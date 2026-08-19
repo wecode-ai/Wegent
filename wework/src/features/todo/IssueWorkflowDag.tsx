@@ -14,19 +14,25 @@ import {
 import {
   Bot,
   Check,
+  CheckCircle2,
   ChevronRight,
+  Circle,
   FastForward,
   Play,
   Plus,
   RefreshCw,
-  Upload,
   UserRound,
   XCircle,
 } from 'lucide-react'
-import type { WorkflowNodeInstance } from '@/api/deliveries'
+import type { Delivery, WorkflowNodeInstance } from '@/api/deliveries'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { layoutWorkflowGraph } from './workflowGraph'
+import {
+  WorkflowStageCompletionDialog,
+  type WorkflowDeliverableDraft,
+} from './WorkflowStageCompletionDialog'
+import { workflowDeliverableTypeLabel } from './workflowDeliverables'
 
 interface WorkflowTaskBinding {
   id: number
@@ -39,10 +45,17 @@ interface WorkflowTaskBinding {
 interface IssueWorkflowDagProps {
   nodes: WorkflowNodeInstance[]
   tasks: WorkflowTaskBinding[]
+  deliveries?: Delivery[]
   onCreateTask?: (stageId: string) => void
   onRunAutomation?: (stageId: string, automationRuleId: string) => void
   onOpenTask?: (task: WorkflowTaskBinding) => void
-  onUploadDeliverables?: (stageId: string, files: File[]) => Promise<void>
+  onOpenDelivery?: (delivery: Delivery) => void
+  onCompleteStage?: (
+    stageId: string,
+    action: 'submit' | 'approve' | 'force_advance',
+    reason: string,
+    values: WorkflowDeliverableDraft[]
+  ) => Promise<void>
   onDecide?: (
     stageId: string,
     action: 'approve' | 'reject' | 'force_advance',
@@ -54,6 +67,8 @@ interface RuntimeStageNodeData extends Record<string, unknown> {
   stage: WorkflowNodeInstance
   index: number
   tasks: WorkflowTaskBinding[]
+  selected: boolean
+  onSelect: (stageId: string) => void
 }
 
 type RuntimeStageFlowNode = Node<RuntimeStageNodeData, 'runtimeStage'>
@@ -63,6 +78,7 @@ const NODE_HEIGHT = 112
 const CURRENT_STAGE_STATUS_PRIORITY: WorkflowNodeInstance['status'][] = [
   'running',
   'awaiting_approval',
+  'awaiting_deliverables',
   'changes_requested',
   'failed',
   'queued',
@@ -94,6 +110,7 @@ function workflowNodeStatusLabel(
   if (status === 'queued') return t('todo.workflow_node_queued')
   if (status === 'running') return t('todo.workflow_node_running')
   if (status === 'awaiting_approval') return t('todo.workflow_node_awaiting_approval')
+  if (status === 'awaiting_deliverables') return t('todo.workflow_node_awaiting_deliverables')
   if (status === 'changes_requested') return t('todo.workflow_node_changes_requested')
   if (status === 'completed') return t('todo.workflow_node_completed')
   if (status === 'forced_completed') return t('todo.workflow_node_forced_completed')
@@ -109,17 +126,45 @@ function workflowTaskStatusLabel(t: (key: string) => string, status?: string): s
   return t('todo.workflow_task_status_pending')
 }
 
+function requirementDelivery(
+  stage: WorkflowNodeInstance,
+  requirementId: string,
+  deliveries: Delivery[]
+): Delivery | undefined {
+  const stageDeliveryIds = new Set(stage.delivery_ids ?? [])
+  return deliveries.find(
+    delivery =>
+      delivery.status === 'delivered' &&
+      stageDeliveryIds.has(delivery.id) &&
+      delivery.fulfillments.some(fulfillment => fulfillment.requirement_id === requirementId)
+  )
+}
+
 const RuntimeStageNodeCard = memo(function RuntimeStageNodeCard({
   data,
 }: NodeProps<RuntimeStageFlowNode>) {
   const { t } = useTranslation('common')
-  const { stage, tasks } = data
+  const { stage, tasks, selected, onSelect } = data
   const statusLabel = workflowNodeStatusLabel(t, stage.status)
 
   return (
     <article
       data-testid={`cloud-todo-workflow-node-${stage.id}`}
-      className="relative flex h-[112px] w-[208px] flex-col rounded-xl border border-border bg-background p-3 shadow-sm"
+      role="button"
+      tabIndex={0}
+      aria-pressed={selected}
+      onClick={() => onSelect(stage.id)}
+      onKeyDown={event => {
+        if (event.key !== 'Enter' && event.key !== ' ') return
+        event.preventDefault()
+        onSelect(stage.id)
+      }}
+      className={cn(
+        'relative flex h-[112px] w-[208px] cursor-pointer flex-col rounded-xl border bg-background p-3 shadow-sm transition',
+        selected
+          ? 'border-blue-500/70 ring-1 ring-blue-500/20'
+          : 'border-border hover:border-text-muted/50'
+      )}
     >
       <Handle type="target" position={Position.Left} className="!invisible" />
       <header className="flex items-start gap-2">
@@ -164,22 +209,34 @@ const nodeTypes = { runtimeStage: RuntimeStageNodeCard }
 export function IssueWorkflowDag({
   nodes,
   tasks,
+  deliveries = [],
   onCreateTask,
   onRunAutomation,
   onOpenTask,
-  onUploadDeliverables,
+  onOpenDelivery,
+  onCompleteStage,
   onDecide,
 }: IssueWorkflowDagProps) {
   const { t } = useTranslation('common')
   const [decisionDraft, setDecisionDraft] = useState<{
     stageId: string
-    action: 'reject' | 'force_advance'
+    action: 'reject'
     reason: string
+  } | null>(null)
+  const [completionDraft, setCompletionDraft] = useState<{
+    stageId: string
+    action: 'submit' | 'approve' | 'force_advance'
+    reason: string
+    values: Record<string, WorkflowDeliverableDraft>
   } | null>(null)
   const [busyStageId, setBusyStageId] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [selectedStageId, setSelectedStageId] = useState<string | null>(null)
   const flowInstanceRef = useRef<ReactFlowInstance<RuntimeStageFlowNode, Edge> | null>(null)
   const currentStageId = useMemo(() => getCurrentWorkflowNodeId(nodes), [nodes])
+  const selectedStage = selectedStageId
+    ? nodes.find(stage => stage.id === selectedStageId)
+    : undefined
   const graph = useMemo(() => {
     const edges: Edge[] = nodes.flatMap(node =>
       node.depends_on.map(dependency => ({
@@ -198,6 +255,8 @@ export function IssueWorkflowDag({
         stage,
         index,
         tasks: tasks.filter(task => task.workflow_node_id === stage.id),
+        selected: stage.id === (selectedStageId ?? currentStageId),
+        onSelect: setSelectedStageId,
       },
     }))
     return {
@@ -207,7 +266,7 @@ export function IssueWorkflowDag({
         nodeHeight: NODE_HEIGHT,
       }) as RuntimeStageFlowNode[],
     }
-  }, [nodes, tasks])
+  }, [currentStageId, nodes, selectedStageId, tasks])
   const focusCurrentStage = useCallback(
     (instance: ReactFlowInstance<RuntimeStageFlowNode, Edge>, duration = 0) => {
       void instance.fitView({
@@ -226,11 +285,13 @@ export function IssueWorkflowDag({
 
   const actionableStages = nodes.filter(stage =>
     stage.automation_rule_id
-      ? ['ready', 'failed'].includes(stage.status) && Boolean(onRunAutomation)
+      ? (['ready', 'failed'].includes(stage.status) && Boolean(onRunAutomation)) ||
+        (stage.status === 'awaiting_deliverables' && Boolean(onCompleteStage))
       : ['ready', 'queued', 'running', 'awaiting_approval', 'changes_requested', 'failed'].includes(
           stage.status
-        ) && Boolean(onCreateTask || onDecide)
+        ) && Boolean(onCreateTask || onDecide || onCompleteStage)
   )
+  const detailStages = selectedStage ? [selectedStage] : actionableStages
 
   const decide = async (
     stageId: string,
@@ -250,25 +311,77 @@ export function IssueWorkflowDag({
     }
   }
 
+  const completeStage = async () => {
+    if (!completionDraft || !onCompleteStage) return
+    setBusyStageId(completionDraft.stageId)
+    setActionError(null)
+    try {
+      await onCompleteStage(
+        completionDraft.stageId,
+        completionDraft.action,
+        completionDraft.reason,
+        Object.values(completionDraft.values)
+      )
+      setCompletionDraft(null)
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : t('todo.workflow_action_failed'))
+    } finally {
+      setBusyStageId(null)
+    }
+  }
+  const completionStage = completionDraft
+    ? nodes.find(stage => stage.id === completionDraft.stageId)
+    : undefined
+  const pendingCompletionRequirements = (completionStage?.required_deliverables ?? []).filter(
+    requirement =>
+      !(completionStage?.fulfilled_deliverable_ids ?? []).includes(requirement.id) &&
+      (!completionStage || !requirementDelivery(completionStage, requirement.id, deliveries))
+  )
+
   return (
     <>
-      {actionableStages.length > 0 ? (
+      {detailStages.length > 0 ? (
         <section
           data-testid="cloud-todo-workflow-actions"
           className="mt-2 overflow-hidden rounded-xl border border-border bg-background"
         >
           <h4 className="border-b border-border px-3 py-2.5 text-xs font-medium text-text-muted">
-            {t('todo.workflow_active_stages')}
+            {selectedStage ? t('todo.workflow_node_details') : t('todo.workflow_active_stages')}
           </h4>
           <div className="divide-y divide-border">
-            {actionableStages.map(stage => {
+            {detailStages.map(stage => {
               const stageTasks = tasks.filter(task => task.workflow_node_id === stage.id)
               const automated = Boolean(stage.automation_rule_id)
               const startHumanStage = stageTasks.length === 0 && stage.status === 'ready'
               const awaitingApproval = stage.status === 'awaiting_approval'
-              const missingDeliverables =
-                (stage.required_deliverables?.length ?? 0) > 0 &&
-                (stage.delivery_ids?.length ?? 0) === 0
+              const canRunAutomation =
+                automated && ['ready', 'failed'].includes(stage.status) && Boolean(onRunAutomation)
+              const canSubmitDeliverables =
+                automated && stage.status === 'awaiting_deliverables' && Boolean(onCompleteStage)
+              const canCreateTask =
+                !automated &&
+                [
+                  'ready',
+                  'queued',
+                  'running',
+                  'awaiting_approval',
+                  'changes_requested',
+                  'failed',
+                ].includes(stage.status) &&
+                Boolean(onCreateTask)
+              const requirements = stage.required_deliverables ?? []
+              const fulfilledIds = new Set(stage.fulfilled_deliverable_ids ?? [])
+              const requirementDeliveries = new Map(
+                requirements.map(requirement => [
+                  requirement.id,
+                  requirementDelivery(stage, requirement.id, deliveries),
+                ])
+              )
+              const fulfilledCount = requirements.filter(
+                requirement =>
+                  fulfilledIds.has(requirement.id) ||
+                  Boolean(requirementDeliveries.get(requirement.id))
+              ).length
               return (
                 <article
                   key={stage.id}
@@ -292,7 +405,24 @@ export function IssueWorkflowDag({
                       </span>
                     </span>
                     <span className="ml-auto flex flex-wrap items-center justify-end gap-1">
-                      {automated ? (
+                      {canSubmitDeliverables ? (
+                        <button
+                          type="button"
+                          data-testid={`cloud-todo-submit-workflow-deliverables-${stage.id}`}
+                          onClick={() =>
+                            setCompletionDraft({
+                              stageId: stage.id,
+                              action: 'submit',
+                              reason: '',
+                              values: {},
+                            })
+                          }
+                          className="flex h-7 items-center gap-1 rounded-lg bg-text-primary px-2 text-xs font-medium text-background"
+                        >
+                          <Check className="h-3.5 w-3.5" />
+                          {t('todo.workflow_submit_deliverables', '补充交付物')}
+                        </button>
+                      ) : canRunAutomation ? (
                         <button
                           type="button"
                           data-testid={`cloud-todo-run-workflow-node-${stage.id}`}
@@ -308,11 +438,11 @@ export function IssueWorkflowDag({
                             ? t('todo.workflow_run_again')
                             : t('todo.workflow_run')}
                         </button>
-                      ) : !awaitingApproval && onCreateTask ? (
+                      ) : canCreateTask ? (
                         <button
                           type="button"
                           data-testid={`cloud-todo-create-workflow-task-${stage.id}`}
-                          onClick={() => onCreateTask(stage.id)}
+                          onClick={() => onCreateTask?.(stage.id)}
                           className="flex h-7 items-center gap-1 rounded-lg px-2 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
                         >
                           {startHumanStage ? (
@@ -331,10 +461,11 @@ export function IssueWorkflowDag({
                         <button
                           type="button"
                           onClick={() =>
-                            setDecisionDraft({
+                            setCompletionDraft({
                               stageId: stage.id,
                               action: 'force_advance',
                               reason: '',
+                              values: {},
                             })
                           }
                           className="flex h-7 items-center gap-1 rounded-lg px-2 text-xs text-text-muted hover:bg-muted hover:text-text-primary"
@@ -401,50 +532,79 @@ export function IssueWorkflowDag({
                       </div>
                     </div>
                   ) : null}
-                  {!automated && (stage.required_deliverables?.length ?? 0) > 0 ? (
-                    <div className="mt-2 rounded-lg bg-muted/40 px-3 py-2">
-                      <p className="text-xs font-medium text-text-secondary">
-                        {t('todo.workflow_required_deliverables')}
-                      </p>
-                      <ul className="mt-1 space-y-1 text-xs text-text-muted">
-                        {stage.required_deliverables?.map(requirement => (
-                          <li key={requirement}>· {requirement}</li>
-                        ))}
-                      </ul>
-                      <div className="mt-2 flex items-center justify-between gap-2">
-                        <span className="text-xs text-text-muted">
-                          {t('todo.workflow_deliveries_submitted', {
-                            count: stage.delivery_ids?.length ?? 0,
-                          })}
+                  {requirements.length > 0 ? (
+                    <div className="mt-2 overflow-hidden rounded-lg border border-border">
+                      <div className="flex items-center justify-between bg-muted/40 px-3 py-2">
+                        <p className="text-xs font-medium text-text-secondary">
+                          {t('todo.workflow_required_deliverables')}
+                        </p>
+                        <span
+                          data-testid={`cloud-todo-workflow-deliverable-progress-${stage.id}`}
+                          className="text-xs text-text-muted"
+                        >
+                          {fulfilledCount}/{requirements.length}
                         </span>
-                        <label className="flex h-7 cursor-pointer items-center gap-1 rounded-lg px-2 text-xs font-medium text-text-secondary hover:bg-muted">
-                          <Upload className="h-3.5 w-3.5" />
-                          {t('todo.workflow_upload_deliverables')}
-                          <input
-                            type="file"
-                            multiple
-                            className="sr-only"
-                            data-testid={`cloud-todo-upload-workflow-deliverables-${stage.id}`}
-                            disabled={!stageTasks.length || busyStageId === stage.id}
-                            onChange={event => {
-                              const files = Array.from(event.target.files ?? [])
-                              event.target.value = ''
-                              if (!files.length || !onUploadDeliverables) return
-                              setBusyStageId(stage.id)
-                              setActionError(null)
-                              void onUploadDeliverables(stage.id, files)
-                                .catch(error =>
-                                  setActionError(
-                                    error instanceof Error
-                                      ? error.message
-                                      : t('todo.workflow_action_failed')
-                                  )
-                                )
-                                .finally(() => setBusyStageId(null))
-                            }}
-                          />
-                        </label>
                       </div>
+                      <div className="divide-y divide-border">
+                        {requirements.map(requirement => {
+                          const delivery = requirementDeliveries.get(requirement.id)
+                          const fulfilled = fulfilledIds.has(requirement.id) || Boolean(delivery)
+                          const content = (
+                            <>
+                              {fulfilled ? (
+                                <CheckCircle2 className="h-4 w-4 shrink-0 text-green-600" />
+                              ) : (
+                                <Circle className="h-4 w-4 shrink-0 text-text-muted" />
+                              )}
+                              <span className="min-w-0 flex-1 truncate text-xs text-text-primary">
+                                {requirement.name}
+                              </span>
+                              <span className="shrink-0 text-xs text-text-muted">
+                                {workflowDeliverableTypeLabel(requirement.value_type, t)}
+                              </span>
+                              <span
+                                data-testid={`cloud-todo-workflow-deliverable-status-${stage.id}-${requirement.id}`}
+                                className={cn(
+                                  'shrink-0 text-xs',
+                                  fulfilled ? 'text-green-600' : 'text-text-muted'
+                                )}
+                              >
+                                {fulfilled
+                                  ? t('todo.workflow_deliverable_fulfilled')
+                                  : t('todo.workflow_deliverable_missing')}
+                              </span>
+                              {delivery && onOpenDelivery ? (
+                                <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-muted" />
+                              ) : null}
+                            </>
+                          )
+                          return delivery && onOpenDelivery ? (
+                            <button
+                              key={requirement.id}
+                              type="button"
+                              data-testid={`cloud-todo-open-workflow-deliverable-${stage.id}-${requirement.id}`}
+                              onClick={() => onOpenDelivery(delivery)}
+                              className="flex min-h-10 w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-muted"
+                            >
+                              {content}
+                            </button>
+                          ) : (
+                            <div
+                              key={requirement.id}
+                              className="flex min-h-10 items-center gap-2 px-3 py-1.5"
+                            >
+                              {content}
+                            </div>
+                          )
+                        })}
+                      </div>
+                      {fulfilledCount < requirements.length ? (
+                        <p className="border-t border-border px-3 py-2 text-xs text-text-muted">
+                          {t('todo.workflow_deliverables_missing_count', {
+                            count: requirements.length - fulfilledCount,
+                          })}
+                        </p>
+                      ) : null}
                     </div>
                   ) : null}
                   {!automated && onDecide ? (
@@ -454,8 +614,19 @@ export function IssueWorkflowDag({
                           <button
                             type="button"
                             data-testid={`cloud-todo-approve-workflow-node-${stage.id}`}
-                            disabled={busyStageId === stage.id || missingDeliverables}
-                            onClick={() => void decide(stage.id, 'approve')}
+                            disabled={busyStageId === stage.id}
+                            onClick={() => {
+                              if (fulfilledCount === requirements.length) {
+                                void decide(stage.id, 'approve')
+                                return
+                              }
+                              setCompletionDraft({
+                                stageId: stage.id,
+                                action: 'approve',
+                                reason: '',
+                                values: {},
+                              })
+                            }}
                             className="flex h-7 items-center gap-1 rounded-lg bg-text-primary px-2 text-xs font-medium text-background disabled:opacity-40"
                           >
                             <Check className="h-3.5 w-3.5" />
@@ -534,6 +705,7 @@ export function IssueWorkflowDag({
             flowInstanceRef.current = instance
             focusCurrentStage(instance)
           }}
+          onNodeClick={(_, node) => setSelectedStageId(node.id)}
           minZoom={0.35}
           maxZoom={1.5}
           nodesDraggable={false}
@@ -545,6 +717,24 @@ export function IssueWorkflowDag({
           <Controls showInteractive={false} />
         </ReactFlow>
       </div>
+      {completionDraft ? (
+        <WorkflowStageCompletionDialog
+          stageName={completionStage?.name ?? completionDraft.stageId}
+          requirements={pendingCompletionRequirements}
+          action={completionDraft.action}
+          busy={busyStageId === completionDraft.stageId}
+          reason={completionDraft.reason}
+          values={completionDraft.values}
+          onReasonChange={reason =>
+            setCompletionDraft(current => (current ? { ...current, reason } : current))
+          }
+          onValuesChange={values =>
+            setCompletionDraft(current => (current ? { ...current, values } : current))
+          }
+          onClose={() => setCompletionDraft(null)}
+          onSubmit={() => void completeStage()}
+        />
+      ) : null}
     </>
   )
 }

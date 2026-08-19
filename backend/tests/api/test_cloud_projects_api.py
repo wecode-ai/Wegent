@@ -2151,12 +2151,21 @@ def test_cloud_workspace_lists_immutable_delivery_files(
     item = test_client.post(
         f"/api/v1/cloud-projects/{project['id']}/loop-items",
         headers=_auth(test_token),
-        json={"title": "Publish report"},
+        json={"title": "Release issue"},
+    ).json()
+    root_item = test_db.get(LoopItem, item["id"])
+    assert root_item is not None
+    root_item.parent_id = ""
+    test_db.commit()
+    task = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Publish report", "parent_id": item["id"]},
     ).json()
     delivered_at = datetime(2026, 7, 22, 12, 0, 0)
     delivery = Delivery(
         id="delivery-snapshot",
-        loop_item_id=item["id"],
+        loop_item_id=task["id"],
         created_by_user_id=1,
         status="delivered",
         markdown_object_key="snapshot/markdown.md",
@@ -2191,13 +2200,17 @@ def test_cloud_workspace_lists_immutable_delivery_files(
         {
             "asset_id": asset.id,
             "delivery_id": delivery.id,
-            "loop_item_id": item["id"],
+            "loop_item_id": task["id"],
             "loop_item_title": "Publish report",
             "relative_path": "reports/report.pdf",
             "display_name": "report.pdf",
             "content_type": "application/pdf",
             "size_bytes": 6,
             "delivered_at": "2026-07-22T12:00:00",
+            "loop_item_path": [
+                {"id": item["id"], "title": "Release issue"},
+                {"id": task["id"], "title": "Publish report"},
+            ],
         }
     ]
     assert accessed.status_code == 200

@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token, get_password_hash
 from app.models.cloud_project import CloudProject
-from app.models.delivery import ProjectAutomationRule, ProjectAutomationRun
+from app.models.delivery import LoopItem, ProjectAutomationRule, ProjectAutomationRun
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.task import TaskResource
@@ -374,7 +374,15 @@ def test_delivery_flow_creates_immutable_snapshot(
     test_token: str,
     delivery_project: CloudProject,
     delivery_storage: FakeDeliveryStorage,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    published_events: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "app.services.delivery.service.publish_loop_item_changed",
+        lambda db, *, item, reason, actor_user_id: published_events.append(
+            (item.id, reason)
+        ),
+    )
     item_response = test_client.post(
         f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
         headers=_auth(test_token),
@@ -430,6 +438,7 @@ def test_delivery_flow_creates_immutable_snapshot(
     assert finalized.status_code == 200
     assert finalized.json()["status"] == "delivered"
     assert any(key.endswith("manifest.json") for key in delivery_storage.objects)
+    assert published_events == [(item_id, "delivery_finalized")]
 
     detail = test_client.get(
         f"/api/v1/deliveries/{delivery_id}", headers=_auth(test_token)
@@ -447,6 +456,83 @@ def test_delivery_flow_creates_immutable_snapshot(
         files={"file": ("late.txt", b"late", "text/plain")},
     )
     assert immutable.status_code == 409
+
+
+def test_workflow_delivery_rejects_empty_fulfillments(
+    test_client: TestClient,
+    test_token: str,
+    test_db: Session,
+    delivery_project: CloudProject,
+    delivery_storage: FakeDeliveryStorage,
+) -> None:
+    delivery_project.metadata_json = {
+        **(delivery_project.metadata_json or {}),
+        "workflow_definition": {
+            "version": 1,
+            "stage_mode": "dag",
+            "advancement_policy": "manual",
+            "nodes": [
+                {
+                    "id": "backend",
+                    "name": "Backend",
+                    "kind": "my_task",
+                    "depends_on": [],
+                    "required": True,
+                    "workspace_policy": "composer",
+                    "required_deliverables": [
+                        {
+                            "id": "backend-wiki",
+                            "name": "Backend Wiki",
+                            "description": "",
+                            "value_type": "text",
+                        }
+                    ],
+                }
+            ],
+        },
+    }
+    test_db.commit()
+    item = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Workflow delivery"},
+    ).json()
+    source_task = {
+        "deviceId": "local-device",
+        "taskId": "backend-task",
+        "taskTitle": "Implement backend",
+        "workflowNodeId": "backend",
+    }
+    binding = test_client.post(
+        f"/api/v1/loop-items/{item['id']}/tasks",
+        headers=_auth(test_token),
+        json=source_task,
+    )
+    assert binding.status_code == 201
+    draft = test_client.post(
+        f"/api/v1/loop-items/{item['id']}/deliveries",
+        headers=_auth(test_token),
+        json={"markdown": "# Backend", "source_task": source_task},
+    )
+    assert draft.status_code == 201
+    delivery_id = draft.json()["id"]
+
+    finalized = test_client.post(
+        f"/api/v1/deliveries/{delivery_id}/finalize",
+        headers=_auth(test_token),
+        json={"fulfillments": []},
+    )
+
+    assert finalized.status_code == 422
+    assert (
+        finalized.json()["detail"]
+        == "Workflow Delivery must fulfill at least one required deliverable"
+    )
+    detail = test_client.get(
+        f"/api/v1/deliveries/{delivery_id}", headers=_auth(test_token)
+    )
+    assert detail.status_code == 200
+    assert detail.json()["status"] == "draft"
 
 
 @pytest.mark.parametrize("initial_status", ["inbox", "pending"])
@@ -681,6 +767,79 @@ def test_workflow_task_binding_requires_a_ready_non_automated_stage(
     )
     assert duplicate.status_code == 201
     assert duplicate.json()["workflow_node_id"] == "develop"
+
+    stored_item = test_db.get(LoopItem, item["id"])
+    assert stored_item is not None
+    metadata = dict(stored_item.metadata_json or {})
+    workflow = dict(metadata["workflow"])
+    nodes = [dict(node) for node in workflow["nodes"]]
+    nodes[0]["status"] = "awaiting_approval"
+    workflow["nodes"] = nodes
+    metadata["workflow"] = workflow
+    stored_item.metadata_json = metadata
+    test_db.commit()
+
+    correction = test_client.post(
+        f"/api/v1/loop-items/{item['id']}/tasks",
+        headers=_auth(test_token),
+        json={
+            "deviceId": "local-device",
+            "taskId": "correction-task",
+            "workflowNodeId": "develop",
+        },
+    )
+    assert correction.status_code == 201
+    assert correction.json()["workflow_node_id"] == "develop"
+
+    completed = test_client.patch(
+        "/api/v1/runtime-tasks/cloud-context/status",
+        headers=_auth(test_token),
+        json={
+            "deviceId": "local-device",
+            "taskId": "correction-task",
+            "status": "succeeded",
+        },
+    )
+    assert completed.status_code == 200
+    completed_node = completed.json()["workflow"]["nodes"][0]
+    assert completed_node["status"] == "awaiting_approval"
+    assert completed_node["task_ids"][0] == "local-device:correction-task"
+    assert (
+        completed_node["task_statuses"]["local-device:correction-task"] == "succeeded"
+    )
+
+    stored_item = test_db.get(LoopItem, item["id"])
+    assert stored_item is not None
+    metadata = dict(stored_item.metadata_json or {})
+    workflow = dict(metadata["workflow"])
+    nodes = [dict(node) for node in workflow["nodes"]]
+    nodes[0]["decision_history"] = [
+        {
+            "action": "reject",
+            "actor_user_id": 1,
+            "reason": "Needs correction",
+            "decided_at": "2026-08-19T02:47:28+00:00",
+        }
+    ]
+    workflow["nodes"] = nodes
+    metadata["workflow"] = workflow
+    stored_item.metadata_json = metadata
+    test_db.commit()
+    current = test_client.get(
+        f"/api/v1/loop-items/{item['id']}",
+        headers=_auth(test_token),
+    ).json()
+
+    serialized = test_client.patch(
+        f"/api/v1/loop-items/{item['id']}",
+        headers=_auth(test_token),
+        json={
+            "version": current["version"],
+            "status": current["status"],
+            "workflow": current["workflow"],
+        },
+    )
+    assert serialized.status_code == 200
 
 
 def test_binding_subscription_backend_task_uses_task_store(

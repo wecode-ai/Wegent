@@ -18,6 +18,7 @@ import {
   type DeliveryAsset,
   type DeliveryCreateInput,
   type DeliveryDetail,
+  type DeliveryFinalizeInput,
 } from '@/api/deliveries'
 import {
   attachIssueWorkflowDelivery,
@@ -1218,11 +1219,15 @@ export function createLocalDeliveryApi(
         file: await fileInput(file),
       })
     },
-    async finalizeDelivery(deliveryId: string) {
+    async finalizeDelivery(
+      deliveryId: string,
+      input: DeliveryFinalizeInput = { fulfillments: [] }
+    ) {
       const delivery = await api.getDelivery(deliveryId)
       const finalized = await request<Delivery>('deliveries.finalize', {
         item_id: delivery.loop_item_id,
         delivery_id: deliveryId,
+        finalize: input,
       })
       if (delivery.source_task_binding_id) {
         const bindings = await api.listTaskBindings(delivery.loop_item_id)
@@ -1230,12 +1235,11 @@ export function createLocalDeliveryApi(
         if (binding?.workflow_node_id) {
           const item = await api.getLoopItem(delivery.loop_item_id)
           if (item.workflow) {
-            const stage = item.workflow.nodes.find(node => node.id === binding.workflow_node_id)
-            if (stage?.delivery_ids?.includes(deliveryId)) return finalized
             const workflow = attachIssueWorkflowDelivery(
               item.workflow,
               binding.workflow_node_id,
-              deliveryId
+              deliveryId,
+              input.fulfillments.map(fulfillment => fulfillment.requirement_id)
             )
             await api.updateLoopItem(item.id, {
               version: item.version,

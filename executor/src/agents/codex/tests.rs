@@ -204,72 +204,6 @@ fn mcp_thread_diagnostics_report_names_without_config_values() {
 }
 
 #[test]
-fn mcp_inventory_diagnostics_report_accepted_tool_names() {
-    let response = json!({
-        "data": [{
-            "name": "wework_space",
-            "tools": {
-                "get_board_item": {
-                    "name": "get_board_item",
-                    "description": "sensitive-description",
-                    "inputSchema": {"type": "object"}
-                },
-                "assign_board_item": {
-                    "name": "assign_board_item",
-                    "inputSchema": {"type": "object"}
-                }
-            },
-            "resources": [],
-            "resourceTemplates": []
-        }]
-    });
-
-    let inventories = mcp_inventory_diagnostic_fields(&response);
-
-    assert_eq!(inventories.len(), 1);
-    let fields = inventories[0].iter().cloned().collect::<BTreeMap<_, _>>();
-    assert_eq!(fields["server_name"], "wework_space");
-    assert_eq!(fields["tool_count"], "2");
-    assert_eq!(fields["tool_names"], "assign_board_item,get_board_item");
-    assert!(!fields
-        .values()
-        .any(|value| value.contains("sensitive-description")));
-}
-
-#[test]
-fn project_space_capability_requires_the_stable_server_contract() {
-    let valid = json!({
-        "data": [{
-            "name": "wework_space",
-            "tools": {
-                "get_current_context": {"name": "get_current_context"},
-                "read_item_attachment": {"name": "read_item_attachment"},
-                "get_board_item": {"name": "get_board_item"}
-            }
-        }]
-    });
-    let missing_server = json!({"data": []});
-    let missing_attachment_tool = json!({
-        "data": [{
-            "name": "wework_space",
-            "tools": {
-                "get_current_context": {"name": "get_current_context"}
-            }
-        }]
-    });
-
-    assert_eq!(validate_project_space_capability_inventory(&valid), Ok(3));
-    assert_eq!(
-        validate_project_space_capability_inventory(&missing_server),
-        Err("Required project-space capability is unavailable".to_owned())
-    );
-    assert_eq!(
-        validate_project_space_capability_inventory(&missing_attachment_tool),
-        Err("Required project-space capability is missing tool read_item_attachment".to_owned())
-    );
-}
-
-#[test]
 fn initialize_params_does_not_advertise_openai_form_elicitation_extension() {
     let params = initialize_params();
 
@@ -2181,7 +2115,10 @@ fn thread_launch_params_always_include_space_routing() {
             .as_str()
             .expect("developer instructions should be a string");
         assert!(instructions.contains("Wework 项目空间 routing:"));
-        assert!(instructions.contains("tool_search"));
+        assert!(instructions.contains("get_current_context"));
+        assert!(instructions.contains("list_item_attachments"));
+        assert!(instructions.contains("read_item_attachment"));
+        assert!(instructions.contains("MCP resource listing"));
         assert!(instructions.contains("list_board_items"));
         assert!(instructions.contains("get_assignment_candidates"));
     }
@@ -2865,28 +2802,30 @@ fn codex_thread_binds_project_space_through_context_grant() {
     assert!(request.mcp_servers.is_empty());
     assert_eq!(config["mcp_servers.wework_space.enabled"], true);
     assert_eq!(
-        config["mcp_servers.wework_space.command"],
-        env::current_exe().unwrap().display().to_string()
+        config["mcp_servers.wework_space.url"],
+        "http://127.0.0.1:1/mcp"
     );
     assert_eq!(
-        config["mcp_servers.wework_space.args"],
-        json!(["space-mcp-server"])
+        config["mcp_servers.wework_space.http_headers.Authorization"],
+        "Bearer test-space-mcp-instance-token"
     );
-    assert_eq!(config["mcp_servers.wework_space.startup_timeout_sec"], 15);
+    assert!(!config.contains_key("mcp_servers.wework_space.command"));
+    assert!(!config.contains_key("mcp_servers.wework_space.args"));
+    assert!(!config.contains_key("mcp_servers.wework_space.startup_timeout_sec"));
     assert_eq!(config["mcp_servers.wework_space.tool_timeout_sec"], 60);
     assert_eq!(
         config["mcp_servers.wework_space.default_tools_approval_mode"],
         "approve"
     );
     assert_eq!(
-        config["mcp_servers.wework_space.env.WEWORK_SPACE_BACKEND_URL"],
+        config["mcp_servers.wework_space.http_headers.X-Wework-Space-Backend-Url"],
         "https://wework.example.com"
     );
     assert_eq!(
-        config["mcp_servers.wework_space.env.WEWORK_SPACE_AUTH_TOKEN"],
+        config["mcp_servers.wework_space.http_headers.X-Wework-Space-Backend-Token"],
         "runtime-token"
     );
-    let encoded = config["mcp_servers.wework_space.env.WEWORK_SPACE_CONTEXT_GRANT"]
+    let encoded = config["mcp_servers.wework_space.http_headers.X-Wework-Space-Context-Grant"]
         .as_str()
         .expect("encoded context grant");
     let decoded = STANDARD.decode(encoded).expect("base64 context grant");
@@ -2907,14 +2846,52 @@ fn codex_thread_enables_unbound_project_space_for_generic_tasks() {
 
     assert_eq!(config["mcp_servers.wework_space.enabled"], true);
     assert_eq!(
-        config["mcp_servers.wework_space.command"],
-        env::current_exe().unwrap().display().to_string()
+        config["mcp_servers.wework_space.url"],
+        "http://127.0.0.1:1/mcp"
     );
     assert_eq!(
-        config["mcp_servers.wework_space.args"],
-        json!(["space-mcp-server"])
+        config["mcp_servers.wework_space.http_headers.Authorization"],
+        "Bearer test-space-mcp-instance-token"
     );
-    assert!(!config.contains_key("mcp_servers.wework_space.env.WEWORK_SPACE_CONTEXT_GRANT"));
+    assert!(!config.contains_key("mcp_servers.wework_space.command"));
+    assert!(!config.contains_key("mcp_servers.wework_space.args"));
+    assert!(
+        !config.contains_key("mcp_servers.wework_space.http_headers.X-Wework-Space-Context-Grant")
+    );
+}
+
+#[test]
+fn required_project_space_startup_failure_terminates_the_turn() {
+    let message = json!({
+        "method": "mcpServer/startupStatus/updated",
+        "params": {
+            "threadId": "thread-1",
+            "name": "wework_space",
+            "status": "failed",
+            "failureReason": "HTTP 401"
+        }
+    });
+
+    assert_eq!(
+        required_mcp_startup_failure(&message).as_deref(),
+        Some("required project-space capability failed to connect: HTTP 401")
+    );
+    assert!(required_mcp_startup_failure(&json!({
+        "method": "mcpServer/startupStatus/updated",
+        "params": {
+            "name": "wework_space",
+            "status": "ready"
+        }
+    }))
+    .is_none());
+    assert!(required_mcp_startup_failure(&json!({
+        "method": "mcpServer/startupStatus/updated",
+        "params": {
+            "name": "another_server",
+            "status": "failed"
+        }
+    }))
+    .is_none());
 }
 
 #[test]
