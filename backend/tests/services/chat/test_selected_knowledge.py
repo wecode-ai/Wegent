@@ -278,6 +278,48 @@ def test_explicit_empty_wegent_scope_keeps_legacy_path() -> None:
     assert request.provider_native_knowledge is False
 
 
+def test_explicit_empty_wegent_scope_keeps_other_provider_refs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(PROVIDER_SKILLS, "demo", "demo-knowledge")
+    task = SimpleNamespace(
+        json={"spec": {"knowledgeBaseRefs": [{"id": 12, "name": "默认整库"}]}}
+    )
+    request = ExecutionRequest(knowledge_base_ids=[12], is_user_selected_kb=True)
+    current_contexts = [
+        SimpleNamespace(
+            context_type=ContextType.KNOWLEDGE_BASE.value,
+            status=ContextStatus.READY.value,
+            name="空范围",
+            type_data={
+                "knowledge_id": 12,
+                "scope_restricted": True,
+                "document_ids": [],
+            },
+        ),
+        SimpleNamespace(
+            context_type=ContextType.EXTERNAL_KNOWLEDGE.value,
+            status=ContextStatus.READY.value,
+            name="本轮空间",
+            type_data={
+                "provider": "demo",
+                "mode": "explicit",
+                "id": "selected-space",
+            },
+        ),
+    ]
+
+    skills = apply_selected_knowledge_context(
+        MagicMock(), request, task, current_contexts=current_contexts
+    )
+
+    assert skills == ["demo-knowledge"]
+    assert 'provider="demo"' in request.selected_knowledge_prompt
+    assert 'knowledge_base_id="selected-space"' in request.selected_knowledge_prompt
+    assert 'provider="wegent"' not in request.selected_knowledge_prompt
+    assert "explicitly selected by the user" in request.selected_knowledge_prompt
+
+
 def test_build_selected_knowledge_refs_groups_resources_by_knowledge_base(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -530,6 +572,21 @@ def test_wegent_skill_does_not_broaden_selected_knowledge_queries() -> None:
     assert "First, list available knowledge bases" not in skill
     assert 'use `scope="all"` directly' not in skill
     assert "Never broaden the request to the whole knowledge base" in skill
+
+
+def test_dingtalk_skill_only_describes_provider_adapter_behavior() -> None:
+    skill_path = (
+        Path(__file__).resolve().parents[3]
+        / "init_data"
+        / "skills"
+        / "dingtalk-docs"
+        / "SKILL.md"
+    )
+    skill = skill_path.read_text(encoding="utf-8")
+
+    assert "does not guarantee workspace or folder scoping" in skill
+    assert "only when the user explicitly requests a mutation" not in skill
+    assert "DingTalk is the authority for the current user's permissions" in skill
 
 
 def test_activate_provider_native_knowledge_requires_skill_mcp() -> None:

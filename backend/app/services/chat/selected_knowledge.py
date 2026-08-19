@@ -16,6 +16,7 @@ from app.models.subtask_context import ContextStatus, ContextType
 from app.services.execution.skill_mcp import extract_skill_mcp_servers
 from app.services.mcp_provider_registry import get_mcp_service_by_skill_name
 from shared.models.knowledge import (
+    KnowledgeBaseToolAccessMode,
     KnowledgeScopeType,
     SelectedKnowledgeContext,
     SelectedKnowledgeRef,
@@ -52,10 +53,6 @@ def apply_selected_knowledge_context(
 ) -> list[str]:
     """Attach the selected-knowledge prompt and deterministic provider skills."""
     current_contexts = tuple(current_contexts)
-    if _has_explicit_empty_wegent_scope(current_contexts):
-        request.selected_knowledge_prompt = ""
-        request.provider_native_knowledge = False
-        return []
     context = build_selected_knowledge_context(
         db,
         request,
@@ -192,10 +189,13 @@ def build_selected_knowledge_context(
         db,
         current_contexts=current_contexts,
     )
+    if not explicit_refs and has_explicit_empty_wegent_scope(current_contexts):
+        return SelectedKnowledgeContext()
     return resolve_selected_knowledge_context(task_refs, explicit_refs)
 
 
-def _has_explicit_empty_wegent_scope(contexts: Iterable[Any]) -> bool:
+def has_explicit_empty_wegent_scope(contexts: Iterable[Any]) -> bool:
+    """Return whether this turn contains an intentionally empty Wegent scope."""
     for context in contexts:
         if (
             getattr(context, "status", None) != ContextStatus.READY.value
@@ -213,6 +213,44 @@ def _has_explicit_empty_wegent_scope(contexts: Iterable[Any]) -> bool:
     return False
 
 
+def has_empty_restricted_knowledge_scope(scopes: Iterable[Any]) -> bool:
+    """Return whether resolved Wegent scopes contain no accessible documents."""
+    return any(
+        bool(getattr(scope, "scope_restricted", False))
+        and not list(getattr(scope, "document_ids", None) or [])
+        for scope in scopes
+    )
+
+
+def has_supported_explicit_external_context(contexts: Iterable[Any]) -> bool:
+    """Return whether this turn has an external source with a native adapter."""
+    return bool(_build_external_refs_from_values(_current_external_values(contexts)))
+
+
+def should_prepare_provider_native_knowledge(
+    *,
+    knowledge_base_ids: Iterable[Any],
+    knowledge_base_scopes: Iterable[Any],
+    access_mode: str,
+    current_contexts: Iterable[Any],
+    preload_selected_kb_skill: bool,
+    shell_type: str,
+) -> bool:
+    """Decide once whether context processing should suppress the legacy KB path."""
+    if (
+        not preload_selected_kb_skill
+        or shell_type not in SUPPORTED_PROVIDER_NATIVE_SHELLS
+        or access_mode == KnowledgeBaseToolAccessMode.RESTRICTED_SEARCH_ONLY
+    ):
+        return False
+    has_wegent_source = bool(tuple(knowledge_base_ids)) and not (
+        has_empty_restricted_knowledge_scope(knowledge_base_scopes)
+    )
+    return has_wegent_source or has_supported_explicit_external_context(
+        current_contexts
+    )
+
+
 def _build_current_explicit_refs(
     db: "Session",
     *,
@@ -224,17 +262,24 @@ def _build_current_explicit_refs(
         if getattr(context, "status", None) == ContextStatus.READY.value
     ]
     wegent_refs = _build_current_wegent_refs(db, ready_contexts)
-    external_values = [
+    return [
+        *wegent_refs,
+        *_build_external_refs_from_values(_current_external_values(ready_contexts)),
+    ]
+
+
+def _current_external_values(contexts: Iterable[Any]) -> list[dict[str, Any]]:
+    return [
         {
             **context.type_data,
             "name": context.type_data.get("name") or getattr(context, "name", None),
         }
-        for context in ready_contexts
-        if getattr(context, "context_type", None)
+        for context in contexts
+        if getattr(context, "status", None) == ContextStatus.READY.value
+        and getattr(context, "context_type", None)
         == ContextType.EXTERNAL_KNOWLEDGE.value
         and isinstance(getattr(context, "type_data", None), dict)
     ]
-    return [*wegent_refs, *_build_external_refs_from_values(external_values)]
 
 
 def _build_current_wegent_refs(
@@ -264,6 +309,8 @@ def _build_current_wegent_refs(
         scope_restricted = bool(data.get("scope_restricted")) or bool(
             folder_ids or document_ids
         )
+        if scope_restricted and not (folder_ids or document_ids):
+            continue
         resources = (
             _load_wegent_resources(db, kb_id, folder_ids, document_ids)
             if scope_restricted

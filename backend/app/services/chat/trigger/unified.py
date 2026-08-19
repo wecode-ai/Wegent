@@ -18,7 +18,6 @@ Key changes from the original trigger_ai_response:
 
 import json
 import logging
-from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from fastapi import HTTPException, status
@@ -672,15 +671,6 @@ def _ensure_selected_kb_skill_priority(request: "ExecutionRequest") -> None:
         )
 
 
-def _has_explicit_empty_kb_scope(scopes: Iterable[Any]) -> bool:
-    """Return whether an intentionally empty restricted scope is present."""
-    return any(
-        bool(getattr(scope, "scope_restricted", False))
-        and not list(getattr(scope, "document_ids", None) or [])
-        for scope in scopes
-    )
-
-
 async def trigger_ai_response_unified(
     task: TaskResource,
     assistant_subtask: Subtask,
@@ -1152,14 +1142,22 @@ async def build_execution_request(
         from app.services.chat.selected_knowledge import (
             activate_provider_native_knowledge,
             apply_selected_knowledge_context,
+            has_empty_restricted_knowledge_scope,
+            has_supported_explicit_external_context,
         )
 
         provider_skills = []
+        has_empty_wegent_scope = has_empty_restricted_knowledge_scope(
+            request.knowledge_base_scopes
+        )
         if (
             task_labels.get("source") != KNOWLEDGE_ARTIFACT_SOURCE
             and request.kb_tool_access_mode
             != KnowledgeBaseToolAccessMode.RESTRICTED_SEARCH_ONLY
-            and not _has_explicit_empty_kb_scope(request.knowledge_base_scopes)
+            and (
+                not has_empty_wegent_scope
+                or has_supported_explicit_external_context(current_contexts)
+            )
         ):
             provider_skills = apply_selected_knowledge_context(
                 db,
@@ -1241,16 +1239,17 @@ async def _process_contexts(
     # DB queries needed.
     request.prompt = ctx.final_message
     from app.services.chat.selected_knowledge import (
-        SUPPORTED_PROVIDER_NATIVE_SHELLS,
+        has_empty_restricted_knowledge_scope,
+        should_prepare_provider_native_knowledge,
     )
 
-    prepare_provider_native_knowledge = bool(
-        ctx.kb.knowledge_base_ids
-        and preload_selected_kb_skill
-        and ctx.kb.kb_tool_access_mode
-        != KnowledgeBaseToolAccessMode.RESTRICTED_SEARCH_ONLY
-        and not _has_explicit_empty_kb_scope(ctx.kb.knowledge_base_scopes)
-        and _request_shell_type(request) in SUPPORTED_PROVIDER_NATIVE_SHELLS
+    prepare_provider_native_knowledge = should_prepare_provider_native_knowledge(
+        knowledge_base_ids=ctx.kb.knowledge_base_ids,
+        knowledge_base_scopes=ctx.kb.knowledge_base_scopes,
+        access_mode=ctx.kb.kb_tool_access_mode,
+        current_contexts=current_contexts or (),
+        preload_selected_kb_skill=preload_selected_kb_skill,
+        shell_type=_request_shell_type(request),
     )
     request.system_prompt = (
         base_system_prompt
@@ -1280,7 +1279,9 @@ async def _process_contexts(
         request.kb_tool_access_mode = ctx.kb.kb_tool_access_mode
         if ctx.kb.document_ids and not ctx.kb.knowledge_base_scopes:
             request.document_ids = ctx.kb.document_ids
-        if prepare_provider_native_knowledge:
+        if prepare_provider_native_knowledge and not (
+            has_empty_restricted_knowledge_scope(ctx.kb.knowledge_base_scopes)
+        ):
             _ensure_selected_kb_skill_priority(request)
 
     logger.info(

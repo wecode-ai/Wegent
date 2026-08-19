@@ -1023,6 +1023,68 @@ class TestProcessContextsAttachments:
         assert result.preload_skills == []
 
     @pytest.mark.asyncio
+    async def test_external_provider_keeps_native_path_with_empty_wegent_scope(self):
+        from app.services.chat.trigger import unified as trigger_unified
+
+        request = ExecutionRequest(
+            task_id=1,
+            subtask_id=2,
+            prompt="hello",
+            system_prompt="base",
+            model_config={},
+            bot=[{"shell_type": "ClaudeCode"}],
+        )
+        ctx = ChatContextsResult(
+            final_message="processed",
+            has_table_context=False,
+            table_contexts=[],
+            kb=KnowledgeBaseToolsResult(
+                extra_tools=[],
+                enhanced_system_prompt="base + legacy guidance",
+                kb_meta_prompt="legacy metadata",
+                knowledge_base_ids=[12],
+                knowledge_base_scopes=[
+                    KnowledgeBaseScope(
+                        knowledge_base_id=12,
+                        scope_restricted=True,
+                        document_ids=[],
+                    )
+                ],
+            ),
+        )
+        current_contexts = [
+            SimpleNamespace(
+                context_type=ContextType.EXTERNAL_KNOWLEDGE.value,
+                status=ContextStatus.READY.value,
+                type_data={
+                    "provider": "dingtalk",
+                    "mode": "explicit",
+                    "id": "space-1",
+                },
+            )
+        ]
+
+        with patch(
+            "app.services.chat.preprocessing.prepare_contexts_for_chat",
+            new=AsyncMock(return_value=ctx),
+        ):
+            with patch(
+                "app.services.chat.trigger.unified.context_service.get_attachments_by_subtask",
+                return_value=[],
+            ):
+                result = await trigger_unified._process_contexts(
+                    db=MagicMock(),
+                    request=request,
+                    user_subtask_id=1,
+                    user_id=7,
+                    current_contexts=current_contexts,
+                )
+
+        assert result.system_prompt == "base"
+        assert result.kb_meta_prompt == ""
+        assert result.preload_skills == []
+
+    @pytest.mark.asyncio
     async def test_populates_request_attachments_from_subtask_contexts(self):
         """Executor request should carry attachment metadata for local downloads."""
         from app.services.chat.trigger import unified as trigger_unified
