@@ -1,0 +1,65 @@
+diff --git a/dist/diagram.js b/dist/diagram.js
+index 77129a44f6ed8c667ffcc6984cb9c485822bd58a..3eae8fecf663f91f743c113a290b5ece61b2093a 100644
+--- a/dist/diagram.js
++++ b/dist/diagram.js
+@@ -29,23 +29,33 @@ const normalizePlantumlServer = (documentRef, value) => {
+         return normalized;
+     }
+ };
+-const sanitizeSvg = (documentRef, svg, t) => {
+-    const parsed = new DOMParser().parseFromString(svg, 'image/svg+xml');
+-    const parseError = parsed.querySelector('parsererror');
+-    if (parseError) {
+-        throw new Error(parseError.textContent || t('drawing.error.svgParseFailed'));
+-    }
+-    parsed.querySelectorAll('script,iframe,object,embed').forEach(node => node.remove());
+-    parsed.querySelectorAll('*').forEach(node => {
++const sanitizeSvgNode = (documentRef, svgNode) => {
++    svgNode.querySelectorAll('script,iframe,object,embed').forEach(node => node.remove());
++    [svgNode, ...svgNode.querySelectorAll('*')].forEach(node => {
+         for (const attribute of Array.from(node.attributes)) {
+             if (/^on/i.test(attribute.name)) {
+                 node.removeAttribute(attribute.name);
+             }
+         }
+     });
+-    const svgNode = parsed.documentElement;
+     return documentRef.importNode(svgNode, true);
+ };
++const sanitizeXmlSvg = (documentRef, svg, t) => {
++    const parsed = new DOMParser().parseFromString(svg, 'image/svg+xml');
++    const parseError = parsed.querySelector('parsererror');
++    if (parseError) {
++        throw new Error(parseError.textContent || t('drawing.error.svgParseFailed'));
++    }
++    return sanitizeSvgNode(documentRef, parsed.documentElement);
++};
++const sanitizeMermaidSvg = (documentRef, svg, t) => {
++    const parsed = new DOMParser().parseFromString(svg, 'text/html');
++    const svgNode = parsed.querySelector('svg');
++    if (!svgNode) {
++        throw new Error(t('drawing.error.svgParseFailed'));
++    }
++    return sanitizeSvgNode(documentRef, svgNode);
++};
+ const renderMermaidSvg = async (documentRef, text, theme, t) => {
+     const mermaidModule = await import('mermaid');
+     const mermaid = mermaidModule.default;
+@@ -56,7 +66,7 @@ const renderMermaidSvg = async (documentRef, text, theme, t) => {
+         theme: isDarkTheme(documentRef, theme) ? 'dark' : 'default'
+     });
+     const rendered = await mermaid.render(id, text);
+-    return sanitizeSvg(documentRef, rendered.svg, t);
++    return sanitizeMermaidSvg(documentRef, rendered.svg, t);
+ };
+ const appendSvgText = (documentRef, parent, text, x, dy, weight = '500') => {
+     const line = documentRef.createElementNS('http://www.w3.org/2000/svg', 'tspan');
+@@ -138,7 +148,7 @@ const renderPlantumlSvg = async (documentRef, text, options, t) => {
+         if (!response.ok) {
+             throw new Error(t('drawing.error.plantumlRenderFailed', { status: response.status }));
+         }
+-        return sanitizeSvg(documentRef, await response.text(), t);
++        return sanitizeXmlSvg(documentRef, await response.text(), t);
+     }
+     catch (error) {
+         if (error instanceof DOMException && error.name === 'AbortError') {
