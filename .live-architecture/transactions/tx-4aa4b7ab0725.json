@@ -1,0 +1,51 @@
+{
+  "actor": {
+    "id": "codex",
+    "kind": "ai"
+  },
+  "authority": "human",
+  "base_revision": "A00000006",
+  "changes": [
+    {
+      "action": "create",
+      "change_id": "chg-ca85154a180b",
+      "confidence": 1.0,
+      "evidence": [
+        "executor/src/local/backend/client.rs"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Both acknowledged and fire-and-forget device heartbeats now use the canonical heartbeat_payload implementation.",
+      "subject": "arch://wegent/contract/local-backend-heartbeat",
+      "timestamp": "2026-08-19T07:01:09Z"
+    },
+    {
+      "action": "verify",
+      "change_id": "chg-3e267487cf9b",
+      "confidence": 1.0,
+      "evidence": [
+        "cargo test --all-features"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Executor contract, migration, resilience, and full test suites verify payload parity, terminal event isolation, and reconnect behavior.",
+      "subject": "arch://wegent/contract/local-backend-heartbeat",
+      "timestamp": "2026-08-19T07:01:09Z"
+    }
+  ],
+  "created_at": "2026-08-19T06:51:49Z",
+  "id": "tx-4aa4b7ab0725",
+  "intent": "Use one canonical device heartbeat payload for acknowledged and fire-and-forget delivery, preserving runtime feature projection while keeping terminal buffering tests scoped to terminal events.",
+  "merged_revision": "A00000007",
+  "read_set": [
+    "arch://wegent/flow/git-worktree-execution"
+  ],
+  "resolutions": [],
+  "status": "merged",
+  "updated_at": "2026-08-19T07:01:09Z",
+  "write_set": [
+    "arch://wegent/contract/local-backend-heartbeat"
+  ]
+}

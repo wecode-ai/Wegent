@@ -171,28 +171,21 @@ if ! [[ "$WEWORK_PORT" =~ ^[0-9]+$ ]] || [ "$WEWORK_PORT" -lt 1 ] || [ "$WEWORK_
 fi
 
 is_port_available() {
-  node - "$1" <<'NODE'
-const net = require('node:net')
-const port = Number(process.argv[2])
-
-const canListen = host =>
-  new Promise(resolve => {
-    const server = net.createServer()
-
-    server.once('error', () => resolve(false))
-    server.listen(port, host, () => {
-      server.close(() => resolve(true))
-    })
-  })
-
-;(async () => {
-  for (const host of ['127.0.0.1', '0.0.0.0']) {
-    if (!(await canListen(host))) {
-      process.exit(1)
-    }
-  }
-})()
-NODE
+  node -e '
+    const net = require("node:net")
+    const port = Number(process.argv[1])
+    const canListen = host =>
+      new Promise(resolve => {
+        const server = net.createServer()
+        server.once("error", () => resolve(false))
+        server.listen(port, host, () => server.close(() => resolve(true)))
+      })
+    ;(async () => {
+      for (const host of ["127.0.0.1", "0.0.0.0"]) {
+        if (!(await canListen(host))) process.exit(1)
+      }
+    })()
+  ' "$1"
 }
 
 find_available_wework_port() {
@@ -200,7 +193,7 @@ find_available_wework_port() {
 
   while [ "$port" -le 65535 ]; do
     if is_port_available "$port"; then
-      echo "$port"
+      AVAILABLE_WEWORK_PORT="$port"
       return 0
     fi
     port="$((port + 1))"
@@ -240,7 +233,8 @@ build_wework_dev_title() {
   echo "$worktree_name"
 }
 
-AVAILABLE_WEWORK_PORT="$(find_available_wework_port "$WEWORK_PORT")"
+AVAILABLE_WEWORK_PORT=""
+find_available_wework_port "$WEWORK_PORT"
 if [ "$AVAILABLE_WEWORK_PORT" != "$WEWORK_PORT" ]; then
   echo "WEWORK_PORT $WEWORK_PORT is already in use; using $AVAILABLE_WEWORK_PORT instead."
 fi
@@ -320,13 +314,13 @@ WEWORK_APP_IDENTIFIER_VALUE="${WEWORK_APP_IDENTIFIER:-}" \
 WEWORK_DISABLE_BACKGROUND_THROTTLING_VALUE="${WEWORK_DISABLE_BACKGROUND_THROTTLING:-0}" \
 WEWORK_DIR_VALUE="$WEWORK_DIR" \
 TAURI_DEV_CONFIG_VALUE="$TAURI_DEV_CONFIG" \
-python3 - <<'PY'
+python3 -c '
 import json
 import os
 
 config = {
     "build": {
-        "devUrl": f"http://localhost:{os.environ['WEWORK_PORT_VALUE']}",
+        "devUrl": "http://localhost:{}".format(os.environ["WEWORK_PORT_VALUE"]),
         "beforeDevCommand": os.environ["BEFORE_DEV_COMMAND_VALUE"],
     },
 }
@@ -357,7 +351,7 @@ if os.environ["WEWORK_RELEASE_UI_VALUE"] != "true":
 with open(os.environ["TAURI_DEV_CONFIG_VALUE"], "w", encoding="utf-8") as handle:
     json.dump(config, handle, indent=2)
     handle.write("\n")
-PY
+'
 
 echo "Starting WeWork mac app"
 echo "  RELEASE_UI=$WEWORK_RELEASE_UI"

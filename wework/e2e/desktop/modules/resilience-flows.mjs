@@ -41,10 +41,19 @@ async function verifyReconnectRecovery({ composerSelector, control }) {
   )
 
   control.disconnectReconnectResponse()
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 5_000))
+  const briefDisconnectSnapshot = JSON.parse(
+    await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
+  )
+  assert.equal(
+    briefDisconnectSnapshot.testIds.includes('runtime-reconnecting-status'),
+    false,
+    'A brief model stream interruption showed the reconnecting status before ten seconds'
+  )
   await control.command(
     'waitFor',
     `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="runtime-reconnecting-status"]`,
-    { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+    { timeoutMs: 15_000 }
   )
   await captureVerificationScreenshot(
     control,

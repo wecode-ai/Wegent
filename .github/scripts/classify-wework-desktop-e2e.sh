@@ -15,6 +15,7 @@ core_segments=(
   supervisor-lifecycle
   resilience
   runtime-task-queue
+  codex-notification-isolation
   conversation-state
   temporary-chat
   workspace-attachments
@@ -71,11 +72,11 @@ cloud_shards=(
 # runner reuses the same prebuilt application with two isolated local workers.
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 core_shards=(
-  rendering-extensions,claude-runtime,automation-lifecycle
-  model-routing,window-lifecycle
-  resilience,core-task-flow,project-automation,permission-modes
-  conversation-state,embedded-browser,workspace-tabs,runtime-task-queue,local-harness
-  workspace-attachments,goal-lifecycle,priority-filter,supervisor-lifecycle,local-file-preview,temporary-chat
+  core-task-flow
+  model-routing,embedded-browser,claude-runtime,local-harness
+  window-lifecycle,conversation-state,temporary-chat
+  resilience,runtime-task-queue,codex-notification-isolation,goal-lifecycle,supervisor-lifecycle
+  rendering-extensions,workspace-attachments,workspace-tabs,priority-filter,automation-lifecycle,project-automation,permission-modes,local-file-preview
 )
 
 validate_core_shards() {
@@ -361,7 +362,10 @@ classify_wework_path() {
     wework/src-tauri/src/embedded_browser* | \
       wework/src/lib/embedded-browser* | \
       wework/src/lib/browser-url* | \
+      wework/src/lib/browser-device-toolbar* | \
       wework/src/components/layout/workspace-panels/WorkspaceBrowserPanel* | \
+      wework/src/components/layout/workspace-panels/BrowserDeviceToolbar* | \
+      wework/src/components/layout/workspace-panels/browser-find/* | \
       wework/e2e/desktop/scenarios/embedded-browser-agent.scenario.mjs)
       select_target "core:embedded-browser"
       return
@@ -407,6 +411,10 @@ classify_wework_path() {
     # Runtime queue orchestration has an independently bootstrapped checkpoint.
     wework/e2e/desktop/scenarios/runtime-task-queue.scenario.mjs)
       select_target "core:runtime-task-queue"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/codex-notification-isolation.scenario.mjs)
+      select_target "core:codex-notification-isolation"
       return
       ;;
 

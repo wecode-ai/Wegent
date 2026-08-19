@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { HTMLAttributes, ReactNode } from 'react'
+import type { HTMLAttributes, OlHTMLAttributes, ReactNode } from 'react'
 import type { Element as HastElement } from 'hast'
 import { FileText, Folder, Link2 } from 'lucide-react'
 import { Streamdown } from 'streamdown'
@@ -34,6 +34,8 @@ const ASSISTANT_MARKDOWN_LINK_CLASS = [
   '[&_code]:!rounded-none [&_code]:!bg-transparent [&_code]:!px-0 [&_code]:!py-0 [&_code]:!font-[inherit] [&_code]:!text-inherit',
 ].join(' ')
 const CODEX_PLAN_TAG_PATTERN = /<\/?\s*proposed_plan\s*>/gi
+const CONTENT_REFERENCE_CITATION_PATTERN = /\uE200cite\uE202[\s\S]*?\uE201/g
+const TRAILING_CONTENT_REFERENCE_CITATION_PATTERN = /\uE200cite(?:\uE202[\s\S]*)?$/
 const WEWORK_MARKDOWN_FILE_LINK_HOST = 'wework.local'
 const WEWORK_MARKDOWN_FILE_LINK_PATH = '/markdown-file'
 const WEWORK_MARKDOWN_FILE_LINK_PREFIX = `https://${WEWORK_MARKDOWN_FILE_LINK_HOST}${WEWORK_MARKDOWN_FILE_LINK_PATH}?path=`
@@ -96,16 +98,20 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
   fileChanges,
 }: AssistantMarkdownProps) {
   const bufferedContent = useBufferedStreamingText(content, isStreaming)
+  const displayContent = useMemo(
+    () => stripUnsupportedContentReferenceCitations(bufferedContent),
+    [bufferedContent]
+  )
   const windowMarkdown = isTauriRuntime() && variant === 'default'
   const contentParts = useMemo(() => {
-    const parts = splitCodexInlineVisualizations(bufferedContent)
+    const parts = splitCodexInlineVisualizations(displayContent)
     return parts.flatMap<AssistantMarkdownPart>(part => {
       if (part.kind === 'visualization') return [part]
       const chunks = windowMarkdown ? splitStaticMarkdownChunks(part.content) : [part.content]
       const windowed = chunks.length > 1
       return chunks.map(content => ({ kind: 'markdown', content, windowed }))
     })
-  }, [bufferedContent, windowMarkdown])
+  }, [displayContent, windowMarkdown])
   const openFileRef = useRef(onOpenFile)
 
   useEffect(() => {
@@ -153,8 +159,9 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
           {children}
         </ul>
       ),
-      ol: ({ children }: { children?: ReactNode }) => (
+      ol: ({ children, start }: OlHTMLAttributes<HTMLOListElement>) => (
         <ol
+          start={start}
           className={`${variant === 'process' ? 'mb-1.5 space-y-0.5 pl-5' : 'mb-3 space-y-1.5 pl-8'} list-decimal`}
         >
           {children}
@@ -383,6 +390,12 @@ function areAssistantMarkdownPropsEqual(
 
 function prepareAssistantMarkdownContent(content: string): string {
   return encodeLocalMarkdownLinks(content.replace(CODEX_PLAN_TAG_PATTERN, ''))
+}
+
+function stripUnsupportedContentReferenceCitations(content: string): string {
+  return content
+    .replace(CONTENT_REFERENCE_CITATION_PATTERN, '')
+    .replace(TRAILING_CONTENT_REFERENCE_CITATION_PATTERN, '')
 }
 
 function encodeLocalMarkdownLinks(content: string): string {

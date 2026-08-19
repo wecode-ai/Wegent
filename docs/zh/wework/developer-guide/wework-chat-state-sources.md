@@ -277,6 +277,11 @@ assistant 之前。canonical `turns` 是前端 transcript 的唯一输入，不�
 元数据可以继续使用各自的紧凑字号，但不能让同一段聊天正文因 streaming/完成态切换而
 改变字号并产生跳闪。
 
+最终回答进入 Markdown 渲染器前必须移除没有结构化引用元数据支持的
+`cite…` 内容引用标记，包括流式阶段尚未闭合的尾部标记。Wework
+不能把这些内部协议字符作为普通正文显示；只有在同时接入引用元数据和对应交互组件后，
+才能把它们转换为可见引用。
+
 ## 引导消息顺序
 
 运行中的 Codex LocalTask 支持把队列消息作为原生引导发送。引导是当前 turn 内的用户输入，不是新的 follow-up turn，所以 UI 必须在发送开始时就把本地用户消息插入到当前 assistant 中间：
@@ -306,6 +311,7 @@ assistant 之前。canonical `turns` 是前端 transcript 的唯一输入，不�
 - 普通 follow-up 必须在等待 `runtime.tasks.sendMessage` 返回前先把 user message 写入会话缓存，使它稳定出现在当前 turn 的“正在思考”指示器之前；发送失败时再按同一 client message id 回滚。
 - `BufferedChatInput` 传入的运行中发送选项必须由 `TemporaryChatPanel` 原样处理。用户选择“引导当前回复”或从队列卡片触发引导时，临时聊天必须调用 `runtime.tasks.guidance`，并以 `clientGuidanceId` 结算对应队列项；不能把引导降级成当前 turn 结束后的普通 follow-up。
 - 临时聊天只复用当前工作区和当前线程上下文；如果没有可用的主线程 source，应阻止发送并提示用户先打开已有对话。
+- 临时聊天默认用于轻量、非变更式探索。边界之前的主线程消息、计划和工具结果只作为参考，不能在临时聊天中继续执行；但用户在边界之后明确要求修改文件、源码、Git、配置或工作区状态时，允许在当前线程既有权限范围内执行，并且修改必须最小化、局限于本次请求。未收到明确变更请求时不得写入，也不得自行申请更宽权限。
 - runtime work 列表刷新后，reducer 必须用同一设备、同一任务的权威 `threadId/runtimeHandle` 水合当前任务地址；不能因为设备仍在线就保留缺少 thread 的 optimistic address，否则右侧临时聊天无法建立 `sideSource`。
 
 维护规则：不要用 fallback 在 UI 里把临时聊天补进左侧任务列表，也不要在 executor 中为临时线程伪造 rollout。临时聊天的主路径是 `ephemeral + sideSource + direct_thread_id`。
