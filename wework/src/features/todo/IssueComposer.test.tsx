@@ -99,6 +99,12 @@ describe('IssueComposer', () => {
     expect(screen.getByTestId('workspace-issue-heading')).toHaveTextContent('要推进什么？')
     expect(screen.getByText('描述目标、问题或交付，创建后会进入当前项目空间。')).toBeVisible()
     expect(screen.queryByText('描述要推进的事情，创建后自动进入所选看板。')).not.toBeInTheDocument()
+    const expandButton = screen.getByTestId('workspace-issue-expand')
+    expect(screen.getByTestId('workspace-issue-composer-input-shell')).toContainElement(
+      expandButton
+    )
+    expect(expandButton).toHaveAccessibleName('全屏编辑')
+    expect(expandButton).toHaveClass('hover:bg-muted', 'hover:text-text-primary')
     expect(screen.queryByTestId('project-work-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('model-selector-button')).not.toBeInTheDocument()
     await userEvent.type(screen.getByTestId('workspace-issue-input'), '修复工作空间创建入口')

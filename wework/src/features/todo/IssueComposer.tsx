@@ -5,6 +5,7 @@ import { type ProjectChatControls, type ProjectWorkControls } from '@/components
 import { AttachmentBadges } from '@/components/chat/composer/AttachmentBadges'
 import { BufferedChatInput } from '@/components/layout/BufferedChatInput'
 import { WorkbenchHarnessSelector } from '@/components/layout/WorkbenchHarnessSelector'
+import { Tooltip } from '@/components/ui/tooltip'
 import { useTranslation } from '@/hooks/useTranslation'
 import { releaseAttachmentPreview } from '@/lib/attachments'
 import { cn } from '@/lib/utils'
@@ -318,48 +319,68 @@ export function IssueComposer({
         }
       : undefined
   const renderComposer = (resolvedProjectWork: ProjectWorkControls | undefined) => (
-    <BufferedChatInput
-      value={content}
-      onChange={setContent}
-      onSubmit={submit}
-      disabled={busy}
-      submitDisabled={busy || !boardKey}
-      error={error}
-      placeholder={t('workbench.input_placeholder', '随心输入')}
-      inputTestId="workspace-issue-input"
-      submitButtonTestId="workspace-issue-submit"
-      variant="desktop"
-      projectChat={projectChat}
-      projectWork={resolvedProjectWork}
-      showProjectWorkBar={creationMode === 'task' && localProjects.length > 0}
-      showExecutionTools={creationMode === 'task'}
-      showWorkspaceMenu={false}
-      projectWorkBarMiddleContext={
-        creationMode === 'task' && selectedWorkItemProject ? (
-          <WorkItemComposerGuide
-            integrated
-            toolbar
-            project={selectedWorkItemProject}
-            projects={projects}
-            onSelectProject={project =>
-              setBoardKey(`${project.project_store}:${String(project.id)}`)
-            }
-          />
-        ) : undefined
-      }
-      projectWorkBarTrailingContext={
-        creationMode === 'task' ? (
-          <WorkbenchHarnessSelector
-            runtime="codex"
-            harnesses={[]}
-            enabledHarnesses={[]}
-            loading={false}
-            detectionFailed={false}
-            onRuntimeChange={() => undefined}
-          />
-        ) : undefined
-      }
-    />
+    <div data-testid="workspace-issue-composer-input-shell" className="relative">
+      <BufferedChatInput
+        value={content}
+        onChange={setContent}
+        onSubmit={submit}
+        disabled={busy}
+        submitDisabled={busy || !boardKey}
+        error={error}
+        placeholder={t('workbench.input_placeholder', '随心输入')}
+        inputTestId="workspace-issue-input"
+        submitButtonTestId="workspace-issue-submit"
+        variant="desktop"
+        projectChat={projectChat}
+        projectWork={resolvedProjectWork}
+        showProjectWorkBar={creationMode === 'task' && localProjects.length > 0}
+        showExecutionTools={creationMode === 'task'}
+        showWorkspaceMenu={false}
+        projectWorkBarMiddleContext={
+          creationMode === 'task' && selectedWorkItemProject ? (
+            <WorkItemComposerGuide
+              integrated
+              toolbar
+              project={selectedWorkItemProject}
+              projects={projects}
+              onSelectProject={project =>
+                setBoardKey(`${project.project_store}:${String(project.id)}`)
+              }
+            />
+          ) : undefined
+        }
+        projectWorkBarTrailingContext={
+          creationMode === 'task' ? (
+            <WorkbenchHarnessSelector
+              runtime="codex"
+              harnesses={[]}
+              enabledHarnesses={[]}
+              loading={false}
+              detectionFailed={false}
+              onRuntimeChange={() => undefined}
+            />
+          ) : undefined
+        }
+      />
+      {creationMode === 'issue' ? (
+        <Tooltip
+          label={t('todo.expand_issue_editor', '全屏编辑')}
+          side="top"
+          align="end"
+          className="absolute right-3 top-3 z-10"
+        >
+          <button
+            type="button"
+            data-testid="workspace-issue-expand"
+            onClick={() => setFullScreen(true)}
+            className="flex h-11 w-11 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-muted hover:text-text-primary focus-visible:bg-muted focus-visible:text-text-primary focus-visible:outline-none md:h-8 md:w-8"
+            aria-label={t('todo.expand_issue_editor', '全屏编辑')}
+          >
+            <Maximize2 className="h-4 w-4" />
+          </button>
+        </Tooltip>
+      ) : null}
+    </div>
   )
 
   return (
@@ -588,7 +609,7 @@ export function IssueComposer({
                 </button>
               </div>
             )}
-            <div className="mb-3 flex items-center gap-2">
+            <div className="mb-3">
               <div
                 data-testid="workspace-issue-creation-tabs"
                 className="inline-flex h-9 items-center rounded-xl bg-muted p-1"
@@ -626,17 +647,6 @@ export function IssueComposer({
                   {t('todo.create_task_tab', '创建任务')}
                 </button>
               </div>
-              {creationMode === 'issue' ? (
-                <button
-                  type="button"
-                  data-testid="workspace-issue-expand"
-                  onClick={() => setFullScreen(true)}
-                  className="flex h-11 w-11 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary md:h-8 md:w-8"
-                  aria-label={t('todo.expand_issue_editor', '全屏编辑')}
-                >
-                  <Maximize2 className="h-4 w-4" />
-                </button>
-              ) : null}
             </div>
             <div className="mb-2 flex items-center px-1 text-xs text-text-muted">
               <span className="flex min-w-0 items-center gap-1.5">
