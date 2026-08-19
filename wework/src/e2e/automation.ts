@@ -540,7 +540,7 @@ function desktopControlElementEnabled(element: HTMLElement): boolean {
   return !('disabled' in element) || !(element as HTMLButtonElement).disabled
 }
 
-function desktopControlElementVisible(element: HTMLElement): boolean {
+function desktopControlElementRendered(element: HTMLElement): boolean {
   let current: HTMLElement | null = element
   while (current) {
     const style = window.getComputedStyle(current)
@@ -555,9 +555,14 @@ function desktopControlElementVisible(element: HTMLElement): boolean {
   }
 
   const rect = element.getBoundingClientRect()
+  return rect.width > 0 && rect.height > 0
+}
+
+function desktopControlElementVisible(element: HTMLElement): boolean {
+  if (!desktopControlElementRendered(element)) return false
+
+  const rect = element.getBoundingClientRect()
   return !(
-    rect.width <= 0 ||
-    rect.height <= 0 ||
     rect.bottom <= 0 ||
     rect.right <= 0 ||
     rect.top >= window.innerHeight ||
@@ -774,6 +779,18 @@ async function waitForDesktopControlElement(command: DesktopControlCommand): Pro
 
   while (Date.now() - startedAt < timeoutMs) {
     const elements = findDesktopControlElements(command.selector)
+    if (command.visible === false) {
+      const visibleElements = elements.filter(desktopControlElementVisible)
+      if (visibleElements.length === 0) {
+        matchedAt ??= Date.now()
+        if (Date.now() - matchedAt >= (command.stableMs ?? 0)) return ''
+      } else {
+        matchedAt = null
+      }
+      await waitForDesktopControlTick()
+      continue
+    }
+
     const matchingElements = command.visible
       ? elements.filter(desktopControlElementVisible)
       : elements
@@ -1342,7 +1359,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'getClipboardText':
       return getDesktopE2EClipboardText()
     case 'scrollIntoView': {
-      const element = findDesktopControlElements(command.selector)[0]
+      const elements = findDesktopControlElements(command.selector)
+      const element = command.visible ? elements.find(desktopControlElementRendered) : elements[0]
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
       element.scrollIntoView({ block: 'center', inline: 'nearest' })
       element.dispatchEvent(new Event('scroll', { bubbles: true }))
@@ -1495,17 +1513,25 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       const startedAt = Date.now()
       let lastFailure = `Unable to find selector "${command.selector}" containing "${text}"`
       while (Date.now() - startedAt < timeoutMs) {
-        const container = findDesktopControlElements(command.selector).find(element =>
-          (element.textContent ?? '').includes(text)
+        const container = findDesktopControlElements(command.selector).find(
+          element =>
+            (!command.visible || desktopControlElementVisible(element)) &&
+            (element.textContent ?? '').includes(text)
         )
         const target = container?.querySelector<HTMLElement>(targetSelector)
-        if (target && desktopControlElementEnabled(target)) {
+        if (
+          target &&
+          (!command.visible || desktopControlElementVisible(target)) &&
+          desktopControlElementEnabled(target)
+        ) {
           target.scrollIntoView({ block: 'center', inline: 'nearest' })
           target.click()
           return target.textContent?.trim() ?? ''
         }
         if (container && !target) {
           lastFailure = `Unable to find descendant "${targetSelector}" inside "${command.selector}"`
+        } else if (target && command.visible && !desktopControlElementVisible(target)) {
+          lastFailure = `Descendant "${targetSelector}" inside "${command.selector}" is hidden`
         } else if (target && !desktopControlElementEnabled(target)) {
           lastFailure = `Descendant "${targetSelector}" inside "${command.selector}" is disabled`
         }
@@ -1560,6 +1586,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'getWorkbenchDebugSnapshot':
       return JSON.stringify(getWorkbenchDebugSnapshot())
+    case 'getActiveElementTestId':
+      return document.activeElement?.getAttribute('data-testid') ?? ''
     case 'getLocalExecutorStatus':
       return JSON.stringify(await invoke(LOCAL_EXECUTOR_COMMANDS.status))
     case 'getLocalExecutorLog':

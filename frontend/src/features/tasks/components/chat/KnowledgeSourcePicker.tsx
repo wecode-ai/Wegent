@@ -1204,10 +1204,13 @@ export function KnowledgeSourcePicker({
   }
 
   const renderMiddleColumn = () => {
-    if (loading) {
+    const isInternalSource =
+      activeSource === 'personal' || activeSource === 'group' || activeSource === 'organization'
+
+    if (isInternalSource && loading) {
       return <PickerLoading label={t('picker.loading')} />
     }
-    if (error) {
+    if (isInternalSource && error) {
       return <PickerError message={error} onRetry={onRetry} />
     }
 

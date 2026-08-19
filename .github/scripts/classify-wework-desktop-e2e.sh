@@ -15,6 +15,7 @@ core_segments=(
   supervisor-lifecycle
   resilience
   runtime-task-queue
+  codex-notification-isolation
   conversation-state
   temporary-chat
   workspace-attachments
@@ -58,24 +59,25 @@ cloud_segments=(
   plugin-auto-update
 )
 # Group checkpoints by observed Cloud CI duration and order each shard from
-# longest to shortest so the five serial workers finish at similar times.
+# longest to shortest so the five runners keep both local workers busy.
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 cloud_shards=(
-  core-task-flow,cloud-worktree-create
-  cloud-worktree-capability,cloud-worktree-tools,model-routing,embedded-browser,telemetry-consent
-  cloud-worktree-queued-cancel,window-lifecycle,conversation-state,browser-multi-tabs
-  cloud-worktree-device-restart,resilience,goal-lifecycle,supervisor-lifecycle
-  cloud-worktree-archive-restore,rendering-extensions,workspace-attachments,workspace-tabs,priority-filter,automation-lifecycle,project-automation,plugin-auto-update
+  goal-lifecycle,window-lifecycle,cloud-worktree-tools,telemetry-consent
+  model-routing,project-automation,workspace-attachments,plugin-auto-update
+  embedded-browser,cloud-worktree-create,workspace-tabs,cloud-worktree-archive-restore,cloud-worktree-device-restart
+  resilience,rendering-extensions,cloud-worktree-queued-cancel,priority-filter,cloud-worktree-capability
+  core-task-flow,conversation-state,supervisor-lifecycle,automation-lifecycle,browser-multi-tabs
 )
-# Keep the number of core desktop runners fixed as checkpoints grow. Each
-# runner reuses the same prebuilt application and executes its shard serially.
+# Keep the number of core desktop runners fixed as checkpoints grow. Group
+# checkpoints by observed Core CI duration and order each shard so both local
+# workers stay balanced while reusing the same prebuilt application.
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 core_shards=(
-  core-task-flow
-  model-routing,embedded-browser,claude-runtime,local-harness
-  window-lifecycle,conversation-state,temporary-chat
-  resilience,runtime-task-queue,goal-lifecycle,supervisor-lifecycle
-  rendering-extensions,workspace-attachments,workspace-tabs,priority-filter,automation-lifecycle,project-automation,permission-modes,local-file-preview
+  rendering-extensions,resilience,runtime-task-queue
+  model-routing,window-lifecycle
+  core-task-flow,embedded-browser,automation-lifecycle,priority-filter,temporary-chat
+  claude-runtime,workspace-attachments,local-harness,supervisor-lifecycle,codex-notification-isolation,local-file-preview
+  conversation-state,goal-lifecycle,workspace-tabs,project-automation,permission-modes
 )
 
 validate_core_shards() {
@@ -410,6 +412,10 @@ classify_wework_path() {
     # Runtime queue orchestration has an independently bootstrapped checkpoint.
     wework/e2e/desktop/scenarios/runtime-task-queue.scenario.mjs)
       select_target "core:runtime-task-queue"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/codex-notification-isolation.scenario.mjs)
+      select_target "core:codex-notification-isolation"
       return
       ;;
 

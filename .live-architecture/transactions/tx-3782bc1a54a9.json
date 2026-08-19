@@ -1,0 +1,97 @@
+{
+  "actor": {
+    "id": "codex",
+    "kind": "ai"
+  },
+  "authority": "ai",
+  "base_revision": "A00000021",
+  "changes": [
+    {
+      "action": "assert",
+      "change_id": "chg-ca42aae3fd3e",
+      "confidence": 1.0,
+      "evidence": [
+        "user screenshot 2026-08-18"
+      ],
+      "object": null,
+      "plane": "intent",
+      "predicate": null,
+      "reason": "A later successful task must repair a stale failed stage snapshot immediately.",
+      "subject": "arch://wegent/flow/issue-runtime-project-space-binding",
+      "timestamp": "2026-08-18T14:18:08Z"
+    },
+    {
+      "action": "update",
+      "change_id": "chg-f7bd1e55dd64",
+      "confidence": 1.0,
+      "evidence": [
+        "docs/zh/architecture/issue-task-workflow.md"
+      ],
+      "object": null,
+      "plane": "model",
+      "predicate": null,
+      "reason": "Stage rendering and human decision validation recompute from ordered task bindings and per-task Runtime truth.",
+      "subject": "arch://wegent/flow/issue-runtime-project-space-binding",
+      "timestamp": "2026-08-18T14:18:09Z"
+    },
+    {
+      "action": "verify",
+      "change_id": "chg-d1f8542af2a7",
+      "confidence": 1.0,
+      "evidence": [
+        "wework/src/api/issueWorkflow.ts",
+        "backend/app/services/project_workflow_projection.py"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Shared projections repair stale stage status while preserving approved terminal decisions.",
+      "subject": "arch://wegent/flow/issue-runtime-project-space-binding",
+      "timestamp": "2026-08-18T14:18:09Z"
+    },
+    {
+      "action": "verify",
+      "change_id": "chg-e2352ca64cf0",
+      "confidence": 1.0,
+      "evidence": [
+        "wework/src/features/todo/TodoEditor.tsx",
+        "backend/app/services/issue_workflow_decision.py"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Issue detail and approval paths consume reconciled task truth instead of the stored stale aggregate.",
+      "subject": "arch://wegent/flow/issue-task-conversation-entry",
+      "timestamp": "2026-08-18T14:18:09Z"
+    },
+    {
+      "action": "observe",
+      "change_id": "chg-6044509f4284",
+      "confidence": 1.0,
+      "evidence": [
+        "wework/test-results/desktop-e2e/2026-08-18T14-14-22-023Z-80526/project-automation-00-workflow-task-statuses.png"
+      ],
+      "object": null,
+      "plane": "runtime",
+      "predicate": null,
+      "reason": "Real Tauri passed the stale-failure fixture assertion and rendered the stage as awaiting human approval before a later unrelated navigation failure.",
+      "subject": "arch://wegent/flow/issue-task-conversation-entry",
+      "timestamp": "2026-08-18T14:18:09Z"
+    }
+  ],
+  "created_at": "2026-08-18T14:09:07Z",
+  "id": "tx-3782bc1a54a9",
+  "intent": "阶段展示与人工决策必须从按绑定时间排序的任务状态真值重算，后续成功覆盖旧失败，并修复历史失败快照",
+  "merged_revision": "A00000022",
+  "read_set": [
+    "arch://wegent/flow/issue-runtime-project-space-binding",
+    "arch://wegent/flow/issue-task-conversation-entry"
+  ],
+  "resolutions": [],
+  "status": "merged",
+  "updated_at": "2026-08-18T14:18:19Z",
+  "write_set": [
+    "arch://wegent/flow/issue-runtime-project-space-binding",
+    "arch://wegent/flow/issue-task-conversation-entry"
+  ]
+}

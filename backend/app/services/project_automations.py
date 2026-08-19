@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session, aliased
 from app.core.project_automation_secrets import encrypt_webhook_secret
 from app.models.delivery import (
     CloudProject,
+    LoopItem,
     ProjectAutomationRule,
     ProjectAutomationRun,
     ProjectChatAgent,
@@ -55,6 +56,7 @@ from app.services.project_automation_execution import (
 )
 from app.services.project_chat.service import bot_config
 from app.services.share import team_share_service
+from app.services.workflow_stage_context import workflow_stage_context_resolver
 
 logger = logging.getLogger(__name__)
 
@@ -188,7 +190,10 @@ class ProjectAutomationService:
         )
         if trigger_type == "schedule":
             event_type = None
+        elif trigger_type == "event":
+            expression = None
         else:
+            event_type = None
             expression = None
         validate_trigger(trigger_type, event_type, expression)
 
@@ -339,12 +344,92 @@ class ProjectAutomationService:
     ) -> dict:
         require_cloud_project_role(db, project_id, user_id, BaseRole.Developer)
         rule = self._rule(db, project_id, automation_id)
-        if _metadata(rule).get("trigger_type") == "event":
+        trigger_type = _metadata(rule).get("trigger_type")
+        if trigger_type in {"event", "workflow"}:
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
-                "Event automations can only run from a matching event",
+                (
+                    "Event automations can only run from a matching event"
+                    if trigger_type == "event"
+                    else "Workflow automations can only run from a workflow stage"
+                ),
             )
         run = self._create_run(db, rule, "manual", utcnow())
+        await project_automation_execution.dispatch(db, rule, run)
+        return self._run_view(
+            run, str(_metadata(rule).get("timezone") or "Asia/Shanghai")
+        )
+
+    async def run_for_workflow_node(
+        self,
+        db: Session,
+        project_id: str,
+        automation_id: str,
+        item_id: str,
+        workflow_node_id: str,
+        user_id: int,
+    ) -> dict:
+        require_cloud_project_role(db, project_id, user_id, BaseRole.Developer)
+        rule = self._rule(db, project_id, automation_id)
+        item = (
+            db.query(LoopItem).filter(LoopItem.id == item_id).with_for_update().first()
+        )
+        if item is None or str(item.cloud_project_id) != str(project_id):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Issue not found")
+        workflow = (
+            item.metadata_json.get("workflow")
+            if isinstance(item.metadata_json, dict)
+            else None
+        )
+        nodes = workflow.get("nodes") if isinstance(workflow, dict) else None
+        node = next(
+            (
+                candidate
+                for candidate in nodes or []
+                if isinstance(candidate, dict)
+                and candidate.get("id") == workflow_node_id
+            ),
+            None,
+        )
+        if node is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow node not found")
+        if not node.get("automation_rule_id"):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "Workflow stage has no automation",
+            )
+        if node.get("status") not in {"ready", "failed"}:
+            raise HTTPException(status.HTTP_409_CONFLICT, "Workflow node is not ready")
+        if node.get("automation_rule_id") != automation_id:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "Workflow node automation does not match",
+            )
+        run = self._create_run(db, rule, "manual", utcnow(), commit=False)
+        run.task_id = item.id
+        run.task_title = item.title or ""
+        run.metadata_json = {
+            **(run.metadata_json or {}),
+            "workflow_node_id": workflow_node_id,
+            "instruction_override": str(node.get("prompt") or ""),
+            "dependency_context": node.get("dependency_context") or {},
+            "workflow_stage_input": workflow_stage_context_resolver.resolve(
+                db,
+                item=item,
+                target_node_id=workflow_node_id,
+            ),
+        }
+        from app.services.project_workflow_projection import update_workflow_node
+
+        update_workflow_node(
+            db,
+            item_id=item.id,
+            node_id=workflow_node_id,
+            node_status="queued",
+            automation_run_id=str(run.id),
+        )
+        db.commit()
+        db.refresh(run)
         await project_automation_execution.dispatch(db, rule, run)
         return self._run_view(
             run, str(_metadata(rule).get("timezone") or "Asia/Shanghai")
@@ -500,6 +585,11 @@ class ProjectAutomationService:
 
         run.status = "cancelled"
         run.version += 1
+        from app.services.project_workflow_projection import (
+            sync_automation_workflow_node,
+        )
+
+        sync_automation_workflow_node(db, run)
         project_automation_execution.finish_activity(
             db,
             run=run,

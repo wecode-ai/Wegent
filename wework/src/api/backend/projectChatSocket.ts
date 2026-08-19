@@ -11,6 +11,7 @@ const AGENT_FAILED_EVENT = 'wework:project_chat:agent:failed'
 const MANAGER_CONTINUE_EVENT = 'wework:project_chat:manager:continue'
 const WEGENT_CONTINUE_EVENT = 'wework:project_chat:wegent:continue'
 const AGENT_CHUNK_EVENT = 'wework:project_chat:agent:chunk'
+const LOOP_ITEM_CHANGED_EVENT = 'wework:loop_item:changed'
 const ACK_TIMEOUT_MS = 15_000
 
 export interface ProjectChatMention {
@@ -43,6 +44,13 @@ export interface ProjectChatSubscription {
   messages: ProjectChatMessage[]
   latestSequence: number
   currentUserId: string
+}
+
+export interface LoopItemChangedEvent {
+  projectId: string
+  itemId: string
+  version: number
+  reason: 'runtime_status' | 'delivery_finalized' | 'workflow_decision' | string
 }
 
 export interface ProjectChatClient {
@@ -94,6 +102,9 @@ export interface ProjectChatClient {
     agentId: string
     attachmentIds?: number[]
   }) => Promise<ProjectChatMessage>
+  subscribeLoopItemChanges?: (
+    onChange: (event: LoopItemChangedEvent) => void
+  ) => Promise<() => void>
   dispose: () => void
 }
 
@@ -225,6 +236,11 @@ export function createProjectChatClient(options: ProjectChatClientOptions): Proj
     },
     continueWegentTask(input) {
       return emitWithAck<ProjectChatMessage>(client, WEGENT_CONTINUE_EVENT, input)
+    },
+    async subscribeLoopItemChanges(onChange) {
+      await client.ensureConnected()
+      client.socket.on(LOOP_ITEM_CHANGED_EVENT, onChange)
+      return () => client.socket.off(LOOP_ITEM_CHANGED_EVENT, onChange)
     },
     dispose() {
       client.dispose()

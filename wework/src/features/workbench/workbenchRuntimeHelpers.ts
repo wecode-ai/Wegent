@@ -333,10 +333,26 @@ export function findRuntimeTaskWorkspace(
   return (
     workspaces.find(
       workspace =>
-        workspace.deviceId === address.deviceId &&
+        (workspace.deviceId === address.deviceId || workspace.remoteHostId === address.deviceId) &&
         workspace.tasks.some(task => task.taskId === address.taskId)
     ) ?? null
   )
+}
+
+export function hydrateRuntimeTaskAddress(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  address: RuntimeTaskAddress
+): RuntimeTaskAddress {
+  const workspace = findRuntimeTaskWorkspace(runtimeWork, address)
+  const task = workspace?.tasks.find(item => item.taskId === address.taskId)
+  if (!workspace || !task) return address
+  return {
+    ...address,
+    runtime: task.runtime,
+    workspacePath: getRuntimeTaskWorkspacePath(workspace, task),
+    ...(task.threadId ? { threadId: task.threadId } : {}),
+    ...(task.runtimeHandle ? { runtimeHandle: task.runtimeHandle } : {}),
+  }
 }
 
 export function getRememberedStandaloneDeviceId(

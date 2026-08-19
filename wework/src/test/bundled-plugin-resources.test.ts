@@ -14,6 +14,8 @@ const bundledPluginExampleManifests = [
   'bundled-plugins/wework-plugin-example/.mcp.json',
 ]
 
+const bundledWeworkSpaceDirectory = 'bundled-plugins/wework-personal/plugins/wework-space'
+
 const temporaryDirectories: string[] = []
 
 afterEach(() => {
@@ -80,6 +82,39 @@ describe('bundled plugin resources', () => {
     for (const manifest of bundledMarketplaceManifests) {
       expect(releaseConfig.bundle.resources).toContain(manifest)
     }
+  })
+
+  test('installs the stable Wework project-space capability by default', () => {
+    const tauriDirectory = resolve(process.cwd(), 'src-tauri')
+    const codexMarketplace = JSON.parse(
+      readFileSync(
+        resolve(tauriDirectory, 'bundled-plugins/wework-personal/.agents/plugins/marketplace.json'),
+        'utf8'
+      )
+    ) as {
+      plugins: Array<{
+        name: string
+        policy?: { installation?: string }
+      }>
+    }
+    const claudeMarketplace = JSON.parse(
+      readFileSync(
+        resolve(tauriDirectory, 'bundled-plugins/wework-personal/.claude-plugin/marketplace.json'),
+        'utf8'
+      )
+    ) as { plugins: Array<{ name: string }> }
+    expect(
+      codexMarketplace.plugins.find(plugin => plugin.name === 'wework-space')?.policy?.installation
+    ).toBe('INSTALLED_BY_DEFAULT')
+    expect(claudeMarketplace.plugins.some(plugin => plugin.name === 'wework-space')).toBe(true)
+    expect(existsSync(resolve(tauriDirectory, bundledWeworkSpaceDirectory, '.mcp.json'))).toBe(
+      false
+    )
+    expect(
+      existsSync(
+        resolve(tauriDirectory, bundledWeworkSpaceDirectory, 'skills/wework-project-space/SKILL.md')
+      )
+    ).toBe(true)
   })
 
   test('uses the shared release config generator in GitHub macOS releases', () => {

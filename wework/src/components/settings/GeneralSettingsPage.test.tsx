@@ -51,6 +51,7 @@ const importExternalContentMock = vi.hoisted(() => vi.fn())
 const getWegentUsageDisplayMock = vi.hoisted(() => vi.fn())
 const getRuntimeSettingsMock = vi.hoisted(() => vi.fn())
 const updateRuntimeSettingsMock = vi.hoisted(() => vi.fn())
+const refreshWorkListsMock = vi.hoisted(() => vi.fn())
 
 vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -143,6 +144,7 @@ describe('GeneralSettingsPage', () => {
     getWegentUsageDisplayMock.mockReset()
     getRuntimeSettingsMock.mockReset()
     updateRuntimeSettingsMock.mockReset()
+    refreshWorkListsMock.mockReset()
     importExternalContentMock.mockResolvedValue({
       source: 'codex',
       sourcePath: '/Users/test/.codex',
@@ -152,6 +154,7 @@ describe('GeneralSettingsPage', () => {
     getAppPreferencesMock.mockResolvedValue(defaultPreferences)
     getRuntimeSettingsMock.mockResolvedValue({ maxConcurrentTasks: 3 })
     updateRuntimeSettingsMock.mockImplementation(settings => Promise.resolve(settings))
+    refreshWorkListsMock.mockResolvedValue(undefined)
     updateAppPreferencesMock.mockImplementation(patch =>
       Promise.resolve({ ...defaultPreferences, ...patch })
     )
@@ -191,6 +194,7 @@ describe('GeneralSettingsPage', () => {
                 updateRuntimeSettings: updateRuntimeSettingsMock,
               },
             },
+            refreshWorkLists: refreshWorkListsMock,
           } as unknown as WorkbenchContextValue
         }
       >
@@ -207,6 +211,7 @@ describe('GeneralSettingsPage', () => {
     await waitFor(() => {
       expect(updateRuntimeSettingsMock).toHaveBeenCalledWith({ maxConcurrentTasks: 2 })
     })
+    expect(refreshWorkListsMock).toHaveBeenCalledOnce()
     expect(select).toHaveValue('2')
   })
 
@@ -233,6 +238,10 @@ describe('GeneralSettingsPage', () => {
   })
 
   test('persists the selected default workspace tab', async () => {
+    getAppPreferencesMock.mockResolvedValue({
+      ...defaultPreferences,
+      experimentalFeaturesEnabled: true,
+    })
     render(<GeneralSettingsPage />)
 
     const boardButton = await screen.findByTestId('general-default-workspace-tab-board-button')
@@ -250,6 +259,12 @@ describe('GeneralSettingsPage', () => {
       })
     })
     expect(boardButton).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  test('shows the default workspace tab setting while experimental features are disabled', async () => {
+    render(<GeneralSettingsPage />)
+    expect(await screen.findByTestId('general-default-workspace-tab-task-button')).toBeEnabled()
+    expect(screen.getByTestId('general-default-workspace-tab-board-button')).toBeInTheDocument()
   })
 
   test('keeps experimental features off by default and persists enabling them', async () => {
