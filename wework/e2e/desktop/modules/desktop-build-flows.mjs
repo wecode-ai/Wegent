@@ -469,17 +469,53 @@ async function buildDesktopApp(
     backgroundThrottling: 'disabled',
     focus: false,
   }))
+  const buildEnv = {
+    ...process.env,
+    VITE_WEWORK_DESKTOP_E2E_CONTROL_URL: controlUrl,
+    VITE_WEWORK_E2E_CLOUD_BACKEND_URL: cloudBackendUrl,
+    VITE_WEWORK_E2E_CLOUD_TOKEN: cloudToken,
+    VITE_WEWORK_E2E_MODEL_SERVER_URL: modelServerUrl,
+    VITE_WEWORK_E2E_LOCAL_MODELS_CATALOG_READY:
+      CLOUD_ONLY || CLOUD_FEATURES_ONLY ? 'true' : 'false',
+    VITE_WEWORK_E2E: 'true',
+    VITE_WEWORK_E2E_WORKTREE_CREATION_DELAY_MS: '1500',
+    VITE_WEWORK_E2E_TRANSCRIPT_PAGE_SIZE: String(E2E_TRANSCRIPT_PAGE_SIZE),
+    VITE_WEWORK_E2E_CODEX_HOME_INITIALIZATION: RUNS_PLUGIN_E2E ? 'true' : 'false',
+    VITE_WEWORK_E2E_SEED_LOCAL_MODELS: RUNS_PLUGIN_E2E || MEMORY_ONLY ? 'false' : 'true',
+    VITE_WEWORK_POSTHOG_HOST: modelServerUrl,
+    VITE_WEWORK_POSTHOG_KEY: TELEMETRY_TEST_PROJECT_KEY,
+    VITE_WEWORK_RELEASE_CHANNEL: 'stable',
+    VITE_WEWORK_RUNTIME_MODE: 'local-first',
+  }
   await runChecked(
-    'pnpm',
+    process.execPath,
+    [join(weworkDir, 'node_modules', 'typescript', 'bin', 'tsc'), '-b'],
+    {
+      cwd: weworkDir,
+      env: buildEnv,
+    }
+  )
+  await runChecked(
+    process.execPath,
+    [join(weworkDir, 'node_modules', 'vite', 'bin', 'vite.js'), 'build'],
+    {
+      cwd: weworkDir,
+      env: buildEnv,
+    }
+  )
+  await runChecked(
+    process.execPath,
     [
-      'exec',
-      'tauri',
+      join(weworkDir, 'node_modules', '@tauri-apps', 'cli', 'tauri.js'),
       'build',
       '--debug',
       '--no-bundle',
       '--config',
       JSON.stringify({
         identifier: appIdentifier,
+        build: {
+          beforeBuildCommand: null,
+        },
         app: {
           windows,
           security: {
@@ -499,24 +535,7 @@ async function buildDesktopApp(
     ],
     {
       cwd: weworkDir,
-      env: {
-        ...process.env,
-        VITE_WEWORK_DESKTOP_E2E_CONTROL_URL: controlUrl,
-        VITE_WEWORK_E2E_CLOUD_BACKEND_URL: cloudBackendUrl,
-        VITE_WEWORK_E2E_CLOUD_TOKEN: cloudToken,
-        VITE_WEWORK_E2E_MODEL_SERVER_URL: modelServerUrl,
-        VITE_WEWORK_E2E_LOCAL_MODELS_CATALOG_READY:
-          CLOUD_ONLY || CLOUD_FEATURES_ONLY ? 'true' : 'false',
-        VITE_WEWORK_E2E: 'true',
-        VITE_WEWORK_E2E_WORKTREE_CREATION_DELAY_MS: '1500',
-        VITE_WEWORK_E2E_TRANSCRIPT_PAGE_SIZE: String(E2E_TRANSCRIPT_PAGE_SIZE),
-        VITE_WEWORK_E2E_CODEX_HOME_INITIALIZATION: RUNS_PLUGIN_E2E ? 'true' : 'false',
-        VITE_WEWORK_E2E_SEED_LOCAL_MODELS: RUNS_PLUGIN_E2E || MEMORY_ONLY ? 'false' : 'true',
-        VITE_WEWORK_POSTHOG_HOST: modelServerUrl,
-        VITE_WEWORK_POSTHOG_KEY: TELEMETRY_TEST_PROJECT_KEY,
-        VITE_WEWORK_RELEASE_CHANNEL: 'stable',
-        VITE_WEWORK_RUNTIME_MODE: 'local-first',
-      },
+      env: buildEnv,
     }
   )
   const mainBinaryName = await readTauriMainBinaryName()
