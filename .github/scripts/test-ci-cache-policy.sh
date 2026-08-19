@@ -267,14 +267,6 @@ done
 
 # GitHub expressions are matched literally in workflow source.
 # shellcheck disable=SC2016
-playwright_key='playwright-chromium-v2-${{ steps.playwright-version.outputs.version }}'
-if ! grep -Fq "$playwright_key" "$workflow_dir/e2e-tests.yml" ||
-  ! grep -Fq "$playwright_key" "$warmup_workflow"; then
-  fail "Platform E2E and warmup must share the Playwright browser cache"
-fi
-
-# GitHub expressions are matched literally in workflow source.
-# shellcheck disable=SC2016
 if ! sed -n '/^  e2e-tests:/,/^  executor-e2e-tests:/p' \
   "$workflow_dir/e2e-tests.yml" |
   grep -F 'image: ${{ needs.prepare-platform-e2e-image.outputs.image }}' \
@@ -286,6 +278,37 @@ if ! sed -n '/^  e2e-tests:/,/^  executor-e2e-tests:/p' \
     "$workflow_dir/e2e-tests.yml" |
     grep -E 'install-playwright-(browser|system-deps)' >/dev/null; then
   fail "Platform E2E shards must consume the immutable Playwright image without runtime installs"
+fi
+
+# GitHub expressions are matched literally in workflow source.
+# shellcheck disable=SC2016
+if ! sed -n '/^  executor-e2e-tests:/,/^  merge-reports:/p' \
+  "$workflow_dir/e2e-tests.yml" |
+  grep -F 'prepare-platform-e2e-image' >/dev/null ||
+  ! sed -n '/^  executor-e2e-tests:/,/^  merge-reports:/p' \
+    "$workflow_dir/e2e-tests.yml" |
+    grep -F \
+    'PLATFORM_E2E_IMAGE: ${{ needs.prepare-platform-e2e-image.outputs.image }}' \
+      >/dev/null ||
+  ! sed -n '/^  executor-e2e-tests:/,/^  merge-reports:/p' \
+    "$workflow_dir/e2e-tests.yml" |
+    grep -F 'docker run --rm' >/dev/null ||
+  ! sed -n '/^  executor-e2e-tests:/,/^  merge-reports:/p' \
+    "$workflow_dir/e2e-tests.yml" |
+    grep -F -- '--network host' >/dev/null ||
+  sed -n '/^  executor-e2e-tests:/,/^  merge-reports:/p' \
+    "$workflow_dir/e2e-tests.yml" |
+    grep -E 'install-playwright-(browser|system-deps)' >/dev/null ||
+  sed -n '/^  executor-e2e-tests:/,/^  merge-reports:/p' \
+    "$workflow_dir/e2e-tests.yml" |
+    grep -F 'playwright-chromium-v2-' >/dev/null; then
+  fail "Executor E2E must run Playwright from the immutable dependency image"
+fi
+
+if grep -R -E \
+  'install-playwright-(browser|system-deps)|playwright-chromium-v2-' \
+  "$workflow_dir/e2e-tests.yml" "$warmup_workflow" >/dev/null; then
+  fail "CI workflows must not install or cache Playwright outside dependency images"
 fi
 
 if ! grep -Fq 'docker/wework-e2e/browser.Dockerfile' \
