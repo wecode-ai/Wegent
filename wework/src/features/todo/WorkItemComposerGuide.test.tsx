@@ -6,6 +6,12 @@ import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import type { ProjectSpaceApi } from '@/features/todo/projectSpaceSelection'
 import { WorkItemComposerGuide } from './WorkItemComposerGuide'
 
+const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
+
+vi.mock('@/features/experimental-features/useExperimentalFeaturesEnabled', () => ({
+  useExperimentalFeaturesEnabled: () => experimentalFeatures.enabled,
+}))
+
 const project = {
   id: 'work-items',
   project_key: 'WORK',
@@ -53,6 +59,13 @@ const taskBindings = [
 ]
 
 describe('WorkItemComposerGuide', () => {
+  test('stays hidden while experimental features are disabled', () => {
+    experimentalFeatures.enabled = false
+    const { container } = render(<WorkItemComposerGuide project={project} />)
+    expect(container).toBeEmptyDOMElement()
+    experimentalFeatures.enabled = true
+  })
+
   test('shows the default workspace as the selected destination for a new task', async () => {
     const user = userEvent.setup()
     const onSelectProject = vi.fn()

@@ -901,7 +901,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const currentRuntimeProject = state.runtimeWork?.projects.find(
     projectWork => currentProject && runtimeProjectUiId(projectWork.project) === currentProject.id
   )?.project
-  const defaultProjectSpace = currentRuntimeProject?.defaultProjectSpace ?? null
+  const defaultProjectSpace = experimentalFeaturesEnabled
+    ? (currentRuntimeProject?.defaultProjectSpace ?? null)
+    : null
   const paneKey = getWorkbenchPaneKey(pane)
   useLayoutEffect(() => {
     paneActiveRef.current = paneActive
@@ -1662,13 +1664,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       ? {
           deviceId: activeDeviceId,
           path: soleActiveDeviceWorkspacePath,
-          source: 'runtime' as const,
-        }
-      : null) ??
-    (currentRuntimeTask && (currentRuntimeTask.workspacePath || runtimeTaskWorkspacePath)
-      ? {
-          deviceId: currentRuntimeTask.deviceId,
-          path: currentRuntimeTask.workspacePath || runtimeTaskWorkspacePath!,
           source: 'runtime' as const,
         }
       : null)

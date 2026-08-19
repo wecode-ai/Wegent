@@ -93,6 +93,7 @@ class ProjectAutomationExecution:
                 raise RuntimeError("Automation owner or project is unavailable")
             self._ensure_run_task(db, project=project, owner=owner, rule=rule, run=run)
             context = self._automation_context(rule, run)
+            instruction = self._run_instruction(rule, run)
             configured_mode = assignment_mode(metadata(rule))
             if configured_mode == "manual":
                 self._assign_project_robot(
@@ -102,7 +103,7 @@ class ProjectAutomationExecution:
                     run=run,
                     agent_id=rule.assignee_agent_id,
                     context=context,
-                    instruction=rule.description or "",
+                    instruction=instruction,
                 )
             else:
                 configured_manager = manager_type(metadata(rule))
@@ -169,18 +170,19 @@ class ProjectAutomationExecution:
         except ZoneInfoNotFoundError:
             local_time = scheduled_for
         context = self._automation_context(rule, run)
+        instruction = self._run_instruction(rule, run)
         routed = loop_item_provider_router.create(
             db,
             project,
             owner,
             LoopItemCreate(
                 title=f"{rule.title} · {local_time:%Y-%m-%d %H:%M}",
-                description=rule.description or "",
+                description=instruction,
                 priority="medium",
                 tags=["automation"],
             ),
             automation_context=context,
-            instruction=rule.description or "",
+            instruction=instruction,
             assign_creator_if_unassigned=False,
         )
         item_id = routed.values.get("id")
@@ -399,10 +401,15 @@ class ProjectAutomationExecution:
             ),
             "请读取候选执行者并按调度要求完成分派，不要执行任务。",
         ]
-        instruction = (rule.description or "").strip()
+        instruction = ProjectAutomationExecution._run_instruction(rule, run).strip()
         if instruction:
             sections.append(instruction)
         return "\n\n".join(sections)
+
+    @staticmethod
+    def _run_instruction(rule: ProjectAutomationRule, run: ProjectAutomationRun) -> str:
+        override = metadata(run).get("instruction_override")
+        return str(override) if isinstance(override, str) else (rule.description or "")
 
     def _create_manager_activity(
         self,
@@ -696,6 +703,12 @@ class ProjectAutomationExecution:
             run.completed_at = utcnow()
             run.version += 1
             run_changed = True
+        if run_changed:
+            from app.services.project_workflow_projection import (
+                sync_automation_workflow_node,
+            )
+
+            sync_automation_workflow_node(db, run)
 
         if backend_task_id is not None and run.backend_task_id != backend_task_id:
             run.backend_task_id = backend_task_id
@@ -776,6 +789,11 @@ class ProjectAutomationExecution:
         run.status = "failed"
         run.description = error[:2000]
         run.version += 1
+        from app.services.project_workflow_projection import (
+            sync_automation_workflow_node,
+        )
+
+        sync_automation_workflow_node(db, run)
         self.finish_activity(
             db,
             run=run,
@@ -950,6 +968,11 @@ class ProjectAutomationProcessor:
         run.assignee_agent_id = ""
         run.device_id = ""
         run.version += 1
+        from app.services.project_workflow_projection import (
+            sync_automation_workflow_node,
+        )
+
+        sync_automation_workflow_node(db, run)
         db.commit()
         db.refresh(run)
 

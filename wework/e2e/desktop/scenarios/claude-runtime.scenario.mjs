@@ -15,7 +15,11 @@ import {
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const ACTIVE_WORKSPACE_TAB_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
-const COMPOSER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"][contenteditable="true"]`
+const ACTIVE_WORKSPACE_WORKBENCH_SELECTOR =
+  `${ACTIVE_WORKSPACE_TAB_SELECTOR} ${ACTIVE_WORKBENCH_SELECTOR}`
+const COMPOSER_SELECTOR = `${ACTIVE_WORKSPACE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"][contenteditable="true"]`
+const ACTIVE_PROJECT_WORK_BUTTON =
+  `${ACTIVE_WORKSPACE_WORKBENCH_SELECTOR} [data-testid="project-work-button"]`
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..')
 const CLAUDE_BINARY = join(
   REPOSITORY_ROOT,
@@ -193,8 +197,8 @@ async function configureClaude(control, executablePath, version, timeoutMs) {
 }
 
 async function createLocalProject(control, workspacePath, timeoutMs) {
-  await control.command('waitFor', '[data-testid="project-work-button"]', { timeoutMs })
-  await control.command('click', '[data-testid="project-work-button"]')
+  await control.command('waitFor', ACTIVE_PROJECT_WORK_BUTTON, { timeoutMs, visible: true })
+  await control.command('click', ACTIVE_PROJECT_WORK_BUTTON)
   await control.command('click', '[data-testid="add-local-project-option"]')
   await control.command('waitFor', '[data-testid="device-folder-path-input"]', { timeoutMs })
   await control.command('fill', '[data-testid="device-folder-path-input"]', {
@@ -211,13 +215,14 @@ async function createLocalProject(control, workspacePath, timeoutMs) {
   await control.command('clickWhenEnabled', '[data-testid="confirm-local-project-create-button"]', {
     timeoutMs,
   })
-  await control.command('waitFor', '[data-testid="project-work-button"]', {
+  await control.command('waitFor', ACTIVE_PROJECT_WORK_BUTTON, {
     text: 'claude-local-runtime-e2e',
     timeoutMs,
+    visible: true,
   })
 }
 
-async function createRemoteProject(control, workspacePath, timeoutMs) {
+async function createRemoteProject(control, workspacePath, timeoutMs, captureScreenshot) {
   await control.command('click', '[data-testid="projects-create-button"]')
   await control.command('click', '[data-testid="project-create-remote-option"]')
   await control.command('waitFor', '[data-testid="standalone-remote-device-select"]', {
@@ -259,22 +264,33 @@ async function createRemoteProject(control, workspacePath, timeoutMs) {
   )
   assert.ok(remoteProjectRow, 'The remote Claude project identity was unavailable')
   await control.command(
-    'clickWhenEnabled',
-    `[data-testid="${remoteProjectRow}"] [data-testid="project-new-conversation-button"]`,
-    { timeoutMs }
+    'clickDescendantInElementWithText',
+    '[data-testid^="project-row-"]',
+    {
+      text: 'claude-remote-workspace',
+      target: '[data-testid="project-new-conversation-button"]',
+      timeoutMs,
+      visible: true,
+    }
   )
-  await control.command('waitFor', '[data-testid="project-work-button"]', {
+  await control.command('waitFor', ACTIVE_PROJECT_WORK_BUTTON, {
     text: 'claude-remote-workspace',
     stableMs: 300,
     timeoutMs,
+    visible: true,
   })
-  await control.command('waitFor', COMPOSER_SELECTOR, { stableMs: 300, timeoutMs })
+  await control.command('waitFor', COMPOSER_SELECTOR, {
+    stableMs: 300,
+    timeoutMs,
+    visible: true,
+  })
+  await captureScreenshot(control, 'claude-runtime-remote-project-selected.png')
 }
 
 async function selectClaudeRuntime(control, modelLabel, timeoutMs) {
   await control.command(
     'click',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workbench-harness-selector"]`
+    `${ACTIVE_WORKSPACE_WORKBENCH_SELECTOR} [data-testid="workbench-harness-selector"]`
   )
   await control.command(
     'clickWhenEnabled',
@@ -285,7 +301,7 @@ async function selectClaudeRuntime(control, modelLabel, timeoutMs) {
   )
   await control.command(
     'click',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workbench-harness-model-selector"]`
+    `${ACTIVE_WORKSPACE_WORKBENCH_SELECTOR} [data-testid="workbench-harness-model-selector"]`
   )
   await control.command(
     'clickDescendantInElementWithText',
@@ -294,9 +310,10 @@ async function selectClaudeRuntime(control, modelLabel, timeoutMs) {
       text: modelLabel,
       target: 'span',
       timeoutMs,
+      visible: true,
     }
   )
-  await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs })
+  await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs, visible: true })
 }
 
 async function sendNewClaudeTask(control, prompt, completion, runtimeTimeoutMs) {
@@ -315,7 +332,12 @@ async function sendNewClaudeTask(control, prompt, completion, runtimeTimeoutMs) 
   return taskRow
 }
 
-export async function createDesktopScenario({ resultDir, uiTimeoutMs, workspacePath }) {
+export async function createDesktopScenario({
+  captureScreenshot,
+  resultDir,
+  uiTimeoutMs,
+  workspacePath,
+}) {
   await access(CLAUDE_BINARY, constants.X_OK)
   const { stdout } = await execFileAsync(CLAUDE_BINARY, ['--version'])
   const claudeVersion = stdout.trim().split('\n')[0]
@@ -503,7 +525,12 @@ export async function createDesktopScenario({ resultDir, uiTimeoutMs, workspaceP
         'The local Claude Code task rendered content emitted after cancellation'
       )
 
-      await createRemoteProject(control, remoteWorkspacePath, uiTimeoutMs)
+      await createRemoteProject(
+        control,
+        remoteWorkspacePath,
+        uiTimeoutMs,
+        captureScreenshot
+      )
       await selectClaudeRuntime(control, REMOTE_MODEL_LABEL, uiTimeoutMs)
       const remoteTaskRow = await sendNewClaudeTask(
         control,
@@ -511,6 +538,7 @@ export async function createDesktopScenario({ resultDir, uiTimeoutMs, workspaceP
         REMOTE_INITIAL_COMPLETION,
         runtimeTimeoutMs
       )
+      await captureScreenshot(control, 'claude-runtime-remote-completed.png')
       assert.equal(
         (await readFile(join(remoteWorkspacePath, REMOTE_ARTIFACT), 'utf8')).trim(),
         REMOTE_ARTIFACT_CONTENT,

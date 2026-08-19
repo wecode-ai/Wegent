@@ -532,6 +532,28 @@ describe('ProjectWorkBar', () => {
     expect(onSelectStandaloneDevice).toHaveBeenCalledWith('local-device')
   })
 
+  test('does not offer clearing when the selected project is required', async () => {
+    render(
+      <ProjectWorkBar
+        projects={[project]}
+        devices={[localDevice]}
+        runtimeWork={runtimeWork}
+        currentProject={project}
+        currentProjectId={project.id}
+        executionMode="current_workspace"
+        showClearButton={false}
+        onSelectProject={vi.fn()}
+        onSelectStandaloneDevice={vi.fn()}
+        onExecutionModeChange={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('project-work-button'))
+
+    expect(screen.queryByTestId('no-project-option')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('clear-project-button')).not.toBeInTheDocument()
+  })
+
   test('opens the project chooser when the external open signal changes', () => {
     const props = {
       projects: [project],
@@ -1185,6 +1207,29 @@ describe('ProjectWorkBar', () => {
     expect(screen.getByTestId('project-worktree-branch-button')).toHaveTextContent(
       'runtime/worktree'
     )
+  })
+
+  test('shows the inherited branch while execution controls are locked', () => {
+    render(
+      <ProjectWorkBar
+        projects={[project]}
+        devices={[localDevice]}
+        currentProject={project}
+        currentProjectId={project.id}
+        currentStandaloneDeviceId={null}
+        executionMode="git_worktree"
+        executionModeLocked
+        onSelectProject={vi.fn()}
+        onSelectStandaloneDevice={vi.fn()}
+        onExecutionModeChange={vi.fn()}
+        branchName="feature/login"
+        branchLoading={false}
+      />
+    )
+
+    expect(screen.getByTestId('execution-mode-button')).toHaveTextContent('新工作树')
+    expect(screen.getByTestId('project-work-branch-readonly')).toHaveTextContent('feature/login')
+    expect(screen.queryByTestId('project-worktree-branch-button')).not.toBeInTheDocument()
   })
 
   test('allows worktree mode when the project main directory is detached', async () => {

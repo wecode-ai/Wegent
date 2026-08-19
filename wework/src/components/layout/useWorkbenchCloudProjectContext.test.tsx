@@ -764,7 +764,7 @@ describe('useWorkbenchCloudProjectContext', () => {
     expect(workspaceTabs.selectTab).toHaveBeenCalledOnce()
     expect(workspaceTabs.selectTab).toHaveBeenCalledWith(boardTab.id, {
       title: '我的任务',
-      contentRoute: `/todo?projectStore=${cloudProject.project_store}&projectId=${cloudProject.id}&itemId=${item.id}`,
+      contentRoute: `/todo?projectStore=${cloudProject.project_store}&projectId=${cloudProject.id}`,
     })
     expect(workspaceTabs.tabs).toEqual([taskTab, boardTab])
   })
