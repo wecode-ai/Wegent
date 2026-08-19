@@ -34,17 +34,21 @@ describe('ExternalWorkbenchPluginLoader', () => {
     const runtime = new WorkbenchPluginRuntime()
     await runtime.initialize({ id: 'test', entries: [] })
     const dispose = vi.fn()
+    const receivedReactFactory = vi.fn()
     const importer = vi.fn(async () => ({
       default: {
         activate: ({
           apps,
+          react,
           routes,
           settings,
         }: {
           apps: typeof runtime.apps
+          react: { createElement: (...args: unknown[]) => unknown }
           routes: typeof runtime.routes
           settings: typeof runtime.settings
         }) => {
+          receivedReactFactory(react.createElement)
           const disposeRoute = routes.register({
             id: 'external.route',
             path: '/external',
@@ -87,6 +91,7 @@ describe('ExternalWorkbenchPluginLoader', () => {
     expect(runtime.apps.resolve('external')?.path).toBe('/external')
     expect(runtime.settings.resolve('external')?.path).toBe('/settings/external')
     expect(importer).toHaveBeenCalledWith('asset://localhost//plugins/example/frontend.js')
+    expect(receivedReactFactory).toHaveBeenCalledWith(expect.any(Function))
 
     await loader.unload('example')
     expect(runtime.routes.resolve('/external')).toBeNull()

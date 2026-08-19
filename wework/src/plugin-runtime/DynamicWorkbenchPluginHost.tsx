@@ -1,8 +1,7 @@
 import { useEffect } from 'react'
 
-import { createHttpClient } from '@/api/http'
-import { createPluginApi } from '@/api/plugins'
-import { useCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
+import { LOCAL_PLUGIN_SKILLS_CHANGED_EVENT } from '@/features/plugins/pluginTrial'
 
 import { getWorkbenchPluginRuntime } from './bootstrap'
 import {
@@ -22,49 +21,43 @@ function filterDesiredPlugins(
 }
 
 export function DynamicWorkbenchPluginHost() {
-  const cloud = useCloudConnection()
-
   useEffect(() => {
     const loader = new ExternalWorkbenchPluginLoader(getWorkbenchPluginRuntime())
+    const pluginApi = createLocalCodexPluginApi()
     let cancelled = false
+    let generation = 0
 
     const load = async () => {
-      const localPlugins = await listDeviceWorkbenchPlugins()
-      let desiredNames: Set<string> | null = null
-      if (cloud.isConnected && cloud.apiBaseUrl) {
-        const api = createPluginApi(
-          createHttpClient({
-            baseUrl: cloud.apiBaseUrl,
-            getToken: () => cloud.token,
-            redirectOnUnauthorized: false,
-          })
-        )
-        const installed = await api.listInstalledPlugins()
-        desiredNames = new Set(
-          installed.items
-            .filter(
-              plugin =>
-                plugin.spec.enabled &&
-                plugin.spec.installState !== 'uninstalled' &&
-                plugin.spec.components.workbench
-            )
-            .map(plugin => plugin.spec.source.pluginKey)
-        )
-      }
-      if (!cancelled) {
+      const currentGeneration = ++generation
+      const [localPlugins, installed] = await Promise.all([
+        listDeviceWorkbenchPlugins(),
+        pluginApi.listInstalledPlugins(),
+      ])
+      const desiredNames = new Set(
+        installed.items
+          .filter(plugin => plugin.spec.enabled && plugin.spec.installState !== 'uninstalled')
+          .map(plugin => plugin.spec.source.pluginKey)
+      )
+      if (!cancelled && currentGeneration === generation) {
         await loader.reconcile(filterDesiredPlugins(localPlugins, desiredNames))
       }
     }
 
-    void load().catch(error => {
-      console.error('[Wework] Failed to load workbench plugins:', error)
-    })
+    const refresh = () => {
+      void load().catch(error => {
+        console.error('[Wework] Failed to load workbench plugins:', error)
+      })
+    }
+
+    window.addEventListener(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT, refresh)
+    refresh()
 
     return () => {
       cancelled = true
+      window.removeEventListener(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT, refresh)
       void loader.dispose()
     }
-  }, [cloud.apiBaseUrl, cloud.isConnected, cloud.serviceKey, cloud.token])
+  }, [])
 
   return null
 }

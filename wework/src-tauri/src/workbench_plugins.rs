@@ -205,8 +205,7 @@ fn collect_plugin_roots(directory: &Path, depth: usize, output: &mut Vec<PathBuf
     }
 }
 
-#[tauri::command]
-pub fn workbench_plugin_list() -> Vec<InspectedWorkbenchPlugin> {
+fn list_workbench_plugins() -> Vec<InspectedWorkbenchPlugin> {
     let mut roots = Vec::new();
     for search_root in plugin_search_roots() {
         collect_plugin_roots(&search_root, 6, &mut roots);
@@ -217,6 +216,13 @@ pub fn workbench_plugin_list() -> Vec<InspectedWorkbenchPlugin> {
         .into_iter()
         .filter_map(|root| inspect_plugin(root.to_string_lossy().as_ref()).ok())
         .collect()
+}
+
+#[tauri::command]
+pub async fn workbench_plugin_list() -> Result<Vec<InspectedWorkbenchPlugin>, String> {
+    tauri::async_runtime::spawn_blocking(list_workbench_plugins)
+        .await
+        .map_err(|error| format!("Failed to join Workbench plugin scan: {error}"))
 }
 
 #[tauri::command]

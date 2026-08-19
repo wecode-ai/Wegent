@@ -1,5 +1,6 @@
 import { convertFileSrc, invoke, isTauri } from '@tauri-apps/api/core'
 import type { Plugin } from '@deepseek-ai/cordis'
+import { createElement } from 'react'
 
 import type { WorkbenchRouteRegistry } from './routes'
 import type { WorkbenchSlotRegistry } from './slots'
@@ -44,6 +45,9 @@ export interface WorkbenchDesktopClient {
 export interface WorkbenchPluginApi {
   id: string
   manifest: WorkbenchPluginManifest
+  react: {
+    createElement: typeof createElement
+  }
   routes: WorkbenchRouteRegistry
   slots: WorkbenchSlotRegistry
   settings: WorkbenchSettingsRegistry
@@ -149,6 +153,7 @@ export class ExternalWorkbenchPluginLoader {
         const dispose = await module.activate({
           id,
           manifest: plugin.manifest,
+          react: { createElement },
           routes: ctx.workbenchRoutes,
           slots: ctx.workbenchSlots,
           settings: ctx.workbenchSettings,

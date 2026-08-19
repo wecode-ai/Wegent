@@ -89,34 +89,6 @@ class PluginConnectorComponent(BaseModel):
     )
 
 
-class WorkbenchFrontendModule(BaseModel):
-    """Same-realm frontend entry exported by a Wework plugin package."""
-
-    entry: str
-    export: str = "default"
-    sha256: str
-
-
-class WorkbenchDesktopSidecar(BaseModel):
-    """Desktop JSON-RPC sidecar declared by a Wework plugin package."""
-
-    command: str
-    args: List[str] = Field(default_factory=list)
-    sha256: str
-    capabilities: List[str] = Field(default_factory=list)
-
-
-class WorkbenchPluginComponent(BaseModel):
-    """Optional Wework workbench runtime contribution."""
-
-    apiVersion: Literal["1"] = "1"
-    required: bool = False
-    pinnedToClientVersion: bool = False
-    clientVersion: Optional[str] = None
-    frontend: Optional[WorkbenchFrontendModule] = None
-    desktop: Optional[WorkbenchDesktopSidecar] = None
-
-
 class InstalledPluginComponents(BaseModel):
     """Cross-runtime plugin component inventory."""
 
@@ -130,7 +102,6 @@ class InstalledPluginComponents(BaseModel):
     monitors: List[PluginPathComponent] = Field(default_factory=list)
     bins: List[PluginPathComponent] = Field(default_factory=list)
     settings: Optional[Dict[str, Any]] = None
-    workbench: Optional[WorkbenchPluginComponent] = None
 
 
 class PluginInterface(BaseModel):
