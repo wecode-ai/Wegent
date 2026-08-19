@@ -9,24 +9,21 @@ from shared.codex_model_catalog import (
 
 
 def test_catalog_id_config_candidates_are_validated_independently() -> None:
-    assert (
-        codex_catalog_model_id_from_config(
-            {
-                "codex_catalog_model_id": "  ",
-                "codexCatalogModelId": " operator-catalog ",
-            }
-        )
-        == "operator-catalog"
+    blank_primary_result = codex_catalog_model_id_from_config(
+        {
+            "codex_catalog_model_id": "  ",
+            "codexCatalogModelId": " operator-catalog ",
+        }
     )
-    assert (
-        codex_catalog_model_id_from_config(
-            {
-                "codex_catalog_model_id": {"invalid": True},
-                "codexCatalogModelId": "alias-catalog",
-            }
-        )
-        == "alias-catalog"
+    non_string_primary_result = codex_catalog_model_id_from_config(
+        {
+            "codex_catalog_model_id": {"invalid": True},
+            "codexCatalogModelId": "alias-catalog",
+        }
     )
+
+    assert blank_primary_result == "operator-catalog"
+    assert non_string_primary_result == "alias-catalog"
 
 
 def test_resolves_exact_upstream_model_with_matching_api_format() -> None:
