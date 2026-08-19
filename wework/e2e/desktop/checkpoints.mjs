@@ -5,6 +5,7 @@ export const DESKTOP_CHECKPOINTS = [
   'telemetry-consent',
   'automation-lifecycle',
   'project-automation',
+  'external-event-subscription',
   'project-assignment-notification',
   'offline-local-project-space',
   'plugin-auto-update',

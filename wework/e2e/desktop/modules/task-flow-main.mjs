@@ -830,6 +830,24 @@ last_updated = "2026-07-30T00:00:00Z"`
       return
     }
 
+    if (DESKTOP_SEGMENT === 'external-event-subscription') {
+      phase = 'external-event-subscription-scenario'
+      assert.ok(
+        desktopScenario,
+        'The external-event-subscription checkpoint requires WEWORK_E2E_DESKTOP_SCENARIO_MODULE'
+      )
+      await desktopScenario.verify(control)
+      await writeFile(
+        join(resultDir, 'model-requests.json'),
+        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+        'utf8'
+      )
+      console.log(
+        `Wework desktop external-event-subscription checkpoint passed. Evidence: ${resultDir}`
+      )
+      return
+    }
+
     if (DESKTOP_SEGMENT === 'remote-device-onboarding') {
       phase = 'remote-device-onboarding'
       await verifyRemoteDockerCommandFlow(control, cloudEnvironment)
