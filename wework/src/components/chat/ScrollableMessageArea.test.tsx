@@ -3,7 +3,10 @@ import { createRef } from 'react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { ScrollableMessageArea } from './ScrollableMessageArea'
 import { MessageTurnNavigation } from './MessageTurnNavigation'
-import { getConversationScrollSnapshot } from '@/features/workbench/runtimeConversationCache'
+import {
+  cacheConversationScrollSnapshot,
+  getConversationScrollSnapshot,
+} from '@/features/workbench/runtimeConversationCache'
 import { projectRuntimeConversationTurns } from '@/features/workbench/runtimeConversationTurns'
 
 function mockRect(element: Element, top: number, bottom: number) {
@@ -2063,6 +2066,79 @@ describe('ScrollableMessageArea', () => {
     })
     expect(content).toBeInTheDocument()
     vi.stubGlobal('ResizeObserver', originalResizeObserver)
+  })
+
+  test('does not save stale turn navigation into a newly opened conversation', () => {
+    const messagesA = [
+      {
+        id: 'stale-navigation-user-1',
+        role: 'user' as const,
+        content: '旧会话第一条需求',
+        status: 'done' as const,
+        createdAt: '2026-05-29T00:00:00.000Z',
+      },
+      {
+        id: 'stale-navigation-assistant-1',
+        role: 'assistant' as const,
+        content: '旧会话回复',
+        status: 'done' as const,
+        createdAt: '2026-05-29T00:00:01.000Z',
+      },
+      {
+        id: 'stale-navigation-user-2',
+        role: 'user' as const,
+        content: '旧会话最新需求',
+        status: 'done' as const,
+        createdAt: '2026-05-29T00:00:02.000Z',
+      },
+    ]
+    const messagesB = [
+      {
+        id: 'stale-navigation-new-conversation',
+        role: 'assistant' as const,
+        content: '新会话内容',
+        status: 'done' as const,
+        createdAt: '2026-05-29T00:01:00.000Z',
+      },
+    ]
+    cacheConversationScrollSnapshot('stale-navigation-b', {
+      distanceFromBottomPx: 420,
+      pinnedToBottom: false,
+    })
+    const { rerender } = render(
+      <ScrollableMessageArea conversationKey="stale-navigation-a" messages={messagesA} />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    const firstMessageAnchor = screen.getByText('旧会话第一条需求').closest('[data-message-id]')!
+    Object.defineProperty(scroller, 'clientHeight', { value: 300, configurable: true })
+    Object.defineProperty(scroller, 'scrollHeight', { value: 1200, configurable: true })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 700,
+      writable: true,
+      configurable: true,
+    })
+    scroller.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      if (typeof top === 'number') scroller.scrollTop = top
+    })
+    mockRect(scroller, 0, 300)
+    mockScrollRelativeRect(firstMessageAnchor, scroller, 120, 60)
+
+    fireEvent.resize(window)
+    flushScheduledTimers()
+    fireEvent.click(screen.getAllByTestId('message-turn-navigation-marker')[0])
+    rerender(<ScrollableMessageArea conversationKey="stale-navigation-b" messages={messagesB} />)
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 480,
+      writable: true,
+      configurable: true,
+    })
+    act(() => vi.runOnlyPendingTimers())
+
+    expect(getConversationScrollSnapshot('stale-navigation-b')).toEqual({
+      distanceFromBottomPx: 420,
+      pinnedToBottom: false,
+    })
   })
 
   test('jumps to the resolved client message id after loading an older turn', async () => {
