@@ -66,6 +66,10 @@ def test_render_selected_knowledge_prompt_preserves_provider_scopes() -> None:
     assert "must not use general knowledge" in prompt
     assert "permission denial" in prompt
     assert "tool failure" in prompt
+    assert "search is unavailable or unsupported" in prompt
+    assert "native listing and exact-read capabilities" in prompt
+    assert "insufficient to support a precision-sensitive claim" in prompt
+    assert "read the relevant original document content" in prompt
     assert (
         "must not claim that the knowledge sources contain no relevant content"
         in prompt

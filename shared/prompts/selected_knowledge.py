@@ -52,6 +52,8 @@ def render_selected_knowledge_prompt(
         "- Create or update content only when the user explicitly requests a management action.",
         "- This scope guides model routing; the provider remains the authority for access control.",
         "- If a provider cannot perform a scoped search, traverse its native hierarchy or read the exact resource instead of using an unscoped global search.",
+        "- If search is unavailable or unsupported for a selected source, use the provider's native listing and exact-read capabilities to gather evidence.",
+        "- If search results are insufficient to support a precision-sensitive claim, read the relevant original document content before answering.",
         "</selected_knowledge_guidance>",
     ]
     return "\n".join([*source_lines, *guidance])
