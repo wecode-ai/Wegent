@@ -13,6 +13,12 @@ def test_render_selected_knowledge_prompt_preserves_provider_scopes() -> None:
                 provider="wegent",
                 knowledge_base_id="12",
                 knowledge_base_name="产品知识",
+                retrieval_capabilities={
+                    "retrieval_mode": "hybrid",
+                    "semantic_query": True,
+                    "keywords": True,
+                    "phrases": True,
+                },
             ),
             SelectedKnowledgeRef(
                 provider="dingtalk",
@@ -45,6 +51,8 @@ def test_render_selected_knowledge_prompt_preserves_provider_scopes() -> None:
     assert prompt.count("<source ") == 3
     assert prompt.count("<resource ") == 2
     assert 'provider="wegent"' in prompt
+    assert 'retrieval_mode="hybrid"' in prompt
+    assert 'search_hints="semantic_query,keywords,phrases"' in prompt
     assert 'scope_type="folder"' in prompt
     assert 'resource_id="folder-1"' in prompt
     assert "AP &amp; Docs" in prompt
@@ -58,3 +66,24 @@ def test_render_selected_knowledge_prompt_preserves_provider_scopes() -> None:
 def test_render_selected_knowledge_prompt_ignores_invalid_refs() -> None:
     assert render_selected_knowledge_prompt([]) == ""
     assert render_selected_knowledge_prompt([{"provider": "demo"}]) == ""
+
+
+def test_render_selected_knowledge_prompt_omits_empty_search_hints() -> None:
+    prompt = render_selected_knowledge_prompt(
+        [
+            SelectedKnowledgeRef(
+                provider="wegent",
+                knowledge_base_id="12",
+                knowledge_base_name="Vector Docs",
+                retrieval_capabilities={
+                    "retrieval_mode": "vector",
+                    "semantic_query": False,
+                    "keywords": False,
+                    "phrases": False,
+                },
+            )
+        ]
+    )
+
+    assert 'retrieval_mode="vector"' in prompt
+    assert "search_hints=" not in prompt

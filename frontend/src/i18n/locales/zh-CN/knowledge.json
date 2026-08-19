@@ -1137,7 +1137,8 @@
       "modelDescription": "仓库代码会发送给该模型，请自行评估暴露风险。",
       "modelPlaceholder": "选择模型",
       "modelRequired": "请选择生成模型",
-      "created": "代码 Wiki 已创建，正在生成内容。"
+      "created": "代码 Wiki 已创建，正在生成内容。",
+      "retrievalProfileUnavailable": "Code Wiki 检索 Profile 不可用，将使用自动默认配置。"
     },
     "reader": {
       "regenerate": "重新生成",

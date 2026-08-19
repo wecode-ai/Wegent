@@ -407,6 +407,13 @@
     "marketplace_tag_sort": "排序值",
     "marketplace_tag_enabled": "启用",
     "marketplace_tag_disabled": "停用",
+    "code_wiki_profile_title": "Code Wiki 检索默认 Profile",
+    "code_wiki_profile_description": "新建 Code Wiki 的初始配置，只能引用公共资源。",
+    "code_wiki_profile_health_missing": "尚未配置 Profile，新建 Code Wiki 将使用自动默认值。",
+    "code_wiki_profile_health_valid": "Profile 引用的公共资源可用。",
+    "code_wiki_profile_health_invalid": "Profile 无法应用，新建 Code Wiki 将使用自动默认值。",
+    "code_wiki_profile_saved": "Code Wiki 检索默认 Profile 已保存",
+    "code_wiki_profile_save_failed": "保存 Code Wiki 检索默认 Profile 失败",
     "version": "版本",
     "success": {
       "updated": "配置更新成功"

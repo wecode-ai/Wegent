@@ -407,6 +407,13 @@
     "marketplace_tag_sort": "Sort Value",
     "marketplace_tag_enabled": "Enabled",
     "marketplace_tag_disabled": "Disabled",
+    "code_wiki_profile_title": "Code Wiki Retrieval Default Profile",
+    "code_wiki_profile_description": "Initial settings for new Code Wikis. References must name public resources.",
+    "code_wiki_profile_health_missing": "No profile is configured; new Code Wikis use automatic defaults.",
+    "code_wiki_profile_health_valid": "The profile references active public resources.",
+    "code_wiki_profile_health_invalid": "The profile cannot be applied; new Code Wikis use automatic defaults.",
+    "code_wiki_profile_saved": "Code Wiki retrieval default profile saved",
+    "code_wiki_profile_save_failed": "Failed to save Code Wiki retrieval default profile",
     "version": "Version",
     "success": {
       "updated": "Configuration updated successfully"

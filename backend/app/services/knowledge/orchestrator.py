@@ -49,6 +49,7 @@ from app.services.knowledge.document_read_service import (
 )
 from app.services.knowledge.knowledge_service import KnowledgeService
 from app.stores.tasks import task_store
+from shared.models import SearchHints
 
 logger = logging.getLogger(__name__)
 
@@ -2760,6 +2761,7 @@ class KnowledgeOrchestrator:
         reserved_output_tokens: int = 4096,
         context_buffer_ratio: float = 0.1,
         max_direct_chunks: int = 500,
+        search_hints: SearchHints | None = None,
     ) -> Dict[str, Any]:
         """Retrieve knowledge with automatic routing and gateway support.
 
@@ -2782,6 +2784,7 @@ class KnowledgeOrchestrator:
             reserved_output_tokens: Tokens reserved for model output.
             context_buffer_ratio: Safety buffer ratio for context window.
             max_direct_chunks: Maximum chunks allowed for direct injection.
+            search_hints: Optional dense and sparse query-planning hints.
 
         Returns:
             Dict with keys:
@@ -2856,6 +2859,7 @@ class KnowledgeOrchestrator:
             reserved_output_tokens=reserved_output_tokens,
             context_buffer_ratio=context_buffer_ratio,
             max_direct_chunks=max_direct_chunks,
+            search_hints=search_hints,
             restricted_mode=False,
         )
 

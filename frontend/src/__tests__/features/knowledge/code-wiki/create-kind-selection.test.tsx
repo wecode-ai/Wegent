@@ -11,6 +11,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { CreateKnowledgeBaseDialog } from '@/features/knowledge/document/components/CreateKnowledgeBaseDialog'
 import { codeWikiApi } from '@/apis/code-wiki'
+import { getCodeWikiRetrievalProfile } from '@/apis/knowledge'
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
@@ -18,6 +19,27 @@ jest.mock('@/hooks/useTranslation', () => ({
 
 jest.mock('@/apis/code-wiki', () => ({
   codeWikiApi: { resolve: jest.fn().mockResolvedValue(null) },
+}))
+
+jest.mock('@/apis/knowledge', () => ({
+  getMultimodalDefaultPrompts: jest.fn().mockResolvedValue({
+    enabled: false,
+    video_prompt: '',
+    image_prompt: '',
+  }),
+  getCodeWikiRetrievalProfile: jest.fn().mockResolvedValue({
+    version: 1,
+    retrieval_config: {
+      retriever_name: 'public-retriever',
+      retriever_namespace: 'default',
+      embedding_config: { model_name: 'public-embedding', model_namespace: 'default' },
+      retrieval_mode: 'hybrid',
+      top_k: 5,
+      score_threshold: 0.5,
+      hybrid_weights: { vector_weight: 0.7, keyword_weight: 0.3 },
+    },
+    health: { status: 'valid', fallback_reason: null },
+  }),
 }))
 
 // The model selector fetches on mount. Left real it resolves after the test ends,
@@ -38,7 +60,23 @@ jest.mock('@/lib/runtime-config', () => ({
 }))
 
 describe('CreateKnowledgeBaseDialog kind selection', () => {
-  beforeEach(() => mockRuntimeConfig.mockReturnValue({ enableCodeWiki: true }))
+  beforeEach(() => {
+    mockRuntimeConfig.mockReturnValue({ enableCodeWiki: true })
+    ;(getCodeWikiRetrievalProfile as jest.Mock).mockReset()
+    ;(getCodeWikiRetrievalProfile as jest.Mock).mockResolvedValue({
+      version: 1,
+      retrieval_config: {
+        retriever_name: 'public-retriever',
+        retriever_namespace: 'default',
+        embedding_config: { model_name: 'public-embedding', model_namespace: 'default' },
+        retrieval_mode: 'hybrid',
+        top_k: 5,
+        score_threshold: 0.5,
+        hybrid_weights: { vector_weight: 0.7, keyword_weight: 0.3 },
+      },
+      health: { status: 'valid', fallback_reason: null },
+    })
+  })
 
   it('starts on documents, where a name is required', async () => {
     const onSubmit = jest.fn()
@@ -49,7 +87,7 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
     await waitFor(() => expect(onSubmit).not.toHaveBeenCalled())
   })
 
-  it('swaps the opening-view field for repository fields when code is chosen', () => {
+  it('swaps the opening-view field for repository fields when code is chosen', async () => {
     render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={jest.fn()} />)
 
     fireEvent.click(screen.getByTestId('create-kb-kind-code'))
@@ -58,6 +96,37 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
     expect(screen.queryByTestId('switch-kb-type')).not.toBeInTheDocument()
     expect(screen.getByTestId('repository-selector')).toBeInTheDocument()
     expect(screen.getByTestId('code-wiki-language')).toBeInTheDocument()
+    await waitFor(() => expect(getCodeWikiRetrievalProfile).toHaveBeenCalledTimes(1))
+  })
+
+  it('shows when an unusable profile falls back to automatic defaults', async () => {
+    ;(getCodeWikiRetrievalProfile as jest.Mock).mockResolvedValue({
+      version: 1,
+      retrieval_config: null,
+      health: { status: 'invalid', fallback_reason: 'Public retriever is inactive.' },
+    })
+    render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={jest.fn()} />)
+
+    fireEvent.click(screen.getByTestId('create-kb-kind-code'))
+
+    await screen.findByTestId('code-wiki-retrieval-profile-fallback')
+    expect(screen.getByText('Public retriever is inactive.')).toBeInTheDocument()
+  })
+
+  it('shows the automatic-default notice when no profile is configured', async () => {
+    ;(getCodeWikiRetrievalProfile as jest.Mock).mockResolvedValue({
+      version: 0,
+      retrieval_config: null,
+      health: { status: 'missing', fallback_reason: null },
+    })
+    render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={jest.fn()} />)
+
+    fireEvent.click(screen.getByTestId('create-kb-kind-code'))
+
+    await screen.findByTestId('code-wiki-retrieval-profile-fallback')
+    expect(
+      screen.getByText('knowledge:codeWiki.create.retrievalProfileUnavailable')
+    ).toBeInTheDocument()
   })
 
   it('offers both ways to name a repository', () => {

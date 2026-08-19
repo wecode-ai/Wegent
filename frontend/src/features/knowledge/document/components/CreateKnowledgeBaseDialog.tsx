@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { BookOpen, Code2, Database, User, Building2, Users, FileText } from 'lucide-react'
 import {
   Dialog,
@@ -39,6 +39,7 @@ import type {
   RagConfigMode,
 } from '@/types/knowledge'
 import { GenerationTaskRow } from '@/features/knowledge/code-wiki/GenerationTaskRow'
+import { getCodeWikiRetrievalProfile } from '@/apis/knowledge'
 import { KnowledgeBaseForm } from './KnowledgeBaseForm'
 import { useMultimodalKBConfig } from '@/features/knowledge/multimodal/hooks/useMultimodalKBConfig'
 
@@ -173,6 +174,9 @@ export function CreateKnowledgeBaseDialog({
   const [retrievalConfig, setRetrievalConfig] = useState<RetrievalConfigDraft>(
     createDefaultRetrievalConfig
   )
+  const profileAppliedRef = useRef(false)
+  const retrievalConfigChangedRef = useRef(false)
+  const [profileFallbackReason, setProfileFallbackReason] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [accordionValue, setAccordionValue] = useState<string>('')
   const [maxCalls, setMaxCalls] = useState(10)
@@ -203,8 +207,41 @@ export function CreateKnowledgeBaseDialog({
       setSource(createEmptySource())
       setSelectedGroupId(defaultGroupId || 'personal')
       setDirectAccessRequirement('read')
+      profileAppliedRef.current = false
+      retrievalConfigChangedRef.current = false
+      setProfileFallbackReason(null)
     }
   }, [open, initialKbType, defaultGroupId])
+
+  useEffect(() => {
+    if (kind !== 'code') {
+      profileAppliedRef.current = false
+      retrievalConfigChangedRef.current = false
+      setProfileFallbackReason(null)
+      return
+    }
+    if (!open || profileAppliedRef.current) return
+    profileAppliedRef.current = true
+    let cancelled = false
+
+    void getCodeWikiRetrievalProfile()
+      .then(profile => {
+        if (cancelled) return
+        if (profile.health.status === 'valid' && profile.retrieval_config) {
+          if (!retrievalConfigChangedRef.current) {
+            setRetrievalConfig(profile.retrieval_config)
+          }
+          return
+        }
+        setProfileFallbackReason(profile.health.fallback_reason ?? '')
+      })
+      .catch(() => {
+        if (!cancelled) setProfileFallbackReason('')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [kind, open])
 
   // Update selectedKbType when KB type changes (keep summaryEnabled unchanged)
   const handleKbTypeChange = (newType: KnowledgeBaseType) => {
@@ -428,6 +465,15 @@ export function CreateKnowledgeBaseDialog({
                         dataTestId="code-wiki-execution-model-select"
                       />
                     </SimpleConfigRow>
+                    {profileFallbackReason !== null && (
+                      <p
+                        className="text-sm text-warning"
+                        data-testid="code-wiki-retrieval-profile-fallback"
+                      >
+                        {profileFallbackReason ||
+                          t('knowledge:codeWiki.create.retrievalProfileUnavailable')}
+                      </p>
+                    )}
                   </>
                 ) : (
                   /* KB Type selector - subtle style */
@@ -566,6 +612,9 @@ export function CreateKnowledgeBaseDialog({
             showRetrievalSection={ragConfigMode !== 'disabled'}
             retrievalConfig={retrievalConfig}
             onRetrievalConfigChange={setRetrievalConfig}
+            onRetrievalConfigUserChange={() => {
+              retrievalConfigChangedRef.current = true
+            }}
             retrievalScope={effectiveScope}
             retrievalGroupName={effectiveGroupName}
             showGuidedQuestions={true}

@@ -20,12 +20,17 @@ from app.schemas.admin import (
     SystemConfigResponse,
     SystemConfigUpdate,
 )
+from app.schemas.knowledge import (
+    CodeWikiRetrievalProfileResponse,
+    CodeWikiRetrievalProfileUpdate,
+)
 from app.schemas.marketplace_tags import MarketplaceTagsResponse, MarketplaceTagsUpdate
 from app.schemas.quick_launch import (
     QuickLaunchFunctionsResponse,
     QuickLaunchFunctionsUpdate,
 )
 from app.services.marketplace_tag_service import marketplace_tag_service
+from app.services.knowledge.code_wiki.retrieval_profile import get_profile, save_profile
 
 router = APIRouter()
 
@@ -79,6 +84,46 @@ DEFAULT_SLOGAN_TIPS_CONFIG = {
         },
     ],
 }
+
+
+@router.get(
+    "/system-config/code-wiki-retrieval-profile",
+    response_model=CodeWikiRetrievalProfileResponse,
+)
+def get_code_wiki_retrieval_profile(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+) -> CodeWikiRetrievalProfileResponse:
+    """Return the Code Wiki profile and its current resource-reference health."""
+    del current_user
+    retrieval_config, version, health = get_profile(db)
+    return CodeWikiRetrievalProfileResponse(
+        version=version,
+        retrieval_config=retrieval_config,
+        health=health,
+    )
+
+
+@router.put(
+    "/system-config/code-wiki-retrieval-profile",
+    response_model=CodeWikiRetrievalProfileResponse,
+)
+def update_code_wiki_retrieval_profile(
+    profile: CodeWikiRetrievalProfileUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+) -> CodeWikiRetrievalProfileResponse:
+    """Replace the administrator-managed Code Wiki form baseline."""
+    retrieval_config, version, health = save_profile(
+        db,
+        retrieval_config=profile.retrieval_config.model_dump(exclude_none=True),
+        updated_by=current_user.id,
+    )
+    return CodeWikiRetrievalProfileResponse(
+        version=version,
+        retrieval_config=retrieval_config,
+        health=health,
+    )
 
 
 @router.get(

@@ -1137,7 +1137,8 @@
       "modelDescription": "This repository's code is sent to the model. Assess the exposure yourself.",
       "modelPlaceholder": "Select a model",
       "modelRequired": "Select the model to generate with",
-      "created": "Code Wiki created. Content is generating."
+      "created": "Code Wiki created. Content is generating.",
+      "retrievalProfileUnavailable": "The Code Wiki retrieval profile is unavailable, so automatic defaults will be used."
     },
     "reader": {
       "regenerate": "Regenerate",

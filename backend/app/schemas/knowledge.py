@@ -24,6 +24,7 @@ from app.schemas.kind import (
     RetrieverRef,
     SummaryModelRef,
 )
+from app.services.knowledge.retrieval_capabilities import derive_retrieval_capabilities
 from app.schemas.knowledge_multimodal import (
     DocumentReindexRequest,
     MultimodalAnalysisFieldsMixin,
@@ -190,6 +191,42 @@ class RetrievalConfigCreate(BaseModel):
     hybrid_weights: Optional[HybridWeights] = Field(
         None, description="Hybrid search weights"
     )
+
+
+class CodeWikiRetrievalProfileUpdate(BaseModel):
+    """Administrator-managed initial retrieval configuration for Code Wiki."""
+
+    retrieval_config: RetrievalConfigCreate
+
+    @model_validator(mode="after")
+    def require_complete_resource_references(self) -> "CodeWikiRetrievalProfileUpdate":
+        config = self.retrieval_config
+        if not config.retriever_name or not config.embedding_config:
+            raise ValueError(
+                "Code Wiki retrieval profile requires a retriever and embedding model"
+            )
+        if not config.embedding_config.model_name:
+            raise ValueError(
+                "Code Wiki retrieval profile requires an embedding model name"
+            )
+        if config.retrieval_mode not in {"vector", "keyword", "hybrid"}:
+            raise ValueError("Code Wiki retrieval profile has an unsupported retrieval mode")
+        return self
+
+
+class CodeWikiRetrievalProfileHealth(BaseModel):
+    """Safe validation state shown to admins and Code Wiki creators."""
+
+    status: Literal["missing", "valid", "invalid"]
+    fallback_reason: Optional[str] = None
+
+
+class CodeWikiRetrievalProfileResponse(BaseModel):
+    """Public-readable profile containing references but never connection details."""
+
+    version: int
+    retrieval_config: Optional[RetrievalConfigCreate] = None
+    health: CodeWikiRetrievalProfileHealth
 
 
 # Scopes a model reference may name. Four, not three: `runtime` is a real scope --
@@ -792,6 +829,10 @@ class KnowledgeBaseResponse(MultimodalAnalysisResponseFieldsMixin):
     retrieval_config: Optional[RetrievalConfig] = Field(
         None, description="Retrieval configuration"
     )
+    retrieval_capabilities: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Safe derived retrieval and query-hint capabilities",
+    )
     summary_enabled: bool = Field(
         default=False,
         description="Enable automatic summary generation for documents",
@@ -894,6 +935,9 @@ class KnowledgeBaseResponse(MultimodalAnalysisResponseFieldsMixin):
             document_count=document_count,
             retrieval_config=cls._normalize_retrieval_config_for_response(
                 spec.get("retrievalConfig"), kind.id
+            ),
+            retrieval_capabilities=derive_retrieval_capabilities(
+                spec.get("retrievalConfig")
             ),
             summary_enabled=spec.get("summaryEnabled", False),
             summary_model_ref=summary_model_ref,

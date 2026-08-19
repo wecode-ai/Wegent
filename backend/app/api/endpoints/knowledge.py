@@ -43,6 +43,7 @@ from app.schemas.knowledge import (
     AllGroupedKnowledgeResponse,
     BatchDocumentIds,
     BatchOperationResult,
+    CodeWikiRetrievalProfileResponse,
     ContentOrigin,
     DocumentContentUpdate,
     DocumentDetailResponse,
@@ -73,6 +74,7 @@ from app.services.knowledge import (
     KnowledgeService,
     knowledge_base_qa_service,
 )
+from app.services.knowledge.code_wiki.retrieval_profile import get_profile
 from app.services.knowledge.orchestrator import (
     DEFAULT_KNOWLEDGE_LIST_LIMIT,
     MAX_DOCUMENT_READ_LIMIT,
@@ -308,6 +310,24 @@ def get_knowledge_config():
     """
     return {
         "chunk_storage_enabled": settings.CHUNK_STORAGE_ENABLED,
+    }
+
+
+@router.get(
+    "/code-wiki-retrieval-profile",
+    response_model=CodeWikiRetrievalProfileResponse,
+)
+def get_code_wiki_retrieval_profile(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Return the safe system baseline used by the shared Code Wiki form."""
+    del current_user
+    retrieval_config, version, health = get_profile(db)
+    return {
+        "version": version,
+        "retrieval_config": retrieval_config,
+        "health": health,
     }
 
 

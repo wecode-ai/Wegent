@@ -22,6 +22,8 @@ jest.mock('@/apis/admin', () => ({
     getPublicTeams: jest.fn(),
     getQuickLaunchFunctionsConfig: jest.fn(),
     updateQuickLaunchFunctionsConfig: jest.fn(),
+    getCodeWikiRetrievalProfile: jest.fn(),
+    updateCodeWikiRetrievalProfile: jest.fn(),
   },
 }))
 
@@ -156,6 +158,11 @@ describe('SystemConfigPanel', () => {
       version: 8,
       functions: [],
     })
+    mockedAdminApis.getCodeWikiRetrievalProfile.mockResolvedValue({
+      version: 0,
+      retrieval_config: null,
+      health: { status: 'missing', fallback_reason: null },
+    })
     mockedUploadAttachment.mockResolvedValue({
       id: 777,
       filename: 'template.pdf',
@@ -174,6 +181,13 @@ describe('SystemConfigPanel', () => {
     expect(await screen.findByTestId('quick-launch-functions-section')).toBeInTheDocument()
     expect(screen.queryByTestId('quick-access-config-section')).not.toBeInTheDocument()
     expect(mockedAdminApis.getQuickAccessConfig).not.toHaveBeenCalled()
+  })
+
+  test('keeps the Code Wiki retrieval default profile collapsed initially', async () => {
+    render(<SystemConfigPanel />)
+
+    expect(await screen.findByTestId('code-wiki-retrieval-profile-toggle')).toBeInTheDocument()
+    expect(screen.queryByTestId('save-code-wiki-retrieval-profile')).not.toBeInTheDocument()
   })
 
   test('loads and saves system function launcher form configuration', async () => {

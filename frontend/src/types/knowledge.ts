@@ -72,6 +72,17 @@ export interface RetrievalConfigDraft {
   }
 }
 
+export interface CodeWikiRetrievalProfileHealth {
+  status: 'missing' | 'valid' | 'invalid'
+  fallback_reason: string | null
+}
+
+export interface CodeWikiRetrievalProfile {
+  version: number
+  retrieval_config: RetrievalConfigDraft | null
+  health: CodeWikiRetrievalProfileHealth
+}
+
 // Splitter Config types
 export type ChunkStrategy = 'flat' | 'hierarchical' | 'semantic'
 export type FormatEnhancement = 'none' | 'file_aware'
