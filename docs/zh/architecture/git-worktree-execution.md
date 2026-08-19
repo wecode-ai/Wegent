@@ -53,6 +53,7 @@ sequenceDiagram
     U->>B: runtime.tasks.create(taskId, sourcePath, git_worktree)
     B->>E: 原样转发
     E->>E: 计算稳定 plannedPath 并持久化任务意图
+    E->>E: 按托管路径约定识别尚未创建的 plannedPath
     E-->>U: accepted/queued + plannedPath
     U->>U: 用 plannedPath 水合当前任务地址和列表投影
     alt 无可用 slot
@@ -120,7 +121,7 @@ sequenceDiagram
 18. 延迟创建必须持久化计划阶段的源仓库 fingerprint，并在获得 slot 后与创建前重新计算的 fingerprint 比较；源目录被替换为另一个仓库时必须以 `worktree_source_changed` 失败。
 19. 停止超时是未知结果，不得清除 Runtime 取消控制或把任务当作已停止；重试归档/删除前仍必须获得同一 Runtime 的停止 ACK。
 20. `preserveSnapshot=false` 表示终态清理：Executor 必须删除已有快照引用并从 `worktrees.json` 移除记录；后续 `runtime.worktrees.list` 不得返回已清理的墓碑条目。
-21. 工作区类型判定优先使用真实 Git 元数据；只有路径中没有可解析的 Git 仓库或 Worktree 元数据时，才允许使用 `worktrees/<id>/<project>` 路径约定兜底。普通仓库不得仅因任一父目录名为 `worktrees` 被投影成 Worktree。
+21. 已存在工作区的类型判定优先使用自身真实 Git 元数据；尚未创建的托管计划路径必须先按 `worktrees/<id>/<project>` 约定识别，不能被更高层 Executor 源码仓库的 `.git` 否定。已有候选根自身包含普通仓库 `.git` 时仍判定为普通工作区，不能仅因任一父目录名为 `worktrees` 被投影成 Worktree。
 22. Runtime 接受任务后，列表刷新失败只能降级为稍后对账，不能撤销已接受任务的本地可见状态或报告发送失败。
 23. Worktree 乐观导航可以在计划路径返回前只携带任务身份；创建响应或任务列表首次提供计划/最终路径后，Wework 必须将该路径回填到当前任务地址。当前任务、列表投影和后续 Terminal、IDE、文件操作不得长期保留无路径的乐观地址。
 

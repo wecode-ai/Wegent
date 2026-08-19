@@ -21,6 +21,7 @@ from app.models.user import User
 from app.models.wiki import WikiContent, WikiGeneration, WikiGenerationStatus
 from app.services.knowledge.code_wiki.generation import (
     GenerationInFlight,
+    GenerationWikiNotFound,
     current_run_state,
     finish_generation,
     published_commit,
@@ -221,6 +222,23 @@ def test_a_second_run_is_refused_while_one_is_live(
             knowledge_base=knowledge_base,
             user=test_user,
             head_commit=NEXT_HEAD,
+            now=NOW,
+        )
+
+
+def test_a_run_does_not_start_after_its_wiki_was_deleted(
+    test_db: Session, knowledge_base: Kind, test_user: User
+) -> None:
+    """A start that waited behind deletion must not use a stale KB object."""
+    test_db.delete(knowledge_base)
+    test_db.flush()
+
+    with pytest.raises(GenerationWikiNotFound, match="was deleted"):
+        start_generation(
+            test_db,
+            knowledge_base=knowledge_base,
+            user=test_user,
+            head_commit=HEAD,
             now=NOW,
         )
 

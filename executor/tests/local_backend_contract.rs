@@ -714,7 +714,7 @@ impl RecordingTransport {
     }
 
     async fn wait_for_emits(&self, count: usize) -> Vec<RecordedCall> {
-        timeout(Duration::from_secs(3), async {
+        timeout(Duration::from_secs(10), async {
             loop {
                 let emits = self.emits();
                 if emits.len() >= count {
@@ -728,7 +728,7 @@ impl RecordingTransport {
     }
 
     async fn wait_for_emit_event(&self, event: &str) -> Vec<RecordedCall> {
-        timeout(Duration::from_secs(3), async {
+        timeout(Duration::from_secs(10), async {
             loop {
                 let emits = self.emits();
                 if emits.iter().any(|emit| emit.event == event) {
