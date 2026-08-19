@@ -478,6 +478,22 @@ async function waitForBottom(control, description, timeoutMs) {
   throw new Error(`${description} remained ${distanceFromBottom(metrics)}px from the bottom`)
 }
 
+async function assertScrollPositionRemainsStable(control, initialMetrics, description, timeoutMs) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    const metrics = await getSingleElementMetrics(control, SCROLLER_SELECTOR, description)
+    assert.ok(
+      distanceFromBottom(metrics) > 8,
+      `${description} returned to the bottom after the user scrolled upward`
+    )
+    assert.ok(
+      Math.abs(metrics.scrollTop - initialMetrics.scrollTop) <= 8,
+      `${description} jumped from ${initialMetrics.scrollTop}px to ${metrics.scrollTop}px`
+    )
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+}
+
 async function waitForRenderedAppend(control, previousContentLength, timeoutMs) {
   const startedAt = Date.now()
   let processText = ''
@@ -1610,13 +1626,36 @@ export function createDesktopScenario({
       await control.command(
         'waitFor',
         `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`,
-        { stableMs: 750, timeoutMs: uiTimeoutMs }
+        { timeoutMs: uiTimeoutMs }
       )
       await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
         text: MARKER,
-        stableMs: 750,
         timeoutMs: uiTimeoutMs,
       })
+
+      await control.command('scrollFromBottomAsUser', SCROLLER_SELECTOR, { value: '160' })
+      const completedUserScrollPosition = await getSingleElementMetrics(
+        control,
+        SCROLLER_SELECTOR,
+        'The completed conversation immediately after the user scrolled upward'
+      )
+      assert.ok(
+        distanceFromBottom(completedUserScrollPosition) > 8,
+        'The user scroll did not move the completed conversation away from the bottom'
+      )
+      await assertScrollPositionRemainsStable(
+        control,
+        completedUserScrollPosition,
+        'The completed conversation while delayed bottom-follow work could still run',
+        uiTimeoutMs
+      )
+      await capture(control, 'streaming-text-18-completed-user-scroll-stable.png')
+      await control.command('scrollToBottomAsUser', SCROLLER_SELECTOR)
+      await waitForBottom(
+        control,
+        'The completed conversation after restoring the downstream test precondition',
+        uiTimeoutMs
+      )
       const completedSnapshot = JSON.parse(
         await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
       )
@@ -1637,36 +1676,6 @@ export function createDesktopScenario({
         'The pause button remained after completion'
       )
       await capture(control, 'streaming-text-17-response-completed.png')
-
-      await control.command('scrollFromBottomAsUser', SCROLLER_SELECTOR, { value: '160' })
-      const completedUserScrollPosition = await getSingleElementMetrics(
-        control,
-        SCROLLER_SELECTOR,
-        'The completed conversation immediately after the user scrolled upward'
-      )
-      assert.ok(
-        distanceFromBottom(completedUserScrollPosition) > 8,
-        'The user scroll did not move the completed conversation away from the bottom'
-      )
-      await new Promise(resolve => setTimeout(resolve, 1_250))
-      const stableCompletedUserScrollPosition = await getSingleElementMetrics(
-        control,
-        SCROLLER_SELECTOR,
-        'The completed conversation after delayed bottom-follow work had time to run'
-      )
-      assert.ok(
-        Math.abs(
-          stableCompletedUserScrollPosition.scrollTop - completedUserScrollPosition.scrollTop
-        ) <= 8,
-        `The completed conversation jumped from ${completedUserScrollPosition.scrollTop}px to ${stableCompletedUserScrollPosition.scrollTop}px after the user scrolled upward`
-      )
-      await capture(control, 'streaming-text-18-completed-user-scroll-stable.png')
-      await control.command('scrollToBottomAsUser', SCROLLER_SELECTOR)
-      await waitForBottom(
-        control,
-        'The completed conversation after restoring the downstream test precondition',
-        uiTimeoutMs
-      )
 
       await verifyStoppedTurnOrder(control)
       active = false
