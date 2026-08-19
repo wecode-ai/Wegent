@@ -3,6 +3,7 @@ import type { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
 import type {
   Attachment,
   BindRuntimeTaskIMSessionsResponse,
+  CloneGitRepositoryInput,
   CreateGitWorkspaceProjectRequest,
   CreateProjectRequest,
   DeleteDeviceWorkspaceRequest,
@@ -328,6 +329,7 @@ export interface WorkbenchContextValue {
   getProjectWorkspaceRoot: (deviceId: string) => Promise<string>
   listDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
   createDeviceDirectory: (deviceId: string, path: string) => Promise<void>
+  cloneGitRepository: (deviceId: string, input: CloneGitRepositoryInput) => Promise<void>
   loadEnvironmentInfo: (
     project: ProjectWithTasks | null,
     workspaceTarget?: WorkspaceTarget | null,
