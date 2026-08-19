@@ -41,6 +41,10 @@ import { ApiError } from '@/api/http'
 import type { ProjectChatAgent } from '@/api/projectChatAgents'
 import { DesktopWindowControls } from '@/components/layout/DesktopWindowControls'
 import {
+  DesktopSidebarAccount,
+  type DesktopSidebarAccountSettingsOptions,
+} from '@/components/layout/DesktopSidebarAccount'
+import {
   DesktopSidebarHeader,
   DesktopSidebarNavItem,
 } from '@/components/layout/DesktopSidebarPrimitives'
@@ -364,6 +368,8 @@ interface CloudTodoWorkspaceProps {
   onFocusedItemHandled?: () => void
   onActiveProjectChange?: (project: LocatedCloudProject | null) => void
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
+  onOpenSettings?: (options?: DesktopSidebarAccountSettingsOptions) => void
+  onLogout?: () => void
 }
 
 const columnEmptyHints: Record<CloudLoopItem['status'], string> = {
@@ -848,6 +854,8 @@ export function CloudTodoWorkspace({
   onFocusedItemHandled,
   onActiveProjectChange,
   onOpenRuntimeTask,
+  onOpenSettings,
+  onLogout,
 }: CloudTodoWorkspaceProps) {
   const { t } = useTranslation('common')
   const projectSpaceApis = useMemo(() => {
@@ -2627,6 +2635,13 @@ export function CloudTodoWorkspace({
                   )
                 })}
               </div>
+              {onOpenSettings && onLogout ? (
+                <DesktopSidebarAccount
+                  user={user}
+                  onOpenSettings={onOpenSettings}
+                  onLogout={onLogout}
+                />
+              ) : null}
             </div>
           </aside>
         ) : null}

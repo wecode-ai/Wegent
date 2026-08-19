@@ -117,6 +117,10 @@ describe('IssueComposer', () => {
     expect(expandButton).toHaveClass('hover:bg-muted', 'hover:text-text-primary')
     expect(screen.queryByTestId('project-work-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('model-selector-button')).not.toBeInTheDocument()
+    const compactProjectSelect = screen.getByTestId('workspace-issue-project-compact')
+    expect(screen.getByTestId('composer-toolbar')).toContainElement(compactProjectSelect)
+    expect(compactProjectSelect.closest('label')).toHaveClass('text-sm', 'font-normal')
+    expect(screen.getByTestId('workspace-issue-composer-input-shell')).toHaveClass('font-normal')
     await userEvent.type(screen.getByTestId('workspace-issue-input'), '修复工作空间创建入口')
     await userEvent.keyboard('{Shift>}{Enter}{/Shift}只创建 Issue')
     await userEvent.click(screen.getByTestId('workspace-issue-submit'))
@@ -319,8 +323,17 @@ describe('IssueComposer', () => {
       'top-4'
     )
     expect(screen.getByTestId('workspace-issue-title')).toHaveValue('自动生成的标题')
+    expect(screen.getByTestId('workspace-issue-title')).toHaveClass(
+      'text-heading-md',
+      'font-medium'
+    )
     expect(screen.getByTestId('workspace-issue-project')).toHaveValue('backend:1')
     expect(screen.getByTestId('workspace-issue-description')).toHaveValue('自动生成的标题')
+    expect(screen.getByTestId('workspace-issue-description')).toHaveClass(
+      'text-base',
+      'font-normal',
+      'leading-6'
+    )
 
     fireEvent.change(screen.getByTestId('workspace-issue-title'), {
       target: { value: '默认生成的标题' },

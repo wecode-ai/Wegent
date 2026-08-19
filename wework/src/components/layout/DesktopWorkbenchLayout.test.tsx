@@ -1511,6 +1511,34 @@ describe('DesktopWorkbenchLayout', () => {
     ).toHaveStyle({ display: 'none' })
   })
 
+  test('returns to the workspace after opening settings from its account menu', async () => {
+    deliveryApiMock.available = true
+    window.history.pushState({}, '', '/todo')
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          user: {
+            id: 1,
+            user_name: 'local',
+            email: 'local@example.com',
+          },
+        }}
+      />
+    )
+
+    await userEvent.click(await screen.findByTestId('settings-button'))
+    await userEvent.click(screen.getByTestId('settings-menu-button'))
+    expect(window.location.pathname).toBe('/settings')
+
+    await userEvent.click(screen.getByTestId('settings-back-button'))
+
+    expect(window.location.pathname).toBe('/todo')
+    expect(screen.getByTestId('cloud-todo-workspace')).toBeVisible()
+  })
+
   test('uses the independent board tab instead of a work-items sidebar destination', () => {
     const taskTab = {
       id: 'task-existing',

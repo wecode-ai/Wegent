@@ -467,7 +467,10 @@ export function IssueComposer({
         }
       : undefined
   const renderComposer = (resolvedProjectWork: ProjectWorkControls | undefined) => (
-    <div data-testid="workspace-issue-composer-input-shell" className="relative">
+    <div
+      data-testid="workspace-issue-composer-input-shell"
+      className="relative font-normal text-text-primary"
+    >
       <BufferedChatInput
         value={content}
         onChange={updateCompactContent}
@@ -484,6 +487,43 @@ export function IssueComposer({
         showProjectWorkBar={creationMode === 'task' && localProjects.length > 0}
         showExecutionTools={creationMode === 'task'}
         showWorkspaceMenu={false}
+        toolbarLeadingContext={
+          creationMode === 'issue' ? (
+            <label className="relative flex h-8 min-w-0 max-w-48 cursor-pointer items-center gap-1.5 rounded-lg px-2 text-sm font-normal leading-[18px] text-text-secondary transition-colors hover:bg-muted hover:text-text-primary focus-within:bg-muted focus-within:text-text-primary">
+              <LayoutDashboard className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <span className="min-w-0 truncate">
+                {selectedWorkItemProject?.name ??
+                  t('workbench.default_work_item_board', '我的任务')}
+              </span>
+              <ChevronDown className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <select
+                data-testid="workspace-issue-project-compact"
+                aria-label={t('todo.issue_project_label', '项目空间')}
+                value={boardKey}
+                disabled={busy || projects.length === 0}
+                onChange={event => selectBoard(event.target.value)}
+                className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
+              >
+                {!projects.some(
+                  project => `${project.project_store}:${String(project.id)}` === boardKey
+                ) && boardKey ? (
+                  <option value={boardKey}>
+                    {selectedWorkItemProject?.name ??
+                      t('workbench.default_work_item_board', '我的任务')}
+                  </option>
+                ) : null}
+                {projects.map(project => (
+                  <option
+                    key={`${project.project_store}:${String(project.id)}`}
+                    value={`${project.project_store}:${String(project.id)}`}
+                  >
+                    {project.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : undefined
+        }
         projectWorkBarMiddleContext={
           creationMode === 'task' && selectedWorkItemProject ? (
             <WorkItemComposerGuide
@@ -651,11 +691,11 @@ export function IssueComposer({
                     disabled={busy}
                     onChange={event => setTitle(event.target.value)}
                     placeholder={t('todo.issue_title_placeholder', 'Issue 标题')}
-                    className="block h-12 w-full border-0 bg-transparent text-heading-lg font-semibold leading-9 tracking-tight text-text-primary outline-none placeholder:text-text-muted/55 disabled:opacity-60"
+                    className="block h-11 w-full border-0 bg-transparent text-heading-md font-medium leading-8 tracking-normal text-text-primary outline-none placeholder:text-text-muted/55 disabled:opacity-60"
                   />
 
                   <div className="mt-4 flex flex-wrap items-center gap-2">
-                    <label className="relative inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-full border border-border px-3 text-xs text-text-secondary transition hover:bg-muted hover:text-text-primary">
+                    <label className="relative inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-full border border-border px-3 text-sm font-normal text-text-secondary transition hover:bg-muted hover:text-text-primary">
                       <Folder className="h-4 w-4 shrink-0 text-text-muted" />
                       <span className="max-w-48 truncate font-medium text-text-primary">
                         {selectedWorkItemProject?.name ??
@@ -688,7 +728,7 @@ export function IssueComposer({
                         ))}
                       </select>
                     </label>
-                    <label className="relative inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-full border border-border px-3 text-xs text-text-secondary transition hover:bg-muted hover:text-text-primary">
+                    <label className="relative inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-full border border-border px-3 text-sm font-normal text-text-secondary transition hover:bg-muted hover:text-text-primary">
                       <span className="h-2 w-2 rounded-full bg-zinc-400" />
                       <span className="font-medium text-text-primary">
                         {statusOptions.find(option => option.id === status)?.name ?? status}
@@ -709,7 +749,7 @@ export function IssueComposer({
                         ))}
                       </select>
                     </label>
-                    <label className="relative inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-full border border-border px-3 text-xs text-text-secondary transition hover:bg-muted hover:text-text-primary">
+                    <label className="relative inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-full border border-border px-3 text-sm font-normal text-text-secondary transition hover:bg-muted hover:text-text-primary">
                       <Flag className="h-3.5 w-3.5 text-text-muted" />
                       <span className="font-medium text-text-primary">
                         {priority === 'none'
@@ -740,7 +780,7 @@ export function IssueComposer({
                         <option value="urgent">{t('todo.priority_urgent', '紧急')}</option>
                       </select>
                     </label>
-                    <label className="relative inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-full border border-border px-3 text-xs text-text-secondary transition hover:bg-muted hover:text-text-primary">
+                    <label className="relative inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-full border border-border px-3 text-sm font-normal text-text-secondary transition hover:bg-muted hover:text-text-primary">
                       <CircleUserRound className="h-3.5 w-3.5 text-text-muted" />
                       <span className="max-w-32 truncate font-medium text-text-primary">
                         {selectedAssigneeName ?? t('todo.unassigned', '未指派')}
@@ -766,7 +806,7 @@ export function IssueComposer({
                       <span
                         key={tag}
                         data-testid={`workspace-issue-tag-${tag}`}
-                        className="inline-flex h-8 items-center gap-1 rounded-full border border-border px-3 text-xs text-text-primary"
+                        className="inline-flex h-8 items-center gap-1 rounded-full border border-border px-3 text-sm font-normal text-text-primary"
                       >
                         # {tag}
                         <button
@@ -781,7 +821,7 @@ export function IssueComposer({
                         </button>
                       </span>
                     ))}
-                    <label className="inline-flex h-8 items-center gap-1.5 rounded-full px-2 text-xs text-text-secondary focus-within:bg-muted">
+                    <label className="inline-flex h-8 items-center gap-1.5 rounded-full px-2 text-sm font-normal text-text-secondary focus-within:bg-muted">
                       <Tag className="h-3.5 w-3.5 text-text-muted" />
                       <input
                         data-testid="workspace-issue-tag-input"
@@ -814,7 +854,7 @@ export function IssueComposer({
                       data-testid="workspace-issue-attach"
                       disabled={busy}
                       onClick={() => fileInputRef.current?.click()}
-                      className="inline-flex h-8 items-center gap-1.5 rounded-full border border-transparent px-3 text-xs text-text-secondary transition hover:border-border hover:bg-muted hover:text-text-primary disabled:opacity-50"
+                      className="inline-flex h-8 items-center gap-1.5 rounded-full border border-transparent px-3 text-sm font-normal text-text-secondary transition hover:border-border hover:bg-muted hover:text-text-primary disabled:opacity-50"
                     >
                       <Paperclip className="h-4 w-4" />
                       {stagedAttachments.length > 0
@@ -842,7 +882,7 @@ export function IssueComposer({
                         'todo.issue_description_placeholder',
                         '补充背景、目标、验收标准或其他上下文…'
                       )}
-                      className="min-h-[240px] w-full resize-none border-0 bg-transparent py-1 text-chat leading-7 text-text-primary outline-none placeholder:text-text-muted/55"
+                      className="min-h-[240px] w-full resize-none border-0 bg-transparent py-1 text-base font-normal leading-6 text-text-primary outline-none placeholder:text-text-muted/55"
                     />
                     <AttachmentBadges
                       attachments={stagedAttachments.map(item => item.attachment)}
@@ -932,7 +972,7 @@ export function IssueComposer({
                 <Bot className="mb-5 h-9 w-9 text-text-muted/55" aria-hidden="true" />
                 <h1
                   data-testid="workspace-issue-heading"
-                  className="text-xl font-normal leading-9 tracking-normal text-text-primary/95"
+                  className="text-heading-md font-medium leading-7 tracking-normal text-text-primary/95"
                 >
                   {creationMode === 'issue'
                     ? t('todo.issue_composer_title', '要推进什么？')
@@ -1014,43 +1054,6 @@ export function IssueComposer({
                 </button>
               </div>
             </div>
-            {creationMode === 'issue' ? (
-              <div className="mb-2">
-                <label className="relative inline-flex h-8 max-w-full cursor-pointer items-center gap-1.5 rounded-lg px-2 text-xs text-text-muted transition hover:bg-muted hover:text-text-primary">
-                  <LayoutDashboard className="h-3.5 w-3.5 shrink-0" />
-                  <span className="truncate">
-                    {selectedWorkItemProject?.name ??
-                      t('workbench.default_work_item_board', '我的任务')}
-                  </span>
-                  <ChevronDown className="h-3 w-3 shrink-0" />
-                  <select
-                    data-testid="workspace-issue-project-compact"
-                    aria-label={t('todo.issue_project_label', '项目空间')}
-                    value={boardKey}
-                    disabled={busy || projects.length === 0}
-                    onChange={event => selectBoard(event.target.value)}
-                    className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
-                  >
-                    {!projects.some(
-                      project => `${project.project_store}:${String(project.id)}` === boardKey
-                    ) && boardKey ? (
-                      <option value={boardKey}>
-                        {selectedWorkItemProject?.name ??
-                          t('workbench.default_work_item_board', '我的任务')}
-                      </option>
-                    ) : null}
-                    {projects.map(project => (
-                      <option
-                        key={`${project.project_store}:${String(project.id)}`}
-                        value={`${project.project_store}:${String(project.id)}`}
-                      >
-                        {project.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-            ) : null}
             {creationMode === 'task' && workbench?.selectProject && selectedLocalProject ? (
               <ConnectedIssueProjectWork
                 project={selectedLocalProject}
