@@ -36,7 +36,6 @@ import {
   CLOUD_COMPLETION_TEXT,
   CLOUD_DEVICE_ID,
   REMOTE_DOCKER_DEVICE_ID,
-  CLOUD_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES,
   CLOUD_MULTIMODAL_VISION_CASE,
   CLOUD_FOLLOW_UP_COMPLETION_TEXT,
   CLOUD_FOLLOW_UP_PROMPT,
@@ -51,7 +50,6 @@ import {
   E2E_TRANSCRIPT_PAGE_SIZE,
   LOCAL_CONNECTED_MODEL_PROTOCOL_MATRIX_CASES,
   LOCAL_CUSTOM_MODEL_PROTOCOL_MATRIX_CASES,
-  LOCAL_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES,
   MACOS_LAUNCH_SERVICES_REGISTER,
   MEMORY_ONLY,
   MODEL_PROTOCOL_MATRIX_TIMEOUT_MS,
@@ -1055,18 +1053,6 @@ async function verifyCloudProjectFlow(
   await verifyCloudVisionFlows(control, composerSelector)
 
   await verifyAnthropicEmptyResponseRecovery({ composerSelector, control })
-
-  await verifyModelProtocolMatrix({
-    cases: CLOUD_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES,
-    composerSelector,
-    control,
-    newConversationSelector:
-      '[data-testid^="project-row-"] [data-testid="project-new-conversation-button"]',
-    screenshotPrefix: 'cloud-matrix',
-    setCodexUpstreamProtocol: protocol => cloudEnvironment.setCodexUpstreamProtocol(protocol),
-    startIndex: LOCAL_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES.length,
-    workspacePath,
-  })
 
   const currentProjectSnapshot = await waitForSnapshot(
     control,

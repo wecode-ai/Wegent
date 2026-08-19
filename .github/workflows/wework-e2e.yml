@@ -372,6 +372,7 @@ jobs:
             !wework/test-results/desktop-e2e/**/executor-home/**
           if-no-files-found: ignore
           retention-days: 7
+          compression-level: 0
 
   wework-desktop-cloud-e2e:
     name: Wework Desktop E2E (${{ matrix.name }})
@@ -442,6 +443,7 @@ jobs:
             !wework/test-results/desktop-e2e/**/executor-home/**
           if-no-files-found: ignore
           retention-days: 7
+          compression-level: 0
 
   wework-desktop-e2e:
     name: Wework Desktop E2E (${{ matrix.name }})
@@ -530,6 +532,7 @@ jobs:
             !wework/test-results/desktop-e2e/**/executor-home/**
           if-no-files-found: ignore
           retention-days: 7
+          compression-level: 0
 
   wework-e2e-summary:
     name: Wework E2E Summary
@@ -691,3 +694,4 @@ jobs:
             !wework/test-results/desktop-e2e/**/executor-home/**
           if-no-files-found: ignore
           retention-days: 7
+          compression-level: 0

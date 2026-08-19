@@ -3,8 +3,11 @@
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "$script_dir/../.." && pwd)"
 classifier="$script_dir/classify-ci-changes.sh"
 desktop_classifier="$script_dir/classify-wework-desktop-e2e.sh"
+cloud_checkpoint_flows="$repo_root/wework/e2e/desktop/modules/cloud-checkpoint-flows.mjs"
+desktop_build_flows="$repo_root/wework/e2e/desktop/modules/desktop-build-flows.mjs"
 
 assert_invalid_desktop_shards_rejected() {
   local temp_dir
@@ -787,6 +790,7 @@ if [[ "$wework_desktop_cloud_job" != *"needs.changes.outputs.wework_desktop_clou
   [[ "$wework_desktop_cloud_job" != *"--parallel-segments"* ]] ||
   [[ "$wework_desktop_cloud_job" != *'WEWORK_E2E_PARALLEL_CHECKPOINTS: "2"'* ]] ||
   [[ "$wework_desktop_cloud_job" != *'WEWORK_E2E_ISOLATED_XVFB: "true"'* ]] ||
+  [[ "$wework_desktop_cloud_job" != *"compression-level: 0"* ]] ||
   [[ "$wework_desktop_cloud_job" != *"name: Download shared Wework desktop E2E build"* ]] ||
   [[ "$wework_desktop_cloud_job" != *"WEWORK_E2E_APP_BIN:"* ]] ||
   [[ "$wework_desktop_cloud_job" != *"WEWORK_E2E_EXECUTOR_BIN:"* ]]; then
@@ -799,8 +803,17 @@ wework_desktop_core_job="$(
     "$wework_workflow"
 )"
 if [[ "$wework_desktop_core_job" != *"needs.changes.outputs.wework_desktop_core_e2e == 'true'"* ]] ||
-  [[ "$wework_desktop_core_job" != *'WEWORK_E2E_PARALLEL_CHECKPOINTS: "2"'* ]]; then
+  [[ "$wework_desktop_core_job" != *'WEWORK_E2E_PARALLEL_CHECKPOINTS: "2"'* ]] ||
+  [[ "$wework_desktop_core_job" != *"compression-level: 0"* ]]; then
   printf 'Wework Core desktop E2E must use its segment classification\n' >&2
+  exit 1
+fi
+
+if grep -Fq 'cases: CLOUD_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES' "$desktop_build_flows" ||
+  [[ "$(grep -Fc \
+    'cases: CLOUD_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES' \
+    "$cloud_checkpoint_flows")" -ne 1 ]]; then
+  printf 'Cloud model protocol coverage must run once in its dedicated checkpoint\n' >&2
   exit 1
 fi
 
