@@ -1291,7 +1291,24 @@ async function confirmLocalProjectName(control, name) {
 }
 
 async function createSingleRootLocalProject(control, workspacePath, name) {
-  await control.command('click', '[data-testid="projects-create-button"]')
+  const sidebarSnapshot = await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes('projects-empty-create-button') ||
+      snapshot.testIds.includes('runtime-project-sortable-list'),
+    'The project section did not settle into an empty or populated state'
+  )
+  const createButtonSelector = sidebarSnapshot.testIds.includes('projects-empty-create-button')
+    ? '[data-testid="projects-empty-create-button"]'
+    : '[data-testid="projects-create-button"]'
+  if (createButtonSelector.includes('projects-empty-create-button')) {
+    assert.match(
+      await control.command('getText', createButtonSelector),
+      /New project|新建项目/,
+      'The empty project section did not expose a localized creation action'
+    )
+  }
+  await control.command('click', createButtonSelector)
   await control.command('click', '[data-testid="project-create-local-option"]')
   await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
