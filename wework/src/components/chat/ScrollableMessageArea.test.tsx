@@ -3441,6 +3441,47 @@ describe('ScrollableMessageArea', () => {
     expect(scroller.scrollTo).not.toHaveBeenCalled()
   })
 
+  test('cancels delayed bottom following as soon as the user scrolls upward', () => {
+    render(
+      <ScrollableMessageArea
+        conversationKey="delayed-bottom-follow"
+        messages={[
+          {
+            id: 'delayed-bottom-follow-assistant',
+            role: 'assistant',
+            content: '回复已完成',
+            status: 'done',
+            createdAt: '2026-08-18T00:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    Object.defineProperty(scroller, 'clientHeight', {
+      value: 200,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollHeight', {
+      value: 800,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 600,
+      writable: true,
+      configurable: true,
+    })
+    scroller.scrollTo = vi.fn()
+
+    fireEvent.wheel(scroller, { deltaY: -80 })
+
+    act(() => {
+      vi.runOnlyPendingTimers()
+    })
+
+    expect(scroller.scrollTo).not.toHaveBeenCalled()
+  })
+
   test('scrolls to a newly applied guidance message inserted before the assistant continuation', () => {
     const streamingMessage = {
       id: 'guidance-stream',

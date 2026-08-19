@@ -925,17 +925,17 @@ function ScrollableMessagePaneContent({
       return
     }
 
+    if (userScrollPausedAutoFollowRef.current) {
+      restoreUserViewportAnchor()
+      return
+    }
+
     const shouldFollowBottom =
       followingBottomKeyRef.current === currentScrollKey ||
       (currentScrollKey !== null &&
         getConversationScrollSnapshot(currentScrollKey)?.pinnedToBottom === true)
     if (shouldFollowBottom) {
       setScrollToBottom('auto', { saveSnapshot: false })
-      return
-    }
-
-    if (userScrollPausedAutoFollowRef.current) {
-      restoreUserViewportAnchor()
       return
     }
 
@@ -986,10 +986,19 @@ function ScrollableMessagePaneContent({
     scrollToBottom('smooth', { saveSnapshot: true })
   }
 
-  const markUserScrollIntent = useCallback(() => {
-    userScrollIntentRef.current = true
-    captureUserViewportAnchor()
-  }, [captureUserViewportAnchor])
+  const markUserScrollIntent = useCallback(
+    (event?: Event | { nativeEvent?: Event }) => {
+      userScrollIntentRef.current = true
+      clearScheduledScrolls()
+      captureUserViewportAnchor()
+
+      const nativeEvent = event && 'nativeEvent' in event ? event.nativeEvent : event
+      if (nativeEvent && 'deltaY' in nativeEvent && Number(nativeEvent.deltaY) < 0) {
+        userScrollPausedAutoFollowRef.current = true
+      }
+    },
+    [captureUserViewportAnchor, clearScheduledScrolls]
+  )
 
   const handleScroll = useCallback(() => {
     if (autoScrollSuspended || isTurnNavigationAutoScrollSuspended()) {

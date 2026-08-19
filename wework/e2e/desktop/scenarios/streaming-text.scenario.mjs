@@ -1631,6 +1631,37 @@ export function createDesktopScenario({
         'The pause button remained after completion'
       )
       await capture(control, 'streaming-text-17-response-completed.png')
+
+      await control.command('scrollFromBottomAsUser', SCROLLER_SELECTOR, { value: '160' })
+      const completedUserScrollPosition = await getSingleElementMetrics(
+        control,
+        SCROLLER_SELECTOR,
+        'The completed conversation immediately after the user scrolled upward'
+      )
+      assert.ok(
+        distanceFromBottom(completedUserScrollPosition) > 8,
+        'The user scroll did not move the completed conversation away from the bottom'
+      )
+      await new Promise(resolve => setTimeout(resolve, 1_250))
+      const stableCompletedUserScrollPosition = await getSingleElementMetrics(
+        control,
+        SCROLLER_SELECTOR,
+        'The completed conversation after delayed bottom-follow work had time to run'
+      )
+      assert.ok(
+        Math.abs(
+          stableCompletedUserScrollPosition.scrollTop - completedUserScrollPosition.scrollTop
+        ) <= 8,
+        `The completed conversation jumped from ${completedUserScrollPosition.scrollTop}px to ${stableCompletedUserScrollPosition.scrollTop}px after the user scrolled upward`
+      )
+      await capture(control, 'streaming-text-18-completed-user-scroll-stable.png')
+      await control.command('scrollToBottomAsUser', SCROLLER_SELECTOR)
+      await waitForBottom(
+        control,
+        'The completed conversation after restoring the downstream test precondition',
+        uiTimeoutMs
+      )
+
       await verifyStoppedTurnOrder(control)
       active = false
     },
