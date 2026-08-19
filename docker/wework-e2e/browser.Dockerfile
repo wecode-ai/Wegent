@@ -2,8 +2,6 @@ FROM mcr.microsoft.com/playwright:v1.60.0-noble
 
 ARG PNPM_VERSION=11.7.0
 
-COPY --from=ghcr.io/astral-sh/uv:0.11.17 /uv /uvx /bin/
-
 RUN apt-get update \
   && apt-get install --yes --no-install-recommends \
     libmagic1 \
@@ -15,7 +13,6 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 RUN node --version \
   && pnpm --version \
-  && uv --version \
   && zstd --version \
   && ldconfig -p | grep -q 'libmagic\.so\.1' \
   && find /ms-playwright -type f \
