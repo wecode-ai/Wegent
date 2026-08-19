@@ -93,6 +93,7 @@ class ProjectAutomationExecution:
                 raise RuntimeError("Automation owner or project is unavailable")
             self._ensure_run_task(db, project=project, owner=owner, rule=rule, run=run)
             context = self._automation_context(rule, run)
+            instruction = self._run_instruction(rule, run)
             configured_mode = assignment_mode(metadata(rule))
             if configured_mode == "manual":
                 self._assign_project_robot(
@@ -102,7 +103,7 @@ class ProjectAutomationExecution:
                     run=run,
                     agent_id=rule.assignee_agent_id,
                     context=context,
-                    instruction=rule.description or "",
+                    instruction=instruction,
                 )
             else:
                 configured_manager = manager_type(metadata(rule))
@@ -169,18 +170,19 @@ class ProjectAutomationExecution:
         except ZoneInfoNotFoundError:
             local_time = scheduled_for
         context = self._automation_context(rule, run)
+        instruction = self._run_instruction(rule, run)
         routed = loop_item_provider_router.create(
             db,
             project,
             owner,
             LoopItemCreate(
                 title=f"{rule.title} · {local_time:%Y-%m-%d %H:%M}",
-                description=rule.description or "",
+                description=instruction,
                 priority="medium",
                 tags=["automation"],
             ),
             automation_context=context,
-            instruction=rule.description or "",
+            instruction=instruction,
             assign_creator_if_unassigned=False,
         )
         item_id = routed.values.get("id")
@@ -241,6 +243,12 @@ class ProjectAutomationExecution:
         run.status = "queued"
         run.version += 1
         db.commit()
+        if execution.team_id:
+            from app.services.board_team_execution import (
+                schedule_board_robot_execution,
+            )
+
+            schedule_board_robot_execution(db, execution)
         logger.info(
             "[ProjectAutomation] Queued project robot run=%s execution=%s device=%s",
             run.id,
@@ -379,17 +387,29 @@ class ProjectAutomationExecution:
         run: ProjectAutomationRun,
         context: dict,
     ) -> str:
-        return (
-            "你是这个看板的 AI 分派调度员，不是任务执行者。必须先通过 wework_space "
-            "工具读取当前项目、原始任务，以及项目成员和项目机器人的能力说明；再根据"
-            "任务内容和下面的调度要求选择最合适的人员或机器人，并通过工具直接完成"
-            "分派。不要自己执行原始任务，不要创建替代任务，也不要只在回复中建议人选。"
-            "如果没有合适人选，保持任务未分配并说明原因。工具调用完成后，最终回复只"
-            "需简要记录已分配给谁以及判断依据；最终回复不参与分派，也不要求 JSON。\n\n"
-            f"当前项目 ID：{project.id}\n"
-            f"当前任务 ID：{run.task_id or ''}\n"
-            f"调度要求：\n{rule.description or ''}"
-        )
+        del db, owner, context
+        task_id = run.task_id or ""
+        sections = [
+            (
+                f"project_id: {project.id}\n"
+                f"task_id: {task_id}\n"
+                f"automation_run_id: {run.id}"
+            ),
+            (
+                f"看板任务数据位于 cloud://projects/{project.id}/todos/{task_id}，"
+                "请通过看板工具自行查看。"
+            ),
+            "请读取候选执行者并按调度要求完成分派，不要执行任务。",
+        ]
+        instruction = ProjectAutomationExecution._run_instruction(rule, run).strip()
+        if instruction:
+            sections.append(instruction)
+        return "\n\n".join(sections)
+
+    @staticmethod
+    def _run_instruction(rule: ProjectAutomationRule, run: ProjectAutomationRun) -> str:
+        override = metadata(run).get("instruction_override")
+        return str(override) if isinstance(override, str) else (rule.description or "")
 
     def _create_manager_activity(
         self,
@@ -683,6 +703,12 @@ class ProjectAutomationExecution:
             run.completed_at = utcnow()
             run.version += 1
             run_changed = True
+        if run_changed:
+            from app.services.project_workflow_projection import (
+                sync_automation_workflow_node,
+            )
+
+            sync_automation_workflow_node(db, run)
 
         if backend_task_id is not None and run.backend_task_id != backend_task_id:
             run.backend_task_id = backend_task_id
@@ -741,6 +767,7 @@ class ProjectAutomationExecution:
         activity_metadata.update(
             {
                 "execution_id": execution.id,
+                "executor_type": execution.executor_type,
                 "run_status": "queued",
                 "execution_device_id": execution.execution_device_id,
             }
@@ -762,6 +789,11 @@ class ProjectAutomationExecution:
         run.status = "failed"
         run.description = error[:2000]
         run.version += 1
+        from app.services.project_workflow_projection import (
+            sync_automation_workflow_node,
+        )
+
+        sync_automation_workflow_node(db, run)
         self.finish_activity(
             db,
             run=run,
@@ -936,6 +968,11 @@ class ProjectAutomationProcessor:
         run.assignee_agent_id = ""
         run.device_id = ""
         run.version += 1
+        from app.services.project_workflow_projection import (
+            sync_automation_workflow_node,
+        )
+
+        sync_automation_workflow_node(db, run)
         db.commit()
         db.refresh(run)
 

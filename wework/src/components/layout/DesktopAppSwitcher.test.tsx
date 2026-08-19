@@ -59,16 +59,20 @@ describe('DesktopAppSwitcher', () => {
     expect(onNavigate).toHaveBeenCalledWith('todo')
   })
 
-  test('hides Kanban while experimental features are disabled', () => {
+  test('shows Kanban while experimental features are disabled', () => {
     render(<DesktopAppSwitcher activeApp="wework" onNavigate={vi.fn()} />)
 
     fireEvent.click(screen.getByTestId('chrome-tab-wework'))
-    expect(screen.queryByTestId('app-switcher-option-todo')).not.toBeInTheDocument()
+    expect(screen.getByTestId('app-switcher-option-todo')).toBeInTheDocument()
     expect(
       within(screen.getByTestId('desktop-app-switcher-menu'))
         .getAllByRole('menuitemradio')
         .map(option => option.textContent)
-    ).toEqual(['任务使用 AI 解决具体问题', '智能体构建并交付可嵌入业务的云端智能体'])
+    ).toEqual([
+      '任务使用 AI 解决具体问题',
+      '项目空间用 AI 管理项目的规划、执行与反馈',
+      '智能体构建并交付可嵌入业务的云端智能体',
+    ])
   })
 
   test('keeps Kanban navigable while disconnected', () => {

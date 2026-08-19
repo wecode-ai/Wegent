@@ -145,6 +145,22 @@ function mockDeferredModelsLoad(models: Model[]) {
   }
 }
 
+function mockDeferredModelFailure(error: Error) {
+  let rejectModels!: (error: Error) => void
+  const promise = new Promise<{ data: Model[] }>((_, reject) => {
+    rejectModels = reject
+  })
+  ;(modelApis.getUnifiedModels as jest.Mock).mockReturnValue(promise)
+  return {
+    async reject() {
+      await act(async () => {
+        rejectModels(error)
+        await promise.catch(() => undefined)
+      })
+    },
+  }
+}
+
 describe('useModelSelection', () => {
   beforeEach(() => {
     jest.clearAllMocks()
@@ -153,6 +169,44 @@ describe('useModelSelection', () => {
     ;(getModelNamespaceFromConfig as jest.Mock).mockReturnValue(undefined)
     ;(getGlobalModelPreference as jest.Mock).mockReturnValue(null)
     ;(getCompatibleProviderFromAgentType as jest.Mock).mockReturnValue(null)
+  })
+
+  it('retries model loading once after a transient network failure', async () => {
+    ;(modelApis.getUnifiedModels as jest.Mock)
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValueOnce({ data: [mockModel] })
+
+    const { result } = renderHook(() =>
+      useModelSelection({
+        teamId: 1,
+        taskId: null,
+        selectedTeam: mockTeam,
+      })
+    )
+
+    await waitFor(() => {
+      expect(modelApis.getUnifiedModels).toHaveBeenCalledTimes(2)
+      expect(result.current.models).toEqual([expect.objectContaining(mockModel)])
+    })
+    expect(result.current.error).toBeNull()
+  })
+
+  it('does not retry non-network model loading failures', async () => {
+    const modelLoad = mockDeferredModelFailure(new Error('Server rejected'))
+
+    const { result } = renderHook(() =>
+      useModelSelection({
+        teamId: 1,
+        taskId: null,
+        selectedTeam: mockTeam,
+      })
+    )
+
+    await modelLoad.reject()
+
+    expect(result.current.error).toBe('common:models.errors.load_models_failed')
+    expect(result.current.isLoading).toBe(false)
+    expect(modelApis.getUnifiedModels).toHaveBeenCalledTimes(1)
   })
 
   it('selects concrete models as force override without showing override text', async () => {

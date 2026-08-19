@@ -37,6 +37,11 @@ class TestExtractCompletedResult:
         result = extract_completed_result({})
         assert result["value"] == ""
 
+    def test_null_output(self):
+        """OpenAI SDK may normalize an omitted output field to null."""
+        result = extract_completed_result({"output": None})
+        assert result["value"] == ""
+
     def test_preserves_usage(self):
         result = extract_completed_result({"usage": {"tokens": 42}})
         assert result["usage"] == {"tokens": 42}

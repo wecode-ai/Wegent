@@ -65,16 +65,27 @@ fn executor_build_entrypoints_use_rust_binary_build() {
 
     let dev_sidecar = fs::read_to_string("../wework/scripts/dev-executor-sidecar.sh").unwrap();
     assert!(dev_sidecar.contains("WEGENT_EXECUTOR_DEV_RELOAD:-1"));
-    assert!(dev_sidecar.contains("--features dev-reload"));
-    assert!(dev_sidecar.contains("--bin wegent-executor-dev"));
+    assert!(dev_sidecar.contains("dev-executor-reload.mjs"));
     assert!(dev_sidecar.contains("cargo build"));
     assert!(dev_sidecar.contains("configure_wegent_cargo_target_dir \"$PROJECT_DIR\" \"executor\""));
     assert!(dev_sidecar.contains("$cache_root/executor-dev"));
     assert!(!dev_sidecar.contains("executor_source_cache_key"));
     assert!(dev_sidecar.contains("WEGENT_EXECUTOR_SOURCE_DIR"));
-    assert!(dev_sidecar
-        .contains("cargo_target_binary_path \"$EXECUTOR_DIR\" debug wegent-executor-dev"));
     assert!(!dev_sidecar.contains("exec cargo run"));
+
+    let dev_reload = fs::read_to_string("../wework/scripts/dev-executor-reload.mjs").unwrap();
+    assert!(dev_reload.contains("'cargo'"));
+    assert!(dev_reload.contains("'--bin', 'wegent-executor'"));
+    assert!(dev_reload.contains("watch(sourceDir, { recursive: true }"));
+    assert!(!dev_reload.contains("wegent-executor-dev"));
+
+    let windows_dev = fs::read_to_string("../wework/scripts/dev-windows-app.mjs").unwrap();
+    assert!(windows_dev.contains("Building executor dev-reload binaries"));
+    assert!(
+        windows_dev.contains("'wegent-executor-dev',\n        '--bin',\n        'wegent-executor'")
+    );
+    assert!(windows_dev.contains("process.env.WEGENT_EXECUTOR_BUILD_TARGET = target"));
+    assert!(windows_dev.contains("process.env.WEGENT_EXECUTOR_PREBUILT = '1'"));
 
     let device_dockerfile = fs::read_to_string("../docker/device/Dockerfile").unwrap();
     assert!(device_dockerfile.contains("pkg-config"));
@@ -86,6 +97,74 @@ fn executor_build_entrypoints_use_rust_binary_build() {
     assert!(device_dockerfile.contains("ENV WEGENT_EXECUTOR_VERSION=${APP_VERSION}"));
     assert!(device_dockerfile.contains("cargo build --release --locked"));
     assert!(device_dockerfile.contains("target/release/wegent-executor"));
+    assert!(device_dockerfile.contains("ARG NODE_DIST_MIRROR=https://nodejs.org/dist"));
+    assert!(device_dockerfile.contains("ARG CODE_SERVER_VERSION=4.121.0"));
+    assert!(device_dockerfile.contains(
+        "ARG CODE_SERVER_REPOSITORY_RAW=https://raw.githubusercontent.com/coder/code-server"
+    ));
+    assert!(device_dockerfile.contains("ARG CODE_SERVER_HTTPS_PROXY="));
+    assert!(!device_dockerfile.contains("WECODE_CLI_CC"));
+    assert!(!device_dockerfile.contains("wecode-cli-cc"));
+    assert!(device_dockerfile.contains("export HTTPS_PROXY=\"$CODE_SERVER_HTTPS_PROXY\""));
+    assert!(device_dockerfile.contains("ARG CARGO_HTTPS_PROXY="));
+    assert!(device_dockerfile.contains("export HTTPS_PROXY=\"$CARGO_HTTPS_PROXY\""));
+    assert!(device_dockerfile.contains("/v${CODE_SERVER_VERSION}/install.sh"));
+    assert!(device_dockerfile.contains("--method=standalone"));
+    assert!(device_dockerfile.contains("--prefix=/usr/local"));
+    assert!(device_dockerfile.contains("--version=\"${CODE_SERVER_VERSION}\""));
+    assert!(device_dockerfile.contains(
+        "/usr/local/lib/code-server-${CODE_SERVER_VERSION}/lib/vscode/node_modules/vsda"
+    ));
+    assert!(device_dockerfile.contains("code-server --version | tail -n 1 | awk '{print $1}'"));
+    assert!(device_dockerfile
+        .contains("test \"$installed_code_server_version\" = \"$CODE_SERVER_VERSION\""));
+    assert!(device_dockerfile
+        .contains("install -m 0755 /app/executor \"$WEGENT_EXECUTOR_HOME/bin/wegent-executor\""));
+    assert!(device_dockerfile
+        .contains("ENV LOCAL_WORKSPACE_ROOT=/home/wegent/.wecode/wegent-executor/workspace"));
+    assert!(device_dockerfile.contains("ENV WEGENT_WORKSPACE_ROOTS=/home/wegent"));
+    for persistent_path in [
+        "$WEGENT_EXECUTOR_HOME/bin",
+        "$WEGENT_EXECUTOR_HOME/runtime-work",
+        "$WEGENT_EXECUTOR_HOME/capabilities",
+        "$WEGENT_EXECUTOR_HOME/sessions",
+        "$LOCAL_WORKSPACE_ROOT/projects",
+        "$LOCAL_WORKSPACE_ROOT/chats",
+        "$LOCAL_WORKSPACE_ROOT/worktrees",
+        "$DEVICE_LOG_DIR",
+    ] {
+        assert!(device_dockerfile.contains(persistent_path));
+    }
+    assert!(device_dockerfile
+        .contains("EXPECTED_EXECUTOR_HOME=\"/home/wegent/.wecode/wegent-executor\""));
+    assert!(!device_dockerfile.contains("WEGENT_EXECUTOR_HOME_EXPECTED_PATH"));
+    assert!(device_dockerfile
+        .contains("WEGENT_EXECUTOR_HOME=\"$(realpath -m -- \"$WEGENT_EXECUTOR_HOME\")\""));
+    assert!(device_dockerfile
+        .contains("LOCAL_WORKSPACE_ROOT=\"$(realpath -m -- \"$LOCAL_WORKSPACE_ROOT\")\""));
+    assert!(device_dockerfile.contains("WEGENT_EXECUTOR_HOME_ID"));
+    assert!(device_dockerfile.contains(".executor-home-id"));
+    assert!(device_dockerfile.contains("flock -n 9"));
+    assert!(device_dockerfile.contains(".write-probe.$$"));
+    assert!(device_dockerfile.contains("auth: none"));
+    assert!(device_dockerfile.contains("--auth none"));
+    assert!(!device_dockerfile.contains("--auth password"));
+    assert!(!device_dockerfile.contains("--install-extension"));
+    assert!(device_dockerfile.contains("$WEGENT_EXECUTOR_HOME/logs"));
+    assert!(!device_dockerfile.contains("code-server@${CODE_SERVER_VERSION}"));
+    assert!(!device_dockerfile.contains("deb.nodesource.com"));
+    assert!(!device_dockerfile.contains(
+        "ARG CODE_SERVER_DIST_MIRROR=https://github.com/coder/code-server/releases/download"
+    ));
+
+    let github_pipeline = fs::read_to_string("../.github/workflows/publish-image.yml").unwrap();
+    assert_eq!(
+        github_pipeline
+            .matches("file: docker/device/Dockerfile")
+            .count(),
+        2
+    );
+    assert!(!github_pipeline.contains("file: wecode/docker/device/Dockerfile"));
 
     let e2e_workflow = fs::read_to_string("../.github/workflows/e2e-tests.yml").unwrap();
     assert!(!e2e_workflow.contains("python -m executor.main"));

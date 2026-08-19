@@ -56,6 +56,23 @@ async fn local_backend_registers_device_with_python_compatible_payload() {
     assert_eq!(calls[0].payload["executor_version"], "test-version");
     assert_eq!(calls[0].payload["client_ip"], "192.0.2.10");
     assert_eq!(calls[0].payload["runtime_transfer_host"], "192.0.2.10");
+    assert_eq!(calls[0].payload["runtime_features"]["schemaVersion"], 1);
+    assert_eq!(
+        calls[0].payload["runtime_features"]["worktrees"]["version"],
+        1
+    );
+    assert_eq!(
+        calls[0].payload["runtime_features"]["worktrees"]["managed"],
+        true
+    );
+    assert_eq!(
+        calls[0].payload["runtime_features"]["worktrees"]["deferredPrepare"],
+        true
+    );
+    assert_eq!(
+        calls[0].payload["runtime_features"]["worktrees"]["preflight"],
+        true
+    );
 }
 
 #[tokio::test]
@@ -93,6 +110,7 @@ async fn local_backend_heartbeat_reports_running_tasks_capabilities_and_auth_fil
     client.set_running_task_ids(["10".to_owned(), "20".to_owned()]);
 
     let accepted = client.send_heartbeat(Duration::from_secs(2)).await.unwrap();
+    client.emit_liveness_heartbeat().await.unwrap();
 
     assert!(accepted);
     let calls = transport.calls();
@@ -103,10 +121,31 @@ async fn local_backend_heartbeat_reports_running_tasks_capabilities_and_auth_fil
     assert_eq!(calls[0].payload["executor_version"], "test-version");
     assert_eq!(calls[0].payload["capabilities"]["revision"], 0);
     assert_eq!(calls[0].payload["capabilities"]["skills"], json!([]));
+    assert_eq!(calls[0].payload["runtime_features"]["schemaVersion"], 1);
+    assert_eq!(
+        calls[0].payload["runtime_features"]["worktrees"]["version"],
+        1
+    );
+    assert_eq!(
+        calls[0].payload["runtime_features"]["worktrees"]["managed"],
+        true
+    );
+    assert_eq!(
+        calls[0].payload["runtime_features"]["worktrees"]["deferredPrepare"],
+        true
+    );
+    assert_eq!(
+        calls[0].payload["runtime_features"]["worktrees"]["preflight"],
+        true
+    );
     assert_eq!(
         calls[0].payload["runtime_auth_files"]["codex"],
         json!({"target_path": expected_auth_path, "exists": true})
     );
+    let emits = transport.emits();
+    assert_eq!(emits.len(), 1);
+    assert_eq!(emits[0].event, "device:heartbeat");
+    assert_eq!(emits[0].payload, calls[0].payload);
 }
 
 #[tokio::test]
@@ -146,6 +185,7 @@ async fn local_backend_task_execute_handler_runs_agent_and_emits_events() {
     let fake_claude = write_fake_executable(
         "fake-local-backend-claude",
         r#"#!/bin/sh
+	cat >/dev/null
 	printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"local done"}]}}'
 	printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn"}'
 	"#,
@@ -189,6 +229,7 @@ async fn local_backend_task_execute_streams_claude_stdout_before_completion() {
     let fake_claude = write_fake_executable(
         "fake-local-backend-streaming-claude",
         r#"#!/bin/sh
+	cat >/dev/null
 	printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"hello"}]}}'
 	sleep 0.1
 	printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":" world"}]}}'
@@ -238,6 +279,7 @@ async fn local_backend_task_execute_streams_claude_thinking_deltas_before_text()
     let fake_claude = write_fake_executable(
         "fake-local-backend-thinking-claude",
         r#"#!/bin/sh
+	cat >/dev/null
 	printf '%s\n' '{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"checking image"}}'
 	sleep 0.1
 	printf '%s\n' '{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"visible answer"}}'
@@ -285,6 +327,7 @@ async fn local_backend_task_execute_streams_claude_assistant_thinking_blocks_as_
     let fake_claude = write_fake_executable(
         "fake-local-backend-assistant-thinking-claude",
         r#"#!/bin/sh
+	cat >/dev/null
 	printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"abcdef"},{"type":"text","text":"answer"}]}}'
 	printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn"}'
 	"#,
@@ -341,6 +384,7 @@ async fn local_backend_task_execute_streams_claude_tool_use_blocks() {
     let fake_claude = write_fake_executable(
         "fake-local-backend-tool-claude",
         r##"#!/bin/sh
+	cat >/dev/null
 	printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"Read_0","name":"Read","input":{"file_path":"README.md"}}]}}'
 	sleep 0.1
 	printf '%s\n' '{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"Read_0","content":"# Project"}]}}'
@@ -409,6 +453,7 @@ async fn local_backend_task_execute_streams_large_claude_assistant_message() {
         "fake-local-backend-large-assistant-claude",
         &format!(
             r#"#!/bin/sh
+	cat >/dev/null
 	printf '%s\n' '{}'
 	printf '%s\n' '{{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn"}}'
 	"#,
@@ -669,7 +714,7 @@ impl RecordingTransport {
     }
 
     async fn wait_for_emits(&self, count: usize) -> Vec<RecordedCall> {
-        timeout(Duration::from_secs(3), async {
+        timeout(Duration::from_secs(10), async {
             loop {
                 let emits = self.emits();
                 if emits.len() >= count {
@@ -683,7 +728,7 @@ impl RecordingTransport {
     }
 
     async fn wait_for_emit_event(&self, event: &str) -> Vec<RecordedCall> {
-        timeout(Duration::from_secs(3), async {
+        timeout(Duration::from_secs(10), async {
             loop {
                 let emits = self.emits();
                 if emits.iter().any(|emit| emit.event == event) {

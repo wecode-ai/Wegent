@@ -39,11 +39,13 @@ import {
   buildDesktopApp,
   buildExecutor,
   codexUpstreamApiFormat,
+  mcpElicitationConfigToml,
   resolveDesktopCodexBinary,
   toolDetailsMcpConfigToml,
   verifyCloudProjectFlow,
   verifyConnectedModelsOnLocalExecution,
   verifyModelProtocolMatrix,
+  verifyRemoteDockerCommandFlow,
   verifyRetryFailureRestoration,
   writeCodexConfig,
 } from './desktop-build-flows.mjs'
@@ -86,6 +88,7 @@ import {
 
 import {
   declineInitialTelemetryConsent,
+  ensureExperimentalFeaturesEnabled,
   verifyAutomationLifecycle,
   verifyInitialTelemetryConsent,
   verifySitesPluginAutoInstall,
@@ -162,6 +165,8 @@ import {
   MIXED_TOOL_TURN_MODEL_PROTOCOL_MATRIX_CASES,
   MODEL_API_KEY,
   MODEL_SWITCH_ONLY,
+  MCP_ELICITATION_COMPLETION_TEXT,
+  MCP_ELICITATION_PROMPT,
   PASTED_WORKSPACE_PATHS_ONLY,
   QUEUE_MANAGEMENT_ONLY,
   QUEUE_NAVIGATION_ONLY,
@@ -249,9 +254,10 @@ import {
 
 import {
   captureVerificationScreenshot,
-  configureDefaultProjectSpaceAssociation,
+  verifyDefaultTaskBoardAssociation,
   verifyExplicitlyTrackedTask,
   verifyDefaultWorkspaceStartupTab,
+  verifyWorkspaceIssueCreation,
   verifyWorkspaceDocumentTabs,
   verifyWorkspaceTabIsolation,
   waitForControlSelectionOffset,
@@ -449,10 +455,15 @@ async function main() {
       false,
       'The isolated Wework Codex home was not blank before application startup'
     )
-    await createOfficialPluginMarketplaceFixture({
-      marketplaceRoot: pluginMarketplacePath,
-      repositoryRoot: officialPluginRepositoryPath,
-    })
+    if (
+      shouldRunPluginSegment('plugin-lifecycle') ||
+      shouldRunPluginSegment('skill-mention-rendering')
+    ) {
+      await createOfficialPluginMarketplaceFixture({
+        marketplaceRoot: pluginMarketplacePath,
+        repositoryRoot: officialPluginRepositoryPath,
+      })
+    }
     await createPluginMarketplaceFixture(marketplacePluginPath)
     await mkdir(nativeCodexHome, { recursive: true })
     await writeFile(
@@ -510,11 +521,27 @@ async function main() {
     console.log(`Using real Codex: ${codexVersion}`)
     const appIdentifier = `io.wecode.wework.e2e.run${process.pid}`
     let executorBinary
+    let prebuiltDesktopApp = null
     const scenarioRequiresCloudEnvironment = desktopScenario?.requiresCloudEnvironment === true
-    if (
+    if (BUILD_ONLY) {
+      const builds = await Promise.all([
+        buildExecutor(),
+        buildDesktopApp(
+          control.controlUrl,
+          control.url,
+          'wework-desktop-e2e-cloud-token',
+          appIdentifier,
+          control.url,
+          codexBinary
+        ),
+      ])
+      executorBinary = builds[0]
+      prebuiltDesktopApp = builds[1]
+    } else if (
       CLOUD_ONLY ||
       CLOUD_FEATURES_ONLY ||
       CLOUD_VISION_ONLY ||
+      DESKTOP_SEGMENT === 'remote-device-onboarding' ||
       scenarioRequiresCloudEnvironment
     ) {
       cloudEnvironment = new RealCloudEnvironment({
@@ -534,14 +561,18 @@ async function main() {
     } else {
       executorBinary = await buildExecutor()
     }
-    const desktopAppPromise = buildDesktopApp(
-      control.controlUrl,
-      cloudEnvironment?.backendUrl ?? control.url,
-      cloudEnvironment?.authToken ?? desktopScenario?.authToken ?? 'wework-desktop-e2e-cloud-token',
-      appIdentifier,
-      control.url,
-      codexBinary
-    )
+    const desktopAppPromise = prebuiltDesktopApp
+      ? Promise.resolve(prebuiltDesktopApp)
+      : buildDesktopApp(
+          control.controlUrl,
+          cloudEnvironment?.backendUrl ?? control.url,
+          cloudEnvironment?.authToken ??
+            desktopScenario?.authToken ??
+            'wework-desktop-e2e-cloud-token',
+          appIdentifier,
+          control.url,
+          codexBinary
+        )
     const desktopApp = cloudEnvironment
       ? (
           await Promise.all([
@@ -582,6 +613,10 @@ async function main() {
         control.url,
         `${desktopScenario?.codexConfigToml ?? ''}\n${
           shouldConfigureToolDetailsMcp() ? toolDetailsMcpConfigToml() : ''
+        }\n${
+          DESKTOP_SEGMENT === 'permission-modes'
+            ? mcpElicitationConfigToml(join(resultDir, 'mcp-elicitation-result.jsonl'))
+            : ''
         }`
       )
       await writeFile(
@@ -761,6 +796,24 @@ last_updated = "2026-07-30T00:00:00Z"`
       return
     }
 
+    if (DESKTOP_SEGMENT === 'browser-toolbar-actions') {
+      phase = 'browser-toolbar-actions-scenario'
+      assert.ok(
+        desktopScenario,
+        'The browser-toolbar-actions checkpoint requires WEWORK_E2E_DESKTOP_SCENARIO_MODULE'
+      )
+      await desktopScenario.verify(control)
+      await writeFile(
+        join(resultDir, 'model-requests.json'),
+        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+        'utf8'
+      )
+      console.log(
+        `Wework desktop browser-toolbar-actions checkpoint passed. Evidence: ${resultDir}`
+      )
+      return
+    }
+
     if (DESKTOP_SEGMENT === 'project-automation') {
       phase = 'project-automation-scenario'
       assert.ok(
@@ -774,6 +827,15 @@ last_updated = "2026-07-30T00:00:00Z"`
         'utf8'
       )
       console.log(`Wework desktop project-automation checkpoint passed. Evidence: ${resultDir}`)
+      return
+    }
+
+    if (DESKTOP_SEGMENT === 'remote-device-onboarding') {
+      phase = 'remote-device-onboarding'
+      await verifyRemoteDockerCommandFlow(control, cloudEnvironment)
+      console.log(
+        `Wework desktop remote-device onboarding checkpoint passed. Evidence: ${resultDir}`
+      )
       return
     }
 
@@ -1248,6 +1310,8 @@ last_updated = "2026-07-30T00:00:00Z"`
     if (shouldRunDesktopCheckpoint('workspace-tabs')) {
       phase = 'workspace-startup-tab'
       await verifyDefaultWorkspaceStartupTab(control)
+      phase = 'workspace-issue-creation'
+      await verifyWorkspaceIssueCreation(control)
       phase = 'workspace-tab-isolation'
       await verifyWorkspaceTabIsolation(control)
       if (shouldStopAfterDesktopCheckpoint('workspace-tabs')) {
@@ -1601,7 +1665,7 @@ last_updated = "2026-07-30T00:00:00Z"`
     let associatedTaskTabTestId = null
     if (shouldRunDesktopCheckpoint('core-task-flow')) {
       phase = 'project-space-default-association-setup'
-      associatedTaskTabTestId = await configureDefaultProjectSpaceAssociation(control, projectId)
+      associatedTaskTabTestId = await verifyDefaultTaskBoardAssociation(control, projectRowSelector)
     }
 
     if (MIXED_TOOL_TURNS_ONLY) {
@@ -2300,6 +2364,7 @@ last_updated = "2026-07-30T00:00:00Z"`
     }
 
     if (shouldRunDesktopCheckpoint('conversation-state')) {
+      await ensureExperimentalFeaturesEnabled(control)
       if (!taskRowTestId) {
         taskRowTestId = await createCheckpointTaskFixture(control, composerSelector)
         taskRowCompletionText = CHECKPOINT_TASK_COMPLETION_TEXT
@@ -2469,7 +2534,7 @@ last_updated = "2026-07-30T00:00:00Z"`
       phase = 'workspace-resources-across-conversation-switch'
       await writeFile(
         join(workspacePath, GIT_SEED_NAME),
-        `${GIT_SEED_CONTENT}${FILE_PREVIEW_RESTORE_MARKER}\n`
+        `${GIT_SEED_CONTENT}${FILE_PREVIEW_RESTORE_MARKER}\n${REVIEW_RESTORE_MARKER}\n`
       )
       const firstTaskDebugSnapshot = JSON.parse(
         await control.command('getWorkbenchDebugSnapshot', 'body')
@@ -2498,11 +2563,6 @@ last_updated = "2026-07-30T00:00:00Z"`
       const activeTaskWorkbenchSelector =
         `[data-testid="workspace-tab-content-${activeWorkspaceTabId}"] ` +
         '[data-testid="desktop-workbench-main"]'
-      const firstTaskReadme = join(firstTaskWorkspacePath, GIT_SEED_NAME)
-      await writeFile(
-        firstTaskReadme,
-        `${await readFile(firstTaskReadme, 'utf8')}${REVIEW_RESTORE_MARKER}\n`
-      )
       const activeBrowserInputSelector = `${activeTaskWorkbenchSelector} [data-testid="workspace-browser-url-input"]`
       const activeTerminalSelector = `${activeTaskWorkbenchSelector} [data-testid="workspace-terminal-window"]`
       const bottomPanelToggleSelector = '[data-testid="toggle-bottom-workspace-panel-button"]'
@@ -3220,6 +3280,8 @@ async function verifyPermissionModes(control) {
   )
   await captureVerificationScreenshot(control, 'permission-06-full-access-enabled.png')
 
+  await verifyMcpElicitationInFullAccess(control)
+
   await control.command('click', trigger)
   await control.command('waitFor', '[data-testid="permission-mode-read-only"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -3233,7 +3295,7 @@ async function verifyPermissionModes(control) {
     /Read only|只读/,
     'Selecting read-only did not update the permission mode'
   )
-  await captureVerificationScreenshot(control, 'permission-07-read-only-enabled.png')
+  await captureVerificationScreenshot(control, 'permission-09-read-only-enabled.png')
 
   await control.command('click', trigger)
   await control.command('waitFor', '[data-testid="permission-mode-workspace-write"]', {
@@ -3248,6 +3310,95 @@ async function verifyPermissionModes(control) {
     /Workspace|工作区/,
     'Restoring workspace mode did not update the permission mode'
   )
+}
+
+async function verifyMcpElicitationInFullAccess(control) {
+  const evidencePath = join(resultDir, 'mcp-elicitation-result.jsonl')
+  assert.equal(
+    await pathExists(evidencePath),
+    false,
+    'The MCP elicitation fixture produced evidence before the scenario started'
+  )
+
+  control.setScenario('mcp_elicitation')
+  await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL, ACTIVE_WORKBENCH_SELECTOR)
+  await sendPromptUntilScenarioRequest(
+    control,
+    ACTIVE_COMPOSER_SELECTOR,
+    MCP_ELICITATION_PROMPT,
+    'mcp_elicitation'
+  )
+  await control.command('waitFor', '[data-testid="request-user-input-card"]', {
+    text: '访问范围',
+    visible: true,
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const formText = await control.command('getText', '[data-testid="request-user-input-card"]')
+  for (const expectedText of ['访问范围', '所有人', '仅自己']) {
+    assert.ok(formText.includes(expectedText), `The MCP elicitation form omitted ${expectedText}`)
+  }
+  const formSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  assert.equal(
+    formSnapshot.testIds.includes('request-user-input-option-__codex_approval-0'),
+    false,
+    'The MCP tool call displayed an execution approval card instead of the business form'
+  )
+  assert.equal(
+    await pathExists(evidencePath),
+    false,
+    'Codex resolved the MCP elicitation before the user answered the visible form'
+  )
+  await captureVerificationScreenshot(control, 'permission-07-mcp-elicitation-form.png')
+
+  const runningSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+  const taskId = runningSnapshot.workbench?.currentRuntimeTask?.taskId
+  assert.ok(taskId, 'The MCP elicitation form was not attached to a runtime task')
+
+  await control.command('click', '[data-testid="request-user-input-option-audience-1"]')
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: MCP_ELICITATION_COMPLETION_TEXT,
+    visible: true,
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await waitForWorkbenchDebugState(
+    control,
+    snapshot =>
+      snapshot.workbench?.currentRuntimeTask?.taskId === taskId &&
+      snapshot.pane?.status?.isBusy === false,
+    'The MCP elicitation task did not settle after the accepted form response'
+  )
+  await control.command('click', '[data-testid="final-processing-toggle"]')
+  await control.command('waitFor', '[data-testid="request-user-input-summary"]', {
+    text: '仅自己',
+    visible: true,
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+
+  const startedAt = Date.now()
+  let evidence = null
+  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    if (await pathExists(evidencePath)) {
+      const records = (await readFile(evidencePath, 'utf8'))
+        .split('\n')
+        .filter(Boolean)
+        .map(line => JSON.parse(line))
+      evidence = records.find(record => record.event === 'elicitation_result') ?? null
+      if (evidence) break
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  assert.deepEqual(
+    evidence?.result,
+    {
+      action: 'accept',
+      content: { audience: 'owner' },
+    },
+    'The MCP fixture did not receive the accepted stable audience value'
+  )
+  await captureVerificationScreenshot(control, 'permission-08-mcp-elicitation-complete.png')
 }
 
 export { main }

@@ -2,13 +2,17 @@ import type { LocalLoopItemExecution } from '@/api/local/localDelivery'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { createConversationWorkspace } from '@/features/workbench/workbenchRuntimeHelpers'
 import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
+import { runtimeTaskReconciliationSnapshot } from '@/features/workbench/runtimeTaskLifecycle/projection'
 import type { RuntimeTaskCreateRequest } from '@/types/api'
+import {
+  findRuntimeTaskWorkspace,
+  getRuntimeTaskWorkspacePath,
+} from '@/features/workbench/workbenchRuntimeHelpers'
 
 const LOCAL_QUEUE_POLL_MS = 3000
 const LOCAL_QUEUE_DEVICE_CACHE_MS = 30_000
 const LOCAL_QUEUE_HEARTBEAT_INTERVAL_MS = 60_000
 const LOCAL_QUEUE_RECOVERY_INTERVAL_MS = 60_000
-const LOCAL_QUEUE_DEVICE_CAPACITY = 5
 const LOCAL_QUEUE_LEASE_SECONDS = 300
 
 function recordValue(value: unknown): Record<string, unknown> | null {
@@ -35,6 +39,24 @@ function runtimeBot(value: unknown): Array<Record<string, unknown>> {
     throw new Error('Transient runtime payload has an invalid bot identity')
   }
   return bots
+}
+
+export async function stopLocalRobotQueueExecution(
+  executionApi: NonNullable<WorkbenchServices['localLoopItemExecutionApi']>,
+  runtimeWorkApi: WorkbenchServices['runtimeWorkApi'],
+  executionId: number
+): Promise<LocalLoopItemExecution> {
+  const execution = await executionApi.cancel(executionId)
+  if (execution.status !== 'cancel_requested') return execution
+  if (!execution.runtime_device_id || !execution.runtime_task_id) {
+    throw new Error('Delivered execution has no runtime identity')
+  }
+  if (!runtimeWorkApi) throw new Error('Runtime cancellation API is unavailable')
+  await runtimeWorkApi.cancelRuntimeTask({
+    deviceId: execution.runtime_device_id,
+    taskId: execution.runtime_task_id,
+  })
+  return execution
 }
 
 /**
@@ -94,7 +116,6 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
   const claimNext = async (deviceId: string) => {
     const claim = {
       execution_device_id: deviceId,
-      device_capacity: LOCAL_QUEUE_DEVICE_CAPACITY,
       lease_seconds: LOCAL_QUEUE_LEASE_SECONDS,
     }
     const cloudExecution = await cloudExecutionApi?.claimNext(claim)
@@ -132,8 +153,8 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
   }
 
   const dispatchOnce = async (): Promise<void> => {
-    let deviceIds = await localDeviceIds()
-    if (deviceIds.length === 0) deviceIds = ['local-device']
+    const deviceIds = await localDeviceIds()
+    if (deviceIds.length === 0) return
     let execution: LocalLoopItemExecution | null = null
     let isCloudExecution = false
     let claimDeviceId: string | null = null
@@ -157,6 +178,8 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
     const deviceId = claimDeviceId ?? 'local-device'
 
     const taskId = nonEmptyString(execution.runtime_task_id) ?? ''
+    let startRequested = false
+    let runtimeAccepted = false
     try {
       const runtimePayload = recordValue(execution.runtime_payload)
       if (!runtimePayload) {
@@ -187,21 +210,66 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
           ? payloadLocalProjectId
           : null
       let boundWorkspacePath: string | null = null
+      const workspaceSourceTask = recordValue(runtimePayload.workspaceSourceTask)
+      const sourceTaskAddress =
+        workspaceSourceTask &&
+        nonEmptyString(workspaceSourceTask.deviceId) &&
+        nonEmptyString(workspaceSourceTask.taskId)
+          ? {
+              deviceId: nonEmptyString(workspaceSourceTask.deviceId)!,
+              taskId: nonEmptyString(workspaceSourceTask.taskId)!,
+            }
+          : null
+      const runtimeWork =
+        boundLocalProjectId != null || sourceTaskAddress
+          ? await services.runtimeWorkApi?.listRuntimeWork()
+          : null
+      if (sourceTaskAddress) {
+        if (sourceTaskAddress.deviceId !== deviceId) {
+          throw new Error('Inherited workflow workspace belongs to another device')
+        }
+        const sourceWorkspace = findRuntimeTaskWorkspace(runtimeWork, sourceTaskAddress)
+        const sourceTask = sourceWorkspace?.tasks.find(
+          candidate => candidate.taskId === sourceTaskAddress.taskId
+        )
+        boundWorkspacePath =
+          sourceWorkspace && sourceTask
+            ? getRuntimeTaskWorkspacePath(sourceWorkspace, sourceTask)
+            : null
+        if (!boundWorkspacePath) {
+          throw new Error('Inherited workflow workspace is unavailable')
+        }
+      }
       if (boundLocalProjectId != null) {
-        const runtimeWork = await services.runtimeWorkApi?.listRuntimeWork()
         const projectWork = runtimeWork?.projects.find(
           item => item.project.id === boundLocalProjectId
         )
         const workspace = projectWork?.deviceWorkspaces.find(
           candidate => candidate.deviceId === deviceId && candidate.available
         )
-        boundWorkspacePath =
+        boundWorkspacePath ??=
           workspace?.workspacePath ?? projectWork?.project.roots?.[0]?.path ?? null
       }
       if (boundLocalProjectId != null && !boundWorkspacePath) {
         throw new Error(
           `Bound local project ${boundLocalProjectId} is unavailable on device ${deviceId}`
         )
+      }
+      if (boundWorkspacePath && execution.agent_max_concurrent_executions > 1) {
+        const gitCheck = await deviceApi.executeCommand(deviceId, {
+          command_key: 'git_is_worktree',
+          args: [boundWorkspacePath],
+          timeout_seconds: 15,
+          max_output_bytes: 4096,
+        })
+        const gitCheckOutput = Array.isArray(gitCheck.stdout)
+          ? gitCheck.stdout.join('\n')
+          : typeof gitCheck.stdout === 'string'
+            ? gitCheck.stdout
+            : ''
+        if (!gitCheck.success || gitCheckOutput.trim() !== 'true') {
+          throw new Error('Robot concurrency above 1 requires an isolated Git worktree workspace')
+        }
       }
 
       const title = typeof runtimePayload.title === 'string' ? runtimePayload.title : null
@@ -267,6 +335,9 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
         standaloneChatWorkspace,
         ...modelFields,
         ...(boundLocalProjectId != null ? { projectId: boundLocalProjectId } : {}),
+        ...(boundLocalProjectId != null && execution.agent_max_concurrent_executions > 1
+          ? { execution: { workspace: { source: 'git_worktree' as const } } }
+          : {}),
       }
 
       console.log('[local-robot-queue] claimed transient runtime payload', {
@@ -279,31 +350,37 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
         boundLocalProjectId,
         boundWorkspacePath,
       })
-      // Open the reviewable AI activity before the executor can emit events:
-      // the canonical runtime identity is already bound at claim time, so the
-      // comment exists first and the event write-back can only reuse it.
+      const workspacePath =
+        boundWorkspacePath ??
+        (await createConversationWorkspace(deviceApi, request.deviceId ?? deviceId, prompt, taskId))
+      if (isCloudExecution) {
+        const fenced = await cloudExecutionApi!.startRequested(execution, deviceId, taskId)
+        if (!fenced) throw new Error('Execution is no longer dispatchable')
+      } else {
+        const fenced = await executionApi.startRequested(
+          execution.id,
+          deviceId,
+          taskId,
+          LOCAL_QUEUE_LEASE_SECONDS
+        )
+        if (!fenced) throw new Error('Execution is no longer dispatchable')
+      }
+      startRequested = true
+      const response = await runtimeWorkApi.createRuntimeTask({ ...request, workspacePath })
+      if (response.taskId !== taskId) {
+        throw new Error(`Runtime accepted task '${response.taskId}' instead of '${taskId}'`)
+      }
+      runtimeAccepted = true
       if (isCloudExecution) {
         await cloudExecutionApi!.runtimeStart(
           execution,
           deviceId,
-          taskId,
+          response.taskId,
           prompt,
           request.modelId ?? null
         )
-      }
-      const workspacePath =
-        boundWorkspacePath ??
-        (await createConversationWorkspace(deviceApi, request.deviceId ?? deviceId, prompt, taskId))
-      const response = await runtimeWorkApi.createRuntimeTask({ ...request, workspacePath })
-      if (isCloudExecution) {
-        await cloudExecutionApi!.heartbeat(
-          execution,
-          deviceId,
-          response.taskId,
-          LOCAL_QUEUE_LEASE_SECONDS
-        )
       } else {
-        await executionApi.heartbeat(
+        await executionApi.runtimeStart(
           execution.id,
           deviceId,
           response.taskId,
@@ -311,33 +388,6 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
         )
       }
       keepRunAlive(execution, deviceId, response.taskId, isCloudExecution)
-      if (isCloudExecution) {
-        let terminalReported = false
-        let unsubscribe: () => void = () => undefined
-        const reportOnce = (report: () => Promise<unknown>) => {
-          if (terminalReported) return
-          terminalReported = true
-          unsubscribe()
-          void report().catch(cause => {
-            console.warn('[local-robot-queue] failed to report cloud terminal state', {
-              executionId: execution.id,
-              error: cause instanceof Error ? cause.message : String(cause),
-            })
-          })
-        }
-        unsubscribe = services.chatStream.subscribe({
-          scope: { deviceId, taskId: response.taskId },
-          onChatDone: payload => {
-            if (payload.taskId !== response.taskId) return
-            const note = typeof payload.result?.value === 'string' ? payload.result.value : null
-            reportOnce(() => cloudExecutionApi!.complete(execution, note))
-          },
-          onChatError: payload => {
-            if (payload.taskId !== response.taskId) return
-            reportOnce(() => cloudExecutionApi!.fail(execution, payload.error))
-          },
-        })
-      }
       console.log('[local-robot-queue] dispatched', {
         executionId: execution.id,
         loopItemId: execution.loop_item_id,
@@ -356,14 +406,25 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
         taskId,
         error: errorText,
       })
-      const fail = isCloudExecution
-        ? cloudExecutionApi!.fail(execution, errorText)
-        : executionApi.fail(execution.id, errorText)
+      const fail =
+        startRequested && isCloudExecution
+          ? cloudExecutionApi!.dispatchUnknown(execution, deviceId, taskId, errorText)
+          : startRequested
+            ? executionApi.dispatchUnknown(execution.id, deviceId, taskId, errorText)
+            : isCloudExecution
+              ? cloudExecutionApi!.dispatchFailed(execution, errorText)
+              : executionApi.dispatchFailed(execution.id, errorText)
       await fail.catch(failCause => {
-        console.warn('[local-robot-queue] failed to mark execution failed', {
+        console.warn('[local-robot-queue] failed to persist dispatch outcome', {
           error: failCause instanceof Error ? failCause.message : String(failCause),
         })
       })
+      if (runtimeAccepted) {
+        console.warn('[local-robot-queue] Runtime accepted the task; reconciliation owns outcome', {
+          executionId: execution.id,
+          taskId,
+        })
+      }
     }
   }
 
@@ -371,7 +432,38 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
   const recover = async () => {
     try {
       const result = await executionApi.recoverStale()
-      if (result.requeued > 0 || result.failed > 0) {
+      const staleExecutions = await executionApi.listStale()
+      if (staleExecutions.length > 0) {
+        const runtimeWork = await runtimeWorkApi.listRuntimeWork()
+        const snapshots = new Map<
+          string,
+          { status: string; running: boolean; turnStatus: string | null }
+        >()
+        const workspaces = [
+          ...runtimeWork.projects.flatMap(project => project.deviceWorkspaces),
+          ...runtimeWork.chats,
+        ]
+        for (const workspace of workspaces) {
+          for (const task of workspace.tasks) {
+            const truth = runtimeTaskReconciliationSnapshot(task)
+            snapshots.set(`${workspace.deviceId}:${task.taskId}`, {
+              status: truth.runtimeStatus,
+              running: truth.running,
+              turnStatus: truth.turnStatus,
+            })
+          }
+        }
+        for (const execution of staleExecutions) {
+          const address = `${execution.runtime_device_id}:${execution.runtime_task_id}`
+          const snapshot = snapshots.get(address)
+          await executionApi.reconcile(execution.id, {
+            runtime_status: snapshot?.status ?? 'missing',
+            running: snapshot?.running ?? false,
+            turn_status: snapshot?.turnStatus ?? null,
+          })
+        }
+      }
+      if (result.requeued > 0 || result.unknown > 0) {
         console.log('[local-robot-queue] recovered stale runs', result)
       }
     } catch (cause) {
@@ -385,13 +477,13 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
     if (disposed || dispatching) return
     dispatching = true
     recoveryCountdown -= LOCAL_QUEUE_POLL_MS
-    void dispatchOnce().finally(() => {
+    const recoveryDue = recoveryCountdown <= 0
+    if (recoveryDue) {
+      recoveryCountdown = LOCAL_QUEUE_RECOVERY_INTERVAL_MS
+    }
+    void (recoveryDue ? recover() : Promise.resolve()).then(dispatchOnce).finally(() => {
       dispatching = false
     })
-    if (recoveryCountdown <= 0) {
-      recoveryCountdown = LOCAL_QUEUE_RECOVERY_INTERVAL_MS
-      void recover()
-    }
   }, LOCAL_QUEUE_POLL_MS)
 
   return () => {

@@ -2,7 +2,29 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
+import { requestWorkbenchComposerFocus } from '@/lib/workbenchComposerFocus'
 import { BufferedChatInput } from './BufferedChatInput'
+
+function createProjectChat(scopeKey: string) {
+  return {
+    models: [],
+    skills: [],
+    selectedModel: null,
+    selectedModelOptions: {},
+    selectedSkills: [],
+    attachments: [],
+    uploadingFiles: new Map(),
+    errors: new Map(),
+    isOptionsLocked: false,
+    setSelectedModel: vi.fn(),
+    setSelectedModelOption: vi.fn(),
+    toggleSkill: vi.fn(),
+    handleFileSelect: vi.fn(),
+    removeAttachment: vi.fn(),
+    listLocalSkills: vi.fn(),
+    scopeKey,
+  }
+}
 
 describe('BufferedChatInput', () => {
   afterEach(() => {
@@ -289,6 +311,62 @@ describe('BufferedChatInput', () => {
     expect(onChange).toHaveBeenLastCalledWith('draft')
   })
 
+  test('does not flush transient composition text after the debounce window', async () => {
+    const onChange = vi.fn()
+    render(<BufferedChatInput value="" onChange={onChange} onSubmit={vi.fn()} disabled={false} />)
+
+    const input = screen.getByTestId('chat-message-input')
+    fireEvent.compositionStart(input)
+    await userEvent.type(input, 'nihao')
+    await new Promise(resolve => window.setTimeout(resolve, 350))
+
+    expect(onChange).not.toHaveBeenCalled()
+
+    fireEvent.compositionEnd(input)
+    await waitFor(() => expect(onChange).toHaveBeenLastCalledWith('nihao'))
+  })
+
+  test('cancels a queued frame flush when composition starts', async () => {
+    vi.useFakeTimers({ toFake: ['requestAnimationFrame'] })
+    const onChange = vi.fn()
+    render(<BufferedChatInput value="" onChange={onChange} onSubmit={vi.fn()} disabled={false} />)
+
+    const input = screen.getByTestId('chat-message-input')
+    await userEvent.type(input, 'draft')
+    fireEvent.blur(input)
+    fireEvent.compositionStart(input)
+    vi.advanceTimersByTime(20)
+
+    expect(onChange).not.toHaveBeenCalled()
+
+    fireEvent.compositionEnd(input)
+    vi.advanceTimersByTime(20)
+
+    expect(onChange).toHaveBeenLastCalledWith('draft')
+  })
+
+  test('preserves caller composition callbacks', () => {
+    const onCompositionStart = vi.fn()
+    const onCompositionEnd = vi.fn()
+    render(
+      <BufferedChatInput
+        value=""
+        onChange={vi.fn()}
+        onCompositionStart={onCompositionStart}
+        onCompositionEnd={onCompositionEnd}
+        onSubmit={vi.fn()}
+        disabled={false}
+      />
+    )
+
+    const input = screen.getByTestId('chat-message-input')
+    fireEvent.compositionStart(input)
+    fireEvent.compositionEnd(input)
+
+    expect(onCompositionStart).toHaveBeenCalledOnce()
+    expect(onCompositionEnd).toHaveBeenCalledOnce()
+  })
+
   test('restores a buffered draft after switching chat scopes', async () => {
     const drafts = new Map<string, string>()
     const onBlankChange = vi.fn((value: string) => drafts.set('blank', value))
@@ -347,5 +425,65 @@ describe('BufferedChatInput', () => {
     await waitFor(() => {
       expect(screen.getByTestId('chat-message-input')).toHaveValue('unfinished draft')
     })
+  })
+
+  test('focuses the matching composer when a conversation is selected', async () => {
+    render(
+      <>
+        <button type="button">Conversation</button>
+        <BufferedChatInput
+          value=""
+          onChange={vi.fn()}
+          onSubmit={vi.fn()}
+          disabled={false}
+          projectChat={createProjectChat('runtime:device-1:task-1')}
+        />
+      </>
+    )
+    const conversation = screen.getByRole('button', { name: 'Conversation' })
+    conversation.focus()
+
+    requestWorkbenchComposerFocus('runtime:device-1:task-1')
+
+    await waitFor(() => expect(screen.getByTestId('chat-message-input')).toHaveFocus())
+  })
+
+  test('does not focus a disabled or non-matching composer', async () => {
+    const projectChat = createProjectChat('runtime:device-1:task-1')
+    const { rerender } = render(
+      <>
+        <button type="button">Conversation</button>
+        <BufferedChatInput
+          value=""
+          onChange={vi.fn()}
+          onSubmit={vi.fn()}
+          disabled={false}
+          projectChat={projectChat}
+        />
+      </>
+    )
+    const conversation = screen.getByRole('button', { name: 'Conversation' })
+    conversation.focus()
+
+    requestWorkbenchComposerFocus('runtime:device-1:task-2')
+    await new Promise(resolve => window.requestAnimationFrame(resolve))
+    expect(conversation).toHaveFocus()
+
+    rerender(
+      <>
+        <button type="button">Conversation</button>
+        <BufferedChatInput
+          value=""
+          onChange={vi.fn()}
+          onSubmit={vi.fn()}
+          disabled
+          projectChat={projectChat}
+        />
+      </>
+    )
+    screen.getByRole('button', { name: 'Conversation' }).focus()
+    requestWorkbenchComposerFocus('runtime:device-1:task-1')
+    await new Promise(resolve => window.requestAnimationFrame(resolve))
+    expect(screen.getByRole('button', { name: 'Conversation' })).toHaveFocus()
   })
 })

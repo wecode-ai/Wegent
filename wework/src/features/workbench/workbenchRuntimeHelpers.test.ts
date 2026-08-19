@@ -3,6 +3,7 @@ import {
   buildRuntimeTaskTitle,
   findProjectDeviceWorkspace,
   getDefaultProjectDeviceWorkspaceId,
+  hydrateRuntimeTaskAddress,
   MAX_RUNTIME_TASK_TITLE_LENGTH,
   mergeRuntimeTaskHandles,
   projectTaskAddresses,
@@ -96,6 +97,94 @@ describe('workbenchRuntimeHelpers', () => {
         },
       },
     ])
+  })
+
+  test('hydrates an inherited task address with its exact worktree path', () => {
+    const runtimeWork: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: { key: 'local:/workspace/project', name: 'Project' },
+          deviceWorkspaces: [
+            {
+              deviceId: 'local-device',
+              available: true,
+              workspacePath: '/workspace/worktrees/login',
+              workspaceKind: 'worktree',
+              worktreeId: 'login',
+              tasks: [
+                {
+                  taskId: 'development-task',
+                  threadId: 'development-thread',
+                  workspacePath: '/workspace/worktrees/login',
+                  title: 'Develop login',
+                  runtime: 'codex',
+                  runtimeHandle: { threadId: 'development-thread' },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    }
+
+    expect(
+      hydrateRuntimeTaskAddress(runtimeWork, {
+        deviceId: 'local-device',
+        taskId: 'development-task',
+      })
+    ).toEqual({
+      deviceId: 'local-device',
+      taskId: 'development-task',
+      runtime: 'codex',
+      threadId: 'development-thread',
+      workspacePath: '/workspace/worktrees/login',
+      runtimeHandle: { threadId: 'development-thread' },
+    })
+  })
+
+  test('hydrates inherited worktree details through the remote host identity', () => {
+    const runtimeWork: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: { key: 'local:/workspace/project', name: 'Project' },
+          deviceWorkspaces: [
+            {
+              deviceId: 'local-device',
+              remoteHostId: 'device-1',
+              available: true,
+              workspacePath: '/workspace/worktrees/login',
+              workspaceKind: 'worktree',
+              worktreeId: 'login',
+              tasks: [
+                {
+                  taskId: 'development-task',
+                  threadId: 'development-thread',
+                  workspacePath: '/workspace/worktrees/login',
+                  title: 'Develop login',
+                  runtime: 'codex',
+                  runtimeHandle: { threadId: 'development-thread' },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    }
+
+    expect(
+      hydrateRuntimeTaskAddress(runtimeWork, {
+        deviceId: 'device-1',
+        taskId: 'development-task',
+      })
+    ).toMatchObject({
+      workspacePath: '/workspace/worktrees/login',
+      threadId: 'development-thread',
+      runtimeHandle: { threadId: 'development-thread' },
+    })
   })
 
   test('merges runtime task handles without dropping existing metadata', () => {

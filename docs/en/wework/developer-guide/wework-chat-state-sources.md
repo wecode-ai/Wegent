@@ -242,7 +242,16 @@ The sidebar running indicator, composer state, message state, and unread reminde
 
 A terminal task event must immediately mark the local task as `running: false` and refresh the work list. If a concurrent refresh returns an older `running: true` snapshot, the reducer must preserve the locally settled state until the same task receives a new start event; a stale response must not relight the spinner, pause button, or "Thinking". Execution identity is `deviceId + taskId`. `workspacePath` is routing metadata that may change between creation, refresh, and transcript recovery, so it must not participate in execution-state identity.
 
-Unread is created only when the current Wework renderer observes a `running: true -> false` edge. It must not infer execution history from free-form `status` text or persisted records; local persistence stores only unread results that were already created, never running state. A task whose persisted Goal remains `active` while the executor is no longer running is waiting for recovery and must not become completion-unread because the application or executor restarted. The current task and every running task must be excluded from visible unread state. Opening a task clears its unread state.
+Unread is created only from a running-state edge for the same task: it was
+`running: true`, it is now `running: false`, and it is not the currently open
+task. Browser storage keeps task keys for unread results and, separately, task
+keys that were last observed running so Wework can finish this edge comparison
+after an abnormal application exit. The latter set exists only for unread
+reminders and is not a source of current execution state; executor snapshots
+and live events remain authoritative. The current task and every running task
+must be excluded from visible unread state, and opening a task clears its unread
+state. The new storage namespace does not import legacy unread data, so existing
+tasks start read after the upgrade.
 
 The executor's `RuntimeTaskLink.running` field exists only in current-process
 memory and runtime API responses. `runtime-work/index.json` must not serialize
@@ -322,6 +331,13 @@ retain their compact roles, but a chat body must not change font size when it
 moves between streaming and completed states because that causes a visible
 flash.
 
+Before final answers enter the Markdown renderer, Wework must remove
+`cite…` content-reference markers that have no structured citation metadata,
+including an unfinished trailing marker during streaming. These internal
+protocol characters must never appear as ordinary response text. They may be
+converted into visible citations only after the matching metadata and
+interaction component are available.
+
 ## Guidance Message Order
 
 Running Codex LocalTasks can send a queued message as native guidance. Guidance is user input inside the current turn, not a new follow-up turn, so the UI must insert the local user message inside the active assistant as soon as guidance sending starts:
@@ -351,6 +367,7 @@ The right workspace **Temporary chat** feature starts a short side conversation 
 - A regular follow-up must write its user message into the conversation cache before awaiting `runtime.tasks.sendMessage`, keeping it ahead of the current turn's Thinking indicator. A failed send removes that same client message id from the cache.
 - `TemporaryChatPanel` must preserve the running-send options supplied by `BufferedChatInput`. When the user selects **Guide current response** or sends a queued row as guidance, the temporary chat must call `runtime.tasks.guidance` and settle the matching queue item by `clientGuidanceId`; it must not downgrade guidance to a regular follow-up after the active turn.
 - Temporary chats reuse only the current workspace and current thread context. If no main thread source is available, sending should be blocked and the user should be asked to open an existing conversation first.
+- Temporary chats default to lightweight, non-mutating exploration. Parent-thread messages, plans, and tool results before the side boundary are reference-only and must not be continued. If the user explicitly requests a file, source, Git, configuration, or workspace mutation after the boundary, the temporary chat may perform it within the thread's existing permissions, keeping the change minimal and local to the request. Without an explicit mutation request, it must not write or seek broader permissions.
 - After a runtime-work refresh, the reducer must hydrate the current task address with the authoritative `threadId/runtimeHandle` from the same device and task. Keeping an optimistic address without its thread merely because the device is still online prevents the temporary chat from establishing `sideSource`.
 
 Maintenance rule: do not add UI fallbacks that insert temporary chats into the left task list, and do not fabricate rollout records for temporary threads in the executor. The primary path is `ephemeral + sideSource + direct_thread_id`.

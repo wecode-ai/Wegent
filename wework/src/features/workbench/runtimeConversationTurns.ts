@@ -142,7 +142,7 @@ export function reduceRuntimeConversationTurns(
         }
       })
     case 'assistant_error':
-      return updateTurn(turns, action.subtaskId, turn => {
+      return updateFailedTurn(turns, action.subtaskId, turn => {
         return {
           ...turn,
           items: settleRuntimeReconnectingBlocks(turn.items),
@@ -525,6 +525,52 @@ function updateTurn(
   const index = turns.findIndex(turn => turn.id === turnId)
   if (index < 0) return turns
   return replaceAt(turns, index, update(turns[index]))
+}
+
+function updateFailedTurn(
+  turns: RuntimeConversationTurn[],
+  turnId: string | undefined,
+  update: (turn: RuntimeConversationTurn) => RuntimeConversationTurn
+): RuntimeConversationTurn[] {
+  if (!turnId) return turns
+  const existingIndex = turns.findIndex(turn => turn.id === turnId)
+  if (existingIndex >= 0) {
+    return replaceAt(turns, existingIndex, update(turns[existingIndex]))
+  }
+  const optimisticIndex = turns.findLastIndex(
+    turn => turn.id === null && (turn.status === 'pending' || turn.status === 'streaming')
+  )
+  if (optimisticIndex >= 0) {
+    const optimistic = turns[optimisticIndex]
+    return replaceAt(
+      turns,
+      optimisticIndex,
+      update({
+        ...optimistic,
+        id: turnId,
+        items: optimistic.items.map(item =>
+          item.type === 'user_message'
+            ? {
+                ...item,
+                message: {
+                  ...item.message,
+                  subtaskId: turnId,
+                  turnId,
+                },
+              }
+            : item
+        ),
+      })
+    )
+  }
+  return [
+    ...turns,
+    update({
+      id: turnId,
+      items: [],
+      status: 'streaming',
+    }),
+  ]
 }
 
 function upsertAssistantText(

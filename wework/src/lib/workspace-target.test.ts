@@ -338,6 +338,100 @@ describe('resolveWorkspaceTarget', () => {
     })
   })
 
+  test('does not expose a queued independent workspace path to file data planes', () => {
+    const project: ProjectWithTasks = {
+      id: 12,
+      name: 'Wegent',
+      tasks: [],
+    }
+
+    expect(
+      resolveRuntimeWorkspaceContext({
+        currentRuntimeTask: {
+          deviceId: 'device-b',
+          workspacePath: '/workspace/worktrees/runtime-1/project-alpha',
+          taskId: 'runtime-1',
+        },
+        projects: [project],
+        runtimeWork: {
+          projects: [
+            {
+              project: { id: 12, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  id: 22,
+                  deviceId: 'device-b',
+                  workspacePath: '/workspace/project-alpha',
+                  available: true,
+                  tasks: [
+                    {
+                      taskId: 'runtime-1',
+                      workspacePath: '/workspace/worktrees/runtime-1/project-alpha',
+                      workspaceKind: 'workspace',
+                      title: 'Queued Worktree task',
+                      runtime: 'codex',
+                      status: 'queued',
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          chats: [],
+          totalTasks: 1,
+        },
+      })
+    ).toEqual({
+      project,
+      workspaceTarget: null,
+    })
+  })
+
+  test('uses an unprojected non-worktree task path as a workspace target', () => {
+    expect(
+      resolveRuntimeWorkspaceContext({
+        currentRuntimeTask: {
+          deviceId: 'device-b',
+          workspacePath: '/workspace/github_wegent',
+          taskId: 'runtime-1',
+        },
+        projects: [],
+        runtimeWork: {
+          projects: [],
+          chats: [],
+          totalTasks: 0,
+        },
+      })
+    ).toEqual({
+      project: null,
+      workspaceTarget: {
+        deviceId: 'device-b',
+        path: '/workspace/github_wegent',
+        source: 'runtime',
+        taskId: 'runtime-1',
+      },
+    })
+  })
+
+  test('does not use an unprojected Worktree task path as a workspace target', () => {
+    expect(
+      resolveRuntimeWorkspaceContext({
+        currentRuntimeTask: {
+          deviceId: 'device-b',
+          workspacePath: '/workspace/worktrees/runtime-1/project-alpha',
+          workspaceKind: 'worktree',
+          taskId: 'runtime-1',
+        },
+        projects: [],
+        runtimeWork: {
+          projects: [],
+          chats: [],
+          totalTasks: 0,
+        },
+      })
+    ).toBeNull()
+  })
+
   test('keeps the remote host route for a merged historical task workspace', () => {
     const project: ProjectWithTasks = {
       id: 12,
@@ -386,6 +480,65 @@ describe('resolveWorkspaceTarget', () => {
       workspaceTarget: {
         deviceId: 'cloud-device',
         path: '/home/ubuntu/project-alpha',
+        source: 'runtime',
+        taskId: 'runtime-1',
+        workspaceSource: 'remote',
+      },
+    })
+  })
+
+  test('uses the final remote Worktree path for historical task tools', () => {
+    const project: ProjectWithTasks = {
+      id: 12,
+      name: 'Wegent',
+      tasks: [],
+    }
+
+    expect(
+      resolveRuntimeWorkspaceContext({
+        currentRuntimeTask: {
+          deviceId: 'logical-cloud-device',
+          workspacePath: '/executor/worktrees/runtime-1/project-alpha',
+          taskId: 'runtime-1',
+        },
+        projects: [project],
+        runtimeWork: {
+          projects: [
+            {
+              project: { id: 12, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  id: 22,
+                  deviceId: 'logical-cloud-device',
+                  remoteHostId: 'runtime-cloud-device',
+                  workspacePath: '/executor/worktrees/runtime-1/project-alpha',
+                  workspaceSource: 'remote',
+                  workspaceKind: 'worktree',
+                  worktreeId: 'runtime-1',
+                  available: true,
+                  tasks: [
+                    {
+                      taskId: 'runtime-1',
+                      workspacePath: '/executor/worktrees/runtime-1/project-alpha',
+                      workspaceKind: 'worktree',
+                      worktreeId: 'runtime-1',
+                      title: 'Runtime task',
+                      runtime: 'codex',
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          chats: [],
+          totalTasks: 1,
+        },
+      })
+    ).toEqual({
+      project,
+      workspaceTarget: {
+        deviceId: 'runtime-cloud-device',
+        path: '/executor/worktrees/runtime-1/project-alpha',
         source: 'runtime',
         taskId: 'runtime-1',
         workspaceSource: 'remote',

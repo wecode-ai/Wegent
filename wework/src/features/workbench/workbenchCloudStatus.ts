@@ -363,7 +363,7 @@ export function selectRuntimeWorkView(
     : localRuntimeWork
 }
 
-function isRemoteRuntimeWorkspace(workspace: RuntimeDeviceWorkspace): boolean {
+export function isRemoteRuntimeWorkspace(workspace: RuntimeDeviceWorkspace): boolean {
   return workspace.workspaceSource === 'remote' || Boolean(workspace.remoteHostId)
 }
 
@@ -715,6 +715,7 @@ function mergeRuntimeProjects(
         ? {
             ...existing.project,
             ...normalizedProject.project,
+            id: existing.project.id,
             key: normalizedProject.project.key,
             sidebarStateKey: existing.project.sidebarStateKey ?? existing.project.key,
             stateDeviceId: existing.project.stateDeviceId,

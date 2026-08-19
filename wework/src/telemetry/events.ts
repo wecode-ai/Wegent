@@ -156,6 +156,7 @@ export interface AnalyticsEventMap {
       | 'project_space_action'
       | 'hook_action'
       | 'git_action'
+      | 'worktree_archive_cleanup'
       | 'model_action'
       | 'plugin_action'
       | 'board_item_action'
@@ -180,6 +181,8 @@ export interface AnalyticsEventMap {
       | 'publish'
       | 'delete'
       | 'open'
+      | 'preview'
+      | 'download'
       | 'move'
       | 'update'
       | 'edit'
@@ -452,6 +455,7 @@ export const ANALYTICS_EVENT_VALUE_CONSTRAINTS: {
       'project_space_action',
       'hook_action',
       'git_action',
+      'worktree_archive_cleanup',
       'model_action',
       'plugin_action',
       'board_item_action',
@@ -477,6 +481,8 @@ export const ANALYTICS_EVENT_VALUE_CONSTRAINTS: {
       'publish',
       'delete',
       'open',
+      'preview',
+      'download',
       'move',
       'update',
       'edit',

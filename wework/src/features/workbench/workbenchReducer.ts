@@ -21,7 +21,6 @@ import {
 } from '@/lib/runtime-project'
 import { workbenchDeviceMatchesId } from '@/lib/workbench-device'
 import {
-  getRuntimeTaskWorkspacePath,
   mergeRuntimeTaskHandles,
   removeRuntimeTasks,
   updateRuntimeWorkTask,
@@ -121,6 +120,11 @@ export type WorkbenchAction =
       type: 'runtime_task_opened'
       address: RuntimeTaskAddress
       project: ProjectWithTasks | null
+    }
+  | {
+      type: 'runtime_task_address_reconciled'
+      previousAddress: RuntimeTaskAddress
+      address: RuntimeTaskAddress
     }
   | {
       type: 'runtime_task_optimistic_upserted'
@@ -635,7 +639,7 @@ function findRuntimeTaskAddressByTaskId(
       deviceId: workspace.deviceId,
       taskId,
       ...(task.runtime !== 'codex' ? { runtime: task.runtime } : {}),
-      workspacePath: getRuntimeTaskWorkspacePath(workspace, task),
+      ...(task.workspacePath ? { workspacePath: task.workspacePath } : {}),
       ...(task.taskId ? { taskId: task.taskId } : {}),
       ...(task.threadId ? { threadId: task.threadId } : {}),
       ...(task.runtimeHandle ? { runtimeHandle: task.runtimeHandle } : {}),
@@ -667,8 +671,12 @@ function reconcileCurrentRuntimeTaskAddress(
     )
     return {
       ...currentRuntimeTask,
+      workspacePath: hydratedCurrentDeviceTask.workspacePath,
       ...(hydratedCurrentDeviceTask.threadId
         ? { threadId: hydratedCurrentDeviceTask.threadId }
+        : {}),
+      ...(hydratedCurrentDeviceTask.workspacePath
+        ? { workspacePath: hydratedCurrentDeviceTask.workspacePath }
         : {}),
       ...(runtimeHandle ? { runtimeHandle } : {}),
     }
@@ -1196,6 +1204,28 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
         currentProject: action.project,
         currentRuntimeTask: action.address,
       }
+    case 'runtime_task_address_reconciled': {
+      const currentRuntimeTask = state.currentRuntimeTask
+      if (
+        !currentRuntimeTask ||
+        currentRuntimeTask.deviceId !== action.previousAddress.deviceId ||
+        currentRuntimeTask.taskId !== action.previousAddress.taskId
+      ) {
+        return state
+      }
+      const runtimeHandle = mergeRuntimeTaskHandles(
+        currentRuntimeTask.runtimeHandle,
+        action.address.runtimeHandle
+      )
+      return {
+        ...state,
+        currentRuntimeTask: {
+          ...currentRuntimeTask,
+          ...action.address,
+          ...(runtimeHandle ? { runtimeHandle } : {}),
+        },
+      }
+    }
     case 'runtime_task_optimistic_upserted':
       return {
         ...state,

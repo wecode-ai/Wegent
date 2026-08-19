@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   ChatInput,
   type ChatInputHandle,
@@ -6,6 +6,10 @@ import {
   type ChatSubmitOptions,
 } from '@/components/chat/ChatInput'
 import { recordComposerDiagnostic } from '@/components/chat/composer/composerDiagnostics'
+import {
+  WORKBENCH_COMPOSER_FOCUS_EVENT,
+  type WorkbenchComposerFocusDetail,
+} from '@/lib/workbenchComposerFocus'
 
 export interface BufferedChatInputInsertion {
   id: number
@@ -25,6 +29,8 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   onSubmit,
   insertion,
   onDraftEdit,
+  onCompositionStart: onParentCompositionStart,
+  onCompositionEnd: onParentCompositionEnd,
   ...props
 }: BufferedChatInputProps) {
   const scopeKey = props.projectChat?.scopeKey
@@ -38,13 +44,27 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   const draftRef = useRef(draft)
   const appliedInsertionIdRef = useRef<number | null>(null)
   const flushTimeoutRef = useRef<number | null>(null)
+  const flushFrameRef = useRef<number | null>(null)
   const composerRef = useRef<ChatInputHandle>(null)
   const committedValueRef = useRef(value)
   const pendingChangeRef = useRef(onChange)
   const programmaticUpdateDepthRef = useRef(0)
   const draftEditVersionRef = useRef(0)
+  const isComposingRef = useRef(false)
   const scopeKeyRef = useRef(scopeKey)
   scopeKeyRef.current = scopeKey
+
+  useLayoutEffect(() => {
+    const focusRequestedComposer = (event: Event) => {
+      const detail = (event as CustomEvent<WorkbenchComposerFocusDetail>).detail
+      if (props.disabled || !scopeKey || detail?.scopeKey !== scopeKey) return
+      composerRef.current?.focus()
+    }
+    window.addEventListener(WORKBENCH_COMPOSER_FOCUS_EVENT, focusRequestedComposer)
+    return () => {
+      window.removeEventListener(WORKBENCH_COMPOSER_FOCUS_EVENT, focusRequestedComposer)
+    }
+  }, [props.disabled, scopeKey])
 
   const setComposerValue = useCallback((nextValue: string, cursor: number) => {
     programmaticUpdateDepthRef.current += 1
@@ -58,6 +78,13 @@ export const BufferedChatInput = memo(function BufferedChatInput({
     if (flushTimeoutRef.current !== null) {
       window.clearTimeout(flushTimeoutRef.current)
       flushTimeoutRef.current = null
+    }
+  }, [])
+
+  const cancelPendingFlushFrame = useCallback(() => {
+    if (flushFrameRef.current !== null) {
+      window.cancelAnimationFrame(flushFrameRef.current)
+      flushFrameRef.current = null
     }
   }, [])
 
@@ -109,13 +136,14 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   // Flush a pending draft whenever it would be discarded (scope switch or unmount).
   useEffect(() => {
     return () => {
+      cancelPendingFlush()
+      cancelPendingFlushFrame()
       const pendingDraft = draftRef.current
       if (pendingDraft !== committedValueRef.current) {
-        cancelPendingFlush()
         pendingChangeRef.current(pendingDraft)
       }
     }
-  }, [cancelPendingFlush, scopeKey])
+  }, [cancelPendingFlush, cancelPendingFlushFrame, scopeKey])
 
   useEffect(() => {
     if (!insertion || appliedInsertionIdRef.current === insertion.id) return
@@ -136,27 +164,43 @@ export const BufferedChatInput = memo(function BufferedChatInput({
         draftEditVersionRef.current += 1
         onDraftEdit?.()
       }
+      if (isComposingRef.current) {
+        cancelPendingFlush()
+        return
+      }
       scheduleDraftFlush(nextDraft)
     },
-    [onDraftEdit, scheduleDraftFlush]
+    [cancelPendingFlush, onDraftEdit, scheduleDraftFlush]
   )
 
   // Flush after the next frame so the editor state settles first.
   const flushDraftNextFrame = useCallback(
     (reason: string) => {
+      cancelPendingFlushFrame()
       recordComposerDiagnostic('draft-flush-request', {
         reason,
         draftLength: draftRef.current.length,
       })
-      window.requestAnimationFrame(() => flushDraft(draftRef.current, reason))
+      flushFrameRef.current = window.requestAnimationFrame(() => {
+        flushFrameRef.current = null
+        if (isComposingRef.current) return
+        flushDraft(draftRef.current, reason)
+      })
     },
-    [flushDraft]
+    [cancelPendingFlushFrame, flushDraft]
   )
   const handleBlur = useCallback(() => flushDraftNextFrame('blur'), [flushDraftNextFrame])
-  const handleCompositionEnd = useCallback(
-    () => flushDraftNextFrame('composition-end'),
-    [flushDraftNextFrame]
-  )
+  const handleCompositionStart = useCallback(() => {
+    isComposingRef.current = true
+    cancelPendingFlushFrame()
+    cancelPendingFlush()
+    onParentCompositionStart?.()
+  }, [cancelPendingFlush, cancelPendingFlushFrame, onParentCompositionStart])
+  const handleCompositionEnd = useCallback(() => {
+    isComposingRef.current = false
+    flushDraftNextFrame('composition-end')
+    onParentCompositionEnd?.()
+  }, [flushDraftNextFrame, onParentCompositionEnd])
 
   const handleSubmit = useCallback(
     (valueOverride?: string, options?: ChatSubmitOptions) => {
@@ -198,6 +242,7 @@ export const BufferedChatInput = memo(function BufferedChatInput({
       value={draft}
       onChange={setDraft}
       onBlur={handleBlur}
+      onCompositionStart={handleCompositionStart}
       onCompositionEnd={handleCompositionEnd}
       onSubmit={handleSubmit}
     />

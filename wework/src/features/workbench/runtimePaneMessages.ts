@@ -238,6 +238,7 @@ export function createRuntimeTaskStreamHandlers(
         })
         return
       }
+      if (settledAssistantTurnIds.has(identity.subtaskId)) return
       const blocks = getResultBlocks(identity.subtaskId, payload.result)
       if (!payload.content && !reasoningChunk && (!blocks || blocks.length === 0)) {
         if (contextUsage) {
@@ -285,6 +286,7 @@ export function createRuntimeTaskStreamHandlers(
         warnAndDropRuntimeStreamEvent('chat:done', address, payload)
         return
       }
+      if (settledAssistantTurnIds.has(identity.subtaskId)) return
       const blocks = getResultBlocks(identity.subtaskId, payload.result)
       const fileChanges =
         normalizeTurnFileChanges(payload.result.fileChanges) ??

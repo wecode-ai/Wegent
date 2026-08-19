@@ -145,6 +145,11 @@ the static CSS bundle:
 | Heading large  |       `24px` |              `29px` | `500`     | rare prominent heading                |
 | Display        |       `28px` |         `32px–34px` | `500`     | exceptional home/onboarding use only  |
 
+Document-style Markdown previews use the heading ramp for clear content
+hierarchy: H1 uses Heading large, H2 uses Heading medium, and H3 uses Heading
+small. Lower heading levels continue through the semantic UI sizes. Compact
+chat and process Markdown keep their denser heading scale.
+
 The default UI font size is `14px`; the default code font size is `12px`.
 Appearance settings may change UI size from `11px` through `16px` and code size
 from `8px` through `24px`, in whole-pixel steps. Changing UI size scales every
@@ -409,10 +414,10 @@ may reveal on hover/focus but must remain keyboard accessible.
 - Keep the sidebar base surface stable when the application window gains or
   loses focus. Window focus must not darken the task or work-items sidebar.
 - Sortable sidebar rows must keep the sortable container separate from the
-  pointer activator. Only the primary icon-and-label or label region may start
-  pointer sorting, after at least `6px` of movement; trailing actions, metadata,
-  and unused row space must remain click-only. Preserve keyboard sorting on the
-  sortable container.
+  pointer activator. The primary non-action area, including unused space beside
+  a short label, may start pointer sorting after at least `6px` of movement.
+  Trailing actions and metadata must remain outside the activator. Preserve
+  keyboard sorting on the sortable container.
 - Section spacing may be larger than row spacing; avoid divider-heavy grouping.
 - On macOS light theme, use the captured warm translucent/off-white sidebar
   material and keep the main canvas pure white. Preserve the traffic-light safe

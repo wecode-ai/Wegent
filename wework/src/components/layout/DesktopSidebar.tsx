@@ -19,6 +19,7 @@ import {
   MessageCircle,
   MessageCircleOff,
   MessageSquarePlus,
+  Pause,
   Pin,
   Plus,
   RotateCw,
@@ -28,7 +29,15 @@ import {
   UserRound,
   X,
 } from 'lucide-react'
-import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react'
 import type {
   KeyboardEvent,
   MouseEvent as ReactMouseEvent,
@@ -49,6 +58,10 @@ import { SHOW_PLUGINS_NAVIGATION } from '@/features/plugins/visibility'
 import { getRuntimeTaskReminderItemKey } from '@/features/workbench/runtimeTaskReminders'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import { runtimeTaskBoardOrigin } from '@/features/workbench/runtimeTaskOrigin'
+import {
+  getRuntimeConversationQueuePaused,
+  subscribeRuntimeConversation,
+} from '@/features/workbench/runtimeConversationCache'
 import {
   getRuntimeTaskLifecycleKey,
   useRuntimeTaskLifecycle,
@@ -184,7 +197,7 @@ interface DesktopSidebarProps {
   imNotificationSettings?: RuntimeIMNotificationSettingsResponse | null
   unreadRuntimeTaskKeys?: ReadonlySet<string>
   preferredDeviceId?: string | null
-  activeItem?: 'chat' | 'todo' | 'plugins' | 'sites' | 'cloud-work' | 'automation'
+  activeItem?: 'chat' | 'plugins' | 'sites' | 'cloud-work' | 'automation'
   localHarnessSessions?: LocalHarnessWorkbenchSession[]
   activeLocalHarnessSessionId?: string | null
   collapsed?: boolean
@@ -1561,6 +1574,7 @@ function RuntimeTaskRow({
     !workspace.available || !onArchiveRuntimeTask || archiving || archivePending
   const taskAddress = getRuntimeTaskAddress(workspace, task)
   const taskLifecycle = useRuntimeTaskLifecycle(taskAddress)
+  const queuePaused = useRuntimeTaskQueuePaused(taskAddress)
   const queued = isRuntimeTaskQueued(task)
   const queuePosition =
     queued && Number.isInteger(task.queuePosition) && Number(task.queuePosition) > 0
@@ -1790,6 +1804,7 @@ function RuntimeTaskRow({
           {priorityLayout ? (
             <span className="flex min-w-0 flex-1 flex-col justify-center gap-0.5">
               <span
+                data-sidebar-drag-activator
                 data-testid={`runtime-local-task-title-${task.taskId}`}
                 className={cn(
                   'runtime-task-title relative flex min-w-0 items-center gap-1 truncate',
@@ -1810,10 +1825,7 @@ function RuntimeTaskRow({
                     aria-label={boardOriginLabel}
                   />
                 ) : null}
-                <span
-                  data-sidebar-drag-activator
-                  data-testid={`runtime-local-task-drag-activator-${task.taskId}`}
-                >
+                <span data-testid={`runtime-local-task-drag-activator-${task.taskId}`}>
                   {task.title}
                 </span>
               </span>
@@ -1833,6 +1845,7 @@ function RuntimeTaskRow({
             </span>
           ) : (
             <span
+              data-sidebar-drag-activator
               data-testid={`runtime-local-task-title-${task.taskId}`}
               className={cn(
                 'runtime-task-title relative min-w-0 flex-1 truncate',
@@ -1853,10 +1866,7 @@ function RuntimeTaskRow({
                   aria-label={boardOriginLabel}
                 />
               ) : null}
-              <span
-                data-sidebar-drag-activator
-                data-testid={`runtime-local-task-drag-activator-${task.taskId}`}
-              >
+              <span data-testid={`runtime-local-task-drag-activator-${task.taskId}`}>
                 {task.title}
               </span>
             </span>
@@ -1932,6 +1942,19 @@ function RuntimeTaskRow({
                         {queuePosition}
                       </span>
                     ) : null}
+                  </span>
+                ) : queuePaused ? (
+                  <span
+                    data-testid={`runtime-local-task-queue-paused-${task.taskId}`}
+                    role="status"
+                    title={t('workbench.runtime_task_queue_paused')}
+                    aria-label={t('workbench.runtime_task_queue_paused')}
+                    className="flex h-[30px] w-[30px] items-center justify-center"
+                  >
+                    <Pause
+                      className="h-3.5 w-3.5 text-[rgb(var(--color-sidebar-text-muted))]"
+                      aria-hidden="true"
+                    />
                   </span>
                 ) : taskLifecycle?.derived.shouldShowSidebarRunning ? (
                   <span
@@ -2244,6 +2267,26 @@ function RuntimeTaskRow({
   )
 }
 
+function useRuntimeTaskQueuePaused(address: RuntimeTaskAddress): boolean {
+  const stableAddress = useMemo<RuntimeTaskAddress>(
+    () => ({
+      deviceId: address.deviceId,
+      taskId: address.taskId,
+    }),
+    [address.deviceId, address.taskId]
+  )
+  const subscribe = useCallback(
+    (listener: () => void) => subscribeRuntimeConversation(stableAddress, listener),
+    [stableAddress]
+  )
+  const getSnapshot = useCallback(
+    () => getRuntimeConversationQueuePaused(stableAddress),
+    [stableAddress]
+  )
+
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+}
+
 function LocalHarnessSessionRow({
   session,
   selected,
@@ -2382,6 +2425,7 @@ function ProjectItem({
   onCloseLocalHarnessSession?: (sessionId: string) => void | Promise<void>
 }) {
   const { t } = useTranslation('common')
+  const workbench = useContext(WorkbenchContext)
   const lifecycleSnapshot = useRuntimeTaskLifecycleStoreSnapshot()
   const runtimeWorkspaces = runtimeProjectWork?.deviceWorkspaces
   const allRuntimeTaskItems = useMemo(
@@ -2545,11 +2589,18 @@ function ProjectItem({
       projectAppearance?.color as (typeof PROJECT_APPEARANCE_COLORS)[number]
     )
     const color = PROJECT_APPEARANCE_COLORS[(currentIndex + 1) % PROJECT_APPEARANCE_COLORS.length]
-    await onSetRuntimeProjectAppearance({
-      deviceId: projectStateDeviceId,
-      projectKey,
-      appearance: { ...projectAppearance, color },
-    })
+    try {
+      await onSetRuntimeProjectAppearance({
+        deviceId: projectStateDeviceId,
+        projectKey,
+        appearance: { ...projectAppearance, color },
+      })
+    } catch (error) {
+      console.error('[Wework] Failed to update project appearance', error)
+      workbench?.setWorkbenchError(
+        error instanceof Error ? error.message : t('workbench.change_project_appearance')
+      )
+    }
   }
   const closeArchiveConfirm = () => {
     if (!projectArchiving) {
@@ -2640,6 +2691,7 @@ function ProjectItem({
           <button
             type="button"
             data-testid="project-item-button"
+            data-sidebar-drag-activator
             onClick={() => {
               onToggleProject(project.id)
             }}
@@ -2650,7 +2702,6 @@ function ProjectItem({
             )}
           >
             <span
-              data-sidebar-drag-activator
               data-testid={`project-drag-activator-${project.id}`}
               className="flex min-w-0 max-w-full items-center gap-2.5"
             >
@@ -2698,7 +2749,7 @@ function ProjectItem({
             <ProjectDeviceInlineStatus
               deviceState={projectDeviceState}
               testId={`project-device-status-${project.id}`}
-              className="pointer-events-none absolute right-2 top-1/2 max-w-[124px] -translate-y-1/2 justify-end text-right group-hover/project:invisible group-focus-within/project:invisible"
+              className="pointer-events-auto absolute right-2 top-1/2 max-w-[124px] -translate-y-1/2 justify-end text-right transition-opacity group-hover/project:opacity-0 group-focus-within/project:opacity-0"
             />
           )}
           <div className="pointer-events-none absolute right-1 top-1/2 z-[70] flex w-[58px] shrink-0 -translate-y-1/2 items-center justify-end opacity-0 transition-opacity group-hover/project:pointer-events-auto group-hover/project:opacity-100 hover:pointer-events-auto hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100">
@@ -3555,6 +3606,14 @@ export function DesktopSidebar({
     )
   }, [currentRuntimeTask, regularChatTaskItems])
   const displayedProjectsExpanded = projectsExpanded
+  const runtimeWorkCheck = cloudWorkStatus?.checks.runtimeWork
+  const showEmptyProjectCreateAction =
+    runtimeWork !== null &&
+    runtimeWork !== undefined &&
+    runtimeWorkCheck !== null &&
+    runtimeWorkCheck !== undefined &&
+    runtimeWorkCheck !== 'syncing' &&
+    sidebarProjects.length === 0
   const displayedChatsExpanded =
     chatsExpanded ||
     selectedRuntimeChatVisible ||
@@ -4299,7 +4358,15 @@ export function DesktopSidebar({
                       </div>,
                       document.body
                     )}
-                  {displayedProjectsExpanded && (
+                  {displayedProjectsExpanded && showEmptyProjectCreateAction && (
+                    <DesktopSidebarNavItem
+                      icon={Plus}
+                      label={t('workbench.new_project', '新建项目')}
+                      testId="projects-empty-create-button"
+                      onClick={openProjectCreateDialog}
+                    />
+                  )}
+                  {displayedProjectsExpanded && sidebarProjects.length > 0 && (
                     <SidebarSortableList
                       testId="runtime-project-sortable-list"
                       className="space-y-1"

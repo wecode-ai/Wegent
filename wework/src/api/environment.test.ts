@@ -232,6 +232,17 @@ describe('loadProjectEnvironment', () => {
         ],
         stderr: '',
       })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: {
+          data: {
+            resource: {
+              mergeQueueEntry: null,
+            },
+          },
+        },
+        stderr: '',
+      })
 
     const info = await loadProjectEnvironment(
       { executeCommand },
@@ -255,14 +266,93 @@ describe('loadProjectEnvironment', () => {
         draft: false,
         checks: 'pending',
         mergeability: 'conflicting',
+        mergeQueue: 'not_queued',
       },
     })
-    expect(executeCommand).toHaveBeenLastCalledWith('local-device', {
+    expect(executeCommand).toHaveBeenCalledWith('local-device', {
       command_key: 'git_github_pull_requests',
       path: '/workspace/Wegent',
       args: ['feature/change-request-status'],
       timeout_seconds: 20,
       max_output_bytes: 256 * 1024,
+    })
+    expect(executeCommand).toHaveBeenLastCalledWith('local-device', {
+      command_key: 'git_github_pull_request_merge_queue',
+      path: '/workspace/Wegent',
+      args: ['-F', 'url=https://github.com/wecode-ai/Wegent/pull/2631'],
+      timeout_seconds: 20,
+      max_output_bytes: 64 * 1024,
+    })
+  })
+
+  test('keeps a GitHub pull request pending while it is in the merge queue', async () => {
+    const executeCommand = vi
+      .fn()
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: 'fix/merge-queue-status\n',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: '',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: '',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: 'https://github.com/wecode-ai/Wegent.git\n',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: [
+          {
+            number: 2779,
+            url: 'https://github.com/wecode-ai/Wegent/pull/2779',
+            title: 'fix(wework): stabilize paused streaming scroll',
+            state: 'OPEN',
+            isDraft: false,
+            mergeable: 'MERGEABLE',
+            mergeStateStatus: 'CLEAN',
+            statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'SUCCESS' }],
+          },
+        ],
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: {
+          data: {
+            resource: {
+              mergeQueueEntry: {
+                id: 'merge-queue-entry',
+              },
+            },
+          },
+        },
+        stderr: '',
+      })
+
+    const info = await loadProjectEnvironment(
+      { executeCommand },
+      null,
+      {
+        deviceId: 'local-device',
+        path: '/workspace/Wegent',
+      },
+      { force: true }
+    )
+
+    expect(info.changeRequest?.changeRequest).toMatchObject({
+      number: 2779,
+      checks: 'success',
+      mergeability: 'mergeable',
+      mergeQueue: 'queued',
     })
   })
 
@@ -557,6 +647,7 @@ describe('loadProjectEnvironment', () => {
         draft: true,
         checks: 'success',
         mergeability: 'unknown',
+        mergeQueue: 'unknown',
       },
     })
   })
@@ -1031,6 +1122,80 @@ describe('loadProjectEnvironment', () => {
 
     expect(refreshedInfo).toMatchObject({ additions: '+13', deletions: '-5' })
     expect(executeCommand).toHaveBeenCalledTimes(10)
+  })
+
+  test('deduplicates a forced refresh while the current environment load is still pending', async () => {
+    let resolveBranch: (value: {
+      success: boolean
+      stdout: string
+      stderr: string
+    }) => void = () => {}
+    const branchResult = new Promise<{
+      success: boolean
+      stdout: string
+      stderr: string
+    }>(resolve => {
+      resolveBranch = resolve
+    })
+    const executeCommand = vi.fn((_: string, data: { command_key: string }) => {
+      if (data.command_key === 'git_branch') {
+        return branchResult
+      }
+      if (data.command_key === 'git_remote_url') {
+        return Promise.resolve({
+          success: true,
+          stdout: 'https://github.com/wecode-ai/Wegent.git\n',
+          stderr: '',
+        })
+      }
+      if (data.command_key === 'git_github_pull_requests') {
+        return Promise.resolve({
+          success: true,
+          stdout: [],
+          stderr: '',
+        })
+      }
+      return Promise.resolve({
+        success: true,
+        stdout: '',
+        stderr: '',
+      })
+    })
+    const api = { executeCommand }
+    const project = {
+      id: 1002,
+      name: 'Wegent',
+      config: {
+        mode: 'workspace' as const,
+        execution: {
+          targetType: 'local' as const,
+          deviceId: 'device-123',
+        },
+        workspace: {
+          source: 'local_path' as const,
+          localPath: '/workspace/Wegent',
+        },
+      },
+    }
+
+    const initialLoad = loadProjectEnvironment(api, project)
+    const forcedRefresh = loadProjectEnvironment(api, project, undefined, { force: true })
+
+    await vi.waitFor(() => {
+      expect(executeCommand).toHaveBeenCalledTimes(3)
+    })
+
+    resolveBranch({
+      success: true,
+      stdout: 'fix/environment-refresh\n',
+      stderr: '',
+    })
+
+    const [initialInfo, refreshedInfo] = await Promise.all([initialLoad, forcedRefresh])
+
+    expect(initialInfo).toEqual(refreshedInfo)
+    expect(initialInfo.branchName).toBe('fix/environment-refresh')
+    expect(executeCommand).toHaveBeenCalledTimes(5)
   })
 
   test('uses git diff against HEAD for tracked uncommitted changes', async () => {

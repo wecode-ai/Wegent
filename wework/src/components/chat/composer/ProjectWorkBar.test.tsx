@@ -111,7 +111,74 @@ const runtimeWork: RuntimeWorkListResponse = {
   totalTasks: 0,
 }
 
+const availableWorktree = {
+  available: true,
+  reason: 'available',
+  deviceId: 'device-1',
+  sourcePath: '/repo/Wegent',
+} as const
+
 describe('ProjectWorkBar', () => {
+  test('orders project, workspace, and execution context by user decision flow', () => {
+    render(
+      <ProjectWorkBar
+        devices={[localDevice]}
+        currentProject={null}
+        executionMode="current_workspace"
+        isGitProject={false}
+        onSelectProject={vi.fn()}
+        onSelectStandaloneDevice={vi.fn()}
+        middleContext={<button data-testid="workspace-context">我的任务</button>}
+        trailingContext={<button data-testid="execution-context">Codex</button>}
+      />
+    )
+
+    const bar = screen.getByTestId('project-work-bar')
+    const orderedControls = Array.from(
+      bar.querySelectorAll(
+        '[data-testid="workspace-context"], [data-testid="project-work-button"], [data-testid="execution-context"]'
+      )
+    ).map(element => element.getAttribute('data-testid'))
+
+    expect(orderedControls).toEqual([
+      'project-work-button',
+      'workspace-context',
+      'execution-context',
+    ])
+  })
+
+  test('renders the work-item dropdown after execution mode and branch controls', () => {
+    render(
+      <ProjectWorkBar
+        projects={[project]}
+        devices={[localDevice]}
+        currentProject={project}
+        currentProjectId={project.id}
+        currentStandaloneDeviceId={null}
+        executionMode="current_workspace"
+        onSelectProject={vi.fn()}
+        onSelectStandaloneDevice={vi.fn()}
+        onExecutionModeChange={vi.fn()}
+        branchName="main"
+        branchLoading={false}
+        onListBranches={vi.fn().mockResolvedValue(['main'])}
+        onCheckoutBranch={vi.fn()}
+        trailingContext={<div data-testid="harness-option">Codex</div>}
+        endContext={<button data-testid="work-item-option">我的任务</button>}
+      />
+    )
+
+    const workItemOption = screen.getByTestId('work-item-option')
+    expect(
+      screen
+        .getByTestId('harness-option')
+        .compareDocumentPosition(screen.getByTestId('execution-mode-button'))
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(
+      screen.getByTestId('project-branch-button').compareDocumentPosition(workItemOption)
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+  })
+
   test('uses consistent regular typography for desktop selector triggers', () => {
     render(
       <ProjectWorkBar
@@ -290,11 +357,11 @@ describe('ProjectWorkBar', () => {
     expect(screen.getByTestId('project-work-button')).toHaveTextContent('Wegent')
     expect(screen.getByTestId('project-work-button')).not.toHaveTextContent('macOS-Device')
     expect(screen.getByTestId('project-work-button')).not.toHaveTextContent('10.201.3.200')
-    expect(screen.getByTestId('execution-mode-button')).toHaveTextContent('本地模式')
+    expect(screen.getByTestId('execution-mode-button')).toHaveTextContent('当前工作区')
     expect(screen.queryByTestId('project-work-remote-status')).not.toBeInTheDocument()
   })
 
-  test('shows remote mode separately from the project name and right-aligns the remote IP', () => {
+  test('shows launch mode separately from the remote execution location', () => {
     render(
       <ProjectWorkBar
         projects={[project]}
@@ -314,9 +381,104 @@ describe('ProjectWorkBar', () => {
 
     expect(screen.getByTestId('project-work-button')).toHaveTextContent('Wegent')
     expect(screen.getByTestId('project-work-button')).not.toHaveTextContent('远程')
-    expect(screen.getByTestId('execution-mode-button')).toHaveTextContent('远程')
+    expect(screen.getByTestId('execution-mode-button')).toHaveTextContent('当前工作区')
     expect(screen.getByTestId('project-work-remote-status')).toHaveTextContent('10.201.3.200')
     expect(screen.getByTestId('project-work-remote-status')).toHaveClass('ml-auto')
+  })
+
+  test('allows a supported remote workspace to select new worktree mode', async () => {
+    const onExecutionModeChange = vi.fn()
+
+    render(
+      <ProjectWorkBar
+        projects={[project]}
+        devices={[device]}
+        runtimeWork={runtimeWork}
+        currentProject={project}
+        currentProjectId={project.id}
+        currentStandaloneDeviceId={null}
+        selectedDeviceWorkspaceId={101}
+        executionMode="current_workspace"
+        worktreeAvailability={{
+          available: true,
+          reason: 'available',
+          deviceId: 'device-1',
+          sourcePath: '/repo/Wegent',
+        }}
+        isGitProject
+        onSelectProject={vi.fn()}
+        onSelectStandaloneDevice={vi.fn()}
+        onSelectProjectWorkspace={vi.fn()}
+        onExecutionModeChange={onExecutionModeChange}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('execution-mode-button'))
+    await userEvent.click(screen.getByTestId('execution-mode-git-worktree-button'))
+
+    expect(onExecutionModeChange).toHaveBeenCalledWith('git_worktree')
+  })
+
+  test('shows the shared availability reason without changing the selected mode', async () => {
+    const onExecutionModeChange = vi.fn()
+
+    render(
+      <ProjectWorkBar
+        projects={[project]}
+        devices={[device]}
+        runtimeWork={runtimeWork}
+        currentProject={project}
+        currentProjectId={project.id}
+        currentStandaloneDeviceId={null}
+        selectedDeviceWorkspaceId={101}
+        executionMode="git_worktree"
+        worktreeAvailability={{
+          available: false,
+          reason: 'preflight_pending',
+          deviceId: 'device-1',
+          sourcePath: '/repo/Wegent',
+        }}
+        isGitProject
+        onSelectProject={vi.fn()}
+        onSelectStandaloneDevice={vi.fn()}
+        onSelectProjectWorkspace={vi.fn()}
+        onExecutionModeChange={onExecutionModeChange}
+      />
+    )
+
+    expect(screen.getByTestId('execution-mode-button')).toHaveTextContent('新工作树')
+    await userEvent.click(screen.getByTestId('execution-mode-button'))
+
+    expect(screen.getByTestId('execution-mode-git-worktree-button')).toBeDisabled()
+    expect(screen.getByTestId('execution-mode-worktree-unavailable-reason')).toHaveTextContent(
+      '正在检查工作树可用性'
+    )
+    expect(onExecutionModeChange).not.toHaveBeenCalled()
+  })
+
+  test('keeps launch mode locked while an existing task is open', async () => {
+    const onExecutionModeChange = vi.fn()
+
+    render(
+      <ProjectWorkBar
+        projects={[project]}
+        devices={[localDevice]}
+        currentProject={project}
+        currentProjectId={project.id}
+        currentStandaloneDeviceId={null}
+        executionMode="current_workspace"
+        executionModeLocked
+        onSelectProject={vi.fn()}
+        onSelectStandaloneDevice={vi.fn()}
+        onExecutionModeChange={onExecutionModeChange}
+      />
+    )
+
+    expect(screen.getByTestId('execution-mode-button')).toBeDisabled()
+    await userEvent.click(screen.getByTestId('execution-mode-button'))
+
+    expect(screen.queryByTestId('project-execution-mode-menu')).not.toBeInTheDocument()
+    expect(onExecutionModeChange).not.toHaveBeenCalled()
   })
 
   test('hides remote status while no project is selected', () => {
@@ -368,6 +530,28 @@ describe('ProjectWorkBar', () => {
     await userEvent.click(screen.getByTestId('clear-project-button'))
 
     expect(onSelectStandaloneDevice).toHaveBeenCalledWith('local-device')
+  })
+
+  test('does not offer clearing when the selected project is required', async () => {
+    render(
+      <ProjectWorkBar
+        projects={[project]}
+        devices={[localDevice]}
+        runtimeWork={runtimeWork}
+        currentProject={project}
+        currentProjectId={project.id}
+        executionMode="current_workspace"
+        showClearButton={false}
+        onSelectProject={vi.fn()}
+        onSelectStandaloneDevice={vi.fn()}
+        onExecutionModeChange={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('project-work-button'))
+
+    expect(screen.queryByTestId('no-project-option')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('clear-project-button')).not.toBeInTheDocument()
   })
 
   test('opens the project chooser when the external open signal changes', () => {
@@ -455,12 +639,12 @@ describe('ProjectWorkBar', () => {
     )
 
     expect(screen.getByTestId('project-work-button')).toHaveTextContent('Notes')
-    expect(screen.queryByTestId('execution-mode-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('execution-mode-button')).toHaveTextContent('当前工作区')
     expect(screen.queryByTestId('project-branch-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('project-work-remote-status')).not.toBeInTheDocument()
   })
 
-  test('hides execution and branch controls for a non-Git remote project', () => {
+  test('shows a stable unavailable reason for a non-Git remote project', async () => {
     render(
       <ProjectWorkBar
         projects={[nonGitProject]}
@@ -482,7 +666,11 @@ describe('ProjectWorkBar', () => {
     )
 
     expect(screen.getByTestId('project-work-remote-status')).toHaveTextContent('10.201.3.200')
-    expect(screen.queryByTestId('execution-mode-button')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('execution-mode-button'))
+    expect(screen.getByTestId('execution-mode-git-worktree-button')).toBeDisabled()
+    expect(screen.getByTestId('execution-mode-worktree-unavailable-reason')).toHaveTextContent(
+      '当前工作区不是 Git 仓库'
+    )
     expect(screen.queryByTestId('project-branch-button')).not.toBeInTheDocument()
   })
 
@@ -731,7 +919,7 @@ describe('ProjectWorkBar', () => {
     )
 
     const executionModeButton = screen.getByTestId('execution-mode-button')
-    expect(executionModeButton).toHaveTextContent('本地模式')
+    expect(executionModeButton).toHaveTextContent('当前工作区')
 
     await user.click(executionModeButton)
 
@@ -750,6 +938,7 @@ describe('ProjectWorkBar', () => {
         currentProjectId={project.id}
         currentStandaloneDeviceId={null}
         executionMode="git_worktree"
+        worktreeAvailability={availableWorktree}
         onSelectProject={vi.fn()}
         onSelectStandaloneDevice={vi.fn()}
         onExecutionModeChange={onExecutionModeChange}
@@ -793,7 +982,7 @@ describe('ProjectWorkBar', () => {
       />
     )
 
-    expect(screen.getByTestId('execution-mode-button')).toHaveTextContent('本地模式')
+    expect(screen.getByTestId('execution-mode-button')).toHaveTextContent('当前工作区')
     expect(screen.getByTestId('project-branch-button')).toHaveTextContent('main')
     expect(screen.queryByTestId('project-worktree-branch-button')).not.toBeInTheDocument()
   })
@@ -902,6 +1091,7 @@ describe('ProjectWorkBar', () => {
         currentProjectId={project.id}
         currentStandaloneDeviceId={null}
         executionMode="git_worktree"
+        worktreeAvailability={availableWorktree}
         onSelectProject={vi.fn()}
         onSelectStandaloneDevice={vi.fn()}
         onExecutionModeChange={vi.fn()}
@@ -932,6 +1122,7 @@ describe('ProjectWorkBar', () => {
         currentProjectId={project.id}
         currentStandaloneDeviceId={null}
         executionMode="git_worktree"
+        worktreeAvailability={availableWorktree}
         onSelectProject={vi.fn()}
         onSelectStandaloneDevice={vi.fn()}
         onExecutionModeChange={vi.fn()}
@@ -970,6 +1161,7 @@ describe('ProjectWorkBar', () => {
         currentProjectId={project.id}
         currentStandaloneDeviceId={null}
         executionMode="git_worktree"
+        worktreeAvailability={availableWorktree}
         onSelectProject={vi.fn()}
         onSelectStandaloneDevice={vi.fn()}
         onExecutionModeChange={vi.fn()}
@@ -999,6 +1191,7 @@ describe('ProjectWorkBar', () => {
         currentProjectId={project.id}
         currentStandaloneDeviceId={null}
         executionMode="git_worktree"
+        worktreeAvailability={availableWorktree}
         onSelectProject={vi.fn()}
         onSelectStandaloneDevice={vi.fn()}
         onExecutionModeChange={vi.fn()}
@@ -1016,6 +1209,29 @@ describe('ProjectWorkBar', () => {
     )
   })
 
+  test('shows the inherited branch while execution controls are locked', () => {
+    render(
+      <ProjectWorkBar
+        projects={[project]}
+        devices={[localDevice]}
+        currentProject={project}
+        currentProjectId={project.id}
+        currentStandaloneDeviceId={null}
+        executionMode="git_worktree"
+        executionModeLocked
+        onSelectProject={vi.fn()}
+        onSelectStandaloneDevice={vi.fn()}
+        onExecutionModeChange={vi.fn()}
+        branchName="feature/login"
+        branchLoading={false}
+      />
+    )
+
+    expect(screen.getByTestId('execution-mode-button')).toHaveTextContent('新工作树')
+    expect(screen.getByTestId('project-work-branch-readonly')).toHaveTextContent('feature/login')
+    expect(screen.queryByTestId('project-worktree-branch-button')).not.toBeInTheDocument()
+  })
+
   test('allows worktree mode when the project main directory is detached', async () => {
     const user = userEvent.setup()
     const onExecutionModeChange = vi.fn()
@@ -1028,6 +1244,7 @@ describe('ProjectWorkBar', () => {
         currentProjectId={project.id}
         currentStandaloneDeviceId={null}
         executionMode="current_workspace"
+        worktreeAvailability={availableWorktree}
         onSelectProject={vi.fn()}
         onSelectStandaloneDevice={vi.fn()}
         onExecutionModeChange={onExecutionModeChange}

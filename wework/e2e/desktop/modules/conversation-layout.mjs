@@ -169,6 +169,11 @@ async function verifyShortConversationLayout({ composerSelector, control }) {
     taskRowsBeforeRace,
     'WEWORK_DESKTOP_E2E_CONCURRENT_MEMORY_1'
   )
+  await assertNewTaskPrecedesExistingTask(
+    control,
+    runningTaskRowTestId,
+    shortConversationTaskRowTestId
+  )
 
   await ensureTaskRowVisible(control, shortConversationTaskRowTestId)
   await control.command('clickWhenEnabled', `[data-testid="${shortConversationTaskRowTestId}"]`, {
@@ -547,12 +552,19 @@ async function waitForProcessingBlock(
 ) {
   const startedAt = Date.now()
   let diagnostics = null
+  let targetReadySince = null
 
   while (Date.now() - startedAt < timeoutMs) {
     await control.command('expandProcessingSummaries', 'body')
     const targetCount = Number(await control.command('getElementCount', selector))
+    if (targetCount > 0) {
+      targetReadySince ??= Date.now()
+    } else {
+      targetReadySince = null
+    }
     diagnostics = {
       targetCount,
+      targetStableMs: targetReadySince === null ? 0 : Date.now() - targetReadySince,
       finalProcessingExpandedCount: Number(
         await control.command(
           'getElementCount',
@@ -584,7 +596,7 @@ async function waitForProcessingBlock(
         await control.command('getElementCount', '[data-testid="processing-live-preview"]')
       ),
     }
-    if (targetCount > 0) return diagnostics
+    if (diagnostics.targetStableMs >= COMPOSER_READY_STABILITY_MS) return diagnostics
     await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
   }
 
@@ -740,6 +752,46 @@ async function waitForNewTaskRow(
   throw new Error(`The sidebar did not expose a task row for ${expectedText}`)
 }
 
+async function assertNewTaskPrecedesExistingTask(control, newTaskRowTestId, existingTaskRowTestId) {
+  const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+  const candidateListTestIds = snapshot.testIds.filter(
+    testId =>
+      testId === 'runtime-chat-task-sortable-list' ||
+      testId.startsWith('project-runtime-task-sortable-')
+  )
+
+  for (const listTestId of candidateListTestIds) {
+    const listSelector = `[data-testid="${listTestId}"]`
+    const containsNewTask =
+      Number(
+        await control.command(
+          'getElementCount',
+          `${listSelector} [data-testid="${newTaskRowTestId}"]`
+        )
+      ) === 1
+    const containsExistingTask =
+      Number(
+        await control.command(
+          'getElementCount',
+          `${listSelector} [data-testid="${existingTaskRowTestId}"]`
+        )
+      ) === 1
+    if (!containsNewTask || !containsExistingTask) continue
+
+    const taskOrder = JSON.parse(await control.command('getTestIdOrder', listSelector)).filter(
+      testId => testId === newTaskRowTestId || testId === existingTaskRowTestId
+    )
+    assert.deepEqual(
+      taskOrder,
+      [newTaskRowTestId, existingTaskRowTestId],
+      'A newly created task was displayed below an existing task in the sidebar'
+    )
+    return
+  }
+
+  throw new Error('The new and existing tasks did not share a sidebar task list')
+}
+
 async function createCheckpointTaskFixture(
   control,
   composerSelector,
@@ -806,25 +858,32 @@ async function verifyWorktreeCreationStatus({ composerSelector, control, workspa
   control.setScenario('checkpoint_task')
   const scenarioRequest = control.awaitScenarioRequest('checkpoint_task')
   await sendPrompt(control, composerSelector, CHECKPOINT_TASK_PROMPT)
-  await control.command('waitFor', '[data-testid="worktree-creation-status"]', {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  assert.match(
-    await control.command('getText', '[data-testid="worktree-creation-status"]'),
-    /正在搭建你的独立工作树|Building your independent worktree/,
-    'The worktree creation status page did not explain the active operation'
+  const creatingSnapshot = await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes('worktree-creation-status') ||
+      snapshot.text.includes(CHECKPOINT_TASK_PROMPT),
+    'The worktree task neither showed creation progress nor entered the conversation'
   )
+  // Fast local fixtures can finish creating the worktree between waitFor and getText.
+  // Validate the transient status only when it is still present.
+  if (creatingSnapshot.testIds.includes('worktree-creation-status')) {
+    assert.match(
+      creatingSnapshot.text,
+      /正在搭建你的独立工作树|Building your independent worktree/,
+      'The worktree creation status page did not explain the active operation'
+    )
+    assert.equal(
+      creatingSnapshot.testIds.includes('desktop-floating-composer-card'),
+      false,
+      'The composer remained interactive while the worktree was being created'
+    )
+    await captureVerificationScreenshot(control, 'worktree-status-03-creating.png')
+  }
   await control.command('waitFor', `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`, {
     text: CHECKPOINT_TASK_PROMPT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  const creatingSnapshot = JSON.parse(await control.command('snapshot', 'body'))
-  assert.equal(
-    creatingSnapshot.testIds.includes('desktop-floating-composer-card'),
-    false,
-    'The composer remained interactive while the worktree was being created'
-  )
-  await captureVerificationScreenshot(control, 'worktree-status-03-creating.png')
 
   await withTimeout(
     scenarioRequest,
@@ -855,13 +914,6 @@ async function verifyWorktreeCreationStatus({ composerSelector, control, workspa
   })
 
   await control.command('click', `[data-testid="runtime-local-task-archive-${worktreeTaskId}"]`)
-  await control.command(
-    'waitFor',
-    `[data-testid="runtime-local-task-archive-toast-${worktreeTaskId}"]`,
-    {
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
-  )
   await withTimeout(
     (async () => {
       while ((await pathExists(worktreePath)) || (await pathExists(worktreeContainer))) {

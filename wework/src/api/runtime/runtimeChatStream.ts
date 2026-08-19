@@ -61,6 +61,11 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
           logRuntimeChatTerminalEvent(event, matchedSubscriptionCount, subscriptionEntries.length)
         }
         for (const [subscriptionId, subscription] of subscriptionEntries) {
+          if (event.event === 'project.task.assigned') {
+            const payload = projectTaskAssignedPayload(event.payload)
+            if (payload) subscription.handlers.onProjectTaskAssigned?.(payload)
+            continue
+          }
           if (event.event === 'executor.runtime_replaced') {
             const payload = runtimeTransportReplacedPayload(event.payload)
             if (payload) {
@@ -192,8 +197,27 @@ function hasLocalExecutorResponseHandlers(handlers: ChatStreamHandlers): boolean
     handlers.onRuntimeSupervisorUpdated ||
     handlers.onRuntimePlanUpdated ||
     handlers.onGuidanceApplied ||
-    handlers.onRuntimeTransportReplaced
+    handlers.onRuntimeTransportReplaced ||
+    handlers.onProjectTaskAssigned
   )
+}
+
+function projectTaskAssignedPayload(
+  payload: Record<string, unknown>
+): Parameters<NonNullable<ChatStreamHandlers['onProjectTaskAssigned']>>[0] | null {
+  const projectId = stringField(payload, 'projectId')
+  const projectName = stringField(payload, 'projectName')
+  const itemId = stringField(payload, 'itemId')
+  const itemTitle = stringField(payload, 'itemTitle')
+  const assignerName = stringField(payload, 'assignerName')
+  if (!projectId || !itemId || !itemTitle || !assignerName) return null
+  return {
+    projectId,
+    projectName: projectName ?? '',
+    itemId,
+    itemTitle,
+    assignerName,
+  }
 }
 
 function runtimeTransportReplacedPayload(

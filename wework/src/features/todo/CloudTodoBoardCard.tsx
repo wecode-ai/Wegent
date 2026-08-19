@@ -1,20 +1,12 @@
 import { useDraggable, useDroppable } from '@dnd-kit/core'
 import { CSS } from '@dnd-kit/utilities'
-import {
-  Archive,
-  Bot,
-  CalendarDays,
-  ChevronRight,
-  Ellipsis,
-  Flag,
-  ListTodo,
-  Plus,
-} from 'lucide-react'
+import { Archive, Bot, CalendarDays, Ellipsis, Flag, ListTodo } from 'lucide-react'
 import { useState } from 'react'
 import type { CloudLoopItem } from '@/api/deliveries'
 import { Tooltip } from '@/components/ui/tooltip'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
+import { isLoopItemExecutionActive } from './cloudMyWorkModel'
 import { priorityBadgeClasses } from './todoShared'
 
 export interface BoardCardDisplaySettings {
@@ -45,6 +37,7 @@ export function CloudTodoCardContent({ item, display, agentNames }: CloudTodoCar
   const showFooter = display.showPriority || display.showDate || display.showAssignee
   const assigneeName =
     item.assignee_name ||
+    item.assignee_team_name ||
     (item.assignee_agent_id
       ? item.assignee_agent_name || agentNames?.[item.assignee_agent_id] || null
       : null)
@@ -108,7 +101,9 @@ export function CloudTodoCardContent({ item, display, agentNames }: CloudTodoCar
                   className="inline-flex min-w-0 items-center gap-1.5"
                 >
                   <span className="sr-only">负责人</span>
-                  {item.assignee_agent_id ? <Bot className="h-3.5 w-3.5 shrink-0" /> : null}
+                  {item.assignee_agent_id || item.assignee_team_id ? (
+                    <Bot className="h-3.5 w-3.5 shrink-0" />
+                  ) : null}
                   <span className="truncate">{assigneeName}</span>
                 </span>
               </Tooltip>
@@ -124,10 +119,12 @@ export function CloudTodoCardContent({ item, display, agentNames }: CloudTodoCar
 
 interface CloudTodoBoardCardProps {
   item: CloudLoopItem
-  childCount: number
+  taskBindings?: Array<{
+    id: number
+    task_id: string
+    task_title: string | null
+  }>
   onClick: () => void
-  onAddChild: () => void
-  onOpenChildren: () => void
   onArchive: () => void
   onOpenActivity?: () => void
   display: BoardCardDisplaySettings
@@ -138,10 +135,8 @@ interface CloudTodoBoardCardProps {
 
 export function CloudTodoBoardCard({
   item,
-  childCount,
+  taskBindings = [],
   onClick,
-  onAddChild,
-  onOpenChildren,
   onArchive,
   display,
   agentNames,
@@ -150,6 +145,8 @@ export function CloudTodoBoardCard({
 }: CloudTodoBoardCardProps) {
   const { t } = useTranslation('common')
   const [menuOpen, setMenuOpen] = useState(false)
+  const hasActiveTask = isLoopItemExecutionActive(item)
+  const currentTaskBinding = hasActiveTask ? taskBindings[0] : undefined
   const {
     attributes,
     listeners,
@@ -227,47 +224,25 @@ export function CloudTodoBoardCard({
         <CloudTodoCardContent item={item} display={display} agentNames={agentNames} />
       </button>
 
-      <div className="relative border-t border-dashed border-text-primary/15 bg-muted/30 px-3.5 py-2 transition-colors hover:bg-muted/50 focus-within:bg-muted/50 before:pointer-events-none before:absolute before:-left-2 before:-top-2 before:z-10 before:h-4 before:w-4 before:rounded-full before:bg-muted after:pointer-events-none after:absolute after:-right-2 after:-top-2 after:z-10 after:h-4 after:w-4 after:rounded-full after:bg-muted">
-        {childCount > 0 ? (
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              data-testid={`cloud-todo-open-children-${item.id}`}
-              onClick={onOpenChildren}
-              className="flex h-8 min-w-0 flex-1 items-center gap-1.5 px-0.5 text-xs font-medium text-text-secondary transition-colors hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/50"
+      {currentTaskBinding ? (
+        <div
+          data-testid={`cloud-todo-card-tasks-${item.id}`}
+          className="border-t border-border/60 px-3.5 py-2"
+        >
+          <div className="flex min-w-0 items-center gap-2 text-xs text-text-secondary">
+            <ListTodo className="h-3.5 w-3.5" />
+            <span className="shrink-0 text-text-muted">
+              {t('todo.current_running_task', '正在执行')}
+            </span>
+            <span
+              data-testid={`cloud-todo-card-task-${item.id}-${currentTaskBinding.id}`}
+              className="min-w-0 truncate"
             >
-              <ListTodo className="h-3.5 w-3.5 shrink-0" />
-              <span className="truncate">子任务 </span>
-              <span className="inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-text-primary/5 px-1 text-xs font-medium text-text-secondary">
-                {childCount}
-              </span>
-              <ChevronRight className="ml-auto h-3.5 w-3.5 shrink-0" />
-            </button>
-            <button
-              type="button"
-              data-testid={`cloud-todo-card-add-child-${item.id}`}
-              disabled={item.can_edit === false}
-              onClick={onAddChild}
-              className="flex h-7 shrink-0 items-center gap-1 border-l border-border/60 pl-3 text-xs text-text-muted transition-colors hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/50 disabled:hidden"
-              aria-label="新建子任务"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              添加子任务
-            </button>
+              {currentTaskBinding.task_title || currentTaskBinding.task_id}
+            </span>
           </div>
-        ) : (
-          <button
-            type="button"
-            data-testid={`cloud-todo-card-add-child-${item.id}`}
-            disabled={item.can_edit === false}
-            onClick={onAddChild}
-            className="flex h-7 w-full items-center gap-1.5 rounded-md px-1 text-xs text-text-muted transition hover:bg-muted hover:text-text-primary disabled:hidden"
-          >
-            <Plus className="h-3.5 w-3.5" />
-            新建子任务
-          </button>
-        )}
-      </div>
+        </div>
+      ) : null}
     </article>
   )
 }

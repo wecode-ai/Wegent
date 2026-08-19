@@ -1,0 +1,80 @@
+{
+  "actor": {
+    "id": "codex",
+    "kind": "ai"
+  },
+  "authority": "ai",
+  "base_revision": "A00000008",
+  "changes": [
+    {
+      "action": "create",
+      "change_id": "chg-4722157ecb59",
+      "confidence": 1.0,
+      "evidence": [
+        "docs/zh/architecture/issue-task-workflow.md"
+      ],
+      "object": null,
+      "plane": "model",
+      "predicate": null,
+      "reason": "Selected stage handles become explicit before/after insertion controls; insertion rewires every direct edge in that direction and migrates replaced edge-context policies",
+      "subject": "arch://wegent/flow/issue-workflow-adjacent-stage-insertion",
+      "timestamp": "2026-08-18T08:17:35Z"
+    },
+    {
+      "action": "observe",
+      "change_id": "chg-e36531c260f2",
+      "confidence": 1.0,
+      "evidence": [
+        "wework/src/features/todo/ProjectWorkflowEditor.tsx"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "ProjectWorkflowEditor exposes selected-node plus controls and performs context-preserving predecessor or successor insertion",
+      "subject": "arch://wegent/flow/issue-workflow-adjacent-stage-insertion",
+      "timestamp": "2026-08-18T08:17:36Z"
+    },
+    {
+      "action": "verify",
+      "change_id": "chg-fbe3ec3c05dd",
+      "confidence": 1.0,
+      "evidence": [
+        "wework/src/features/todo/ProjectWorkflowEditor.test.tsx"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Focused tests cover selected-only controls plus context-preserving insertion before and after a stage",
+      "subject": "arch://wegent/flow/issue-workflow-adjacent-stage-insertion",
+      "timestamp": "2026-08-18T08:17:36Z"
+    },
+    {
+      "action": "verify",
+      "change_id": "chg-2838c3a44ea6",
+      "confidence": 1.0,
+      "evidence": [
+        "wework/test-results/desktop-e2e/2026-08-18T08-12-53-333Z-29963"
+      ],
+      "object": null,
+      "plane": "runtime",
+      "predicate": null,
+      "reason": "The isolated desktop project-automation checkpoint verified selected-only insertion controls and successful adjacent stage creation",
+      "subject": "arch://wegent/flow/issue-workflow-adjacent-stage-insertion",
+      "timestamp": "2026-08-18T08:21:17Z"
+    }
+  ],
+  "created_at": "2026-08-18T08:17:23Z",
+  "id": "tx-3047a9c22d98",
+  "intent": "Selecting a stage card reveals plus controls at its incoming and outgoing handles; activating either inserts a new stage before or after it while preserving DAG dependency and edge-context semantics",
+  "merged_revision": "A00000009",
+  "read_set": [
+    "arch://wegent/flow/issue-task-workflow",
+    "arch://wegent/flow/issue-workflow-orchestration-editor"
+  ],
+  "resolutions": [],
+  "status": "merged",
+  "updated_at": "2026-08-18T08:21:17Z",
+  "write_set": [
+    "arch://wegent/flow/issue-workflow-adjacent-stage-insertion"
+  ]
+}

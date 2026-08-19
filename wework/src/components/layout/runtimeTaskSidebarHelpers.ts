@@ -19,7 +19,7 @@ export function isRuntimeTaskQueued(task: RuntimeTaskSummary): boolean {
 }
 
 function getRuntimeTaskSortTime(task: RuntimeTaskSummary) {
-  const value = task.completedAt ?? task.createdAt ?? task.updatedAt
+  const value = task.updatedAt ?? task.createdAt ?? task.completedAt
   if (value == null) return 0
   const timestamp = new Date(value).getTime()
   return Number.isNaN(timestamp) ? 0 : timestamp
@@ -35,8 +35,8 @@ function compareRuntimeTasks(
   if (useSidebarOrder && leftOrder != null && rightOrder != null && leftOrder !== rightOrder) {
     return leftOrder - rightOrder
   }
-  if (useSidebarOrder && leftOrder != null && rightOrder == null) return -1
-  if (useSidebarOrder && leftOrder == null && rightOrder != null) return 1
+  if (useSidebarOrder && leftOrder != null && rightOrder == null) return 1
+  if (useSidebarOrder && leftOrder == null && rightOrder != null) return -1
   return getRuntimeTaskSortTime(right) - getRuntimeTaskSortTime(left)
 }
 

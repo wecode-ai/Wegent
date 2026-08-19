@@ -5,15 +5,18 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import secrets
 from datetime import datetime
 
 from fastapi import HTTPException, status
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from app.core.project_automation_secrets import encrypt_webhook_secret
 from app.models.delivery import (
+    CloudProject,
+    LoopItem,
     ProjectAutomationRule,
     ProjectAutomationRun,
     ProjectChatAgent,
@@ -53,6 +56,7 @@ from app.services.project_automation_execution import (
 )
 from app.services.project_chat.service import bot_config
 from app.services.share import team_share_service
+from app.services.workflow_stage_context import workflow_stage_context_resolver
 
 logger = logging.getLogger(__name__)
 
@@ -186,7 +190,10 @@ class ProjectAutomationService:
         )
         if trigger_type == "schedule":
             event_type = None
+        elif trigger_type == "event":
+            expression = None
         else:
+            event_type = None
             expression = None
         validate_trigger(trigger_type, event_type, expression)
 
@@ -295,10 +302,7 @@ class ProjectAutomationService:
     ) -> None:
         require_cloud_project_role(db, project_id, user_id, BaseRole.Maintainer)
         row = self._rule(db, project_id, automation_id)
-        row.deleted_at = utcnow()
-        row.status = "disabled"
-        row.due_at = loop_unset_datetime_for_connection(db.connection(), "due_at")
-        row.version += 1
+        self._mark_deleted(db, row, user_id=user_id, deleted_at=utcnow())
         db.commit()
         logger.info(
             "[ProjectAutomation] Deleted rule=%s project=%s user=%s",
@@ -307,17 +311,125 @@ class ProjectAutomationService:
             user_id,
         )
 
+    def delete_project_rules(self, db: Session, project_id: str, user_id: int) -> int:
+        """Delete every automation rule while its parent project is archived."""
+
+        rows = (
+            db.query(ProjectAutomationRule)
+            .filter(
+                ProjectAutomationRule.cloud_project_id == project_id,
+                loop_datetime_is_unset(ProjectAutomationRule.deleted_at),
+            )
+            .with_for_update()
+            .all()
+        )
+        deleted_at = utcnow()
+        for row in rows:
+            self._mark_deleted(
+                db,
+                row,
+                user_id=user_id,
+                deleted_at=deleted_at,
+            )
+        logger.info(
+            "[ProjectAutomation] Deleted project rules project=%s count=%s user=%s",
+            project_id,
+            len(rows),
+            user_id,
+        )
+        return len(rows)
+
     async def run_now(
         self, db: Session, project_id: str, automation_id: str, user_id: int
     ) -> dict:
         require_cloud_project_role(db, project_id, user_id, BaseRole.Developer)
         rule = self._rule(db, project_id, automation_id)
-        if _metadata(rule).get("trigger_type") == "event":
+        trigger_type = _metadata(rule).get("trigger_type")
+        if trigger_type in {"event", "workflow"}:
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
-                "Event automations can only run from a matching event",
+                (
+                    "Event automations can only run from a matching event"
+                    if trigger_type == "event"
+                    else "Workflow automations can only run from a workflow stage"
+                ),
             )
         run = self._create_run(db, rule, "manual", utcnow())
+        await project_automation_execution.dispatch(db, rule, run)
+        return self._run_view(
+            run, str(_metadata(rule).get("timezone") or "Asia/Shanghai")
+        )
+
+    async def run_for_workflow_node(
+        self,
+        db: Session,
+        project_id: str,
+        automation_id: str,
+        item_id: str,
+        workflow_node_id: str,
+        user_id: int,
+    ) -> dict:
+        require_cloud_project_role(db, project_id, user_id, BaseRole.Developer)
+        rule = self._rule(db, project_id, automation_id)
+        item = (
+            db.query(LoopItem).filter(LoopItem.id == item_id).with_for_update().first()
+        )
+        if item is None or str(item.cloud_project_id) != str(project_id):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Issue not found")
+        workflow = (
+            item.metadata_json.get("workflow")
+            if isinstance(item.metadata_json, dict)
+            else None
+        )
+        nodes = workflow.get("nodes") if isinstance(workflow, dict) else None
+        node = next(
+            (
+                candidate
+                for candidate in nodes or []
+                if isinstance(candidate, dict)
+                and candidate.get("id") == workflow_node_id
+            ),
+            None,
+        )
+        if node is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow node not found")
+        if not node.get("automation_rule_id"):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "Workflow stage has no automation",
+            )
+        if node.get("status") not in {"ready", "failed"}:
+            raise HTTPException(status.HTTP_409_CONFLICT, "Workflow node is not ready")
+        if node.get("automation_rule_id") != automation_id:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "Workflow node automation does not match",
+            )
+        run = self._create_run(db, rule, "manual", utcnow(), commit=False)
+        run.task_id = item.id
+        run.task_title = item.title or ""
+        run.metadata_json = {
+            **(run.metadata_json or {}),
+            "workflow_node_id": workflow_node_id,
+            "instruction_override": str(node.get("prompt") or ""),
+            "dependency_context": node.get("dependency_context") or {},
+            "workflow_stage_input": workflow_stage_context_resolver.resolve(
+                db,
+                item=item,
+                target_node_id=workflow_node_id,
+            ),
+        }
+        from app.services.project_workflow_projection import update_workflow_node
+
+        update_workflow_node(
+            db,
+            item_id=item.id,
+            node_id=workflow_node_id,
+            node_status="queued",
+            automation_run_id=str(run.id),
+        )
+        db.commit()
+        db.refresh(run)
         await project_automation_execution.dispatch(db, rule, run)
         return self._run_view(
             run, str(_metadata(rule).get("timezone") or "Asia/Shanghai")
@@ -416,18 +528,29 @@ class ProjectAutomationService:
             .filter(
                 LoopItemExecution.automation_run_id == str(run.id),
                 LoopItemExecution.status.in_(
-                    ["pending_approval", "queued", "claimed", "running"]
+                    [
+                        "pending_approval",
+                        "queued",
+                        "claimed",
+                        "running",
+                        "cancel_requested",
+                    ]
                 ),
             )
             .order_by(LoopItemExecution.id.desc())
             .first()
         )
         if execution is not None:
-            loop_item_execution_service.cancel(
+            execution = loop_item_execution_service.cancel(
                 db,
                 execution_id=execution.id,
                 note="Automation run cancelled by user",
             )
+            if execution.status == "cancel_requested":
+                from app.tasks.robot_queue_tasks import emit_runtime_cancels
+
+                await asyncio.to_thread(emit_runtime_cancels, [execution])
+                db.rollback()
             db.refresh(run)
             return self._run_view(run, timezone_name)
 
@@ -462,6 +585,11 @@ class ProjectAutomationService:
 
         run.status = "cancelled"
         run.version += 1
+        from app.services.project_workflow_projection import (
+            sync_automation_workflow_node,
+        )
+
+        sync_automation_workflow_node(db, run)
         project_automation_execution.finish_activity(
             db,
             run=run,
@@ -474,9 +602,15 @@ class ProjectAutomationService:
 
     async def check_due(self, db: Session) -> int:
         now = utcnow()
+        active_project = aliased(CloudProject)
         rule_ids = (
             db.query(ProjectAutomationRule.id)
+            .join(
+                active_project,
+                active_project.id == ProjectAutomationRule.cloud_project_id,
+            )
             .filter(
+                active_project.status == "active",
                 ProjectAutomationRule.status == "enabled",
                 ProjectAutomationRule.due_at.isnot(None),
                 ProjectAutomationRule.due_at <= now,
@@ -542,6 +676,20 @@ class ProjectAutomationService:
             await project_automation_execution.dispatch(db, rule, run)
             dispatched += 1
         return dispatched
+
+    @staticmethod
+    def _mark_deleted(
+        db: Session,
+        row: ProjectAutomationRule,
+        *,
+        user_id: int,
+        deleted_at: datetime,
+    ) -> None:
+        row.deleted_at = deleted_at
+        row.status = "disabled"
+        row.due_at = loop_unset_datetime_for_connection(db.connection(), "due_at")
+        row.updated_by_user_id = user_id
+        row.version += 1
 
     @staticmethod
     def _assignment_metadata(

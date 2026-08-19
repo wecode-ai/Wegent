@@ -83,6 +83,8 @@ function createApis(devices: DeviceInfo[] = [createDevice()]) {
     unarchiveConversation: vi.fn(),
     deleteArchivedConversation: vi.fn(),
     deleteArchivedConversationsBulk: vi.fn(),
+    getWorktreeCapabilities: vi.fn(),
+    preflightWorktree: vi.fn(),
     cancelRuntimeTask: vi.fn(),
     createRuntimeTask: vi.fn(),
     forkRuntimeTask: vi.fn(),
@@ -224,5 +226,69 @@ describe('executor access layer', () => {
 
     await expect(client.runtime.listRuntimeWork()).resolves.toEqual(createRuntimeWork())
     expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(1)
+  })
+
+  test('guards Worktree capability and preflight calls with the target executor', async () => {
+    const { runtimeWorkApi, deviceApi } = createApis()
+    runtimeWorkApi.getWorktreeCapabilities.mockResolvedValue({
+      success: true,
+      deviceId: 'device-1',
+      runtimeWorktrees: null,
+    })
+    runtimeWorkApi.preflightWorktree.mockResolvedValue({
+      success: true,
+      deviceId: 'device-1',
+      supported: true,
+      sourcePath: '/Users/me/project',
+      sourceExists: true,
+      sourceDirectory: true,
+      gitRepository: true,
+      gitCommonDirValid: true,
+      gitCommonDirWritable: true,
+      writable: true,
+    })
+    const client = createExecutorClientFromApis({
+      transportKind: 'backend-relay',
+      deviceApi,
+      runtimeWorkApi,
+    })
+
+    await client.runtime.getWorktreeCapabilities({ deviceId: 'device-1' })
+    await client.runtime.preflightWorktree({
+      deviceId: 'device-1',
+      sourcePath: '/Users/me/project',
+    })
+
+    expect(runtimeWorkApi.getWorktreeCapabilities).toHaveBeenCalledWith({
+      deviceId: 'device-1',
+    })
+    expect(runtimeWorkApi.preflightWorktree).toHaveBeenCalledWith({
+      deviceId: 'device-1',
+      sourcePath: '/Users/me/project',
+    })
+  })
+
+  test('rejects Worktree preflight for unknown and offline executors', async () => {
+    const { runtimeWorkApi, deviceApi } = createApis([createDevice({ status: 'offline' })])
+    const client = createExecutorClientFromApis({
+      transportKind: 'backend-relay',
+      deviceApi,
+      runtimeWorkApi,
+    })
+
+    await expect(
+      client.runtime.preflightWorktree({
+        deviceId: 'missing-device',
+        sourcePath: '/Users/me/project',
+      })
+    ).rejects.toThrow('executor-not-found:missing-device')
+    await expect(
+      client.runtime.preflightWorktree({
+        deviceId: 'device-1',
+        sourcePath: '/Users/me/project',
+      })
+    ).rejects.toThrow('executor-offline:device-1')
+
+    expect(runtimeWorkApi.preflightWorktree).not.toHaveBeenCalled()
   })
 })

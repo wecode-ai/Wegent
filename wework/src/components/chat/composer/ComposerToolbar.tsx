@@ -1,13 +1,11 @@
 import { ArrowUp, ChevronDown, ClipboardList, Clock3, CornerDownRight, Zap } from 'lucide-react'
 import { useLayoutEffect, useRef, useState, type ComponentProps, type ReactNode } from 'react'
-import type { CloudProject } from '@/api/deliveries'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import type { ComposerSubmitOptions } from './ComposerTextarea'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Tooltip } from '@/components/ui/tooltip'
 import type { LocalDeviceApp, ModelOptions, RuntimeContextUsage, UnifiedModel } from '@/types/api'
 import { AddContextMenu } from './AddContextMenu'
-import type { ComposerCloudMentionCandidate } from './composerMentionCandidates'
 import { ComposerModePill, GoalDraftPill } from './GoalDraftPill'
 import { ContextUsageIndicator } from './ContextUsageIndicator'
 import { ModelSelector } from './ModelSelector'
@@ -27,6 +25,7 @@ interface ComposerToolbarProps {
   canSend: boolean
   disabled?: boolean
   pluginPickerIconOnly?: boolean
+  showExecutionTools?: boolean
   models: UnifiedModel[]
   selectedModel: UnifiedModel | null
   activeModel?: UnifiedModel | null
@@ -60,9 +59,6 @@ interface ComposerToolbarProps {
   sendButtonTestId?: string
   leadingContext?: ReactNode
   onListLocalApps?: () => Promise<LocalDeviceApp[]>
-  cloudProjectCandidates?: ComposerCloudMentionCandidate[]
-  selectedCloudProjectId?: CloudProject['id']
-  onSelectCloudProject?: (project: CloudProject) => void
 }
 
 const COMPACT_TOOLBAR_WIDTH = 475
@@ -73,6 +69,7 @@ export function ComposerToolbar({
   canSend,
   disabled = false,
   pluginPickerIconOnly = false,
+  showExecutionTools = true,
   models,
   selectedModel,
   activeModel,
@@ -106,9 +103,6 @@ export function ComposerToolbar({
   sendButtonTestId = 'send-message-button',
   leadingContext,
   onListLocalApps,
-  cloudProjectCandidates,
-  selectedCloudProjectId,
-  onSelectCloudProject,
 }: ComposerToolbarProps) {
   const { t } = useTranslation('common')
   const toolbarRef = useRef<HTMLDivElement>(null)
@@ -150,21 +144,22 @@ export function ComposerToolbar({
         <AddContextMenu
           disabled={disabled}
           onFileSelect={onFileSelect}
-          onSetPlanMode={planModeActive ? undefined : onSetPlanMode}
-          onSetGoal={onSetGoal}
-          onConfigureSupervisor={onConfigureSupervisor}
-          supervisorEnabled={supervisorEnabled}
-          supervisorPending={supervisorPending}
-          cloudProjectCandidates={cloudProjectCandidates}
-          selectedCloudProjectId={selectedCloudProjectId}
-          onSelectCloudProject={onSelectCloudProject}
+          onSetPlanMode={showExecutionTools && !planModeActive ? onSetPlanMode : undefined}
+          onSetGoal={showExecutionTools ? onSetGoal : undefined}
+          onConfigureSupervisor={showExecutionTools ? onConfigureSupervisor : undefined}
+          supervisorEnabled={showExecutionTools && supervisorEnabled}
+          supervisorPending={showExecutionTools && supervisorPending}
         />
-        <QuickPhraseMenu disabled={disabled} onSelect={onQuickPhraseSelect} />
-        <PluginPickerMenu
-          disabled={disabled}
-          iconOnly={compact || pluginPickerIconOnly}
-          onListLocalApps={onListLocalApps}
-        />
+        {showExecutionTools ? (
+          <>
+            <QuickPhraseMenu disabled={disabled} onSelect={onQuickPhraseSelect} />
+            <PluginPickerMenu
+              disabled={disabled}
+              iconOnly={compact || pluginPickerIconOnly}
+              onListLocalApps={onListLocalApps}
+            />
+          </>
+        ) : null}
         {leadingContext}
         {goalDraftActive ? (
           <GoalDraftPill onCancel={onCancelGoalDraft} />
@@ -182,37 +177,41 @@ export function ComposerToolbar({
         ) : null}
       </div>
       <div data-composer-toolbar-group="actions" className="flex min-w-0 items-center gap-1.5">
-        <PermissionModeSelector
-          value={runtimePermissionMode(selectedModelOptions)}
-          disabled={disabled}
-          iconOnly
-          onChange={mode => onSelectModelOption(RUNTIME_PERMISSION_MODE_OPTION, mode)}
-        />
-        <ContextUsageIndicator
-          usage={contextUsage}
-          disabled={disabled}
-          onCompactContext={onCompactContext}
-        />
-        {modelSelectorOverride ??
-          (isModelSelectionReady ? (
-            <ModelSelector
-              models={models}
-              selectedModel={selectedModel}
-              selectedModelOptions={selectedModelOptions}
-              nextTurn={isStreaming && modelChangePending}
-              openSignal={modelSelectorOpenSignal}
-              onOpenChange={onModelSelectorOpenChange}
+        {showExecutionTools ? (
+          <>
+            <PermissionModeSelector
+              value={runtimePermissionMode(selectedModelOptions)}
               disabled={disabled}
-              onSelectModel={onSelectModel}
-              onSelectModelAndOptions={onSelectModelAndOptions}
-              onSelectModelOption={onSelectModelOption}
-              onBlockedModelSelect={onBlockedModelSelect}
-              buttonClassName="opacity-90 hover:opacity-100"
-              maxClosedWidth={compact ? NARROW_MODEL_SELECTOR_MAX_WIDTH : undefined}
+              iconOnly
+              onChange={mode => onSelectModelOption(RUNTIME_PERMISSION_MODE_OPTION, mode)}
             />
-          ) : (
-            <div className="h-11 w-32 shrink-0" data-testid="model-selector-loading" />
-          ))}
+            <ContextUsageIndicator
+              usage={contextUsage}
+              disabled={disabled}
+              onCompactContext={onCompactContext}
+            />
+            {modelSelectorOverride ??
+              (isModelSelectionReady ? (
+                <ModelSelector
+                  models={models}
+                  selectedModel={selectedModel}
+                  selectedModelOptions={selectedModelOptions}
+                  nextTurn={isStreaming && modelChangePending}
+                  openSignal={modelSelectorOpenSignal}
+                  onOpenChange={onModelSelectorOpenChange}
+                  disabled={disabled}
+                  onSelectModel={onSelectModel}
+                  onSelectModelAndOptions={onSelectModelAndOptions}
+                  onSelectModelOption={onSelectModelOption}
+                  onBlockedModelSelect={onBlockedModelSelect}
+                  buttonClassName="opacity-90 hover:opacity-100"
+                  maxClosedWidth={compact ? NARROW_MODEL_SELECTOR_MAX_WIDTH : undefined}
+                />
+              ) : (
+                <div className="h-11 w-32 shrink-0" data-testid="model-selector-loading" />
+              ))}
+          </>
+        ) : null}
         {showWorkspaceMenu && projectWorkMenuContext ? (
           <PopoutWorkspaceMenu {...projectWorkMenuContext} disabled={disabled} />
         ) : null}

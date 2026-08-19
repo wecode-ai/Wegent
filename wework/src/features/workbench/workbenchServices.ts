@@ -50,6 +50,7 @@ import type {
 } from '@/features/local-harness/localHarnessModels'
 import type { LocalHarnessId } from '@/lib/local-harness'
 import type { createProjectAutomationApi } from '@/api/projectAutomations'
+import type { createProjectIncomingHookApi } from '@/api/projectIncomingHooks'
 
 export interface WorkspaceSessionApi {
   startProjectTerminal: (projectId: number) => Promise<ProjectDeviceSessionResponse>
@@ -74,6 +75,7 @@ export interface ProjectSpaceDetailServices {
   projectChatClient?: ProjectChatClient
   projectChatAgentApi?: ReturnType<typeof createProjectChatAgentApi>
   projectAutomationApi?: ReturnType<typeof createProjectAutomationApi>
+  projectIncomingHookApi?: ReturnType<typeof createProjectIncomingHookApi>
   loopItemExecutionApi?: ReturnType<typeof createLocalLoopItemExecutionApi>
   deviceApi: WorkbenchServices['deviceApi']
   modelApi: WorkbenchServices['modelApi']
@@ -114,6 +116,8 @@ export interface WorkbenchServices {
   deviceApi: Pick<
     ReturnType<typeof createDeviceApi>,
     | 'listDevices'
+    | 'getRuntimeSettings'
+    | 'updateRuntimeSettings'
     | 'getHomeDirectory'
     | 'getProjectWorkspaceRoot'
     | 'listDirectories'
@@ -152,6 +156,7 @@ export interface WorkbenchServices {
   localProjectChatClient?: ProjectChatClient
   projectChatAgentApi?: ReturnType<typeof createProjectChatAgentApi>
   projectAutomationApi?: ReturnType<typeof createProjectAutomationApi>
+  projectIncomingHookApi?: ReturnType<typeof createProjectIncomingHookApi>
   localProjectChatAgentApi?: ReturnType<typeof createLocalProjectChatAgentApi>
   localLoopItemExecutionApi?: ReturnType<typeof createLocalLoopItemExecutionApi>
   localHarnessModelApi?: {

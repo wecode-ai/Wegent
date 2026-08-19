@@ -5,6 +5,7 @@ import type {
   ChangeRequestLookup,
   ChangeRequestLookupState,
   ChangeRequestMergeability,
+  ChangeRequestMergeQueueState,
   ChangeRequestProvider,
   ChangeRequestState,
   EnvironmentInfo,
@@ -55,6 +56,7 @@ const NO_CHANGES_TO_COMMIT_MESSAGE = 'No changes to commit'
 type EnvironmentInfoCacheEntry = {
   expiresAt: number
   promise: Promise<EnvironmentInfo>
+  settled: boolean
 }
 
 const environmentInfoCaches = new WeakMap<
@@ -252,6 +254,23 @@ function gitlabCheckStatuses(record: Record<string, unknown>): string[] {
   return [stringValue(pipeline as Record<string, unknown>, 'status')].filter(Boolean)
 }
 
+function githubMergeQueueState(value: unknown): ChangeRequestMergeQueueState {
+  const response =
+    value && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : null
+  const data =
+    response?.data && typeof response.data === 'object' && !Array.isArray(response.data)
+      ? (response.data as Record<string, unknown>)
+      : null
+  const resource =
+    data?.resource && typeof data.resource === 'object' && !Array.isArray(data.resource)
+      ? (data.resource as Record<string, unknown>)
+      : null
+  if (!resource || !Object.hasOwn(resource, 'mergeQueueEntry')) return 'unknown'
+  return resource.mergeQueueEntry ? 'queued' : 'not_queued'
+}
+
 function parseChangeRequest(provider: ChangeRequestProvider, value: unknown): ChangeRequest | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const record = value as Record<string, unknown>
@@ -270,6 +289,7 @@ function parseChangeRequest(provider: ChangeRequestProvider, value: unknown): Ch
       provider === 'github' ? githubCheckStatuses(record) : gitlabCheckStatuses(record)
     ),
     mergeability: normalizeMergeability(provider, record),
+    mergeQueue: 'unknown',
   }
 }
 
@@ -337,10 +357,29 @@ async function loadChangeRequest(
       if (right.state === 'open' && left.state !== 'open') return 1
       return right.number - left.number
     })
+  const changeRequest = changeRequests?.[0]
+  if (!changeRequest) {
+    return { provider, state: 'not_found' }
+  }
 
-  return changeRequests?.[0]
-    ? { provider, state: 'found', changeRequest: changeRequests[0] }
-    : { provider, state: 'not_found' }
+  if (provider === 'github' && changeRequest.state === 'open') {
+    try {
+      const queueResponse = await api.executeCommand(deviceId, {
+        command_key: 'git_github_pull_request_merge_queue',
+        path,
+        args: ['-F', `url=${changeRequest.url}`],
+        timeout_seconds: 20,
+        max_output_bytes: 64 * 1024,
+      })
+      if (queueResponse.success) {
+        changeRequest.mergeQueue = githubMergeQueueState(outputAsRecord(queueResponse.stdout))
+      }
+    } catch {
+      changeRequest.mergeQueue = 'unknown'
+    }
+  }
+
+  return { provider, state: 'found', changeRequest }
 }
 
 function environmentInfoCacheKey(
@@ -777,15 +816,27 @@ export async function loadProjectEnvironment(
   const now = Date.now()
   const environmentInfoCache = getEnvironmentInfoCache(api)
   const cached = environmentInfoCache.get(cacheKey)
-  if (!options.force && cached && cached.expiresAt > now) {
+  // Forced polling must still share an in-flight load. Replacing a slow request
+  // on every poll prevents any result from settling the environment loading state.
+  if (cached && (!cached.settled || (!options.force && cached.expiresAt > now))) {
     return cloneEnvironmentInfo(await cached.promise)
   }
 
   const promise = loadProjectEnvironmentUncached(api, project, target)
-  environmentInfoCache.set(cacheKey, {
+  const entry: EnvironmentInfoCacheEntry = {
     expiresAt: now + ENVIRONMENT_INFO_CACHE_TTL_MS,
     promise,
-  })
+    settled: false,
+  }
+  environmentInfoCache.set(cacheKey, entry)
+  void promise.then(
+    () => {
+      entry.settled = true
+    },
+    () => {
+      entry.settled = true
+    }
+  )
 
   try {
     return cloneEnvironmentInfo(await promise)

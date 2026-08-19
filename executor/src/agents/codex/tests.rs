@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde_json::json;
 
 use super::*;
@@ -54,6 +55,70 @@ async fn active_thread_tracking_counts_each_thread_independently() {
     client.mark_thread_idle("thread-1").await;
     client.mark_thread_idle("thread-2").await;
     assert!(client.state.lock().await.active_threads.is_empty());
+}
+
+#[tokio::test]
+async fn notification_hub_isolates_thread_subscribers_from_cross_thread_bursts() {
+    let hub = CodexNotificationHub::new();
+    let mut thread_a = hub.subscribe_thread("thread-a");
+
+    for index in 0..(CODEX_THREAD_NOTIFICATION_CAPACITY + 100) {
+        hub.send(json!({
+            "method": "item/commandExecution/outputDelta",
+            "params": {
+                "threadId": "thread-b",
+                "turnId": "turn-b",
+                "delta": index.to_string()
+            }
+        }));
+    }
+    hub.send(json!({
+        "method": "turn/completed",
+        "params": {
+            "threadId": "thread-a",
+            "turn": {"id": "turn-a", "status": "completed"}
+        }
+    }));
+
+    let message = thread_a
+        .recv()
+        .await
+        .expect("cross-thread traffic must not lag the subscriber");
+    assert_eq!(message["method"], "turn/completed");
+    assert_eq!(message["params"]["threadId"], "thread-a");
+}
+
+#[tokio::test]
+async fn notification_hub_keeps_global_and_thread_scoped_delivery() {
+    let hub = CodexNotificationHub::new();
+    let mut all = hub.subscribe_all();
+    let mut thread_a = hub.subscribe_thread("thread-a");
+    let mut thread_b = hub.subscribe_thread("thread-b");
+    let message = json!({
+        "method": "item/started",
+        "params": {"threadId": "thread-a", "turnId": "turn-a"}
+    });
+
+    hub.send(message.clone());
+
+    assert_eq!(all.recv().await.unwrap(), message);
+    assert_eq!(thread_a.recv().await.unwrap(), message);
+    assert!(thread_b.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn notification_hub_delivers_unscoped_process_exit_to_each_thread() {
+    let hub = CodexNotificationHub::new();
+    let mut thread_a = hub.subscribe_thread("thread-a");
+    let mut thread_b = hub.subscribe_thread("thread-b");
+
+    notify_shared_process_closed(&hub, "app-server stopped");
+
+    for receiver in [&mut thread_a, &mut thread_b] {
+        let message = receiver.recv().await.unwrap();
+        assert_eq!(message["method"], "codex/app-server/exited");
+        assert_eq!(message["params"]["message"], "app-server stopped");
+    }
 }
 
 #[tokio::test]
@@ -203,39 +268,6 @@ fn mcp_thread_diagnostics_report_names_without_config_values() {
 }
 
 #[test]
-fn mcp_inventory_diagnostics_report_accepted_tool_names() {
-    let response = json!({
-        "data": [{
-            "name": "wework_space",
-            "tools": {
-                "get_board_item": {
-                    "name": "get_board_item",
-                    "description": "sensitive-description",
-                    "inputSchema": {"type": "object"}
-                },
-                "assign_board_item": {
-                    "name": "assign_board_item",
-                    "inputSchema": {"type": "object"}
-                }
-            },
-            "resources": [],
-            "resourceTemplates": []
-        }]
-    });
-
-    let inventories = mcp_inventory_diagnostic_fields(&response);
-
-    assert_eq!(inventories.len(), 1);
-    let fields = inventories[0].iter().cloned().collect::<BTreeMap<_, _>>();
-    assert_eq!(fields["server_name"], "wework_space");
-    assert_eq!(fields["tool_count"], "2");
-    assert_eq!(fields["tool_names"], "assign_board_item,get_board_item");
-    assert!(!fields
-        .values()
-        .any(|value| value.contains("sensitive-description")));
-}
-
-#[test]
 fn initialize_params_does_not_advertise_openai_form_elicitation_extension() {
     let params = initialize_params();
 
@@ -279,6 +311,49 @@ fn mcp_form_elicitation_maps_enum_names_to_request_user_input_options() {
             {"label": "仅自己", "description": "owner"},
             {"label": "指定人", "description": "custom"}
         ])
+    );
+}
+
+#[test]
+fn mcp_form_elicitation_returns_accepted_form_content() {
+    let message = json!({
+        "id": 73,
+        "method": "mcpServer/elicitation/request",
+        "params": {
+            "serverName": "wegent-sites",
+            "mode": "form",
+            "message": "请选择内网访问范围。",
+            "requestedSchema": {
+                "type": "object",
+                "properties": {
+                    "audience": {
+                        "type": "string",
+                        "title": "访问范围",
+                        "enum": ["all", "owner"],
+                        "enumNames": ["所有人", "仅自己"]
+                    }
+                },
+                "required": ["audience"]
+            }
+        }
+    });
+    let response = json!({
+        "requestId": 73,
+        "answers": {
+            "audience": {"answers": ["仅自己"]}
+        }
+    });
+
+    let result = mcp_server_elicitation_response(&message, Some(&response))
+        .expect("supported MCP form should be accepted");
+
+    assert_eq!(
+        result,
+        json!({
+            "action": "accept",
+            "content": {"audience": "owner"},
+            "_meta": Value::Null
+        })
     );
 }
 
@@ -747,6 +822,94 @@ fn cloud_model_uses_provider_model_id_for_catalog_capabilities() {
         codex_request_model(&request).as_deref(),
         Some("gpt-5.6-luna")
     );
+}
+
+#[test]
+fn configured_vision_sidecar_derives_catalog_from_any_base_profile() {
+    let request = ExecutionRequest {
+        model_config: json!({
+            "model_id": "provider-model",
+            "codex_catalog_model_id": "wework-kimi-k2-7",
+            "codex_responses_compat_proxy": true,
+            "vision_sidecar": {
+                "enabled": true,
+                "request_url": "https://vision.example/v1/responses",
+                "model_id": "vision-model"
+            }
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    assert_eq!(
+        codex_request_model(&request).as_deref(),
+        Some("wework-kimi-k2-7-vision-sidecar")
+    );
+}
+
+#[test]
+fn disabled_vision_sidecar_keeps_the_base_catalog_profile() {
+    let request = ExecutionRequest {
+        model_config: json!({
+            "model_id": "provider-model",
+            "codex_catalog_model_id": "operator-catalog",
+            "codex_responses_compat_proxy": true,
+            "vision_sidecar": {"enabled": false}
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    assert_eq!(
+        codex_request_model(&request).as_deref(),
+        Some("operator-catalog")
+    );
+}
+
+#[test]
+fn malformed_vision_sidecar_keeps_the_base_catalog_profile() {
+    let request = ExecutionRequest {
+        model_config: json!({
+            "model_id": "provider-model",
+            "codex_catalog_model_id": "operator-catalog",
+            "codex_responses_compat_proxy": true,
+            "vision_sidecar": "invalid"
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    assert_eq!(
+        codex_request_model(&request).as_deref(),
+        Some("operator-catalog")
+    );
+}
+
+#[test]
+fn incomplete_vision_sidecar_keeps_the_base_catalog_profile() {
+    let invalid_sidecars = [
+        json!({"model_id": "vision-model"}),
+        json!({"request_url": "https://vision.example/v1/responses"}),
+        json!({
+            "request_url": "https://vision.example/v1/responses",
+            "model_id": "vision-model",
+            "api_format": "openai-embeddings"
+        }),
+    ];
+
+    for vision_sidecar in invalid_sidecars {
+        let request = ExecutionRequest {
+            model_config: json!({
+                "model_id": "provider-model",
+                "codex_catalog_model_id": "operator-catalog",
+                "codex_responses_compat_proxy": true,
+                "vision_sidecar": vision_sidecar
+            }),
+            ..ExecutionRequest::default()
+        };
+
+        assert_eq!(
+            codex_request_model(&request).as_deref(),
+            Some("operator-catalog")
+        );
+    }
 }
 
 #[test]
@@ -1296,7 +1459,7 @@ fn persistent_codex_app_server_launch_config_keeps_only_process_settings() {
     }
     assert!(launch_config
         .config_overrides
-        .contains(&"goals=true".to_owned()));
+        .contains(&"features.goals=true".to_owned()));
     assert!(launch_config
         .config_overrides
         .contains(&"features.apply_patch_freeform=true".to_owned()));
@@ -2086,21 +2249,13 @@ fn thread_launch_params_include_execution_system_prompt_as_developer_instruction
             .starts_with("用中文回复\n\nJudge the supplied content without answering it."));
         assert!(instructions.contains("Wework 内置浏览器 routing:"));
         assert!(instructions.contains("browser_open"));
-        assert!(!instructions.contains("Wework 项目空间 routing:"));
+        assert!(instructions.contains("Wework 项目空间 routing:"));
     }
 }
 
 #[test]
-fn thread_launch_params_include_space_routing_when_space_mcp_is_injected() {
-    let request = ExecutionRequest {
-        mcp_servers: vec![json!({
-            "name": "wework_space",
-            "type": "stdio",
-            "command": "/path/to/wegent-executor",
-            "args": ["space-mcp-server"]
-        })],
-        ..ExecutionRequest::default()
-    };
+fn thread_launch_params_always_include_space_routing() {
+    let request = ExecutionRequest::default();
     let launch_config = CodexLaunchConfig::default();
 
     for params in [
@@ -2112,7 +2267,10 @@ fn thread_launch_params_include_space_routing_when_space_mcp_is_injected() {
             .as_str()
             .expect("developer instructions should be a string");
         assert!(instructions.contains("Wework 项目空间 routing:"));
-        assert!(instructions.contains("tool_search"));
+        assert!(instructions.contains("get_current_context"));
+        assert!(instructions.contains("list_item_attachments"));
+        assert!(instructions.contains("read_item_attachment"));
+        assert!(instructions.contains("MCP resource listing"));
         assert!(instructions.contains("list_board_items"));
         assert!(instructions.contains("get_assignment_candidates"));
     }
@@ -2132,7 +2290,18 @@ fn codex_full_access_permission_profile_is_applied_by_default() {
             params["permissions"],
             CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE
         );
-        assert_eq!(params["approvalPolicy"], "never");
+        assert_eq!(
+            params["approvalPolicy"],
+            json!({
+                "granular": {
+                    "sandbox_approval": false,
+                    "rules": false,
+                    "skill_approval": false,
+                    "request_permissions": false,
+                    "mcp_elicitations": true,
+                }
+            })
+        );
         assert!(params.get("sandboxPolicy").is_none());
         assert!(params.get("sandbox").is_none());
     }
@@ -2442,7 +2611,10 @@ fn codex_thread_launch_disables_tool_call_mcp_elicitation() {
             params["config"]["features.tool_call_mcp_elicitation"],
             false
         );
-        assert_eq!(params["approvalPolicy"], "never");
+        assert_eq!(
+            params["approvalPolicy"]["granular"]["mcp_elicitations"],
+            true
+        );
     }
 }
 
@@ -2755,6 +2927,123 @@ fn codex_launch_config_includes_cdp_browser_mcp_server() {
     } else {
         env::remove_var(WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV);
     }
+}
+
+#[test]
+fn codex_thread_binds_project_space_through_context_grant() {
+    let mut request = ExecutionRequest {
+        task_id: "runtime-task-1".to_owned(),
+        backend_url: Some("https://wework.example.com".to_owned()),
+        auth_token: Some("runtime-token".to_owned()),
+        ..ExecutionRequest::default()
+    };
+    request.extra.insert(
+        "origin".to_owned(),
+        json!({
+            "type": "board_task",
+            "cloudProjectId": "space-1",
+            "loopItemId": "issue-1",
+        }),
+    );
+
+    let launch_config =
+        build_codex_launch_config(&request).expect("Codex launch config should be built");
+    let params = thread_start_params(&request, &launch_config);
+    let config = params["config"].as_object().expect("thread config");
+
+    assert!(request.mcp_servers.is_empty());
+    assert_eq!(config["mcp_servers.wework_space.enabled"], true);
+    assert_eq!(
+        config["mcp_servers.wework_space.url"],
+        "http://127.0.0.1:1/mcp"
+    );
+    assert_eq!(
+        config["mcp_servers.wework_space.http_headers.Authorization"],
+        "Bearer test-space-mcp-instance-token"
+    );
+    assert!(!config.contains_key("mcp_servers.wework_space.command"));
+    assert!(!config.contains_key("mcp_servers.wework_space.args"));
+    assert!(!config.contains_key("mcp_servers.wework_space.startup_timeout_sec"));
+    assert_eq!(config["mcp_servers.wework_space.tool_timeout_sec"], 60);
+    assert_eq!(
+        config["mcp_servers.wework_space.default_tools_approval_mode"],
+        "approve"
+    );
+    assert_eq!(
+        config["mcp_servers.wework_space.http_headers.X-Wework-Space-Backend-Url"],
+        "https://wework.example.com"
+    );
+    assert_eq!(
+        config["mcp_servers.wework_space.http_headers.X-Wework-Space-Backend-Token"],
+        "runtime-token"
+    );
+    let encoded = config["mcp_servers.wework_space.http_headers.X-Wework-Space-Context-Grant"]
+        .as_str()
+        .expect("encoded context grant");
+    let decoded = STANDARD.decode(encoded).expect("base64 context grant");
+    let grant: Value = serde_json::from_slice(&decoded).expect("JSON context grant");
+    assert_eq!(grant["task_id"], "runtime-task-1");
+    assert_eq!(grant["space_id"], "space-1");
+    assert_eq!(grant["item_id"], "issue-1");
+}
+
+#[test]
+fn codex_thread_enables_unbound_project_space_for_generic_tasks() {
+    let request = ExecutionRequest::default();
+
+    let launch_config =
+        build_codex_launch_config(&request).expect("Codex launch config should be built");
+    let params = thread_start_params(&request, &launch_config);
+    let config = params["config"].as_object().expect("thread config");
+
+    assert_eq!(config["mcp_servers.wework_space.enabled"], true);
+    assert_eq!(
+        config["mcp_servers.wework_space.url"],
+        "http://127.0.0.1:1/mcp"
+    );
+    assert_eq!(
+        config["mcp_servers.wework_space.http_headers.Authorization"],
+        "Bearer test-space-mcp-instance-token"
+    );
+    assert!(!config.contains_key("mcp_servers.wework_space.command"));
+    assert!(!config.contains_key("mcp_servers.wework_space.args"));
+    assert!(
+        !config.contains_key("mcp_servers.wework_space.http_headers.X-Wework-Space-Context-Grant")
+    );
+}
+
+#[test]
+fn required_project_space_startup_failure_terminates_the_turn() {
+    let message = json!({
+        "method": "mcpServer/startupStatus/updated",
+        "params": {
+            "threadId": "thread-1",
+            "name": "wework_space",
+            "status": "failed",
+            "failureReason": "HTTP 401"
+        }
+    });
+
+    assert_eq!(
+        required_mcp_startup_failure(&message).as_deref(),
+        Some("required project-space capability failed to connect: HTTP 401")
+    );
+    assert!(required_mcp_startup_failure(&json!({
+        "method": "mcpServer/startupStatus/updated",
+        "params": {
+            "name": "wework_space",
+            "status": "ready"
+        }
+    }))
+    .is_none());
+    assert!(required_mcp_startup_failure(&json!({
+        "method": "mcpServer/startupStatus/updated",
+        "params": {
+            "name": "another_server",
+            "status": "failed"
+        }
+    }))
+    .is_none());
 }
 
 #[test]

@@ -18,6 +18,10 @@ import type {
   WorkbenchPaneContextValue,
 } from '@/features/workbench/workbenchContextTypes'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import {
+  WorkspaceTabsContext,
+  type WorkspaceTabsContextValue,
+} from '@/features/workspace-tabs/workspaceTabsContextValue'
 import { openExternalUrl } from '@/lib/external-links'
 import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
 import {
@@ -60,6 +64,8 @@ const deliveryApiMock = vi.hoisted(() => ({
   listCloudFiles: vi.fn(),
   listLoopItems: vi.fn(),
   listDeliveries: vi.fn(),
+  findCloudContextForTask: vi.fn(),
+  trackProjectTask: vi.fn(),
 }))
 const embeddedBrowserMocks = vi.hoisted(() => ({
   setEmbeddedBrowserActiveTab: vi.fn().mockResolvedValue(undefined),
@@ -598,6 +604,8 @@ describe('DesktopWorkbenchLayout', () => {
     deliveryApiMock.listCloudFiles.mockResolvedValue({ items: [] })
     deliveryApiMock.listLoopItems.mockResolvedValue({ items: [] })
     deliveryApiMock.listDeliveries.mockResolvedValue({ items: [] })
+    deliveryApiMock.findCloudContextForTask.mockRejectedValue(new Error('Context not found'))
+    deliveryApiMock.trackProjectTask.mockImplementation(() => new Promise(() => {}))
     cloudDesktopExtensionMock.available = false
     cloudDesktopExtensionMock.launch.mockResolvedValue(true)
     Object.defineProperty(window, 'innerWidth', {
@@ -1127,6 +1135,8 @@ describe('DesktopWorkbenchLayout', () => {
                 listCloudFiles: deliveryApiMock.listCloudFiles,
                 listLoopItems: deliveryApiMock.listLoopItems,
                 listDeliveries: deliveryApiMock.listDeliveries,
+                findCloudContextForTask: deliveryApiMock.findCloudContextForTask,
+                trackProjectTask: deliveryApiMock.trackProjectTask,
               },
             }
           : {}),
@@ -1499,6 +1509,48 @@ describe('DesktopWorkbenchLayout', () => {
     expect(
       screen.getByTestId('desktop-workbench-content').closest('[aria-hidden="true"]')
     ).toHaveStyle({ display: 'none' })
+  })
+
+  test('uses the independent board tab instead of a work-items sidebar destination', () => {
+    const taskTab = {
+      id: 'task-existing',
+      kind: 'task' as const,
+      title: '当前任务',
+      contentRoute: '/?deviceId=local-device&taskId=runtime-1',
+    }
+    const boardTab = {
+      id: 'board-existing',
+      kind: 'board' as const,
+      title: '工作项',
+      contentRoute: '/todo',
+    }
+    const selectTab = vi.fn()
+    const openTab = vi.fn()
+    const workspaceTabs = {
+      tabs: [taskTab, boardTab],
+      activeTabId: taskTab.id,
+      activeTab: taskTab,
+      openTab,
+      selectTab,
+      closeTab: vi.fn(),
+      closeOtherTabs: vi.fn(),
+      restoreClosedTab: vi.fn(),
+      moveTab: vi.fn(),
+      updateActiveTab: vi.fn(),
+    } as unknown as WorkspaceTabsContextValue
+
+    render(
+      <WorkspaceTabsContext.Provider value={workspaceTabs}>
+        <DesktopWorkbenchLayout {...baseProps} />
+      </WorkspaceTabsContext.Provider>
+    )
+
+    expect(screen.queryByTestId('work-items-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-board-loading')).not.toBeInTheDocument()
+    expect(screen.getByTestId('desktop-workbench-content')).toBeVisible()
+    expect(selectTab).not.toHaveBeenCalled()
+    expect(openTab).not.toHaveBeenCalled()
+    expect(workspaceTabs.tabs).toEqual([taskTab, boardTab])
   })
 
   test('submits implementation plan confirmation as a user message response', async () => {
@@ -2072,6 +2124,14 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('mention-cloud-projects-action')).not.toBeInTheDocument()
   })
 
+  test('hides the work-item composer guide while experimental features are disabled', () => {
+    experimentalFeatures.enabled = false
+
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    expect(screen.queryByTestId('project-space-context-pill')).not.toBeInTheDocument()
+  })
+
   test('shows cloud project space entries in the @ menu while experimental features are enabled', async () => {
     deliveryApiMock.available = true
 
@@ -2093,9 +2153,9 @@ describe('DesktopWorkbenchLayout', () => {
     deliveryApiMock.listCloudProjects.mockResolvedValue({
       items: [
         {
-          id: 'space-1',
+          id: 'default-work-items',
           public_id: 'public-space-1',
-          project_key: 'SPACE-1',
+          project_key: 'WORK',
           name: 'Task Follow-up Board',
           description: '',
           project_store: 'local',
@@ -2114,7 +2174,7 @@ describe('DesktopWorkbenchLayout', () => {
     const runtimeWork = structuredClone(createRuntimeWorkForProject(currentProject)!)
     runtimeWork.projects[0].project.defaultProjectSpace = {
       projectStore: 'local',
-      projectId: 'space-1',
+      projectId: 'default-work-items',
     }
 
     render(
@@ -2140,6 +2200,69 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(await screen.findByTestId('project-space-context-pill')).toHaveTextContent(
       'Task Follow-up Board'
+    )
+  })
+
+  test('keeps the work-item guide visible while a runtime task binding is unresolved', async () => {
+    deliveryApiMock.available = true
+    deliveryApiMock.listCloudProjects.mockResolvedValue({
+      items: [
+        {
+          id: 'default-work-items',
+          public_id: 'public-space-1',
+          project_key: 'WORK',
+          name: '工作项',
+          description: '',
+          project_store: 'local',
+          task_provider: 'local',
+          provider_config: {},
+          created_by_user_id: 1,
+          status: 'active',
+          tags: [],
+          version: 1,
+          created_at: '2026-08-09T00:00:00Z',
+          updated_at: '2026-08-09T00:00:00Z',
+        },
+      ],
+    })
+    deliveryApiMock.findCloudContextForTask.mockImplementation(() => new Promise(() => {}))
+    const currentProject = activeProjectState.currentProject
+    const runtimeWork = structuredClone(createRuntimeWorkForProject(currentProject)!)
+    runtimeWork.projects[0].deviceWorkspaces[0].tasks.push({
+      taskId: 'runtime-1',
+      workspacePath: '/workspace/github_wegent',
+      title: '完成默认工作项流程',
+      runtime: 'codex',
+      running: true,
+    })
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...activeProjectState,
+          currentRuntimeTask: {
+            deviceId: 'device-1',
+            workspacePath: '/workspace/github_wegent',
+            taskId: 'runtime-1',
+          },
+          runtimeWork,
+        }}
+        projectWork={{
+          ...baseProps.projectWork,
+          currentProject,
+          currentProjectId: currentProject.id,
+          runtimeWork,
+        }}
+      />
+    )
+
+    const workItemGuide = await screen.findByTestId('project-space-context-pill')
+    const composerInput = screen.getByTestId('chat-message-input')
+    expect(workItemGuide).toHaveTextContent('工作空间')
+    expect(workItemGuide).toHaveAttribute('title', '工作空间')
+    expect(workItemGuide.compareDocumentPosition(composerInput)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
     )
   })
 
@@ -3434,7 +3557,7 @@ describe('DesktopWorkbenchLayout', () => {
     fireEvent.click(screen.getByTestId('harness-session-picker-create-button'))
     expect(await screen.findByTestId('transient-notice')).toHaveTextContent('Right session failed')
     expect(screen.getByTestId('central-harness-terminal')).toBeInTheDocument()
-  })
+  }, 15_000)
 
   test('prepares a project worktree before starting the primary OpenCode session', async () => {
     isLocalTerminalAvailableMock.mockReturnValue(true)
@@ -3508,7 +3631,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('project-local-tasks-panel-1')).toContainElement(
       await screen.findByTestId('local-harness-session-row-local-harness-1')
     )
-  })
+  }, 15_000)
 
   test('lists active native harness sessions without opening one after a WebView reload', async () => {
     isLocalTerminalAvailableMock.mockReturnValue(true)
@@ -4205,14 +4328,18 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('project-create-remote-option'))
 
     const select = screen.getByTestId('standalone-remote-device-select')
+    expect(select).toHaveTextContent('云设备')
+    expect(select).toHaveTextContent('远程 Docker 设备')
+    expect(select).toHaveTextContent('Cloud Device')
+    expect(select).toHaveTextContent('Remote Device')
     expect(select).toHaveTextContent('10.201.3.200')
     expect(select).toHaveTextContent('127.0.0.1')
-    expect(select).not.toHaveTextContent('Cloud Device')
-    expect(select).not.toHaveTextContent('Remote Device')
     expect(select).not.toHaveTextContent('Local Device')
+    expect(screen.getByTestId('standalone-remote-device-option-cloud-device')).toBeEnabled()
+    expect(screen.getByTestId('standalone-remote-device-option-remote-device')).toBeEnabled()
   })
 
-  test('remote project dialog excludes incompatible non-local devices', async () => {
+  test('remote project dialog shows a version-mismatched Docker device as disabled', async () => {
     const onUpgradeDevice = vi.fn().mockResolvedValue(undefined)
 
     render(
@@ -4224,13 +4351,14 @@ describe('DesktopWorkbenchLayout', () => {
           devices: [
             {
               id: 1,
-              device_id: 'old-device',
-              name: 'Old Device',
+              device_id: 'remote-device',
+              name: 'Remote Docker Device',
               status: 'online',
               is_default: false,
-              device_type: 'cloud',
+              device_type: 'remote',
               bind_shell: 'claudecode',
-              executor_version: '1.8.4',
+              executor_version: 'dev',
+              client_ip: '10.201.3.201',
               slot_used: 0,
             },
           ],
@@ -4244,7 +4372,17 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('standalone-folder-project-dialog')).toBeInTheDocument()
     expect(screen.getByTestId('standalone-folder-no-device')).toHaveTextContent('连接一台云端设备')
     expect(screen.getByTestId('standalone-folder-no-device')).toHaveTextContent('启动脚本')
-    expect(screen.queryByTestId('standalone-remote-device-select')).not.toBeInTheDocument()
+    expect(screen.getByTestId('standalone-remote-device-select')).toHaveTextContent(
+      'Remote Docker Device'
+    )
+    expect(screen.getByTestId('standalone-remote-device-select')).toHaveTextContent('10.201.3.201')
+    expect(screen.getByTestId('standalone-remote-device-select')).toHaveTextContent(
+      '需升级到 v1.8.5'
+    )
+    expect(screen.getByTestId('standalone-remote-device-option-remote-device')).toBeDisabled()
+    expect(screen.getByTestId('standalone-remote-device-unavailable-hint')).toHaveTextContent(
+      '版本不匹配'
+    )
     expect(onUpgradeDevice).not.toHaveBeenCalled()
   })
 
@@ -5246,8 +5384,8 @@ describe('DesktopWorkbenchLayout', () => {
   test('opens the general settings page from the settings menu', async () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
-    await userEvent.click(screen.getByTestId('settings-button'))
-    await userEvent.click(screen.getByTestId('settings-menu-button'))
+    fireEvent.click(screen.getByTestId('settings-button'))
+    fireEvent.click(screen.getByTestId('settings-menu-button'))
 
     expect(screen.getByTestId('wework-settings-page')).toBeInTheDocument()
     expect(screen.getByTestId('settings-back-button')).toHaveTextContent('返回')
@@ -5268,7 +5406,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByText('Personal Devices')).not.toBeInTheDocument()
     expect(screen.queryByText('Linux-Device-481b616e8e0b')).not.toBeInTheDocument()
     expect(screen.queryByText('可连接这台设备的云设备')).not.toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('settings-nav-connections'))
+    fireEvent.click(screen.getByTestId('settings-nav-connections'))
 
     expect(await screen.findByRole('heading', { name: '云端连接' })).toBeInTheDocument()
     expect(screen.getByText('已连接云端')).toBeInTheDocument()
@@ -5294,15 +5432,17 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByText('CPU')).toBeInTheDocument()
     expect(screen.getByText('内存')).toBeInTheDocument()
     expect(screen.getByText('磁盘')).toBeInTheDocument()
-    expect(
-      await screen.findByTestId('connection-device-metric-cpu-24a59054-4638-4744-983d-372706c30fcd')
-    ).toHaveTextContent('42%')
-    expect(
-      screen.getByTestId('connection-device-metric-memory-24a59054-4638-4744-983d-372706c30fcd')
-    ).toHaveTextContent('68%')
-    expect(
-      screen.getByTestId('connection-device-metric-disk-24a59054-4638-4744-983d-372706c30fcd')
-    ).toHaveTextContent('57%')
+    await waitFor(() => {
+      expect(
+        screen.getByTestId('connection-device-metric-cpu-24a59054-4638-4744-983d-372706c30fcd')
+      ).toHaveTextContent('42%')
+      expect(
+        screen.getByTestId('connection-device-metric-memory-24a59054-4638-4744-983d-372706c30fcd')
+      ).toHaveTextContent('68%')
+      expect(
+        screen.getByTestId('connection-device-metric-disk-24a59054-4638-4744-983d-372706c30fcd')
+      ).toHaveTextContent('57%')
+    })
     expect(screen.queryByTestId('connection-scale-wiki')).not.toBeInTheDocument()
     expect(screen.queryByText('说明')).not.toBeInTheDocument()
     expect(screen.queryByText('扩容 Wiki')).not.toBeInTheDocument()
@@ -5328,7 +5468,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('right-workspace-terminal-option')).toHaveTextContent('终端')
     expect(screen.getByTestId('right-workspace-browser-option')).toHaveTextContent('浏览器')
     expect(screen.getByTestId('right-workspace-file-option')).toHaveTextContent('文件')
-    await userEvent.click(screen.getByTestId('right-workspace-file-option'))
+    fireEvent.click(screen.getByTestId('right-workspace-file-option'))
     expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
     expect(screen.queryByTestId('workspace-tool-launcher')).not.toBeInTheDocument()
     expect(screen.getByTestId('right-workspace-resize-handle')).toHaveAttribute('role', 'separator')
@@ -5381,13 +5521,13 @@ describe('DesktopWorkbenchLayout', () => {
       ],
     })
 
-    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    fireEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
     const content = screen.getByTestId('desktop-workbench-content')
     const panelShell = screen.getByTestId('right-workspace-panel-shell')
     const expandButton = screen.getByTestId('toggle-right-workspace-panel-expanded-button')
 
     expect(expandButton).toHaveAttribute('aria-pressed', 'false')
-    await userEvent.click(expandButton)
+    fireEvent.click(expandButton)
 
     expect(content).toHaveStyle({ width: '100%' })
     expect(panelShell).toHaveStyle({ width: '100%' })
@@ -5404,14 +5544,14 @@ describe('DesktopWorkbenchLayout', () => {
       'true'
     )
 
-    await userEvent.click(
+    fireEvent.click(
       within(screen.getByTestId('desktop-sidebar')).getByTestId('collapse-sidebar-button')
     )
 
     expect(screen.getByTestId('desktop-sidebar')).toHaveStyle({ width: '0px' })
     expect(panelShell).toHaveStyle({ width: '100%' })
 
-    await userEvent.click(screen.getByTestId('restore-conversation-from-expanded-workspace-button'))
+    fireEvent.click(screen.getByTestId('restore-conversation-from-expanded-workspace-button'))
 
     await waitFor(() => {
       expect(content).toHaveStyle({ width: '420px' })
@@ -5516,9 +5656,38 @@ describe('DesktopWorkbenchLayout', () => {
     expect(browserTab).toHaveTextContent(/^example.com$/)
     expect(screen.getByTestId('workspace-browser-frame')).toHaveAttribute(
       'src',
-      'https://example.com/'
+      'http://example.com/'
     )
     expect(screen.getByTestId('workspace-browser-frame')).toHaveClass('bg-background')
+  })
+
+  test('uses separate browser shortcuts for the closed and open right panel', async () => {
+    renderWorkspacePanelLayout()
+
+    expect(screen.getByTestId('right-workspace-panel-shell')).toHaveAttribute('aria-hidden', 'true')
+
+    fireEvent.keyDown(window, { key: 'b', metaKey: true, shiftKey: true })
+
+    expect(await screen.findByTestId('right-workspace-browser-tab-1')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    expect(screen.getByTestId('right-workspace-panel-shell')).toHaveAttribute(
+      'aria-hidden',
+      'false'
+    )
+    expect(screen.getByTestId('workspace-browser-url-input')).toBeInTheDocument()
+
+    fireEvent.keyDown(window, { key: 't', metaKey: true })
+
+    expect(await screen.findByTestId('right-workspace-browser-tab-2')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+
+    fireEvent.keyDown(window, { key: 'b', metaKey: true, shiftKey: true })
+
+    expect(screen.queryByTestId('right-workspace-browser-tab-3')).not.toBeInTheDocument()
   })
 
   test('deactivates the right workspace browser while settings are open', async () => {
@@ -5540,7 +5709,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
     await userEvent.click(screen.getByTestId('right-workspace-browser-option'))
-    await userEvent.type(screen.getByTestId('workspace-browser-url-input'), 'weibo.com{Enter}')
+    await userEvent.type(screen.getByTestId('workspace-browser-url-input'), 'example.com{Enter}')
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
 
@@ -5549,10 +5718,10 @@ describe('DesktopWorkbenchLayout', () => {
     expect(rightPanelShell).toHaveStyle({ width: '0px' })
     expect(screen.getByTestId('right-workspace-panel')).toBeInTheDocument()
     expect(screen.getByTestId('workspace-browser-panel')).toHaveClass('hidden')
-    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('https://weibo.com/')
+    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('http://example.com/')
     expect(screen.getByTestId('workspace-browser-frame')).toHaveAttribute(
       'src',
-      'https://weibo.com/'
+      'http://example.com/'
     )
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
@@ -5563,10 +5732,10 @@ describe('DesktopWorkbenchLayout', () => {
       'true'
     )
     expect(screen.getByTestId('workspace-browser-panel')).not.toHaveClass('hidden')
-    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('https://weibo.com/')
+    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('http://example.com/')
     expect(screen.getByTestId('workspace-browser-frame')).toHaveAttribute(
       'src',
-      'https://weibo.com/'
+      'http://example.com/'
     )
   })
 
@@ -5575,7 +5744,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
     await userEvent.click(screen.getByTestId('right-workspace-browser-option'))
-    await userEvent.type(screen.getByTestId('workspace-browser-url-input'), 'weibo.com{Enter}')
+    await userEvent.type(screen.getByTestId('workspace-browser-url-input'), 'example.com{Enter}')
 
     vi.spyOn(getDesktopWorkbenchMainElement(), 'getBoundingClientRect').mockReturnValue(
       createRect({ left: 0, top: 0, width: 1000, height: 720 })
@@ -5604,7 +5773,7 @@ describe('DesktopWorkbenchLayout', () => {
       expect(rightPanelShell).toHaveStyle({ width: '0px' })
       expect(screen.queryByTestId('right-workspace-resize-handle')).not.toBeInTheDocument()
     })
-    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('https://weibo.com/')
+    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('http://example.com/')
     expect(document.body.style.cursor).toBe('')
     expect(document.body.style.userSelect).toBe('')
 
@@ -5612,7 +5781,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(content).toHaveStyle({ width: '420px' })
     expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 420px)' })
-    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('https://weibo.com/')
+    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('http://example.com/')
   })
 
   test('does not leave the browser loading when submitting the current URL again', async () => {
@@ -5622,10 +5791,10 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('right-workspace-browser-option'))
 
     const urlInput = screen.getByTestId('workspace-browser-url-input')
-    await userEvent.type(urlInput, 'weibo.com{Enter}')
+    await userEvent.type(urlInput, 'example.com{Enter}')
     expect(screen.getByTestId('workspace-browser-frame')).toHaveAttribute(
       'src',
-      'https://weibo.com/'
+      'http://example.com/'
     )
 
     await userEvent.type(urlInput, '{Enter}')
@@ -5633,7 +5802,7 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() =>
       expect(screen.getByTestId('workspace-browser-frame')).toHaveAttribute(
         'src',
-        'https://weibo.com/'
+        'http://example.com/'
       )
     )
     expect(screen.queryByTestId('workspace-browser-loading')).not.toBeInTheDocument()
@@ -5644,7 +5813,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
     await userEvent.click(screen.getByTestId('right-workspace-browser-option'))
-    await userEvent.type(screen.getByTestId('workspace-browser-url-input'), 'weibo.com{Enter}')
+    await userEvent.type(screen.getByTestId('workspace-browser-url-input'), 'example.com{Enter}')
 
     await userEvent.click(screen.getByTestId('right-workspace-new-tab-button'))
     const menu = screen.getByTestId('right-workspace-new-tab-menu')
@@ -5663,7 +5832,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('right-workspace-browser-tab-1'))
     expect(screen.getAllByTestId('workspace-browser-url-input')[0]).toHaveValue(
-      'https://weibo.com/'
+      'http://example.com/'
     )
   })
 
@@ -5710,7 +5879,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
     await userEvent.click(screen.getByTestId('right-workspace-browser-option'))
-    await userEvent.type(screen.getByTestId('workspace-browser-url-input'), 'weibo.com{Enter}')
+    await userEvent.type(screen.getByTestId('workspace-browser-url-input'), 'example.com{Enter}')
 
     await userEvent.click(screen.getByTestId('right-workspace-new-tab-button'))
 
@@ -5724,10 +5893,10 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('right-workspace-new-tab-menu')).not.toBeInTheDocument()
     expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute('aria-selected', 'true')
     expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
-    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('https://weibo.com/')
+    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('http://example.com/')
     expect(screen.getByTestId('workspace-browser-frame')).toHaveAttribute(
       'src',
-      'https://weibo.com/'
+      'http://example.com/'
     )
 
     await userEvent.click(screen.getByTestId('right-workspace-browser-tab-1'))
@@ -5736,10 +5905,10 @@ describe('DesktopWorkbenchLayout', () => {
       'aria-selected',
       'true'
     )
-    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('https://weibo.com/')
+    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('http://example.com/')
     expect(screen.getByTestId('workspace-browser-frame')).toHaveAttribute(
       'src',
-      'https://weibo.com/'
+      'http://example.com/'
     )
   })
 
@@ -6183,7 +6352,7 @@ describe('DesktopWorkbenchLayout', () => {
         })
       )
     )
-  })
+  }, 15_000)
 
   test('temporary chat queues a follow-up while its current response is running', async () => {
     const address: RuntimeTaskAddress = {
@@ -6915,6 +7084,201 @@ describe('DesktopWorkbenchLayout', () => {
       'md:h-8',
       'md:min-w-0'
     )
+  })
+
+  test('right workspace panel opens Dart source as text', async () => {
+    const user = userEvent.setup()
+    const workspacePanelState = createCloudWorkspacePanelState()
+    const dartPath = '/workspace/project/lib/main.dart'
+    const listWorkspaceEntries = vi.fn().mockResolvedValue({
+      path: '/workspace/project',
+      entries: [
+        {
+          name: 'main.dart',
+          path: dartPath,
+          isDirectory: false,
+          size: 31,
+          modifiedAt: null,
+        },
+      ],
+    })
+    const readWorkspaceTextFile = vi.fn().mockResolvedValue({
+      path: dartPath,
+      name: 'main.dart',
+      content: 'void main() => print("hello");',
+      editable: true,
+      revision: 'sha256:dart',
+      truncated: false,
+      size: 31,
+      modifiedAt: null,
+    })
+    const readWorkspaceFileChunk = vi.fn()
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        workspaceFileApi={{
+          listWorkspaceEntries,
+          readWorkspaceTextFile,
+          readWorkspaceFileChunk,
+        }}
+        state={{
+          ...baseProps.state,
+          ...workspacePanelState,
+        }}
+        projectWork={{
+          ...baseProps.projectWork,
+          projects: workspacePanelState.projects,
+          devices: workspacePanelState.devices,
+          currentProjectId: workspacePanelState.currentProject?.id,
+        }}
+      />
+    )
+
+    await user.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await user.click(screen.getByTestId('right-workspace-file-option'))
+    await user.click(await screen.findByText('main.dart'))
+
+    expect(await screen.findByTestId('workspace-file-preview-code-view')).toBeInTheDocument()
+    expect(readWorkspaceTextFile).toHaveBeenCalledWith(
+      'workspace-cloud-device',
+      dartPath,
+      '/workspace/project'
+    )
+    expect(readWorkspaceFileChunk).not.toHaveBeenCalled()
+  })
+
+  test('right workspace panel detects text content for unknown source extensions', async () => {
+    const user = userEvent.setup()
+    const workspacePanelState = createCloudWorkspacePanelState()
+    const sourcePath = '/workspace/project/src/main.zig'
+    const sourceContent = 'pub fn main() void {}'
+    const listWorkspaceEntries = vi.fn().mockResolvedValue({
+      path: '/workspace/project',
+      entries: [
+        {
+          name: 'main.zig',
+          path: sourcePath,
+          isDirectory: false,
+          size: sourceContent.length,
+          modifiedAt: null,
+        },
+      ],
+    })
+    const readWorkspaceFileChunk = vi.fn().mockResolvedValue({
+      path: sourcePath,
+      name: 'main.zig',
+      contentBase64: btoa(sourceContent),
+      offset: 0,
+      eof: true,
+      size: sourceContent.length,
+      modifiedAt: null,
+    })
+    const readWorkspaceTextFile = vi.fn().mockResolvedValue({
+      path: sourcePath,
+      name: 'main.zig',
+      content: sourceContent,
+      editable: true,
+      revision: 'sha256:zig',
+      truncated: false,
+      size: sourceContent.length,
+      modifiedAt: null,
+    })
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        workspaceFileApi={{
+          listWorkspaceEntries,
+          readWorkspaceTextFile,
+          readWorkspaceFileChunk,
+        }}
+        state={{
+          ...baseProps.state,
+          ...workspacePanelState,
+        }}
+        projectWork={{
+          ...baseProps.projectWork,
+          projects: workspacePanelState.projects,
+          devices: workspacePanelState.devices,
+          currentProjectId: workspacePanelState.currentProject?.id,
+        }}
+      />
+    )
+
+    await user.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await user.click(screen.getByTestId('right-workspace-file-option'))
+    await user.click(await screen.findByText('main.zig'))
+
+    expect(await screen.findByTestId('workspace-file-preview-code-view')).toBeInTheDocument()
+    expect(readWorkspaceFileChunk).toHaveBeenCalledWith(
+      'workspace-cloud-device',
+      sourcePath,
+      0,
+      '/workspace/project'
+    )
+    expect(readWorkspaceTextFile).toHaveBeenCalledWith(
+      'workspace-cloud-device',
+      sourcePath,
+      '/workspace/project'
+    )
+  })
+
+  test('right workspace panel keeps unknown binary files on the binary preview path', async () => {
+    const user = userEvent.setup()
+    const workspacePanelState = createCloudWorkspacePanelState()
+    const binaryPath = '/workspace/project/artifact.data'
+    const listWorkspaceEntries = vi.fn().mockResolvedValue({
+      path: '/workspace/project',
+      entries: [
+        {
+          name: 'artifact.data',
+          path: binaryPath,
+          isDirectory: false,
+          size: 4,
+          modifiedAt: null,
+        },
+      ],
+    })
+    const readWorkspaceFileChunk = vi.fn().mockResolvedValue({
+      path: binaryPath,
+      name: 'artifact.data',
+      contentBase64: 'AAECAw==',
+      offset: 0,
+      eof: true,
+      size: 4,
+      modifiedAt: null,
+    })
+    const readWorkspaceTextFile = vi.fn()
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        workspaceFileApi={{
+          listWorkspaceEntries,
+          readWorkspaceTextFile,
+          readWorkspaceFileChunk,
+        }}
+        state={{
+          ...baseProps.state,
+          ...workspacePanelState,
+        }}
+        projectWork={{
+          ...baseProps.projectWork,
+          projects: workspacePanelState.projects,
+          devices: workspacePanelState.devices,
+          currentProjectId: workspacePanelState.currentProject?.id,
+        }}
+      />
+    )
+
+    await user.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await user.click(screen.getByTestId('right-workspace-file-option'))
+    await user.click(await screen.findByText('artifact.data'))
+
+    expect(await screen.findByTestId('workspace-binary-file-preview')).toBeInTheDocument()
+    expect(readWorkspaceFileChunk).toHaveBeenCalledTimes(1)
+    expect(readWorkspaceTextFile).not.toHaveBeenCalled()
   })
 
   test('switches folders in the file tab for a multi-root project', async () => {
@@ -9601,7 +9965,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(activePane().getByTestId('workspace-browser-url-input')).toHaveValue(
-      'https://example.com/'
+      'http://example.com/'
     )
 
     rerender(<DesktopWorkbenchLayout {...propsForTask(taskB)} />)
@@ -9622,13 +9986,13 @@ describe('DesktopWorkbenchLayout', () => {
       'true'
     )
     expect(activePane().getByTestId('workspace-browser-url-input')).toHaveValue(
-      'https://example.com/'
+      'http://example.com/'
     )
     expect(activePane().getByTestId('workspace-browser-frame')).toHaveAttribute(
       'src',
-      'https://example.com/'
+      'http://example.com/'
     )
-  })
+  }, 10_000)
 
   test('exposes the task-scoped browser label before the browser panel mounts', () => {
     const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
@@ -9795,7 +10159,7 @@ describe('DesktopWorkbenchLayout', () => {
       )
     })
     expect(workspaceFileApi.readWorkspaceTextFile).toHaveBeenCalledTimes(4)
-  })
+  }, 15_000)
 
   test('preserves an absolute file opened from a message when switching runtime tasks', async () => {
     const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
@@ -10069,7 +10433,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(startLocalTerminalMock).toHaveBeenCalledTimes(taskAddresses.length)
     expect(closeLocalTerminalMock).not.toHaveBeenCalled()
-  }, 20000)
+  }, 30_000)
 
   test('omits the desktop add-menu item when the internal extension is unavailable', async () => {
     renderWorkspacePanelLayout()

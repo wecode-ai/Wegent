@@ -79,6 +79,14 @@ const REQUEST_USER_INPUT_PROMPT =
   'WEWORK_DESKTOP_E2E_REQUEST_INPUT: ask which implementation direction to use.'
 const REQUEST_USER_INPUT_QUESTION = 'Which implementation direction should be used?'
 const REQUEST_USER_INPUT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_REQUEST_INPUT_COMPLETE'
+const MCP_ELICITATION_PROMPT =
+  'WEWORK_DESKTOP_E2E_MCP_ELICITATION: confirm the inner-site access audience.'
+const MCP_ELICITATION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_MCP_ELICITATION_COMPLETE'
+const MCP_ELICITATION_ACCEPTED_MARKER = 'E2E_MCP_ELICITATION_ACCEPTED:owner'
+const MCP_ELICITATION_NAMESPACE = 'wegent_sites_interactions'
+const MCP_ELICITATION_TOOL_NAME = 'confirm_inner_site_access'
+const MCP_ELICITATION_SEARCH_ID = 'wework-e2e-mcp-elicitation-search'
+const MCP_ELICITATION_CALL_ID = 'wework-e2e-mcp-elicitation-call'
 const TASK_PLAN_PROMPT =
   'WEWORK_DESKTOP_E2E_TASK_PLAN: publish a task plan and finish after the task is backgrounded.'
 const TASK_PLAN_STEP = 'Verify the background task plan remains visible'
@@ -255,8 +263,8 @@ const LOCAL_VISION_SIDECAR_CASE = {
 const CLOUD_VISION_SIDECAR_CASE = {
   source: 'cloud',
   mainOptionId: 'desktop-e2e-cloud-vision-main',
-  mainLabel: 'Desktop E2E Cloud Vision Main',
-  mainModelId: 'desktop-e2e-cloud-vision-main-upstream',
+  mainLabel: 'Desktop E2E DeepSeek Flash Vision Main',
+  mainModelId: 'deepseek-v4-flash',
   sidecarModelId: 'desktop-e2e-cloud-vision-sidecar-upstream',
 }
 const CLOUD_MULTIMODAL_VISION_CASE = {
@@ -399,6 +407,7 @@ const TELEMETRY_FORBIDDEN_PROPERTY_PATTERN =
 const CLOUD_PUBLIC_MODEL_NAME = 'desktop-e2e-public-model'
 const CLOUD_PUBLIC_MODEL_LABEL = 'Desktop E2E Public Model'
 const CLOUD_DEVICE_ID = 'wework-e2e-cloud-device'
+const REMOTE_DOCKER_DEVICE_ID = 'wework-e2e-remote-docker-device'
 const FRESH_CHAT_PROMPT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT: confirm this is a new conversation.'
 const FRESH_CHAT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT_COMPLETE'
 const CONVERSATION_SWITCH_RACE_PROMPT =
@@ -494,6 +503,7 @@ const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..', '..', '..')
 const repoDir = resolve(weworkDir, '..')
 const toolDetailsMcpServerPath = join(weworkDir, 'e2e', 'utils', 'tool-details-mcp-server.mjs')
+const mcpElicitationServerPath = join(weworkDir, 'e2e', 'utils', 'mcp-elicitation-server.mjs')
 const runId = `${new Date().toISOString().replace(/[:.]/g, '-')}-${process.pid}`
 const resultDir = join(weworkDir, 'test-results', 'desktop-e2e', runId)
 
@@ -1240,6 +1250,7 @@ async function ensureModelOptionVisible(
       await control
         .command('hover', modelSelectorButton, {
           timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+          visible: true,
         })
         .catch(() => undefined)
       menu = JSON.parse(await control.command('snapshot', 'body'))
@@ -1247,6 +1258,7 @@ async function ensureModelOptionVisible(
         await control.command('clickWhenEnabled', modelSelectorButton, {
           stableMs: 100,
           timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+          visible: true,
         })
       }
     }
@@ -1279,7 +1291,24 @@ async function confirmLocalProjectName(control, name) {
 }
 
 async function createSingleRootLocalProject(control, workspacePath, name) {
-  await control.command('click', '[data-testid="projects-create-button"]')
+  const sidebarSnapshot = await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes('projects-empty-create-button') ||
+      snapshot.testIds.includes('runtime-project-sortable-list'),
+    'The project section did not settle into an empty or populated state'
+  )
+  const createButtonSelector = sidebarSnapshot.testIds.includes('projects-empty-create-button')
+    ? '[data-testid="projects-empty-create-button"]'
+    : '[data-testid="projects-create-button"]'
+  if (createButtonSelector.includes('projects-empty-create-button')) {
+    assert.match(
+      await control.command('getText', createButtonSelector),
+      /New project|新建项目/,
+      'The empty project section did not expose a localized creation action'
+    )
+  }
+  await control.command('click', createButtonSelector)
   await control.command('click', '[data-testid="project-create-local-option"]')
   await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -1307,8 +1336,11 @@ async function selectE2EModel(
   const modelSelectorButton = `${composerSelector} [data-testid="model-selector-button"]`.trim()
   await control.command('waitFor', modelSelectorButton, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    visible: true,
   })
-  const selectedModelLabel = await control.command('getText', modelSelectorButton)
+  const selectedModelLabel = await control.command('getText', modelSelectorButton, {
+    visible: true,
+  })
   if (labels.some(label => selectedModelLabel.includes(label))) return
 
   await ensureModelOptionVisible(control, modelIds, modelSelectorButton)
@@ -1320,6 +1352,7 @@ async function selectE2EModel(
       await control.command('clickWhenEnabled', modelSelectorButton, {
         stableMs: 100,
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        visible: true,
       })
     }
     await revealGroupedModelOption(control, targetOptionIds)
@@ -1357,7 +1390,9 @@ async function waitForE2EModelLabel(
 ) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
-    const selectedModelLabel = await control.command('getText', modelSelectorButton)
+    const selectedModelLabel = await control.command('getText', modelSelectorButton, {
+      visible: true,
+    })
     if (labels.some(label => selectedModelLabel.includes(label))) return
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
@@ -1419,6 +1454,13 @@ export {
   REQUEST_USER_INPUT_PROMPT,
   REQUEST_USER_INPUT_QUESTION,
   REQUEST_USER_INPUT_COMPLETION_TEXT,
+  MCP_ELICITATION_PROMPT,
+  MCP_ELICITATION_COMPLETION_TEXT,
+  MCP_ELICITATION_ACCEPTED_MARKER,
+  MCP_ELICITATION_NAMESPACE,
+  MCP_ELICITATION_TOOL_NAME,
+  MCP_ELICITATION_SEARCH_ID,
+  MCP_ELICITATION_CALL_ID,
   TASK_PLAN_PROMPT,
   TASK_PLAN_STEP,
   SEND_MODE_DRAFT,
@@ -1577,6 +1619,7 @@ export {
   CLOUD_PUBLIC_MODEL_NAME,
   CLOUD_PUBLIC_MODEL_LABEL,
   CLOUD_DEVICE_ID,
+  REMOTE_DOCKER_DEVICE_ID,
   FRESH_CHAT_PROMPT,
   FRESH_CHAT_COMPLETION_TEXT,
   CONVERSATION_SWITCH_RACE_PROMPT,
@@ -1664,6 +1707,7 @@ export {
   weworkDir,
   repoDir,
   toolDetailsMcpServerPath,
+  mcpElicitationServerPath,
   runId,
   resultDir,
   OFFICIAL_PLUGIN_REPOSITORY,

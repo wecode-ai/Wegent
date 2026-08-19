@@ -1,5 +1,33 @@
 import type { RuntimeTaskSummary } from '@/types/api'
 
+export type RuntimeTaskBoardState = 'attention' | 'queued' | 'active' | 'completed'
+
+export function runtimeTaskBoardState(task: RuntimeTaskSummary): RuntimeTaskBoardState {
+  const normalizedTask = normalizeRuntimeTaskSummary(task)
+  const status = normalizedTask.status?.trim().toLowerCase()
+  const turnStatus = normalizedTask.turnStatus?.trim().toLowerCase()
+  if (
+    status === 'failed' ||
+    status === 'error' ||
+    status === 'cancelled' ||
+    status === 'canceled' ||
+    turnStatus === 'failed' ||
+    turnStatus === 'interrupted'
+  ) {
+    return 'attention'
+  }
+  if (
+    normalizedTask.running === true ||
+    isRuntimeTaskConfirmedActive(normalizedTask) ||
+    isRuntimeTaskOptimisticallyActive(normalizedTask)
+  ) {
+    return 'active'
+  }
+  if (isRuntimeTaskQueued(normalizedTask)) return 'queued'
+  if (isRuntimeTaskAuthoritativeCompletion(normalizedTask)) return 'completed'
+  return 'attention'
+}
+
 export function normalizeRuntimeTaskSummary(task: RuntimeTaskSummary): RuntimeTaskSummary {
   if (!isRuntimeTaskAuthoritativeCompletion(task)) return task
 
@@ -30,6 +58,19 @@ export function normalizeRuntimeTaskSummary(task: RuntimeTaskSummary): RuntimeTa
     ...canonicalTask,
     status: settledStatus,
     turnStatus: settledTurnStatus,
+  }
+}
+
+export function runtimeTaskReconciliationSnapshot(task: RuntimeTaskSummary): {
+  runtimeStatus: string
+  running: boolean
+  turnStatus: string | null
+} {
+  const canonical = normalizeRuntimeTaskSummary(task)
+  return {
+    runtimeStatus: canonical.status ?? '',
+    running: isRuntimeTaskConfirmedActive(canonical),
+    turnStatus: canonical.turnStatus ?? null,
   }
 }
 

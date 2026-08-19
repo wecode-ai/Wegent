@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { HTMLAttributes, ReactNode } from 'react'
+import type { HTMLAttributes, OlHTMLAttributes, ReactNode } from 'react'
 import type { Element as HastElement } from 'hast'
 import { FileText, Folder, Link2 } from 'lucide-react'
 import { Streamdown } from 'streamdown'
@@ -27,13 +27,15 @@ import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
 import type { TurnFileChangesSummary } from '@/types/api'
 
 const ASSISTANT_MARKDOWN_LINK_CLASS = [
-  'inline-flex max-w-full items-center gap-1 rounded-md px-0.5 align-baseline',
+  'inline-flex min-w-0 max-w-full items-center gap-1 rounded-md px-0.5 align-baseline',
   'text-sm font-medium leading-5 text-blue-600 no-underline',
   'transition-colors hover:text-blue-700',
   'dark:text-blue-300 dark:hover:text-blue-200',
   '[&_code]:!rounded-none [&_code]:!bg-transparent [&_code]:!px-0 [&_code]:!py-0 [&_code]:!font-[inherit] [&_code]:!text-inherit',
 ].join(' ')
 const CODEX_PLAN_TAG_PATTERN = /<\/?\s*proposed_plan\s*>/gi
+const CONTENT_REFERENCE_CITATION_PATTERN = /\uE200cite\uE202[\s\S]*?\uE201/g
+const TRAILING_CONTENT_REFERENCE_CITATION_PATTERN = /\uE200cite(?:\uE202[\s\S]*)?$/
 const WEWORK_MARKDOWN_FILE_LINK_HOST = 'wework.local'
 const WEWORK_MARKDOWN_FILE_LINK_PATH = '/markdown-file'
 const WEWORK_MARKDOWN_FILE_LINK_PREFIX = `https://${WEWORK_MARKDOWN_FILE_LINK_HOST}${WEWORK_MARKDOWN_FILE_LINK_PATH}?path=`
@@ -43,9 +45,45 @@ const DIAGRAM_LANGUAGES = new Set(['mermaid', 'mmd', 'plantuml', 'puml'])
 interface AssistantMarkdownProps {
   content: string
   isStreaming?: boolean
-  variant?: 'default' | 'process'
+  variant?: 'default' | 'document' | 'process'
   onOpenFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
   fileChanges?: TurnFileChangesSummary
+}
+
+const MARKDOWN_HEADING_CLASSES = {
+  default: {
+    h1: 'mb-4 mt-6 text-lg font-semibold text-text-primary',
+    h2: 'mb-3 mt-5 text-base font-semibold text-text-primary',
+    h3: 'mb-2 mt-4 text-sm font-semibold text-text-primary',
+  },
+  document: {
+    h1: 'mb-5 mt-8 text-heading-lg font-semibold tracking-[-0.02em] text-text-primary',
+    h2: 'mb-4 mt-7 text-heading-md font-semibold tracking-[-0.01em] text-text-primary',
+    h3: 'mb-3 mt-6 text-heading-sm font-semibold text-text-primary',
+  },
+  process: {
+    h1: 'mb-2 mt-3 text-base font-semibold text-text-primary',
+    h2: 'mb-1.5 mt-3 text-sm font-semibold text-text-primary',
+    h3: 'mb-1 mt-2 text-sm font-semibold text-text-primary',
+  },
+} as const
+
+const DOCUMENT_MARKDOWN_HEADING_COMPONENTS = {
+  h4: ({ children }: { children?: ReactNode }) => (
+    <h4 data-scroll-anchor className="mb-2 mt-5 text-lg font-semibold text-text-primary">
+      {children}
+    </h4>
+  ),
+  h5: ({ children }: { children?: ReactNode }) => (
+    <h5 data-scroll-anchor className="mb-2 mt-4 text-base font-semibold text-text-primary">
+      {children}
+    </h5>
+  ),
+  h6: ({ children }: { children?: ReactNode }) => (
+    <h6 data-scroll-anchor className="mb-2 mt-4 text-sm font-semibold text-text-secondary">
+      {children}
+    </h6>
+  ),
 }
 
 type AssistantMarkdownPart =
@@ -60,16 +98,20 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
   fileChanges,
 }: AssistantMarkdownProps) {
   const bufferedContent = useBufferedStreamingText(content, isStreaming)
+  const displayContent = useMemo(
+    () => stripUnsupportedContentReferenceCitations(bufferedContent),
+    [bufferedContent]
+  )
   const windowMarkdown = isTauriRuntime() && variant === 'default'
   const contentParts = useMemo(() => {
-    const parts = splitCodexInlineVisualizations(bufferedContent)
+    const parts = splitCodexInlineVisualizations(displayContent)
     return parts.flatMap<AssistantMarkdownPart>(part => {
       if (part.kind === 'visualization') return [part]
       const chunks = windowMarkdown ? splitStaticMarkdownChunks(part.content) : [part.content]
       const windowed = chunks.length > 1
       return chunks.map(content => ({ kind: 'markdown', content, windowed }))
     })
-  }, [bufferedContent, windowMarkdown])
+  }, [displayContent, windowMarkdown])
   const openFileRef = useRef(onOpenFile)
 
   useEffect(() => {
@@ -83,44 +125,25 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
     }
     openFileRef.current?.(path)
   }, [])
+  const headingClasses = MARKDOWN_HEADING_CLASSES[variant]
   const components = useMemo(
     () => ({
       h1: ({ children }: { children?: ReactNode }) => (
-        <h1
-          data-scroll-anchor
-          className={
-            variant === 'process'
-              ? 'mb-2 mt-3 text-base font-semibold text-text-primary'
-              : 'mb-4 mt-6 text-lg font-semibold text-text-primary'
-          }
-        >
+        <h1 data-scroll-anchor className={headingClasses.h1}>
           {children}
         </h1>
       ),
       h2: ({ children }: { children?: ReactNode }) => (
-        <h2
-          data-scroll-anchor
-          className={
-            variant === 'process'
-              ? 'mb-1.5 mt-3 text-sm font-semibold text-text-primary'
-              : 'mb-3 mt-5 text-base font-semibold text-text-primary'
-          }
-        >
+        <h2 data-scroll-anchor className={headingClasses.h2}>
           {children}
         </h2>
       ),
       h3: ({ children }: { children?: ReactNode }) => (
-        <h3
-          data-scroll-anchor
-          className={
-            variant === 'process'
-              ? 'mb-1 mt-2 text-sm font-semibold text-text-primary'
-              : 'mb-2 mt-4 text-sm font-semibold text-text-primary'
-          }
-        >
+        <h3 data-scroll-anchor className={headingClasses.h3}>
           {children}
         </h3>
       ),
+      ...(variant === 'document' ? DOCUMENT_MARKDOWN_HEADING_COMPONENTS : {}),
       p: ({ children }: { children?: ReactNode }) => (
         <p
           data-scroll-anchor
@@ -136,8 +159,9 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
           {children}
         </ul>
       ),
-      ol: ({ children }: { children?: ReactNode }) => (
+      ol: ({ children, start }: OlHTMLAttributes<HTMLOListElement>) => (
         <ol
+          start={start}
           className={`${variant === 'process' ? 'mb-1.5 space-y-0.5 pl-5' : 'mb-3 space-y-1.5 pl-8'} list-decimal`}
         >
           {children}
@@ -200,7 +224,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
         <AssistantMarkdownImage src={src} alt={alt} />
       ),
     }),
-    [openFile, variant]
+    [headingClasses, openFile, variant]
   )
 
   return (
@@ -368,6 +392,12 @@ function prepareAssistantMarkdownContent(content: string): string {
   return encodeLocalMarkdownLinks(content.replace(CODEX_PLAN_TAG_PATTERN, ''))
 }
 
+function stripUnsupportedContentReferenceCitations(content: string): string {
+  return content
+    .replace(CONTENT_REFERENCE_CITATION_PATTERN, '')
+    .replace(TRAILING_CONTENT_REFERENCE_CITATION_PATTERN, '')
+}
+
 function encodeLocalMarkdownLinks(content: string): string {
   return content.replace(MARKDOWN_LINK_PATTERN, (match, imageMarker, label, rawHref) => {
     if (imageMarker) return match
@@ -511,7 +541,12 @@ function AssistantMarkdownLink({
         aria-label={tooltip}
       >
         {icon}
-        {children}
+        <span
+          className="min-w-0 whitespace-normal [overflow-wrap:anywhere]"
+          data-testid="assistant-markdown-link-label"
+        >
+          {children}
+        </span>
         {lineLabel ? (
           <span className="shrink-0" data-testid="assistant-markdown-link-line">
             ({lineLabel})
@@ -542,7 +577,12 @@ function AssistantMarkdownLink({
       }}
     >
       {icon}
-      {children}
+      <span
+        className="min-w-0 whitespace-normal [overflow-wrap:anywhere]"
+        data-testid="assistant-markdown-link-label"
+      >
+        {children}
+      </span>
     </a>
   )
 }

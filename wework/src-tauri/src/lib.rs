@@ -2722,6 +2722,15 @@ fn save_text_file_to_downloads(
         return Err("File content is empty".to_string());
     }
 
+    save_bytes_to_downloads(&app, &filename, content.as_bytes(), "plan.md")
+}
+
+fn save_bytes_to_downloads(
+    app: &tauri::AppHandle,
+    filename: &str,
+    bytes: &[u8],
+    fallback_filename: &str,
+) -> Result<String, String> {
     let downloads_dir = app
         .path()
         .download_dir()
@@ -2729,13 +2738,25 @@ fn save_text_file_to_downloads(
     std::fs::create_dir_all(&downloads_dir)
         .map_err(|error| format!("Failed to create Downloads directory: {error}"))?;
 
-    let filename = sanitized_download_filename(&filename, std::path::Path::new("plan.md"));
+    let filename = sanitized_download_filename(filename, std::path::Path::new(fallback_filename));
     let target_path = unique_download_path(&downloads_dir, &filename);
-    std::fs::write(&target_path, content)
+    std::fs::write(&target_path, bytes)
         .map_err(|error| format!("Failed to save file to Downloads: {error}"))?;
     notify_download_finished(&target_path);
 
     Ok(target_path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn save_binary_file_to_downloads(
+    app: tauri::AppHandle,
+    filename: String,
+    bytes: Vec<u8>,
+) -> Result<String, String> {
+    if bytes.is_empty() {
+        return Err("File content is empty".to_string());
+    }
+    save_bytes_to_downloads(&app, &filename, &bytes, "download")
 }
 
 fn default_executor_home(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
@@ -5093,6 +5114,7 @@ pub fn run() {
             embedded_browser::embedded_browser_resolve_agent_approval,
             embedded_browser::embedded_browser_resume_download,
             embedded_browser::embedded_browser_set_agent_control_paused,
+            embedded_browser::embedded_browser_set_zoom,
             embedded_browser::embedded_browser_set_bounds,
             local_terminal::archive_local_harness_session,
             local_terminal::attach_local_terminal,
@@ -5154,6 +5176,7 @@ pub fn run() {
             update_app_preferences,
             download_local_file_to_downloads,
             save_text_file_to_downloads,
+            save_binary_file_to_downloads,
             local_path_exists,
             get_local_path_kind,
             open_local_file,
@@ -5177,7 +5200,9 @@ pub fn run() {
             todo_store::write_todo_workspace_file,
             system_drag::complete_system_drag_drop,
             system_drag::dismiss_system_drag_panel,
+            system_drag::get_system_drag_panel_visibility_for_e2e,
             system_drag::log_system_drag_debug,
+            system_drag::show_system_drag_panel_for_e2e,
             system_drag::take_pending_system_drag_drops,
             #[cfg(desktop)]
             system_lock::get_system_session_locked,

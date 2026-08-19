@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   CalendarClock,
   CheckCircle2,
@@ -27,7 +27,13 @@ import { useTranslation } from '@/hooks/useTranslation'
 import type { DeviceInfo } from '@/types/api'
 import type { Team, UnifiedModel } from '@/types/api'
 import { CloudTodoModal } from './CloudTodoModal'
-import { executionDisplayStatus, isExecutionFailed, isExecutionRunning } from './executionStatus'
+import {
+  executionDisplayStatus,
+  isExecutionActive,
+  isExecutionCancellable,
+  isExecutionFailed,
+  isExecutionTerminal,
+} from './executionStatus'
 import { ProjectAutomationTemplates } from './ProjectAutomationTemplates'
 import { ProjectAutomationRunDetailDialog } from './ProjectAutomationRunDetailDialog'
 import {
@@ -66,7 +72,9 @@ export function ProjectAutomationRulesSection({
   modelApi,
   teamApi,
   onOpenTask,
+  onRulesChange,
   projectTags = [],
+  createAiCoordinatorRequestKey = 0,
 }: {
   projectId: string
   api?: AutomationApi
@@ -76,11 +84,14 @@ export function ProjectAutomationRulesSection({
   modelApi?: { listModels: () => Promise<{ data: UnifiedModel[] }> }
   teamApi?: { listTeams: () => Promise<Team[]> }
   onOpenTask?: (taskId: string) => void
+  onRulesChange?: (rules: ProjectAutomationRule[]) => void
   projectTags?: string[]
+  createAiCoordinatorRequestKey?: number
 }) {
   const { t } = useTranslation('common')
   const backendUrl = getRuntimeConfig().wegentBackendUrl || window.location.origin
   const [rules, setRules] = useState<ProjectAutomationRule[]>([])
+  const visibleRules = rules.filter(rule => rule.triggerType !== 'workflow')
   const [agents, setAgents] = useState<ProjectChatAgent[]>([])
   const [devices, setDevices] = useState<DeviceInfo[]>([])
   const [models, setModels] = useState<UnifiedModel[]>([])
@@ -96,6 +107,11 @@ export function ProjectAutomationRulesSection({
     eventId: string
     secret: string
   } | null>(null)
+  const handledAiCoordinatorRequestKey = useRef(createAiCoordinatorRequestKey)
+
+  useEffect(() => {
+    onRulesChange?.(rules)
+  }, [onRulesChange, rules])
 
   const load = useCallback(async () => {
     if (!api || !agentApi) return
@@ -138,7 +154,7 @@ export function ProjectAutomationRulesSection({
 
   useEffect(() => {
     const ruleId = selected?.id
-    if (!api || !ruleId || !runs.some(run => isExecutionRunning(run.status))) return
+    if (!api || !ruleId || !runs.some(run => isExecutionActive(run.status))) return
 
     let disposed = false
     const timer = window.setTimeout(() => {
@@ -147,7 +163,7 @@ export function ProjectAutomationRulesSection({
         .then(latestRuns => {
           if (disposed) return
           setRuns(latestRuns)
-          if (!latestRuns.some(run => isExecutionRunning(run.status))) void load()
+          if (!latestRuns.some(run => isExecutionActive(run.status))) void load()
         })
         .catch(loadError => {
           if (!disposed) {
@@ -163,6 +179,7 @@ export function ProjectAutomationRulesSection({
   }, [api, load, projectId, runs, selected?.id])
 
   const selectRule = async (rule: ProjectAutomationRule) => {
+    if (rule.triggerType === 'workflow') return
     setSelected(rule)
     setDraft({
       name: rule.name,
@@ -191,14 +208,35 @@ export function ProjectAutomationRulesSection({
     }
   }
 
-  const createRule = (template?: ProjectAutomationTemplate) => {
-    const next = draftFromTemplate(template, agents, models, devices)
-    setSelected(null)
-    setRuns([])
-    setCreatedWebhook(null)
-    setDraft(next.draft)
-    setSchedule(next.schedule)
-  }
+  const createRule = useCallback(
+    (template?: ProjectAutomationTemplate) => {
+      const next = draftFromTemplate(template, agents, models, devices)
+      setSelected(null)
+      setRuns([])
+      setCreatedWebhook(null)
+      setDraft(next.draft)
+      setSchedule(next.schedule)
+    },
+    [agents, devices, models]
+  )
+
+  useEffect(() => {
+    if (createAiCoordinatorRequestKey === handledAiCoordinatorRequestKey.current) return
+    if (!canManage) return
+    handledAiCoordinatorRequestKey.current = createAiCoordinatorRequestKey
+    const timer = window.setTimeout(() => {
+      createRule({
+        name: t('workbench.project_automation_template_board_managed_name'),
+        prompt: t(DEFAULT_AI_MANAGED_PROMPT_KEY),
+        triggerType: 'event',
+        eventType: 'task.created',
+        assignmentMode: 'ai_managed',
+        managerType: 'custom',
+        agentId: null,
+      })
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [canManage, createAiCoordinatorRequestKey, createRule, t])
 
   const save = async () => {
     if (!api || !draft) return
@@ -343,8 +381,16 @@ export function ProjectAutomationRulesSection({
   const statusLabel = useMemo(
     () => ({
       queued: t('workbench.project_automation_queued'),
+      waiting_approval: t('workbench.project_automation_waiting_approval'),
+      starting: t('workbench.project_automation_starting'),
+      waiting_runtime: t('workbench.project_automation_waiting_runtime'),
       running: t('workbench.project_automation_running'),
-      completed: t('workbench.project_automation_completed'),
+      cancelling: t('workbench.project_automation_cancelling'),
+      succeeded: t('workbench.project_automation_succeeded'),
+      failed: t('workbench.project_automation_failed'),
+      cancelled: t('workbench.project_automation_cancelled'),
+      skipped: t('workbench.project_automation_skipped'),
+      unknown: t('workbench.project_automation_unknown'),
     }),
     [t]
   )
@@ -384,7 +430,9 @@ export function ProjectAutomationRulesSection({
 
   return (
     <section data-testid="project-automation-rules" className="mt-8">
-      <div className={`flex items-center justify-between gap-3${rules.length ? ' mb-3' : ''}`}>
+      <div
+        className={`flex items-center justify-between gap-3${visibleRules.length ? ' mb-3' : ''}`}
+      >
         <div>
           <h3 className="text-heading-md font-semibold">
             {t('workbench.project_automation_rules_title')}
@@ -408,8 +456,8 @@ export function ProjectAutomationRulesSection({
 
       {error && !draft ? <p className="mb-3 text-sm text-red-600">{error}</p> : null}
       <div className="space-y-2" data-testid="project-automation-rule-list">
-        {rules.length ? (
-          rules.map(rule => (
+        {visibleRules.length ? (
+          visibleRules.map(rule => (
             <div
               key={rule.id}
               role="button"
@@ -441,7 +489,7 @@ export function ProjectAutomationRulesSection({
                   {rule.lastRunStatus
                     ? rule.lastRunStatus === 'queued'
                       ? statusLabel.queued
-                      : statusLabel[executionDisplayStatus(rule.lastRunStatus) ?? 'running']
+                      : statusLabel[executionDisplayStatus(rule.lastRunStatus) ?? 'unknown']
                     : rule.triggerType === 'event' && rule.enabled
                       ? t('workbench.project_automation_waiting_event')
                       : rule.nextRunAt
@@ -875,38 +923,33 @@ export function ProjectAutomationRulesSection({
                     data-testid="project-automation-run-list"
                   >
                     {runs.map(run => {
-                      const finished = !isExecutionRunning(run.status)
+                      const finished = isExecutionTerminal(run.status)
                       const failed = isExecutionFailed(run.status) || Boolean(run.error)
+                      const displayStatus = executionDisplayStatus(run.status) ?? 'unknown'
+                      const succeeded = displayStatus === 'succeeded'
                       return (
                         <div key={run.id} className="flex min-h-10 items-center gap-3 py-2 text-sm">
                           {finished ? (
                             <button
                               type="button"
                               data-testid={`project-automation-run-detail-${run.id}`}
-                              aria-label={t(
-                                failed
-                                  ? 'workbench.project_automation_run_failed_details'
-                                  : 'workbench.project_automation_run_succeeded_details'
-                              )}
-                              title={t(
-                                failed
-                                  ? 'workbench.project_automation_run_failed_details'
-                                  : 'workbench.project_automation_run_succeeded_details'
-                              )}
+                              aria-label={t('workbench.project_automation_run_details')}
+                              title={t('workbench.project_automation_run_details')}
                               onClick={() => setDetailRun(run)}
-                              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg hover:bg-surface ${failed ? 'text-red-600' : 'text-green-600'}`}
+                              className={`flex h-8 shrink-0 items-center justify-center gap-1 rounded-lg px-2 text-xs hover:bg-surface ${failed ? 'text-red-600' : succeeded ? 'text-green-600' : 'text-text-muted'}`}
                             >
                               {failed ? (
                                 <CircleX className="h-4 w-4" aria-hidden="true" />
                               ) : (
                                 <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
                               )}
+                              {statusLabel[displayStatus]}
                             </button>
                           ) : (
                             <span className="w-8 shrink-0">
                               {run.status === 'queued'
                                 ? statusLabel.queued
-                                : statusLabel[executionDisplayStatus(run.status) ?? 'running']}
+                                : statusLabel[displayStatus]}
                             </span>
                           )}
                           <span className="min-w-0 flex-1">
@@ -947,7 +990,7 @@ export function ProjectAutomationRulesSection({
                               {t('workbench.project_automation_retry_run')}
                             </button>
                           ) : null}
-                          {isExecutionRunning(run.status) ? (
+                          {isExecutionCancellable(run.status) ? (
                             <button
                               type="button"
                               data-testid={`project-automation-cancel-run-${run.id}`}

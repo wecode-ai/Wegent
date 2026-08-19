@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ChevronRight, MessageCircle } from 'lucide-react'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
-import type { ChatSubmitOptions } from '@/components/chat/ChatInput'
+import type { ChatSubmitOptions, ProjectWorkControls } from '@/components/chat/ChatInput'
 import { BufferedChatInput } from '@/components/layout/BufferedChatInput'
 import {
   DESKTOP_CHAT_CONTENT_WIDTH_CLASS,
@@ -35,6 +35,7 @@ import type {
   ModelOptions,
   ModelType,
   ProjectWithTasks,
+  RuntimeSendRequest,
   RuntimeTaskAddress,
 } from '@/types/api'
 import type { RuntimePaneQueuedMessage, WorkbenchMessage } from '@/types/workbench'
@@ -59,6 +60,7 @@ interface TemporaryChatPanelProps {
   instanceId: string
   testId?: string
   initialInput?: string
+  autoSubmitInitialInput?: boolean
   initialAddress?: RuntimeTaskAddress | null
   createTask?: (
     message: string,
@@ -74,10 +76,16 @@ interface TemporaryChatPanelProps {
     }
   ) => Promise<RuntimeTaskAddress | false>
   onAddressChange?: (address: RuntimeTaskAddress | null) => void
+  runtimeContext?: Pick<RuntimeSendRequest, 'cloudProjectId' | 'origin' | 'additionalContext'>
   sendEphemeral?: boolean
   emptyStateText?: string
   placeholder?: string
   expanded?: boolean
+  wideComposer?: boolean
+  projectWork?: ProjectWorkControls
+  showProjectWorkBar?: boolean
+  projectWorkBarMiddleContext?: ReactNode
+  projectWorkBarTrailingContext?: ReactNode
   onRestoreConversation?: () => void
 }
 
@@ -87,13 +95,20 @@ export function TemporaryChatPanel({
   instanceId,
   testId = 'right-workspace-chat-panel',
   initialInput = '',
+  autoSubmitInitialInput = false,
   initialAddress = null,
   createTask,
   onAddressChange,
+  runtimeContext,
   sendEphemeral = true,
   emptyStateText = '临时聊天不会出现在左侧任务列表。',
   placeholder = '要求后续变更',
   expanded = false,
+  wideComposer = false,
+  projectWork,
+  showProjectWorkBar = false,
+  projectWorkBarMiddleContext,
+  projectWorkBarTrailingContext,
   onRestoreConversation,
 }: TemporaryChatPanelProps) {
   const { t } = useTranslation('common')
@@ -151,6 +166,7 @@ export function TemporaryChatPanel({
   const queuedMessageSendInFlightIdsRef = useRef(new Set<string>())
   const queuedMessagesRef = useRef(queuedMessages)
   const createdAddressKeyRef = useRef<string | null>(null)
+  const autoSubmittedInitialInputRef = useRef(false)
 
   useEffect(() => {
     queuedMessagesRef.current = queuedMessages
@@ -178,7 +194,11 @@ export function TemporaryChatPanel({
 
   useEffect(() => {
     if (!address) return
-    const syncMessages = () => setMessages(getRuntimeConversationMessages(address))
+    const syncMessages = () => {
+      const nextMessages = getRuntimeConversationMessages(address)
+      setMessages(nextMessages)
+      if (nextMessages.length > 0) setError(null)
+    }
     return subscribeRuntimeConversation(address, syncMessages)
   }, [address])
 
@@ -195,7 +215,7 @@ export function TemporaryChatPanel({
         if (transcript.messages.length > 0) setMessages(transcript.messages)
       })
       .catch(caughtError => {
-        if (!cancelled) {
+        if (!cancelled && getRuntimeConversationMessages(address).length === 0) {
           setError(caughtError instanceof Error ? caughtError.message : '加载临时聊天失败')
         }
       })
@@ -291,6 +311,7 @@ export function TemporaryChatPanel({
               ...(queuedMessage.modelOptions ? { modelOptions: queuedMessage.modelOptions } : {}),
               ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
               ...(attachments.length > 0 ? { attachments } : {}),
+              ...runtimeContext,
             },
             {
               onError: message => {
@@ -326,7 +347,7 @@ export function TemporaryChatPanel({
         queuedMessageSendInFlightIdsRef.current.delete(queuedMessage.id)
       }
     },
-    [address, sendEphemeral, sendRuntimePaneMessage]
+    [address, runtimeContext, sendEphemeral, sendRuntimePaneMessage]
   )
 
   useEffect(() => {
@@ -497,6 +518,7 @@ export function TemporaryChatPanel({
           ...selectedModelFields,
           ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
           ...(attachments.length > 0 ? { attachments } : {}),
+          ...runtimeContext,
         },
         {
           onError: errorMessage => {
@@ -539,6 +561,7 @@ export function TemporaryChatPanel({
       queuedMessages.length,
       sideChatProjectChat,
       selectedModelFields,
+      runtimeContext,
       sendQueuedMessageAsGuidance,
       sendRuntimePaneMessage,
       source,
@@ -546,6 +569,14 @@ export function TemporaryChatPanel({
       updateAddress,
     ]
   )
+
+  useEffect(() => {
+    if (!autoSubmitInitialInput || !initialInput.trim() || autoSubmittedInitialInputRef.current) {
+      return
+    }
+    autoSubmittedInitialInputRef.current = true
+    void send(initialInput)
+  }, [autoSubmitInitialInput, initialInput, send])
 
   const cancelQueuedMessage = useCallback((id: string) => {
     setQueuedMessages(messages =>
@@ -606,11 +637,16 @@ export function TemporaryChatPanel({
         className={cn(
           'shrink-0',
           expanded
-            ? 'relative z-critical mx-auto w-[min(46rem,calc(100%_-_2rem))] max-w-[calc(100%_-_2rem)] bg-transparent pb-2 pt-6'
+            ? cn(
+                'relative z-critical mx-auto max-w-[calc(100%_-_2rem)] bg-transparent pb-2 pt-6',
+                wideComposer
+                  ? 'w-[min(68rem,calc(100%_-_2rem))]'
+                  : 'w-[min(46rem,calc(100%_-_2rem))]'
+              )
             : 'bg-background py-3'
         )}
       >
-        {expanded && (
+        {expanded && onRestoreConversation ? (
           <button
             type="button"
             data-testid="restore-conversation-from-expanded-workspace-button"
@@ -620,7 +656,7 @@ export function TemporaryChatPanel({
             <span>{t('workbench.latest_conversation_turn')}</span>
             <ChevronRight className="h-4 w-4" aria-hidden="true" />
           </button>
-        )}
+        ) : null}
         <div
           data-testid="side-chat-composer-layout"
           className={cn('pointer-events-auto', !expanded && DESKTOP_CHAT_CONTENT_WIDTH_CLASS)}
@@ -636,7 +672,10 @@ export function TemporaryChatPanel({
             placeholder={placeholder}
             variant="desktop"
             projectChat={sideChatProjectChat}
-            showProjectWorkBar={false}
+            projectWork={projectWork}
+            showProjectWorkBar={showProjectWorkBar}
+            projectWorkBarMiddleContext={projectWorkBarMiddleContext}
+            projectWorkBarTrailingContext={projectWorkBarTrailingContext}
             queuedMessages={queuedMessages}
             onCancelQueuedMessage={cancelQueuedMessage}
             onSendQueuedAsGuidance={guideQueuedMessage}

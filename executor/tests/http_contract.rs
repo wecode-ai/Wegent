@@ -31,14 +31,21 @@ fn env_lock() -> &'static tokio::sync::Mutex<()> {
     LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
 }
 
+type CancelledRequests = Vec<(String, Option<String>)>;
+
 #[derive(Clone, Default)]
 struct RecordingRunner {
     submitted: Arc<Mutex<Vec<ExecutionRequest>>>,
+    cancelled: Arc<Mutex<CancelledRequests>>,
 }
 
 impl RecordingRunner {
     fn submitted(&self) -> Vec<ExecutionRequest> {
         self.submitted.lock().unwrap().clone()
+    }
+
+    fn cancelled(&self) -> CancelledRequests {
+        self.cancelled.lock().unwrap().clone()
     }
 }
 
@@ -48,6 +55,15 @@ impl TaskRunner for RecordingRunner {
     fn submit(&self, request: ExecutionRequest) -> Self::SubmitFuture {
         self.submitted.lock().unwrap().push(request);
         std::future::ready(RunnerResult::accepted(TaskStatus::Running))
+    }
+
+    fn cancel(
+        &self,
+        task_id: String,
+        subtask_id: Option<String>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send>> {
+        self.cancelled.lock().unwrap().push((task_id, subtask_id));
+        Box::pin(async { true })
     }
 }
 
@@ -262,6 +278,29 @@ async fn responses_endpoint_accepts_openai_background_requests() {
     assert_eq!(submitted[0].task_id, "123");
     assert_eq!(submitted[0].subtask_id, "456");
     assert_eq!(submitted[0].prompt, json!("run this task"));
+}
+
+#[tokio::test]
+async fn cancel_endpoint_waits_for_runtime_cancellation_ack() {
+    let runner = RecordingRunner::default();
+    let app = create_router(AppState::new(runner.clone()));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/tasks/cancel?task_id=282&subtask_id=536")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        runner.cancelled(),
+        vec![("282".to_owned(), Some("536".to_owned()))]
+    );
 }
 
 #[tokio::test]

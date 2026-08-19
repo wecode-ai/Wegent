@@ -34,5 +34,9 @@ cp "$executor_binary" "$staging_dir/wegent-executor"
 cp -R "$codex_root" "$staging_dir/codex/$codex_target"
 chmod 0755 "$staging_dir/WeWork" "$staging_dir/wegent-executor"
 
+if [[ "$(uname -s)" == "Linux" ]]; then
+  strip --strip-debug "$staging_dir/WeWork" "$staging_dir/wegent-executor"
+fi
+
 tar -I 'zstd -T0 -3' -cf "$archive" -C "$artifact_dir" wework-core-e2e-build
 test -s "$archive"

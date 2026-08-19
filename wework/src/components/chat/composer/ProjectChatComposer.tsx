@@ -51,6 +51,7 @@ interface ProjectChatComposerProps {
   value: string
   onChange: (value: string) => void
   onBlur?: () => void
+  onCompositionStart?: () => void
   onCompositionEnd?: () => void
   onSubmit: (submittedValue?: string, options?: ComposerSubmitOptions) => void
   disabled: boolean
@@ -87,7 +88,6 @@ interface ProjectChatComposerProps {
   cloudSpaceEnabled?: boolean
   onSelectExternalMention?: (candidate: ComposerExternalMentionCandidate) => void
   onSelectCloudProject?: (project: CloudProject) => void
-  selectedCloudProjectId?: CloudProject['id']
   planModeActive?: boolean
   onSetPlanMode?: () => void
   onClearPlanMode?: () => void
@@ -104,6 +104,7 @@ interface ProjectChatComposerProps {
   onListLocalApps?: () => Promise<LocalDeviceApp[]>
   projectWork: ProjectWorkControls
   showProjectWorkBar?: boolean
+  showExecutionTools?: boolean
   isStreaming?: boolean
   onPause?: () => void
   showWorkspaceMenu?: boolean
@@ -111,7 +112,9 @@ interface ProjectChatComposerProps {
   /** Called when Backspace is pressed on an empty composer (e.g. dismiss Plugin Creator). */
   onDismissInputLeadingContext?: () => void
   toolbarLeadingContext?: ReactNode
+  projectWorkBarMiddleContext?: ReactNode
   projectWorkBarTrailingContext?: ReactNode
+  projectWorkBarEndContext?: ReactNode
   modelSelectorOverride?: ReactNode
 }
 
@@ -125,6 +128,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       value,
       onChange,
       onBlur,
+      onCompositionStart,
       onCompositionEnd,
       onSubmit,
       disabled,
@@ -161,7 +165,6 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       cloudSpaceEnabled,
       onSelectExternalMention,
       onSelectCloudProject,
-      selectedCloudProjectId,
       planModeActive = false,
       onSetPlanMode,
       onClearPlanMode,
@@ -178,13 +181,16 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       onListLocalApps,
       projectWork,
       showProjectWorkBar = true,
+      showExecutionTools = true,
       isStreaming = false,
       onPause,
       showWorkspaceMenu,
       inputLeadingContext,
       onDismissInputLeadingContext,
       toolbarLeadingContext,
+      projectWorkBarMiddleContext,
       projectWorkBarTrailingContext,
+      projectWorkBarEndContext,
       modelSelectorOverride,
     },
     ref
@@ -326,6 +332,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
             pendingProjectWorkspaceProjectId={projectWork.pendingProjectWorkspaceProjectId}
             executionMode={projectWork.executionMode}
             executionModeLocked={projectWork.executionModeLocked}
+            worktreeAvailability={projectWork.worktreeAvailability}
             isGitProject={projectWork.isGitProject}
             onSelectProject={projectWork.onSelectProject}
             onSelectStandaloneDevice={projectWork.onSelectStandaloneDevice}
@@ -344,7 +351,9 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
             showClearButton={projectWork.showProjectClearButton}
             projectMenuOpenSignal={projectWork.projectMenuOpenSignal}
             projectMenuAnchorElement={projectWork.projectMenuAnchorElement}
+            middleContext={projectWorkBarMiddleContext}
             trailingContext={projectWorkBarTrailingContext}
+            endContext={projectWorkBarEndContext}
             className="min-h-10 rounded-t-[26px] bg-surface px-4"
             buttonClassName="text-sm leading-[18px] text-text-secondary hover:bg-background/70 hover:text-text-primary"
           />
@@ -429,6 +438,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
             value={value}
             onChange={handleComposerChange}
             onBlur={onBlur}
+            onCompositionStart={onCompositionStart}
             onCompositionEnd={onCompositionEnd}
             onSubmit={onSubmit}
             canSend={canSend}
@@ -486,6 +496,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
             sendButtonTestId={submitButtonTestId}
             disabled={disabled}
             pluginPickerIconOnly={pluginPickerIconOnly}
+            showExecutionTools={showExecutionTools}
             models={models}
             selectedModel={selectedModel}
             activeModel={activeModel}
@@ -520,6 +531,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
                     currentProjectId: projectWork.currentProjectId,
                     executionMode: projectWork.executionMode,
                     executionModeLocked: projectWork.executionModeLocked,
+                    worktreeAvailability: projectWork.worktreeAvailability,
                     isGitProject: projectWork.isGitProject,
                     projectName: projectWork.currentProject?.name,
                     projects: workspaceMenuProjects,
@@ -534,9 +546,6 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
             onSubmit={options => onSubmit(composerRef.current?.getValue() ?? value, options)}
             leadingContext={toolbarLeadingContext}
             onListLocalApps={onListLocalApps}
-            cloudProjectCandidates={cloudProjectCandidates}
-            selectedCloudProjectId={selectedCloudProjectId}
-            onSelectCloudProject={onSelectCloudProject}
           />
         </form>
       </div>

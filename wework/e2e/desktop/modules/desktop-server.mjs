@@ -130,6 +130,13 @@ import {
   LOCAL_MODEL_SWITCH_INVALID_CALL_ID,
   LOCAL_VISION_SIDECAR_CASE,
   MEMORY_PROMPT,
+  MCP_ELICITATION_ACCEPTED_MARKER,
+  MCP_ELICITATION_CALL_ID,
+  MCP_ELICITATION_COMPLETION_TEXT,
+  MCP_ELICITATION_NAMESPACE,
+  MCP_ELICITATION_PROMPT,
+  MCP_ELICITATION_SEARCH_ID,
+  MCP_ELICITATION_TOOL_NAME,
   MESSAGE_EDIT_ORIGINAL_COMPLETION_TEXT,
   MESSAGE_EDIT_ORIGINAL_PROMPT,
   MESSAGE_EDIT_UPDATED_COMPLETION_TEXT,
@@ -406,6 +413,7 @@ class DesktopE2EServer {
     this.automationStage = 'manual_goal'
     this.scenarioRequests = new Map()
     this.scenarioWaiters = new Map()
+    this.heldScenarioResponses = new Map()
     this.localProtocolStates = new Map(
       LOCAL_MODEL_CASES.map(model => [model.protocol, { stage: 'initial', requests: [] }])
     )
@@ -576,6 +584,7 @@ class DesktopE2EServer {
         'fork_follow_up',
         'task_plan',
         'request_user_input',
+        'mcp_elicitation',
         'window_lifecycle',
         'background_completion_restore',
         'background_follow_up_restore',
@@ -593,6 +602,8 @@ class DesktopE2EServer {
         'anthropic_empty_response',
         'reconnect',
         'checkpoint_task',
+        'worktree_queue_hold',
+        'worktree_restart_hold',
         'message_edit',
         'file_panel_anchor',
         'fresh_chat',
@@ -621,6 +632,24 @@ class DesktopE2EServer {
       `Unknown desktop E2E scenario: ${scenario}`
     )
     this.scenario = scenario
+  }
+
+  holdScenarioResponse(scenario) {
+    assert.ok(
+      ['worktree_queue_hold', 'worktree_restart_hold'].includes(scenario),
+      `Scenario "${scenario}" does not support held responses`
+    )
+    let release
+    const promise = new Promise(resolvePromise => {
+      release = resolvePromise
+    })
+    this.heldScenarioResponses.set(scenario, { promise, release })
+  }
+
+  releaseScenarioResponse(scenario) {
+    const held = this.heldScenarioResponses.get(scenario)
+    held?.release()
+    this.heldScenarioResponses.delete(scenario)
   }
 
   setMatrixCase(model) {
@@ -903,6 +932,19 @@ class DesktopE2EServer {
         user_name: 'wework-desktop-e2e-cloud-user',
         email: 'desktop-e2e@wework.local',
       })
+      return
+    }
+
+    if (
+      request.method === 'POST' &&
+      url.pathname === '/api/v1/loop-item-executions/claim-my-next'
+    ) {
+      json(response, 200, null)
+      return
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/apps/installed') {
+      json(response, 200, { apps: [] })
       return
     }
 
@@ -1877,7 +1919,7 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         ...functionCall('wework-e2e-tool-call', tool.name, tool.arguments),
-        ...functionCall('wework-e2e-view-image', image.name, image.arguments),
+        ...functionCall('wework-e2e-view-image', image.name, image.arguments, 1),
         customToolCall('wework-e2e-apply-patch', 'apply_patch', patch),
         responseCompleted(responseId),
       ])
@@ -2598,6 +2640,57 @@ class DesktopE2EServer {
       return
     }
 
+    if (this.scenario === 'mcp_elicitation') {
+      this.recordScenarioRequest('mcp_elicitation', modelRequest)
+      const requestNumber = this.scenarioRequests.get('mcp_elicitation').length
+      const requestText = JSON.stringify(body)
+
+      if (requestNumber === 1) {
+        assert.ok(
+          requestText.includes(MCP_ELICITATION_PROMPT),
+          'The real Codex request did not contain the MCP elicitation prompt'
+        )
+        const search = selectToolSearch(body, MCP_ELICITATION_TOOL_NAME)
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...toolSearchResponseEvents(MCP_ELICITATION_SEARCH_ID, search),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+
+      if (requestNumber === 2) {
+        const tool = selectMcpTool(body, MCP_ELICITATION_NAMESPACE, MCP_ELICITATION_TOOL_NAME, {})
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...namespacedFunctionCall(
+            MCP_ELICITATION_CALL_ID,
+            tool.namespace,
+            tool.name,
+            tool.arguments
+          ),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+
+      assert.equal(requestNumber, 3, `Unexpected MCP elicitation request ${requestNumber}`)
+      assert.ok(
+        requestContainsToolOutput(body, MCP_ELICITATION_CALL_ID),
+        'The MCP elicitation tool output did not return to the real model request'
+      )
+      assert.ok(
+        requestText.includes(MCP_ELICITATION_ACCEPTED_MARKER),
+        'The MCP server did not return the accepted audience marker to the model'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(MCP_ELICITATION_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
     if (this.scenario === 'task_plan') {
       this.recordScenarioRequest('task_plan', modelRequest)
       assert.ok(
@@ -2757,6 +2850,31 @@ class DesktopE2EServer {
         assistantMessage(CHECKPOINT_TASK_COMPLETION_TEXT),
         responseCompleted(responseId),
       ])
+      return
+    }
+
+    if (this.scenario === 'worktree_queue_hold' || this.scenario === 'worktree_restart_hold') {
+      const scenario = this.scenario
+      const held = this.heldScenarioResponses.get(scenario)
+      assert.ok(held, `The ${scenario} response was not held before the task started`)
+      this.recordScenarioRequest(scenario, modelRequest)
+      response.writeHead(200, {
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'Content-Type': 'text/event-stream; charset=utf-8',
+      })
+      response.flushHeaders()
+      response.write(createSse([responseCreated(responseId)]))
+      await held.promise
+      if (!response.writableEnded && !response.destroyed) {
+        response.end(
+          createSse([
+            assistantMessage(`${scenario.toUpperCase()}_COMPLETE`),
+            responseCompleted(responseId),
+          ])
+        )
+      }
       return
     }
 
@@ -3145,18 +3263,6 @@ class DesktopE2EServer {
     if (this.scenario === 'queue_management') {
       this.recordScenarioRequest('queue_management', modelRequest)
       const latestInput = latestModelInputText(body)
-      const initialPrompts = [QUEUE_DIRECT_INITIAL, QUEUE_PRESERVE_INITIAL, QUEUE_CLEAR_INITIAL]
-      if (initialPrompts.some(prompt => latestInput.includes(prompt))) {
-        response.writeHead(200, {
-          'Access-Control-Allow-Origin': '*',
-          'Cache-Control': 'no-cache',
-          Connection: 'keep-alive',
-          'Content-Type': 'text/event-stream; charset=utf-8',
-        })
-        response.write(createSse([responseCreated(responseId)]))
-        return
-      }
-
       const followUpPrompts = [
         QUEUE_DIRECT_FIRST,
         QUEUE_DIRECT_SECOND,
@@ -3166,8 +3272,15 @@ class DesktopE2EServer {
         QUEUE_CLEAR_MANUAL,
       ]
       const prompt = followUpPrompts.find(candidate => latestInput.includes(candidate))
-      assert.ok(prompt, `Unexpected queue management request: ${latestInput}`)
-      if (prompt === QUEUE_DIRECT_THIRD) {
+      if (prompt) {
+        if (prompt !== QUEUE_DIRECT_THIRD) {
+          this.writeSse(response, [
+            responseCreated(responseId),
+            assistantMessage(`${QUEUE_MANAGEMENT_COMPLETION_PREFIX}:${prompt}`),
+            responseCompleted(responseId),
+          ])
+          return
+        }
         response.writeHead(200, {
           'Access-Control-Allow-Origin': '*',
           'Cache-Control': 'no-cache',
@@ -3185,11 +3298,19 @@ class DesktopE2EServer {
         )
         return
       }
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(`${QUEUE_MANAGEMENT_COMPLETION_PREFIX}:${prompt}`),
-        responseCompleted(responseId),
-      ])
+
+      const initialPrompts = [QUEUE_DIRECT_INITIAL, QUEUE_PRESERVE_INITIAL, QUEUE_CLEAR_INITIAL]
+      assert.ok(
+        initialPrompts.some(candidate => latestInput.includes(candidate)),
+        `Unexpected queue management request: ${latestInput}`
+      )
+      response.writeHead(200, {
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'Content-Type': 'text/event-stream; charset=utf-8',
+      })
+      response.write(createSse([responseCreated(responseId)]))
       return
     }
 

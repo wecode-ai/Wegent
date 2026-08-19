@@ -22,14 +22,14 @@ use crate::{
     local::git_commit_message::generate_commit_message,
     local::local_skills::list_local_skills,
     local::workspace_files::{
-        execute_workspace_file_command_with_input, is_workspace_file_command,
+        execute_workspace_file_command_with_input, is_workspace_file_command, WORKSPACE_ROOTS_ENV,
     },
     logging::{format_executor_log, reserve_executor_stdout_for_protocol, write_executor_log_line},
     runtime_work::RuntimeWorkRpcHandler,
     task_runtime::{
-        BinaryInput, ChatAgentCreate, ChatAgentUpdate, DeliveryCreate, LocalCommentCreate,
-        LocalExecutionClaim, ProjectCreate, ProjectDescriptor, ProjectUpdate, RuntimeTaskAddress,
-        TaskCreate, TaskReorder, TaskRuntime, TaskUpdate,
+        BinaryInput, ChatAgentCreate, ChatAgentUpdate, DeliveryCreate, DeliveryFinalize,
+        LocalCommentCreate, LocalExecutionClaim, ProjectCreate, ProjectDescriptor, ProjectUpdate,
+        RuntimeTaskAddress, TaskCreate, TaskReorder, TaskRuntime, TaskUpdate,
     },
     version::get_version,
 };
@@ -466,6 +466,68 @@ impl AppIpcServer {
             return self.handle_device_command(params).await;
         }
 
+        if method == "executions.claim_next" {
+            let Some(handler) = &self.runtime_work_handler else {
+                return Err(AppIpcError::new(
+                    "runtime_unavailable",
+                    "Runtime work handler is not available",
+                ));
+            };
+            let runtime_instance_id = self.runtime_instance_id.as_ref().ok_or_else(|| {
+                AppIpcError::new(
+                    "runtime_identity_unavailable",
+                    "Runtime instance identity is not available",
+                )
+            })?;
+            let capacity = handler
+                .handle_runtime_rpc(json!({
+                    "method": "runtime.capacity.get",
+                    "payload": {},
+                }))
+                .await?;
+            let limit = capacity
+                .get("limit")
+                .and_then(Value::as_u64)
+                .filter(|value| (1..=20).contains(value))
+                .ok_or_else(|| {
+                    AppIpcError::new(
+                        "runtime_capacity_unavailable",
+                        "Runtime capacity is not available",
+                    )
+                })?;
+            let mut params = params.as_object().cloned().ok_or_else(|| {
+                AppIpcError::new("invalid_request", "Claim params must be an object")
+            })?;
+            let claim = params
+                .get_mut("claim")
+                .and_then(Value::as_object_mut)
+                .ok_or_else(|| AppIpcError::new("invalid_request", "Claim must be an object"))?;
+            claim.insert(
+                "runtime_instance_id".to_owned(),
+                Value::String(runtime_instance_id.clone()),
+            );
+            claim.insert("device_capacity".to_owned(), Value::from(limit));
+            claim.insert(
+                "runtime_active".to_owned(),
+                capacity.get("active").cloned().ok_or_else(|| {
+                    AppIpcError::new(
+                        "runtime_capacity_unavailable",
+                        "Runtime active capacity is not available",
+                    )
+                })?,
+            );
+            claim.insert(
+                "runtime_active_task_ids".to_owned(),
+                capacity.get("active_task_ids").cloned().ok_or_else(|| {
+                    AppIpcError::new(
+                        "runtime_capacity_unavailable",
+                        "Runtime active task identities are not available",
+                    )
+                })?,
+            );
+            return handle_task_runtime_request(method, Value::Object(params)).await;
+        }
+
         if method.starts_with("projects.")
             || method.starts_with("external_projects.")
             || method.starts_with("dws.")
@@ -714,12 +776,18 @@ impl AppIpcServer {
         }
 
         let args = string_list(params.get("args"))?;
-        let env = string_env(params.get("env"))?;
+        let path = string_field(&params, "path").or_else(|| string_field(&params, "cwd"));
+        let mut env = string_env(params.get("env"))?;
         if is_workspace_file_command(command_key) {
+            if !env.contains_key(WORKSPACE_ROOTS_ENV) {
+                if let Some(path) = path.as_ref() {
+                    env.insert(WORKSPACE_ROOTS_ENV.to_owned(), path.clone());
+                }
+            }
             return serde_json::to_value(
                 execute_workspace_file_command_with_input(
                     command_key,
-                    string_field(&params, "path").or_else(|| string_field(&params, "cwd")),
+                    path,
                     args,
                     env,
                     string_field(&params, "stdin"),
@@ -1280,6 +1348,15 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                     .map_err(task_runtime_error)?
             })
         }
+        "executions.cancel" => {
+            let execution_id = required_task_i64(&params, "execution_id")?;
+            let note = params.get("note").and_then(Value::as_str);
+            serialize_task_value(
+                runtime
+                    .cancel_execution(execution_id, note)
+                    .map_err(task_runtime_error)?,
+            )
+        }
         "executions.claim_next" => {
             let input = task_input::<LocalExecutionClaim>(&params, "claim")?;
             serialize_task_value(
@@ -1307,39 +1384,89 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                     .map_err(task_runtime_error)?,
             )
         }
-        "executions.complete" => {
+        "executions.start_requested"
+        | "executions.runtime_start"
+        | "executions.dispatch_unknown" => {
             let execution_id = required_task_i64(&params, "execution_id")?;
-            let note = params.get("note").and_then(Value::as_str);
-            serialize_task_value(
-                runtime
-                    .complete_execution(execution_id, note)
-                    .map_err(task_runtime_error)?,
-            )
+            let runtime_device_id = required_task_string(&params, "runtime_device_id")?;
+            let runtime_task_id = required_task_string(&params, "runtime_task_id")?;
+            let lease_seconds = params
+                .get("lease_seconds")
+                .and_then(Value::as_u64)
+                .unwrap_or(300);
+            let execution = match method {
+                "executions.start_requested" => runtime.request_runtime_start(
+                    execution_id,
+                    runtime_device_id,
+                    runtime_task_id,
+                    lease_seconds,
+                ),
+                "executions.runtime_start" => runtime.confirm_runtime_accepted(
+                    execution_id,
+                    runtime_device_id,
+                    runtime_task_id,
+                    lease_seconds,
+                ),
+                _ => runtime.mark_runtime_dispatch_unknown(
+                    execution_id,
+                    runtime_device_id,
+                    runtime_task_id,
+                    params
+                        .get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("Runtime dispatch outcome is unknown"),
+                ),
+            }
+            .map_err(task_runtime_error)?;
+            serialize_task_value(execution)
         }
-        "executions.fail" => {
+        "executions.dispatch_failed" => {
             let execution_id = required_task_i64(&params, "execution_id")?;
             let error = params
                 .get("error")
                 .and_then(Value::as_str)
-                .unwrap_or("Local runtime run failed");
-            let requeue = params
-                .get("requeue")
-                .and_then(Value::as_bool)
-                .unwrap_or(true);
+                .unwrap_or("Local runtime preflight failed");
             serialize_task_value(
                 runtime
-                    .fail_execution(execution_id, error, requeue)
+                    .fail_runtime_preflight(execution_id, error)
                     .map_err(task_runtime_error)?,
             )
         }
         "executions.recover_stale" => {
-            let (requeued, failed) = runtime
+            let (requeued, unknown) = runtime
                 .recover_stale_local_executions()
                 .map_err(task_runtime_error)?;
             Ok(json!({
                 "requeued": requeued,
-                "failed": failed,
+                "unknown": unknown,
             }))
+        }
+        "executions.list_stale" => serialize_task_value(
+            runtime
+                .stale_local_executions()
+                .map_err(task_runtime_error)?,
+        ),
+        "executions.reconcile" => {
+            let execution_id = required_task_i64(&params, "execution_id")?;
+            let runtime_status = params
+                .get("runtime_status")
+                .and_then(Value::as_str)
+                .unwrap_or("missing");
+            let running = params
+                .get("running")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let turn_status = params.get("turn_status").and_then(Value::as_str);
+            serialize_task_value(
+                runtime
+                    .reconcile_execution_snapshot(
+                        execution_id,
+                        runtime_status,
+                        running,
+                        turn_status,
+                    )
+                    .map_err(task_runtime_error)?,
+            )
         }
         "files.list" => {
             let project_id = required_task_string(&params, "project_id")?;
@@ -1463,9 +1590,21 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
         "deliveries.finalize" => {
             let item_id = required_task_string(&params, "item_id")?;
             let delivery_id = required_task_string(&params, "delivery_id")?;
+            let input = params
+                .get("finalize")
+                .cloned()
+                .map(serde_json::from_value::<DeliveryFinalize>)
+                .transpose()
+                .map_err(|error| {
+                    AppIpcError::new(
+                        "invalid_request",
+                        format!("invalid finalize input: {error}"),
+                    )
+                })?
+                .unwrap_or_default();
             serialize_task_value(
                 runtime
-                    .finalize_delivery(item_id, delivery_id)
+                    .finalize_delivery(item_id, delivery_id, input)
                     .map_err(task_runtime_error)?,
             )
         }
@@ -1840,6 +1979,7 @@ pub async fn serve_app_ipc_sidecar(
     device_id: String,
     runtime_instance_id: String,
 ) -> Result<(), String> {
+    crate::task_runtime::mcp_http::ensure_space_mcp_http_endpoint().await?;
     let server = AppIpcServer::new()
         .with_device_id(normalize_device_id(device_id))
         .with_runtime_instance_id(runtime_instance_id)
@@ -1965,6 +2105,17 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
                 "--json",
                 "number,url,title,state,isDraft,statusCheckRollup,mergeable,mergeStateStatus",
                 "--head",
+            ],
+            Some(PostProcessor::Json),
+        )),
+        "git_github_pull_request_merge_queue" => Some(command_definition(
+            "gh api graphql <pull-request-merge-queue-query>",
+            &[
+                "gh",
+                "api",
+                "graphql",
+                "-f",
+                "query=query($url:URI!){resource(url:$url){... on PullRequest{mergeQueueEntry{id}}}}",
             ],
             Some(PostProcessor::Json),
         )),

@@ -113,6 +113,17 @@ export function useWorkbenchRuntimeTasks({
     []
   )
 
+  const reconcileCurrentRuntimeTaskAddress = useCallback(
+    (previousAddress: RuntimeTaskAddress, address: RuntimeTaskAddress) => {
+      dispatch({
+        type: 'runtime_task_address_reconciled',
+        previousAddress,
+        address,
+      })
+    },
+    [dispatch]
+  )
+
   const clearCurrentRuntimeTaskView = useCallback(() => {
     currentRuntimeTaskRef.current = null
     dispatch({ type: 'current_task_cleared' })
@@ -217,6 +228,7 @@ export function useWorkbenchRuntimeTasks({
 
   const removeArchivedWorktrees = useCallback(
     async (worktreeTargets: RuntimeTaskWorktreeTarget[]) => {
+      let succeeded = true
       for (const target of uniqueRuntimeTaskWorktreeTargets(worktreeTargets)) {
         try {
           if (!services.runtimeWorkApi) throw new Error('Runtime work API is unavailable')
@@ -226,6 +238,7 @@ export function useWorkbenchRuntimeTasks({
             preserveSnapshot: true,
           })
         } catch (error) {
+          succeeded = false
           dispatch({
             type: 'error_set',
             error:
@@ -237,8 +250,34 @@ export function useWorkbenchRuntimeTasks({
           })
         }
       }
+      return succeeded
     },
     [dispatch, services.runtimeWorkApi, t]
+  )
+
+  const completeArchivedBoardTasks = useCallback(
+    async (addresses: RuntimeTaskAddress[]) => {
+      const trackingApis = [
+        services.projectSpaceApis?.local,
+        services.projectSpaceApis?.cloud ?? services.deliveryApi,
+      ].filter((api, index, values) => Boolean(api) && values.indexOf(api) === index)
+      if (trackingApis.length === 0) return
+
+      await Promise.all(
+        addresses.map(async address => {
+          const results = await Promise.allSettled(
+            trackingApis.map(api => api!.updateTaskTrackingStatus(address, 'archived'))
+          )
+          if (results.every(result => result.status === 'rejected')) {
+            console.warn('[Wework] Failed to complete archived task on project board', {
+              address: runtimeAddressDebug(address),
+              errors: results.map(result => (result.status === 'rejected' ? result.reason : null)),
+            })
+          }
+        })
+      )
+    },
+    [services.deliveryApi, services.projectSpaceApis]
   )
 
   const archiveRuntimeConversations = useCallback(
@@ -260,19 +299,26 @@ export function useWorkbenchRuntimeTasks({
       const archivedAddresses = results.flatMap(result =>
         result.response?.accepted ? [result.address] : []
       )
+      let worktreeCleanupSucceeded = true
       if (archivedAddresses.length > 0) {
+        await completeArchivedBoardTasks(archivedAddresses)
         archivedAddresses.forEach(evictRuntimeConversation)
         archivedAddresses.forEach(address => lifecycleStore.remove(address))
         markRuntimeTasksArchived(archivedAddresses)
-        await removeArchivedWorktrees(
+        worktreeCleanupSucceeded = await removeArchivedWorktrees(
           findRuntimeTaskWorktrees(state.runtimeWork, archivedAddresses)
         )
         clearCurrentRuntimeTaskIfArchived(archivedAddresses)
         await refreshWorkLists({ syncCloud: false })
-        track('feature_action_completed', { domain: 'conversation', action: 'archive' })
+        if (worktreeCleanupSucceeded) {
+          track('feature_action_completed', { domain: 'conversation', action: 'archive' })
+        } else {
+          track('operation_failed', { operation: 'worktree_archive_cleanup' })
+        }
       }
       const failedResult = results.find(result => !result.response?.accepted)
-      if (!failedResult) return { status: 'archived' }
+      if (!failedResult && worktreeCleanupSucceeded) return { status: 'archived' }
+      if (!failedResult) return { status: 'failed' }
       track('operation_failed', { operation: 'conversation_archive' })
       dispatch({
         type: 'error_set',
@@ -284,6 +330,7 @@ export function useWorkbenchRuntimeTasks({
     },
     [
       clearCurrentRuntimeTaskIfArchived,
+      completeArchivedBoardTasks,
       dispatch,
       executorClient,
       lifecycleStore,
@@ -473,6 +520,7 @@ export function useWorkbenchRuntimeTasks({
   return {
     openRuntimeTaskView,
     isCurrentRuntimeTask,
+    reconcileCurrentRuntimeTaskAddress,
     clearCurrentRuntimeTaskView,
     loadRuntimeTranscriptForPane,
     subscribeRuntimeTaskStream,

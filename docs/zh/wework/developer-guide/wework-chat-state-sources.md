@@ -199,7 +199,13 @@ turn 被取消后 goal 在暂停请求到达前启动下一 turn。如果 goal �
 
 任务终止事件应立即把本地任务标记为 `running: false`，并刷新 work list。若并发刷新返回了更早的 `running: true` 快照，reducer 必须保留本地已结算状态，直到同一任务收到新的启动事件，不能让旧响应把 spinner、暂停按钮或“正在思考”重新点亮。同一任务的执行身份由 `deviceId + taskId` 决定；`workspacePath` 是可能在创建、刷新和 transcript 恢复间变化的路由元数据，不能参与运行状态身份判断。
 
-未读只在当前 Wework renderer 生命周期内观察到 `running: true -> false` 边沿时产生，不根据 `status` 文本或持久化记录猜测运行历史；本地持久化只保存已经产生的未读结果，不保存运行态。持久化 Goal 仍为 `active` 但 executor 已不再运行的任务属于待恢复状态，不得因应用或 executor 重启产生完成未读。当前任务和所有运行中任务都必须从可见未读集合排除；打开任务会清除其未读状态。
+未读只根据同一任务的运行状态边沿产生：之前为 `running: true`、现在为
+`running: false`，且任务不是当前打开任务。Wework 在浏览器存储中保存已经产生的
+未读任务键，并额外保存上一次观察到仍在运行的任务键，使应用异常退出后仍能在
+下次启动时完成这次边沿判断。这份任务键集合只服务于未读提醒，不能作为当前运行态
+来源；当前运行态仍以 executor 快照和实时事件为准。当前任务和所有运行中任务都必须
+从可见未读集合排除；打开任务会清除其未读状态。新存储命名空间不导入旧版未读数据，
+因此升级后的既有任务默认已读。
 
 executor 的 `RuntimeTaskLink.running` 只存在于当前进程内存和 runtime API
 响应中。`runtime-work/index.json` 不得序列化该字段，读取旧索引时也必须忽略其中
@@ -271,6 +277,11 @@ assistant 之前。canonical `turns` 是前端 transcript 的唯一输入，不�
 元数据可以继续使用各自的紧凑字号，但不能让同一段聊天正文因 streaming/完成态切换而
 改变字号并产生跳闪。
 
+最终回答进入 Markdown 渲染器前必须移除没有结构化引用元数据支持的
+`cite…` 内容引用标记，包括流式阶段尚未闭合的尾部标记。Wework
+不能把这些内部协议字符作为普通正文显示；只有在同时接入引用元数据和对应交互组件后，
+才能把它们转换为可见引用。
+
 ## 引导消息顺序
 
 运行中的 Codex LocalTask 支持把队列消息作为原生引导发送。引导是当前 turn 内的用户输入，不是新的 follow-up turn，所以 UI 必须在发送开始时就把本地用户消息插入到当前 assistant 中间：
@@ -300,6 +311,7 @@ assistant 之前。canonical `turns` 是前端 transcript 的唯一输入，不�
 - 普通 follow-up 必须在等待 `runtime.tasks.sendMessage` 返回前先把 user message 写入会话缓存，使它稳定出现在当前 turn 的“正在思考”指示器之前；发送失败时再按同一 client message id 回滚。
 - `BufferedChatInput` 传入的运行中发送选项必须由 `TemporaryChatPanel` 原样处理。用户选择“引导当前回复”或从队列卡片触发引导时，临时聊天必须调用 `runtime.tasks.guidance`，并以 `clientGuidanceId` 结算对应队列项；不能把引导降级成当前 turn 结束后的普通 follow-up。
 - 临时聊天只复用当前工作区和当前线程上下文；如果没有可用的主线程 source，应阻止发送并提示用户先打开已有对话。
+- 临时聊天默认用于轻量、非变更式探索。边界之前的主线程消息、计划和工具结果只作为参考，不能在临时聊天中继续执行；但用户在边界之后明确要求修改文件、源码、Git、配置或工作区状态时，允许在当前线程既有权限范围内执行，并且修改必须最小化、局限于本次请求。未收到明确变更请求时不得写入，也不得自行申请更宽权限。
 - runtime work 列表刷新后，reducer 必须用同一设备、同一任务的权威 `threadId/runtimeHandle` 水合当前任务地址；不能因为设备仍在线就保留缺少 thread 的 optimistic address，否则右侧临时聊天无法建立 `sideSource`。
 
 维护规则：不要用 fallback 在 UI 里把临时聊天补进左侧任务列表，也不要在 executor 中为临时线程伪造 rollout。临时聊天的主路径是 `ephemeral + sideSource + direct_thread_id`。
