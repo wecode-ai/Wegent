@@ -99,6 +99,7 @@ dependencies = [
  "portable-pty",
  "regex",
  "reqwest 0.13.4",
+ "semver",
  "sentry",
  "serde",
  "serde_json",

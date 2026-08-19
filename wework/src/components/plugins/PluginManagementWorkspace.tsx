@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { Boxes } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createHttpClient } from '@/api/http'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
@@ -861,13 +862,24 @@ export function PluginManagementWorkspace({
           'pt-[27px]',
         ].join(' ')}
       >
-        <header className="mb-6">
-          <h1 className="heading-base tracking-tight text-text-primary">
-            {t('workbench.plugins_manage_plugins', '管理插件')}
-          </h1>
-          <p className="mt-1 text-sm leading-5 text-text-secondary">
-            {t('workbench.plugins_manage_plugins_description', '管理已安装插件。')}
-          </p>
+        <header className="mb-6 flex items-start justify-between gap-4">
+          <div>
+            <h1 className="heading-base tracking-tight text-text-primary">
+              {t('workbench.plugins_manage_plugins', '管理插件')}
+            </h1>
+            <p className="mt-1 text-sm leading-5 text-text-secondary">
+              {t('workbench.plugins_manage_plugins_description', '管理已安装插件。')}
+            </p>
+          </div>
+          <button
+            type="button"
+            data-testid="plugin-management-harness-apps-button"
+            className="inline-flex h-9 shrink-0 items-center gap-2 rounded-lg bg-text-primary px-3 text-sm text-background hover:opacity-80"
+            onClick={() => navigateTo('/harness-apps')}
+          >
+            <Boxes aria-hidden="true" className="h-4 w-4" />
+            {t('workbench.harness_apps_title')}
+          </button>
         </header>
 
         {isLoadingPlugins ? (

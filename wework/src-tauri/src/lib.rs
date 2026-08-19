@@ -9,6 +9,7 @@ mod embedded_browser;
 mod embedded_browser_tls;
 #[cfg(desktop)]
 mod feedback;
+mod harness_apps;
 mod inline_visualization;
 mod local_executor;
 mod local_terminal;
@@ -4946,6 +4947,7 @@ pub fn run() {
         .manage(TrayVisualState::default())
         .manage(local_executor::LocalExecutorState::default())
         .manage(local_terminal::LocalTerminalState::default())
+        .manage(harness_apps::HarnessAppRuntimeState::default())
         .manage(popout_window::PopoutWindowState::default())
         .manage(system_drag::SystemDragState::default())
         .manage(system_lock::SystemLockState::default())
@@ -5100,6 +5102,12 @@ pub fn run() {
             embedded_browser::embedded_browser_set_agent_control_paused,
             embedded_browser::embedded_browser_set_zoom,
             embedded_browser::embedded_browser_set_bounds,
+            harness_apps::delete_harness_app,
+            harness_apps::install_harness_app,
+            harness_apps::list_harness_apps,
+            harness_apps::preview_harness_app,
+            harness_apps::start_harness_app,
+            harness_apps::stop_harness_app,
             local_terminal::archive_local_harness_session,
             local_terminal::attach_local_terminal,
             local_terminal::close_local_terminal,
@@ -5269,6 +5277,8 @@ pub fn run() {
                 {
                     let state = app_handle.state::<workbench_plugins::WorkbenchPluginState>();
                     workbench_plugins::shutdown(state.inner());
+                    let harness_state = app_handle.state::<harness_apps::HarnessAppRuntimeState>();
+                    harness_apps::shutdown(harness_state.inner());
                 }
             }
             _ => {}

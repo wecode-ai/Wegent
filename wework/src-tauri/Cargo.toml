@@ -47,6 +47,7 @@ getrandom = "0.2"
 infer = "0.19"
 mime_guess = "2"
 regex = "1"
+semver = "1"
 sha2 = "0.10"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 # Keep Wry's devtools API available when its debug assertions are disabled below.

@@ -61,6 +61,7 @@ import {
   RETRY_COMPLETION_TEXT,
   RETRY_PROMPT,
   RUNS_PLUGIN_E2E,
+  SELECTED_DESKTOP_SEGMENT,
   TELEMETRY_TEST_PROJECT_KEY,
   WORKBENCH_READY_TIMEOUT_MS,
   assert,
@@ -81,6 +82,7 @@ import {
   resolve,
   resolveExecutable,
   resultDir,
+  rm,
   runChecked,
   selectE2EModel,
   sendPromptUntilScenarioRequest,
@@ -411,6 +413,18 @@ async function bundleMacCodex(contentsPath, codexBinary) {
   return bundledCodexBinary
 }
 
+async function bundleMacDeepSeekHarness(contentsPath) {
+  if (SELECTED_DESKTOP_SEGMENT !== 'harness-apps') return null
+
+  const source = join(weworkDir, 'src-tauri', 'bundled-deepseek-harness')
+  const bundledRuntime = join(contentsPath, 'Resources', 'bundled-deepseek-harness')
+  await mkdir(dirname(bundledRuntime), { recursive: true })
+  await rm(bundledRuntime, { recursive: true, force: true })
+  await symlink(source, bundledRuntime, 'dir')
+  console.log(`Bundled E2E DeepSeek Harness: ${bundledRuntime}`)
+  return bundledRuntime
+}
+
 async function wrapMacDesktopApp(binaryPath, binaryName, appIdentifier, codexBinary) {
   if (process.platform !== 'darwin') {
     return { binaryPath, appBundlePath: null, codexBinaryPath: null }
@@ -444,6 +458,7 @@ async function wrapMacDesktopApp(binaryPath, binaryName, appIdentifier, codexBin
     'utf8'
   )
   const bundledCodexBinary = await bundleMacCodex(contentsPath, codexBinary)
+  await bundleMacDeepSeekHarness(contentsPath)
   commandOutput(MACOS_LAUNCH_SERVICES_REGISTER, ['-f', appBundlePath])
   return {
     binaryPath: bundledBinaryPath,
@@ -460,6 +475,10 @@ async function buildDesktopApp(
   modelServerUrl,
   codexBinary
 ) {
+  if (SELECTED_DESKTOP_SEGMENT === 'harness-apps') {
+    await runChecked('pnpm', ['run', 'prepare:deepseek-harness'], { cwd: weworkDir })
+  }
+
   const configured = process.env.WEWORK_E2E_APP_BIN
   if (configured) {
     const binaryPath = await resolveExecutable(configured, 'app', 'Configured Wework desktop app')
@@ -1391,6 +1410,7 @@ export {
   macCodexBundleLayout,
   findCodexPackageRoot,
   bundleMacCodex,
+  bundleMacDeepSeekHarness,
   wrapMacDesktopApp,
   buildDesktopApp,
   verifyConnectedModelsOnLocalExecution,

@@ -34,6 +34,7 @@ export const DESKTOP_CHECKPOINTS = [
   'claude-runtime',
   'local-file-preview',
   'local-harness',
+  'harness-apps',
   'browser-multi-tabs',
   'embedded-browser',
   'browser-toolbar-actions',

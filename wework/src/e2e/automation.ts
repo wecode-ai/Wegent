@@ -162,6 +162,37 @@ async function getEmbeddedBrowserLocalStorageItem(command: DesktopControlCommand
   )
 }
 
+async function captureEmbeddedBrowserWhenReady(command: DesktopControlCommand): Promise<string> {
+  const label = command.value?.trim()
+  if (!label) throw new Error('captureEmbeddedBrowser requires a label')
+
+  const timeoutMs = command.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS
+  const startedAt = Date.now()
+  let lastError = 'Embedded browser is not ready'
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      const page = await evalEmbeddedBrowserJson<{
+        readyState: string
+        textLength: number
+      }>(
+        `({
+          readyState: document.readyState,
+          textLength: (document.body?.innerText ?? '').trim().length
+        })`,
+        label
+      )
+      if (page.readyState === 'complete' && page.textLength > 0) {
+        return await invoke<string>('embedded_browser_capture_snapshot', { label })
+      }
+      lastError = `page state is ${page.readyState} with ${page.textLength} visible text characters`
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error)
+    }
+    await waitForDesktopControlTick()
+  }
+  throw new Error(`Timed out capturing embedded browser "${label}": ${lastError}`)
+}
+
 function hasTestId(testId: string): boolean {
   return document.querySelector(`[data-testid="${CSS.escape(testId)}"]`) !== null
 }
@@ -988,6 +1019,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return invoke<string>('capture_popout_webview')
     case 'captureWorkspaceWindow':
       return invoke<string>('capture_workspace_webview')
+    case 'captureEmbeddedBrowser':
+      return captureEmbeddedBrowserWhenReady(command)
     case 'closeMainWindowToTray':
       return ''
     case 'requestMainWindowClose':
