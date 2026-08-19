@@ -12,6 +12,10 @@ from pathlib import Path
 from typing import Any, Optional
 
 CATALOG_DIRECTORY = Path(__file__).resolve().parent / "assets" / "codex-models"
+CODEX_CATALOG_MODEL_ID_KEYS = (
+    "codex_catalog_model_id",
+    "codexCatalogModelId",
+)
 
 
 def _normalized_strings(value: Any) -> tuple[str, ...]:
@@ -22,6 +26,21 @@ def _normalized_strings(value: Any) -> tuple[str, ...]:
     return tuple(
         item.strip().lower() for item in value if isinstance(item, str) and item.strip()
     )
+
+
+def codex_catalog_model_id_from_config(
+    config: Any,
+    keys: tuple[str, ...] = CODEX_CATALOG_MODEL_ID_KEYS,
+) -> Optional[str]:
+    """Return the first independently validated catalog ID candidate."""
+
+    if not isinstance(config, dict):
+        return None
+    for key in keys:
+        candidate = config.get(key)
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+    return None
 
 
 @lru_cache(maxsize=1)

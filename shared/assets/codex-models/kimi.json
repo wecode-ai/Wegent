@@ -35,7 +35,11 @@
       "slug": "wework-kimi-k2-7",
       "upstream_model_ids": ["kimi-for-coding", "kimi-for-coding-highspeed"],
       "upstream_model_id_contains": ["kimi-k2.7"],
-      "upstream_api_formats": ["openai-responses", "openai-chat-completions"],
+      "upstream_api_formats": [
+        "openai-responses",
+        "openai-chat-completions",
+        "anthropic-messages"
+      ],
       "display_name": "Kimi K2.7 Code",
       "description": "Kimi K2.7 Code profile for stable agentic coding",
       "apply_patch_tool_type": "freeform",

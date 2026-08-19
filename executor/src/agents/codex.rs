@@ -3077,23 +3077,16 @@ fn codex_request_model(request: &ExecutionRequest) -> Option<String> {
         return model_id(request);
     }
     let base_model_id = catalog_model_id.or_else(|| model_id(request))?;
-    if vision_sidecar_enabled(&request.model_config) {
+    if vision_sidecar_upstream(&request.model_config)
+        .ok()
+        .flatten()
+        .is_some()
+    {
         return Some(codex_model_catalog::vision_sidecar_catalog_model_id(
             &base_model_id,
         ));
     }
     Some(base_model_id)
-}
-
-fn vision_sidecar_enabled(model_config: &Value) -> bool {
-    let Some(sidecar) = model_config
-        .get("vision_sidecar")
-        .or_else(|| model_config.get("visionSidecar"))
-        .and_then(Value::as_object)
-    else {
-        return false;
-    };
-    bool_value(sidecar.get("enabled")) != Some(false)
 }
 
 fn codex_web_search_mode(model_config: &Value) -> Option<String> {

@@ -42,6 +42,7 @@ from app.services.runtime_codex_model import (
     build_codex_runtime_model_config,
     is_codex_runtime_model_enabled,
 )
+from shared.codex_model_catalog import codex_catalog_model_id_from_config
 
 logger = logging.getLogger(__name__)
 
@@ -260,14 +261,9 @@ class ModelAggregationService:
                 for key, value in model_crd.spec.modelConfig.items()
                 if key != "modelCapabilities"
             }
-            codex_catalog_model_id = env.get("codex_catalog_model_id") or env.get(
-                "codexCatalogModelId"
-            )
-            if (
-                isinstance(codex_catalog_model_id, str)
-                and codex_catalog_model_id.strip()
-            ):
-                config["codex_catalog_model_id"] = codex_catalog_model_id.strip()
+            codex_catalog_model_id = codex_catalog_model_id_from_config(env)
+            if codex_catalog_model_id:
+                config["codex_catalog_model_id"] = codex_catalog_model_id
             if model_crd.spec.protocol:
                 config = {**config, "protocol": model_crd.spec.protocol}
             if model_crd.spec.apiFormat:

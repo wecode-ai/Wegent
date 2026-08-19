@@ -41,7 +41,10 @@ from app.services.user_runtime_config import (
     UserRuntimeConfigError,
     user_runtime_config_service,
 )
-from shared.codex_model_catalog import codex_catalog_model_id_for_upstream
+from shared.codex_model_catalog import (
+    codex_catalog_model_id_for_upstream,
+    codex_catalog_model_id_from_config,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -201,20 +204,15 @@ def _catalog_model_id_from_model_options(
     model_options: Optional[Dict[str, Any]],
 ) -> Optional[str]:
     """Extract catalog model id override from UI model options."""
-    if not model_options:
-        return None
-    catalog_id = (
-        model_options.get("weworkCloudModelCodexCatalogModelId")
-        or model_options.get("weworkCloudModelCatalogModelId")
-        or model_options.get("codex_catalog_model_id")
-        or model_options.get("codexCatalogModelId")
+    return codex_catalog_model_id_from_config(
+        model_options,
+        (
+            "weworkCloudModelCodexCatalogModelId",
+            "weworkCloudModelCatalogModelId",
+            "codex_catalog_model_id",
+            "codexCatalogModelId",
+        ),
     )
-    result = (
-        catalog_id.strip()
-        if isinstance(catalog_id, str) and catalog_id.strip()
-        else None
-    )
-    return result
 
 
 def _catalog_model_id_from_model_spec(

@@ -513,6 +513,9 @@ fn vision_sidecar_catalog_model(base: &Value) -> Option<Value> {
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_else(|| vec![Value::String("text".to_owned())]);
+    if !input_modalities.iter().any(|modality| modality == "text") {
+        input_modalities.insert(0, Value::String("text".to_owned()));
+    }
     if !input_modalities.iter().any(|modality| modality == "image") {
         input_modalities.push(Value::String("image".to_owned()));
     }
@@ -706,6 +709,19 @@ mod tests {
             json!(["text", "audio", "image"])
         );
         assert_eq!(vision_model["visibility"], "none");
+    }
+
+    #[test]
+    fn vision_derivation_adds_text_to_an_image_only_profile() {
+        let base = json!({
+            "slug": "image-only-model",
+            "display_name": "Image-only Model",
+            "input_modalities": ["image"]
+        });
+
+        let vision_model = vision_sidecar_catalog_model(&base).expect("derived model");
+
+        assert_eq!(vision_model["input_modalities"], json!(["text", "image"]));
     }
 
     #[test]

@@ -851,6 +851,36 @@ fn malformed_vision_sidecar_keeps_the_base_catalog_profile() {
 }
 
 #[test]
+fn incomplete_vision_sidecar_keeps_the_base_catalog_profile() {
+    let invalid_sidecars = [
+        json!({"model_id": "vision-model"}),
+        json!({"request_url": "https://vision.example/v1/responses"}),
+        json!({
+            "request_url": "https://vision.example/v1/responses",
+            "model_id": "vision-model",
+            "api_format": "openai-embeddings"
+        }),
+    ];
+
+    for vision_sidecar in invalid_sidecars {
+        let request = ExecutionRequest {
+            model_config: json!({
+                "model_id": "provider-model",
+                "codex_catalog_model_id": "operator-catalog",
+                "codex_responses_compat_proxy": true,
+                "vision_sidecar": vision_sidecar
+            }),
+            ..ExecutionRequest::default()
+        };
+
+        assert_eq!(
+            codex_request_model(&request).as_deref(),
+            Some("operator-catalog")
+        );
+    }
+}
+
+#[test]
 fn shell_profile_uses_explicit_catalog_capabilities() {
     let request = ExecutionRequest {
         model_config: json!({

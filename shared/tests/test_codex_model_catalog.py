@@ -2,7 +2,31 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from shared.codex_model_catalog import codex_catalog_model_id_for_upstream
+from shared.codex_model_catalog import (
+    codex_catalog_model_id_for_upstream,
+    codex_catalog_model_id_from_config,
+)
+
+
+def test_catalog_id_config_candidates_are_validated_independently() -> None:
+    assert (
+        codex_catalog_model_id_from_config(
+            {
+                "codex_catalog_model_id": "  ",
+                "codexCatalogModelId": " operator-catalog ",
+            }
+        )
+        == "operator-catalog"
+    )
+    assert (
+        codex_catalog_model_id_from_config(
+            {
+                "codex_catalog_model_id": {"invalid": True},
+                "codexCatalogModelId": "alias-catalog",
+            }
+        )
+        == "alias-catalog"
+    )
 
 
 def test_resolves_exact_upstream_model_with_matching_api_format() -> None:
@@ -25,6 +49,12 @@ def test_resolves_declared_upstream_model_fragment() -> None:
     assert (
         codex_catalog_model_id_for_upstream(
             "moonshot-kimi-k2.7-code-highspeed", "openai-responses"
+        )
+        == "wework-kimi-k2-7"
+    )
+    assert (
+        codex_catalog_model_id_for_upstream(
+            "moonshot-kimi-k2.7-code-highspeed", "anthropic-messages"
         )
         == "wework-kimi-k2-7"
     )
