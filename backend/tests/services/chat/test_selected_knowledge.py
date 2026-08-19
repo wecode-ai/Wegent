@@ -657,6 +657,10 @@ def test_wegent_skill_does_not_broaden_selected_knowledge_queries() -> None:
 
     assert "First, list available knowledge bases" not in skill
     assert 'use `scope="all"` directly' not in skill
+    assert "always includes all descendant folders" not in skill
+    assert "set `include_subfolders`" in skill
+    assert "resource's `include_descendants` value" in skill
+    assert "omit `include_subfolders` to use the Provider default" in skill
     assert "Never broaden the request to the whole knowledge base" in skill
 
 
