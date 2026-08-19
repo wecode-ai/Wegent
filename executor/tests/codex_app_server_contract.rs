@@ -1349,7 +1349,9 @@ while IFS= read -r line; do
       ;;
     *'"method":"turn/start"'*)
       turn_count=$((turn_count + 1))
-      printf '{"id":%s,"result":{"turn":{"id":"turn-%s","status":"inProgress"}}}\n' "$request_id" "$turn_count"
+      thread_id=$(printf '%s' "$line" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
+      turn_id="turn-${thread_id}"
+      printf '{"id":%s,"result":{"turn":{"id":"%s","status":"inProgress"}}}\n' "$request_id" "$turn_id"
       if [ "$turn_count" -eq 2 ]; then
         index=0
         while [ "$index" -lt 2200 ]; do
@@ -1357,8 +1359,8 @@ while IFS= read -r line; do
           index=$((index + 1))
         done
         for active in 1 2; do
-          printf '{"method":"item/completed","params":{"threadId":"thread-%s","turnId":"turn-%s","item":{"id":"message-%s","type":"agentMessage","phase":"final_answer","text":"isolated"}}}\n' "$active" "$active" "$active"
-          printf '{"method":"turn/completed","params":{"threadId":"thread-%s","turn":{"id":"turn-%s","status":"completed"}}}\n' "$active" "$active"
+          printf '{"method":"item/completed","params":{"threadId":"thread-%s","turnId":"turn-thread-%s","item":{"id":"message-%s","type":"agentMessage","phase":"final_answer","text":"isolated"}}}\n' "$active" "$active" "$active"
+          printf '{"method":"turn/completed","params":{"threadId":"thread-%s","turn":{"id":"turn-thread-%s","status":"completed"}}}\n' "$active" "$active"
         done
       fi
       ;;

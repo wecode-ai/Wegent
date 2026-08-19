@@ -185,6 +185,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       const requestText = JSON.stringify(body)
       const prompt = Object.values(PROMPTS).find(candidate => requestText.includes(candidate))
       if (!prompt) return false
+      if (streams.has(prompt)) {
+        const message = `Received duplicate notification isolation request for ${prompt}`
+        response.writeHead(409, { 'Content-Type': 'application/json; charset=utf-8' })
+        response.end(`${JSON.stringify({ error: message })}\n`)
+        throw new Error(message)
+      }
 
       requests.push(prompt)
       const id = `wework-notification-isolation-${requests.length}`
