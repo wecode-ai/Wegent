@@ -2689,6 +2689,7 @@
     "join_existing_work_item": "加入已有工作空间",
     "select_another_work_item": "选择其他工作空间",
     "disable_work_item": "不使用工作空间",
+    "clear_extra_project_space": "不加入其他项目空间",
     "goal_status_compact_active": "进行中",
     "goal_status_compact_paused": "已暂停",
     "goal_status_compact_blocked": "受阻",
