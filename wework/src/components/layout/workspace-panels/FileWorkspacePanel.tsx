@@ -3,6 +3,7 @@ import {
   Check,
   ChevronDown,
   Code2,
+  Copy,
   Eye,
   FileOutput,
   Folder,
@@ -15,6 +16,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isWorkspaceDirectoryCacheFresh } from '@/features/workbench/workspaceFileDirectoryCache'
+import { copyTextToClipboard } from '@/lib/clipboard'
 import { cn } from '@/lib/utils'
 import { track } from '@/telemetry/client'
 import {
@@ -40,6 +42,7 @@ import type {
 } from '@/types/workspace-files'
 import { WorkspaceFilePreview } from './WorkspaceFilePreview'
 import { WorkspaceFileTree } from './WorkspaceFileTree'
+import { workspaceRelativeFilePath } from './workspaceFilePath'
 import { isMarkdownFile } from './workspaceFileTypes'
 
 export interface FileWorkspacePanelSelection {
@@ -76,6 +79,12 @@ interface WorkspaceBinaryPreview {
 interface FilePreviewLoadingProgress {
   loadedBytes: number
   totalBytes: number | null
+}
+
+interface CopyRelativePathFeedback {
+  rootPath: string
+  filePath: string
+  status: 'copied' | 'failed'
 }
 
 function FileOpenerIcon({ opener }: { opener: LocalFileOpener }) {
@@ -219,6 +228,8 @@ export function FileWorkspacePanel({
   const [fileOpenerMenuOpen, setFileOpenerMenuOpen] = useState(false)
   const [workspaceTargetMenuOpen, setWorkspaceTargetMenuOpen] = useState(false)
   const [selectedApplicationPath, setSelectedApplicationPath] = useState<string | null>(null)
+  const [copyRelativePathFeedback, setCopyRelativePathFeedback] =
+    useState<CopyRelativePathFeedback | null>(null)
   const [, setFileOpenerIconCacheVersion] = useState(0)
   const initialSelectionRef = useRef(initialSelection)
   const treeRequestSequence = useRef(0)
@@ -228,6 +239,7 @@ export function FileWorkspacePanel({
   const fileOpenerRequestSequence = useRef(0)
   const fileOpenerMenuRef = useRef<HTMLDivElement>(null)
   const workspaceTargetMenuRef = useRef<HTMLDivElement>(null)
+  const copyRelativePathFeedbackTimeoutRef = useRef<number | null>(null)
 
   const warmFileOpenerIcons = useCallback(async (openers: LocalFileOpener[]) => {
     for (const opener of openers) {
@@ -683,6 +695,15 @@ export function FileWorkspacePanel({
     }
   }, [workspaceTargetMenuOpen])
 
+  useEffect(
+    () => () => {
+      if (copyRelativePathFeedbackTimeoutRef.current !== null) {
+        window.clearTimeout(copyRelativePathFeedbackTimeoutRef.current)
+      }
+    },
+    []
+  )
+
   if (!stableTarget) {
     return (
       <section className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-sm text-text-muted">
@@ -694,6 +715,15 @@ export function FileWorkspacePanel({
   const activePreviewLineTarget =
     previewLineTarget && previewLineTarget.filePath === preview?.path ? previewLineTarget : null
   const displayPath = selectedFilePath ?? stableTarget.path
+  const selectedFileRelativePath =
+    selectedFilePath && !selectedPathIsDirectory
+      ? workspaceRelativeFilePath(stableTarget.path, selectedFilePath)
+      : null
+  const activeCopyRelativePathFeedback =
+    copyRelativePathFeedback?.rootPath === stableTarget.path &&
+    copyRelativePathFeedback.filePath === selectedFilePath
+      ? copyRelativePathFeedback.status
+      : null
   const canOpenFile =
     stableTarget.workspaceSource !== 'remote' &&
     Boolean(selectedFilePath) &&
@@ -727,6 +757,32 @@ export function FileWorkspacePanel({
     if (!selectedFilePath || !canOpenFile) return
     setFileOpenerMenuOpen(false)
     await revealLocalFile(selectedFilePath)
+  }
+
+  const copySelectedFileRelativePath = async () => {
+    if (!selectedFilePath || !selectedFileRelativePath) return
+    const feedbackTarget = {
+      rootPath: stableTarget.path,
+      filePath: selectedFilePath,
+    }
+    if (copyRelativePathFeedbackTimeoutRef.current !== null) {
+      window.clearTimeout(copyRelativePathFeedbackTimeoutRef.current)
+    }
+    try {
+      await copyTextToClipboard(selectedFileRelativePath)
+      setCopyRelativePathFeedback({ ...feedbackTarget, status: 'copied' })
+    } catch {
+      setCopyRelativePathFeedback({ ...feedbackTarget, status: 'failed' })
+    }
+    copyRelativePathFeedbackTimeoutRef.current = window.setTimeout(() => {
+      setCopyRelativePathFeedback(current =>
+        current?.rootPath === feedbackTarget.rootPath &&
+        current.filePath === feedbackTarget.filePath
+          ? null
+          : current
+      )
+      copyRelativePathFeedbackTimeoutRef.current = null
+    }, 2000)
   }
 
   const directoryTreeToggleLabel = directoryTreeVisible
@@ -866,6 +922,50 @@ export function FileWorkspacePanel({
               {markdownMode === 'preview'
                 ? t('workbench.workspace_file_source')
                 : t('workbench.workspace_file_preview')}
+            </button>
+          )}
+          {selectedFileRelativePath && !editing && (
+            <button
+              type="button"
+              data-testid="workspace-file-copy-relative-path-button"
+              onClick={() => void copySelectedFileRelativePath()}
+              title={t('workbench.workspace_file_copy_relative_path')}
+              className={cn(
+                'flex h-8 items-center gap-1.5 rounded-md px-2 text-sm hover:bg-muted',
+                activeCopyRelativePathFeedback === 'copied'
+                  ? 'text-green-600'
+                  : activeCopyRelativePathFeedback === 'failed'
+                    ? 'text-red-600'
+                    : 'text-text-secondary hover:text-text-primary'
+              )}
+            >
+              {activeCopyRelativePathFeedback === 'copied' ? (
+                <Check className="h-4 w-4" />
+              ) : (
+                <Copy className="h-4 w-4" />
+              )}
+              <span
+                data-testid={
+                  activeCopyRelativePathFeedback === 'copied'
+                    ? 'workspace-file-relative-path-copied-status'
+                    : activeCopyRelativePathFeedback === 'failed'
+                      ? 'workspace-file-relative-path-copy-failed-status'
+                      : undefined
+                }
+                role={
+                  activeCopyRelativePathFeedback === 'copied'
+                    ? 'status'
+                    : activeCopyRelativePathFeedback === 'failed'
+                      ? 'alert'
+                      : undefined
+                }
+              >
+                {activeCopyRelativePathFeedback === 'copied'
+                  ? t('workbench.workspace_file_relative_path_copied')
+                  : activeCopyRelativePathFeedback === 'failed'
+                    ? t('workbench.workspace_file_copy_relative_path_failed')
+                    : t('workbench.workspace_file_copy_relative_path')}
+              </span>
             </button>
           )}
           {editing && (
