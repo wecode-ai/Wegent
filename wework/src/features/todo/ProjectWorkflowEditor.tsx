@@ -116,6 +116,24 @@ function dependencyContext(
   return [...(node.dependency_context?.[dependencyId] ?? DEFAULT_DEPENDENCY_CONTEXT)]
 }
 
+/** Replace one incoming dependency with another, keeping context in sync. */
+function rewireDependency(
+  node: WorkflowNodeDefinition,
+  from: string,
+  to: string
+): WorkflowNodeDefinition {
+  if (!node.depends_on.includes(from)) return node
+  const nextContext = Object.fromEntries(
+    Object.entries(node.dependency_context ?? {}).filter(([dependencyId]) => dependencyId !== from)
+  )
+  nextContext[to] = dependencyContext(node, from)
+  return {
+    ...node,
+    depends_on: node.depends_on.map(dependencyId => (dependencyId === from ? to : dependencyId)),
+    dependency_context: nextContext,
+  }
+}
+
 function createStageNode(
   id: string,
   name: string,
@@ -1233,17 +1251,8 @@ export function ProjectWorkflowEditor({
       updateDefinition({
         stage_mode: 'dag',
         nodes: [...nodes.slice(0, anchorIndex), inserted, ...nodes.slice(anchorIndex)].map(node =>
-          node.node_type === 'end' && previous && node.depends_on.includes(previous.id)
-            ? {
-                ...node,
-                depends_on: node.depends_on.map(dependency =>
-                  dependency === previous.id ? inserted.id : dependency
-                ),
-                dependency_context: {
-                  ...(node.dependency_context ?? {}),
-                  [inserted.id]: [...DEFAULT_DEPENDENCY_CONTEXT],
-                },
-              }
+          node.node_type === 'end' && previous
+            ? rewireDependency(node, previous.id, inserted.id)
             : node
         ),
       })
@@ -1322,22 +1331,7 @@ export function ProjectWorkflowEditor({
         const inserted = createStageNode(id, name, [selectedId], {
           [selectedId]: [...DEFAULT_DEPENDENCY_CONTEXT],
         })
-        const rewiredNodes = value.nodes.map(node => {
-          if (!node.depends_on.includes(selectedId)) return node
-          const nextContext = Object.fromEntries(
-            Object.entries(node.dependency_context ?? {}).filter(
-              ([dependencyId]) => dependencyId !== selectedId
-            )
-          )
-          nextContext[id] = dependencyContext(node, selectedId)
-          return {
-            ...node,
-            depends_on: node.depends_on.map(dependencyId =>
-              dependencyId === selectedId ? id : dependencyId
-            ),
-            dependency_context: nextContext,
-          }
-        })
+        const rewiredNodes = value.nodes.map(node => rewireDependency(node, selectedId, id))
         rewiredNodes.splice(selectedIndex + 1, 0, inserted)
         updateDefinition({ stage_mode: 'dag', nodes: rewiredNodes })
       }

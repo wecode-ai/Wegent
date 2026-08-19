@@ -700,6 +700,47 @@ describe('ProjectWorkflowEditor', () => {
     expect(screen.getByTestId('project-workflow-wait-mode-wait-1-trigger')).toBeInTheDocument()
   })
 
+  test('prunes stale dependency context while rewiring the end node', () => {
+    const initial: ProjectWorkflowDefinition = {
+      version: 1,
+      stage_mode: 'dag',
+      advancement_policy: 'manual',
+      nodes: [
+        startNode,
+        {
+          ...endNode,
+          depends_on: ['start'],
+          dependency_context: { start: ['final_result', 'deliveries'] },
+        },
+      ],
+    }
+    const onChange = vi.fn()
+    const { rerender } = render(
+      <ProjectWorkflowEditor value={initial} busy={false} onChange={onChange} onSave={vi.fn()} />
+    )
+
+    fireEvent.click(screen.getByTestId('project-workflow-add'))
+    const afterStage = onChange.mock.calls.at(-1)![0] as ProjectWorkflowDefinition
+    expect(afterStage.nodes.find(node => node.id === 'end')).toEqual(
+      expect.objectContaining({
+        depends_on: ['stage-1'],
+        dependency_context: { 'stage-1': ['final_result', 'deliveries'] },
+      })
+    )
+    rerender(
+      <ProjectWorkflowEditor value={afterStage} busy={false} onChange={onChange} onSave={vi.fn()} />
+    )
+
+    fireEvent.click(screen.getByTestId('project-workflow-add-wait'))
+    const afterWait = onChange.mock.calls.at(-1)![0] as ProjectWorkflowDefinition
+    expect(afterWait.nodes.find(node => node.id === 'end')).toEqual(
+      expect.objectContaining({
+        depends_on: ['wait-1'],
+        dependency_context: { 'wait-1': ['final_result', 'deliveries'] },
+      })
+    )
+  })
+
   test('edits wait rules and gates saving on a non-empty event type', () => {
     const onChange = vi.fn()
     const workflowWithWait: ProjectWorkflowDefinition = {
