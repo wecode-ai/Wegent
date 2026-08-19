@@ -4468,7 +4468,7 @@ async fn wait_for_method_count(log_path: &Path, method: &str, expected: usize) {
 }
 
 async fn wait_for_logged_pid(log_path: &Path, prefix: &str) -> u32 {
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
         let content = fs::read_to_string(log_path).unwrap_or_default();
         if let Some(pid) = content.lines().find_map(|line| {

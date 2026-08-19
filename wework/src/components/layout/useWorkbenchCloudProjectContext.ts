@@ -764,7 +764,6 @@ export function useWorkbenchCloudProjectContext({
     const params = new URLSearchParams()
     params.set('projectStore', boundCloudProject.project_store)
     params.set('projectId', String(boundCloudProject.id))
-    params.set('itemId', boundCloudItem.id)
     const contentRoute = `/todo?${params.toString()}`
     if (workspaceTabs) {
       const projectKey = projectSpaceKey(projectSpaceRef(boundCloudProject))

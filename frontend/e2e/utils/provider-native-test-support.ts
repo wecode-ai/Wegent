@@ -281,9 +281,16 @@ export async function waitForTaskTerminal(
     await expect
       .poll(
         async () => {
-          const response = await runtimeRequest.get(
-            `${PROVIDER_NATIVE_API_URL}/api/tasks/${taskId}/runtime-check`
-          )
+          let response
+          try {
+            response = await runtimeRequest.get(
+              `${PROVIDER_NATIVE_API_URL}/api/tasks/${taskId}/runtime-check`
+            )
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error)
+            if (!/socket hang up|ECONNRESET/i.test(message)) throw error
+            return `TRANSPORT_ERROR_${message}`
+          }
           if (response.status() !== 200) return `HTTP_${response.status()}`
           const body = (await response.json()) as { task_status: string }
           finalStatus = body.task_status.toUpperCase()

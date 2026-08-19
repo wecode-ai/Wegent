@@ -212,7 +212,7 @@ def test_status_removal_bulk_clear_appends_entries(test_db, test_user) -> None:
     assert last["by_user_id"] == test_user.id
 
 
-def test_task_started_binding_records_entry(test_db, test_user) -> None:
+def test_task_binding_does_not_claim_runtime_has_started(test_db, test_user) -> None:
     project = _make_project(test_db, test_user)
     item = _create_item(test_db, project, test_user)
 
@@ -228,10 +228,6 @@ def test_task_started_binding_records_entry(test_db, test_user) -> None:
     )
     test_db.refresh(item)
 
-    assert item.status == "in_progress"
+    assert item.status == "inbox"
     history = _history(item)
-    assert len(history) == 2
-    last = history[-1]
-    assert last["trigger"] == "task_started"
-    assert last["to_status"] == "in_progress"
-    assert last["by_user_id"] == test_user.id
+    assert len(history) == 1

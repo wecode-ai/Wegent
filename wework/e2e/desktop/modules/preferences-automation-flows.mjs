@@ -190,7 +190,8 @@ async function declineInitialTelemetryConsent(control) {
   )
 }
 
-async function ensureExperimentalFeaturesEnabled(control) {
+async function setExperimentalFeaturesEnabled(control, enabled) {
+  if (control.experimentalFeaturesEnabled === enabled) return
   const settingsButtonCount = Number(
     await control.command('getElementCount', '[data-testid="settings-button"]', {
       visible: true,
@@ -198,8 +199,9 @@ async function ensureExperimentalFeaturesEnabled(control) {
   )
   if (settingsButtonCount === 0) {
     await control.command('setAppPreferences', 'body', {
-      value: JSON.stringify({ experimentalFeaturesEnabled: true }),
+      value: JSON.stringify({ experimentalFeaturesEnabled: enabled }),
     })
+    control.experimentalFeaturesEnabled = enabled
     return
   }
 
@@ -210,18 +212,28 @@ async function ensureExperimentalFeaturesEnabled(control) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   if (
-    (await control.command('getAttribute', toggleSelector, { value: 'aria-checked' })) !== 'true'
+    (await control.command('getAttribute', toggleSelector, { value: 'aria-checked' })) !==
+    String(enabled)
   ) {
     await control.command('click', toggleSelector)
     await waitForAttribute(
       control,
       toggleSelector,
       'aria-checked',
-      'true',
-      'Enabling experimental features was not persisted'
+      String(enabled),
+      `${enabled ? 'Enabling' : 'Disabling'} experimental features was not persisted`
     )
   }
+  control.experimentalFeaturesEnabled = enabled
   await control.command('click', '[data-testid="settings-back-button"]')
+}
+
+async function ensureExperimentalFeaturesEnabled(control) {
+  await setExperimentalFeaturesEnabled(control, true)
+}
+
+async function ensureExperimentalFeaturesDisabled(control) {
+  await setExperimentalFeaturesEnabled(control, false)
 }
 
 async function verifyAutomationLifecycle(control, executorHome, homePath) {
@@ -1033,6 +1045,7 @@ export {
   verifyTelemetryRemainsDisabled,
   verifyInitialTelemetryConsent,
   declineInitialTelemetryConsent,
+  ensureExperimentalFeaturesDisabled,
   ensureExperimentalFeaturesEnabled,
   verifyAutomationLifecycle,
   verifyCloudAutomationLifecycle,

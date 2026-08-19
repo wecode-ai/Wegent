@@ -11,7 +11,6 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
-import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { useTranslation } from '@/hooks/useTranslation'
 import { dispatchOpenSettingsShortcut } from '@/lib/keybindings'
 import { cn } from '@/lib/utils'
@@ -112,7 +111,6 @@ export function DesktopAppSwitcher({
 }: DesktopAppSwitcherProps) {
   const { t } = useTranslation('common')
   const cloudConnection = useContext(CloudConnectionContext)
-  const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   const triggerRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const timerRef = useRef<number | null>(null)
@@ -134,13 +132,11 @@ export function DesktopAppSwitcher({
       },
     ]
 
-    if (experimentalFeaturesEnabled || activeApp === 'todo') {
-      appOptions.push({
-        key: 'todo',
-        label: t('workbench.app_weloop_label', '项目空间'),
-        description: t('workbench.app_weloop_description', '用 AI 管理项目的规划、执行与反馈'),
-      })
-    }
+    appOptions.push({
+      key: 'todo',
+      label: t('workbench.app_weloop_label', '项目空间'),
+      description: t('workbench.app_weloop_description', '用 AI 管理项目的规划、执行与反馈'),
+    })
 
     appOptions.push({
       key: 'wegent',
@@ -153,7 +149,7 @@ export function DesktopAppSwitcher({
     })
 
     return appOptions
-  }, [activeApp, cloudConnection?.isConnected, experimentalFeaturesEnabled, t])
+  }, [activeApp, cloudConnection?.isConnected, t])
   const displayedAppKey = rollingLabel ? displayedKey : activeApp
   const selected =
     options.find(option => option.key === displayedAppKey) ??

@@ -238,6 +238,10 @@ describe('GeneralSettingsPage', () => {
   })
 
   test('persists the selected default workspace tab', async () => {
+    getAppPreferencesMock.mockResolvedValue({
+      ...defaultPreferences,
+      experimentalFeaturesEnabled: true,
+    })
     render(<GeneralSettingsPage />)
 
     const boardButton = await screen.findByTestId('general-default-workspace-tab-board-button')
@@ -255,6 +259,12 @@ describe('GeneralSettingsPage', () => {
       })
     })
     expect(boardButton).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  test('shows the default workspace tab setting while experimental features are disabled', async () => {
+    render(<GeneralSettingsPage />)
+    expect(await screen.findByTestId('general-default-workspace-tab-task-button')).toBeEnabled()
+    expect(screen.getByTestId('general-default-workspace-tab-board-button')).toBeInTheDocument()
   })
 
   test('keeps experimental features off by default and persists enabling them', async () => {

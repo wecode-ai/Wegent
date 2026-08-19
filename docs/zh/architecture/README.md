@@ -11,6 +11,11 @@ sidebar_position: 1
 | 看板自动化与 Wegent 执行    | [board-automation.md](board-automation.md)               | 指派、执行真值、runtime 激活、续聊、取消、终态投影                |
 | 自定义 AI 调度员评论续聊    | [automation-manager-continuation.md](automation-manager-continuation.md) | 评论身份、execution 绑定、runtime 会话续聊、任务状态隔离 |
 | 内置浏览器导航与多标签      | [embedded-browser.md](embedded-browser.md)               | bridge 路由、pending open、WebView 生命周期、导航完成、多标签 E2E |
+| Issue、任务与工作流编排     | [issue-task-workflow.md](issue-task-workflow.md)         | Issue 聚合、任务绑定、工作空间继承、DAG 就绪判断、状态聚合         |
+| Issue Runtime 状态、交付与界面投影 | [issue-runtime-delivery-projection.md](issue-runtime-delivery-projection.md) | Runtime 终态写入、阶段聚合、Delivery 履约、事件失效、Issue 详情一致性 |
+| 工作流阶段交付与依赖上下文 | [workflow-stage-deliverables.md](workflow-stage-deliverables.md) | 结构化交付要求、人工与自动阶段门禁、代码证据、后继上下文快照 |
+| 工作流阶段执行路由         | [workflow-stage-execution-routing.md](workflow-stage-execution-routing.md) | 人工启动、云端派发、本地/云端设备路由、统一阶段执行契约 |
+| 项目空间 Agent 能力         | [project-space-agent-capability.md](project-space-agent-capability.md) | 本地 Gateway、ContextGrant、Codex Plugin、离线 Provider、MCP 生命周期 |
 | 项目执行状态与 Runtime 容量 | [project-execution-state.md](project-execution-state.md) | claim、事件顺序、取消、重试、lease、并发容量、UI 投影             |
 | Git Worktree 执行           | [git-worktree-execution.md](git-worktree-execution.md)   | 设备路由、能力、preflight、排队创建、生命周期、持久化、UI 投影    |
 | 文本模型视觉委托            | [model-vision-delegation.md](model-vision-delegation.md)                 | 显式模型引用、catalog 能力、sidecar 配置、图片替换、失败隔离      |

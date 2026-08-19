@@ -293,7 +293,46 @@ impl RuntimeWorkRpcHandler {
             }
         }
         let payload_has_workspace_path = payload_workspace_path.is_some();
+        let workspace_source_task = payload
+            .get("workspaceSourceTask")
+            .or_else(|| payload.get("workspace_source_task"))
+            .and_then(Value::as_object);
+        let inherited_workspace_path = if let Some(source) = workspace_source_task {
+            let source_device_id = source
+                .get("deviceId")
+                .or_else(|| source.get("device_id"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    AppIpcError::new("bad_request", "workspace source device is required")
+                })?;
+            let source_task_id = source
+                .get("taskId")
+                .or_else(|| source.get("task_id"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    AppIpcError::new("bad_request", "workspace source task is required")
+                })?;
+            if source_device_id != self.device_id {
+                return Err(AppIpcError::new(
+                    "workspace_source_unavailable",
+                    "inherited workflow workspace belongs to another device",
+                ));
+            }
+            Some(
+                self.local_task_link(source_task_id)
+                    .ok_or_else(|| {
+                        AppIpcError::new(
+                            "workspace_source_unavailable",
+                            "inherited workflow workspace is unavailable",
+                        )
+                    })?
+                    .workspace_path,
+            )
+        } else {
+            None
+        };
         let source_workspace_path = payload_workspace_path
+            .or(inherited_workspace_path)
             .or_else(|| request.cwd().map(str::to_owned))
             .or_else(|| {
                 id_field(&payload, "local_project_id")

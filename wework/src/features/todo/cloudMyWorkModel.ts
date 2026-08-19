@@ -1,10 +1,16 @@
-import type { CloudMyWorkItem } from '@/api/deliveries'
+import type { CloudLoopItem, CloudMyWorkItem } from '@/api/deliveries'
 import { isExecutionActive } from './executionStatus'
 
 export type MyWorkGroupKey = 'approval' | 'action' | 'running' | 'review' | 'done'
 
+export function isLoopItemExecutionActive(
+  item: Pick<CloudLoopItem, 'status' | 'execution_state'>
+): boolean {
+  return item.status === 'in_progress' || isExecutionActive(item.execution_state)
+}
+
 export function isMyWorkExecutionActive(item: CloudMyWorkItem): boolean {
-  if (item.execution_state != null) return isExecutionActive(item.execution_state)
+  if (item.execution_state != null) return isLoopItemExecutionActive(item)
   // A manually-created Runtime task has no queue execution attempt. Its task
   // binding remains authoritative for that separate path.
   return item.has_active_task && item.status === 'in_progress'

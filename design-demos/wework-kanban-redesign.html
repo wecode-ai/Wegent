@@ -1,0 +1,818 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Wework 看板重设计 Demo</title>
+<style>
+  /* ============ 设计变量（配色取自现有界面） ============ */
+  :root {
+    --bg-app: #ffffff;          /* 应用底色：白 */
+    --bg-sidebar: #f7f7f7;      /* 侧栏底色：浅灰，代替竖分割线 */
+    --bg-subtle: #f7f7f7;       /* 详情属性区/对话输入等浅色分区块 */
+    --bg-surface: #ffffff;      /* 卡片/浮层 */
+    --bg-column: #f5f5f5;       /* 看板列容器 */
+    --bg-hover: rgba(0,0,0,.05);
+    --bg-active: #dfe0e3;       /* 侧栏选中行 */
+    --text-1: #1f2328;
+    --text-2: #6b6f76;
+    --text-3: #9ba0a6;
+    --accent: #2f6fed;
+    --accent-soft: #f5f9ff;     /* 任务行选中浅蓝底（取自现有选中态） */
+    --accent-border: rgba(47,111,237,.35);
+    --border-subtle: rgba(0,0,0,.06);   /* 只保留在卡片等真正需要的地方 */
+    --radius-s: 8px;
+    --radius-m: 12px;
+    --radius-l: 16px;
+    --shadow-card: 0 1px 2px rgba(0,0,0,.04);
+    --shadow-card-hover: 0 4px 14px rgba(0,0,0,.08);
+    --shadow-float: 0 12px 40px rgba(0,0,0,.16);
+    --font: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", sans-serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: var(--font);
+    background: var(--bg-app);
+    color: var(--text-1);
+    font-size: 13px;
+    overflow: hidden;
+  }
+
+  /* ============ 整体骨架：无分割线，靠底色分层 ============ */
+  .app { display: flex; height: 100vh; }
+
+  /* ============ 左侧栏 ============ */
+  .sidebar {
+    width: 232px;
+    flex-shrink: 0;
+    background: var(--bg-sidebar);
+    padding: 12px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    transition: width .22s ease, padding .22s ease;
+    overflow: hidden;
+  }
+  .sidebar.collapsed { width: 56px; padding: 12px 8px; }
+  .sidebar.collapsed .label,
+  .sidebar.collapsed .item-text,
+  .sidebar.collapsed .section-title,
+  .sidebar.collapsed .count-badge,
+  .sidebar.collapsed .brand-text { display: none; }
+
+  .brand {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 8px 12px;
+    font-weight: 700; font-size: 15px;
+    white-space: nowrap;
+  }
+  .brand-mark {
+    width: 24px; height: 24px; border-radius: 7px; flex-shrink: 0;
+    background: #1a1a1a;
+  }
+
+  .side-item {
+    display: flex; align-items: center; gap: 9px;
+    padding: 7px 9px;
+    border-radius: var(--radius-s);
+    color: var(--text-2);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background .12s;
+    user-select: none;
+  }
+  .side-item:hover { background: var(--bg-hover); }
+  .side-item.active {
+    background: var(--bg-active);
+    color: var(--text-1);
+    font-weight: 500;
+  }
+  .side-item .icon { width: 16px; text-align: center; flex-shrink: 0; font-size: 14px; }
+  .count-badge {
+    margin-left: auto;
+    font-size: 11px;
+    color: var(--text-3);
+    background: var(--bg-hover);
+    border-radius: 999px;
+    padding: 1px 7px;
+  }
+  .side-item.active .count-badge { background: rgba(0,0,0,.07); color: var(--text-2); }
+
+  .section-title {
+    font-size: 11px;
+    color: var(--text-3);
+    padding: 14px 9px 5px;
+    display: flex; justify-content: space-between; align-items: center;
+    letter-spacing: .02em;
+  }
+  .section-title .plus { cursor: pointer; border-radius: 4px; padding: 0 4px; }
+  .section-title .plus:hover { background: var(--bg-hover); }
+
+  .side-scroll { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 1px; }
+  .side-scroll::-webkit-scrollbar { width: 0; }
+
+  .collapse-btn {
+    margin-top: 6px;
+    border: none; background: none; cursor: pointer;
+    color: var(--text-3); font-size: 12px;
+    padding: 6px 9px; border-radius: var(--radius-s);
+    text-align: left;
+  }
+  .collapse-btn:hover { background: var(--bg-hover); color: var(--text-2); }
+
+  /* ============ 主区域 ============ */
+  .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
+  /* 统一顶栏：只有这一条横带，下面不再有第二条工具栏 */
+  .topbar {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 20px;
+  }
+  .ws-switcher {
+    display: flex; align-items: center; gap: 7px;
+    padding: 5px 10px;
+    border-radius: var(--radius-s);
+    cursor: pointer; font-weight: 500;
+    transition: background .12s;
+  }
+  .ws-switcher:hover { background: var(--bg-hover); }
+  .ws-dot { width: 8px; height: 8px; border-radius: 50%; background: #34a853; }
+  .ws-switcher .chev { color: var(--text-3); font-size: 10px; }
+
+  .search {
+    flex: 1; max-width: 420px;
+    display: flex; align-items: center; gap: 8px;
+    background: var(--bg-hover);
+    border-radius: var(--radius-s);
+    padding: 6px 12px;
+    color: var(--text-3);
+    cursor: text;
+  }
+  .search kbd {
+    margin-left: auto;
+    font-family: var(--font); font-size: 11px;
+    background: var(--bg-surface);
+    border-radius: 4px; padding: 1px 6px;
+    color: var(--text-3);
+    box-shadow: var(--shadow-card);
+  }
+
+  .top-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+  .btn-ghost {
+    border: none; background: none; cursor: pointer;
+    padding: 6px 12px; border-radius: var(--radius-s);
+    color: var(--text-2); font-size: 13px; font-family: var(--font);
+    display: flex; align-items: center; gap: 6px;
+  }
+  .btn-ghost:hover { background: var(--bg-hover); }
+  .btn-primary {
+    border: none; cursor: pointer;
+    background: #1a1a1a; color: #fff;
+    padding: 7px 14px; border-radius: var(--radius-s);
+    font-size: 13px; font-weight: 500; font-family: var(--font);
+  }
+  .btn-primary:hover { opacity: .88; }
+
+  /* 看板头：标题 + 胶囊分段 + 筛选 chips，同一行 */
+  .board-head {
+    display: flex; align-items: center; gap: 14px;
+    padding: 6px 20px 14px;
+    flex-wrap: wrap;
+  }
+  .board-title { font-size: 17px; font-weight: 650; display: flex; align-items: baseline; gap: 8px; }
+  .board-title .meta { font-size: 12px; color: var(--text-3); font-weight: 400; }
+
+  .seg {
+    display: flex; gap: 2px;
+    background: var(--bg-hover);
+    padding: 3px;
+    border-radius: 9px;
+  }
+  .seg button {
+    border: none; background: none; cursor: pointer;
+    font-family: var(--font); font-size: 12.5px;
+    padding: 4px 13px; border-radius: 6px;
+    color: var(--text-2);
+  }
+  .seg button.on {
+    background: var(--bg-surface);
+    color: var(--text-1); font-weight: 500;
+    box-shadow: var(--shadow-card);
+  }
+
+  .chips { display: flex; gap: 6px; margin-left: auto; }
+  .chip {
+    display: flex; align-items: center; gap: 5px;
+    padding: 5px 11px;
+    background: var(--bg-surface);
+    border-radius: 999px;
+    color: var(--text-2); font-size: 12px;
+    cursor: pointer;
+    box-shadow: var(--shadow-card);
+  }
+  .chip:hover { color: var(--text-1); }
+  .chip .chev { font-size: 9px; color: var(--text-3); }
+
+  /* ============ 看板 ============ */
+  .board {
+    flex: 1;
+    display: flex; gap: 14px;
+    padding: 2px 20px 18px;
+    overflow-x: auto;
+    align-items: flex-start;
+  }
+  .col {
+    width: 272px; flex-shrink: 0;
+    background: var(--bg-column);
+    border-radius: var(--radius-m);
+    padding: 10px;
+    max-height: 100%;
+    display: flex; flex-direction: column;
+  }
+  .col-head {
+    display: flex; align-items: center; gap: 7px;
+    padding: 4px 6px 10px;
+    font-weight: 550; font-size: 12.5px;
+  }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .col-count {
+    font-size: 11px; color: var(--text-3);
+    background: rgba(255,255,255,.7);
+    border-radius: 999px; padding: 1px 8px;
+  }
+  .col-head .more { margin-left: auto; color: var(--text-3); cursor: pointer; padding: 0 4px; border-radius: 4px; }
+  .col-head .more:hover { background: var(--bg-hover); }
+
+  .col-body { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
+  .col-body::-webkit-scrollbar { width: 0; }
+
+  .card {
+    background: var(--bg-surface);
+    border-radius: 10px;
+    padding: 11px 12px;
+    cursor: pointer;
+    box-shadow: var(--shadow-card);
+    transition: box-shadow .15s, transform .15s;
+  }
+  .card:hover { box-shadow: var(--shadow-card-hover); transform: translateY(-1px); }
+  .card-title { font-weight: 550; margin-bottom: 4px; line-height: 1.45; }
+  .card-desc {
+    color: var(--text-2); font-size: 12px; line-height: 1.5;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .card-foot {
+    display: flex; align-items: center; gap: 10px;
+    margin-top: 9px;
+    color: var(--text-3); font-size: 11.5px;
+  }
+  .tag {
+    padding: 1px 8px; border-radius: 999px;
+    font-size: 11px;
+  }
+  .tag-normal { background: #f1f1f2; color: var(--text-2); }
+  .tag-run { background: #e8f3ff; color: #1a7fd4; }
+  .avatar {
+    margin-left: auto;
+    width: 20px; height: 20px; border-radius: 50%;
+    background: #e2e2e4;
+    color: #5a5d62; font-size: 10px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .pulse { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #1a7fd4; animation: p 1.4s infinite; }
+  @keyframes p { 50% { opacity: .3; } }
+
+  .add-card {
+    border: none; background: none; cursor: pointer;
+    color: var(--text-3); font-family: var(--font); font-size: 12.5px;
+    padding: 8px; border-radius: var(--radius-s);
+    text-align: left; margin-top: 6px;
+  }
+  .add-card:hover { background: var(--bg-hover); color: var(--text-2); }
+
+  .add-col {
+    flex-shrink: 0;
+    width: 272px;
+    cursor: pointer;
+    color: var(--text-3); font-family: var(--font); font-size: 12.5px;
+    padding: 12px;
+    border-radius: var(--radius-m);
+    text-align: left;
+    border: 1.5px dashed rgba(0,0,0,.12);
+    background: transparent;
+  }
+  .add-col:hover { color: var(--text-2); border-color: rgba(0,0,0,.22); }
+
+  /* ============ 浮层栈：Issue 详情 + 任务对话，两级向右递进出 ============ */
+  .backdrop {
+    position: fixed; inset: 0;
+    background: rgba(30,30,28,.18);
+    opacity: 0; pointer-events: none;
+    transition: opacity .2s;
+    z-index: 20;
+  }
+  .backdrop.show { opacity: 1; pointer-events: auto; }
+
+  .panel-stack {
+    position: fixed;
+    top: 12px; right: 12px; bottom: 12px;
+    display: flex;
+    z-index: 21;
+    pointer-events: none;
+  }
+  .panel {
+    pointer-events: auto;
+    background: var(--bg-surface);
+    border-radius: var(--radius-l);
+    box-shadow: var(--shadow-float);
+    display: flex; flex-direction: column;
+    overflow: hidden;
+    flex-shrink: 0;
+    width: 0; opacity: 0;
+    transform: translateX(48px);
+    transition:
+      width .26s cubic-bezier(.32,.72,.28,1),
+      margin-left .26s cubic-bezier(.32,.72,.28,1),
+      opacity .18s ease,
+      transform .26s cubic-bezier(.32,.72,.28,1);
+  }
+  .panel.show { opacity: 1; transform: none; }
+  .panel.detail.show { width: 430px; }
+  .panel.convo.show { width: 480px; margin-left: 12px; }
+  @media (max-width: 1100px) {
+    .panel.detail.show { width: 380px; }
+    .panel.convo.show { width: 420px; }
+  }
+
+  .panel-head {
+    display: flex; align-items: center; gap: 8px;
+    padding: 14px 18px 10px;
+  }
+  .panel-head .crumb { color: var(--text-3); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .panel-head .crumb b { color: var(--text-2); font-weight: 500; }
+  .panel-head .spacer { flex: 1; }
+  .icon-btn {
+    border: none; background: none; cursor: pointer;
+    width: 28px; height: 28px; border-radius: 7px; flex-shrink: 0;
+    color: var(--text-3); font-size: 13px;
+  }
+  .icon-btn:hover { background: var(--bg-hover); color: var(--text-1); }
+
+  .panel-body { flex: 1; overflow-y: auto; padding: 0 18px 18px; }
+
+  /* ---- Issue 详情层 ---- */
+  .meta-row { display: flex; gap: 8px; margin: 2px 0 12px; flex-wrap: wrap; }
+  .meta-item {
+    display: flex; align-items: center; gap: 6px;
+    background: var(--bg-subtle);
+    border-radius: 999px;
+    padding: 4px 11px;
+    color: var(--text-2); font-size: 12px;
+    cursor: pointer;
+  }
+  .meta-item:hover { color: var(--text-1); }
+  .meta-item .avatar { margin-left: 0; width: 16px; height: 16px; font-size: 9px; }
+
+  .detail-title {
+    font-size: 19px; font-weight: 650; line-height: 1.4;
+    padding: 2px 0 12px;
+    outline: none;
+  }
+
+  .attach-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--bg-subtle);
+    border-radius: var(--radius-s);
+    padding: 7px 11px;
+    color: var(--text-2); font-size: 12px;
+    cursor: pointer;
+    margin-bottom: 8px;
+  }
+  .attach-chip:hover { color: var(--text-1); }
+
+  .collapsible {
+    display: flex; align-items: center; justify-content: space-between;
+    color: var(--text-2); font-size: 12.5px;
+    padding: 9px 2px;
+    cursor: pointer;
+    border-radius: var(--radius-s);
+  }
+  .collapsible:hover { color: var(--text-1); }
+
+  .task-head {
+    display: flex; align-items: center; justify-content: space-between;
+    margin: 14px 0 8px;
+    font-size: 13px; font-weight: 600;
+  }
+  .task-head .btn-ghost { font-size: 12px; padding: 4px 10px; }
+
+  .task-list { display: flex; flex-direction: column; gap: 6px; }
+  .task-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    cursor: pointer;
+    border: 1px solid transparent;
+    transition: background .12s;
+  }
+  .task-row:hover { background: var(--bg-subtle); }
+  .task-row.active {
+    background: var(--accent-soft);
+    border-color: var(--accent-border);
+  }
+  .task-info { min-width: 0; }
+  .task-name { font-weight: 550; font-size: 13px; }
+  .task-sub { color: var(--text-3); font-size: 11.5px; margin-top: 1px; }
+  .task-row .chev-r { margin-left: auto; color: var(--text-3); font-size: 15px; }
+
+  .panel-foot {
+    padding: 12px 18px;
+    display: flex; gap: 8px; align-items: center;
+    color: var(--text-3); font-size: 12.5px;
+  }
+  .attach-bar {
+    flex: 1;
+    display: flex; align-items: center; gap: 10px;
+    background: var(--bg-subtle);
+    border-radius: 10px;
+    padding: 9px 13px;
+    cursor: pointer;
+  }
+  .attach-bar:hover { color: var(--text-2); }
+
+  /* ---- 任务对话层 ---- */
+  .convo-body { display: flex; flex-direction: column; gap: 16px; padding-top: 4px; }
+  .msg { max-width: 94%; }
+  .msg-name { font-weight: 600; font-size: 13px; margin-bottom: 6px; }
+  .msg.ai .msg-bubble {
+    font-size: 13px; line-height: 1.7; color: var(--text-1);
+  }
+  .msg.ai .msg-bubble ul { padding-left: 18px; margin: 6px 0; }
+  .msg.ai .msg-bubble li { margin: 2px 0; }
+  .msg.ai .msg-bubble p { margin: 8px 0; }
+  .msg.user { align-self: flex-end; }
+  .msg.user .msg-bubble {
+    background: var(--bg-subtle);
+    border-radius: 12px;
+    padding: 8px 13px;
+    font-size: 13px;
+  }
+
+  .convo-foot { padding: 12px 14px 14px; }
+  .reply-box {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: 14px;
+    box-shadow: var(--shadow-card);
+  }
+  .reply-input { padding: 12px 14px 6px; color: var(--text-3); font-size: 13px; cursor: text; }
+  .reply-bar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 4px 10px 9px;
+    color: var(--text-3); font-size: 12px;
+  }
+  .reply-icons { display: flex; gap: 4px; }
+  .reply-icons span { cursor: pointer; padding: 2px 5px; border-radius: 5px; }
+  .reply-icons span:hover { background: var(--bg-hover); }
+  .model-sel {
+    background: var(--bg-subtle);
+    border-radius: 999px;
+    padding: 3px 10px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .model-sel:hover { color: var(--text-2); }
+
+  @media (max-width: 900px) {
+    .sidebar { display: none; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ============ 侧栏 ============ -->
+  <aside class="sidebar" id="sidebar">
+    <div class="brand"><span class="brand-mark"></span><span class="brand-text">Wework</span></div>
+
+    <div class="side-item"><span class="icon">＋</span><span class="item-text">新建 Issue</span></div>
+    <div class="side-item"><span class="icon">◉</span><span class="item-text">我的工作</span></div>
+    <div class="side-item"><span class="icon">⚙</span><span class="item-text">设置</span></div>
+
+    <div class="section-title"><span>看板</span><span class="plus">＋</span></div>
+
+    <div class="side-scroll">
+      <div class="side-item active"><span class="icon">☁</span><span class="item-text">测试新的issues</span><span class="count-badge">4</span></div>
+      <div class="side-item"><span class="icon">☁</span><span class="item-text">测试自动化2026_08_15</span></div>
+      <div class="side-item"><span class="icon">☁</span><span class="item-text">自动化测试 2026_08_14</span></div>
+      <div class="side-item"><span class="icon">☁</span><span class="item-text">AI Verify Cloud 260D20</span></div>
+      <div class="side-item"><span class="icon">☁</span><span class="item-text">定时任务测试</span></div>
+      <div class="side-item"><span class="icon">☁</span><span class="item-text">修改名字</span></div>
+      <div class="side-item"><span class="icon">☁</span><span class="item-text">测试自动分活</span></div>
+      <div class="side-item"><span class="icon">☁</span><span class="item-text">定时任务执行</span></div>
+      <div class="side-item"><span class="icon">☁</span><span class="item-text">测试空的自动化页面</span></div>
+      <div class="side-item"><span class="icon">☁</span><span class="item-text">常驻云端设备冒烟-901f</span></div>
+      <div class="side-item"><span class="icon">☁</span><span class="item-text">云端真实执行-cloud-exec</span></div>
+      <div class="side-item"><span class="icon">☁</span><span class="item-text">钉钉表格接入</span></div>
+      <div class="side-item"><span class="icon">☁</span><span class="item-text">githubDemo</span></div>
+    </div>
+
+    <button class="collapse-btn" id="collapseBtn" title="收起侧栏">⇤ 收起</button>
+  </aside>
+
+  <!-- ============ 主区域 ============ -->
+  <div class="main">
+
+    <!-- 唯一的一条顶栏 -->
+    <header class="topbar">
+      <div class="ws-switcher">
+        <span class="ws-dot"></span>云端工作 <span class="chev">▾</span>
+      </div>
+      <div class="search">⌕&nbsp; 搜索 Issue、看板、文档… <kbd>⌘K</kbd></div>
+      <div class="top-actions">
+        <button class="btn-ghost">✦ 私信 AI</button>
+        <button class="btn-primary">＋ 新建 Issue</button>
+      </div>
+    </header>
+
+    <!-- 看板头：标题 / 分段切换 / 筛选 chips 一行搞定 -->
+    <div class="board-head">
+      <div class="board-title">测试新的issues <span class="meta">4 个 Issue</span></div>
+      <div class="seg" id="seg">
+        <button class="on">看板</button>
+        <button>文件</button>
+        <button>自动化</button>
+        <button>管理</button>
+      </div>
+      <div class="chips">
+        <div class="chip">状态 <span class="chev">▾</span></div>
+        <div class="chip">全部状态 <span class="chev">▾</span></div>
+        <div class="chip">⌕ 筛选</div>
+      </div>
+    </div>
+
+    <!-- 看板 -->
+    <div class="board" id="board">
+      <div class="col">
+        <div class="col-head">
+          <span class="status-dot" style="background:#9ba0a6"></span>收集箱
+          <span class="col-count">0</span>
+          <span class="more">⋯</span>
+        </div>
+        <div class="col-body"></div>
+        <button class="add-card">＋ 添加 Issue</button>
+      </div>
+
+      <div class="col">
+        <div class="col-head">
+          <span class="status-dot" style="background:#2f6fed"></span>待开始
+          <span class="col-count">1</span>
+          <span class="more">⋯</span>
+        </div>
+        <div class="col-body">
+          <div class="card" onclick="openDetail('开始任务')">
+            <div class="card-title">开始任务</div>
+            <div class="card-desc">开始任务</div>
+            <div class="card-foot">
+              <span class="tag tag-normal">普通</span>
+              <span>◷ 08-18</span>
+              <span class="avatar">A</span>
+            </div>
+          </div>
+        </div>
+        <button class="add-card">＋ 添加 Issue</button>
+      </div>
+
+      <div class="col">
+        <div class="col-head">
+          <span class="status-dot" style="background:#f2a33c"></span>进行中
+          <span class="col-count">1</span>
+          <span class="more">⋯</span>
+        </div>
+        <div class="col-body">
+          <div class="card" onclick="openDetail('看看图片是啥')">
+            <div class="card-title">看看图片是啥</div>
+            <div class="card-desc">看看图片是啥 [image.png] (/wegent://attachments/069763dc-…)</div>
+            <div class="card-foot">
+              <span class="tag tag-normal">普通</span>
+              <span>◷ 08-18</span>
+              <span class="avatar">A</span>
+            </div>
+            <div class="card-foot">
+              <span class="tag tag-run"><span class="pulse"></span>&nbsp;正在执行 · 测试</span>
+            </div>
+          </div>
+        </div>
+        <button class="add-card">＋ 添加 Issue</button>
+      </div>
+
+      <div class="col">
+        <div class="col-head">
+          <span class="status-dot" style="background:#7b5cf0"></span>待确认
+          <span class="col-count">1</span>
+          <span class="more">⋯</span>
+        </div>
+        <div class="col-body">
+          <div class="card" onclick="openDetail('看看这个项目是干啥的')">
+            <div class="card-title">看看这个项目是干啥的</div>
+            <div class="card-desc">看看这个项目是干啥的</div>
+            <div class="card-foot">
+              <span class="tag tag-normal">普通</span>
+              <span>◷ 08-18</span>
+              <span class="avatar">A</span>
+            </div>
+          </div>
+        </div>
+        <button class="add-card">＋ 添加 Issue</button>
+      </div>
+
+      <button class="add-col">＋ 添加列表</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 浮层栈：第一级 Issue 详情，第二级任务对话 ============ -->
+<div class="backdrop" id="backdrop" onclick="closeTop()"></div>
+<div class="panel-stack">
+
+  <!-- 第一级：Issue 详情 -->
+  <section class="panel detail" id="detail">
+    <div class="panel-head">
+      <span class="crumb">测试新的issues / <b>ISSUES94CBA1-2</b></span>
+      <span class="spacer"></span>
+      <button class="icon-btn" title="展开">⤢</button>
+      <button class="icon-btn" onclick="closeAll()" title="关闭">✕</button>
+    </div>
+    <div class="panel-body">
+      <div class="meta-row">
+        <span class="meta-item"><span class="avatar">A</span>负责人 admin ▾</span>
+        <span class="meta-item">◷ 截止 未设置 ▾</span>
+      </div>
+
+      <div class="detail-title" id="detailTitle" contenteditable>看看图片是啥</div>
+
+      <div class="attach-chip">🖼 image.png</div>
+
+      <div class="collapsible"><span>展开描述</span><span>▸</span></div>
+
+      <div class="task-head">
+        <span>任务 <span class="col-count">7</span></span>
+        <button class="btn-ghost">＋ 新建任务</button>
+      </div>
+      <div class="task-list" id="taskList">
+        <div class="task-row" onclick="openConvo(this)">
+          <span class="status-dot" style="background:#9ba0a6"></span>
+          <div class="task-info">
+            <div class="task-name">测试</div>
+            <div class="task-sub">local-device · 点击展开会话</div>
+          </div>
+          <span class="chev-r">›</span>
+        </div>
+        <div class="task-row active" onclick="openConvo(this)">
+          <span class="status-dot" style="background:#2f6fed"></span>
+          <div class="task-info">
+            <div class="task-name">测试</div>
+            <div class="task-sub">local-device · 当前会话</div>
+          </div>
+          <span class="chev-r">›</span>
+        </div>
+        <div class="task-row" onclick="openConvo(this)">
+          <span class="status-dot" style="background:#9ba0a6"></span>
+          <div class="task-info">
+            <div class="task-name">测试</div>
+            <div class="task-sub">local-device · 点击展开会话</div>
+          </div>
+          <span class="chev-r">›</span>
+        </div>
+        <div class="task-row" onclick="openConvo(this)">
+          <span class="status-dot" style="background:#34a853"></span>
+          <div class="task-info">
+            <div class="task-name">测试</div>
+            <div class="task-sub">local-device · 点击展开会话</div>
+          </div>
+          <span class="chev-r">›</span>
+        </div>
+        <div class="task-row" onclick="openConvo(this)">
+          <span class="status-dot" style="background:#9ba0a6"></span>
+          <div class="task-info">
+            <div class="task-name">测试</div>
+            <div class="task-sub">local-device · 点击展开会话</div>
+          </div>
+          <span class="chev-r">›</span>
+        </div>
+      </div>
+
+      <div class="collapsible"><span>更多属性</span><span>▾</span></div>
+    </div>
+    <div class="panel-foot">
+      <div class="attach-bar">📎 附件 <span style="margin-left:auto">1 ＋ 上传</span></div>
+    </div>
+  </section>
+
+  <!-- 第二级：任务对话 -->
+  <section class="panel convo" id="convo">
+    <div class="panel-head">
+      <button class="icon-btn" onclick="closeConvo()" title="返回">‹</button>
+      <span class="crumb"><b>ISSUES94CBA1-2</b> · 任务对话</span>
+      <span class="spacer"></span>
+      <button class="btn-ghost" style="font-size:12px;flex-shrink:0">打开完整任务 ⤢</button>
+    </div>
+    <div class="panel-body convo-body">
+      <div class="msg ai">
+        <div class="msg-name">测试</div>
+        <div class="msg-bubble">
+          <p>附件是一张「测试新的issues」项目空间的自动化设置页面截图，主要内容包括：</p>
+          <ul>
+            <li>「Issue 编排」区域</li>
+            <li>当前选中「预置流程」</li>
+            <li>阶段图尚未配置，显示「添加第一个阶段」</li>
+            <li>下方是「机器人」配置区域，右侧有「添加机器人」按钮</li>
+          </ul>
+          <p>任务目前处于「进行中」，负责人是 admin。</p>
+        </div>
+      </div>
+      <div class="msg user">
+        <div class="msg-bubble">看看图片</div>
+      </div>
+      <div class="msg ai">
+        <div class="msg-bubble">
+          <p>图片是 Wework 项目空间「测试新的issues」的自动化管理页面截图。画面主要展示：</p>
+          <ul>
+            <li>「Issue 编排」设置</li>
+            <li>已选择「预置流程」</li>
+            <li>阶段图目前为空，可点击「添加第一个阶段」</li>
+            <li>下方是「机器人」区域，可点击右侧的「添加机器人」</li>
+          </ul>
+          <p>整体来看，这是一个尚未配置 Issue 自动化阶段和执行机器人的初始页面。</p>
+        </div>
+      </div>
+    </div>
+    <div class="convo-foot">
+      <div class="reply-box">
+        <div class="reply-input">快速回复这个任务</div>
+        <div class="reply-bar">
+          <span class="reply-icons"><span>＋</span><span>⌘</span><span>⚡</span></span>
+          <span class="model-sel">ⓘ 公网：kimi-k2.7-code(高速版) ▾</span>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script>
+  // 侧栏收起/展开
+  const sidebar = document.getElementById('sidebar');
+  const collapseBtn = document.getElementById('collapseBtn');
+  collapseBtn.onclick = () => {
+    sidebar.classList.toggle('collapsed');
+    collapseBtn.textContent = sidebar.classList.contains('collapsed') ? '⇥' : '⇤ 收起';
+  };
+
+  // 分段切换
+  document.getElementById('seg').addEventListener('click', e => {
+    if (e.target.tagName !== 'BUTTON') return;
+    document.querySelectorAll('#seg button').forEach(b => b.classList.remove('on'));
+    e.target.classList.add('on');
+  });
+
+  // 侧栏选中态
+  document.querySelectorAll('.side-scroll .side-item').forEach(item => {
+    item.onclick = () => {
+      document.querySelectorAll('.side-scroll .side-item').forEach(i => i.classList.remove('active'));
+      item.classList.add('active');
+    };
+  });
+
+  // 两级浮层
+  const detail = document.getElementById('detail');
+  const convo = document.getElementById('convo');
+  const backdrop = document.getElementById('backdrop');
+
+  function openDetail(title) {
+    document.getElementById('detailTitle').textContent = title;
+    detail.classList.add('show');
+    backdrop.classList.add('show');
+  }
+  function openConvo(row) {
+    document.querySelectorAll('#taskList .task-row').forEach(r => r.classList.remove('active'));
+    row.classList.add('active');
+    convo.classList.add('show');
+  }
+  function closeConvo() {
+    convo.classList.remove('show');
+  }
+  function closeAll() {
+    convo.classList.remove('show');
+    detail.classList.remove('show');
+    backdrop.classList.remove('show');
+  }
+  // 关闭时只退一级：对话开着先关对话，否则关整个浮层
+  function closeTop() {
+    if (convo.classList.contains('show')) closeConvo();
+    else closeAll();
+  }
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeTop(); });
+</script>
+</body>
+</html>

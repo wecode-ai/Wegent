@@ -29,6 +29,7 @@ from app.schemas.cloud_file import (
     CloudFolderCreate,
     ProjectDeliveryFileListResponse,
     ProjectDeliveryFileResponse,
+    ProjectDeliveryItemPathResponse,
 )
 from app.schemas.cloud_project import (
     CloudProjectCreate,
@@ -387,18 +388,24 @@ def list_project_delivery_files(
     return ProjectDeliveryFileListResponse(
         items=[
             ProjectDeliveryFileResponse(
-                asset_id=asset.id,
-                delivery_id=delivery.id,
-                loop_item_id=item.id,
-                loop_item_title=item.title,
-                relative_path=asset.relative_path,
-                display_name=asset.display_name,
-                content_type=asset.content_type,
-                size_bytes=asset.size_bytes,
-                delivered_at=delivery.delivered_at,
+                asset_id=row.asset.id,
+                delivery_id=row.delivery.id,
+                loop_item_id=row.item.id,
+                loop_item_title=row.item.title or row.item.id,
+                relative_path=row.asset.relative_path,
+                display_name=row.asset.display_name,
+                content_type=row.asset.content_type,
+                size_bytes=row.asset.size_bytes,
+                delivered_at=row.delivery.delivered_at,
+                loop_item_path=[
+                    ProjectDeliveryItemPathResponse(
+                        id=item.id, title=item.title or item.id
+                    )
+                    for item in row.item_path
+                ],
             )
-            for asset, delivery, item in rows
-            if delivery.delivered_at is not None
+            for row in rows
+            if row.delivery.delivered_at is not None
         ]
     )
 

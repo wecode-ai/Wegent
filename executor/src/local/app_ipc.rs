@@ -27,9 +27,9 @@ use crate::{
     logging::{format_executor_log, reserve_executor_stdout_for_protocol, write_executor_log_line},
     runtime_work::RuntimeWorkRpcHandler,
     task_runtime::{
-        BinaryInput, ChatAgentCreate, ChatAgentUpdate, DeliveryCreate, LocalCommentCreate,
-        LocalExecutionClaim, ProjectCreate, ProjectDescriptor, ProjectUpdate, RuntimeTaskAddress,
-        TaskCreate, TaskReorder, TaskRuntime, TaskUpdate,
+        BinaryInput, ChatAgentCreate, ChatAgentUpdate, DeliveryCreate, DeliveryFinalize,
+        LocalCommentCreate, LocalExecutionClaim, ProjectCreate, ProjectDescriptor, ProjectUpdate,
+        RuntimeTaskAddress, TaskCreate, TaskReorder, TaskRuntime, TaskUpdate,
     },
     version::get_version,
 };
@@ -1590,9 +1590,21 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
         "deliveries.finalize" => {
             let item_id = required_task_string(&params, "item_id")?;
             let delivery_id = required_task_string(&params, "delivery_id")?;
+            let input = params
+                .get("finalize")
+                .cloned()
+                .map(serde_json::from_value::<DeliveryFinalize>)
+                .transpose()
+                .map_err(|error| {
+                    AppIpcError::new(
+                        "invalid_request",
+                        format!("invalid finalize input: {error}"),
+                    )
+                })?
+                .unwrap_or_default();
             serialize_task_value(
                 runtime
-                    .finalize_delivery(item_id, delivery_id)
+                    .finalize_delivery(item_id, delivery_id, input)
                     .map_err(task_runtime_error)?,
             )
         }
@@ -1967,6 +1979,7 @@ pub async fn serve_app_ipc_sidecar(
     device_id: String,
     runtime_instance_id: String,
 ) -> Result<(), String> {
+    crate::task_runtime::mcp_http::ensure_space_mcp_http_endpoint().await?;
     let server = AppIpcServer::new()
         .with_device_id(normalize_device_id(device_id))
         .with_runtime_instance_id(runtime_instance_id)

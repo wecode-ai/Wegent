@@ -5,6 +5,7 @@ import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import { useAnchoredPortalMenu } from '@/components/chat/composer/useAnchoredPortalMenu'
 import { useOutsideClick } from '@/components/chat/composer/useOutsideClick'
 import type { ProjectSpaceApi } from '@/features/todo/projectSpaceSelection'
+import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { RuntimeTaskAddress } from '@/types/api'
 
@@ -43,7 +44,12 @@ function isCurrentBinding(binding: TaskBinding, currentTask?: RuntimeTaskAddress
   )
 }
 
-export function WorkItemComposerGuide({
+export function WorkItemComposerGuide(props: WorkItemComposerGuideProps) {
+  const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
+  return experimentalFeaturesEnabled ? <ExperimentalWorkItemComposerGuide {...props} /> : null
+}
+
+function ExperimentalWorkItemComposerGuide({
   project,
   item,
   api,

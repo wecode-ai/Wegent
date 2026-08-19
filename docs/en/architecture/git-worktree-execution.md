@@ -53,6 +53,7 @@ sequenceDiagram
     U->>B: runtime.tasks.create(taskId, sourcePath, git_worktree)
     B->>E: relay unchanged
     E->>E: compute stable plannedPath and persist intent
+    E->>E: recognize an uncreated plannedPath by the managed path convention
     E-->>U: accepted/queued + plannedPath
     U->>U: hydrate the current task address and list projection with plannedPath
     alt no slot available
@@ -120,7 +121,7 @@ Essential invariants:
 18. Deferred creation persists the source-repository fingerprint captured while planning and compares it with a freshly computed fingerprint after acquiring a slot. Replacing the source directory with another repository fails as `worktree_source_changed`.
 19. A stop timeout has an unknown outcome. It never clears Runtime cancellation control or treats the task as stopped; an archive/delete retry still requires a stop acknowledgement from the same Runtime.
 20. `preserveSnapshot=false` is terminal cleanup: the Executor deletes any existing snapshot reference and removes the record from `worktrees.json`; later `runtime.worktrees.list` calls never return a tombstone for the cleaned Worktree.
-21. Workspace-kind detection prefers real Git metadata. The `worktrees/<id>/<project>` path convention is only a fallback when no Git repository or Worktree metadata can be resolved. A normal repository is never projected as a Worktree solely because an ancestor directory is named `worktrees`.
+21. Workspace-kind detection for an existing workspace prefers Git metadata on the candidate root itself. An uncreated managed planned path is recognized first by the `worktrees/<id>/<project>` convention and is not rejected because a higher Executor source checkout has a `.git` directory. An existing candidate root with normal repository metadata remains a workspace and is never projected as a Worktree solely because an ancestor directory is named `worktrees`.
 22. After Runtime accepts task creation, a work-list refresh failure only defers reconciliation; it never removes the accepted task from local visibility or reports the send as failed.
 23. Optimistic Worktree navigation may carry only task identity before the planned path returns. Once the create response or task list first provides the planned or final path, Wework hydrates that path into the current task address. The current task, list projection, and later Terminal, IDE, and file operations never retain a pathless optimistic address indefinitely.
 

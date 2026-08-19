@@ -36,6 +36,7 @@ on:
       - "shared/uv.lock"
       - "wegent-cli/requirements.txt"
       - "wework/package.json"
+      - "wework/codex-binaries.lock.json"
       - "wework/src-tauri/**"
   workflow_dispatch:
 
@@ -438,7 +439,7 @@ jobs:
           cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/wegent-wework-e2e:buildcache-desktop,mode=max
 
   warm-wework-desktop-target:
-    name: Warm Wework Desktop Cargo Target
+    name: Warm Wework Desktop Rust Cache
     needs:
       - changes
       - prepare-wework-desktop-image
@@ -450,6 +451,7 @@ jobs:
       packages: read
     env:
       HOME: /root
+      WEWORK_E2E_SKIP_TYPECHECK: "true"
     container:
       image: ${{ needs.prepare-wework-desktop-image.outputs.desktop_image }}
       credentials:
@@ -467,6 +469,16 @@ jobs:
         with:
           setup-toolchain: "false"
 
+      - name: Set up sccache
+        uses: ./.github/actions/setup-sccache
+
+      - name: Restore bundled Codex cache
+        id: bundled-codex-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ~/.cache/wegent/codex
+          key: ${{ runner.os }}-wework-codex-v1-${{ hashFiles('wework/codex-binaries.lock.json') }}
+
       - name: Restore shared Wework desktop E2E Cargo dependencies
         id: wework-desktop-cargo-cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
@@ -481,14 +493,19 @@ jobs:
             ${{ runner.os }}-wework-desktop-e2e-v3-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-
 
       - name: Prepare bundled sidecars
-        if: steps.wework-desktop-cargo-cache.outputs.cache-hit != 'true'
         working-directory: ./wework
         run: |
-          pnpm run prepare:codex --materialize
-          pnpm run prepare:dws
+          node scripts/prepare-codex-binary.mjs --materialize &
+          codex_pid=$!
+          node scripts/prepare-dws-binary.mjs &
+          dws_pid=$!
+
+          status=0
+          wait "$codex_pid" || status=$?
+          wait "$dws_pid" || status=$?
+          exit "$status"
 
       - name: Build Wework desktop Core E2E binaries
-        if: steps.wework-desktop-cargo-cache.outputs.cache-hit != 'true'
         env:
           CI: true
           WEWORK_E2E_BUILD_MANIFEST: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build.json
@@ -507,6 +524,13 @@ jobs:
             executor/target
             wework/src-tauri/target
           key: ${{ steps.wework-desktop-cargo-cache.outputs.cache-primary-key }}
+
+      - name: Save bundled Codex cache
+        if: steps.bundled-codex-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ~/.cache/wegent/codex
+          key: ${{ steps.bundled-codex-cache.outputs.cache-primary-key }}
 
   warm-executor-e2e-image:
     name: Warm Executor E2E Image Cache

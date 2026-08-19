@@ -28,6 +28,7 @@ export interface Delivery {
   created_at: string
   delivered_at: string | null
   assets: DeliveryAsset[]
+  fulfillments: DeliveryFulfillment[]
 }
 
 export interface DeliveryDetail extends Delivery {
@@ -39,6 +40,62 @@ export interface DeliveryCreateInput {
   markdown: string
   chat?: Record<string, unknown>
   source_task?: RuntimeTaskAddress
+}
+
+export type DeliverableValueType =
+  | 'text'
+  | 'file'
+  | 'code_snapshot'
+  | 'git_branch'
+  | 'pull_request'
+  | 'url'
+
+export interface DeliverableRequirement {
+  id: string
+  name: string
+  description: string
+  value_type: DeliverableValueType
+  file_constraints?: {
+    accepted_types: string[]
+    min_files: number
+    max_files: number
+  } | null
+}
+
+export type DeliveryFulfillment =
+  | { requirement_id: string; kind: 'text'; text: string }
+  | { requirement_id: string; kind: 'file'; asset_ids: string[] }
+  | {
+      requirement_id: string
+      kind: 'code_snapshot'
+      asset_id: string
+      changed_files: string[]
+      base_revision?: string | null
+      head_revision?: string | null
+      sha256: string
+    }
+  | {
+      requirement_id: string
+      kind: 'git_branch'
+      remote_url: string
+      branch: string
+      commit_sha: string
+    }
+  | {
+      requirement_id: string
+      kind: 'pull_request'
+      provider: 'github' | 'gitlab'
+      url: string
+      number: number
+      state: 'draft'
+      head_branch: string
+      base_branch: string
+      head_commit: string
+    }
+  | { requirement_id: string; kind: 'url'; url: string; title: string }
+
+export interface DeliveryFinalizeInput {
+  fulfillments: DeliveryFulfillment[]
 }
 
 export interface CloudLoopItem {
@@ -107,6 +164,7 @@ export interface CloudLoopItem {
     scheduled_for?: string | null
     bug_key?: string
   } | null
+  workflow?: IssueWorkflowInstance | null
   ai_state?: {
     run_id?: string
     status?: string
@@ -126,6 +184,8 @@ export interface CloudLoopItem {
     auto_retry?: boolean
     auto_retry_count?: number
   } | null
+  local_project_id?: number | null
+  local_project_name?: string | null
   title: string
   description: string
   status: string
@@ -249,6 +309,7 @@ export interface CloudProject {
     auto_retry_on_failure: boolean
     max_retry_count: number
   }
+  workflow_definition?: ProjectWorkflowDefinition
   created_by_user_id: number
   current_user_id?: number
   current_user_name?: string
@@ -274,9 +335,75 @@ export interface CloudTaskContext {
   task_id: string
   task_title: string | null
   backend_task_id: number | null
+  workflow_node_id?: string | null
   project: CloudProject
   loop_item: CloudLoopItem | null
   linked_at: string
+}
+
+export type WorkflowWorkspacePolicy = 'none' | 'composer' | 'inherit'
+export type WorkflowContextSource = 'final_result' | 'deliveries' | 'activity'
+export type WorkflowNodeStatus =
+  | 'blocked'
+  | 'ready'
+  | 'queued'
+  | 'running'
+  | 'awaiting_approval'
+  | 'awaiting_deliverables'
+  | 'changes_requested'
+  | 'completed'
+  | 'forced_completed'
+  | 'failed'
+export type IssueAdvancementPolicy = 'manual' | 'ai'
+export type IssueStageMode = 'none' | 'dag'
+
+export interface WorkflowNodeDefinition {
+  id: string
+  name: string
+  prompt?: string
+  kind?: 'my_task' | 'automation' | 'ai' | null
+  depends_on: string[]
+  dependency_context?: Record<string, WorkflowContextSource[]>
+  required: boolean
+  required_deliverables?: DeliverableRequirement[]
+  workspace_policy: WorkflowWorkspacePolicy
+  automation_rule_id?: string | null
+}
+
+export interface ProjectWorkflowDefinition {
+  version: number
+  stage_mode?: IssueStageMode
+  advancement_policy?: IssueAdvancementPolicy
+  coordinator_prompt?: string
+  ai_automation_rule_id?: string | null
+  nodes: WorkflowNodeDefinition[]
+}
+
+export interface WorkflowNodeInstance extends WorkflowNodeDefinition {
+  status: WorkflowNodeStatus
+  task_binding_id?: string | null
+  task_ids?: string[]
+  task_statuses?: Record<string, string>
+  delivery_ids?: string[]
+  fulfilled_deliverable_ids?: string[]
+  decision_history?: Array<{
+    action: 'approve' | 'reject' | 'force_advance'
+    actor_user_id: number
+    reason: string
+    decided_at: string
+  }>
+  execution_id?: number | null
+  automation_run_id?: string | null
+}
+
+export interface IssueWorkflowInstance {
+  version: number
+  definition_version: number
+  stage_mode?: IssueStageMode
+  advancement_policy?: IssueAdvancementPolicy
+  coordinator_prompt?: string
+  ai_automation_rule_id?: string | null
+  nodes: WorkflowNodeInstance[]
 }
 
 export interface CloudProjectFile {
@@ -306,6 +433,10 @@ export interface ProjectDeliveryFile {
   content_type: string | null
   size_bytes: number
   delivered_at: string
+  loop_item_path: Array<{
+    id: string
+    title: string
+  }>
 }
 
 export interface CloudProjectMember {
@@ -425,6 +556,25 @@ export function createTaskTrackingStatusQueue() {
 
 export const enqueueTaskTrackingMutation = createTaskTrackingStatusQueue()
 
+const workflowMutationTails = new Map<string, Promise<void>>()
+
+export function enqueueIssueWorkflowMutation<T>(
+  itemId: string,
+  update: () => Promise<T>
+): Promise<T> {
+  const previous = workflowMutationTails.get(itemId) ?? Promise.resolve()
+  const request = previous.then(update, update)
+  const tail = request.then(
+    () => undefined,
+    () => undefined
+  )
+  workflowMutationTails.set(itemId, tail)
+  void tail.then(() => {
+    if (workflowMutationTails.get(itemId) === tail) workflowMutationTails.delete(itemId)
+  })
+  return request
+}
+
 export function createDeliveryApi(client: HttpClient) {
   const trackProjectTaskOnce = createProjectTaskTrackingSingleFlight()
   const pendingTrackedItems = new Map<string, CloudLoopItem>()
@@ -466,6 +616,7 @@ export function createDeliveryApi(client: HttpClient) {
         visibility?: 'private' | 'public'
         card_display?: CloudProject['card_display']
         board_config?: CloudProject['board_config']
+        workflow_definition?: CloudProject['workflow_definition']
         provider_config?: {
           repository?: string
           domain?: string
@@ -600,6 +751,9 @@ export function createDeliveryApi(client: HttpClient) {
         due_at?: string
         parent_id?: string | null
         tags?: string[]
+        local_project_id?: number | null
+        local_project_name?: string | null
+        workflow?: IssueWorkflowInstance | null
       }
     ): Promise<CloudLoopItem> {
       return client.post(`/v1/cloud-projects/${projectId}/loop-items`, data)
@@ -619,6 +773,7 @@ export function createDeliveryApi(client: HttpClient) {
           | 'assignee_team_id'
           | 'due_at'
           | 'tags'
+          | 'workflow'
         >
       > & {
         version: number
@@ -738,6 +893,7 @@ export function createDeliveryApi(client: HttpClient) {
         task_id: string
         task_title: string | null
         backend_task_id: number | null
+        workflow_node_id?: string | null
         linked_at: string
       }>
     > {
@@ -754,11 +910,30 @@ export function createDeliveryApi(client: HttpClient) {
     removeLoopItemCollaborator(itemId: string, userId: number): Promise<void> {
       return client.delete(`/v1/loop-items/${encodeURIComponent(itemId)}/collaborators/${userId}`)
     },
-    bindTask(itemId: string, task: RuntimeTaskAddress, taskTitle?: string | null): Promise<void> {
+    bindTask(
+      itemId: string,
+      task: RuntimeTaskAddress,
+      taskTitle?: string | null,
+      workflowNodeId?: string | null
+    ): Promise<void> {
       return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/tasks`, {
         ...task,
         ...(taskTitle ? { taskTitle } : {}),
+        ...(workflowNodeId ? { workflowNodeId } : {}),
       })
+    },
+    decideWorkflowNode(
+      itemId: string,
+      workflowNodeId: string,
+      action: 'approve' | 'reject' | 'force_advance',
+      reason = '',
+      actorUserId?: number
+    ): Promise<CloudLoopItem> {
+      void actorUserId
+      return client.post(
+        `/v1/loop-items/${encodeURIComponent(itemId)}/workflow-nodes/${encodeURIComponent(workflowNodeId)}/decision`,
+        { action, reason }
+      )
     },
     bindProjectTask(
       projectId: CloudProjectIdInput,
@@ -793,7 +968,7 @@ export function createDeliveryApi(client: HttpClient) {
           (await api.createLoopItem(projectId, {
             title: taskTitle,
             description,
-            status: 'in_progress',
+            status: 'pending',
           }))
         pendingTrackedItems.set(trackingKey, item)
         await api.bindTask(item.id, task, taskTitle)
@@ -815,6 +990,16 @@ export function createDeliveryApi(client: HttpClient) {
         }
         if (!context.loop_item_id) return null
         const item = context.loop_item ?? (await api.getLoopItem(context.loop_item_id))
+        if (item.workflow && context.workflow_node_id) {
+          return client.patch('/v1/runtime-tasks/cloud-context/status', {
+            ...task,
+            status: executionStatus,
+          })
+        }
+        if (executionStatus === 'succeeded') {
+          const bindings = await api.listTaskBindings(item.id)
+          if (bindings.length > 1) return item
+        }
         const nextStatus = nextTaskTrackingStatus(item.status, executionStatus, {
           completeOnSuccess: isDefaultWorkItemProject(context.project),
         })
@@ -935,8 +1120,21 @@ export function createDeliveryApi(client: HttpClient) {
       form.set('relative_path', relativePath)
       return client.post(`/v1/deliveries/${deliveryId}/assets`, form)
     },
-    finalizeDelivery(deliveryId: string): Promise<Delivery> {
-      return client.post(`/v1/deliveries/${deliveryId}/finalize`)
+    finalizeDelivery(
+      deliveryId: string,
+      data: DeliveryFinalizeInput = { fulfillments: [] }
+    ): Promise<Delivery> {
+      return client.post(`/v1/deliveries/${deliveryId}/finalize`, data)
+    },
+    getWorkflowStageContext(
+      itemId: string,
+      workflowNodeId: string
+    ): Promise<Record<string, unknown>> {
+      return client.get(
+        `/v1/loop-items/${encodeURIComponent(itemId)}/workflow-nodes/${encodeURIComponent(
+          workflowNodeId
+        )}/input-context`
+      )
     },
     discardDraft(deliveryId: string): Promise<void> {
       return client.delete(`/v1/deliveries/${deliveryId}`)
