@@ -1474,6 +1474,7 @@ async def prepare_contexts_for_chat(
         enhanced_system_prompt=enhanced_system_prompt,
         kb_meta_prompt=kb_meta_prompt,
         knowledge_base_ids=merged_knowledge_base_ids,
+        knowledge_base_names=kb_result.knowledge_base_names,
         is_user_selected_kb=(
             True if selected_scopes else kb_result.is_user_selected_kb
         ),
@@ -1599,6 +1600,11 @@ def _prepare_kb_tools_from_contexts(
 
     # Track whether KB is user-selected (strict mode) or inherited from task (relaxed mode)
     is_user_selected_kb = bool(subtask_kb_ids)
+    knowledge_base_names = {
+        context.knowledge_id: context.name
+        for context in kb_contexts
+        if context.knowledge_id is not None and context.name
+    }
 
     knowledge_base_scopes: List[KnowledgeBaseScope] = []
 
@@ -1622,13 +1628,17 @@ def _prepare_kb_tools_from_contexts(
             scope.knowledge_base_id for scope in knowledge_base_scopes
         ] or _get_bound_knowledge_base_ids(db, task_id, user_id)
         from app.services.chat.task_default_knowledge_bases import (
-            resolve_task_default_knowledge_base_ids,
+            resolve_task_default_knowledge_base_refs,
         )
 
-        default_knowledge_base_ids = resolve_task_default_knowledge_base_ids(
+        default_knowledge_base_refs = resolve_task_default_knowledge_base_refs(
             db,
             task_id,
             user_id,
+        )
+        default_knowledge_base_ids = [ref.id for ref in default_knowledge_base_refs]
+        knowledge_base_names.update(
+            {ref.id: ref.name for ref in default_knowledge_base_refs}
         )
         knowledge_base_ids = list(
             dict.fromkeys(bound_knowledge_base_ids + default_knowledge_base_ids)
@@ -1661,6 +1671,7 @@ def _prepare_kb_tools_from_contexts(
             enhanced_system_prompt=enhanced_system_prompt,
             kb_meta_prompt="",
             knowledge_base_ids=[],
+            knowledge_base_names={},
             is_user_selected_kb=False,
             document_ids=[],
             knowledge_base_scopes=[],
@@ -1753,6 +1764,7 @@ def _prepare_kb_tools_from_contexts(
         enhanced_system_prompt=enhanced_system_prompt,
         kb_meta_prompt=kb_meta_prompt,
         knowledge_base_ids=knowledge_base_ids,
+        knowledge_base_names=knowledge_base_names,
         is_user_selected_kb=is_user_selected_kb,
         document_ids=legacy_document_ids,
         knowledge_base_scopes=knowledge_base_scopes,

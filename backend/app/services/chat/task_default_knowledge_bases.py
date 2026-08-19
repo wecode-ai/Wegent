@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.models.user import User
-from app.schemas.kind import Bot, Ghost, Task, Team
+from app.schemas.kind import Bot, Ghost, KnowledgeBaseDefaultRef, Task, Team
 from app.services.adapters.task_kinds.converters import resolve_task_ref_team
 from app.services.kind_ref_resolver import batch_load_kinds_by_refs
 from app.services.knowledge.knowledge_visibility_query import (
@@ -61,13 +61,13 @@ def _build_task_knowledge_base_ref(
     }
 
 
-def _iter_team_member_default_knowledge_base_ids(
+def _iter_team_member_default_knowledge_base_refs(
     db: Session,
     team,
-) -> list[int]:
-    """Collect default knowledge base IDs from all team member Ghosts."""
+) -> list[KnowledgeBaseDefaultRef]:
+    """Collect default knowledge base references from all team member Ghosts."""
     team_crd = Team.model_validate(team.json)
-    knowledge_base_ids: list[int] = []
+    knowledge_base_refs: list[KnowledgeBaseDefaultRef] = []
     bot_refs = [
         (member.botRef.namespace, member.botRef.name)
         for member in team_crd.spec.members or []
@@ -99,9 +99,9 @@ def _iter_team_member_default_knowledge_base_ids(
             continue
         ghost_crd = Ghost.model_validate(ghost.json)
         for ref in ghost_crd.spec.defaultKnowledgeBaseRefs or []:
-            knowledge_base_ids.append(ref.id)
+            knowledge_base_refs.append(ref)
 
-    return knowledge_base_ids
+    return knowledge_base_refs
 
 
 def _resolve_task_default_knowledge_bases(
@@ -109,7 +109,7 @@ def _resolve_task_default_knowledge_bases(
     task_id: int,
     user_id: int,
     knowledge_base_id: int | None = None,
-) -> tuple[Kind | None, list[int]]:
+) -> tuple[Kind | None, list[KnowledgeBaseDefaultRef]]:
     """Resolve the current Team and defaults its owner may still access."""
     task = task_store.get_active_task(db, task_id=task_id)
     if task is None or not isinstance(task.json, dict):
@@ -124,9 +124,10 @@ def _resolve_task_default_knowledge_bases(
     if team is None or team_share_service.get_resource(db, team.id, user_id) is None:
         return None, []
 
-    candidate_ids = list(
-        dict.fromkeys(_iter_team_member_default_knowledge_base_ids(db, team))
-    )
+    candidates_by_id: dict[int, KnowledgeBaseDefaultRef] = {}
+    for ref in _iter_team_member_default_knowledge_base_refs(db, team):
+        candidates_by_id.setdefault(ref.id, ref)
+    candidate_ids = list(candidates_by_id)
     if knowledge_base_id is not None:
         if knowledge_base_id not in candidate_ids:
             return team, []
@@ -136,8 +137,24 @@ def _resolve_task_default_knowledge_bases(
         user_id=team.user_id,
         candidate_ids=candidate_ids,
     )
-    accessible_ids = [kb_id for kb_id in candidate_ids if kb_id in allowed_ids]
-    return team, accessible_ids
+    accessible_refs = [
+        candidates_by_id[kb_id] for kb_id in candidate_ids if kb_id in allowed_ids
+    ]
+    return team, accessible_refs
+
+
+def resolve_task_default_knowledge_base_refs(
+    db: Session,
+    task_id: int,
+    user_id: int,
+) -> list[KnowledgeBaseDefaultRef]:
+    """Resolve current agent defaults with their configured display names."""
+    _, knowledge_base_refs = _resolve_task_default_knowledge_bases(
+        db,
+        task_id,
+        user_id,
+    )
+    return knowledge_base_refs
 
 
 def resolve_task_default_knowledge_base_ids(
@@ -146,12 +163,14 @@ def resolve_task_default_knowledge_base_ids(
     user_id: int,
 ) -> list[int]:
     """Resolve current agent defaults for an authorized task user."""
-    _, knowledge_base_ids = _resolve_task_default_knowledge_bases(
-        db,
-        task_id,
-        user_id,
-    )
-    return knowledge_base_ids
+    return [
+        ref.id
+        for ref in resolve_task_default_knowledge_base_refs(
+            db,
+            task_id,
+            user_id,
+        )
+    ]
 
 
 def resolve_task_default_knowledge_base_read_user_id(
@@ -161,13 +180,13 @@ def resolve_task_default_knowledge_base_read_user_id(
     knowledge_base_id: int,
 ) -> int | None:
     """Return the KB owner after validating task-scoped agent default access."""
-    team, knowledge_base_ids = _resolve_task_default_knowledge_bases(
+    team, knowledge_base_refs = _resolve_task_default_knowledge_bases(
         db,
         task_id,
         user_id,
         knowledge_base_id,
     )
-    if team is None or knowledge_base_id not in knowledge_base_ids:
+    if team is None or knowledge_base_id not in {ref.id for ref in knowledge_base_refs}:
         return None
     knowledge_base = _get_active_knowledge_base(db, knowledge_base_id)
     return knowledge_base.user_id if knowledge_base is not None else None

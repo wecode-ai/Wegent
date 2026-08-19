@@ -5,6 +5,7 @@
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+from app.schemas.kind import KnowledgeBaseDefaultRef
 from app.services.chat.storage.task_manager import TaskCreationParams, create_new_task
 
 
@@ -81,7 +82,7 @@ def _make_kb(kb_id: int, name: str):
 
 def test_team_default_refs_batch_load_bots_and_ghosts():
     from app.services.chat.task_default_knowledge_bases import (
-        _iter_team_member_default_knowledge_base_ids,
+        _iter_team_member_default_knowledge_base_refs,
     )
 
     db = Mock()
@@ -103,9 +104,12 @@ def test_team_default_refs_batch_load_bots_and_ghosts():
         "app.services.chat.task_default_knowledge_bases.batch_load_kinds_by_refs",
         side_effect=[bots, ghosts],
     ) as batch_load:
-        result = _iter_team_member_default_knowledge_base_ids(db, team)
+        result = _iter_team_member_default_knowledge_base_refs(db, team)
 
-    assert result == [11, 22]
+    assert [(ref.id, ref.name) for ref in result] == [
+        (11, "Product Docs"),
+        (22, "Runbooks"),
+    ]
     assert batch_load.call_count == 2
 
 
@@ -216,8 +220,12 @@ def test_resolve_task_defaults_uses_current_agent_configuration():
             return_value=team,
         ),
         patch(
-            "app.services.chat.task_default_knowledge_bases._iter_team_member_default_knowledge_base_ids",
-            return_value=[11, 22, 11],
+            "app.services.chat.task_default_knowledge_bases._iter_team_member_default_knowledge_base_refs",
+            return_value=[
+                KnowledgeBaseDefaultRef(id=11, name="Product Docs"),
+                KnowledgeBaseDefaultRef(id=22, name="Runbooks"),
+                KnowledgeBaseDefaultRef(id=11, name="Product Docs"),
+            ],
         ),
         patch(
             "app.services.chat.task_default_knowledge_bases.get_acl_accessible_knowledge_base_ids",
@@ -261,8 +269,11 @@ def test_resolve_task_defaults_drops_kbs_revoked_from_team_owner():
             return_value=team,
         ),
         patch(
-            "app.services.chat.task_default_knowledge_bases._iter_team_member_default_knowledge_base_ids",
-            return_value=[11, 22],
+            "app.services.chat.task_default_knowledge_bases._iter_team_member_default_knowledge_base_refs",
+            return_value=[
+                KnowledgeBaseDefaultRef(id=11, name="Product Docs"),
+                KnowledgeBaseDefaultRef(id=22, name="Runbooks"),
+            ],
         ),
         patch(
             "app.services.chat.task_default_knowledge_bases.get_acl_accessible_knowledge_base_ids",
@@ -301,8 +312,8 @@ def test_resolve_public_team_defaults_uses_public_acl_context():
             return_value=team,
         ),
         patch(
-            "app.services.chat.task_default_knowledge_bases._iter_team_member_default_knowledge_base_ids",
-            return_value=[11],
+            "app.services.chat.task_default_knowledge_bases._iter_team_member_default_knowledge_base_refs",
+            return_value=[KnowledgeBaseDefaultRef(id=11, name="Product Docs")],
         ),
         patch(
             "app.services.chat.task_default_knowledge_bases.get_acl_accessible_knowledge_base_ids",
@@ -333,7 +344,10 @@ def test_task_default_read_user_is_knowledge_base_owner():
     with (
         patch(
             "app.services.chat.task_default_knowledge_bases._resolve_task_default_knowledge_bases",
-            return_value=(team, [11]),
+            return_value=(
+                team,
+                [KnowledgeBaseDefaultRef(id=11, name="Product Docs")],
+            ),
         ),
         patch(
             "app.services.chat.task_default_knowledge_bases._get_active_knowledge_base",
@@ -377,7 +391,7 @@ def test_resolve_task_defaults_requires_agent_access():
             return_value=None,
         ),
         patch(
-            "app.services.chat.task_default_knowledge_bases._iter_team_member_default_knowledge_base_ids"
+            "app.services.chat.task_default_knowledge_bases._iter_team_member_default_knowledge_base_refs"
         ) as iter_defaults,
     ):
         result = resolve_task_default_knowledge_base_ids(db, task_id=100, user_id=7)

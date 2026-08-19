@@ -76,6 +76,8 @@ class KnowledgeBaseToolsResult:
     # Populated so callers can fill ExecutionRequest.knowledge_base_ids without a
     # second DB query.
     knowledge_base_ids: list[int] = None  # type: ignore[assignment]
+    # Display-name snapshots retained from the selected context or agent default.
+    knowledge_base_names: dict[int, str] = None  # type: ignore[assignment]
     is_user_selected_kb: bool = False
     document_ids: list[int] = None  # type: ignore[assignment]
     knowledge_base_scopes: list[KnowledgeBaseScope] = None  # type: ignore[assignment]
@@ -85,6 +87,8 @@ class KnowledgeBaseToolsResult:
         # Use object.__setattr__ because the dataclass is frozen.
         if self.knowledge_base_ids is None:
             object.__setattr__(self, "knowledge_base_ids", [])
+        if self.knowledge_base_names is None:
+            object.__setattr__(self, "knowledge_base_names", {})
         if self.document_ids is None:
             object.__setattr__(self, "document_ids", [])
         if self.knowledge_base_scopes is None:

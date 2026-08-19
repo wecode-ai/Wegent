@@ -191,7 +191,7 @@ class TestBuildExecutionRequestUserSubtaskId:
             *,
             preload_selected_kb_skill=True,
         ):
-            return request
+            return request, {}
 
         with patch.object(trigger_unified, "SessionLocal", return_value=mock_db):
             with patch(
@@ -443,7 +443,7 @@ class TestBuildExecutionRequestUserSubtaskId:
                 with patch.object(
                     trigger_unified,
                     "_process_contexts",
-                    new=AsyncMock(return_value=request_from_builder),
+                    new=AsyncMock(return_value=(request_from_builder, {})),
                 ) as mock_process_contexts:
                     task = MagicMock()
                     task.id = 1
@@ -493,7 +493,7 @@ class TestBuildExecutionRequestUserSubtaskId:
             patch.object(
                 trigger_unified,
                 "_process_contexts",
-                new=AsyncMock(return_value=request_from_builder),
+                new=AsyncMock(return_value=(request_from_builder, {})),
             ) as mock_process_contexts,
         ):
             task = MagicMock()
@@ -599,7 +599,7 @@ class TestBuildExecutionRequestUserSubtaskId:
                 with patch.object(
                     trigger_unified,
                     "_process_contexts",
-                    new=AsyncMock(return_value=request_from_builder),
+                    new=AsyncMock(return_value=(request_from_builder, {})),
                 ):
                     task = MagicMock()
                     task.id = 1
@@ -706,7 +706,7 @@ class TestBuildExecutionRequestUserSubtaskId:
             request.is_user_selected_kb = True
             request.preload_skills = ["wegent-knowledge"]
             request.user_selected_skills = ["wegent-knowledge"]
-            return request
+            return request, {1408: "产品知识"}
 
         team = MagicMock()
         team.json = {
@@ -724,33 +724,27 @@ class TestBuildExecutionRequestUserSubtaskId:
                     "_process_contexts",
                     new=AsyncMock(side_effect=_process_contexts_with_selected_kb),
                 ):
-                    with patch.object(
-                        trigger_unified.task_knowledge_base_service,
-                        "get_knowledge_base_display_names_by_ids",
-                        return_value={1408: "产品知识"},
-                    ) as mock_get_names:
-                        task = MagicMock()
-                        task.id = 1273
-                        task.json = {}
+                    task = MagicMock()
+                    task.id = 1273
+                    task.json = {}
 
-                        assistant_subtask = MagicMock()
-                        assistant_subtask.id = 1709
+                    assistant_subtask = MagicMock()
+                    assistant_subtask.id = 1709
 
-                        user = MagicMock()
-                        user.id = 7
+                    user = MagicMock()
+                    user.id = 7
 
-                        result = await trigger_unified.build_execution_request(
-                            task=task,
-                            assistant_subtask=assistant_subtask,
-                            team=team,
-                            user=user,
-                            message="save to selected kb",
-                            payload=None,
-                            user_subtask_id=1708,
-                            device_id="device-1",
-                        )
+                    result = await trigger_unified.build_execution_request(
+                        task=task,
+                        assistant_subtask=assistant_subtask,
+                        team=team,
+                        user=user,
+                        message="save to selected kb",
+                        payload=None,
+                        user_subtask_id=1708,
+                        device_id="device-1",
+                    )
 
-        mock_get_names.assert_called_once_with(mock_db, [1408])
         mock_builder.resolve_request_preload_skills.assert_called_once()
         unresolved_request = (
             mock_builder.resolve_request_preload_skills.call_args.kwargs["request"]
@@ -823,7 +817,7 @@ class TestBuildExecutionRequestUserSubtaskId:
             request.is_user_selected_kb = True
             request.preload_skills = ["wegent-knowledge"]
             request.user_selected_skills = ["wegent-knowledge"]
-            return request
+            return request, {1408: "产品知识"}
 
         team = MagicMock()
         team.json = {
@@ -907,7 +901,7 @@ class TestProcessContextsAttachments:
                 "app.services.chat.trigger.unified.context_service.get_attachments_by_subtask",
                 return_value=[attachment_context],
             ):
-                result = await trigger_unified._process_contexts(
+                result, names = await trigger_unified._process_contexts(
                     db=MagicMock(),
                     request=request,
                     user_subtask_id=1642,
@@ -915,6 +909,7 @@ class TestProcessContextsAttachments:
                 )
 
         assert result.prompt == "processed"
+        assert names == {}
         assert result.system_prompt == "enhanced"
         assert result.attachments == [
             {
@@ -1034,6 +1029,7 @@ class TestProcessContextsAttachments:
                 enhanced_system_prompt="enhanced",
                 kb_meta_prompt="meta",
                 knowledge_base_ids=[1408],
+                knowledge_base_names={1408: "产品知识"},
                 is_user_selected_kb=True,
             ),
         )
@@ -1046,7 +1042,7 @@ class TestProcessContextsAttachments:
                 "app.services.chat.trigger.unified.context_service.get_attachments_by_subtask",
                 return_value=[],
             ):
-                result = await trigger_unified._process_contexts(
+                result, names = await trigger_unified._process_contexts(
                     db=MagicMock(),
                     request=request,
                     user_subtask_id=1696,
@@ -1054,6 +1050,7 @@ class TestProcessContextsAttachments:
                 )
 
         assert result.knowledge_base_ids == [1408]
+        assert names == {1408: "产品知识"}
         assert result.preload_skills == ["wegent-knowledge"]
         assert result.user_selected_skills == ["wegent-knowledge"]
         assert result.system_prompt == "system"
@@ -1100,7 +1097,7 @@ class TestProcessContextsAttachments:
                 "app.services.chat.trigger.unified.context_service.get_attachments_by_subtask",
                 return_value=[],
             ):
-                result = await trigger_unified._process_contexts(
+                result, _ = await trigger_unified._process_contexts(
                     db=MagicMock(),
                     request=request,
                     user_subtask_id=1696,
@@ -1158,7 +1155,7 @@ class TestProcessContextsAttachments:
                 "app.services.chat.trigger.unified.context_service.get_attachments_by_subtask",
                 return_value=[],
             ):
-                result = await trigger_unified._process_contexts(
+                result, _ = await trigger_unified._process_contexts(
                     db=MagicMock(),
                     request=request,
                     user_subtask_id=1696,
@@ -1210,7 +1207,7 @@ class TestProcessContextsAttachments:
                 "app.services.chat.trigger.unified.context_service.get_attachments_by_subtask",
                 return_value=[],
             ):
-                result = await trigger_unified._process_contexts(
+                result, _ = await trigger_unified._process_contexts(
                     db=MagicMock(),
                     request=request,
                     user_subtask_id=1696,

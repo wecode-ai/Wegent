@@ -158,7 +158,7 @@ def test_apply_selected_knowledge_context_resolves_default_knowledge_name() -> N
         MagicMock(),
         request,
         task,
-        resolved_knowledge_base_names={115: "KB-A_产品知识"},
+        selected_knowledge_base_names={115: "KB-A_产品知识"},
     )
 
     # Assert
@@ -195,7 +195,7 @@ def test_whole_base_external_ref_preserves_resolved_wegent_name() -> None:
         _DefaultKnowledgeDB(),
         request,
         task,
-        resolved_knowledge_base_names={115: "KB-A_产品知识"},
+        selected_knowledge_base_names={115: "KB-A_产品知识"},
     )
 
     assert len(refs) == 1
@@ -266,6 +266,35 @@ def test_scoped_refs_use_later_non_fallback_name() -> None:
     assert len(refs) == 1
     assert [resource.resource_id for resource in refs[0].resources] == ["9", "10"]
     assert refs[0].knowledge_base_name == "KB-A_产品知识"
+
+
+def test_name_equal_to_id_is_not_treated_as_a_fallback() -> None:
+    request = ExecutionRequest(
+        external_knowledge_refs=[
+            {
+                "provider": "wegent",
+                "id": "115",
+                "name": "115",
+                "target_type": "document",
+                "document_id": "9",
+            },
+            {
+                "provider": "wegent",
+                "id": "115",
+                "name": "stale-name",
+                "target_type": "document",
+                "document_id": "10",
+            },
+        ]
+    )
+
+    refs = build_selected_knowledge_refs(
+        MagicMock(),
+        request,
+        SimpleNamespace(json={"spec": {}}),
+    )
+
+    assert refs[0].knowledge_base_name == "115"
 
 
 def test_build_selected_knowledge_refs_groups_resources_by_knowledge_base(

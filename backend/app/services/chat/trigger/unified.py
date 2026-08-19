@@ -33,9 +33,6 @@ from app.services.chat.external_knowledge_refs import (
     validate_external_knowledge_refs,
 )
 from app.services.context import context_service
-from app.services.knowledge.task_knowledge_base_service import (
-    task_knowledge_base_service,
-)
 from app.services.runtime_codex_model import (
     CODEX_RUNTIME_MODEL_ID,
     CODEX_RUNTIME_MODEL_NAME,
@@ -1082,23 +1079,17 @@ async def build_execution_request(
         context_subtask_id = (
             user_subtask_id if user_subtask_id else processed_subtask_id
         )
-        resolved_knowledge_base_names: dict[int, str] = {}
+        selected_knowledge_base_names: dict[int, str] = {}
         if context_subtask_id:
             preload_selected_kb_skill = (
                 task_labels.get("source") != KNOWLEDGE_ARTIFACT_SOURCE
             )
-            request = await _process_contexts(
+            request, selected_knowledge_base_names = await _process_contexts(
                 db,
                 request,
                 context_subtask_id,
                 user.id,
                 preload_selected_kb_skill=preload_selected_kb_skill,
-            )
-            resolved_knowledge_base_names = (
-                task_knowledge_base_service.get_knowledge_base_display_names_by_ids(
-                    db,
-                    list(request.knowledge_base_ids or []),
-                )
             )
 
         from app.services.chat.selected_knowledge import (
@@ -1112,7 +1103,7 @@ async def build_execution_request(
                 db,
                 request,
                 task,
-                resolved_knowledge_base_names=resolved_knowledge_base_names,
+                selected_knowledge_base_names=selected_knowledge_base_names,
             )
         unresolved_provider_skills = [
             skill_name
@@ -1146,7 +1137,7 @@ async def _process_contexts(
     user_id: int,
     *,
     preload_selected_kb_skill: bool = True,
-) -> "ExecutionRequest":
+) -> tuple["ExecutionRequest", dict[int, str]]:
     """Process contexts (attachments, knowledge bases, etc.) for the request.
 
     Args:
@@ -1158,7 +1149,7 @@ async def _process_contexts(
             the knowledge-management skill (default: True)
 
     Returns:
-        Enhanced ExecutionRequest with context information
+        Enhanced ExecutionRequest and selected knowledge-base name snapshots
     """
     from app.services.chat.preprocessing import prepare_contexts_for_chat
 
@@ -1236,7 +1227,7 @@ async def _process_contexts(
         inline_attachment_content,
     )
 
-    return request
+    return request, ctx.kb.knowledge_base_names
 
 
 async def _create_kb_contexts_from_api_request(

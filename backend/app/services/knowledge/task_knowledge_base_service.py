@@ -214,19 +214,6 @@ class TaskKnowledgeBaseService:
 
         return {kb.id: kb for kb in knowledge_bases}
 
-    def get_knowledge_base_display_names_by_ids(
-        self,
-        db: Session,
-        kb_ids: List[int],
-    ) -> dict[int, str]:
-        """Load current display names for knowledge bases resolved upstream."""
-        knowledge_bases = self.get_knowledge_bases_by_ids(db, kb_ids)
-        return {
-            kb_id: display_name
-            for kb_id, knowledge_base in knowledge_bases.items()
-            if (display_name := get_knowledge_base_display_name(knowledge_base))
-        }
-
     def get_knowledge_base_by_ref(
         self, db: Session, ref: dict
     ) -> tuple[Optional[Kind], bool]:
