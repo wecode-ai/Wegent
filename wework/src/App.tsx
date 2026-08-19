@@ -26,19 +26,12 @@ import { OidcCallbackPage } from '@/pages/OidcCallbackPage'
 import { LoginPage } from '@/pages/LoginPage'
 import { WeworkAuthorizePage } from '@/pages/WeworkAuthorizePage'
 import { WorkbenchPage } from '@/pages/WorkbenchPage'
-import { PluginsPage } from '@/pages/PluginsPage'
-import { PluginCreatePage } from '@/pages/PluginCreatePage'
-import { PluginManagementPage } from '@/pages/PluginManagementPage'
-import { SitesPage } from '@/pages/SitesPage'
-import { AutomationsPage } from '@/pages/AutomationsPage'
-import { CloudWorkPage } from '@/pages/CloudWorkPage'
 import { PopoutWorkbenchPage } from '@/pages/PopoutWorkbenchPage'
 import { stripAppBasePath } from '@/config/runtime'
 import { AppearanceProvider } from '@/features/appearance'
 import { ChromeTitlebar } from '@/components/topnav/ChromeTitlebar'
 import { AppIframe } from '@/components/topnav/AppIframe'
 import { useChromeTabs } from '@/components/topnav/useChromeTabs'
-import { APP_TABS } from '@/config/apps'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { AppUpdateProvider } from '@/features/app-update/AppUpdateProvider'
 import { LocalRuntimeInitializer } from '@/features/local-runtime/LocalRuntimeInitializer'
@@ -101,6 +94,10 @@ import { TelemetryBridge } from '@/telemetry/TelemetryBridge'
 import { track, useTelemetryEnabled } from '@/telemetry/client'
 import { WorkspaceTabPortalOwner } from '@/components/topnav/TitlebarActionsPortal'
 import { setActiveWorkspaceTabPortalOwner } from '@/components/topnav/workspaceTabPortalOwnership'
+import { getWorkbenchPluginRuntime } from '@/plugin-runtime/bootstrap'
+import { DynamicWorkbenchPluginHost } from '@/plugin-runtime/DynamicWorkbenchPluginHost'
+import { useActiveWorkbenchApps } from '@/plugin-runtime/apps'
+import { useWorkbenchRouteRegistry } from '@/plugin-runtime/routes'
 
 const WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS = 6000
 const POPOUT_WINDOW_LABEL = 'popout-window'
@@ -162,12 +159,8 @@ function useCurrentLocation() {
 
 function telemetryFeatureForPath(path: string) {
   if (path === '/login' || path === '/login/oidc') return 'login' as const
-  if (path === '/plugins/manage') return 'plugin_management' as const
-  if (path === '/plugins/create') return 'plugin_create' as const
-  if (path === '/plugins') return 'plugins' as const
-  if (path === '/cloud-work') return 'cloud_work' as const
-  if (path === '/sites') return 'sites' as const
-  if (path === '/automations') return 'automations' as const
+  const pluginRoute = getWorkbenchPluginRuntime().routes.resolve(path)
+  if (pluginRoute) return pluginRoute.telemetryFeature
   if (path.startsWith('/app/')) return 'apps' as const
   if (path.startsWith('/settings')) return 'settings' as const
   if (path.startsWith('/project-space')) return 'project_space' as const
@@ -190,20 +183,14 @@ function workspaceTabIframe(
 ): { src: string; title: string } | null {
   const match = workspaceTabPath(tab).match(/^\/app\/([^/]+)/)
   if (!match) return null
-  const app = APP_TABS.find(candidate => candidate.key === match[1])
+  const app = getWorkbenchPluginRuntime().apps.resolve(match[1])
   if (!app || app.mode !== 'iframe') return null
   const src = app.key === 'wegent' ? wegentUrl : app.url
   return src ? { src, title: app.label } : null
 }
 
 function workspaceTabAuxiliaryPage(path: string, search: string) {
-  if (path === '/plugins/manage') return <PluginManagementPage />
-  if (path === '/plugins/create') return <PluginCreatePage />
-  if (path === '/plugins') return <PluginsPage routeSearch={search} />
-  if (path === '/cloud-work') return <CloudWorkPage />
-  if (path === '/sites') return <SitesPage />
-  if (path === '/automations') return <AutomationsPage />
-  return null
+  return getWorkbenchPluginRuntime().routes.resolve(path)?.render({ search }) ?? null
 }
 
 interface WorkspaceTabSurfaceProps {
@@ -227,6 +214,8 @@ function WorkspaceTabSurface({
   tab,
   user,
 }: WorkspaceTabSurfaceProps) {
+  useActiveWorkbenchApps()
+  useWorkbenchRouteRegistry(getWorkbenchPluginRuntime().routes)
   const tabPath = workspaceTabPath(tab)
   const tabSearch = new URL(tab.contentRoute, window.location.origin).search
   const iframe = workspaceTabIframe(tab, cloudWebUrl)
@@ -323,6 +312,7 @@ function WorkspaceTabSurface({
 
 function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: AppRoutesProps = {}) {
   const path = useCurrentPath()
+  useWorkbenchRouteRegistry(getWorkbenchPluginRuntime().routes)
   const isPopoutWindow = isPopoutWindowRuntime()
   const { user, isLoading } = useAuth()
   const cloudConnection = useCloudConnection()
@@ -456,11 +446,8 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
 
 export default function App() {
   const path = useCurrentPath()
-  if (isTauriRuntime() && path === '/system-drag') {
-    return <SystemDragPanel />
-  }
-
-  return <MainApp />
+  const content = isTauriRuntime() && path === '/system-drag' ? <SystemDragPanel /> : <MainApp />
+  return getWorkbenchPluginRuntime().slots.renderRoot(content)
 }
 
 function MainApp() {
@@ -476,6 +463,7 @@ function MainApp() {
           <CloudConnectionProvider>
             <AuthProvider>
               <TelemetryBridge />
+              <DynamicWorkbenchPluginHost />
               <AppShell />
             </AuthProvider>
           </CloudConnectionProvider>

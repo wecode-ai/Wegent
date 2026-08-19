@@ -15,6 +15,7 @@ import { installWeworkAutomationBridge } from './e2e/automation'
 import { installDesktopExtensions } from '@extensions/desktop'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { installFrontendRecoveryBridge } from '@/lib/frontendRecovery'
+import { initializeWorkbenchPluginRuntime } from '@/plugin-runtime/bootstrap'
 
 const isSystemDragPanel = isTauriRuntime() && window.location.pathname === '/system-drag'
 if (!isSystemDragPanel) {
@@ -46,6 +47,7 @@ function renderApp(): void {
 }
 
 if (!isSystemDragPanel) {
+  await initializeWorkbenchPluginRuntime()
   await installWeworkAutomationBridge()
 }
 renderApp()

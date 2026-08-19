@@ -1,32 +1,42 @@
 import { useCallback, useMemo } from 'react'
-import { APP_TABS, DEFAULT_APP_KEY } from '@/config/apps'
 import { stripAppBasePath } from '@/config/runtime'
 import { navigateTo } from '@/lib/navigation'
+import {
+  getActiveWorkbenchAppRegistry,
+  type WorkbenchAppContribution,
+  useActiveWorkbenchApps,
+} from '@/plugin-runtime/apps'
+import { CORE_WORKBENCH_APPS } from '@/plugin-runtime/core-apps-data'
+
+const DEFAULT_APP_KEY = 'wework'
 
 export function useChromeTabs(currentPath: string) {
   const normalizedPath = stripAppBasePath(currentPath)
+  const registeredTabs = useActiveWorkbenchApps()
+  const tabs: readonly WorkbenchAppContribution[] =
+    registeredTabs.length > 0 ? registeredTabs : CORE_WORKBENCH_APPS
 
   const activeAppKey = useMemo(() => {
     const match = normalizedPath.match(/^\/app\/([^/]+)/)
-    if (match && APP_TABS.some(t => t.key === match[1])) return match[1]
+    if (match && tabs.some(t => t.key === match[1])) return match[1]
 
-    const nativeMatch = APP_TABS.find(
+    const nativeMatch = tabs.find(
       tab => tab.mode === 'native' && tab.path && tab.path !== '/' && normalizedPath === tab.path
     )
     if (nativeMatch) return nativeMatch.key
 
     return DEFAULT_APP_KEY
-  }, [normalizedPath])
+  }, [normalizedPath, tabs])
 
   const activeTab = useMemo(
-    () => APP_TABS.find(t => t.key === activeAppKey) ?? null,
-    [activeAppKey]
+    () => tabs.find(t => t.key === activeAppKey) ?? null,
+    [activeAppKey, tabs]
   )
 
   const isNativeApp = activeTab?.mode === 'native'
 
   const navigateToApp = useCallback((appKey: string) => {
-    const tab = APP_TABS.find(item => item.key === appKey)
+    const tab = getActiveWorkbenchAppRegistry().resolve(appKey)
     if (!tab) return
 
     if (tab.mode === 'native') {
@@ -41,6 +51,6 @@ export function useChromeTabs(currentPath: string) {
     activeTab,
     isNativeApp,
     navigateToApp,
-    tabs: APP_TABS.filter(tab => !tab.hidden),
+    tabs: tabs.filter(tab => !tab.hidden),
   }
 }
