@@ -155,6 +155,37 @@ extract_named_workflow_step() {
   ' "$workflow_path"
 }
 
+extract_named_workflow_step_from_job() {
+  local workflow_path="$1"
+  local job_start="$2"
+  local job_end="$3"
+  local step_name="$4"
+  awk \
+    -v job_start="$job_start" \
+    -v job_end="$job_end" \
+    -v target="$step_name" '
+      $0 == job_start {
+        in_job = 1
+        next
+      }
+      in_job && $0 == job_end {
+        in_job = 0
+      }
+      !in_job {
+        next
+      }
+      found && /^      - name:/ {
+        found = 0
+      }
+      $0 == "      - name: " target {
+        found = 1
+      }
+      found {
+        print
+      }
+    ' "$workflow_path"
+}
+
 assert_case() {
   local name="$1"
   local expected="$2"
@@ -622,26 +653,30 @@ if ! grep -q "wework_desktop_core_e2e_matrix" "$wework_workflow" ||
 fi
 
 core_cache_step="$(
-  extract_named_workflow_step \
-    <(sed -n \
-      '/^  build-wework-desktop-core-e2e:/,/^  wework-desktop-core-e2e:/p' \
-      "$wework_workflow") \
+  extract_named_workflow_step_from_job \
+    "$wework_workflow" \
+    "  build-wework-desktop-core-e2e:" \
+    "  wework-desktop-core-e2e:" \
     "Restore shared Wework desktop E2E Cargo dependencies"
 )"
 desktop_cache_step="$(
-  extract_named_workflow_step \
-    <(sed -n '/^  wework-desktop-e2e:/,/^  wework-e2e-summary:/p' \
-      "$wework_workflow") \
+  extract_named_workflow_step_from_job \
+    "$wework_workflow" \
+    "  wework-desktop-e2e:" \
+    "  wework-e2e-summary:" \
     "Restore shared Wework desktop E2E Cargo dependencies"
 )"
 core_cache_key="$(
-  sed -n 's/^          key:[[:space:]]*//p' <<<"$core_cache_step"
+  printf '%s\n' "$core_cache_step" |
+    sed -n 's/^          key:[[:space:]]*//p'
 )"
 desktop_cache_key="$(
-  sed -n 's/^          key:[[:space:]]*//p' <<<"$desktop_cache_step"
+  printf '%s\n' "$desktop_cache_step" |
+    sed -n 's/^          key:[[:space:]]*//p'
 )"
 core_cache_restore_keys="$(
-  awk '
+  printf '%s\n' "$core_cache_step" |
+    awk '
     /^          restore-keys:/ {
       in_restore_keys = 1
       next
@@ -652,10 +687,11 @@ core_cache_restore_keys="$(
     in_restore_keys {
       print
     }
-  ' <<<"$core_cache_step"
+  '
 )"
 desktop_cache_restore_keys="$(
-  awk '
+  printf '%s\n' "$desktop_cache_step" |
+    awk '
     /^          restore-keys:/ {
       in_restore_keys = 1
       next
@@ -666,7 +702,7 @@ desktop_cache_restore_keys="$(
     in_restore_keys {
       print
     }
-  ' <<<"$desktop_cache_step"
+  '
 )"
 if [[ "$(grep -c \
   "name: Restore shared Wework desktop E2E Cargo dependencies" \
@@ -683,7 +719,7 @@ fi
 
 # GitHub expressions are matched literally in workflow source.
 # shellcheck disable=SC2016
-if ! grep -Fq '${{ runner.os }}-wework-desktop-e2e-v3-' \
+if ! grep -Fq '${{ runner.os }}-wework-desktop-e2e-v4-' \
   <<<"$desktop_cache_key" ||
   ! grep -Fq "hashFiles('docker/wework-e2e/desktop.Dockerfile')" \
     <<<"$desktop_cache_key" ||
@@ -712,19 +748,33 @@ if [[ "$(grep -c \
 fi
 
 wework_browser_job="$(
-  sed -n '/^  wework-e2e:/,/^  wework-desktop-e2e:/p' "$wework_workflow"
+  sed -n '/^  wework-e2e:/,/^  build-wework-desktop-core-e2e:/p' \
+    "$wework_workflow"
 )"
-if ! grep -q "needs.changes.outputs.wework_e2e == 'true'" <<<"$wework_browser_job"; then
+if [[ "$wework_browser_job" != *"needs.changes.outputs.wework_e2e == 'true'"* ]]; then
   printf 'Wework browser E2E must use the broad Wework change classification\n' >&2
+  exit 1
+fi
+
+wework_changes_job="$(
+  sed -n '/^  changes:/,/^  wework-e2e:/p' "$wework_workflow"
+)"
+# GitHub expressions and shell source are matched literally in workflow source.
+# shellcheck disable=SC2016
+if grep -Fq "prepare-wework-e2e-image" "$wework_workflow" ||
+  [[ "$wework_changes_job" != *'browser_image: ${{ steps.image.outputs.browser-ref }}'* ]] ||
+  [[ "$wework_changes_job" != *'desktop_image: ${{ steps.image.outputs.desktop-ref }}'* ]] ||
+  [[ "$wework_changes_job" != *'docker manifest inspect "$IMAGE"'* ]] ||
+  [[ "$wework_changes_job" != *"steps.browser-image-check.outputs.exists == 'false'"* ]] ||
+  [[ "$wework_changes_job" != *"steps.desktop-image-check.outputs.exists == 'false'"* ]]; then
+  printf 'Wework image resolution must share the change-detection job and build only misses\n' >&2
   exit 1
 fi
 
 wework_desktop_job="$(
   sed -n '/^  wework-desktop-e2e:/,/^  wework-e2e-summary:/p' "$wework_workflow"
 )"
-if ! grep -q \
-  "needs.changes.outputs.wework_desktop_other_e2e == 'true'" \
-  <<<"$wework_desktop_job"; then
+if [[ "$wework_desktop_job" != *"needs.changes.outputs.wework_desktop_other_e2e == 'true'"* ]]; then
   printf 'Wework non-Core desktop E2E must use its segment classification\n' >&2
   exit 1
 fi
@@ -732,30 +782,24 @@ fi
 wework_desktop_cloud_job="$(
   sed -n '/^  wework-desktop-cloud-e2e:/,/^  wework-desktop-e2e:/p' "$wework_workflow"
 )"
-if ! grep -q \
-  "needs.changes.outputs.wework_desktop_cloud_e2e == 'true'" \
-  <<<"$wework_desktop_cloud_job" ||
-  ! grep -Fq "fromJSON(needs.changes.outputs.wework_desktop_cloud_e2e_matrix)" \
-    <<<"$wework_desktop_cloud_job" ||
-  ! grep -Fq -- "--parallel-segments" <<<"$wework_desktop_cloud_job" ||
-  ! grep -Fq 'WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"' \
-    <<<"$wework_desktop_cloud_job" ||
-  ! grep -Fq 'WEWORK_E2E_ISOLATED_XVFB: "true"' \
-    <<<"$wework_desktop_cloud_job" ||
-  ! grep -Fq "name: Download shared Wework desktop E2E build" \
-    <<<"$wework_desktop_cloud_job" ||
-  ! grep -Fq "WEWORK_E2E_APP_BIN:" <<<"$wework_desktop_cloud_job" ||
-  ! grep -Fq "WEWORK_E2E_EXECUTOR_BIN:" <<<"$wework_desktop_cloud_job"; then
+if [[ "$wework_desktop_cloud_job" != *"needs.changes.outputs.wework_desktop_cloud_e2e == 'true'"* ]] ||
+  [[ "$wework_desktop_cloud_job" != *"fromJSON(needs.changes.outputs.wework_desktop_cloud_e2e_matrix)"* ]] ||
+  [[ "$wework_desktop_cloud_job" != *"--parallel-segments"* ]] ||
+  [[ "$wework_desktop_cloud_job" != *'WEWORK_E2E_PARALLEL_CHECKPOINTS: "2"'* ]] ||
+  [[ "$wework_desktop_cloud_job" != *'WEWORK_E2E_ISOLATED_XVFB: "true"'* ]] ||
+  [[ "$wework_desktop_cloud_job" != *"name: Download shared Wework desktop E2E build"* ]] ||
+  [[ "$wework_desktop_cloud_job" != *"WEWORK_E2E_APP_BIN:"* ]] ||
+  [[ "$wework_desktop_cloud_job" != *"WEWORK_E2E_EXECUTOR_BIN:"* ]]; then
   printf 'Wework Cloud desktop E2E must use five prebuilt shards with local parallelism\n' >&2
   exit 1
 fi
 
 wework_desktop_core_job="$(
-  sed -n '/^  wework-desktop-core-e2e:/,/^  wework-desktop-e2e:/p' "$wework_workflow"
+  sed -n '/^  wework-desktop-core-e2e:/,/^  wework-desktop-cloud-e2e:/p' \
+    "$wework_workflow"
 )"
-if ! grep -q \
-  "needs.changes.outputs.wework_desktop_core_e2e == 'true'" \
-  <<<"$wework_desktop_core_job"; then
+if [[ "$wework_desktop_core_job" != *"needs.changes.outputs.wework_desktop_core_e2e == 'true'"* ]] ||
+  [[ "$wework_desktop_core_job" != *'WEWORK_E2E_PARALLEL_CHECKPOINTS: "2"'* ]]; then
   printf 'Wework Core desktop E2E must use its segment classification\n' >&2
   exit 1
 fi
