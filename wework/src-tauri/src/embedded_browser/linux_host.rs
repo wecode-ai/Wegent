@@ -17,6 +17,7 @@ struct AllocationTarget {
 struct AllocationController {
     target: Cell<AllocationTarget>,
     applying: Cell<bool>,
+    idle_pending: Cell<bool>,
 }
 
 fn find_host(container: &gtk::Box) -> Option<gtk::Fixed> {
@@ -115,7 +116,7 @@ fn place_webview(
     let height = size.height.round() as i32;
     embedded_webview.set_size_request(width, height);
     host.move_(&embedded_webview, x, y);
-    let controller = allocation_controller(&embedded_webview);
+    let controller = allocation_controller(&host);
     controller.target.set(AllocationTarget {
         x,
         y,
@@ -127,9 +128,9 @@ fn place_webview(
     Ok(())
 }
 
-fn allocation_controller(webview: &webkit2gtk::WebView) -> Rc<AllocationController> {
+fn allocation_controller(host: &gtk::Fixed) -> Rc<AllocationController> {
     if let Some(controller) =
-        unsafe { webview.data::<Rc<AllocationController>>(ALLOCATION_CONTROLLER_DATA) }
+        unsafe { host.data::<Rc<AllocationController>>(ALLOCATION_CONTROLLER_DATA) }
             .map(|data| unsafe { data.as_ref().clone() })
     {
         return controller;
@@ -138,31 +139,67 @@ fn allocation_controller(webview: &webkit2gtk::WebView) -> Rc<AllocationControll
     let controller = Rc::new(AllocationController {
         target: Cell::new(AllocationTarget::default()),
         applying: Cell::new(false),
+        idle_pending: Cell::new(false),
     });
     let callback_controller = controller.clone();
-    webview.connect_size_allocate(move |webview, allocation| {
-        let target = callback_controller.target.get();
-        if callback_controller.applying.get()
-            || (allocation.x() == target.x
-                && allocation.y() == target.y
-                && allocation.width() == target.width
-                && allocation.height() == target.height)
-        {
+    host.connect_size_allocate(move |host, _| {
+        enforce_webview_allocation(host, &callback_controller);
+        if callback_controller.idle_pending.replace(true) {
             return;
         }
-
-        callback_controller.applying.set(true);
-        if let Some(host) = webview
-            .parent()
-            .and_then(|parent| parent.downcast::<gtk::Fixed>().ok())
-        {
-            host.move_(webview, target.x, target.y);
-        }
-        apply_webview_allocation(webview, target.x, target.y, target.width, target.height);
-        callback_controller.applying.set(false);
+        let deferred_host = host.clone();
+        let deferred_controller = callback_controller.clone();
+        gtk::glib::idle_add_local_once(move || {
+            deferred_controller.idle_pending.set(false);
+            enforce_webview_allocation(&deferred_host, &deferred_controller);
+        });
     });
-    unsafe { webview.set_data(ALLOCATION_CONTROLLER_DATA, controller.clone()) };
+    if let Some(webview) = host
+        .children()
+        .into_iter()
+        .find_map(|child| child.downcast::<webkit2gtk::WebView>().ok())
+    {
+        let callback_controller = controller.clone();
+        webview.connect_size_allocate(move |webview, _| {
+            let Some(host) = webview
+                .parent()
+                .and_then(|parent| parent.downcast::<gtk::Fixed>().ok())
+            else {
+                return;
+            };
+            enforce_webview_allocation(&host, &callback_controller);
+        });
+    }
+    unsafe { host.set_data(ALLOCATION_CONTROLLER_DATA, controller.clone()) };
     controller
+}
+
+fn enforce_webview_allocation(host: &gtk::Fixed, controller: &AllocationController) {
+    let target = controller.target.get();
+    if controller.applying.get() {
+        return;
+    }
+
+    let Some(webview) = host
+        .children()
+        .into_iter()
+        .find_map(|child| child.downcast::<webkit2gtk::WebView>().ok())
+    else {
+        return;
+    };
+    let allocation = webview.allocation();
+    if allocation.x() == target.x
+        && allocation.y() == target.y
+        && allocation.width() == target.width
+        && allocation.height() == target.height
+    {
+        return;
+    }
+
+    controller.applying.set(true);
+    host.move_(&webview, target.x, target.y);
+    apply_webview_allocation(&webview, target.x, target.y, target.width, target.height);
+    controller.applying.set(false);
 }
 
 fn apply_webview_allocation(
@@ -178,6 +215,11 @@ fn apply_webview_allocation(
     let allocation = gtk::Allocation::new(x, y, width, height);
     embedded_webview.set_allocation(&allocation);
     embedded_webview.size_allocate(&allocation);
+    if let Some(window) = embedded_webview.window() {
+        if window.window_type() == gtk::gdk::WindowType::Child {
+            window.move_resize(x, y, width, height);
+        }
+    }
 }
 
 pub fn apply_bounds(
