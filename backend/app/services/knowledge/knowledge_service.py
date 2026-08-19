@@ -1024,7 +1024,10 @@ class KnowledgeService:
             .filter(
                 Kind.id == knowledge_base_id,
                 Kind.kind == "KnowledgeBase",
-                Kind.is_active == True,
+                Kind.namespace == kb.namespace,
+                Kind.name == kb.name,
+                Kind.user_id == kb.user_id,
+                Kind.is_active.is_(True),
             )
             .with_for_update()
             .first()

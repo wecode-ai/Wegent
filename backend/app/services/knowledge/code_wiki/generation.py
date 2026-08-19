@@ -218,7 +218,10 @@ def start_generation(
         .filter(
             Kind.id == knowledge_base.id,
             Kind.kind == "KnowledgeBase",
-            Kind.is_active == True,
+            Kind.namespace == knowledge_base.namespace,
+            Kind.name == knowledge_base.name,
+            Kind.user_id == knowledge_base.user_id,
+            Kind.is_active.is_(True),
         )
         .with_for_update()
         .first()

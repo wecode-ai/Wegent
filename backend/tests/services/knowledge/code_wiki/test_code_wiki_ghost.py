@@ -92,13 +92,15 @@ def test_major_components_and_workflows_get_substantive_coverage(system_prompt: 
     assert "substantive coverage" in system_prompt
 
 
-def test_quickstart_is_the_canonical_task_routing_entry(system_prompt: str):
+def test_quickstart_is_the_canonical_task_routing_entry(system_prompt: str) -> None:
     assert "canonical entry" in system_prompt
     assert "`index` must link to `quickstart`" in system_prompt
     assert "task-oriented routes" in system_prompt
 
 
-def test_consequential_operations_require_operational_evidence(system_prompt: str):
+def test_consequential_operations_require_operational_evidence(
+    system_prompt: str,
+) -> None:
     for subject in (
         "state-changing operations",
         "preconditions",
@@ -116,7 +118,9 @@ def test_component_hierarchies_have_substantive_overview_pages(system_prompt: st
     assert "do not invent hierarchy" in normalized_prompt
 
 
-def test_high_value_relationships_require_diagram_consideration(system_prompt: str):
+def test_high_value_relationships_require_diagram_consideration(
+    system_prompt: str,
+) -> None:
     normalized_prompt = " ".join(system_prompt.split())
 
     for subject in ("architecture", "cross-component", "lifecycles", "data models"):
@@ -125,7 +129,7 @@ def test_high_value_relationships_require_diagram_consideration(system_prompt: s
     assert "code-wiki-mermaid" not in system_prompt
     assert "multi-boundary architecture" in system_prompt
     assert "system-context map" in system_prompt
-    assert "start with 4–8 major nodes" in system_prompt
+    assert "start with 4\N{EN DASH}8 major nodes" in system_prompt
     assert "primary boundary or flow" in normalized_prompt
     assert "abstraction level" in system_prompt
     assert "branching, state transition" in normalized_prompt

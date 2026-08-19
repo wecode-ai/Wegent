@@ -159,6 +159,7 @@ def start_run(
     Raises:
         CodeWikiRunError: If the wiki cannot be generated, or a run is already going.
         GenerationInFlight: Propagated from the version store.
+        GenerationWikiNotFound: If the wiki is deleted before the run starts.
     """
     source = source_of(knowledge_base)
     team, task_user = _resolve_execution_context(db, knowledge_base, user)

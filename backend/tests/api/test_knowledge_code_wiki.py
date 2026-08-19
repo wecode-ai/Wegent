@@ -1549,7 +1549,7 @@ def _stored_code_wiki(test_db: Session, owner: User, name: str) -> Kind:
 def test_editing_a_code_wiki_persists_its_execution_model_and_task_visibility(
     test_db: Session,
     test_user: User,
-):
+) -> None:
     wiki = _stored_code_wiki(test_db, test_user, "editable-wiki")
     model_ref = {
         "name": "claude-opus-5",
@@ -1581,7 +1581,7 @@ def test_editing_a_code_wiki_persists_its_execution_model_and_task_visibility(
 def test_deleting_a_code_wiki_removes_its_generated_pages(
     test_db: Session,
     test_user: User,
-):
+) -> None:
     wiki = _stored_code_wiki(test_db, test_user, "removable-wiki")
     page = KnowledgeDocument(
         kind_id=wiki.id,
@@ -1610,10 +1610,10 @@ def test_deleting_a_code_wiki_removes_its_generated_pages(
     assert test_db.get(KnowledgeDocument, page.id) is None
 
 
-def test_deleting_a_code_wiki_refuses_legacy_projected_pages_without_origin(
+def test_deleting_a_code_wiki_refuses_user_pages_with_legacy_projection_markers(
     test_db: Session,
     test_user: User,
-):
+) -> None:
     wiki = _stored_code_wiki(test_db, test_user, "legacy-removable-wiki")
     page = KnowledgeDocument(
         kind_id=wiki.id,
@@ -1641,7 +1641,7 @@ def test_deleting_a_code_wiki_refuses_legacy_projected_pages_without_origin(
 def test_code_wiki_model_update_reaches_the_stored_spec(
     test_db: Session,
     test_user: User,
-):
+) -> None:
     from app.services.knowledge.orchestrator import knowledge_orchestrator
 
     wiki = _stored_code_wiki(test_db, test_user, "model-wiki")
@@ -1679,7 +1679,7 @@ def test_code_wiki_model_update_reaches_the_stored_spec(
 def test_deleting_a_code_wiki_with_user_documents_stays_refused(
     test_db: Session,
     test_user: User,
-):
+) -> None:
     wiki = _stored_code_wiki(test_db, test_user, "protected-wiki")
     test_db.add(
         KnowledgeDocument(
@@ -1702,7 +1702,7 @@ def test_deleting_a_code_wiki_with_user_documents_stays_refused(
 def test_deleting_a_code_wiki_with_a_running_generation_stays_refused(
     test_db: Session,
     test_user: User,
-):
+) -> None:
     from app.models.wiki import WikiGeneration, WikiGenerationStatus
 
     wiki = _stored_code_wiki(test_db, test_user, "running-wiki")

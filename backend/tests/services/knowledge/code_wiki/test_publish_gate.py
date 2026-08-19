@@ -292,7 +292,7 @@ def test_a_section_that_is_itself_a_page_draws_no_warning() -> None:
     assert verdict.warnings == ()
 
 
-def test_a_section_page_is_required_independently_of_diagram_policy():
+def test_a_section_page_is_required_independently_of_diagram_policy() -> None:
     pages = [
         PageSource(path="index", title="Index", content="body"),
         PageSource(path="architecture/backend", title="Backend", content="body"),

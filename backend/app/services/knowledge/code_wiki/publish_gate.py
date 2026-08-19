@@ -148,7 +148,10 @@ def evaluate_publish_gate(
         policy: Limits to apply.
 
     Returns:
-        The verdict. Warnings never cause a rejection on their own.
+        The verdict. Producing fewer than the minimum number of pages and missing
+        section overview pages are blocking. Content-volume warnings are advisory;
+        Mermaid warnings are advisory unless the policy explicitly makes them
+        blocking.
     """
     policy = policy or DEFAULT_POLICY
     structure_warnings = _structure_warnings(pages)

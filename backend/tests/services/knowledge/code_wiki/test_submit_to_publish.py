@@ -268,7 +268,7 @@ def test_missing_section_page_is_refused_until_the_agent_repairs_it(
     knowledge_base: Kind,
     test_user: User,
     no_side_effects: FakeEffects,
-):
+) -> None:
     generation = _generation(test_db, test_user, knowledge_base.id)
     _seed_page(test_db, generation, "index")
     _seed_page(test_db, generation, "architecture/backend")
