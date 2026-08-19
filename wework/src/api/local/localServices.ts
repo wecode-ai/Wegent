@@ -400,6 +400,8 @@ const catalogReconciliationTrackers = new WeakMap<
   LocalExecutorRequest,
   CatalogReconciliationTracker
 >()
+const CATALOG_IDLE_RESTART_RETRY_DELAY_MS = 100
+const CATALOG_IDLE_RESTART_MAX_ATTEMPTS = 20
 
 function catalogReconciliationTracker(request: LocalExecutorRequest): CatalogReconciliationTracker {
   const existing = catalogReconciliationTrackers.get(request)
@@ -442,27 +444,46 @@ async function reconcilePendingLocalModelCatalog(
     await request('runtime.codex.catalog.custom.write', {
       models: catalogModels.flatMap(model => (model.catalogEntry ? [model.catalogEntry] : [])),
     })
-    const restart = await request<{
+    let restart = await request<{
       restarted?: boolean
+      activeTaskCount?: number
+      pendingRequestCount?: number
     }>('runtime.codex.app_server.restart', { ifIdle: true })
     if (restart.restarted) {
       markLocalModelCatalogReady(pendingCatalogModels)
       return
     }
-    const models = await request<{
-      data?: Array<{ id?: string }>
-    }>('runtime.codex.models.list', { includeHidden: true })
-    const loadedModelIds = new Set(
-      (models.data ?? []).flatMap(model => (typeof model.id === 'string' ? [model.id] : []))
-    )
-    const loadedPendingModels = pendingCatalogModels.filter(model => {
-      const catalogModelId =
-        model.codexCatalogModelId ??
-        (typeof model.catalogEntry?.slug === 'string' ? model.catalogEntry.slug : null)
-      return Boolean(catalogModelId && loadedModelIds.has(catalogModelId))
-    })
-    if (loadedPendingModels.length > 0) {
-      markLocalModelCatalogReady(loadedPendingModels)
+
+    for (let attempt = 0; attempt < CATALOG_IDLE_RESTART_MAX_ATTEMPTS; attempt += 1) {
+      const models = await request<{
+        data?: Array<{ id?: string }>
+      }>('runtime.codex.models.list', { includeHidden: true })
+      const loadedModelIds = new Set(
+        (models.data ?? []).flatMap(model => (typeof model.id === 'string' ? [model.id] : []))
+      )
+      const loadedPendingModels = pendingCatalogModels.filter(model => {
+        const catalogModelId =
+          model.codexCatalogModelId ??
+          (typeof model.catalogEntry?.slug === 'string' ? model.catalogEntry.slug : null)
+        return Boolean(catalogModelId && loadedModelIds.has(catalogModelId))
+      })
+      if (loadedPendingModels.length > 0) {
+        markLocalModelCatalogReady(loadedPendingModels)
+      }
+      if (
+        loadedPendingModels.length === pendingCatalogModels.length ||
+        (restart.activeTaskCount ?? 0) > 0 ||
+        (restart.pendingRequestCount ?? 0) <= 0
+      ) {
+        return
+      }
+
+      await new Promise(resolve => setTimeout(resolve, CATALOG_IDLE_RESTART_RETRY_DELAY_MS))
+      restart = await request('runtime.codex.app_server.restart', { ifIdle: true })
+      if (restart.restarted) {
+        markLocalModelCatalogReady(pendingCatalogModels)
+        return
+      }
     }
   })()
   tracker.inFlight = reconciliation

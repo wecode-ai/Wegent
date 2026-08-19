@@ -41,7 +41,6 @@ use super::codex_log_db::configure_codex_log_db_filter;
 use super::{model_id, prompt_text};
 
 const DEFAULT_CODEX_RPC_TIMEOUT_SECONDS: u64 = 300;
-const CODEX_MCP_INVENTORY_TIMEOUT_SECONDS: u64 = 10;
 const DEFAULT_CODEX_TURN_STARTUP_TIMEOUT_SECONDS: u64 = 180;
 const DEFAULT_PROVIDER_ID: &str = "wecode-openai";
 pub const CODEX_APP_SERVER_TURN_CANCELLED: &str = "codex app-server turn cancelled";
@@ -91,7 +90,8 @@ pub(crate) const WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS: &str = r#"Wewor
 - Do not fall back to an external Chrome window unless the user explicitly asks for Chrome."#;
 pub(crate) const WEWORK_SPACE_DEVELOPER_INSTRUCTIONS: &str = r#"Wework 项目空间 routing:
 - "项目空间" and "project space" refer to Wework project spaces. For project-space boards, tasks, files, comments, deliveries, tables, or assignment requests, use the available `wework_space` MCP tools.
-- Project-space MCP tools are discovered on demand. Use the available deferred-tool discovery function with the requested project-space capability before concluding that a tool is unavailable. It is normally named `tool_search`; compatibility providers may expose it as `search_deferred_tools`. Do not use MCP resource listing as a substitute for tool discovery.
+- `wework_space` is a fixed capability connected by the Wework Executor. Do not call MCP resource listing, a browser, Shell, `curl`, or parse `wegent://` URLs to determine whether it is available.
+- For the current bound Issue, call `get_current_context` first. To read its description or attachments, use `get_board_item`, then `list_item_attachments`, then `read_item_attachment`.
 - Use `list_board_items` to list a project's tasks and `search_board_items` for text or structured task searches. Use the matching project-space tool for reads and writes instead of querying local files, executor logs, or backend storage directly.
 - For AI-managed board automation, use `get_board_item` for the current item, `get_assignment_candidates` for eligible members and robots, and `assign_board_item` only after choosing a candidate from that result."#;
 
@@ -1471,17 +1471,6 @@ async fn run_codex_app_server_turn_on_shared_client(
             if let Some(callback) = active_turn_started.as_ref() {
                 callback(thread_id.clone(), turn_id.clone());
             }
-            let inventory_client = client.clone();
-            let inventory_request = request.clone();
-            let inventory_thread_id = thread_id.clone();
-            tokio::spawn(async move {
-                log_codex_mcp_inventory(
-                    &inventory_client,
-                    &inventory_request,
-                    &inventory_thread_id,
-                )
-                .await;
-            });
             log_executor_event(
                 "codex shared active turn resolved",
                 &[
@@ -1550,154 +1539,6 @@ async fn run_codex_app_server_turn_on_shared_client(
     }
     cleanup_generated_files(&prepared.generated_files);
     result
-}
-
-async fn log_codex_mcp_inventory(
-    client: &CodexAppServerClient,
-    request: &ExecutionRequest,
-    thread_id: &str,
-) {
-    let response = timeout(
-        Duration::from_secs(CODEX_MCP_INVENTORY_TIMEOUT_SECONDS),
-        client.request(
-            "mcpServerStatus/list",
-            json!({"threadId": thread_id, "detail": "full"}),
-        ),
-    )
-    .await;
-    match response {
-        Ok(Ok(response)) => {
-            let mut fields = task_fields(&request.task_id, &request.subtask_id);
-            fields.push(("thread_id", thread_id.to_owned()));
-            match validate_project_space_capability_inventory(&response) {
-                Ok(tool_count) => {
-                    fields.push(("tool_count", tool_count.to_string()));
-                    log_executor_event("codex project-space capability ready", &fields);
-                }
-                Err(error) => {
-                    fields.push(("error", error));
-                    log_executor_event("codex project-space capability diagnostic failed", &fields);
-                }
-            }
-            let inventories = mcp_inventory_diagnostic_fields(&response);
-            if inventories.is_empty() {
-                let mut fields = task_fields(&request.task_id, &request.subtask_id);
-                fields.extend([
-                    ("thread_id", thread_id.to_owned()),
-                    ("server_count", "0".to_owned()),
-                ]);
-                log_executor_event("codex MCP inventory", &fields);
-                return;
-            }
-            for inventory in inventories {
-                let mut fields = task_fields(&request.task_id, &request.subtask_id);
-                fields.push(("thread_id", thread_id.to_owned()));
-                fields.extend(inventory);
-                log_executor_event("codex MCP inventory", &fields);
-            }
-        }
-        Ok(Err(error)) => {
-            let mut fields = task_fields(&request.task_id, &request.subtask_id);
-            fields.extend([("thread_id", thread_id.to_owned()), ("error", error)]);
-            log_executor_event("codex MCP inventory failed", &fields);
-        }
-        Err(_) => {
-            let mut fields = task_fields(&request.task_id, &request.subtask_id);
-            fields.extend([
-                ("thread_id", thread_id.to_owned()),
-                (
-                    "timeout_seconds",
-                    CODEX_MCP_INVENTORY_TIMEOUT_SECONDS.to_string(),
-                ),
-            ]);
-            log_executor_event("codex MCP inventory timed out", &fields);
-        }
-    }
-}
-
-fn validate_project_space_capability_inventory(response: &Value) -> Result<usize, String> {
-    let server = response
-        .get("data")
-        .and_then(Value::as_array)
-        .and_then(|servers| {
-            servers.iter().find(|server| {
-                server.get("name").and_then(Value::as_str)
-                    == Some(crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME)
-            })
-        })
-        .ok_or_else(|| "Required project-space capability is unavailable".to_owned())?;
-    let tools = server
-        .get("tools")
-        .and_then(Value::as_object)
-        .ok_or_else(|| "Required project-space capability exposed no tools".to_owned())?;
-    for required in ["get_current_context", "read_item_attachment"] {
-        if !tools.contains_key(required)
-            && !tools
-                .values()
-                .any(|tool| tool.get("name").and_then(Value::as_str) == Some(required))
-        {
-            return Err(format!(
-                "Required project-space capability is missing tool {required}"
-            ));
-        }
-    }
-    Ok(tools.len())
-}
-
-fn mcp_inventory_diagnostic_fields(response: &Value) -> Vec<Vec<(&'static str, String)>> {
-    response
-        .get("data")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .map(|server| {
-            let tools = server
-                .get("tools")
-                .and_then(Value::as_object)
-                .cloned()
-                .unwrap_or_default();
-            let tool_names = tools
-                .iter()
-                .map(|(key, tool)| {
-                    tool.get("name")
-                        .and_then(Value::as_str)
-                        .unwrap_or(key)
-                        .to_owned()
-                })
-                .collect::<BTreeSet<_>>()
-                .into_iter()
-                .collect::<Vec<_>>()
-                .join(",");
-            vec![
-                (
-                    "server_name",
-                    server
-                        .get("name")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .to_owned(),
-                ),
-                ("tool_count", tools.len().to_string()),
-                ("tool_names", tool_names),
-                (
-                    "resource_count",
-                    server
-                        .get("resources")
-                        .and_then(Value::as_array)
-                        .map_or(0, Vec::len)
-                        .to_string(),
-                ),
-                (
-                    "resource_template_count",
-                    server
-                        .get("resourceTemplates")
-                        .and_then(Value::as_array)
-                        .map_or(0, Vec::len)
-                        .to_string(),
-                ),
-            ]
-        })
-        .collect()
 }
 
 fn mcp_thread_config_fields(params: &Value) -> Vec<(&'static str, String)> {
@@ -2063,6 +1904,12 @@ async fn read_shared_turn_notifications(
             continue;
         }
         log_codex_raw_turn_message(&message);
+        if let Some(error) = required_mcp_startup_failure(&message) {
+            if let Some(sender) = &options.notifications {
+                let _ = sender.send(message);
+            }
+            return Err(error);
+        }
 
         let notification_turn_id = root_turn_notification_id(&message, state);
         if let Some(turn_id) =
@@ -2176,6 +2023,35 @@ async fn read_shared_turn_notifications(
             state.reset_turn_output();
         }
     }
+}
+
+fn required_mcp_startup_failure(message: &Value) -> Option<String> {
+    if message.get("method").and_then(Value::as_str) != Some("mcpServer/startupStatus/updated") {
+        return None;
+    }
+    let params = message_params(message);
+    if params.get("name").and_then(Value::as_str)
+        != Some(crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME)
+    {
+        return None;
+    }
+    let status = params
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !matches!(status, "failed" | "error" | "cancelled") {
+        return None;
+    }
+    let reason = params
+        .get("failureReason")
+        .or_else(|| params.get("error"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    Some(match reason {
+        Some(reason) => format!("required project-space capability failed to connect: {reason}"),
+        None => format!("required project-space capability failed to connect ({status})"),
+    })
 }
 
 fn should_wait_for_goal_continuation(
@@ -2911,7 +2787,7 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchCo
         .extend(cdp_browser_mcp_config_overrides(request));
     launch_config
         .config_overrides
-        .extend(project_space_mcp_config_overrides(request));
+        .extend(project_space_mcp_config_overrides(request)?);
     launch_config
         .config_overrides
         .extend(runtime_capabilities::request_mcp_config_overrides(request));
@@ -3730,43 +3606,40 @@ fn cdp_browser_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String> {
     overrides
 }
 
-fn project_space_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String> {
+fn project_space_mcp_config_overrides(request: &ExecutionRequest) -> Result<Vec<String>, String> {
     let server_name = crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME;
     let key = toml_key_path(&["mcp_servers", server_name]);
     let grant = crate::task_runtime::mcp::encoded_space_context_grant(request);
-    let command = env::current_exe()
-        .unwrap_or_else(|_| executor_home().join("bin/wegent-executor"))
-        .display()
-        .to_string();
+    let endpoint = crate::task_runtime::mcp_http::space_mcp_http_endpoint()
+        .ok_or_else(|| "project-space MCP endpoint is not ready".to_owned())?;
     let mut overrides = vec![
         format!("{key}.enabled=true"),
-        format!("{key}.command={}", toml_value(&command)),
-        format!(
-            "{key}.args={}",
-            toml_json_value(&json!(["space-mcp-server"]))
-        ),
-        format!("{key}.startup_timeout_sec=15"),
-        format!("{key}.tool_timeout_sec=60"),
-    ];
-    let Some(grant) = grant else {
-        return overrides;
-    };
-    overrides.extend([
-        format!(
-            "{key}.default_tools_approval_mode={}",
-            toml_value("approve")
-        ),
+        format!("{key}.url={}", toml_value(&endpoint.url)),
         format!(
             "{}={}",
-            toml_key_path(&[
-                "mcp_servers",
-                server_name,
-                "env",
-                crate::task_runtime::mcp::SPACE_CONTEXT_GRANT_ENV,
-            ]),
-            toml_value(&grant)
+            toml_key_path(&["mcp_servers", server_name, "http_headers", "Authorization",]),
+            toml_value(&format!("Bearer {}", endpoint.token))
         ),
-    ]);
+        format!("{key}.tool_timeout_sec=60"),
+    ];
+    if let Some(grant) = grant {
+        overrides.extend([
+            format!(
+                "{key}.default_tools_approval_mode={}",
+                toml_value("approve")
+            ),
+            format!(
+                "{}={}",
+                toml_key_path(&[
+                    "mcp_servers",
+                    server_name,
+                    "http_headers",
+                    "X-Wework-Space-Context-Grant",
+                ]),
+                toml_value(&grant)
+            ),
+        ]);
+    }
     let backend_url = request
         .backend_url
         .as_deref()
@@ -3781,8 +3654,8 @@ fn project_space_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String>
             toml_key_path(&[
                 "mcp_servers",
                 server_name,
-                "env",
-                "WEWORK_SPACE_BACKEND_URL",
+                "http_headers",
+                "X-Wework-Space-Backend-Url",
             ]),
             toml_value(backend_url.trim())
         ));
@@ -3798,11 +3671,16 @@ fn project_space_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String>
     if let Some(auth_token) = auth_token {
         overrides.push(format!(
             "{}={}",
-            toml_key_path(&["mcp_servers", server_name, "env", "WEWORK_SPACE_AUTH_TOKEN",]),
+            toml_key_path(&[
+                "mcp_servers",
+                server_name,
+                "http_headers",
+                "X-Wework-Space-Backend-Token",
+            ]),
             toml_value(auth_token.trim())
         ));
     }
-    overrides
+    Ok(overrides)
 }
 
 fn embedded_browser_label(request: &ExecutionRequest) -> Option<String> {
@@ -3899,6 +3777,7 @@ async fn prepare_codex_execution_request(
     request: ExecutionRequest,
     cancellation: Option<&mut oneshot::Receiver<()>>,
 ) -> Result<PreparedCodexExecutionRequest, String> {
+    crate::task_runtime::mcp_http::ensure_space_mcp_http_endpoint().await?;
     let mut request = if let Some(cancellation) = cancellation {
         tokio::select! {
             biased;

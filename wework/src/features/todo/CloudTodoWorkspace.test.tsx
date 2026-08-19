@@ -989,6 +989,11 @@ describe('CloudTodoWorkspace', () => {
 
     expect(await screen.findByTestId('cloud-todo-detail')).toBeInTheDocument()
     const tasks = await screen.findByTestId('cloud-todo-tasks')
+    expect(screen.getByTestId('cloud-todo-task-list')).toHaveClass(
+      'max-h-[280px]',
+      'overflow-y-auto',
+      'overscroll-contain'
+    )
     expect(tasks).toHaveTextContent('任务')
     expect(tasks).toHaveTextContent('开发修改')
     expect(tasks).toHaveTextContent('测试修改')

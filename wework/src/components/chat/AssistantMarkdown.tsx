@@ -27,7 +27,7 @@ import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
 import type { TurnFileChangesSummary } from '@/types/api'
 
 const ASSISTANT_MARKDOWN_LINK_CLASS = [
-  'inline-flex max-w-full items-center gap-1 rounded-md px-0.5 align-baseline',
+  'inline-flex min-w-0 max-w-full items-center gap-1 rounded-md px-0.5 align-baseline',
   'text-sm font-medium leading-5 text-blue-600 no-underline',
   'transition-colors hover:text-blue-700',
   'dark:text-blue-300 dark:hover:text-blue-200',
@@ -528,7 +528,12 @@ function AssistantMarkdownLink({
         aria-label={tooltip}
       >
         {icon}
-        {children}
+        <span
+          className="min-w-0 whitespace-normal [overflow-wrap:anywhere]"
+          data-testid="assistant-markdown-link-label"
+        >
+          {children}
+        </span>
         {lineLabel ? (
           <span className="shrink-0" data-testid="assistant-markdown-link-line">
             ({lineLabel})
@@ -559,7 +564,12 @@ function AssistantMarkdownLink({
       }}
     >
       {icon}
-      {children}
+      <span
+        className="min-w-0 whitespace-normal [overflow-wrap:anywhere]"
+        data-testid="assistant-markdown-link-label"
+      >
+        {children}
+      </span>
     </a>
   )
 }

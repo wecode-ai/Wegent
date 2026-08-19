@@ -56,6 +56,7 @@ from app.services.project_automation_execution import (
 )
 from app.services.project_chat.service import bot_config
 from app.services.share import team_share_service
+from app.services.workflow_stage_context import workflow_stage_context_resolver
 
 logger = logging.getLogger(__name__)
 
@@ -412,6 +413,11 @@ class ProjectAutomationService:
             "workflow_node_id": workflow_node_id,
             "instruction_override": str(node.get("prompt") or ""),
             "dependency_context": node.get("dependency_context") or {},
+            "workflow_stage_input": workflow_stage_context_resolver.resolve(
+                db,
+                item=item,
+                target_node_id=workflow_node_id,
+            ),
         }
         from app.services.project_workflow_projection import update_workflow_node
 

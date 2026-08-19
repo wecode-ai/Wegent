@@ -9,17 +9,63 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 WorkflowContextSource = Literal["final_result", "deliveries", "activity"]
+DeliverableValueType = Literal[
+    "text",
+    "file",
+    "code_snapshot",
+    "git_branch",
+    "pull_request",
+    "url",
+]
 WorkflowNodeStatus = Literal[
     "blocked",
     "ready",
     "queued",
     "running",
     "awaiting_approval",
+    "awaiting_deliverables",
     "changes_requested",
     "completed",
     "forced_completed",
     "failed",
 ]
+
+
+class DeliverableFileConstraints(BaseModel):
+    accepted_types: list[str] = Field(default_factory=list, max_length=20)
+    min_files: int = Field(default=1, ge=1, le=100)
+    max_files: int = Field(default=1, ge=1, le=100)
+
+    @model_validator(mode="after")
+    def validate_file_count(self) -> "DeliverableFileConstraints":
+        self.accepted_types = [
+            value.strip() for value in self.accepted_types if value.strip()
+        ]
+        if self.max_files < self.min_files:
+            raise ValueError("max_files cannot be smaller than min_files")
+        return self
+
+
+class DeliverableRequirement(BaseModel):
+    id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    name: str = Field(min_length=1, max_length=100)
+    description: str = Field(default="", max_length=2000)
+    value_type: DeliverableValueType
+    file_constraints: DeliverableFileConstraints | None = None
+
+    @model_validator(mode="after")
+    def validate_requirement(self) -> "DeliverableRequirement":
+        self.name = self.name.strip()
+        self.description = self.description.strip()
+        if not self.name:
+            raise ValueError("workflow deliverable requirement name cannot be empty")
+        if self.value_type == "file":
+            self.file_constraints = (
+                self.file_constraints or DeliverableFileConstraints()
+            )
+        elif self.file_constraints is not None:
+            raise ValueError("file_constraints are only valid for file requirements")
+        return self
 
 
 class WorkflowNodeDefinition(BaseModel):
@@ -34,14 +80,14 @@ class WorkflowNodeDefinition(BaseModel):
         default_factory=dict
     )
     required: bool = True
-    required_deliverables: list[str] = Field(default_factory=list, max_length=20)
+    required_deliverables: list[DeliverableRequirement] = Field(
+        default_factory=list, max_length=20
+    )
     workspace_policy: Literal["none", "composer", "inherit"] = "composer"
     automation_rule_id: str | None = Field(default=None, max_length=64)
 
     @model_validator(mode="after")
     def validate_execution_configuration(self) -> "WorkflowNodeDefinition":
-        if self.automation_rule_id and self.workspace_policy != "none":
-            raise ValueError("automated stages cannot require a local workspace")
         if unknown := set(self.dependency_context) - set(self.depends_on):
             raise ValueError(
                 "workflow dependency context references non-dependencies: "
@@ -52,14 +98,9 @@ class WorkflowNodeDefinition(BaseModel):
                 raise ValueError(
                     f"workflow dependency context contains duplicates: {dependency}"
                 )
-        normalized_deliverables = [
-            requirement.strip() for requirement in self.required_deliverables
-        ]
-        if any(not requirement for requirement in normalized_deliverables):
-            raise ValueError("workflow deliverable requirements cannot be empty")
-        if len(normalized_deliverables) != len(set(normalized_deliverables)):
-            raise ValueError("workflow deliverable requirements must be unique")
-        self.required_deliverables = normalized_deliverables
+        deliverable_ids = [requirement.id for requirement in self.required_deliverables]
+        if len(deliverable_ids) != len(set(deliverable_ids)):
+            raise ValueError("workflow deliverable requirement IDs must be unique")
         return self
 
 

@@ -895,7 +895,7 @@ class LoopItemService:
             if "workflow" in values.model_fields_set:
                 workflow = values.workflow
                 metadata["workflow"] = (
-                    workflow.model_dump() if workflow is not None else None
+                    workflow.model_dump(mode="json") if workflow is not None else None
                 )
                 updates.pop("workflow", None)
             updates["metadata_json"] = metadata
@@ -1393,6 +1393,49 @@ class LoopItemService:
         values: LoopItemTaskBind,
         user_id: int,
     ) -> LoopItemTaskBinding:
+        return self._bind_task(
+            db,
+            item_id=item_id,
+            values=values,
+            user_id=user_id,
+            allow_automated_stage=False,
+        )
+
+    def bind_execution_task(
+        self,
+        db: Session,
+        *,
+        item_id: str,
+        values: LoopItemTaskBind,
+        user_id: int,
+        stage_snapshot: dict[str, Any],
+        commit: bool = True,
+    ) -> LoopItemTaskBinding:
+        """Bind a trusted queued execution to its workflow stage."""
+
+        if not values.workflow_node_id:
+            raise ValueError("Workflow execution binding requires a stage")
+        return self._bind_task(
+            db,
+            item_id=item_id,
+            values=values,
+            user_id=user_id,
+            allow_automated_stage=True,
+            stage_snapshot=stage_snapshot,
+            commit=commit,
+        )
+
+    def _bind_task(
+        self,
+        db: Session,
+        *,
+        item_id: str,
+        values: LoopItemTaskBind,
+        user_id: int,
+        allow_automated_stage: bool,
+        stage_snapshot: dict[str, Any] | None = None,
+        commit: bool = True,
+    ) -> LoopItemTaskBinding:
         item = self.get(db, item_id, user_id)
         self._require_item_access(db, item, user_id, edit=True)
         self._validate_backend_task(db, values.backend_task_id, user_id)
@@ -1417,6 +1460,7 @@ class LoopItemService:
                     if active is not None and active.loop_item_id == item_id
                     else None
                 ),
+                allow_automated_stage=allow_automated_stage,
             )
         if active is not None:
             if active.loop_item_id == item_id:
@@ -1431,11 +1475,26 @@ class LoopItemService:
                         ),
                         "workflow_node_id": values.workflow_node_id,
                     }
+                    from app.services.workflow_stage_context import (
+                        workflow_stage_context_resolver,
+                    )
+
+                    if workflow_stage_context_resolver.binding_snapshot(active) is None:
+                        workflow_stage_context_resolver.freeze_binding(
+                            active,
+                            stage_snapshot
+                            or workflow_stage_context_resolver.resolve(
+                                db, item=item, target_node_id=values.workflow_node_id
+                            ),
+                        )
                 self.ensure_collaborator(
                     db, item, user_id, user_id, "task", commit=False
                 )
-                db.commit()
-                db.refresh(active)
+                if commit:
+                    db.commit()
+                    db.refresh(active)
+                else:
+                    db.flush()
                 return active
             active.unlinked_at = self._now()
         binding = LoopItemTaskBinding(
@@ -1447,16 +1506,32 @@ class LoopItemService:
             task_title=values.task_title,
             backend_task_id=values.backend_task_id,
             linked_by_user_id=user_id,
+            linked_at=self._now(),
             metadata_json=(
                 {"workflow_node_id": values.workflow_node_id}
                 if values.workflow_node_id
                 else None
             ),
         )
+        if values.workflow_node_id:
+            from app.services.workflow_stage_context import (
+                workflow_stage_context_resolver,
+            )
+
+            workflow_stage_context_resolver.freeze_binding(
+                binding,
+                stage_snapshot
+                or workflow_stage_context_resolver.resolve(
+                    db, item=item, target_node_id=values.workflow_node_id
+                ),
+            )
         db.add(binding)
         self.ensure_collaborator(db, item, user_id, user_id, "task", commit=False)
-        db.commit()
-        db.refresh(binding)
+        if commit:
+            db.commit()
+            db.refresh(binding)
+        else:
+            db.flush()
         return binding
 
     @staticmethod
@@ -1465,6 +1540,8 @@ class LoopItemService:
         item: LoopItem,
         workflow_node_id: str,
         active_binding: LoopItemTaskBinding | None,
+        *,
+        allow_automated_stage: bool = False,
     ) -> None:
         metadata = item.metadata_json if isinstance(item.metadata_json, dict) else {}
         workflow = metadata.get("workflow")
@@ -1480,7 +1557,7 @@ class LoopItemService:
         )
         if node is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow node not found")
-        if node.get("automation_rule_id"):
+        if node.get("automation_rule_id") and not allow_automated_stage:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
                 "Automated workflow stage does not accept a user task",
@@ -1489,6 +1566,8 @@ class LoopItemService:
             "ready",
             "queued",
             "running",
+            "awaiting_approval",
+            "changes_requested",
             "failed",
         }:
             raise HTTPException(
@@ -1530,6 +1609,7 @@ class LoopItemService:
             task_title=values.task_title,
             backend_task_id=values.backend_task_id,
             linked_by_user_id=user_id,
+            linked_at=self._now(),
         )
         db.add(binding)
         db.commit()
@@ -1614,7 +1694,10 @@ class LoopItemService:
                 LoopItemTaskBinding.loop_item_id == item_id,
                 loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
             )
-            .order_by(LoopItemTaskBinding.linked_at.desc())
+            .order_by(
+                LoopItemTaskBinding.linked_at.desc(),
+                LoopItemTaskBinding.id.desc(),
+            )
             .all()
         )
 

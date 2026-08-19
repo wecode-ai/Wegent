@@ -33,6 +33,7 @@ import type {
   CloudMyWorkItem,
   CloudProject,
   CloudProjectMember,
+  DeliveryFulfillment,
 } from '@/api/deliveries'
 import { isDefaultWorkItemProject } from '@/api/deliveries'
 import type { AITableField } from '@/api/aitable'
@@ -108,6 +109,7 @@ import {
   workItemTaskInput,
   workflowStageTaskInput,
 } from './workItemTaskInput'
+import type { WorkflowDeliverableDraft } from './WorkflowStageCompletionDialog'
 
 type ProjectView = 'board' | 'table' | 'files' | 'automation' | 'manage'
 type RootView = 'projects' | 'my-work' | 'settings'
@@ -120,6 +122,86 @@ const nativeBoardGroupFields: AITableField[] = [
   { id: 'assignee', name: '负责人', type: 'user', config: null, raw: {} },
   { id: 'tag', name: '标签', type: 'tag', config: null, raw: {} },
 ]
+
+async function uploadWorkflowDeliverables(
+  api: DeliveryApi,
+  deliveryId: string,
+  values: WorkflowDeliverableDraft[]
+): Promise<DeliveryFulfillment[]> {
+  const fulfillments: DeliveryFulfillment[] = []
+  for (const value of values) {
+    const requirementId = value.requirement.id
+    if (value.requirement.value_type === 'text' && value.text?.trim()) {
+      fulfillments.push({
+        requirement_id: requirementId,
+        kind: 'text',
+        text: value.text.trim(),
+      })
+    } else if (value.requirement.value_type === 'url' && value.url?.trim()) {
+      fulfillments.push({
+        requirement_id: requirementId,
+        kind: 'url',
+        url: value.url.trim(),
+        title: value.title?.trim() ?? '',
+      })
+    } else if (value.requirement.value_type === 'file' && value.files?.length) {
+      const assets = []
+      for (const file of value.files) {
+        assets.push(await api.addAsset(deliveryId, file, `${requirementId}/${file.name}`))
+      }
+      fulfillments.push({
+        requirement_id: requirementId,
+        kind: 'file',
+        asset_ids: assets.map(asset => asset.id),
+      })
+    } else if (value.requirement.value_type === 'code_snapshot' && value.files?.[0]) {
+      const file = value.files[0]
+      const asset = await api.addAsset(deliveryId, file, `${requirementId}/${file.name}`)
+      fulfillments.push({
+        requirement_id: requirementId,
+        kind: 'code_snapshot',
+        asset_id: asset.id,
+        changed_files: [file.name],
+        base_revision: null,
+        head_revision: null,
+        sha256: asset.sha256,
+      })
+    } else if (
+      value.requirement.value_type === 'git_branch' &&
+      value.remoteUrl?.trim() &&
+      value.branch?.trim() &&
+      value.commitSha?.trim()
+    ) {
+      fulfillments.push({
+        requirement_id: requirementId,
+        kind: 'git_branch',
+        remote_url: value.remoteUrl.trim(),
+        branch: value.branch.trim(),
+        commit_sha: value.commitSha.trim(),
+      })
+    } else if (
+      value.requirement.value_type === 'pull_request' &&
+      value.url?.trim() &&
+      value.number?.trim() &&
+      value.headBranch?.trim() &&
+      value.baseBranch?.trim() &&
+      value.commitSha?.trim()
+    ) {
+      fulfillments.push({
+        requirement_id: requirementId,
+        kind: 'pull_request',
+        provider: value.provider ?? 'github',
+        url: value.url.trim(),
+        number: Number(value.number),
+        state: 'draft',
+        head_branch: value.headBranch.trim(),
+        base_branch: value.baseBranch.trim(),
+        head_commit: value.commitSha.trim(),
+      })
+    }
+  }
+  return fulfillments
+}
 
 const nativeBoardStatusColors: Record<
   CloudLoopItem['status'],
@@ -1838,6 +1920,30 @@ export function CloudTodoWorkspace({
     []
   )
   useEffect(() => {
+    const subscribe = selectedProjectChatClient?.subscribeLoopItemChanges
+    if (!subscribe || !selectedProjectId) return
+    let active = true
+    let unsubscribe: (() => void) | undefined
+    void subscribe(event => {
+      if (!active || event.projectId !== String(selectedProjectId)) return
+      setBoardRefreshNonce(value => value + 1)
+    })
+      .then(release => {
+        if (!active) {
+          release()
+          return
+        }
+        unsubscribe = release
+      })
+      .catch(error => {
+        console.warn('[Wework project board] issue-change subscription failed', error)
+      })
+    return () => {
+      active = false
+      unsubscribe?.()
+    }
+  }, [selectedProjectChatClient, selectedProjectId])
+  useEffect(() => {
     if (
       !selectedProjectApi ||
       !selectedProjectKey ||
@@ -3481,54 +3587,81 @@ export function CloudTodoWorkspace({
                 inheritFromTask,
               })
             }}
-            onRunWorkflowNode={(workflowNodeId, automationRuleId) => {
+            onRunWorkflowNode={async (workflowNodeId, automationRuleId) => {
               const automationApi = selectedProjectServices?.projectAutomationApi
-              if (!automationApi || !selectedItemProject) return
-              void automationApi
-                .runWorkflowNode(
+              if (!automationApi || !selectedItemProject) {
+                throw new Error(t('todo.workflow_action_failed', '节点操作失败'))
+              }
+              const refreshSelectedWorkflowItem = async () => {
+                const updated = await selectedItemApi.getLoopItem(selectedItem.id)
+                const locatedUpdated = {
+                  ...updated,
+                  project_store: selectedItem.project_store,
+                }
+                setItems(current =>
+                  current.map(item => (item.id === locatedUpdated.id ? locatedUpdated : item))
+                )
+                setSelectedItem(locatedUpdated)
+                return locatedUpdated
+              }
+              try {
+                await automationApi.runWorkflowNode(
                   String(selectedItemProject.id),
                   selectedItem.id,
                   workflowNodeId,
                   automationRuleId
                 )
-                .then(async () => {
-                  const updated = await selectedItemApi.getLoopItem(selectedItem.id)
-                  const locatedUpdated = {
-                    ...updated,
-                    project_store: selectedItem.project_store,
-                  }
-                  setItems(current =>
-                    current.map(item => (item.id === locatedUpdated.id ? locatedUpdated : item))
-                  )
-                  setSelectedItem(locatedUpdated)
-                })
-                .catch(() => setBoardRefreshNonce(value => value + 1))
-            }}
-            onUploadWorkflowDeliverables={async (workflowNodeId, files) => {
-              const bindings = await selectedItemApi.listTaskBindings(selectedItem.id)
-              const source = bindings
-                .filter(binding => binding.workflow_node_id === workflowNodeId)
-                .at(-1)
-              if (!source) throw new Error('请先为当前阶段创建任务')
-              const stage = selectedItem.workflow?.nodes.find(node => node.id === workflowNodeId)
-              const delivery = await selectedItemApi.createDelivery(selectedItem.id, {
-                markdown: [
-                  `# ${stage?.name ?? workflowNodeId} 阶段交付物`,
-                  ...(stage?.required_deliverables ?? []).map(requirement => `- ${requirement}`),
-                ].join('\n'),
-                source_task: {
-                  deviceId: source.device_id,
-                  taskId: source.task_id,
-                },
-              })
-              try {
-                for (const file of files) {
-                  await selectedItemApi.addAsset(delivery.id, file, file.name)
-                }
-                await selectedItemApi.finalizeDelivery(delivery.id)
+                await refreshSelectedWorkflowItem()
               } catch (error) {
-                await selectedItemApi.discardDraft(delivery.id).catch(() => undefined)
+                setBoardRefreshNonce(value => value + 1)
+                const refreshed = await refreshSelectedWorkflowItem().catch(() => null)
+                const stageStatus = refreshed?.workflow?.nodes.find(
+                  node => node.id === workflowNodeId
+                )?.status
+                if (stageStatus && ['queued', 'running'].includes(stageStatus)) return
                 throw error
+              }
+            }}
+            onCompleteWorkflowStage={async (workflowNodeId, action, reason, values) => {
+              const stage = selectedItem.workflow?.nodes.find(node => node.id === workflowNodeId)
+              if (values.length > 0) {
+                const bindings = await selectedItemApi.listTaskBindings(selectedItem.id)
+                const source = bindings
+                  .filter(binding => binding.workflow_node_id === workflowNodeId)
+                  .at(-1)
+                if (!source) throw new Error('当前阶段没有可关联的执行任务')
+                const delivery = await selectedItemApi.createDelivery(selectedItem.id, {
+                  markdown: [
+                    `# ${stage?.name ?? workflowNodeId} 阶段交付物`,
+                    ...(stage?.required_deliverables ?? []).map(
+                      requirement => `- ${requirement.name} (${requirement.value_type})`
+                    ),
+                  ].join('\n'),
+                  source_task: {
+                    deviceId: source.device_id,
+                    taskId: source.task_id,
+                  },
+                })
+                try {
+                  const fulfillments = await uploadWorkflowDeliverables(
+                    selectedItemApi,
+                    delivery.id,
+                    values
+                  )
+                  await selectedItemApi.finalizeDelivery(delivery.id, { fulfillments })
+                } catch (error) {
+                  await selectedItemApi.discardDraft(delivery.id).catch(() => undefined)
+                  throw error
+                }
+              }
+              if (action !== 'submit') {
+                await selectedItemApi.decideWorkflowNode(
+                  selectedItem.id,
+                  workflowNodeId,
+                  action,
+                  reason,
+                  Number(user.id)
+                )
               }
               const updated = await selectedItemApi.getLoopItem(selectedItem.id)
               const locatedUpdated = {

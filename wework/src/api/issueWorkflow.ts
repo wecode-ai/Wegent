@@ -8,6 +8,14 @@ import type {
 type RuntimeWorkflowStatus = 'running' | 'succeeded' | 'failed' | 'cancelled' | 'archived'
 export type WorkflowDecisionAction = 'approve' | 'reject' | 'force_advance'
 
+export interface WorkflowTaskBinding {
+  id?: number | string
+  device_id: string
+  task_id: string
+  workflow_node_id?: string | null
+  linked_at?: string
+}
+
 export function instantiateIssueWorkflow(
   definition: ProjectWorkflowDefinition | null | undefined
 ): IssueWorkflowInstance | null {
@@ -29,6 +37,7 @@ export function instantiateIssueWorkflow(
       task_ids: [],
       task_statuses: {},
       delivery_ids: [],
+      fulfilled_deliverable_ids: [],
       decision_history: [],
       execution_id: null,
     })),
@@ -49,6 +58,60 @@ function releaseReadyNodes(nodes: WorkflowNodeInstance[]): WorkflowNodeInstance[
   })
 }
 
+function projectWorkflowNodeTaskStatus(
+  node: WorkflowNodeInstance,
+  taskStatuses: Record<string, string>,
+  orderedTaskIds: string[],
+  fallbackStatus?: RuntimeWorkflowStatus
+): WorkflowNodeInstance['status'] {
+  if (['completed', 'forced_completed'].includes(node.status)) return node.status
+  if (orderedTaskIds.some(taskId => taskStatuses[taskId] === 'running')) return 'running'
+  const latestStatus = orderedTaskIds[0] ? taskStatuses[orderedTaskIds[0]] : fallbackStatus
+  if (latestStatus === 'running') return 'running'
+  if (['succeeded', 'archived'].includes(latestStatus ?? '')) {
+    if (!node.automation_rule_id) return 'awaiting_approval'
+    const fulfilled = new Set(node.fulfilled_deliverable_ids ?? [])
+    return (node.required_deliverables ?? []).every(requirement => fulfilled.has(requirement.id))
+      ? 'completed'
+      : 'awaiting_deliverables'
+  }
+  if (['failed', 'cancelled'].includes(latestStatus ?? '')) return 'failed'
+  return node.status
+}
+
+export function reconcileIssueWorkflowForTaskBindings(
+  workflow: IssueWorkflowInstance,
+  bindings: WorkflowTaskBinding[]
+): IssueWorkflowInstance {
+  const orderedBindings = [...bindings].sort((left, right) => {
+    const timeOrder = (right.linked_at ?? '').localeCompare(left.linked_at ?? '')
+    if (timeOrder !== 0) return timeOrder
+    return String(right.id ?? '').localeCompare(String(left.id ?? ''), undefined, {
+      numeric: true,
+    })
+  })
+  let changed = false
+  const nodes = workflow.nodes.map(node => {
+    const stageTaskIds = orderedBindings
+      .filter(binding => binding.workflow_node_id === node.id)
+      .map(binding => `${binding.device_id}:${binding.task_id}`)
+    const knownTaskIds = Array.from(new Set([...stageTaskIds, ...(node.task_ids ?? [])]))
+    const taskStatuses = node.task_statuses ?? {}
+    if (knownTaskIds.every(taskId => taskStatuses[taskId] === undefined)) return node
+    const status = projectWorkflowNodeTaskStatus(node, taskStatuses, knownTaskIds)
+    if (
+      status === node.status &&
+      knownTaskIds.length === (node.task_ids?.length ?? 0) &&
+      knownTaskIds.every((taskId, index) => taskId === node.task_ids?.[index])
+    ) {
+      return node
+    }
+    changed = true
+    return { ...node, status, task_ids: knownTaskIds }
+  })
+  return changed ? { ...workflow, nodes } : workflow
+}
+
 export function updateIssueWorkflowForRuntime(
   workflow: IssueWorkflowInstance,
   workflowNodeId: string,
@@ -65,28 +128,23 @@ export function updateIssueWorkflowForRuntime(
       }
       const knownTaskIds = Array.from(
         new Set([
-          ...(node.task_ids ?? []),
           ...stageTaskIds,
+          ...(node.task_ids ?? []),
           ...(runtimeTaskId ? [runtimeTaskId] : []),
         ])
       )
-      const allCompleted =
-        knownTaskIds.length > 0 &&
-        knownTaskIds.every(taskId => ['succeeded', 'archived'].includes(taskStatuses[taskId] ?? ''))
-      const anyRunning = knownTaskIds.some(taskId => taskStatuses[taskId] === 'running')
-      const anyFailed = knownTaskIds.some(taskId =>
-        ['failed', 'cancelled'].includes(taskStatuses[taskId] ?? '')
+      const orderedTaskIds = Array.from(
+        new Set([
+          ...(stageTaskIds.length > 0 ? stageTaskIds : runtimeTaskId ? [runtimeTaskId] : []),
+          ...knownTaskIds,
+        ])
       )
-      const status =
-        allCompleted || (!runtimeTaskId && executionStatus === 'succeeded')
-          ? node.automation_rule_id
-            ? 'completed'
-            : 'awaiting_approval'
-          : anyRunning || executionStatus === 'running'
-            ? 'running'
-            : anyFailed
-              ? 'failed'
-              : 'queued'
+      const status = projectWorkflowNodeTaskStatus(
+        node,
+        taskStatuses,
+        orderedTaskIds,
+        executionStatus
+      )
       return { ...node, status, task_ids: knownTaskIds, task_statuses: taskStatuses }
     })
   )
@@ -121,7 +179,10 @@ export function decideIssueWorkflowNode(
       if (node.automation_rule_id) throw new Error('Automated stages do not accept decisions')
       if (action === 'approve') {
         if (node.status !== 'awaiting_approval') throw new Error('Stage is not awaiting approval')
-        if ((node.required_deliverables?.length ?? 0) > 0 && !node.delivery_ids?.length) {
+        const fulfilled = new Set(node.fulfilled_deliverable_ids ?? [])
+        if (
+          (node.required_deliverables ?? []).some(requirement => !fulfilled.has(requirement.id))
+        ) {
           throw new Error('Required deliverables are missing')
         }
       } else if (action === 'reject') {
@@ -159,19 +220,31 @@ export function decideIssueWorkflowNode(
 export function attachIssueWorkflowDelivery(
   workflow: IssueWorkflowInstance,
   workflowNodeId: string,
-  deliveryId: string
+  deliveryId: string,
+  fulfilledDeliverableIds: string[] = []
 ): IssueWorkflowInstance {
+  const nodes = workflow.nodes.map(node => {
+    if (node.id !== workflowNodeId) return node
+    const fulfilled = Array.from(
+      new Set([...(node.fulfilled_deliverable_ids ?? []), ...fulfilledDeliverableIds])
+    )
+    const allRequiredFulfilled = (node.required_deliverables ?? []).every(requirement =>
+      fulfilled.includes(requirement.id)
+    )
+    return {
+      ...node,
+      delivery_ids: Array.from(new Set([...(node.delivery_ids ?? []), deliveryId])),
+      fulfilled_deliverable_ids: fulfilled,
+      status:
+        node.automation_rule_id && node.status === 'awaiting_deliverables' && allRequiredFulfilled
+          ? ('completed' as const)
+          : node.status,
+    }
+  })
   return {
     ...workflow,
     version: workflow.version + 1,
-    nodes: workflow.nodes.map(node =>
-      node.id === workflowNodeId
-        ? {
-            ...node,
-            delivery_ids: Array.from(new Set([...(node.delivery_ids ?? []), deliveryId])),
-          }
-        : node
-    ),
+    nodes: releaseReadyNodes(nodes),
   }
 }
 

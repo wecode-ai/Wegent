@@ -35,6 +35,8 @@ flowchart LR
     AI --> BINDING
     FREE --> BINDING
     STAGE --> BINDING
+    BINDING --> TASK_STATUS[按任务保存 Runtime 状态]
+    TASK_STATUS --> STAGE
     ISSUE --> TASK_COMPOSER[右侧空白任务会话]
     TASK_COMPOSER -->|首条消息| BINDING
     BINDING -->|打开已有任务| SIDEBAR[右侧任务会话]
@@ -46,6 +48,7 @@ flowchart LR
     GRANT --> SPACE_MCP[稳定 wework-space capability]
     SPACE_MCP --> ISSUE
     SPACE_MCP --> ATTACHMENT
+    SPACE_MCP --> DELIVERY
     STAGE -->|阶段自动化规则| EXEC[(LoopItemExecution)]
     EXEC --> RUNTIME[现有 Runtime / Team / API 激活器]
     TASK --> WORKSPACE[现有 workspace / worktree / branch 真值]
@@ -132,7 +135,7 @@ sequenceDiagram
         U->>V: 按节点要求上传并提交交付物
         V->>O: 将 delivered Delivery 绑定到 workflow node
     end
-    O->>O: 聚合阶段内任务和必要交付物
+    O->>O: 保存每个任务状态；运行优先，否则以最近任务终态聚合阶段
     alt 人工阶段满足验收前置条件
         O-->>U: 节点进入待批准
         U->>H: 批准 / 驳回 / 强制推进
@@ -152,6 +155,7 @@ sequenceDiagram
 | 用户管理 / AI 调度 → 具体任务        | 标准 Wework Composer、AI manager、`LoopItemTaskBinding`                   |
 | Issue 新建任务 / 已有任务 → 右侧会话 | `CloudTodoWorkspace`、`TodoEditor`、`AiChatModal`                         |
 | Runtime Task 绑定 → 阶段状态同步     | `projectSpaceSelection`、`WorkbenchProvider`、ProjectSpace API            |
+| 阶段任务状态历史与最近终态聚合       | Wework `issueWorkflow`、`IssueWorkflowDag`、Issue workflow snapshot       |
 | 节点交付物 → 人工验收与推进          | Delivery API、workflow decision service、`IssueWorkflowDag`               |
 | Issue 看板入口 → 手动任务或编排      | `CloudTodoWorkspace`、`workItemTaskInput`、Issue workflow snapshot        |
 | Issue 会话 → 项目空间当前上下文      | Runtime metadata、ContextGrant、内置 `wework-space` Plugin、Local Gateway |
@@ -179,9 +183,12 @@ sequenceDiagram
 - Issue 从“收集箱”拖到“待开始”时，任务入口必须读取该 Issue 的编排快照。仅“无阶段 + 手动推进”属于自己管理任务，需暂缓移动并打开新建任务 Composer；预置流程必须直接写入“待开始”并启动全部 ready 的自动化阶段，AI 推进必须启动快照绑定的调度员。两者都不得打开新建任务 Composer，也不得为绕过弹窗而创建空白 Runtime Task；重复进入不得为同一阶段或 AI 调度员创建重复运行。
 - 预置流程中的人工阶段由用户显式开始。Issue 详情必须在缩放流程图之外展示所有 ready 人工阶段的主操作，明确标注“人工执行”并提供“开始处理”；流程图只承担结构与进度展示，不能把唯一入口藏在会缩放的节点内部。点击“开始处理”只打开绑定该阶段的任务 Composer，首条消息发送前仍不得创建空白 Runtime Task。
 - 人工阶段的 Runtime Task 创建后，只先写入 `LoopItemTaskBinding`。Runtime Task 云上下文必须返回该绑定的 `workflow_node_id`，绑定完成必须触发已知 Runtime 生命周期重放；不得把人工任务写成 `LoopItemExecution` 的 queued 状态，也不得在 Runtime 尚未确认 running 时由 UI 伪造“排队中”或“进行中”。
-- 人工阶段状态机是 `blocked → ready → running → awaiting_approval → completed`。驳回进入 `changes_requested` 并允许继续原任务；强制推进进入 `forced_completed`。`queued` 仅用于已经创建真实自动化执行且等待 Runtime 容量的自动阶段，不得用于未执行的人工阶段。
-- 节点可声明零个或多个必要交付物。任务 Composer 和 Issue 详情必须明示这些要求及上传方法；提交的 Delivery 必须通过来源 TaskBinding 归属到唯一 `workflow_node_id`。未满足必要交付物时不得批准，但允许具有权限的用户填写原因后强制推进。
-- 人工任务全部成功且必要交付物已提交后，节点只能进入 `awaiting_approval`，不能自动完成。只有用户批准或带原因强制推进后，后继节点才可解锁；驳回必须保留任务、交付物和历史决定，不得回滚或覆盖审计记录。
+- 人工阶段状态机是 `blocked → ready → running → awaiting_approval → completed`。`awaiting_approval` 只阻止进入后续阶段，不得阻止当前阶段继续创建人工任务以修正结果或补交交付物；驳回进入 `changes_requested`，并允许继续原任务或创建新任务。强制推进进入 `forced_completed`。`queued` 仅用于已经创建真实自动化执行且等待 Runtime 容量的自动阶段，不得用于未执行的人工阶段。
+- 节点可声明零个或多个带稳定 ID 和值类型的必要交付物。任务 Composer 和 Issue 详情必须明示这些要求及履约方法；提交的 Delivery 必须通过来源 TaskBinding 归属到唯一 `workflow_node_id`，并逐项绑定 `requirement_id`。未满足必要交付物时不得批准，但允许具有权限的用户填写原因后强制推进；完整生命周期见 [工作流阶段交付与依赖上下文](workflow-stage-deliverables.md)。
+- 绑定 Issue 阶段的 Agent 必须能通过统一 `wework-space` MCP 完成与用户相同的 Delivery 创建、附件上传与下载、读取、提交和草稿丢弃；写操作必须从 ContextGrant 的 Runtime 地址解析来源 TaskBinding，不得接受模型指定的阶段归属。
+- 每个阶段任务的 Runtime 状态必须按稳定的 `device_id:task_id` 写入 `task_statuses`，Issue 详情必须逐条展示，不得只展示阶段汇总状态。
+- 阶段存在任一运行中任务时状态为 `running`；否则由最近绑定任务的可信终态决定当前阶段结果。后续成功必须覆盖旧失败对阶段汇总状态的影响，但旧任务失败状态仍保留在任务历史中。Issue 详情展示和人工决策校验必须从任务真值重算阶段，不得信任可能滞后的阶段快照。人工阶段成功后只能进入 `awaiting_approval`，不能自动完成。
+- 只有用户批准或带原因强制推进后，后继节点才可解锁；驳回必须保留任务、交付物和历史决定，不得回滚或覆盖审计记录。
 - 节点决定必须记录 action、actor user id、reason 和 timestamp。强制推进必须填写非空原因；普通批准可选备注；驳回必须填写原因。
 - Issue 详情必须同时提供已有任务重入、交付物上传、批准、驳回和强制推进入口。节点内任务行是稳定重入入口，关闭右侧会话后仍可再次打开。
 - Issue 详情中的“新建任务”只打开与已有任务会话同位置的右侧空白 Composer；首条消息发送前不得创建 Runtime Task 或 `LoopItemTaskBinding`。

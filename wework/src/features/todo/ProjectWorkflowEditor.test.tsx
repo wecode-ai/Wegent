@@ -227,6 +227,144 @@ describe('ProjectWorkflowEditor', () => {
     })
   })
 
+  test('creates deliverables in a dialog and keeps the inspector as a compact list', () => {
+    const onChange = vi.fn()
+    const onSave = vi.fn()
+    render(
+      <ProjectWorkflowEditor value={workflow} busy={false} onChange={onChange} onSave={onSave} />
+    )
+
+    expect(screen.queryByTestId('workflow-deliverable-requirements-dialog')).not.toBeInTheDocument()
+    expect(screen.queryByPlaceholderText('交付物名称')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('project-workflow-add-deliverable-develop'))
+
+    expect(screen.getByTestId('workflow-deliverable-requirements-dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('workflow-deliverable-requirements-save')).toBeDisabled()
+
+    fireEvent.change(screen.getByTestId('workflow-deliverable-requirement-name-deliverable-1'), {
+      target: { value: '后端 Wiki' },
+    })
+    fireEvent.change(screen.getByTestId('workflow-deliverable-requirement-type-deliverable-1'), {
+      target: { value: 'url' },
+    })
+    fireEvent.change(
+      screen.getByTestId('workflow-deliverable-requirement-description-deliverable-1'),
+      {
+        target: { value: '包含接口和部署说明' },
+      }
+    )
+    fireEvent.click(screen.getByTestId('workflow-deliverable-requirement-add'))
+    fireEvent.change(screen.getByTestId('workflow-deliverable-requirement-name-deliverable-2'), {
+      target: { value: '后端代码' },
+    })
+    fireEvent.change(screen.getByTestId('workflow-deliverable-requirement-type-deliverable-2'), {
+      target: { value: 'code_snapshot' },
+    })
+    fireEvent.click(screen.getByTestId('workflow-deliverable-requirements-save'))
+
+    const expectedDefinition: ProjectWorkflowDefinition = {
+      ...workflow,
+      nodes: [
+        {
+          ...workflow.nodes[0],
+          required_deliverables: [
+            {
+              id: 'deliverable-1',
+              name: '后端 Wiki',
+              description: '包含接口和部署说明',
+              value_type: 'url',
+              file_constraints: null,
+            },
+            {
+              id: 'deliverable-2',
+              name: '后端代码',
+              description: '',
+              value_type: 'code_snapshot',
+              file_constraints: null,
+            },
+          ],
+        },
+        workflow.nodes[1],
+      ],
+    }
+    expect(onChange).toHaveBeenLastCalledWith(expectedDefinition)
+    expect(onSave).toHaveBeenCalledWith(expectedDefinition)
+    expect(screen.queryByTestId('workflow-deliverable-requirements-dialog')).not.toBeInTheDocument()
+  })
+
+  test('edits an existing deliverable by clicking its compact tile', () => {
+    const onChange = vi.fn()
+    const workflowWithDeliverable: ProjectWorkflowDefinition = {
+      ...workflow,
+      nodes: [
+        {
+          ...workflow.nodes[0],
+          required_deliverables: [
+            {
+              id: 'backend-wiki',
+              name: '后端 Wiki',
+              description: '接口说明',
+              value_type: 'url',
+              file_constraints: null,
+            },
+          ],
+        },
+        workflow.nodes[1],
+      ],
+    }
+    render(
+      <ProjectWorkflowEditor
+        value={workflowWithDeliverable}
+        busy={false}
+        onChange={onChange}
+        onSave={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('project-workflow-deliverable-backend-wiki')).toHaveTextContent(
+      '后端 Wiki'
+    )
+    expect(
+      screen.queryByTestId('project-workflow-deliverable-name-backend-wiki')
+    ).not.toBeInTheDocument()
+    expect(screen.getByTestId('project-workflow-deliverable-list-develop')).toHaveClass(
+      'max-h-60',
+      'divide-y',
+      'overflow-y-auto',
+      'overscroll-contain'
+    )
+    expect(screen.getByTestId('project-workflow-deliverable-backend-wiki')).toHaveClass('min-h-12')
+
+    fireEvent.click(screen.getByTestId('project-workflow-deliverable-backend-wiki'))
+    fireEvent.change(
+      screen.getByTestId('workflow-deliverable-requirement-description-backend-wiki'),
+      {
+        target: { value: '接口、部署和回滚说明' },
+      }
+    )
+    fireEvent.click(screen.getByTestId('workflow-deliverable-requirements-save'))
+
+    expect(onChange).toHaveBeenLastCalledWith({
+      ...workflowWithDeliverable,
+      nodes: [
+        {
+          ...workflowWithDeliverable.nodes[0],
+          required_deliverables: [
+            {
+              id: 'backend-wiki',
+              name: '后端 Wiki',
+              description: '接口、部署和回滚说明',
+              value_type: 'url',
+              file_constraints: null,
+            },
+          ],
+        },
+        workflowWithDeliverable.nodes[1],
+      ],
+    })
+  })
+
   test('keeps the three orchestration choices as one dimension', () => {
     const onChange = vi.fn()
     render(
@@ -425,7 +563,7 @@ describe('ProjectWorkflowEditor', () => {
         {
           ...workflow.nodes[0],
           automation_rule_id: 'workflow-rule-1',
-          workspace_policy: 'none',
+          workspace_policy: 'composer',
         },
         workflow.nodes[1],
       ],

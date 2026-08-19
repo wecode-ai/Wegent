@@ -2010,9 +2010,18 @@ impl LocalTaskStore {
                 &input.task_id,
             )?;
         }
+        let workflow_stage_input = match (item_id, input.workflow_node_id.as_deref()) {
+            (Some(item_id), Some(workflow_node_id)) => Some(local_workflow_stage_snapshot(
+                &transaction,
+                item_id,
+                workflow_node_id,
+            )?),
+            _ => None,
+        };
         let metadata = json!({
             "external_item_id": external_item_id,
             "workflow_node_id": input.workflow_node_id,
+            "workflow_stage_input": workflow_stage_input,
         });
         if let Some(active) = active {
             let target_item_id = item_id.or(external_item_id);
@@ -2022,15 +2031,9 @@ impl LocalTaskStore {
             if same_target {
                 transaction.execute(
                     "UPDATE loop_items SET task_title = ?1, backend_task_id = ?2,
-                            metadata = ?3, updated_at = ?4
-                     WHERE id = ?5",
-                    params![
-                        input.task_title,
-                        input.backend_task_id,
-                        metadata.to_string(),
-                        now(),
-                        active.id
-                    ],
+                            updated_at = ?3
+                     WHERE id = ?4",
+                    params![input.task_title, input.backend_task_id, now(), active.id],
                 )?;
                 transaction.commit()?;
                 drop(connection);
@@ -2074,7 +2077,8 @@ impl LocalTaskStore {
                     COALESCE(loop_item_id, json_extract(metadata, '$.external_item_id')),
                     task_user_id, device_id,
                     task_id, task_title, backend_task_id,
-                    json_extract(metadata, '$.workflow_node_id'), linked_at
+                    json_extract(metadata, '$.workflow_node_id'),
+                    json_extract(metadata, '$.workflow_stage_input'), linked_at
              FROM loop_items
              WHERE resource_type = 'execution' AND unlinked_at IS NULL
                AND (loop_item_id = ?1 OR json_extract(metadata, '$.external_item_id') = ?1)
@@ -2114,7 +2118,8 @@ impl LocalTaskStore {
                         COALESCE(loop_item_id, json_extract(metadata, '$.external_item_id')),
                         task_user_id, device_id,
                         task_id, task_title, backend_task_id,
-                        json_extract(metadata, '$.workflow_node_id'), linked_at
+                        json_extract(metadata, '$.workflow_node_id'),
+                        json_extract(metadata, '$.workflow_stage_input'), linked_at
                  FROM loop_items WHERE id = ?1 AND resource_type = 'execution'",
                 [id],
                 map_task_binding,
@@ -2161,7 +2166,8 @@ fn get_active_binding(
                     COALESCE(loop_item_id, json_extract(metadata, '$.external_item_id')),
                     task_user_id, device_id,
                     task_id, task_title, backend_task_id,
-                    json_extract(metadata, '$.workflow_node_id'), linked_at
+                    json_extract(metadata, '$.workflow_node_id'),
+                    json_extract(metadata, '$.workflow_stage_input'), linked_at
              FROM loop_items
              WHERE resource_type = 'execution' AND device_id = ?1 AND task_id = ?2
                AND unlinked_at IS NULL
@@ -2206,30 +2212,17 @@ fn validate_local_workflow_task_binding(
         .get("status")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    if !is_idempotent && !matches!(status, "ready" | "failed") {
+    if !is_idempotent
+        && !matches!(
+            status,
+            "ready" | "queued" | "running" | "awaiting_approval" | "changes_requested" | "failed"
+        )
+    {
         return Err(TaskRuntimeError::Invalid(
             "workflow node is not ready".to_owned(),
         ));
     }
 
-    let occupied = connection.query_row(
-        "SELECT EXISTS(
-            SELECT 1
-            FROM loop_items
-            WHERE resource_type = 'execution'
-              AND loop_item_id = ?1
-              AND json_extract(metadata, '$.workflow_node_id') = ?2
-              AND unlinked_at IS NULL
-              AND NOT (device_id = ?3 AND task_id = ?4)
-        )",
-        params![item_id, workflow_node_id, device_id, task_id],
-        |row| row.get::<_, bool>(0),
-    )?;
-    if occupied {
-        return Err(TaskRuntimeError::Invalid(
-            "workflow node already has a runtime task".to_owned(),
-        ));
-    }
     Ok(())
 }
 
@@ -2244,8 +2237,53 @@ fn map_task_binding(row: &Row<'_>) -> rusqlite::Result<TaskBinding> {
         task_title: row.get(6)?,
         backend_task_id: row.get(7)?,
         workflow_node_id: row.get(8)?,
-        linked_at: row.get(9)?,
+        workflow_stage_input: row
+            .get::<_, Option<String>>(9)?
+            .and_then(|value| serde_json::from_str(&value).ok()),
+        linked_at: row.get(10)?,
     })
+}
+
+fn local_workflow_stage_snapshot(
+    connection: &Connection,
+    item_id: &str,
+    workflow_node_id: &str,
+) -> Result<Value, TaskRuntimeError> {
+    let item = get_item_from(connection, item_id, "task")?.ok_or(TaskRuntimeError::TaskNotFound)?;
+    let nodes = item
+        .metadata
+        .get("workflow")
+        .and_then(|workflow| workflow.get("nodes"))
+        .and_then(Value::as_array)
+        .ok_or_else(|| TaskRuntimeError::Invalid("task has no workflow".to_owned()))?;
+    let target = nodes
+        .iter()
+        .find(|node| node.get("id").and_then(Value::as_str) == Some(workflow_node_id))
+        .ok_or_else(|| TaskRuntimeError::Invalid("workflow node not found".to_owned()))?;
+    let dependencies = target
+        .get("depends_on")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter_map(|dependency_id| {
+            nodes
+                .iter()
+                .find(|node| node.get("id").and_then(Value::as_str) == Some(dependency_id))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    Ok(json!({
+        "version": 1,
+        "issue": {
+            "id": item.id,
+            "title": item.title,
+            "description": item.description,
+            "status": item.status,
+        },
+        "target_stage": target,
+        "dependencies": dependencies,
+    }))
 }
 
 fn migrate(connection: &Connection) -> Result<(), TaskRuntimeError> {
@@ -5755,19 +5793,51 @@ mod tests {
             )
             .unwrap();
 
-        let occupied = store.bind_task(
-            &project.id,
-            Some(&task.id),
-            None,
-            RuntimeTaskAddress {
-                device_id: "local-device".to_owned(),
-                task_id: "runtime-2".to_owned(),
-                task_title: Some("Duplicate develop".to_owned()),
-                backend_task_id: None,
-                workflow_node_id: Some("develop".to_owned()),
-            },
-        );
-        assert!(matches!(occupied, Err(TaskRuntimeError::Invalid(_))));
+        let additional = store
+            .bind_task(
+                &project.id,
+                Some(&task.id),
+                None,
+                RuntimeTaskAddress {
+                    device_id: "local-device".to_owned(),
+                    task_id: "runtime-2".to_owned(),
+                    task_title: Some("Additional develop".to_owned()),
+                    backend_task_id: None,
+                    workflow_node_id: Some("develop".to_owned()),
+                },
+            )
+            .unwrap();
+        assert_eq!(additional.workflow_node_id.as_deref(), Some("develop"));
+
+        let current = store.get_task(&project.id, &task.id).unwrap();
+        let mut workflow = current.metadata["workflow"].clone();
+        workflow["nodes"][0]["status"] = json!("awaiting_approval");
+        store
+            .update_task(
+                &project.id,
+                &task.id,
+                TaskUpdate {
+                    version: current.version,
+                    workflow: Some(Some(workflow)),
+                    ..TaskUpdate::default()
+                },
+            )
+            .unwrap();
+        let correction = store
+            .bind_task(
+                &project.id,
+                Some(&task.id),
+                None,
+                RuntimeTaskAddress {
+                    device_id: "local-device".to_owned(),
+                    task_id: "runtime-correction".to_owned(),
+                    task_title: Some("Correct develop".to_owned()),
+                    backend_task_id: None,
+                    workflow_node_id: Some("develop".to_owned()),
+                },
+            )
+            .unwrap();
+        assert_eq!(correction.workflow_node_id.as_deref(), Some("develop"));
 
         let blocked = store.bind_task(
             &project.id,
@@ -5874,7 +5944,13 @@ mod tests {
                 },
             )
             .unwrap();
-        let finalized = store.finalize_delivery(&task.id, &delivery.id).unwrap();
+        let finalized = store
+            .finalize_delivery(
+                &task.id,
+                &delivery.id,
+                crate::task_runtime::DeliveryFinalize::default(),
+            )
+            .unwrap();
         assert_eq!(finalized.status, "delivered");
         assert_eq!(
             std::fs::read_to_string(store.delivery_asset_path(&asset.id).unwrap()).unwrap(),
@@ -5946,6 +6022,78 @@ mod tests {
             .unwrap();
         assert_eq!(loop_item_id, None);
         assert_eq!(external_item_id.as_deref(), Some("42"));
+    }
+
+    #[test]
+    fn finalized_delivery_is_bound_to_the_source_workflow_node() {
+        let (_directory, store) = store();
+        let project = local_project(&store);
+        let task = store
+            .create_task(
+                &project.id,
+                TaskCreate {
+                    title: "Workflow delivery".to_owned(),
+                    description: String::new(),
+                    status: "pending".to_owned(),
+                    priority: "none".to_owned(),
+                    parent_id: None,
+                    tags: vec![],
+                    workflow: Some(json!({
+                        "version": 1,
+                        "nodes": [{
+                            "id": "develop",
+                            "name": "Develop",
+                            "kind": "my_task",
+                            "status": "ready",
+                            "depends_on": [],
+                            "required": true,
+                            "required_deliverables": ["result.txt"],
+                            "delivery_ids": []
+                        }]
+                    })),
+                },
+            )
+            .unwrap();
+        let address = RuntimeTaskAddress {
+            device_id: "device-1".to_owned(),
+            task_id: "runtime-1".to_owned(),
+            task_title: Some("Implement".to_owned()),
+            backend_task_id: None,
+            workflow_node_id: Some("develop".to_owned()),
+        };
+        store
+            .bind_task(&project.id, Some(&task.id), None, address.clone())
+            .unwrap();
+        let delivery = store
+            .create_delivery(
+                &project.id,
+                &task.id,
+                true,
+                DeliveryCreate {
+                    markdown: "# Done".to_owned(),
+                    chat: Some(json!({"messages": [{"role": "assistant", "content": "done"}]})),
+                    source_task: Some(address),
+                },
+            )
+            .unwrap();
+
+        store
+            .finalize_delivery(
+                &task.id,
+                &delivery.id,
+                crate::task_runtime::DeliveryFinalize::default(),
+            )
+            .unwrap();
+
+        let updated = store.get_task(&project.id, &task.id).unwrap();
+        assert_eq!(
+            updated.metadata["workflow"]["nodes"][0]["delivery_ids"],
+            json!([delivery.id])
+        );
+        assert_eq!(
+            store.delivery_detail(&delivery.id).unwrap().chat,
+            Some(json!({"messages": [{"role": "assistant", "content": "done"}]}))
+        );
     }
 
     #[test]

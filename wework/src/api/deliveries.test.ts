@@ -336,7 +336,7 @@ describe('createDeliveryApi task tracking', () => {
     })
   })
 
-  test('serializes workflow projection updates from parallel runtime tasks', async () => {
+  test('uses the atomic workflow status command for parallel runtime tasks', async () => {
     const workflowItem: CloudLoopItem = {
       ...trackedItem,
       status: 'pending',
@@ -369,38 +369,8 @@ describe('createDeliveryApi task tracking', () => {
         ],
       },
     }
-    let currentItem = workflowItem
-    let releaseFirstUpdate: (() => void) | null = null
-    const firstUpdateReleased = new Promise<void>(resolve => {
-      releaseFirstUpdate = resolve
-    })
+    const currentItem = workflowItem
     const get = vi.fn(async (endpoint: string) => {
-      if (endpoint.endsWith(`/loop-items/${currentItem.id}/tasks`)) {
-        return [
-          {
-            id: 1,
-            loop_item_id: currentItem.id,
-            task_user_id: 1,
-            device_id: 'local-device',
-            task_id: 'runtime-develop',
-            task_title: 'Develop',
-            backend_task_id: null,
-            workflow_node_id: 'develop',
-            linked_at: '2026-08-18T00:00:00Z',
-          },
-          {
-            id: 2,
-            loop_item_id: currentItem.id,
-            task_user_id: 1,
-            device_id: 'local-device',
-            task_id: 'runtime-docs',
-            task_title: 'Docs',
-            backend_task_id: null,
-            workflow_node_id: 'docs',
-            linked_at: '2026-08-18T00:00:00Z',
-          },
-        ]
-      }
       if (endpoint.includes('/cloud-context')) {
         const nodeId = endpoint.includes('runtime-develop') ? 'develop' : 'docs'
         return {
@@ -411,18 +381,7 @@ describe('createDeliveryApi task tracking', () => {
       }
       return currentItem
     })
-    const patch = vi.fn(
-      async (_endpoint: string, body: { version: number; workflow: CloudLoopItem['workflow'] }) => {
-        if (body.version === 1) await firstUpdateReleased
-        currentItem = {
-          ...currentItem,
-          status: 'in_progress',
-          version: body.version + 1,
-          workflow: body.workflow,
-        }
-        return currentItem
-      }
-    )
+    const patch = vi.fn().mockResolvedValue({ ...workflowItem, status: 'in_progress', version: 2 })
     const developApi = createDeliveryApi(clientWith({ get, patch }))
     const docsApi = createDeliveryApi(clientWith({ get, patch }))
 
@@ -434,22 +393,18 @@ describe('createDeliveryApi task tracking', () => {
       { deviceId: 'local-device', taskId: 'runtime-docs' },
       'running'
     )
-    await vi.waitFor(() => expect(patch).toHaveBeenCalledTimes(1))
-
-    releaseFirstUpdate?.()
-
     await Promise.all([develop, docs])
-    expect(patch).toHaveBeenNthCalledWith(
-      1,
-      `/v1/loop-items/${trackedItem.id}`,
-      expect.objectContaining({ version: 1 })
-    )
-    expect(patch).toHaveBeenNthCalledWith(
-      2,
-      `/v1/loop-items/${trackedItem.id}`,
-      expect.objectContaining({ version: 2 })
-    )
-    expect(currentItem.workflow?.nodes.map(node => node.status)).toEqual(['running', 'running'])
+    expect(patch).toHaveBeenNthCalledWith(1, '/v1/runtime-tasks/cloud-context/status', {
+      deviceId: 'local-device',
+      taskId: 'runtime-develop',
+      status: 'running',
+    })
+    expect(patch).toHaveBeenNthCalledWith(2, '/v1/runtime-tasks/cloud-context/status', {
+      deviceId: 'local-device',
+      taskId: 'runtime-docs',
+      status: 'running',
+    })
+    expect(get).toHaveBeenCalledTimes(2)
   })
 
   test('synchronizes a friendly runtime title to the bound task', async () => {

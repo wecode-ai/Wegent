@@ -103,8 +103,20 @@ export function AiChatModal({
       localProjects[0]
     return matched?.id ?? null
   })
+  const [localDeviceWorkspaceId, setLocalDeviceWorkspaceId] = useState<number | null>(null)
   const selectedLocalProject =
     localProjects.find(candidate => candidate.id === localProjectId) ?? null
+  const selectLocalProject = useCallback((projectId: number | null) => {
+    setLocalProjectId(projectId)
+    setLocalDeviceWorkspaceId(null)
+  }, [])
+  const selectLocalProjectWorkspace = useCallback(
+    (projectId: number, deviceWorkspaceId: number | null) => {
+      setLocalProjectId(projectId)
+      setLocalDeviceWorkspaceId(deviceWorkspaceId)
+    },
+    []
+  )
   const runtimeContext = useMemo<
     Pick<RuntimeSendRequest, 'cloudProjectId' | 'origin' | 'additionalContext'>
   >(
@@ -204,6 +216,7 @@ export function AiChatModal({
     ) => {
       const address = await createProjectRuntimeTask(message, {
         project: selectedLocalProject,
+        deviceWorkspaceId: localDeviceWorkspaceId,
         workspaceSource: inheritFromTask,
         runtime: 'codex',
         attachments: options.attachments,
@@ -219,12 +232,10 @@ export function AiChatModal({
     [
       createProjectRuntimeTask,
       inheritFromTask,
+      localDeviceWorkspaceId,
       onTaskCreated,
-      project,
       runtimeContext,
       selectedLocalProject,
-      task,
-      workflowNodeId,
     ]
   )
 
@@ -287,7 +298,9 @@ export function AiChatModal({
     return selectedLocalProject ? (
       <ConnectedIssueProjectWork
         project={selectedLocalProject}
-        onSelectProject={setLocalProjectId}
+        selectedDeviceWorkspaceId={localDeviceWorkspaceId}
+        onSelectProject={selectLocalProject}
+        onSelectProjectWorkspace={selectLocalProjectWorkspace}
         inheritFromTask={inheritFromTask}
       >
         {projectWork => composer(projectWork)}

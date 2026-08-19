@@ -20,13 +20,22 @@ from app.core.config import settings
 from app.db.session import SessionLocal
 from app.mcp_server.auth import MCPAuthInfo
 from app.mcp_server.tools.decorator import mcp_tool
-from app.models.delivery import CloudProject, Delivery, LoopItem
+from app.models.cloud_project import LoopItemTaskBinding
+from app.models.delivery import (
+    CloudProject,
+    Delivery,
+    LoopItem,
+    loop_datetime_is_unset,
+)
 from app.models.user import User
 from app.schemas.base_role import BaseRole
 from app.schemas.cloud_file import CloudFileResponse
 from app.schemas.cloud_project import CloudProjectCreate, CloudProjectUpdate
 from app.schemas.delivery import (
+    DeliveryAssetResponse,
+    DeliveryCreate,
     DeliveryDetailResponse,
+    DeliveryFinalize,
     DeliveryResponse,
     LoopItemAttachmentResponse,
     LoopItemCreate,
@@ -47,6 +56,11 @@ from app.services.loop_items.provider_router import (
 from app.services.loop_items.service import loop_item_service
 from app.services.project_automation_execution import project_automation_execution
 from app.services.project_chat.service import project_chat_service
+from app.services.workflow_deliverables import (
+    fulfilled_requirement_ids,
+    missing_requirement_ids,
+)
+from app.services.workflow_stage_context import workflow_stage_context_resolver
 from app.stores.tasks import task_store
 
 BOARD_TASK_SOURCES = {
@@ -204,8 +218,49 @@ def _content_view(content: bytes, content_type: str, filename: str) -> dict[str,
 
 def _delivery_view(db: Session, delivery: Delivery) -> dict[str, Any]:
     return DeliveryResponse.model_validate(
-        {**delivery.__dict__, "assets": delivery_service.list_assets(db, delivery.id)}
+        {
+            **delivery.__dict__,
+            "assets": delivery_service.list_assets(db, delivery.id),
+            "fulfillments": delivery_service.fulfillment_values(delivery),
+        }
     ).model_dump(mode="json")
+
+
+def _delivery_binding(
+    db: Session, token_info: MCPAuthInfo, item_id: str
+) -> LoopItemTaskBinding:
+    if token_info.auth_type != "task" or token_info.task_id is None:
+        raise ValueError("Delivery writes require an authenticated board Task")
+    binding = (
+        db.query(LoopItemTaskBinding)
+        .filter(
+            LoopItemTaskBinding.loop_item_id == item_id,
+            LoopItemTaskBinding.task_user_id == token_info.user_id,
+            LoopItemTaskBinding.backend_task_id == token_info.task_id,
+            loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
+        )
+        .first()
+    )
+    if binding is None:
+        raise ValueError("Authenticated Task is not bound to this board item")
+    return binding
+
+
+def _delivery_draft_for_binding(
+    db: Session,
+    token_info: MCPAuthInfo,
+    item_id: str,
+    delivery_id: str,
+) -> tuple[Delivery, LoopItemTaskBinding]:
+    binding = _delivery_binding(db, token_info, item_id)
+    delivery = delivery_service.get_delivery(db, delivery_id, token_info.user_id)
+    if (
+        delivery.loop_item_id != item_id
+        or delivery.status != "draft"
+        or delivery.source_task_binding_id != binding.id
+    ):
+        raise ValueError("Delivery draft does not belong to the authenticated Task")
+    return delivery, binding
 
 
 @mcp_tool(server="wework_space")
@@ -681,6 +736,131 @@ def delete_item_attachment(
 
 
 @mcp_tool(server="wework_space")
+def get_delivery_requirements(
+    token_info: MCPAuthInfo, space_id: str = "", item_id: str = ""
+) -> dict[str, Any]:
+    """Return the authenticated Task's workflow stage and Delivery requirements."""
+
+    with SessionLocal() as db:
+        project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
+        resolved_item_id = _item_id(db, token_info, item_id)
+        item = _read_item(db, project, resolved_item_id, token_info.user_id)
+        binding = _delivery_binding(db, token_info, resolved_item_id)
+        workflow = item.get("workflow") or {}
+        node = next(
+            (
+                candidate
+                for candidate in workflow.get("nodes", [])
+                if candidate.get("id") == binding.workflow_node_id
+            ),
+            None,
+        )
+        return {
+            "workflow_node_id": binding.workflow_node_id,
+            "workflow_node": node,
+            "required_deliverables": (node or {}).get("required_deliverables", []),
+            "delivery_ids": (node or {}).get("delivery_ids", []),
+            "fulfilled_requirement_ids": sorted(
+                fulfilled_requirement_ids(db, node or {})
+            ),
+            "missing_requirement_ids": missing_requirement_ids(db, node or {}),
+        }
+
+
+@mcp_tool(server="wework_space")
+def get_workflow_stage_context(
+    token_info: MCPAuthInfo, space_id: str = "", item_id: str = ""
+) -> dict[str, Any]:
+    """Return the immutable predecessor context for the authenticated stage."""
+
+    with SessionLocal() as db:
+        project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
+        resolved_item_id = _item_id(db, token_info, item_id)
+        item = db.get(LoopItem, resolved_item_id)
+        if item is None or str(item.cloud_project_id) != str(project.id):
+            raise ValueError("Board item not found")
+        binding = _delivery_binding(db, token_info, resolved_item_id)
+        if not binding.workflow_node_id:
+            raise ValueError("Authenticated Task is not bound to a workflow stage")
+        snapshot = workflow_stage_context_resolver.binding_snapshot(binding)
+        if snapshot is None:
+            snapshot = workflow_stage_context_resolver.resolve(
+                db,
+                item=item,
+                target_node_id=binding.workflow_node_id,
+            )
+            workflow_stage_context_resolver.freeze_binding(binding, snapshot)
+            db.commit()
+        return snapshot
+
+
+@mcp_tool(server="wework_space")
+def create_delivery(
+    token_info: MCPAuthInfo,
+    markdown: str = "",
+    chat: dict[str, Any] | None = None,
+    chat_selection: dict[str, Any] | None = None,
+    space_id: str = "",
+    item_id: str = "",
+) -> dict[str, Any]:
+    """Create a Delivery draft, optionally snapshotting selected Issue chat messages."""
+
+    with SessionLocal() as db:
+        project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
+        resolved_item_id = _item_id(db, token_info, item_id)
+        _read_item(db, project, resolved_item_id, token_info.user_id)
+        binding = _delivery_binding(db, token_info, resolved_item_id)
+        delivery = delivery_service.create_delivery(
+            db,
+            resolved_item_id,
+            token_info.user_id,
+            DeliveryCreate.model_validate(
+                {
+                    "markdown": markdown,
+                    "chat": chat,
+                    "chat_selection": chat_selection,
+                    "source_task": {
+                        "deviceId": binding.device_id,
+                        "taskId": binding.task_id,
+                    },
+                }
+            ),
+        )
+        return _delivery_view(db, delivery)
+
+
+@mcp_tool(server="wework_space")
+def upload_delivery_asset(
+    token_info: MCPAuthInfo,
+    delivery_id: str,
+    relative_path: str,
+    content_text: str = "",
+    content_base64: str = "",
+    display_name: str = "",
+    content_type: str = "application/octet-stream",
+    space_id: str = "",
+    item_id: str = "",
+) -> dict[str, Any]:
+    """Upload inline text/base64 content into the authenticated Task's draft."""
+
+    with SessionLocal() as db:
+        project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
+        resolved_item_id = _item_id(db, token_info, item_id)
+        _read_item(db, project, resolved_item_id, token_info.user_id)
+        _delivery_draft_for_binding(db, token_info, resolved_item_id, delivery_id)
+        asset = delivery_service.add_asset(
+            db,
+            delivery_id,
+            token_info.user_id,
+            relative_path,
+            display_name or relative_path,
+            content_type,
+            BytesIO(_decode_upload(content_text, content_base64)),
+        )
+        return DeliveryAssetResponse.model_validate(asset).model_dump(mode="json")
+
+
+@mcp_tool(server="wework_space")
 def list_deliveries(
     token_info: MCPAuthInfo, space_id: str = "", item_id: str = ""
 ) -> list[dict[str, Any]]:
@@ -718,6 +898,101 @@ def read_delivery(
             markdown=delivery_service.read_markdown(delivery),
             chat=delivery_service.read_chat(delivery),
         ).model_dump(mode="json")
+
+
+@mcp_tool(server="wework_space")
+def download_delivery_asset(
+    token_info: MCPAuthInfo,
+    delivery_id: str,
+    asset_id: str,
+    space_id: str = "",
+    item_id: str = "",
+) -> dict[str, Any]:
+    """Read a Delivery asset as inline text/base64 content."""
+
+    with SessionLocal() as db:
+        project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
+        resolved_item_id = _item_id(db, token_info, item_id)
+        _read_item(db, project, resolved_item_id, token_info.user_id)
+        delivery = delivery_service.get_delivery(db, delivery_id, token_info.user_id)
+        if delivery.loop_item_id != resolved_item_id:
+            raise ValueError("Delivery not found on this board item")
+        asset = next(
+            (
+                candidate
+                for candidate in delivery_service.list_assets(db, delivery_id)
+                if candidate.id == asset_id
+            ),
+            None,
+        )
+        if asset is None:
+            raise ValueError("Delivery asset not found")
+        content = delivery_service.storage.get_bytes(
+            asset.object_key, settings.DELIVERY_MAX_ASSET_SIZE_MB * 1024 * 1024
+        )
+        return _content_view(
+            content,
+            asset.content_type or "application/octet-stream",
+            asset.display_name,
+        )
+
+
+@mcp_tool(
+    server="wework_space",
+    param_descriptions={
+        "fulfillments": (
+            "Typed results bound to required_deliverables by requirement_id. "
+            "Required when the current stage declares deliverables. Each object must use "
+            "one kind: text {requirement_id, kind, text}; file "
+            "{requirement_id, kind, asset_ids}; code_snapshot "
+            "{requirement_id, kind, asset_id, changed_files, sha256}; git_branch "
+            "{requirement_id, kind, remote_url, branch, commit_sha}; pull_request "
+            "{requirement_id, kind, provider, url, number, head_branch, base_branch, "
+            "head_commit}; url {requirement_id, kind, url, title}."
+        )
+    },
+)
+def finalize_delivery(
+    token_info: MCPAuthInfo,
+    delivery_id: str,
+    fulfillments: list[dict[str, Any]] | None = None,
+    space_id: str = "",
+    item_id: str = "",
+) -> dict[str, Any]:
+    """Finalize a Delivery with typed requirement fulfillments."""
+
+    with SessionLocal() as db:
+        project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
+        resolved_item_id = _item_id(db, token_info, item_id)
+        _read_item(db, project, resolved_item_id, token_info.user_id)
+        _delivery_draft_for_binding(db, token_info, resolved_item_id, delivery_id)
+        return _delivery_view(
+            db,
+            delivery_service.finalize(
+                db,
+                delivery_id,
+                token_info.user_id,
+                DeliveryFinalize.model_validate({"fulfillments": fulfillments or []}),
+            ),
+        )
+
+
+@mcp_tool(server="wework_space")
+def discard_delivery_draft(
+    token_info: MCPAuthInfo,
+    delivery_id: str,
+    space_id: str = "",
+    item_id: str = "",
+) -> dict[str, bool]:
+    """Discard the authenticated Task's unfinished Delivery draft."""
+
+    with SessionLocal() as db:
+        project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
+        resolved_item_id = _item_id(db, token_info, item_id)
+        _read_item(db, project, resolved_item_id, token_info.user_id)
+        _delivery_draft_for_binding(db, token_info, resolved_item_id, delivery_id)
+        delivery_service.discard_draft(db, delivery_id, token_info.user_id)
+        return {"discarded": True}
 
 
 @mcp_tool(server="wework_space")

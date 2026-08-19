@@ -1513,17 +1513,25 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       const startedAt = Date.now()
       let lastFailure = `Unable to find selector "${command.selector}" containing "${text}"`
       while (Date.now() - startedAt < timeoutMs) {
-        const container = findDesktopControlElements(command.selector).find(element =>
-          (element.textContent ?? '').includes(text)
+        const container = findDesktopControlElements(command.selector).find(
+          element =>
+            (!command.visible || desktopControlElementVisible(element)) &&
+            (element.textContent ?? '').includes(text)
         )
         const target = container?.querySelector<HTMLElement>(targetSelector)
-        if (target && desktopControlElementEnabled(target)) {
+        if (
+          target &&
+          (!command.visible || desktopControlElementVisible(target)) &&
+          desktopControlElementEnabled(target)
+        ) {
           target.scrollIntoView({ block: 'center', inline: 'nearest' })
           target.click()
           return target.textContent?.trim() ?? ''
         }
         if (container && !target) {
           lastFailure = `Unable to find descendant "${targetSelector}" inside "${command.selector}"`
+        } else if (target && command.visible && !desktopControlElementVisible(target)) {
+          lastFailure = `Descendant "${targetSelector}" inside "${command.selector}" is hidden`
         } else if (target && !desktopControlElementEnabled(target)) {
           lastFailure = `Descendant "${targetSelector}" inside "${command.selector}" is disabled`
         }
