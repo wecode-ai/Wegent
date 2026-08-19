@@ -257,14 +257,17 @@ impl RuntimeTaskLink {
             supervisor,
             git_info,
             created_at: timestamp_ms_field(thread, "createdAt").unwrap_or_else(now_ms),
-            updated_at: timestamp_ms_field(thread, "updatedAt").unwrap_or_else(now_ms),
-            completed_at: if running {
-                local_link.as_ref().and_then(|link| link.completed_at)
-            } else if local_settled_status.is_some() {
-                local_link.as_ref().and_then(|link| link.completed_at)
+            updated_at: if running {
+                timestamp_ms_field(thread, "updatedAt").unwrap_or_else(now_ms)
             } else {
-                timestamp_ms_field(thread, "updatedAt")
-                    .or_else(|| local_link.as_ref().and_then(|link| link.completed_at))
+                local_completed_at
+                    .or_else(|| timestamp_ms_field(thread, "updatedAt"))
+                    .unwrap_or_else(now_ms)
+            },
+            completed_at: if running || local_settled_status.is_some() {
+                local_completed_at
+            } else {
+                local_completed_at.or_else(|| timestamp_ms_field(thread, "updatedAt"))
             },
             runtime_handle: local_link
                 .as_ref()
@@ -1170,6 +1173,32 @@ mod tests {
             false,
         );
 
+        assert_eq!(link.completed_at, Some(1_780_000_100_000));
+    }
+
+    #[test]
+    fn completed_wework_task_keeps_its_persisted_activity_time() {
+        let local_link = RuntimeTaskLink {
+            local_task_id: "task-1".to_owned(),
+            thread_id: Some("thread-1".to_owned()),
+            workspace_path: "/workspace/project".to_owned(),
+            status: "done".to_owned(),
+            completed_at: Some(1_780_000_100_000),
+            ..RuntimeTaskLink::default()
+        };
+        let link = RuntimeTaskLink::from_thread_metadata(
+            &json!({
+                "id": "thread-1",
+                "status": "idle",
+                "createdAt": 1_780_000_000,
+                "updatedAt": 1_780_086_400,
+            }),
+            Some(local_link),
+            "/workspace/project".to_owned(),
+            false,
+        );
+
+        assert_eq!(link.updated_at, 1_780_000_100_000);
         assert_eq!(link.completed_at, Some(1_780_000_100_000));
     }
 
