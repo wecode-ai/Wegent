@@ -20,7 +20,7 @@ PNG、JPEG、WebP、GIF、BMP、AVIF、TIFF 和 SVG 图片使用 Flyfish Viewer 
 
 `.mermaid`、`.mmd`、`.plantuml` 和 `.puml` 文件使用与对话内代码块相同的图表渲染器。预览必须跟随 Wework 当前明暗主题，并在面板尺寸变化时等比例适配，不能裁掉 SVG 边缘。
 
-Mermaid 可能通过 SVG `foreignObject` 生成包含 `<br>` 的 HTML 标签。渲染器必须按 HTML 语义解析 Mermaid 输出，再导入 SVG；不能先按严格 XML 重解析，否则浏览器序列化后的非自闭合 HTML 标签会触发 XML 标签不匹配。导入前必须移除 `script`、`iframe`、`object`、`embed` 和根节点及后代元素上的事件处理属性。PlantUML 输出仍按严格 SVG/XML 解析。
+Mermaid 可能通过 SVG `foreignObject` 生成包含 `<br>` 的 HTML 标签。渲染器必须启用 Mermaid 严格安全级别，按 HTML 语义解析输出后再导入 SVG；不能先按严格 XML 重解析，否则浏览器序列化后的非自闭合 HTML 标签会触发 XML 标签不匹配。导入前必须移除可执行或可提交内容的元素、根节点及后代元素上的事件处理属性、外部资源属性、不安全 URL 协议和非本地图形引用；仅保留 `#id` 形式的本地 `href` 引用。PlantUML 输出仍按严格 SVG/XML 解析。
 
 图表预览提供复制和保存操作。复制会生成 PNG 并通过桌面原生命令写入系统剪贴板；保存会打开系统保存窗口并将 PNG 写入用户选择的位置。Mermaid 的 HTML 标签在导出阶段转换为纯 SVG 文本，避免 macOS WebView 因 `foreignObject` 将 Canvas 标记为不可导出。
 

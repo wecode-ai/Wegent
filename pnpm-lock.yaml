@@ -7,7 +7,7 @@ settings:
 packageExtensionsChecksum: sha256-7xSR3ISjHMO1s2SGAymiUIjUjIMF2cWdsXI0XROK3UY=
 
 patchedDependencies:
-  '@file-viewer/renderer-drawing@2.1.26': 3150a1936195a58ca833b6055990b9d82afbc39f6b915e31366e057437a666be
+  '@file-viewer/renderer-drawing@2.1.26': f4d00a3f3f86eacb4f5fbd6447a7e743af72865c6a01fa193ee9337984b1bf68
 
 importers:
 
@@ -9778,7 +9778,7 @@ snapshots:
       '@file-viewer/renderer-archive': 2.1.26
       '@file-viewer/renderer-cad': 2.1.26(three@0.184.0)
       '@file-viewer/renderer-data': 2.1.26
-      '@file-viewer/renderer-drawing': 2.1.26(patch_hash=3150a1936195a58ca833b6055990b9d82afbc39f6b915e31366e057437a666be)
+      '@file-viewer/renderer-drawing': 2.1.26(patch_hash=f4d00a3f3f86eacb4f5fbd6447a7e743af72865c6a01fa193ee9337984b1bf68)
       '@file-viewer/renderer-eda': 2.1.26
       '@file-viewer/renderer-geo': 2.1.26
       '@file-viewer/renderer-mindmap': 2.1.26
@@ -9849,7 +9849,7 @@ snapshots:
       hyparquet: 1.26.2
       sql.js: 1.14.1
 
-  '@file-viewer/renderer-drawing@2.1.26(patch_hash=3150a1936195a58ca833b6055990b9d82afbc39f6b915e31366e057437a666be)':
+  '@file-viewer/renderer-drawing@2.1.26(patch_hash=f4d00a3f3f86eacb4f5fbd6447a7e743af72865c6a01fa193ee9337984b1bf68)':
     dependencies:
       '@file-viewer/core': 2.1.26
       '@panzoom/panzoom': 4.6.2
