@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { useEffect, type ComponentType, type MouseEvent, type ReactNode } from 'react'
+import { useEffect, type ComponentType, type ReactNode } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { Delivery, WorkflowNodeInstance } from '@/api/deliveries'
 import { IssueWorkflowDag } from './IssueWorkflowDag'
@@ -8,48 +8,62 @@ const fitView = vi.fn()
 
 vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
-    t: (key: string): string =>
-      ({
-        'todo.workflow_active_stages': '当前阶段',
-        'todo.workflow_node_details': '节点详情',
-        'todo.workflow_stage_human_execution': '人工执行',
-        'todo.workflow_ai_execution': 'AI 执行',
-        'todo.workflow_start_work': '开始处理',
-        'todo.workflow_add_stage_task': '添加任务',
-        'todo.workflow_view_execution_short': '查看',
-        'todo.workflow_task_executions': '任务执行',
-        'todo.workflow_task_status_running': '执行中',
-        'todo.workflow_task_status_succeeded': '成功',
-        'todo.workflow_task_status_failed': '失败',
-        'todo.workflow_task_status_cancelled': '已取消',
-        'todo.workflow_task_status_archived': '已归档',
-        'todo.workflow_task_status_pending': '等待执行',
-        'todo.workflow_run_again': '重新运行',
-        'todo.workflow_run': '运行',
-        'todo.workflow_node_blocked': '等待前置任务',
-        'todo.workflow_node_ready': '可开始',
-        'todo.workflow_node_queued': '排队中',
-        'todo.workflow_node_running': '执行中',
-        'todo.workflow_node_awaiting_approval': '待人工批准',
-        'todo.workflow_node_changes_requested': '已驳回，待修改',
-        'todo.workflow_node_completed': '已完成',
-        'todo.workflow_node_forced_completed': '已强制推进',
-        'todo.workflow_node_failed': '执行失败',
-        'todo.workflow_required_deliverables': '必要交付物',
-        'todo.workflow_deliveries_submitted': '已提交',
-        'todo.workflow_deliverable_fulfilled': '已提交',
-        'todo.workflow_deliverable_missing': '待提交',
-        'todo.workflow_deliverables_missing_count': '仍有交付物未提交',
-        'todo.deliverable_type_text': '文本',
-        'todo.deliverable_type_file': '文件',
-        'todo.workflow_upload_deliverables': '上传交付物',
-        'todo.workflow_approve_stage': '批准进入下一阶段',
-        'todo.workflow_reject_stage': '驳回',
-        'todo.workflow_force_advance': '强制推进',
-        'todo.workflow_decision_reason_placeholder': '填写原因',
-        'todo.workflow_wait_dependencies': '等待前置阶段',
-        'todo.workflow_no_stage_tasks': '尚无具体任务',
-      })[key] ?? key,
+    t: (key: string, fallback?: string, values?: Record<string, string | number>): string => {
+      const text =
+        {
+          'todo.workflow_active_stages': '当前阶段',
+          'todo.workflow_node_details': '节点详情',
+          'todo.workflow_next_actions': '下一步',
+          'todo.workflow_stage_human_execution': '人工执行',
+          'todo.workflow_ai_execution': 'AI 执行',
+          'todo.workflow_start_work': '开始处理',
+          'todo.workflow_add_stage_task': '添加任务',
+          'todo.workflow_view_execution_short': '查看',
+          'todo.workflow_task_executions': '任务执行',
+          'todo.workflow_task_status_running': '执行中',
+          'todo.workflow_task_status_succeeded': '成功',
+          'todo.workflow_task_status_failed': '失败',
+          'todo.workflow_task_status_cancelled': '已取消',
+          'todo.workflow_task_status_archived': '已归档',
+          'todo.workflow_task_status_pending': '等待执行',
+          'todo.workflow_run_again': '重新运行',
+          'todo.workflow_run': '运行',
+          'todo.workflow_node_blocked': '等待前置任务',
+          'todo.workflow_node_ready': '可开始',
+          'todo.workflow_node_queued': '排队中',
+          'todo.workflow_node_running': '执行中',
+          'todo.workflow_node_waiting': '等待中',
+          'todo.workflow_node_awaiting_approval': '待人工批准',
+          'todo.workflow_node_changes_requested': '已驳回，待修改',
+          'todo.workflow_node_completed': '已完成',
+          'todo.workflow_node_forced_completed': '已强制推进',
+          'todo.workflow_node_failed': '执行失败',
+          'todo.workflow_required_deliverables': '必要交付物',
+          'todo.workflow_deliveries_submitted': '已提交',
+          'todo.workflow_deliverable_fulfilled': '已提交',
+          'todo.workflow_deliverable_missing': '待提交',
+          'todo.workflow_deliverables_missing_count': '仍有交付物未提交',
+          'todo.deliverable_type_text': '文本',
+          'todo.deliverable_type_file': '文件',
+          'todo.workflow_upload_deliverables': '上传交付物',
+          'todo.workflow_approve_stage': '批准进入下一阶段',
+          'todo.workflow_reject_stage': '驳回',
+          'todo.workflow_force_advance': '强制推进',
+          'todo.workflow_decision_reason_placeholder': '填写原因',
+          'todo.workflow_wait_dependencies': '等待前置阶段',
+          'todo.workflow_no_stage_tasks': '尚无具体任务',
+          'todo.workflow_wait_mode_trigger': 'trigger',
+          'todo.workflow_wait_mode_debounce': 'debounce',
+          'todo.workflow_wait_event_types': '等待：{{types}}',
+          'todo.workflow_wait_round': '等待中 · 第 {{round}} 轮修复中',
+        }[key] ??
+        fallback ??
+        key
+      return Object.entries(values ?? {}).reduce(
+        (rendered, [name, value]) => rendered.replace(`{{${name}}}`, String(value)),
+        text
+      )
+    },
   }),
 }))
 
@@ -152,6 +166,148 @@ describe('IssueWorkflowDag', () => {
     )
   })
 
+  test('exposes ready human and AI stage actions outside the zoomable graph', () => {
+    const onCreateTask = vi.fn()
+    const onRunAutomation = vi.fn()
+
+    render(
+      <IssueWorkflowDag
+        nodes={[
+          stage('编辑'),
+          stage('审阅', { automation_rule_id: 'rule-1' }),
+          stage('交付', { status: 'blocked' }),
+        ]}
+        tasks={[]}
+        onCreateTask={onCreateTask}
+        onRunAutomation={onRunAutomation}
+      />
+    )
+
+    expect(screen.getByTestId('cloud-todo-workflow-actions')).toHaveTextContent('当前阶段')
+    expect(screen.getByTestId('cloud-todo-workflow-action-编辑')).toHaveTextContent(
+      '人工执行 · 可开始'
+    )
+    expect(screen.getByTestId('cloud-todo-workflow-action-审阅')).toHaveTextContent(
+      'AI 执行 · 可开始'
+    )
+    expect(screen.queryByTestId('cloud-todo-workflow-action-交付')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('cloud-todo-create-workflow-task-编辑'))
+    expect(onCreateTask).toHaveBeenCalledWith('编辑')
+
+    fireEvent.click(screen.getByTestId('cloud-todo-run-workflow-node-审阅'))
+    expect(onRunAutomation).toHaveBeenCalledWith('审阅', 'rule-1')
+  })
+
+  test('offers another task after a human stage has already started', () => {
+    render(
+      <IssueWorkflowDag
+        nodes={[stage('编辑', { status: 'running' })]}
+        tasks={[
+          {
+            id: 1,
+            device_id: 'device-1',
+            task_id: 'task-1',
+            task_title: '已有任务',
+            workflow_node_id: '编辑',
+          },
+        ]}
+        onCreateTask={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('cloud-todo-create-workflow-task-编辑')).toHaveTextContent('添加任务')
+  })
+
+  test('renders a waiting node with mode badges, events, and round text', () => {
+    render(
+      <IssueWorkflowDag
+        nodes={[
+          stage('等待', {
+            node_type: 'wait',
+            status: 'waiting',
+            wait_round: 2,
+            wait_config: {
+              rules: [
+                {
+                  id: 'rule-1',
+                  event_type: 'ci_failed',
+                  mode: 'debounce',
+                  action: 'rerun',
+                },
+                {
+                  id: 'rule-2',
+                  event_type: 'merged',
+                  mode: 'trigger',
+                  action: 'complete',
+                },
+              ],
+            },
+          }),
+        ]}
+        tasks={[]}
+      />
+    )
+
+    expect(screen.getByTestId('cloud-todo-workflow-node-等待')).toHaveTextContent('等待中')
+    expect(screen.getByTestId('cloud-todo-workflow-wait-mode-等待-debounce')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-workflow-wait-mode-等待-trigger')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-workflow-node-等待')).toHaveTextContent(
+      '等待：ci_failed / merged'
+    )
+    expect(screen.getByTestId('cloud-todo-workflow-node-等待')).toHaveTextContent(
+      '等待中 · 第 2 轮修复中'
+    )
+    expect(screen.queryByTestId('cloud-todo-workflow-action-等待')).not.toBeInTheDocument()
+  })
+
+  test('renders start and end endpoint nodes without stage actions', () => {
+    render(
+      <IssueWorkflowDag
+        nodes={[
+          stage('开始', { node_type: 'start', status: 'completed' }),
+          stage('编辑'),
+          stage('结束', { node_type: 'end', status: 'blocked' }),
+        ]}
+        tasks={[]}
+        onCreateTask={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('cloud-todo-workflow-node-开始')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-workflow-node-结束')).toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-workflow-action-开始')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-workflow-action-结束')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-workflow-action-编辑')).toBeInTheDocument()
+  })
+
+  test('shows the waiting status label for a wait node', () => {
+    render(
+      <IssueWorkflowDag
+        nodes={[
+          stage('等待', {
+            node_type: 'wait',
+            status: 'waiting',
+            wait_config: {
+              rules: [
+                {
+                  id: 'rule-1',
+                  event_type: 'merged',
+                  mode: 'trigger',
+                  action: 'complete',
+                },
+              ],
+            },
+          }),
+        ]}
+        tasks={[]}
+      />
+    )
+
+    expect(screen.getByTestId('cloud-todo-workflow-node-等待')).toHaveTextContent('等待中')
+    expect(screen.queryByTestId('cloud-todo-workflow-action-等待')).not.toBeInTheDocument()
+  })
+
   test('switches the detail panel when a completed graph node is clicked', () => {
     const onCreateTask = vi.fn()
     render(
@@ -187,39 +343,6 @@ describe('IssueWorkflowDag', () => {
     expect(screen.queryByTestId('cloud-todo-create-workflow-task-设计')).not.toBeInTheDocument()
   })
 
-  test('exposes ready human and AI stage actions outside the zoomable graph', () => {
-    const onCreateTask = vi.fn()
-    const onRunAutomation = vi.fn()
-
-    render(
-      <IssueWorkflowDag
-        nodes={[
-          stage('编辑'),
-          stage('审阅', { automation_rule_id: 'rule-1' }),
-          stage('交付', { status: 'blocked' }),
-        ]}
-        tasks={[]}
-        onCreateTask={onCreateTask}
-        onRunAutomation={onRunAutomation}
-      />
-    )
-
-    expect(screen.getByTestId('cloud-todo-workflow-actions')).toHaveTextContent('当前阶段')
-    expect(screen.getByTestId('cloud-todo-workflow-action-编辑')).toHaveTextContent(
-      '人工执行 · 可开始'
-    )
-    expect(screen.getByTestId('cloud-todo-workflow-action-审阅')).toHaveTextContent(
-      'AI 执行 · 可开始'
-    )
-    expect(screen.queryByTestId('cloud-todo-workflow-action-交付')).not.toBeInTheDocument()
-
-    fireEvent.click(screen.getByTestId('cloud-todo-create-workflow-task-编辑'))
-    expect(onCreateTask).toHaveBeenCalledWith('编辑')
-
-    fireEvent.click(screen.getByTestId('cloud-todo-run-workflow-node-审阅'))
-    expect(onRunAutomation).toHaveBeenCalledWith('审阅', 'rule-1')
-  })
-
   test('prevents duplicate reruns and surfaces the backend rejection', async () => {
     let rejectRun: ((reason?: unknown) => void) | undefined
     const onRunAutomation = vi.fn(
@@ -250,26 +373,6 @@ describe('IssueWorkflowDag', () => {
       expect(rerun).not.toBeDisabled()
       expect(screen.getByText('执行设备当前不可用')).toBeInTheDocument()
     })
-  })
-
-  test('offers another task after a human stage has already started', () => {
-    render(
-      <IssueWorkflowDag
-        nodes={[stage('编辑', { status: 'running' })]}
-        tasks={[
-          {
-            id: 1,
-            device_id: 'device-1',
-            task_id: 'task-1',
-            task_title: '已有任务',
-            workflow_node_id: '编辑',
-          },
-        ]}
-        onCreateTask={vi.fn()}
-      />
-    )
-
-    expect(screen.getByTestId('cloud-todo-create-workflow-task-编辑')).toHaveTextContent('添加任务')
   })
 
   test('allows another task while a human stage awaits approval', () => {

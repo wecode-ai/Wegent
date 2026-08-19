@@ -23,6 +23,18 @@ export function instantiateIssueWorkflow(
   const stageMode = definition.stage_mode ?? (definition.nodes.length ? 'dag' : 'none')
   const advancementPolicy = definition.advancement_policy ?? 'manual'
   if (stageMode === 'none' && advancementPolicy === 'manual') return null
+  const nodes = (stageMode === 'dag' ? definition.nodes : []).map(node => ({
+    ...node,
+    status:
+      node.node_type === 'start' ? 'completed' : node.depends_on.length === 0 ? 'ready' : 'blocked',
+    task_binding_id: null,
+    task_ids: [],
+    task_statuses: {},
+    delivery_ids: [],
+    fulfilled_deliverable_ids: [],
+    decision_history: [],
+    execution_id: null,
+  }))
   return {
     version: 1,
     definition_version: definition.version,
@@ -30,17 +42,9 @@ export function instantiateIssueWorkflow(
     advancement_policy: advancementPolicy,
     coordinator_prompt: definition.coordinator_prompt ?? '',
     ai_automation_rule_id: definition.ai_automation_rule_id ?? null,
-    nodes: (stageMode === 'dag' ? definition.nodes : []).map(node => ({
-      ...node,
-      status: node.depends_on.length === 0 ? 'ready' : 'blocked',
-      task_binding_id: null,
-      task_ids: [],
-      task_statuses: {},
-      delivery_ids: [],
-      fulfilled_deliverable_ids: [],
-      decision_history: [],
-      execution_id: null,
-    })),
+    // Release nodes whose dependencies are already satisfied (the start node
+    // completes at instantiation), mirroring the backend projection pass.
+    nodes: releaseReadyNodes(nodes),
   }
 }
 
@@ -52,9 +56,12 @@ function releaseReadyNodes(nodes: WorkflowNodeInstance[]): WorkflowNodeInstance[
   )
   return nodes.map(node => {
     if (node.status !== 'blocked') return node
-    return node.depends_on.every(dependency => completed.has(dependency))
-      ? { ...node, status: 'ready' }
-      : node
+    if (!node.depends_on.every(dependency => completed.has(dependency))) return node
+    if (node.node_type === 'end') {
+      completed.add(node.id)
+      return { ...node, status: 'completed' }
+    }
+    return { ...node, status: node.node_type === 'wait' ? 'waiting' : 'ready' }
   })
 }
 
@@ -159,7 +166,9 @@ export function workflowBoardStatus(workflow: IssueWorkflowInstance): CloudLoopI
   ) {
     return 'in_review'
   }
-  if (workflow.nodes.some(node => ['running', 'changes_requested'].includes(node.status))) {
+  if (
+    workflow.nodes.some(node => ['running', 'waiting', 'changes_requested'].includes(node.status))
+  ) {
     return 'in_progress'
   }
   return 'pending'

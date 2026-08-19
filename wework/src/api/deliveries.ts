@@ -343,11 +343,15 @@ export interface CloudTaskContext {
 
 export type WorkflowWorkspacePolicy = 'none' | 'composer' | 'inherit'
 export type WorkflowContextSource = 'final_result' | 'deliveries' | 'activity'
+export type WorkflowNodeType = 'stage' | 'wait' | 'start' | 'end'
+export type WaitEventMode = 'trigger' | 'debounce'
+export type WaitEventAction = 'rerun' | 'complete'
 export type WorkflowNodeStatus =
   | 'blocked'
   | 'ready'
   | 'queued'
   | 'running'
+  | 'waiting'
   | 'awaiting_approval'
   | 'awaiting_deliverables'
   | 'changes_requested'
@@ -357,10 +361,24 @@ export type WorkflowNodeStatus =
 export type IssueAdvancementPolicy = 'manual' | 'ai'
 export type IssueStageMode = 'none' | 'dag'
 
+export interface WaitEventRule {
+  id: string
+  event_type: string
+  mode: WaitEventMode
+  action: WaitEventAction
+  rerun_prompt?: string
+}
+
+export interface WaitNodeConfig {
+  rules: WaitEventRule[]
+}
+
 export interface WorkflowNodeDefinition {
   id: string
   name: string
   prompt?: string
+  node_type?: WorkflowNodeType
+  wait_config?: WaitNodeConfig | null
   kind?: 'my_task' | 'automation' | 'ai' | null
   depends_on: string[]
   dependency_context?: Record<string, WorkflowContextSource[]>
@@ -394,6 +412,7 @@ export interface WorkflowNodeInstance extends WorkflowNodeDefinition {
   }>
   execution_id?: number | null
   automation_run_id?: string | null
+  wait_round?: number
 }
 
 export interface IssueWorkflowInstance {

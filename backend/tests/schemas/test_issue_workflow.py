@@ -36,6 +36,44 @@ def test_workflow_definition_instantiates_ready_roots() -> None:
     assert [node.status for node in workflow.nodes] == ["ready", "blocked"]
 
 
+def test_workflow_instantiation_completes_start_node_and_unlocks_dependents() -> None:
+    definition = ProjectWorkflowDefinition.model_validate(
+        {
+            "version": 1,
+            "stage_mode": "dag",
+            "advancement_policy": "manual",
+            "nodes": [
+                {
+                    "id": "start",
+                    "name": "开始",
+                    "node_type": "start",
+                    "depends_on": [],
+                    "workspace_policy": "none",
+                },
+                {
+                    "id": "develop",
+                    "name": "开发",
+                    "depends_on": ["start"],
+                    "workspace_policy": "composer",
+                },
+                {
+                    "id": "end",
+                    "name": "结束",
+                    "node_type": "end",
+                    "depends_on": ["develop"],
+                    "workspace_policy": "none",
+                },
+            ],
+        }
+    )
+
+    workflow = instantiate_workflow(definition)
+
+    assert [node.status for node in workflow.nodes] == ["completed", "ready", "blocked"]
+    assert workflow.nodes[0].node_type == "start"
+    assert workflow.nodes[0].status == "completed"
+
+
 @pytest.mark.parametrize(
     "nodes",
     [

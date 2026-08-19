@@ -40,6 +40,56 @@ const definition = {
   ],
 }
 
+const endpointDefinition = {
+  version: 1,
+  stage_mode: 'dag' as const,
+  advancement_policy: 'manual' as const,
+  nodes: [
+    {
+      id: 'start',
+      name: '开始',
+      node_type: 'start' as const,
+      depends_on: [],
+      required: false,
+      workspace_policy: 'none' as const,
+    },
+    {
+      id: 'develop',
+      name: '开发',
+      depends_on: ['start'],
+      required: true,
+      workspace_policy: 'composer' as const,
+    },
+    {
+      id: 'wait',
+      name: '等待',
+      node_type: 'wait' as const,
+      depends_on: ['develop'],
+      required: true,
+      workspace_policy: 'none' as const,
+      wait_config: {
+        rules: [
+          {
+            id: 'rule-1',
+            event_type: 'merged',
+            mode: 'trigger' as const,
+            action: 'complete' as const,
+            rerun_prompt: '',
+          },
+        ],
+      },
+    },
+    {
+      id: 'end',
+      name: '结束',
+      node_type: 'end' as const,
+      depends_on: ['wait'],
+      required: true,
+      workspace_policy: 'none' as const,
+    },
+  ],
+}
+
 describe('Issue workflow projection', () => {
   it('instantiates only root nodes as ready', () => {
     expect(instantiateIssueWorkflow(definition)?.nodes.map(node => node.status)).toEqual([
@@ -91,6 +141,106 @@ describe('Issue workflow projection', () => {
     workflow = decideIssueWorkflowNode(workflow, 'test', 'approve', 1, '')
     workflow = updateIssueWorkflowForRuntime(workflow, 'pr', 'succeeded')
     workflow = decideIssueWorkflowNode(workflow, 'pr', 'approve', 1, '')
+    expect(workflowBoardStatus(workflow)).toBe('in_review')
+  })
+
+  it('completes the start node and releases stages that depend on it', () => {
+    const workflow = instantiateIssueWorkflow(endpointDefinition)!
+
+    expect(workflow.nodes.map(node => [node.id, node.status])).toEqual([
+      ['start', 'completed'],
+      ['develop', 'ready'],
+      ['wait', 'blocked'],
+      ['end', 'blocked'],
+    ])
+    expect(workflowBoardStatus(workflow)).toBe('pending')
+  })
+
+  it('enters waiting after its prerequisites finish and keeps the issue in progress', () => {
+    let workflow = instantiateIssueWorkflow(endpointDefinition)!
+    workflow = updateIssueWorkflowForRuntime(workflow, 'develop', 'running')
+    expect(workflowBoardStatus(workflow)).toBe('in_progress')
+
+    workflow = updateIssueWorkflowForRuntime(workflow, 'develop', 'succeeded')
+    workflow = decideIssueWorkflowNode(workflow, 'develop', 'approve', 1, '')
+    expect(workflow.nodes.map(node => [node.id, node.status])).toEqual([
+      ['start', 'completed'],
+      ['develop', 'completed'],
+      ['wait', 'waiting'],
+      ['end', 'blocked'],
+    ])
+    expect(workflowBoardStatus(workflow)).toBe('in_progress')
+  })
+
+  it('auto-completes the end node when the last stage finishes and moves the issue to review', () => {
+    const definitionWithEnd = {
+      version: 1,
+      stage_mode: 'dag' as const,
+      advancement_policy: 'manual' as const,
+      nodes: [
+        {
+          id: 'start',
+          name: '开始',
+          node_type: 'start' as const,
+          depends_on: [],
+          required: false,
+          workspace_policy: 'none' as const,
+        },
+        {
+          id: 'develop',
+          name: '开发',
+          depends_on: ['start'],
+          required: true,
+          workspace_policy: 'composer' as const,
+        },
+        {
+          id: 'end',
+          name: '结束',
+          node_type: 'end' as const,
+          depends_on: ['develop'],
+          required: true,
+          workspace_policy: 'none' as const,
+        },
+      ],
+    }
+    let workflow = instantiateIssueWorkflow(definitionWithEnd)!
+    workflow = updateIssueWorkflowForRuntime(workflow, 'develop', 'succeeded')
+    workflow = decideIssueWorkflowNode(workflow, 'develop', 'approve', 1, '')
+
+    expect(workflow.nodes.map(node => [node.id, node.status])).toEqual([
+      ['start', 'completed'],
+      ['develop', 'completed'],
+      ['end', 'completed'],
+    ])
+    expect(workflowBoardStatus(workflow)).toBe('in_review')
+  })
+
+  it('treats a minimal start-to-end flow as already done', () => {
+    const workflow = instantiateIssueWorkflow({
+      version: 1,
+      stage_mode: 'dag',
+      advancement_policy: 'manual',
+      nodes: [
+        {
+          id: 'start',
+          name: '开始',
+          node_type: 'start',
+          depends_on: [],
+          required: false,
+          workspace_policy: 'none',
+        },
+        {
+          id: 'end',
+          name: '结束',
+          node_type: 'end',
+          depends_on: ['start'],
+          required: true,
+          workspace_policy: 'none',
+        },
+      ],
+    })!
+
+    expect(workflow.nodes.map(node => node.status)).toEqual(['completed', 'completed'])
     expect(workflowBoardStatus(workflow)).toBe('in_review')
   })
 

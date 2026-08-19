@@ -265,21 +265,63 @@ class IssueWorkflowInstance(BaseModel):
         return self
 
 
+def release_blocked_nodes(
+    nodes: list[WorkflowNodeInstance],
+) -> list[WorkflowNodeInstance]:
+    """Advance blocked nodes whose dependencies are already completed.
+
+    Mirrors the projection pass used on persisted snapshots: a wait node enters
+    ``waiting``, an end node completes immediately, everything else becomes
+    ``ready``. End nodes join the completed set so later nodes can release in
+    the same pass.
+    """
+
+    completed = {
+        node.id for node in nodes if node.status in {"completed", "forced_completed"}
+    }
+    for node in nodes:
+        if node.status != "blocked":
+            continue
+        if not all(dependency in completed for dependency in node.depends_on):
+            continue
+        if node.node_type == "end":
+            node.status = "completed"
+            completed.add(node.id)
+        elif node.node_type == "wait":
+            node.status = "waiting"
+        else:
+            node.status = "ready"
+    return nodes
+
+
 def instantiate_workflow(
     definition: ProjectWorkflowDefinition,
 ) -> IssueWorkflowInstance:
     roots = {node.id for node in definition.nodes if not node.depends_on}
+    # The start node is the workflow entry: it is already satisfied when the
+    # workflow begins, otherwise every stage that depends on it would stay
+    # blocked forever.
+    start_ids = {node.id for node in definition.nodes if node.node_type == "start"}
+    nodes = [
+        WorkflowNodeInstance(
+            **node.model_dump(),
+            status=(
+                "completed"
+                if node.id in start_ids
+                else "ready"
+                if node.id in roots
+                else "blocked"
+            ),
+        )
+        for node in (definition.nodes if definition.stage_mode == "dag" else [])
+    ]
     return IssueWorkflowInstance(
         definition_version=definition.version,
         stage_mode=definition.stage_mode,
         advancement_policy=definition.advancement_policy,
         coordinator_prompt=definition.coordinator_prompt,
         ai_automation_rule_id=definition.ai_automation_rule_id,
-        nodes=[
-            WorkflowNodeInstance(
-                **node.model_dump(),
-                status="ready" if node.id in roots else "blocked",
-            )
-            for node in (definition.nodes if definition.stage_mode == "dag" else [])
-        ],
+        # Release nodes whose dependencies are already satisfied (the start
+        # node completes at instantiation), mirroring the projection pass.
+        nodes=release_blocked_nodes(nodes),
     )

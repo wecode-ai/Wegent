@@ -1,12 +1,4 @@
-import {
-  memo,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type KeyboardEvent as ReactKeyboardEvent,
-} from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Background,
   BaseEdge,
@@ -27,6 +19,7 @@ import {
 import {
   Bot,
   GitBranch,
+  Hourglass,
   Plus,
   Settings2,
   Sparkles,
@@ -37,6 +30,7 @@ import {
 import type {
   IssueStageMode,
   ProjectWorkflowDefinition,
+  WaitEventRule,
   WorkflowContextSource,
   WorkflowNodeDefinition,
   WorkflowWorkspacePolicy,
@@ -46,8 +40,8 @@ import type { ProjectChatAgent } from '@/api/projectChatAgents'
 import { Tooltip } from '@/components/ui/tooltip'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
-import { WorkflowDeliverableRequirementsDialog } from './WorkflowDeliverableRequirementsDialog'
 import { layoutWorkflowGraph, wouldCreateWorkflowCycle } from './workflowGraph'
+import { WorkflowDeliverableRequirementsDialog } from './WorkflowDeliverableRequirementsDialog'
 import {
   createWorkflowDeliverableRequirement,
   workflowDeliverableTypeLabel,
@@ -65,11 +59,15 @@ interface ProjectWorkflowEditorProps {
   onRequestConfigureAiCoordinator?: () => void
 }
 
-interface StageNodeData extends Record<string, unknown> {
-  stage: WorkflowNodeDefinition
+interface EditorNodeData extends Record<string, unknown> {
+  node: WorkflowNodeDefinition
   index: number
   actionLabel: string
   dependencyCount: number
+  nodeWidth: number
+  nodeHeight: number
+  canInsertBefore: boolean
+  canInsertAfter: boolean
   onInsertBefore: () => void
   onInsertAfter: () => void
 }
@@ -79,7 +77,7 @@ interface WorkflowEdgeData extends Record<string, unknown> {
   selected: boolean
 }
 
-type StageFlowNode = Node<StageNodeData, 'stage'>
+type EditorFlowNode = Node<EditorNodeData>
 type WorkflowFlowEdge = Edge<WorkflowEdgeData, 'workflow'>
 type OrchestrationMode = 'manual' | 'workflow' | 'ai'
 type StageInsertionDirection = 'before' | 'after'
@@ -90,12 +88,21 @@ interface DeliverableDialogState {
 
 const STAGE_NODE_WIDTH = 220
 const STAGE_NODE_HEIGHT = 116
+const ENDPOINT_NODE_SIZE = 72
+const START_NODE_ID = 'start'
+const END_NODE_ID = 'end'
 const DEFAULT_DEPENDENCY_CONTEXT: WorkflowContextSource[] = ['final_result', 'deliveries']
 
-function nextNodeId(nodes: WorkflowNodeDefinition[]): string {
-  let index = nodes.length + 1
-  while (nodes.some(node => node.id === `stage-${index}`)) index += 1
-  return `stage-${index}`
+function nextNodeId(nodes: WorkflowNodeDefinition[], prefix: 'stage' | 'wait'): string {
+  let index = 1
+  while (nodes.some(node => node.id === `${prefix}-${index}`)) index += 1
+  return `${prefix}-${index}`
+}
+
+function nextRuleId(rules: WaitEventRule[]): string {
+  let index = 1
+  while (rules.some(rule => rule.id === `rule-${index}`)) index += 1
+  return `rule-${index}`
 }
 
 function stageMode(value: ProjectWorkflowDefinition): IssueStageMode {
@@ -109,7 +116,7 @@ function dependencyContext(
   return [...(node.dependency_context?.[dependencyId] ?? DEFAULT_DEPENDENCY_CONTEXT)]
 }
 
-function createStage(
+function createStageNode(
   id: string,
   name: string,
   dependsOn: string[],
@@ -118,6 +125,7 @@ function createStage(
   return {
     id,
     name,
+    node_type: 'stage',
     prompt: '',
     depends_on: dependsOn,
     dependency_context: dependencyContexts,
@@ -128,11 +136,124 @@ function createStage(
   }
 }
 
-const StageNodeCard = memo(function StageNodeCard({ data, selected }: NodeProps<StageFlowNode>) {
+function createWaitNode(
+  id: string,
+  name: string,
+  dependsOn: string[],
+  dependencyContexts: Record<string, WorkflowContextSource[]>
+): WorkflowNodeDefinition {
+  return {
+    id,
+    name,
+    node_type: 'wait',
+    prompt: '',
+    wait_config: {
+      rules: [
+        { id: 'rule-1', event_type: '', mode: 'trigger', action: 'complete', rerun_prompt: '' },
+      ],
+    },
+    depends_on: dependsOn,
+    dependency_context: dependencyContexts,
+    required: true,
+    required_deliverables: [],
+    workspace_policy: 'none',
+    automation_rule_id: null,
+  }
+}
+
+function createStartNode(name: string): WorkflowNodeDefinition {
+  return {
+    id: START_NODE_ID,
+    name,
+    node_type: 'start',
+    prompt: '',
+    depends_on: [],
+    dependency_context: {},
+    required: false,
+    required_deliverables: [],
+    workspace_policy: 'none',
+    automation_rule_id: null,
+  }
+}
+
+function createEndNode(name: string, dependsOn: string[]): WorkflowNodeDefinition {
+  return {
+    id: END_NODE_ID,
+    name,
+    node_type: 'end',
+    prompt: '',
+    depends_on: dependsOn,
+    dependency_context: Object.fromEntries(
+      dependsOn.map(dependencyId => [dependencyId, [...DEFAULT_DEPENDENCY_CONTEXT]])
+    ),
+    required: true,
+    required_deliverables: [],
+    workspace_policy: 'none',
+    automation_rule_id: null,
+  }
+}
+
+/** Guarantee the DAG is bounded by the structural start and end nodes. */
+function ensureEndpointNodes(
+  value: ProjectWorkflowDefinition,
+  startName: string,
+  endName: string
+): ProjectWorkflowDefinition {
+  if (value.stage_mode !== 'dag') return value
+  const nodes = [...value.nodes]
+  let changed = false
+  if (!nodes.some(node => node.node_type === 'start')) {
+    nodes.unshift(createStartNode(startName))
+    changed = true
+  }
+  if (!nodes.some(node => node.node_type === 'end')) {
+    const last = nodes[nodes.length - 1]
+    nodes.push(createEndNode(endName, last ? [last.id] : []))
+    changed = true
+  }
+  return changed ? { ...value, nodes } : value
+}
+
+function InsertNodeButton({
+  side,
+  testId,
+  label,
+  onClick,
+}: {
+  side: 'left' | 'right'
+  testId: string
+  label: string
+  onClick: () => void
+}) {
+  return (
+    <Tooltip
+      label={label}
+      className={cn(
+        '!absolute top-1/2 -translate-y-1/2',
+        side === 'left' ? 'left-0 -translate-x-1/2' : 'right-0 translate-x-1/2'
+      )}
+    >
+      <button
+        type="button"
+        data-testid={testId}
+        aria-label={label}
+        onClick={event => {
+          event.stopPropagation()
+          onClick()
+        }}
+        className="nodrag nopan flex h-6 w-6 items-center justify-center rounded-full border border-blue-500 bg-background text-blue-500 shadow-sm transition hover:bg-blue-500 hover:text-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+      >
+        <Plus className="h-3.5 w-3.5" />
+      </button>
+    </Tooltip>
+  )
+}
+
+const StageNodeCard = memo(function StageNodeCard({ data, selected }: NodeProps<EditorFlowNode>) {
   const { t } = useTranslation('common')
   return (
     <article
-      data-testid={`project-workflow-stage-${data.stage.id}`}
+      data-testid={`project-workflow-stage-${data.node.id}`}
       className={cn(
         'relative h-[116px] w-[220px] rounded-xl border bg-background px-3 py-2.5 shadow-sm transition',
         selected
@@ -148,36 +269,25 @@ const StageNodeCard = memo(function StageNodeCard({ data, selected }: NodeProps<
           selected && '!opacity-0'
         )}
       />
-      {selected ? (
-        <Tooltip
+      {selected && data.canInsertBefore ? (
+        <InsertNodeButton
+          side="left"
+          testId={`project-workflow-insert-before-${data.node.id}`}
           label={t('todo.workflow_insert_stage_before', '在此阶段前插入阶段')}
-          className="!absolute left-0 top-1/2 -translate-x-1/2 -translate-y-1/2"
-        >
-          <button
-            type="button"
-            data-testid={`project-workflow-insert-before-${data.stage.id}`}
-            aria-label={t('todo.workflow_insert_stage_before', '在此阶段前插入阶段')}
-            onClick={event => {
-              event.stopPropagation()
-              data.onInsertBefore()
-            }}
-            className="nodrag nopan flex h-6 w-6 items-center justify-center rounded-full border border-blue-500 bg-background text-blue-500 shadow-sm transition hover:bg-blue-500 hover:text-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
-          >
-            <Plus className="h-3.5 w-3.5" />
-          </button>
-        </Tooltip>
+          onClick={data.onInsertBefore}
+        />
       ) : null}
       <div className="flex items-start gap-2">
         <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-border text-xs text-text-muted">
           {data.index + 1}
         </span>
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium text-text-primary">{data.stage.name}</p>
+          <p className="truncate text-sm font-medium text-text-primary">{data.node.name}</p>
           <p className="mt-0.5 truncate text-xs text-text-muted">{data.actionLabel}</p>
         </div>
       </div>
       <p className="mt-2 line-clamp-2 min-h-8 text-xs leading-4 text-text-secondary">
-        {data.stage.prompt || t('todo.workflow_stage_prompt_empty', '尚未设置这个阶段需要完成什么')}
+        {data.node.prompt || t('todo.workflow_stage_prompt_empty', '尚未设置这个阶段需要完成什么')}
       </p>
       <p className="mt-1 text-xs text-text-muted">
         {data.dependencyCount
@@ -194,30 +304,165 @@ const StageNodeCard = memo(function StageNodeCard({ data, selected }: NodeProps<
           selected && '!opacity-0'
         )}
       />
-      {selected ? (
-        <Tooltip
+      {selected && data.canInsertAfter ? (
+        <InsertNodeButton
+          side="right"
+          testId={`project-workflow-insert-after-${data.node.id}`}
           label={t('todo.workflow_insert_stage_after', '在此阶段后插入阶段')}
-          className="!absolute right-0 top-1/2 translate-x-1/2 -translate-y-1/2"
-        >
-          <button
-            type="button"
-            data-testid={`project-workflow-insert-after-${data.stage.id}`}
-            aria-label={t('todo.workflow_insert_stage_after', '在此阶段后插入阶段')}
-            onClick={event => {
-              event.stopPropagation()
-              data.onInsertAfter()
-            }}
-            className="nodrag nopan flex h-6 w-6 items-center justify-center rounded-full border border-blue-500 bg-background text-blue-500 shadow-sm transition hover:bg-blue-500 hover:text-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
-          >
-            <Plus className="h-3.5 w-3.5" />
-          </button>
-        </Tooltip>
+          onClick={data.onInsertAfter}
+        />
       ) : null}
     </article>
   )
 })
 
-const nodeTypes = { stage: StageNodeCard }
+const WaitNodeCard = memo(function WaitNodeCard({ data, selected }: NodeProps<EditorFlowNode>) {
+  const { t } = useTranslation('common')
+  const modes = Array.from(new Set((data.node.wait_config?.rules ?? []).map(rule => rule.mode)))
+  const waitingEvents = Array.from(
+    new Set(
+      (data.node.wait_config?.rules ?? []).map(rule => rule.event_type.trim()).filter(Boolean)
+    )
+  )
+  return (
+    <article
+      data-testid={`project-workflow-wait-${data.node.id}`}
+      className={cn(
+        'relative h-[116px] w-[220px] rounded-xl border border-dashed bg-background px-3 py-2.5 shadow-sm transition',
+        selected
+          ? 'border-blue-500 ring-2 ring-blue-500/15'
+          : 'border-text-muted/60 hover:border-text-muted'
+      )}
+    >
+      <Handle
+        type="target"
+        position={Position.Left}
+        className={cn(
+          '!h-3 !w-3 !border-2 !border-background !bg-text-muted',
+          selected && '!opacity-0'
+        )}
+      />
+      {selected && data.canInsertBefore ? (
+        <InsertNodeButton
+          side="left"
+          testId={`project-workflow-insert-before-${data.node.id}`}
+          label={t('todo.workflow_insert_node_before', '在此节点前插入阶段')}
+          onClick={data.onInsertBefore}
+        />
+      ) : null}
+      <div className="flex items-start gap-2">
+        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-dashed border-text-muted/70 text-text-muted">
+          <Hourglass className="h-3.5 w-3.5" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-medium text-text-primary">{data.node.name}</p>
+          <p className="mt-0.5 truncate text-xs text-text-muted">{data.actionLabel}</p>
+        </div>
+      </div>
+      <div className="mt-2 flex flex-wrap gap-1">
+        {modes.map(mode => (
+          <span
+            key={mode}
+            data-testid={`project-workflow-wait-mode-${data.node.id}-${mode}`}
+            className="flex h-5 items-center rounded-full border border-border px-1.5 text-xs uppercase tracking-wide text-text-muted"
+          >
+            {mode === 'trigger'
+              ? t('todo.workflow_wait_mode_trigger', 'trigger')
+              : t('todo.workflow_wait_mode_debounce', 'debounce')}
+          </span>
+        ))}
+      </div>
+      <p className="mt-1 line-clamp-1 text-xs text-text-secondary">
+        {waitingEvents.length
+          ? t('todo.workflow_wait_event_types', '等待：{{types}}', {
+              types: waitingEvents.join(' / '),
+            })
+          : t('todo.workflow_wait_event_types_empty', '尚未配置等待事件')}
+      </p>
+      <Handle
+        type="source"
+        position={Position.Right}
+        className={cn(
+          '!h-3 !w-3 !border-2 !border-background !bg-text-muted',
+          selected && '!opacity-0'
+        )}
+      />
+      {selected && data.canInsertAfter ? (
+        <InsertNodeButton
+          side="right"
+          testId={`project-workflow-insert-after-${data.node.id}`}
+          label={t('todo.workflow_insert_node_after', '在此节点后插入阶段')}
+          onClick={data.onInsertAfter}
+        />
+      ) : null}
+    </article>
+  )
+})
+
+const EndpointNodeCard = memo(function EndpointNodeCard({
+  data,
+  selected,
+}: NodeProps<EditorFlowNode>) {
+  const isStart = data.node.node_type === 'start'
+  const { t } = useTranslation('common')
+  return (
+    <article
+      data-testid={`project-workflow-${data.node.node_type}-${data.node.id}`}
+      className={cn(
+        'relative flex h-[72px] w-[72px] items-center justify-center rounded-full border-2 shadow-sm transition',
+        isStart ? 'border-text-muted bg-muted/40' : 'border-border bg-background',
+        selected && 'border-blue-500 ring-2 ring-blue-500/15'
+      )}
+    >
+      {!isStart ? (
+        <Handle
+          type="target"
+          position={Position.Left}
+          className={cn(
+            '!h-3 !w-3 !border-2 !border-background !bg-text-muted',
+            selected && '!opacity-0'
+          )}
+        />
+      ) : null}
+      {selected && data.canInsertBefore ? (
+        <InsertNodeButton
+          side="left"
+          testId={`project-workflow-insert-before-${data.node.id}`}
+          label={t('todo.workflow_insert_stage_before', '在此阶段前插入阶段')}
+          onClick={data.onInsertBefore}
+        />
+      ) : null}
+      <span className="max-w-full truncate px-1 text-center text-xs font-medium text-text-secondary">
+        {data.node.name}
+      </span>
+      {isStart ? (
+        <Handle
+          type="source"
+          position={Position.Right}
+          className={cn(
+            '!h-3 !w-3 !border-2 !border-background !bg-text-muted',
+            selected && '!opacity-0'
+          )}
+        />
+      ) : null}
+      {selected && data.canInsertAfter ? (
+        <InsertNodeButton
+          side="right"
+          testId={`project-workflow-insert-after-${data.node.id}`}
+          label={t('todo.workflow_insert_stage_after', '在此阶段后插入阶段')}
+          onClick={data.onInsertAfter}
+        />
+      ) : null}
+    </article>
+  )
+})
+
+const nodeTypes = {
+  stage: StageNodeCard,
+  wait: WaitNodeCard,
+  start: EndpointNodeCard,
+  end: EndpointNodeCard,
+}
 
 const WorkflowEdge = memo(function WorkflowEdge({
   id,
@@ -384,6 +629,507 @@ function DependencyContextInspector({
   )
 }
 
+function StageInspector({
+  node,
+  automationRule,
+  robotMode,
+  robotBusy,
+  projectAgents,
+  dependencies,
+  onUpdate,
+  onRemove,
+  onRemoveDependency,
+  onSelectExecutor,
+  onSelectExecutionMode,
+  onRequestCreateRobot,
+  onManageDeliverables,
+}: {
+  node: WorkflowNodeDefinition
+  automationRule?: ProjectAutomationRule
+  robotMode: boolean
+  robotBusy: boolean
+  projectAgents: ProjectChatAgent[]
+  dependencies: WorkflowNodeDefinition[]
+  onUpdate: (patch: Partial<WorkflowNodeDefinition>) => void
+  onRemove: () => void
+  onRemoveDependency: (dependencyId: string) => void
+  onSelectExecutor: (agentId: string) => void
+  onSelectExecutionMode: (mode: 'human' | 'robot') => void
+  onRequestCreateRobot?: () => void
+  onManageDeliverables: (
+    requirements: NonNullable<WorkflowNodeDefinition['required_deliverables']>
+  ) => void
+}) {
+  const { t } = useTranslation('common')
+  return (
+    <div data-testid={`project-workflow-inspector-${node.id}`}>
+      <div className="flex items-center justify-between gap-2">
+        <h5 className="text-sm font-semibold text-text-primary">
+          {t('todo.workflow_stage_settings', '阶段设置')}
+        </h5>
+        <button
+          type="button"
+          data-testid={`project-workflow-remove-${node.id}`}
+          onClick={onRemove}
+          aria-label={t('todo.workflow_remove_stage', '删除阶段 {{name}}', {
+            name: node.name,
+          })}
+          className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-muted hover:text-red-600"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      </div>
+      <label className="mt-4 block text-xs font-medium text-text-secondary">
+        {t('todo.workflow_stage_name_label', '阶段名称')}
+        <input
+          value={node.name}
+          data-testid={`project-workflow-stage-name-${node.id}`}
+          onChange={event => onUpdate({ name: event.target.value })}
+          className="mt-1.5 h-9 w-full rounded-lg border border-border bg-background px-2.5 text-sm outline-none focus:border-blue-500"
+        />
+      </label>
+      <label className="mt-4 block text-xs font-medium text-text-secondary">
+        {t('todo.workflow_stage_prompt_label', '阶段提示词')}
+        <textarea
+          value={node.prompt ?? ''}
+          data-testid={`project-workflow-stage-prompt-${node.id}`}
+          onChange={event => onUpdate({ prompt: event.target.value })}
+          placeholder={t('todo.workflow_stage_prompt_placeholder', '这个阶段需要完成什么')}
+          className="mt-1.5 min-h-28 w-full resize-y rounded-lg border border-border bg-background px-2.5 py-2 text-sm outline-none focus:border-blue-500"
+        />
+      </label>
+      <fieldset className="mt-4">
+        <div className="flex items-center justify-between gap-2">
+          <legend className="text-xs font-medium text-text-secondary">
+            {t('todo.workflow_stage_deliverables_label', '必要交付物')}
+          </legend>
+          <button
+            type="button"
+            data-testid={`project-workflow-add-deliverable-${node.id}`}
+            onClick={() => {
+              const requirements = node.required_deliverables ?? []
+              onManageDeliverables([
+                ...requirements,
+                createWorkflowDeliverableRequirement(requirements),
+              ])
+            }}
+            className="flex h-7 items-center gap-1 rounded-md px-2 text-xs text-text-secondary hover:bg-muted"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            {t('todo.workflow_add_deliverable', '添加交付物')}
+          </button>
+        </div>
+        {(node.required_deliverables ?? []).length ? (
+          <div
+            data-testid={`project-workflow-deliverable-list-${node.id}`}
+            className="mt-2 max-h-60 divide-y divide-border overflow-y-auto overscroll-contain rounded-lg border border-border"
+          >
+            {(node.required_deliverables ?? []).map(requirement => (
+              <button
+                key={requirement.id}
+                type="button"
+                data-testid={`project-workflow-deliverable-${requirement.id}`}
+                onClick={() =>
+                  onManageDeliverables(
+                    (node.required_deliverables ?? []).map(valueRequirement => ({
+                      ...valueRequirement,
+                    }))
+                  )
+                }
+                className="flex min-h-12 w-full min-w-0 items-center gap-3 px-3 py-2 text-left transition hover:bg-muted focus-visible:bg-muted focus-visible:outline-none"
+              >
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium text-text-primary">
+                    {requirement.name}
+                  </span>
+                  <span className="mt-0.5 block truncate text-xs text-text-muted">
+                    {requirement.description ||
+                      t('todo.workflow_deliverable_no_description', '暂无验收说明')}
+                  </span>
+                </span>
+                <span className="shrink-0 rounded-md bg-muted px-1.5 py-0.5 text-xs text-text-muted">
+                  {workflowDeliverableTypeLabel(requirement.value_type, t)}
+                </span>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => onManageDeliverables([createWorkflowDeliverableRequirement([])])}
+            className="mt-2 flex h-11 w-full items-center justify-center rounded-lg border border-dashed border-border px-3 text-xs text-text-muted hover:bg-muted hover:text-text-secondary"
+          >
+            {t('todo.workflow_deliverable_empty', '暂无交付物，点击添加')}
+          </button>
+        )}
+        <span className="mt-1.5 block text-xs font-normal text-text-muted">
+          {t(
+            'todo.workflow_stage_deliverables_hint',
+            '每项交付要求都会绑定一个实际结果；全部满足后才可继续。'
+          )}
+        </span>
+      </fieldset>
+      <fieldset className="mt-4">
+        <legend className="text-xs font-medium text-text-secondary">
+          {t('todo.workflow_stage_executor_label', '任务执行方式')}
+        </legend>
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          {(
+            [
+              ['human', UserRound, t('todo.workflow_stage_human_execution', '人工执行')],
+              ['robot', Bot, t('todo.workflow_stage_robot_execution', '机器人执行')],
+            ] as const
+          ).map(([mode, Icon, label]) => (
+            <label
+              key={mode}
+              className={cn(
+                'flex h-10 cursor-pointer items-center justify-center gap-2 rounded-lg border text-sm transition',
+                robotMode === (mode === 'robot')
+                  ? 'border-blue-500 bg-blue-500/10 text-blue-500'
+                  : 'border-border text-text-secondary hover:bg-muted'
+              )}
+            >
+              <input
+                type="radio"
+                name={`project-workflow-stage-executor-${node.id}`}
+                value={mode}
+                checked={robotMode === (mode === 'robot')}
+                data-testid={`project-workflow-stage-executor-${mode}-${node.id}`}
+                onChange={() => onSelectExecutionMode(mode)}
+                className="sr-only"
+              />
+              <Icon className="h-4 w-4" />
+              {label}
+            </label>
+          ))}
+        </div>
+      </fieldset>
+      {robotMode ? (
+        <div className="mt-3">
+          <label className="block text-xs font-medium text-text-secondary">
+            {t('todo.workflow_stage_robot_label', '执行机器人')}
+            <div className="mt-1.5 flex gap-2">
+              <select
+                value={automationRule?.agentId ?? ''}
+                data-testid={`project-workflow-stage-automation-${node.id}`}
+                disabled={robotBusy}
+                onChange={event => void onSelectExecutor(event.target.value)}
+                className="h-9 min-w-0 flex-1 rounded-lg border border-border bg-background px-2 text-sm"
+              >
+                <option value="">
+                  {projectAgents.length
+                    ? t('todo.workflow_stage_select_robot', '选择机器人')
+                    : t('todo.workflow_stage_no_robots', '暂无可用机器人')}
+                </option>
+                {projectAgents.map(agent => (
+                  <option key={agent.id} value={agent.id}>
+                    {agent.name}
+                  </option>
+                ))}
+              </select>
+              {onRequestCreateRobot ? (
+                <button
+                  type="button"
+                  data-testid="project-workflow-stage-add-robot"
+                  onClick={onRequestCreateRobot}
+                  aria-label={t('todo.workflow_stage_add_robot', '添加机器人')}
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border text-text-secondary hover:bg-muted"
+                >
+                  <Plus className="h-4 w-4" />
+                </button>
+              ) : null}
+            </div>
+          </label>
+        </div>
+      ) : null}
+      <p className="mt-1.5 text-xs text-text-muted">
+        {robotMode
+          ? t(
+              'todo.workflow_stage_robot_hint',
+              '阶段提示词会作为机器人的任务指令，执行记录归入当前阶段。'
+            )
+          : t(
+              'todo.workflow_stage_user_hint',
+              '阶段就绪后打开标准任务 Composer，可继续选择本地模式、工作空间和分支。'
+            )}
+      </p>
+      {!node.automation_rule_id ? (
+        <label className="mt-4 block text-xs font-medium text-text-secondary">
+          {t('todo.workflow_workspace_policy_label', '任务工作空间')}
+          <select
+            value={node.workspace_policy}
+            data-testid={`project-workflow-stage-workspace-${node.id}`}
+            onChange={event =>
+              onUpdate({
+                workspace_policy: event.target.value as WorkflowWorkspacePolicy,
+              })
+            }
+            className="mt-1.5 h-9 w-full rounded-lg border border-border bg-background px-2 text-sm"
+          >
+            <option value="composer">
+              {t('todo.workflow_workspace_composer', '创建任务时选择工作空间')}
+            </option>
+            <option value="inherit">
+              {t('todo.workflow_workspace_inherit', '继承前序任务工作空间')}
+            </option>
+            <option value="none">{t('todo.workflow_workspace_none', '不限定工作空间')}</option>
+          </select>
+        </label>
+      ) : null}
+      <label className="mt-4 flex items-center gap-2 text-xs text-text-secondary">
+        <input
+          type="checkbox"
+          data-testid={`project-workflow-stage-required-${node.id}`}
+          checked={node.required}
+          onChange={event => onUpdate({ required: event.target.checked })}
+        />
+        {t('todo.workflow_stage_required', '该阶段完成后才能推进 Issue')}
+      </label>
+      <div className="mt-5 border-t border-border pt-4">
+        <p className="text-xs font-medium text-text-secondary">
+          {t('todo.workflow_dependencies', '前置阶段')}
+        </p>
+        {node.depends_on.length ? (
+          <div className="mt-2 space-y-1">
+            {node.depends_on.map(dependencyId => {
+              const dependency = dependencies.find(candidate => candidate.id === dependencyId)
+              return (
+                <div
+                  key={dependencyId}
+                  className="flex h-8 items-center justify-between rounded-lg bg-muted px-2 text-xs text-text-secondary"
+                >
+                  <span className="truncate">{dependency?.name ?? dependencyId}</span>
+                  <button
+                    type="button"
+                    data-testid={`project-workflow-remove-dependency-${node.id}-${dependencyId}`}
+                    onClick={() => onRemoveDependency(dependencyId)}
+                    aria-label={t('todo.workflow_remove_dependency', '移除前置阶段 {{name}}', {
+                      name: dependency?.name ?? dependencyId,
+                    })}
+                    className="ml-2 text-text-muted hover:text-red-600"
+                  >
+                    ×
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        ) : (
+          <p className="mt-2 text-xs text-text-muted">
+            {t('todo.workflow_no_dependencies', '无前置阶段')}
+          </p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function WaitNodeInspector({
+  node,
+  onUpdate,
+  onRemove,
+}: {
+  node: WorkflowNodeDefinition
+  onUpdate: (patch: Partial<WorkflowNodeDefinition>) => void
+  onRemove: () => void
+}) {
+  const { t } = useTranslation('common')
+  const rules = node.wait_config?.rules ?? []
+  const updateRule = (ruleId: string, patch: Partial<WaitEventRule>) => {
+    onUpdate({
+      wait_config: {
+        rules: rules.map(rule => (rule.id === ruleId ? { ...rule, ...patch } : rule)),
+      },
+    })
+  }
+  const addRule = () => {
+    const id = nextRuleId(rules)
+    onUpdate({
+      wait_config: {
+        rules: [
+          ...rules,
+          { id, event_type: '', mode: 'trigger', action: 'complete', rerun_prompt: '' },
+        ],
+      },
+    })
+  }
+  const removeRule = (ruleId: string) => {
+    onUpdate({ wait_config: { rules: rules.filter(rule => rule.id !== ruleId) } })
+  }
+  return (
+    <div data-testid={`project-workflow-inspector-${node.id}`}>
+      <div className="flex items-center justify-between gap-2">
+        <h5 className="flex items-center gap-1.5 text-sm font-semibold text-text-primary">
+          <Hourglass className="h-4 w-4 text-text-muted" />
+          {t('todo.workflow_wait_settings', '等待节点设置')}
+        </h5>
+        <button
+          type="button"
+          data-testid={`project-workflow-remove-${node.id}`}
+          onClick={onRemove}
+          aria-label={t('todo.workflow_remove_wait_node', '删除等待节点 {{name}}', {
+            name: node.name,
+          })}
+          className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-muted hover:text-red-600"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      </div>
+      <label className="mt-4 block text-xs font-medium text-text-secondary">
+        {t('todo.workflow_stage_name_label', '阶段名称')}
+        <input
+          value={node.name}
+          data-testid={`project-workflow-wait-name-${node.id}`}
+          onChange={event => onUpdate({ name: event.target.value })}
+          className="mt-1.5 h-9 w-full rounded-lg border border-border bg-background px-2.5 text-sm outline-none focus:border-blue-500"
+        />
+      </label>
+      <div className="mt-5">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-xs font-medium text-text-secondary">
+            {t('todo.workflow_wait_rules', '事件规则')}
+          </p>
+          <button
+            type="button"
+            data-testid={`project-workflow-wait-rule-add-${node.id}`}
+            onClick={addRule}
+            className="flex h-7 items-center gap-1 rounded-lg px-2 text-xs text-text-secondary hover:bg-muted"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            {t('todo.workflow_wait_rule_add', '添加规则')}
+          </button>
+        </div>
+        <div className="mt-2 space-y-4">
+          {rules.map((rule, index) => (
+            <div
+              key={rule.id}
+              data-testid={`project-workflow-wait-rule-${node.id}-${rule.id}`}
+              className="rounded-lg border border-border p-3"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs text-text-muted">
+                  {t('todo.workflow_wait_rule_number', '规则 {{number}}', { number: index + 1 })}
+                </p>
+                <button
+                  type="button"
+                  data-testid={`project-workflow-wait-rule-remove-${node.id}-${rule.id}`}
+                  onClick={() => removeRule(rule.id)}
+                  aria-label={t('todo.workflow_wait_rule_remove', '删除规则')}
+                  className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted hover:bg-muted hover:text-red-600"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+              <label className="mt-3 block text-xs font-medium text-text-secondary">
+                {t('todo.workflow_wait_rule_event_type', '事件类型')}
+                <input
+                  value={rule.event_type}
+                  data-testid={`project-workflow-wait-rule-event-${node.id}-${rule.id}`}
+                  onChange={event => updateRule(rule.id, { event_type: event.target.value })}
+                  placeholder={t(
+                    'todo.workflow_wait_rule_event_type_placeholder',
+                    '例如 merged、ci_failed、review_comment'
+                  )}
+                  className="mt-1.5 h-9 w-full rounded-lg border border-border bg-background px-2.5 text-sm outline-none focus:border-blue-500"
+                />
+              </label>
+              <div className="mt-3 grid grid-cols-2 gap-3">
+                <label className="block text-xs font-medium text-text-secondary">
+                  {t('todo.workflow_wait_rule_mode', '语义模式')}
+                  <select
+                    value={rule.mode}
+                    data-testid={`project-workflow-wait-rule-mode-${node.id}-${rule.id}`}
+                    onChange={event =>
+                      updateRule(rule.id, { mode: event.target.value as WaitEventRule['mode'] })
+                    }
+                    className="mt-1.5 h-9 w-full rounded-lg border border-border bg-background px-2 text-sm"
+                  >
+                    <option value="trigger">
+                      {t('todo.workflow_wait_mode_trigger', 'trigger（一条即触发）')}
+                    </option>
+                    <option value="debounce">
+                      {t('todo.workflow_wait_mode_debounce', 'debounce（运行时聚合）')}
+                    </option>
+                  </select>
+                </label>
+                <label className="block text-xs font-medium text-text-secondary">
+                  {t('todo.workflow_wait_rule_action', '动作')}
+                  <select
+                    value={rule.action}
+                    data-testid={`project-workflow-wait-rule-action-${node.id}-${rule.id}`}
+                    onChange={event =>
+                      updateRule(rule.id, {
+                        action: event.target.value as WaitEventRule['action'],
+                      })
+                    }
+                    className="mt-1.5 h-9 w-full rounded-lg border border-border bg-background px-2 text-sm"
+                  >
+                    <option value="complete">
+                      {t('todo.workflow_wait_rule_action_complete', '完成并放行后继')}
+                    </option>
+                    <option value="rerun">
+                      {t('todo.workflow_wait_rule_action_rerun', '重跑当前任务')}
+                    </option>
+                  </select>
+                </label>
+              </div>
+              {rule.action === 'rerun' ? (
+                <label className="mt-3 block text-xs font-medium text-text-secondary">
+                  {t('todo.workflow_wait_rule_rerun_prompt', '重跑提示词')}
+                  <textarea
+                    value={rule.rerun_prompt ?? ''}
+                    data-testid={`project-workflow-wait-rule-rerun-prompt-${node.id}-${rule.id}`}
+                    onChange={event => updateRule(rule.id, { rerun_prompt: event.target.value })}
+                    placeholder={t(
+                      'todo.workflow_wait_rule_rerun_prompt_placeholder',
+                      '事件命中后按此提示词发一轮新消息'
+                    )}
+                    className="mt-1.5 min-h-20 w-full resize-y rounded-lg border border-border bg-background px-2.5 py-2 text-sm outline-none focus:border-blue-500"
+                  />
+                </label>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      </div>
+      <p className="mt-4 text-xs text-text-muted">
+        {t(
+          'todo.workflow_wait_hint',
+          '外部事件由登记工具绑定后到达；trigger 第一条即触发，debounce 在上一轮运行期间聚合。'
+        )}
+      </p>
+    </div>
+  )
+}
+
+function EndpointInspector({ node }: { node: WorkflowNodeDefinition }) {
+  const { t } = useTranslation('common')
+  const isStart = node.node_type === 'start'
+  return (
+    <div data-testid={`project-workflow-inspector-${node.id}`}>
+      <h5 className="text-sm font-semibold text-text-primary">
+        {isStart
+          ? t('todo.workflow_start_settings', '开始节点')
+          : t('todo.workflow_end_settings', '结束节点')}
+      </h5>
+      <p className="mt-3 text-xs text-text-muted">
+        {isStart
+          ? t(
+              'todo.workflow_start_hint',
+              '流程入口，任务进入后自动开始；不可删除，也不能有前置阶段。'
+            )
+          : t(
+              'todo.workflow_end_hint',
+              '流程终点，任务到达即自动停止、彻底完成；不可删除，节点只能插在它之前。'
+            )}
+      </p>
+      <div className="mt-4 rounded-lg bg-muted px-3 py-2 text-sm text-text-secondary">
+        {node.name}
+      </div>
+    </div>
+  )
+}
+
 export function ProjectWorkflowEditor({
   value,
   busy,
@@ -396,15 +1142,27 @@ export function ProjectWorkflowEditor({
   onRequestConfigureAiCoordinator,
 }: ProjectWorkflowEditorProps) {
   const { t } = useTranslation('common')
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(value.nodes[0]?.id ?? null)
-  const [selectedEdge, setSelectedEdge] = useState<{ source: string; target: string } | null>(null)
-  const [stageRobotBusyId, setStageRobotBusyId] = useState<string | null>(null)
-  const [deliverableDialog, setDeliverableDialog] = useState<DeliverableDialogState | null>(null)
-  const [robotModeNodeIds, setRobotModeNodeIds] = useState<Set<string>>(
-    () => new Set(value.nodes.filter(node => node.automation_rule_id).map(node => node.id))
+  const startName = t('todo.workflow_start_node', '开始')
+  const endName = t('todo.workflow_end_node', '结束')
+  const normalized = useMemo(
+    () => ensureEndpointNodes(value, startName, endName),
+    [endName, startName, value]
   )
-  const currentStageMode = stageMode(value)
-  const currentAdvancementPolicy = value.advancement_policy ?? 'manual'
+  useEffect(() => {
+    if (normalized !== value) onChange(normalized)
+  }, [normalized, onChange, value])
+
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(
+    normalized.nodes[0]?.id ?? null
+  )
+  const [selectedEdge, setSelectedEdge] = useState<{ source: string; target: string } | null>(null)
+  const [deliverableDialog, setDeliverableDialog] = useState<DeliverableDialogState | null>(null)
+  const [stageRobotBusyId, setStageRobotBusyId] = useState<string | null>(null)
+  const [robotModeNodeIds, setRobotModeNodeIds] = useState<Set<string>>(
+    () => new Set(normalized.nodes.filter(node => node.automation_rule_id).map(node => node.id))
+  )
+  const currentStageMode = stageMode(normalized)
+  const currentAdvancementPolicy = normalized.advancement_policy ?? 'manual'
   const orchestrationMode: OrchestrationMode =
     currentAdvancementPolicy === 'ai' ? 'ai' : currentStageMode === 'dag' ? 'workflow' : 'manual'
   const aiRules = useMemo(
@@ -424,15 +1182,28 @@ export function ProjectWorkflowEditor({
       ),
     [automationRules]
   )
-  const selectedNode = value.nodes.find(node => node.id === selectedNodeId) ?? null
+  const selectedNode = normalized.nodes.find(node => node.id === selectedNodeId) ?? null
   const selectedStageRule = stageRules.find(rule => rule.id === selectedNode?.automation_rule_id)
   const selectedStageRobotMode =
     Boolean(selectedStageRule) || Boolean(selectedNode && robotModeNodeIds.has(selectedNode.id))
+  const nodesValid =
+    normalized.nodes.length > 0 &&
+    normalized.nodes.every(node => node.name.trim() && node.depends_on.every(Boolean)) &&
+    normalized.nodes.some(node => node.node_type === 'start') &&
+    normalized.nodes.some(node => node.node_type === 'end') &&
+    normalized.nodes.every(node =>
+      node.node_type === 'end' ? node.depends_on.length > 0 : true
+    ) &&
+    normalized.nodes
+      .filter(node => node.node_type === 'wait')
+      .every(
+        node =>
+          (node.wait_config?.rules ?? []).length > 0 &&
+          node.wait_config!.rules.every(rule => rule.event_type.trim())
+      )
   const canSave =
-    (currentStageMode === 'none' ||
-      (value.nodes.length > 0 &&
-        value.nodes.every(node => node.name.trim() && node.depends_on.every(Boolean)))) &&
-    (currentAdvancementPolicy === 'manual' || Boolean(value.ai_automation_rule_id))
+    (currentStageMode === 'none' || nodesValid) &&
+    (currentAdvancementPolicy === 'manual' || Boolean(normalized.ai_automation_rule_id))
 
   const updateDefinition = useCallback(
     (patch: Partial<ProjectWorkflowDefinition>) => {
@@ -448,40 +1219,81 @@ export function ProjectWorkflowEditor({
     },
     [updateDefinition, value.nodes]
   )
-  const addNode = () => {
-    const id = nextNodeId(value.nodes)
-    const stageNumber = Number(id.replace('stage-', ''))
-    const previous = value.nodes.at(-1)
-    const dependsOn = previous ? [previous.id] : []
-    updateDefinition({
-      stage_mode: 'dag',
-      nodes: [
-        ...value.nodes,
-        createStage(
-          id,
-          t('todo.workflow_new_stage_numbered', '新阶段 {{number}}', {
-            number: stageNumber,
-          }),
-          dependsOn,
-          previous ? { [previous.id]: [...DEFAULT_DEPENDENCY_CONTEXT] } : {}
+  const appendNodeBeforeEnd = useCallback(
+    (newNode: WorkflowNodeDefinition) => {
+      const nodes = value.nodes
+      const endIndex = nodes.findIndex(node => node.node_type === 'end')
+      const anchorIndex = endIndex >= 0 ? endIndex : nodes.length
+      const previous = nodes[anchorIndex - 1]
+      const inserted: WorkflowNodeDefinition = {
+        ...newNode,
+        depends_on: previous ? [previous.id] : [],
+        dependency_context: previous ? { [previous.id]: [...DEFAULT_DEPENDENCY_CONTEXT] } : {},
+      }
+      updateDefinition({
+        stage_mode: 'dag',
+        nodes: [...nodes.slice(0, anchorIndex), inserted, ...nodes.slice(anchorIndex)].map(node =>
+          node.node_type === 'end' && previous && node.depends_on.includes(previous.id)
+            ? {
+                ...node,
+                depends_on: node.depends_on.map(dependency =>
+                  dependency === previous.id ? inserted.id : dependency
+                ),
+                dependency_context: {
+                  ...(node.dependency_context ?? {}),
+                  [inserted.id]: [...DEFAULT_DEPENDENCY_CONTEXT],
+                },
+              }
+            : node
         ),
-      ],
-    })
-    setSelectedNodeId(id)
+      })
+      setSelectedNodeId(inserted.id)
+    },
+    [updateDefinition, value.nodes]
+  )
+  const addNode = () => {
+    const id = nextNodeId(value.nodes, 'stage')
+    const stageNumber = Number(id.replace('stage-', ''))
+    appendNodeBeforeEnd(
+      createStageNode(
+        id,
+        t('todo.workflow_new_stage_numbered', '新阶段 {{number}}', {
+          number: stageNumber,
+        }),
+        [],
+        {}
+      )
+    )
+  }
+  const addWaitNode = () => {
+    const id = nextNodeId(value.nodes, 'wait')
+    const waitNumber = Number(id.replace('wait-', ''))
+    appendNodeBeforeEnd(
+      createWaitNode(
+        id,
+        t('todo.workflow_new_wait_numbered', '新等待 {{number}}', {
+          number: waitNumber,
+        }),
+        [],
+        {}
+      )
+    )
   }
   const insertNode = useCallback(
     (selectedId: string, direction: StageInsertionDirection) => {
       const selectedIndex = value.nodes.findIndex(node => node.id === selectedId)
       if (selectedIndex < 0) return
       const selected = value.nodes[selectedIndex]
-      const id = nextNodeId(value.nodes)
+      if (direction === 'before' && selected.node_type === 'start') return
+      if (direction === 'after' && selected.node_type === 'end') return
+      const id = nextNodeId(value.nodes, 'stage')
       const stageNumber = Number(id.replace('stage-', ''))
       const name = t('todo.workflow_new_stage_numbered', '新阶段 {{number}}', {
         number: stageNumber,
       })
 
       if (direction === 'before') {
-        const inserted = createStage(
+        const inserted = createStageNode(
           id,
           name,
           [...selected.depends_on],
@@ -507,7 +1319,7 @@ export function ProjectWorkflowEditor({
           ],
         })
       } else {
-        const inserted = createStage(id, name, [selectedId], {
+        const inserted = createStageNode(id, name, [selectedId], {
           [selectedId]: [...DEFAULT_DEPENDENCY_CONTEXT],
         })
         const rewiredNodes = value.nodes.map(node => {
@@ -534,20 +1346,46 @@ export function ProjectWorkflowEditor({
     },
     [t, updateDefinition, value.nodes]
   )
-  const removeNode = (id: string) => {
-    const remainingNodes = value.nodes.filter(node => node.id !== id)
-    updateDefinition({
-      nodes: remainingNodes.map(node => ({
-        ...node,
-        depends_on: node.depends_on.filter(dependency => dependency !== id),
-        dependency_context: Object.fromEntries(
-          Object.entries(node.dependency_context ?? {}).filter(([dependency]) => dependency !== id)
-        ),
-      })),
-    })
-    if (selectedNodeId === id) setSelectedNodeId(remainingNodes[0]?.id ?? null)
-    if (selectedEdge?.source === id || selectedEdge?.target === id) setSelectedEdge(null)
-  }
+  const spliceOutNode = useCallback(
+    (nodes: WorkflowNodeDefinition[], removedId: string): WorkflowNodeDefinition[] => {
+      const removed = nodes.find(node => node.id === removedId)
+      if (!removed) return nodes
+      const removedDependencies = removed.depends_on
+      return nodes
+        .filter(node => node.id !== removedId)
+        .map(node => {
+          if (!node.depends_on.includes(removedId)) return node
+          const nextDependencies = Array.from(
+            new Set([...removedDependencies, ...node.depends_on.filter(dep => dep !== removedId)])
+          ).filter(dep => dep !== node.id)
+          const nextContext = { ...(node.dependency_context ?? {}) }
+          delete nextContext[removedId]
+          for (const dependency of removedDependencies) {
+            if (dependency === node.id) continue
+            nextContext[dependency] = dependencyContext(removed, dependency)
+          }
+          return {
+            ...node,
+            depends_on: nextDependencies,
+            dependency_context: nextContext,
+          }
+        })
+    },
+    []
+  )
+  const removeNode = useCallback(
+    (id: string) => {
+      const target = value.nodes.find(node => node.id === id)
+      if (!target || target.node_type === 'start' || target.node_type === 'end') return
+      const remainingNodes = spliceOutNode(value.nodes, id)
+      updateDefinition({
+        nodes: remainingNodes,
+      })
+      if (selectedNodeId === id) setSelectedNodeId(remainingNodes[0]?.id ?? null)
+      if (selectedEdge?.source === id || selectedEdge?.target === id) setSelectedEdge(null)
+    },
+    [selectedEdge, selectedNodeId, spliceOutNode, updateDefinition, value.nodes]
+  )
   const removeDependency = useCallback(
     (source: string, target: string) => {
       const targetNode = value.nodes.find(node => node.id === target)
@@ -564,40 +1402,9 @@ export function ProjectWorkflowEditor({
     },
     [updateNode, value.nodes]
   )
-  const handleGraphKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (event.key !== 'Backspace' && event.key !== 'Delete') return
-    const target = event.target as HTMLElement
-    if (target.closest('input, textarea, select, button, a, [contenteditable="true"]')) return
-    if (selectedNodeId) {
-      event.preventDefault()
-      updateDefinition({
-        nodes: value.nodes
-          .filter(node => node.id !== selectedNodeId)
-          .map(node => {
-            if (!node.depends_on.includes(selectedNodeId)) return node
-            return {
-              ...node,
-              depends_on: node.depends_on.filter(dependency => dependency !== selectedNodeId),
-              dependency_context: Object.fromEntries(
-                Object.entries(node.dependency_context ?? {}).filter(
-                  ([dependency]) => dependency !== selectedNodeId
-                )
-              ),
-            }
-          }),
-      })
-      setSelectedNodeId(null)
-      setSelectedEdge(null)
-      return
-    }
-    if (selectedEdge) {
-      event.preventDefault()
-      removeDependency(selectedEdge.source, selectedEdge.target)
-    }
-  }
 
   const graph = useMemo(() => {
-    const edges: WorkflowFlowEdge[] = value.nodes.flatMap(node =>
+    const edges: WorkflowFlowEdge[] = normalized.nodes.flatMap(node =>
       node.depends_on.map(dependency => ({
         id: `${dependency}-${node.id}`,
         type: 'workflow',
@@ -615,22 +1422,31 @@ export function ProjectWorkflowEditor({
         },
       }))
     )
-    const nodes: StageFlowNode[] = value.nodes.map((node, index) => {
+    const nodes: EditorFlowNode[] = normalized.nodes.map((node, index) => {
       const automationRule = stageRules.find(rule => rule.id === node.automation_rule_id)
+      const isEndpoint = node.node_type === 'start' || node.node_type === 'end'
       return {
         id: node.id,
-        type: 'stage',
+        type: node.node_type ?? 'stage',
         position: { x: 0, y: 0 },
         selected: node.id === selectedNodeId,
         data: {
-          stage: node,
+          node,
           index,
+          nodeWidth: isEndpoint ? ENDPOINT_NODE_SIZE : STAGE_NODE_WIDTH,
+          nodeHeight: isEndpoint ? ENDPOINT_NODE_SIZE : STAGE_NODE_HEIGHT,
           actionLabel: automationRule
             ? t('todo.workflow_stage_robot_named', '机器人：{{name}}', {
                 name: automationRule.agentName || automationRule.name,
               })
-            : t('todo.workflow_stage_human_execution', '人工执行'),
+            : node.node_type === 'wait'
+              ? t('todo.workflow_wait_node_action', '等待外部事件')
+              : node.node_type === 'start' || node.node_type === 'end'
+                ? t('todo.workflow_endpoint_action', '流程节点')
+                : t('todo.workflow_stage_human_execution', '人工执行'),
           dependencyCount: node.depends_on.length,
+          canInsertBefore: node.node_type !== 'start',
+          canInsertAfter: node.node_type !== 'end',
           onInsertBefore: () => insertNode(node.id, 'before'),
           onInsertAfter: () => insertNode(node.id, 'after'),
         },
@@ -641,11 +1457,11 @@ export function ProjectWorkflowEditor({
       nodes: layoutWorkflowGraph(nodes, edges, {
         nodeWidth: STAGE_NODE_WIDTH,
         nodeHeight: STAGE_NODE_HEIGHT,
-      }) as StageFlowNode[],
+      }) as EditorFlowNode[],
     }
-  }, [insertNode, selectedEdge, selectedNodeId, stageRules, t, value.nodes])
+  }, [insertNode, normalized.nodes, selectedEdge, selectedNodeId, stageRules, t])
 
-  const flowInstanceRef = useRef<ReactFlowInstance<StageFlowNode, WorkflowFlowEdge> | null>(null)
+  const flowInstanceRef = useRef<ReactFlowInstance<EditorFlowNode, WorkflowFlowEdge> | null>(null)
   useEffect(() => {
     const instance = flowInstanceRef.current
     if (!instance) return
@@ -653,16 +1469,19 @@ export function ProjectWorkflowEditor({
       void instance.fitView({ padding: 0.25, maxZoom: 1 })
     })
     return () => cancelAnimationFrame(frame)
-  }, [value.nodes.length])
+  }, [normalized.nodes.length])
 
   const handleConnect = useCallback(
     (connection: Connection) => {
       const { source, target } = connection
       if (!source || !target) return
+      const sourceNode = value.nodes.find(node => node.id === source)
+      const targetNode = value.nodes.find(node => node.id === target)
+      if (!sourceNode || !targetNode) return
+      if (sourceNode.node_type === 'end' || targetNode.node_type === 'start') return
       const dependencies = new Map(value.nodes.map(node => [node.id, node.depends_on]))
       if (wouldCreateWorkflowCycle(source, target, dependencies)) return
-      const targetNode = value.nodes.find(node => node.id === target)
-      if (!targetNode || targetNode.depends_on.includes(source)) return
+      if (targetNode.depends_on.includes(source)) return
       updateNode(target, {
         depends_on: [...targetNode.depends_on, source],
         dependency_context: {
@@ -674,6 +1493,57 @@ export function ProjectWorkflowEditor({
       setSelectedEdge({ source, target })
     },
     [updateNode, value.nodes]
+  )
+
+  const handleDelete = useCallback(
+    ({ nodes, edges }: { nodes: Node[]; edges: Edge[] }) => {
+      const structuralIds = new Set([START_NODE_ID, END_NODE_ID])
+      const removedNodeIds = new Set(
+        nodes
+          .filter(node => !structuralIds.has(node.id))
+          .filter(node => {
+            const target = value.nodes.find(candidate => candidate.id === node.id)
+            return target && target.node_type !== 'start' && target.node_type !== 'end'
+          })
+          .map(node => node.id)
+      )
+      const removedEdges = new Set(
+        edges
+          .filter(edge => {
+            const sourceStructural = structuralIds.has(edge.source)
+            const targetStructural = structuralIds.has(edge.target)
+            const sourceRemoved = removedNodeIds.has(edge.source)
+            const targetRemoved = removedNodeIds.has(edge.target)
+            // Edges touching a structural node only disappear when their other
+            // endpoint was actually removed; structural edges stay in the graph.
+            return !(sourceStructural || targetStructural) || sourceRemoved || targetRemoved
+          })
+          .map(edge => `${edge.source}-${edge.target}`)
+      )
+      let nextNodes = value.nodes
+      for (const removedId of removedNodeIds) {
+        nextNodes = spliceOutNode(nextNodes, removedId)
+      }
+      updateDefinition({
+        nodes: nextNodes.map(node => {
+          const shouldRemoveDependency = (dependency: string) =>
+            removedEdges.has(`${dependency}-${node.id}`)
+          if (!node.depends_on.some(shouldRemoveDependency)) return node
+          return {
+            ...node,
+            depends_on: node.depends_on.filter(dependency => !shouldRemoveDependency(dependency)),
+            dependency_context: Object.fromEntries(
+              Object.entries(node.dependency_context ?? {}).filter(
+                ([dependency]) => !shouldRemoveDependency(dependency)
+              )
+            ),
+          }
+        }),
+      })
+      setSelectedNodeId(null)
+      setSelectedEdge(null)
+    },
+    [spliceOutNode, updateDefinition, value.nodes]
   )
 
   const selectStageExecutor = async (node: WorkflowNodeDefinition, agentId: string) => {
@@ -705,7 +1575,7 @@ export function ProjectWorkflowEditor({
       }
       updateNode(node.id, {
         automation_rule_id: ruleId,
-        workspace_policy: node.workspace_policy === 'none' ? 'composer' : node.workspace_policy,
+        workspace_policy: 'none',
       })
     } catch {
       revertToHumanExecution()
@@ -792,7 +1662,7 @@ export function ProjectWorkflowEditor({
               <div className="mt-1.5 flex gap-2">
                 <select
                   data-testid="project-workflow-ai-rule"
-                  value={value.ai_automation_rule_id ?? ''}
+                  value={normalized.ai_automation_rule_id ?? ''}
                   onChange={event =>
                     updateDefinition({ ai_automation_rule_id: event.target.value || null })
                   }
@@ -834,7 +1704,7 @@ export function ProjectWorkflowEditor({
             {t('todo.workflow_coordinator_prompt', '调度提示词')}
             <textarea
               data-testid="project-workflow-coordinator-prompt"
-              value={value.coordinator_prompt ?? ''}
+              value={normalized.coordinator_prompt ?? ''}
               onChange={event => updateDefinition({ coordinator_prompt: event.target.value })}
               placeholder={t(
                 'todo.workflow_coordinator_prompt_placeholder',
@@ -871,384 +1741,123 @@ export function ProjectWorkflowEditor({
                 )}
               </p>
             </div>
-            <button
-              type="button"
-              data-testid="project-workflow-add"
-              onClick={addNode}
-              className="flex h-8 items-center gap-1 rounded-lg px-2.5 text-sm text-text-secondary hover:bg-muted"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              {t('todo.workflow_add_stage', '添加阶段')}
-            </button>
-          </div>
-          {value.nodes.length === 0 ? (
-            <button
-              type="button"
-              data-testid="project-workflow-empty-add"
-              onClick={addNode}
-              className="flex h-40 w-full items-center justify-center gap-2 rounded-xl border border-dashed border-border text-sm text-text-muted hover:bg-muted"
-            >
-              <Plus className="h-4 w-4" />
-              {t('todo.workflow_add_first_stage', '添加第一个阶段')}
-            </button>
-          ) : (
-            <div className="grid min-h-[420px] overflow-hidden rounded-xl border border-border bg-muted/20 lg:grid-cols-[minmax(0,1fr)_300px]">
-              <div
-                className="h-[420px]"
-                data-testid="project-workflow-dag"
-                onKeyDown={handleGraphKeyDown}
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                data-testid="project-workflow-add-wait"
+                onClick={addWaitNode}
+                className="flex h-8 items-center gap-1 rounded-lg px-2.5 text-sm text-text-secondary hover:bg-muted"
               >
-                <ReactFlow
-                  className="workflow-react-flow"
-                  nodes={graph.nodes}
-                  edges={graph.edges}
-                  nodeTypes={nodeTypes}
-                  edgeTypes={edgeTypes}
-                  onInit={instance => {
-                    flowInstanceRef.current = instance
-                    void instance.fitView({ padding: 0.25, maxZoom: 1 })
-                  }}
-                  onNodeClick={(_, node) => {
-                    setSelectedEdge(null)
-                    setSelectedNodeId(node.id)
-                  }}
-                  onPaneClick={() => {
-                    setSelectedNodeId(null)
-                    setSelectedEdge(null)
-                  }}
-                  onConnect={handleConnect}
-                  minZoom={0.35}
-                  maxZoom={1.5}
-                  nodesDraggable={false}
-                  deleteKeyCode={null}
-                  proOptions={{ hideAttribution: true }}
-                  defaultEdgeOptions={{ deletable: true }}
-                >
-                  <Background gap={24} size={1} color="rgb(var(--color-border))" />
-                  <Controls showInteractive={false} />
-                </ReactFlow>
-              </div>
-              <aside className="border-t border-border bg-background p-4 lg:border-l lg:border-t-0">
-                {selectedEdge ? (
-                  <DependencyContextInspector
-                    source={value.nodes.find(node => node.id === selectedEdge.source)}
-                    target={value.nodes.find(node => node.id === selectedEdge.target)}
-                    contextSources={
-                      value.nodes.find(node => node.id === selectedEdge.target)
-                        ?.dependency_context?.[selectedEdge.source] ?? DEFAULT_DEPENDENCY_CONTEXT
-                    }
-                    onChange={sources => {
-                      const targetNode = value.nodes.find(node => node.id === selectedEdge.target)
-                      if (!targetNode) return
-                      updateNode(targetNode.id, {
-                        dependency_context: {
-                          ...(targetNode.dependency_context ?? {}),
-                          [selectedEdge.source]: sources,
-                        },
-                      })
-                    }}
-                    onDelete={() => removeDependency(selectedEdge.source, selectedEdge.target)}
-                  />
-                ) : selectedNode ? (
-                  <div data-testid={`project-workflow-inspector-${selectedNode.id}`}>
-                    <div className="flex items-center justify-between gap-2">
-                      <h5 className="text-sm font-semibold text-text-primary">
-                        {t('todo.workflow_stage_settings', '阶段设置')}
-                      </h5>
-                      <button
-                        type="button"
-                        data-testid={`project-workflow-remove-${selectedNode.id}`}
-                        onClick={() => removeNode(selectedNode.id)}
-                        aria-label={t('todo.workflow_remove_stage', '删除阶段 {{name}}', {
-                          name: selectedNode.name,
-                        })}
-                        className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-muted hover:text-red-600"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                    <label className="mt-4 block text-xs font-medium text-text-secondary">
-                      {t('todo.workflow_stage_name_label', '阶段名称')}
-                      <input
-                        value={selectedNode.name}
-                        data-testid={`project-workflow-stage-name-${selectedNode.id}`}
-                        onChange={event =>
-                          updateNode(selectedNode.id, { name: event.target.value })
-                        }
-                        className="mt-1.5 h-9 w-full rounded-lg border border-border bg-background px-2.5 text-sm outline-none focus:border-blue-500"
-                      />
-                    </label>
-                    <label className="mt-4 block text-xs font-medium text-text-secondary">
-                      {t('todo.workflow_stage_prompt_label', '阶段提示词')}
-                      <textarea
-                        value={selectedNode.prompt ?? ''}
-                        data-testid={`project-workflow-stage-prompt-${selectedNode.id}`}
-                        onChange={event =>
-                          updateNode(selectedNode.id, { prompt: event.target.value })
-                        }
-                        placeholder={t(
-                          'todo.workflow_stage_prompt_placeholder',
-                          '这个阶段需要完成什么'
-                        )}
-                        className="mt-1.5 min-h-28 w-full resize-y rounded-lg border border-border bg-background px-2.5 py-2 text-sm outline-none focus:border-blue-500"
-                      />
-                    </label>
-                    <fieldset className="mt-4">
-                      <div className="flex items-center justify-between gap-2">
-                        <legend className="text-xs font-medium text-text-secondary">
-                          {t('todo.workflow_stage_deliverables_label', '必要交付物')}
-                        </legend>
-                        <button
-                          type="button"
-                          data-testid={`project-workflow-add-deliverable-${selectedNode.id}`}
-                          onClick={() => {
-                            const requirements = selectedNode.required_deliverables ?? []
-                            setDeliverableDialog({
-                              nodeId: selectedNode.id,
-                              requirements: [
-                                ...requirements,
-                                createWorkflowDeliverableRequirement(requirements),
-                              ],
-                            })
-                          }}
-                          className="flex h-7 items-center gap-1 rounded-md px-2 text-xs text-text-secondary hover:bg-muted"
-                        >
-                          <Plus className="h-3.5 w-3.5" />
-                          {t('todo.workflow_add_deliverable', '添加交付物')}
-                        </button>
-                      </div>
-                      {(selectedNode.required_deliverables ?? []).length ? (
-                        <div
-                          data-testid={`project-workflow-deliverable-list-${selectedNode.id}`}
-                          className="mt-2 max-h-60 divide-y divide-border overflow-y-auto overscroll-contain rounded-lg border border-border"
-                        >
-                          {(selectedNode.required_deliverables ?? []).map(requirement => (
-                            <button
-                              key={requirement.id}
-                              type="button"
-                              data-testid={`project-workflow-deliverable-${requirement.id}`}
-                              onClick={() =>
-                                setDeliverableDialog({
-                                  nodeId: selectedNode.id,
-                                  requirements: (selectedNode.required_deliverables ?? []).map(
-                                    valueRequirement => ({ ...valueRequirement })
-                                  ),
-                                })
-                              }
-                              className="flex min-h-12 w-full min-w-0 items-center gap-3 px-3 py-2 text-left transition hover:bg-muted focus-visible:bg-muted focus-visible:outline-none"
-                            >
-                              <span className="min-w-0 flex-1">
-                                <span className="block truncate text-sm font-medium text-text-primary">
-                                  {requirement.name}
-                                </span>
-                                <span className="mt-0.5 block truncate text-xs text-text-muted">
-                                  {requirement.description ||
-                                    t('todo.workflow_deliverable_no_description', '暂无验收说明')}
-                                </span>
-                              </span>
-                              <span className="shrink-0 rounded-md bg-muted px-1.5 py-0.5 text-xs text-text-muted">
-                                {workflowDeliverableTypeLabel(requirement.value_type, t)}
-                              </span>
-                            </button>
-                          ))}
-                        </div>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setDeliverableDialog({
-                              nodeId: selectedNode.id,
-                              requirements: [createWorkflowDeliverableRequirement([])],
-                            })
-                          }
-                          className="mt-2 flex h-11 w-full items-center justify-center rounded-lg border border-dashed border-border px-3 text-xs text-text-muted hover:bg-muted hover:text-text-secondary"
-                        >
-                          {t('todo.workflow_deliverable_empty', '暂无交付物，点击添加')}
-                        </button>
-                      )}
-                      <span className="mt-1.5 block text-xs font-normal text-text-muted">
-                        {t(
-                          'todo.workflow_stage_deliverables_hint',
-                          '每项交付要求都会绑定一个实际结果；全部满足后才可继续。'
-                        )}
-                      </span>
-                    </fieldset>
-                    <fieldset className="mt-4">
-                      <legend className="text-xs font-medium text-text-secondary">
-                        {t('todo.workflow_stage_executor_label', '任务执行方式')}
-                      </legend>
-                      <div className="mt-2 grid grid-cols-2 gap-2">
-                        {(
-                          [
-                            [
-                              'human',
-                              UserRound,
-                              t('todo.workflow_stage_human_execution', '人工执行'),
-                            ],
-                            ['robot', Bot, t('todo.workflow_stage_robot_execution', '机器人执行')],
-                          ] as const
-                        ).map(([mode, Icon, label]) => (
-                          <label
-                            key={mode}
-                            className={cn(
-                              'flex h-10 cursor-pointer items-center justify-center gap-2 rounded-lg border text-sm transition',
-                              selectedStageRobotMode === (mode === 'robot')
-                                ? 'border-blue-500 bg-blue-500/10 text-blue-500'
-                                : 'border-border text-text-secondary hover:bg-muted'
-                            )}
-                          >
-                            <input
-                              type="radio"
-                              name={`project-workflow-stage-executor-${selectedNode.id}`}
-                              value={mode}
-                              checked={selectedStageRobotMode === (mode === 'robot')}
-                              data-testid={`project-workflow-stage-executor-${mode}-${selectedNode.id}`}
-                              onChange={() => selectStageExecutionMode(selectedNode, mode)}
-                              className="sr-only"
-                            />
-                            <Icon className="h-4 w-4" />
-                            {label}
-                          </label>
-                        ))}
-                      </div>
-                    </fieldset>
-                    {selectedStageRobotMode ? (
-                      <div className="mt-3">
-                        <label className="block text-xs font-medium text-text-secondary">
-                          {t('todo.workflow_stage_robot_label', '执行机器人')}
-                          <div className="mt-1.5 flex gap-2">
-                            <select
-                              value={selectedStageRule?.agentId ?? ''}
-                              data-testid={`project-workflow-stage-automation-${selectedNode.id}`}
-                              disabled={stageRobotBusyId === selectedNode.id}
-                              onChange={event =>
-                                void selectStageExecutor(selectedNode, event.target.value)
-                              }
-                              className="h-9 min-w-0 flex-1 rounded-lg border border-border bg-background px-2 text-sm"
-                            >
-                              <option value="">
-                                {projectAgents.length
-                                  ? t('todo.workflow_stage_select_robot', '选择机器人')
-                                  : t('todo.workflow_stage_no_robots', '暂无可用机器人')}
-                              </option>
-                              {projectAgents.map(agent => (
-                                <option key={agent.id} value={agent.id}>
-                                  {agent.name}
-                                </option>
-                              ))}
-                            </select>
-                            {onRequestCreateRobot ? (
-                              <button
-                                type="button"
-                                data-testid="project-workflow-stage-add-robot"
-                                onClick={onRequestCreateRobot}
-                                aria-label={t('todo.workflow_stage_add_robot', '添加机器人')}
-                                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border text-text-secondary hover:bg-muted"
-                              >
-                                <Plus className="h-4 w-4" />
-                              </button>
-                            ) : null}
-                          </div>
-                        </label>
-                      </div>
-                    ) : null}
-                    <p className="mt-1.5 text-xs text-text-muted">
-                      {selectedStageRobotMode
-                        ? t(
-                            'todo.workflow_stage_robot_hint',
-                            '阶段提示词会作为机器人的任务指令，执行记录归入当前阶段。'
-                          )
-                        : t(
-                            'todo.workflow_stage_user_hint',
-                            '阶段就绪后打开标准任务 Composer，可继续选择本地模式、工作空间和分支。'
-                          )}
-                    </p>
-                    {!selectedNode.automation_rule_id ? (
-                      <label className="mt-4 block text-xs font-medium text-text-secondary">
-                        {t('todo.workflow_workspace_policy_label', '任务工作空间')}
-                        <select
-                          value={selectedNode.workspace_policy}
-                          data-testid={`project-workflow-stage-workspace-${selectedNode.id}`}
-                          onChange={event =>
-                            updateNode(selectedNode.id, {
-                              workspace_policy: event.target.value as WorkflowWorkspacePolicy,
-                            })
-                          }
-                          className="mt-1.5 h-9 w-full rounded-lg border border-border bg-background px-2 text-sm"
-                        >
-                          <option value="composer">
-                            {t('todo.workflow_workspace_composer', '创建任务时选择工作空间')}
-                          </option>
-                          <option value="inherit">
-                            {t('todo.workflow_workspace_inherit', '继承前序任务工作空间')}
-                          </option>
-                          <option value="none">
-                            {t('todo.workflow_workspace_none', '不限定工作空间')}
-                          </option>
-                        </select>
-                      </label>
-                    ) : null}
-                    <label className="mt-4 flex items-center gap-2 text-xs text-text-secondary">
-                      <input
-                        type="checkbox"
-                        data-testid={`project-workflow-stage-required-${selectedNode.id}`}
-                        checked={selectedNode.required}
-                        onChange={event =>
-                          updateNode(selectedNode.id, { required: event.target.checked })
-                        }
-                      />
-                      {t('todo.workflow_stage_required', '该阶段完成后才能推进 Issue')}
-                    </label>
-                    <div className="mt-5 border-t border-border pt-4">
-                      <p className="text-xs font-medium text-text-secondary">
-                        {t('todo.workflow_dependencies', '前置阶段')}
-                      </p>
-                      {selectedNode.depends_on.length ? (
-                        <div className="mt-2 space-y-1">
-                          {selectedNode.depends_on.map(dependencyId => {
-                            const dependency = value.nodes.find(node => node.id === dependencyId)
-                            if (!dependency) return null
-                            return (
-                              <div
-                                key={dependencyId}
-                                className="flex h-8 items-center justify-between rounded-lg bg-muted px-2 text-xs text-text-secondary"
-                              >
-                                <span className="truncate">{dependency.name}</span>
-                                <button
-                                  type="button"
-                                  data-testid={`project-workflow-remove-dependency-${selectedNode.id}-${dependencyId}`}
-                                  onClick={() => removeDependency(dependencyId, selectedNode.id)}
-                                  aria-label={t(
-                                    'todo.workflow_remove_dependency',
-                                    '移除前置阶段 {{name}}',
-                                    { name: dependency.name }
-                                  )}
-                                  className="ml-2 text-text-muted hover:text-red-600"
-                                >
-                                  ×
-                                </button>
-                              </div>
-                            )
-                          })}
-                        </div>
-                      ) : (
-                        <p className="mt-2 text-xs text-text-muted">
-                          {t('todo.workflow_no_dependencies', '无前置阶段')}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex h-full min-h-40 flex-col items-center justify-center text-center">
-                    <GitBranch className="h-5 w-5 text-text-muted" />
-                    <p className="mt-2 text-sm text-text-secondary">
-                      {t('todo.workflow_select_stage', '选择一个阶段进行配置')}
-                    </p>
-                  </div>
-                )}
-              </aside>
+                <Hourglass className="h-3.5 w-3.5" />
+                {t('todo.workflow_add_wait_node', '添加等待节点')}
+              </button>
+              <button
+                type="button"
+                data-testid="project-workflow-add"
+                onClick={addNode}
+                className="flex h-8 items-center gap-1 rounded-lg px-2.5 text-sm text-text-secondary hover:bg-muted"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                {t('todo.workflow_add_stage', '添加阶段')}
+              </button>
             </div>
-          )}
+          </div>
+          <div className="grid min-h-[420px] overflow-hidden rounded-xl border border-border bg-muted/20 lg:grid-cols-[minmax(0,1fr)_300px]">
+            <div className="h-[420px]" data-testid="project-workflow-dag">
+              <ReactFlow
+                className="workflow-react-flow"
+                nodes={graph.nodes}
+                edges={graph.edges}
+                nodeTypes={nodeTypes}
+                edgeTypes={edgeTypes}
+                onInit={instance => {
+                  flowInstanceRef.current = instance
+                  void instance.fitView({ padding: 0.25, maxZoom: 1 })
+                }}
+                onNodeClick={(_, node) => {
+                  setSelectedEdge(null)
+                  setSelectedNodeId(node.id)
+                }}
+                onPaneClick={() => {
+                  setSelectedNodeId(null)
+                  setSelectedEdge(null)
+                }}
+                onConnect={handleConnect}
+                onDelete={handleDelete}
+                minZoom={0.35}
+                maxZoom={1.5}
+                nodesDraggable={false}
+                deleteKeyCode={['Backspace', 'Delete']}
+                proOptions={{ hideAttribution: true }}
+                defaultEdgeOptions={{ deletable: true }}
+              >
+                <Background gap={24} size={1} color="rgb(var(--color-border))" />
+                <Controls showInteractive={false} />
+              </ReactFlow>
+            </div>
+            <aside className="border-t border-border bg-background p-4 lg:border-l lg:border-t-0">
+              {selectedEdge ? (
+                <DependencyContextInspector
+                  source={normalized.nodes.find(node => node.id === selectedEdge.source)}
+                  target={normalized.nodes.find(node => node.id === selectedEdge.target)}
+                  contextSources={
+                    normalized.nodes.find(node => node.id === selectedEdge.target)
+                      ?.dependency_context?.[selectedEdge.source] ?? DEFAULT_DEPENDENCY_CONTEXT
+                  }
+                  onChange={sources => {
+                    const targetNode = normalized.nodes.find(
+                      node => node.id === selectedEdge.target
+                    )
+                    if (!targetNode) return
+                    updateNode(targetNode.id, {
+                      dependency_context: {
+                        ...(targetNode.dependency_context ?? {}),
+                        [selectedEdge.source]: sources,
+                      },
+                    })
+                  }}
+                  onDelete={() => removeDependency(selectedEdge.source, selectedEdge.target)}
+                />
+              ) : selectedNode ? (
+                selectedNode.node_type === 'wait' ? (
+                  <WaitNodeInspector
+                    node={selectedNode}
+                    onUpdate={patch => updateNode(selectedNode.id, patch)}
+                    onRemove={() => removeNode(selectedNode.id)}
+                  />
+                ) : selectedNode.node_type === 'start' || selectedNode.node_type === 'end' ? (
+                  <EndpointInspector node={selectedNode} />
+                ) : (
+                  <StageInspector
+                    node={selectedNode}
+                    automationRule={selectedStageRule}
+                    robotMode={selectedStageRobotMode}
+                    robotBusy={stageRobotBusyId === selectedNode.id}
+                    projectAgents={projectAgents}
+                    dependencies={normalized.nodes}
+                    onUpdate={patch => updateNode(selectedNode.id, patch)}
+                    onRemove={() => removeNode(selectedNode.id)}
+                    onRemoveDependency={dependencyId =>
+                      removeDependency(dependencyId, selectedNode.id)
+                    }
+                    onSelectExecutor={agentId => void selectStageExecutor(selectedNode, agentId)}
+                    onSelectExecutionMode={mode => selectStageExecutionMode(selectedNode, mode)}
+                    onRequestCreateRobot={onRequestCreateRobot}
+                    onManageDeliverables={requirements =>
+                      setDeliverableDialog({ nodeId: selectedNode.id, requirements })
+                    }
+                  />
+                )
+              ) : (
+                <div className="flex h-full min-h-40 flex-col items-center justify-center text-center">
+                  <GitBranch className="h-5 w-5 text-text-muted" />
+                  <p className="mt-2 text-sm text-text-secondary">
+                    {t('todo.workflow_select_stage', '选择一个阶段进行配置')}
+                  </p>
+                </div>
+              )}
+            </aside>
+          </div>
         </div>
       ) : (
         <div className="mt-5 rounded-xl border border-dashed border-border px-4 py-8 text-center">
