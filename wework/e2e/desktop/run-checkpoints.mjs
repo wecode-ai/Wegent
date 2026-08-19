@@ -18,6 +18,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'local-file-preview': './scenarios/local-file-preview.scenario.mjs',
   'local-harness': './scenarios/local-terminal.scenario.mjs',
   'browser-multi-tabs': './scenarios/embedded-browser-multi-tabs.scenario.mjs',
+  'browser-toolbar-actions': './scenarios/embedded-browser-toolbar-actions.scenario.mjs',
   'rendering-extensions': './scenarios/streaming-text.scenario.mjs',
   'runtime-task-queue': './scenarios/runtime-task-queue.scenario.mjs',
   'context-compaction': './scenarios/context-compaction.scenario.mjs',

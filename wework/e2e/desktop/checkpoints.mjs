@@ -35,6 +35,7 @@ export const DESKTOP_CHECKPOINTS = [
   'local-harness',
   'browser-multi-tabs',
   'embedded-browser',
+  'browser-toolbar-actions',
 ]
 
 export const PLUGIN_SEGMENTS = [
