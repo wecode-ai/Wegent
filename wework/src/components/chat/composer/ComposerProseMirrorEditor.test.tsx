@@ -236,6 +236,71 @@ describe('ComposerProseMirrorEditor', () => {
     })
   })
 
+  test.each([
+    ['Home', 0],
+    ['End', 'before after'.length],
+  ])('moves the caret with %s without inserting a control character', (key, selectionOffset) => {
+    const { editorRef, onChange } = renderEditor('before after')
+    const editor = screen.getByTestId('composer-editor')
+
+    act(() => {
+      editorRef.current?.setValue('before after', 'before '.length)
+      editorRef.current?.focus()
+    })
+
+    expect(fireEvent.keyDown(editor, { key, code: key })).toBe(false)
+    expect(editorRef.current?.getSnapshot()).toMatchObject({
+      value: 'before after',
+      selectionOffset,
+      selectionStart: selectionOffset,
+      selectionEnd: selectionOffset,
+    })
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  test.each([
+    ['Home', 0, 'before '.length],
+    ['End', 'before '.length, 'before after'.length],
+  ])('extends the selection with Shift+%s', (key, selectionStart, selectionEnd) => {
+    const { editorRef } = renderEditor('before after')
+    const editor = screen.getByTestId('composer-editor')
+
+    act(() => {
+      editorRef.current?.setValue('before after', 'before '.length)
+      editorRef.current?.focus()
+    })
+
+    expect(fireEvent.keyDown(editor, { key, code: key, shiftKey: true })).toBe(false)
+    expect(editorRef.current?.getSnapshot()).toMatchObject({
+      value: 'before after',
+      selectionStart,
+      selectionEnd,
+    })
+  })
+
+  test.each([
+    ['Home', 0],
+    ['End', 'first line\nsecond line'.length],
+  ])('moves to the document boundary with Cmd/Ctrl+%s', (key, selectionOffset) => {
+    const { editorRef } = renderEditor('first line\nsecond line')
+    const editor = screen.getByTestId('composer-editor')
+
+    act(() => {
+      editorRef.current?.setValue('first line\nsecond line', 'first line'.length)
+      editorRef.current?.focus()
+    })
+
+    expect(
+      fireEvent.keyDown(editor, {
+        key,
+        code: key,
+        metaKey: key === 'Home',
+        ctrlKey: key === 'End',
+      })
+    ).toBe(false)
+    expect(editorRef.current?.getSnapshot().selectionOffset).toBe(selectionOffset)
+  })
+
   test('keeps line breaks when pasting rich text', () => {
     const { editorRef, onChange } = renderEditor('')
     const editor = screen.getByTestId('composer-editor')
