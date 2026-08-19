@@ -22,6 +22,9 @@ from app.services.chat.selected_knowledge import (
     should_prepare_provider_native_knowledge,
 )
 from app.services.execution.skill_mcp import extract_skill_mcp_servers
+from app.services.knowledge.task_knowledge_base_service import (
+    task_knowledge_base_service,
+)
 from shared.models import ExecutionRequest, KnowledgeBaseScope
 
 
@@ -200,6 +203,138 @@ def test_apply_selected_knowledge_context_is_idempotent(
 
     assert request.preload_skills == ["demo-knowledge"]
     assert request.user_selected_skills == ["demo-knowledge"]
+
+
+def test_selected_wegent_source_includes_bounded_routing_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_ids: list[int] = []
+
+    def get_knowledge_bases_by_ids(
+        db: object,
+        kb_ids: list[int],
+    ) -> dict[int, SimpleNamespace]:
+        captured_ids.extend(kb_ids)
+        return {
+            13: SimpleNamespace(
+                json={
+                    "spec": {
+                        "summaryEnabled": True,
+                        "summary": {
+                            "status": "completed",
+                            "short_summary": "产品 < 发布流程",
+                            "topics": [
+                                "产品",
+                                "发布",
+                                "流程",
+                                "权限",
+                                "协作",
+                                "ignored",
+                            ],
+                        },
+                    }
+                }
+            )
+        }
+
+    monkeypatch.setattr(
+        task_knowledge_base_service,
+        "get_knowledge_bases_by_ids",
+        get_knowledge_bases_by_ids,
+    )
+    request = ExecutionRequest(knowledge_base_ids=[12])
+    task = SimpleNamespace(
+        json={"spec": {"knowledgeBaseRefs": [{"id": 12, "name": "默认知识"}]}}
+    )
+    current_contexts = [
+        SimpleNamespace(
+            context_type=ContextType.KNOWLEDGE_BASE.value,
+            status=ContextStatus.READY.value,
+            name="本轮知识",
+            type_data={"knowledge_id": 13},
+        )
+    ]
+
+    apply_selected_knowledge_context(
+        MagicMock(),
+        request,
+        task,
+        current_contexts=current_contexts,
+    )
+
+    assert captured_ids == [13]
+    assert 'knowledge_base_id="13"' in request.selected_knowledge_prompt
+    assert 'routing_summary="产品 发布流程"' in request.selected_knowledge_prompt
+    assert 'routing_topics="产品, 发布, 流程, 权限, 协作"' in (
+        request.selected_knowledge_prompt
+    )
+    assert 'knowledge_base_id="12"' not in request.selected_knowledge_prompt
+
+
+def test_manual_routing_summary_is_available_without_completed_auto_summary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        task_knowledge_base_service,
+        "get_knowledge_bases_by_ids",
+        lambda db, kb_ids: {
+            12: SimpleNamespace(
+                json={
+                    "spec": {
+                        "summaryEnabled": False,
+                        "summary": {
+                            "status": "pending",
+                            "manual_long_summary": "人工路由摘要",
+                            "short_summary": "未完成自动摘要",
+                            "topics": ["人工主题"],
+                        },
+                    }
+                }
+            )
+        },
+    )
+    request = ExecutionRequest(knowledge_base_ids=[12])
+    task = SimpleNamespace(
+        json={"spec": {"knowledgeBaseRefs": [{"id": 12, "name": "产品知识"}]}}
+    )
+
+    apply_selected_knowledge_context(MagicMock(), request, task)
+
+    assert 'routing_summary="人工路由摘要"' in request.selected_knowledge_prompt
+    assert 'routing_topics="人工主题"' in request.selected_knowledge_prompt
+    assert "未完成自动摘要" not in request.selected_knowledge_prompt
+
+
+def test_incomplete_auto_summary_is_not_used_for_routing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        task_knowledge_base_service,
+        "get_knowledge_bases_by_ids",
+        lambda db, kb_ids: {
+            12: SimpleNamespace(
+                json={
+                    "spec": {
+                        "summaryEnabled": True,
+                        "summary": {
+                            "status": "pending",
+                            "short_summary": "未完成摘要",
+                            "topics": ["未完成主题"],
+                        },
+                    }
+                }
+            )
+        },
+    )
+    request = ExecutionRequest(knowledge_base_ids=[12])
+    task = SimpleNamespace(
+        json={"spec": {"knowledgeBaseRefs": [{"id": 12, "name": "产品知识"}]}}
+    )
+
+    apply_selected_knowledge_context(MagicMock(), request, task)
+
+    assert "routing_summary=" not in request.selected_knowledge_prompt
+    assert "routing_topics=" not in request.selected_knowledge_prompt
 
 
 def test_current_external_selection_replaces_all_task_knowledge(

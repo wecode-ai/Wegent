@@ -39,6 +39,7 @@ def render_selected_knowledge_prompt(
         *_render_evidence_policy(context.evidence_required),
         "- First distinguish source metadata, content overview, content questions, and management requests.",
         "- For source metadata, answer from the source information above without retrieving content.",
+        "- Routing summaries and topics are metadata for choosing a source; they are not content evidence and must not be used to answer content questions.",
         "- For a content overview, use the provider's native listing capability.",
         "- For content questions, search or read evidence only within the sources above.",
         "- Use only the MCP tools belonging to each source's provider; do not translate the selection into a cross-provider query.",
@@ -109,6 +110,8 @@ def _normalize_ref(
         "provider": provider,
         "knowledge_base_id": knowledge_base_id,
         "knowledge_base_name": str(value.get("knowledge_base_name") or "").strip(),
+        "routing_summary": _optional_string(value.get("routing_summary")),
+        "routing_topics": _normalize_topics(value.get("routing_topics")),
         "resources": resources,
     }
 
@@ -137,6 +140,8 @@ def _render_source(ref: dict[str, Any]) -> list[str]:
         "provider": ref["provider"],
         "knowledge_base_id": ref["knowledge_base_id"],
         "knowledge_base_name": ref["knowledge_base_name"],
+        "routing_summary": ref["routing_summary"],
+        "routing_topics": ", ".join(ref["routing_topics"]),
     }
     rendered_source = _render_attributes(attributes)
     resources = ref["resources"]
@@ -171,3 +176,11 @@ def _optional_string(value: Any) -> str | None:
 
 def _optional_bool(value: Any) -> bool | None:
     return value if isinstance(value, bool) else None
+
+
+def _normalize_topics(value: Any) -> tuple[str, ...]:
+    if not isinstance(value, (list, tuple)):
+        return ()
+    return tuple(
+        topic for item in value if (topic := _optional_string(item)) is not None
+    )

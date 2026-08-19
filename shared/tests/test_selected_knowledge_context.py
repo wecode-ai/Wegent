@@ -91,3 +91,30 @@ def test_duplicate_folder_scope_merges_include_descendants_with_union_semantics(
     )
 
     assert context.refs[0].resources == (folder_tree,)
+
+
+def test_duplicate_refs_preserve_routing_metadata() -> None:
+    first = SelectedKnowledgeRef(
+        provider="wegent",
+        knowledge_base_id="kb-1",
+        knowledge_base_name="知识库",
+        resources=(
+            SelectedKnowledgeResource(scope_type="folder", resource_id="folder-1"),
+        ),
+        routing_summary="产品发布流程",
+        routing_topics=("产品",),
+    )
+    second = SelectedKnowledgeRef(
+        provider="wegent",
+        knowledge_base_id="kb-1",
+        knowledge_base_name="知识库",
+        resources=(
+            SelectedKnowledgeResource(scope_type="document", resource_id="doc-1"),
+        ),
+        routing_topics=("发布", "产品"),
+    )
+
+    context = resolve_selected_knowledge_context([], [first, second])
+
+    assert context.refs[0].routing_summary == "产品发布流程"
+    assert context.refs[0].routing_topics == ("产品", "发布")

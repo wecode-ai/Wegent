@@ -18,6 +18,8 @@ def test_render_selected_knowledge_prompt_preserves_provider_scopes() -> None:
                     provider="wegent",
                     knowledge_base_id="12",
                     knowledge_base_name="产品知识",
+                    routing_summary='产品 < 发布 "流程"',
+                    routing_topics=("产品", "发布"),
                 ),
                 SelectedKnowledgeRef(
                     provider="dingtalk",
@@ -53,6 +55,9 @@ def test_render_selected_knowledge_prompt_preserves_provider_scopes() -> None:
     assert prompt.count("<source ") == 3
     assert prompt.count("<resource ") == 2
     assert 'provider="wegent"' in prompt
+    assert 'routing_summary="产品 &lt; 发布 &quot;流程&quot;"' in prompt
+    assert 'routing_topics="产品, 发布"' in prompt
+    assert "they are not content evidence" in prompt
     assert 'scope_type="folder"' in prompt
     assert 'resource_id="folder-1"' in prompt
     assert 'include_descendants="false"' in prompt

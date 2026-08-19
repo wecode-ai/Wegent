@@ -51,6 +51,8 @@ class SelectedKnowledgeRef:
     knowledge_base_id: str
     knowledge_base_name: str
     resources: tuple[SelectedKnowledgeResource, ...] = field(default_factory=tuple)
+    routing_summary: str | None = None
+    routing_topics: tuple[str, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)

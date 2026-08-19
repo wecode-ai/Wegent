@@ -49,8 +49,17 @@ def _merge_refs(
             knowledge_base_id=current.knowledge_base_id,
             knowledge_base_name=current.knowledge_base_name,
             resources=_merge_resources(current.resources, ref.resources),
+            routing_summary=current.routing_summary or ref.routing_summary,
+            routing_topics=_merge_topics(
+                current.routing_topics,
+                ref.routing_topics,
+            ),
         )
     return tuple(merged.values())
+
+
+def _merge_topics(*topic_groups: Iterable[str]) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(topic for group in topic_groups for topic in group))
 
 
 def _merge_resources(

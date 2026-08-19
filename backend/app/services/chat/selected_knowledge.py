@@ -6,7 +6,9 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any, NoReturn
 
 from fastapi import HTTPException
@@ -32,11 +34,16 @@ if TYPE_CHECKING:
     from shared.models.execution import ExecutionRequest
 
 
+logger = logging.getLogger(__name__)
+
 PROVIDER_SKILLS = {
     "wegent": "wegent-knowledge",
     "dingtalk": "dingtalk-docs",
 }
 SUPPORTED_PROVIDER_NATIVE_SHELLS = {"Chat", "ClaudeCode"}
+ROUTING_SUMMARY_MAX_LENGTH = 200
+ROUTING_TOPIC_MAX_LENGTH = 48
+MAX_ROUTING_TOPICS = 5
 
 
 def register_provider_skill(provider_id: str, skill_name: str) -> None:
@@ -210,7 +217,8 @@ def build_selected_knowledge_context(
         )
     else:
         context = resolve_selected_knowledge_context(task_refs, explicit_refs)
-    return _filter_native_refs(context, request.kb_tool_access_mode)
+    context = _filter_native_refs(context, request.kb_tool_access_mode)
+    return _enrich_wegent_routing_metadata(db, context)
 
 
 def _filter_native_refs(
@@ -224,6 +232,98 @@ def _filter_native_refs(
         refs=tuple(ref for ref in context.refs if ref.provider != "wegent"),
         evidence_required=context.evidence_required,
     )
+
+
+def _enrich_wegent_routing_metadata(
+    db: "Session",
+    context: SelectedKnowledgeContext,
+) -> SelectedKnowledgeContext:
+    """Attach bounded Wegent metadata after the effective range is resolved."""
+    wegent_ids = [
+        kb_id
+        for ref in context.refs
+        if ref.provider == "wegent"
+        and (kb_id := _positive_int(ref.knowledge_base_id)) is not None
+    ]
+    if not wegent_ids:
+        return context
+
+    from app.services.chat.preprocessing.kb_meta import sanitize_prompt_text
+    from app.services.knowledge.task_knowledge_base_service import (
+        task_knowledge_base_service,
+    )
+
+    try:
+        knowledge_bases = task_knowledge_base_service.get_knowledge_bases_by_ids(
+            db,
+            wegent_ids,
+        )
+    except Exception:
+        logger.warning(
+            "Failed to load routing metadata for Wegent knowledge bases: %s",
+            wegent_ids,
+            exc_info=True,
+        )
+        return context
+
+    enriched_refs: list[SelectedKnowledgeRef] = []
+    for ref in context.refs:
+        kb_id = _positive_int(ref.knowledge_base_id)
+        knowledge_base = knowledge_bases.get(kb_id) if kb_id is not None else None
+        if ref.provider != "wegent" or knowledge_base is None:
+            enriched_refs.append(ref)
+            continue
+        spec = (
+            knowledge_base.json.get("spec", {})
+            if isinstance(knowledge_base.json, dict)
+            else {}
+        )
+        summary = spec.get("summary")
+        summary_data = summary if isinstance(summary, dict) else {}
+        routing_summary = _routing_summary(spec, summary_data)
+        routing_topics = _routing_topics(spec, summary_data)
+        enriched_refs.append(
+            replace(
+                ref,
+                routing_summary=sanitize_prompt_text(
+                    routing_summary,
+                    max_len=ROUTING_SUMMARY_MAX_LENGTH,
+                )
+                or None,
+                routing_topics=tuple(
+                    topic
+                    for value in routing_topics[:MAX_ROUTING_TOPICS]
+                    if (
+                        topic := sanitize_prompt_text(
+                            value,
+                            max_len=ROUTING_TOPIC_MAX_LENGTH,
+                        )
+                    )
+                ),
+            )
+        )
+    return replace(context, refs=tuple(enriched_refs))
+
+
+def _routing_summary(spec: dict[str, Any], summary: dict[str, Any]) -> str:
+    manual_summary = summary.get("manual_long_summary")
+    if manual_summary:
+        return str(manual_summary)
+    if not spec.get("summaryEnabled") or summary.get("status") != "completed":
+        return ""
+    return str(summary.get("short_summary") or "")
+
+
+def _routing_topics(
+    spec: dict[str, Any],
+    summary: dict[str, Any],
+) -> list[Any]:
+    if not summary.get("manual_long_summary") and (
+        not spec.get("summaryEnabled") or summary.get("status") != "completed"
+    ):
+        return []
+    topics = summary.get("topics")
+    return list(topics) if isinstance(topics, (list, tuple)) else []
 
 
 def has_explicit_knowledge_context(contexts: Iterable[Any]) -> bool:
@@ -707,6 +807,11 @@ def _int_values(values: Any) -> list[int]:
         if normalized not in result:
             result.append(normalized)
     return result
+
+
+def _positive_int(value: Any) -> int | None:
+    values = _int_values([value])
+    return values[0] if values else None
 
 
 def _append_unique(values: list, value: str) -> None:
