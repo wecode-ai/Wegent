@@ -1004,6 +1004,9 @@ class KnowledgeOrchestrator:
         retrieval_config: Optional[Dict[str, Any]] = None,
         summary_enabled: Optional[bool] = None,
         summary_model_ref: Optional[Dict[str, str]] = None,
+        execution_model_ref: Optional[Dict[str, str]] = None,
+        execution_model_ref_is_set: bool = False,
+        show_generation_task: Optional[bool] = None,
         guided_questions: Optional[List[str]] = None,
         max_calls_per_conversation: Optional[int] = None,
         exempt_calls_before_check: Optional[int] = None,
@@ -1021,6 +1024,9 @@ class KnowledgeOrchestrator:
             retrieval_config: New retrieval config (optional)
             summary_enabled: New summary enabled flag (optional)
             summary_model_ref: New summary model reference (optional)
+            execution_model_ref: Code Wiki execution model reference. Explicit null
+                clears the override, so its presence is tracked separately.
+            show_generation_task: Whether Code Wiki generation tasks are visible.
             guided_questions: New guided questions list (optional)
             max_calls_per_conversation: Max calls per conversation (optional)
             exempt_calls_before_check: Exempt calls before check (optional)
@@ -1051,6 +1057,10 @@ class KnowledgeOrchestrator:
             update_fields["summary_enabled"] = summary_enabled
         if summary_model_ref is not None:
             update_fields["summary_model_ref"] = summary_model_ref
+        if execution_model_ref_is_set:
+            update_fields["execution_model_ref"] = execution_model_ref
+        if show_generation_task is not None:
+            update_fields["show_generation_task"] = show_generation_task
         if guided_questions is not None:
             update_fields["guided_questions"] = guided_questions
         if max_calls_per_conversation is not None:

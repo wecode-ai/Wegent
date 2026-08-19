@@ -17,18 +17,23 @@ def _skill(name: str) -> tuple[dict, str]:
     return yaml.safe_load(frontmatter), body
 
 
-def test_wiki_submit_owns_the_page_write_contract():
+def test_wiki_submit_owns_the_page_write_contract() -> None:
     metadata, body = _skill("wiki_submit")
 
     assert metadata["bindShells"] == ["ClaudeCode"]
     for subject in (
         "at most 4 folders",
         "complete content",
-        "section that holds pages needs a page",
+        "section that holds pages needs a substantive page",
+        "architecture/backend/api",
+        "both `architecture` and `architecture/backend`",
         "[Backend](architecture/backend)",
         "--structure-order",
         "version was published",
         "Mermaid diagrams that do not render",
         "`complete` again",
+        "Before the first submit",
+        "Before ending the run",
+        "Do not report the generation as complete",
     ):
         assert subject in body
