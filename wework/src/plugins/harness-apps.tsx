@@ -1,6 +1,6 @@
 import type { Context, Plugin } from '@deepseek-ai/cordis'
 
-import { HarnessAppsPage } from '@/pages/HarnessAppsPage'
+import { PluginManagementPage } from '@/pages/PluginManagementPage'
 
 export const harnessAppsPlugin: Plugin.Object<void> = {
   name: 'wework-harness-apps',
@@ -8,9 +8,9 @@ export const harnessAppsPlugin: Plugin.Object<void> = {
   apply(ctx: Context) {
     return ctx.workbenchRoutes.register({
       id: 'harness-apps.management',
-      path: '/harness-apps',
+      path: '/plugins/manage/harness',
       telemetryFeature: 'plugins',
-      render: () => <HarnessAppsPage />,
+      render: () => <PluginManagementPage section="harness" />,
     })
   },
 }

@@ -1,11 +1,9 @@
 import type { ReactNode } from 'react'
-import { Boxes } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createHttpClient } from '@/api/http'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import { createPluginApi } from '@/api/plugins'
 import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
-import { Button } from '@/components/ui/button'
 import { track } from '@/telemetry/client'
 import { notifyLocalPluginSkillsChanged, queuePluginTrial } from '@/features/plugins/pluginTrial'
 import { logoutLocalConnectorsForPlugin } from '@/features/plugins/logoutLocalQrConnectors'
@@ -35,6 +33,7 @@ import { pluginUninstallWarningDetails, uninstallPluginIdentities } from './plug
 import { withPublishedPluginCloudLink } from './publishedPluginIdentity'
 import { PluginDetailView } from './PluginDetailView'
 import { PluginOperationNotice, type PluginOperationNoticeState } from './PluginOperationNotice'
+import { PluginManagementSectionNav } from './PluginManagementSectionNav'
 import { PluginPublishDialog, type PluginPublishRequest } from './PluginPublishDialog'
 import { PluginShareDialog } from './PluginShareDialog'
 import {
@@ -863,7 +862,7 @@ export function PluginManagementWorkspace({
           'pt-[27px]',
         ].join(' ')}
       >
-        <header className="mb-6 flex items-start justify-between gap-4">
+        <header className="mb-5">
           <div>
             <h1 className="heading-base tracking-tight text-text-primary">
               {t('workbench.plugins_manage_plugins', '管理插件')}
@@ -872,16 +871,10 @@ export function PluginManagementWorkspace({
               {t('workbench.plugins_manage_plugins_description', '管理已安装插件。')}
             </p>
           </div>
-          <Button
-            size="sm"
-            data-testid="plugin-management-harness-apps-button"
-            className="shrink-0"
-            onClick={() => navigateTo('/harness-apps')}
-          >
-            <Boxes aria-hidden="true" className="h-4 w-4" />
-            {t('workbench.harness_apps_title')}
-          </Button>
         </header>
+        <div className="mb-5">
+          <PluginManagementSectionNav active="plugins" />
+        </div>
 
         {isLoadingPlugins ? (
           <div className="py-10 text-sm text-text-secondary">

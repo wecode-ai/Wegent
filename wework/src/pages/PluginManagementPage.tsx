@@ -17,8 +17,13 @@ import { navigateTo } from '@/lib/navigation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { track } from '@/telemetry/client'
 import { createPluginRouteRuntimeTaskOpener } from './plugin-route-navigation'
+import { HarnessAppsPage } from './HarnessAppsPage'
 
-export function PluginManagementPage() {
+interface PluginManagementPageProps {
+  section?: 'plugins' | 'harness'
+}
+
+export function PluginManagementPage({ section = 'plugins' }: PluginManagementPageProps) {
   const { t } = useTranslation('common')
   const { logout } = useAuth()
   const cloudConnection = useOptionalCloudConnection()
@@ -102,6 +107,20 @@ export function PluginManagementPage() {
     navigateTo('/')
     startStandaloneChat()
   }
+
+  const topBarLeftActions =
+    !isMobile && sidebarCollapsed && !isTauri ? (
+      <DesktopWindowControls
+        sidebarCollapsed
+        onToggleSidebar={() => setSidebarCollapsed(false)}
+        onNewChat={handleNewChat}
+      />
+    ) : !isMobile && !isTauri ? (
+      <DesktopWindowControls
+        sidebarCollapsed={false}
+        onToggleSidebar={() => setSidebarCollapsed(true)}
+      />
+    ) : undefined
 
   return (
     <div className="flex h-full overflow-hidden bg-background text-text-primary">
@@ -194,25 +213,19 @@ export function PluginManagementPage() {
           />
         </>
       )}
-      <PluginManagementWorkspace
-        cloudApiBaseUrl={cloudConnection.apiBaseUrl}
-        cloudToken={cloudConnection.token}
-        sidebarCollapsed={sidebarCollapsed && !isMobile}
-        topBarLeftActions={
-          !isMobile && sidebarCollapsed && !isTauri ? (
-            <DesktopWindowControls
-              sidebarCollapsed
-              onToggleSidebar={() => setSidebarCollapsed(false)}
-              onNewChat={handleNewChat}
-            />
-          ) : !isMobile && !isTauri ? (
-            <DesktopWindowControls
-              sidebarCollapsed={false}
-              onToggleSidebar={() => setSidebarCollapsed(true)}
-            />
-          ) : undefined
-        }
-      />
+      {section === 'harness' ? (
+        <HarnessAppsPage
+          sidebarCollapsed={sidebarCollapsed && !isMobile}
+          topBarLeftActions={topBarLeftActions}
+        />
+      ) : (
+        <PluginManagementWorkspace
+          cloudApiBaseUrl={cloudConnection.apiBaseUrl}
+          cloudToken={cloudConnection.token}
+          sidebarCollapsed={sidebarCollapsed && !isMobile}
+          topBarLeftActions={topBarLeftActions}
+        />
+      )}
       <WorkbenchSearchDialog
         open={searchOpen}
         onClose={() => setSearchOpen(false)}

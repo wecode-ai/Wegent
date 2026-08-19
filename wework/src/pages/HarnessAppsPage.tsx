@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type DragEvent } from 'react'
+import { useEffect, useMemo, useState, type DragEvent, type ReactNode } from 'react'
 import { AlertTriangle, Box, Boxes, Circle, Play, Plus, Square, Trash2, Upload } from 'lucide-react'
 import {
   harnessAppsApi,
@@ -6,6 +6,7 @@ import {
   type HarnessAppPreview,
 } from '@/api/local/harnessApps'
 import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
+import { PluginManagementSectionNav } from '@/components/plugins/PluginManagementSectionNav'
 import {
   listLocalHarnessModelOptions,
   type LocalHarnessModelOption,
@@ -21,8 +22,17 @@ import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getErrorMessage } from '@/lib/error-message'
+import { navigateTo } from '@/lib/navigation'
 
-export function HarnessAppsPage() {
+interface HarnessAppsPageProps {
+  sidebarCollapsed?: boolean
+  topBarLeftActions?: ReactNode
+}
+
+export function HarnessAppsPage({
+  sidebarCollapsed = false,
+  topBarLeftActions,
+}: HarnessAppsPageProps) {
   const { t } = useTranslation('common')
   const { projectChat, services } = useWorkbench()
   const workspaceTabs = useOptionalWorkspaceTabs()
@@ -250,9 +260,34 @@ export function HarnessAppsPage() {
   }
 
   return (
-    <main className="h-full overflow-y-auto bg-background text-text-primary">
-      <DesktopTopBar testId="harness-apps-topbar" />
-      <div className="mx-auto flex max-w-[980px] flex-col gap-5 px-6 py-7">
+    <main className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-background text-text-primary">
+      <DesktopTopBar
+        testId="harness-apps-topbar"
+        className={[
+          'sticky top-0 z-30 shrink-0 border-b border-border/75 bg-background/95 backdrop-blur-xl',
+          sidebarCollapsed ? 'md:pl-6' : 'md:pl-7',
+        ].join(' ')}
+        left={
+          <>
+            {topBarLeftActions}
+            <button
+              type="button"
+              data-testid="harness-apps-back-button"
+              className="plugin-route-back-button"
+              onClick={() => navigateTo('/plugins')}
+            >
+              ‹ {t('workbench.plugins_back_to_marketplace', '返回插件市场')}
+            </button>
+          </>
+        }
+      />
+      <div
+        className={[
+          'mx-auto flex w-full max-w-[1060px] flex-col px-5 pb-[68px] md:px-[26px]',
+          sidebarCollapsed ? 'md:pl-6' : 'md:pl-7',
+          'pt-[27px]',
+        ].join(' ')}
+      >
         <header className="flex items-start justify-between gap-4">
           <div>
             <h1 className="heading-base">
@@ -274,11 +309,14 @@ export function HarnessAppsPage() {
             {t('workbench.harness_apps_import', '导入安装包')}
           </Button>
         </header>
+        <div className="mt-5">
+          <PluginManagementSectionNav active="harness" />
+        </div>
 
         {error ? (
           <div
             data-testid="harness-app-error"
-            className="rounded-lg bg-danger/10 p-3 text-sm text-danger"
+            className="mt-5 rounded-lg bg-danger/10 p-3 text-sm text-danger"
           >
             {error}
           </div>
@@ -286,7 +324,7 @@ export function HarnessAppsPage() {
 
         <section
           data-testid="harness-app-drop-zone"
-          className="min-h-0"
+          className="mt-5 min-h-0"
           onDragOver={event => event.preventDefault()}
           onDrop={event => void dropPackage(event)}
         >

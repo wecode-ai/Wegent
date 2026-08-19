@@ -264,7 +264,7 @@ describe('HarnessAppsPage', () => {
         id: 'harness-tab',
         kind: 'auxiliary',
         title: running.manifest.displayName,
-        contentRoute: '/harness-apps',
+        contentRoute: '/plugins/manage/harness',
       },
     ]
     mocks.api.list.mockResolvedValue([running])

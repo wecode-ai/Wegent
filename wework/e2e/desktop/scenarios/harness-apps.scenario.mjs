@@ -72,10 +72,27 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
   const packagePath = await createHarnessPackage(resultDir)
   return {
     async verify(control) {
-      await control.command('navigate', 'body', { value: '/harness-apps' })
+      await control.command('navigate', 'body', { value: '/plugins/manage' })
+      await control.command('waitFor', '[data-testid="plugin-management-section-harness"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await captureScreenshot(control, 'harness-apps-00-entry.png', 'body')
+      await control.command('click', '[data-testid="plugin-management-section-harness"]')
       await control.command('waitFor', '[data-testid="harness-app-drop-zone"]', {
         timeoutMs: uiTimeoutMs,
       })
+      await control.command('waitFor', '[data-testid="sidebar-worklists-scroll"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', '[data-testid="plugin-management-section-nav"]', {
+        text: 'Harness 能力',
+        timeoutMs: uiTimeoutMs,
+      })
+      const harnessManagementSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+      assert.ok(
+        harnessManagementSnapshot.location.includes('/plugins/manage/harness'),
+        `Harness management did not open inside plugin management: ${harnessManagementSnapshot.location}`
+      )
       const managementTabId = await control.command(
         'getAttribute',
         '[data-workspace-tab-content][aria-hidden="false"]',
@@ -153,6 +170,26 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         'Stopping a Harness app left its stale app tab mounted'
       )
       await captureScreenshot(control, 'harness-apps-05-stopped.png', 'body')
+
+      await control.command('click', '[data-testid="plugin-management-section-plugins"]')
+      await control.command(
+        'waitFor',
+        '[data-testid="plugin-management-section-plugins"][aria-current="page"]',
+        {
+          stableMs: 1000,
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await control.command('waitFor', '[data-testid="plugin-management-page-content"]', {
+        stableMs: 1000,
+        timeoutMs: uiTimeoutMs,
+      })
+      const pluginManagementSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+      assert.ok(
+        pluginManagementSnapshot.location.includes('/plugins/manage'),
+        `Harness management did not return to installed plugins: ${pluginManagementSnapshot.location}`
+      )
+      await captureScreenshot(control, 'harness-apps-06-returned-to-plugins.png', 'body')
     },
   }
 }

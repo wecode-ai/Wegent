@@ -1502,6 +1502,8 @@
     "plugins_manage": "Manage",
     "plugins_manage_plugins": "Manage plugins",
     "plugins_manage_plugins_description": "Manage installed plugins.",
+    "plugins_management_sections": "Plugin management sections",
+    "plugins_section_plugins": "Plugins",
     "harness_apps_title": "Harness capabilities",
     "harness_apps_description": "Install local DeepSeek Harness capability packages and run them in independent workspace tabs.",
     "harness_apps_import": "Import package",

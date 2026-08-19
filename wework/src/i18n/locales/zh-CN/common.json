@@ -1500,6 +1500,8 @@
     "plugins_manage": "管理",
     "plugins_manage_plugins": "管理插件",
     "plugins_manage_plugins_description": "管理已安装插件。",
+    "plugins_management_sections": "插件管理分区",
+    "plugins_section_plugins": "插件",
     "harness_apps_title": "Harness 能力",
     "harness_apps_description": "安装本地 DeepSeek Harness 能力包，并作为独立工作区标签运行。",
     "harness_apps_import": "导入安装包",

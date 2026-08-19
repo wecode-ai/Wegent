@@ -8,6 +8,8 @@ sidebar_position: 25
 
 ```mermaid
 flowchart LR
+    PLUGINS[插件中心 / 管理插件] --> MANAGE[Harness 能力分区]
+    MANAGE --> ZIP
     ZIP[插件 ZIP] --> VALIDATE[manifest / SHA-256 / 路径 / 大小校验]
     VALIDATE --> STORE[(不可变版本目录)]
     STORE --> INSTANCE[(独立 DSH_HOME)]
@@ -22,12 +24,15 @@ flowchart LR
 ```mermaid
 sequenceDiagram
     participant U as 用户
+    participant C as 插件中心管理页
     participant UI as HarnessAppsPage
     participant T as Tauri HarnessAppRuntime
     participant P as Wework 模型代理
     participant D as DeepSeek Harness
     participant W as 原生 WebView
 
+    U->>C: 管理插件 → Harness 能力
+    C->>UI: 保持插件中心侧边栏和同级导航
     U->>UI: 选择 ZIP 和固定模型
     UI->>T: preview / install
     T->>T: 校验 manifest、哈希和版本依赖
@@ -52,7 +57,8 @@ sequenceDiagram
 | ZIP、manifest、版本和落盘校验 | `wework/src-tauri/src/harness_apps.rs` |
 | Runtime 解析、实例目录、进程组和端口 | `wework/src-tauri/src/harness_apps.rs` |
 | Wework 模型到 Anthropic Messages 代理 | `wework/src/features/local-harness/localHarnessModels.ts` |
+| 插件中心入口、侧边栏和管理分区导航 | `wework/src/pages/PluginManagementPage.tsx`、`wework/src/components/plugins/PluginManagementSectionNav.tsx` |
 | 安装、管理和生命周期 UI | `wework/src/pages/HarnessAppsPage.tsx` |
 | 工作区标签与原生 WebView | `wework/src/App.tsx`、`wework/src/features/workspace-tabs/workspaceTabs.ts` |
 
-不变量：DeepSeek Harness 源码保持只读；安装包必须先校验再写入不可变的 `name/version` 目录；插件声明的 DSH 版本范围必须包含实际 Runtime 版本；每个能力实例拥有独立 `DSH_HOME`、端口和进程组；模型选择在安装记录中固定，模型凭据只存在于运行期代理和子进程环境中；一个实例的启动、停止或失败不得影响其他实例；没有活动状态 API 时实例按显式生命周期常驻；停止、卸载和 Wework 退出都必须回收完整进程组；只有 HTTP 就绪后才能创建标签页。
+不变量：Harness 能力管理必须位于插件中心的管理壳层内，并提供返回插件管理和插件市场的明确路径；DeepSeek Harness 源码保持只读；安装包必须先校验再写入不可变的 `name/version` 目录；插件声明的 DSH 版本范围必须包含实际 Runtime 版本；每个能力实例拥有独立 `DSH_HOME`、端口和进程组；模型选择在安装记录中固定，模型凭据只存在于运行期代理和子进程环境中；一个实例的启动、停止或失败不得影响其他实例；没有活动状态 API 时实例按显式生命周期常驻；停止、卸载和 Wework 退出都必须回收完整进程组；只有 HTTP 就绪后才能创建标签页。
