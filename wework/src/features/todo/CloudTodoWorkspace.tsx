@@ -2296,6 +2296,11 @@ export function CloudTodoWorkspace({
     files: File[]
     createTask: boolean
     localProjectId: number | null
+    continueCreating?: boolean
+    status?: CloudLoopItem['status']
+    priority?: CloudLoopItem['priority']
+    tags?: string[]
+    assigneeUserId?: number | null
   }) {
     const targetProject = projects.find(
       project => projectSpaceKey(projectSpaceRef(project)) === input.boardKey
@@ -2310,7 +2315,9 @@ export function CloudTodoWorkspace({
       let created = await targetApi.createLoopItem(targetProject.id, {
         title: input.title,
         description: input.description,
-        status: input.createTask ? 'pending' : 'inbox',
+        status: input.status ?? (input.createTask ? 'pending' : 'inbox'),
+        ...(input.priority ? { priority: input.priority } : {}),
+        ...(input.tags ? { tags: input.tags } : {}),
         parent_id: null,
         ...(input.createTask && isDefaultWorkItemProject(targetProject) && issueLocalProject
           ? {
@@ -2331,6 +2338,20 @@ export function CloudTodoWorkspace({
           created = await targetApi.updateLoopItem(created.id, {
             version: created.version,
             description: [input.description, attachmentMarkdown].filter(Boolean).join('\n\n'),
+          })
+        }
+      }
+      if (input.assigneeUserId) {
+        if (typeof targetApi.assignLoopItem === 'function') {
+          created = await targetApi.assignLoopItem(targetProject.id, created.id, {
+            version: created.version,
+            assigneeType: 'user',
+            assigneeId: String(input.assigneeUserId),
+          })
+        } else {
+          created = await targetApi.updateLoopItem(created.id, {
+            version: created.version,
+            assignee_user_id: input.assigneeUserId,
           })
         }
       }
@@ -2357,8 +2378,12 @@ export function CloudTodoWorkspace({
       setRootView('projects')
       setProjectView('board')
       setBoardParentId(null)
-      setIssueComposerOpen(false)
-      setSelectedItem(locatedItem)
+      if (input.continueCreating) {
+        setSelectedItem(null)
+      } else {
+        setIssueComposerOpen(false)
+        setSelectedItem(locatedItem)
+      }
       if (input.createTask) {
         setTaskComposerRequest({
           workItemId: locatedItem.id,
@@ -2661,6 +2686,7 @@ export function CloudTodoWorkspace({
               }
               initialContent={issueComposerInitialContent}
               localProjects={localProjectOptions}
+              projectMembers={projectMembers}
               initialLocalProjectId={selectedLocalProject?.id ?? null}
               presentation={issueComposerPresentation}
               busy={issueComposerBusy}

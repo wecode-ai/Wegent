@@ -250,7 +250,7 @@ describe('IssueComposer', () => {
     })
   })
 
-  it('expands into an app-fullscreen editor that derives the title from content', async () => {
+  it('expands into an app-fullscreen form with separate issue fields', async () => {
     const onCreate = vi.fn()
     const file = new File(['image'], 'context.png', { type: 'image/png' })
     render(
@@ -279,11 +279,15 @@ describe('IssueComposer', () => {
       'inset-0',
       'top-4'
     )
-    expect(screen.queryByTestId('workspace-issue-title')).not.toBeInTheDocument()
+    expect(screen.getByTestId('workspace-issue-title')).toHaveValue('自动生成的标题')
+    expect(screen.getByTestId('workspace-issue-project')).toHaveValue('backend:1')
     expect(screen.getByTestId('workspace-issue-description')).toHaveValue('自动生成的标题')
 
+    fireEvent.change(screen.getByTestId('workspace-issue-title'), {
+      target: { value: '默认生成的标题' },
+    })
     fireEvent.change(screen.getByTestId('workspace-issue-description'), {
-      target: { value: '默认生成的标题\n完整 Issue 内容' },
+      target: { value: '完整 Issue 内容' },
     })
     fireEvent.change(screen.getByTestId('workspace-issue-file-input'), {
       target: { files: [file] },
@@ -291,10 +295,8 @@ describe('IssueComposer', () => {
     await userEvent.click(screen.getByTestId('workspace-issue-collapse'))
     await userEvent.click(screen.getByTestId('workspace-issue-expand'))
 
-    expect(screen.queryByTestId('workspace-issue-title')).not.toBeInTheDocument()
-    expect(screen.getByTestId('workspace-issue-description')).toHaveValue(
-      '默认生成的标题\n完整 Issue 内容'
-    )
+    expect(screen.getByTestId('workspace-issue-title')).toHaveValue('默认生成的标题')
+    expect(screen.getByTestId('workspace-issue-description')).toHaveValue('完整 Issue 内容')
     expect(screen.getByRole('button', { name: 'context.png' })).toBeInTheDocument()
     expect(
       screen.getByTestId('workspace-issue-composer-panel').querySelector('header')
@@ -323,8 +325,8 @@ describe('IssueComposer', () => {
 
     expect(onCreate).toHaveBeenCalledWith({
       boardKey: 'backend:1',
-      title: '默认生成的标题 完整 Issue 内容',
-      description: '默认生成的标题\n完整 Issue 内容',
+      title: '默认生成的标题',
+      description: '完整 Issue 内容',
       files: [file],
       createTask: false,
       localProjectId: null,
@@ -344,8 +346,11 @@ describe('IssueComposer', () => {
     )
 
     await userEvent.click(screen.getByTestId('workspace-issue-expand'))
+    fireEvent.change(screen.getByTestId('workspace-issue-title'), {
+      target: { value: '未完成的 Issue' },
+    })
     fireEvent.change(screen.getByTestId('workspace-issue-description'), {
-      target: { value: '未完成的 Issue\n关闭后需要恢复的内容' },
+      target: { value: '关闭后需要恢复的内容' },
     })
     fireEvent.change(screen.getByTestId('workspace-issue-file-input'), {
       target: { files: [file] },
@@ -371,11 +376,60 @@ describe('IssueComposer', () => {
     )
     await userEvent.click(screen.getByTestId('workspace-issue-expand'))
 
-    expect(screen.queryByTestId('workspace-issue-title')).not.toBeInTheDocument()
-    expect(screen.getByTestId('workspace-issue-description')).toHaveValue(
-      '未完成的 Issue\n关闭后需要恢复的内容'
-    )
+    expect(screen.getByTestId('workspace-issue-title')).toHaveValue('未完成的 Issue')
+    expect(screen.getByTestId('workspace-issue-description')).toHaveValue('关闭后需要恢复的内容')
     expect(screen.getByRole('button', { name: 'draft.png' })).toBeInTheDocument()
+  })
+
+  it('keeps the fullscreen form open and resets it for continuous issue creation', async () => {
+    const onCreate = vi.fn(async () => true)
+    render(
+      <IssueComposer
+        projects={[workItemProject]}
+        initialBoardKey="local:default-work-items"
+        projectMembers={{
+          'local:default-work-items': [
+            {
+              id: 1,
+              user_id: 7,
+              user_name: 'Alice',
+              email: 'alice@example.com',
+              role: 'Maintainer',
+            },
+          ],
+        }}
+        onCancel={vi.fn()}
+        onCreate={onCreate}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('workspace-issue-expand'))
+    await userEvent.type(screen.getByTestId('workspace-issue-title'), '第一个 Issue')
+    await userEvent.type(screen.getByTestId('workspace-issue-description'), '第一条描述')
+    await userEvent.selectOptions(screen.getByTestId('workspace-issue-status'), 'in_progress')
+    await userEvent.selectOptions(screen.getByTestId('workspace-issue-priority'), 'high')
+    await userEvent.selectOptions(screen.getByTestId('workspace-issue-assignee'), '7')
+    await userEvent.type(screen.getByTestId('workspace-issue-tag-input'), '体验{Enter}')
+    await userEvent.click(screen.getByTestId('workspace-issue-continue-creating'))
+    await userEvent.click(screen.getByTestId('workspace-issue-fullscreen-submit'))
+
+    expect(onCreate).toHaveBeenCalledWith({
+      boardKey: 'local:default-work-items',
+      title: '第一个 Issue',
+      description: '第一条描述',
+      files: [],
+      createTask: false,
+      localProjectId: null,
+      continueCreating: true,
+      status: 'in_progress',
+      priority: 'high',
+      tags: ['体验'],
+      assigneeUserId: 7,
+    })
+    expect(screen.getByTestId('workspace-issue-title')).toHaveValue('')
+    expect(screen.getByTestId('workspace-issue-description')).toHaveValue('')
+    expect(screen.getByTestId('workspace-issue-composer-panel')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('workspace-issue-title')).toHaveFocus())
   })
 
   it('clears the persisted draft after explicit discard or successful creation', async () => {
@@ -390,8 +444,11 @@ describe('IssueComposer', () => {
     )
 
     await userEvent.click(screen.getByTestId('workspace-issue-expand'))
-    fireEvent.change(screen.getByTestId('workspace-issue-description'), {
+    fireEvent.change(screen.getByTestId('workspace-issue-title'), {
       target: { value: '可清理草稿' },
+    })
+    fireEvent.change(screen.getByTestId('workspace-issue-description'), {
+      target: { value: '清理前的描述' },
     })
     await waitFor(() =>
       expect(localStorage.getItem('wework-issue-composer-draft:backend:1:issue')).not.toBeNull()
@@ -399,8 +456,11 @@ describe('IssueComposer', () => {
     await userEvent.click(screen.getByTestId('workspace-issue-clear-draft'))
     expect(localStorage.getItem('wework-issue-composer-draft:backend:1:issue')).toBeNull()
 
+    fireEvent.change(screen.getByTestId('workspace-issue-title'), {
+      target: { value: '创建后清理' },
+    })
     fireEvent.change(screen.getByTestId('workspace-issue-description'), {
-      target: { value: '创建后清理\n提交内容' },
+      target: { value: '提交内容' },
     })
     await userEvent.click(screen.getByTestId('workspace-issue-fullscreen-submit'))
 
