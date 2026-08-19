@@ -570,6 +570,86 @@ fn cancelled_navigation_does_not_replace_the_next_loading_state() {
 }
 
 #[test]
+fn stale_finished_navigation_does_not_replace_the_current_failure() {
+    let mut entry = super::EmbeddedBrowserEntry {
+        native_label: "native-1".to_string(),
+        title: None,
+        url: Some("http://localhost:3000/failing".to_string()),
+        loaded_url: Some("https://example.com/previous".to_string()),
+        is_loading: false,
+        navigation_error: Some(super::EmbeddedBrowserNavigationError {
+            code: -1004,
+            message: "Could not connect to the server.".to_string(),
+            url: Some("http://localhost:3000/failing".to_string()),
+        }),
+        opened_at_unix_ms: 0,
+        bootstrap_finished: true,
+        host_ready: true,
+        phase: super::EmbeddedBrowserPhase::Opening,
+    };
+
+    assert_eq!(
+        super::apply_navigation_finished(&mut entry, "https://example.com/previous".to_string()),
+        super::NavigationFinishedOutcome::IgnoredStale
+    );
+    assert_eq!(entry.url.as_deref(), Some("http://localhost:3000/failing"));
+    assert!(entry.navigation_error.is_some());
+}
+
+#[test]
+fn synthetic_finished_navigation_does_not_clear_the_current_failure() {
+    let failed_url = "http://localhost:3000/failing".to_string();
+    let mut entry = super::EmbeddedBrowserEntry {
+        native_label: "native-1".to_string(),
+        title: None,
+        url: Some(failed_url.clone()),
+        loaded_url: None,
+        is_loading: false,
+        navigation_error: Some(super::EmbeddedBrowserNavigationError {
+            code: -1004,
+            message: "Could not connect to the server.".to_string(),
+            url: Some(failed_url.clone()),
+        }),
+        opened_at_unix_ms: 0,
+        bootstrap_finished: true,
+        host_ready: true,
+        phase: super::EmbeddedBrowserPhase::Opening,
+    };
+
+    assert_eq!(
+        super::apply_navigation_finished(&mut entry, failed_url),
+        super::NavigationFinishedOutcome::IgnoredFailed
+    );
+    assert!(entry.navigation_error.is_some());
+    assert_eq!(entry.loaded_url, None);
+}
+
+#[test]
+fn current_finished_navigation_completes_loading() {
+    let current_url = "https://example.com/current".to_string();
+    let mut entry = super::EmbeddedBrowserEntry {
+        native_label: "native-1".to_string(),
+        title: None,
+        url: Some(current_url.clone()),
+        loaded_url: None,
+        is_loading: true,
+        navigation_error: None,
+        opened_at_unix_ms: 0,
+        bootstrap_finished: true,
+        host_ready: true,
+        phase: super::EmbeddedBrowserPhase::Opening,
+    };
+
+    assert_eq!(
+        super::apply_navigation_finished(&mut entry, current_url.clone()),
+        super::NavigationFinishedOutcome::Applied
+    );
+    assert!(!entry.is_loading);
+    assert_eq!(entry.loaded_url, Some(current_url));
+    assert_eq!(entry.navigation_error, None);
+}
+
+#[test]
 fn bridge_request_deserializes_inspect_options_and_ref_target() {
     let request: EmbeddedBrowserBridgeRequest = serde_json::from_value(json!({
         "action": "resolveRef",

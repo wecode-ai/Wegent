@@ -163,6 +163,13 @@ enum EmbeddedBrowserOpenAction {
     RequestOpen,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NavigationFinishedOutcome {
+    Applied,
+    IgnoredStale,
+    IgnoredFailed,
+}
+
 impl EmbeddedBrowserEntry {
     fn readiness(&self) -> EmbeddedBrowserReadiness {
         match &self.phase {
@@ -953,6 +960,27 @@ fn apply_navigation_failure(entry: &mut EmbeddedBrowserEntry, code: i64, message
         url: entry.url.clone(),
     });
     true
+}
+
+fn apply_navigation_finished(
+    entry: &mut EmbeddedBrowserEntry,
+    finished_url: String,
+) -> NavigationFinishedOutcome {
+    if entry.url.as_deref() != Some(finished_url.as_str()) {
+        return NavigationFinishedOutcome::IgnoredStale;
+    }
+    if entry
+        .navigation_error
+        .as_ref()
+        .is_some_and(|error| error.url == entry.url)
+    {
+        return NavigationFinishedOutcome::IgnoredFailed;
+    }
+    entry.url = Some(finished_url.clone());
+    entry.loaded_url = Some(finished_url);
+    entry.is_loading = false;
+    entry.navigation_error = None;
+    NavigationFinishedOutcome::Applied
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -2048,38 +2076,46 @@ pub async fn embedded_browser_open(
                     &native_label_for_load,
                     &current_url,
                 );
-                let loaded_url = webview_url.clone().or(Some(current_url.clone()));
-                if let Some(loaded_url) =
-                    loaded_url.and_then(|url| loaded_browser_url(&load_state_handle, &url))
-                {
+                let loaded_url = webview_url
+                    .clone()
+                    .or(Some(current_url.clone()))
+                    .and_then(|url| loaded_browser_url(&load_state_handle, &url));
+                let mut outcome = None;
+                if let Some(loaded_url) = loaded_url.clone() {
                     let _ = update_entry_for_native_label(
                         &load_state_handle,
                         &native_label_for_load,
                         |entry| {
-                            entry.url = Some(loaded_url.clone());
-                            entry.loaded_url = Some(loaded_url);
+                            outcome = Some(apply_navigation_finished(entry, loaded_url));
                         },
                     );
                 }
-                let _ = update_entry_for_native_label(
-                    &load_state_handle,
-                    &native_label_for_load,
-                    |entry| {
-                        entry.is_loading = false;
-                        entry.navigation_error = None;
-                    },
-                );
-                emit_page_state_change(
-                    &app_for_load,
-                    &load_state_handle,
-                    owner.clone(),
-                    native_label_for_load.clone(),
-                );
-                log_embedded_browser_page_diagnostics(
-                    load_state_handle.clone(),
-                    owner,
-                    "page_load_finished",
-                );
+                if bootstrap_finished || matches!(outcome, Some(NavigationFinishedOutcome::Applied))
+                {
+                    emit_page_state_change(
+                        &app_for_load,
+                        &load_state_handle,
+                        owner.clone(),
+                        native_label_for_load.clone(),
+                    );
+                }
+                if matches!(outcome, Some(NavigationFinishedOutcome::Applied)) {
+                    log_embedded_browser_page_diagnostics(
+                        load_state_handle.clone(),
+                        owner,
+                        "page_load_finished",
+                    );
+                } else if let Some(outcome) = outcome {
+                    log_embedded_browser_diagnostic(
+                        &load_state_handle,
+                        &owner,
+                        "page_load_finished_ignored",
+                        json!({
+                            "finishedUrl": loaded_url,
+                            "outcome": format!("{outcome:?}"),
+                        }),
+                    );
+                }
             }
         })
         .on_document_title_changed(move |_webview, title| {
