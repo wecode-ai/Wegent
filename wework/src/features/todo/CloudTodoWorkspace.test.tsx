@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import '@/i18n'
@@ -1824,10 +1824,12 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.type(screen.getByTestId('cloud-project-name'), '钉钉需求池')
     await userEvent.click(screen.getByTestId('cloud-project-task-provider-dingtalk_aitable'))
     expect(screen.getByTestId('cloud-project-create-confirm')).toBeDisabled()
-    await userEvent.type(
-      screen.getByTestId('cloud-project-aitable-url'),
-      'https://alidocs.dingtalk.com/i/nodes/pYLaezmVN63PAZGPTPKyr2X3VrMqPxX6?iframeQuery=entrance%3Ddata%26sheetId%3DhERWDMS%26viewId%3DqvGDAH2'
-    )
+    fireEvent.change(screen.getByTestId('cloud-project-aitable-url'), {
+      target: {
+        value:
+          'https://alidocs.dingtalk.com/i/nodes/pYLaezmVN63PAZGPTPKyr2X3VrMqPxX6?iframeQuery=entrance%3Ddata%26sheetId%3DhERWDMS%26viewId%3DqvGDAH2',
+      },
+    })
     expect(screen.queryByTestId('cloud-project-aitable-token')).not.toBeInTheDocument()
     await userEvent.click(screen.getByTestId('cloud-project-create-confirm'))
 
