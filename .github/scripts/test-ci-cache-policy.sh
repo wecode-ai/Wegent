@@ -302,6 +302,14 @@ if ! sed -n '/^  executor-e2e-tests:/,/^  merge-reports:/p' \
       '--volume "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE"' >/dev/null ||
   ! sed -n '/^  executor-e2e-tests:/,/^  merge-reports:/p' \
     "$workflow_dir/e2e-tests.yml" |
+    grep -F -- \
+      '--volume "$GITHUB_WORKSPACE:$container_workspace"' >/dev/null ||
+  ! sed -n '/^  executor-e2e-tests:/,/^  merge-reports:/p' \
+    "$workflow_dir/e2e-tests.yml" |
+    grep -F 'container_workspace="/__w/$repository_name/$repository_name"' \
+      >/dev/null ||
+  ! sed -n '/^  executor-e2e-tests:/,/^  merge-reports:/p' \
+    "$workflow_dir/e2e-tests.yml" |
     grep -F -- '--env E2E_BOOTSTRAP_ADMIN_PASSWORD' >/dev/null ||
   ! sed -n '/^  executor-e2e-tests:/,/^  merge-reports:/p' \
     "$workflow_dir/e2e-tests.yml" |

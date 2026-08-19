@@ -833,11 +833,14 @@ jobs:
           E2E_DEVICE_ID: e2e-claudecode-device
           CI: true
         run: |
+          repository_name="${GITHUB_REPOSITORY##*/}"
+          container_workspace="/__w/$repository_name/$repository_name"
           docker run --rm \
             --network host \
             --ipc host \
             --volume "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \
-            --workdir "$GITHUB_WORKSPACE/frontend" \
+            --volume "$GITHUB_WORKSPACE:$container_workspace" \
+            --workdir "$container_workspace/frontend" \
             --env E2E_INTERNAL_SERVICE_TOKEN \
             --env INTERNAL_SERVICE_TOKEN \
             --env CHAT_SHELL_REMOTE_STORAGE_TOKEN \
