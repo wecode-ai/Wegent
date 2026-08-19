@@ -5,8 +5,6 @@ import {
 } from '../workbenchServices'
 import type { RuntimeTaskLifecycleStore } from './RuntimeTaskLifecycleStore'
 
-const RUNNING_TASK_RECONCILIATION_INTERVAL_MS = 1_000
-
 export function RuntimeTaskLifecycleStreamCoordinator({
   services,
   store,
@@ -21,63 +19,50 @@ export function RuntimeTaskLifecycleStreamCoordinator({
 
   useEffect(() => {
     let disposed = false
-    let inFlight = false
-    let timer: number | null = null
+    let reconciliation: Promise<void> | null = null
+    let pendingReason: 'event_lagged' | 'runtime_replaced' | null = null
 
-    const hasRunningTasks = () => store.getSnapshot().runningTaskKeys.size > 0
-    const schedule = (delay: number) => {
-      if (disposed || inFlight || timer !== null || !hasRunningTasks()) return
-      timer = window.setTimeout(() => {
-        timer = null
-        void reconcile()
-      }, delay)
-    }
-    const reconcile = async () => {
-      if (disposed || inFlight || !hasRunningTasks()) return
-      inFlight = true
-      try {
-        const snapshot = store.getSnapshot()
-        const runningTasks = [...snapshot.runningTaskKeys].flatMap(key => {
-          const task = snapshot.tasks.get(key)
-          return task ? [task] : []
-        })
-        const transcripts = await Promise.allSettled(
-          runningTasks.map(task =>
-            executorClient.runtime.getRuntimeTranscript({
-              ...task.address,
-              limit: 1,
-            })
-          )
-        )
-        transcripts.forEach((result, index) => {
-          if (result.status !== 'fulfilled') return
-          const lifecycle = runningTasks[index]
-          if (lifecycle) {
-            store.syncRuntimeTranscriptSnapshot(lifecycle.address, result.value)
-          }
-        })
-        const failures = transcripts.filter(
-          (result): result is PromiseRejectedResult => result.status === 'rejected'
-        )
-        if (transcripts.length > 0 && failures.length === transcripts.length) {
-          throw failures[0]?.reason
+    const runReconciliation = async (initialReason: 'event_lagged' | 'runtime_replaced') => {
+      let reason: typeof pendingReason = initialReason
+      while (!disposed && reason) {
+        pendingReason = null
+        try {
+          const runtimeWork = await executorClient.runtime.listRuntimeWork()
+          if (!disposed) store.syncRuntimeWork(runtimeWork)
+        } catch (error) {
+          console.warn('[Wework] Runtime task lifecycle reconciliation failed', {
+            reason,
+            error,
+          })
         }
-      } catch (error) {
-        console.warn('[Wework] Running runtime task reconciliation failed', { error })
-      } finally {
-        inFlight = false
-        schedule(RUNNING_TASK_RECONCILIATION_INTERVAL_MS)
+        reason = pendingReason
       }
     }
-    const unsubscribe = store.subscribe(() => schedule(0))
-    schedule(0)
+
+    const reconcile = (reason: 'event_lagged' | 'runtime_replaced') => {
+      if (disposed) return
+      if (reconciliation) {
+        pendingReason = reason
+        return
+      }
+      reconciliation = runReconciliation(reason).finally(() => {
+        reconciliation = null
+      })
+    }
+
+    const unsubscribe = services.chatStream.subscribe({
+      onRuntimeEventLagged: payload => {
+        console.warn('[Wework] Runtime event stream lagged; reconciling task state', payload)
+        reconcile('event_lagged')
+      },
+      onRuntimeTransportReplaced: () => reconcile('runtime_replaced'),
+    })
 
     return () => {
       disposed = true
       unsubscribe()
-      if (timer !== null) window.clearTimeout(timer)
     }
-  }, [executorClient, store])
+  }, [executorClient, services.chatStream, store])
 
   return null
 }
