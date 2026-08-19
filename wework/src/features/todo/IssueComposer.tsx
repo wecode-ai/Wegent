@@ -166,6 +166,7 @@ export function IssueComposer({
   const [content, setContent] = useState(initialContent || draft?.content || '')
   const contentRef = useRef(initialContent || draft?.content || '')
   const [fullScreen, setFullScreen] = useState(false)
+  const fullScreenRef = useRef(false)
   const [continueCreating, setContinueCreating] = useState(false)
   const [status, setStatus] = useState<CloudLoopItem['status']>(draft?.status ?? 'inbox')
   const [priority, setPriority] = useState<CloudLoopItem['priority']>(draft?.priority ?? 'none')
@@ -243,6 +244,7 @@ export function IssueComposer({
       if (event.key !== 'Escape') return
       event.preventDefault()
       if (fullScreen) {
+        fullScreenRef.current = false
         setFullScreen(false)
         return
       }
@@ -423,6 +425,7 @@ export function IssueComposer({
   const submit = (submittedContent?: string) =>
     createIssue(submittedContent ?? contentRef.current, title)
   const updateCompactContent = (value: string) => {
+    if (fullScreenRef.current) return
     contentRef.current = value
     setContent(value)
   }
@@ -443,11 +446,21 @@ export function IssueComposer({
       compactInput instanceof HTMLTextAreaElement
         ? compactInput.value
         : (compactInput?.innerText ?? compactInput?.textContent ?? '')
-    const latestContent = renderedContent || contentRef.current
+    const normalizedRenderedContent = renderedContent.endsWith('\n')
+      ? renderedContent.slice(0, -1)
+      : renderedContent
+    const latestContent = normalizedRenderedContent.trim()
+      ? normalizedRenderedContent
+      : contentRef.current
     contentRef.current = latestContent
     setContent(latestContent)
     setTitle(currentTitle => currentTitle.trim() || issueDraftFromText(latestContent).title)
+    fullScreenRef.current = true
     setFullScreen(true)
+  }
+  const closeFullScreen = () => {
+    fullScreenRef.current = false
+    setFullScreen(false)
   }
   const fallbackProjectWork: ProjectWorkControls | undefined =
     localProjects.length > 0
@@ -653,7 +666,7 @@ export function IssueComposer({
                 <button
                   type="button"
                   data-testid="workspace-issue-collapse"
-                  onClick={() => setFullScreen(false)}
+                  onClick={closeFullScreen}
                   className="flex h-11 w-11 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary md:h-8 md:w-8"
                   aria-label={t('todo.collapse_issue_editor', '收起编辑器')}
                 >

@@ -426,6 +426,13 @@ describe('IssueComposer', () => {
         onCreate={vi.fn()}
       />
     )
+    const restoredCompactInput = screen.getByTestId('workspace-issue-input')
+    if (!(restoredCompactInput instanceof HTMLTextAreaElement)) {
+      Object.defineProperty(restoredCompactInput, 'innerText', {
+        configurable: true,
+        value: '\n',
+      })
+    }
     await userEvent.click(screen.getByTestId('workspace-issue-expand'))
 
     expect(screen.getByTestId('workspace-issue-title')).toHaveValue('未完成的 Issue')
