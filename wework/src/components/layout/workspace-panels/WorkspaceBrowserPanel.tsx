@@ -1857,7 +1857,10 @@ export function WorkspaceBrowserTabPanel({
     }
     if (handledOpenRequestIdRef.current === openRequest.id) return
     handledOpenRequestIdRef.current = openRequest.id
-    activeOpenRequestIdRef.current = openRequest.id
+    // Only agent (bridge) opens defer the initial navigation to the bridge and
+    // therefore create the host with about:blank. User, popup, and restore
+    // requests bind the target URL directly during host creation.
+    activeOpenRequestIdRef.current = openRequest.source === 'agent' ? openRequest.id : null
     logBrowserOpenDiagnostic('request_consumed', {
       active,
       label,
@@ -1866,7 +1869,15 @@ export function WorkspaceBrowserTabPanel({
       url: openRequest.url,
     })
     openBrowserUrl(openRequest.url)
-  }, [active, label, openBrowserUrl, openRequest?.id, openRequest?.label, openRequest?.url])
+  }, [
+    active,
+    label,
+    openBrowserUrl,
+    openRequest?.id,
+    openRequest?.label,
+    openRequest?.source,
+    openRequest?.url,
+  ])
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
