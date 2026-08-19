@@ -270,8 +270,8 @@ async function verifyWorkspaceTabsWithoutExperiments(control) {
     'Disabling experiments removed the Agent tab'
   )
   assert.ok(
-    !tabStripSnapshot.testIds.some(testId => testId.startsWith('workspace-tab-board-')),
-    'The project-space tab remained visible while experiments were disabled'
+    tabStripSnapshot.testIds.some(testId => testId.startsWith('workspace-tab-board-')),
+    'Disabling experiments removed the project-space tab'
   )
 
   await control.command('click', '[data-testid="workspace-tab-add"]')
@@ -290,8 +290,8 @@ async function verifyWorkspaceTabsWithoutExperiments(control) {
     'The new-tab menu removed Agent creation while experiments were disabled'
   )
   assert.ok(
-    !addMenuSnapshot.testIds.includes('workspace-tab-add-board'),
-    'The new-tab menu exposed project spaces while experiments were disabled'
+    addMenuSnapshot.testIds.includes('workspace-tab-add-board'),
+    'Disabling experiments removed project-space creation from the new-tab menu'
   )
   await captureVerificationScreenshot(control, 'workspace-tabs-00-experiments-disabled.png')
   await control.command('click', '[data-testid="workspace-tab-add"]')
@@ -299,7 +299,6 @@ async function verifyWorkspaceTabsWithoutExperiments(control) {
 
 async function verifyDefaultWorkspaceStartupTab(control) {
   await verifyWorkspaceTabsWithoutExperiments(control)
-  await ensureExperimentalFeaturesEnabled(control)
   await control.command('navigate', 'body', { value: '/settings' })
   await control.command('waitFor', '[data-testid="general-settings-page"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
