@@ -3442,12 +3442,94 @@ describe('ScrollableMessageArea', () => {
   })
 
   test('cancels delayed bottom following as soon as the user scrolls upward', () => {
+    const resizeCallbacks: ResizeObserverCallback[] = []
+    vi.stubGlobal(
+      'ResizeObserver',
+      class ResizeObserverMock {
+        constructor(callback: ResizeObserverCallback) {
+          resizeCallbacks.push(callback)
+        }
+        observe() {}
+        disconnect() {}
+      }
+    )
+
     render(
       <ScrollableMessageArea
         conversationKey="delayed-bottom-follow"
         messages={[
           {
             id: 'delayed-bottom-follow-assistant',
+            role: 'assistant',
+            content: '回复已完成',
+            status: 'done',
+            createdAt: '2026-08-18T00:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    const anchor = screen.getByText('回复已完成').closest('[data-scroll-anchor]')!
+    Object.defineProperty(scroller, 'clientHeight', {
+      value: 200,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollHeight', {
+      value: 800,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 600,
+      writable: true,
+      configurable: true,
+    })
+    scroller.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      scroller.scrollTop = Number(top)
+    })
+    mockRect(scroller, 100, 300)
+    let anchorTopAtScrollZero = 500
+    anchor.getBoundingClientRect = vi.fn(() => {
+      const top = anchorTopAtScrollZero - scroller.scrollTop
+      return {
+        top,
+        bottom: top + 800,
+        left: 0,
+        right: 320,
+        width: 320,
+        height: 800,
+        x: 0,
+        y: top,
+        toJSON: () => ({}),
+      } as DOMRect
+    })
+
+    fireEvent.wheel(scroller, { deltaY: -80 })
+    scroller.scrollTop = 440
+    fireEvent.scroll(scroller)
+
+    act(() => {
+      vi.runOnlyPendingTimers()
+    })
+
+    expect(scroller.scrollTo).not.toHaveBeenCalled()
+
+    anchorTopAtScrollZero += 120
+    act(() => {
+      resizeCallbacks.forEach(callback => callback([], {} as ResizeObserver))
+    })
+
+    expect(scroller.scrollTop).toBe(560)
+    expect(anchor.getBoundingClientRect().top).toBe(60)
+  })
+
+  test('keeps delayed bottom following for pointer input without scrolling', () => {
+    render(
+      <ScrollableMessageArea
+        conversationKey="pointer-without-scroll"
+        messages={[
+          {
+            id: 'pointer-without-scroll-assistant',
             role: 'assistant',
             content: '回复已完成',
             status: 'done',
@@ -3473,13 +3555,13 @@ describe('ScrollableMessageArea', () => {
     })
     scroller.scrollTo = vi.fn()
 
-    fireEvent.wheel(scroller, { deltaY: -80 })
+    fireEvent.pointerDown(scroller)
 
     act(() => {
       vi.runOnlyPendingTimers()
     })
 
-    expect(scroller.scrollTo).not.toHaveBeenCalled()
+    expect(scroller.scrollTo).toHaveBeenCalled()
   })
 
   test('scrolls to a newly applied guidance message inserted before the assistant continuation', () => {

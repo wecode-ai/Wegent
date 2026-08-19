@@ -989,13 +989,13 @@ function ScrollableMessagePaneContent({
   const markUserScrollIntent = useCallback(
     (event?: Event | { nativeEvent?: Event }) => {
       userScrollIntentRef.current = true
-      clearScheduledScrolls()
-      captureUserViewportAnchor()
 
       const nativeEvent = event && 'nativeEvent' in event ? event.nativeEvent : event
-      if (nativeEvent && 'deltaY' in nativeEvent && Number(nativeEvent.deltaY) < 0) {
-        userScrollPausedAutoFollowRef.current = true
-      }
+      if (!nativeEvent || !('deltaY' in nativeEvent) || Number(nativeEvent.deltaY) >= 0) return
+
+      clearScheduledScrolls()
+      captureUserViewportAnchor()
+      userScrollPausedAutoFollowRef.current = true
     },
     [captureUserViewportAnchor, clearScheduledScrolls]
   )
