@@ -588,7 +588,7 @@ export function IssueComposer({
                 </button>
               </div>
             )}
-            <div className="mb-3 flex items-center justify-between">
+            <div className="mb-3 flex items-center gap-2">
               <div
                 data-testid="workspace-issue-creation-tabs"
                 className="inline-flex h-9 items-center rounded-xl bg-muted p-1"
@@ -626,37 +626,25 @@ export function IssueComposer({
                   {t('todo.create_task_tab', '创建任务')}
                 </button>
               </div>
-              <div className="flex items-center gap-2">
-                <span className="hidden text-xs text-text-muted sm:inline">
-                  {creationMode === 'issue'
-                    ? t('todo.issue_create_mode_hint', '仅创建，不会启动执行')
-                    : t('todo.task_create_mode_hint', '创建后立即进入执行流程')}
-                </span>
-                {creationMode === 'issue' ? (
-                  <button
-                    type="button"
-                    data-testid="workspace-issue-expand"
-                    onClick={() => setFullScreen(true)}
-                    className="flex h-11 w-11 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary md:h-8 md:w-8"
-                    aria-label={t('todo.expand_issue_editor', '全屏编辑')}
-                  >
-                    <Maximize2 className="h-4 w-4" />
-                  </button>
-                ) : null}
-              </div>
+              {creationMode === 'issue' ? (
+                <button
+                  type="button"
+                  data-testid="workspace-issue-expand"
+                  onClick={() => setFullScreen(true)}
+                  className="flex h-11 w-11 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary md:h-8 md:w-8"
+                  aria-label={t('todo.expand_issue_editor', '全屏编辑')}
+                >
+                  <Maximize2 className="h-4 w-4" />
+                </button>
+              ) : null}
             </div>
-            <div className="mb-2 flex items-center justify-between px-1 text-xs text-text-muted">
+            <div className="mb-2 flex items-center px-1 text-xs text-text-muted">
               <span className="flex min-w-0 items-center gap-1.5">
                 <LayoutDashboard className="h-3.5 w-3.5 shrink-0" />
                 <span className="truncate">
                   {selectedWorkItemProject?.name ??
                     t('workbench.default_work_item_board', '我的任务')}
                 </span>
-              </span>
-              <span className="shrink-0">
-                {creationMode === 'issue'
-                  ? t('todo.issue_submit_shortcut', '⌘↵ 创建')
-                  : t('todo.task_submit_shortcut', '⌘↵ 创建并执行')}
               </span>
             </div>
             {creationMode === 'task' && workbench?.selectProject && selectedLocalProject ? (
