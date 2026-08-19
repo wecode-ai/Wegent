@@ -267,6 +267,45 @@ class LocalTaskResponsesHandler:
                     },
                 )
 
+    async def forward_runtime_event_to_channels(
+        self,
+        *,
+        device_id: str,
+        payload: dict[str, Any],
+    ) -> None:
+        """Bridge a relay-style runtime event envelope onto IM channel callbacks.
+
+        The native runtime relays its Responses API stream as `runtime:event`
+        envelopes with camelCase keys, so IM-originated turns would otherwise
+        never reach the channel emitter that is awaiting them.
+        """
+
+        source = payload.get("source")
+        if not isinstance(source, dict) or source.get("source") != "im":
+            return
+
+        local_task_id = str(payload.get("taskId") or "").strip()
+        event_type = str(payload.get("event_type") or "").strip()
+        if not local_task_id or not event_type:
+            return
+
+        event_data = payload.get("data")
+        event = self.execution_event(
+            event_type=event_type,
+            event_data=event_data if isinstance(event_data, dict) else {},
+            subtask_id=runtime_subtask_id(payload, device_id, local_task_id),
+            message_id=None,
+        )
+        if event is None:
+            return
+
+        await self.forward_channel_callbacks(
+            device_id=device_id,
+            local_task_id=local_task_id,
+            source=source,
+            event=event,
+        )
+
     async def forward_channel_callbacks(
         self,
         *,

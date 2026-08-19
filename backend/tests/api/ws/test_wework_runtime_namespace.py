@@ -10,9 +10,125 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.api.ws import device_namespace, wework_runtime_namespace
+from app.api.ws import device_namespace, local_task_responses, wework_runtime_namespace
 from app.api.ws.device_namespace import DeviceNamespace
 from app.api.ws.wework_runtime_namespace import WeworkRuntimeNamespace
+
+
+def _im_source() -> dict:
+    return {
+        "source": "im",
+        "channel_type": "dingtalk",
+        "external_id": "dingtalk:conversation-1:user-1",
+    }
+
+
+async def _relay_runtime_event(namespace, monkeypatch, payload: dict) -> dict:
+    monkeypatch.setattr(
+        namespace,
+        "get_session",
+        AsyncMock(return_value={"user_id": 7, "device_id": "local-device"}),
+    )
+    monkeypatch.setattr(
+        device_namespace,
+        "run_sync_in_executor",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(device_namespace, "get_sio", lambda: AsyncMock())
+    return await namespace.on_runtime_event(
+        "device-sid",
+        {"type": "event", "event": payload["event_type"], "payload": payload},
+    )
+
+
+@pytest.mark.asyncio
+async def test_runtime_event_forwards_im_chunk_to_channel_callbacks(monkeypatch):
+    """IM-originated native runtime output must reach the channel emitter.
+
+    The native runtime relays its stream only as ``runtime:event`` envelopes,
+    so the relay path itself has to feed the IM callbacks; otherwise the
+    DingTalk AI card stays on its placeholder forever.
+    """
+
+    namespace = DeviceNamespace()
+    forward = AsyncMock()
+    monkeypatch.setattr(
+        local_task_responses, "forward_event_to_channel_callbacks", forward
+    )
+
+    result = await _relay_runtime_event(
+        namespace,
+        monkeypatch,
+        {
+            "event_type": "response.output_text.delta",
+            "taskId": "runtime-375023196",
+            "subtaskId": "runtime-375023196",
+            "data": {"delta": "Hi!", "offset": 3},
+            "source": _im_source(),
+        },
+    )
+
+    assert result == {"success": True}
+    forward.assert_awaited_once()
+    kwargs = forward.await_args.kwargs
+    assert kwargs["task_id"] == "runtime:local-device:runtime-375023196"
+    assert kwargs["event"].content == "Hi!"
+    assert kwargs["subtask_id"] == kwargs["event"].subtask_id > 0
+
+
+@pytest.mark.asyncio
+async def test_runtime_event_completes_im_channel_callback_on_terminal_event(
+    monkeypatch,
+):
+    namespace = DeviceNamespace()
+    registry = MagicMock()
+    registry.handle_task_completed = AsyncMock()
+    monkeypatch.setattr(local_task_responses, "get_callback_registry", lambda: registry)
+
+    result = await _relay_runtime_event(
+        namespace,
+        monkeypatch,
+        {
+            "event_type": "response.completed",
+            "taskId": "runtime-375023196",
+            "data": {
+                "response": {"output_text": "Hi! What would you like to work on?"}
+            },
+            "source": _im_source(),
+        },
+    )
+
+    assert result == {"success": True}
+    registry.handle_task_completed.assert_awaited_once()
+    kwargs = registry.handle_task_completed.await_args.kwargs
+    assert kwargs["task_id"] == "runtime:local-device:runtime-375023196"
+    assert kwargs["status"] == "COMPLETED"
+
+
+@pytest.mark.asyncio
+async def test_runtime_event_skips_channel_callbacks_without_im_source(monkeypatch):
+    namespace = DeviceNamespace()
+    forward = AsyncMock()
+    registry = MagicMock()
+    registry.handle_task_completed = AsyncMock()
+    monkeypatch.setattr(
+        local_task_responses, "forward_event_to_channel_callbacks", forward
+    )
+    monkeypatch.setattr(local_task_responses, "get_callback_registry", lambda: registry)
+
+    result = await _relay_runtime_event(
+        namespace,
+        monkeypatch,
+        {
+            "event_type": "response.output_text.delta",
+            "taskId": "runtime-375023196",
+            "data": {"delta": "Hi!"},
+        },
+    )
+
+    assert result == {"success": True}
+    forward.assert_not_awaited()
+    registry.handle_task_completed.assert_not_awaited()
 
 
 @pytest.mark.asyncio
