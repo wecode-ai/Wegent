@@ -500,18 +500,33 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
     const replyComposer = `[data-testid="cloud-task-activity-card-composer-${rootMessageId}"]`
     await control.command('fill', replyComposer, { value: '确认继续执行' })
     await control.command('press', replyComposer, { key: 'Enter' })
+    await control.command('fill', replyComposer, { value: '补充检查排队消息' })
+    await control.command('press', replyComposer, { key: 'Enter' })
+    await control.command(
+      'waitFor',
+      `[data-testid="cloud-task-activity-card-queue-${rootMessageId}"]`,
+      {
+        text: '补充检查排队消息',
+        timeoutMs: uiTimeoutMs,
+      }
+    )
     const continuedTask = await waitForValue(
       () => cloudRequest(`/api/tasks/${teamExecution.backendTaskId}`),
-      task => (task.subtasks ?? []).some(subtask => subtask.prompt === '确认继续执行'),
-      'The board reply did not append a user turn to the native Wegent Task',
+      task => {
+        const prompts = (task.subtasks ?? []).map(subtask => subtask.prompt)
+        const firstReplyIndex = prompts.indexOf('确认继续执行')
+        const queuedReplyIndex = prompts.indexOf('补充检查排队消息')
+        return firstReplyIndex >= 0 && queuedReplyIndex > firstReplyIndex
+      },
+      'Queued board replies were not appended to the native Wegent Task in order',
       uiTimeoutMs * 3
     )
     assert.equal(continuedTask.id, teamExecution.backendTaskId)
     const agentExecutionBadgeSelector = '[data-testid^="cloud-task-activity-execution-badge-"]'
     await waitForValue(
       () => control.command('getElementCount', agentExecutionBadgeSelector),
-      count => Number(count) === 2,
-      'The native Wegent continuation was not projected as a second agent comment',
+      count => Number(count) === 3,
+      'Queued native Wegent continuations were not projected as distinct agent comments',
       uiTimeoutMs * 3
     )
     const unchangedExecution = await waitForCompletedExecution(
