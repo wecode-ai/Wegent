@@ -6,6 +6,7 @@ import { marketplaceItemMarketplaceId } from './pluginDistribution'
 import {
   hasLocalCodexMaterialization,
   linkedCloudPluginId,
+  localMaterializedVersion,
   localPluginId,
 } from './installedPluginMerge'
 
@@ -107,6 +108,13 @@ export function mergeMarketplaceCatalog(
     const localInstall = localPublishedInstalls.get(String(item.id))
     const cloudInstall = localInstall ? undefined : cloudManagedInstalls.get(String(item.id))
     const matchedInstall = localInstall ?? cloudInstall
+    const installedVersion = matchedInstall
+      ? localMaterializedVersion(matchedInstall) || matchedInstall.spec.version?.trim() || null
+      : null
+    const catalogVersion = (item.version ?? '').trim()
+    const localVersionLags = Boolean(
+      installedVersion && catalogVersion && installedVersion !== catalogVersion
+    )
     // Cloud catalog ids are unique; never collapse distinct plugins by display name.
     const cloudKey = `cloud:${item.id}`
     merged.set(cloudKey, {
@@ -119,9 +127,12 @@ export function mergeMarketplaceCatalog(
               Boolean(localInstall) ||
               Boolean(item.installedLocally) ||
               hasLocalCodexMaterialization(matchedInstall),
+            installedVersion,
             enabled: matchedInstall.spec.enabled,
             updateAvailable:
-              item.updateAvailable || matchedInstall.spec.installState === 'update_available',
+              item.updateAvailable ||
+              matchedInstall.spec.installState === 'update_available' ||
+              localVersionLags,
             currentDeviceInstallation: localInstall ? null : item.currentDeviceInstallation,
           }
         : {}),

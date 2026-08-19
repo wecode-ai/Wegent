@@ -131,12 +131,6 @@ export function mergeInstalledPlugins(
       .filter((pluginId): pluginId is number => pluginId !== null)
       .map(String)
   )
-  const localItemsByIdentity = new Map(
-    localItems.flatMap(item => {
-      const identity = pluginIdentity(item)
-      return identity ? ([[identity, item]] as const) : []
-    })
-  )
   const matchedLocalKeys = new Set<string>()
 
   for (const item of cloudItems) {
@@ -145,9 +139,8 @@ export function mergeInstalledPlugins(
         device => device.deviceId === currentDeviceId
       )
       const identity = pluginIdentity(item)
-      const localMatch =
-        (identity ? localItemsByIdentity.get(identity) : undefined) ??
-        localItems.find(local => localMatchesCloudPlugin(local, item))
+      const localMatches = localRowsMatchingCloudPlugin(localItems, item)
+      const localMatch = pickPreferredLocalMaterialization(localMatches)
       const hasMaterializedRelease = Boolean(currentDeviceInstallation?.actualReleaseId)
       if (
         currentDeviceId &&
@@ -197,11 +190,8 @@ export function mergeInstalledPlugins(
           : item
       merged.set(`market:${item.spec.pluginId}:${mergedItem.spec.releaseId}`, mergedItem)
       if (identity) cloudPluginIdentities.add(identity)
-      if (localMatch) {
-        const localIdentity = pluginIdentity(localMatch)
-        if (localIdentity) matchedLocalKeys.add(localIdentity)
-        const localId = localPluginId(localMatch)
-        if (localId) matchedLocalKeys.add(`id:${localId}`)
+      for (const matchedLocal of localMatches) {
+        markMatchedLocalKeys(matchedLocalKeys, matchedLocal)
       }
     }
   }
@@ -239,6 +229,9 @@ export function mergeInstalledPlugins(
     }
     const id = localPluginId(item)
     if (id && matchedLocalKeys.has(`id:${id}`)) continue
+    const localName = String(item.metadata.name || '').trim()
+    if (localName && matchedLocalKeys.has(`id:${localName}`)) continue
+    if (cloudItems.some(cloud => localMatchesCloudPlugin(item, cloud))) continue
     if (id) merged.set(`runtime:${id}`, item)
     else if (identity) merged.set(`runtime:${identity}`, item)
   }
@@ -314,6 +307,34 @@ function cloudRowLocalPresencePayload(
     ...(cloudKindId ? { cloudInstalledPluginId: cloudKindId } : {}),
     ...(localVersion ? { localVersion } : {}),
   }
+}
+
+function markMatchedLocalKeys(matchedLocalKeys: Set<string>, local: InstalledPlugin): void {
+  const localIdentity = pluginIdentity(local)
+  if (localIdentity) matchedLocalKeys.add(localIdentity)
+  const localId = localPluginId(local)
+  if (localId) matchedLocalKeys.add(`id:${localId}`)
+  const localName = String(local.metadata.name || '').trim()
+  if (localName) matchedLocalKeys.add(`id:${localName}`)
+}
+
+/** Every local row that represents the same cloud plugin (Codex + store ZIP). */
+function localRowsMatchingCloudPlugin(
+  localItems: InstalledPlugin[],
+  cloud: InstalledPlugin
+): InstalledPlugin[] {
+  return localItems.filter(local => localMatchesCloudPlugin(local, cloud))
+}
+
+function pickPreferredLocalMaterialization(
+  matches: InstalledPlugin[]
+): InstalledPlugin | undefined {
+  if (matches.length === 0) return undefined
+  const storeDirMatch = matches.find(item => {
+    const id = (localPluginId(item) || String(item.metadata.name || '')).trim()
+    return /^\d+-wegent-/.test(id)
+  })
+  return storeDirMatch ?? matches[0]
 }
 
 /**

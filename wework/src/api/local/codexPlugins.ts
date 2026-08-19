@@ -2193,11 +2193,22 @@ export function applyInstalledPluginsToMarketplaceItems(
     const installedLocally =
       typeof installed.spec.pluginId !== 'number' ||
       installed.spec.sourcePayload?.localPresent === true
+    const installedVersion =
+      (typeof installed.spec.sourcePayload?.localVersion === 'string'
+        ? installed.spec.sourcePayload.localVersion.trim()
+        : '') ||
+      installed.spec.version?.trim() ||
+      null
+    const catalogVersion = (item.version ?? '').trim()
+    const localVersionLags = Boolean(
+      installedVersion && catalogVersion && installedVersion !== catalogVersion
+    )
     if (
       item.installed &&
       item.installedPluginId != null &&
       !installedLocally &&
-      item.enabled === installed.spec.enabled
+      item.enabled === installed.spec.enabled &&
+      !localVersionLags
     ) {
       return item
     }
@@ -2207,7 +2218,9 @@ export function applyInstalledPluginsToMarketplaceItems(
       installedPluginId:
         typeof id === 'string' || typeof id === 'number' ? id : item.installedPluginId,
       installedLocally: item.installedLocally || installedLocally,
+      installedVersion: installedVersion || item.installedVersion || null,
       enabled: installed.spec.enabled,
+      updateAvailable: Boolean(item.updateAvailable) || localVersionLags,
       currentDeviceInstallation: item.currentDeviceInstallation,
     }
   })

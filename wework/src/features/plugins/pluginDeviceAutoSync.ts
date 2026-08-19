@@ -57,15 +57,24 @@ export function hasInFlightPluginDeviceSync(deviceId: string): boolean {
   return inFlightDeviceIds.has(deviceId.trim())
 }
 
+function localPackageLagsCatalogVersion(item: PluginMarketplaceItem): boolean {
+  const local = (item.installedVersion ?? '').trim()
+  const desired = (item.version ?? '').trim()
+  return Boolean(local && desired && local !== desired)
+}
+
 /** Account has an install record but this device still needs materialization. */
 export function marketplaceItemNeedsDeviceSync(item: PluginMarketplaceItem): boolean {
-  if (item.installedLocally) return false
   if (item.installedPluginId === null || item.installedPluginId === undefined) {
     return false
   }
+  // An older local ZIP must still sync to the desired release. Matching local
+  // packages skip sync so status report can clear a stale cloud pending row.
+  if (item.installedLocally && !localPackageLagsCatalogVersion(item)) return false
   const state = item.currentDeviceInstallation?.state
   if (item.currentDeviceInstallation?.actualReleaseId && state === 'failed') return false
   if (!item.installed) return true
+  if (localPackageLagsCatalogVersion(item)) return true
   return state === 'failed' || state === 'pending'
 }
 

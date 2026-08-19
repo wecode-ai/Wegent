@@ -2135,6 +2135,8 @@ export interface PluginMarketplaceItem {
   installed: boolean
   installedPluginId?: string | number | null
   installedLocally?: boolean
+  /** Materialized package version on this device (may lag catalog `version`). */
+  installedVersion?: string | null
   enabled: boolean
   sourceType: 'marketplace'
   interface?: PluginInterface | null

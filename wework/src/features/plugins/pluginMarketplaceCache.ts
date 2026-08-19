@@ -430,6 +430,7 @@ export function marketplaceItemsSignature(items: PluginMarketplaceItem[]): strin
         item.version ?? '',
         item.installed ? '1' : '0',
         item.installedLocally ? '1' : '0',
+        item.installedVersion ?? '',
         item.installedPluginId ?? '',
         item.updateAvailable ? '1' : '0',
         item.enabled ? '1' : '0',

@@ -155,6 +155,48 @@ describe('pluginDeviceAutoSync', () => {
         })
       )
     ).toBe(true)
+    expect(
+      marketplaceItemNeedsDeviceSync(
+        item({
+          id: 268634,
+          name: 'code-review',
+          version: '0.1.3',
+          installedPluginId: 268634,
+          installed: false,
+          installedLocally: true,
+          installedVersion: '0.1.2',
+          currentDeviceInstallation: {
+            deviceId: 'd1',
+            desiredReleaseId: 7,
+            actualReleaseId: null,
+            state: 'pending',
+            attemptCount: 1,
+            updatedAt: '2026-01-01T00:00:00Z',
+          },
+        })
+      )
+    ).toBe(true)
+    expect(
+      marketplaceItemNeedsDeviceSync(
+        item({
+          id: 268634,
+          name: 'code-review',
+          version: '0.1.2',
+          installedPluginId: 268634,
+          installed: true,
+          installedLocally: true,
+          installedVersion: '0.1.2',
+          currentDeviceInstallation: {
+            deviceId: 'd1',
+            desiredReleaseId: 6,
+            actualReleaseId: null,
+            state: 'pending',
+            attemptCount: 1,
+            updatedAt: '2026-01-01T00:00:00Z',
+          },
+        })
+      )
+    ).toBe(false)
   })
 
   test('tracks one auto-sync attempt per device id', () => {

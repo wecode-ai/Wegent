@@ -248,6 +248,60 @@ describe('mergeInstalledPlugins', () => {
     expect(merged[0]?.spec.pluginId).toBe(267250)
   })
 
+  test('dedupes codex membership and store ZIP for the same cloud plugin', () => {
+    const cloud = cloudPlugin({
+      id: 268634,
+      displayName: 'Code Review',
+      installState: 'update_available',
+      version: '0.1.3',
+    })
+    cloud.metadata = {
+      name: 'code-review',
+      namespace: 'default',
+      labels: { id: 268634 },
+    }
+    cloud.spec.source = {
+      ...cloud.spec.source,
+      pluginKey: 'code-review',
+      catalogItemId: '268634',
+    }
+    cloud.status.devices = [
+      {
+        deviceId: 'current-device',
+        desiredReleaseId: 7,
+        actualReleaseId: 6,
+        state: 'pending',
+        attemptCount: 1,
+        updatedAt: '2026-01-01T00:00:00Z',
+      },
+    ]
+    const codexMembership = localCodexPlugin({
+      id: 'code-review',
+      name: 'code-review',
+      pluginKey: 'code-review',
+      marketplace: 'wegent',
+      version: '0.1.2',
+    })
+    const storePackage = localCodexPlugin({
+      id: '268634-wegent-code-review-0.1.2',
+      name: '268634-wegent-code-review-0.1.2',
+      pluginKey: '268634-wegent-code-review-0.1.2',
+      marketplace: 'wegent',
+      version: '0.1.2',
+    })
+
+    const merged = mergeInstalledPlugins([cloud], [codexMembership, storePackage], 'current-device')
+
+    expect(merged).toHaveLength(1)
+    expect(merged[0]?.spec.displayName).toBe('Code Review')
+    expect(merged[0]?.spec.pluginId).toBe(268634)
+    expect(hasLocalCodexMaterialization(merged[0]!)).toBe(true)
+    expect(merged[0]?.spec.sourcePayload).toMatchObject({
+      localPresent: true,
+      localVersion: '0.1.2',
+    })
+  })
+
   test('folds a disk store package that Codex membership omitted', () => {
     const local = localCodexPlugin({ id: 'documents-local', name: 'documents' })
     const store = localCodexPlugin({
