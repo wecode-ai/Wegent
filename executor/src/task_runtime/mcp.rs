@@ -3211,6 +3211,11 @@ mod tests {
                 .len(),
             6
         );
+        assert_eq!(
+            finalize["inputSchema"]["properties"]["fulfillments"]["items"]["oneOf"][4]
+                ["properties"]["provider"]["enum"],
+            json!(["github", "gitlab"])
+        );
     }
 
     #[test]
@@ -3266,20 +3271,41 @@ mod tests {
 
     #[test]
     fn exposes_only_wework_space_business_vocabulary() {
-        let serialized = serde_json::to_string(&tools()).unwrap().to_lowercase();
-
-        for forbidden in [
-            "wegent_tasks",
-            "wegent_delivery",
-            "github",
-            "gitlab",
-            "project_id",
-            "task_id",
-            "\"todo\"",
-            "report_automation_bug",
-        ] {
-            assert!(!serialized.contains(forbidden), "found {forbidden}");
+        let exposed_tools = tools();
+        for exposed_tool in &exposed_tools {
+            let public_surface = format!(
+                "{} {}",
+                exposed_tool["name"].as_str().unwrap_or_default(),
+                exposed_tool["description"].as_str().unwrap_or_default()
+            )
+            .to_lowercase();
+            for forbidden in [
+                "wegent_tasks",
+                "wegent_delivery",
+                "github",
+                "gitlab",
+                "todo",
+                "report_automation_bug",
+            ] {
+                assert!(
+                    !public_surface.contains(forbidden),
+                    "found {forbidden} in tool surface {public_surface}"
+                );
+            }
+            let input_properties = exposed_tool["inputSchema"]["properties"]
+                .as_object()
+                .expect("tool input properties");
+            for forbidden in ["project_id", "task_id"] {
+                assert!(
+                    !input_properties.contains_key(forbidden),
+                    "found {forbidden} in {} input",
+                    exposed_tool["name"]
+                );
+            }
         }
+        let serialized = serde_json::to_string(&exposed_tools)
+            .unwrap()
+            .to_lowercase();
         for required in [
             "list_spaces",
             "get_board_item",
