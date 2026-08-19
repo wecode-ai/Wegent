@@ -6,14 +6,6 @@ import type { RuntimePlanEventPayload, RuntimePlanStep } from '@/types/api'
 const COMPLETED_PLAN_NOTICE_DURATION_MS = 2200
 
 export function TaskPlanProgress({ plan }: { plan?: RuntimePlanEventPayload | null }) {
-  useEffect(() => {
-    if (import.meta.env.DEV) {
-      console.warn('[Wework] Runtime task plan progress rendered', {
-        stepCount: plan?.plan.length ?? 0,
-      })
-    }
-  }, [plan])
-
   if (!plan?.plan.length) return null
 
   const allCompleted = plan.plan.every(step => step.status === 'completed')
