@@ -367,6 +367,7 @@ describe('DesktopSidebar', () => {
     ) as HTMLElement
     const remoteActivator = screen.getByTestId('project-drag-activator-8')
     const remoteButton = remoteActivator.closest('button') as HTMLButtonElement
+    const remoteMetadata = screen.getByTestId('project-device-status-8')
 
     mockSidebarSortableRect(localSortable, 0)
     mockSidebarSortableRect(remoteSortable, 30)
@@ -375,8 +376,9 @@ describe('DesktopSidebar', () => {
     expect(remoteSortable).toHaveAttribute('role', 'button')
     expect(remoteActivator).not.toHaveAttribute('data-sidebar-drag-activator')
     expect(remoteButton).toHaveAttribute('data-sidebar-drag-activator')
+    expect(remoteMetadata).toHaveClass('pointer-events-auto')
 
-    fireEvent.pointerDown(remoteButton, {
+    fireEvent.pointerDown(remoteMetadata, {
       button: 0,
       buttons: 1,
       clientX: 220,
@@ -391,13 +393,38 @@ describe('DesktopSidebar', () => {
       isPrimary: true,
       pointerId: 1,
     })
+    expect(remoteSortable).not.toHaveAttribute('data-dragging')
+    fireEvent.pointerUp(document, {
+      button: 0,
+      buttons: 0,
+      clientX: 220,
+      clientY: 10,
+      isPrimary: true,
+      pointerId: 1,
+    })
+
+    fireEvent.pointerDown(remoteButton, {
+      button: 0,
+      buttons: 1,
+      clientX: 220,
+      clientY: 45,
+      isPrimary: true,
+      pointerId: 2,
+    })
+    fireEvent.pointerMove(document, {
+      buttons: 1,
+      clientX: 220,
+      clientY: 10,
+      isPrimary: true,
+      pointerId: 2,
+    })
     expect(remoteSortable).toHaveAttribute('data-dragging', 'true')
     fireEvent.pointerMove(document, {
       buttons: 1,
       clientX: 220,
       clientY: 5,
       isPrimary: true,
-      pointerId: 1,
+      pointerId: 2,
     })
     fireEvent.pointerUp(document, {
       button: 0,
@@ -405,7 +432,7 @@ describe('DesktopSidebar', () => {
       clientX: 220,
       clientY: 5,
       isPrimary: true,
-      pointerId: 1,
+      pointerId: 2,
     })
 
     await waitFor(() => expect(onReorderRuntimeProjects).toHaveBeenCalledTimes(1))
