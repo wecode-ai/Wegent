@@ -112,6 +112,56 @@ describe('TodoEditor external item sync', () => {
     )
   })
 
+  it('keeps same-item data during refresh and clears it when switching items', async () => {
+    const never = new Promise<never>(() => undefined)
+    const switchingApi = {
+      listDeliveries: vi.fn(async () => ({ items: [] })),
+      listTaskBindings: vi
+        .fn()
+        .mockResolvedValueOnce([
+          {
+            id: 8,
+            device_id: 'local-device',
+            task_id: 'first-task',
+            task_title: '第一个 Issue 的任务',
+          },
+        ])
+        .mockImplementation(() => never),
+      listLoopItemAttachments: vi.fn(async () => []),
+      listLoopItemCollaborators: vi.fn(async () => []),
+      listCloudProjectMembers: vi.fn(async () => []),
+    } as never
+    const secondItem = {
+      ...baseItem,
+      id: 'WEG-2',
+      title: 'Second issue',
+    } as unknown as CloudLoopItem
+    const renderEditor = (item: CloudLoopItem, taskRefreshKey: number) => (
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        item={item}
+        project={project}
+        allItems={[baseItem, secondItem]}
+        onUpdated={vi.fn()}
+        onAddChild={vi.fn()}
+        onClose={vi.fn()}
+        api={switchingApi}
+        taskRefreshKey={taskRefreshKey}
+        currentUserId={1}
+      />
+    )
+    const view = render(renderEditor(baseItem, 0))
+
+    expect(await screen.findByText('第一个 Issue 的任务')).toBeInTheDocument()
+
+    view.rerender(renderEditor(baseItem, 1))
+    expect(screen.getByText('第一个 Issue 的任务')).toBeInTheDocument()
+
+    view.rerender(renderEditor(secondItem, 1))
+    expect(screen.queryByText('第一个 Issue 的任务')).not.toBeInTheDocument()
+  })
+
   it('shows the automation provenance on a generated task', () => {
     render(
       editorElement({

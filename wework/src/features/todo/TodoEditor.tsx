@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -676,6 +677,7 @@ export function TodoEditor(props: TodoEditorProps) {
   const editItemId = item?.id ?? null
   const editProjectId = item?.cloud_project_id ?? null
   const createProjectId = createProps?.project.id ?? null
+  const loadedEditItemIdRef = useRef(editItemId)
   const visibleAttachments = useMemo(() => {
     const merged = new Map<string, AttachmentRow>()
     markdownAttachmentRows(description).forEach(attachment => merged.set(attachment.id, attachment))
@@ -692,6 +694,16 @@ export function TodoEditor(props: TodoEditorProps) {
     if (!node) return
     node.scrollTop = 0
   }, [editItemId, isCreate])
+
+  useLayoutEffect(() => {
+    if (loadedEditItemIdRef.current === editItemId) return
+    loadedEditItemIdRef.current = editItemId
+    setDeliveries([])
+    setSelectedDelivery(null)
+    setTasks([])
+    setAttachments([])
+    setCollaborators([])
+  }, [editItemId])
 
   // Edit mode loads everything tied to the item id.
   useEffect(() => {
