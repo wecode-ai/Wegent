@@ -428,7 +428,7 @@ export function IssueComposer({
                   type="button"
                   data-testid="workspace-issue-collapse"
                   onClick={() => setFullScreen(false)}
-                  className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary"
+                  className="flex h-11 w-11 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary md:h-8 md:w-8"
                   aria-label={t('todo.collapse_issue_editor', '收起编辑器')}
                 >
                   <Minimize2 className="h-4 w-4" />
@@ -437,7 +437,7 @@ export function IssueComposer({
                   type="button"
                   data-testid="workspace-issue-close"
                   onClick={onCancel}
-                  className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary"
+                  className="flex h-11 w-11 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary md:h-8 md:w-8"
                   aria-label={t('common.close', '关闭')}
                 >
                   <X className="h-4 w-4" />
@@ -581,7 +581,7 @@ export function IssueComposer({
                   type="button"
                   data-testid="workspace-issue-close"
                   onClick={onCancel}
-                  className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary"
+                  className="flex h-11 w-11 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary md:h-8 md:w-8"
                   aria-label={t('common.close', '关闭')}
                 >
                   <X className="h-4 w-4" />
@@ -637,7 +637,7 @@ export function IssueComposer({
                     type="button"
                     data-testid="workspace-issue-expand"
                     onClick={() => setFullScreen(true)}
-                    className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary"
+                    className="flex h-11 w-11 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary md:h-8 md:w-8"
                     aria-label={t('todo.expand_issue_editor', '全屏编辑')}
                   >
                     <Maximize2 className="h-4 w-4" />
