@@ -44,9 +44,28 @@ test.describe('Provider-native ClaudeCode access', () => {
     claudeTeamId = await createClaudeResources(request)
   })
 
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page }, testInfo) => {
     activePrompt = ''
+    let modelRequestCount = 0
+    if (testInfo.title.includes('E2E-A2-013')) {
+      await page.route('**/api/models/unified?**', async route => {
+        const requestUrl = new URL(route.request().url())
+        if (requestUrl.searchParams.get('model_category_type') !== 'llm') {
+          await route.continue()
+          return
+        }
+        modelRequestCount += 1
+        if (modelRequestCount === 1) {
+          await route.abort('internetdisconnected')
+          return
+        }
+        await route.continue()
+      })
+    }
     await openClaudeChat(page)
+    if (testInfo.title.includes('E2E-A2-013')) {
+      expect(modelRequestCount).toBeGreaterThanOrEqual(2)
+    }
   })
 
   test.afterEach(async ({ request }) => {
@@ -96,7 +115,7 @@ test.describe('Provider-native ClaudeCode access', () => {
     const taskId = await knowledge.waitForTaskId()
     const dispatchedTask = await getTask(request, resources.token, taskId)
     expect((dispatchedTask as { model_id?: string }).model_id).toBe(CLAUDE_MODEL_NAME)
-    await waitForTaskTerminal(request, resources.token, taskId)
+    await waitForTaskTerminal(resources.token, taskId)
     const task = await getTask(request, resources.token, taskId)
     const bodies = await getScenarioModelBodies(request, prompt)
     const requestText = modelRequestText(bodies)
@@ -143,7 +162,7 @@ test.describe('Provider-native ClaudeCode access', () => {
     await knowledge.selectDingTalkDocuments(['doc-d1'])
     await knowledge.sendMessage(prompt)
     const taskId = await knowledge.waitForTaskId()
-    await waitForTaskTerminal(request, resources.token, taskId)
+    await waitForTaskTerminal(resources.token, taskId)
     const task = await getTask(request, resources.token, taskId)
     const requestText = modelRequestText(await getScenarioModelBodies(request, prompt))
 

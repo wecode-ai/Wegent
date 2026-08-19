@@ -686,6 +686,19 @@ export function TaskActivityView({
     }
   }
 
+  async function persistConversationAttachments(attachments: Attachment[]) {
+    if (projectLocation !== 'local' || !projectDeliveryApi || attachments.length === 0) return
+    try {
+      await projectDeliveryApi.importLoopItemAttachments(task.id, attachments)
+    } catch (cause) {
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : t('workbench.task_activity_attachment_persist_failed')
+      )
+    }
+  }
+
   async function sendCardReply(
     card: {
       root: ProjectChatMessage
@@ -728,6 +741,8 @@ export function TaskActivityView({
       followCardRef.current = rootId
       setMessages(current => mergeProjectChatMessages(current, [message]))
       setCardAiErrors(current => ({ ...current, [rootId]: '' }))
+      void persistConversationAttachments(attachments)
+      void persistConversationAttachments(attachments)
       if (customManager && customManagerAddress) {
         void continueCustomAutomationManager(card.root, message, customManagerAddress, attachments)
         revealCardBottom(rootId)
@@ -839,6 +854,7 @@ export function TaskActivityView({
       setNewCommentDraft('')
       attachmentSelection.resetAttachments()
       scrollTaskCommentsToTop()
+      void persistConversationAttachments(attachments)
       if (assignedAgent && !selfManagedExecution) {
         await startTaskAiRun({
           client,

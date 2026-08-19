@@ -32,6 +32,18 @@ import {
 
 import { captureVerificationScreenshot } from './workspace-flows.mjs'
 
+async function waitForSystemDragPanelVisibility(control, expected, message) {
+  const expectedValue = String(expected)
+  const startedAt = Date.now()
+  let lastValue = ''
+  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    lastValue = await control.command('getSystemDragPanelVisibility', 'body')
+    if (lastValue === expectedValue) return
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(`${message}: observed=${lastValue}`)
+}
+
 async function verifyPastedZipAttachment({ composerSelector, control }) {
   control.setScenario('pasted_zip_attachment')
   await control.command('snapshot', 'body')
@@ -89,10 +101,38 @@ async function verifySystemDragPanelLayout(control) {
     /Temporary stash|临时暂存/,
     'The system drag panel did not expose the stash destination'
   )
+  assert.ok(
+    snapshot.testIds.includes('system-drag-close-button'),
+    'The system drag panel did not expose a manual close button'
+  )
   await captureVerificationScreenshot(
     control,
     'system-drag-panel.png',
     '[data-testid="system-drag-panel"]'
+  )
+  await control.command('showSystemDragPanel', 'body')
+  await waitForSystemDragPanelVisibility(
+    control,
+    true,
+    'The native system drag panel did not become visible for manual-close verification'
+  )
+  await control.command('click', '[data-testid="system-drag-close-button"]', { visible: true })
+  await waitForSystemDragPanelVisibility(
+    control,
+    false,
+    'Clicking the system drag close button did not hide the native panel window'
+  )
+  await control.command('showSystemDragPanel', 'body')
+  await waitForSystemDragPanelVisibility(
+    control,
+    true,
+    'The native system drag panel did not reopen for Escape verification'
+  )
+  await control.command('press', '[data-testid="system-drag-close-button"]', { key: 'Escape' })
+  await waitForSystemDragPanelVisibility(
+    control,
+    false,
+    'Pressing Escape did not hide the native system drag panel window'
   )
   await control.command('navigate', 'body', { value: '/' })
   await control.command('waitFor', '[data-testid="new-chat-button"]', {

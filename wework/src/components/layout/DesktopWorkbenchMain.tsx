@@ -1041,7 +1041,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     userId: state.user?.id,
   })
   const workItemContextAvailable = Boolean(
-    currentProjectSpaceRuntimeTask && boundCloudProject && boundCloudItem && boundProjectSpaceApi
+    experimentalFeaturesEnabled &&
+    currentProjectSpaceRuntimeTask &&
+    boundCloudProject &&
+    boundCloudItem &&
+    boundProjectSpaceApi
   )
   const supervisor = runtimeTaskSummary?.supervisor ?? null
   const defaultEmbeddedBrowserLabel = currentRuntimeTask?.taskId
@@ -2494,7 +2498,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const hasConversation = paneMessages.length > 0 || Boolean(currentRuntimeTask)
   const isCreatingWorktree = isWorktreeCreationPending(
     runtimeTaskSummary,
-    paneSession.status.sendPhase
+    paneSession.status.sendPhase,
+    paneSession.status.workspaceCreationKind
   )
   const hasMainBackground = Boolean(background.imagePath && background.inMain)
   const activeDevice = findWorkbenchDevice(devices, activeDeviceId)
@@ -2527,7 +2532,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     !currentProject &&
     !currentRuntimeTask &&
     !activeDeviceId &&
-    !devices.some(device => device.status === 'online' && isWeWorkCompatibleDevice(device))
+    !devices.some(device => isWorkbenchDeviceOnline(device) && isWeWorkCompatibleDevice(device))
   const composerDisabled =
     activeDeviceUnavailable || activeDeviceVersionUnsupported || noStandaloneCompatibleDevice
   const composerDisabledReason = activeDeviceUnavailable
@@ -2644,7 +2649,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       : currentWorkItemGuideProject
         ? [currentWorkItemGuideProject]
         : []
-  const projectSpaceContext =
+  const projectSpaceContext = experimentalFeaturesEnabled ? (
     currentProjectSpaceRuntimeTask && boundCloudProject && boundCloudItem ? (
       <WorkItemComposerGuide
         integrated
@@ -2680,6 +2685,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         onRemoveProject={clearPendingProjectContext}
       />
     ) : null
+  ) : null
   useEffect(() => {
     if (!rightPanelImmediateLayout || !rightPanelOpen) return
 

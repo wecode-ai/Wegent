@@ -180,6 +180,18 @@ describe('WorkspaceBrowserPanel', () => {
     embeddedBrowserMocks.setEmbeddedBrowserBounds.mockResolvedValue(undefined)
   })
 
+  test('disables text correction in the browser address bar', () => {
+    render(<WorkspaceBrowserPanel active />)
+
+    expect(screen.getByTestId('workspace-browser-url-input')).toHaveAttribute(
+      'autocapitalize',
+      'none'
+    )
+    expect(screen.getByTestId('workspace-browser-url-input')).toHaveAttribute('autocomplete', 'off')
+    expect(screen.getByTestId('workspace-browser-url-input')).toHaveAttribute('autocorrect', 'off')
+    expect(screen.getByTestId('workspace-browser-url-input')).toHaveAttribute('spellcheck', 'false')
+  })
+
   test('clears cookies from the browser actions submenu and reports completion', async () => {
     render(<WorkspaceBrowserPanel active />)
 
@@ -252,7 +264,7 @@ describe('WorkspaceBrowserPanel', () => {
 
     await waitFor(() => {
       expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledWith(
-        'https://example.com/',
+        'http://example.com/',
         {
           x: 500,
           y: 120,
@@ -2508,6 +2520,12 @@ describe('WorkspaceBrowserPanel', () => {
     view.rerender(<WorkspaceBrowserPanel active />)
     fireEvent.click(screen.getByTestId('workspace-browser-annotate-button'))
     await screen.findByTestId('workspace-browser-annotation-close-button')
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.evalEmbeddedBrowser).toHaveBeenCalledWith(
+        expect.stringContaining('setOriginalViewEnabled?.(false)'),
+        'workspace-browser'
+      )
+    })
 
     embeddedBrowserMocks.evalEmbeddedBrowser.mockClear()
     await act(async () => {
@@ -2515,7 +2533,11 @@ describe('WorkspaceBrowserPanel', () => {
       await firstInjection
     })
 
-    expect(embeddedBrowserMocks.evalEmbeddedBrowser).not.toHaveBeenCalled()
+    expect(
+      embeddedBrowserMocks.evalEmbeddedBrowser.mock.calls.filter(call =>
+        String(call[0]).includes('__WEWORK_BROWSER_ANNOTATION__?.destroy')
+      )
+    ).toEqual([])
     expect(screen.getByTestId('workspace-browser-annotation-close-button')).toBeInTheDocument()
   })
 

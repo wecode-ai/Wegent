@@ -148,6 +148,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
   )
   const localWorkspacePath =
     workspaceTarget?.path ?? (currentProject ? configuredWorkspacePath(currentProject) : undefined)
+  const normalizedWorkspacePath = localWorkspacePath?.trim()
   const projectUsesLocalWorkspace = Boolean(
     currentProject &&
     (currentProject.config?.execution?.targetType === 'local' ||
@@ -230,13 +231,12 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
   }
 
   const handleOpenCodeServer = async () => {
-    const workspacePath = localWorkspacePath?.trim()
     if (
       !codeServerProjectDeviceId ||
       !workspaceSessionApi ||
       ideLoading ||
       !codeServerEnabled ||
-      (useDeviceCodeServerSession && !workspacePath)
+      (useDeviceCodeServerSession && !normalizedWorkspacePath)
     ) {
       return
     }
@@ -244,7 +244,10 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
     setIdeError(null)
     try {
       const session = useDeviceCodeServerSession
-        ? await workspaceSessionApi.startDeviceCodeServer(codeServerProjectDeviceId, workspacePath)
+        ? await workspaceSessionApi.startDeviceCodeServer(
+            codeServerProjectDeviceId,
+            normalizedWorkspacePath
+          )
         : currentProject
           ? await workspaceSessionApi.startProjectCodeServer(currentProject.id)
           : null
@@ -364,6 +367,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
         <button
           type="button"
           data-testid="open-code-server-titlebar-button"
+          data-workspace-path={normalizedWorkspacePath || undefined}
           onClick={() => void handleOpenCodeServer()}
           disabled={ideLoading || !codeServerEnabled}
           className={cn(

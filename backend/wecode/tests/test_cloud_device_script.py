@@ -27,6 +27,28 @@ def test_simple_startup_script_exports_current_user_identity():
     assert '-t "device-api-key"' in script
 
 
+def test_simple_startup_script_exports_cloud_worktree_runtime_environment():
+    """Managed cloud devices should advertise verified persistent Worktrees."""
+    encoded = generate_simple_startup_script(
+        user_name="alice",
+        backend_url="https://backend.example.com",
+        auth_token="device-api-key",
+        install_script_url="https://example.com/install.sh",
+        device_id="cloud-device-id",
+    )
+
+    script = base64.b64decode(encoded).decode("utf-8")
+
+    assert 'export DEVICE_TYPE="cloud"' in script
+    assert 'export WEGENT_EXECUTOR_HOME="/home/ubuntu/.wegent-executor"' in script
+    assert (
+        'export LOCAL_WORKSPACE_ROOT="/home/ubuntu/.wegent-executor/workspace"'
+        in script
+    )
+    assert 'export WEGENT_EXECUTOR_HOME_ID="cloud-device-id"' in script
+    assert 'export WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED="true"' in script
+
+
 def test_simple_startup_script_sets_ubuntu_password():
     """Cloud device user_data should set the ubuntu user's login password."""
     encoded = generate_simple_startup_script(

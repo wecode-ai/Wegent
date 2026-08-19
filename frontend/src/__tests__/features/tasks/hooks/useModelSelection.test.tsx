@@ -155,6 +155,43 @@ describe('useModelSelection', () => {
     ;(getCompatibleProviderFromAgentType as jest.Mock).mockReturnValue(null)
   })
 
+  it('retries model loading once after a transient network failure', async () => {
+    ;(modelApis.getUnifiedModels as jest.Mock)
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValueOnce({ data: [mockModel] })
+
+    const { result } = renderHook(() =>
+      useModelSelection({
+        teamId: 1,
+        taskId: null,
+        selectedTeam: mockTeam,
+      })
+    )
+
+    await waitFor(() => {
+      expect(modelApis.getUnifiedModels).toHaveBeenCalledTimes(2)
+      expect(result.current.models).toEqual([expect.objectContaining(mockModel)])
+    })
+    expect(result.current.error).toBeNull()
+  })
+
+  it('does not retry non-network model loading failures', async () => {
+    ;(modelApis.getUnifiedModels as jest.Mock).mockRejectedValue(new Error('Server rejected'))
+
+    const { result } = renderHook(() =>
+      useModelSelection({
+        teamId: 1,
+        taskId: null,
+        selectedTeam: mockTeam,
+      })
+    )
+
+    await waitFor(() => {
+      expect(result.current.error).toBe('common:models.errors.load_models_failed')
+    })
+    expect(modelApis.getUnifiedModels).toHaveBeenCalledTimes(1)
+  })
+
   it('selects concrete models as force override without showing override text', async () => {
     const { result } = await renderModelSelectionHook()
 

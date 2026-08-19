@@ -8,13 +8,36 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.services.context.context_service import context_service
-from app.services.knowledge.document_read_service import DocumentReadService
+from app.services.knowledge.document_read_service import (
+    DocumentReadService,
+    _resolve_source_media_type,
+)
+
+
+def _attachment(attachment_id: int, extracted_text: str, extension: str = ".txt"):
+    return SimpleNamespace(
+        id=attachment_id,
+        extracted_text=extracted_text,
+        context_type="attachment",
+        file_extension=extension,
+    )
 
 
 @pytest.mark.unit
 class TestDocumentReadService:
     def setup_method(self) -> None:
         self.service = DocumentReadService()
+
+    def test_source_media_type_does_not_hide_detection_errors(self) -> None:
+        attachment = _attachment(101, "content")
+
+        with patch.object(
+            context_service,
+            "is_video_context",
+            side_effect=RuntimeError("invalid attachment metadata"),
+        ):
+            with pytest.raises(RuntimeError, match="invalid attachment metadata"):
+                _resolve_source_media_type(attachment)
 
     def test_read_documents_persists_once_per_knowledge_base(self) -> None:
         """kb_head persistence should batch documents by KB within one tool call."""
@@ -25,9 +48,9 @@ class TestDocumentReadService:
             21: SimpleNamespace(id=21, name="doc-21", attachment_id=201, kind_id=2),
         }
         attachments = {
-            101: SimpleNamespace(id=101, extracted_text="abcdefghijk"),
-            102: SimpleNamespace(id=102, extracted_text="lmnopqrstuv"),
-            201: SimpleNamespace(id=201, extracted_text="wxyz0123456"),
+            101: _attachment(101, "abcdefghijk"),
+            102: _attachment(102, "lmnopqrstuv"),
+            201: _attachment(201, "wxyz0123456"),
         }
         existing_context = MagicMock(id=900)
         mock_get_context_map = MagicMock()
@@ -97,8 +120,8 @@ class TestDocumentReadService:
             21: SimpleNamespace(id=21, name="doc-21", attachment_id=201, kind_id=3),
         }
         attachments = {
-            101: SimpleNamespace(id=101, extracted_text="abcdefghijk"),
-            201: SimpleNamespace(id=201, extracted_text="lmnopqrstuv"),
+            101: _attachment(101, "abcdefghijk"),
+            201: _attachment(201, "lmnopqrstuv"),
         }
         mock_get_context_map = MagicMock()
         mock_create_context = MagicMock()
@@ -168,7 +191,7 @@ class TestDocumentReadService:
             11: SimpleNamespace(id=11, name="doc-11", attachment_id=101, kind_id=1),
         }
         attachments = {
-            101: SimpleNamespace(id=101, extracted_text="abcdefghijk"),
+            101: _attachment(101, "abcdefghijk"),
         }
 
         with (
@@ -206,8 +229,8 @@ class TestDocumentReadService:
             ),
         }
         attachments = {
-            101: SimpleNamespace(id=101, extracted_text="ORIGINAL_PDF_TEXT"),
-            201: SimpleNamespace(id=201, extracted_text="# Converted Markdown"),
+            101: _attachment(101, "ORIGINAL_PDF_TEXT", ".pdf"),
+            201: _attachment(201, "# Converted Markdown", ".md"),
         }
 
         with (
@@ -241,7 +264,7 @@ class TestDocumentReadService:
             ),
         }
         attachments = {
-            101: SimpleNamespace(id=101, extracted_text="ORIGINAL_TEXT"),
+            101: _attachment(101, "ORIGINAL_TEXT"),
         }
 
         with (

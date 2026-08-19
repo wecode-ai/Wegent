@@ -22,7 +22,7 @@ use crate::{
     local::git_commit_message::generate_commit_message,
     local::local_skills::list_local_skills,
     local::workspace_files::{
-        execute_workspace_file_command_with_input, is_workspace_file_command,
+        execute_workspace_file_command_with_input, is_workspace_file_command, WORKSPACE_ROOTS_ENV,
     },
     logging::{format_executor_log, reserve_executor_stdout_for_protocol, write_executor_log_line},
     runtime_work::RuntimeWorkRpcHandler,
@@ -776,12 +776,18 @@ impl AppIpcServer {
         }
 
         let args = string_list(params.get("args"))?;
-        let env = string_env(params.get("env"))?;
+        let path = string_field(&params, "path").or_else(|| string_field(&params, "cwd"));
+        let mut env = string_env(params.get("env"))?;
         if is_workspace_file_command(command_key) {
+            if !env.contains_key(WORKSPACE_ROOTS_ENV) {
+                if let Some(path) = path.as_ref() {
+                    env.insert(WORKSPACE_ROOTS_ENV.to_owned(), path.clone());
+                }
+            }
             return serde_json::to_value(
                 execute_workspace_file_command_with_input(
                     command_key,
-                    string_field(&params, "path").or_else(|| string_field(&params, "cwd")),
+                    path,
                     args,
                     env,
                     string_field(&params, "stdin"),
@@ -2086,6 +2092,17 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
                 "--json",
                 "number,url,title,state,isDraft,statusCheckRollup,mergeable,mergeStateStatus",
                 "--head",
+            ],
+            Some(PostProcessor::Json),
+        )),
+        "git_github_pull_request_merge_queue" => Some(command_definition(
+            "gh api graphql <pull-request-merge-queue-query>",
+            &[
+                "gh",
+                "api",
+                "graphql",
+                "-f",
+                "query=query($url:URI!){resource(url:$url){... on PullRequest{mergeQueueEntry{id}}}}",
             ],
             Some(PostProcessor::Json),
         )),

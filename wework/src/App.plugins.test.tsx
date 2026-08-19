@@ -239,7 +239,7 @@ function installedCodexSitesPlugin(): InstalledPlugin {
         catalogItemId: '100',
         marketplace: 'wegent',
       },
-      displayName: '站点',
+      displayName: '快速建站',
       description: 'Build and deploy websites with Wegent Sites',
       version: '0.1.0',
       installState: 'installed',
@@ -259,7 +259,7 @@ function installedCodexSitesPlugin(): InstalledPlugin {
         bins: [],
       },
       interface: {
-        displayName: '站点',
+        displayName: '快速建站',
         defaultPrompt: ['Build an internal website and validate it locally'],
       },
       packageRef: null,
@@ -328,7 +328,7 @@ function installedCodexMiniProgramPlugin(): InstalledPlugin {
         catalogItemId: '102',
         marketplace: 'wegent',
       },
-      displayName: '微博小程序开发助手',
+      displayName: '微博小程序H5开发助手',
       description: 'Build and publish mini programs',
       version: '0.1.0',
       installState: 'installed',
@@ -348,7 +348,7 @@ function installedCodexMiniProgramPlugin(): InstalledPlugin {
         bins: [],
       },
       interface: {
-        displayName: '微博小程序开发助手',
+        displayName: '微博小程序H5开发助手',
         defaultPrompt: ['创建并发布一个小程序'],
       },
       packageRef: null,
@@ -1125,8 +1125,8 @@ describe('App plugins route', () => {
     expect(JSON.parse(sessionStorage.getItem('wework:pending-plugin-trial') ?? '{}')).toMatchObject(
       {
         input:
-          '[$站点](plugin://wegent-sites@wegent) Build an internal website and validate it locally',
-        pluginName: '站点',
+          '[$快速建站](plugin://wegent-sites@wegent) Build an internal website and validate it locally',
+        pluginName: '快速建站',
         openInNewChat: true,
       }
     )
@@ -1189,8 +1189,8 @@ describe('App plugins route', () => {
     expect(JSON.parse(sessionStorage.getItem('wework:pending-plugin-trial') ?? '{}')).toMatchObject(
       {
         input:
-          '[$微博小程序开发助手](plugin://weibo-miniapp-h5-develop-agent@wegent) 创建并发布一个小程序',
-        pluginName: '微博小程序开发助手',
+          '[$微博小程序H5开发助手](plugin://weibo-miniapp-h5-develop-agent@wegent) 创建并发布一个小程序',
+        pluginName: '微博小程序H5开发助手',
         openInNewChat: true,
       }
     )
@@ -1247,8 +1247,8 @@ describe('App plugins route', () => {
     expect(JSON.parse(sessionStorage.getItem('wework:pending-plugin-trial') ?? '{}')).toMatchObject(
       {
         input:
-          '[$微博小程序开发助手](plugin://weibo-miniapp-h5-develop-agent@wegent) 创建并发布一个小程序',
-        pluginName: '微博小程序开发助手',
+          '[$微博小程序H5开发助手](plugin://weibo-miniapp-h5-develop-agent@wegent) 创建并发布一个小程序',
+        pluginName: '微博小程序H5开发助手',
       }
     )
   })
@@ -1313,8 +1313,8 @@ describe('App plugins route', () => {
     expect(JSON.parse(sessionStorage.getItem('wework:pending-plugin-trial') ?? '{}')).toMatchObject(
       {
         input:
-          '[$站点](plugin://wegent-sites@wegent) Build an internal website and validate it locally',
-        pluginName: '站点',
+          '[$快速建站](plugin://wegent-sites@wegent) Build an internal website and validate it locally',
+        pluginName: '快速建站',
       }
     )
   })
@@ -1366,8 +1366,8 @@ describe('App plugins route', () => {
     expect(JSON.parse(sessionStorage.getItem('wework:pending-plugin-trial') ?? '{}')).toMatchObject(
       {
         input:
-          '[$站点](plugin://wegent-sites@wegent) Build an internal website and validate it locally',
-        pluginName: '站点',
+          '[$快速建站](plugin://wegent-sites@wegent) Build an internal website and validate it locally',
+        pluginName: '快速建站',
       }
     )
   })
@@ -1421,8 +1421,8 @@ describe('App plugins route', () => {
     expect(JSON.parse(sessionStorage.getItem('wework:pending-plugin-trial') ?? '{}')).toMatchObject(
       {
         input:
-          '[$站点](plugin://wegent-sites@wegent) Build an internal website and validate it locally',
-        pluginName: '站点',
+          '[$快速建站](plugin://wegent-sites@wegent) Build an internal website and validate it locally',
+        pluginName: '快速建站',
       }
     )
   })

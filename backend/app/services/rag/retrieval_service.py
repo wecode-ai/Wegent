@@ -1002,6 +1002,7 @@ class RetrievalService:
                         "total_length": result.get("total_length", 0),
                     },
                     "knowledge_base_id": kb_id or result.get("kb_id"),
+                    "source_media_type": result.get("source_media_type"),
                 }
             )
 

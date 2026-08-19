@@ -248,6 +248,8 @@ class LocalDeviceProvider(BaseDeviceProvider):
         executor_version: Optional[str] = None,
         client_ip: Optional[str] = None,
         runtime_transfer_host: Optional[str] = None,
+        runtime_instance_id: Optional[str] = None,
+        runtime_features: Optional[Dict[str, Any]] = None,
     ) -> bool:
         """Set device online status in Redis."""
         key = self.generate_online_key(user_id, device_id)
@@ -259,6 +261,8 @@ class LocalDeviceProvider(BaseDeviceProvider):
             "executor_version": executor_version,
             "client_ip": client_ip,
             "runtime_transfer_host": runtime_transfer_host,
+            "runtime_instance_id": runtime_instance_id,
+            "runtime_features": runtime_features,
         }
         result = await cache_manager.set(key, data, expire=DEVICE_ONLINE_TTL)
         logger.info(f"[LocalDeviceProvider] set_online: key={key}, result={result}")
@@ -341,6 +345,9 @@ class LocalDeviceProvider(BaseDeviceProvider):
             "runtime_transfer_host": spec.get("runtimeTransferHost"),
             "runtime_instance_id": spec.get("runtimeInstanceId"),
             "app_device_id": spec.get("appDeviceId"),
+            "runtime_features": (
+                online_info.get("runtime_features") if online_info else None
+            ),
             "bind_shell": spec.get("bindShell", "claudecode"),
         }
 
@@ -477,6 +484,9 @@ class LocalDeviceProvider(BaseDeviceProvider):
                     "runtime_transfer_host": spec.get("runtimeTransferHost"),
                     "runtime_instance_id": spec.get("runtimeInstanceId"),
                     "app_device_id": spec.get("appDeviceId"),
+                    "runtime_features": (
+                        online_info.get("runtime_features") if online_info else None
+                    ),
                     "bind_shell": spec.get("bindShell", "claudecode"),
                 }
             )
@@ -492,6 +502,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
         runtime_transfer_host: Optional[str] = None,
         runtime_instance_id: Optional[str] = None,
         runtime_capacity: Optional[Dict[str, Any]] = None,
+        runtime_features: Optional[Dict[str, Any]] = None,
     ) -> bool:
         """Refresh device heartbeat in Redis."""
         key = self.generate_online_key(user_id, device_id)
@@ -509,6 +520,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
             # stale capacity truth with the online TTL.
             data["runtime_instance_id"] = runtime_instance_id
             data["runtime_capacity"] = runtime_capacity
+            data["runtime_features"] = runtime_features
             result = await cache_manager.set(key, data, expire=DEVICE_ONLINE_TTL)
             logger.debug(
                 f"[LocalDeviceProvider] refresh_heartbeat: key={key}, "

@@ -13,7 +13,7 @@ use std::{
 use serde_json::Map;
 use serde_json::{json, Value};
 
-use crate::{emitter::EventEnvelope, runner::EventSink};
+use crate::{emitter::EventEnvelope, runner::EventSink, runtime_work::runtime_features};
 
 use super::{
     capability::{CapabilityReportProvider, DefaultCapabilityReporter},
@@ -142,6 +142,7 @@ where
             "client_ip": self.config.client_ip,
             "runtime_transfer_host": self.config.runtime_transfer_host,
             "app_device_id": self.config.app_device_id,
+            "runtime_features": runtime_features(),
         })
     }
 
@@ -159,6 +160,7 @@ where
             "running_task_ids": running_task_ids,
             "executor_version": self.config.executor_version,
             "capabilities": self.capability_reporter.build_report(),
+            "runtime_features": runtime_features(),
             "runtime_auth_files": build_runtime_auth_file_report(&self.config.runtime_auth_home),
             "runtime_transfer_host": self.config.runtime_transfer_host,
         })

@@ -1010,7 +1010,7 @@ fn persistent_codex_app_server_launch_config(
         .config_overrides
         .extend(codex_router_provider_overrides());
     launch_config.config_overrides.extend([
-        "goals=true".to_owned(),
+        "features.goals=true".to_owned(),
         "features.code_mode_host=true".to_owned(),
     ]);
     launch_config
@@ -4348,7 +4348,15 @@ pub(crate) const CODEX_WORKSPACE_PERMISSION_PROFILE: &str = ":workspace";
 
 pub(crate) fn codex_runtime_approval_policy(request: &ExecutionRequest) -> Value {
     match codex_runtime_permission_profile(request) {
-        CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE => Value::String("never".to_owned()),
+        CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE => json!({
+            "granular": {
+                "sandbox_approval": false,
+                "rules": false,
+                "skill_approval": false,
+                "request_permissions": false,
+                "mcp_elicitations": true,
+            }
+        }),
         _ => Value::String("on-request".to_owned()),
     }
 }

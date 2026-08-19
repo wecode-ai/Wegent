@@ -903,6 +903,7 @@ class KnowledgeOrchestrator:
             has_more=result["has_more"],
             kb_id=result["kb_id"],
             index_status=document.index_status,
+            source_media_type=result.get("source_media_type"),
         )
 
     async def get_document_detail(

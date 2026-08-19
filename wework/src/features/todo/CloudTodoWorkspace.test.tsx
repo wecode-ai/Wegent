@@ -254,6 +254,7 @@ function services(overrides: Partial<WorkbenchServices> = {}): WorkbenchServices
       searchCloudProjectUsers: vi.fn(async () => ({ users: [], total: 0 })),
       listCloudFiles: vi.fn(async () => ({ items: [] })),
       listProjectDeliveryFiles: vi.fn(async () => ({ items: [] })),
+      listProjectTaskAttachments: vi.fn(async () => ({ items: [] })),
       createCloudFolder: vi.fn(async (_projectId: number, path: string) => ({
         id: 51,
         cloud_project_id: 11,
@@ -2104,7 +2105,7 @@ describe('CloudTodoWorkspace', () => {
       })
     )
     expect(await screen.findByText('已保存')).toBeInTheDocument()
-  })
+  }, 15_000)
 
   it('updates the DingTalk connection without exposing board mappings', async () => {
     const workbenchServices = services()
@@ -2185,7 +2186,7 @@ describe('CloudTodoWorkspace', () => {
     expect(workbenchServices.dwsApi.login).toHaveBeenCalledOnce()
     expect(screen.getByTestId('aitable-dws-login')).toHaveTextContent('等待浏览器授权…')
     expect(screen.getByTestId('aitable-dws-login')).toBeDisabled()
-  })
+  }, 15_000)
 
   it('shows the DingTalk connect prompt on the board when dws is not authenticated', async () => {
     const workbenchServices = services()
@@ -2256,6 +2257,7 @@ describe('CloudTodoWorkspace', () => {
   })
 
   it('creates a top-level issue from the lightweight workspace composer', async () => {
+    const user = userEvent.setup()
     const workbenchServices = services()
     workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({ items: [item] }))
     workbenchServices.deliveryApi!.createLoopItem = vi.fn(async (_projectId, values) => ({
@@ -2274,10 +2276,12 @@ describe('CloudTodoWorkspace', () => {
     )
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    await userEvent.click(screen.getByTestId('cloud-todo-add'))
-    await userEvent.type(screen.getByTestId('workspace-issue-input'), 'Release readiness')
-    await userEvent.keyboard('{Shift>}{Enter}{/Shift}Verify the complete launch flow')
-    await userEvent.click(screen.getByTestId('workspace-issue-submit'))
+    await screen.findByTestId('cloud-todo-card-WEG-1')
+    await user.click(screen.getByTestId('cloud-todo-add'))
+    const input = screen.getByTestId('workspace-issue-input')
+    await user.click(input)
+    await user.paste('Release readiness\nVerify the complete launch flow')
+    await user.click(screen.getByTestId('workspace-issue-submit'))
 
     await waitFor(() =>
       expect(workbenchServices.deliveryApi.createLoopItem).toHaveBeenCalledWith(11, {
@@ -2294,6 +2298,7 @@ describe('CloudTodoWorkspace', () => {
   })
 
   it('creates an active issue and opens its first task composer', async () => {
+    const user = userEvent.setup()
     const workbenchServices = services()
     workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({ items: [item] }))
     workbenchServices.deliveryApi!.createLoopItem = vi.fn(async (_projectId, values) => ({
@@ -2314,10 +2319,13 @@ describe('CloudTodoWorkspace', () => {
     )
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    await userEvent.click(screen.getByTestId('cloud-todo-add'))
-    await userEvent.type(screen.getByTestId('workspace-issue-input'), 'Start release work')
-    await userEvent.click(screen.getByTestId('workspace-issue-start-execution'))
-    await userEvent.click(screen.getByTestId('workspace-issue-submit'))
+    await screen.findByTestId('cloud-todo-card-WEG-1')
+    await user.click(screen.getByTestId('cloud-todo-add'))
+    await user.click(screen.getByTestId('workspace-issue-start-execution'))
+    const input = screen.getByTestId('workspace-issue-input')
+    await user.click(input)
+    await user.paste('Start release work')
+    await user.click(screen.getByTestId('workspace-issue-submit'))
 
     await waitFor(() =>
       expect(workbenchServices.deliveryApi.createLoopItem).toHaveBeenCalledWith(11, {

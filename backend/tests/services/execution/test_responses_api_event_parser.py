@@ -4,6 +4,7 @@
 
 """Tests for fail-fast tool ID validation in Responses API event parsing."""
 
+import json
 from unittest.mock import AsyncMock
 
 import pytest
@@ -94,6 +95,82 @@ class TestResponsesAPIEventParserToolIds:
         assert result.type == EventType.DONE
         assert result.result["value"] == "Visible answer."
         assert result.result["reasoning_content"] == "First thought. Second thought."
+
+    def test_response_completed_restores_video_sources_from_mcp_output(self):
+        parser = ResponsesAPIEventParser()
+        parser.parse(
+            task_id=1,
+            subtask_id=2,
+            message_id=3,
+            event_type=ResponsesAPIStreamEvents.OUTPUT_ITEM_ADDED.value,
+            data={
+                "item": {
+                    "type": "mcp_call",
+                    "id": "mcp_knowledge",
+                    "name": "wegent_kb_search_knowledge_base",
+                    "server_label": "wegent-knowledge",
+                }
+            },
+        )
+        payload = {
+            "mode": "rag_retrieval",
+            "chunks": [
+                {
+                    "title": "825.video.md",
+                    "score": 0.66,
+                    "knowledge_base_id": 212,
+                    "document_id": 825,
+                    "metadata": {
+                        "doc_ref": "825",
+                        "source_file": "825.video.md",
+                        "video_segment_id": "segment_109_278",
+                        "video_start_sec": 109,
+                        "video_end_sec": 278,
+                        "video_segment_title": "Core features",
+                        "video_segment_description": "Three editing modes",
+                    },
+                }
+            ],
+        }
+        parser.parse(
+            task_id=1,
+            subtask_id=2,
+            message_id=3,
+            event_type=ResponsesAPIStreamEvents.MCP_CALL_COMPLETED.value,
+            data={
+                "item_id": "mcp_knowledge",
+                "output": [{"type": "text", "text": json.dumps(payload)}],
+            },
+        )
+
+        result = parser.parse(
+            task_id=1,
+            subtask_id=2,
+            message_id=3,
+            event_type=ResponsesAPIStreamEvents.RESPONSE_COMPLETED.value,
+            data={"response": {"output": []}},
+        )
+
+        assert result is not None
+        assert result.result["sources"] == [
+            {
+                "index": 1,
+                "title": "825.video.md",
+                "kb_id": 212,
+                "document_id": 825,
+                "source_type": "wegent_video_segment",
+                "segments": [
+                    {
+                        "id": "segment_109_278",
+                        "start_sec": 109,
+                        "end_sec": 278,
+                        "score": 0.66,
+                        "title": "Core features",
+                        "description": "Three editing modes",
+                    }
+                ],
+            }
+        ]
 
     def test_status_updated_event_emits_status_update(self):
         parser = ResponsesAPIEventParser()
@@ -868,6 +945,61 @@ class TestResponsesAPIEventParserToolIds:
         assert result is not None
         assert result.tool_output == '{"results":["block output"]}'
         assert result.tool_input == {"query": "tool blocks"}
+
+    def test_inprocess_bridge_restores_video_sources_from_mcp_output(self):
+        transport = EmitterBridgeTransport(
+            emitter=AsyncMock(),
+            task_id=1,
+            subtask_id=2,
+            message_id=3,
+        )
+        transport._convert_event(
+            ResponsesAPIStreamEvents.OUTPUT_ITEM_ADDED.value,
+            {
+                "item": {
+                    "type": "mcp_call",
+                    "id": "mcp_video",
+                    "name": "provider_rewritten_name",
+                    "server_label": "wegent-knowledge",
+                }
+            },
+            message_id=3,
+        )
+        payload = {
+            "mode": "rag_retrieval",
+            "chunks": [
+                {
+                    "title": "825.video.md",
+                    "knowledge_base_id": 212,
+                    "document_id": 825,
+                    "metadata": {
+                        "doc_ref": "825",
+                        "source_file": "825.video.md",
+                        "video_start_sec": 109,
+                        "video_end_sec": 278,
+                        "video_segment_title": "Core features",
+                    },
+                }
+            ],
+        }
+        transport._convert_event(
+            ResponsesAPIStreamEvents.MCP_CALL_COMPLETED.value,
+            {
+                "item_id": "mcp_video",
+                "output": [{"type": "text", "text": json.dumps(payload)}],
+            },
+            message_id=3,
+        )
+
+        result = transport._convert_event(
+            ResponsesAPIStreamEvents.RESPONSE_COMPLETED.value,
+            {"response": {"output": []}},
+            message_id=3,
+        )
+
+        assert result is not None
+        assert result.result["sources"][0]["document_id"] == 825
+        assert result.result["sources"][0]["segments"][0]["start_sec"] == 109
 
     def test_inprocess_bridge_shell_call_lifecycle(self):
         transport = EmitterBridgeTransport(

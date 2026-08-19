@@ -177,6 +177,18 @@ class CloudFileService:
             raise HTTPException(status.HTTP_409_CONFLICT, "Path is not a file")
         return self.storage.download_url(file.object_key)
 
+    def read_content(
+        self, db: Session, file_id: int, user_id: int
+    ) -> tuple[bytes, str, str]:
+        file = self.get(db, file_id, user_id)
+        if file.kind != "file" or not file.object_key:
+            raise HTTPException(status.HTTP_409_CONFLICT, "Path is not a file")
+        content = self.storage.get_bytes(
+            file.object_key,
+            settings.DELIVERY_MAX_ASSET_SIZE_MB * 1024 * 1024,
+        )
+        return content, file.content_type or "application/octet-stream", file.name
+
     def move(
         self,
         db: Session,

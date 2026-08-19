@@ -40,6 +40,30 @@ describe('videoTimestampPromptGuard', () => {
     expect(checkVideoTimestampPrompt(prompt).status).toBe('compliant')
   })
 
+  it('accepts prose range rules plus a bracketed mixed-time chapter template', () => {
+    // Mirrors the shared DEFAULT_VIDEO_PROMPT structure.
+    const prompt = `你是一个全能的多模态视频内容分析与档案挖掘专家。
+我已将完整的长视频文件提供给你。请你从全局视角出发，将其转化为带有精确时间戳的 Markdown 档案，用于后续向量数据库检索（RAG）。
+
+【核心要求：全时段覆盖与硬性时间约束】
+1. 章节 1 的开始时间必须严格为 \`00:00:00\`，最终章节的结束时间必须严格对应视频的最后一秒。
+2. 章节之间必须做到前一章结束时间 = 后一章开始时间，全程无间隙。
+
+请严格按照以下 Markdown 模板生成：
+
+# {{VIDEO_FILENAME}}
+
+## 全时段连续章节解析
+
+### 章节 1：[核心标题] ([00:00:00] - [HH:MM:SS])
+> **本段摘要**：[概括核心事件]
+
+### 章节 2：[核心标题] ([上一章结束时间] - [HH:MM:SS])
+> **本段摘要**：...`
+
+    expect(checkVideoTimestampPrompt(prompt).status).toBe('compliant')
+  })
+
   it('treats timestamp keywords without a complete contract as ambiguous', () => {
     expect(checkVideoTimestampPrompt('请输出视频摘要，并尽量提供时间戳。').status).toBe('ambiguous')
   })

@@ -14,6 +14,51 @@ RuntimeWorkspaceKind = Literal["workspace", "worktree", "chat"]
 RuntimeWorkspaceSource = Literal["local", "remote"]
 
 
+class RuntimeWorktreeDeviceRequest(BaseModel):
+    """Address one Runtime-owned Worktree operation by logical device ID."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    device_id: str = Field(..., alias="deviceId", min_length=1)
+
+
+class RuntimeWorktreePreflightRequest(RuntimeWorktreeDeviceRequest):
+    """Validate one source workspace before enabling managed Worktrees."""
+
+    source_path: str = Field(..., alias="sourcePath", min_length=1)
+    ref: Optional[str] = None
+
+
+class RuntimeWorktreeSettingsPatch(RuntimeWorktreeDeviceRequest):
+    """Update Runtime-owned Worktree settings."""
+
+    worktree_root: Optional[str] = Field(default=None, alias="worktreeRoot")
+    auto_cleanup_enabled: Optional[bool] = Field(
+        default=None,
+        alias="autoCleanupEnabled",
+    )
+    keep_count: Optional[int] = Field(default=None, alias="keepCount", ge=1)
+
+
+class RuntimeWorktreePrepareRequest(RuntimeWorktreeDeviceRequest):
+    """Prepare one managed Worktree on the addressed Runtime."""
+
+    source_path: str = Field(..., alias="sourcePath", min_length=1)
+    worktree_id: str = Field(..., alias="worktreeId", min_length=1)
+    ref: Optional[str] = None
+    permanent: Optional[bool] = None
+
+
+class RuntimeWorktreePathRequest(RuntimeWorktreeDeviceRequest):
+    """Delete or restore one managed Worktree path."""
+
+    path: str = Field(..., min_length=1)
+    preserve_snapshot: Optional[bool] = Field(
+        default=None,
+        alias="preserveSnapshot",
+    )
+
+
 class RuntimeTaskAddress(BaseModel):
     """Transient address for a device-local runtime task."""
 
@@ -295,7 +340,12 @@ class ArchivedConversationItem(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     id: str
-    local_task_id: str = Field(..., alias="localTaskId")
+    task_id: str = Field(
+        ...,
+        alias="taskId",
+        validation_alias=AliasChoices("taskId", "localTaskId", "local_task_id"),
+    )
+    thread_id: Optional[str] = Field(default=None, alias="threadId")
     title: str
     project_id: Optional[int] = Field(default=None, alias="projectId")
     project_key: Optional[str] = Field(default=None, alias="projectKey")
@@ -310,6 +360,10 @@ class ArchivedConversationItem(BaseModel):
     device_address: Optional[str] = Field(default=None, alias="deviceAddress")
     source: Literal["local", "cloud"] = "local"
     runtime: Optional[RuntimeName] = None
+    runtime_handle: Optional[dict[str, Any]] = Field(
+        default=None,
+        alias="runtimeHandle",
+    )
     created_at: Optional[str] = Field(default=None, alias="createdAt")
     updated_at: Optional[str] = Field(default=None, alias="updatedAt")
 
@@ -445,6 +499,10 @@ class RuntimeSendRequest(BaseModel):
 
     address: RuntimeTaskAddress
     message: str = Field(..., min_length=1)
+    client_user_message_id: Optional[str] = Field(
+        default=None,
+        alias="clientUserMessageId",
+    )
     attachment_ids: list[int] = Field(default_factory=list, alias="attachmentIds")
     model_selection: Optional[RuntimeModelSelection] = Field(
         default=None,
@@ -807,6 +865,7 @@ class RuntimeTaskCreateResponse(BaseModel):
     workspace_path: str = Field(..., alias="workspacePath")
     runtime: RuntimeName
     error: Optional[str] = None
+    error_code: Optional[str] = Field(default=None, alias="errorCode")
 
 
 class RuntimeTaskForkTarget(BaseModel):

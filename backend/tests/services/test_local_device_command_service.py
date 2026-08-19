@@ -576,6 +576,9 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     git_github_pull_requests_definition = resolve_local_device_command(
         "git_github_pull_requests", settings.LOCAL_DEVICE_COMMANDS
     )
+    git_github_pull_request_merge_queue_definition = resolve_local_device_command(
+        "git_github_pull_request_merge_queue", settings.LOCAL_DEVICE_COMMANDS
+    )
     git_gitlab_merge_requests_definition = resolve_local_device_command(
         "git_gitlab_merge_requests", settings.LOCAL_DEVICE_COMMANDS
     )
@@ -690,7 +693,11 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     assert git_remote_url_definition.post_processor is None
     assert git_github_pull_requests_definition is not None
     assert "gh pr list --state all" in git_github_pull_requests_definition.command
+    assert "mergeStateStatus" in git_github_pull_requests_definition.command
     assert git_github_pull_requests_definition.post_processor == "json"
+    assert git_github_pull_request_merge_queue_definition is not None
+    assert "mergeQueueEntry" in git_github_pull_request_merge_queue_definition.command
+    assert git_github_pull_request_merge_queue_definition.post_processor == "json"
     assert git_gitlab_merge_requests_definition is not None
     assert "glab mr list --all" in git_gitlab_merge_requests_definition.command
     assert git_gitlab_merge_requests_definition.post_processor == "json"
@@ -970,6 +977,25 @@ def test_local_device_command_registry_default_includes_workspace_file_commands(
     assert read_definition is not None
     assert read_definition.post_processor == "json"
     assert "MAX_BYTES = 262144" in read_definition.command
+
+
+def test_remote_command_policy_separates_read_only_and_mutating_keys():
+    from app.services.device.command_service import (
+        REMOTE_DEVICE_COMMAND_KEYS,
+        REMOTE_MUTATING_COMMAND_KEYS,
+        REMOTE_READ_ONLY_COMMAND_KEYS,
+    )
+
+    assert REMOTE_READ_ONLY_COMMAND_KEYS.isdisjoint(REMOTE_MUTATING_COMMAND_KEYS)
+    assert {
+        "workspace_tree",
+        "workspace_read_text_file",
+        "workspace_read_file_chunk",
+    } <= REMOTE_READ_ONLY_COMMAND_KEYS
+    assert {"git_checkout", "git_commit", "git_push"} <= REMOTE_MUTATING_COMMAND_KEYS
+    assert REMOTE_DEVICE_COMMAND_KEYS == (
+        REMOTE_READ_ONLY_COMMAND_KEYS | REMOTE_MUTATING_COMMAND_KEYS
+    )
 
 
 def test_workspace_tree_script_lists_files_and_directories(
@@ -2387,10 +2413,145 @@ async def test_execute_configured_device_command_allows_remote_directory_creatio
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("command_key", "stdout", "env"),
+    [
+        (
+            "read_runtime_auth_file",
+            '{"status":"read","path":"~/.codex/auth.json","content":"{}"}',
+            {
+                "WEGENT_RUNTIME_CONFIG_RUNTIME": "codex",
+                "WEGENT_RUNTIME_CONFIG_TARGET_PATH": "~/.codex/auth.json",
+            },
+        ),
+        (
+            "sync_runtime_auth_file",
+            '{"status":"written","path":"~/.codex/auth.json"}',
+            {
+                "WEGENT_RUNTIME_CONFIG_RUNTIME": "codex",
+                "WEGENT_RUNTIME_CONFIG_TARGET_PATH": "~/.codex/auth.json",
+                "WEGENT_RUNTIME_CONFIG_CONTENT": "{}",
+            },
+        ),
+    ],
+)
+async def test_execute_configured_device_command_allows_cloud_runtime_auth_commands(
+    monkeypatch: pytest.MonkeyPatch,
+    command_key: str,
+    stdout: str,
+    env: dict[str, str],
+) -> None:
+    """Cloud devices should support the constrained runtime auth commands."""
+    from app.schemas.device import DeviceType
+    from app.services.device import command_service
+    from app.services.device.command_registry import resolve_local_device_command
+
+    execute_mock = AsyncMock(
+        return_value={
+            "success": True,
+            "exit_code": 0,
+            "stdout": stdout,
+            "stderr": "",
+            "duration": 0.02,
+            "timed_out": False,
+        }
+    )
+    online_mock = AsyncMock(return_value={"socket_id": "socket-cloud"})
+    monkeypatch.setattr(
+        command_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: SimpleNamespace(
+            name="cloud-crd",
+            json={
+                "spec": {
+                    "deviceType": "cloud",
+                    "cloudConfig": {"deviceId": "runtime-cloud"},
+                }
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        command_service.device_service,
+        "get_device_online_info_by_type",
+        online_mock,
+    )
+    monkeypatch.setattr(
+        command_service.local_device_command_service,
+        "execute_command",
+        execute_mock,
+    )
+
+    result = await command_service.execute_configured_device_command(
+        db=object(),
+        user_id=7,
+        device_id="cloud-crd",
+        command_key=command_key,
+        env=env,
+    )
+
+    command_definition = resolve_local_device_command(command_key)
+    assert command_definition is not None
+    assert result["success"] is True
+    assert isinstance(result["stdout"], dict)
+    online_mock.assert_awaited_once_with(7, "runtime-cloud", DeviceType.CLOUD)
+    execute_mock.assert_awaited_once_with(
+        user_id=7,
+        device_id="runtime-cloud",
+        command=command_definition.command,
+        path=None,
+        args=[],
+        env=env,
+        timeout_seconds=60,
+        max_output_bytes=1024 * 1024,
+    )
+
+
+@pytest.mark.asyncio
+async def test_execute_configured_device_command_rejects_remote_runtime_auth_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Remote devices should not gain access to runtime auth commands."""
+    from app.services.device import command_service
+
+    execute_mock = AsyncMock()
+    online_mock = AsyncMock(return_value={"socket_id": "socket-remote"})
+    monkeypatch.setattr(
+        command_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: SimpleNamespace(
+            name="remote-device",
+            json={"spec": {"deviceType": "remote"}},
+        ),
+    )
+    monkeypatch.setattr(
+        command_service.device_service,
+        "get_device_online_info_by_type",
+        online_mock,
+    )
+    monkeypatch.setattr(
+        command_service.local_device_command_service,
+        "execute_command",
+        execute_mock,
+    )
+
+    with pytest.raises(command_service.DeviceCommandError) as exc_info:
+        await command_service.execute_configured_device_command(
+            db=object(),
+            user_id=7,
+            device_id="remote-device",
+            command_key="read_runtime_auth_file",
+        )
+
+    assert "not supported for remote devices" in str(exc_info.value)
+    online_mock.assert_not_awaited()
+    execute_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_execute_configured_device_command_rejects_cloud_unsupported_command_key(
     monkeypatch,
 ):
-    """Cloud directory browsing must not enable the full command registry."""
+    """Cloud workspace tooling must not enable the full command registry."""
     from app.services.device import command_service
 
     execute_mock = AsyncMock()
@@ -2430,6 +2591,78 @@ async def test_execute_configured_device_command_rejects_cloud_unsupported_comma
     assert "not supported for cloud devices" in str(exc_info.value)
     online_mock.assert_not_awaited()
     execute_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("command_key", "path", "expected_runtime_command_key"),
+    [
+        ("workspace_tree", "/workspace/repo", "workspace_tree"),
+        ("git_status_porcelain", "/workspace/repo", None),
+    ],
+)
+async def test_execute_configured_device_command_allows_cloud_workspace_tools(
+    monkeypatch,
+    command_key,
+    path,
+    expected_runtime_command_key,
+):
+    """Cloud file and Git tools should execute on the resolved Runtime."""
+    from app.services.device import command_service
+
+    execute_mock = AsyncMock(
+        return_value={
+            "success": True,
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": "",
+            "duration": 0.01,
+            "timed_out": False,
+        }
+    )
+    online_mock = AsyncMock(return_value={"socket_id": "socket-cloud"})
+    monkeypatch.setattr(
+        command_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: SimpleNamespace(
+            name="cloud-crd",
+            json={
+                "spec": {
+                    "deviceType": "cloud",
+                    "cloudConfig": {"deviceId": "runtime-cloud"},
+                }
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        command_service.device_service,
+        "get_device_online_info_by_type",
+        online_mock,
+    )
+    monkeypatch.setattr(
+        command_service.local_device_command_service,
+        "execute_command",
+        execute_mock,
+    )
+
+    await command_service.execute_configured_device_command(
+        db=object(),
+        user_id=7,
+        device_id="cloud-crd",
+        command_key=command_key,
+        path=path,
+    )
+
+    online_mock.assert_awaited_once_with(
+        7,
+        "runtime-cloud",
+        command_service.DeviceType.CLOUD,
+    )
+    execute_mock.assert_awaited_once()
+    _, kwargs = execute_mock.await_args
+    assert kwargs["device_id"] == "runtime-cloud"
+    assert kwargs["path"] == path
+    assert kwargs.get("command_key") == expected_runtime_command_key
 
 
 @pytest.mark.asyncio
@@ -2648,7 +2881,6 @@ async def test_execute_device_command_endpoint_allows_wework_local_project_works
         }
     )
     monkeypatch.setattr(devices, "execute_configured_device_command", service_mock)
-
     response = await devices.execute_device_command(
         device_id="device-abc",
         request=DeviceCommandRequest(
@@ -2691,6 +2923,10 @@ async def test_execute_device_command_endpoint_does_not_trust_client_workspace_r
         }
     )
     monkeypatch.setattr(devices, "execute_configured_device_command", service_mock)
+    runtime_rpc_mock = AsyncMock(
+        side_effect=devices.RuntimeRpcError("Device is unavailable")
+    )
+    monkeypatch.setattr(devices.runtime_rpc_service, "call", runtime_rpc_mock)
 
     response = await devices.execute_device_command(
         device_id="device-abc",
@@ -2707,6 +2943,7 @@ async def test_execute_device_command_endpoint_does_not_trust_client_workspace_r
     service_mock.assert_awaited_once()
     _, kwargs = service_mock.await_args
     assert kwargs["env"] == {"EXISTING": "1"}
+    runtime_rpc_mock.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -2914,9 +3151,9 @@ async def test_execute_device_command_endpoint_allows_runtime_rpc_workspace(
             "workspaces": [
                 {
                     "workspacePath": workspace_path,
-                    "localTasks": [
+                    "tasks": [
                         {
-                            "localTaskId": "019ef869-1dae-7b32-bb68-6407a8d43159",
+                            "taskId": "019ef869-1dae-7b32-bb68-6407a8d43159",
                             "workspacePath": workspace_path,
                         }
                     ],

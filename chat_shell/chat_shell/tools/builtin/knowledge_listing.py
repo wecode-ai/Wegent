@@ -843,6 +843,69 @@ class KnowledgeListDocumentsTool(BaseTool):
         return response.json()
 
 
+def _build_kb_head_video_sources(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Build video-only sources from kb_head document read results.
+
+    Only generates sources for documents that are:
+      1. Confirmed as video (``source_media_type == "video"``)
+      2. Fully read in one call (``offset == 0`` and ``not has_more``)
+      3. Have a valid ``kb_id`` (required by StreamingState.add_sources)
+      4. Contain parseable video chapter timestamps in content
+
+    Non-video documents produce no sources — preserving existing behavior.
+    """
+    from shared.knowledge.video_segments import extract_all_video_segments
+    from shared.knowledge.video_sources import (
+        VideoSourceIdentity,
+        VideoSourceSegment,
+        build_video_source,
+        video_source_to_payload,
+    )
+
+    sources: list[dict[str, Any]] = []
+    for doc in results:
+        kb_id = doc.get("kb_id")
+        if not kb_id:
+            continue
+        if doc.get("source_media_type") != "video":
+            continue
+        if doc.get("offset", 0) != 0 or doc.get("has_more", False):
+            continue
+        try:
+            document_id = int(doc.get("id"))
+        except (TypeError, ValueError):
+            continue
+
+        parse_result = extract_all_video_segments(doc.get("content", ""))
+        built = build_video_source(
+            identity=VideoSourceIdentity(
+                knowledge_base_id=kb_id,
+                document_id=document_id,
+                title=doc.get("name") or "",
+            ),
+            coverage="complete",
+            segments=[
+                VideoSourceSegment(
+                    start_sec=s.start_sec,
+                    end_sec=s.end_sec,
+                    title=s.title,
+                    description=s.description,
+                )
+                for s in parse_result.segments
+            ],
+            input_truncated=parse_result.truncated,
+        )
+        if built is None:
+            continue
+
+        source = video_source_to_payload(built)
+        source["index"] = len(sources) + 1
+        source["source_type"] = "wegent_video_chapters"
+        sources.append(source)
+
+    return sources
+
+
 class KbHeadTool(BaseTool):
     """Read document content with offset/limit pagination.
 
@@ -1029,7 +1092,10 @@ class KbHeadTool(BaseTool):
 
         logger.info(f"[KbHeadTool] Read {len(results)} documents (package mode)")
 
-        return json.dumps({"documents": results}, ensure_ascii=False)
+        sources = _build_kb_head_video_sources(results)
+        return json.dumps(
+            {"documents": results, "sources": sources}, ensure_ascii=False
+        )
 
     async def _validate_scoped_document_ids_package_mode(
         self,
@@ -1148,4 +1214,7 @@ class KbHeadTool(BaseTool):
 
         logger.info(f"[KbHeadTool] Read {len(results)} documents (HTTP mode)")
 
-        return json.dumps({"documents": results}, ensure_ascii=False)
+        sources = _build_kb_head_video_sources(results)
+        return json.dumps(
+            {"documents": results, "sources": sources}, ensure_ascii=False
+        )

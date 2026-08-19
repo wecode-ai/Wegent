@@ -283,6 +283,7 @@ describe('EnvironmentInfoPopover', () => {
               draft: false,
               checks: 'success',
               mergeability: 'mergeable',
+              mergeQueue: 'not_queued',
             },
           },
         }}
@@ -328,6 +329,7 @@ describe('EnvironmentInfoPopover', () => {
               draft: false,
               checks: 'success',
               mergeability: 'conflicting',
+              mergeQueue: 'not_queued',
             },
           },
         }}
@@ -342,6 +344,48 @@ describe('EnvironmentInfoPopover', () => {
     expect(screen.getByTestId('change-request-conflict')).toHaveTextContent('存在冲突')
     expect(button).toHaveAccessibleName(/存在冲突/)
     expect(button.querySelector('[aria-hidden="true"]')).toHaveClass('text-red-500')
+  })
+
+  test('shows a pending status while the pull request is in the merge queue', () => {
+    const popoverContainer = document.createElement('div')
+    document.body.appendChild(popoverContainer)
+    portalContainers.push(popoverContainer)
+
+    render(
+      <EnvironmentInfoPopover
+        info={{
+          additions: '+2',
+          deletions: '-1',
+          executionTarget: 'local',
+          branchName: 'fix/merge-queue-status',
+          changeRequest: {
+            provider: 'github',
+            state: 'found',
+            changeRequest: {
+              provider: 'github',
+              number: 2779,
+              url: 'https://github.com/wecode-ai/Wegent/pull/2779',
+              title: 'fix(wework): stabilize paused streaming scroll',
+              state: 'open',
+              draft: false,
+              checks: 'success',
+              mergeability: 'mergeable',
+              mergeQueue: 'queued',
+            },
+          },
+        }}
+        popoverContainer={popoverContainer}
+        open
+        onOpenChange={vi.fn()}
+      />
+    )
+
+    const button = screen.getByTestId('change-request-button')
+    expect(screen.getByTestId('change-request-merge-queue')).toHaveTextContent('合并队列中')
+    expect(screen.queryByTestId('change-request-checks')).not.toBeInTheDocument()
+    expect(button).toHaveAccessibleName(/合并队列中/)
+    expect(button).not.toHaveAccessibleName(/检查通过/)
+    expect(button.querySelector('[aria-hidden="true"]')).not.toHaveClass('text-green-500')
   })
 
   test('opens Git hosting settings from a GitLab CLI recovery hint', async () => {

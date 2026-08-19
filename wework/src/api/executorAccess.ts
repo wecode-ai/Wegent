@@ -36,6 +36,10 @@ import type {
   RuntimeTaskQueueReorderResponse,
   RuntimeTranscriptRequest,
   RuntimeTranscriptResponse,
+  RuntimeWorktreeCapabilitiesRequest,
+  RuntimeWorktreeCapabilitiesResponse,
+  RuntimeWorktreePreflightRequest,
+  RuntimeWorktreePreflightResponse,
   RuntimeWorkspaceOpenRequest,
   RuntimeWorkspaceOpenResponse,
   RuntimeWorkspaceRemoveRequest,
@@ -146,6 +150,12 @@ export interface ExecutorRuntimeClient {
   activateRuntimeProject: ReturnType<typeof createRuntimeWorkApi>['activateRuntimeProject']
   reorderRuntimeProjectTasks: ReturnType<typeof createRuntimeWorkApi>['reorderRuntimeProjectTasks']
   setRuntimeTaskPinned: ReturnType<typeof createRuntimeWorkApi>['setRuntimeTaskPinned']
+  getWorktreeCapabilities: (
+    data: RuntimeWorktreeCapabilitiesRequest
+  ) => Promise<RuntimeWorktreeCapabilitiesResponse>
+  preflightWorktree: (
+    data: RuntimeWorktreePreflightRequest
+  ) => Promise<RuntimeWorktreePreflightResponse>
   archiveRuntimeTask: ReturnType<typeof createRuntimeWorkApi>['archiveRuntimeTask']
   renameRuntimeTask: ReturnType<typeof createRuntimeWorkApi>['renameRuntimeTask']
   listArchivedConversations: ReturnType<typeof createRuntimeWorkApi>['listArchivedConversations']
@@ -358,10 +368,21 @@ export function createExecutorClientFromApis({
         }
       : {}),
   }
+  const runtime: ExecutorRuntimeClient = {
+    ...runtimeWorkApi,
+    async getWorktreeCapabilities(data) {
+      await resolve(data.deviceId)
+      return runtimeWorkApi.getWorktreeCapabilities(data)
+    },
+    async preflightWorktree(data) {
+      await resolve(data.deviceId)
+      return runtimeWorkApi.preflightWorktree(data)
+    },
+  }
 
   return {
     registry,
-    runtime: runtimeWorkApi,
+    runtime,
     commands,
     files,
     review: reviewApi ?? {},

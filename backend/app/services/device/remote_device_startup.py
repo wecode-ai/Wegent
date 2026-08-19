@@ -263,6 +263,8 @@ class DefaultRemoteDeviceCommandProvider:
             "DEVICE_ID": context.device_id,
             "DEVICE_NAME": context.device_name,
             "EXECUTOR_MODE": "local",
+            "WEGENT_EXECUTOR_HOME_ID": context.device_id,
+            "WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED": "true",
             "WEGENT_BACKEND_URL": backend_url,
             "WEGENT_SOCKET_URL": socket_url,
             "WEGENT_AUTH_TOKEN": context.auth_token,
@@ -287,8 +289,17 @@ class DefaultRemoteDeviceCommandProvider:
             ]
         )
         command = "\n".join(lines)
+        process_env = {
+            key: value
+            for key, value in env.items()
+            if key
+            not in {
+                "WEGENT_EXECUTOR_HOME_ID",
+                "WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED",
+            }
+        }
         process_command = _build_process_start_command(
-            env,
+            process_env,
             os.getenv(
                 "REMOTE_DEVICE_EXECUTOR_INSTALL_URL",
                 DEFAULT_REMOTE_DEVICE_EXECUTOR_INSTALL_URL,

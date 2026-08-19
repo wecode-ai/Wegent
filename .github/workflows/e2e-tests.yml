@@ -280,7 +280,7 @@ jobs:
 
       - name: Install Playwright system dependencies
         working-directory: ./frontend
-        run: pnpm exec playwright install-deps chromium
+        run: ../.github/scripts/install-playwright-system-deps.sh
 
       - name: Run database migrations
         working-directory: ./backend
@@ -577,7 +577,7 @@ jobs:
 
       - name: Install Playwright system dependencies
         working-directory: ./frontend
-        run: pnpm exec playwright install-deps chromium
+        run: ../.github/scripts/install-playwright-system-deps.sh
 
       - name: Download executor E2E runtime
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
