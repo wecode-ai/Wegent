@@ -17,7 +17,11 @@ from app.models.kind import Kind
 from app.models.knowledge import ContentOrigin, KnowledgeDocument
 from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
 from app.models.user import User
-from app.schemas.knowledge import KnowledgeBaseType, KnowledgeBaseUpdate
+from app.schemas.knowledge import (
+    KnowledgeBaseType,
+    KnowledgeBaseUpdate,
+    KnowledgeDocumentCreate,
+)
 from app.services.knowledge.code_wiki.source import SourceAccessDenied
 from app.services.knowledge.knowledge_service import KnowledgeService
 
@@ -1723,6 +1727,52 @@ def test_deleting_a_code_wiki_with_a_running_generation_stays_refused(
     with pytest.raises(ValueError, match="generation is in progress"):
         KnowledgeService.delete_knowledge_base(test_db, wiki.id, test_user.id)
     assert test_db.get(Kind, wiki.id) is not None
+
+
+def test_document_creation_loses_to_code_wiki_deletion_after_permission_check(
+    test_db: Session,
+    test_user: User,
+    test_session_factory: sessionmaker,
+) -> None:
+    """A document writer must re-check the KB after waiting for its row lock."""
+    wiki = _stored_code_wiki(test_db, test_user, "locked-wiki")
+    test_db.commit()
+    deleting_db = test_session_factory()
+    creating_db = test_session_factory()
+
+    def delete_after_permission_check(*args: object, **kwargs: object) -> bool:
+        assert KnowledgeService.delete_knowledge_base(
+            deleting_db, wiki.id, test_user.id
+        )
+        return True
+
+    try:
+        with patch.object(
+            KnowledgeService,
+            "can_manage_knowledge_base_documents",
+            side_effect=delete_after_permission_check,
+        ):
+            with pytest.raises(ValueError, match="not found or access denied"):
+                KnowledgeService.create_document(
+                    creating_db,
+                    wiki.id,
+                    test_user.id,
+                    KnowledgeDocumentCreate(
+                        name="late-user-document.md",
+                        file_extension="md",
+                    ),
+                )
+        assert (
+            creating_db.query(KnowledgeDocument)
+            .filter(KnowledgeDocument.kind_id == wiki.id)
+            .count()
+            == 0
+        )
+        deleting_db.expire_all()
+        assert deleting_db.get(Kind, wiki.id) is None
+    finally:
+        creating_db.close()
+        deleting_db.close()
 
 
 def test_a_failed_registration_leaves_no_knowledge_base_behind(

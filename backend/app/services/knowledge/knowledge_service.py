@@ -1002,7 +1002,7 @@ class KnowledgeService:
         ):
             raise ValueError("You do not have permission to manage this knowledge base")
 
-        kb = KnowledgeService._lock_knowledge_base_for_deletion(db, kb)
+        kb = KnowledgeService._lock_active_knowledge_base(db, kb)
         if not kb:
             return False
 
@@ -1065,10 +1065,10 @@ class KnowledgeService:
         return True
 
     @staticmethod
-    def _lock_knowledge_base_for_deletion(
+    def _lock_active_knowledge_base(
         db: Session, knowledge_base: Kind
     ) -> Optional[Kind]:
-        """Lock an active KB so deletion and Code Wiki generation serialize."""
+        """Lock an active KB so document writes and deletion serialize."""
         return (
             db.query(Kind)
             .filter(
@@ -1565,6 +1565,10 @@ class KnowledgeService:
             raise ValueError(
                 "You do not have permission to add documents to this knowledge base"
             )
+
+        kb = KnowledgeService._lock_active_knowledge_base(db, kb)
+        if not kb:
+            raise ValueError("Knowledge base not found or access denied")
 
         validated_folder_id = data.folder_id
 
