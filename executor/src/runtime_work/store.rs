@@ -54,6 +54,7 @@ struct PersistedRuntimeWorkIndex {
 }
 
 #[derive(Clone, Default, Deserialize, Serialize)]
+#[serde(from = "PersistedRuntimeTaskInput")]
 #[serde(default)]
 struct PersistedRuntimeTask {
     local_task_id: String,
@@ -72,6 +73,55 @@ struct PersistedRuntimeTask {
     ephemeral: bool,
     runtime_project_key: Option<String>,
     runtime_workspace_roots: Vec<String>,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(default)]
+struct PersistedRuntimeTaskInput {
+    local_task_id: String,
+    thread_id: Option<String>,
+    workspace_path: String,
+    title: String,
+    runtime: String,
+    archived: bool,
+    status: Option<String>,
+    continuable: bool,
+    goal_status: Option<String>,
+    supervisor: Option<super::response::RuntimeSupervisorState>,
+    created_at: i64,
+    updated_at: i64,
+    runtime_handle: Value,
+    parent: Option<Value>,
+    ephemeral: bool,
+    runtime_project_key: Option<String>,
+    runtime_workspace_roots: Vec<String>,
+}
+
+impl From<PersistedRuntimeTaskInput> for PersistedRuntimeTask {
+    fn from(input: PersistedRuntimeTaskInput) -> Self {
+        Self {
+            local_task_id: input.local_task_id,
+            thread_id: input.thread_id,
+            workspace_path: input.workspace_path,
+            title: input.title,
+            runtime: input.runtime,
+            archived: input.archived
+                || input
+                    .status
+                    .as_deref()
+                    .is_some_and(|status| status.eq_ignore_ascii_case("archived")),
+            continuable: input.continuable,
+            goal_status: input.goal_status,
+            supervisor: input.supervisor,
+            created_at: input.created_at,
+            updated_at: input.updated_at,
+            runtime_handle: input.runtime_handle,
+            parent: input.parent,
+            ephemeral: input.ephemeral,
+            runtime_project_key: input.runtime_project_key,
+            runtime_workspace_roots: input.runtime_workspace_roots,
+        }
+    }
 }
 
 impl PersistedRuntimeTask {
@@ -796,5 +846,42 @@ mod tests {
         assert_eq!(restored.completed_at, None);
         assert!(restored.runtime_handle.get("queuePosition").is_none());
         assert!(restored.runtime_handle.get("lastError").is_none());
+    }
+
+    #[test]
+    fn legacy_archived_status_is_migrated_at_the_deserialization_boundary() {
+        let directory = tempfile::tempdir().expect("temporary directory should be created");
+        let index_path = directory.path().join("index.json");
+        fs::write(
+            &index_path,
+            serde_json::to_vec(&serde_json::json!({
+                "version": 1,
+                "tasks": {
+                    "legacy-task": {
+                        "local_task_id": "legacy-task",
+                        "status": "archived"
+                    }
+                },
+                "workspaces": {}
+            }))
+            .expect("legacy index should serialize"),
+        )
+        .expect("legacy index should be written");
+
+        let store = RuntimeWorkStore::new(index_path.clone());
+        let restored = store
+            .get_task("legacy-task")
+            .expect("legacy archived task should be restored");
+        assert_eq!(restored.status, "archived");
+
+        store.update_task("legacy-task", |_| {});
+        let persisted: Value =
+            serde_json::from_slice(&fs::read(index_path).expect("index should be readable"))
+                .expect("index should contain JSON");
+        let task = persisted["tasks"]["legacy-task"]
+            .as_object()
+            .expect("legacy task should be rewritten as metadata");
+        assert_eq!(task.get("archived"), Some(&Value::Bool(true)));
+        assert!(!task.contains_key("status"));
     }
 }

@@ -17,7 +17,7 @@ flowchart LR
     REPO[(base Git workspace)]
     WORKTREE[(managed Worktree)]
     STATE[(Runtime Task Metadata Store<br/>no execution status)]
-    EXECUTION[(execution evidence<br/>turn queue + preparing Worktree)]
+    EXECUTION[(persisted turn queue<br/>queued execution intent)]
     WORKTREE_STATE[(worktrees.json<br/>Worktree lifecycle + snapshot refs)]
     VOLUME[(stable Executor Home volume)]
     ATTEST[deployment durability attestation<br/>persistentStorageVerified]

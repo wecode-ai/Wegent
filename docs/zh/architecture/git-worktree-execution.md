@@ -17,7 +17,7 @@ flowchart LR
     REPO[(主 Git 工作区)]
     WORKTREE[(托管 Worktree)]
     STATE[(Runtime Task Metadata Store<br/>无执行状态)]
-    EXECUTION[(执行证据<br/>turn queue + preparing Worktree)]
+    EXECUTION[(持久化 turn queue<br/>排队执行意图)]
     WORKTREE_STATE[(worktrees.json<br/>Worktree 生命周期 + snapshot refs)]
     VOLUME[(稳定 Executor Home 持久卷)]
     ATTEST[部署持久化证明<br/>persistentStorageVerified]
