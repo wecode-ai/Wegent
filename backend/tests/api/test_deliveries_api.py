@@ -7,6 +7,7 @@
 import io
 import json
 import uuid
+from datetime import datetime
 from typing import Any, BinaryIO
 from unittest.mock import AsyncMock
 
@@ -23,6 +24,8 @@ from app.models.delivery import (
     ProjectWorkflowPlanItem,
     ProjectWorkflowRun,
 )
+from app.models.loop_item_execution import LoopItemExecution
+from app.models.project_chat_message import ProjectChatMessage
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.task import TaskResource
@@ -604,6 +607,14 @@ def test_ai_workflow_plan_is_approved_idempotently_and_advances_from_checkpoint(
     child_id = approved_plan["items"][0]["task_id"]
     assert approved_plan["status"] == "running"
     assert child_id
+    assert approved_plan["items"][0]["task_status"] == "pending"
+
+    refreshed_issue = test_client.get(
+        f"/api/v1/loop-items/{issue['id']}",
+        headers=_auth(test_token),
+    )
+    assert refreshed_issue.status_code == 200
+    assert refreshed_issue.json()["status"] == "pending"
 
     repeated = test_client.post(
         f"/api/v1/loop-items/{issue['id']}/workflow-plan/approve",
@@ -612,10 +623,23 @@ def test_ai_workflow_plan_is_approved_idempotently_and_advances_from_checkpoint(
     assert repeated.status_code == 200
     assert repeated.json()["items"][0]["task_id"] == child_id
 
+    started = test_client.patch(
+        f"/api/v1/loop-items/{child_id}",
+        headers=_auth(test_token),
+        json={"status": "in_progress", "version": 1},
+    )
+    assert started.status_code == 200
+    active_issue = test_client.get(
+        f"/api/v1/loop-items/{issue['id']}",
+        headers=_auth(test_token),
+    )
+    assert active_issue.status_code == 200
+    assert active_issue.json()["status"] == "in_progress"
+
     completed = test_client.patch(
         f"/api/v1/loop-items/{child_id}",
         headers=_auth(test_token),
-        json={"status": "completed", "version": 1},
+        json={"status": "completed", "version": 2},
     )
     assert completed.status_code == 200
 
@@ -696,6 +720,116 @@ def test_ai_workflow_plan_can_materialize_automatically(
     assert child is not None
     assert child.parent_id == issue["id"]
     assert child.assignee_user_id == test_user.id
+
+
+def test_ai_workflow_plan_exposes_coordinator_execution_truth(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+    test_user: User,
+    delivery_project: CloudProject,
+) -> None:
+    issue = LoopItem(
+        id="observable-workflow-issue",
+        cloud_project_id=delivery_project.id,
+        title="Observable workflow",
+        description="",
+        status="pending",
+        priority="medium",
+        created_by_user_id=test_user.id,
+        metadata_json={},
+    )
+    workflow_run = ProjectWorkflowRun(
+        id="observable-workflow-run",
+        cloud_project_id=delivery_project.id,
+        parent_id=issue.id,
+        title="Planning",
+        status="planning",
+        source="ai",
+        created_by_user_id=test_user.id,
+        metadata_json={
+            "stage_id": "__issue__",
+            "plan_version": 1,
+            "automation_run_id": "observable-automation-run",
+        },
+    )
+    issue.metadata_json = {
+        "workflow": {
+            "advancement_policy": "ai",
+            "active_run_id": workflow_run.id,
+            "active_plan_version": 1,
+            "orchestration_status": "planning",
+        }
+    }
+    rule = ProjectAutomationRule(
+        id="observable-coordinator-rule",
+        cloud_project_id=delivery_project.id,
+        title="Workflow coordinator",
+        status="enabled",
+        created_by_user_id=test_user.id,
+        metadata_json={
+            "manager_type": "custom",
+            "model": "test-cloud-model",
+            "execution_environment": "cloud",
+            "execution_device_id": "cloud-device-dev",
+        },
+    )
+    automation_run = ProjectAutomationRun(
+        id="observable-automation-run",
+        cloud_project_id=delivery_project.id,
+        parent_id=rule.id,
+        task_id=issue.id,
+        title="Coordinate workflow",
+        status="running",
+        backend_task_id=42,
+        created_by_user_id=test_user.id,
+        metadata_json={"activity_message_id": "observable-activity"},
+    )
+    execution = LoopItemExecution(
+        loop_item_id=issue.id,
+        cloud_project_id=str(delivery_project.id),
+        executor_owner_user_id=test_user.id,
+        automation_run_id=automation_run.id,
+        execution_environment="cloud",
+        execution_device_id="cloud-device-dev",
+        runtime_device_id="runtime-cloud-device",
+        runtime_task_id="runtime-task-42",
+        status="running",
+        observed_state="running",
+        sync_state="synced",
+        started_at=datetime.utcnow(),
+        heartbeat_at=datetime.utcnow(),
+    )
+    activity = ProjectChatMessage(
+        message_id="observable-activity",
+        project_id=str(delivery_project.id),
+        task_id=issue.id,
+        sender_type="system",
+        sender_name="Workflow coordinator",
+        message_type="activity",
+        content="Generating workflow plan",
+        status="running",
+    )
+    test_db.add_all([issue, workflow_run, rule, automation_run, execution, activity])
+    test_db.commit()
+
+    response = test_client.get(
+        f"/api/v1/loop-items/{issue.id}/workflow-plan",
+        headers=_auth(test_token),
+    )
+
+    assert response.status_code == 200
+    coordinator = response.json()["coordinator_run"]
+    assert coordinator["automation_run_id"] == automation_run.id
+    assert coordinator["manager_type"] == "custom"
+    assert coordinator["model"] == "test-cloud-model"
+    assert coordinator["execution_environment"] == "cloud"
+    assert coordinator["execution_device_id"] == "cloud-device-dev"
+    assert coordinator["runtime_device_id"] == "runtime-cloud-device"
+    assert coordinator["runtime_task_id"] == "runtime-task-42"
+    assert coordinator["backend_task_id"] == 42
+    assert coordinator["activity_message_id"] == activity.message_id
+    assert coordinator["status"] == "running"
 
 
 def test_ai_workflow_rejects_active_run_from_another_issue(
@@ -827,6 +961,34 @@ def test_ai_workflow_without_dag_plans_and_completes_at_issue_scope(
     assert resumed.json()["status"] == "planning"
     assert resumed.json()["stage_id"] == "__issue__"
 
+    stale_runs = [
+        ProjectAutomationRun(
+            cloud_project_id=delivery_project.id,
+            parent_id="coordinator-rule",
+            task_id=issue["id"],
+            title=f"Stale coordinator {index}",
+            status="queued",
+            created_by_user_id=test_user.id,
+        )
+        for index in range(2)
+    ]
+    test_db.add_all(stale_runs)
+    test_db.flush()
+    stale_executions = [
+        LoopItemExecution(
+            loop_item_id=issue["id"],
+            cloud_project_id=str(delivery_project.id),
+            executor_owner_user_id=test_user.id,
+            automation_run_id=run.id,
+            execution_environment="cloud",
+            execution_device_id="cloud-device-dev",
+            status="queued",
+        )
+        for run in stale_runs
+    ]
+    test_db.add_all(stale_executions)
+    test_db.commit()
+
     replanned = test_client.post(
         f"/api/v1/loop-items/{issue['id']}/workflow-plan/replan",
         headers=_auth(test_token),
@@ -834,6 +996,10 @@ def test_ai_workflow_without_dag_plans_and_completes_at_issue_scope(
     assert replanned.status_code == 200
     assert replanned.json()["plan_version"] == 2
     assert replanned.json()["stage_id"] == "__issue__"
+    for execution in stale_executions:
+        test_db.refresh(execution)
+        assert execution.status == "cancelled"
+        assert execution.termination_reason == "cancelled_before_start"
 
     submitted = test_client.post(
         f"/api/v1/loop-items/{issue['id']}/workflow-plan",
@@ -880,6 +1046,103 @@ def test_ai_workflow_without_dag_plans_and_completes_at_issue_scope(
     assert refreshed.json()["workflow"]["active_run_id"] is None
     assert refreshed.json()["workflow"]["current_stage_id"] is None
     assert refreshed.json()["workflow"]["nodes"] == []
+
+
+def test_ai_workflow_replan_waits_for_running_coordinator_cancellation(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+    test_user: User,
+    delivery_project: CloudProject,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.project_automations import project_automation_processor
+
+    monkeypatch.setattr(
+        project_automation_processor,
+        "process",
+        AsyncMock(return_value=1),
+    )
+    delivery_project.metadata_json = {
+        **(delivery_project.metadata_json or {}),
+        "workflow_definition": {
+            "version": 1,
+            "stage_mode": "none",
+            "advancement_policy": "ai",
+            "approval_policy": "required",
+            "ai_automation_rule_id": "coordinator-rule",
+            "nodes": [],
+        },
+    }
+    test_db.commit()
+    issue = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Running coordinator issue"},
+    ).json()
+    automation_run = ProjectAutomationRun(
+        cloud_project_id=delivery_project.id,
+        parent_id="coordinator-rule",
+        task_id=issue["id"],
+        title="Running coordinator",
+        status="running",
+        created_by_user_id=test_user.id,
+    )
+    test_db.add(automation_run)
+    test_db.flush()
+    execution = LoopItemExecution(
+        loop_item_id=issue["id"],
+        cloud_project_id=str(delivery_project.id),
+        executor_owner_user_id=test_user.id,
+        automation_run_id=automation_run.id,
+        execution_environment="cloud",
+        execution_device_id="cloud-device-dev",
+        runtime_device_id="cloud-device-dev",
+        runtime_task_id="codex-queue-running",
+        status="running",
+        start_requested_at=datetime.utcnow(),
+        started_at=datetime.utcnow(),
+    )
+    test_db.add(execution)
+    test_db.commit()
+    monkeypatch.setattr(
+        "app.api.endpoints.deliveries.asyncio.to_thread",
+        AsyncMock(return_value=None),
+    )
+
+    replanned = test_client.post(
+        f"/api/v1/loop-items/{issue['id']}/workflow-plan/replan",
+        headers=_auth(test_token),
+    )
+
+    assert replanned.status_code == 409
+    assert replanned.json()["detail"] == (
+        "Previous AI coordinator execution is still stopping; retry shortly"
+    )
+    test_db.refresh(execution)
+    assert execution.status == "cancel_requested"
+    plan = test_client.get(
+        f"/api/v1/loop-items/{issue['id']}/workflow-plan",
+        headers=_auth(test_token),
+    )
+    assert plan.status_code == 200
+    assert plan.json()["plan_version"] == 1
+
+    from app.services.loop_item_executions.service import (
+        loop_item_execution_service,
+    )
+
+    loop_item_execution_service.confirm_runtime_cancelled(
+        test_db,
+        execution_id=execution.id,
+        note="Runtime stopped",
+    )
+    retried = test_client.post(
+        f"/api/v1/loop-items/{issue['id']}/workflow-plan/replan",
+        headers=_auth(test_token),
+    )
+    assert retried.status_code == 200
+    assert retried.json()["plan_version"] == 2
 
 
 def test_ai_workflow_replans_once_when_a_task_reports_rework(

@@ -2634,6 +2634,42 @@ describe('CloudTodoWorkspace', () => {
     expect((await screen.findAllByText('Updated TODO')).length).toBeGreaterThan(0)
   })
 
+  it('keeps the detail panel closed when an in-flight save finishes', async () => {
+    const workbenchServices = services()
+    let resolveUpdate: ((updated: typeof item) => void) | undefined
+    workbenchServices.deliveryApi!.updateLoopItem = vi.fn(
+      () =>
+        new Promise(resolve => {
+          resolveUpdate = resolve
+        })
+    )
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
+    await userEvent.clear(screen.getByTestId('cloud-todo-detail-title'))
+    await userEvent.type(screen.getByTestId('cloud-todo-detail-title'), 'Updated TODO')
+    await userEvent.click(screen.getByTestId('cloud-todo-save'))
+    await userEvent.click(screen.getByTestId('cloud-todo-detail-close'))
+
+    resolveUpdate?.({
+      ...item,
+      title: 'Updated TODO',
+      version: item.version + 1,
+    })
+
+    await waitFor(() =>
+      expect(screen.queryByTestId('cloud-todo-detail-close')).not.toBeInTheDocument()
+    )
+  })
+
   it('offers every board status when editing a completed TODO', async () => {
     const workbenchServices = services()
     workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({

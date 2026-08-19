@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
@@ -12,15 +13,21 @@ from sqlalchemy.orm import Session
 from app.models.delivery import (
     CloudProject,
     LoopItem,
+    ProjectAutomationRule,
+    ProjectAutomationRun,
     ProjectChatAgent,
     ProjectWorkflowPlanItem,
     ProjectWorkflowRun,
     loop_datetime_is_unset,
+    loop_datetime_value_is_unset,
 )
+from app.models.loop_item_execution import LoopItemExecution
+from app.models.project_chat_message import ProjectChatMessage
 from app.models.user import User
 from app.schemas.delivery import LoopItemCreate
 from app.schemas.issue_workflow import (
     ISSUE_WORKFLOW_SCOPE_ID,
+    WorkflowCoordinatorRunView,
     WorkflowPlanItemCreate,
     WorkflowPlanItemView,
     WorkflowPlanSubmit,
@@ -29,8 +36,21 @@ from app.schemas.issue_workflow import (
 )
 from app.services.cloud_projects.access import BaseRole, require_cloud_project_role
 from app.services.cloud_projects.service import cloud_project_service
+from app.services.loop_item_executions.service import (
+    ACTIVE_STATUSES,
+    STATUS_CANCEL_REQUESTED,
+    execution_display_state,
+    loop_item_execution_service,
+)
+from app.services.loop_item_status_history import write_status_change
 from app.services.loop_items.service import loop_item_service
-from app.services.project_automation_domain import runnable_wegent_team
+from app.services.project_automation_domain import (
+    metadata,
+    runnable_wegent_team,
+    text,
+)
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -64,6 +84,33 @@ class ProjectWorkflowOrchestrationService:
         workflow = self._workflow(issue)
         run = self._active_run(db, issue, workflow)
         return self._view(db, issue, run) if run is not None else None
+
+    def request_coordinator_cancellations(
+        self, db: Session, *, issue_id: str, user_id: int
+    ) -> list[LoopItemExecution]:
+        """Cancel prior coordinator runs before a user-requested replan."""
+
+        issue = self._issue(db, issue_id, user_id, BaseRole.Developer, for_update=True)
+        executions = self._active_coordinator_executions(db, issue, for_update=True)
+        runtime_cancellations: list[LoopItemExecution] = []
+        for execution in executions:
+            cancelled = loop_item_execution_service.cancel(
+                db,
+                execution_id=execution.id,
+                note="Superseded by workflow replanning",
+                commit=False,
+            )
+            if cancelled.status == STATUS_CANCEL_REQUESTED:
+                runtime_cancellations.append(cancelled)
+        db.commit()
+        logger.info(
+            "[IssueWorkflow] Requested coordinator cancellation issue=%s "
+            "executions=%s runtime_cancellations=%s",
+            issue_id,
+            [execution.id for execution in executions],
+            [execution.id for execution in runtime_cancellations],
+        )
+        return runtime_cancellations
 
     def submit_plan(
         self,
@@ -205,6 +252,18 @@ class ProjectWorkflowOrchestrationService:
         workflow["orchestration_status"] = "running"
         run.status = "running"
         run.version += 1
+        if issue.status == "inbox":
+            issue_metadata = dict(issue.metadata_json or {})
+            write_status_change(
+                issue_metadata,
+                project=project,
+                from_status=issue.status,
+                to_status="pending",
+                trigger="workflow_plan_approved",
+                by_user_id=user_id,
+            )
+            issue.metadata_json = issue_metadata
+            issue.status = "pending"
         self._write_workflow(issue, workflow)
         db.commit()
         db.refresh(run)
@@ -294,6 +353,11 @@ class ProjectWorkflowOrchestrationService:
 
     def replan(self, db: Session, *, issue_id: str, user_id: int) -> WorkflowPlanView:
         issue = self._issue(db, issue_id, user_id, BaseRole.Developer, for_update=True)
+        active_executions = self._active_coordinator_executions(db, issue)
+        if active_executions:
+            raise ValueError(
+                "Previous AI coordinator execution is still stopping; retry shortly"
+            )
         workflow = self._workflow(issue)
         current = self._active_run(db, issue, workflow)
         run = self._start_new_plan_version(
@@ -306,6 +370,24 @@ class ProjectWorkflowOrchestrationService:
         db.commit()
         db.refresh(run)
         return self._view(db, issue, run)
+
+    @staticmethod
+    def _active_coordinator_executions(
+        db: Session,
+        issue: LoopItem,
+        *,
+        for_update: bool = False,
+    ) -> list[LoopItemExecution]:
+        query = db.query(LoopItemExecution).filter(
+            LoopItemExecution.loop_item_id == issue.id,
+            LoopItemExecution.cloud_project_id == str(issue.cloud_project_id),
+            LoopItemExecution.agent_id == "",
+            LoopItemExecution.team_id == 0,
+            LoopItemExecution.status.in_(ACTIVE_STATUSES),
+        )
+        if for_update:
+            query = query.with_for_update()
+        return query.order_by(LoopItemExecution.id.asc()).all()
 
     def report_task_outcome(
         self,
@@ -437,7 +519,26 @@ class ProjectWorkflowOrchestrationService:
         if not task_ids:
             return False
         tasks = db.query(LoopItem).filter(LoopItem.id.in_(task_ids)).all()
-        if not tasks or not all(task.status == "completed" for task in tasks):
+        if not tasks:
+            return False
+        if not all(task.status == "completed" for task in tasks):
+            if issue.status in {"inbox", "pending"} and any(
+                task.status in {"in_progress", "in_review"} for task in tasks
+            ):
+                project = db.get(CloudProject, issue.cloud_project_id)
+                issue_metadata = dict(issue.metadata_json or {})
+                if project is not None:
+                    write_status_change(
+                        issue_metadata,
+                        project=project,
+                        from_status=issue.status,
+                        to_status="in_progress",
+                        trigger="workflow_task_started",
+                        by_user_id=None,
+                    )
+                issue.metadata_json = issue_metadata
+                issue.status = "in_progress"
+                issue.version += 1
             return False
         stage_id = self._run_stage(run)
         self._set_stage_status(workflow, stage_id, "completed", items)
@@ -789,6 +890,8 @@ class ProjectWorkflowOrchestrationService:
         run: ProjectWorkflowRun,
     ) -> WorkflowPlanView:
         workflow = self._workflow(issue)
+        items = self._items(db, run.id)
+        task_statuses = self._task_statuses(db, items)
         return WorkflowPlanView(
             run_id=run.id,
             issue_id=issue.id,
@@ -814,11 +917,151 @@ class ProjectWorkflowOrchestrationService:
                     rationale=str((item.metadata_json or {}).get("rationale") or ""),
                     depends_on=list((item.metadata_json or {}).get("depends_on") or []),
                     task_id=item.loop_item_id or None,
+                    task_status=task_statuses.get(item.loop_item_id),
                     status=item.status,
                 )
-                for item in self._items(db, run.id)
+                for item in items
                 if item.status != "superseded"
             ],
+            coordinator_run=self._coordinator_view(db, run),
+        )
+
+    @staticmethod
+    def _task_statuses(
+        db: Session, items: list[ProjectWorkflowPlanItem]
+    ) -> dict[str, str]:
+        task_ids = [item.loop_item_id for item in items if item.loop_item_id]
+        if not task_ids:
+            return {}
+        return {
+            task.id: task.status
+            for task in db.query(LoopItem)
+            .filter(
+                LoopItem.id.in_(task_ids),
+                loop_datetime_is_unset(LoopItem.deleted_at),
+            )
+            .all()
+        }
+
+    @staticmethod
+    def _coordinator_view(
+        db: Session,
+        workflow_run: ProjectWorkflowRun,
+    ) -> WorkflowCoordinatorRunView | None:
+        workflow_metadata = metadata(workflow_run)
+        automation_run_id = text(workflow_metadata.get("automation_run_id"))
+        automation_run = (
+            db.get(ProjectAutomationRun, automation_run_id)
+            if automation_run_id
+            else None
+        )
+        if automation_run is None:
+            return None
+        run_metadata = metadata(automation_run)
+        rule = db.get(ProjectAutomationRule, automation_run.parent_id)
+        rule_metadata = metadata(rule) if rule is not None else {}
+        configured_manager = rule_metadata.get("manager_type")
+        if configured_manager not in {"custom", "wegent"}:
+            return None
+        execution_environment = rule_metadata.get("execution_environment")
+        if execution_environment not in {"local", "cloud", "managed"}:
+            execution_environment = (
+                "managed" if configured_manager == "wegent" else "cloud"
+            )
+        execution = (
+            db.query(LoopItemExecution)
+            .filter(LoopItemExecution.automation_run_id == automation_run.id)
+            .order_by(LoopItemExecution.id.desc())
+            .first()
+        )
+        activity_message_id = text(run_metadata.get("activity_message_id"))
+        activity = (
+            db.query(ProjectChatMessage)
+            .filter(ProjectChatMessage.message_id == activity_message_id)
+            .one_or_none()
+            if activity_message_id
+            else None
+        )
+        timestamps = [automation_run.updated_at]
+        if execution is not None:
+            timestamps.extend(
+                value
+                for value in (
+                    execution.updated_at,
+                    execution.heartbeat_at,
+                    execution.observed_at,
+                )
+                if value is not None and not loop_datetime_value_is_unset(value)
+            )
+        if activity is not None:
+            timestamps.append(activity.updated_at)
+        status = (
+            execution_display_state(execution)
+            if execution is not None
+            else {
+                "pending": "preparing",
+                "queued": "queued",
+                "running": "running",
+                "succeeded": "succeeded",
+                "failed": "failed",
+                "cancelled": "cancelled",
+                "skipped": "cancelled",
+            }.get(automation_run.status or "", "preparing")
+        )
+        return WorkflowCoordinatorRunView(
+            workflow_run_id=workflow_run.id,
+            automation_run_id=automation_run.id,
+            plan_version=int(workflow_metadata.get("plan_version") or 1),
+            stage_id=str(workflow_metadata.get("stage_id") or ISSUE_WORKFLOW_SCOPE_ID),
+            manager_type=configured_manager,
+            manager_name=(
+                rule.title
+                if rule is not None and rule.title
+                else (
+                    "Custom coordinator"
+                    if configured_manager == "custom"
+                    else "Wegent Agent"
+                )
+            ),
+            model=text(rule_metadata.get("model")),
+            execution_environment=execution_environment,
+            execution_device_id=(
+                execution.execution_device_id or None
+                if execution is not None
+                else automation_run.device_id
+                or text(rule_metadata.get("execution_device_id"))
+            ),
+            execution_id=execution.id if execution is not None else None,
+            runtime_device_id=(
+                execution.runtime_device_id or None if execution is not None else None
+            ),
+            runtime_task_id=(
+                execution.runtime_task_id or None if execution is not None else None
+            ),
+            backend_task_id=automation_run.backend_task_id or None,
+            activity_message_id=activity_message_id,
+            status=status,
+            last_activity_at=max(timestamps),
+            started_at=(
+                execution.started_at
+                if execution is not None
+                and not loop_datetime_value_is_unset(execution.started_at)
+                else None
+            ),
+            completed_at=(
+                automation_run.completed_at
+                if not loop_datetime_value_is_unset(automation_run.completed_at)
+                else None
+            ),
+            error=(
+                execution.error_message
+                if execution is not None and execution.error_message
+                else (
+                    automation_run.description
+                    if automation_run.status == "failed" and automation_run.description
+                    else None
+                )
+            ),
         )
 
 

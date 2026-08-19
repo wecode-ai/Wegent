@@ -553,8 +553,11 @@ async fn call_tool(runtime: &TaskRuntime, name: &str, mut arguments: Value) -> V
                 (Err(error), _) | (_, Err(error)) => Err(error),
             }
         }
-        "get_assignment_candidates" | "assign_board_item" => Err(super::TaskRuntimeError::Invalid(
-            "AI-managed assignment requires a backend project space".to_owned(),
+        "get_assignment_candidates"
+        | "assign_board_item"
+        | "submit_workflow_plan"
+        | "report_workflow_outcome" => Err(super::TaskRuntimeError::Invalid(
+            "AI workflow tools require a backend project space".to_owned(),
         )),
         "create_board_item" => {
             let project_id = string_argument(&arguments, "space_id");
@@ -861,6 +864,8 @@ fn is_task_provider_tool(name: &str) -> bool {
             | "get_board_item"
             | "get_assignment_candidates"
             | "assign_board_item"
+            | "submit_workflow_plan"
+            | "report_workflow_outcome"
             | "create_board_item"
             | "update_board_item"
             | "add_board_item_comment"
@@ -992,6 +997,22 @@ async fn call_backend_tool(
                     "assignee_id": arguments.get("assignee_id").and_then(Value::as_str).unwrap_or_default(),
                 }))
         }
+        "submit_workflow_plan" => client
+            .post(format!(
+                "{base}/loop-items/{}/workflow-plan",
+                encode_segment(task_id()?)
+            ))
+            .json(arguments.get("plan").unwrap_or(arguments)),
+        "report_workflow_outcome" => client
+            .post(format!(
+                "{base}/loop-items/{}/workflow-outcome",
+                encode_segment(task_id()?)
+            ))
+            .json(&json!({
+                "verdict": arguments.get("verdict").and_then(Value::as_str).unwrap_or_default(),
+                "summary": arguments.get("summary").and_then(Value::as_str).unwrap_or_default(),
+                "findings": arguments.get("findings").cloned().unwrap_or_else(|| json!([])),
+            })),
         "create_board_item" => client
             .post(format!("{base}/cloud-projects/{project_id}/loop-items"))
             .json(arguments.get("item").unwrap_or(arguments)),
@@ -1485,6 +1506,64 @@ fn tools() -> Vec<Value> {
             }),
         ),
         tool(
+            "submit_workflow_plan",
+            "Submit an AI orchestration plan and apply its configured approval policy",
+            json!({
+                "type": "object",
+                "properties": {
+                    "space_id": {"type": "string"},
+                    "item_id": {"type": "string"},
+                    "plan": {
+                        "type": "object",
+                        "properties": {
+                            "summary": {"type": "string"},
+                            "items": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "client_key": {"type": "string"},
+                                        "stage_id": {"type": "string"},
+                                        "title": {"type": "string"},
+                                        "description": {"type": "string"},
+                                        "assignee_type": {"enum": ["user", "agent"]},
+                                        "assignee_id": {"type": "string"},
+                                        "assignee_name": {"type": "string"},
+                                        "rationale": {"type": "string"},
+                                        "depends_on": {
+                                            "type": "array",
+                                            "items": {"type": "string"}
+                                        }
+                                    },
+                                    "required": ["client_key", "stage_id", "title"]
+                                }
+                            }
+                        },
+                        "required": ["items"]
+                    }
+                },
+                "required": ["plan"]
+            }),
+        ),
+        tool(
+            "report_workflow_outcome",
+            "Report passed verification or request an AI-coordinated rework plan",
+            json!({
+                "type": "object",
+                "properties": {
+                    "space_id": {"type": "string"},
+                    "item_id": {"type": "string"},
+                    "verdict": {"enum": ["passed", "needs_rework"]},
+                    "summary": {"type": "string"},
+                    "findings": {
+                        "type": "array",
+                        "items": {"type": "string"}
+                    }
+                },
+                "required": ["verdict"]
+            }),
+        ),
+        tool(
             "update_board_item",
             "Update an item on a project-space board",
             json!({
@@ -1740,6 +1819,7 @@ fn is_automation_manager_tool(name: &str) -> bool {
             | "get_board_item"
             | "get_assignment_candidates"
             | "assign_board_item"
+            | "submit_workflow_plan"
     )
 }
 
@@ -2243,6 +2323,8 @@ mod tests {
             "get_board_item",
             "get_assignment_candidates",
             "assign_board_item",
+            "submit_workflow_plan",
+            "report_workflow_outcome",
             "list_item_attachments",
             "read_item_attachment",
             "list_space_files",
@@ -2267,9 +2349,11 @@ mod tests {
                 "get_board_item",
                 "get_assignment_candidates",
                 "assign_board_item",
+                "submit_workflow_plan",
             ]
         );
         for forbidden in [
+            "report_workflow_outcome",
             "create_board_item",
             "update_board_item",
             "add_board_item_comment",

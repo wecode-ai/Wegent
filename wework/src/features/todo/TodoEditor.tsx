@@ -503,6 +503,8 @@ export type TodoEditorProps = {
   headerActions?: ReactNode
   selectedTaskId?: string | null
   onCreateTask?: (workflowNodeId?: string) => void
+  onWorkflowChanged?: () => void
+  onOpenWorkflowTask?: (taskId: string) => void
   onRunWorkflowNode?: (workflowNodeId: string, automationRuleId: string) => void
   onUploadWorkflowDeliverables?: (workflowNodeId: string, files: File[]) => Promise<void>
   onDecideWorkflowNode?: (
@@ -558,6 +560,7 @@ export function TodoEditor(props: TodoEditorProps) {
     item?.parent_id ?? draft?.parentId ?? createProps?.initialParent?.id ?? ''
   )
   const [dueDate, setDueDate] = useState(item?.due_at?.slice(0, 10) ?? draft?.dueDate ?? '')
+  const [focusedActivityMessageId, setFocusedActivityMessageId] = useState<string | null>(null)
   const [assigneeTarget, setAssigneeTarget] = useState(
     item?.assignee_team_id
       ? `team:${item.assignee_team_id}`
@@ -1165,6 +1168,7 @@ export function TodoEditor(props: TodoEditorProps) {
         projectChatAgentApi={props.projectChatAgentApi}
         localProjects={props.localProjects}
         selfManagedExecution={props.selfManagedExecution}
+        focusMessageId={focusedActivityMessageId}
         linear
       />
     ) : null
@@ -1777,90 +1781,99 @@ export function TodoEditor(props: TodoEditorProps) {
               {workspacePanel && item ? (
                 <>
                   {item.workflow?.advancement_policy === 'ai' ? (
-                    <IssueWorkflowPlan api={api} item={item} onUpdated={editProps!.onUpdated} />
+                    <IssueWorkflowPlan
+                      api={api}
+                      item={item}
+                      onUpdated={editProps!.onUpdated}
+                      onChanged={props.onWorkflowChanged}
+                      onOpenTask={props.onOpenWorkflowTask}
+                      onViewActivity={setFocusedActivityMessageId}
+                    />
                   ) : null}
-                  <section className="mt-6" data-testid="cloud-todo-tasks">
-                    <div className="flex h-8 items-center gap-2">
-                      <h3 className="text-sm font-semibold text-text-primary">
-                        {item.workflow?.nodes.length
-                          ? t('todo.workflow_runtime_title')
-                          : props.showCurrentTaskOnly
-                            ? t('todo.current_running_task')
-                            : t('todo.tasks')}
-                      </h3>
-                      <span className="text-xs text-text-muted">
-                        {item.workflow?.nodes.length ?? displayedTasks.length}
-                      </span>
-                      {props.onCreateTask && !item.workflow?.nodes.length ? (
-                        <button
-                          type="button"
-                          data-testid="cloud-todo-create-task"
-                          onClick={() => props.onCreateTask?.()}
-                          className="ml-auto flex h-7 items-center gap-1 rounded-lg px-2 text-xs font-medium text-text-secondary transition hover:bg-muted hover:text-text-primary"
-                        >
-                          <Plus className="h-3.5 w-3.5" />
-                          {t('todo.new_task')}
-                        </button>
-                      ) : null}
-                    </div>
-                    {item.workflow?.nodes.length ? (
-                      <IssueWorkflowDag
-                        nodes={item.workflow.nodes}
-                        tasks={tasks}
-                        onCreateTask={props.onCreateTask}
-                        onRunAutomation={props.onRunWorkflowNode}
-                        onOpenTask={props.onOpenTaskConversation}
-                        onUploadDeliverables={props.onUploadWorkflowDeliverables}
-                        onDecide={props.onDecideWorkflowNode}
-                      />
-                    ) : displayedTasks.length === 0 ? (
-                      <p className="rounded-xl border border-dashed border-border px-3 py-4 text-center text-xs text-text-muted">
-                        {props.showCurrentTaskOnly
-                          ? t('todo.no_running_task')
-                          : t('todo.no_linked_task')}
-                      </p>
-                    ) : (
-                      <div className="mt-1 space-y-1">
-                        {displayedTasks.map(task => {
-                          const selected = props.selectedTaskId === task.task_id
-                          return (
-                            <button
-                              key={task.id}
-                              type="button"
-                              data-testid={`cloud-todo-open-task-conversation-${task.id}`}
-                              data-selected={selected ? 'true' : 'false'}
-                              onClick={() => props.onOpenTaskConversation?.(task)}
-                              className={cn(
-                                'flex w-full items-center gap-2.5 rounded-xl border px-3 py-2.5 text-left transition',
-                                selected
-                                  ? 'border-blue-500/50 bg-blue-500/5'
-                                  : 'border-transparent hover:bg-muted'
-                              )}
-                            >
-                              <span
-                                className={cn(
-                                  'h-2 w-2 shrink-0 rounded-full',
-                                  selected ? 'bg-blue-500' : 'bg-text-muted'
-                                )}
-                              />
-                              <span className="min-w-0 flex-1">
-                                <span
-                                  className="block truncate text-sm font-medium text-text-primary"
-                                  title={task.task_title || task.task_id}
-                                >
-                                  {task.task_title || task.task_id}
-                                </span>
-                                <span className="mt-0.5 block truncate text-xs text-text-muted">
-                                  {task.device_id} · {selected ? '当前会话' : '点击展开会话'}
-                                </span>
-                              </span>
-                              <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" />
-                            </button>
-                          )
-                        })}
+                  {item.workflow?.advancement_policy !== 'ai' ? (
+                    <section className="mt-6" data-testid="cloud-todo-tasks">
+                      <div className="flex h-8 items-center gap-2">
+                        <h3 className="text-sm font-semibold text-text-primary">
+                          {item.workflow?.nodes.length
+                            ? t('todo.workflow_runtime_title')
+                            : props.showCurrentTaskOnly
+                              ? t('todo.current_running_task')
+                              : t('todo.tasks')}
+                        </h3>
+                        <span className="text-xs text-text-muted">
+                          {item.workflow?.nodes.length ?? displayedTasks.length}
+                        </span>
+                        {props.onCreateTask && !item.workflow?.nodes.length ? (
+                          <button
+                            type="button"
+                            data-testid="cloud-todo-create-task"
+                            onClick={() => props.onCreateTask?.()}
+                            className="ml-auto flex h-7 items-center gap-1 rounded-lg px-2 text-xs font-medium text-text-secondary transition hover:bg-muted hover:text-text-primary"
+                          >
+                            <Plus className="h-3.5 w-3.5" />
+                            {t('todo.new_task')}
+                          </button>
+                        ) : null}
                       </div>
-                    )}
-                  </section>
+                      {item.workflow?.nodes.length ? (
+                        <IssueWorkflowDag
+                          nodes={item.workflow.nodes}
+                          tasks={tasks}
+                          onCreateTask={props.onCreateTask}
+                          onRunAutomation={props.onRunWorkflowNode}
+                          onOpenTask={props.onOpenTaskConversation}
+                          onUploadDeliverables={props.onUploadWorkflowDeliverables}
+                          onDecide={props.onDecideWorkflowNode}
+                        />
+                      ) : displayedTasks.length === 0 ? (
+                        <p className="rounded-xl border border-dashed border-border px-3 py-4 text-center text-xs text-text-muted">
+                          {props.showCurrentTaskOnly
+                            ? t('todo.no_running_task')
+                            : t('todo.no_linked_task')}
+                        </p>
+                      ) : (
+                        <div className="mt-1 space-y-1">
+                          {displayedTasks.map(task => {
+                            const selected = props.selectedTaskId === task.task_id
+                            return (
+                              <button
+                                key={task.id}
+                                type="button"
+                                data-testid={`cloud-todo-open-task-conversation-${task.id}`}
+                                data-selected={selected ? 'true' : 'false'}
+                                onClick={() => props.onOpenTaskConversation?.(task)}
+                                className={cn(
+                                  'flex w-full items-center gap-2.5 rounded-xl border px-3 py-2.5 text-left transition',
+                                  selected
+                                    ? 'border-blue-500/50 bg-blue-500/5'
+                                    : 'border-transparent hover:bg-muted'
+                                )}
+                              >
+                                <span
+                                  className={cn(
+                                    'h-2 w-2 shrink-0 rounded-full',
+                                    selected ? 'bg-blue-500' : 'bg-text-muted'
+                                  )}
+                                />
+                                <span className="min-w-0 flex-1">
+                                  <span
+                                    className="block truncate text-sm font-medium text-text-primary"
+                                    title={task.task_title || task.task_id}
+                                  >
+                                    {task.task_title || task.task_id}
+                                  </span>
+                                  <span className="mt-0.5 block truncate text-xs text-text-muted">
+                                    {task.device_id} · {selected ? '当前会话' : '点击展开会话'}
+                                  </span>
+                                </span>
+                                <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" />
+                              </button>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </section>
+                  ) : null}
 
                   {showChildren ? (
                     <section className="mt-6" data-testid="cloud-todo-children">

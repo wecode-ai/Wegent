@@ -377,6 +377,7 @@ export interface WorkflowPlanItem {
   rationale: string
   depends_on: string[]
   task_id: string | null
+  task_status: CloudLoopItem['status'] | null
   status: 'proposed' | 'materialized' | 'superseded'
 }
 
@@ -389,6 +390,27 @@ export interface WorkflowPlan {
   status: NonNullable<IssueWorkflowInstance['orchestration_status']>
   summary: string
   items: WorkflowPlanItem[]
+  coordinator_run?: {
+    workflow_run_id: string
+    automation_run_id: string
+    plan_version: number
+    stage_id: string
+    manager_type: 'custom' | 'wegent'
+    manager_name: string
+    model: string | null
+    execution_environment: 'local' | 'cloud' | 'managed'
+    execution_device_id: string | null
+    execution_id: number | null
+    runtime_device_id: string | null
+    runtime_task_id: string | null
+    backend_task_id: number | null
+    activity_message_id: string | null
+    status: string
+    last_activity_at: string
+    started_at: string | null
+    completed_at: string | null
+    error: string | null
+  } | null
 }
 
 export interface CloudProjectFile {

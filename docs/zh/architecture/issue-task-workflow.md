@@ -20,6 +20,9 @@ flowchart LR
     SNAPSHOT --> MODE{推进方式}
     MODE -->|用户管理| HUMAN[用户拆解与分配]
     MODE -->|AI 调度| RUN[(Workflow Run)]
+    RUN --> AUTO_RUN[(Coordinator Automation Run)]
+    AUTO_RUN --> COORD_EXEC[(Coordinator Execution)]
+    COORD_EXEC --> COORD_ACTIVITY[Issue 动态中的运行活动]
     RUN --> SCOPE{规划范围}
     SCOPE -->|无阶段| ISSUE_SCOPE[整个 Issue]
     SCOPE -->|有阶段| READY_SCOPE[当前 ready 阶段]
@@ -123,6 +126,7 @@ sequenceDiagram
         O->>O: 写入待开始并直接进入已配置编排
         O->>E: 预置流程启动全部 ready 自动化阶段
         O->>A: AI 推进启动已配置调度员
+        O->>O: 持久化 workflow run 与 automation run 的唯一关联
         Note over O,U: 不创建空白 Runtime Task，不打开新建任务 Composer
     end
     alt 用户管理
@@ -131,16 +135,25 @@ sequenceDiagram
         U->>B: 发送首条消息后创建具体任务，可选归入 ready 阶段
     else AI 调度
         O->>A: 提供 Issue、提示词、当前规划范围与候选能力
+        A-->>D: 排队、Runtime 状态、心跳与流式活动
         A->>P: 提交结构化任务方案
         alt 执行前需要人工确认
             P-->>V: 展示方案
             alt 用户退回或重新规划
-                V->>O: 创建下一方案版本
+                V->>O: 请求重新规划
+                O->>E: 取消同一 Issue 的全部非终态调度执行
+                E->>R: 停止已启动的 Runtime 进程
+                R-->>E: stopped ACK
+                E-->>O: 旧调度执行全部进入终态
+                O->>O: 创建下一方案版本
+                O->>A: 启动新版本调度员
             else 用户确认
                 V->>B: 按计划项幂等创建并分配具体任务
+                B->>O: 父 Issue 进入待开始，方案项投影具体任务状态
             end
         else 自动执行
             P->>B: 按计划项幂等创建并分配具体任务
+            B->>O: 父 Issue 进入待开始，方案项投影具体任务状态
         end
     end
     opt 阶段配置自动化动作
@@ -185,6 +198,8 @@ sequenceDiagram
 | 编排显式保存与重新进入回填           | Wework `ProjectAutomationView`、`ProjectWorkflowEditor`、ProjectSpace API |
 | 项目编排定义与 Issue 快照            | Backend workflow schema/service；Wework 自动化页 DAG UI                   |
 | AI 调度 → 方案版本与确认             | Backend workflow run/plan service；Wework Issue 编排方案 UI               |
+| Workflow run → 调度执行与活动        | `project_automation_execution.py`、`loop_item_executions/service.py`、`TaskActivityView` |
+| 重新规划 → 取消旧调度执行            | `project_workflow_orchestration.py`、`loop_item_executions/service.py`、`robot_queue_tasks.py` |
 | 已确认方案 → 具体任务                | Backend workflow materializer；标准 LoopItem 创建与指派服务               |
 | 依赖边 → 后继阶段上下文              | Workflow node dependency context；Composer / automation instruction       |
 | 用户管理 / AI 调度 → 具体任务        | 标准 Wework Composer、AI manager、`LoopItemTaskBinding`                   |
@@ -217,12 +232,16 @@ sequenceDiagram
 - AI 调度必须通过创建、指派和启动具体任务推进 Issue。有阶段时每个 AI 创建的任务必须归入一个阶段，并遵守该阶段依赖；无阶段时 AI 可根据 Issue 和提示词自由拆解。
 - AI 调度员是内置云端角色；项目只保存一个云端模型标识，不创建用户可见的调度员实体，也不保存模型密钥。
 - AI 只能提交结构化方案。`approval_policy=required` 时必须停在 `awaiting_approval`，确认前不得创建、指派或启动具体任务；`approval_policy=automatic` 时方案校验成功后立即物化。两种策略都必须通过同一套标准 LoopItem 创建与指派路径，且默认值为 `required`。
+- 方案确认并物化具体任务后，父 Issue 至少进入“待开始”；方案项必须直接展示其具体任务的真实状态并作为重入入口，不能只显示静态方案文案，让用户误以为任务尚未创建。
 - 执行者发现需要返工时必须提交结构化 outcome；`needs_rework` 只废弃当前活动方案，并在有 DAG 时创建同阶段新版本、无 DAG 时创建 Issue 级新版本，不修改历史任务，也不在阶段 DAG 中创建回边。
 - 重复上报同一个任务的同一返工结果必须幂等，不得重复创建方案版本或重复启动调度 AI。
 - 每个方案版本不可变；计划项使用稳定幂等键。重复确认、服务重启或事件重放只能补齐缺失任务，不能重复创建。
 - Issue 快照只保存当前编排摘要和活动 run/version 指针；方案历史与计划项作为独立持久资源保存，不把完整历史堆入 Issue JSON。
 - 活动 run 指针必须同时校验所属 Issue 和项目；客户端提交的快照不得借此读取或操作其他 Issue 的方案。
 - AI 编排只能绑定当前项目内已启用的云端调度规则。进入新规划版本、恢复失败规划或推进到下一阶段时必须实际触发一次调度；触发失败必须把规划标记为 failed，不能永久停在 planning。
+- 一个 workflow run 最多绑定一个 coordinator automation run；事件重放必须复用该关联，重新规划必须先创建新 workflow run，不能为同一方案版本并行创建多个调度执行。
+- 用户重新规划前必须取消同一 Issue 的全部非终态 coordinator execution。queued 或尚未发送 Start 的 claimed execution 可直接终结；已发送 Start 或 running 的 execution 必须等待 Runtime stopped ACK 后才能创建并调度新方案版本。取消未确认时重新规划失败，不得让新旧调度员并发。
+- Issue 方案区只能投影 coordinator automation run 与 execution 的真实排队、启动、Runtime、心跳和终态；`planning` 不能单独证明 AI 仍在运行。完整流式内容继续由 Issue 动态承载，并通过稳定的 activity message id 定位。
 - 父 Issue 推进和新版本创建必须持有父记录行锁；并发任务完成和重复事件不能创建两个下一阶段 run。
 - 暂停只阻止新规划和新物化；已有执行继续按 execution 真值回写。继续执行从第一个未完成检查点恢复。
 - 从某阶段重跑必须保留上游可信结果，将该阶段及下游活动方案标记为 superseded，并在停止受影响的活动执行后创建新版本。

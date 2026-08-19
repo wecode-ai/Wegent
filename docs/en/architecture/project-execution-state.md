@@ -16,6 +16,8 @@ flowchart LR
     FENCE --> TRUTH[(execution-state truth)]
     TRUTH --> NORMALIZE[execution ID sentinel normalization]
     NORMALIZE --> VIEW
+    TRUTH --> ACTIVITY[(durable activity message)]
+    ACTIVITY --> VIEW
     VIEW[pure UI projection]
     SETTINGS[device slot_max] --> SCHEDULER[Runtime scheduler]
     RUN_NOW[user Run now command] --> SCHEDULER
@@ -54,6 +56,7 @@ sequenceDiagram
         S->>S: recover or terminate from real process truth
     end
     S-->>U: normalize 0 to null and return a read-only projection
+    U->>U: locate the same run activity by activity_message_id
 ```
 
 | Edge                                  | Code owner                                                      |
@@ -62,8 +65,9 @@ sequenceDiagram
 | Execution ID storage and normalization | `backend/app/models/loop_item_execution.py`, execution API/schema |
 | Scheduler, slots, and real process    | `executor/src/runner/`, `executor/src/runtime_work/`            |
 | Local IPC and Runtime RPC             | `executor/src/local/app_ipc.rs`, Backend device runtime service |
+| Durable run activity                  | `backend/app/models/project_chat_message.py`, project chat service |
 | UI projection                         | Wework workbench stores and board queries                       |
 
-Invariants: attempt identity and event sequence must match; late events cannot overwrite a newer attempt; terminal state and slot release are atomic; sending cancellation is not cancellation success, and Runtime scope exit must guarantee the stopped acknowledgement; `loop_item_executions.team_id/backend_task_id=0` means unbound only, existence checks must use positive-ID semantics, and APIs/UI must normalize the sentinel to `null`; capacity belongs to each device Runtime scheduler and aggregate capacity is not execution truth; persisted queue state and queued task IDs come from one scheduler snapshot; Run now may temporarily push a selected queued execution beyond `slot_max`, in which case `slot_used` is projected exactly from active task IDs and no other queued execution starts automatically until active usage drops below the limit; UI never derives or writes runtime state.
+Invariants: attempt identity and event sequence must match; late events cannot overwrite a newer attempt; terminal state and slot release are atomic; sending cancellation is not cancellation success, and Runtime scope exit must guarantee the stopped acknowledgement; `loop_item_executions.team_id/backend_task_id=0` means unbound only, existence checks must use positive-ID semantics, and APIs/UI must normalize the sentinel to `null`; capacity belongs to each device Runtime scheduler and aggregate capacity is not execution truth; persisted queue state and queued task IDs come from one scheduler snapshot; Run now may temporarily push a selected queued execution beyond `slot_max`, in which case `slot_used` is projected exactly from active task IDs and no other queued execution starts automatically until active usage drops below the limit; automation and workflow views must project status, environment, device, and heartbeat from the same `LoopItemExecution` and open the same durable run through `activity_message_id`; UI never derives or writes runtime state.
 
 See [project execution state-of-truth refactoring](../wework/developer-guide/wework-project-execution-state-truth-refactoring.md) for the detailed state matrix and acceptance coverage.

@@ -506,6 +506,10 @@ class ProjectAutomationExecution:
             "run_id": str(run.id),
             "run_status": "queued",
         }
+        run_metadata = metadata(run)
+        for key in ("workflow_run_id", "plan_version", "stage_id"):
+            if run_metadata.get(key) is not None:
+                message_metadata[key] = run_metadata[key]
         if model:
             message_metadata["model"] = model
         row = ProjectChatMessage(
@@ -526,7 +530,6 @@ class ProjectAutomationExecution:
         )
         db.add(row)
         db.flush()
-        run_metadata = metadata(run)
         run_metadata["activity_message_id"] = message_id
         run.metadata_json = run_metadata
         db.commit()
@@ -976,12 +979,26 @@ class ProjectAutomationProcessor:
         rule: ProjectAutomationRule,
         trigger: str,
         scheduled_for: datetime,
+        *,
+        commit: bool = True,
     ) -> ProjectAutomationRun:
         if self._run_factory is not None:
-            return self._run_factory(db, rule, trigger, scheduled_for)
+            return self._run_factory(
+                db,
+                rule,
+                trigger,
+                scheduled_for,
+                commit=commit,
+            )
         from app.services.project_automations import project_automation_service
 
-        return project_automation_service._create_run(db, rule, trigger, scheduled_for)
+        return project_automation_service._create_run(
+            db,
+            rule,
+            trigger,
+            scheduled_for,
+            commit=commit,
+        )
 
     async def retry(
         self,
@@ -1097,6 +1114,7 @@ class ProjectAutomationProcessor:
         dispatched = 0
         for rule in query.all():
             rule_metadata = metadata(rule)
+            workflow_run: ProjectWorkflowRun | None = None
             if workflow_replan:
                 event_config = rule_metadata.get("event_config")
                 if not isinstance(event_config, dict) or not event_config.get(
@@ -1110,7 +1128,18 @@ class ProjectAutomationProcessor:
                     continue
                 if not self._matches(rule_metadata.get("event_config"), event):
                     continue
-            run = self._create_run(db, rule, "event", utcnow())
+            event_config = rule_metadata.get("event_config")
+            if isinstance(event_config, dict) and event_config.get(
+                "workflowCoordinator"
+            ):
+                workflow_run = self._workflow_run(db, event)
+                if workflow_run is not None:
+                    workflow_metadata = metadata(workflow_run)
+                    linked_run_id = text(workflow_metadata.get("automation_run_id"))
+                    if linked_run_id and db.get(ProjectAutomationRun, linked_run_id):
+                        dispatched += 1
+                        continue
+            run = self._create_run(db, rule, "event", utcnow(), commit=False)
             run.task_id = event.subject_id
             event_title = event.payload.get("title")
             run.task_title = str(event_title) if event_title else ""
@@ -1122,6 +1151,18 @@ class ProjectAutomationProcessor:
                 "actor_user_id": event.actor_user_id,
                 "payload": event.payload,
             }
+            if workflow_run is not None:
+                workflow_metadata = metadata(workflow_run)
+                run_metadata.update(
+                    {
+                        "workflow_run_id": workflow_run.id,
+                        "plan_version": workflow_metadata.get("plan_version"),
+                        "stage_id": workflow_metadata.get("stage_id"),
+                    }
+                )
+                workflow_metadata["automation_run_id"] = run.id
+                workflow_run.metadata_json = workflow_metadata
+                workflow_run.version += 1
             run.metadata_json = run_metadata
             db.commit()
             await project_automation_execution.dispatch(db, rule, run)
@@ -1133,6 +1174,40 @@ class ProjectAutomationProcessor:
             dispatched,
         )
         return dispatched
+
+    @staticmethod
+    def _workflow_run(
+        db: Session,
+        event: ProjectAutomationEvent,
+    ) -> ProjectWorkflowRun | None:
+        raw_workflow = event.payload.get("workflow")
+        run_id = (
+            raw_workflow.get("active_run_id")
+            if isinstance(raw_workflow, dict)
+            else None
+        )
+        if not isinstance(run_id, str) or not run_id:
+            item = db.get(LoopItem, event.subject_id)
+            item_metadata = metadata(item) if item is not None else {}
+            workflow = item_metadata.get("workflow")
+            run_id = (
+                workflow.get("active_run_id") if isinstance(workflow, dict) else None
+            )
+        if not isinstance(run_id, str) or not run_id:
+            return None
+        run = (
+            db.query(ProjectWorkflowRun)
+            .filter(ProjectWorkflowRun.id == run_id)
+            .with_for_update()
+            .one_or_none()
+        )
+        if (
+            run is None
+            or run.parent_id != event.subject_id
+            or str(run.cloud_project_id) != str(event.project_id)
+        ):
+            raise RuntimeError("Workflow coordinator run binding is invalid")
+        return run
 
     @staticmethod
     def _matches(config: object, event: ProjectAutomationEvent) -> bool:

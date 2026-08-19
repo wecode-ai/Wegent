@@ -21,6 +21,13 @@ WorkflowOrchestrationStatus = Literal[
 ]
 WorkflowPlanItemAssigneeType = Literal["user", "agent", "team"]
 WorkflowTaskOutcomeVerdict = Literal["passed", "needs_rework"]
+WorkflowTaskStatus = Literal[
+    "inbox",
+    "pending",
+    "in_progress",
+    "in_review",
+    "completed",
+]
 ISSUE_WORKFLOW_SCOPE_ID = "__issue__"
 WorkflowNodeStatus = Literal[
     "blocked",
@@ -275,7 +282,30 @@ class WorkflowPlanSubmit(BaseModel):
 class WorkflowPlanItemView(WorkflowPlanItemCreate):
     id: str
     task_id: str | None = None
+    task_status: WorkflowTaskStatus | None = None
     status: Literal["proposed", "materialized", "superseded"]
+
+
+class WorkflowCoordinatorRunView(BaseModel):
+    workflow_run_id: str
+    automation_run_id: str
+    plan_version: int
+    stage_id: str
+    manager_type: Literal["custom", "wegent"]
+    manager_name: str
+    model: str | None = None
+    execution_environment: Literal["local", "cloud", "managed"]
+    execution_device_id: str | None = None
+    execution_id: int | None = None
+    runtime_device_id: str | None = None
+    runtime_task_id: str | None = None
+    backend_task_id: int | None = None
+    activity_message_id: str | None = None
+    status: str
+    last_activity_at: datetime
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    error: str | None = None
 
 
 class WorkflowPlanView(BaseModel):
@@ -287,3 +317,4 @@ class WorkflowPlanView(BaseModel):
     status: WorkflowOrchestrationStatus
     summary: str
     items: list[WorkflowPlanItemView]
+    coordinator_run: WorkflowCoordinatorRunView | None = None

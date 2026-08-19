@@ -58,6 +58,7 @@ interface TaskActivityViewProps {
   // spaces enqueue a robot run inside send), so the shared runtime-task start
   // flow must not run again.
   selfManagedExecution?: boolean
+  focusMessageId?: string | null
   // rail mode: fill a fixed-height side column with an internally scrolling
   // message list and a composer pinned to the bottom
   rail?: boolean
@@ -73,6 +74,7 @@ export function TaskActivityView({
   projectChatAgentApi,
   localProjects = [],
   selfManagedExecution = false,
+  focusMessageId = null,
   rail = false,
   linear = false,
 }: TaskActivityViewProps) {
@@ -373,6 +375,16 @@ export function TaskActivityView({
     () => messages.filter(message => message.taskId === task.id),
     [messages, task]
   )
+
+  useEffect(() => {
+    if (!focusMessageId) return
+    const frame = requestAnimationFrame(() => {
+      listRef.current
+        ?.querySelector<HTMLElement>(`[data-testid="cloud-task-activity-card-${focusMessageId}"]`)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [focusMessageId, threadMessages])
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
@@ -1079,7 +1091,10 @@ export function TaskActivityView({
                     data-testid={`cloud-task-activity-card-${rootId}`}
                     data-executor-type={String(card.root.metadata.executor_type ?? '')}
                     data-manager-type={String(card.root.metadata.manager_type ?? '')}
-                    className="task-detail-comment-card"
+                    className={cn(
+                      'task-detail-comment-card',
+                      focusMessageId === rootId && 'ring-1 ring-blue-500/50'
+                    )}
                   >
                     <ChatMessage
                       message={card.root}

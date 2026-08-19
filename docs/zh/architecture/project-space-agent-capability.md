@@ -56,6 +56,12 @@ sequenceDiagram
     else 云项目离线且未缓存
         G-->>P: 返回明确的 offline/not-cached 错误
     end
+    opt AI 调度员生成方案或执行者上报结果
+        H->>P: submit_workflow_plan / report_workflow_outcome
+        P->>G: 使用 ContextGrant 绑定的 Issue 调用编排 API
+        G->>B: 提交结构化方案或结果
+        B-->>G: 返回持久化的 workflow 状态
+    end
     G-->>P: 返回经过 scope 校验的结果
     P-->>H: MCP tool result
 ```
@@ -85,4 +91,5 @@ sequenceDiagram
 - Gateway 必须拒绝超出 ContextGrant scope 的显式 `space_id/item_id`，不能信任模型传入的标识。
 - Runtime 在首轮前只校验固定能力配置与 ContextGrant，不得用全局 MCP 工具清单阻塞模型。工具清单诊断异步执行；能力调用失败必须返回明确错误，并由会话 UI 保留用户消息和失败回复。
 - 本地、远程和 Backend MCP 使用相同工具 schema 与契约测试；Provider 只决定数据来源，不改变工具语义。
+- AI 调度员会话必须暴露 `get_current_context`、`get_board_item`、`get_assignment_candidates`、`assign_board_item` 和 `submit_workflow_plan`；任务执行者会话必须可用 `report_workflow_outcome`。Executor Adapter 与 Backend MCP 必须代理同名、同 schema、同授权语义的工具，不能让提示词要求一个实际工具清单中不存在的能力。
 - 迁移完成后必须删除 `ensure_space_mcp_server` 的逐任务服务注入路径，不能长期保留双主路径。

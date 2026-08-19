@@ -6,6 +6,7 @@
 import uuid
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
+from unittest.mock import Mock
 
 import pytest
 from fastapi import HTTPException
@@ -716,6 +717,71 @@ def test_task_agent_response_updates_task_ai_state(
     assert ai_state["runtime_device_id"] == "device-1"
     assert ai_state["runtime_task_id"] == "runtime-task-1"
     assert ai_state["trigger_message_id"] == trigger.message_id
+
+
+def test_task_agent_start_syncs_ai_workflow_parent(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.project_workflow_orchestration import (
+        project_workflow_orchestration_service,
+    )
+
+    project = create_project(test_db, test_user)
+    parent = LoopItem(
+        cloud_project_id=project.id,
+        title="Parent Issue",
+        description="",
+        status="pending",
+        created_by_user_id=test_user.id,
+    )
+    test_db.add(parent)
+    test_db.flush()
+    task = LoopItem(
+        cloud_project_id=project.id,
+        parent_id=parent.id,
+        title="Run this task",
+        description="",
+        status="pending",
+        assignee_agent_id="12",
+        created_by_user_id=test_user.id,
+    )
+    test_db.add(task)
+    test_db.commit()
+    sync_parent = Mock(return_value=False)
+    monkeypatch.setattr(
+        project_workflow_orchestration_service,
+        "sync_parent_for_child",
+        sync_parent,
+    )
+    trigger = project_chat_service.send(
+        test_db,
+        user_id=test_user.id,
+        user_name=test_user.user_name,
+        request=ProjectChatSend(
+            clientMessageId=str(uuid.uuid4()),
+            projectId=project.id,
+            taskId=task.id,
+            content="Please execute the task",
+            mentions=[{"type": "agent", "id": "12", "label": "Code Reviewer"}],
+        ),
+    ).message
+
+    project_chat_service.start_agent_response(
+        test_db,
+        user_id=test_user.id,
+        request=ProjectChatAgentStart(
+            projectId=project.id,
+            taskId=task.id,
+            triggerMessageId=trigger.message_id,
+            agentId="12",
+            runtimeDeviceId="device-1",
+            runtimeTaskId="runtime-task-1",
+        ),
+    )
+
+    sync_parent.assert_called_once_with(test_db, task)
 
 
 def test_expired_task_ai_lease_is_presented_unknown_without_writes(

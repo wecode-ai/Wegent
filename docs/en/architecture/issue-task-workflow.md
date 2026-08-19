@@ -20,6 +20,9 @@ flowchart LR
     SNAPSHOT --> MODE{Advancement policy}
     MODE -->|user managed| HUMAN[User plans and assigns]
     MODE -->|AI coordinated| RUN[(Workflow Run)]
+    RUN --> AUTO_RUN[(Coordinator Automation Run)]
+    AUTO_RUN --> COORD_EXEC[(Coordinator Execution)]
+    COORD_EXEC --> COORD_ACTIVITY[Run activity in Issue activity]
     RUN --> SCOPE{Planning scope}
     SCOPE -->|no stages| ISSUE_SCOPE[Whole Issue]
     SCOPE -->|stages| READY_SCOPE[Current ready stage]
@@ -123,6 +126,7 @@ sequenceDiagram
         O->>O: Persist pending and enter the configured orchestration
         O->>E: Preset workflow starts every ready automated stage
         O->>A: AI advancement starts the configured coordinator
+        O->>O: Persist the unique workflow-run to automation-run binding
         Note over O,U: Do not create a blank Runtime Task or open the new-task Composer
     end
     alt User managed
@@ -131,16 +135,25 @@ sequenceDiagram
         U->>B: Create a concrete task on the first message, optionally in a ready stage
     else AI coordinated
         O->>A: Provide Issue, prompt, current planning scope, and candidate capabilities
+        A-->>D: Queue, Runtime, heartbeat, and streaming activity
         A->>P: Submit a structured task plan
         alt Approval is required before execution
             P-->>V: Present the plan
             alt User rejects or replans
-                V->>O: Create the next plan version
+                V->>O: Request replanning
+                O->>E: Cancel every non-terminal coordinator execution for the Issue
+                E->>R: Stop each started Runtime process
+                R-->>E: stopped ACK
+                E-->>O: Prior coordinator executions are terminal
+                O->>O: Create the next plan version
+                O->>A: Dispatch the new-version coordinator
             else User approves
                 V->>B: Idempotently create and assign concrete tasks
+                B->>O: Move the parent Issue to Pending and project concrete-task status onto each plan item
             end
         else Automatic execution
             P->>B: Idempotently create and assign concrete tasks
+            B->>O: Move the parent Issue to Pending and project concrete-task status onto each plan item
         end
     end
     opt Stage has an automation action
@@ -185,6 +198,8 @@ sequenceDiagram
 | Explicit orchestration save and re-entry restoration | Wework `ProjectAutomationView`, `ProjectWorkflowEditor`, and ProjectSpace API             |
 | Project orchestration definition and Issue snapshot  | Backend workflow schemas/services; Wework Automation DAG UI                               |
 | AI coordination to plan versions and approval        | Backend workflow run/plan service; Wework Issue orchestration-plan UI                     |
+| Workflow run to coordinator execution and activity   | `project_automation_execution.py`, `loop_item_executions/service.py`, `TaskActivityView`   |
+| Replanning to prior-coordinator cancellation         | `project_workflow_orchestration.py`, `loop_item_executions/service.py`, `robot_queue_tasks.py` |
 | Approved plan to concrete tasks                      | Backend workflow materializer; standard LoopItem creation/assignment                      |
 | Dependency edge to successor context                 | Workflow node dependency context; Composer / automation instruction                       |
 | User/AI coordination to concrete tasks               | Standard Wework Composer, AI manager, `LoopItemTaskBinding`                               |
@@ -217,12 +232,16 @@ Invariants:
 - AI advances an Issue only by creating, assigning, and starting concrete tasks. With stages, every AI-created task belongs to a stage and follows its dependencies. Without stages, AI may decompose work from the Issue and prompt.
 - The AI coordinator is a built-in cloud role. A project stores one cloud model identifier, not a user-visible coordinator entity or model credentials.
 - AI may only submit a structured plan. With `approval_policy=required`, the run must stop at `awaiting_approval`, and no concrete task may be created, assigned, or started before approval. With `approval_policy=automatic`, a valid plan is materialized immediately. Both policies use the same standard LoopItem creation and assignment path, and the default is `required`.
+- After approval materializes concrete tasks, the parent Issue must be at least Pending. Each plan item must directly project its concrete task's trusted status and remain a stable re-entry point instead of looking like static plan prose.
 - When an assignee finds that rework is required, it must submit a structured outcome. `needs_rework` supersedes only the active plan and creates a new version for the same stage when a DAG exists or for the Issue-level scope without a DAG; it does not rewrite historical tasks or add a back edge to the stage DAG.
 - Repeated submission of the same rework outcome for one task must be idempotent and must not create duplicate plan versions or dispatch the coordinator twice.
 - Every plan version is immutable and every plan item has a stable idempotency key. Repeated approval, service restart, or event replay may only fill missing tasks and must not create duplicates.
 - The Issue snapshot stores only the current orchestration summary and active run/version pointers. Plan history and plan items are separate durable resources rather than an ever-growing Issue JSON document.
 - An active run pointer must be validated against both its owning Issue and project. A client-supplied snapshot must never expose or operate another Issue's plan.
 - AI orchestration may reference only an enabled cloud coordinator in the same project. Entering a new plan version, recovering failed planning, or advancing to the next stage must dispatch exactly one coordinator; dispatch failure moves planning to `failed` instead of leaving it stuck in `planning`.
+- One workflow run may bind at most one coordinator automation run. Event replay must reuse that binding, while replanning must create a new workflow run before dispatching another coordinator execution.
+- Before user-requested replanning, every non-terminal coordinator execution for the same Issue must be cancelled. Queued or claimed executions that have not received Start may terminate immediately; executions with delivered Start or running processes must receive a Runtime stopped ACK before the new plan version is created and dispatched. An unconfirmed cancellation fails replanning instead of running old and new coordinators concurrently.
+- The Issue plan surface may project only the real coordinator automation-run and execution queue, startup, Runtime, heartbeat, and terminal states. `planning` alone does not prove that AI is still running. Full streaming content remains in Issue activity and is addressed by a stable activity-message id.
 - Parent-Issue advancement and plan-version creation hold a row lock on the parent. Concurrent task completion and repeated events must not create duplicate next-stage runs.
 - Pausing stops new planning and materialization only; existing executions continue to project their trusted state. Resume starts at the first incomplete checkpoint.
 - Replaying from a stage preserves trusted upstream results, marks that stage and downstream active plans superseded, and creates a new version only after affected active executions are stopped.

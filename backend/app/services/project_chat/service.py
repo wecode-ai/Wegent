@@ -1435,6 +1435,12 @@ class ProjectChatService:
         task_metadata[TASK_AI_STATE_KEY] = next_state
         task.metadata_json = task_metadata
         task.version += 1
+        if status_value == "running" and task.parent_id:
+            from app.services.project_workflow_orchestration import (
+                project_workflow_orchestration_service,
+            )
+
+            project_workflow_orchestration_service.sync_parent_for_child(db, task)
         logger.debug(
             "[ProjectChat] Task AI state set: "
             "project_id=%s task_id=%s task_status=%s ai_status=%s "

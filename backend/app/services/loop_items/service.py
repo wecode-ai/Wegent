@@ -467,7 +467,7 @@ class LoopItemService:
             agent = db.get(ProjectChatAgent, agent_id)
             if (
                 agent is None
-                or agent.cloud_project_id != cloud_project_id
+                or agent.cloud_project_id != str(cloud_project_id)
                 or agent.status != "active"
             ):
                 raise HTTPException(

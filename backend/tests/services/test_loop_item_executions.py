@@ -1295,11 +1295,31 @@ async def test_workflow_replan_event_dispatches_only_the_configured_coordinator(
             "timezone": "Asia/Shanghai",
         },
     )
-    test_db.add(rule)
+    workflow_run = ProjectWorkflowRun(
+        cloud_project_id=project.id,
+        parent_id=item.id,
+        title="Planning",
+        status="planning",
+        source="ai",
+        created_by_user_id=test_user.id,
+        metadata_json={"stage_id": "analysis", "plan_version": 2},
+    )
+    test_db.add_all([rule, workflow_run])
+    test_db.flush()
+    item.metadata_json = {
+        "workflow": {
+            "advancement_policy": "ai",
+            "active_run_id": workflow_run.id,
+            "active_plan_version": 2,
+        }
+    }
     test_db.commit()
     payload = {
         "title": item.title,
-        "workflow": {"advancement_policy": "ai"},
+        "workflow": {
+            "advancement_policy": "ai",
+            "active_run_id": workflow_run.id,
+        },
         "rework": {
             "verdict": "needs_rework",
             "summary": "Regression failed",
@@ -1325,7 +1345,21 @@ async def test_workflow_replan_event_dispatches_only_the_configured_coordinator(
             automation_id=rule.id,
         )
 
+        repeated = await project_automation_processor.process(
+            test_db,
+            ProjectAutomationEvent(
+                event_type="workflow.replan",
+                project_id=str(project.id),
+                subject_id=item.id,
+                source="workflow",
+                actor_user_id=test_user.id,
+                payload=payload,
+            ),
+            automation_id=rule.id,
+        )
+
     assert dispatched == 1
+    assert repeated == 1
     run = (
         test_db.query(ProjectAutomationRun)
         .filter(ProjectAutomationRun.parent_id == rule.id)
@@ -1336,6 +1370,11 @@ async def test_workflow_replan_event_dispatches_only_the_configured_coordinator(
     assert run.metadata_json["event"]["payload"]["rework"]["summary"] == (
         "Regression failed"
     )
+    assert run.metadata_json["workflow_run_id"] == workflow_run.id
+    assert run.metadata_json["plan_version"] == 2
+    assert run.metadata_json["stage_id"] == "analysis"
+    test_db.refresh(workflow_run)
+    assert workflow_run.metadata_json["automation_run_id"] == run.id
     dispatch.assert_awaited_once_with(test_db, rule, run)
 
 

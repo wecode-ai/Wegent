@@ -16,6 +16,7 @@ use std::{
     time::Duration,
 };
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde_json::{json, Value};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -114,16 +115,24 @@ struct McpChild {
 
 impl McpChild {
     async fn spawn(home: &Path) -> Self {
-        let mut process = Command::new(BIN)
+        Self::spawn_with_context_grant(home, None).await
+    }
+
+    async fn spawn_with_context_grant(home: &Path, context_grant: Option<&str>) -> Self {
+        let mut command = Command::new(BIN);
+        command
             .arg("space-mcp-server")
             .env("WEGENT_EXECUTOR_HOME", home)
             .env_remove("WEGENT_BACKEND_URL")
             .env_remove("WEGENT_AUTH_TOKEN")
+            .env_remove("WEWORK_SPACE_CONTEXT_GRANT")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
+            .stderr(Stdio::piped());
+        if let Some(context_grant) = context_grant {
+            command.env("WEWORK_SPACE_CONTEXT_GRANT", context_grant);
+        }
+        let mut process = command.spawn().unwrap();
         let stdin = process.stdin.take().unwrap();
         let stdout = BufReader::new(process.stdout.take().unwrap());
         let mut child = Self {
@@ -203,6 +212,8 @@ async fn space_mcp_server_handshakes_on_a_legacy_database() {
     assert!(names.contains(&"list_spaces"));
     assert!(names.contains(&"create_board_item"));
     assert!(names.contains(&"get_board_item"));
+    assert!(names.contains(&"submit_workflow_plan"));
+    assert!(names.contains(&"report_workflow_outcome"));
 
     // list_spaces without a backend falls back to local projects and succeeds.
     let spaces = child
@@ -214,6 +225,59 @@ async fn space_mcp_server_handshakes_on_a_legacy_database() {
     assert!(
         spaces.get("error").is_none(),
         "list_spaces failed: {spaces}"
+    );
+
+    child.process.kill().await.unwrap();
+    child.process.wait().await.unwrap();
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+#[tokio::test]
+async fn space_mcp_server_exposes_workflow_submit_to_automation_manager() {
+    let home = temp_home("automation-manager");
+    let _ = std::fs::remove_dir_all(&home);
+    seed_legacy_database(&home);
+    let context_grant = STANDARD.encode(
+        json!({
+            "version": 1,
+            "task_id": "runtime-task",
+            "space_id": "42",
+            "item_id": "PRJ-1",
+            "automation_run_id": "automation-run",
+            "automation_manager": true,
+            "expires_at_unix": 4_102_444_800_i64
+        })
+        .to_string(),
+    );
+
+    let mut child = McpChild::spawn_with_context_grant(&home, Some(context_grant.as_str())).await;
+    child
+        .request(
+            "initialize",
+            json!({
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "space-mcp-contract", "version": "1"},
+            }),
+        )
+        .await;
+    let tools = child.request("tools/list", json!({})).await;
+    let names = tools["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|tool| tool["name"].as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        names,
+        vec![
+            "get_current_context",
+            "get_board_item",
+            "get_assignment_candidates",
+            "assign_board_item",
+            "submit_workflow_plan",
+        ]
     );
 
     child.process.kill().await.unwrap();

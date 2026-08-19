@@ -17,6 +17,7 @@ from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.user import User
 from app.schemas.base_role import BaseRole
+from app.schemas.delivery import LoopItemCreate
 from app.schemas.project_chat import LoopItemApproval, LoopItemAssign
 from app.services.loop_items.service import loop_item_service
 
@@ -162,6 +163,26 @@ def test_assign_to_robot_enters_queue_with_history(
     assert execution.status == "queued"
     assert execution.agent_id == bot.id
     assert execution.assigner_user_id == test_user.id
+
+
+def test_create_task_accepts_active_robot_from_numeric_project_id(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+
+    created = loop_item_service.create(
+        test_db,
+        int(project.id),
+        test_user.id,
+        LoopItemCreate(
+            title="AI workflow child",
+            assignee_agent_id=bot.id,
+        ),
+    )
+
+    assert created.cloud_project_id == project.id
+    assert created.assignee_agent_id == bot.id
 
 
 def test_assign_to_wegent_runtime_robot_keeps_robot_as_queue_identity(

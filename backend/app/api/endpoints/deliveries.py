@@ -4,6 +4,7 @@
 
 """Authenticated project TODO and delivery endpoints."""
 
+import asyncio
 import logging
 
 from fastapi import (
@@ -650,6 +651,18 @@ async def replan_loop_item_workflow_plan(
     current_user: User = Depends(get_current_user),
 ) -> WorkflowPlanView:
     try:
+        runtime_cancellations = (
+            project_workflow_orchestration_service.request_coordinator_cancellations(
+                db,
+                issue_id=item_id,
+                user_id=current_user.id,
+            )
+        )
+        if runtime_cancellations:
+            from app.tasks.robot_queue_tasks import emit_runtime_cancels
+
+            await asyncio.to_thread(emit_runtime_cancels, runtime_cancellations)
+            db.expire_all()
         project_workflow_orchestration_service.replan(
             db, issue_id=item_id, user_id=current_user.id
         )

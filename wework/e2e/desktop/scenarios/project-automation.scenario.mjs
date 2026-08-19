@@ -699,6 +699,55 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         workflow_definition: aiWorkflowDefinition,
       }),
     })
+
+    await control.command('click', `${activeBoard} [data-testid="cloud-todo-add"]`)
+    await control.command('waitFor', `${activeBoard} [data-testid="workspace-issue-input"]`, {
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('fill', `${activeBoard} [data-testid="workspace-issue-input"]`, {
+      value: '真实后端 AI 编排可观测',
+    })
+    await control.command('click', `${activeBoard} [data-testid="workspace-issue-submit"]`)
+    await control.command('waitFor', `${activeBoard} [data-testid="cloud-todo-detail-title"]`, {
+      text: '真实后端 AI 编排可观测',
+      timeoutMs: uiTimeoutMs,
+    })
+    const observableWorkflowIssue = await waitForValue(
+      () => cloudRequest(`/api/v1/cloud-projects/${projectId}/loop-items`),
+      response =>
+        (response.items ?? []).find(item => item.title === '真实后端 AI 编排可观测')?.workflow
+          ?.active_run_id,
+      'The observable AI workflow Issue did not create a planning run',
+      uiTimeoutMs
+    ).then(response => response.items.find(item => item.title === '真实后端 AI 编排可观测'))
+    const observablePlan = await waitForValue(
+      () => cloudRequest(`/api/v1/loop-items/${observableWorkflowIssue.id}/workflow-plan`),
+      plan => Boolean(plan?.coordinator_run?.activity_message_id),
+      'The workflow plan did not expose its coordinator execution',
+      uiTimeoutMs * 2
+    )
+    assert.equal(observablePlan.coordinator_run.model, CLOUD_MODEL_NAME)
+    assert.equal(observablePlan.coordinator_run.execution_environment, 'cloud')
+    assert.equal(observablePlan.coordinator_run.execution_device_id, CLOUD_DEVICE_ID)
+    await control.command('waitFor', '[data-testid="issue-workflow-coordinator-run"]', {
+      text: CLOUD_MODEL_NAME,
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('waitFor', '[data-testid="issue-workflow-coordinator-run"]', {
+      text: CLOUD_DEVICE_ID,
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('clickWhenEnabled', '[data-testid="issue-workflow-view-activity"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command(
+      'waitFor',
+      `[data-testid="cloud-task-activity-card-${observablePlan.coordinator_run.activity_message_id}"]`,
+      { timeoutMs: uiTimeoutMs }
+    )
+    await captureScreenshot(control, 'project-automation-ai-workflow-observable-run.png')
+    await control.command('click', '[data-testid="cloud-todo-detail-close"]')
+
     await cloudRequest(`/api/v1/cloud-projects/${projectId}/automations/${coordinatorRule.id}`, {
       method: 'PATCH',
       body: JSON.stringify({
@@ -775,6 +824,34 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
     )
     assert.equal(approvedPlan.status, 'running')
     assert.ok(approvedPlan.items[0].task_id)
+    assert.equal(approvedPlan.items[0].task_status, 'pending')
+    const approvedIssue = await cloudRequest(`/api/v1/loop-items/${aiWorkflowIssue.id}`)
+    assert.equal(approvedIssue.status, 'pending')
+    await control.command(
+      'waitFor',
+      `[data-testid="issue-workflow-plan-item-${approvedPlan.items[0].id}"]`,
+      {
+        text: '待处理',
+        timeoutMs: uiTimeoutMs,
+      }
+    )
+
+    await control.command(
+      'click',
+      `[data-testid="issue-workflow-plan-item-${approvedPlan.items[0].id}"]`
+    )
+    await control.command('waitFor', `${activeBoard} [data-testid="cloud-todo-detail-title"]`, {
+      text: '分析需求与约束',
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('click', '[data-testid="cloud-todo-detail-close"]')
+    await control.command(
+      'click',
+      `${activeBoard} [data-testid="cloud-todo-card-${aiWorkflowIssue.id}"]`
+    )
+    await control.command('waitFor', '[data-testid="issue-workflow-plan-pause"]', {
+      timeoutMs: uiTimeoutMs,
+    })
 
     await control.command('click', '[data-testid="issue-workflow-plan-pause"]')
     await control.command('waitFor', '[data-testid="issue-workflow-plan-resume"]', {

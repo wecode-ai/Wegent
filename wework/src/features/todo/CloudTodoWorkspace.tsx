@@ -3452,6 +3452,33 @@ export function CloudTodoWorkspace({
             allItems={detailAllItems}
             showChildren={false}
             taskRefreshKey={boardRefreshNonce}
+            onWorkflowChanged={() => setBoardRefreshNonce(value => value + 1)}
+            onOpenWorkflowTask={taskId => {
+              void selectedItemApi
+                .getLoopItem(taskId)
+                .then(child => {
+                  const locatedChild = {
+                    ...child,
+                    project_store: selectedItem.project_store,
+                  }
+                  setItems(current => {
+                    const exists = current.some(item => item.id === locatedChild.id)
+                    return exists
+                      ? current.map(item => (item.id === locatedChild.id ? locatedChild : item))
+                      : [...current, locatedChild]
+                  })
+                  setDetailItems(current => {
+                    const exists = current.some(item => item.id === locatedChild.id)
+                    return exists
+                      ? current.map(item => (item.id === locatedChild.id ? locatedChild : item))
+                      : [...current, locatedChild]
+                  })
+                  setSelectedTaskBinding(null)
+                  setTaskComposerRequest(null)
+                  setSelectedItem(locatedChild)
+                })
+                .catch(() => setBoardRefreshNonce(value => value + 1))
+            }}
             onCreateTask={async workflowNodeId => {
               setSelectedTaskBinding(null)
               let inheritFromTask: RuntimeTaskAddress | null = null
@@ -3500,7 +3527,9 @@ export function CloudTodoWorkspace({
                   setItems(current =>
                     current.map(item => (item.id === locatedUpdated.id ? locatedUpdated : item))
                   )
-                  setSelectedItem(locatedUpdated)
+                  setSelectedItem(current =>
+                    current?.id === locatedUpdated.id ? locatedUpdated : current
+                  )
                 })
                 .catch(() => setBoardRefreshNonce(value => value + 1))
             }}
@@ -3538,7 +3567,9 @@ export function CloudTodoWorkspace({
               setItems(current =>
                 current.map(item => (item.id === locatedUpdated.id ? locatedUpdated : item))
               )
-              setSelectedItem(locatedUpdated)
+              setSelectedItem(current =>
+                current?.id === locatedUpdated.id ? locatedUpdated : current
+              )
               setBoardRefreshNonce(value => value + 1)
             }}
             onDecideWorkflowNode={async (workflowNodeId, action, reason) => {
@@ -3556,7 +3587,9 @@ export function CloudTodoWorkspace({
               setItems(current =>
                 current.map(item => (item.id === locatedUpdated.id ? locatedUpdated : item))
               )
-              setSelectedItem(locatedUpdated)
+              setSelectedItem(current =>
+                current?.id === locatedUpdated.id ? locatedUpdated : current
+              )
               setBoardRefreshNonce(value => value + 1)
             }}
             onClose={() => {
@@ -3582,7 +3615,7 @@ export function CloudTodoWorkspace({
               setDetailItems(current =>
                 current.map(item => (item.id === updated.id ? locatedUpdated : item))
               )
-              setSelectedItem(locatedUpdated)
+              setSelectedItem(current => (current?.id === updated.id ? locatedUpdated : current))
               track('feature_action_completed', { domain: 'board_item', action: 'update' })
             }}
           />

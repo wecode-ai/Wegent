@@ -56,6 +56,12 @@ sequenceDiagram
     else Uncached cloud project while offline
         G-->>P: Return an explicit offline/not-cached error
     end
+    opt AI coordinator submits a plan or an assignee reports an outcome
+        H->>P: submit_workflow_plan / report_workflow_outcome
+        P->>G: Call the orchestration API for the ContextGrant-bound Issue
+        G->>B: Submit the structured plan or outcome
+        B-->>G: Return the persisted workflow state
+    end
     G-->>P: Return the scope-checked result
     P-->>H: MCP tool result
 ```
@@ -85,4 +91,5 @@ Invariants:
 - The Gateway rejects explicit `space_id/item_id` outside the ContextGrant scope and never trusts identifiers supplied by the model.
 - Before the first model turn, Runtime validates only the fixed capability configuration and ContextGrant; it must not block the model on a global MCP inventory request. Tool-inventory diagnostics run asynchronously, and capability failures must produce an explicit error while the conversation UI preserves both the user message and failed assistant response.
 - Local, remote, and Backend MCP implementations share the same tool schema and contract tests. Providers choose data location without changing tool semantics.
+- An AI-coordinator session exposes `get_current_context`, `get_board_item`, `get_assignment_candidates`, `assign_board_item`, and `submit_workflow_plan`; an assignee session can use `report_workflow_outcome`. The Executor Adapter and Backend MCP must proxy the same names, schemas, and authorization semantics so a prompt never requires a capability absent from the negotiated tool inventory.
 - After migration, the per-task `ensure_space_mcp_server` service-injection path is removed; two primary paths must not remain.
