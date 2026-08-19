@@ -9,11 +9,9 @@ import {
   requestToolSearchResults,
   responseCompleted,
   responseCreated,
-  responseFailed,
   selectMcpTool,
-  selectToolSearch,
-  toolSearchResponseEvents,
 } from '../modules/response-protocol.mjs'
+import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 
 const PROJECT_KEY = 'EXT'
 const PROJECT_NAME = '外部事件订阅验收'
@@ -38,7 +36,8 @@ async function readJson(request) {
 }
 
 async function requestJson(baseUrl, token, pathname, options = {}) {
-  const response = await fetch(`${baseUrl}${pathname}`, {
+  const url = pathname.startsWith('http') ? pathname : `${baseUrl}${pathname}`
+  const response = await fetch(url, {
     ...options,
     headers: {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -68,9 +67,45 @@ async function waitForValue(read, predicate, message, timeoutMs) {
 }
 
 function nodeStatuses(issue) {
-  return Object.fromEntries(
-    (issue.workflow?.nodes ?? []).map(node => [node.id, node.status])
-  )
+  return Object.fromEntries((issue.workflow?.nodes ?? []).map(node => [node.id, node.status]))
+}
+
+function toolOutputFor(request, callId) {
+  const visit = value => {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const found = visit(item)
+        if (found !== null) return found
+      }
+      return null
+    }
+    if (!value || typeof value !== 'object') return null
+    if (
+      (value.type === 'function_call_output' || value.type === 'custom_tool_call_output') &&
+      value.call_id === callId
+    ) {
+      return value
+    }
+    for (const nested of Object.values(value)) {
+      const found = visit(nested)
+      if (found !== null) return found
+    }
+    return null
+  }
+  return visit(request.input ?? [])
+}
+
+function registrationResult(payload) {
+  const output = toolOutputFor(payload, REGISTER_CALL_ID)
+  assert.ok(output, 'register_external_reference output is missing from the request')
+  const outputText =
+    typeof output.output === 'string' ? output.output : JSON.stringify(output.output)
+  const marker = outputText.indexOf('\nOutput:\n')
+  const payloadStart = marker >= 0 ? marker + '\nOutput:\n'.length : outputText.search(/[\[{]/)
+  const parsed = JSON.parse(outputText.slice(payloadStart))
+  const content = Array.isArray(parsed) ? parsed[0] : {}
+  const text = typeof content.text === 'string' ? content.text : JSON.stringify(content)
+  return JSON.parse(text)
 }
 
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
@@ -159,11 +194,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       timeoutMs: uiTimeoutMs,
     })
     await control.command('click', '[data-testid="project-workflow-mode-workflow"]')
-    await control.command(
-      'waitFor',
-      '[data-testid="project-workflow-start-start"]',
-      { timeoutMs: uiTimeoutMs }
-    )
+    await control.command('waitFor', '[data-testid="project-workflow-start-start"]', {
+      timeoutMs: uiTimeoutMs,
+    })
     await control.command('waitFor', '[data-testid="project-workflow-end-end"]', {
       timeoutMs: uiTimeoutMs,
     })
@@ -202,11 +235,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       { value: 'merged' }
     )
     await control.command('click', '[data-testid="project-workflow-wait-rule-add-wait-1"]')
-    await control.command(
-      'waitFor',
-      '[data-testid="project-workflow-wait-rule-wait-1-rule-2"]',
-      { timeoutMs: uiTimeoutMs }
-    )
+    await control.command('waitFor', '[data-testid="project-workflow-wait-rule-wait-1-rule-2"]', {
+      timeoutMs: uiTimeoutMs,
+    })
     await control.command(
       'fill',
       '[data-testid="project-workflow-wait-rule-event-wait-1-rule-2"]',
@@ -236,25 +267,21 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       { timeoutMs: uiTimeoutMs }
     )
     await control.command('click', '[data-testid="project-workflow-stage-executor-robot-stage-1"]')
-    await control.command(
-      'waitFor',
-      '[data-testid="project-workflow-stage-automation-stage-1"]',
-      { timeoutMs: uiTimeoutMs }
-    )
+    await control.command('waitFor', '[data-testid="project-workflow-stage-automation-stage-1"]', {
+      timeoutMs: uiTimeoutMs,
+    })
     await control.command(
       'waitFor',
       `[data-testid="project-workflow-stage-automation-stage-1"] option[value="${cloudAgent.id}"]`,
       { timeoutMs: uiTimeoutMs * 2 }
     )
-    await control.command(
-      'select',
-      '[data-testid="project-workflow-stage-automation-stage-1"]',
-      { value: String(cloudAgent.id) }
-    )
+    await control.command('select', '[data-testid="project-workflow-stage-automation-stage-1"]', {
+      value: String(cloudAgent.id),
+    })
     workflowRule = await waitForValue(
       () => cloudRequest(`/api/v1/cloud-projects/${projectId}/automations`),
       items =>
-        items.find(
+        items.some(
           item =>
             item.triggerType === 'workflow' &&
             item.assignmentMode === 'manual' &&
@@ -262,6 +289,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         ),
       'Stage robot workflow rule was not created by the editor',
       uiTimeoutMs * 2
+    ).then(items =>
+      items.find(
+        item =>
+          item.triggerType === 'workflow' &&
+          item.assignmentMode === 'manual' &&
+          String(item.agentId) === String(cloudAgent.id)
+      )
     )
     assert.ok(workflowRule?.id, 'Stage robot workflow rule id is missing')
     await control.command('clickWhenEnabled', '[data-testid="project-workflow-save"]', {
@@ -275,15 +309,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         const stage = nodes.find(node => node.id === 'stage-1')
         return Boolean(
           wait?.node_type === 'wait' &&
-            wait.wait_config?.rules?.some(rule => rule.event_type === 'merged') &&
-            wait.wait_config?.rules?.some(
-              rule =>
-                rule.event_type === 'ci_failed' &&
-                rule.mode === 'debounce' &&
-                rule.action === 'rerun'
-            ) &&
-            stage?.automation_rule_id === workflowRule.id &&
-            stage?.workspace_policy === 'none'
+          wait.wait_config?.rules?.some(rule => rule.event_type === 'merged') &&
+          wait.wait_config?.rules?.some(
+            rule =>
+              rule.event_type === 'ci_failed' && rule.mode === 'debounce' && rule.action === 'rerun'
+          ) &&
+          stage?.automation_rule_id === workflowRule.id &&
+          stage?.workspace_policy === 'none'
         )
       },
       'The workflow definition was not persisted by the real backend',
@@ -294,27 +326,22 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
 
   async function createIssueThroughUi(control, activeBoard) {
     await control.command('click', '[data-testid="cloud-project-board-view"]')
-    if (
-      (await control.command('getElementCount', '[data-testid="cloud-todo-detail-close"]')) > 0
-    ) {
+    if ((await control.command('getElementCount', '[data-testid="cloud-todo-detail-close"]')) > 0) {
       await control.command('click', '[data-testid="cloud-todo-detail-close"]')
     }
     await control.command('click', `${activeBoard} [data-testid="cloud-todo-add"]`)
-    await control.command(
-      'waitFor',
-      `${activeBoard} [data-testid="workspace-issue-input"]`,
-      { timeoutMs: uiTimeoutMs }
-    )
+    await control.command('waitFor', `${activeBoard} [data-testid="workspace-issue-input"]`, {
+      timeoutMs: uiTimeoutMs,
+    })
     await control.command('click', `${activeBoard} [data-testid="workspace-create-task-tab"]`)
     await control.command('fill', `${activeBoard} [data-testid="workspace-issue-input"]`, {
       value: ISSUE_TITLE,
     })
     await control.command('click', `${activeBoard} [data-testid="workspace-issue-submit"]`)
-    await control.command(
-      'waitFor',
-      `${activeBoard} [data-testid="cloud-todo-detail-title"]`,
-      { text: ISSUE_TITLE, timeoutMs: uiTimeoutMs * 2 }
-    )
+    await control.command('waitFor', `${activeBoard} [data-testid="cloud-todo-detail-title"]`, {
+      text: ISSUE_TITLE,
+      timeoutMs: uiTimeoutMs * 2,
+    })
   }
 
   return {
@@ -335,37 +362,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       })
       assert.ok(cloudProject?.id, 'Real cloud project fixture did not return an id')
       const projectId = String(cloudProject.id)
-      cloudAgent = await cloudRequest(
-        `/api/v1/cloud-projects/${projectId}/chat-agents`,
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            name: ROBOT_NAME,
-            runtime: 'codex',
-            model: CLOUD_PUBLIC_MODEL_NAME,
-            systemPrompt: ROBOT_SYSTEM_PROMPT,
-            capabilityDescription: '开发并提交 MR，随后根据外部事件修复问题。',
-            visibility: 'creator_admin',
-            executionEnvironment: 'cloud',
-            executionMode: 'auto',
-            executionDeviceId: CLOUD_DEVICE_ID,
-            localProjectId: null,
-          }),
-        }
-      )
-      assert.ok(cloudAgent?.id, 'Cloud robot fixture was not created')
-      assert.equal(
-        cloudAgent.executionDeviceId,
-        CLOUD_DEVICE_ID,
-        'Cloud robot response lost its persisted execution device'
-      )
-      incomingHook = await cloudRequest(
-        `/api/v1/cloud-projects/${projectId}/incoming-hooks`,
-        {
-          method: 'POST',
-          body: JSON.stringify({ name: 'GitLab E2E' }),
-        }
-      )
+      incomingHook = await cloudRequest(`/api/v1/cloud-projects/${projectId}/incoming-hooks`, {
+        method: 'POST',
+        body: JSON.stringify({ name: 'GitLab E2E' }),
+      })
       assert.ok(incomingHook?.webhook_url, 'Incoming hook fixture did not return a webhook URL')
       assert.match(incomingHook.webhook_url, /\/api\/v1\/incoming-hooks\//)
     },
@@ -373,8 +373,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
     async handleHttp(request, response, url) {
       if (request.method === 'POST' && url.pathname === '/v1/responses' && cloudApi) {
         const payload = await readJson(request)
-        const responseId = `external-event-real-${Date.now()}`
         const serialized = JSON.stringify(payload)
+        const responseId = `external-event-real-${Date.now()}`
         const writeEvents = events => {
           response.writeHead(200, {
             'content-type': 'text/event-stream; charset=utf-8',
@@ -389,12 +389,14 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         }
         if (serialized.includes('E2E_EXTERNAL_EVENT_ROBOT_MARKER')) {
           if (requestContainsToolOutput(payload, REGISTER_CALL_ID)) {
+            const result = registrationResult(payload)
             assert.ok(
-              serialized.includes('"binding_id"'),
+              result.binding_id,
               'register_external_reference did not return a persisted binding'
             )
-            assert.ok(
-              serialized.includes(MR_REF),
+            assert.equal(
+              result.opaque_ref,
+              MR_REF,
               'register_external_reference did not echo the registered opaque reference'
             )
             registrationCompleted = true
@@ -414,16 +416,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
             return true
           }
           const namespace = requestToolSearchResults(payload).find(
-            candidate =>
-              candidate?.type === 'namespace' && candidate.name === 'wework_space'
+            candidate => candidate?.type === 'namespace' && candidate.name === 'wework_space'
           )
           if (namespace) {
-            const tool = selectMcpTool(
-              payload,
-              'wework_space',
-              'register_external_reference',
-              { provider: 'gitlab', opaque_ref: MR_REF }
-            )
+            const tool = selectMcpTool(payload, 'wework_space', 'register_external_reference', {
+              provider: 'gitlab',
+              opaque_ref: MR_REF,
+            })
             writeEvents([
               responseCreated(responseId),
               ...namespacedFunctionCall(
@@ -436,10 +435,23 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
             ])
             return true
           }
-          const search = selectToolSearch(payload, 'register_external_reference')
           writeEvents([
             responseCreated(responseId),
-            ...toolSearchResponseEvents(SEARCH_CALL_ID, search),
+            {
+              type: 'response.output_item.done',
+              output_index: 0,
+              item: {
+                id: SEARCH_CALL_ID,
+                type: 'tool_search_call',
+                status: 'completed',
+                call_id: SEARCH_CALL_ID,
+                execution: 'client',
+                arguments: {
+                  query: 'register_external_reference',
+                  limit: 8,
+                },
+              },
+            },
             responseCompleted(responseId),
           ])
           return true
@@ -455,9 +467,40 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
     },
 
     async verify(control) {
+      await ensureExperimentalFeaturesEnabled(control)
       assert.ok(cloudProject?.id, 'Real cloud project fixture is missing')
-      assert.ok(cloudAgent?.id, 'Real cloud robot fixture is missing')
       const projectId = String(cloudProject.id)
+
+      await waitForValue(
+        () => cloudRequest('/api/devices'),
+        response =>
+          response.items?.some(
+            device => device.device_id === CLOUD_DEVICE_ID && device.status === 'online'
+          ),
+        'Cloud execution device did not register before the robot fixture was created',
+        uiTimeoutMs
+      )
+      cloudAgent = await cloudRequest(`/api/v1/cloud-projects/${projectId}/chat-agents`, {
+        method: 'POST',
+        body: JSON.stringify({
+          name: ROBOT_NAME,
+          runtime: 'codex',
+          model: CLOUD_PUBLIC_MODEL_NAME,
+          systemPrompt: ROBOT_SYSTEM_PROMPT,
+          capabilityDescription: '开发并提交 MR，随后根据外部事件修复问题。',
+          visibility: 'creator_admin',
+          executionEnvironment: 'cloud',
+          executionMode: 'auto',
+          executionDeviceId: CLOUD_DEVICE_ID,
+          localProjectId: null,
+        }),
+      })
+      assert.ok(cloudAgent?.id, 'Cloud robot fixture was not created')
+      assert.equal(
+        cloudAgent.executionDeviceId,
+        CLOUD_DEVICE_ID,
+        'Cloud robot response lost its persisted execution device'
+      )
 
       await control.command('waitFor', '[data-testid="workspace-tab-add"]', {
         timeoutMs: uiTimeoutMs,
@@ -490,11 +533,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       )
       assert.equal(initialStatuses['wait-1'], 'waiting')
       assert.equal(initialStatuses['end'], 'blocked')
-      await control.command(
-        'waitFor',
-        '[data-testid="cloud-todo-workflow-node-wait-1"]',
-        { timeoutMs: uiTimeoutMs }
-      )
+      await control.command('waitFor', '[data-testid="cloud-todo-workflow-node-wait-1"]', {
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command(
         'waitFor',
         '[data-testid="cloud-todo-workflow-wait-mode-wait-1-trigger"]',
@@ -508,7 +549,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       await captureScreenshot(control, 'external-event-04-issue-workflow-instantiated.png')
 
       const runs = await waitForValue(
-        () => cloudRequest(`/api/v1/cloud-projects/${projectId}/automations/${workflowRule.id}/runs`),
+        () =>
+          cloudRequest(`/api/v1/cloud-projects/${projectId}/automations/${workflowRule.id}/runs`),
         items => items.find(item => item.taskId === issue.id),
         `Workflow automation run for "${ISSUE_TITLE}" was not created`,
         uiTimeoutMs
@@ -552,7 +594,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         String(stageRun.id),
         firstExecution.id
       )
-      assert.ok(rerunExecution.id > firstExecution.id, 'Rerun execution did not follow the first run')
+      assert.ok(
+        rerunExecution.id > firstExecution.id,
+        'Rerun execution did not follow the first run'
+      )
       issue = await issueByTitle(projectId, ISSUE_TITLE)
       const rerunStatuses = nodeStatuses(issue)
       assert.equal(rerunStatuses['wait-1'], 'waiting')
@@ -595,9 +640,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
           const statuses = nodeStatuses(item)
           return Boolean(
             item &&
-              statuses['wait-1'] === 'completed' &&
-              statuses['end'] === 'completed' &&
-              item.status === 'in_review'
+            statuses['wait-1'] === 'completed' &&
+            statuses['end'] === 'completed' &&
+            item.status === 'in_review'
           )
         },
         'The merged event did not complete the wait/end nodes and move the Issue to in_review',
