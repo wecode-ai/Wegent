@@ -188,6 +188,12 @@ export function IssueComposer({
     setLocalProjectId(projectId)
     setLocalDeviceWorkspaceId(deviceWorkspaceId)
   }
+  const selectBoard = (nextBoardKey: string) => {
+    if (nextBoardKey === boardKey) return
+    setBoardKey(nextBoardKey)
+    setStatus('inbox')
+    setAssigneeUserId(null)
+  }
   const selectedWorkItemProject =
     projects.find(project => `${project.project_store}:${String(project.id)}` === boardKey) ??
     projects[0] ??
@@ -486,7 +492,7 @@ export function IssueComposer({
               project={selectedWorkItemProject}
               projects={projects}
               onSelectProject={project =>
-                setBoardKey(`${project.project_store}:${String(project.id)}`)
+                selectBoard(`${project.project_store}:${String(project.id)}`)
               }
             />
           ) : undefined
@@ -661,7 +667,7 @@ export function IssueComposer({
                         aria-label={t('todo.issue_project_label', '项目空间')}
                         value={boardKey}
                         disabled={busy || projects.length === 0}
-                        onChange={event => setBoardKey(event.target.value)}
+                        onChange={event => selectBoard(event.target.value)}
                         className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
                       >
                         {!projects.some(
@@ -1008,14 +1014,40 @@ export function IssueComposer({
                 </button>
               </div>
             </div>
-            <div className="mb-2 flex items-center px-1 text-xs text-text-muted">
-              <span className="flex min-w-0 items-center gap-1.5">
+            <div className="mb-2">
+              <label className="relative inline-flex h-8 max-w-full cursor-pointer items-center gap-1.5 rounded-lg px-2 text-xs text-text-muted transition hover:bg-muted hover:text-text-primary">
                 <LayoutDashboard className="h-3.5 w-3.5 shrink-0" />
                 <span className="truncate">
                   {selectedWorkItemProject?.name ??
                     t('workbench.default_work_item_board', '我的任务')}
                 </span>
-              </span>
+                <ChevronDown className="h-3 w-3 shrink-0" />
+                <select
+                  data-testid="workspace-issue-project-compact"
+                  aria-label={t('todo.issue_project_label', '项目空间')}
+                  value={boardKey}
+                  disabled={busy || projects.length === 0}
+                  onChange={event => selectBoard(event.target.value)}
+                  className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
+                >
+                  {!projects.some(
+                    project => `${project.project_store}:${String(project.id)}` === boardKey
+                  ) && boardKey ? (
+                    <option value={boardKey}>
+                      {selectedWorkItemProject?.name ??
+                        t('workbench.default_work_item_board', '我的任务')}
+                    </option>
+                  ) : null}
+                  {projects.map(project => (
+                    <option
+                      key={`${project.project_store}:${String(project.id)}`}
+                      value={`${project.project_store}:${String(project.id)}`}
+                    >
+                      {project.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
             </div>
             {creationMode === 'task' && workbench?.selectProject && selectedLocalProject ? (
               <ConnectedIssueProjectWork

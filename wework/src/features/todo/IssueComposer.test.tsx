@@ -30,6 +30,16 @@ const workItemProject = {
   updated_at: '',
 }
 
+const productProject = {
+  ...workItemProject,
+  id: 22,
+  public_id: 'product-space',
+  project_key: 'PRODUCT',
+  name: '产品空间',
+  project_store: 'backend' as const,
+  task_provider: 'wegent' as const,
+}
+
 function renderWithProjectChat(
   component: React.ReactNode,
   overrides: Partial<ProjectChatControls> = {}
@@ -155,6 +165,34 @@ describe('IssueComposer', () => {
       files: [],
       createTask: true,
       localProjectId: 92,
+    })
+  })
+
+  it('selects the target project space from the compact composer', async () => {
+    const onCreate = vi.fn()
+    render(
+      <IssueComposer
+        projects={[workItemProject, productProject]}
+        initialBoardKey="local:default-work-items"
+        onCancel={vi.fn()}
+        onCreate={onCreate}
+      />
+    )
+
+    await userEvent.selectOptions(
+      screen.getByTestId('workspace-issue-project-compact'),
+      'backend:22'
+    )
+    await userEvent.type(screen.getByTestId('workspace-issue-input'), '发布产品需求')
+    await userEvent.click(screen.getByTestId('workspace-issue-submit'))
+
+    expect(onCreate).toHaveBeenCalledWith({
+      boardKey: 'backend:22',
+      title: '发布产品需求',
+      description: '发布产品需求',
+      files: [],
+      createTask: false,
+      localProjectId: null,
     })
   })
 
