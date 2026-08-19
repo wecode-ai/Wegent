@@ -335,7 +335,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 
 full_desktop_expected='wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"core-task-flow"},{"id":"core-2","name":"Core / shard 2","segments":"model-routing,embedded-browser,claude-runtime,local-harness"},{"id":"core-3","name":"Core / shard 3","segments":"window-lifecycle,conversation-state,temporary-chat"},{"id":"core-4","name":"Core / shard 4","segments":"resilience,runtime-task-queue,goal-lifecycle,supervisor-lifecycle"},{"id":"core-5","name":"Core / shard 5","segments":"rendering-extensions,workspace-attachments,workspace-tabs,priority-filter,automation-lifecycle,project-automation,permission-modes,local-file-preview"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"core-task-flow"},{"id":"core-2","name":"Core / shard 2","segments":"model-routing,embedded-browser,claude-runtime,local-harness"},{"id":"core-3","name":"Core / shard 3","segments":"window-lifecycle,conversation-state,temporary-chat"},{"id":"core-4","name":"Core / shard 4","segments":"resilience,runtime-task-queue,codex-notification-isolation,goal-lifecycle,supervisor-lifecycle"},{"id":"core-5","name":"Core / shard 5","segments":"rendering-extensions,workspace-attachments,workspace-tabs,priority-filter,automation-lifecycle,project-automation,permission-modes,local-file-preview"}]}
 wework_desktop_cloud_e2e=true
 wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shard 1","segments":"core-task-flow,cloud-worktree-create"},{"id":"cloud-2","name":"Cloud / shard 2","segments":"cloud-worktree-capability,cloud-worktree-tools,model-routing,embedded-browser,telemetry-consent"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"cloud-worktree-queued-cancel,window-lifecycle,conversation-state,browser-multi-tabs"},{"id":"cloud-4","name":"Cloud / shard 4","segments":"cloud-worktree-device-restart,resilience,goal-lifecycle,supervisor-lifecycle"},{"id":"cloud-5","name":"Cloud / shard 5","segments":"cloud-worktree-archive-restore,rendering-extensions,workspace-attachments,workspace-tabs,priority-filter,automation-lifecycle,project-automation,plugin-auto-update"}]}
 wework_desktop_other_e2e=true
@@ -472,6 +472,16 @@ wework_desktop_cloud_e2e_matrix={"include":[]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/scenarios/runtime-task-queue.scenario.mjs"
+
+assert_desktop_case "Codex notification isolation scenario is invoked by the core CI shard" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-4","name":"Core / shard 4","segments":"codex-notification-isolation"}]}
+wework_desktop_cloud_e2e=false
+wework_desktop_cloud_e2e_matrix={"include":[]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/scenarios/codex-notification-isolation.scenario.mjs"
 
 assert_desktop_case "plugin files select only their plugin segment" \
   'wework_desktop_e2e=true

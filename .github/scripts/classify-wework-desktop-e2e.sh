@@ -15,6 +15,7 @@ core_segments=(
   supervisor-lifecycle
   resilience
   runtime-task-queue
+  codex-notification-isolation
   conversation-state
   temporary-chat
   workspace-attachments
@@ -74,7 +75,7 @@ core_shards=(
   core-task-flow
   model-routing,embedded-browser,claude-runtime,local-harness
   window-lifecycle,conversation-state,temporary-chat
-  resilience,runtime-task-queue,goal-lifecycle,supervisor-lifecycle
+  resilience,runtime-task-queue,codex-notification-isolation,goal-lifecycle,supervisor-lifecycle
   rendering-extensions,workspace-attachments,workspace-tabs,priority-filter,automation-lifecycle,project-automation,permission-modes,local-file-preview
 )
 
@@ -410,6 +411,10 @@ classify_wework_path() {
     # Runtime queue orchestration has an independently bootstrapped checkpoint.
     wework/e2e/desktop/scenarios/runtime-task-queue.scenario.mjs)
       select_target "core:runtime-task-queue"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/codex-notification-isolation.scenario.mjs)
+      select_target "core:codex-notification-isolation"
       return
       ;;
 
