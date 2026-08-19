@@ -696,37 +696,32 @@ export function TodoEditor(props: TodoEditorProps) {
   // Edit mode loads everything tied to the item id.
   useEffect(() => {
     if (editItemId == null || editProjectId == null) return
-    void Promise.allSettled([
-      api.listDeliveries(editItemId),
-      api.listTaskBindings(editItemId),
-      api.listLoopItemAttachments(editItemId),
-      api.listLoopItemCollaborators(editItemId),
-      api.listCloudProjectMembers(editProjectId),
+    let active = true
+    const applyResult = <T,>(request: Promise<T>, apply: (value: T) => void) => {
+      void request.then(
+        value => {
+          if (active) apply(value)
+        },
+        () => undefined
+      )
+    }
+
+    applyResult(api.listDeliveries(editItemId), response => setDeliveries(response.items))
+    applyResult(api.listTaskBindings(editItemId), setTasks)
+    applyResult(api.listLoopItemAttachments(editItemId), setAttachments)
+    applyResult(api.listLoopItemCollaborators(editItemId), setCollaborators)
+    applyResult(api.listCloudProjectMembers(editProjectId), setProjectMembers)
+    applyResult(
       props.projectChatAgentApi?.list(String(editProjectId)) ?? Promise.resolve([]),
-      props.teamApi?.listTeams() ?? Promise.resolve([]),
-    ]).then(
-      ([
-        deliveryResult,
-        taskResult,
-        attachmentResult,
-        collaboratorResult,
-        memberResult,
-        agentResult,
-        teamResult,
-      ]) => {
-        if (deliveryResult.status === 'fulfilled') setDeliveries(deliveryResult.value.items)
-        if (taskResult.status === 'fulfilled') setTasks(taskResult.value)
-        if (attachmentResult.status === 'fulfilled') setAttachments(attachmentResult.value)
-        if (collaboratorResult.status === 'fulfilled') setCollaborators(collaboratorResult.value)
-        if (memberResult.status === 'fulfilled') setProjectMembers(memberResult.value)
-        if (agentResult.status === 'fulfilled') {
-          setProjectAgents(agentResult.value.filter(agent => agent.status === 'active'))
-        }
-        if (teamResult.status === 'fulfilled') {
-          setWegentTeams(teamResult.value.filter(team => team.is_active !== false))
-        }
-      }
+      agents => setProjectAgents(agents.filter(agent => agent.status === 'active'))
     )
+    applyResult(props.teamApi?.listTeams() ?? Promise.resolve([]), teams =>
+      setWegentTeams(teams.filter(team => team.is_active !== false))
+    )
+
+    return () => {
+      active = false
+    }
   }, [
     api,
     editItemId,

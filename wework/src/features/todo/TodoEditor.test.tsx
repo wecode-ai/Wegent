@@ -67,6 +67,51 @@ function editorElement(item: CloudLoopItem) {
 }
 
 describe('TodoEditor external item sync', () => {
+  it('renders local task bindings without waiting for independent remote directories', async () => {
+    const never = new Promise<never>(() => undefined)
+    const fastBindingsApi = {
+      listDeliveries: vi.fn(() => never),
+      listTaskBindings: vi.fn(async () => [
+        {
+          id: 7,
+          device_id: 'local-device',
+          task_id: 'local-task',
+          task_title: '立即显示的本地任务',
+        },
+      ]),
+      listLoopItemAttachments: vi.fn(() => never),
+      listLoopItemCollaborators: vi.fn(() => never),
+      listCloudProjectMembers: vi.fn(() => never),
+    } as never
+    const projectChatAgentApi = {
+      list: vi.fn(() => never),
+    } as never
+    const teamApi = {
+      listTeams: vi.fn(() => never),
+    } as never
+
+    render(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        item={baseItem}
+        project={project}
+        allItems={[baseItem]}
+        onUpdated={vi.fn()}
+        onAddChild={vi.fn()}
+        onClose={vi.fn()}
+        api={fastBindingsApi}
+        projectChatAgentApi={projectChatAgentApi}
+        teamApi={teamApi}
+        currentUserId={1}
+      />
+    )
+
+    expect(await screen.findByTestId('cloud-todo-open-task-conversation-7')).toHaveTextContent(
+      '立即显示的本地任务'
+    )
+  })
+
   it('shows the automation provenance on a generated task', () => {
     render(
       editorElement({
