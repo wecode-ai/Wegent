@@ -96,7 +96,7 @@ impl RuntimeWorkRpcHandler {
             Ok(Ok(failed_task_ids)) => {
                 for task_id in failed_task_ids {
                     log_executor_event(
-                        "interrupted worktree preparation reconciled",
+                        "interrupted worktree task reconciled without runtime restart",
                         &[("local_task_id", task_id)],
                     );
                 }
