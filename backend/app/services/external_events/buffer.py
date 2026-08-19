@@ -92,7 +92,9 @@ class ExternalEventBuffer:
         try:
             events = self._decode(self._redis().get(key))
             event_id = event.get("event_id")
-            if event_id and any(existing.get("event_id") == event_id for existing in events):
+            if event_id and any(
+                existing.get("event_id") == event_id for existing in events
+            ):
                 return
             events.append(event)
             redis = self._redis()

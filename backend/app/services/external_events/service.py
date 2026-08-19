@@ -31,7 +31,9 @@ class ExternalEventService:
         evaluation_service: ExternalEventEvaluationService | None = None,
     ) -> None:
         self.binding_service = binding_service or external_event_binding_service
-        self.evaluation_service = evaluation_service or external_event_evaluation_service
+        self.evaluation_service = (
+            evaluation_service or external_event_evaluation_service
+        )
 
     def route(
         self,
@@ -68,9 +70,7 @@ class ExternalEventService:
             return "buffered"
         for binding in bindings:
             try:
-                self.evaluation_service.evaluate_event(
-                    db, binding=binding, event=event
-                )
+                self.evaluation_service.evaluate_event(db, binding=binding, event=event)
             except Exception:
                 logger.exception(
                     "[ExternalEvent] Evaluation failed binding=%s provider=%s ref=%s",

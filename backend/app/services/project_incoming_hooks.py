@@ -15,8 +15,8 @@ from sqlalchemy.orm import Session
 
 from app.models.delivery import (
     CloudProject,
-    ProjectIncomingHook,
     ProjectIncomingEvent,
+    ProjectIncomingHook,
     loop_datetime_is_unset,
 )
 from app.models.user import User
@@ -25,9 +25,9 @@ from app.schemas.project_incoming_hook import (
     ProjectIncomingHookCreate,
     ProjectIncomingHookUpdate,
 )
+from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.external_events.adapters import normalize_external_event
 from app.services.external_events.service import external_event_service
-from app.services.cloud_projects.access import require_cloud_project_role
 
 MAX_BODY_BYTES = 1_048_576
 MAX_STORED_PAYLOAD_BYTES = 65_536
@@ -351,9 +351,7 @@ class ProjectIncomingHookService:
         identity = instance_id or event_id or ""
         if not identity:
             return self._body_public_id(hook, raw_body)
-        digest = hashlib.sha256(
-            f"{hook.id}:{provider}:{identity}".encode()
-        ).hexdigest()
+        digest = hashlib.sha256(f"{hook.id}:{provider}:{identity}".encode()).hexdigest()
         return digest[:36]
 
     @staticmethod

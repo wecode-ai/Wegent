@@ -42,7 +42,9 @@ def _gitlab_mr_ref(project: Mapping[str, Any], mr: Mapping[str, Any]) -> str:
     return f"{path}!{iid}" if path and iid is not None else ""
 
 
-def _gitlab(payload: Mapping[str, Any], headers: Mapping[str, str]) -> NormalizedExternalEvent | None:
+def _gitlab(
+    payload: Mapping[str, Any], headers: Mapping[str, str]
+) -> NormalizedExternalEvent | None:
     kind = _text(payload.get("object_kind"))
     header_kind = _text(headers.get("x-gitlab-event")).casefold()
     if kind not in {"merge_request", "pipeline", "note"} and header_kind not in {
@@ -116,7 +118,9 @@ def _gitlab_occurred_at(attributes: Mapping[str, Any]) -> datetime | None:
     return parsed
 
 
-def _generic(payload: Mapping[str, Any], provider: str) -> NormalizedExternalEvent | None:
+def _generic(
+    payload: Mapping[str, Any], provider: str
+) -> NormalizedExternalEvent | None:
     opaque_ref = _text(payload.get("opaque_ref")) or _text(payload.get("reference"))
     event_type = _text(payload.get("event_type"))
     if not opaque_ref or not event_type:

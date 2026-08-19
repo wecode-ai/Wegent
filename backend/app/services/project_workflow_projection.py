@@ -208,7 +208,10 @@ def apply_workflow_nodes(
             # begun (no dependency is still blocked): the robot registers the
             # external reference while its stage is still running, and only
             # the terminal event completes the node later.
-            if not any(statuses.get(str(dependency)) == "blocked" for dependency in dependencies):
+            if not any(
+                statuses.get(str(dependency)) == "blocked"
+                for dependency in dependencies
+            ):
                 node["status"] = "waiting"
                 statuses[str(node.get("id"))] = "waiting"
             continue

@@ -2118,10 +2118,10 @@ class LoopItemExecutionService:
         """Best-effort debounce settle for wait nodes bound to this run."""
 
         try:
+            from app.db.session import SessionLocal
             from app.services.external_events.evaluate import (
                 external_event_evaluation_service,
             )
-            from app.db.session import SessionLocal
 
             with SessionLocal() as db:
                 external_event_evaluation_service.on_execution_terminal(

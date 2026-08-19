@@ -81,7 +81,9 @@ class WaitEventRule(BaseModel):
 
 
 class WaitNodeConfig(BaseModel):
-    rules: list[WaitEventRule] = Field(default_factory=list, min_length=1, max_length=20)
+    rules: list[WaitEventRule] = Field(
+        default_factory=list, min_length=1, max_length=20
+    )
 
 
 class WorkflowNodeDefinition(BaseModel):
@@ -285,7 +287,9 @@ def release_blocked_nodes(
         if node.status != "blocked":
             continue
         if node.node_type == "wait":
-            if not any(statuses.get(dependency) == "blocked" for dependency in node.depends_on):
+            if not any(
+                statuses.get(dependency) == "blocked" for dependency in node.depends_on
+            ):
                 node.status = "waiting"
                 statuses[node.id] = "waiting"
             continue
@@ -314,9 +318,7 @@ def instantiate_workflow(
             status=(
                 "completed"
                 if node.id in start_ids
-                else "ready"
-                if node.id in roots
-                else "blocked"
+                else "ready" if node.id in roots else "blocked"
             ),
         )
         for node in (definition.nodes if definition.stage_mode == "dag" else [])

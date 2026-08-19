@@ -20,11 +20,11 @@ from app.models.delivery import ExternalEventBinding, LoopItem, ProjectAutomatio
 from app.models.loop_item_execution import LoopItemExecution
 from app.schemas.issue_workflow import WaitEventRule, WorkflowNodeInstance
 from app.services.external_events.adapters import NormalizedExternalEvent
-from app.services.external_events.buffer import external_event_buffer
 from app.services.external_events.binding import (
     ExternalEventBindingService,
     external_event_binding_service,
 )
+from app.services.external_events.buffer import external_event_buffer
 from app.services.loop_item_executions.service import loop_item_execution_service
 from app.services.project_workflow_projection import apply_workflow_nodes
 
@@ -34,7 +34,9 @@ ACTIVE_EXECUTION_STATUSES = {"pending_approval", "queued", "claimed", "running"}
 
 
 class ExternalEventEvaluationService:
-    def __init__(self, binding_service: ExternalEventBindingService | None = None) -> None:
+    def __init__(
+        self, binding_service: ExternalEventBindingService | None = None
+    ) -> None:
         self.binding_service = binding_service or external_event_binding_service
 
     def evaluate_event(
@@ -192,9 +194,7 @@ class ExternalEventEvaluationService:
             binding.opaque_ref,
             event.event_type,
         )
-        events = self._merge_events(
-            [*pending, *buffered, self._event_dict(event)]
-        )
+        events = self._merge_events([*pending, *buffered, self._event_dict(event)])
         if events:
             self._start_rerun(db, binding=binding, node=node, rule=rule, events=events)
 
@@ -237,7 +237,9 @@ class ExternalEventEvaluationService:
             loop_item_id=item.id,
             cloud_project_id=str(item.cloud_project_id),
             agent=agent,
-            assigner_user_id=int(run.created_by_user_id or agent.created_by_user_id or 0),
+            assigner_user_id=int(
+                run.created_by_user_id or agent.created_by_user_id or 0
+            ),
             environment=str(self._agent_env(agent)),
             execution_device_id=self._agent_device(agent),
             priority=item.priority,
@@ -262,12 +264,16 @@ class ExternalEventEvaluationService:
 
     @staticmethod
     def _rerun_instruction(rule: WaitEventRule, events: list[dict[str, Any]]) -> str:
-        summaries = [str(event.get("summary") or "") for event in events if event.get("summary")]
+        summaries = [
+            str(event.get("summary") or "") for event in events if event.get("summary")
+        ]
         body = "\n".join(f"- {summary}" for summary in summaries) if summaries else ""
         base = (rule.rerun_prompt or "").strip()
         if not body:
             return base
-        return f"{base}\n\n外部事件概述：\n{body}" if base else f"外部事件概述：\n{body}"
+        return (
+            f"{base}\n\n外部事件概述：\n{body}" if base else f"外部事件概述：\n{body}"
+        )
 
     @staticmethod
     def _persist_instruction(db: Session, item: LoopItem, instruction: str) -> None:
@@ -384,7 +390,9 @@ class ExternalEventEvaluationService:
 
     @staticmethod
     def _mutable_nodes(workflow: dict[str, Any]) -> list[dict[str, Any]]:
-        return [dict(node) for node in workflow.get("nodes") or [] if isinstance(node, dict)]
+        return [
+            dict(node) for node in workflow.get("nodes") or [] if isinstance(node, dict)
+        ]
 
     @staticmethod
     def _metadata(binding: ExternalEventBinding) -> dict[str, Any]:
@@ -395,9 +403,7 @@ class ExternalEventEvaluationService:
     def _node_id(binding: ExternalEventBinding) -> str:
         return str(
             (
-                binding.metadata_json
-                if isinstance(binding.metadata_json, dict)
-                else {}
+                binding.metadata_json if isinstance(binding.metadata_json, dict) else {}
             ).get("workflow_node_id")
             or ""
         )
@@ -440,13 +446,13 @@ class ExternalEventEvaluationService:
             opaque_ref=opaque_ref,
             event_type=event_type,
             event_id=(
-                str(value["event_id"])
-                if value.get("event_id") is not None
-                else None
+                str(value["event_id"]) if value.get("event_id") is not None else None
             ),
             summary=str(value.get("summary") or ""),
             source_url=(
-                str(value["source_url"]) if value.get("source_url") is not None else None
+                str(value["source_url"])
+                if value.get("source_url") is not None
+                else None
             ),
             occurred_at=None,
             detail=value.get("detail") if isinstance(value.get("detail"), dict) else {},
