@@ -345,6 +345,7 @@ export async function createDesktopScenario({
   const requests = []
   let active = false
   let cloudEnvironment = null
+  let cancellationConnectionClosed = false
   let lateCancellationCompleted = false
   let releaseCancellation
   const cancellationRelease = new Promise(resolvePromise => {
@@ -384,6 +385,9 @@ export async function createDesktopScenario({
           'cache-control': 'no-cache',
           connection: 'keep-alive',
           'content-type': 'text/event-stream; charset=utf-8',
+        })
+        response.once('close', () => {
+          cancellationConnectionClosed = true
         })
         response.flushHeaders()
         const stream = streamingTextEvents('claude-cancel-late', LOCAL_CANCELLATION_COMPLETION)
@@ -504,6 +508,11 @@ export async function createDesktopScenario({
       await control.command('waitFor', '[data-testid="assistant-stopped-notice"]', {
         timeoutMs: uiTimeoutMs,
       })
+      await waitFor(
+        () => cancellationConnectionClosed,
+        'The cancelled Claude Code request connection did not close',
+        runtimeTimeoutMs
+      )
       releaseCancellation()
       await waitFor(
         () => lateCancellationCompleted,

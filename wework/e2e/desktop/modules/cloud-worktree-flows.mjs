@@ -796,17 +796,17 @@ async function verifyDeviceRestart(context) {
       WORKBENCH_READY_TIMEOUT_MS,
       'The reconciled task did not become failed and stopped'
     )
-    const runtimeIndex = await readJson(runtimeWorkPath('index.json'))
-    assert.match(
-      runtimeIndex.tasks?.[task.taskId]?.runtime_handle?.lastError ?? '',
-      /runtime was not resumed/i,
-      'Reconcile did not persist the no-auto-resume diagnostic'
-    )
     const worktrees = await readJson(runtimeWorkPath('worktrees.json'))
+    const worktreeRecord = worktrees.records?.[task.workspacePath]
     assert.equal(
-      worktrees.records?.[task.workspacePath]?.state,
+      worktreeRecord?.state,
       'active',
       'Reconcile did not keep the valid Worktree manageable'
+    )
+    assert.match(
+      worktreeRecord?.lastError ?? '',
+      /runtime was not resumed/i,
+      'Reconcile did not persist the no-auto-resume diagnostic on the Worktree'
     )
     assert.equal(
       await pathExists(task.workspacePath),
