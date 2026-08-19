@@ -140,6 +140,7 @@ export async function loadProjectSpaceOptions(
   for (const result of results) {
     if (result.status !== 'fulfilled') continue
     for (const option of result.value) {
+      if (isDefaultWorkItemProject(option.project)) continue
       if (!options.has(option.key)) options.set(option.key, option)
     }
   }

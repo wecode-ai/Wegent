@@ -9,7 +9,13 @@ sidebar_position: 25
 ```mermaid
 flowchart LR
     ISSUE[Issue / 项目会话] --> GRANT[Session ContextGrant<br/>session_id + space_id + item_id + scopes]
-    GENERIC[普通任务] --> SESSION[Agent Session]
+    GENERIC[普通任务] --> MY_TASKS[“我的任务”基础归属<br/>本地 Runtime 真值]
+    GENERIC --> ROUTE{Composer 项目空间选择}
+    ROUTE -->|未选择| DEFAULT_CONTEXT[默认“我的任务”上下文]
+    ROUTE -->|已选择| SELECTED[所选项目空间上下文]
+    DEFAULT_CONTEXT --> SESSION[Agent Session]
+    SELECTED --> SESSION
+    MY_TASKS --> MY_WORK[“我的任务”个人汇总]
     GRANT --> SESSION
     SESSION --> CLIENT[Agent Harness MCP Client<br/>按会话携带可选 ContextGrant]
     CLIENT --> ENDPOINT[Executor 常驻 loopback MCP Endpoint]
@@ -36,7 +42,9 @@ sequenceDiagram
     participant B as Backend Provider
 
     W->>G: App 启动时准备本地 Project-space Provider
-    W->>H: 创建 Agent Session
+    W->>W: 将任务写入“我的任务”基础归属
+    W->>W: 解析 Composer 项目空间选择；未选择时使用默认“我的任务”上下文
+    W->>H: 创建 Agent Session，并附加可选项目空间上下文
     W->>H: 提供默认启用的合法 transport 声明
     opt 项目或 Issue 会话
         W->>H: 注入短期 ContextGrant
@@ -74,19 +82,21 @@ sequenceDiagram
     P-->>H: MCP tool result
 ```
 
-| 边                                           | 代码归属                                                          |
-| -------------------------------------------- | ----------------------------------------------------------------- |
-| Wework 启动 → Local Provider 生命周期        | Wework Tauri local executor；Executor local ProjectSpace provider |
-| Agent Session → ContextGrant                 | Wework Runtime 消息元数据；Executor session context registry      |
-| Agent Session → 常驻 MCP Endpoint             | Executor Codex adapter；Executor `task_runtime/mcp_http.rs`        |
-| Codex → project-space capability             | Codex MCP Client；Executor loopback Endpoint                       |
-| Plugin → Codex 使用说明                      | Wework 内置 `wework-space` Skill Plugin                            |
-| Gateway → Local Provider                     | Executor `task_runtime` 与本地 ProjectSpace provider              |
-| Gateway → Backend Provider                   | Executor authenticated Backend ProjectSpace client                |
-| MCP → Delivery 生命周期                      | Executor `task_runtime/mcp.rs`、Delivery API 与本地 ProjectSpace  |
-| Delivery → 当前 workflow node                | ContextGrant Runtime 地址、`LoopItemTaskBinding`、Delivery 服务   |
-| 云端 Agent → Backend MCP                     | Backend `wework_space` MCP                                        |
-| 统一工具契约 → 全部 Adapter                  | 共享 schema、工具名、权限语义与契约测试                           |
+| 边                                    | 代码归属                                                          |
+| ------------------------------------- | ----------------------------------------------------------------- |
+| Wework 启动 → Local Provider 生命周期 | Wework Tauri local executor；Executor local ProjectSpace provider |
+| 普通任务 → “我的任务”基础归属         | Wework Runtime Work、`runtimeMyWorkItems`                         |
+| Composer 选择 → 可选项目空间上下文    | Wework `WorkItemComposerGuide`、`useWorkbenchCloudProjectContext` |
+| Agent Session → ContextGrant          | Wework Runtime 消息元数据；Executor session context registry      |
+| Agent Session → 常驻 MCP Endpoint     | Executor Codex adapter；Executor `task_runtime/mcp_http.rs`       |
+| Codex → project-space capability      | Codex MCP Client；Executor loopback Endpoint                      |
+| Plugin → Codex 使用说明               | Wework 内置 `wework-space` Skill Plugin                           |
+| Gateway → Local Provider              | Executor `task_runtime` 与本地 ProjectSpace provider              |
+| Gateway → Backend Provider            | Executor authenticated Backend ProjectSpace client                |
+| MCP → Delivery 生命周期               | Executor `task_runtime/mcp.rs`、Delivery API 与本地 ProjectSpace  |
+| Delivery → 当前 workflow node         | ContextGrant Runtime 地址、`LoopItemTaskBinding`、Delivery 服务   |
+| 云端 Agent → Backend MCP              | Backend `wework_space` MCP                                        |
+| 统一工具契约 → 全部 Adapter           | 共享 schema、工具名、权限语义与契约测试                           |
 
 不变量：
 
@@ -95,9 +105,9 @@ sequenceDiagram
 - Plugin 只是 Codex Adapter。Gateway、ContextGrant 和工具契约不得依赖 Codex 专有类型。
 - Wework 启动 Executor 时必须同时启动唯一常驻的 loopback MCP Endpoint。Codex app-server 只能连接该 Endpoint，不得再执行 `executor space-mcp-server` 创建 stdio 子进程。
 - Plugin 的 MCP 声明是产品打包入口；Runtime 负责提供默认启用状态、实际 Executor 路径和可选的会话 ContextGrant，不能依赖插件市场页面曾被打开或异步安装时序。
-- 项目空间 MCP 默认对所有 Agent session 启用。普通任务保持未绑定状态，可显式选择项目；项目或 Issue 会话通过 ContextGrant 获得默认 `space_id/item_id` 和越界保护。
-- ContextGrant 必须按 Agent session 隔离且不向模型暴露。其一小时有效期只限制新 MCP 会话的启动，启动后租约跟随该会话 Adapter 生命周期；长任务不会在执行中断权，Adapter 退出即撤销。模型参数、prompt 文本和全局“当前项目”均不是授权来源。
-- 普通任务不绑定项目上下文；项目会话可只绑定 `space_id`，Issue 会话绑定 `space_id + item_id`。
+- 项目空间 MCP 默认对所有 Agent session 启用。每个普通任务都必须先进入“我的任务”基础归属；Composer 选择项目空间只增加项目上下文，未选择时使用默认“我的任务”上下文。项目会话通过 ContextGrant 获得默认 `space_id`，Issue 会话获得 `space_id + item_id`；两者都获得越界保护。
+- ContextGrant 必须按 Agent session 隔离且不向模型暴露。其一小时有效期只限制新 MCP 会话的启动，启动后租约跟随该会话 Adapter 生命周期；长任务不会在执行中被中断，Adapter 退出即撤销。模型参数、prompt 文本和全局“当前项目”均不是授权来源。
+- “我的任务”基础归属与项目空间上下文是两个正交维度。前者对所有任务强制存在并提供个人汇总和离线可见性；后者可以为空或指向一个所选项目空间，并用于 Agent 当前上下文。清除项目空间只能移除额外上下文，不得移除“我的任务”基础归属。项目会话可只绑定 `space_id`，Issue 会话绑定 `space_id + item_id`。
 - `get_current_context` 在无绑定时返回明确的未绑定结果；MCP 启动失败、无权限、云项目离线和未缓存必须是不同错误。
 - Gateway 必须拒绝超出 ContextGrant scope 的显式 `space_id/item_id`，不能信任模型传入的标识。
 - Delivery 写工具只在同时绑定 `space_id + item_id + device_id + task_id` 的 Issue 会话可用。`source_task` 与 `workflow_node_id` 必须由 ContextGrant 和当前有效 `TaskBinding` 推导，模型不得指定或覆盖。
