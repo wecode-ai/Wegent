@@ -43,7 +43,7 @@ jest.mock('@/features/tasks/components/chat/ChatContextInput', () => ({
   __esModule: true,
   default: () => (
     <>
-      <button type="button" aria-controls="context-selector-popover">
+      <button type="button" aria-controls="context-selector-popover" data-testid="context-button">
         Context
       </button>
       {createPortal(

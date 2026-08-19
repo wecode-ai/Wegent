@@ -150,7 +150,8 @@ function mockDeferredModelFailure(error: Error) {
   const promise = new Promise<{ data: Model[] }>((_, reject) => {
     rejectModels = reject
   })
-  ;(modelApis.getUnifiedModels as jest.Mock).mockReturnValue(promise)
+  const getUnifiedModelsMock = modelApis.getUnifiedModels as jest.Mock
+  getUnifiedModelsMock.mockReturnValue(promise)
   return {
     async reject() {
       await act(async () => {
