@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use gtk::prelude::*;
 use tauri::{AppHandle, LogicalPosition, LogicalSize, Webview, Wry};
-use webkit2gtk::{glib::error::ErrorDomain, prelude::WebViewExt, NetworkError};
+use webkit2gtk::{glib::error::ErrorDomain, NetworkError, WebViewExt};
 
 const HOST_NAME: &str = "wework-embedded-browser-host";
 
