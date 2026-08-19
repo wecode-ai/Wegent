@@ -158,7 +158,7 @@ describe('EnvironmentInfoPopover', () => {
           additions: '',
           deletions: '',
           executionTarget: 'local',
-          workspacePath: '/workspace/web',
+          workspacePath: '/workspace/web/',
           workspaceRoots: ['/workspace/web', '/workspace/api'],
         }}
         popoverContainer={popoverContainer}
@@ -175,6 +175,113 @@ describe('EnvironmentInfoPopover', () => {
     )
     expect(screen.getByTestId('environment-workspace-path-button')).toHaveClass('min-h-11')
     expect(screen.getByTestId('environment-workspace-root-button-1')).toHaveClass('min-h-11')
+  })
+
+  test('matches Windows workspace roots with different separators and casing', () => {
+    const popoverContainer = document.createElement('div')
+    document.body.appendChild(popoverContainer)
+    portalContainers.push(popoverContainer)
+
+    render(
+      <EnvironmentInfoPopover
+        info={{
+          additions: '',
+          deletions: '',
+          executionTarget: 'local',
+          workspacePath: String.raw`C:\Workspace\Web`,
+          workspaceRoots: ['C:/workspace/web', 'C:/workspace/api'],
+        }}
+        popoverContainer={popoverContainer}
+        open
+        onOpenChange={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('environment-workspace-path')).toHaveTextContent('web')
+    expect(screen.getByTestId('environment-workspace-root-1')).toHaveTextContent('api')
+    expect(screen.getByTestId('environment-workspace-root-button-1')).toHaveAttribute(
+      'title',
+      'C:/workspace/api'
+    )
+  })
+
+  test('matches UNC workspace roots with different separators and casing', () => {
+    const popoverContainer = document.createElement('div')
+    document.body.appendChild(popoverContainer)
+    portalContainers.push(popoverContainer)
+
+    render(
+      <EnvironmentInfoPopover
+        info={{
+          additions: '',
+          deletions: '',
+          executionTarget: 'local',
+          workspacePath: String.raw`\\SERVER\Share\Web`,
+          workspaceRoots: ['//server/share/web', '//server/share/api'],
+        }}
+        popoverContainer={popoverContainer}
+        open
+        onOpenChange={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('environment-workspace-path')).toHaveTextContent('web')
+    expect(screen.getByTestId('environment-workspace-root-1')).toHaveTextContent('api')
+    expect(screen.getByTestId('environment-workspace-root-button-1')).toHaveAttribute(
+      'title',
+      '//server/share/api'
+    )
+  })
+
+  test('shows the active worktree path instead of the source project root', () => {
+    const popoverContainer = document.createElement('div')
+    document.body.appendChild(popoverContainer)
+    portalContainers.push(popoverContainer)
+
+    render(
+      <EnvironmentInfoPopover
+        info={{
+          additions: '',
+          deletions: '',
+          executionTarget: 'local',
+          workspacePath: '/workspace/worktrees/runtime-42/example-project',
+          workspaceRoots: ['/workspace/projects/example-project'],
+        }}
+        popoverContainer={popoverContainer}
+        open
+        onOpenChange={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('environment-workspace-path')).toHaveTextContent('example-project')
+    expect(screen.queryByText('/workspace/projects/example-project')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('environment-workspace-root-button-1')).not.toBeInTheDocument()
+  })
+
+  test('shows the last Windows workspace path segment', () => {
+    const popoverContainer = document.createElement('div')
+    document.body.appendChild(popoverContainer)
+    portalContainers.push(popoverContainer)
+
+    render(
+      <EnvironmentInfoPopover
+        info={{
+          additions: '',
+          deletions: '',
+          executionTarget: 'local',
+          workspacePath: String.raw`C:\Users\me\worktrees\runtime-42\project`,
+        }}
+        popoverContainer={popoverContainer}
+        open
+        onOpenChange={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('environment-workspace-path')).toHaveTextContent('project')
+    expect(screen.getByTestId('environment-workspace-path-button')).toHaveAttribute(
+      'title',
+      String.raw`C:\Users\me\worktrees\runtime-42\project`
+    )
   })
 
   test('keeps the newest workspace copy confirmation visible for its full duration', async () => {
