@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { join } from 'node:path'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 
@@ -7,6 +8,7 @@ import {
   CHECKPOINT_TASK_PROMPT,
   DEFAULT_MODEL_ID,
   DEFAULT_MODEL_LABEL,
+  createSingleRootLocalProject,
   selectE2EModel,
   withTimeout,
 } from '../modules/shared.mjs'
@@ -259,7 +261,7 @@ function assertExecutionTruthContract(execution) {
   }
 }
 
-export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
+export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspacePath }) {
   const rules = [RULE]
   const runs = [
     {
@@ -637,6 +639,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       timeoutMs: uiTimeoutMs,
     })
     const issueComposerSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+    await control.command(
+      'waitFor',
+      '[data-testid="ai-chat-modal"] [data-testid="project-work-button"]',
+      { timeoutMs: uiTimeoutMs }
+    )
     await control.command(
       'click',
       '[data-testid="ai-chat-modal"] [data-testid="project-work-button"]'
@@ -1584,6 +1591,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
     async verify(control) {
       await ensureExperimentalFeaturesEnabled(control)
       if (cloudApi) {
+        await createSingleRootLocalProject(control, workspacePath, 'project-automation-primary')
+        await createSingleRootLocalProject(
+          control,
+          join(workspacePath, '..', 'secondary-project-root'),
+          'project-automation-secondary'
+        )
         await verifyRealCloud(control)
         return
       }
@@ -1824,7 +1837,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         `${activeWorkflow} [data-testid="project-workflow-edge-stage-1-stage-2"]`,
         { key: 'Enter' }
       )
-      await control.command('press', 'body', { key: 'Delete' })
+      await control.command(
+        'press',
+        `${activeWorkflow} [data-testid="project-workflow-edge-stage-1-stage-2"]`,
+        { key: 'Delete' }
+      )
       await control.command(
         'waitFor',
         `${activeWorkflow} [data-testid="project-workflow-edge-stage-1-stage-2"]`,
@@ -1864,7 +1881,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         'click',
         `${activeWorkflow} [data-testid="project-workflow-stage-stage-3"]`
       )
-      await control.command('press', 'body', { key: 'Backspace' })
+      await control.command(
+        'press',
+        `${activeWorkflow} [data-testid="project-workflow-stage-stage-3"]`,
+        { key: 'Backspace' }
+      )
       await control.command(
         'waitFor',
         `${activeWorkflow} [data-testid="project-workflow-stage-stage-3"]`,

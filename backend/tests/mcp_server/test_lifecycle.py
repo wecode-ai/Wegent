@@ -161,6 +161,7 @@ def test_mounted_wework_space_streamable_http_uses_parent_asgi_lifespan(
         "read_item_attachment",
         "delete_item_attachment",
         "get_delivery_requirements",
+        "get_workflow_stage_context",
         "create_delivery",
         "upload_delivery_asset",
         "list_deliveries",

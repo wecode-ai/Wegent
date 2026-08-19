@@ -1,4 +1,12 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from 'react'
 import {
   Background,
   BaseEdge,
@@ -556,6 +564,37 @@ export function ProjectWorkflowEditor({
     },
     [updateNode, value.nodes]
   )
+  const handleGraphKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'Backspace' && event.key !== 'Delete') return
+    const target = event.target as HTMLElement
+    if (target.closest('input, textarea, select, button, a, [contenteditable="true"]')) return
+    if (selectedNodeId) {
+      event.preventDefault()
+      updateDefinition({
+        nodes: value.nodes
+          .filter(node => node.id !== selectedNodeId)
+          .map(node => {
+            if (!node.depends_on.includes(selectedNodeId)) return node
+            return {
+              ...node,
+              depends_on: node.depends_on.filter(dependency => dependency !== selectedNodeId),
+              dependency_context: Object.fromEntries(
+                Object.entries(node.dependency_context ?? {}).filter(
+                  ([dependency]) => dependency !== selectedNodeId
+                )
+              ),
+            }
+          }),
+      })
+      setSelectedNodeId(null)
+      setSelectedEdge(null)
+      return
+    }
+    if (selectedEdge) {
+      event.preventDefault()
+      removeDependency(selectedEdge.source, selectedEdge.target)
+    }
+  }
 
   const graph = useMemo(() => {
     const edges: WorkflowFlowEdge[] = value.nodes.flatMap(node =>
@@ -635,34 +674,6 @@ export function ProjectWorkflowEditor({
       setSelectedEdge({ source, target })
     },
     [updateNode, value.nodes]
-  )
-
-  const handleDelete = useCallback(
-    ({ nodes, edges }: { nodes: Node[]; edges: Edge[] }) => {
-      const removedNodeIds = new Set(nodes.map(node => node.id))
-      const removedEdges = new Set(edges.map(edge => `${edge.source}-${edge.target}`))
-      updateDefinition({
-        nodes: value.nodes
-          .filter(node => !removedNodeIds.has(node.id))
-          .map(node => {
-            const shouldRemoveDependency = (dependency: string) =>
-              removedNodeIds.has(dependency) || removedEdges.has(`${dependency}-${node.id}`)
-            if (!node.depends_on.some(shouldRemoveDependency)) return node
-            return {
-              ...node,
-              depends_on: node.depends_on.filter(dependency => !shouldRemoveDependency(dependency)),
-              dependency_context: Object.fromEntries(
-                Object.entries(node.dependency_context ?? {}).filter(
-                  ([dependency]) => !shouldRemoveDependency(dependency)
-                )
-              ),
-            }
-          }),
-      })
-      setSelectedNodeId(null)
-      setSelectedEdge(null)
-    },
-    [updateDefinition, value.nodes]
   )
 
   const selectStageExecutor = async (node: WorkflowNodeDefinition, agentId: string) => {
@@ -882,7 +893,11 @@ export function ProjectWorkflowEditor({
             </button>
           ) : (
             <div className="grid min-h-[420px] overflow-hidden rounded-xl border border-border bg-muted/20 lg:grid-cols-[minmax(0,1fr)_300px]">
-              <div className="h-[420px]" data-testid="project-workflow-dag">
+              <div
+                className="h-[420px]"
+                data-testid="project-workflow-dag"
+                onKeyDown={handleGraphKeyDown}
+              >
                 <ReactFlow
                   className="workflow-react-flow"
                   nodes={graph.nodes}
@@ -902,11 +917,10 @@ export function ProjectWorkflowEditor({
                     setSelectedEdge(null)
                   }}
                   onConnect={handleConnect}
-                  onDelete={handleDelete}
                   minZoom={0.35}
                   maxZoom={1.5}
                   nodesDraggable={false}
-                  deleteKeyCode={['Backspace', 'Delete']}
+                  deleteKeyCode={null}
                   proOptions={{ hideAttribution: true }}
                   defaultEdgeOptions={{ deletable: true }}
                 >
