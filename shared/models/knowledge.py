@@ -31,16 +31,6 @@ class KnowledgeScopeType:
     DOCUMENT = "document"
 
 
-class KnowledgeAccessOutcome:
-    """Provider-neutral outcomes that determine knowledge fallback behavior."""
-
-    UNSUPPORTED = "unsupported"
-    DENIED = "denied"
-    RATE_LIMITED = "rate_limited"
-    FAILED = "failed"
-    EMPTY = "empty"
-
-
 @dataclass(frozen=True)
 class SelectedKnowledgeResource:
     """One selected folder or document inside a knowledge base."""

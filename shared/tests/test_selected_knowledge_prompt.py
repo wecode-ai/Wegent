@@ -64,13 +64,11 @@ def test_render_selected_knowledge_prompt_preserves_provider_scopes() -> None:
     assert "resource_id as provider-native tool arguments" in prompt
     assert "must obtain evidence" in prompt
     assert "must not use general knowledge" in prompt
-    assert "unsupported: search is unavailable" in prompt
-    assert "denied: access was refused" in prompt
-    assert "rate_limited: the provider rejected further calls" in prompt
-    assert "failed: the tool call failed" in prompt
-    assert "empty: the call succeeded but returned no relevant evidence" in prompt
-    assert "do not treat it as an empty result" in prompt
-    assert "apply the explicit or inherited evidence policy above" in prompt
+    assert "result as empty only when the provider call succeeded" in prompt
+    assert "access is denied" in prompt
+    assert "call is rate-limited" in prompt
+    assert "tool fails" in prompt
+    assert "do not retry after a rate limit" in prompt
     assert "search is unavailable or unsupported" in prompt
     assert "native listing and exact-read capabilities" in prompt
     assert "insufficient to support a precision-sensitive claim" in prompt

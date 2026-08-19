@@ -11,7 +11,6 @@ from html import escape
 from typing import Any
 
 from shared.models.knowledge import (
-    KnowledgeAccessOutcome,
     KnowledgeScopeType,
     SelectedKnowledgeContext,
     SelectedKnowledgeRef,
@@ -61,15 +60,10 @@ def render_selected_knowledge_prompt(
 
 
 def _render_outcome_policy() -> list[str]:
-    """Render the minimal provider-neutral failure and fallback contract."""
+    """Render provider-neutral failure and fallback guidance."""
     return [
-        "- Normalize provider outcomes by meaning before deciding what to do:",
-        f"  - {KnowledgeAccessOutcome.UNSUPPORTED}: search is unavailable; use native listing and exact-read capabilities.",
-        f"  - {KnowledgeAccessOutcome.DENIED}: access was refused; report the permission boundary and do not claim that no relevant content exists.",
-        f"  - {KnowledgeAccessOutcome.RATE_LIMITED}: the provider rejected further calls; stop retrying and report the temporary limit.",
-        f"  - {KnowledgeAccessOutcome.FAILED}: the tool call failed; report the failure and do not treat it as an empty result.",
-        f"  - {KnowledgeAccessOutcome.EMPTY}: the call succeeded but returned no relevant evidence; apply the explicit or inherited evidence policy above.",
-        "- On denied, rate_limited, or failed outcomes, you must not claim that the knowledge sources contain no relevant content.",
+        "- Treat a result as empty only when the provider call succeeded but returned no relevant evidence.",
+        "- If access is denied, a call is rate-limited, or a tool fails, report that condition; you must not claim that the knowledge sources contain no relevant content, and do not retry after a rate limit.",
     ]
 
 
