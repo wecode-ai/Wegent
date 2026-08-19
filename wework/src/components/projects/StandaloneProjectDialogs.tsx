@@ -14,6 +14,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
+import { hasEmbeddedHttpGitCredentials } from '@/lib/git-url'
 import { isImeEnterEvent } from '@/lib/ime'
 import { openNativeProjectDirectoryPickers } from '@/lib/native-directory-picker'
 import {
@@ -159,15 +160,6 @@ function getGitRepositoryName(url: string): string {
       .at(-1)
       ?.replace(/\.git$/i, '') ?? ''
   )
-}
-
-function hasEmbeddedHttpCredentials(url: string): boolean {
-  try {
-    const parsed = new URL(url)
-    return Boolean(parsed.username || parsed.password)
-  } catch {
-    return false
-  }
 }
 
 function isValidGitRepositoryUrl(url: string): boolean {
@@ -634,7 +626,7 @@ export function StandaloneFolderProjectDialog({
       setGitError(t('workbench.remote_project_git_url_invalid', '请输入有效的 Git 仓库地址'))
       return
     }
-    if (hasEmbeddedHttpCredentials(normalizedUrl)) {
+    if (hasEmbeddedHttpGitCredentials(normalizedUrl)) {
       setGitError(
         t(
           'workbench.remote_project_git_credentials_forbidden',
@@ -1094,7 +1086,7 @@ export function StandaloneFolderProjectDialog({
               data-testid="remote-project-source-back"
               disabled={gitSubmitting}
               onClick={() => setRemoteProjectSource(null)}
-              className="inline-flex h-8 items-center gap-1 text-sm text-text-secondary hover:text-text-primary disabled:opacity-50"
+              className="inline-flex h-11 items-center gap-1 text-sm text-text-secondary hover:text-text-primary disabled:opacity-50 sm:h-8"
             >
               <ChevronLeft className="h-4 w-4" />
               {t('workbench.remote_project_source_change', '更改项目来源')}
@@ -1138,7 +1130,7 @@ export function StandaloneFolderProjectDialog({
                       setGitError(null)
                     }}
                     placeholder="https://github.com/owner/repository.git"
-                    className="mt-2 h-10 w-full rounded-[10px] border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-focus focus:ring-2 focus:ring-focus/20 disabled:opacity-60"
+                    className="mt-2 h-11 w-full rounded-[10px] border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-focus focus:ring-2 focus:ring-focus/20 disabled:opacity-60 sm:h-10"
                   />
                 </label>
                 <div className="mt-4">
@@ -1158,14 +1150,14 @@ export function StandaloneFolderProjectDialog({
                         setGitParentPath(event.target.value)
                         setGitError(null)
                       }}
-                      className="h-10 min-w-0 flex-1 rounded-[10px] border border-border bg-background px-3 font-mono text-sm text-text-primary outline-none focus:border-focus focus:ring-2 focus:ring-focus/20 disabled:opacity-60"
+                      className="h-11 min-w-0 flex-1 rounded-[10px] border border-border bg-background px-3 font-mono text-sm text-text-primary outline-none focus:border-focus focus:ring-2 focus:ring-focus/20 disabled:opacity-60 sm:h-10"
                     />
                     <button
                       type="button"
                       data-testid="remote-project-git-parent-browse"
                       disabled={gitSubmitting}
                       onClick={() => setGitParentPickerOpen(true)}
-                      className="inline-flex h-10 shrink-0 items-center gap-2 rounded-[10px] border border-border px-3 text-sm font-medium text-text-primary hover:bg-muted disabled:opacity-50"
+                      className="inline-flex h-11 shrink-0 items-center gap-2 rounded-[10px] border border-border px-3 text-sm font-medium text-text-primary hover:bg-muted disabled:opacity-50 sm:h-10"
                     >
                       <FolderOpen className="h-4 w-4" />
                       {t('workbench.remote_project_git_parent_browse', '选择')}
@@ -1185,7 +1177,7 @@ export function StandaloneFolderProjectDialog({
                   data-testid="remote-project-git-advanced-toggle"
                   disabled={gitSubmitting}
                   onClick={() => setGitAdvancedOpen(value => !value)}
-                  className="mt-4 h-8 text-sm text-text-secondary hover:text-text-primary disabled:opacity-50"
+                  className="mt-4 h-11 text-sm text-text-secondary hover:text-text-primary disabled:opacity-50 sm:h-8"
                 >
                   {gitAdvancedOpen
                     ? t('workbench.remote_project_git_advanced_hide', '收起分支设置')
@@ -1208,7 +1200,7 @@ export function StandaloneFolderProjectDialog({
                         'workbench.remote_project_git_branch_placeholder',
                         '留空使用默认分支'
                       )}
-                      className="h-10 w-full rounded-[10px] border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-focus focus:ring-2 focus:ring-focus/20 disabled:opacity-60"
+                      className="h-11 w-full rounded-[10px] border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-focus focus:ring-2 focus:ring-focus/20 disabled:opacity-60 sm:h-10"
                     />
                   </label>
                 )}
@@ -1220,9 +1212,10 @@ export function StandaloneFolderProjectDialog({
                 <div className="mt-5 flex justify-end gap-2">
                   <button
                     type="button"
+                    data-testid="remote-project-git-cancel"
                     disabled={gitSubmitting}
                     onClick={closeDialog}
-                    className="h-9 rounded-[10px] px-4 text-sm font-medium text-text-secondary hover:bg-muted disabled:opacity-50"
+                    className="h-11 rounded-[10px] px-4 text-sm font-medium text-text-secondary hover:bg-muted disabled:opacity-50 sm:h-9"
                   >
                     {t('workbench.cancel', '取消')}
                   </button>
@@ -1236,7 +1229,7 @@ export function StandaloneFolderProjectDialog({
                       !getGitRepositoryName(gitUrl)
                     }
                     onClick={() => void submitGitProject()}
-                    className="inline-flex h-9 items-center gap-2 rounded-[10px] bg-text-primary px-4 text-sm font-medium text-background hover:bg-text-primary/90 disabled:opacity-50"
+                    className="inline-flex h-11 items-center gap-2 rounded-[10px] bg-text-primary px-4 text-sm font-medium text-background hover:bg-text-primary/90 disabled:opacity-50 sm:h-9"
                   >
                     {gitSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
                     {t('workbench.remote_project_git_submit', '克隆并添加')}

@@ -1548,6 +1548,7 @@ export interface GitCloneProjectOperation extends CloneGitRepositoryInput {
   name: string
   status: 'cloning' | 'opening' | 'failed'
   failureStage?: 'clone' | 'open'
+  failureReason?: 'executor-offline' | 'clone-failed' | 'open-failed'
   error?: string
 }
 

@@ -115,17 +115,19 @@ The main desktop flow's short-conversation layout regression stores `short-conve
 
 The main desktop runner also supports execution through ordered checkpoints.
 The checkpoints are `remote-device-onboarding`, `workspace-tabs`, `priority-filter`,
-`telemetry-consent`, `automation-lifecycle`, `project-automation`,
-`project-assignment-notification`, `offline-local-project-space`, `plugin-auto-update`,
-`project-ai-settings`, `model-routing`, `permission-modes`, `core-task-flow`,
-`task-attachments`, `cloud-git-worktree`, `cloud-worktree-capability`,
-`cloud-worktree-create`, `cloud-worktree-queued-cancel`, `cloud-worktree-tools`,
-`cloud-worktree-archive-restore`, `cloud-worktree-device-restart`, `context-compaction`,
-`runtime-task-queue`, `codex-notification-isolation`, `split-workbench`,
-`window-lifecycle`, `goal-lifecycle`, `supervisor-lifecycle`, `resilience`,
-`conversation-state`, `temporary-chat`, `workspace-attachments`, `rendering-extensions`,
+`cloud-project-creation`, `telemetry-consent`, `automation-lifecycle`,
+`project-automation`, `project-assignment-notification`, `offline-local-project-space`,
+`plugin-auto-update`, `project-ai-settings`, `model-routing`, `permission-modes`,
+`core-task-flow`, `task-attachments`, `cloud-git-worktree`,
+`cloud-worktree-capability`, `cloud-worktree-create`, `cloud-worktree-queued-cancel`,
+`cloud-worktree-tools`, `cloud-worktree-archive-restore`,
+`cloud-worktree-device-restart`, `context-compaction`, `runtime-task-queue`,
+`codex-notification-isolation`, `split-workbench`, `window-lifecycle`,
+`goal-lifecycle`, `supervisor-lifecycle`, `resilience`, `conversation-state`,
+`temporary-chat`, `workspace-attachments`, `rendering-extensions`,
 `change-request-status`, `claude-runtime`, `local-file-preview`, `local-harness`,
-`browser-multi-tabs`, `embedded-browser`, and `browser-toolbar-actions`.
+`harness-apps`, `browser-multi-tabs`, `embedded-browser`, and
+`browser-toolbar-actions`.
 `--segment <checkpoint>` performs common startup and project
 initialization, then runs only the selected checkpoint.
 `--from-segment <checkpoint>` starts there and continues through every later

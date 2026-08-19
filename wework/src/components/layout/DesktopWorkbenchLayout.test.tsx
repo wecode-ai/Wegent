@@ -5031,10 +5031,12 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() =>
       expect(onCreateDeviceDirectory).toHaveBeenCalledWith('device-1', '/home/ubuntu/new-project')
     )
-    expect(onOpenStandaloneWorkspace).toHaveBeenCalledWith(
-      'device-1',
-      '/home/ubuntu/new-project',
-      'new-project'
+    await waitFor(() =>
+      expect(onOpenStandaloneWorkspace).toHaveBeenCalledWith(
+        'device-1',
+        '/home/ubuntu/new-project',
+        'new-project'
+      )
     )
   })
 
@@ -5228,6 +5230,18 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.type(
       screen.getByTestId('remote-project-git-url-input'),
       'https://token@github.com/owner/repository.git'
+    )
+    await userEvent.click(screen.getByTestId('remote-project-git-submit'))
+
+    expect(await screen.findByTestId('remote-project-git-error')).toHaveTextContent(
+      '仓库地址不能包含账号、密码或 Token'
+    )
+    expect(onCloneGitRepository).not.toHaveBeenCalled()
+
+    await userEvent.clear(screen.getByTestId('remote-project-git-url-input'))
+    await userEvent.type(
+      screen.getByTestId('remote-project-git-url-input'),
+      'https://user:password@github.com/owner/repository.git'
     )
     await userEvent.click(screen.getByTestId('remote-project-git-submit'))
 

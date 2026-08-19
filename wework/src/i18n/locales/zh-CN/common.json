@@ -702,7 +702,7 @@
     "use_existing_folder_title": "使用现有文件夹",
     "use_existing_folder_desc": "选择本地设备上的一个或多个文件夹；多个文件夹会组成同一个项目。",
     "add_remote_project_title": "新建远程项目",
-    "add_remote_project_desc": "选择远程主机，以及打开目录、新建项目或克隆 Git 仓库。",
+    "add_remote_project_desc": "选择远程主机，然后打开目录、新建项目或克隆 Git 仓库。",
     "cloud_work_title": "云端工作",
     "cloud_work_desc": "选择项目代码所在目录，后续任务会在选中的云端设备上运行。",
     "cloud_work_connect_desc": "还没有可用云端设备。先在云主机或另一台电脑上运行下面的连接脚本。",

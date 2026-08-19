@@ -173,6 +173,7 @@ async function verifyOfflineRemoteProjectRemoval({
   await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
     value: REMOTE_DOCKER_DEVICE_ID,
   })
+  await control.command('click', '[data-testid="remote-project-source-existing"]')
   await waitForControlValue(
     control,
     '[data-testid="device-folder-path-input"]',
@@ -838,6 +839,7 @@ async function verifyCloudProjectFlow(
   await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
     value: REMOTE_DOCKER_DEVICE_ID,
   })
+  await control.command('click', '[data-testid="remote-project-source-existing"]')
   await waitForControlValue(
     control,
     '[data-testid="device-folder-path-input"]',
@@ -848,6 +850,7 @@ async function verifyCloudProjectFlow(
   await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
     value: CLOUD_DEVICE_ID,
   })
+  await control.command('click', '[data-testid="remote-project-source-existing"]')
   await waitForControlValue(
     control,
     '[data-testid="device-folder-path-input"]',

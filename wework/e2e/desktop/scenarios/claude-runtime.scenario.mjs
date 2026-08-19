@@ -15,11 +15,9 @@ import {
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const ACTIVE_WORKSPACE_TAB_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
-const ACTIVE_WORKSPACE_WORKBENCH_SELECTOR =
-  `${ACTIVE_WORKSPACE_TAB_SELECTOR} ${ACTIVE_WORKBENCH_SELECTOR}`
+const ACTIVE_WORKSPACE_WORKBENCH_SELECTOR = `${ACTIVE_WORKSPACE_TAB_SELECTOR} ${ACTIVE_WORKBENCH_SELECTOR}`
 const COMPOSER_SELECTOR = `${ACTIVE_WORKSPACE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"][contenteditable="true"]`
-const ACTIVE_PROJECT_WORK_BUTTON =
-  `${ACTIVE_WORKSPACE_WORKBENCH_SELECTOR} [data-testid="project-work-button"]`
+const ACTIVE_PROJECT_WORK_BUTTON = `${ACTIVE_WORKSPACE_WORKBENCH_SELECTOR} [data-testid="project-work-button"]`
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..')
 const CLAUDE_BINARY = join(
   REPOSITORY_ROOT,
@@ -231,6 +229,7 @@ async function createRemoteProject(control, workspacePath, timeoutMs, captureScr
   await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
     value: 'wework-e2e-cloud-device',
   })
+  await control.command('click', '[data-testid="remote-project-source-existing"]')
   await control.command('waitFor', '[data-testid="device-folder-path-input"]', { timeoutMs })
   await control.command('fill', '[data-testid="device-folder-path-input"]', {
     value: workspacePath,
@@ -263,16 +262,12 @@ async function createRemoteProject(control, workspacePath, timeoutMs, captureScr
     timeoutMs
   )
   assert.ok(remoteProjectRow, 'The remote Claude project identity was unavailable')
-  await control.command(
-    'clickDescendantInElementWithText',
-    '[data-testid^="project-row-"]',
-    {
-      text: 'claude-remote-workspace',
-      target: '[data-testid="project-new-conversation-button"]',
-      timeoutMs,
-      visible: true,
-    }
-  )
+  await control.command('clickDescendantInElementWithText', '[data-testid^="project-row-"]', {
+    text: 'claude-remote-workspace',
+    target: '[data-testid="project-new-conversation-button"]',
+    timeoutMs,
+    visible: true,
+  })
   await control.command('waitFor', ACTIVE_PROJECT_WORK_BUTTON, {
     text: 'claude-remote-workspace',
     stableMs: 300,
@@ -525,12 +520,7 @@ export async function createDesktopScenario({
         'The local Claude Code task rendered content emitted after cancellation'
       )
 
-      await createRemoteProject(
-        control,
-        remoteWorkspacePath,
-        uiTimeoutMs,
-        captureScreenshot
-      )
+      await createRemoteProject(control, remoteWorkspacePath, uiTimeoutMs, captureScreenshot)
       await selectClaudeRuntime(control, REMOTE_MODEL_LABEL, uiTimeoutMs)
       const remoteTaskRow = await sendNewClaudeTask(
         control,

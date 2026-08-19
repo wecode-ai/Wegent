@@ -1,3 +1,5 @@
+import { basename } from 'node:path'
+
 import { verifyShortConversationLayout } from './conversation-layout.mjs'
 
 import {
@@ -226,6 +228,9 @@ async function verifyCloudProjectCreationSources(control, workspacePath) {
     gitMenus,
     'Cloning a Git cloud project did not add it to the sidebar'
   )
+  await runChecked('git', ['rev-parse', '--is-inside-work-tree'], {
+    cwd: join(homePath, basename(workspacePath)),
+  })
 }
 
 async function waitForCloudProject(control, previousProjectMenus, message) {
@@ -354,6 +359,12 @@ async function verifyCloudCheckpoint({
     return
   }
 
+  if (checkpoint === 'cloud-project-creation') {
+    setPhase('cloud-project-creation-sources')
+    await verifyCloudProjectCreationSources(control, workspacePath)
+    return
+  }
+
   const { composerSelector, projectRowSelector } = await createCloudProjectFixture(
     control,
     workspacePath
@@ -361,10 +372,6 @@ async function verifyCloudCheckpoint({
   const executorLogPath = cloudEnvironment.remoteExecutorLogPath
 
   switch (checkpoint) {
-    case 'cloud-project-creation':
-      setPhase('cloud-project-creation-sources')
-      await verifyCloudProjectCreationSources(control, workspacePath)
-      return
     case 'cloud-git-worktree':
     case 'cloud-worktree-capability':
     case 'cloud-worktree-create':

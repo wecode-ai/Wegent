@@ -210,6 +210,7 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
                 ...item,
                 status: resumeOpening ? 'opening' : 'cloning',
                 failureStage: undefined,
+                failureReason: undefined,
                 error: undefined,
               }
             : item
@@ -251,6 +252,12 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
                     ...item,
                     status: 'failed',
                     failureStage: stage,
+                    failureReason:
+                      error instanceof Error && error.message.includes('executor-offline:')
+                        ? 'executor-offline'
+                        : stage === 'clone'
+                          ? 'clone-failed'
+                          : 'open-failed',
                     error:
                       error instanceof Error
                         ? error.message
@@ -269,7 +276,7 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
   const retryGitCloneOperation = useCallback(
     (operation: GitCloneProjectOperation) => {
       runGitCloneOperation(operation, {
-        refreshDevice: operation.error?.includes('executor-offline:') ?? false,
+        refreshDevice: operation.failureReason === 'executor-offline',
       })
     },
     [runGitCloneOperation]
@@ -984,6 +991,7 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
       onListDeviceDirectories={onListDeviceDirectories}
       onCreateDeviceDirectory={onCreateDeviceDirectory}
       onCloneGitRepository={onCloneGitRepository}
+      onStartGitCloneProject={startGitCloneProject}
       onRetryGitCloneOperation={retryGitCloneOperation}
       onDismissGitCloneOperation={dismissGitCloneOperation}
       projectSpaceApis={availableProjectSpaceApis}

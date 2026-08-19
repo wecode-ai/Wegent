@@ -33,6 +33,7 @@ import type {
 import type { WorkspaceTarget } from '@/types/workspace-files'
 import type { WorkbenchState } from '@/types/workbench'
 import { getParentPath } from '@/components/projects/device-folder-path'
+import { hasEmbeddedHttpGitCredentials } from '@/lib/git-url'
 import type { ProjectMutationOptions, RefreshWorkLists } from './workbenchContextTypes'
 import type { WorkbenchAction } from './workbenchReducer'
 import { findProjectMetadataDeviceWorkspace, writeLastProjectId } from './workbenchRuntimeHelpers'
@@ -533,6 +534,9 @@ export function useWorkbenchProjectActions({
       const targetPath = input.targetPath.trim()
       const branch = input.branch?.trim()
       if (!url) throw new Error('Git repository URL is required')
+      if (hasEmbeddedHttpGitCredentials(url)) {
+        throw new Error('Git repository URL must not include embedded HTTP credentials')
+      }
       if (!targetPath) throw new Error('Git target path is required')
 
       await executorClient.commands.createDirectory(deviceId, getParentPath(targetPath))

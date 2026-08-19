@@ -112,6 +112,7 @@ import {
   useOptionalAppearance,
 } from '@/features/appearance'
 import type {
+  CloneGitRepositoryInput,
   DeviceInfo,
   GitCloneProjectOperation,
   RuntimeTaskSummary,
@@ -287,10 +288,8 @@ interface DesktopSidebarProps {
   onGetDeviceHomeDirectory: (deviceId: string) => Promise<string>
   onListDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
   onCreateDeviceDirectory: (deviceId: string, path: string) => Promise<void>
-  onCloneGitRepository?: (
-    deviceId: string,
-    input: { url: string; branch?: string; targetPath: string }
-  ) => Promise<void>
+  onCloneGitRepository?: (deviceId: string, input: CloneGitRepositoryInput) => Promise<void>
+  onStartGitCloneProject?: (deviceId: string, input: CloneGitRepositoryInput) => void
   onRetryGitCloneOperation?: (operation: GitCloneProjectOperation) => void
   onDismissGitCloneOperation?: (operationId: string) => void
   projectSpaceApis?: ProjectSpaceApi[]
@@ -2970,6 +2969,7 @@ export function DesktopSidebar({
   onListDeviceDirectories,
   onCreateDeviceDirectory,
   onCloneGitRepository,
+  onStartGitCloneProject,
   onRetryGitCloneOperation,
   onDismissGitCloneOperation,
   projectSpaceApis,
@@ -4232,7 +4232,7 @@ export function DesktopSidebar({
                                   ? t('workbench.remote_project_git_cloning', '克隆中')
                                   : operation.status === 'opening'
                                     ? t('workbench.remote_project_git_opening', '添加中')
-                                    : operation.error?.includes('executor-offline:')
+                                    : operation.failureReason === 'executor-offline'
                                       ? t('workbench.remote_project_device_offline', '设备离线')
                                       : operation.failureStage === 'open'
                                         ? t('workbench.remote_project_git_open_failed', '添加失败')
@@ -4541,6 +4541,7 @@ export function DesktopSidebar({
             onListDeviceDirectories={onListDeviceDirectories}
             onCreateDeviceDirectory={onCreateDeviceDirectory}
             onCloneGitRepository={onCloneGitRepository}
+            onStartGitCloneProject={onStartGitCloneProject}
             onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
             onGetRemoteDeviceStartupCommand={onGetRemoteDeviceStartupCommand}
             onRefreshDevices={onRefreshDevices}
