@@ -16,11 +16,16 @@ const OVERLAY_WINDOW_HEIGHT: f64 = 640.0;
 const EXPANDED_WIDTH: f64 = 470.0;
 const EXPANDED_HEIGHT: f64 = 640.0;
 
+#[derive(Default)]
+struct PopoutWindowLayoutState {
+    expanded: bool,
+    overlay_active: bool,
+}
+
 pub struct PopoutWindowState {
     registered_shortcut: Mutex<Option<Shortcut>>,
     previous_frontmost_pid: Mutex<Option<i32>>,
-    expanded: AtomicBool,
-    overlay_active: AtomicBool,
+    layout: Mutex<PopoutWindowLayoutState>,
     visible: AtomicBool,
     focus_restore_generation: AtomicU64,
 }
@@ -30,8 +35,7 @@ impl Default for PopoutWindowState {
         Self {
             registered_shortcut: Mutex::new(None),
             previous_frontmost_pid: Mutex::new(None),
-            expanded: AtomicBool::new(false),
-            overlay_active: AtomicBool::new(false),
+            layout: Mutex::new(PopoutWindowLayoutState::default()),
             visible: AtomicBool::new(false),
             focus_restore_generation: AtomicU64::new(0),
         }
@@ -384,13 +388,15 @@ pub fn hide_for_main_window(app: &AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub fn set_popout_window_expanded(app: AppHandle, expanded: bool) -> Result<(), String> {
     let state = app.state::<PopoutWindowState>();
-    let was_expanded = state.expanded.load(Ordering::SeqCst);
-    let overlay_active = state.overlay_active.load(Ordering::SeqCst);
     let window = app
         .get_webview_window(WINDOW_LABEL)
         .ok_or_else(|| "Popout Window is not open".to_string())?;
-    resize_window_for_state(&window, was_expanded, expanded, overlay_active)?;
-    state.expanded.store(expanded, Ordering::SeqCst);
+    let mut layout = state
+        .layout
+        .lock()
+        .map_err(|_| "Failed to lock Popout Window layout state".to_string())?;
+    resize_window_for_state(&window, layout.expanded, expanded, layout.overlay_active)?;
+    layout.expanded = expanded;
     Ok(())
 }
 
@@ -494,15 +500,17 @@ mod tests {
 #[tauri::command]
 pub fn set_popout_window_overlay_active(app: AppHandle, active: bool) -> Result<(), String> {
     let state = app.state::<PopoutWindowState>();
-    let expanded = state.expanded.load(Ordering::SeqCst);
-    let was_active = state.overlay_active.load(Ordering::SeqCst);
-    if was_active == active {
-        return Ok(());
-    }
     let window = app
         .get_webview_window(WINDOW_LABEL)
         .ok_or_else(|| "Popout Window is not open".to_string())?;
-    resize_window_for_state(&window, expanded, expanded, active)?;
-    state.overlay_active.store(active, Ordering::SeqCst);
+    let mut layout = state
+        .layout
+        .lock()
+        .map_err(|_| "Failed to lock Popout Window layout state".to_string())?;
+    if layout.overlay_active == active {
+        return Ok(());
+    }
+    resize_window_for_state(&window, layout.expanded, layout.expanded, active)?;
+    layout.overlay_active = active;
     Ok(())
 }
