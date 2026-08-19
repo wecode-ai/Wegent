@@ -145,7 +145,10 @@ def test_manager_prompt_is_minimal_visible_assignment_input():
         "automation_run_id: run-1\n\n"
         "看板任务数据位于 cloud://projects/project-1/todos/task-1，"
         "请通过看板工具自行查看。\n\n"
-        "请读取候选执行者并按调度要求完成分派，不要执行任务。\n\n"
+        "你是看板的 AI 管家，只负责编排，不执行具体任务。"
+        "请读取当前 Issue 和候选执行者，将工作拆成可独立验收的子任务，"
+        "然后调用 submit_workflow_plan 提交结构化方案。"
+        "不要直接修改原 Issue 的负责人。\n\n"
         "Prefer domain ownership."
     )
 

@@ -3153,11 +3153,10 @@ def test_local_runtime_payload_leaves_model_materialization_to_app(
     assert "api_key" not in str(payload)
     if executor_type == "automation_manager":
         assert f"project_id: {project.id}" in payload["message"]
+        assert "你是看板的 AI 管家，只负责编排，不执行具体任务。" in payload["message"]
+        assert "submit_workflow_plan" in payload["message"]
         assert f"task_id: {item.id}" in payload["message"]
         assert f"automation_run_id: {run.id}" in payload["message"]
-        assert (
-            "请读取候选执行者并按调度要求完成分派，不要执行任务。" in payload["message"]
-        )
         assert "Handle the task" in payload["message"]
 
 
@@ -3809,7 +3808,7 @@ def test_completed_manager_comment_repairs_stale_queued_rule_run(
     assert run.completed_at is not None
 
 
-def test_manager_does_not_treat_default_creator_as_an_mcp_assignment(
+def test_manager_does_not_treat_default_creator_as_a_submitted_plan(
     test_db: Session, test_user: User
 ) -> None:
     project = _make_project(test_db, test_user)
@@ -3862,9 +3861,11 @@ def test_manager_does_not_treat_default_creator_as_an_mcp_assignment(
     )
 
     test_db.refresh(run)
+    test_db.refresh(activity)
     test_db.refresh(item)
     assert item.assignee_user_id == test_user.id
-    assert run.status == "skipped"
+    assert run.status == "failed"
+    assert activity.status == "failed"
     assert activity.metadata_json.get("selected_assignee_id") is None
 
 
