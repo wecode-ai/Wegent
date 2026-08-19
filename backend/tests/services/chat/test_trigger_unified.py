@@ -1228,8 +1228,8 @@ class TestProcessContextsAttachments:
         assert prepare_mock.await_args.kwargs["inline_attachment_content"] is False
 
     @pytest.mark.asyncio
-    async def test_prioritizes_knowledge_skill_when_user_selected_kb_is_present(self):
-        """User-selected KBs should auto-preload and prioritize the management skill."""
+    async def test_defers_selected_knowledge_skill_until_final_scope_resolution(self):
+        """Context preprocessing must not mount a Provider before final resolution."""
         from app.services.chat.trigger import unified as trigger_unified
 
         request = ExecutionRequest(
@@ -1270,8 +1270,8 @@ class TestProcessContextsAttachments:
                 )
 
         assert result.knowledge_base_ids == [1408]
-        assert result.preload_skills == ["wegent-knowledge"]
-        assert result.user_selected_skills == ["wegent-knowledge"]
+        assert result.preload_skills == []
+        assert result.user_selected_skills == []
         assert result.system_prompt == "system"
         assert result.kb_meta_prompt == ""
         assert result.provider_native_knowledge is False

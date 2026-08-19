@@ -191,6 +191,7 @@ def build_selected_knowledge_context(
 ) -> SelectedKnowledgeContext:
     """Resolve explicit message contexts over inherited task knowledge refs."""
     current_contexts = tuple(current_contexts)
+    _validate_explicit_external_contexts(current_contexts)
     task_refs = build_selected_knowledge_refs(db, request, task)
     explicit_refs = _build_current_explicit_refs(
         db,
@@ -241,6 +242,11 @@ def has_supported_explicit_external_context(contexts: Iterable[Any]) -> bool:
     return bool(_build_external_refs_from_values(_current_external_values(contexts)))
 
 
+def has_explicit_external_context(contexts: Iterable[Any]) -> bool:
+    """Return whether this turn explicitly selected an external source."""
+    return bool(_current_external_values(contexts))
+
+
 def should_prepare_provider_native_knowledge(
     *,
     knowledge_base_ids: Iterable[Any],
@@ -254,16 +260,17 @@ def should_prepare_provider_native_knowledge(
     if (
         not preload_selected_kb_skill
         or shell_type not in SUPPORTED_PROVIDER_NATIVE_SHELLS
-        or access_mode == KnowledgeBaseToolAccessMode.RESTRICTED_SEARCH_ONLY
     ):
+        return False
+    if has_supported_explicit_external_context(current_contexts):
+        return True
+    if access_mode == KnowledgeBaseToolAccessMode.RESTRICTED_SEARCH_ONLY:
         return False
     has_wegent_source = has_usable_wegent_scope(
         knowledge_base_ids,
         knowledge_base_scopes,
     )
-    return has_wegent_source or has_supported_explicit_external_context(
-        current_contexts
-    )
+    return has_wegent_source
 
 
 def _build_current_explicit_refs(
@@ -373,16 +380,8 @@ def _build_wegent_refs(
     task_json: dict[str, Any] = task.json if isinstance(task.json, dict) else {}
     raw_spec = task_json.get("spec")
     spec: dict[str, Any] = raw_spec if isinstance(raw_spec, dict) else {}
-    kb_refs = {
-        int(ref["id"]): ref
-        for ref in spec.get("knowledgeBaseRefs") or []
-        if isinstance(ref, dict) and ref.get("id") is not None
-    }
-    scope_refs = {
-        int(ref["id"]): ref
-        for ref in spec.get("knowledgeBaseScopes") or []
-        if isinstance(ref, dict) and ref.get("id") is not None
-    }
+    kb_refs = _index_refs_by_integer_id(spec.get("knowledgeBaseRefs"))
+    scope_refs = _index_refs_by_integer_id(spec.get("knowledgeBaseScopes"))
     prefer_request_scope = _is_knowledge_workbench_task(task_json)
 
     result: list[SelectedKnowledgeRef] = []
@@ -576,6 +575,53 @@ def _build_external_refs_from_values(
                 resources=resources,
             )
         )
+    return result
+
+
+def _validate_explicit_external_contexts(contexts: Iterable[Any]) -> None:
+    """Reject explicit external selections that cannot be consumed completely."""
+    for value in _current_external_values(contexts):
+        provider = str(value.get("provider") or "").strip().lower()
+        if provider not in PROVIDER_SKILLS:
+            _raise_capability_error(
+                f"Unsupported knowledge provider: {provider or '<missing>'}"
+            )
+        if not str(value.get("id") or "").strip():
+            _raise_capability_error("Invalid explicit knowledge source: missing id")
+
+        scope_type = str(value.get("target_type") or "knowledge_base")
+        if scope_type not in {
+            KnowledgeScopeType.KNOWLEDGE_BASE,
+            KnowledgeScopeType.FOLDER,
+            KnowledgeScopeType.DOCUMENT,
+        }:
+            _raise_capability_error(
+                f"Invalid explicit knowledge source: unsupported target type "
+                f"{scope_type}"
+            )
+        if scope_type == KnowledgeScopeType.FOLDER and not (
+            value.get("node_id") or value.get("parent_id")
+        ):
+            _raise_capability_error(
+                "Invalid explicit knowledge source: missing folder id"
+            )
+        if scope_type == KnowledgeScopeType.DOCUMENT and not (
+            value.get("document_id") or value.get("node_id")
+        ):
+            _raise_capability_error(
+                "Invalid explicit knowledge source: missing document id"
+            )
+
+
+def _index_refs_by_integer_id(values: Any) -> dict[int, dict[str, Any]]:
+    """Index valid reference mappings without trusting persisted identifiers."""
+    result: dict[int, dict[str, Any]] = {}
+    for value in values if isinstance(values, list) else []:
+        if not isinstance(value, dict):
+            continue
+        identifiers = _int_values([value.get("id")])
+        if identifiers:
+            result[identifiers[0]] = value
     return result
 
 

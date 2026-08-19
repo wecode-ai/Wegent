@@ -188,7 +188,7 @@ def test_current_external_selection_replaces_all_task_knowledge(
     assert "explicitly selected by the user" in request.selected_knowledge_prompt
 
 
-def test_unknown_explicit_provider_does_not_restore_task_knowledge() -> None:
+def test_unknown_explicit_provider_returns_capability_error() -> None:
     task = SimpleNamespace(
         json={"spec": {"knowledgeBaseRefs": [{"id": 12, "name": "默认知识"}]}}
     )
@@ -206,13 +206,10 @@ def test_unknown_explicit_provider_does_not_restore_task_knowledge() -> None:
         )
     ]
 
-    skills = apply_selected_knowledge_context(
-        MagicMock(), request, task, current_contexts=current_contexts
-    )
-
-    assert skills == []
-    assert request.selected_knowledge_prompt == ""
-    assert request.provider_native_knowledge is False
+    with pytest.raises(HTTPException, match="Unsupported knowledge provider"):
+        apply_selected_knowledge_context(
+            MagicMock(), request, task, current_contexts=current_contexts
+        )
 
 
 @pytest.mark.parametrize(
@@ -239,7 +236,7 @@ def test_unknown_explicit_provider_does_not_restore_task_knowledge() -> None:
         },
     ],
 )
-def test_invalid_explicit_external_resource_does_not_activate_native(
+def test_invalid_explicit_external_resource_returns_capability_error(
     monkeypatch: pytest.MonkeyPatch,
     type_data: dict,
 ) -> None:
@@ -254,18 +251,47 @@ def test_invalid_explicit_external_resource_does_not_activate_native(
         )
     ]
 
-    skills = apply_selected_knowledge_context(
-        MagicMock(),
-        request,
-        SimpleNamespace(
-            json={"spec": {"knowledgeBaseRefs": [{"id": 12, "name": "默认知识"}]}}
-        ),
-        current_contexts=current_contexts,
-    )
+    with pytest.raises(HTTPException, match="Invalid explicit knowledge source"):
+        apply_selected_knowledge_context(
+            MagicMock(),
+            request,
+            SimpleNamespace(
+                json={"spec": {"knowledgeBaseRefs": [{"id": 12, "name": "默认知识"}]}}
+            ),
+            current_contexts=current_contexts,
+        )
 
-    assert skills == []
-    assert request.selected_knowledge_prompt == ""
-    assert request.provider_native_knowledge is False
+
+def test_invalid_explicit_source_rejects_other_valid_sources(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(PROVIDER_SKILLS, "demo", "demo-knowledge")
+    contexts = [
+        SimpleNamespace(
+            context_type=ContextType.EXTERNAL_KNOWLEDGE.value,
+            status=ContextStatus.READY.value,
+            name="有效来源",
+            type_data={"provider": "demo", "mode": "explicit", "id": "demo-1"},
+        ),
+        SimpleNamespace(
+            context_type=ContextType.EXTERNAL_KNOWLEDGE.value,
+            status=ContextStatus.READY.value,
+            name="未知来源",
+            type_data={
+                "provider": "unknown-provider",
+                "mode": "explicit",
+                "id": "unknown-1",
+            },
+        ),
+    ]
+
+    with pytest.raises(HTTPException, match="Unsupported knowledge provider"):
+        apply_selected_knowledge_context(
+            MagicMock(),
+            ExecutionRequest(),
+            SimpleNamespace(json={"spec": {}}),
+            current_contexts=contexts,
+        )
 
 
 def test_current_wegent_document_selection_replaces_all_task_refs() -> None:
@@ -458,6 +484,38 @@ def test_empty_wegent_scope_keeps_other_valid_wegent_scope() -> None:
     assert should_prepare is True
 
 
+def test_restricted_wegent_does_not_disable_explicit_external_provider() -> None:
+    contexts = [
+        SimpleNamespace(
+            context_type=ContextType.EXTERNAL_KNOWLEDGE.value,
+            status=ContextStatus.READY.value,
+            name="钉钉文档",
+            type_data={
+                "provider": "dingtalk",
+                "mode": "explicit",
+                "id": "space-1",
+            },
+        )
+    ]
+
+    should_prepare = should_prepare_provider_native_knowledge(
+        knowledge_base_ids=[12],
+        knowledge_base_scopes=[
+            KnowledgeBaseScope(
+                knowledge_base_id=12,
+                scope_restricted=True,
+                document_ids=[9],
+            )
+        ],
+        access_mode="restricted_search_only",
+        current_contexts=contexts,
+        preload_selected_kb_skill=True,
+        shell_type="Chat",
+    )
+
+    assert should_prepare is True
+
+
 def test_current_wegent_folder_preserves_include_subfolders_false() -> None:
     request = ExecutionRequest(knowledge_base_ids=[12], is_user_selected_kb=True)
     contexts = [
@@ -555,6 +613,26 @@ def test_task_empty_restricted_scope_does_not_become_whole_knowledge_base() -> N
 
     assert [ref.knowledge_base_id for ref in refs] == ["13"]
     assert [resource.resource_id for resource in refs[0].resources] == ["9"]
+
+
+def test_task_invalid_knowledge_base_ids_are_ignored() -> None:
+    request = ExecutionRequest(knowledge_base_ids=[12])
+    task = SimpleNamespace(
+        json={
+            "spec": {
+                "knowledgeBaseRefs": [
+                    {"id": "invalid", "name": "损坏数据"},
+                    {"id": 12, "name": "有效知识"},
+                ],
+                "knowledgeBaseScopes": [{"id": "also-invalid"}],
+            }
+        }
+    )
+
+    refs = build_selected_knowledge_refs(MagicMock(), request, task)
+
+    assert [ref.knowledge_base_id for ref in refs] == ["12"]
+    assert refs[0].knowledge_base_name == "有效知识"
 
 
 def test_selected_dingtalk_docs_and_ai_table_keyword_skill_can_coexist() -> None:

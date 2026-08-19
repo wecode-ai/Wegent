@@ -56,7 +56,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-SELECTED_KB_PRELOAD_SKILL = "wegent-knowledge"
 KNOWLEDGE_ARTIFACT_SOURCE = "knowledge_artifact"
 CODEX_RUNTIME = "codex"
 RUNTIME_MODEL_TYPE = "runtime"
@@ -645,32 +644,6 @@ def _build_executor_attachment_payload(context: Any) -> dict[str, Any]:
     }
 
 
-def _ensure_selected_kb_skill_priority(request: "ExecutionRequest") -> None:
-    """Ensure selected-KB requests both preload and prioritize the KB skill."""
-    if not request.knowledge_base_ids or not request.is_user_selected_kb:
-        return
-
-    preload_skills = list(request.preload_skills or [])
-    if SELECTED_KB_PRELOAD_SKILL not in preload_skills:
-        preload_skills.append(SELECTED_KB_PRELOAD_SKILL)
-        request.preload_skills = preload_skills
-        logger.info(
-            "[ai_trigger_unified] Added preload skill '%s' for selected KBs: %s",
-            SELECTED_KB_PRELOAD_SKILL,
-            request.knowledge_base_ids,
-        )
-
-    user_selected_skills = list(request.user_selected_skills or [])
-    if SELECTED_KB_PRELOAD_SKILL not in user_selected_skills:
-        user_selected_skills.append(SELECTED_KB_PRELOAD_SKILL)
-        request.user_selected_skills = user_selected_skills
-        logger.info(
-            "[ai_trigger_unified] Added user-selected skill '%s' for selected KBs: %s",
-            SELECTED_KB_PRELOAD_SKILL,
-            request.knowledge_base_ids,
-        )
-
-
 async def trigger_ai_response_unified(
     task: TaskResource,
     assistant_subtask: Subtask,
@@ -1142,7 +1115,7 @@ async def build_execution_request(
         from app.services.chat.selected_knowledge import (
             activate_provider_native_knowledge,
             apply_selected_knowledge_context,
-            has_supported_explicit_external_context,
+            has_explicit_external_context,
             has_usable_wegent_scope,
         )
 
@@ -1150,13 +1123,13 @@ async def build_execution_request(
         has_usable_wegent = has_usable_wegent_scope(
             request.knowledge_base_ids, request.knowledge_base_scopes
         )
-        if (
-            task_labels.get("source") != KNOWLEDGE_ARTIFACT_SOURCE
-            and request.kb_tool_access_mode
-            != KnowledgeBaseToolAccessMode.RESTRICTED_SEARCH_ONLY
-            and (
+        has_external_context = has_explicit_external_context(current_contexts)
+        if task_labels.get("source") != KNOWLEDGE_ARTIFACT_SOURCE and (
+            has_external_context
+            or (
                 has_usable_wegent
-                or has_supported_explicit_external_context(current_contexts)
+                and request.kb_tool_access_mode
+                != KnowledgeBaseToolAccessMode.RESTRICTED_SEARCH_ONLY
             )
         ):
             provider_skills = apply_selected_knowledge_context(
@@ -1279,12 +1252,6 @@ async def _process_contexts(
         request.kb_tool_access_mode = ctx.kb.kb_tool_access_mode
         if ctx.kb.document_ids and not ctx.kb.knowledge_base_scopes:
             request.document_ids = ctx.kb.document_ids
-        if prepare_provider_native_knowledge and has_usable_wegent_scope(
-            ctx.kb.knowledge_base_ids,
-            ctx.kb.knowledge_base_scopes,
-        ):
-            _ensure_selected_kb_skill_priority(request)
-
     logger.info(
         "[ai_trigger_unified] Context processing completed: "
         "user_subtask_id=%d, knowledge_base_ids=%s, table_contexts_count=%d, "
