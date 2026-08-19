@@ -89,19 +89,34 @@
       "reason": "The bundled plugin is instruction-only and no longer declares or starts an MCP server",
       "subject": "arch://wegent/adapter/codex-project-space-plugin",
       "timestamp": "2026-08-19T04:37:56Z"
+    },
+    {
+      "action": "verify",
+      "change_id": "chg-0326bddf1a03",
+      "confidence": 1.0,
+      "evidence": [
+        "wework/test-results/ai-verify/2026-08-19T04-47-38-522Z-19946/executor.log"
+      ],
+      "object": null,
+      "plane": "runtime",
+      "predicate": null,
+      "reason": "Isolated real Tauri startup launched one Executor process and logged exactly one persistent project-space MCP endpoint ready event",
+      "subject": "arch://wegent/flow/issue-runtime-project-space-binding",
+      "timestamp": "2026-08-19T04:49:48Z"
     }
   ],
   "created_at": "2026-08-19T04:09:18Z",
   "id": "tx-c52b0321e001",
   "intent": "Clarify and enforce single ownership of project-space MCP lifecycle: Wework owns the persistent Provider, Codex app-server alone owns each session Adapter, diagnostics must never initiate MCP startup, and bound Issue conversations use the deterministic attachment tool path",
+  "merged_revision": "A00000033",
   "read_set": [
     "arch://wegent/adapter/codex-project-space-plugin",
     "arch://wegent/flow/issue-runtime-project-space-binding",
     "arch://wegent/service/local-project-space-gateway"
   ],
   "resolutions": [],
-  "status": "open",
-  "updated_at": "2026-08-19T04:37:56Z",
+  "status": "merged",
+  "updated_at": "2026-08-19T04:49:48Z",
   "write_set": [
     "arch://wegent/adapter/codex-project-space-plugin",
     "arch://wegent/flow/issue-runtime-project-space-binding"
