@@ -279,21 +279,22 @@ fi
 
 # GitHub expressions are matched literally in workflow source.
 # shellcheck disable=SC2016
-wework_target_key='wework-desktop-e2e-v3-${{ hashFiles('\''docker/wework-e2e/desktop.Dockerfile'\'') }}-${{ hashFiles('\''executor/Cargo.lock'\'', '\''wework/src-tauri/Cargo.lock'\'') }}'
-if ! grep -Fq "$wework_target_key" "$workflow_dir/wework-e2e.yml" ||
-  ! grep -Fq "$wework_target_key" "$warmup_workflow"; then
-  fail "Wework E2E and warmup must share the desktop Cargo target cache"
+wework_source_key='wework-desktop-e2e-cargo-sources-v1-${{ hashFiles('\''docker/wework-e2e/desktop.Dockerfile'\'') }}-${{ hashFiles('\''executor/Cargo.lock'\'', '\''wework/src-tauri/Cargo.lock'\'') }}'
+if ! grep -Fq "$wework_source_key" "$workflow_dir/wework-e2e.yml" ||
+  ! grep -Fq "$wework_source_key" "$warmup_workflow"; then
+  fail "Wework E2E and warmup must share the desktop Cargo source cache"
 fi
 
 desktop_warmup_section="$(
-  grep -A120 'name: Warm Wework Desktop Cargo Target' "$warmup_workflow"
+  grep -A120 'name: Warm Wework Desktop Rust Cache' "$warmup_workflow"
 )"
 # GitHub expressions are matched literally in workflow source.
 # shellcheck disable=SC2016
 if [[ "$desktop_warmup_section" != *'image: ${{ needs.prepare-wework-desktop-image.outputs.desktop_image }}'* ]] ||
   [[ "$desktop_warmup_section" != *'HOME: /root'* ]] ||
-  [[ "$desktop_warmup_section" =~ install-wework-tauri-system-dependencies|dtolnay/rust-toolchain ]]; then
-  fail "Wework desktop target warmup must build inside the E2E container"
+  [[ "$desktop_warmup_section" != *'uses: ./.github/actions/setup-sccache'* ]] ||
+  [[ "$desktop_warmup_section" =~ executor/target|wework/src-tauri/target|install-wework-tauri-system-dependencies|dtolnay/rust-toolchain ]]; then
+  fail "Wework desktop Rust warmup must use sccache inside the E2E container"
 fi
 
 printf 'CI cache policy tests passed\n'

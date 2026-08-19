@@ -722,7 +722,7 @@ fi
 
 # GitHub expressions are matched literally in workflow source.
 # shellcheck disable=SC2016
-if ! grep -Fq '${{ runner.os }}-wework-desktop-e2e-v3-' \
+if ! grep -Fq '${{ runner.os }}-wework-desktop-e2e-cargo-sources-v1-' \
   <<<"$desktop_cache_key" ||
   ! grep -Fq "hashFiles('docker/wework-e2e/desktop.Dockerfile')" \
     <<<"$desktop_cache_key" ||
@@ -788,7 +788,7 @@ wework_desktop_cloud_job="$(
 if [[ "$wework_desktop_cloud_job" != *"needs.changes.outputs.wework_desktop_cloud_e2e == 'true'"* ]] ||
   [[ "$wework_desktop_cloud_job" != *"fromJSON(needs.changes.outputs.wework_desktop_cloud_e2e_matrix)"* ]] ||
   [[ "$wework_desktop_cloud_job" != *"--parallel-segments"* ]] ||
-  [[ "$wework_desktop_cloud_job" != *'WEWORK_E2E_PARALLEL_CHECKPOINTS: "3"'* ]] ||
+  [[ "$wework_desktop_cloud_job" != *'WEWORK_E2E_PARALLEL_CHECKPOINTS: "2"'* ]] ||
   [[ "$wework_desktop_cloud_job" != *'WEWORK_E2E_ISOLATED_XVFB: "true"'* ]] ||
   [[ "$wework_desktop_cloud_job" != *"compression-level: 0"* ]] ||
   [[ "$wework_desktop_cloud_job" != *"name: Download shared Wework desktop E2E build"* ]] ||
@@ -803,7 +803,7 @@ wework_desktop_core_job="$(
     "$wework_workflow"
 )"
 if [[ "$wework_desktop_core_job" != *"needs.changes.outputs.wework_desktop_core_e2e == 'true'"* ]] ||
-  [[ "$wework_desktop_core_job" != *'WEWORK_E2E_PARALLEL_CHECKPOINTS: "3"'* ]] ||
+  [[ "$wework_desktop_core_job" != *'WEWORK_E2E_PARALLEL_CHECKPOINTS: "2"'* ]] ||
   [[ "$wework_desktop_core_job" != *"compression-level: 0"* ]]; then
   printf 'Wework Core desktop E2E must use its segment classification\n' >&2
   exit 1

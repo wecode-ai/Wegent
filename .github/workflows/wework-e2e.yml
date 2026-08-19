@@ -212,6 +212,9 @@ jobs:
           save-cache: ${{ github.ref == 'refs/heads/main' }}
           setup-toolchain: "false"
 
+      - name: Set up sccache
+        uses: ./.github/actions/setup-sccache
+
       - name: Restore bundled Codex cache
         id: bundled-codex-cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
@@ -226,18 +229,16 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            executor/target
-            wework/src-tauri/target
-          key: ${{ runner.os }}-wework-desktop-e2e-v3-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-${{ hashFiles('executor/Cargo.lock', 'wework/src-tauri/Cargo.lock') }}
+          key: ${{ runner.os }}-wework-desktop-e2e-cargo-sources-v1-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-${{ hashFiles('executor/Cargo.lock', 'wework/src-tauri/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-wework-desktop-e2e-v3-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-
+            ${{ runner.os }}-wework-desktop-e2e-cargo-sources-v1-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-
 
       - name: Prepare bundled sidecars
         working-directory: ./wework
         run: |
-          pnpm run prepare:codex --materialize &
+          node scripts/prepare-codex-binary.mjs --materialize &
           codex_pid=$!
-          pnpm run prepare:dws &
+          node scripts/prepare-dws-binary.mjs &
           dws_pid=$!
 
           status=0
@@ -259,8 +260,6 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            executor/target
-            wework/src-tauri/target
           key: ${{ steps.wework-desktop-cargo-cache.outputs.cache-primary-key }}
 
       - name: Save bundled Codex cache
@@ -349,7 +348,7 @@ jobs:
           WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/wegent-executor
           WEWORK_E2E_CODEX_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/codex/x86_64-unknown-linux-gnu/vendor/x86_64-unknown-linux-musl/bin/codex
           WEWORK_E2E_ISOLATED_XVFB: "true"
-          WEWORK_E2E_PARALLEL_CHECKPOINTS: "3"
+          WEWORK_E2E_PARALLEL_CHECKPOINTS: "2"
           WEWORK_E2E_PARALLEL_SCOPE: core
           WEWORK_E2E_SEGMENTS: ${{ matrix.segments }}
         run: |
@@ -420,7 +419,7 @@ jobs:
           WEWORK_E2E_CODEX_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/codex/x86_64-unknown-linux-gnu/vendor/x86_64-unknown-linux-musl/bin/codex
           WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/wegent-executor
           WEWORK_E2E_ISOLATED_XVFB: "true"
-          WEWORK_E2E_PARALLEL_CHECKPOINTS: "3"
+          WEWORK_E2E_PARALLEL_CHECKPOINTS: "2"
           WEWORK_E2E_PARALLEL_SCOPE: cloud
           WEWORK_E2E_SEGMENTS: ${{ matrix.segments }}
         run: |
@@ -469,6 +468,9 @@ jobs:
         with:
           setup-toolchain: "false"
 
+      - name: Set up sccache
+        uses: ./.github/actions/setup-sccache
+
       - name: Restore bundled Codex cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
@@ -481,18 +483,16 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            executor/target
-            wework/src-tauri/target
-          key: ${{ runner.os }}-wework-desktop-e2e-v3-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-${{ hashFiles('executor/Cargo.lock', 'wework/src-tauri/Cargo.lock') }}
+          key: ${{ runner.os }}-wework-desktop-e2e-cargo-sources-v1-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-${{ hashFiles('executor/Cargo.lock', 'wework/src-tauri/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-wework-desktop-e2e-v3-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-
+            ${{ runner.os }}-wework-desktop-e2e-cargo-sources-v1-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-
 
       - name: Prepare bundled sidecars
         working-directory: ./wework
         run: |
-          pnpm run prepare:codex &
+          node scripts/prepare-codex-binary.mjs &
           codex_pid=$!
-          pnpm run prepare:dws &
+          node scripts/prepare-dws-binary.mjs &
           dws_pid=$!
 
           status=0

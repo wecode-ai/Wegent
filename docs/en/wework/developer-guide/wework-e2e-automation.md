@@ -130,7 +130,7 @@ its own minimal fixtures instead of depending on tasks or UI state created only
 by the complete flow. PR CI builds the smallest segment matrix for the changed
 feature paths. Shared desktop infrastructure, merge queue, scheduled runs, and
 `ci:all` still run the complete desktop suites. The complete Core and Cloud
-suites each use five fixed GitHub Actions matrix jobs. Every job runs three
+suites each use five fixed GitHub Actions matrix jobs. Every job runs two
 checkpoints concurrently with isolated Xvfb displays, ports, application data,
 and Executor Homes. Shards are balanced from observed CI durations; a new or
 materially slower checkpoint requires rebalancing instead of adding runners,
@@ -138,7 +138,9 @@ removing coverage, or rerunning failures. CI first builds one Core Tauri
 application, Executor, and Codex artifact. In `--build-only` mode, the
 independent Tauri and Executor builds run concurrently on the same runner. Every
 Core and Cloud shard downloads and reuses that artifact instead of rebuilding
-Vite, Tauri, and Executor. The plugin suite requires separate build-time
+Vite, Tauri, and Executor. Rust builds cache Cargo sources and sccache compiler
+units rather than the large full `target/` directories whose restore latency is
+highly variable. The plugin suite requires separate build-time
 configuration and remains an independent job alongside the shared Core build.
 Both successful and failed runs retain complete diagnostics; uploads disable
 redundant compression for PNG and other already-compressed evidence so artifact
