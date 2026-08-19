@@ -130,7 +130,7 @@ its own minimal fixtures instead of depending on tasks or UI state created only
 by the complete flow. PR CI builds the smallest segment matrix for the changed
 feature paths. Shared desktop infrastructure, merge queue, scheduled runs, and
 `ci:all` still run the complete desktop suites. The complete Core and Cloud
-suites each use five fixed GitHub Actions matrix jobs. Every job runs two
+suites each use five fixed GitHub Actions matrix jobs. Every job runs three
 checkpoints concurrently with isolated Xvfb displays, ports, application data,
 and Executor Homes. Shards are balanced from observed CI durations; a new or
 materially slower checkpoint requires rebalancing instead of adding runners,
