@@ -144,21 +144,27 @@ describe('Issue workflow projection', () => {
     expect(workflowBoardStatus(workflow)).toBe('in_review')
   })
 
-  it('completes the start node and releases stages that depend on it', () => {
+  it('completes the start node, releases stages, and activates the wait node', () => {
     const workflow = instantiateIssueWorkflow(endpointDefinition)!
 
     expect(workflow.nodes.map(node => [node.id, node.status])).toEqual([
       ['start', 'completed'],
       ['develop', 'ready'],
-      ['wait', 'blocked'],
+      ['wait', 'waiting'],
       ['end', 'blocked'],
     ])
-    expect(workflowBoardStatus(workflow)).toBe('pending')
+    expect(workflowBoardStatus(workflow)).toBe('in_progress')
   })
 
-  it('enters waiting after its prerequisites finish and keeps the issue in progress', () => {
+  it('keeps the wait node active while the stage runs and completes it after approval', () => {
     let workflow = instantiateIssueWorkflow(endpointDefinition)!
     workflow = updateIssueWorkflowForRuntime(workflow, 'develop', 'running')
+    expect(workflow.nodes.map(node => [node.id, node.status])).toEqual([
+      ['start', 'completed'],
+      ['develop', 'running'],
+      ['wait', 'waiting'],
+      ['end', 'blocked'],
+    ])
     expect(workflowBoardStatus(workflow)).toBe('in_progress')
 
     workflow = updateIssueWorkflowForRuntime(workflow, 'develop', 'succeeded')

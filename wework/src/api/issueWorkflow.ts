@@ -23,7 +23,7 @@ export function instantiateIssueWorkflow(
   const stageMode = definition.stage_mode ?? (definition.nodes.length ? 'dag' : 'none')
   const advancementPolicy = definition.advancement_policy ?? 'manual'
   if (stageMode === 'none' && advancementPolicy === 'manual') return null
-  const nodes = (stageMode === 'dag' ? definition.nodes : []).map(node => ({
+  const nodes: WorkflowNodeInstance[] = (stageMode === 'dag' ? definition.nodes : []).map(node => ({
     ...node,
     status:
       node.node_type === 'start' ? 'completed' : node.depends_on.length === 0 ? 'ready' : 'blocked',
@@ -54,14 +54,26 @@ function releaseReadyNodes(nodes: WorkflowNodeInstance[]): WorkflowNodeInstance[
       .filter(node => ['completed', 'forced_completed'].includes(node.status))
       .map(node => node.id)
   )
+  const statuses = new Map(nodes.map(node => [node.id, node.status]))
   return nodes.map(node => {
     if (node.status !== 'blocked') return node
+    if (node.node_type === 'wait') {
+      // A wait node becomes active as soon as its upstream work has begun (no
+      // dependency is still blocked): the robot registers the external
+      // reference while its stage is still running, and only the terminal
+      // event completes the node later. Mirrors the backend projection pass.
+      if (node.depends_on.some(dependency => statuses.get(dependency) === 'blocked')) return node
+      statuses.set(node.id, 'waiting')
+      return { ...node, status: 'waiting' }
+    }
     if (!node.depends_on.every(dependency => completed.has(dependency))) return node
     if (node.node_type === 'end') {
       completed.add(node.id)
+      statuses.set(node.id, 'completed')
       return { ...node, status: 'completed' }
     }
-    return { ...node, status: node.node_type === 'wait' ? 'waiting' : 'ready' }
+    statuses.set(node.id, 'ready')
+    return { ...node, status: 'ready' }
   })
 }
 
