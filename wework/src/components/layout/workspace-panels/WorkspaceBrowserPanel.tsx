@@ -796,12 +796,21 @@ export function WorkspaceBrowserTabPanel({
         setDeviceVisualRect(current => (current === null ? current : null))
       }
 
-      // Bounds establish the target CSS viewport. Linux derives the effective
-      // native zoom from this target and the GTK allocation it actually gets.
-      await setEmbeddedBrowserBounds(nextBounds, nativeVisible, label)
-      await setEmbeddedBrowserZoom(deviceFitScaleRef.current, label).catch(error => {
-        console.error('Failed to apply embedded browser zoom:', error)
-      })
+      const applyZoom = () =>
+        setEmbeddedBrowserZoom(deviceFitScaleRef.current, label).catch(error => {
+          console.error('Failed to apply embedded browser zoom:', error)
+        })
+      if (placement) {
+        // Linux derives the effective native zoom from the responsive target
+        // bounds, so establish those bounds before changing zoom.
+        await setEmbeddedBrowserBounds(nextBounds, nativeVisible, label)
+        await applyZoom()
+      } else {
+        // Preserve the established navigation/annotation timing for the normal
+        // embedded browser viewport.
+        await applyZoom()
+        await setEmbeddedBrowserBounds(nextBounds, nativeVisible, label)
+      }
     },
     [active, embeddedBrowserAvailable, label]
   )
