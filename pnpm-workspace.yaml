@@ -45,3 +45,5 @@ minimumReleaseAgeExclude:
   - '@file-viewer/renderer-geo@2.1.26'
   - '@file-viewer/renderer-mindmap@2.1.26'
   - '@file-viewer/renderer-typst@2.1.26'
+patchedDependencies:
+  '@file-viewer/renderer-drawing@2.1.26': patches/@file-viewer__renderer-drawing@2.1.26.patch
