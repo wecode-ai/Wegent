@@ -647,6 +647,9 @@ fn git_worktree_root_and_id(path: &str) -> Option<(String, String)> {
 }
 
 fn resolved_worktree_root_and_id(path: &str) -> Option<(String, String)> {
+    if !Path::new(path).exists() {
+        return path_worktree_root_and_id(path);
+    }
     if let Some(worktree) = git_worktree_root_and_id(path) {
         return Some(worktree);
     }
@@ -687,7 +690,7 @@ fn parse_gitdir_file(git_file: &Path, worktree_root: &Path) -> Option<PathBuf> {
 
 fn path_worktree_root_and_id(path: &str) -> Option<(String, String)> {
     let parts = Path::new(path).components().collect::<Vec<_>>();
-    for index in 0..parts.len() {
+    for index in (0..parts.len()).rev() {
         let component_text = parts[index].as_os_str().to_str()?;
         if component_text != "worktrees" && component_text != ".worktrees" {
             continue;
@@ -875,6 +878,38 @@ mod tests {
         assert_eq!(
             workspace_task_path(&source_path, &repository_path),
             repository_path
+        );
+    }
+
+    #[test]
+    fn nonexistent_planned_worktree_does_not_inherit_an_ancestor_worktree() {
+        let directory = tempdir().expect("temporary directory");
+        let common_dir = directory.path().join("repo").join(".git");
+        let outer_worktree = directory.path().join("outer");
+        let outer_git_dir = common_dir.join("worktrees").join("outer");
+        std::fs::create_dir_all(&outer_git_dir).expect("outer worktree metadata");
+        std::fs::create_dir_all(&outer_worktree).expect("outer worktree");
+        std::fs::write(
+            outer_worktree.join(".git"),
+            format!("gitdir: {}\n", outer_git_dir.display()),
+        )
+        .expect("outer worktree git file");
+
+        let planned = outer_worktree
+            .join("executor-home")
+            .join("workspace")
+            .join("worktrees")
+            .join("runtime-1")
+            .join("workspace");
+        let planned_path = planned.display().to_string();
+
+        assert_eq!(
+            workspace_task_path(&planned_path, &outer_worktree.display().to_string()),
+            planned_path
+        );
+        assert_eq!(
+            infer_worktree_id(&planned_path).as_deref(),
+            Some("runtime-1")
         );
     }
 }

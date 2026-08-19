@@ -132,6 +132,7 @@ interface MessageListProps {
   onAddSelectionToConversation?: (text: string) => void
   onAskSelectionInSidebar?: (text: string) => void
   onVirtualLayoutChange?: () => void
+  virtualAnchorToEnd?: boolean
   renderGapAfterMessage?: (
     message: WorkbenchMessage,
     nextMessage: WorkbenchMessage | undefined
@@ -225,6 +226,7 @@ export const MessageList = memo(function MessageList({
   onAddSelectionToConversation,
   onAskSelectionInSidebar,
   onVirtualLayoutChange,
+  virtualAnchorToEnd = true,
   renderGapAfterMessage,
 }: MessageListProps) {
   const { t } = useTranslation('common')
@@ -321,7 +323,7 @@ export const MessageList = memo(function MessageList({
     paddingStart: MESSAGE_LIST_PADDING_TOP_PX,
     paddingEnd: MESSAGE_LIST_PADDING_BOTTOM_PX,
     overscan: VIRTUAL_MESSAGE_OVERSCAN,
-    anchorTo: 'end',
+    anchorTo: virtualAnchorToEnd ? 'end' : 'start',
     rangeExtractor: range => {
       const indexes =
         range.count <= VIRTUAL_MESSAGE_FULL_MEASUREMENT_COUNT
@@ -801,6 +803,7 @@ function areMessageListPropsEqual(previous: MessageListProps, next: MessageListP
       ? 'onAskSelectionInSidebar'
       : null,
     previous.onVirtualLayoutChange !== next.onVirtualLayoutChange ? 'onVirtualLayoutChange' : null,
+    previous.virtualAnchorToEnd !== next.virtualAnchorToEnd ? 'virtualAnchorToEnd' : null,
     previous.renderGapAfterMessage !== next.renderGapAfterMessage ? 'renderGapAfterMessage' : null,
   ].filter((key): key is string => key !== null)
 

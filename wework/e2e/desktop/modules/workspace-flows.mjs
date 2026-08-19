@@ -178,6 +178,7 @@ async function captureVerificationScreenshot(control, name, selector = 'body') {
 }
 
 async function verifyWorkspaceDocumentTabs(control) {
+  await ensureExperimentalFeaturesEnabled(control)
   await control.command('waitFor', '[data-testid="workspace-tab-strip"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
@@ -250,6 +251,7 @@ async function reloadMainWindow(control, errorMessage) {
 }
 
 async function verifyDefaultWorkspaceStartupTab(control) {
+  await ensureExperimentalFeaturesEnabled(control)
   await control.command('navigate', 'body', { value: '/settings' })
   await control.command('waitFor', '[data-testid="general-settings-page"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -311,6 +313,10 @@ async function verifyDefaultWorkspaceStartupTab(control) {
 }
 
 async function verifyWorkspaceIssueCreation(control) {
+  await ensureExperimentalFeaturesEnabled(control)
+  await control.command('waitFor', '[data-testid="workspace-tab-strip"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   const boardTabs = workspaceTabIds(JSON.parse(await control.command('snapshot', 'body')), 'board')
   assert.ok(boardTabs.length > 0, 'The workspace issue flow requires an existing board tab')
   const boardTabSuffix = boardTabs[0].slice('workspace-tab-board-'.length)
@@ -592,6 +598,15 @@ async function waitForAttribute(control, selector, name, expected, message) {
 }
 
 async function verifyWorkspaceTabIsolation(control) {
+  await control.command('waitFor', '[data-testid="workspace-tab-strip"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid^="workspace-tab-select-task-"]')
+  await control.command('waitFor', '[data-tab-kind="task"][aria-selected="true"]', {
+    text: '任务',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await ensureExperimentalFeaturesEnabled(control)
   await control.command('waitFor', '[data-testid="workspace-tab-strip"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })

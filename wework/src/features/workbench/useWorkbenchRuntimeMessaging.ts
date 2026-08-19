@@ -1345,9 +1345,12 @@ export function useWorkbenchRuntimeMessaging({
           options?.onRuntimeTaskOptimisticOpen?.(address, {
             previousAddress: optimisticAddress,
           })
-          if (options?.openInMainPane !== false && optimisticTaskStillSelected) {
-            runtimeTasks.openRuntimeTaskView(address, runtimeProject, { navigate: true })
-          }
+        }
+        if (options?.openInMainPane !== false && optimisticTaskStillSelected) {
+          runtimeTasks.openRuntimeTaskView(address, runtimeProject, {
+            markOpened: !resolvedSameIdentity,
+            navigate: !resolvedSameIdentity,
+          })
         }
         if (response.status === 'queued') {
           lifecycleStore.syncRuntimeTask(address, {

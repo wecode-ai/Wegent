@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
 
+import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
+
 import {
   CHECKPOINT_TASK_COMPLETION_TEXT,
   CHECKPOINT_TASK_PROMPT,
@@ -1322,6 +1324,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
     },
 
     async verify(control) {
+      await ensureExperimentalFeaturesEnabled(control)
       if (cloudApi) {
         await verifyRealCloud(control)
         return

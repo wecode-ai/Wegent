@@ -2103,6 +2103,10 @@ export function WorkspaceBrowserTabPanel({
               name="url"
               data-testid="workspace-browser-url-input"
               value={address}
+              autoCapitalize="none"
+              autoComplete="off"
+              autoCorrect="off"
+              spellCheck={false}
               onChange={event => setAddress(event.target.value)}
               onFocus={() => {
                 addressEditingRef.current = true
