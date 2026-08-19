@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  attachIssueWorkflowDelivery,
+  decideIssueWorkflowNode,
   instantiateIssueWorkflow,
   preferNewestLoopItemSnapshot,
   updateIssueWorkflowForRuntime,
@@ -69,17 +71,42 @@ describe('Issue workflow projection', () => {
     expect(preferNewestLoopItemSnapshot(queued, completed)).toBe(completed)
   })
 
-  it('releases successors and aggregates the Issue state', () => {
+  it('waits for human approval before releasing successors', () => {
     let workflow = instantiateIssueWorkflow(definition)!
     workflow = updateIssueWorkflowForRuntime(workflow, 'develop', 'running')
     expect(workflowBoardStatus(workflow)).toBe('in_progress')
 
     workflow = updateIssueWorkflowForRuntime(workflow, 'develop', 'succeeded')
+    expect(workflow.nodes.map(node => node.status)).toEqual([
+      'awaiting_approval',
+      'blocked',
+      'blocked',
+    ])
+    workflow = decideIssueWorkflowNode(workflow, 'develop', 'approve', 1, '')
     expect(workflow.nodes.map(node => node.status)).toEqual(['completed', 'ready', 'blocked'])
     expect(workflowBoardStatus(workflow)).toBe('pending')
 
     workflow = updateIssueWorkflowForRuntime(workflow, 'test', 'succeeded')
+    workflow = decideIssueWorkflowNode(workflow, 'test', 'approve', 1, '')
     workflow = updateIssueWorkflowForRuntime(workflow, 'pr', 'succeeded')
+    workflow = decideIssueWorkflowNode(workflow, 'pr', 'approve', 1, '')
     expect(workflowBoardStatus(workflow)).toBe('in_review')
+  })
+
+  it('requires configured deliverables before approval', () => {
+    const withDeliverables = {
+      ...definition,
+      nodes: definition.nodes.map(node =>
+        node.id === 'develop' ? { ...node, required_deliverables: ['测试报告'] } : node
+      ),
+    }
+    let workflow = instantiateIssueWorkflow(withDeliverables)!
+    workflow = updateIssueWorkflowForRuntime(workflow, 'develop', 'succeeded')
+    expect(() => decideIssueWorkflowNode(workflow, 'develop', 'approve', 1, '')).toThrow(
+      'Required deliverables are missing'
+    )
+    workflow = attachIssueWorkflowDelivery(workflow, 'develop', 'delivery-1')
+    workflow = decideIssueWorkflowNode(workflow, 'develop', 'approve', 1, '')
+    expect(workflow.nodes[0].status).toBe('completed')
   })
 })

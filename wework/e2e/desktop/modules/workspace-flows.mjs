@@ -1,6 +1,9 @@
 import { waitForSnapshot } from './conversation-layout.mjs'
 
-import { ensureExperimentalFeaturesEnabled } from './preferences-automation-flows.mjs'
+import {
+  ensureExperimentalFeaturesDisabled,
+  ensureExperimentalFeaturesEnabled,
+} from './preferences-automation-flows.mjs'
 
 import {
   ACTIVE_COMPOSER_SELECTOR,
@@ -114,10 +117,15 @@ async function waitForWorkbenchTask(control, taskId, message) {
   throw new Error(message)
 }
 
-async function waitForWorkbenchDebugState(control, predicate, message) {
+async function waitForWorkbenchDebugState(
+  control,
+  predicate,
+  message,
+  timeoutMs = DEFAULT_STEP_TIMEOUT_MS
+) {
   const startedAt = Date.now()
   let lastSnapshot = null
-  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+  while (Date.now() - startedAt < timeoutMs) {
     const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
     lastSnapshot = snapshot
     if (predicate(snapshot)) return snapshot
@@ -245,7 +253,52 @@ async function reloadMainWindow(control, errorMessage) {
   )
 }
 
+async function verifyWorkspaceTabsWithoutExperiments(control) {
+  await ensureExperimentalFeaturesDisabled(control)
+  await control.command('waitFor', '[data-testid="workspace-tab-strip"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  const tabStripSnapshot = JSON.parse(
+    await control.command('snapshot', '[data-testid="workspace-tab-strip"]')
+  )
+  assert.ok(
+    tabStripSnapshot.testIds.some(testId => testId.startsWith('workspace-tab-task-')),
+    'Disabling experiments removed the task tab'
+  )
+  assert.ok(
+    tabStripSnapshot.testIds.some(testId => testId.startsWith('workspace-tab-agent-')),
+    'Disabling experiments removed the Agent tab'
+  )
+  assert.ok(
+    !tabStripSnapshot.testIds.some(testId => testId.startsWith('workspace-tab-board-')),
+    'The project-space tab remained visible while experiments were disabled'
+  )
+
+  await control.command('click', '[data-testid="workspace-tab-add"]')
+  await control.command('waitFor', '[data-testid="workspace-tab-add-menu"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const addMenuSnapshot = JSON.parse(
+    await control.command('snapshot', '[data-testid="workspace-tab-add-menu"]')
+  )
+  assert.ok(
+    addMenuSnapshot.testIds.includes('workspace-tab-add-task'),
+    'The new-tab menu removed task creation while experiments were disabled'
+  )
+  assert.ok(
+    addMenuSnapshot.testIds.includes('workspace-tab-add-agent'),
+    'The new-tab menu removed Agent creation while experiments were disabled'
+  )
+  assert.ok(
+    !addMenuSnapshot.testIds.includes('workspace-tab-add-board'),
+    'The new-tab menu exposed project spaces while experiments were disabled'
+  )
+  await captureVerificationScreenshot(control, 'workspace-tabs-00-experiments-disabled.png')
+  await control.command('click', '[data-testid="workspace-tab-add"]')
+}
+
 async function verifyDefaultWorkspaceStartupTab(control) {
+  await verifyWorkspaceTabsWithoutExperiments(control)
   await ensureExperimentalFeaturesEnabled(control)
   await control.command('navigate', 'body', { value: '/settings' })
   await control.command('waitFor', '[data-testid="general-settings-page"]', {
@@ -308,6 +361,10 @@ async function verifyDefaultWorkspaceStartupTab(control) {
 }
 
 async function verifyWorkspaceIssueCreation(control) {
+  await ensureExperimentalFeaturesEnabled(control)
+  await control.command('waitFor', '[data-testid="workspace-tab-strip"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   const boardTabs = workspaceTabIds(JSON.parse(await control.command('snapshot', 'body')), 'board')
   assert.ok(boardTabs.length > 0, 'The workspace issue flow requires an existing board tab')
   const boardTabSuffix = boardTabs[0].slice('workspace-tab-board-'.length)
@@ -365,25 +422,112 @@ async function verifyWorkspaceIssueCreation(control) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('click', '[data-testid="workspace-create-issue-tab"]')
-  await control.command('fill', '[data-testid="workspace-issue-input"]', {
-    value: 'WEWORK_DESKTOP_E2E_ISSUE\nWorkspace issue creation verified',
+  await control.command('click', '[data-testid="workspace-issue-expand"]')
+  await control.command('waitFor', '[data-testid="workspace-issue-description"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const expandedPanelClass =
+    (await control.command('getAttribute', '[data-testid="workspace-issue-composer-panel"]', {
+      value: 'class',
+    })) ?? ''
+  assert.ok(
+    expandedPanelClass.includes('fixed') &&
+      expandedPanelClass.includes('left-4') &&
+      expandedPanelClass.includes('right-4') &&
+      expandedPanelClass.includes('bottom-4') &&
+      expandedPanelClass.includes('w-auto'),
+    `Expanded Issue editor must cover the complete board workspace with outer margins: ${expandedPanelClass}`
+  )
+  assert.ok(
+    expandedPanelClass.includes('top-[54px]') &&
+      !expandedPanelClass.includes('inset-0') &&
+      !expandedPanelClass.includes('top-4'),
+    `Expanded Issue editor must preserve the 38px app tab chrome plus a 16px margin: ${expandedPanelClass}`
+  )
+  const editorBodyClass =
+    (await control.command('getAttribute', '[data-testid="workspace-issue-editor-body"]', {
+      value: 'class',
+    })) ?? ''
+  assert.ok(
+    editorBodyClass.includes('w-full') &&
+      editorBodyClass.includes('px-6') &&
+      !editorBodyClass.includes('max-w-[960px]'),
+    `Expanded Issue content must use the available width with standard gutters: ${editorBodyClass}`
+  )
+  await control.command('waitFor', '[data-testid="workspace-issue-header-actions"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('fill', '[data-testid="workspace-issue-description"]', {
+    value: 'WEWORK_DESKTOP_E2E_ISSUE\nWorkspace fullscreen issue creation verified',
+  })
+  await control.command('waitFor', '[data-testid="workspace-issue-draft-status"]', {
+    text: '草稿已自动保存',
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await captureVerificationScreenshot(control, 'workspace-issue-01-ready.png')
-  await control.command('click', '[data-testid="workspace-issue-submit"]')
+  await control.command('click', '[data-testid="workspace-issue-close"]')
+  await control.command('waitFor', '[data-testid="workspace-issue-composer"]', {
+    visible: false,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', `${boardContentSelector} [data-testid="cloud-create-issue"]`)
+  await control.command('waitFor', '[data-testid="workspace-issue-input"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="workspace-issue-expand"]')
+  await waitForControlValue(
+    control,
+    '[data-testid="workspace-issue-description"]',
+    'WEWORK_DESKTOP_E2E_ISSUE\nWorkspace fullscreen issue creation verified',
+    'Fullscreen Issue content did not survive closing and reopening'
+  )
+  await control.command('click', '[data-testid="workspace-issue-fullscreen-submit"]')
   await control.command(
     'waitFor',
     `${boardContentSelector} [data-testid="cloud-todo-detail-title"]`,
     {
-      text: 'WEWORK_DESKTOP_E2E_ISSUE',
       visible: true,
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
+  )
+  await waitForControlValue(
+    control,
+    `${boardContentSelector} [data-testid="cloud-todo-detail-title"]`,
+    'WEWORK_DESKTOP_E2E_ISSUE Workspace fullscreen issue creation verified',
+    'Fullscreen Issue creation did not persist the composed title'
   )
   await captureVerificationScreenshot(
     control,
     'workspace-issue-02-created.png',
     boardContentSelector
   )
+  await control.command('click', `${boardContentSelector} [data-testid="cloud-todo-create-task"]`)
+  await control.command(
+    'waitFor',
+    `${boardContentSelector} [data-testid="ai-chat-modal-backdrop"][data-presentation="sidebar"]`,
+    {
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  await control.command(
+    'waitFor',
+    `${boardContentSelector} [data-testid="work-item-new-task-chat-panel"]`,
+    {
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  await captureVerificationScreenshot(
+    control,
+    'workspace-issue-03-new-task-sidebar.png',
+    boardContentSelector
+  )
+  await control.command('click', `${boardContentSelector} [data-testid="ai-chat-modal-close"]`)
 
   await control.command('click', `${boardContentSelector} [data-testid="cloud-todo-detail-close"]`)
   await control.command('click', boardTabSelector)
@@ -402,7 +546,7 @@ async function verifyWorkspaceIssueCreation(control) {
   )
   await captureVerificationScreenshot(
     control,
-    'workspace-issue-03-on-board.png',
+    'workspace-issue-04-on-board.png',
     boardContentSelector
   )
 }
@@ -597,6 +741,15 @@ async function waitForAttribute(control, selector, name, expected, message) {
 }
 
 async function verifyWorkspaceTabIsolation(control) {
+  await ensureExperimentalFeaturesEnabled(control)
+  await control.command('waitFor', '[data-testid="workspace-tab-strip"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid^="workspace-tab-select-task-"]')
+  await control.command('waitFor', '[data-tab-kind="task"][aria-selected="true"]', {
+    text: '任务',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await ensureExperimentalFeaturesEnabled(control)
   await control.command('waitFor', '[data-testid="workspace-tab-strip"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,

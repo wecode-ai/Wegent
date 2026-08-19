@@ -216,8 +216,9 @@ class DeliveryService:
         item = require_loop_item_access(
             db, delivery.loop_item_id, user_id, BaseRole.Developer
         )
+        source_binding = None
         if delivery.source_task_binding_id:
-            self._require_active_task_binding(
+            source_binding = self._require_active_task_binding(
                 db, item.id, delivery.source_task_binding_id
             )
         assets = self.list_assets(db, delivery.id)
@@ -247,6 +248,17 @@ class DeliveryService:
             delivery.manifest_object_key = manifest_key
             delivery.status = "delivered"
             delivery.delivered_at = now
+            if source_binding is not None and source_binding.workflow_node_id:
+                self._attach_workflow_delivery(
+                    item,
+                    workflow_node_id=source_binding.workflow_node_id,
+                    delivery_id=delivery.id,
+                )
+                item.current_delivery_id = delivery.id
+                item.version += 1
+                db.commit()
+                db.refresh(delivery)
+                return delivery
             if item.status != "completed":
                 project = db.get(CloudProject, item.cloud_project_id)
                 if project is not None:
@@ -275,6 +287,37 @@ class DeliveryService:
             db.rollback()
             self.storage.remove_objects([manifest_key])
             raise
+
+    @staticmethod
+    def _attach_workflow_delivery(
+        item: LoopItem,
+        *,
+        workflow_node_id: str,
+        delivery_id: str,
+    ) -> None:
+        metadata = dict(item.metadata_json or {})
+        workflow = metadata.get("workflow")
+        raw_nodes = workflow.get("nodes") if isinstance(workflow, dict) else None
+        if not isinstance(raw_nodes, list):
+            raise HTTPException(status.HTTP_409_CONFLICT, "Issue has no workflow")
+        nodes: list[dict] = []
+        found = False
+        for raw_node in raw_nodes:
+            node = dict(raw_node) if isinstance(raw_node, dict) else {}
+            if node.get("id") == workflow_node_id:
+                delivery_ids = list(node.get("delivery_ids") or [])
+                if delivery_id not in delivery_ids:
+                    delivery_ids.append(delivery_id)
+                node["delivery_ids"] = delivery_ids
+                found = True
+            nodes.append(node)
+        if not found:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow node not found")
+        next_workflow = dict(workflow)
+        next_workflow["version"] = int(workflow.get("version") or 1) + 1
+        next_workflow["nodes"] = nodes
+        metadata["workflow"] = next_workflow
+        item.metadata_json = metadata
 
     def list_deliveries(
         self, db: Session, item_id: str, user_id: int
@@ -306,6 +349,22 @@ class DeliveryService:
         if delivery.status != "delivered":
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Delivery asset not found")
         return self.storage.download_url(asset.object_key)
+
+    def read_asset_content(
+        self, db: Session, asset_id: str, user_id: int
+    ) -> tuple[bytes, str, str]:
+        asset = db.get(DeliveryAsset, asset_id)
+        if asset is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Delivery asset not found")
+        delivery = self._require_delivery(db, asset.delivery_id, user_id)
+        if delivery.status != "delivered":
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Delivery asset not found")
+        content = self.storage.get_bytes(
+            asset.object_key,
+            settings.DELIVERY_MAX_ASSET_SIZE_MB * 1024 * 1024,
+        )
+        filename = asset.display_name or asset.relative_path
+        return content, asset.content_type or "application/octet-stream", filename
 
     def read_markdown(self, delivery: Delivery) -> str:
         return self.storage.get_bytes(

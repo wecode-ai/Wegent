@@ -16,13 +16,20 @@ from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token, get_password_hash
 from app.models.cloud_project import CloudProject
-from app.models.delivery import LoopItem, ProjectWorkflowPlanItem, ProjectWorkflowRun
+from app.models.delivery import (
+    LoopItem,
+    ProjectAutomationRule,
+    ProjectAutomationRun,
+    ProjectWorkflowPlanItem,
+    ProjectWorkflowRun,
+)
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.task import TaskResource
 from app.models.user import User
 from app.services.delivery import delivery_service
 from app.services.delivery.storage import DeliveryStorageUnavailableError
+from app.services.project_automations import project_automation_execution
 
 
 class FakeDeliveryStorage:
@@ -930,6 +937,69 @@ def test_ai_workflow_replans_once_when_a_task_reports_rework(
     )
 
 
+def test_moving_orchestrated_issue_to_pending_starts_its_workflow(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+    delivery_project: CloudProject,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rule = ProjectAutomationRule(
+        cloud_project_id=delivery_project.id,
+        title="Develop automatically",
+        description="Start from the Issue workflow",
+        status="enabled",
+        created_by_user_id=delivery_project.created_by_user_id,
+        metadata_json={
+            "trigger_type": "workflow",
+            "assignment_mode": "manual",
+            "timezone": "Asia/Shanghai",
+        },
+    )
+    test_db.add(rule)
+    test_db.flush()
+    delivery_project.metadata_json = {
+        **(delivery_project.metadata_json or {}),
+        "workflow_definition": {
+            "version": 1,
+            "stage_mode": "dag",
+            "advancement_policy": "manual",
+            "nodes": [
+                {
+                    "id": "develop",
+                    "name": "Develop",
+                    "kind": "automation",
+                    "depends_on": [],
+                    "required": True,
+                    "workspace_policy": "none",
+                    "automation_rule_id": str(rule.id),
+                }
+            ],
+        },
+    }
+    test_db.commit()
+    created = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Start workflow from board", "status": "inbox"},
+    ).json()
+    dispatch = AsyncMock()
+    monkeypatch.setattr(project_automation_execution, "dispatch", dispatch)
+
+    response = test_client.patch(
+        f"/api/v1/loop-items/{created['id']}",
+        headers=_auth(test_token),
+        json={"version": created["version"], "status": "pending"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "pending"
+    assert response.json()["workflow"]["nodes"][0]["status"] == "queued"
+    run = test_db.query(ProjectAutomationRun).one()
+    assert run.task_id == created["id"]
+    dispatch.assert_awaited_once()
+
+
 def test_workflow_task_binding_requires_a_ready_non_automated_stage(
     test_client: TestClient,
     test_db: Session,
@@ -1009,6 +1079,13 @@ def test_workflow_task_binding_requires_a_ready_non_automated_stage(
     )
     assert first.status_code == 201
     assert first.json()["workflow_node_id"] == "develop"
+    context = test_client.get(
+        "/api/v1/runtime-tasks/cloud-context",
+        headers=_auth(test_token),
+        params={"device_id": "local-device", "task_id": "develop-task"},
+    )
+    assert context.status_code == 200
+    assert context.json()["workflow_node_id"] == "develop"
 
     duplicate = test_client.post(
         f"/api/v1/loop-items/{item['id']}/tasks",

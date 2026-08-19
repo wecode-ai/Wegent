@@ -504,6 +504,12 @@ export type TodoEditorProps = {
   selectedTaskId?: string | null
   onCreateTask?: (workflowNodeId?: string) => void
   onRunWorkflowNode?: (workflowNodeId: string, automationRuleId: string) => void
+  onUploadWorkflowDeliverables?: (workflowNodeId: string, files: File[]) => Promise<void>
+  onDecideWorkflowNode?: (
+    workflowNodeId: string,
+    action: 'approve' | 'reject' | 'force_advance',
+    reason: string
+  ) => Promise<void>
   onOpenTaskConversation?: (task: {
     id: number
     device_id: string
@@ -1804,6 +1810,8 @@ export function TodoEditor(props: TodoEditorProps) {
                         onCreateTask={props.onCreateTask}
                         onRunAutomation={props.onRunWorkflowNode}
                         onOpenTask={props.onOpenTaskConversation}
+                        onUploadDeliverables={props.onUploadWorkflowDeliverables}
+                        onDecide={props.onDecideWorkflowNode}
                       />
                     ) : displayedTasks.length === 0 ? (
                       <p className="rounded-xl border border-dashed border-border px-3 py-4 text-center text-xs text-text-muted">

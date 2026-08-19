@@ -13,17 +13,19 @@ Uses distributed lock to prevent multiple instances from recovering
 the same jobs simultaneously.
 """
 
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
+from app.core.config import settings
 from app.stores.tasks import subtask_store, task_store
 
 logger = logging.getLogger(__name__)
 
 # Consider a video job stale if last_poll_at is older than this threshold
-# Set to 10 seconds since we have Celery task_id deduplication to prevent duplicates
-STALE_THRESHOLD_SECONDS = 10
+STALE_THRESHOLD_SECONDS = max(1, settings.VIDEO_RECOVERY_STALE_SECONDS)
+RECOVERY_LOOKBACK_HOURS = max(1, settings.VIDEO_RECOVERY_LOOKBACK_HOURS)
 
 # Lock name for video recovery
 VIDEO_RECOVERY_LOCK_NAME = "video_recovery"
@@ -63,6 +65,23 @@ async def recover_video_jobs() -> int:
         return await _do_recover_video_jobs()
 
 
+async def recover_video_jobs_after_stale_delay() -> int:
+    """Run a second recovery pass after fresh polling heartbeats become stale.
+
+    During rolling deployments, the first startup pass can observe a poll from
+    the terminating worker and skip it as fresh. If that worker exits before
+    scheduling its next poll, this delayed pass recovers the orphaned job.
+    """
+    delay_seconds = STALE_THRESHOLD_SECONDS + 1
+    logger.info(
+        "[video_recovery] Scheduling delayed recovery pass in %d seconds",
+        delay_seconds,
+    )
+    await asyncio.sleep(delay_seconds)
+    logger.info("[video_recovery] Starting delayed recovery pass")
+    return await recover_video_jobs()
+
+
 async def _do_recover_video_jobs() -> int:
     """
     Internal function to perform the actual recovery logic.
@@ -73,19 +92,19 @@ async def _do_recover_video_jobs() -> int:
 
     db = SessionLocal()
     try:
-        # Only query RUNNING subtasks created in the last hour for performance
+        # Bound the recovery scan for performance.
         now_utc = datetime.now(timezone.utc)
-        one_hour_ago = now_utc - timedelta(hours=1)
+        created_after = now_utc - timedelta(hours=RECOVERY_LOOKBACK_HOURS)
 
         # Query subtasks that may need recovery
         running_subtasks = subtask_store.list_running_since(
             db,
-            created_after=one_hour_ago,
+            created_after=created_after,
         )
 
         logger.info(
             f"[video_recovery] Found {len(running_subtasks)} RUNNING subtasks "
-            f"(created in last hour) to check"
+            f"(created in last {RECOVERY_LOOKBACK_HOURS} hour(s)) to check"
         )
 
         recovered_count = 0
@@ -105,35 +124,8 @@ async def _do_recover_video_jobs() -> int:
                 )
                 continue
 
-            # Check if this is a video job in polling state
-            if video_job.get("status") != "polling":
-                logger.debug(
-                    f"[video_recovery] Subtask {subtask.id}: video_job.status={video_job.get('status')}, not 'polling', skipping"
-                )
+            if not _is_polling_context_stale(video_job, now_utc, subtask.id):
                 continue
-
-            # Check staleness
-            last_poll_str = video_job.get("last_poll_at")
-            if last_poll_str:
-                try:
-                    last_poll_at = datetime.fromisoformat(
-                        last_poll_str.replace("Z", "+00:00")
-                    )
-                    if last_poll_at.tzinfo is None:
-                        last_poll_at = last_poll_at.replace(tzinfo=timezone.utc)
-
-                    age_seconds = (now_utc - last_poll_at).total_seconds()
-                    if age_seconds < STALE_THRESHOLD_SECONDS:
-                        # Not stale yet, might still be processing
-                        logger.debug(
-                            f"[video_recovery] Skipping non-stale job: "
-                            f"subtask_id={subtask.id}, age={age_seconds}s"
-                        )
-                        continue
-                except (ValueError, TypeError) as e:
-                    logger.warning(
-                        f"[video_recovery] Invalid last_poll_at for subtask {subtask.id}: {e}"
-                    )
 
             # Extract recovery data
             job_id = video_job.get("job_id")
@@ -191,6 +183,50 @@ async def _do_recover_video_jobs() -> int:
         return 0
     finally:
         db.close()
+
+
+def _is_polling_context_stale(
+    video_job: Any,
+    now_utc: datetime,
+    subtask_id: int,
+) -> bool:
+    """Return whether a persisted video polling context needs recovery."""
+    if not isinstance(video_job, dict):
+        return False
+
+    if video_job.get("status") != "polling":
+        logger.debug(
+            "[video_recovery] Subtask %s: video_job.status=%s, skipping",
+            subtask_id,
+            video_job.get("status"),
+        )
+        return False
+
+    last_poll_str = video_job.get("last_poll_at")
+    if not last_poll_str:
+        return True
+
+    try:
+        last_poll_at = datetime.fromisoformat(last_poll_str.replace("Z", "+00:00"))
+        if last_poll_at.tzinfo is None:
+            last_poll_at = last_poll_at.replace(tzinfo=timezone.utc)
+    except (ValueError, TypeError) as exc:
+        logger.warning(
+            "[video_recovery] Invalid last_poll_at for subtask %s: %s",
+            subtask_id,
+            exc,
+        )
+        return True
+
+    age_seconds = (now_utc - last_poll_at).total_seconds()
+    if age_seconds < STALE_THRESHOLD_SECONDS:
+        logger.debug(
+            "[video_recovery] Skipping fresh job: subtask_id=%s, age=%ss",
+            subtask_id,
+            age_seconds,
+        )
+        return False
+    return True
 
 
 def _get_user_id_for_task(db, task_id: int) -> int:

@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "wework_space": {
+      "command": "wegent-executor",
+      "args": ["space-mcp-server"],
+      "startup_timeout_sec": 15,
+      "tool_timeout_sec": 60,
+      "default_tools_approval_mode": "approve"
+    }
+  }
+}

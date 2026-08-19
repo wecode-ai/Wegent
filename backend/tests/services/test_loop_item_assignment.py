@@ -4,7 +4,7 @@
 """Focused contracts for task assignment, robot approval, and queue state."""
 
 import uuid
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -239,6 +239,62 @@ def test_assign_to_member_records_chain(test_db: Session, test_user: User) -> No
     assert metadata["assignment_history"][-1]["to_type"] == "user"
     assert metadata["assignment_history"][-1]["to_name"] == "assignee"
     assert _active_execution(test_db, updated) is None
+
+
+def test_assign_to_other_member_sends_notification(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    member = _make_member(test_db, project, "assignee", BaseRole.Developer)
+    item = _make_item(test_db, project, test_user)
+
+    with patch(
+        "app.services.loop_items.service.notify_project_task_assignee"
+    ) as notify:
+        loop_item_service.assign(
+            test_db,
+            project_id=int(project.id),
+            item_id=item.id,
+            user_id=test_user.id,
+            values=LoopItemAssign(
+                version=item.version,
+                assignee_type="user",
+                assignee_id=str(member.id),
+            ),
+        )
+
+    notify.assert_called_once_with(
+        user_id=member.id,
+        project_id=str(project.id),
+        project_name=project.name,
+        item_id=item.id,
+        item_title=item.title,
+        assigner_name=test_user.user_name,
+    )
+
+
+def test_assign_to_self_does_not_send_notification(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    item = _make_item(test_db, project, test_user)
+
+    with patch(
+        "app.services.loop_items.service.notify_project_task_assignee"
+    ) as notify:
+        loop_item_service.assign(
+            test_db,
+            project_id=int(project.id),
+            item_id=item.id,
+            user_id=test_user.id,
+            values=LoopItemAssign(
+                version=item.version,
+                assignee_type="user",
+                assignee_id=str(test_user.id),
+            ),
+        )
+
+    notify.assert_not_called()
 
 
 def test_manual_approval_flow_only_creator_can_approve(

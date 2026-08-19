@@ -49,12 +49,15 @@ from app.schemas.delivery import (
     MyWorkListResponse,
 )
 from app.schemas.issue_workflow import (
+    WorkflowNodeDecisionRequest,
     WorkflowPlanSubmit,
     WorkflowPlanView,
     WorkflowTaskOutcomeSubmit,
 )
 from app.services.cloud_projects import cloud_project_service
 from app.services.delivery import delivery_service
+from app.services.issue_workflow_decision import issue_workflow_decision_service
+from app.services.issue_workflow_start import issue_workflow_start_service
 from app.services.loop_items import loop_item_service
 from app.services.loop_items.external_provider import external_loop_item_provider
 from app.services.loop_items.provider_router import (
@@ -212,6 +215,7 @@ def find_runtime_task_cloud_context(
     return CloudTaskContextResponse.model_validate(
         {
             **binding.__dict__,
+            "workflow_node_id": binding.workflow_node_id,
             "project": {
                 **project.__dict__,
                 "current_user_id": current_user.id,
@@ -372,6 +376,14 @@ async def create_loop_item(
         )
     if created.internal_item is not None:
         db.refresh(created.internal_item)
+        if created.internal_item.status == "pending":
+            await issue_workflow_start_service.start(
+                db,
+                item=created.internal_item,
+                project=project,
+                user_id=current_user.id,
+            )
+            db.refresh(created.internal_item)
         if created.internal_item.assignee_agent_id:
             from app.services.board_team_execution import (
                 dispatch_board_team_assignment,
@@ -435,6 +447,27 @@ def get_loop_item(
     return _loop_item_response(db, item, current_user)
 
 
+@router.post(
+    "/loop-items/{item_id}/workflow-nodes/{workflow_node_id}/decision",
+    response_model=LoopItemResponse,
+)
+def decide_loop_item_workflow_node(
+    item_id: str,
+    workflow_node_id: str,
+    values: WorkflowNodeDecisionRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> LoopItemResponse:
+    item = issue_workflow_decision_service.decide(
+        db,
+        item_id=item_id,
+        workflow_node_id=workflow_node_id,
+        values=values,
+        user_id=current_user.id,
+    )
+    return _loop_item_response(db, item, current_user)
+
+
 @router.patch("/loop-items/{item_id}", response_model=LoopItemResponse)
 async def update_loop_item(
     item_id: str,
@@ -455,7 +488,20 @@ async def update_loop_item(
             await dispatch_board_team_assignment(db, item=item, user=current_user)
             response = external_loop_item_provider.get(db, item_id, current_user.id)
         return LoopItemResponse.model_validate(response)
+    existing = loop_item_service.get(db, item_id, current_user.id)
+    previous_status = existing.status
     item = loop_item_service.update(db, item_id, current_user.id, values)
+    if previous_status == "inbox" and item.status == "pending":
+        project = cloud_project_service.get(
+            db, int(item.cloud_project_id), current_user.id
+        )
+        await issue_workflow_start_service.start(
+            db,
+            item=item,
+            project=project,
+            user_id=current_user.id,
+        )
+        db.refresh(item)
     if item.assignee_agent_id and "assignee_agent_id" in values.model_fields_set:
         from app.services.board_team_execution import dispatch_board_team_assignment
 
@@ -871,6 +917,22 @@ def access_delivery_asset(
 ) -> DeliveryAssetAccessResponse:
     return DeliveryAssetAccessResponse(
         url=delivery_service.access_asset_url(db, asset_id, current_user.id)
+    )
+
+
+@router.get("/delivery-assets/{asset_id}/content")
+def read_delivery_asset(
+    asset_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    content, content_type, filename = delivery_service.read_asset_content(
+        db, asset_id, current_user.id
+    )
+    return Response(
+        content=content,
+        media_type=content_type,
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
     )
 
 

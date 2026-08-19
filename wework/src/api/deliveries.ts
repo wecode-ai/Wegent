@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { ApiError, type HttpClient } from './http'
 import { updateIssueWorkflowForRuntime, workflowBoardStatus } from './issueWorkflow'
-import type { RuntimeTaskAddress } from '@/types/api'
+import type { Attachment, RuntimeTaskAddress } from '@/types/api'
 
 import { openLocalFile } from '@/lib/local-terminal'
 import { isTauriRuntime } from '@/lib/runtime-environment'
@@ -207,6 +207,10 @@ export interface CloudLoopItemAttachment {
   markdown: string
 }
 
+export interface ProjectTaskAttachment extends CloudLoopItemAttachment {
+  loop_item_title: string
+}
+
 export interface CloudProject {
   id: CloudProjectId
   public_id: string
@@ -283,7 +287,16 @@ export interface CloudTaskContext {
 
 export type WorkflowWorkspacePolicy = 'none' | 'composer' | 'inherit'
 export type WorkflowContextSource = 'final_result' | 'deliveries' | 'activity'
-export type WorkflowNodeStatus = 'blocked' | 'ready' | 'queued' | 'running' | 'completed' | 'failed'
+export type WorkflowNodeStatus =
+  | 'blocked'
+  | 'ready'
+  | 'queued'
+  | 'running'
+  | 'awaiting_approval'
+  | 'changes_requested'
+  | 'completed'
+  | 'forced_completed'
+  | 'failed'
 export type IssueAdvancementPolicy = 'manual' | 'ai'
 export type IssueStageMode = 'none' | 'dag'
 
@@ -295,6 +308,7 @@ export interface WorkflowNodeDefinition {
   depends_on: string[]
   dependency_context?: Record<string, WorkflowContextSource[]>
   required: boolean
+  required_deliverables?: string[]
   workspace_policy: WorkflowWorkspacePolicy
   automation_rule_id?: string | null
 }
@@ -315,6 +329,13 @@ export interface WorkflowNodeInstance extends WorkflowNodeDefinition {
   task_binding_id?: string | null
   task_ids?: string[]
   task_statuses?: Record<string, string>
+  delivery_ids?: string[]
+  decision_history?: Array<{
+    action: 'approve' | 'reject' | 'force_advance'
+    actor_user_id: number
+    reason: string
+    decided_at: string
+  }>
   execution_id?: number | null
   automation_run_id?: string | null
 }
@@ -805,6 +826,24 @@ export function createDeliveryApi(client: HttpClient) {
     listLoopItemAttachments(itemId: string): Promise<CloudLoopItemAttachment[]> {
       return client.get(`/v1/loop-items/${encodeURIComponent(itemId)}/attachments`)
     },
+    listProjectTaskAttachments(
+      projectId: CloudProjectIdInput
+    ): Promise<{ items: ProjectTaskAttachment[] }> {
+      return client.get(`/v1/cloud-projects/${projectId}/task-attachments`)
+    },
+    importLoopItemAttachments(
+      itemId: string,
+      attachments: Attachment[]
+    ): Promise<CloudLoopItemAttachment[]> {
+      return client.post(
+        `/v1/loop-items/${encodeURIComponent(itemId)}/attachments/import-contexts`,
+        {
+          context_ids: attachments
+            .filter(attachment => attachment.id > 0)
+            .map(attachment => attachment.id),
+        }
+      )
+    },
     addLoopItemAttachment(itemId: string, file: File): Promise<CloudLoopItemAttachment> {
       const form = new FormData()
       form.set('file', file, file.name)
@@ -876,6 +915,19 @@ export function createDeliveryApi(client: HttpClient) {
         ...(taskTitle ? { taskTitle } : {}),
         ...(workflowNodeId ? { workflowNodeId } : {}),
       })
+    },
+    decideWorkflowNode(
+      itemId: string,
+      workflowNodeId: string,
+      action: 'approve' | 'reject' | 'force_advance',
+      reason = '',
+      actorUserId?: number
+    ): Promise<CloudLoopItem> {
+      void actorUserId
+      return client.post(
+        `/v1/loop-items/${encodeURIComponent(itemId)}/workflow-nodes/${encodeURIComponent(workflowNodeId)}/decision`,
+        { action, reason }
+      )
     },
     bindProjectTask(
       projectId: CloudProjectIdInput,
@@ -1052,8 +1104,14 @@ export function createDeliveryApi(client: HttpClient) {
     accessCloudFile(fileId: string): Promise<{ url: string; expires_in_seconds: number }> {
       return client.get(`/v1/cloud-projects/files/${fileId}/access`)
     },
+    readCloudFile(fileId: string): Promise<Blob> {
+      return client.getBlob(`/v1/cloud-projects/files/${fileId}/content`)
+    },
     accessDeliveryFile(assetId: string): Promise<{ url: string; expires_in_seconds: number }> {
       return client.get(`/v1/delivery-assets/${encodeURIComponent(assetId)}/access`)
+    },
+    readDeliveryFile(assetId: string): Promise<Blob> {
+      return client.getBlob(`/v1/delivery-assets/${encodeURIComponent(assetId)}/content`)
     },
     moveCloudFile(fileId: string, path: string, version: number): Promise<CloudProjectFile> {
       return client.patch(`/v1/cloud-projects/files/${fileId}`, { path, version })

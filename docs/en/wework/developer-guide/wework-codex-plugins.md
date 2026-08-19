@@ -78,15 +78,17 @@ The interaction style uses the same `config.toml` as its single source of truth.
 
 ## Runtime Permission Modes
 
-The Wework composer provides three permission modes for local Codex tasks and persists the selection in `modelSelection.options.permissionMode`. New tasks and historical tasks without this field default to Workspace instead of implicitly receiving full disk access:
+The Wework composer provides three permission modes for local Codex tasks and persists the selection in `modelSelection.options.permissionMode`. New tasks and historical tasks without this field default to Full access. When a user explicitly switches from another mode to Full access, the UI displays a risk confirmation:
 
 | Permission mode | Codex permission profile | Approval policy | Behavior                                                                                                                        |
 | --------------- | ------------------------ | --------------- | ------------------------------------------------------------------------------------------------------------------------------- |
 | Read only       | `:read-only`             | `on-request`    | Reads the workspace; file writes, commands outside the permission boundary, and additional permission requests require approval |
 | Workspace       | `:workspace`             | `on-request`    | Reads and writes inside the workspace; access outside it or permission expansion requires approval                              |
-| Full access     | `:danger-full-access`    | `never`         | Accesses files, the terminal, and the network without approval; enabling it requires an explicit risk confirmation              |
+| Full access     | `:danger-full-access`    | granular        | Runs file, terminal, and network operations without approval; MCP plugin business forms can still request user input            |
 
 The frontend sends `runtime_permission_profile` with every local runtime request. The Executor applies the corresponding `permissions` and `approvalPolicy` to `thread/start`, `thread/resume`, `thread/fork`, and `turn/start`. Resuming or continuing from a task runtime handle must reconstruct the same profile from the persisted permission mode and must not fall back to a more permissive profile.
+
+Full access uses granular approval policy. It disables `sandbox_approval`, `rules`, `skill_approval`, and `request_permissions`, while preserving `mcp_elicitations: true`. MCP elicitation is plugin-initiated business interaction rather than an execution-safety approval for commands, files, or permission escalation, so it must not be disabled by setting `approvalPolicy: "never"`.
 
 Ordinary Wework Claude Code conversations run as non-interactive child processes and cannot display or complete Claude CLI approval prompts. On this execution path, the Claude Code `default` setting therefore maps to `bypassPermissions`; explicit `acceptEdits`, `plan`, `auto`, and `bypassPermissions` selections are still passed through unchanged. Interactive local terminals do not use this mapping.
 

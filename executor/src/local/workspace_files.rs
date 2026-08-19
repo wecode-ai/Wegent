@@ -18,7 +18,7 @@ use super::command::CommandResult;
 
 const MAX_TEXT_FILE_BYTES: usize = 256 * 1024;
 const MAX_BINARY_CHUNK_BYTES: usize = 1024 * 1024;
-const WORKSPACE_ROOTS_ENV: &str = "WEGENT_WORKSPACE_ROOTS";
+pub const WORKSPACE_ROOTS_ENV: &str = "WEGENT_WORKSPACE_ROOTS";
 
 pub fn is_workspace_file_command(command_key: &str) -> bool {
     matches!(
@@ -117,7 +117,7 @@ fn allowed_workspace_roots(env_values: &HashMap<String, String>) -> Result<Vec<P
 }
 
 fn require_allowed_root(path: &Path, allowed_roots: &[PathBuf]) -> Result<(), String> {
-    if allowed_roots.is_empty() || allowed_roots.iter().any(|root| path.starts_with(root)) {
+    if allowed_roots.iter().any(|root| path.starts_with(root)) {
         return Ok(());
     }
     Err("Workspace path is outside allowed workspace roots".to_owned())
@@ -360,6 +360,22 @@ mod tests {
             WORKSPACE_ROOTS_ENV.to_owned(),
             root.to_string_lossy().into_owned(),
         )])
+    }
+
+    #[test]
+    fn workspace_file_commands_reject_missing_allowed_roots() {
+        let directory = tempfile::tempdir().expect("create workspace");
+
+        let error = execute_blocking(
+            "workspace_tree",
+            directory.path().to_str(),
+            &[],
+            &HashMap::new(),
+            None,
+        )
+        .expect_err("missing allowed roots must fail closed");
+
+        assert_eq!(error, "Workspace path is outside allowed workspace roots");
     }
 
     #[test]

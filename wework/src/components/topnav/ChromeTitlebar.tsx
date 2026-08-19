@@ -15,7 +15,7 @@ import { MessageSquareWarning } from 'lucide-react'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS } from '@/components/layout/DesktopTopBar'
 import { useState, type ReactNode } from 'react'
 import { WorkspaceTabStrip } from '@/features/workspace-tabs/WorkspaceTabStrip'
-import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
+import type { WorkspaceTabKind } from '@/features/workspace-tabs/workspaceTabs'
 
 interface ChromeTitlebarProps {
   beforeTabs?: ReactNode
@@ -23,6 +23,7 @@ interface ChromeTitlebarProps {
   className?: string
   showWorkspacePortals?: boolean
   showFeedback?: boolean
+  availableWorkspaceTabKinds?: readonly WorkspaceTabKind[]
 }
 
 export function ChromeTitlebar({
@@ -31,10 +32,10 @@ export function ChromeTitlebar({
   className,
   showWorkspacePortals = true,
   showFeedback = true,
+  availableWorkspaceTabKinds,
 }: ChromeTitlebarProps) {
   const isTauri = isTauriRuntime()
   const platform = getPlatform()
-  const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   const feedbackSlotVisible = isTauri && platform === 'mac'
   const fixedActionsWidth = showWorkspacePortals
     ? feedbackSlotVisible
@@ -69,7 +70,7 @@ export function ChromeTitlebar({
         </div>
       )}
 
-      {experimentalFeaturesEnabled ? <WorkspaceTabStrip /> : null}
+      <WorkspaceTabStrip availableKinds={availableWorkspaceTabKinds} />
       {afterTabs && (
         <div data-testid="chrome-titlebar-after-tabs" className="ml-3 flex shrink-0 items-center">
           {afterTabs}

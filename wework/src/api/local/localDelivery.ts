@@ -14,15 +14,22 @@ import {
   type CloudProjectId,
   type CloudProjectMember,
   type CloudTaskContext,
+  type ProjectTaskAttachment,
   type Delivery,
   type DeliveryAsset,
   type DeliveryCreateInput,
   type DeliveryDetail,
 } from '@/api/deliveries'
-import { updateIssueWorkflowForRuntime, workflowBoardStatus } from '@/api/issueWorkflow'
+import {
+  attachIssueWorkflowDelivery,
+  decideIssueWorkflowNode,
+  updateIssueWorkflowForRuntime,
+  workflowBoardStatus,
+} from '@/api/issueWorkflow'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { openLocalFile } from '@/lib/local-terminal'
-import type { RuntimeTaskAddress } from '@/types/api'
+import { readDroppedFiles } from '@/tauri/droppedFiles'
+import type { Attachment, RuntimeTaskAddress } from '@/types/api'
 import {
   localProjectAssociationFromTags,
   localProjectAssociationTag,
@@ -962,6 +969,40 @@ export function createLocalDeliveryApi(
         item_id: itemId,
       })
     },
+    async listProjectTaskAttachments(projectId: CloudProjectId) {
+      const tasks = await api.listLoopItems(projectId)
+      const rows = await Promise.all(
+        tasks.items.map(async item => {
+          const attachments = await request<CloudLoopItemAttachment[]>('attachments.list', {
+            project_id: projectId,
+            item_id: item.id,
+          })
+          return attachments.map(attachment => ({
+            ...attachment,
+            loop_item_title: item.title,
+          }))
+        })
+      )
+      return {
+        items: rows
+          .flat()
+          .sort((left, right) =>
+            right.created_at.localeCompare(left.created_at)
+          ) as ProjectTaskAttachment[],
+      }
+    },
+    async importLoopItemAttachments(itemId: string, attachments: Attachment[]) {
+      const files = await readDroppedFiles(
+        attachments
+          .filter(attachment => Boolean(attachment.local_path?.trim()))
+          .map(attachment => attachment.local_path!)
+      )
+      const imported: CloudLoopItemAttachment[] = []
+      for (const file of files) {
+        imported.push(await api.addLoopItemAttachment(itemId, file))
+      }
+      return imported
+    },
     async addLoopItemAttachment(itemId: string, file: File) {
       const projectId = await resolveProjectId(itemId)
       return request<CloudLoopItemAttachment>('attachments.add', {
@@ -976,6 +1017,13 @@ export function createLocalDeliveryApi(
           attachment_id: attachmentId,
         })
       )
+    },
+    async readLoopItemAttachment(attachmentId: string) {
+      const access = await request<LocalAccessRecord>('attachments.access', {
+        attachment_id: attachmentId,
+      })
+      const [file] = await readDroppedFiles([access.path])
+      return file
     },
     async downloadLoopItemAttachment(attachmentId: string) {
       const access = await request<LocalAccessRecord>('attachments.access', {
@@ -1181,10 +1229,22 @@ export function createLocalDeliveryApi(
     async accessCloudFile(fileId: string) {
       return localAccess(await request<LocalAccessRecord>('files.access', { file_id: fileId }))
     },
+    async readCloudFile(fileId: string) {
+      const access = await request<LocalAccessRecord>('files.access', { file_id: fileId })
+      const [file] = await readDroppedFiles([access.path])
+      return file
+    },
     async accessDeliveryFile(assetId: string) {
       return localAccess(
         await request<LocalAccessRecord>('deliveries.access_asset', { asset_id: assetId })
       )
+    },
+    async readDeliveryFile(assetId: string) {
+      const access = await request<LocalAccessRecord>('deliveries.access_asset', {
+        asset_id: assetId,
+      })
+      const [file] = await readDroppedFiles([access.path])
+      return file
     },
     async moveCloudFile(fileId: string, path: string, version: number) {
       const record = await request<LocalProjectFileRecord>('files.move', {
@@ -1214,10 +1274,30 @@ export function createLocalDeliveryApi(
     },
     async finalizeDelivery(deliveryId: string) {
       const delivery = await api.getDelivery(deliveryId)
-      return request<Delivery>('deliveries.finalize', {
+      const finalized = await request<Delivery>('deliveries.finalize', {
         item_id: delivery.loop_item_id,
         delivery_id: deliveryId,
       })
+      if (delivery.source_task_binding_id) {
+        const bindings = await api.listTaskBindings(delivery.loop_item_id)
+        const binding = bindings.find(candidate => candidate.id === delivery.source_task_binding_id)
+        if (binding?.workflow_node_id) {
+          const item = await api.getLoopItem(delivery.loop_item_id)
+          if (item.workflow) {
+            const workflow = attachIssueWorkflowDelivery(
+              item.workflow,
+              binding.workflow_node_id,
+              deliveryId
+            )
+            await api.updateLoopItem(item.id, {
+              version: item.version,
+              workflow,
+              status: workflowBoardStatus(workflow),
+            })
+          }
+        }
+      }
+      return finalized
     },
     async discardDraft(deliveryId: string) {
       await request('deliveries.discard', { delivery_id: deliveryId })
@@ -1228,6 +1308,28 @@ export function createLocalDeliveryApi(
     },
     async getDelivery(deliveryId: string) {
       return request<DeliveryDetail>('deliveries.get', { delivery_id: deliveryId })
+    },
+    async decideWorkflowNode(
+      itemId: string,
+      workflowNodeId: string,
+      action: 'approve' | 'reject' | 'force_advance',
+      reason = '',
+      actorUserId?: number
+    ) {
+      const item = await api.getLoopItem(itemId)
+      if (!item.workflow) throw new Error('Issue has no workflow')
+      const workflow = decideIssueWorkflowNode(
+        item.workflow,
+        workflowNodeId,
+        action,
+        actorUserId ?? Number(item.created_by_user_id),
+        reason
+      )
+      return api.updateLoopItem(item.id, {
+        version: item.version,
+        workflow,
+        status: workflowBoardStatus(workflow),
+      })
     },
   }
   return api as unknown as NonNullable<WorkbenchServices['deliveryApi']>

@@ -3,6 +3,7 @@
 
 """Validated project orchestration definitions and per-Issue snapshots."""
 
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -21,6 +22,17 @@ WorkflowOrchestrationStatus = Literal[
 WorkflowPlanItemAssigneeType = Literal["user", "agent", "team"]
 WorkflowTaskOutcomeVerdict = Literal["passed", "needs_rework"]
 ISSUE_WORKFLOW_SCOPE_ID = "__issue__"
+WorkflowNodeStatus = Literal[
+    "blocked",
+    "ready",
+    "queued",
+    "running",
+    "awaiting_approval",
+    "changes_requested",
+    "completed",
+    "forced_completed",
+    "failed",
+]
 
 
 class WorkflowNodeDefinition(BaseModel):
@@ -35,6 +47,7 @@ class WorkflowNodeDefinition(BaseModel):
         default_factory=dict
     )
     required: bool = True
+    required_deliverables: list[str] = Field(default_factory=list, max_length=20)
     workspace_policy: Literal["none", "composer", "inherit"] = "composer"
     automation_rule_id: str | None = Field(default=None, max_length=64)
 
@@ -52,6 +65,14 @@ class WorkflowNodeDefinition(BaseModel):
                 raise ValueError(
                     f"workflow dependency context contains duplicates: {dependency}"
                 )
+        normalized_deliverables = [
+            requirement.strip() for requirement in self.required_deliverables
+        ]
+        if any(not requirement for requirement in normalized_deliverables):
+            raise ValueError("workflow deliverable requirements cannot be empty")
+        if len(normalized_deliverables) != len(set(normalized_deliverables)):
+            raise ValueError("workflow deliverable requirements must be unique")
+        self.required_deliverables = normalized_deliverables
         return self
 
 
@@ -108,14 +129,35 @@ class ProjectWorkflowDefinition(BaseModel):
 
 
 class WorkflowNodeInstance(WorkflowNodeDefinition):
-    status: Literal["blocked", "ready", "queued", "running", "completed", "failed"] = (
-        "blocked"
-    )
+    status: WorkflowNodeStatus = "blocked"
     task_binding_id: str | None = Field(default=None, max_length=64)
     task_ids: list[str] = Field(default_factory=list, max_length=100)
     task_statuses: dict[str, str] = Field(default_factory=dict)
+    delivery_ids: list[str] = Field(default_factory=list, max_length=100)
+    decision_history: list["WorkflowNodeDecision"] = Field(
+        default_factory=list, max_length=100
+    )
     execution_id: int | None = Field(default=None, ge=1)
     automation_run_id: str | None = Field(default=None, max_length=64)
+
+
+class WorkflowNodeDecision(BaseModel):
+    action: Literal["approve", "reject", "force_advance"]
+    actor_user_id: int = Field(ge=1)
+    reason: str = Field(default="", max_length=2000)
+    decided_at: datetime
+
+
+class WorkflowNodeDecisionRequest(BaseModel):
+    action: Literal["approve", "reject", "force_advance"]
+    reason: str = Field(default="", max_length=2000)
+
+    @model_validator(mode="after")
+    def validate_reason(self) -> "WorkflowNodeDecisionRequest":
+        self.reason = self.reason.strip()
+        if self.action in {"reject", "force_advance"} and not self.reason:
+            raise ValueError(f"{self.action} requires a reason")
+        return self
 
 
 class IssueWorkflowInstance(BaseModel):
@@ -152,6 +194,7 @@ class IssueWorkflowInstance(BaseModel):
                     depends_on=node.depends_on,
                     dependency_context=node.dependency_context,
                     required=node.required,
+                    required_deliverables=node.required_deliverables,
                     workspace_policy=node.workspace_policy,
                     automation_rule_id=node.automation_rule_id,
                 )

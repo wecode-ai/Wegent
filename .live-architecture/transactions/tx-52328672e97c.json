@@ -1,0 +1,79 @@
+{
+  "actor": {
+    "id": "codex",
+    "kind": "ai"
+  },
+  "authority": "ai",
+  "base_revision": "A00000019",
+  "changes": [
+    {
+      "action": "assert",
+      "change_id": "chg-bfb10a8933da",
+      "confidence": 1.0,
+      "evidence": [
+        "user request 2026-08-18"
+      ],
+      "object": null,
+      "plane": "intent",
+      "predicate": null,
+      "reason": "Fullscreen collapse and close controls belong together on the right, and the editor body should not waste space behind a narrow centered width.",
+      "subject": "arch://wegent/flow/issue-creation-composer",
+      "timestamp": "2026-08-18T10:07:13Z"
+    },
+    {
+      "action": "update",
+      "change_id": "chg-44de1c963186",
+      "confidence": 1.0,
+      "evidence": [
+        "docs/zh/architecture/issue-task-workflow.md"
+      ],
+      "object": null,
+      "plane": "model",
+      "predicate": null,
+      "reason": "Define a right-aligned header action group and full-width body with standard page gutters.",
+      "subject": "arch://wegent/flow/issue-creation-composer",
+      "timestamp": "2026-08-18T10:07:14Z"
+    },
+    {
+      "action": "verify",
+      "change_id": "chg-196dc90fd0c1",
+      "confidence": 1.0,
+      "evidence": [
+        "wework/src/features/todo/IssueComposer.tsx"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Group collapse and close in one right-side action container and remove the 960px centered body cap in favor of 24px horizontal and 16px vertical gutters.",
+      "subject": "arch://wegent/flow/issue-creation-composer",
+      "timestamp": "2026-08-18T10:07:14Z"
+    },
+    {
+      "action": "verify",
+      "change_id": "chg-7df4e397519a",
+      "confidence": 1.0,
+      "evidence": [
+        "wework/src/features/todo/IssueComposer.test.tsx"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Focused tests verify action grouping, full-width body classes, standard gutters, and the unchanged title, draft, attachment, and submission behavior.",
+      "subject": "arch://wegent/flow/issue-creation-composer",
+      "timestamp": "2026-08-18T10:07:14Z"
+    }
+  ],
+  "created_at": "2026-08-18T10:05:41Z",
+  "id": "tx-52328672e97c",
+  "intent": "Place fullscreen Issue collapse and close actions together on the right, and let the editor body use the available workspace width with only standard page gutters",
+  "merged_revision": "A00000020",
+  "read_set": [
+    "arch://wegent/flow/issue-creation-composer"
+  ],
+  "resolutions": [],
+  "status": "merged",
+  "updated_at": "2026-08-18T10:07:14Z",
+  "write_set": [
+    "arch://wegent/flow/issue-creation-composer"
+  ]
+}

@@ -1,8 +1,10 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import type { ComponentProps } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { WorkspaceTabsProvider } from './WorkspaceTabsContext'
 import { WorkspaceTabStrip } from './WorkspaceTabStrip'
+import { workspaceTabsStorageKey, type WorkspaceTabKind } from './workspaceTabs'
 
 const openWorkspaceTabWindow = vi.fn().mockResolvedValue(true)
 
@@ -23,10 +25,19 @@ const labels = {
   },
 }
 
-function renderStrip(search = '') {
+function renderStrip(
+  search = '',
+  availableKinds?: ComponentProps<typeof WorkspaceTabStrip>['availableKinds'],
+  pathname = '/'
+) {
   return render(
-    <WorkspaceTabsProvider pathname="/" search={search} storageScope="strip-test" labels={labels}>
-      <WorkspaceTabStrip />
+    <WorkspaceTabsProvider
+      pathname={pathname}
+      search={search}
+      storageScope="strip-test"
+      labels={labels}
+    >
+      <WorkspaceTabStrip availableKinds={availableKinds} />
     </WorkspaceTabsProvider>
   )
 }
@@ -70,6 +81,47 @@ describe('WorkspaceTabStrip', () => {
 
     await user.click(within(tablist).getByText('任务'))
     expect(within(tablist).getByText('任务').closest('[role="tab"]')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+  })
+
+  test('hides the project-space tab and add action when board is not available', async () => {
+    const user = userEvent.setup()
+    renderStrip('', ['task', 'agent', 'auxiliary'] satisfies WorkspaceTabKind[])
+
+    const tablist = screen.getByTestId('workspace-tab-strip')
+    expect(
+      within(tablist)
+        .getAllByRole('tab')
+        .map(tab => tab.textContent)
+    ).toEqual([expect.stringContaining('任务'), expect.stringContaining('智能体')])
+    expect(screen.queryByRole('tab', { name: '项目空间' })).not.toBeInTheDocument()
+
+    await user.click(screen.getByTestId('workspace-tab-add'))
+    expect(screen.getByTestId('workspace-tab-add-menu')).toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-tab-add-board')).not.toBeInTheDocument()
+    expect(screen.getByTestId('workspace-tab-add-task')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-tab-add-agent')).toBeInTheDocument()
+  })
+
+  test('opens an allowed fallback tab in a board-only window when board is unavailable', async () => {
+    localStorage.setItem(
+      workspaceTabsStorageKey('strip-test'),
+      JSON.stringify({
+        activeTabId: 'board-only',
+        tabs: [{ id: 'board-only', kind: 'board', title: '项目空间', contentRoute: '/todo' }],
+      })
+    )
+
+    renderStrip('', ['task', 'agent', 'auxiliary'] satisfies WorkspaceTabKind[], '/todo')
+
+    const tablist = screen.getByTestId('workspace-tab-strip')
+    await waitFor(() => {
+      expect(screen.queryByRole('tab', { name: '项目空间' })).not.toBeInTheDocument()
+      expect(within(tablist).getAllByRole('tab')).toHaveLength(1)
+    })
+    expect(within(tablist).getByRole('tab', { name: '任务' })).toHaveAttribute(
       'aria-selected',
       'true'
     )

@@ -1446,9 +1446,11 @@ async fn run_envd_process(request: &ProcessStartRequest) -> ProcessOutput {
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect::<Vec<_>>();
     let process_environment = process_environment::process_env(&requested_environment);
-    let mut command = Command::new(&request.process.cmd);
+    let (program, prefix_args) = crate::process::spawn_program_parts(&request.process.cmd);
+    let mut command = Command::new(program);
     crate::process::hide_windows_console(&mut command);
     command
+        .args(prefix_args)
         .args(&request.process.args)
         .env_clear()
         .envs(process_environment)

@@ -1,9 +1,14 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { getLocalUser, LOCAL_USER } from './localSession'
-import { createLocalAppServices, createRuntimeWorkApiFromIpc } from './localServices'
+import {
+  createAutomationApiFromIpc,
+  createLocalAppServices,
+  createRuntimeWorkApiFromIpc,
+} from './localServices'
 import {
   clearLocalModelConfigs,
   findLocalModelConfigByModelName,
+  listLocalModelConfigs,
   saveLocalModelConfig,
 } from '@/features/model-settings/localModelSettings'
 import { saveLocalProxyUrl } from '@/features/model-settings/localProxySettings'
@@ -1239,6 +1244,12 @@ describe('createLocalAppServices', () => {
       },
       message: 'continue',
       clientUserMessageId: 'runtime-local-pane-1',
+      cloudProjectId: 'cloud-project-42',
+      origin: {
+        type: 'board_task',
+        cloudProjectId: 'cloud-project-42',
+        loopItemId: 'ISSUE-42',
+      },
       modelId: 'gpt-5.4',
       modelOptions: {
         collaborationMode: 'default',
@@ -1272,6 +1283,12 @@ describe('createLocalAppServices', () => {
         },
         message: 'continue',
         clientUserMessageId: 'runtime-local-pane-1',
+        cloudProjectId: 'cloud-project-42',
+        origin: {
+          type: 'board_task',
+          cloudProjectId: 'cloud-project-42',
+          loopItemId: 'ISSUE-42',
+        },
         collaborationMode: 'default',
         modelOptions: {
           collaborationMode: 'default',
@@ -1325,6 +1342,12 @@ describe('createLocalAppServices', () => {
           execution_target_type: 'local',
           workspace_source: 'local_path',
           new_session: false,
+          cloudProjectId: 'cloud-project-42',
+          origin: {
+            type: 'board_task',
+            cloudProjectId: 'cloud-project-42',
+            loopItemId: 'ISSUE-42',
+          },
           collaborationMode: 'default',
           attachments: [
             {
@@ -1610,7 +1633,7 @@ describe('createLocalAppServices', () => {
       modelId: 'qwen3-coder',
       baseUrl: 'http://localhost:11434/v1',
       apiKey: 'cloud-device-key',
-      catalogReady: true,
+      catalogReady: false,
     })
     const request = vi.fn().mockImplementation(async (method: string) => {
       if (method === 'runtime.codex.app_server.restart') return { restarted: true }
@@ -1649,11 +1672,28 @@ describe('createLocalAppServices', () => {
       message: 'continue from cloud',
       modelId: 'local-model:cloud-ollama',
     })
+    await runtimeApi.setRuntimeSupervisor({
+      address: {
+        deviceId: 'cloud-device',
+        workspacePath: '/workspace/project',
+        taskId: 'cloud-task',
+      },
+      mode: 'auto',
+      modelSelection: {
+        modelName: 'local-model:cloud-ollama',
+        modelType: 'runtime',
+        options: {},
+      },
+      intervalSeconds: 30,
+    })
 
     const createPayload = request.mock.calls.find(
       ([method]) => method === 'runtime.tasks.create'
     )?.[1]
     const sendPayload = request.mock.calls.find(([method]) => method === 'runtime.tasks.send')?.[1]
+    const supervisorPayload = request.mock.calls.find(
+      ([method]) => method === 'runtime.tasks.supervisor.set'
+    )?.[1]
     const expectedModelConfig = expect.objectContaining({
       model_id: 'qwen3-coder',
       base_url: 'http://localhost:11434/v1',
@@ -1664,6 +1704,7 @@ describe('createLocalAppServices', () => {
 
     expect(createPayload.executionRequest.model_config).toEqual(expectedModelConfig)
     expect(sendPayload.executionRequest.model_config).toEqual(expectedModelConfig)
+    expect(supervisorPayload.modelConfig).toEqual(expectedModelConfig)
     expect(requestModelCatalogSync).toHaveBeenCalledWith(
       expect.objectContaining({
         deviceId: 'cloud-device',
@@ -1695,6 +1736,235 @@ describe('createLocalAppServices', () => {
     expect(request).toHaveBeenCalledWith('runtime.tasks.create', expect.any(Object), 'cloud-device')
     expect(request).toHaveBeenCalledWith('runtime.tasks.send', expect.any(Object), 'cloud-device')
     expect(requestModelCatalogSync).toHaveBeenCalledTimes(1)
+    expect(listLocalModelConfigs()[0]).toMatchObject({
+      id: 'cloud-ollama',
+      catalogReady: false,
+    })
+  })
+
+  test('builds cloud automation payloads from a remotely synchronized model catalog', async () => {
+    saveLocalModelConfig({
+      id: 'cloud-automation-task',
+      displayName: 'Cloud Automation Task',
+      modelId: 'qwen3-coder-task',
+      baseUrl: 'http://localhost:11434/v1',
+      apiKey: 'cloud-device-key',
+      catalogReady: false,
+    })
+    saveLocalModelConfig({
+      id: 'cloud-automation-continuation',
+      displayName: 'Cloud Automation Continuation',
+      modelId: 'qwen3-coder-continuation',
+      baseUrl: 'http://localhost:11434/v1',
+      apiKey: 'cloud-device-key',
+      catalogReady: false,
+    })
+    const request = vi
+      .fn()
+      .mockImplementation(async (method: string, data: Record<string, unknown>) => {
+        if (method === 'runtime.codex.app_server.restart') return { restarted: true }
+        if (method === 'runtime.codex.models.list') {
+          return {
+            data: [
+              { id: 'wework-custom-cloud-automation-task' },
+              { id: 'wework-custom-cloud-automation-continuation' },
+            ],
+          }
+        }
+        if (method === 'runtime.automations.create') return { automation: data.automation }
+        return { saved: true }
+      })
+    const runtimeApi = createRuntimeWorkApiFromIpc(request, async () => 'cloud-device', {
+      resolveDeviceId: async () => 'cloud-device',
+      syncConfiguredModelCatalog: true,
+      requestModelCatalogSync: async ({ sync }) => {
+        await sync()
+        return true
+      },
+    })
+    const prepareRuntimeModel = vi.fn(data => runtimeApi.prepareRuntimeModel(data))
+    const automationApi = createAutomationApiFromIpc(
+      request,
+      (method, data) => request(method, data as Record<string, unknown>),
+      {
+        resolveDeviceId: async () => 'cloud-device',
+        syncConfiguredModelCatalog: true,
+        prepareRuntimeModel,
+      },
+      'cloud-device',
+      'cloud'
+    )
+
+    await automationApi.createAutomation({
+      source: 'cloud',
+      name: 'Cloud automation',
+      prompt: 'Run remotely',
+      schedule: { type: 'interval', value: 1, unit: 'hours' },
+      timezone: 'UTC',
+      enabled: true,
+      conversationMode: 'continue_thread',
+      notificationPolicy: 'all_runs',
+      taskRequest: {
+        deviceId: 'cloud-device',
+        workspacePath: '/workspace/project',
+        teamId: 0,
+        runtime: 'codex',
+        message: 'Run remotely',
+        modelId: 'local-model:cloud-automation-task',
+      },
+      continuationPayload: {
+        address: {
+          deviceId: 'cloud-device',
+          workspacePath: '/workspace/project',
+          taskId: 'cloud-task',
+        },
+        message: 'Continue remotely',
+        modelId: 'local-model:cloud-automation-continuation',
+      },
+    })
+
+    const automation = request.mock.calls.find(
+      ([method]) => method === 'runtime.automations.create'
+    )?.[1].automation
+    expect(automation.taskPayload.executionRequest.model_config).toMatchObject({
+      model_id: 'qwen3-coder-task',
+      api_key: 'cloud-device-key',
+    })
+    expect(automation.continuationPayload.executionRequest.model_config).toMatchObject({
+      model_id: 'qwen3-coder-continuation',
+      api_key: 'cloud-device-key',
+    })
+    expect(prepareRuntimeModel).toHaveBeenCalledWith({
+      deviceId: 'cloud-device',
+      modelId: 'local-model:cloud-automation-task',
+    })
+    expect(prepareRuntimeModel).toHaveBeenCalledWith({
+      deviceId: 'cloud-device',
+      modelId: 'local-model:cloud-automation-continuation',
+    })
+    const methods = request.mock.calls.map(([method]) => method)
+    expect(methods.indexOf('runtime.codex.catalog.custom.write')).toBeLessThan(
+      methods.indexOf('runtime.automations.create')
+    )
+    expect(methods.indexOf('runtime.codex.app_server.restart')).toBeLessThan(
+      methods.indexOf('runtime.automations.create')
+    )
+    expect(methods.indexOf('runtime.codex.models.list')).toBeLessThan(
+      methods.indexOf('runtime.automations.create')
+    )
+  })
+
+  test('does not create a cloud automation when model catalog synchronization is cancelled', async () => {
+    saveLocalModelConfig({
+      id: 'cloud-automation-cancelled',
+      displayName: 'Cloud Automation Cancelled',
+      modelId: 'cancelled-model',
+      baseUrl: 'http://localhost:11434/v1',
+      catalogReady: false,
+    })
+    const request = vi.fn()
+    const runtimeApi = createRuntimeWorkApiFromIpc(request, async () => 'cloud-device', {
+      resolveDeviceId: async () => 'cloud-device',
+      syncConfiguredModelCatalog: true,
+      requestModelCatalogSync: vi.fn().mockResolvedValue(false),
+    })
+    const automationApi = createAutomationApiFromIpc(
+      request,
+      (method, data) => request(method, data as Record<string, unknown>),
+      {
+        resolveDeviceId: async () => 'cloud-device',
+        syncConfiguredModelCatalog: true,
+        prepareRuntimeModel: data => runtimeApi.prepareRuntimeModel(data),
+      },
+      'cloud-device',
+      'cloud'
+    )
+
+    await expect(
+      automationApi.createAutomation({
+        source: 'cloud',
+        name: 'Cancelled automation',
+        prompt: 'Do not save',
+        schedule: { type: 'interval', value: 1, unit: 'hours' },
+        timezone: 'UTC',
+        enabled: true,
+        conversationMode: 'independent',
+        notificationPolicy: 'all_runs',
+        taskRequest: {
+          deviceId: 'cloud-device',
+          workspacePath: '/workspace/project',
+          teamId: 0,
+          runtime: 'codex',
+          message: 'Do not save',
+          modelId: 'local-model:cloud-automation-cancelled',
+        },
+      })
+    ).rejects.toThrow()
+    expect(request).not.toHaveBeenCalledWith(
+      'runtime.automations.create',
+      expect.anything(),
+      'cloud-device'
+    )
+  })
+
+  test('does not create a cloud automation when synchronized model verification fails', async () => {
+    saveLocalModelConfig({
+      id: 'cloud-automation-missing',
+      displayName: 'Cloud Automation Missing',
+      modelId: 'missing-model',
+      baseUrl: 'http://localhost:11434/v1',
+      catalogReady: false,
+    })
+    const request = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'runtime.codex.app_server.restart') return { restarted: true }
+      if (method === 'runtime.codex.models.list') return { data: [] }
+      return { saved: true }
+    })
+    const runtimeApi = createRuntimeWorkApiFromIpc(request, async () => 'cloud-device', {
+      resolveDeviceId: async () => 'cloud-device',
+      syncConfiguredModelCatalog: true,
+      requestModelCatalogSync: async ({ sync }) => {
+        await sync()
+        return true
+      },
+    })
+    const automationApi = createAutomationApiFromIpc(
+      request,
+      (method, data) => request(method, data as Record<string, unknown>),
+      {
+        resolveDeviceId: async () => 'cloud-device',
+        syncConfiguredModelCatalog: true,
+        prepareRuntimeModel: data => runtimeApi.prepareRuntimeModel(data),
+      },
+      'cloud-device',
+      'cloud'
+    )
+
+    await expect(
+      automationApi.createAutomation({
+        source: 'cloud',
+        name: 'Missing automation',
+        prompt: 'Do not save',
+        schedule: { type: 'interval', value: 1, unit: 'hours' },
+        timezone: 'UTC',
+        enabled: true,
+        conversationMode: 'independent',
+        notificationPolicy: 'all_runs',
+        taskRequest: {
+          deviceId: 'cloud-device',
+          workspacePath: '/workspace/project',
+          teamId: 0,
+          runtime: 'codex',
+          message: 'Do not save',
+          modelId: 'local-model:cloud-automation-missing',
+        },
+      })
+    ).rejects.toThrow()
+    expect(request).not.toHaveBeenCalledWith(
+      'runtime.automations.create',
+      expect.anything(),
+      'cloud-device'
+    )
   })
 
   test('synchronizes the same configured catalog independently for each cloud device', async () => {
@@ -3357,5 +3627,62 @@ describe('createLocalAppServices', () => {
       timeout_seconds: 30,
       max_output_bytes: 5 * 1024 * 1024,
     })
+  })
+
+  test('routes Worktree capabilities and preflight through the selected IPC device', async () => {
+    const request = vi.fn().mockImplementation(async method => {
+      if (method === 'runtime.worktrees.capabilities') {
+        return {
+          success: true,
+          deviceId: 'remote-device',
+          runtimeWorktrees: {
+            version: 1,
+            managed: true,
+            deferredPrepare: true,
+            snapshots: true,
+            restore: true,
+            preflight: true,
+          },
+        }
+      }
+      return {
+        success: true,
+        deviceId: 'remote-device',
+        supported: true,
+        sourcePath: '/workspace/project',
+        sourceExists: true,
+        sourceDirectory: true,
+        gitRepository: true,
+        gitCommonDirValid: true,
+        gitCommonDirWritable: true,
+        writable: true,
+        repoRoot: '/workspace/project',
+        resolvedWorktreeRoot: '/runtime/worktrees',
+      }
+    })
+    const runtimeApi = createRuntimeWorkApiFromIpc(request, async () => 'remote-device', {
+      resolveDeviceId: async () => 'remote-device',
+      transportLabel: 'Cloud',
+    })
+
+    await runtimeApi.getWorktreeCapabilities({ deviceId: 'remote-device' })
+    await runtimeApi.preflightWorktree({
+      deviceId: 'remote-device',
+      sourcePath: '/workspace/project',
+    })
+
+    expect(request).toHaveBeenCalledWith(
+      'runtime.worktrees.capabilities',
+      { deviceId: 'remote-device' },
+      'remote-device'
+    )
+    expect(request).toHaveBeenCalledWith(
+      'runtime.worktrees.preflight',
+      {
+        deviceId: 'remote-device',
+        sourcePath: '/workspace/project',
+      },
+      'remote-device'
+    )
   })
 })

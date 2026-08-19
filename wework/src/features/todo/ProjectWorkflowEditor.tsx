@@ -14,6 +14,7 @@ import {
   type EdgeProps,
   type Node,
   type NodeProps,
+  type ReactFlowInstance,
 } from '@xyflow/react'
 import {
   Bot,
@@ -34,6 +35,7 @@ import type {
 } from '@/api/deliveries'
 import type { ProjectAutomationRule } from '@/api/projectAutomations'
 import type { ProjectChatAgent } from '@/api/projectChatAgents'
+import { Tooltip } from '@/components/ui/tooltip'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { layoutWorkflowGraph, wouldCreateWorkflowCycle } from './workflowGraph'
@@ -56,6 +58,8 @@ interface StageNodeData extends Record<string, unknown> {
   index: number
   actionLabel: string
   dependencyCount: number
+  onInsertBefore: () => void
+  onInsertAfter: () => void
 }
 
 interface WorkflowEdgeData extends Record<string, unknown> {
@@ -66,6 +70,7 @@ interface WorkflowEdgeData extends Record<string, unknown> {
 type StageFlowNode = Node<StageNodeData, 'stage'>
 type WorkflowFlowEdge = Edge<WorkflowEdgeData, 'workflow'>
 type OrchestrationMode = 'manual' | 'workflow' | 'ai'
+type StageInsertionDirection = 'before' | 'after'
 
 const STAGE_NODE_WIDTH = 220
 const STAGE_NODE_HEIGHT = 116
@@ -79,6 +84,32 @@ function nextNodeId(nodes: WorkflowNodeDefinition[]): string {
 
 function stageMode(value: ProjectWorkflowDefinition): IssueStageMode {
   return value.stage_mode ?? (value.nodes.length ? 'dag' : 'none')
+}
+
+function dependencyContext(
+  node: WorkflowNodeDefinition,
+  dependencyId: string
+): WorkflowContextSource[] {
+  return [...(node.dependency_context?.[dependencyId] ?? DEFAULT_DEPENDENCY_CONTEXT)]
+}
+
+function createStage(
+  id: string,
+  name: string,
+  dependsOn: string[],
+  dependencyContexts: Record<string, WorkflowContextSource[]>
+): WorkflowNodeDefinition {
+  return {
+    id,
+    name,
+    prompt: '',
+    depends_on: dependsOn,
+    dependency_context: dependencyContexts,
+    required: true,
+    required_deliverables: [],
+    workspace_policy: dependsOn.length ? 'inherit' : 'composer',
+    automation_rule_id: null,
+  }
 }
 
 const StageNodeCard = memo(function StageNodeCard({ data, selected }: NodeProps<StageFlowNode>) {
@@ -96,8 +127,30 @@ const StageNodeCard = memo(function StageNodeCard({ data, selected }: NodeProps<
       <Handle
         type="target"
         position={Position.Left}
-        className="!h-3 !w-3 !border-2 !border-background !bg-text-muted"
+        className={cn(
+          '!h-3 !w-3 !border-2 !border-background !bg-text-muted',
+          selected && '!opacity-0'
+        )}
       />
+      {selected ? (
+        <Tooltip
+          label={t('todo.workflow_insert_stage_before', '在此阶段前插入阶段')}
+          className="!absolute left-0 top-1/2 -translate-x-1/2 -translate-y-1/2"
+        >
+          <button
+            type="button"
+            data-testid={`project-workflow-insert-before-${data.stage.id}`}
+            aria-label={t('todo.workflow_insert_stage_before', '在此阶段前插入阶段')}
+            onClick={event => {
+              event.stopPropagation()
+              data.onInsertBefore()
+            }}
+            className="nodrag nopan flex h-6 w-6 items-center justify-center rounded-full border border-blue-500 bg-background text-blue-500 shadow-sm transition hover:bg-blue-500 hover:text-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+          >
+            <Plus className="h-3.5 w-3.5" />
+          </button>
+        </Tooltip>
+      ) : null}
       <div className="flex items-start gap-2">
         <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-border text-xs text-text-muted">
           {data.index + 1}
@@ -120,8 +173,30 @@ const StageNodeCard = memo(function StageNodeCard({ data, selected }: NodeProps<
       <Handle
         type="source"
         position={Position.Right}
-        className="!h-3 !w-3 !border-2 !border-background !bg-text-muted"
+        className={cn(
+          '!h-3 !w-3 !border-2 !border-background !bg-text-muted',
+          selected && '!opacity-0'
+        )}
       />
+      {selected ? (
+        <Tooltip
+          label={t('todo.workflow_insert_stage_after', '在此阶段后插入阶段')}
+          className="!absolute right-0 top-1/2 translate-x-1/2 -translate-y-1/2"
+        >
+          <button
+            type="button"
+            data-testid={`project-workflow-insert-after-${data.stage.id}`}
+            aria-label={t('todo.workflow_insert_stage_after', '在此阶段后插入阶段')}
+            onClick={event => {
+              event.stopPropagation()
+              data.onInsertAfter()
+            }}
+            className="nodrag nopan flex h-6 w-6 items-center justify-center rounded-full border border-blue-500 bg-background text-blue-500 shadow-sm transition hover:bg-blue-500 hover:text-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+          >
+            <Plus className="h-3.5 w-3.5" />
+          </button>
+        </Tooltip>
+      ) : null}
     </article>
   )
 })
@@ -369,26 +444,88 @@ export function ProjectWorkflowEditor({
     const id = nextNodeId(value.nodes)
     const stageNumber = Number(id.replace('stage-', ''))
     const previous = value.nodes.at(-1)
+    const dependsOn = previous ? [previous.id] : []
     updateDefinition({
       stage_mode: 'dag',
       nodes: [
         ...value.nodes,
-        {
+        createStage(
           id,
-          name: t('todo.workflow_new_stage_numbered', '新阶段 {{number}}', {
+          t('todo.workflow_new_stage_numbered', '新阶段 {{number}}', {
             number: stageNumber,
           }),
-          prompt: '',
-          depends_on: previous ? [previous.id] : [],
-          dependency_context: previous ? { [previous.id]: DEFAULT_DEPENDENCY_CONTEXT } : {},
-          required: true,
-          workspace_policy: previous ? 'inherit' : 'composer',
-          automation_rule_id: null,
-        },
+          dependsOn,
+          previous ? { [previous.id]: [...DEFAULT_DEPENDENCY_CONTEXT] } : {}
+        ),
       ],
     })
     setSelectedNodeId(id)
   }
+  const insertNode = useCallback(
+    (selectedId: string, direction: StageInsertionDirection) => {
+      const selectedIndex = value.nodes.findIndex(node => node.id === selectedId)
+      if (selectedIndex < 0) return
+      const selected = value.nodes[selectedIndex]
+      const id = nextNodeId(value.nodes)
+      const stageNumber = Number(id.replace('stage-', ''))
+      const name = t('todo.workflow_new_stage_numbered', '新阶段 {{number}}', {
+        number: stageNumber,
+      })
+
+      if (direction === 'before') {
+        const inserted = createStage(
+          id,
+          name,
+          [...selected.depends_on],
+          Object.fromEntries(
+            selected.depends_on.map(dependencyId => [
+              dependencyId,
+              dependencyContext(selected, dependencyId),
+            ])
+          )
+        )
+        const rewiredSelected = {
+          ...selected,
+          depends_on: [id],
+          dependency_context: { [id]: [...DEFAULT_DEPENDENCY_CONTEXT] },
+        }
+        updateDefinition({
+          stage_mode: 'dag',
+          nodes: [
+            ...value.nodes.slice(0, selectedIndex),
+            inserted,
+            rewiredSelected,
+            ...value.nodes.slice(selectedIndex + 1),
+          ],
+        })
+      } else {
+        const inserted = createStage(id, name, [selectedId], {
+          [selectedId]: [...DEFAULT_DEPENDENCY_CONTEXT],
+        })
+        const rewiredNodes = value.nodes.map(node => {
+          if (!node.depends_on.includes(selectedId)) return node
+          const nextContext = Object.fromEntries(
+            Object.entries(node.dependency_context ?? {}).filter(
+              ([dependencyId]) => dependencyId !== selectedId
+            )
+          )
+          nextContext[id] = dependencyContext(node, selectedId)
+          return {
+            ...node,
+            depends_on: node.depends_on.map(dependencyId =>
+              dependencyId === selectedId ? id : dependencyId
+            ),
+            dependency_context: nextContext,
+          }
+        })
+        rewiredNodes.splice(selectedIndex + 1, 0, inserted)
+        updateDefinition({ stage_mode: 'dag', nodes: rewiredNodes })
+      }
+      setSelectedEdge(null)
+      setSelectedNodeId(id)
+    },
+    [t, updateDefinition, value.nodes]
+  )
   const removeNode = (id: string) => {
     const remainingNodes = value.nodes.filter(node => node.id !== id)
     updateDefinition({
@@ -427,6 +564,7 @@ export function ProjectWorkflowEditor({
         type: 'workflow',
         source: dependency,
         target: node.id,
+        selected: selectedEdge?.source === dependency && selectedEdge.target === node.id,
         markerEnd: { type: MarkerType.ArrowClosed },
         style: { stroke: 'rgb(var(--color-text-muted))', strokeWidth: 1.5 },
         data: {
@@ -454,6 +592,8 @@ export function ProjectWorkflowEditor({
               })
             : t('todo.workflow_stage_human_execution', '人工执行'),
           dependencyCount: node.depends_on.length,
+          onInsertBefore: () => insertNode(node.id, 'before'),
+          onInsertAfter: () => insertNode(node.id, 'after'),
         },
       }
     })
@@ -464,7 +604,17 @@ export function ProjectWorkflowEditor({
         nodeHeight: STAGE_NODE_HEIGHT,
       }) as StageFlowNode[],
     }
-  }, [selectedEdge, selectedNodeId, stageRules, t, value.nodes])
+  }, [insertNode, selectedEdge, selectedNodeId, stageRules, t, value.nodes])
+
+  const flowInstanceRef = useRef<ReactFlowInstance<StageFlowNode, WorkflowFlowEdge> | null>(null)
+  useEffect(() => {
+    const instance = flowInstanceRef.current
+    if (!instance) return
+    const frame = requestAnimationFrame(() => {
+      void instance.fitView({ padding: 0.25, maxZoom: 1 })
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [value.nodes.length])
 
   const handleConnect = useCallback(
     (connection: Connection) => {
@@ -487,22 +637,29 @@ export function ProjectWorkflowEditor({
     [updateNode, value.nodes]
   )
 
-  const handleEdgesDelete = useCallback(
-    (edges: Edge[]) => {
-      const removed = new Set(edges.map(edge => `${edge.source}-${edge.target}`))
+  const handleDelete = useCallback(
+    ({ nodes, edges }: { nodes: Node[]; edges: Edge[] }) => {
+      const removedNodeIds = new Set(nodes.map(node => node.id))
+      const removedEdges = new Set(edges.map(edge => `${edge.source}-${edge.target}`))
       updateDefinition({
-        nodes: value.nodes.map(node => ({
-          ...node,
-          depends_on: node.depends_on.filter(
-            dependency => !removed.has(`${dependency}-${node.id}`)
-          ),
-          dependency_context: Object.fromEntries(
-            Object.entries(node.dependency_context ?? {}).filter(
-              ([dependency]) => !removed.has(`${dependency}-${node.id}`)
-            )
-          ),
-        })),
+        nodes: value.nodes
+          .filter(node => !removedNodeIds.has(node.id))
+          .map(node => {
+            const shouldRemoveDependency = (dependency: string) =>
+              removedNodeIds.has(dependency) || removedEdges.has(`${dependency}-${node.id}`)
+            if (!node.depends_on.some(shouldRemoveDependency)) return node
+            return {
+              ...node,
+              depends_on: node.depends_on.filter(dependency => !shouldRemoveDependency(dependency)),
+              dependency_context: Object.fromEntries(
+                Object.entries(node.dependency_context ?? {}).filter(
+                  ([dependency]) => !shouldRemoveDependency(dependency)
+                )
+              ),
+            }
+          }),
       })
+      setSelectedNodeId(null)
       setSelectedEdge(null)
     },
     [updateDefinition, value.nodes]
@@ -575,7 +732,7 @@ export function ProjectWorkflowEditor({
           data-testid="project-workflow-save"
           disabled={busy || !canSave}
           onClick={onSave}
-          className="h-8 rounded-lg bg-foreground px-3 text-sm text-background disabled:opacity-40"
+          className="h-8 rounded-lg bg-text-primary px-3 text-sm font-medium text-background disabled:opacity-40"
         >
           {busy ? t('todo.workflow_saving', '保存中…') : t('todo.workflow_save', '保存编排')}
         </button>
@@ -755,13 +912,17 @@ export function ProjectWorkflowEditor({
             </button>
           ) : (
             <div className="grid min-h-[420px] overflow-hidden rounded-xl border border-border bg-muted/20 lg:grid-cols-[minmax(0,1fr)_300px]">
-              <div className="min-h-[420px]" data-testid="project-workflow-dag">
+              <div className="h-[420px]" data-testid="project-workflow-dag">
                 <ReactFlow
                   className="workflow-react-flow"
                   nodes={graph.nodes}
                   edges={graph.edges}
                   nodeTypes={nodeTypes}
                   edgeTypes={edgeTypes}
+                  onInit={instance => {
+                    flowInstanceRef.current = instance
+                    void instance.fitView({ padding: 0.25, maxZoom: 1 })
+                  }}
                   onNodeClick={(_, node) => {
                     setSelectedEdge(null)
                     setSelectedNodeId(node.id)
@@ -771,9 +932,7 @@ export function ProjectWorkflowEditor({
                     setSelectedEdge(null)
                   }}
                   onConnect={handleConnect}
-                  onEdgesDelete={handleEdgesDelete}
-                  fitView
-                  fitViewOptions={{ padding: 0.25, maxZoom: 1 }}
+                  onDelete={handleDelete}
                   minZoom={0.35}
                   maxZoom={1.5}
                   nodesDraggable={false}
@@ -849,6 +1008,32 @@ export function ProjectWorkflowEditor({
                         )}
                         className="mt-1.5 min-h-28 w-full resize-y rounded-lg border border-border bg-background px-2.5 py-2 text-sm outline-none focus:border-blue-500"
                       />
+                    </label>
+                    <label className="mt-4 block text-xs font-medium text-text-secondary">
+                      {t('todo.workflow_stage_deliverables_label', '必要交付物')}
+                      <textarea
+                        value={(selectedNode.required_deliverables ?? []).join('\n')}
+                        data-testid={`project-workflow-stage-deliverables-${selectedNode.id}`}
+                        onChange={event =>
+                          updateNode(selectedNode.id, {
+                            required_deliverables: event.target.value
+                              .split('\n')
+                              .map(value => value.trim())
+                              .filter(Boolean),
+                          })
+                        }
+                        placeholder={t(
+                          'todo.workflow_stage_deliverables_placeholder',
+                          '每行一个，例如：测试报告'
+                        )}
+                        className="mt-1.5 min-h-20 w-full resize-y rounded-lg border border-border bg-background px-2.5 py-2 text-sm outline-none focus:border-blue-500"
+                      />
+                      <span className="mt-1.5 block text-xs font-normal text-text-muted">
+                        {t(
+                          'todo.workflow_stage_deliverables_hint',
+                          '任务完成后上传交付物，经人工批准才会进入下一阶段。'
+                        )}
+                      </span>
                     </label>
                     <fieldset className="mt-4">
                       <legend className="text-xs font-medium text-text-secondary">

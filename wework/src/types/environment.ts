@@ -2,6 +2,7 @@ export type ChangeRequestProvider = 'github' | 'gitlab'
 export type ChangeRequestState = 'open' | 'closed' | 'merged'
 export type ChangeRequestChecksState = 'unknown' | 'pending' | 'success' | 'failure'
 export type ChangeRequestMergeability = 'unknown' | 'mergeable' | 'conflicting'
+export type ChangeRequestMergeQueueState = 'unknown' | 'queued' | 'not_queued'
 export type ChangeRequestLookupState =
   | 'found'
   | 'not_found'
@@ -18,6 +19,7 @@ export interface ChangeRequest {
   draft: boolean
   checks: ChangeRequestChecksState
   mergeability: ChangeRequestMergeability
+  mergeQueue: ChangeRequestMergeQueueState
 }
 
 export interface ChangeRequestLookup {
@@ -29,7 +31,7 @@ export interface ChangeRequestLookup {
 export interface EnvironmentInfo {
   additions: string
   deletions: string
-  executionTarget: 'local' | 'cloud'
+  executionTarget: 'local' | 'cloud' | 'remote'
   isGitRepository?: boolean
   deviceId?: string
   workspacePath?: string

@@ -34,7 +34,11 @@ import { LOCAL_EXECUTOR_COMMANDS } from '@/tauri/localExecutor'
 import { executeVerificationControlCommand } from './verification-control'
 import { evalEmbeddedBrowserJson } from '@/lib/embedded-browser'
 import { selectDesktopControlOption } from './desktop-control-select'
-import { getAppPreferences, updateAppPreferences } from '@/tauri/appPreferences'
+import {
+  getAppPreferences,
+  updateAppPreferences,
+  type AppPreferencesPatch,
+} from '@/tauri/appPreferences'
 import type { LocalHarnessId } from '@/lib/local-harness'
 import { getDesktopE2ERuntimeConfig, loadDesktopE2ERuntimeConfig } from './runtime-config'
 import { getDesktopE2EClipboardText, installDesktopE2EClipboard } from './clipboard'
@@ -775,6 +779,18 @@ async function waitForDesktopControlElement(command: DesktopControlCommand): Pro
 
   while (Date.now() - startedAt < timeoutMs) {
     const elements = findDesktopControlElements(command.selector)
+    if (command.visible === false) {
+      const visibleElements = elements.filter(desktopControlElementVisible)
+      if (visibleElements.length === 0) {
+        matchedAt ??= Date.now()
+        if (Date.now() - matchedAt >= (command.stableMs ?? 0)) return ''
+      } else {
+        matchedAt = null
+      }
+      await waitForDesktopControlTick()
+      continue
+    }
+
     const matchingElements = command.visible
       ? elements.filter(desktopControlElementVisible)
       : elements
@@ -1025,6 +1041,25 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         return pressDesktopControlKey(command.target ?? command.selector, command.key)
       }
       return ''
+    case 'getSystemNotifications':
+      return JSON.stringify(
+        (
+          globalThis as typeof globalThis & {
+            __WEWORK_E2E_SYSTEM_NOTIFICATIONS__?: {
+              notifications: Array<{ title: string; body: string }>
+            }
+          }
+        ).__WEWORK_E2E_SYSTEM_NOTIFICATIONS__?.notifications ?? []
+      )
+    case 'clearSystemNotifications': {
+      const root = globalThis as typeof globalThis & {
+        __WEWORK_E2E_SYSTEM_NOTIFICATIONS__?: {
+          notifications: Array<{ title: string; body: string }>
+        }
+      }
+      root.__WEWORK_E2E_SYSTEM_NOTIFICATIONS__ = { notifications: [] }
+      return ''
+    }
     case 'reconcileLegacyRuntimeAssistantSnapshot': {
       const payload = JSON.parse(command.value ?? '{}') as {
         address: RuntimeTaskAddress
@@ -1091,6 +1126,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       })
       return JSON.stringify(updated.localHarnesses)
     }
+    case 'setAppPreferences': {
+      const patch = JSON.parse(command.value ?? '{}') as AppPreferencesPatch
+      const preferences = await updateAppPreferences(patch)
+      return JSON.stringify(preferences)
+    }
     case 'toggleSidebar': {
       const event = new Event('wework:desktop-sidebar-toggle-request', { cancelable: true })
       window.dispatchEvent(event)
@@ -1117,6 +1157,12 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return ''
     case 'getWindowFocusSnapshot':
       return getWindowFocusSnapshot()
+    case 'showSystemDragPanel': {
+      await invoke<void>('show_system_drag_panel_for_e2e')
+      return ''
+    }
+    case 'getSystemDragPanelVisibility':
+      return String(await invoke<boolean>('get_system_drag_panel_visibility_for_e2e'))
     case 'completeSystemDragDrop':
       await invoke('complete_system_drag_drop', {
         payload: JSON.parse(command.value ?? '{}'),

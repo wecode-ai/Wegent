@@ -3,5 +3,18 @@
   "interface": {
     "displayName": "WeWork Personal Marketplace"
   },
-  "plugins": []
+  "plugins": [
+    {
+      "name": "wework-space",
+      "source": {
+        "source": "local",
+        "path": "./plugins/wework-space"
+      },
+      "policy": {
+        "installation": "INSTALLED_BY_DEFAULT",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
 }

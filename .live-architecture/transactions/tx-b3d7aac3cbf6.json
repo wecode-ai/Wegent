@@ -1,0 +1,79 @@
+{
+  "actor": {
+    "id": "codex",
+    "kind": "ai"
+  },
+  "authority": "ai",
+  "base_revision": "A00000006",
+  "changes": [
+    {
+      "action": "assert",
+      "change_id": "chg-d65ed4d4f3d1",
+      "confidence": 1.0,
+      "evidence": [
+        "user request 2026-08-18"
+      ],
+      "object": null,
+      "plane": "intent",
+      "predicate": null,
+      "reason": "Issue creation must support app-fullscreen title, body, and attachment editing",
+      "subject": "arch://wegent/flow/issue-creation-composer",
+      "timestamp": "2026-08-18T08:07:31Z"
+    },
+    {
+      "action": "create",
+      "change_id": "chg-f47f5831633d",
+      "confidence": 1.0,
+      "evidence": [
+        "docs/zh/architecture/issue-task-workflow.md"
+      ],
+      "object": null,
+      "plane": "model",
+      "predicate": null,
+      "reason": "Model the compact and fullscreen views as one shared Issue draft and attachment flow",
+      "subject": "arch://wegent/flow/issue-creation-composer",
+      "timestamp": "2026-08-18T08:07:31Z"
+    },
+    {
+      "action": "create",
+      "change_id": "chg-b97b4aa360e2",
+      "confidence": 1.0,
+      "evidence": [
+        "wework/src/features/todo/IssueComposer.tsx"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Implement shared title, body, fullscreen presentation, and staged attachment submission",
+      "subject": "arch://wegent/flow/issue-creation-composer",
+      "timestamp": "2026-08-18T08:07:32Z"
+    },
+    {
+      "action": "verify",
+      "change_id": "chg-0df105dce3b4",
+      "confidence": 1.0,
+      "evidence": [
+        "wework/src/features/todo/IssueComposer.test.tsx"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Focused component tests verify fullscreen draft persistence, explicit title, attachments, and Escape behavior",
+      "subject": "arch://wegent/flow/issue-creation-composer",
+      "timestamp": "2026-08-18T08:07:32Z"
+    }
+  ],
+  "created_at": "2026-08-18T07:56:48Z",
+  "id": "tx-b3d7aac3cbf6",
+  "intent": "Issue creation can expand to an app-fullscreen editor with explicit title, body, and image/file attachments while preserving the existing create and optional task-launch flow",
+  "merged_revision": "A00000008",
+  "read_set": [
+    "arch://wegent/flow/issue-task-workflow"
+  ],
+  "resolutions": [],
+  "status": "merged",
+  "updated_at": "2026-08-18T08:07:42Z",
+  "write_set": [
+    "arch://wegent/flow/issue-creation-composer"
+  ]
+}

@@ -88,7 +88,11 @@ from app.schemas.runtime_work import (
 )
 from app.schemas.turn_file_changes import TurnFileChangesSummary
 from app.services.device.command_service import execute_configured_device_command
-from app.services.device.runtime_rpc_service import RuntimeRpcError, runtime_rpc_service
+from app.services.device.runtime_rpc_service import (
+    DEFAULT_RUNTIME_RPC_TIMEOUT_SECONDS,
+    RuntimeRpcError,
+    runtime_rpc_service,
+)
 from app.services.device_service import device_service
 from app.services.im.notification_dispatcher import im_notification_dispatcher
 from app.services.im.session_service import (
@@ -173,6 +177,44 @@ class RuntimeWorkspaceListing:
     label: Optional[str] = None
     workspace_source: Optional[str] = None
     remote_host_id: Optional[str] = None
+
+
+async def call_runtime_worktree_rpc(
+    *,
+    user_id: int,
+    device_id: str,
+    method: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Relay one Worktree operation to the user's addressed Runtime."""
+
+    try:
+        return await runtime_rpc_service.call(
+            user_id=user_id,
+            device_id=device_id,
+            method=method,
+            payload=payload,
+            timeout_seconds=(
+                DEVICE_WORKSPACE_PREPARE_TIMEOUT_SECONDS
+                if method == "runtime.worktrees.prepare"
+                else DEFAULT_RUNTIME_RPC_TIMEOUT_SECONDS
+            ),
+        )
+    except RuntimeRpcError as exc:
+        status_code = (
+            status.HTTP_404_NOT_FOUND
+            if exc.code == "device_not_found"
+            else status.HTTP_503_SERVICE_UNAVAILABLE
+        )
+        raise HTTPException(
+            status_code=status_code,
+            detail={
+                "message": str(exc),
+                "code": exc.code,
+                "retryable": exc.retryable,
+                "details": exc.details,
+            },
+        ) from exc
 
 
 def normalize_workspace_path(path: str) -> str:
@@ -586,6 +628,7 @@ async def send_runtime_message(
         **_runtime_task_address_payload(address),
         "message": request.message,
     }
+    _apply_runtime_user_message_identity(payload, request)
     attachments = _runtime_attachment_payloads(db, user_id, request.attachment_ids)
     if attachments:
         payload["attachments"] = attachments
@@ -620,6 +663,7 @@ async def interrupt_and_send_runtime_message(
         **_runtime_task_address_payload(address),
         "message": request.message,
     }
+    _apply_runtime_user_message_identity(payload, request)
     attachments = _runtime_attachment_payloads(db, user_id, request.attachment_ids)
     if attachments:
         payload["attachments"] = attachments
@@ -635,6 +679,19 @@ async def interrupt_and_send_runtime_message(
         request=request,
         rpc_method="runtime.tasks.interrupt_and_send",
     )
+
+
+def _apply_runtime_user_message_identity(
+    payload: dict[str, Any],
+    request: RuntimeSendRequest,
+) -> None:
+    """Forward the stable identity used to correlate a runtime user turn."""
+
+    client_user_message_id = str(request.client_user_message_id or "").strip()
+    if not client_user_message_id:
+        return
+    payload["clientUserMessageId"] = client_user_message_id
+    payload["createdAt"] = int(time.time() * 1000)
 
 
 async def _dispatch_runtime_send(
@@ -1286,6 +1343,7 @@ async def create_runtime_task(
         request.runtime,
         target.device_id,
         target.workspace_path,
+        target.workspace_source,
     )
 
 
@@ -2201,24 +2259,76 @@ def _runtime_create_response(
     runtime: str,
     device_id: str,
     workspace_path: str,
+    workspace_source: str = "local_path",
 ) -> RuntimeTaskCreateResponse:
+    response_workspace_path = _runtime_create_workspace_path(
+        result=result,
+        source_workspace_path=workspace_path,
+        workspace_source=workspace_source,
+    )
+    if workspace_source == "git_worktree" and response_workspace_path is None:
+        error_code = _runtime_result_error_code(result) or "worktree_prepare_failed"
+        return RuntimeTaskCreateResponse(
+            accepted=False,
+            deviceId=str(result.get("deviceId") or device_id),
+            taskId=str(result.get("taskId") or ""),
+            workspacePath="",
+            runtime=result.get("runtime") or runtime,
+            error=str(
+                result.get("error")
+                or "Git worktree preparation did not return an independent workspacePath"
+            ),
+            errorCode=error_code,
+        )
+
+    resolved_workspace_path = response_workspace_path or workspace_path
     if result.get("success") is False:
         return RuntimeTaskCreateResponse(
             accepted=False,
             deviceId=str(result.get("deviceId") or device_id),
             taskId=str(result.get("taskId") or ""),
-            workspacePath=str(result.get("workspacePath") or workspace_path),
+            workspacePath=resolved_workspace_path,
             runtime=result.get("runtime") or runtime,
             error=str(result.get("error") or "Runtime task creation failed"),
+            errorCode=_runtime_result_error_code(result),
         )
     return RuntimeTaskCreateResponse(
         accepted=bool(result.get("accepted", True)),
         deviceId=str(result.get("deviceId") or device_id),
         taskId=str(result.get("taskId") or ""),
-        workspacePath=str(result.get("workspacePath") or workspace_path),
+        workspacePath=resolved_workspace_path,
         runtime=result.get("runtime") or runtime,
         error=result.get("error"),
+        errorCode=_runtime_result_error_code(result),
     )
+
+
+def _runtime_create_workspace_path(
+    *,
+    result: dict[str, Any],
+    source_workspace_path: str,
+    workspace_source: str,
+) -> Optional[str]:
+    raw_workspace_path = result.get("workspacePath")
+    if workspace_source != "git_worktree":
+        if raw_workspace_path:
+            return str(raw_workspace_path)
+        return None
+    if not isinstance(raw_workspace_path, str) or not raw_workspace_path.strip():
+        return None
+
+    result_workspace_path = normalize_workspace_path(raw_workspace_path)
+    if result_workspace_path == normalize_workspace_path(source_workspace_path):
+        return None
+    return result_workspace_path
+
+
+def _runtime_result_error_code(result: dict[str, Any]) -> Optional[str]:
+    for key in ("errorCode", "error_code", "code"):
+        value = result.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
 
 
 def _runtime_workspace_open_response(
@@ -2873,7 +2983,12 @@ def _archived_conversation_item(
 ) -> Optional[ArchivedConversationItem]:
     if not isinstance(raw_item, dict):
         return None
-    local_task_id = raw_item.get("localTaskId") or raw_item.get("id")
+    local_task_id = (
+        raw_item.get("taskId")
+        or raw_item.get("localTaskId")
+        or raw_item.get("local_task_id")
+        or raw_item.get("id")
+    )
     workspace_path = raw_item.get("workspacePath")
     if not isinstance(local_task_id, str) or not local_task_id.strip():
         return None
@@ -2890,9 +3005,11 @@ def _archived_conversation_item(
         project.get("projectName") or _path_basename(normalized_workspace)
     )
     runtime = raw_item.get("runtime")
+    runtime_handle = raw_item.get("runtimeHandle")
     return ArchivedConversationItem(
         id=f"{device_id}:{local_task_id.strip()}",
-        localTaskId=local_task_id.strip(),
+        taskId=local_task_id.strip(),
+        threadId=raw_item.get("threadId"),
         title=str(raw_item.get("title") or local_task_id).strip(),
         projectId=project.get("projectId"),
         projectKey=project_key,
@@ -2904,8 +3021,9 @@ def _archived_conversation_item(
         deviceAddress=device_address,
         source=source if source == "local" else "cloud",
         runtime=runtime if runtime in {"codex", "claude_code"} else None,
-        createdAt=raw_item.get("createdAt"),
-        updatedAt=raw_item.get("updatedAt"),
+        runtimeHandle=runtime_handle if isinstance(runtime_handle, dict) else None,
+        createdAt=_normalized_runtime_timestamp(raw_item.get("createdAt")),
+        updatedAt=_normalized_runtime_timestamp(raw_item.get("updatedAt")),
     )
 
 
@@ -2927,7 +3045,7 @@ def _include_archived_item(
                 item.title,
                 item.project_name or "",
                 item.workspace_path,
-                item.local_task_id,
+                item.task_id,
             ]
         ).lower()
     ):
@@ -3426,6 +3544,26 @@ def _timestamp_from_iso(value: Optional[str]) -> float:
         return 0.0
 
 
+def _normalized_runtime_timestamp(value: Any) -> Optional[str]:
+    if isinstance(value, str):
+        normalized = value.strip()
+        return normalized or None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+
+    timestamp = float(value)
+    if abs(timestamp) >= 10_000_000_000:
+        timestamp /= 1000
+    try:
+        return (
+            datetime.fromtimestamp(timestamp, tz=timezone.utc)
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
+    except (OSError, OverflowError, ValueError):
+        return None
+
+
 def _normalized_address(address: RuntimeTaskAddress) -> RuntimeTaskAddress:
     workspace_path = (
         normalize_workspace_path(address.workspace_path)
@@ -3617,11 +3755,14 @@ def _resolve_runtime_task_target(
             return _apply_requested_workspace_source(target, request)
 
     if request.device_id and request.workspace_path:
-        return RuntimeTaskTarget(
-            device_id=request.device_id.strip(),
-            workspace_path=normalize_workspace_path(request.workspace_path),
-            project=None,
-            workspace_source="local_path",
+        return _apply_requested_workspace_source(
+            RuntimeTaskTarget(
+                device_id=request.device_id.strip(),
+                workspace_path=normalize_workspace_path(request.workspace_path),
+                project=None,
+                workspace_source="local_path",
+            ),
+            request,
         )
 
     raise HTTPException(

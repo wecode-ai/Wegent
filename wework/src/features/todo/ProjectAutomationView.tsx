@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CloudLoopItem, CloudProject, ProjectWorkflowDefinition } from '@/api/deliveries'
 import type { ProjectAutomationInput, ProjectAutomationRule } from '@/api/projectAutomations'
 import type { ProjectChatAgent } from '@/api/projectChatAgents'
@@ -55,6 +55,14 @@ export function ProjectAutomationView({
   const [projectAgents, setProjectAgents] = useState<ProjectChatAgent[]>([])
   const [robotCreateRequestKey, setRobotCreateRequestKey] = useState(0)
   const [coordinatorCreateRequestKey, setCoordinatorCreateRequestKey] = useState(0)
+
+  useEffect(() => {
+    const projectId = String(project.id)
+    const versionRef = projectVersionRef.current
+    if (versionRef.projectId === projectId && versionRef.version === project.version) return
+    projectVersionRef.current = { projectId, version: project.version }
+    setWorkflowDefinition(project.workflow_definition ?? { version: 1, nodes: [] })
+  }, [project.id, project.version, project.workflow_definition])
 
   const handleRulesChange = useCallback((rules: ProjectAutomationRule[]) => {
     setAutomationRules(current => {

@@ -1010,7 +1010,7 @@ fn persistent_codex_app_server_launch_config(
         .config_overrides
         .extend(codex_router_provider_overrides());
     launch_config.config_overrides.extend([
-        "goals=true".to_owned(),
+        "features.goals=true".to_owned(),
         "features.code_mode_host=true".to_owned(),
     ]);
     launch_config
@@ -1471,19 +1471,17 @@ async fn run_codex_app_server_turn_on_shared_client(
             if let Some(callback) = active_turn_started.as_ref() {
                 callback(thread_id.clone(), turn_id.clone());
             }
-            if !request.mcp_servers.is_empty() {
-                let inventory_client = client.clone();
-                let inventory_request = request.clone();
-                let inventory_thread_id = thread_id.clone();
-                tokio::spawn(async move {
-                    log_codex_mcp_inventory(
-                        &inventory_client,
-                        &inventory_request,
-                        &inventory_thread_id,
-                    )
-                    .await;
-                });
-            }
+            let inventory_client = client.clone();
+            let inventory_request = request.clone();
+            let inventory_thread_id = thread_id.clone();
+            tokio::spawn(async move {
+                log_codex_mcp_inventory(
+                    &inventory_client,
+                    &inventory_request,
+                    &inventory_thread_id,
+                )
+                .await;
+            });
             log_executor_event(
                 "codex shared active turn resolved",
                 &[
@@ -1569,6 +1567,18 @@ async fn log_codex_mcp_inventory(
     .await;
     match response {
         Ok(Ok(response)) => {
+            let mut fields = task_fields(&request.task_id, &request.subtask_id);
+            fields.push(("thread_id", thread_id.to_owned()));
+            match validate_project_space_capability_inventory(&response) {
+                Ok(tool_count) => {
+                    fields.push(("tool_count", tool_count.to_string()));
+                    log_executor_event("codex project-space capability ready", &fields);
+                }
+                Err(error) => {
+                    fields.push(("error", error));
+                    log_executor_event("codex project-space capability diagnostic failed", &fields);
+                }
+            }
             let inventories = mcp_inventory_diagnostic_fields(&response);
             if inventories.is_empty() {
                 let mut fields = task_fields(&request.task_id, &request.subtask_id);
@@ -1603,6 +1613,35 @@ async fn log_codex_mcp_inventory(
             log_executor_event("codex MCP inventory timed out", &fields);
         }
     }
+}
+
+fn validate_project_space_capability_inventory(response: &Value) -> Result<usize, String> {
+    let server = response
+        .get("data")
+        .and_then(Value::as_array)
+        .and_then(|servers| {
+            servers.iter().find(|server| {
+                server.get("name").and_then(Value::as_str)
+                    == Some(crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME)
+            })
+        })
+        .ok_or_else(|| "Required project-space capability is unavailable".to_owned())?;
+    let tools = server
+        .get("tools")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "Required project-space capability exposed no tools".to_owned())?;
+    for required in ["get_current_context", "read_item_attachment"] {
+        if !tools.contains_key(required)
+            && !tools
+                .values()
+                .any(|tool| tool.get("name").and_then(Value::as_str) == Some(required))
+        {
+            return Err(format!(
+                "Required project-space capability is missing tool {required}"
+            ));
+        }
+    }
+    Ok(tools.len())
 }
 
 fn mcp_inventory_diagnostic_fields(response: &Value) -> Vec<Vec<(&'static str, String)>> {
@@ -2586,24 +2625,17 @@ fn spawn_codex_app_server(
         .map_err(|error| format!("failed to start codex app-server: {error}"))
 }
 
-fn codex_thread_developer_instructions(
-    user_instructions: &str,
-    task_instructions: &str,
-    include_space_instructions: bool,
-) -> String {
-    let mut instructions = vec![
+fn codex_thread_developer_instructions(user_instructions: &str, task_instructions: &str) -> String {
+    [
         user_instructions.trim(),
         task_instructions.trim(),
         WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS,
-    ];
-    if include_space_instructions {
-        instructions.push(WEWORK_SPACE_DEVELOPER_INSTRUCTIONS);
-    }
-    instructions
-        .into_iter()
-        .filter(|instructions| !instructions.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n\n")
+        WEWORK_SPACE_DEVELOPER_INSTRUCTIONS,
+    ]
+    .into_iter()
+    .filter(|instructions| !instructions.is_empty())
+    .collect::<Vec<_>>()
+    .join("\n\n")
 }
 
 pub(crate) fn strip_wework_browser_instructions(instructions: &str) -> &str {
@@ -2877,6 +2909,9 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchCo
     launch_config
         .config_overrides
         .extend(cdp_browser_mcp_config_overrides(request));
+    launch_config
+        .config_overrides
+        .extend(project_space_mcp_config_overrides(request));
     launch_config
         .config_overrides
         .extend(runtime_capabilities::request_mcp_config_overrides(request));
@@ -3695,6 +3730,81 @@ fn cdp_browser_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String> {
     overrides
 }
 
+fn project_space_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String> {
+    let server_name = crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME;
+    let key = toml_key_path(&["mcp_servers", server_name]);
+    let grant = crate::task_runtime::mcp::encoded_space_context_grant(request);
+    let command = env::current_exe()
+        .unwrap_or_else(|_| executor_home().join("bin/wegent-executor"))
+        .display()
+        .to_string();
+    let mut overrides = vec![
+        format!("{key}.enabled=true"),
+        format!("{key}.command={}", toml_value(&command)),
+        format!(
+            "{key}.args={}",
+            toml_json_value(&json!(["space-mcp-server"]))
+        ),
+        format!("{key}.startup_timeout_sec=15"),
+        format!("{key}.tool_timeout_sec=60"),
+    ];
+    let Some(grant) = grant else {
+        return overrides;
+    };
+    overrides.extend([
+        format!(
+            "{key}.default_tools_approval_mode={}",
+            toml_value("approve")
+        ),
+        format!(
+            "{}={}",
+            toml_key_path(&[
+                "mcp_servers",
+                server_name,
+                "env",
+                crate::task_runtime::mcp::SPACE_CONTEXT_GRANT_ENV,
+            ]),
+            toml_value(&grant)
+        ),
+    ]);
+    let backend_url = request
+        .backend_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| env::var("WEGENT_BACKEND_URL").ok())
+        .filter(|value| !value.trim().is_empty());
+    if let Some(backend_url) = backend_url {
+        overrides.push(format!(
+            "{}={}",
+            toml_key_path(&[
+                "mcp_servers",
+                server_name,
+                "env",
+                "WEWORK_SPACE_BACKEND_URL",
+            ]),
+            toml_value(backend_url.trim())
+        ));
+    }
+    let auth_token = request
+        .auth_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| env::var("WEGENT_AUTH_TOKEN").ok())
+        .filter(|value| !value.trim().is_empty());
+    if let Some(auth_token) = auth_token {
+        overrides.push(format!(
+            "{}={}",
+            toml_key_path(&["mcp_servers", server_name, "env", "WEWORK_SPACE_AUTH_TOKEN",]),
+            toml_value(auth_token.trim())
+        ));
+    }
+    overrides
+}
+
 fn embedded_browser_label(request: &ExecutionRequest) -> Option<String> {
     let task_id = request.task_id.trim();
     if task_id.is_empty() {
@@ -4348,7 +4458,15 @@ pub(crate) const CODEX_WORKSPACE_PERMISSION_PROFILE: &str = ":workspace";
 
 pub(crate) fn codex_runtime_approval_policy(request: &ExecutionRequest) -> Value {
     match codex_runtime_permission_profile(request) {
-        CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE => Value::String("never".to_owned()),
+        CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE => json!({
+            "granular": {
+                "sandbox_approval": false,
+                "rules": false,
+                "skill_approval": false,
+                "request_permissions": false,
+                "mcp_elicitations": true,
+            }
+        }),
         _ => Value::String("on-request".to_owned()),
     }
 }
@@ -4552,21 +4670,11 @@ fn insert_codex_developer_instructions(
     let instructions = codex_thread_developer_instructions(
         &launch_config.user_developer_instructions,
         &request.system_prompt,
-        request_has_mcp_server(request, "wework_space"),
     );
     params.insert(
         "developerInstructions".to_owned(),
         Value::String(instructions),
     );
-}
-
-fn request_has_mcp_server(request: &ExecutionRequest, name: &str) -> bool {
-    request.mcp_servers.iter().any(|server| {
-        server
-            .get("name")
-            .and_then(Value::as_str)
-            .is_some_and(|server_name| server_name == name)
-    })
 }
 
 fn append_thread_launch_params(

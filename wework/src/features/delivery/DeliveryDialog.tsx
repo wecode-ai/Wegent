@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Check, FileText, Folder, GitBranch, MessageSquare, Plus, X } from 'lucide-react'
-import type { WorkbenchMessage } from '@wegent/chat-core'
-import type { RuntimeTaskAddress } from '@/types/api'
+import { Check, FileText, Folder, GitBranch, MessageSquare, Paperclip, Plus, X } from 'lucide-react'
+import type { WorkbenchMessage } from '@/types/workbench'
+import type { Attachment, RuntimeTaskAddress } from '@/types/api'
 import type { LocalWorkItem } from '@/features/todo/todoModel'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -27,6 +27,26 @@ function messagePreview(message: WorkbenchMessage): string {
   return message.role === 'user' ? 'User message' : 'Assistant message'
 }
 
+function attachmentDeliveryKey(attachment: Attachment): string {
+  const localPath = attachment.local_path?.trim()
+  if (localPath) return `local:${localPath}`
+  if (attachment.id > 0) return `remote:${attachment.id}`
+  return `name:${attachment.filename}:${attachment.file_size}`
+}
+
+function uniqueDeliveryRelativePath(base: string, usedPaths: Set<string>): string {
+  let candidate = base
+  let suffix = 1
+  const dot = base.lastIndexOf('.')
+  const stem = dot > 0 ? base.slice(0, dot) : base
+  const extension = dot > 0 ? base.slice(dot) : ''
+  while (usedPaths.has(candidate)) {
+    candidate = `${stem}-${suffix}${extension}`
+    suffix += 1
+  }
+  return candidate
+}
+
 export function DeliveryDialog({
   item,
   runtimeTask,
@@ -38,8 +58,9 @@ export function DeliveryDialog({
 }: DeliveryDialogProps) {
   const { t } = useTranslation('common')
   const [markdown, setMarkdown] = useState('')
-  const [chatScope, setChatScope] = useState<ChatScope>('conversation')
+  const [chatScope, setChatScope] = useState<ChatScope>('selected')
   const [selectedMessages, setSelectedMessages] = useState<number[]>([])
+  const [selectedAttachmentKeys, setSelectedAttachmentKeys] = useState<string[]>([])
   const [files, setFiles] = useState<SelectedDeliveryFile[]>([])
   const [submitting, setSubmitting] = useState(false)
   const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(null)
@@ -53,6 +74,27 @@ export function DeliveryDialog({
         : messages.filter((_, index) => selectedMessages.includes(index)),
     [chatScope, messages, selectedMessages]
   )
+  const availableAttachments = useMemo(() => {
+    const seen = new Set<string>()
+    const options: Array<{ key: string; attachment: Attachment }> = []
+    for (const message of messages) {
+      for (const attachment of message.attachments ?? []) {
+        const key = attachmentDeliveryKey(attachment)
+        if (seen.has(key)) continue
+        seen.add(key)
+        options.push({ key, attachment })
+      }
+    }
+    return options
+  }, [messages])
+  const selectedAttachments = availableAttachments.filter(option =>
+    selectedAttachmentKeys.includes(option.key)
+  )
+  const localSelectedAttachments = selectedAttachments.filter(option =>
+    Boolean(option.attachment.local_path?.trim())
+  )
+  const hasChatSelection =
+    chatScope !== 'selected' || selectedMessages.length > 0 || messages.length === 0
 
   async function choosePaths(directory: boolean) {
     const { open } = await import('@tauri-apps/plugin-dialog')
@@ -78,21 +120,42 @@ export function DeliveryDialog({
         : deliveryApi.bindTask(item.id, runtimeTask))
       const delivery = await deliveryApi.createDelivery(item.id, {
         markdown,
-        ...(chatScope === 'none' ? {} : { chat: { scope: chatScope, messages: chatMessages } }),
+        ...(chatScope !== 'none' && chatMessages.length > 0
+          ? { chat: { scope: chatScope, messages: chatMessages } }
+          : {}),
         source_task: runtimeTask,
       })
       draftId = delivery.id
-      setUploadProgress({ done: 0, total: files.length })
+      const totalAssets = files.length + localSelectedAttachments.length
+      setUploadProgress({ done: 0, total: totalAssets })
+      const usedPaths = new Set(files.map(entry => entry.relativePath))
       for (const [index, entry] of files.entries()) {
         await deliveryApi.addAsset(delivery.id, entry.file, entry.relativePath)
-        setUploadProgress({ done: index + 1, total: files.length })
+        usedPaths.add(entry.relativePath)
+        setUploadProgress({ done: index + 1, total: totalAssets })
+      }
+      for (const [index, option] of localSelectedAttachments.entries()) {
+        const localPath = option.attachment.local_path!
+        const [attachmentEntry] = await readSelectedDeliveryFiles([localPath])
+        if (!attachmentEntry) {
+          throw new Error(
+            t('delivery.attachment_unavailable', { name: option.attachment.filename })
+          )
+        }
+        const relativePath = uniqueDeliveryRelativePath(
+          `attachments/${attachmentEntry.relativePath}`,
+          usedPaths
+        )
+        usedPaths.add(relativePath)
+        await deliveryApi.addAsset(delivery.id, attachmentEntry.file, relativePath)
+        setUploadProgress({ done: files.length + index + 1, total: totalAssets })
       }
       await deliveryApi.finalizeDelivery(delivery.id)
       setCompleted(true)
       track('delivery_completed', {
         asset_count:
-          files.length === 0 ? '0' : files.length === 1 ? '1' : files.length <= 5 ? '2-5' : '6+',
-        includes_chat: chatScope !== 'none',
+          totalAssets === 0 ? '0' : totalAssets === 1 ? '1' : totalAssets <= 5 ? '2-5' : '6+',
+        includes_chat: chatMessages.length > 0,
       })
     } catch (submitError) {
       track('operation_failed', { operation: 'delivery' })
@@ -283,6 +346,58 @@ export function DeliveryDialog({
                 ))}
               </div>
             )}
+
+            {availableAttachments.length > 0 && (
+              <div className="mt-2 rounded-lg border border-border p-2">
+                <div className="flex items-center gap-2 text-xs text-text-muted">
+                  <Paperclip className="h-3.5 w-3.5" />
+                  <span>{t('delivery.conversation_attachments', '会话附件')}</span>
+                  <span>
+                    {selectedAttachments.length}/{availableAttachments.length}
+                  </span>
+                </div>
+                <div
+                  data-testid="delivery-attachment-picker"
+                  className="mt-1 flex max-h-32 flex-wrap gap-1 overflow-y-auto"
+                >
+                  {availableAttachments.map(option => {
+                    const local = Boolean(option.attachment.local_path?.trim())
+                    const checked = selectedAttachmentKeys.includes(option.key)
+                    return (
+                      <label
+                        key={option.key}
+                        data-testid={`delivery-attachment-${option.key.replace(/[^a-zA-Z0-9_-]/g, '-')}`}
+                        className={`flex h-7 max-w-56 cursor-pointer items-center gap-1 rounded-md px-2 text-xs ${
+                          local ? 'hover:bg-hover' : 'cursor-not-allowed opacity-60'
+                        } ${checked ? 'bg-muted' : ''}`}
+                        title={
+                          local
+                            ? option.attachment.filename
+                            : t('delivery.attachment_unavailable', {
+                                name: option.attachment.filename,
+                              })
+                        }
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          disabled={!local}
+                          onChange={() =>
+                            setSelectedAttachmentKeys(current =>
+                              current.includes(option.key)
+                                ? current.filter(value => value !== option.key)
+                                : [...current, option.key]
+                            )
+                          }
+                        />
+                        <FileText className="h-3 w-3 shrink-0 text-text-muted" />
+                        <span className="truncate">{option.attachment.filename}</span>
+                      </label>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -303,7 +418,7 @@ export function DeliveryDialog({
           <button
             type="button"
             data-testid="delivery-confirm"
-            disabled={submitting || (chatScope === 'selected' && selectedMessages.length === 0)}
+            disabled={submitting || !hasChatSelection}
             onClick={() => void submit()}
             className="ml-2 flex h-8 items-center gap-1.5 rounded-md bg-text-primary px-3 text-sm font-medium text-background disabled:opacity-50"
           >

@@ -79,6 +79,14 @@ const REQUEST_USER_INPUT_PROMPT =
   'WEWORK_DESKTOP_E2E_REQUEST_INPUT: ask which implementation direction to use.'
 const REQUEST_USER_INPUT_QUESTION = 'Which implementation direction should be used?'
 const REQUEST_USER_INPUT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_REQUEST_INPUT_COMPLETE'
+const MCP_ELICITATION_PROMPT =
+  'WEWORK_DESKTOP_E2E_MCP_ELICITATION: confirm the inner-site access audience.'
+const MCP_ELICITATION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_MCP_ELICITATION_COMPLETE'
+const MCP_ELICITATION_ACCEPTED_MARKER = 'E2E_MCP_ELICITATION_ACCEPTED:owner'
+const MCP_ELICITATION_NAMESPACE = 'wegent_sites_interactions'
+const MCP_ELICITATION_TOOL_NAME = 'confirm_inner_site_access'
+const MCP_ELICITATION_SEARCH_ID = 'wework-e2e-mcp-elicitation-search'
+const MCP_ELICITATION_CALL_ID = 'wework-e2e-mcp-elicitation-call'
 const TASK_PLAN_PROMPT =
   'WEWORK_DESKTOP_E2E_TASK_PLAN: publish a task plan and finish after the task is backgrounded.'
 const TASK_PLAN_STEP = 'Verify the background task plan remains visible'
@@ -495,6 +503,7 @@ const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..', '..', '..')
 const repoDir = resolve(weworkDir, '..')
 const toolDetailsMcpServerPath = join(weworkDir, 'e2e', 'utils', 'tool-details-mcp-server.mjs')
+const mcpElicitationServerPath = join(weworkDir, 'e2e', 'utils', 'mcp-elicitation-server.mjs')
 const runId = `${new Date().toISOString().replace(/[:.]/g, '-')}-${process.pid}`
 const resultDir = join(weworkDir, 'test-results', 'desktop-e2e', runId)
 
@@ -1420,6 +1429,13 @@ export {
   REQUEST_USER_INPUT_PROMPT,
   REQUEST_USER_INPUT_QUESTION,
   REQUEST_USER_INPUT_COMPLETION_TEXT,
+  MCP_ELICITATION_PROMPT,
+  MCP_ELICITATION_COMPLETION_TEXT,
+  MCP_ELICITATION_ACCEPTED_MARKER,
+  MCP_ELICITATION_NAMESPACE,
+  MCP_ELICITATION_TOOL_NAME,
+  MCP_ELICITATION_SEARCH_ID,
+  MCP_ELICITATION_CALL_ID,
   TASK_PLAN_PROMPT,
   TASK_PLAN_STEP,
   SEND_MODE_DRAFT,
@@ -1666,6 +1682,7 @@ export {
   weworkDir,
   repoDir,
   toolDetailsMcpServerPath,
+  mcpElicitationServerPath,
   runId,
   resultDir,
   OFFICIAL_PLUGIN_REPOSITORY,

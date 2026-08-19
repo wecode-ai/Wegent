@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
@@ -67,11 +67,11 @@ describe('IssueComposer', () => {
     })
   })
 
-  it('uses the same title length limit as task mode', () => {
+  it('preserves a long issue title without truncation', () => {
     const description = '需要处理的任务'.repeat(20)
 
     expect(issueDraftFromText(description)).toEqual({
-      title: `${Array.from(description).slice(0, 59).join('')}…`,
+      title: description,
       description,
     })
   })
@@ -239,6 +239,183 @@ describe('IssueComposer', () => {
       createTask: false,
       localProjectId: null,
     })
+  })
+
+  it('expands into an app-fullscreen editor that derives the title from content', async () => {
+    const onCreate = vi.fn()
+    const file = new File(['image'], 'context.png', { type: 'image/png' })
+    render(
+      <IssueComposer
+        projects={[workItemProject]}
+        initialBoardKey="backend:1"
+        onCancel={vi.fn()}
+        onCreate={onCreate}
+      />
+    )
+
+    await userEvent.type(screen.getByTestId('workspace-issue-input'), '自动生成的标题')
+    await userEvent.click(screen.getByTestId('workspace-issue-expand'))
+
+    expect(screen.getByTestId('workspace-issue-composer-panel')).toHaveClass(
+      'fixed',
+      'bottom-4',
+      'left-4',
+      'right-4',
+      'top-[54px]',
+      'w-auto',
+      'rounded-2xl'
+    )
+    expect(screen.getByTestId('workspace-issue-composer-panel')).not.toHaveClass(
+      'absolute',
+      'inset-0',
+      'top-4'
+    )
+    expect(screen.queryByTestId('workspace-issue-title')).not.toBeInTheDocument()
+    expect(screen.getByTestId('workspace-issue-description')).toHaveValue('自动生成的标题')
+
+    fireEvent.change(screen.getByTestId('workspace-issue-description'), {
+      target: { value: '默认生成的标题\n完整 Issue 内容' },
+    })
+    fireEvent.change(screen.getByTestId('workspace-issue-file-input'), {
+      target: { files: [file] },
+    })
+    await userEvent.click(screen.getByTestId('workspace-issue-collapse'))
+    await userEvent.click(screen.getByTestId('workspace-issue-expand'))
+
+    expect(screen.queryByTestId('workspace-issue-title')).not.toBeInTheDocument()
+    expect(screen.getByTestId('workspace-issue-description')).toHaveValue(
+      '默认生成的标题\n完整 Issue 内容'
+    )
+    expect(screen.getByRole('button', { name: 'context.png' })).toBeInTheDocument()
+    expect(
+      screen.getByTestId('workspace-issue-composer-panel').querySelector('header')
+    ).not.toHaveClass('border-b')
+    expect(screen.getByTestId('workspace-issue-header-actions')).toHaveClass(
+      'ml-auto',
+      'flex',
+      'gap-1'
+    )
+    expect(screen.getByTestId('workspace-issue-header-actions')).toContainElement(
+      screen.getByTestId('workspace-issue-collapse')
+    )
+    expect(screen.getByTestId('workspace-issue-header-actions')).toContainElement(
+      screen.getByTestId('workspace-issue-close')
+    )
+    expect(screen.getByTestId('workspace-issue-editor-body')).toHaveClass('w-full', 'px-6', 'py-4')
+    expect(screen.getByTestId('workspace-issue-editor-body')).not.toHaveClass(
+      'mx-auto',
+      'max-w-[960px]'
+    )
+    expect(screen.getByTestId('workspace-issue-fullscreen-submit').closest('footer')).toHaveClass(
+      'border-t'
+    )
+
+    await userEvent.click(screen.getByTestId('workspace-issue-fullscreen-submit'))
+
+    expect(onCreate).toHaveBeenCalledWith({
+      boardKey: 'backend:1',
+      title: '默认生成的标题 完整 Issue 内容',
+      description: '默认生成的标题\n完整 Issue 内容',
+      files: [file],
+      createTask: false,
+      localProjectId: null,
+    })
+  })
+
+  it('restores a saved draft with staged attachments after an accidental close', async () => {
+    const onCancel = vi.fn()
+    const file = new File(['image'], 'draft.png', { type: 'image/png' })
+    const firstRender = render(
+      <IssueComposer
+        projects={[workItemProject]}
+        initialBoardKey="backend:1"
+        onCancel={onCancel}
+        onCreate={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('workspace-issue-expand'))
+    fireEvent.change(screen.getByTestId('workspace-issue-description'), {
+      target: { value: '未完成的 Issue\n关闭后需要恢复的内容' },
+    })
+    fireEvent.change(screen.getByTestId('workspace-issue-file-input'), {
+      target: { files: [file] },
+    })
+
+    await waitFor(() =>
+      expect(localStorage.getItem('wework-issue-composer-draft:backend:1:issue')).toContain(
+        '未完成的 Issue'
+      )
+    )
+    expect(screen.getByTestId('workspace-issue-draft-status')).toHaveTextContent('草稿已自动保存')
+    await userEvent.click(screen.getByTestId('workspace-issue-close'))
+    expect(onCancel).toHaveBeenCalledOnce()
+    firstRender.unmount()
+
+    render(
+      <IssueComposer
+        projects={[workItemProject]}
+        initialBoardKey="backend:1"
+        onCancel={vi.fn()}
+        onCreate={vi.fn()}
+      />
+    )
+    await userEvent.click(screen.getByTestId('workspace-issue-expand'))
+
+    expect(screen.queryByTestId('workspace-issue-title')).not.toBeInTheDocument()
+    expect(screen.getByTestId('workspace-issue-description')).toHaveValue(
+      '未完成的 Issue\n关闭后需要恢复的内容'
+    )
+    expect(screen.getByRole('button', { name: 'draft.png' })).toBeInTheDocument()
+  })
+
+  it('clears the persisted draft after explicit discard or successful creation', async () => {
+    const onCreate = vi.fn(async () => true)
+    const firstRender = render(
+      <IssueComposer
+        projects={[workItemProject]}
+        initialBoardKey="backend:1"
+        onCancel={vi.fn()}
+        onCreate={onCreate}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('workspace-issue-expand'))
+    fireEvent.change(screen.getByTestId('workspace-issue-description'), {
+      target: { value: '可清理草稿' },
+    })
+    await waitFor(() =>
+      expect(localStorage.getItem('wework-issue-composer-draft:backend:1:issue')).not.toBeNull()
+    )
+    await userEvent.click(screen.getByTestId('workspace-issue-clear-draft'))
+    expect(localStorage.getItem('wework-issue-composer-draft:backend:1:issue')).toBeNull()
+
+    fireEvent.change(screen.getByTestId('workspace-issue-description'), {
+      target: { value: '创建后清理\n提交内容' },
+    })
+    await userEvent.click(screen.getByTestId('workspace-issue-fullscreen-submit'))
+
+    expect(onCreate).toHaveBeenCalledOnce()
+    expect(localStorage.getItem('wework-issue-composer-draft:backend:1:issue')).toBeNull()
+    firstRender.unmount()
+  })
+
+  it('collapses fullscreen editing with Escape before closing the composer', async () => {
+    const onCancel = vi.fn()
+    render(
+      <IssueComposer
+        projects={[workItemProject]}
+        initialBoardKey="backend:1"
+        onCancel={onCancel}
+        onCreate={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('workspace-issue-expand'))
+    fireEvent.keyDown(screen.getByTestId('workspace-issue-description'), { key: 'Escape' })
+
+    expect(screen.queryByTestId('workspace-issue-description')).not.toBeInTheDocument()
+    expect(onCancel).not.toHaveBeenCalled()
   })
 
   it('closes with Escape without showing a duplicate cancel action', () => {
