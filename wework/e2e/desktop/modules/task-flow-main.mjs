@@ -520,8 +520,23 @@ async function main() {
     console.log(`Using real Codex: ${codexVersion}`)
     const appIdentifier = `io.wecode.wework.e2e.run${process.pid}`
     let executorBinary
+    let prebuiltDesktopApp = null
     const scenarioRequiresCloudEnvironment = desktopScenario?.requiresCloudEnvironment === true
-    if (
+    if (BUILD_ONLY) {
+      const builds = await Promise.all([
+        buildExecutor(),
+        buildDesktopApp(
+          control.controlUrl,
+          control.url,
+          'wework-desktop-e2e-cloud-token',
+          appIdentifier,
+          control.url,
+          codexBinary
+        ),
+      ])
+      executorBinary = builds[0]
+      prebuiltDesktopApp = builds[1]
+    } else if (
       CLOUD_ONLY ||
       CLOUD_FEATURES_ONLY ||
       CLOUD_VISION_ONLY ||
@@ -545,14 +560,18 @@ async function main() {
     } else {
       executorBinary = await buildExecutor()
     }
-    const desktopAppPromise = buildDesktopApp(
-      control.controlUrl,
-      cloudEnvironment?.backendUrl ?? control.url,
-      cloudEnvironment?.authToken ?? desktopScenario?.authToken ?? 'wework-desktop-e2e-cloud-token',
-      appIdentifier,
-      control.url,
-      codexBinary
-    )
+    const desktopAppPromise = prebuiltDesktopApp
+      ? Promise.resolve(prebuiltDesktopApp)
+      : buildDesktopApp(
+          control.controlUrl,
+          cloudEnvironment?.backendUrl ?? control.url,
+          cloudEnvironment?.authToken ??
+            desktopScenario?.authToken ??
+            'wework-desktop-e2e-cloud-token',
+          appIdentifier,
+          control.url,
+          codexBinary
+        )
     const desktopApp = cloudEnvironment
       ? (
           await Promise.all([

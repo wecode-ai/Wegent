@@ -61,21 +61,21 @@ cloud_segments=(
 # longest to shortest so the five runners keep both local workers busy.
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 cloud_shards=(
-  core-task-flow,cloud-worktree-create
-  cloud-worktree-capability,cloud-worktree-tools,model-routing,embedded-browser,telemetry-consent
-  cloud-worktree-queued-cancel,window-lifecycle,conversation-state,browser-multi-tabs
-  cloud-worktree-device-restart,resilience,goal-lifecycle,supervisor-lifecycle
-  cloud-worktree-archive-restore,rendering-extensions,workspace-attachments,workspace-tabs,priority-filter,automation-lifecycle,project-automation,plugin-auto-update
+  rendering-extensions,cloud-worktree-queued-cancel,embedded-browser,cloud-worktree-capability,priority-filter
+  cloud-worktree-create,core-task-flow,workspace-tabs,supervisor-lifecycle
+  cloud-worktree-archive-restore,resilience,cloud-worktree-tools,workspace-attachments,automation-lifecycle
+  conversation-state,window-lifecycle,project-automation,plugin-auto-update
+  goal-lifecycle,model-routing,cloud-worktree-device-restart,browser-multi-tabs,telemetry-consent
 )
 # Keep the number of core desktop runners fixed as checkpoints grow. Each
 # runner reuses the same prebuilt application with two isolated local workers.
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 core_shards=(
-  core-task-flow
-  model-routing,embedded-browser,claude-runtime,local-harness
-  window-lifecycle,conversation-state,temporary-chat
-  resilience,runtime-task-queue,goal-lifecycle,supervisor-lifecycle
-  rendering-extensions,workspace-attachments,workspace-tabs,priority-filter,automation-lifecycle,project-automation,permission-modes,local-file-preview
+  rendering-extensions,claude-runtime,automation-lifecycle
+  model-routing,window-lifecycle
+  resilience,core-task-flow,project-automation,permission-modes
+  conversation-state,embedded-browser,workspace-tabs,runtime-task-queue,local-harness
+  workspace-attachments,goal-lifecycle,priority-filter,supervisor-lifecycle,local-file-preview,temporary-chat
 )
 
 validate_core_shards() {
