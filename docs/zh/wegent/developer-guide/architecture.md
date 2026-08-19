@@ -621,6 +621,35 @@ sequenceDiagram
     Frontend->>User: 14. 显示结果
 ```
 
+### Wework 本地项目 AI 设置流
+
+Wework 的本地项目可以保存项目指令、默认模型和项目插件关系。项目记录保存在
+Codex 全局状态中；创建新对话时，前端把当时的项目设置写入任务请求，Executor
+再把这份快照持久化到 `RuntimeTaskLink` 并注入 Codex。
+
+```mermaid
+sequenceDiagram
+    participant User as 用户
+    participant Wework as Wework
+    participant State as Codex 全局状态
+    participant Executor as Executor
+    participant Codex as Codex
+
+    User->>Wework: 配置项目指令、模型和插件
+    Wework->>State: 保存项目级 AI 设置
+    User->>Wework: 在项目中创建新对话
+    Wework->>Executor: 发送项目设置快照
+    Executor->>Executor: 持久化到 RuntimeTaskLink
+    Executor->>Codex: 注入指令、模型和项目插件覆盖
+```
+
+核心不变量：
+
+- 项目设置只影响新对话；已有对话继续使用创建时的快照。
+- 项目插件表示项目安装关系。插件包可以复用全局缓存，但保持全局禁用时仍可在所属项目任务中启用。
+- Codex 的有效插件集合是“全局启用插件”和“当前任务的项目插件”的并集。
+- 项目不拥有独立插件市场；安装来源仍是全局市场及其权限策略。
+
 ### 通信协议
 
 | 通信类型 | 协议 | 用途 |

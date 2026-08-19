@@ -621,6 +621,42 @@ sequenceDiagram
     Frontend->>User: 14. Display result
 ```
 
+### Wework Local Project AI Settings Flow
+
+A Wework local project can store project instructions, a default model, and
+project plugin relationships. The project record lives in Codex global state.
+When a new conversation is created, the frontend copies the current project
+settings into the task request. The Executor persists that snapshot in
+`RuntimeTaskLink` and injects it into Codex.
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Wework
+    participant State as Codex Global State
+    participant Executor
+    participant Codex
+
+    User->>Wework: Configure project instructions, model, and plugins
+    Wework->>State: Persist project-scoped AI settings
+    User->>Wework: Create a new project conversation
+    Wework->>Executor: Send the project settings snapshot
+    Executor->>Executor: Persist it in RuntimeTaskLink
+    Executor->>Codex: Inject instructions, model, and plugin overrides
+```
+
+Core invariants:
+
+- Project settings affect only new conversations; existing conversations keep
+  the snapshot captured when they were created.
+- A project plugin represents a project installation relationship. Its package
+  may reuse the global cache and remain globally disabled while being enabled
+  for tasks in that project.
+- Codex receives the union of globally enabled plugins and the current task's
+  project plugins.
+- Projects do not own separate marketplaces; installation sources and policy
+  still come from global marketplaces.
+
 ### Communication Protocols
 
 | Communication Type | Protocol | Purpose |
