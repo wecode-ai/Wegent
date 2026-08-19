@@ -878,6 +878,39 @@ async fn codex_shared_app_server_restarts_after_turn_startup_stalls() {
 }
 
 #[tokio::test]
+async fn codex_shared_app_server_isolates_active_turns_from_cross_thread_bursts() {
+    let _lock = env_lock().await;
+    let fake_codex = write_fake_codex_cross_thread_burst();
+    let client = CodexAppServerClient::new(fake_codex.display().to_string());
+    let request = ExecutionRequest {
+        prompt: json!("implement feature"),
+        bot: json!([{"shell_type": "ClaudeCode"}]),
+        model_config: json!({
+            "model": "openai",
+            "model_id": "gpt-5",
+            "protocol": "openai-responses"
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    let (first, second) = tokio::join!(
+        client.run_turn_with_cancel(request.clone(), CodexAppServerTurnOptions::default()),
+        client.run_turn_with_cancel(request, CodexAppServerTurnOptions::default())
+    );
+
+    for result in [first, second] {
+        assert_eq!(
+            result
+                .expect("cross-thread traffic must not fail an active turn")
+                .outcome,
+            ExecutionOutcome::Completed {
+                content: "isolated".to_owned()
+            }
+        );
+    }
+}
+
+#[tokio::test]
 async fn codex_app_server_engine_reports_nested_turn_error_details() {
     let _lock = env_lock().await;
     let fake_codex = write_fake_codex_nested_turn_error();
@@ -1282,6 +1315,58 @@ done
     .replace("__MARKER_PATH__", &marker_path.display().to_string())
     .replace("__LOG_PATH__", &log_path.display().to_string());
     fs::write(&path, content).unwrap();
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&path, permissions).unwrap();
+    }
+    path
+}
+
+fn write_fake_codex_cross_thread_burst() -> PathBuf {
+    let path = std::env::temp_dir().join(format!(
+        "fake-codex-cross-thread-burst-{}-{}",
+        std::process::id(),
+        unique_suffix()
+    ));
+    fs::write(
+        &path,
+        r#"#!/bin/sh
+thread_count=0
+turn_count=0
+while IFS= read -r line; do
+  request_id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '{"id":%s,"result":{"protocolVersion":1}}\n' "$request_id"
+      ;;
+    *'"method":"initialized"'*)
+      ;;
+    *'"method":"thread/start"'*)
+      thread_count=$((thread_count + 1))
+      printf '{"id":%s,"result":{"thread":{"id":"thread-%s"}}}\n' "$request_id" "$thread_count"
+      ;;
+    *'"method":"turn/start"'*)
+      turn_count=$((turn_count + 1))
+      printf '{"id":%s,"result":{"turn":{"id":"turn-%s","status":"inProgress"}}}\n' "$request_id" "$turn_count"
+      if [ "$turn_count" -eq 2 ]; then
+        index=0
+        while [ "$index" -lt 2200 ]; do
+          printf '{"method":"item/commandExecution/outputDelta","params":{"threadId":"noise-thread","turnId":"noise-turn","itemId":"noise-item","delta":"%s"}}\n' "$index"
+          index=$((index + 1))
+        done
+        for active in 1 2; do
+          printf '{"method":"item/completed","params":{"threadId":"thread-%s","turnId":"turn-%s","item":{"id":"message-%s","type":"agentMessage","phase":"final_answer","text":"isolated"}}}\n' "$active" "$active" "$active"
+          printf '{"method":"turn/completed","params":{"threadId":"thread-%s","turn":{"id":"turn-%s","status":"completed"}}}\n' "$active" "$active"
+        done
+      fi
+      ;;
+  esac
+done
+"#,
+    )
+    .unwrap();
     #[cfg(unix)]
     {
         let mut permissions = fs::metadata(&path).unwrap().permissions();
