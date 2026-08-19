@@ -15,5 +15,6 @@ Before changing a flow below, update its connection graph, sequence diagram, cod
 | Git Worktree execution                       | [git-worktree-execution.md](git-worktree-execution.md)                   | Device routing, capability, preflight, queued creation, lifecycle, persistence, UI projection    |
 | Text-model vision delegation                 | [model-vision-delegation.md](model-vision-delegation.md)                 | Explicit model reference, catalog capability, sidecar configuration, image replacement, failure isolation |
 | Wework host plugin runtime                   | [workbench-plugin-runtime.md](workbench-plugin-runtime.md)               | Profile composition, services and UI slots, dynamic modules, sidecars, teardown, and recovery    |
+| Codex notification isolation                 | [codex-notification-routing.md](codex-notification-routing.md)           | Shared app-server, thread routing, burst isolation, process exit, terminal projection            |
 
 Detailed product prose remains in the existing developer guides. This directory contains only reviewable architecture truth.

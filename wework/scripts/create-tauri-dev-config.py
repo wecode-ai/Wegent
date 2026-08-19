@@ -23,7 +23,10 @@ def main() -> None:
         )
         with config_path.open(encoding="utf-8") as handle:
             base_config = json.load(handle)
-        config["app"] = {"windows": base_config["app"]["windows"]}
+        windows = base_config["app"]["windows"]
+        for window in windows:
+            window["backgroundThrottling"] = "disabled"
+        config["app"] = {"windows": windows}
 
     if os.environ["WEWORK_RELEASE_UI_VALUE"] != "true":
         config["bundle"] = {

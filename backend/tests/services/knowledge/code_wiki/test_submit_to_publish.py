@@ -238,11 +238,17 @@ def test_pages_sent_with_the_final_summary_are_published_too(
             generation_id=generation.id,
             sections=[
                 WikiContentSection(
+                    type="architecture",
+                    title="Architecture",
+                    content="overview",
+                    path="architecture",
+                ),
+                WikiContentSection(
                     type="chapter",
                     title="Backend Architecture",
                     content="body",
                     path="architecture/backend",
-                )
+                ),
             ],
             summary=WikiContentSummary(status="COMPLETED", head_commit=HEAD),
         ),
@@ -252,8 +258,48 @@ def test_pages_sent_with_the_final_summary_are_published_too(
     # in source_config, so rewording the heading renames the document without moving
     # it or changing the id the RAG index is keyed on.
     assert [doc.name for doc in _documents(test_db, knowledge_base.id)] == [
-        "Backend Architecture"
+        "Architecture",
+        "Backend Architecture",
     ]
+
+
+def test_missing_section_page_is_refused_until_the_agent_repairs_it(
+    test_db: Session,
+    knowledge_base: Kind,
+    test_user: User,
+    no_side_effects: FakeEffects,
+) -> None:
+    generation = _generation(test_db, test_user, knowledge_base.id)
+    _seed_page(test_db, generation, "index")
+    _seed_page(test_db, generation, "architecture/backend")
+
+    _submit(test_db, generation, status="COMPLETED", head_commit=HEAD)
+
+    test_db.refresh(generation)
+    assert generation.status == WikiGenerationStatus.FAILED
+    assert (
+        "required section overview pages are missing"
+        in generation.ext[PUBLISH_GATE_EXT_KEY]["reason"]
+    )
+    assert _documents(test_db, knowledge_base.id) == []
+
+    WikiService().save_generation_contents(
+        test_db,
+        WikiContentWriteRequest(
+            generation_id=generation.id,
+            sections=[
+                WikiContentSection(
+                    type="architecture",
+                    title="Architecture",
+                    content="overview",
+                    path="architecture",
+                )
+            ],
+        ),
+    )
+    _submit(test_db, generation, status="COMPLETED", head_commit=HEAD)
+
+    assert published_generation_id(knowledge_base) == generation.id
 
 
 def test_a_legacy_generation_only_records_its_status(
