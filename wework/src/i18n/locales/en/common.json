@@ -2659,6 +2659,7 @@
     "join_existing_work_item": "Join an existing workspace",
     "select_another_work_item": "Choose another workspace",
     "disable_work_item": "Do not use a workspace",
+    "clear_extra_project_space": "Do not add to another project space",
     "goal_status_compact_active": "In progress",
     "goal_status_compact_paused": "Paused",
     "goal_status_compact_blocked": "Blocked",

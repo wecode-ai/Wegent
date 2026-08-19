@@ -2124,12 +2124,34 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('mention-cloud-projects-action')).not.toBeInTheDocument()
   })
 
-  test('hides the work-item composer guide while experimental features are disabled', () => {
+  test('shows the work-item composer guide while experimental features are disabled', async () => {
     experimentalFeatures.enabled = false
+    deliveryApiMock.available = true
+    deliveryApiMock.listCloudProjects.mockResolvedValue({
+      items: [
+        {
+          id: 'default-work-items',
+          public_id: 'default-work-items',
+          project_key: 'WORK',
+          name: '我的任务',
+          description: '',
+          project_store: 'local',
+          task_provider: 'local',
+          provider_config: {},
+          created_by_user_id: 1,
+          status: 'active',
+          tags: [],
+          version: 1,
+          created_at: '2026-08-09T00:00:00Z',
+          updated_at: '2026-08-09T00:00:00Z',
+          metadata: { system_kind: 'default_work_items' },
+        },
+      ],
+    })
 
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
-    expect(screen.queryByTestId('project-space-context-pill')).not.toBeInTheDocument()
+    expect(await screen.findByTestId('project-space-context-pill')).toHaveTextContent('我的任务')
   })
 
   test('shows cloud project space entries in the @ menu while experimental features are enabled', async () => {
@@ -2153,9 +2175,9 @@ describe('DesktopWorkbenchLayout', () => {
     deliveryApiMock.listCloudProjects.mockResolvedValue({
       items: [
         {
-          id: 'default-work-items',
+          id: 'task-follow-up',
           public_id: 'public-space-1',
-          project_key: 'WORK',
+          project_key: 'FOLLOW',
           name: 'Task Follow-up Board',
           description: '',
           project_store: 'local',
@@ -2174,7 +2196,7 @@ describe('DesktopWorkbenchLayout', () => {
     const runtimeWork = structuredClone(createRuntimeWorkForProject(currentProject)!)
     runtimeWork.projects[0].project.defaultProjectSpace = {
       projectStore: 'local',
-      projectId: 'default-work-items',
+      projectId: 'task-follow-up',
     }
 
     render(

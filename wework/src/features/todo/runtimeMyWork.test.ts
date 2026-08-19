@@ -12,7 +12,12 @@ function task(overrides: Partial<RuntimeTaskSummary> = {}): RuntimeTaskSummary {
   }
 }
 
-function runtimeWork(tasks: RuntimeTaskSummary[]): RuntimeWorkListResponse {
+function runtimeWork(
+  tasks: RuntimeTaskSummary[],
+  workspaceOverrides: Partial<
+    RuntimeWorkListResponse['projects'][number]['deviceWorkspaces'][number]
+  > = {}
+): RuntimeWorkListResponse {
   return {
     projects: [
       {
@@ -23,6 +28,7 @@ function runtimeWork(tasks: RuntimeTaskSummary[]): RuntimeWorkListResponse {
             workspacePath: '/tmp/project',
             available: true,
             tasks,
+            ...workspaceOverrides,
           },
         ],
       },
@@ -48,13 +54,19 @@ describe('runtimeMyWorkItems', () => {
     })
   })
 
-  it('keeps an optional cloud board association without requiring one', () => {
+  it('keeps every offline cloud-associated task in My Tasks', () => {
     const [item] = runtimeMyWorkItems(
-      runtimeWork([
-        task({
-          runtimeHandle: { cloudProjectId: 'cloud-1', loopItemId: 'WEG-1' },
-        }),
-      ])
+      runtimeWork(
+        [
+          task({
+            runtimeHandle: { cloudProjectId: 'cloud-1', loopItemId: 'WEG-1' },
+          }),
+        ],
+        {
+          available: false,
+          deviceStatus: 'offline',
+        }
+      )
     )
 
     expect(item.cloud_project_id).toBe('cloud-1')
