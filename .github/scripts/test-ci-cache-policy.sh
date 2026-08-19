@@ -306,10 +306,13 @@ if ! grep -Fq 'file: docker/wework-e2e/browser.Dockerfile' "$wework_workflow" ||
   fail "Wework E2E must consume its immutable dependency image without runtime installs"
 fi
 
-if ! grep -Fq 'apt-get install --yes --no-install-recommends zstd' \
+if ! grep -Fq 'libmagic1' "$wework_browser_image" ||
+  ! grep -Fq 'zstd' \
   "$wework_browser_image" ||
+  ! grep -Fq "ldconfig -p | grep -q 'libmagic\\.so\\.1'" \
+    "$wework_browser_image" ||
   ! grep -Fq 'zstd --version' "$wework_browser_image"; then
-  fail "Browser E2E images must include zstd for restoring build artifacts"
+  fail "Browser E2E images must include backend and artifact runtime libraries"
 fi
 
 if ! grep -Eq '^ENV IS_SANDBOX=1$' "$wework_desktop_image"; then
