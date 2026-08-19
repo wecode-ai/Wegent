@@ -14,6 +14,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.base import Base
+from app.models.cloud_project import LoopItemTaskBinding
 from app.models.delivery import (
     CloudProject,
     LoopItem,
@@ -39,6 +40,7 @@ from app.services.loop_item_executions.service import (
 )
 from app.services.loop_items.external_provider import external_loop_item_provider
 from app.services.project_automation_execution import project_automation_execution
+from app.services.workflow_stage_context import workflow_stage_task_instruction
 
 
 @pytest.fixture
@@ -2162,6 +2164,91 @@ def test_automation_robot_uses_the_same_visible_input_and_board_origin(
     assert "Scan the checkout for reproducible bugs." not in payload["message"]
 
 
+def test_workflow_stage_instruction_contains_prompt_and_delivery_contract() -> None:
+    instruction = workflow_stage_task_instruction(
+        {
+            "target_stage": {
+                "prompt": "部署并测试，之后交付",
+                "required_deliverables": [
+                    {
+                        "id": "deliverable-1",
+                        "name": "测试报告",
+                        "value_type": "file",
+                        "description": "",
+                    },
+                    {
+                        "id": "deliverable-2",
+                        "name": "访问地址",
+                        "value_type": "text",
+                        "description": "必须可访问",
+                    },
+                ],
+            }
+        }
+    )
+
+    assert instruction.startswith("部署并测试，之后交付")
+    assert "- [deliverable-1] 测试报告 (file)" in instruction
+    assert "- [deliverable-2] 访问地址 (text)：必须可访问" in instruction
+    assert "finalize_delivery" in instruction
+    assert "requirement_id" in instruction
+
+
+def test_inherited_stage_keeps_issue_identity_and_reuses_predecessor_workspace(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    item = _make_item(test_db, project, test_user, title="Deploy")
+    profile = WeworkExecutionProfile.for_project_robot(bot)
+
+    payload = profile.build_runtime_payload(
+        test_db,
+        execution_id=253,
+        runtime_task_id="codex-queue-253",
+        task=TaskContext(
+            id=item.id,
+            cloud_project_id=str(project.id),
+            title=item.title,
+            description="",
+            status="in_progress",
+            priority="medium",
+        ),
+        cloud_project_id=str(project.id),
+        origin_context={
+            "workflow_stage_input": {
+                "target_stage": {
+                    "id": "deploy",
+                    "prompt": "部署并测试",
+                    "workspace_policy": "inherit",
+                    "required_deliverables": [],
+                },
+                "dependencies": [
+                    {
+                        "stage_id": "develop",
+                        "runtime_tasks": [
+                            {
+                                "device_id": "cloud-device-1",
+                                "task_id": "previous-runtime-task",
+                            }
+                        ],
+                    }
+                ],
+            }
+        },
+        execution_device_id="cloud-device-1",
+        materialize_execution_request=False,
+    )
+
+    assert f"task_id: {item.id}" in payload["message"]
+    assert "task_id: previous-runtime-task" not in payload["message"]
+    assert payload["workspaceSourceTask"] == {
+        "deviceId": "cloud-device-1",
+        "taskId": "previous-runtime-task",
+    }
+    assert payload["standaloneChatWorkspace"] is False
+
+
 def test_claim_batch_moves_queued_to_claimed_within_capacity(
     test_db: Session, test_user: User
 ) -> None:
@@ -2575,6 +2662,106 @@ def test_mark_start_requested_preserves_claimed_state(
     assert second.status == "queued"
 
 
+def test_mark_start_requested_binds_automated_stage_runtime_task(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    item = _make_item(test_db, project, test_user)
+    item.metadata_json = {
+        "workflow": {
+            "version": 1,
+            "nodes": [
+                {
+                    "id": "deploy",
+                    "name": "部署",
+                    "status": "queued",
+                    "depends_on": [],
+                    "required": True,
+                    "workspace_policy": "none",
+                    "automation_rule_id": "rule-1",
+                    "required_deliverables": [
+                        {
+                            "id": "deliverable-1",
+                            "name": "测试报告",
+                            "value_type": "file",
+                        }
+                    ],
+                }
+            ],
+        }
+    }
+    run = ProjectAutomationRun(
+        cloud_project_id=project.id,
+        task_id=item.id,
+        title="Deploy",
+        description="",
+        status="queued",
+        created_by_user_id=test_user.id,
+        metadata_json={
+            "workflow_stage_input": {
+                "version": 1,
+                "issue": {"id": item.id},
+                "target_stage": {
+                    "id": "deploy",
+                    "name": "部署",
+                    "prompt": "部署并测试",
+                    "workspace_policy": "none",
+                    "required_deliverables": [
+                        {
+                            "id": "deliverable-1",
+                            "name": "测试报告",
+                            "value_type": "file",
+                        }
+                    ],
+                },
+                "dependencies": [],
+                "sha256": "stage-snapshot",
+            }
+        },
+    )
+    test_db.add(run)
+    test_db.commit()
+    execution = _make_execution(
+        test_db,
+        item,
+        bot,
+        test_user,
+        automation_context={"run_id": str(run.id)},
+    )
+    claimed = loop_item_execution_service.claim(
+        test_db,
+        agent_id=bot.id,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
+    )
+    assert claimed is not None and claimed.id == execution.id
+
+    assert (
+        loop_item_execution_service.mark_start_requested(
+            test_db, execution_ids=[claimed.id]
+        )
+        == 1
+    )
+
+    binding = (
+        test_db.query(LoopItemTaskBinding)
+        .filter(
+            LoopItemTaskBinding.loop_item_id == item.id,
+            LoopItemTaskBinding.task_id == claimed.runtime_task_id,
+        )
+        .one()
+    )
+    assert binding.device_id == "cloud-device-1"
+    assert binding.workflow_node_id == "deploy"
+    assert binding.metadata_json["workflow_stage_input_sha256"] == "stage-snapshot"
+
+
 def test_runtime_start_fence_requires_exact_claim_identity(
     test_db: Session, test_user: User
 ) -> None:
@@ -2796,6 +2983,65 @@ def test_runtime_queued_snapshot_is_accepted_not_running(
     assert reconciled.sync_state == "in_sync"
     assert execution_display_state(reconciled) == "waiting_runtime"
     assert loop_datetime_value_is_unset(reconciled.started_at)
+
+
+def test_missing_cancel_requested_runtime_task_releases_capacity(
+    test_db: Session, test_user: User
+) -> None:
+    running, _, _ = _make_running_automation_execution(test_db, test_user)
+    project = test_db.get(CloudProject, running.cloud_project_id)
+    bot = test_db.get(ProjectChatAgent, running.agent_id)
+    assert project is not None
+    assert bot is not None
+    queued = _make_execution(
+        test_db,
+        _make_item(test_db, project, test_user, title="Next execution"),
+        bot,
+        test_user,
+    )
+    requested = loop_item_execution_service.cancel(
+        test_db,
+        execution_id=running.id,
+        note="User requested stop",
+    )
+    assert requested.status == "cancel_requested"
+    blocked = loop_item_execution_service.claim(
+        test_db,
+        agent_id=bot.id,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
+    )
+    assert blocked is None
+
+    reconciled = loop_item_execution_service.reconcile_runtime_snapshot(
+        test_db,
+        execution_id=running.id,
+        runtime_status="missing",
+        running=False,
+    )
+
+    assert reconciled is not None
+    assert reconciled.status == "cancelled"
+    assert reconciled.observed_state == "cancelled"
+    assert reconciled.sync_state == "in_sync"
+    claimed = loop_item_execution_service.claim(
+        test_db,
+        agent_id=bot.id,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
+    )
+    assert claimed is not None
+    assert claimed.id == queued.id
 
 
 def test_claimed_lease_expiry_requeues_run(test_db: Session, test_user: User) -> None:

@@ -1,6 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
 import { ApiError, type HttpClient } from './http'
-import { updateIssueWorkflowForRuntime, workflowBoardStatus } from './issueWorkflow'
 import type { Attachment, RuntimeTaskAddress } from '@/types/api'
 
 import { openLocalFile } from '@/lib/local-terminal'
@@ -29,6 +28,7 @@ export interface Delivery {
   created_at: string
   delivered_at: string | null
   assets: DeliveryAsset[]
+  fulfillments: DeliveryFulfillment[]
 }
 
 export interface DeliveryDetail extends Delivery {
@@ -40,6 +40,62 @@ export interface DeliveryCreateInput {
   markdown: string
   chat?: Record<string, unknown>
   source_task?: RuntimeTaskAddress
+}
+
+export type DeliverableValueType =
+  | 'text'
+  | 'file'
+  | 'code_snapshot'
+  | 'git_branch'
+  | 'pull_request'
+  | 'url'
+
+export interface DeliverableRequirement {
+  id: string
+  name: string
+  description: string
+  value_type: DeliverableValueType
+  file_constraints?: {
+    accepted_types: string[]
+    min_files: number
+    max_files: number
+  } | null
+}
+
+export type DeliveryFulfillment =
+  | { requirement_id: string; kind: 'text'; text: string }
+  | { requirement_id: string; kind: 'file'; asset_ids: string[] }
+  | {
+      requirement_id: string
+      kind: 'code_snapshot'
+      asset_id: string
+      changed_files: string[]
+      base_revision?: string | null
+      head_revision?: string | null
+      sha256: string
+    }
+  | {
+      requirement_id: string
+      kind: 'git_branch'
+      remote_url: string
+      branch: string
+      commit_sha: string
+    }
+  | {
+      requirement_id: string
+      kind: 'pull_request'
+      provider: 'github' | 'gitlab'
+      url: string
+      number: number
+      state: 'draft'
+      head_branch: string
+      base_branch: string
+      head_commit: string
+    }
+  | { requirement_id: string; kind: 'url'; url: string; title: string }
+
+export interface DeliveryFinalizeInput {
+  fulfillments: DeliveryFulfillment[]
 }
 
 export interface CloudLoopItem {
@@ -293,6 +349,7 @@ export type WorkflowNodeStatus =
   | 'queued'
   | 'running'
   | 'awaiting_approval'
+  | 'awaiting_deliverables'
   | 'changes_requested'
   | 'completed'
   | 'forced_completed'
@@ -309,7 +366,7 @@ export interface WorkflowNodeDefinition {
   depends_on: string[]
   dependency_context?: Record<string, WorkflowContextSource[]>
   required: boolean
-  required_deliverables?: string[]
+  required_deliverables?: DeliverableRequirement[]
   workspace_policy: WorkflowWorkspacePolicy
   automation_rule_id?: string | null
 }
@@ -331,6 +388,7 @@ export interface WorkflowNodeInstance extends WorkflowNodeDefinition {
   task_ids?: string[]
   task_statuses?: Record<string, string>
   delivery_ids?: string[]
+  fulfilled_deliverable_ids?: string[]
   decision_history?: Array<{
     action: 'approve' | 'reject' | 'force_advance'
     actor_user_id: number
@@ -440,6 +498,10 @@ export interface ProjectDeliveryFile {
   content_type: string | null
   size_bytes: number
   delivered_at: string
+  loop_item_path: Array<{
+    id: string
+    title: string
+  }>
 }
 
 export interface CloudProjectMember {
@@ -1009,25 +1071,9 @@ export function createDeliveryApi(client: HttpClient) {
         if (!context.loop_item_id) return null
         const item = context.loop_item ?? (await api.getLoopItem(context.loop_item_id))
         if (item.workflow && context.workflow_node_id) {
-          return enqueueIssueWorkflowMutation(item.id, async () => {
-            const current = await api.getLoopItem(item.id)
-            if (!current.workflow) return current
-            const bindings = await api.listTaskBindings(item.id)
-            const stageTaskIds = bindings
-              .filter(binding => binding.workflow_node_id === context.workflow_node_id)
-              .map(binding => `${binding.device_id}:${binding.task_id}`)
-            const workflow = updateIssueWorkflowForRuntime(
-              current.workflow,
-              context.workflow_node_id!,
-              executionStatus,
-              `${task.deviceId}:${task.taskId}`,
-              stageTaskIds
-            )
-            return api.updateLoopItem(current.id, {
-              version: current.version,
-              workflow,
-              status: workflowBoardStatus(workflow),
-            })
+          return client.patch('/v1/runtime-tasks/cloud-context/status', {
+            ...task,
+            status: executionStatus,
           })
         }
         if (executionStatus === 'succeeded') {
@@ -1154,8 +1200,21 @@ export function createDeliveryApi(client: HttpClient) {
       form.set('relative_path', relativePath)
       return client.post(`/v1/deliveries/${deliveryId}/assets`, form)
     },
-    finalizeDelivery(deliveryId: string): Promise<Delivery> {
-      return client.post(`/v1/deliveries/${deliveryId}/finalize`)
+    finalizeDelivery(
+      deliveryId: string,
+      data: DeliveryFinalizeInput = { fulfillments: [] }
+    ): Promise<Delivery> {
+      return client.post(`/v1/deliveries/${deliveryId}/finalize`, data)
+    },
+    getWorkflowStageContext(
+      itemId: string,
+      workflowNodeId: string
+    ): Promise<Record<string, unknown>> {
+      return client.get(
+        `/v1/loop-items/${encodeURIComponent(itemId)}/workflow-nodes/${encodeURIComponent(
+          workflowNodeId
+        )}/input-context`
+      )
     },
     discardDraft(deliveryId: string): Promise<void> {
       return client.delete(`/v1/deliveries/${deliveryId}`)

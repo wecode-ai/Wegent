@@ -19,10 +19,12 @@ import {
   type DeliveryAsset,
   type DeliveryCreateInput,
   type DeliveryDetail,
+  type DeliveryFinalizeInput,
 } from '@/api/deliveries'
 import {
   attachIssueWorkflowDelivery,
   decideIssueWorkflowNode,
+  reconcileIssueWorkflowForTaskBindings,
   updateIssueWorkflowForRuntime,
   workflowBoardStatus,
 } from '@/api/issueWorkflow'
@@ -1272,11 +1274,15 @@ export function createLocalDeliveryApi(
         file: await fileInput(file),
       })
     },
-    async finalizeDelivery(deliveryId: string) {
+    async finalizeDelivery(
+      deliveryId: string,
+      input: DeliveryFinalizeInput = { fulfillments: [] }
+    ) {
       const delivery = await api.getDelivery(deliveryId)
       const finalized = await request<Delivery>('deliveries.finalize', {
         item_id: delivery.loop_item_id,
         delivery_id: deliveryId,
+        finalize: input,
       })
       if (delivery.source_task_binding_id) {
         const bindings = await api.listTaskBindings(delivery.loop_item_id)
@@ -1287,7 +1293,8 @@ export function createLocalDeliveryApi(
             const workflow = attachIssueWorkflowDelivery(
               item.workflow,
               binding.workflow_node_id,
-              deliveryId
+              deliveryId,
+              input.fulfillments.map(fulfillment => fulfillment.requirement_id)
             )
             await api.updateLoopItem(item.id, {
               version: item.version,
@@ -1318,8 +1325,9 @@ export function createLocalDeliveryApi(
     ) {
       const item = await api.getLoopItem(itemId)
       if (!item.workflow) throw new Error('Issue has no workflow')
+      const bindings = await api.listTaskBindings(itemId)
       const workflow = decideIssueWorkflowNode(
-        item.workflow,
+        reconcileIssueWorkflowForTaskBindings(item.workflow, bindings),
         workflowNodeId,
         action,
         actorUserId ?? Number(item.created_by_user_id),

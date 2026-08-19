@@ -30,11 +30,29 @@ vi.mock('@/features/workbench/useWorkbench', () => ({
 vi.mock('./ConnectedIssueProjectWork', () => ({
   ConnectedIssueProjectWork: ({
     project,
+    selectedDeviceWorkspaceId,
+    onSelectProjectWorkspace,
     children,
   }: {
     project: ProjectWithTasks
-    children: (projectWork: { currentProject: ProjectWithTasks }) => React.ReactNode
-  }) => children({ currentProject: project }),
+    selectedDeviceWorkspaceId: number | null
+    onSelectProjectWorkspace: (projectId: number, deviceWorkspaceId: number | null) => void
+    children: (projectWork: {
+      currentProject: ProjectWithTasks
+      selectedDeviceWorkspaceId: number | null
+    }) => React.ReactNode
+  }) => (
+    <>
+      <button
+        type="button"
+        data-testid="mock-select-project-workspace"
+        onClick={() => onSelectProjectWorkspace(92, 202)}
+      >
+        select workspace
+      </button>
+      {children({ currentProject: project, selectedDeviceWorkspaceId })}
+    </>
+  ),
 }))
 
 vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
@@ -316,6 +334,33 @@ describe('AiChatModal', () => {
     await userEvent.selectOptions(screen.getByTestId('ai-chat-runtime-project'), '92')
 
     expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute('data-project-id', '92')
+  })
+
+  it('keeps project workspace selection local and uses it for task creation', async () => {
+    mocks.createProjectRuntimeTask.mockClear()
+    render(
+      <AiChatModal
+        project={project}
+        localProjects={localProjects}
+        task={task}
+        embedded
+        open
+        onClose={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('mock-select-project-workspace'))
+    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute('data-project-id', '92')
+
+    await userEvent.click(screen.getByTestId('mock-chat-send'))
+    expect(mocks.createProjectRuntimeTask).toHaveBeenCalledWith(
+      '给出任务列表',
+      expect.objectContaining({
+        project: localProjects[1],
+        deviceWorkspaceId: 202,
+      })
+    )
+    mocks.createProjectRuntimeTask.mockClear()
   })
 
   it('starts a new temporary conversation and can switch back', async () => {

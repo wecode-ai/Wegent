@@ -361,7 +361,10 @@ classify_wework_path() {
     wework/src-tauri/src/embedded_browser* | \
       wework/src/lib/embedded-browser* | \
       wework/src/lib/browser-url* | \
+      wework/src/lib/browser-device-toolbar* | \
       wework/src/components/layout/workspace-panels/WorkspaceBrowserPanel* | \
+      wework/src/components/layout/workspace-panels/BrowserDeviceToolbar* | \
+      wework/src/components/layout/workspace-panels/browser-find/* | \
       wework/e2e/desktop/scenarios/embedded-browser-agent.scenario.mjs)
       select_target "core:embedded-browser"
       return

@@ -103,15 +103,13 @@ describe('bundled plugin resources', () => {
         'utf8'
       )
     ) as { plugins: Array<{ name: string }> }
-    const mcpConfig = JSON.parse(
-      readFileSync(resolve(tauriDirectory, bundledWeworkSpaceDirectory, '.mcp.json'), 'utf8')
-    ) as { mcpServers?: Record<string, unknown> }
-
     expect(
       codexMarketplace.plugins.find(plugin => plugin.name === 'wework-space')?.policy?.installation
     ).toBe('INSTALLED_BY_DEFAULT')
     expect(claudeMarketplace.plugins.some(plugin => plugin.name === 'wework-space')).toBe(true)
-    expect(mcpConfig.mcpServers).toHaveProperty('wework_space')
+    expect(existsSync(resolve(tauriDirectory, bundledWeworkSpaceDirectory, '.mcp.json'))).toBe(
+      false
+    )
     expect(
       existsSync(
         resolve(tauriDirectory, bundledWeworkSpaceDirectory, 'skills/wework-project-space/SKILL.md')

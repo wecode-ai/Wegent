@@ -422,7 +422,10 @@ async fn connected_runner_relays_terminal_output_and_exit_events() {
     assert_eq!(ack["success"], true, "{ack}");
     tokio::time::sleep(Duration::from_millis(75)).await;
     assert!(
-        transport.emits().is_empty(),
+        transport
+            .emits()
+            .iter()
+            .all(|emit| emit.event != "terminal:output" && emit.event != "terminal:exit"),
         "PTY output must remain buffered until the browser attaches"
     );
 
@@ -433,11 +436,23 @@ async fn connected_runner_relays_terminal_output_and_exit_events() {
     .unwrap();
     assert_eq!(attach["success"], true, "{attach}");
 
-    wait_until(|| transport.emits().len() >= 2).await;
+    wait_until(|| {
+        transport
+            .emits()
+            .iter()
+            .filter(|emit| emit.event == "terminal:output" || emit.event == "terminal:exit")
+            .count()
+            >= 2
+    })
+    .await;
     runner_task.abort();
     let _ = runner_task.await;
 
-    let emits = transport.emits();
+    let emits = transport
+        .emits()
+        .into_iter()
+        .filter(|emit| emit.event == "terminal:output" || emit.event == "terminal:exit")
+        .collect::<Vec<_>>();
     assert_eq!(emits[0].event, "terminal:output");
     assert_eq!(
         emits[0].payload,

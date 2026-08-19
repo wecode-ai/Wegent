@@ -49,7 +49,12 @@ sequenceDiagram
     else 取消
         U->>S: cancel intent
         S->>R: cancel command
-        R-->>S: stopped ACK
+        alt 收到直接停止 ACK
+            R-->>S: stopped ACK
+        else ACK 响应丢失
+            S->>R: 查询 Runtime 任务列表
+            R-->>S: 精确 runtime_task_id 已不存在
+        end
         S->>S: 写 cancelled 并释放 slot
     else lease 过期
         S->>R: reconcile
@@ -59,15 +64,15 @@ sequenceDiagram
     U->>U: 用 activity_message_id 定位同一运行的活动记录
 ```
 
-| 边                         | 代码归属                                                        |
-| -------------------------- | --------------------------------------------------------------- |
-| claim、attempt 与状态转换  | `backend/app/services/loop_item_executions/service.py`          |
+| 边                         | 代码归属                                                          |
+| -------------------------- | ----------------------------------------------------------------- |
+| claim、attempt 与状态转换  | `backend/app/services/loop_item_executions/service.py`            |
 | 执行 ID 存储与归一化       | `backend/app/models/loop_item_execution.py`、execution API/schema |
-| scheduler、slot 与真实进程 | `executor/src/runner/`、`executor/src/runtime_work/`            |
-| 本地 IPC 和 Runtime RPC    | `executor/src/local/app_ipc.rs`、Backend device runtime service |
+| scheduler、slot 与真实进程 | `executor/src/runner/`、`executor/src/runtime_work/`              |
+| 本地 IPC 和 Runtime RPC    | `executor/src/local/app_ipc.rs`、Backend device runtime service   |
 | 运行活动消息               | `backend/app/models/project_chat_message.py`、project chat service |
-| UI 投影                    | Wework workbench stores 与 board queries                        |
+| UI 投影                    | Wework workbench stores 与 board queries                          |
 
-不变量：attempt 身份和事件序列必须匹配；迟到事件不能覆盖新 attempt；终态与 slot 释放原子发生；取消发送不等于取消成功，Runtime 作用域退出必须保证停止 ACK；`loop_item_executions.team_id/backend_task_id=0` 只表示未绑定，存在性判断必须使用正 ID 语义，API/UI 必须归一化为 `null`；容量属于各设备 Runtime scheduler，聚合容量不是执行真值；队列持久化和排队任务 ID 必须来自同一个 scheduler 快照；“立即执行”允许指定排队任务临时突破 `slot_max`，此时 `slot_used` 必须由活动任务 ID 精确投影，且在活动数重新低于上限前不得自动启动其他排队任务；自动化与工作流页面必须展示同一 `LoopItemExecution` 的状态、执行环境、设备和心跳，并通过持久 `activity_message_id` 打开同一运行记录；UI 不推导或回写运行状态。
+不变量：attempt 身份和事件序列必须匹配；迟到事件不能覆盖新 attempt；终态与 slot 释放原子发生；取消发送不等于取消成功，只有停止 ACK，或在 `cancel_requested` 后由 Runtime 权威任务列表确认精确 `runtime_task_id` 已不存在，才能写 cancelled 并释放 slot；`loop_item_executions.team_id/backend_task_id=0` 只表示未绑定，存在性判断必须使用正 ID 语义，API/UI 必须归一化为 `null`；容量属于各设备 Runtime scheduler，聚合容量不是执行真值；队列持久化和排队任务 ID 必须来自同一个 scheduler 快照；“立即执行”允许指定排队任务临时突破 `slot_max`，此时 `slot_used` 必须由活动任务 ID 精确投影，且在活动数重新低于上限前不得自动启动其他排队任务；自动化与工作流页面必须展示同一 `LoopItemExecution` 的状态、执行环境、设备和心跳，并通过持久 `activity_message_id` 打开同一运行记录；UI 不推导或回写运行状态。
 
 详细状态矩阵与验收见 [项目执行状态真实性重构](../wework/developer-guide/wework-project-execution-state-truth-refactoring.md)。

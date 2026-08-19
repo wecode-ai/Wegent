@@ -27,13 +27,15 @@ import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
 import type { TurnFileChangesSummary } from '@/types/api'
 
 const ASSISTANT_MARKDOWN_LINK_CLASS = [
-  'inline-flex max-w-full items-center gap-1 rounded-md px-0.5 align-baseline',
+  'inline-flex min-w-0 max-w-full items-center gap-1 rounded-md px-0.5 align-baseline',
   'text-sm font-medium leading-5 text-blue-600 no-underline',
   'transition-colors hover:text-blue-700',
   'dark:text-blue-300 dark:hover:text-blue-200',
   '[&_code]:!rounded-none [&_code]:!bg-transparent [&_code]:!px-0 [&_code]:!py-0 [&_code]:!font-[inherit] [&_code]:!text-inherit',
 ].join(' ')
 const CODEX_PLAN_TAG_PATTERN = /<\/?\s*proposed_plan\s*>/gi
+const CONTENT_REFERENCE_CITATION_PATTERN = /\uE200cite\uE202[\s\S]*?\uE201/g
+const TRAILING_CONTENT_REFERENCE_CITATION_PATTERN = /\uE200cite(?:\uE202[\s\S]*)?$/
 const WEWORK_MARKDOWN_FILE_LINK_HOST = 'wework.local'
 const WEWORK_MARKDOWN_FILE_LINK_PATH = '/markdown-file'
 const WEWORK_MARKDOWN_FILE_LINK_PREFIX = `https://${WEWORK_MARKDOWN_FILE_LINK_HOST}${WEWORK_MARKDOWN_FILE_LINK_PATH}?path=`
@@ -96,16 +98,20 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
   fileChanges,
 }: AssistantMarkdownProps) {
   const bufferedContent = useBufferedStreamingText(content, isStreaming)
+  const displayContent = useMemo(
+    () => stripUnsupportedContentReferenceCitations(bufferedContent),
+    [bufferedContent]
+  )
   const windowMarkdown = isTauriRuntime() && variant === 'default'
   const contentParts = useMemo(() => {
-    const parts = splitCodexInlineVisualizations(bufferedContent)
+    const parts = splitCodexInlineVisualizations(displayContent)
     return parts.flatMap<AssistantMarkdownPart>(part => {
       if (part.kind === 'visualization') return [part]
       const chunks = windowMarkdown ? splitStaticMarkdownChunks(part.content) : [part.content]
       const windowed = chunks.length > 1
       return chunks.map(content => ({ kind: 'markdown', content, windowed }))
     })
-  }, [bufferedContent, windowMarkdown])
+  }, [displayContent, windowMarkdown])
   const openFileRef = useRef(onOpenFile)
 
   useEffect(() => {
@@ -385,6 +391,12 @@ function prepareAssistantMarkdownContent(content: string): string {
   return encodeLocalMarkdownLinks(content.replace(CODEX_PLAN_TAG_PATTERN, ''))
 }
 
+function stripUnsupportedContentReferenceCitations(content: string): string {
+  return content
+    .replace(CONTENT_REFERENCE_CITATION_PATTERN, '')
+    .replace(TRAILING_CONTENT_REFERENCE_CITATION_PATTERN, '')
+}
+
 function encodeLocalMarkdownLinks(content: string): string {
   return content.replace(MARKDOWN_LINK_PATTERN, (match, imageMarker, label, rawHref) => {
     if (imageMarker) return match
@@ -528,7 +540,12 @@ function AssistantMarkdownLink({
         aria-label={tooltip}
       >
         {icon}
-        {children}
+        <span
+          className="min-w-0 whitespace-normal [overflow-wrap:anywhere]"
+          data-testid="assistant-markdown-link-label"
+        >
+          {children}
+        </span>
         {lineLabel ? (
           <span className="shrink-0" data-testid="assistant-markdown-link-line">
             ({lineLabel})
@@ -559,7 +576,12 @@ function AssistantMarkdownLink({
       }}
     >
       {icon}
-      {children}
+      <span
+        className="min-w-0 whitespace-normal [overflow-wrap:anywhere]"
+        data-testid="assistant-markdown-link-label"
+      >
+        {children}
+      </span>
     </a>
   )
 }

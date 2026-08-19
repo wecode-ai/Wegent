@@ -716,6 +716,7 @@ describe('local delivery API', () => {
     expect(request).toHaveBeenCalledWith('deliveries.finalize', {
       item_id: 'LOCAL-1',
       delivery_id: 'delivery-1',
+      finalize: { fulfillments: [] },
     })
   })
 })

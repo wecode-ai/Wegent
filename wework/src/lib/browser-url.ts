@@ -55,7 +55,7 @@ export function normalizeBrowserUrl(value: string, appUrl?: string): string | nu
 
   const withProtocol =
     localPathToFileUrl(trimmed) ??
-    (/^[a-z][a-z\d+\-.]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`)
+    (/^[a-z][a-z\d+\-.]*:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`)
 
   try {
     const url = new URL(withProtocol)

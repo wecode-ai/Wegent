@@ -49,7 +49,12 @@ sequenceDiagram
     else cancellation
         U->>S: cancellation intent
         S->>R: cancel command
-        R-->>S: stopped ACK
+        alt direct stop ACK arrives
+            R-->>S: stopped ACK
+        else ACK response is lost
+            S->>R: query the Runtime task list
+            R-->>S: exact runtime_task_id is absent
+        end
         S->>S: write cancelled and release slot
     else lease expiry
         S->>R: reconcile
@@ -59,15 +64,15 @@ sequenceDiagram
     U->>U: locate the same run activity by activity_message_id
 ```
 
-| Edge                                  | Code owner                                                      |
-| ------------------------------------- | --------------------------------------------------------------- |
-| Claim, attempt, and state transitions | `backend/app/services/loop_item_executions/service.py`          |
+| Edge                                   | Code owner                                                        |
+| -------------------------------------- | ----------------------------------------------------------------- |
+| Claim, attempt, and state transitions  | `backend/app/services/loop_item_executions/service.py`            |
 | Execution ID storage and normalization | `backend/app/models/loop_item_execution.py`, execution API/schema |
-| Scheduler, slots, and real process    | `executor/src/runner/`, `executor/src/runtime_work/`            |
-| Local IPC and Runtime RPC             | `executor/src/local/app_ipc.rs`, Backend device runtime service |
+| Scheduler, slots, and real process     | `executor/src/runner/`, `executor/src/runtime_work/`              |
+| Local IPC and Runtime RPC              | `executor/src/local/app_ipc.rs`, Backend device runtime service   |
 | Durable run activity                  | `backend/app/models/project_chat_message.py`, project chat service |
-| UI projection                         | Wework workbench stores and board queries                       |
+| UI projection                          | Wework workbench stores and board queries                         |
 
-Invariants: attempt identity and event sequence must match; late events cannot overwrite a newer attempt; terminal state and slot release are atomic; sending cancellation is not cancellation success, and Runtime scope exit must guarantee the stopped acknowledgement; `loop_item_executions.team_id/backend_task_id=0` means unbound only, existence checks must use positive-ID semantics, and APIs/UI must normalize the sentinel to `null`; capacity belongs to each device Runtime scheduler and aggregate capacity is not execution truth; persisted queue state and queued task IDs come from one scheduler snapshot; Run now may temporarily push a selected queued execution beyond `slot_max`, in which case `slot_used` is projected exactly from active task IDs and no other queued execution starts automatically until active usage drops below the limit; automation and workflow views must project status, environment, device, and heartbeat from the same `LoopItemExecution` and open the same durable run through `activity_message_id`; UI never derives or writes runtime state.
+Invariants: attempt identity and event sequence must match; late events cannot overwrite a newer attempt; terminal state and slot release are atomic; sending cancellation is not cancellation success, and cancelled plus slot release requires either a stop ACK or, after `cancel_requested`, an authoritative Runtime task list proving that the exact `runtime_task_id` is absent; `loop_item_executions.team_id/backend_task_id=0` means unbound only, existence checks must use positive-ID semantics, and APIs/UI must normalize the sentinel to `null`; capacity belongs to each device Runtime scheduler and aggregate capacity is not execution truth; persisted queue state and queued task IDs come from one scheduler snapshot; Run now may temporarily push a selected queued execution beyond `slot_max`, in which case `slot_used` is projected exactly from active task IDs and no other queued execution starts automatically until active usage drops below the limit; automation and workflow views must project status, environment, device, and heartbeat from the same `LoopItemExecution` and open the same durable run through `activity_message_id`; UI never derives or writes runtime state.
 
 See [project execution state-of-truth refactoring](../wework/developer-guide/wework-project-execution-state-truth-refactoring.md) for the detailed state matrix and acceptance coverage.

@@ -50,6 +50,7 @@ import type { ProjectWithTasks, Team } from '@/types/api'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
+import { reconcileIssueWorkflowForTaskBindings } from '@/api/issueWorkflow'
 import { AssignmentChainPopover } from './AssignmentChainPopover'
 import { isLoopItemExecutionActive } from './cloudMyWorkModel'
 import { StatusHistoryPopover } from './StatusHistoryPopover'
@@ -57,6 +58,7 @@ import { TaskDescriptionEditor } from './TaskDescriptionEditor'
 import { TagEditor } from './TagEditor'
 import { normalizeTaskDescription } from './taskDescription'
 import { AITableTaskFields } from './AITableTaskFields'
+import type { WorkflowDeliverableDraft } from './WorkflowStageCompletionDialog'
 import { TaskActivityView } from './TaskActivityView'
 import { IssueWorkflowDag } from './IssueWorkflowDag'
 import { IssueWorkflowPlan } from './IssueWorkflowPlan'
@@ -506,7 +508,12 @@ export type TodoEditorProps = {
   onWorkflowChanged?: () => void
   onOpenWorkflowTask?: (taskId: string) => void
   onRunWorkflowNode?: (workflowNodeId: string, automationRuleId: string) => void
-  onUploadWorkflowDeliverables?: (workflowNodeId: string, files: File[]) => Promise<void>
+  onCompleteWorkflowStage?: (
+    workflowNodeId: string,
+    action: 'submit' | 'approve' | 'force_advance',
+    reason: string,
+    values: WorkflowDeliverableDraft[]
+  ) => Promise<void>
   onDecideWorkflowNode?: (
     workflowNodeId: string,
     action: 'approve' | 'reject' | 'force_advance',
@@ -645,6 +652,7 @@ export function TodoEditor(props: TodoEditorProps) {
       task_id: string
       task_title: string | null
       workflow_node_id?: string | null
+      linked_at?: string
     }>
   >([])
   const [attachments, setAttachments] = useState<CloudLoopItemAttachment[]>([])
@@ -678,6 +686,10 @@ export function TodoEditor(props: TodoEditorProps) {
     attachments.forEach(attachment => merged.set(attachment.id, attachment))
     return Array.from(merged.values())
   }, [attachments, description])
+  const displayedWorkflow = useMemo(
+    () => (item?.workflow ? reconcileIssueWorkflowForTaskBindings(item.workflow, tasks) : null),
+    [item?.workflow, tasks]
+  )
 
   useEffect(() => {
     const node = detailScrollRef.current
@@ -1794,16 +1806,16 @@ export function TodoEditor(props: TodoEditorProps) {
                     <section className="mt-6" data-testid="cloud-todo-tasks">
                       <div className="flex h-8 items-center gap-2">
                         <h3 className="text-sm font-semibold text-text-primary">
-                          {item.workflow?.nodes.length
+                          {displayedWorkflow?.nodes.length
                             ? t('todo.workflow_runtime_title')
                             : props.showCurrentTaskOnly
                               ? t('todo.current_running_task')
                               : t('todo.tasks')}
                         </h3>
                         <span className="text-xs text-text-muted">
-                          {item.workflow?.nodes.length ?? displayedTasks.length}
+                          {displayedWorkflow?.nodes.length ?? displayedTasks.length}
                         </span>
-                        {props.onCreateTask && !item.workflow?.nodes.length ? (
+                        {props.onCreateTask && !displayedWorkflow?.nodes.length ? (
                           <button
                             type="button"
                             data-testid="cloud-todo-create-task"
@@ -1815,14 +1827,18 @@ export function TodoEditor(props: TodoEditorProps) {
                           </button>
                         ) : null}
                       </div>
-                      {item.workflow?.nodes.length ? (
+                      {displayedWorkflow?.nodes.length ? (
                         <IssueWorkflowDag
-                          nodes={item.workflow.nodes}
+                          nodes={displayedWorkflow.nodes}
                           tasks={tasks}
+                          deliveries={deliveries}
                           onCreateTask={props.onCreateTask}
                           onRunAutomation={props.onRunWorkflowNode}
                           onOpenTask={props.onOpenTaskConversation}
-                          onUploadDeliverables={props.onUploadWorkflowDeliverables}
+                          onOpenDelivery={delivery =>
+                            void api.getDelivery(delivery.id).then(setSelectedDelivery)
+                          }
+                          onCompleteStage={props.onCompleteWorkflowStage}
                           onDecide={props.onDecideWorkflowNode}
                         />
                       ) : displayedTasks.length === 0 ? (
@@ -1832,7 +1848,10 @@ export function TodoEditor(props: TodoEditorProps) {
                             : t('todo.no_linked_task')}
                         </p>
                       ) : (
-                        <div className="mt-1 space-y-1">
+                        <div
+                          data-testid="cloud-todo-task-list"
+                          className="mt-1 max-h-[280px] space-y-1 overflow-y-auto overscroll-contain pr-1"
+                        >
                           {displayedTasks.map(task => {
                             const selected = props.selectedTaskId === task.task_id
                             return (

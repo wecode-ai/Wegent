@@ -12,8 +12,7 @@
     "longDescription": "Connects Codex to the Wework-managed local project-space capability. Local projects remain available offline; cloud projects use the authenticated Backend provider when connected.",
     "developerName": "Wework",
     "category": "Productivity",
-    "capabilities": ["Read", "Write", "MCP"],
+    "capabilities": ["Read", "Write"],
     "defaultPrompt": "Use the current Wework project-space context."
-  },
-  "mcpServers": "./.mcp.json"
+  }
 }

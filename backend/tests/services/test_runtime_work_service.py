@@ -4377,7 +4377,7 @@ def test_build_runtime_send_execution_request_uses_complete_create_request(
     assert "terminal output" in execution_request.prompt
 
 
-def test_build_runtime_send_execution_request_preserves_selected_model(
+def test_build_runtime_send_execution_request_preserves_selected_model_and_catalog(
     test_db,
     test_user,
     monkeypatch,
@@ -4396,7 +4396,7 @@ def test_build_runtime_send_execution_request_preserves_selected_model(
         test_db,
         0,
         name="selected-gpt",
-        api_model_id="gpt-5.6-luna",
+        api_model_id="deepseek-v4-pro",
     )
     monkeypatch.setattr(
         runtime_work_service.settings,
@@ -4423,7 +4423,6 @@ def test_build_runtime_send_execution_request_preserves_selected_model(
                 "weworkCloudModelNamespace": "default",
                 "weworkCloudModelResourceUserId": "0",
                 "weworkCloudModelContextWindow": "1048576",
-                "weworkCloudModelCodexCatalogModelId": "wework-gpt-5.6-sol",
             },
         ),
     )
@@ -4441,7 +4440,8 @@ def test_build_runtime_send_execution_request_preserves_selected_model(
     }
     assert execution_request.model_config["model_context_window"] == 1048576
     assert (
-        execution_request.model_config["codex_catalog_model_id"] == "wework-gpt-5.6-sol"
+        execution_request.model_config["codex_catalog_model_id"]
+        == "wework-deepseek-v4-pro"
     )
     assert execution_request.runtime_permission_profile == ":workspace"
     assert execution_request.to_dict()["runtime_permission_profile"] == ":workspace"

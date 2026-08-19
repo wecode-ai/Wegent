@@ -452,6 +452,54 @@ describe('createLocalAppServices', () => {
     expect(request).toHaveBeenCalledWith('runtime.codex.models.list', { includeHidden: true })
   })
 
+  test('retries an idle catalog restart after startup requests drain', async () => {
+    const catalogEntry = createDefaultLocalModelCatalogEntry({
+      id: 'startup-pending-model',
+      displayName: 'Startup pending model',
+      toolProfile: 'native',
+    })
+    saveLocalModelConfig({
+      id: 'startup-pending-model',
+      displayName: 'Startup pending model',
+      modelId: 'startup-pending-model',
+      baseUrl: 'http://localhost:11434/v1',
+      catalogEntry,
+      codexCatalogModelId: String(catalogEntry.slug),
+      catalogReady: false,
+    })
+    let restartCount = 0
+    const request = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'runtime.codex.app_server.restart') {
+        restartCount += 1
+        return restartCount === 1
+          ? { restarted: false, activeTaskCount: 0, pendingRequestCount: 1 }
+          : { restarted: true, activeTaskCount: 0, pendingRequestCount: 0 }
+      }
+      if (method === 'runtime.codex.models.list') return { data: [] }
+      return {}
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({
+        running: true,
+        ready: true,
+        deviceId: 'local-device',
+        version: '1.9.0',
+        runtimeInstanceId: 'runtime-1',
+      }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    const models = await services.modelApi.listModels()
+
+    expect(restartCount).toBe(2)
+    expect(models.data).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'local-model:startup-pending-model' }),
+      ])
+    )
+  })
+
   test('hides official Codex models without auth while keeping provider models', async () => {
     const request = vi.fn().mockImplementation(async (method: string) => {
       if (method === 'device.execute_command') {
@@ -2348,6 +2396,7 @@ describe('createLocalAppServices', () => {
       )
       expect(payload.executionRequest.model_config).not.toHaveProperty('native_tool_search')
       expect(payload.executionRequest.model_config).not.toHaveProperty('native_namespace_tools')
+      expect(payload.executionRequest.model_config).not.toHaveProperty('vision_sidecar')
     }
   )
 
@@ -2402,7 +2451,7 @@ describe('createLocalAppServices', () => {
     const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
     expect(payload.executionRequest.model_config).toEqual(
       expect.objectContaining({
-        codex_catalog_model_id: 'wework-vision-sidecar',
+        codex_catalog_model_id: 'wework-deepseek-v4-flash',
         vision_sidecar: {
           enabled: true,
           request_url: 'https://vision.example/v1/responses',
@@ -2612,6 +2661,7 @@ describe('createLocalAppServices', () => {
       modelOptions: {
         weworkCloudModelNamespace: 'default',
         weworkCloudModelResourceUserId: '42',
+        weworkCloudModelCodexCatalogModelId: 'wework-deepseek-v4-pro',
         weworkCloudVisionSidecar:
           '{"modelName":"cloud-vision","modelType":"user","namespace":"default","resourceUserId":77,"apiFormat":"openai-responses"}',
       },
@@ -2620,7 +2670,7 @@ describe('createLocalAppServices', () => {
     const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
     expect(payload.executionRequest.model_config).toEqual(
       expect.objectContaining({
-        codex_catalog_model_id: 'wework-vision-sidecar',
+        codex_catalog_model_id: 'wework-deepseek-v4-pro',
         vision_sidecar: {
           enabled: true,
           request_url: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy/responses',
@@ -2639,6 +2689,44 @@ describe('createLocalAppServices', () => {
         },
       })
     )
+  })
+
+  test('does not configure cloud vision delegation without an explicit reference', async () => {
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+      cloudModelGateway: {
+        baseUrl: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy',
+        apiKey: 'cloud-login-token',
+      },
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      teamId: 0,
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      taskId: 'task-text-only-deepseek',
+      runtime: 'codex',
+      message: 'text only',
+      title: 'DeepSeek text only',
+      modelId: 'deepseek-v4-pro-responses',
+      modelType: 'public',
+      modelOptions: {
+        weworkCloudModelNamespace: 'default',
+        weworkCloudModelResourceUserId: '0',
+        weworkCloudModelCodexCatalogModelId: 'wework-deepseek-v4-pro',
+      },
+    })
+
+    const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
+    expect(payload.executionRequest.model_config).toEqual(
+      expect.objectContaining({
+        codex_catalog_model_id: 'wework-deepseek-v4-pro',
+      })
+    )
+    expect(payload.executionRequest.model_config).not.toHaveProperty('vision_sidecar')
   })
 
   test('builds cloud model gateway config with upstream_api_format for chat-completions protocol', async () => {

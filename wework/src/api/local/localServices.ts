@@ -132,8 +132,6 @@ import {
 } from '@/features/model-settings/codexOfficialModels'
 import {
   buildLocalModelRequestUrl,
-  DEEPSEEK_V4_FLASH_CATALOG_MODEL_ID,
-  DEEPSEEK_V4_PRO_CATALOG_MODEL_ID,
   findLocalModelConfigByModelName,
   listLocalModelConfigs,
   LOCAL_MODEL_NAME_PREFIX,
@@ -141,8 +139,8 @@ import {
   markLocalModelCatalogReady,
   reconcileLocalModelCatalogRuntime,
   type LocalModelConfig,
-  VISION_SIDECAR_CATALOG_MODEL_ID,
 } from '@/features/model-settings/localModelSettings'
+import { builtinCodexCatalogModel } from '@/features/model-settings/codexCatalog'
 import { localModelSupportsImageInput } from '@/features/model-settings/localModelProviders'
 import { getLocalProxyUrl } from '@/features/model-settings/localProxySettings'
 import { createRuntimeChatStream } from '../runtime/runtimeChatStream'
@@ -186,19 +184,7 @@ const OPENAI_RESPONSES_PROTOCOL = 'openai-responses'
 const RESPONSES_API_FORMAT = 'responses'
 const WORKSPACE_TEXT_FILE_MAX_OUTPUT_BYTES = 1024 * 1024 * 2
 const STALE_CODEX_PROVIDER_MODEL_PREFIX = 'codex-provider:'
-const KIMI_K3_CATALOG_MODEL_ID = 'wework-kimi-k3'
 const DEFAULT_GPT_56_CATALOG_MODEL_ID = 'wework-gpt-5.6-sol'
-const KIMI_K3_REASONING_EFFORTS = ['low', 'high', 'max']
-const KIMI_K3_DEFAULT_REASONING_EFFORT = 'low'
-const DEEPSEEK_V4_REASONING_EFFORTS = ['low', 'high', 'max']
-const DEEPSEEK_V4_DEFAULT_REASONING_EFFORT = 'high'
-
-function isDeepSeekCodexCatalogModel(catalogModelId?: string): boolean {
-  return (
-    catalogModelId === DEEPSEEK_V4_FLASH_CATALOG_MODEL_ID ||
-    catalogModelId === DEEPSEEK_V4_PRO_CATALOG_MODEL_ID
-  )
-}
 
 export const LOCAL_WORKBENCH_TEAM = {
   id: 0,
@@ -320,13 +306,8 @@ function localModelConfigToUnifiedModel(config: LocalModelConfig): UnifiedModel 
 }
 
 function localModelReasoningEfforts(config: LocalModelConfig): string[] {
-  if (config.codexCatalogModelId === KIMI_K3_CATALOG_MODEL_ID) {
-    return KIMI_K3_REASONING_EFFORTS
-  }
-  if (isDeepSeekCodexCatalogModel(config.codexCatalogModelId)) {
-    return DEEPSEEK_V4_REASONING_EFFORTS
-  }
-  const values = config.catalogEntry?.supported_reasoning_levels
+  const catalog = config.catalogEntry ?? builtinCodexCatalogModel(config.codexCatalogModelId)
+  const values = catalog?.supported_reasoning_levels
   if (!Array.isArray(values)) return []
   return values.flatMap(value => {
     if (typeof value === 'string') return [value]
@@ -337,13 +318,8 @@ function localModelReasoningEfforts(config: LocalModelConfig): string[] {
 }
 
 function localModelDefaultReasoningEffort(config: LocalModelConfig): string | null {
-  if (config.codexCatalogModelId === KIMI_K3_CATALOG_MODEL_ID) {
-    return KIMI_K3_DEFAULT_REASONING_EFFORT
-  }
-  if (isDeepSeekCodexCatalogModel(config.codexCatalogModelId)) {
-    return DEEPSEEK_V4_DEFAULT_REASONING_EFFORT
-  }
-  const value = config.catalogEntry?.default_reasoning_level
+  const catalog = config.catalogEntry ?? builtinCodexCatalogModel(config.codexCatalogModelId)
+  const value = catalog?.default_reasoning_level
   return typeof value === 'string' ? value : null
 }
 
@@ -400,6 +376,8 @@ const catalogReconciliationTrackers = new WeakMap<
   LocalExecutorRequest,
   CatalogReconciliationTracker
 >()
+const CATALOG_IDLE_RESTART_RETRY_DELAY_MS = 100
+const CATALOG_IDLE_RESTART_MAX_ATTEMPTS = 20
 
 function catalogReconciliationTracker(request: LocalExecutorRequest): CatalogReconciliationTracker {
   const existing = catalogReconciliationTrackers.get(request)
@@ -442,27 +420,46 @@ async function reconcilePendingLocalModelCatalog(
     await request('runtime.codex.catalog.custom.write', {
       models: catalogModels.flatMap(model => (model.catalogEntry ? [model.catalogEntry] : [])),
     })
-    const restart = await request<{
+    let restart = await request<{
       restarted?: boolean
+      activeTaskCount?: number
+      pendingRequestCount?: number
     }>('runtime.codex.app_server.restart', { ifIdle: true })
     if (restart.restarted) {
       markLocalModelCatalogReady(pendingCatalogModels)
       return
     }
-    const models = await request<{
-      data?: Array<{ id?: string }>
-    }>('runtime.codex.models.list', { includeHidden: true })
-    const loadedModelIds = new Set(
-      (models.data ?? []).flatMap(model => (typeof model.id === 'string' ? [model.id] : []))
-    )
-    const loadedPendingModels = pendingCatalogModels.filter(model => {
-      const catalogModelId =
-        model.codexCatalogModelId ??
-        (typeof model.catalogEntry?.slug === 'string' ? model.catalogEntry.slug : null)
-      return Boolean(catalogModelId && loadedModelIds.has(catalogModelId))
-    })
-    if (loadedPendingModels.length > 0) {
-      markLocalModelCatalogReady(loadedPendingModels)
+
+    for (let attempt = 0; attempt < CATALOG_IDLE_RESTART_MAX_ATTEMPTS; attempt += 1) {
+      const models = await request<{
+        data?: Array<{ id?: string }>
+      }>('runtime.codex.models.list', { includeHidden: true })
+      const loadedModelIds = new Set(
+        (models.data ?? []).flatMap(model => (typeof model.id === 'string' ? [model.id] : []))
+      )
+      const loadedPendingModels = pendingCatalogModels.filter(model => {
+        const catalogModelId =
+          model.codexCatalogModelId ??
+          (typeof model.catalogEntry?.slug === 'string' ? model.catalogEntry.slug : null)
+        return Boolean(catalogModelId && loadedModelIds.has(catalogModelId))
+      })
+      if (loadedPendingModels.length > 0) {
+        markLocalModelCatalogReady(loadedPendingModels)
+      }
+      if (
+        loadedPendingModels.length === pendingCatalogModels.length ||
+        (restart.activeTaskCount ?? 0) > 0 ||
+        (restart.pendingRequestCount ?? 0) <= 0
+      ) {
+        return
+      }
+
+      await new Promise(resolve => setTimeout(resolve, CATALOG_IDLE_RESTART_RETRY_DELAY_MS))
+      restart = await request('runtime.codex.app_server.restart', { ifIdle: true })
+      if (restart.restarted) {
+        markLocalModelCatalogReady(pendingCatalogModels)
+        return
+      }
     }
   })()
   tracker.inFlight = reconciliation
@@ -984,14 +981,13 @@ function localRuntimeModelConfig(
       localModel.apiFormat
     )
     const visionSidecar = localVisionSidecarConfig(localModel)
-    const codexCatalogModelId = visionSidecar
-      ? VISION_SIDECAR_CATALOG_MODEL_ID
-      : localModel.codexCatalogModelId || DEFAULT_GPT_56_CATALOG_MODEL_ID
+    const primaryCodexCatalogModelId =
+      localModel.codexCatalogModelId || DEFAULT_GPT_56_CATALOG_MODEL_ID
     return {
       model: 'openai',
       model_id: localModel.modelId,
       wework_model_kind: 'model-interface',
-      codex_catalog_model_id: codexCatalogModelId,
+      codex_catalog_model_id: primaryCodexCatalogModelId,
       api_format: RESPONSES_API_FORMAT,
       upstream_api_format: localModel.apiFormat,
       tool_profile: localModel.toolProfile,
@@ -1045,14 +1041,13 @@ function localRuntimeModelConfig(
     const nativeNamespaceTools =
       modelOptions?.[CLOUD_MODEL_NATIVE_NAMESPACE_TOOLS_OPTION]?.trim().toLowerCase() === 'true'
     const visionSidecar = cloudVisionSidecarConfig(runtime, modelOptions, cloudModelGateway)
-    const codexCatalogModelId = visionSidecar
-      ? VISION_SIDECAR_CATALOG_MODEL_ID
-      : modelOptions?.[CLOUD_MODEL_CODEX_CATALOG_MODEL_ID_OPTION] || DEFAULT_GPT_56_CATALOG_MODEL_ID
+    const primaryCodexCatalogModelId =
+      modelOptions?.[CLOUD_MODEL_CODEX_CATALOG_MODEL_ID_OPTION] || DEFAULT_GPT_56_CATALOG_MODEL_ID
     return {
       model: 'openai',
       model_id: modelName,
       wework_model_kind: 'cloud',
-      codex_catalog_model_id: codexCatalogModelId,
+      codex_catalog_model_id: primaryCodexCatalogModelId,
       api_format: RESPONSES_API_FORMAT,
       upstream_api_format: upstreamApiFormat,
       native_tool_search: nativeToolSearch,

@@ -1790,6 +1790,7 @@ function RuntimeTaskRow({
           {priorityLayout ? (
             <span className="flex min-w-0 flex-1 flex-col justify-center gap-0.5">
               <span
+                data-sidebar-drag-activator
                 data-testid={`runtime-local-task-title-${task.taskId}`}
                 className={cn(
                   'runtime-task-title relative flex min-w-0 items-center gap-1 truncate',
@@ -1810,10 +1811,7 @@ function RuntimeTaskRow({
                     aria-label={boardOriginLabel}
                   />
                 ) : null}
-                <span
-                  data-sidebar-drag-activator
-                  data-testid={`runtime-local-task-drag-activator-${task.taskId}`}
-                >
+                <span data-testid={`runtime-local-task-drag-activator-${task.taskId}`}>
                   {task.title}
                 </span>
               </span>
@@ -1833,6 +1831,7 @@ function RuntimeTaskRow({
             </span>
           ) : (
             <span
+              data-sidebar-drag-activator
               data-testid={`runtime-local-task-title-${task.taskId}`}
               className={cn(
                 'runtime-task-title relative min-w-0 flex-1 truncate',
@@ -1853,10 +1852,7 @@ function RuntimeTaskRow({
                   aria-label={boardOriginLabel}
                 />
               ) : null}
-              <span
-                data-sidebar-drag-activator
-                data-testid={`runtime-local-task-drag-activator-${task.taskId}`}
-              >
+              <span data-testid={`runtime-local-task-drag-activator-${task.taskId}`}>
                 {task.title}
               </span>
             </span>
@@ -2648,6 +2644,7 @@ function ProjectItem({
           <button
             type="button"
             data-testid="project-item-button"
+            data-sidebar-drag-activator
             onClick={() => {
               onToggleProject(project.id)
             }}
@@ -2658,7 +2655,6 @@ function ProjectItem({
             )}
           >
             <span
-              data-sidebar-drag-activator
               data-testid={`project-drag-activator-${project.id}`}
               className="flex min-w-0 max-w-full items-center gap-2.5"
             >
@@ -2706,7 +2702,7 @@ function ProjectItem({
             <ProjectDeviceInlineStatus
               deviceState={projectDeviceState}
               testId={`project-device-status-${project.id}`}
-              className="pointer-events-none absolute right-2 top-1/2 max-w-[124px] -translate-y-1/2 justify-end text-right group-hover/project:invisible group-focus-within/project:invisible"
+              className="pointer-events-auto absolute right-2 top-1/2 max-w-[124px] -translate-y-1/2 justify-end text-right transition-opacity group-hover/project:opacity-0 group-focus-within/project:opacity-0"
             />
           )}
           <div className="pointer-events-none absolute right-1 top-1/2 z-[70] flex w-[58px] shrink-0 -translate-y-1/2 items-center justify-end opacity-0 transition-opacity group-hover/project:pointer-events-auto group-hover/project:opacity-100 hover:pointer-events-auto hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100">

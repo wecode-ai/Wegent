@@ -130,7 +130,16 @@ export function IssueComposer({
   const [localProjectId, setLocalProjectId] = useState<number | null>(
     draft?.localProjectId ?? initialLocalProjectId ?? localProjects[0]?.id ?? null
   )
+  const [localDeviceWorkspaceId, setLocalDeviceWorkspaceId] = useState<number | null>(null)
   const selectedLocalProject = localProjects.find(project => project.id === localProjectId) ?? null
+  const selectLocalProject = (projectId: number | null) => {
+    setLocalProjectId(projectId)
+    setLocalDeviceWorkspaceId(null)
+  }
+  const selectLocalProjectWorkspace = (projectId: number, deviceWorkspaceId: number | null) => {
+    setLocalProjectId(projectId)
+    setLocalDeviceWorkspaceId(deviceWorkspaceId)
+  }
   const selectedWorkItemProject =
     projects.find(project => `${project.project_store}:${String(project.id)}` === boardKey) ??
     projects[0] ??
@@ -299,9 +308,11 @@ export function IssueComposer({
           runtimeWork: projectRuntimeWork,
           currentProject: selectedLocalProject,
           currentProjectId: selectedLocalProject?.id,
+          selectedDeviceWorkspaceId: localDeviceWorkspaceId,
           executionMode: 'current_workspace',
-          onSelectProject: setLocalProjectId,
+          onSelectProject: selectLocalProject,
           onSelectStandaloneDevice: () => undefined,
+          onSelectProjectWorkspace: selectLocalProjectWorkspace,
           onExecutionModeChange: () => undefined,
           showProjectClearButton: false,
         }
@@ -582,7 +593,9 @@ export function IssueComposer({
             {creationMode === 'task' && workbench?.selectProject && selectedLocalProject ? (
               <ConnectedIssueProjectWork
                 project={selectedLocalProject}
-                onSelectProject={setLocalProjectId}
+                selectedDeviceWorkspaceId={localDeviceWorkspaceId}
+                onSelectProject={selectLocalProject}
+                onSelectProjectWorkspace={selectLocalProjectWorkspace}
               >
                 {renderComposer}
               </ConnectedIssueProjectWork>

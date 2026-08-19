@@ -18,9 +18,14 @@ export function workflowStageTaskInput(stage: WorkflowNodeInstance): string {
   if (stage.required_deliverables?.length) {
     sections.push(
       [
-        '完成任务后，请在 Issue 当前阶段的“必要交付物”区域上传以下内容：',
-        ...stage.required_deliverables.map(requirement => `- ${requirement}`),
-        '上传并提交后，节点将等待人工批准；不要自行宣称已经进入下一阶段。',
+        '完成任务后，必须通过 Issue 交付工具逐项提交以下交付物：',
+        ...stage.required_deliverables.map(
+          requirement =>
+            `- [${requirement.id}] ${requirement.name} (${requirement.value_type})${
+              requirement.description ? `：${requirement.description}` : ''
+            }`
+        ),
+        '上传文件后，调用 finalize_delivery 时必须传入 fulfillments，并让每个实际结果绑定对应 requirement_id。仅创建 Delivery、上传资产或提交空 fulfillments 都不算完成。提交后等待流程状态更新，不要自行宣称已经进入下一阶段。',
       ].join('\n')
     )
   }

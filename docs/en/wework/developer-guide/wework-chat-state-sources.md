@@ -331,6 +331,13 @@ retain their compact roles, but a chat body must not change font size when it
 moves between streaming and completed states because that causes a visible
 flash.
 
+Before final answers enter the Markdown renderer, Wework must remove
+`cite…` content-reference markers that have no structured citation metadata,
+including an unfinished trailing marker during streaming. These internal
+protocol characters must never appear as ordinary response text. They may be
+converted into visible citations only after the matching metadata and
+interaction component are available.
+
 ## Guidance Message Order
 
 Running Codex LocalTasks can send a queued message as native guidance. Guidance is user input inside the current turn, not a new follow-up turn, so the UI must insert the local user message inside the active assistant as soon as guidance sending starts:
