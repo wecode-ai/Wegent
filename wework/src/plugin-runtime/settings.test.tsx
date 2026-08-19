@@ -1,7 +1,12 @@
+import { act, renderHook } from '@testing-library/react'
 import { SlidersHorizontal } from 'lucide-react'
 import { describe, expect, test, vi } from 'vitest'
 
-import { WorkbenchSettingsRegistry } from './settings'
+import {
+  setActiveWorkbenchSettingsRegistry,
+  useActiveWorkbenchSettings,
+  WorkbenchSettingsRegistry,
+} from './settings'
 
 function contribution(key = 'example', path = '/settings/example') {
   return {
@@ -45,5 +50,30 @@ describe('WorkbenchSettingsRegistry', () => {
 
     expect(() => registry.register(contribution())).toThrow('already registered')
     expect(() => registry.register(contribution('other'))).toThrow('path')
+  })
+
+  test('keeps mounted consumers subscribed across registry replacement and restoration', () => {
+    const first = new WorkbenchSettingsRegistry()
+    const restoreFirst = setActiveWorkbenchSettingsRegistry(first)
+    const hook = renderHook(() => useActiveWorkbenchSettings())
+
+    act(() => {
+      first.register(contribution('first', '/settings/first'))
+    })
+    expect(hook.result.current.map(item => item.key)).toEqual(['first'])
+
+    const second = new WorkbenchSettingsRegistry()
+    let restoreSecond = () => undefined
+    act(() => {
+      restoreSecond = setActiveWorkbenchSettingsRegistry(second)
+      second.register(contribution('second', '/settings/second'))
+    })
+    expect(hook.result.current.map(item => item.key)).toEqual(['second'])
+
+    act(() => restoreSecond())
+    expect(hook.result.current.map(item => item.key)).toEqual(['first'])
+
+    hook.unmount()
+    restoreFirst()
   })
 })

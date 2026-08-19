@@ -1,51 +1,43 @@
-import { useSyncExternalStore } from 'react'
+import { useSyncExternalStore, type ComponentType, type ReactNode } from 'react'
 
-export interface WorkbenchAppContribution {
+export interface WorkbenchRightPanelContribution {
   key: string
-  mode: 'native' | 'iframe'
-  path?: string
-  url?: string
-  requiresAuth?: boolean
-  hidden?: boolean
-  experimental?: boolean
-  requiresCloud?: boolean
-  labelKey: string
   label: string
-  descriptionKey: string
-  description: string
+  icon: ComponentType<{ className?: string }>
+  render: () => ReactNode
 }
 
-export class WorkbenchAppRegistry {
-  private readonly apps = new Map<string, WorkbenchAppContribution>()
+export class WorkbenchRightPanelRegistry {
+  private readonly contributions = new Map<string, WorkbenchRightPanelContribution>()
   private readonly listeners = new Set<() => void>()
-  private snapshot: readonly WorkbenchAppContribution[] = []
+  private snapshot: readonly WorkbenchRightPanelContribution[] = []
   private revision = 0
 
   private emit(): void {
-    this.snapshot = Array.from(this.apps.values())
+    this.snapshot = Array.from(this.contributions.values())
     this.revision += 1
     for (const listener of this.listeners) listener()
   }
 
-  register(app: WorkbenchAppContribution): () => void {
-    if (this.apps.has(app.key)) {
-      throw new Error(`Workbench app '${app.key}' is already registered`)
+  register(contribution: WorkbenchRightPanelContribution): () => void {
+    if (this.contributions.has(contribution.key)) {
+      throw new Error(`Workbench right panel '${contribution.key}' is already registered`)
     }
-    this.apps.set(app.key, app)
+    this.contributions.set(contribution.key, contribution)
     this.emit()
     return () => {
-      if (this.apps.get(app.key) === app) {
-        this.apps.delete(app.key)
+      if (this.contributions.get(contribution.key) === contribution) {
+        this.contributions.delete(contribution.key)
         this.emit()
       }
     }
   }
 
-  resolve(key: string): WorkbenchAppContribution | null {
-    return this.apps.get(key) ?? null
+  resolve(key: string): WorkbenchRightPanelContribution | null {
+    return this.contributions.get(key) ?? null
   }
 
-  list(): readonly WorkbenchAppContribution[] {
+  list(): readonly WorkbenchRightPanelContribution[] {
     return this.snapshot
   }
 
@@ -59,7 +51,7 @@ export class WorkbenchAppRegistry {
   }
 }
 
-let activeRegistry = new WorkbenchAppRegistry()
+let activeRegistry = new WorkbenchRightPanelRegistry()
 const activeRegistryListeners = new Set<() => void>()
 let activeRegistryRevision = 0
 let unsubscribeActiveRegistry = activeRegistry.subscribe(notifyActiveRegistryListeners)
@@ -68,7 +60,7 @@ function notifyActiveRegistryListeners(): void {
   for (const listener of activeRegistryListeners) listener()
 }
 
-function replaceActiveRegistry(registry: WorkbenchAppRegistry): void {
+function replaceActiveRegistry(registry: WorkbenchRightPanelRegistry): void {
   unsubscribeActiveRegistry()
   activeRegistry = registry
   unsubscribeActiveRegistry = registry.subscribe(notifyActiveRegistryListeners)
@@ -85,11 +77,7 @@ function getActiveRegistrySnapshot(): string {
   return `${activeRegistryRevision}:${activeRegistry.version()}`
 }
 
-export function getActiveWorkbenchAppRegistry(): WorkbenchAppRegistry {
-  return activeRegistry
-}
-
-export function useActiveWorkbenchApps(): readonly WorkbenchAppContribution[] {
+export function useActiveWorkbenchRightPanels(): readonly WorkbenchRightPanelContribution[] {
   useSyncExternalStore(
     subscribeActiveRegistry,
     getActiveRegistrySnapshot,
@@ -98,7 +86,9 @@ export function useActiveWorkbenchApps(): readonly WorkbenchAppContribution[] {
   return activeRegistry.list()
 }
 
-export function setActiveWorkbenchAppRegistry(registry: WorkbenchAppRegistry): () => void {
+export function setActiveWorkbenchRightPanelRegistry(
+  registry: WorkbenchRightPanelRegistry
+): () => void {
   const previous = activeRegistry
   replaceActiveRegistry(registry)
   return () => {

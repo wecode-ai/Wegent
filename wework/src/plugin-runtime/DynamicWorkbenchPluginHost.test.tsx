@@ -34,6 +34,7 @@ function inspectedPlugin(name: string, required = false) {
   return {
     root: `/plugins/${name}`,
     frontendPath: `/plugins/${name}/frontend.js`,
+    frontendSource: 'export default {}',
     desktopPath: null,
     manifest: {
       name,
@@ -103,6 +104,20 @@ describe('DynamicWorkbenchPluginHost', () => {
     })
 
     view.unmount()
-    expect(mocks.dispose).toHaveBeenCalledOnce()
+    await waitFor(() => expect(mocks.dispose).toHaveBeenCalledOnce())
+  })
+
+  test('loads required plugins only when local installed state is unavailable', async () => {
+    mocks.listInstalledPlugins.mockRejectedValue(new Error('local state unavailable'))
+
+    const view = render(<DynamicWorkbenchPluginHost />)
+
+    await waitFor(() => {
+      expect(mocks.reconcile).toHaveBeenCalledWith([
+        expect.objectContaining({ manifest: expect.objectContaining({ name: 'required' }) }),
+      ])
+    })
+
+    view.unmount()
   })
 })

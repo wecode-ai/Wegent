@@ -1,6 +1,7 @@
 import { Context, type Fiber, type Plugin } from '@deepseek-ai/cordis'
 
 import { WorkbenchRouteRegistry } from './routes'
+import { setActiveWorkbenchRightPanelRegistry, WorkbenchRightPanelRegistry } from './right-panels'
 import { WorkbenchSlotRegistry } from './slots'
 import { setActiveWorkbenchAppRegistry, WorkbenchAppRegistry } from './apps'
 import { setActiveWorkbenchSettingsRegistry, WorkbenchSettingsRegistry } from './settings'
@@ -11,6 +12,7 @@ declare module '@deepseek-ai/cordis' {
     workbenchSlots: WorkbenchSlotRegistry
     workbenchApps: WorkbenchAppRegistry
     workbenchSettings: WorkbenchSettingsRegistry
+    workbenchRightPanels: WorkbenchRightPanelRegistry
   }
 }
 
@@ -48,6 +50,17 @@ const settingsServicePlugin: Plugin.Object<void> = {
     const registry = new WorkbenchSettingsRegistry()
     const restore = setActiveWorkbenchSettingsRegistry(registry)
     ctx.provide('workbenchSettings', registry)
+    return restore
+  },
+}
+
+const rightPanelServicePlugin: Plugin.Object<void> = {
+  name: 'wework-right-panel-service',
+  provide: 'workbenchRightPanels',
+  apply(ctx: Context) {
+    const registry = new WorkbenchRightPanelRegistry()
+    const restore = setActiveWorkbenchRightPanelRegistry(registry)
+    ctx.provide('workbenchRightPanels', registry)
     return restore
   },
 }
@@ -101,6 +114,14 @@ export class WorkbenchPluginRuntime {
     return settings
   }
 
+  get rightPanels(): WorkbenchRightPanelRegistry {
+    const rightPanels = this.context.get('workbenchRightPanels')
+    if (!rightPanels) {
+      throw new Error('Workbench right panel service is not active')
+    }
+    return rightPanels
+  }
+
   async initialize(profile: WorkbenchPluginProfile): Promise<void> {
     if (this.initialized) {
       throw new Error('Workbench plugin runtime is already initialized')
@@ -112,6 +133,7 @@ export class WorkbenchPluginRuntime {
       this.fibers.push(this.context.plugin(slotServicePlugin))
       this.fibers.push(this.context.plugin(appServicePlugin))
       this.fibers.push(this.context.plugin(settingsServicePlugin))
+      this.fibers.push(this.context.plugin(rightPanelServicePlugin))
       for (const entry of profile.entries) {
         if (entry.required && entry.clientVersion !== __WEWORK_APP_VERSION__) {
           throw new Error(
@@ -139,7 +161,8 @@ export class WorkbenchPluginRuntime {
     try {
       await fiber.await()
     } catch (error) {
-      this.fibers.splice(this.fibers.indexOf(fiber), 1)
+      const index = this.fibers.indexOf(fiber)
+      if (index >= 0) this.fibers.splice(index, 1)
       await fiber.dispose()
       throw error
     }

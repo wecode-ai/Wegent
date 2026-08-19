@@ -25,6 +25,10 @@ import {
 import { openExternalUrl } from '@/lib/external-links'
 import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
 import {
+  setActiveWorkbenchRightPanelRegistry,
+  WorkbenchRightPanelRegistry,
+} from '@/plugin-runtime/right-panels'
+import {
   archiveLocalHarnessSession,
   closeLocalTerminal,
   getLocalPathKind,
@@ -5659,6 +5663,38 @@ describe('DesktopWorkbenchLayout', () => {
       'http://example.com/'
     )
     expect(screen.getByTestId('workspace-browser-frame')).toHaveClass('bg-background')
+  })
+
+  test('opens and removes a plugin-contributed right workspace panel', async () => {
+    const registry = new WorkbenchRightPanelRegistry()
+    const restoreRegistry = setActiveWorkbenchRightPanelRegistry(registry)
+    const disposeContribution = registry.register({
+      key: 'example',
+      label: '插件示例',
+      icon: () => null,
+      render: () => <section data-testid="plugin-example-right-panel">插件右侧面板</section>,
+    })
+
+    try {
+      renderWorkspacePanelLayout()
+
+      await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+      await userEvent.click(screen.getByTestId('right-workspace-plugin-example-option'))
+
+      expect(screen.getByTestId('right-workspace-plugin-example-tab')).toHaveAttribute(
+        'aria-selected',
+        'true'
+      )
+      expect(screen.getByTestId('plugin-example-right-panel')).toHaveTextContent('插件右侧面板')
+
+      act(() => disposeContribution())
+
+      expect(screen.queryByTestId('right-workspace-plugin-example-tab')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('plugin-example-right-panel')).not.toBeInTheDocument()
+      expect(screen.getByTestId('right-workspace-launcher')).toBeInTheDocument()
+    } finally {
+      restoreRegistry()
+    }
   })
 
   test('uses separate browser shortcuts for the closed and open right panel', async () => {

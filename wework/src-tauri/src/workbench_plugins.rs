@@ -5,11 +5,14 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-use std::sync::Mutex;
+use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::{mpsc, Arc, Mutex};
+use std::thread;
+use std::time::{Duration, Instant};
 use tauri::State;
 
 const MANIFEST_PATH: &str = ".wework-plugin/plugin.json";
+const SIDECAR_RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -52,19 +55,21 @@ pub struct InspectedWorkbenchPlugin {
     root: String,
     manifest: WorkbenchPluginManifest,
     frontend_path: Option<String>,
+    frontend_source: Option<String>,
     desktop_path: Option<String>,
 }
 
 struct RunningSidecar {
     child: Child,
     stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
+    responses: mpsc::Receiver<Result<Value, String>>,
     next_request_id: u64,
+    capabilities: Vec<String>,
 }
 
 #[derive(Default)]
 pub struct WorkbenchPluginState {
-    sidecars: Mutex<HashMap<String, RunningSidecar>>,
+    sidecars: Mutex<HashMap<String, Arc<Mutex<RunningSidecar>>>>,
 }
 
 fn default_api_version() -> String {
@@ -74,11 +79,11 @@ fn default_api_version() -> String {
 fn normalize_plugin_id(value: &str) -> Result<String, String> {
     let value = value.trim();
     if value.is_empty()
-        || !value
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
+        || !value.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+        })
     {
-        return Err("Plugin id must contain only letters, numbers, '-' or '_'".to_string());
+        return Err("Plugin id must contain only letters, numbers, '-', '_' or '.'".to_string());
     }
     Ok(value.to_string())
 }
@@ -107,17 +112,21 @@ fn resolve_package_file(root: &Path, relative: &str, field: &str) -> Result<Path
     Ok(canonical)
 }
 
-fn verify_sha256(path: &Path, expected: &str, field: &str) -> Result<(), String> {
+fn verify_sha256_bytes(bytes: &[u8], expected: &str, field: &str) -> Result<(), String> {
     let expected = expected.trim().to_ascii_lowercase();
     if expected.len() != 64 || !expected.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err(format!("{field} must be a SHA-256 hex digest"));
     }
-    let bytes = fs::read(path).map_err(|error| format!("Failed to read {field}: {error}"))?;
     let actual = format!("{:x}", Sha256::digest(bytes));
     if actual != expected {
         return Err(format!("{field} SHA-256 mismatch"));
     }
     Ok(())
+}
+
+fn verify_sha256(path: &Path, expected: &str, field: &str) -> Result<(), String> {
+    let bytes = fs::read(path).map_err(|error| format!("Failed to read {field}: {error}"))?;
+    verify_sha256_bytes(&bytes, expected, field)
 }
 
 fn inspect_plugin(raw_root: &str) -> Result<InspectedWorkbenchPlugin, String> {
@@ -144,13 +153,17 @@ fn inspect_plugin(raw_root: &str) -> Result<InspectedWorkbenchPlugin, String> {
         return Err("Pinned Wework plugins must declare clientVersion".to_string());
     }
 
-    let frontend_path = manifest
+    let frontend = manifest
         .frontend
         .as_ref()
         .map(|frontend| {
             let path = resolve_package_file(&root, &frontend.entry, "frontend.entry")?;
-            verify_sha256(&path, &frontend.sha256, "frontend.entry")?;
-            Ok::<String, String>(path.to_string_lossy().into_owned())
+            let bytes = fs::read(&path)
+                .map_err(|error| format!("Failed to read frontend.entry: {error}"))?;
+            verify_sha256_bytes(&bytes, &frontend.sha256, "frontend.entry")?;
+            let source = String::from_utf8(bytes)
+                .map_err(|_| "frontend.entry must contain valid UTF-8 JavaScript".to_string())?;
+            Ok::<(String, String), String>((path.to_string_lossy().into_owned(), source))
         })
         .transpose()?;
     let desktop_path = manifest
@@ -166,7 +179,8 @@ fn inspect_plugin(raw_root: &str) -> Result<InspectedWorkbenchPlugin, String> {
     Ok(InspectedWorkbenchPlugin {
         root: root.to_string_lossy().into_owned(),
         manifest,
-        frontend_path,
+        frontend_path: frontend.as_ref().map(|(path, _)| path.clone()),
+        frontend_source: frontend.map(|(_, source)| source),
         desktop_path,
     })
 }
@@ -182,6 +196,24 @@ fn plugin_search_roots() -> Vec<PathBuf> {
         roots.push(home.join(".wework/plugins"));
     }
     roots
+}
+
+fn canonical_plugin_search_roots() -> Vec<PathBuf> {
+    plugin_search_roots()
+        .into_iter()
+        .filter_map(|root| fs::canonicalize(root).ok())
+        .collect()
+}
+
+fn inspect_discovered_plugin(raw_root: &str) -> Result<InspectedWorkbenchPlugin, String> {
+    let root = canonical_plugin_root(raw_root)?;
+    if !canonical_plugin_search_roots()
+        .iter()
+        .any(|search_root| root.starts_with(search_root))
+    {
+        return Err("Plugin root is outside the approved local plugin directories".to_string());
+    }
+    inspect_plugin(root.to_string_lossy().as_ref())
 }
 
 fn collect_plugin_roots(directory: &Path, depth: usize, output: &mut Vec<PathBuf>) {
@@ -227,7 +259,7 @@ pub async fn workbench_plugin_list() -> Result<Vec<InspectedWorkbenchPlugin>, St
 
 #[tauri::command]
 pub fn workbench_plugin_inspect(plugin_root: String) -> Result<InspectedWorkbenchPlugin, String> {
-    inspect_plugin(&plugin_root)
+    inspect_discovered_plugin(&plugin_root)
 }
 
 #[tauri::command]
@@ -237,7 +269,7 @@ pub fn workbench_plugin_start(
     plugin_root: String,
 ) -> Result<(), String> {
     let plugin_id = normalize_plugin_id(&plugin_id)?;
-    let inspected = inspect_plugin(&plugin_root)?;
+    let inspected = inspect_discovered_plugin(&plugin_root)?;
     if inspected.manifest.name != plugin_id {
         return Err("Plugin id must match the package manifest name".to_string());
     }
@@ -274,16 +306,83 @@ pub fn workbench_plugin_start(
         .stdout
         .take()
         .ok_or_else(|| "Plugin sidecar stdout was not created".to_string())?;
+    let (responses_tx, responses) = mpsc::channel();
+    thread::spawn(move || {
+        for line in BufReader::new(stdout).lines() {
+            let message = line
+                .map_err(|error| format!("Failed to read plugin response: {error}"))
+                .and_then(|line| {
+                    serde_json::from_str(&line)
+                        .map_err(|error| format!("Plugin returned invalid JSON-RPC: {error}"))
+                });
+            if responses_tx.send(message).is_err() {
+                break;
+            }
+        }
+    });
     sidecars.insert(
         plugin_id,
-        RunningSidecar {
+        Arc::new(Mutex::new(RunningSidecar {
             child,
             stdin,
-            stdout: BufReader::new(stdout),
+            responses,
             next_request_id: 1,
-        },
+            capabilities: desktop.capabilities,
+        })),
     );
     Ok(())
+}
+
+fn stop_sidecar(state: &WorkbenchPluginState, plugin_id: &str) -> Result<(), String> {
+    let sidecar = state
+        .sidecars
+        .lock()
+        .map_err(|_| "Workbench plugin state lock is poisoned".to_string())?
+        .remove(plugin_id);
+    if let Some(sidecar) = sidecar {
+        let mut sidecar = sidecar
+            .lock()
+            .map_err(|_| "Workbench plugin sidecar lock is poisoned".to_string())?;
+        let _ = sidecar.child.kill();
+        let _ = sidecar.child.wait();
+    }
+    Ok(())
+}
+
+fn read_matching_response(
+    sidecar: &RunningSidecar,
+    plugin_id: &str,
+    request_id: u64,
+    timeout: Duration,
+) -> Result<Value, String> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(format!(
+                "Workbench plugin '{plugin_id}' timed out waiting for response"
+            ));
+        }
+        let response =
+            sidecar
+                .responses
+                .recv_timeout(remaining)
+                .map_err(|error| match error {
+                    mpsc::RecvTimeoutError::Timeout => {
+                        format!("Workbench plugin '{plugin_id}' timed out waiting for response")
+                    }
+                    mpsc::RecvTimeoutError::Disconnected => {
+                        format!("Workbench plugin '{plugin_id}' exited before responding")
+                    }
+                })??;
+        if response.get("id").and_then(Value::as_u64) != Some(request_id) {
+            continue;
+        }
+        if let Some(error) = response.get("error") {
+            return Err(format!("Plugin JSON-RPC error: {error}"));
+        }
+        return Ok(response.get("result").cloned().unwrap_or(Value::Null));
+    }
 }
 
 #[tauri::command]
@@ -298,48 +397,50 @@ pub fn workbench_plugin_request(
     if method.is_empty() {
         return Err("JSON-RPC method is required".to_string());
     }
-    let mut sidecars = state
+    let sidecar = state
         .sidecars
         .lock()
-        .map_err(|_| "Workbench plugin state lock is poisoned".to_string())?;
-    let sidecar = sidecars
-        .get_mut(&plugin_id)
+        .map_err(|_| "Workbench plugin state lock is poisoned".to_string())?
+        .get(&plugin_id)
+        .cloned()
         .ok_or_else(|| format!("Workbench plugin '{plugin_id}' is not running"))?;
-    let request_id = sidecar.next_request_id;
-    sidecar.next_request_id += 1;
-    let request = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": request_id,
-        "method": method,
-        "params": params,
-    });
-    serde_json::to_writer(&mut sidecar.stdin, &request)
-        .map_err(|error| format!("Failed to write plugin request: {error}"))?;
-    sidecar
-        .stdin
-        .write_all(b"\n")
-        .and_then(|_| sidecar.stdin.flush())
-        .map_err(|error| format!("Failed to flush plugin request: {error}"))?;
-
-    let mut response_line = String::new();
-    let read = sidecar
-        .stdout
-        .read_line(&mut response_line)
-        .map_err(|error| format!("Failed to read plugin response: {error}"))?;
-    if read == 0 {
-        return Err(format!(
-            "Workbench plugin '{plugin_id}' exited before responding"
-        ));
+    let result = {
+        let mut sidecar = sidecar
+            .lock()
+            .map_err(|_| "Workbench plugin sidecar lock is poisoned".to_string())?;
+        if !sidecar
+            .capabilities
+            .iter()
+            .any(|capability| capability == method)
+        {
+            return Err(format!(
+                "Workbench plugin '{plugin_id}' is not authorized for capability '{method}'"
+            ));
+        }
+        let request_id = sidecar.next_request_id;
+        sidecar.next_request_id += 1;
+        let request = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": method,
+            "params": params,
+        });
+        serde_json::to_writer(&mut sidecar.stdin, &request)
+            .map_err(|error| format!("Failed to write plugin request: {error}"))?;
+        sidecar
+            .stdin
+            .write_all(b"\n")
+            .and_then(|_| sidecar.stdin.flush())
+            .map_err(|error| format!("Failed to flush plugin request: {error}"))?;
+        read_matching_response(&sidecar, &plugin_id, request_id, SIDECAR_RESPONSE_TIMEOUT)
+    };
+    if result
+        .as_ref()
+        .is_err_and(|error| error.contains("timed out") || error.contains("exited"))
+    {
+        let _ = stop_sidecar(&state, &plugin_id);
     }
-    let response: Value = serde_json::from_str(&response_line)
-        .map_err(|error| format!("Plugin returned invalid JSON-RPC: {error}"))?;
-    if response.get("id").and_then(Value::as_u64) != Some(request_id) {
-        return Err("Plugin returned a mismatched JSON-RPC response id".to_string());
-    }
-    if let Some(error) = response.get("error") {
-        return Err(format!("Plugin JSON-RPC error: {error}"));
-    }
-    Ok(response.get("result").cloned().unwrap_or(Value::Null))
+    result
 }
 
 #[tauri::command]
@@ -348,15 +449,7 @@ pub fn workbench_plugin_stop(
     plugin_id: String,
 ) -> Result<(), String> {
     let plugin_id = normalize_plugin_id(&plugin_id)?;
-    let mut sidecars = state
-        .sidecars
-        .lock()
-        .map_err(|_| "Workbench plugin state lock is poisoned".to_string())?;
-    if let Some(mut sidecar) = sidecars.remove(&plugin_id) {
-        let _ = sidecar.child.kill();
-        let _ = sidecar.child.wait();
-    }
-    Ok(())
+    stop_sidecar(&state, &plugin_id)
 }
 
 #[tauri::command]
@@ -364,7 +457,7 @@ pub fn workbench_plugin_authorize_capability(
     plugin_root: String,
     capability: String,
 ) -> Result<bool, String> {
-    let inspected = inspect_plugin(&plugin_root)?;
+    let inspected = inspect_discovered_plugin(&plugin_root)?;
     let capabilities = inspected
         .manifest
         .desktop
@@ -377,7 +470,10 @@ pub fn shutdown(state: &WorkbenchPluginState) {
     let Ok(mut sidecars) = state.sidecars.lock() else {
         return;
     };
-    for (_, mut sidecar) in sidecars.drain() {
+    for (_, sidecar) in sidecars.drain() {
+        let Ok(mut sidecar) = sidecar.lock() else {
+            continue;
+        };
         let _ = sidecar.child.kill();
         let _ = sidecar.child.wait();
     }
@@ -419,6 +515,50 @@ mod tests {
             resolve_package_file(root.path(), outside_file.to_str().unwrap(), "command")
                 .unwrap_err()
                 .contains("inside the plugin package")
+        );
+    }
+
+    #[test]
+    fn plugin_ids_accept_periods() {
+        assert_eq!(
+            normalize_plugin_id("example.plugin").unwrap(),
+            "example.plugin"
+        );
+    }
+
+    #[test]
+    fn response_reader_skips_notifications_and_mismatched_ids() {
+        let (sender, responses) = mpsc::channel();
+        sender
+            .send(Ok(serde_json::json!({"jsonrpc":"2.0","method":"status"})))
+            .unwrap();
+        sender
+            .send(Ok(
+                serde_json::json!({"jsonrpc":"2.0","id":4,"result":"old"}),
+            ))
+            .unwrap();
+        sender
+            .send(Ok(
+                serde_json::json!({"jsonrpc":"2.0","id":5,"result":"ok"}),
+            ))
+            .unwrap();
+        let sidecar = RunningSidecar {
+            child: Command::new("true").spawn().unwrap(),
+            stdin: Command::new("cat")
+                .stdin(Stdio::piped())
+                .spawn()
+                .unwrap()
+                .stdin
+                .take()
+                .unwrap(),
+            responses,
+            next_request_id: 1,
+            capabilities: vec![],
+        };
+
+        assert_eq!(
+            read_matching_response(&sidecar, "example", 5, Duration::from_secs(1)).unwrap(),
+            Value::String("ok".to_string())
         );
     }
 }

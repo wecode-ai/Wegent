@@ -47,7 +47,17 @@ function renderApp(): void {
 }
 
 if (!isSystemDragPanel) {
-  await initializeWorkbenchPluginRuntime()
-  await installWeworkAutomationBridge()
+  try {
+    await initializeWorkbenchPluginRuntime()
+    await installWeworkAutomationBridge()
+  } catch (error) {
+    const root = document.getElementById('root')
+    if (root) {
+      root.textContent = `Wework failed to initialize: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    }
+    throw error
+  }
 }
 renderApp()

@@ -1291,20 +1291,28 @@ export function ConnectionsSettingsPage({
   const { sidebarWidth, handleResizeStart } = useResizableSidebar()
   const isDesktopRuntime = isTauriRuntime()
   const registeredSettings = useActiveWorkbenchSettings()
-  const settingsContributions: readonly WorkbenchSettingsContribution[] =
-    registeredSettings.length > 0 ? registeredSettings : CORE_WORKBENCH_SETTINGS
-  const visibleSettingsNavItems = settingsContributions.filter(
-    item =>
-      (!item.experimental || experimentalFeaturesEnabled) && (!item.desktopOnly || isDesktopRuntime)
+  const settingsContributions: readonly WorkbenchSettingsContribution[] = useMemo(
+    () => (registeredSettings.length > 0 ? registeredSettings : CORE_WORKBENCH_SETTINGS),
+    [registeredSettings]
+  )
+  const visibleSettingsNavItems = useMemo(
+    () =>
+      settingsContributions.filter(
+        item =>
+          (!item.experimental || experimentalFeaturesEnabled) &&
+          (!item.desktopOnly || isDesktopRuntime)
+      ),
+    [experimentalFeaturesEnabled, isDesktopRuntime, settingsContributions]
   )
   const shouldAutoOpenAddCloudDeviceDialog =
     autoOpenAddCloudDeviceDialog ||
     new URLSearchParams(window.location.search).get('addDevice') === '1'
-  const [activeNav, setActiveNav] = useState(() =>
+  const [, setActiveNav] = useState(() =>
     getSettingsNavFromPath(window.location.pathname, settingsContributions)
   )
+  const routeActiveNav = getSettingsNavFromPath(window.location.pathname, settingsContributions)
   const effectiveActiveNav =
-    activeNav === 'harnesses' && !experimentalFeaturesEnabled ? 'general' : activeNav
+    visibleSettingsNavItems.find(item => item.key === routeActiveNav)?.key ?? 'general'
 
   useEffect(() => {
     const handlePopState = () => {
@@ -1320,8 +1328,8 @@ export function ConnectionsSettingsPage({
     navigateTo(path ?? '/settings/connections')
   }, [settingsContributions])
   const activeContribution =
-    settingsContributions.find(item => item.key === effectiveActiveNav) ??
-    settingsContributions.find(item => item.key === 'general')
+    visibleSettingsNavItems.find(item => item.key === effectiveActiveNav) ??
+    visibleSettingsNavItems.find(item => item.key === 'general')
 
   return (
     <div
@@ -1430,12 +1438,12 @@ export function ConnectionsSettingsPage({
             onOpenRuntimeTask,
             onRefreshWorkLists,
           })
-        ) : (
+        ) : activeContribution?.key === 'connections' ? (
           <ConnectionsDeviceSettingsPage
             key={shouldAutoOpenAddCloudDeviceDialog ? 'add-device' : 'connections'}
             autoOpenAddCloudDeviceDialog={shouldAutoOpenAddCloudDeviceDialog}
           />
-        )}
+        ) : null}
       </main>
     </div>
   )

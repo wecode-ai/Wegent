@@ -30,9 +30,11 @@ export interface WorkbenchSettingsContribution {
 export class WorkbenchSettingsRegistry {
   private readonly contributions = new Map<string, WorkbenchSettingsContribution>()
   private readonly listeners = new Set<() => void>()
+  private snapshot: readonly WorkbenchSettingsContribution[] = []
   private revision = 0
 
   private emit(): void {
+    this.snapshot = Array.from(this.contributions.values())
     this.revision += 1
     for (const listener of this.listeners) listener()
   }
@@ -72,7 +74,7 @@ export class WorkbenchSettingsRegistry {
   }
 
   list(): readonly WorkbenchSettingsContribution[] {
-    return Array.from(this.contributions.values())
+    return this.snapshot
   }
 
   subscribe(listener: () => void): () => void {
@@ -86,29 +88,52 @@ export class WorkbenchSettingsRegistry {
 }
 
 let activeRegistry = new WorkbenchSettingsRegistry()
+const activeRegistryListeners = new Set<() => void>()
+let activeRegistryRevision = 0
+let unsubscribeActiveRegistry = activeRegistry.subscribe(notifyActiveRegistryListeners)
+
+function notifyActiveRegistryListeners(): void {
+  for (const listener of activeRegistryListeners) listener()
+}
+
+function replaceActiveRegistry(registry: WorkbenchSettingsRegistry): void {
+  unsubscribeActiveRegistry()
+  activeRegistry = registry
+  unsubscribeActiveRegistry = registry.subscribe(notifyActiveRegistryListeners)
+  activeRegistryRevision += 1
+  notifyActiveRegistryListeners()
+}
+
+function subscribeActiveRegistry(listener: () => void): () => void {
+  activeRegistryListeners.add(listener)
+  return () => activeRegistryListeners.delete(listener)
+}
+
+function getActiveRegistrySnapshot(): string {
+  return `${activeRegistryRevision}:${activeRegistry.version()}`
+}
 
 export function getActiveWorkbenchSettingsRegistry(): WorkbenchSettingsRegistry {
   return activeRegistry
 }
 
 export function useActiveWorkbenchSettings(): readonly WorkbenchSettingsContribution[] {
-  const registry = getActiveWorkbenchSettingsRegistry()
   useSyncExternalStore(
-    listener => registry.subscribe(listener),
-    () => registry.version(),
-    () => registry.version()
+    subscribeActiveRegistry,
+    getActiveRegistrySnapshot,
+    getActiveRegistrySnapshot
   )
-  return registry.list()
+  return activeRegistry.list()
 }
 
 export function setActiveWorkbenchSettingsRegistry(
   registry: WorkbenchSettingsRegistry
 ): () => void {
   const previous = activeRegistry
-  activeRegistry = registry
+  replaceActiveRegistry(registry)
   return () => {
     if (activeRegistry === registry) {
-      activeRegistry = previous
+      replaceActiveRegistry(previous)
     }
   }
 }

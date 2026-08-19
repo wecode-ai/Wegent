@@ -76,8 +76,48 @@ const examplePlugin = {
           )
         ),
     })
+    const disposeRightPanel = api.rightPanels.register({
+      key: 'example',
+      label: '插件示例',
+      icon: ({ className }) =>
+        h(
+          'span',
+          {
+            'aria-hidden': 'true',
+            className: `${className ?? ''} flex items-center justify-center rounded bg-primary/15 text-[10px] font-semibold text-primary`,
+          },
+          'P'
+        ),
+      render: () =>
+        h(
+          'section',
+          {
+            'data-testid': 'plugin-example-right-panel',
+            className:
+              'flex min-h-0 flex-1 flex-col overflow-y-auto bg-background px-6 py-8 text-text-primary',
+          },
+          h('p', { className: 'text-xs font-medium text-primary' }, 'PLUGIN CONTRIBUTION'),
+          h('h1', { className: 'heading-medium mt-2' }, '插件右侧面板'),
+          h(
+            'p',
+            { className: 'mt-3 text-sm leading-6 text-text-secondary' },
+            '这个选项和面板由示例插件动态注册。卸载插件后，入口、标签页和内容会从工作台移除。'
+          ),
+          h(
+            'div',
+            { className: 'mt-6 rounded-xl border border-border bg-surface px-4 py-4' },
+            h('p', { className: 'text-sm font-medium' }, '扩展点状态'),
+            h(
+              'p',
+              { className: 'mt-1 text-sm text-text-secondary' },
+              'api.rightPanels 已连接到 Wework 右侧工作区。'
+            )
+          )
+        ),
+    })
 
     return () => {
+      disposeRightPanel()
       disposeSettings()
       disposeApp()
       disposeRoute()

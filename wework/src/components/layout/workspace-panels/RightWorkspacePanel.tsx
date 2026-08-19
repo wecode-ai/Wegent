@@ -9,7 +9,6 @@ import {
   SquareTerminal,
   X,
 } from 'lucide-react'
-import type { LucideIcon } from 'lucide-react'
 import { memo, useCallback, useEffect, useState } from 'react'
 import type { ComponentType, KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react'
 import {
@@ -41,6 +40,7 @@ import { WorkspaceAddMenu, type WorkspaceAddMenuItem } from './WorkspaceAddMenu'
 import { WorkspaceBrowserPanel } from './WorkspaceBrowserPanelContainer'
 import { WorkspacePanelCards } from './WorkspacePanelCards'
 import { TemporaryChatPanel } from './TemporaryChatPanel'
+import type { WorkbenchRightPanelContribution } from '@/plugin-runtime/right-panels'
 
 function getRightWorkspaceShortcuts(platform: ReturnType<typeof getPlatform>) {
   if (platform === 'win') {
@@ -63,6 +63,7 @@ export type RightWorkspaceChatTab = `chat:${string}`
 export type RightWorkspaceBrowserTab = `browser:${string}`
 export type RightWorkspaceHarnessTab = `harness:${string}`
 export type RightWorkspaceTerminalTab = `terminal:${string}`
+export type RightWorkspacePluginTab = `plugin:${string}`
 export type RightWorkspacePanelTab =
   | 'review'
   | 'files'
@@ -72,6 +73,7 @@ export type RightWorkspacePanelTab =
   | RightWorkspaceBrowserTab
   | RightWorkspaceHarnessTab
   | RightWorkspaceTerminalTab
+  | RightWorkspacePluginTab
 export type RightWorkspacePanelView = 'launcher' | RightWorkspacePanelTab
 
 function isRightWorkspaceChatTab(tab: RightWorkspacePanelView): tab is RightWorkspaceChatTab {
@@ -90,6 +92,14 @@ function isRightWorkspaceTerminalTab(
   tab: RightWorkspacePanelView
 ): tab is RightWorkspaceTerminalTab {
   return tab.startsWith('terminal:')
+}
+
+function isRightWorkspacePluginTab(tab: RightWorkspacePanelView): tab is RightWorkspacePluginTab {
+  return tab.startsWith('plugin:')
+}
+
+function getRightWorkspacePluginKey(tab: RightWorkspacePluginTab) {
+  return tab.slice('plugin:'.length)
 }
 
 function getRightWorkspaceHarnessSessionId(tab: RightWorkspaceHarnessTab) {
@@ -190,6 +200,8 @@ interface RightWorkspacePanelProps {
   getChatInitialInput?: (tab: RightWorkspaceChatTab) => string | undefined
   getChatInitialAddress?: (tab: RightWorkspaceChatTab) => RuntimeTaskAddress | null | undefined
   onChatAddressChange?: (tab: RightWorkspaceChatTab, address: RuntimeTaskAddress | null) => void
+  pluginPanels?: readonly WorkbenchRightPanelContribution[]
+  onSelectPluginPanel?: (key: string) => void
 }
 
 interface RightWorkspaceBrowserPanelSlotProps {
@@ -314,6 +326,8 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   getChatInitialInput,
   getChatInitialAddress,
   onChatAddressChange,
+  pluginPanels = [],
+  onSelectPluginPanel,
 }: RightWorkspacePanelProps) {
   const { t } = useTranslation('common')
   const availableTabs = allowTemporaryChat
@@ -327,6 +341,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   const harnessSessionsById = new Map(
     harnessSessions.map(session => [session.sessionId, session] as const)
   )
+  const pluginPanelsByKey = new Map(pluginPanels.map(panel => [panel.key, panel] as const))
 
   useEffect(() => {
     if (!visible) return
@@ -431,6 +446,13 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
           },
         ]
       : []),
+    ...pluginPanels.map(panel => ({
+      id: `plugin:${panel.key}`,
+      testId: `right-workspace-plugin-${panel.key}-option`,
+      icon: panel.icon,
+      label: panel.label,
+      onSelect: () => onSelectPluginPanel?.(panel.key),
+    })),
   ]
 
   const tabBar = showTabs ? (
@@ -453,8 +475,14 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
           key={tab}
           tab={tab}
           active={activeView === tab}
-          label={getRightWorkspaceTabLabel(tab, t, browserStates, harnessSessionsById)}
-          icon={getRightWorkspaceTabIcon(tab)}
+          label={getRightWorkspaceTabLabel(
+            tab,
+            t,
+            browserStates,
+            harnessSessionsById,
+            pluginPanelsByKey
+          )}
+          icon={getRightWorkspaceTabIcon(tab, pluginPanelsByKey)}
           iconSrc={isRightWorkspaceBrowserTab(tab) ? browserStates[tab]?.faviconUrl : null}
           onSelect={getTabSelectHandler(tab)}
           onClose={() => closeTab(tab)}
@@ -515,6 +543,8 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
             onSelectBrowser={onSelectBrowser}
             onSelectFiles={onSelectFiles}
             onSelectChat={onSelectChat}
+            pluginPanels={pluginPanels}
+            onSelectPluginPanel={onSelectPluginPanel}
           />
         ) : !isRightWorkspaceChatTab(activeView) && activeView === 'review' ? (
           <FileChangesReviewPanel
@@ -533,6 +563,8 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
           <PlanWorkspacePanel content={planContent ?? ''} />
         ) : !isRightWorkspaceChatTab(activeView) && activeView === 'work-item' ? (
           workItemPanel
+        ) : isRightWorkspacePluginTab(activeView) ? (
+          (pluginPanelsByKey.get(getRightWorkspacePluginKey(activeView))?.render() ?? null)
         ) : !isRightWorkspaceChatTab(activeView) && workspaceTargetError ? (
           <section
             data-testid="workspace-target-error"
@@ -665,7 +697,7 @@ function RightWorkspaceTitleTab({
   tab: RightWorkspacePanelTab
   active: boolean
   label: string
-  icon: LucideIcon
+  icon: ComponentType<{ className?: string }>
   iconSrc?: string | null
   onSelect: () => void
   onClose: () => void
@@ -787,6 +819,8 @@ function RightWorkspaceLauncher({
   onSelectBrowser,
   onSelectFiles,
   onSelectChat,
+  pluginPanels,
+  onSelectPluginPanel,
 }: {
   canOpenReview: boolean
   canBrowseFiles: boolean
@@ -797,6 +831,8 @@ function RightWorkspaceLauncher({
   onSelectBrowser: () => void
   onSelectFiles: () => void
   onSelectChat: () => void
+  pluginPanels: readonly WorkbenchRightPanelContribution[]
+  onSelectPluginPanel?: (key: string) => void
 }) {
   const { t } = useTranslation('common')
   const platform = getPlatform()
@@ -816,6 +852,15 @@ function RightWorkspaceLauncher({
             shortcut={action.shortcut}
             onClick={() => void action.onSelect()}
             disabled={action.disabled}
+          />
+        ))}
+        {pluginPanels.map(panel => (
+          <RightWorkspaceLauncherItem
+            key={panel.key}
+            data-testid={`right-workspace-plugin-${panel.key}-option`}
+            icon={panel.icon}
+            label={panel.label}
+            onClick={() => onSelectPluginPanel?.(panel.key)}
           />
         ))}
         <RightWorkspaceLauncherItem
@@ -900,7 +945,8 @@ function getRightWorkspaceTabLabel(
   tab: RightWorkspacePanelTab,
   t: ReturnType<typeof useTranslation>['t'],
   browserStates: Partial<Record<RightWorkspaceBrowserTab, RightWorkspaceBrowserState>>,
-  harnessSessionsById: Map<string, LocalHarnessWorkbenchSession>
+  harnessSessionsById: Map<string, LocalHarnessWorkbenchSession>,
+  pluginPanelsByKey: Map<string, WorkbenchRightPanelContribution>
 ) {
   if (tab === 'review') return t('workbench.workspace_tab_review', '审查')
   if (isRightWorkspaceTerminalTab(tab)) {
@@ -918,6 +964,9 @@ function getRightWorkspaceTabLabel(
       harnessSessionsById.get(getRightWorkspaceHarnessSessionId(tab))?.title ??
       t('workbench.harness_session_picker_title', '新建编码会话')
     )
+  }
+  if (isRightWorkspacePluginTab(tab)) {
+    return pluginPanelsByKey.get(getRightWorkspacePluginKey(tab))?.label ?? 'Plugin'
   }
   if (tab === 'plan') return t('workbench.workspace_tab_plan', '计划')
   if (tab === 'work-item') return t('workbench.work_item_detail', 'Issue 详情')
@@ -941,15 +990,24 @@ function getRightWorkspaceTabTestId(tab: RightWorkspacePanelTab) {
   if (isRightWorkspaceHarnessTab(tab)) {
     return `right-workspace-harness-tab-${getRightWorkspaceHarnessSessionId(tab)}`
   }
+  if (isRightWorkspacePluginTab(tab)) {
+    return `right-workspace-plugin-${getRightWorkspacePluginKey(tab)}-tab`
+  }
   return `right-workspace-${tab}-tab`
 }
 
-function getRightWorkspaceTabIcon(tab: RightWorkspacePanelTab) {
+function getRightWorkspaceTabIcon(
+  tab: RightWorkspacePanelTab,
+  pluginPanelsByKey: Map<string, WorkbenchRightPanelContribution>
+) {
   if (tab === 'review') return FileDiff
   if (isRightWorkspaceTerminalTab(tab)) return SquareTerminal
   if (isRightWorkspaceBrowserTab(tab)) return Globe2
   if (isRightWorkspaceChatTab(tab)) return MessageCircle
   if (isRightWorkspaceHarnessTab(tab)) return SquareTerminal
+  if (isRightWorkspacePluginTab(tab)) {
+    return pluginPanelsByKey.get(getRightWorkspacePluginKey(tab))?.icon ?? LayoutDashboard
+  }
   if (tab === 'plan') return ListChecks
   if (tab === 'work-item') return LayoutDashboard
   return File

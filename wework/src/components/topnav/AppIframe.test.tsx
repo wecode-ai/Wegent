@@ -1,6 +1,6 @@
 import { StrictMode } from 'react'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { AppIframe } from './AppIframe'
 
 const embeddedBrowserMocks = vi.hoisted(() => ({
@@ -21,6 +21,10 @@ vi.mock('@/lib/embedded-browser', () => embeddedBrowserMocks)
 vi.mock('@/lib/runtime-environment', () => runtimeMocks)
 
 describe('AppIframe', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
   beforeEach(() => {
     runtimeMocks.isTauriRuntime.mockReturnValue(false)
     embeddedBrowserMocks.closeEmbeddedBrowser.mockClear()
@@ -44,7 +48,7 @@ describe('AppIframe', () => {
 
   test('keeps app identity stable when the display title is localized', async () => {
     runtimeMocks.isTauriRuntime.mockReturnValue(true)
-    const boundsSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
       bottom: 620,
       height: 600,
       left: 10,
@@ -72,7 +76,6 @@ describe('AppIframe', () => {
         'app-wegent-agent-localized'
       )
     )
-    boundsSpy.mockRestore()
   })
 
   test('hides loading on iframe load', () => {

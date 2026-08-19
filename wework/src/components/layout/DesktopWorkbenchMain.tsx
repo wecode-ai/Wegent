@@ -65,6 +65,7 @@ import {
   useOptionalAppearance,
 } from '@/features/appearance'
 import { track } from '@/telemetry/client'
+import { useActiveWorkbenchRightPanels } from '@/plugin-runtime/right-panels'
 import { BottomWorkspacePanel } from './workspace-panels/BottomWorkspacePanel'
 import {
   RightWorkspacePanel,
@@ -74,6 +75,7 @@ import {
   type RightWorkspaceHarnessTab,
   type RightWorkspacePanelTab,
   type RightWorkspacePanelView,
+  type RightWorkspacePluginTab,
   type RightWorkspaceTerminalTab,
 } from './workspace-panels/RightWorkspacePanel'
 import { WorkspacePanelActions } from './workspace-panels/WorkspacePanelActions'
@@ -892,6 +894,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   } = useWorkbenchPaneContext()
   const { services, openRuntimeTask } = useWorkbench()
   const { t } = useTranslation('common')
+  const pluginRightPanels = useActiveWorkbenchRightPanels()
   const [harnessSessionPickerTarget, setHarnessSessionPickerTarget] = useState<
     'main' | 'right' | null
   >(null)
@@ -1548,6 +1551,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     ? `calc(${rightPanelWidth} - ${rightPanelTabBarRightOffset} - ${COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE})`
     : '0px'
   const temporaryChatAvailable = !activeLocalHarnessSession
+  const pluginRightPanelKeys = useMemo(
+    () => new Set(pluginRightPanels.map(panel => panel.key)),
+    [pluginRightPanels]
+  )
   const effectiveRightPanelTabs = useMemo<RightWorkspacePanelTab[]>(() => {
     const canBrowseFiles = Boolean(workspaceProject || openFileRequest?.target)
     const availableContextTabs = workItemContextAvailable
@@ -1559,18 +1566,24 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     const permittedTabs = temporaryChatAvailable
       ? workspaceTabs
       : workspaceTabs.filter(tab => !tab.startsWith('chat:'))
+    const registeredTabs = permittedTabs.filter(
+      tab => !tab.startsWith('plugin:') || pluginRightPanelKeys.has(tab.slice('plugin:'.length))
+    )
     if (
       rightPanelView === 'launcher' ||
       (!canBrowseFiles && rightPanelView === 'files') ||
-      (!temporaryChatAvailable && rightPanelView.startsWith('chat:'))
+      (!temporaryChatAvailable && rightPanelView.startsWith('chat:')) ||
+      (rightPanelView.startsWith('plugin:') &&
+        !pluginRightPanelKeys.has(rightPanelView.slice('plugin:'.length)))
     ) {
-      return permittedTabs
+      return registeredTabs
     }
-    return permittedTabs.includes(rightPanelView)
-      ? permittedTabs
-      : [...permittedTabs, rightPanelView]
+    return registeredTabs.includes(rightPanelView)
+      ? registeredTabs
+      : [...registeredTabs, rightPanelView]
   }, [
     openFileRequest?.target,
+    pluginRightPanelKeys,
     rightPanelTabs,
     rightPanelView,
     temporaryChatAvailable,
@@ -1579,7 +1592,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   ])
   const effectiveRightPanelView =
     (!temporaryChatAvailable && rightPanelView.startsWith('chat:')) ||
-    (!workItemContextAvailable && rightPanelView === 'work-item')
+    (!workItemContextAvailable && rightPanelView === 'work-item') ||
+    (rightPanelView.startsWith('plugin:') &&
+      !pluginRightPanelKeys.has(rightPanelView.slice('plugin:'.length)))
       ? 'launcher'
       : rightPanelView
   const temporaryChatExpanded =
@@ -2640,6 +2655,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       setRightPanelView(tab)
     },
     [setRightPanelOpen, setRightPanelTabs, setRightPanelView]
+  )
+  const selectPluginRightPanel = useCallback(
+    (key: string) => openRightPanelTab(`plugin:${key}` as RightWorkspacePluginTab),
+    [openRightPanelTab]
   )
   const currentWorkItemGuideProject =
     boundCloudProject ?? pendingCloudProject ?? defaultProject ?? defaultWorkItemPreviewProject
@@ -4402,6 +4421,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               onSelectPlan={selectPlanView}
               onSelectTab={selectRightPanelTab}
               onCloseTab={closeRightPanelTab}
+              pluginPanels={pluginRightPanels}
+              onSelectPluginPanel={selectPluginRightPanel}
               onHarnessSessionTitleChange={onLocalHarnessSessionTitleChange}
               onHarnessSessionExit={onLocalHarnessSessionExit}
               onRefreshReview={reviewState.reloadDiff ? refreshReview : undefined}

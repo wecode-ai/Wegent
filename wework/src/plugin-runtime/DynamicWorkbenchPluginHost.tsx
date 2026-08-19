@@ -14,7 +14,7 @@ function filterDesiredPlugins(
   localPlugins: InspectedWorkbenchPlugin[],
   desiredNames: ReadonlySet<string> | null
 ) {
-  if (!desiredNames) return localPlugins
+  if (!desiredNames) return localPlugins.filter(plugin => plugin.manifest.required)
   return localPlugins.filter(
     plugin => plugin.manifest.required || desiredNames.has(plugin.manifest.name)
   )
@@ -26,20 +26,34 @@ export function DynamicWorkbenchPluginHost() {
     const pluginApi = createLocalCodexPluginApi()
     let cancelled = false
     let generation = 0
+    let reconcileChain = Promise.resolve()
 
     const load = async () => {
       const currentGeneration = ++generation
-      const [localPlugins, installed] = await Promise.all([
-        listDeviceWorkbenchPlugins(),
-        pluginApi.listInstalledPlugins(),
-      ])
-      const desiredNames = new Set(
-        installed.items
-          .filter(plugin => plugin.spec.enabled && plugin.spec.installState !== 'uninstalled')
-          .map(plugin => plugin.spec.source.pluginKey)
-      )
+      const localPlugins = await listDeviceWorkbenchPlugins()
+      let desiredNames: ReadonlySet<string> | null = null
+      try {
+        const installed = await pluginApi.listInstalledPlugins()
+        desiredNames = new Set(
+          installed.items
+            .filter(plugin => plugin.spec.enabled && plugin.spec.installState !== 'uninstalled')
+            .map(plugin => plugin.spec.source.pluginKey)
+        )
+      } catch (error) {
+        console.warn(
+          '[Wework] Failed to read local plugin state; loading required plugins only:',
+          error
+        )
+      }
       if (!cancelled && currentGeneration === generation) {
-        await loader.reconcile(filterDesiredPlugins(localPlugins, desiredNames))
+        reconcileChain = reconcileChain
+          .catch(() => undefined)
+          .then(async () => {
+            if (!cancelled && currentGeneration === generation) {
+              await loader.reconcile(filterDesiredPlugins(localPlugins, desiredNames))
+            }
+          })
+        await reconcileChain
       }
     }
 
@@ -55,7 +69,7 @@ export function DynamicWorkbenchPluginHost() {
     return () => {
       cancelled = true
       window.removeEventListener(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT, refresh)
-      void loader.dispose()
+      void reconcileChain.finally(() => loader.dispose())
     }
   }, [])
 
