@@ -128,6 +128,7 @@ struct EmbeddedBrowserEntry {
     title: Option<String>,
     url: Option<String>,
     loaded_url: Option<String>,
+    navigation_generation: u64,
     is_loading: bool,
     navigation_error: Option<EmbeddedBrowserNavigationError>,
     opened_at_unix_ms: u128,
@@ -943,8 +944,38 @@ fn set_entry_url_for_native_label(
     .map(|_| ())
 }
 
-fn apply_navigation_failure(entry: &mut EmbeddedBrowserEntry, code: i64, message: String) -> bool {
+fn apply_navigation_requested(entry: &mut EmbeddedBrowserEntry, requested_url: String) -> u64 {
+    entry.navigation_generation = entry.navigation_generation.saturating_add(1);
+    entry.is_loading = true;
+    entry.navigation_error = None;
+    entry.url = Some(requested_url);
+    entry.navigation_generation
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub(crate) fn current_navigation_generation(
+    app: &tauri::AppHandle,
+    native_label: &str,
+) -> Option<u64> {
+    let state = app.state::<EmbeddedBrowserState>();
+    state.webviews.lock().ok().and_then(|webviews| {
+        webviews
+            .values()
+            .find(|entry| entry.native_label == native_label)
+            .map(|entry| entry.navigation_generation)
+    })
+}
+
+fn apply_navigation_failure(
+    entry: &mut EmbeddedBrowserEntry,
+    navigation_generation: u64,
+    code: i64,
+    message: String,
+) -> bool {
     if code == NS_URL_ERROR_CANCELLED {
+        return false;
+    }
+    if navigation_generation != entry.navigation_generation {
         return false;
     }
     entry.is_loading = false;
@@ -990,6 +1021,8 @@ fn apply_navigation_finished(
 pub(crate) fn handle_navigation_failure(
     app: &tauri::AppHandle,
     native_label: &str,
+    navigation_generation: u64,
+    failing_url: Option<String>,
     code: i64,
     message: String,
 ) {
@@ -997,7 +1030,7 @@ pub(crate) fn handle_navigation_failure(
     let owner = current_logical_owner_or(&state, native_label, BROWSER_WEBVIEW_LABEL);
     let mut applied = false;
     let updated = update_entry_for_native_label(&state, native_label, |entry| {
-        applied = apply_navigation_failure(entry, code, message.clone());
+        applied = apply_navigation_failure(entry, navigation_generation, code, message.clone());
     })
     .unwrap_or(false);
     if !updated || !applied {
@@ -1010,6 +1043,8 @@ pub(crate) fn handle_navigation_failure(
         "navigation_failed",
         json!({
             "nativeLabel": native_label,
+            "navigationGeneration": navigation_generation,
+            "failingUrl": failing_url,
             "code": code,
             "error": message,
         }),
@@ -1894,6 +1929,7 @@ pub async fn embedded_browser_open(
         title: initial_title.clone(),
         url: Some(url.clone()),
         loaded_url: None,
+        navigation_generation: 0,
         is_loading: false,
         navigation_error: None,
         opened_at_unix_ms: current_unix_millis(),
@@ -2024,9 +2060,7 @@ pub async fn embedded_browser_open(
                 }
                 let _ =
                     update_entry_for_native_label(&state, &native_label_for_navigation, |entry| {
-                        entry.is_loading = true;
-                        entry.navigation_error = None;
-                        entry.url = Some(requested_url.clone());
+                        apply_navigation_requested(entry, requested_url.clone());
                     });
                 emit_page_state_change(
                     &app_for_navigation,

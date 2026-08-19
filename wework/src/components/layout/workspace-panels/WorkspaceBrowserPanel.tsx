@@ -74,9 +74,11 @@ import {
   computeDeviceViewportPlacement,
   defaultBrowserDeviceToolbarState,
   matchDevicePresetId,
+  resizeDeviceDimensions,
   resolveDevicePreset,
   BROWSER_DEVICE_MIN_HEIGHT,
   BROWSER_DEVICE_MIN_WIDTH,
+  type BrowserDeviceResizeEdge,
   type BrowserDeviceToolbarState,
 } from '@/lib/browser-device-toolbar'
 import {
@@ -792,8 +794,11 @@ export function WorkspaceBrowserTabPanel({
       const placement = deviceState.isEnabled
         ? computeDeviceViewportPlacement(bounds, deviceState, zoomPercentRef.current)
         : null
+      const nativeZoomScale = placement
+        ? placement.scale
+        : zoomPercentToScaleFactor(zoomPercentRef.current)
       if (placement) {
-        deviceFitScaleRef.current = placement.scale
+        deviceFitScaleRef.current = placement.fitScale
         const hostRect = host.getBoundingClientRect()
         const nextVisualRect = {
           x: placement.visualRect.x - hostRect.left,
@@ -816,13 +821,13 @@ export function WorkspaceBrowserTabPanel({
         )
         await setEmbeddedBrowserBounds(placement.webviewBounds, nativeVisible, label)
       } else {
-        deviceFitScaleRef.current = zoomPercentToScaleFactor(zoomPercentRef.current)
+        deviceFitScaleRef.current = 1
         setDeviceVisualRect(current => (current === null ? current : null))
         await setEmbeddedBrowserBounds(bounds, nativeVisible, label)
       }
       // The native webview zoom carries the page zoom; in device mode the
       // placement already folds it into the combined fit scale.
-      await setEmbeddedBrowserZoom(deviceFitScaleRef.current, label).catch(error => {
+      await setEmbeddedBrowserZoom(nativeZoomScale, label).catch(error => {
         console.error('Failed to apply embedded browser zoom:', error)
       })
     },
@@ -2183,12 +2188,13 @@ export function WorkspaceBrowserTabPanel({
       findPageUrlRef.current = activePageUrl
       return
     }
+    if (status !== 'ready') return
     if (findPageUrlRef.current === activePageUrl) return
     findPageUrlRef.current = activePageUrl
     if (!findQuery) return
     const timer = window.setTimeout(() => runFindSearch(findQuery), 150)
     return () => window.clearTimeout(timer)
-  }, [activePageUrl, findOpen, findQuery, runFindSearch])
+  }, [activePageUrl, findOpen, findQuery, runFindSearch, status])
 
   // --- Device toolbar (viewport emulation via bounds + fit scale) ---
 
@@ -2261,7 +2267,7 @@ export function WorkspaceBrowserTabPanel({
 
   const deviceResizeStateRef = useRef<{
     pointerId: number
-    edge: 'left' | 'right' | 'bottom' | 'bottom-left' | 'bottom-right'
+    edge: BrowserDeviceResizeEdge
     startX: number
     startY: number
     startWidth: number
@@ -2269,12 +2275,7 @@ export function WorkspaceBrowserTabPanel({
   } | null>(null)
 
   const handleDeviceResizeStart = useCallback((event: PointerEvent<HTMLDivElement>) => {
-    const edge = event.currentTarget.dataset.edge as
-      | 'left'
-      | 'right'
-      | 'bottom'
-      | 'bottom-left'
-      | 'bottom-right'
+    const edge = event.currentTarget.dataset.edge as BrowserDeviceResizeEdge
     if (!edge) return
     event.preventDefault()
     event.stopPropagation()
@@ -2294,15 +2295,15 @@ export function WorkspaceBrowserTabPanel({
     (event: PointerEvent<HTMLDivElement>) => {
       const drag = deviceResizeStateRef.current
       if (!drag || drag.pointerId !== event.pointerId) return
-      const scale = deviceFitScaleRef.current || 1
-      const deltaX = (event.clientX - drag.startX) / scale
-      const deltaY = (event.clientY - drag.startY) / scale
-      let nextWidth = drag.startWidth
-      let nextHeight = drag.startHeight
-      if (drag.edge.includes('right')) nextWidth = drag.startWidth + deltaX
-      if (drag.edge.includes('left')) nextWidth = drag.startWidth - deltaX
-      if (drag.edge.includes('bottom')) nextHeight = drag.startHeight + deltaY
-      handleDeviceDimensionsChange(nextWidth, nextHeight)
+      const next = resizeDeviceDimensions(
+        drag.edge,
+        drag.startWidth,
+        drag.startHeight,
+        event.clientX - drag.startX,
+        event.clientY - drag.startY,
+        deviceFitScaleRef.current
+      )
+      handleDeviceDimensionsChange(next.width, next.height)
     },
     [handleDeviceDimensionsChange]
   )

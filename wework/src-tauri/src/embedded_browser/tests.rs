@@ -288,6 +288,7 @@ fn closed_agent_tab_routes_fail_without_retargeting() {
                 title: None,
                 url: None,
                 loaded_url: None,
+                navigation_generation: 0,
                 is_loading: false,
                 navigation_error: None,
                 opened_at_unix_ms: 0,
@@ -520,6 +521,7 @@ fn navigation_failure_ends_loading_and_records_the_requested_url() {
         title: None,
         url: Some("http://localhost:3000/".to_string()),
         loaded_url: None,
+        navigation_generation: 1,
         is_loading: true,
         navigation_error: None,
         opened_at_unix_ms: 0,
@@ -530,6 +532,7 @@ fn navigation_failure_ends_loading_and_records_the_requested_url() {
 
     assert!(super::apply_navigation_failure(
         &mut entry,
+        1,
         -1004,
         "Could not connect to the server.".to_string()
     ));
@@ -552,6 +555,7 @@ fn cancelled_navigation_does_not_replace_the_next_loading_state() {
         title: None,
         url: Some("https://example.com/next".to_string()),
         loaded_url: None,
+        navigation_generation: 1,
         is_loading: true,
         navigation_error: None,
         opened_at_unix_ms: 0,
@@ -562,9 +566,42 @@ fn cancelled_navigation_does_not_replace_the_next_loading_state() {
 
     assert!(!super::apply_navigation_failure(
         &mut entry,
+        1,
         -999,
         "cancelled".to_string()
     ));
+    assert!(entry.is_loading);
+    assert_eq!(entry.navigation_error, None);
+}
+
+#[test]
+fn delayed_failure_from_previous_same_url_navigation_is_ignored() {
+    let repeated_url = "https://example.com/repeated".to_string();
+    let mut entry = super::EmbeddedBrowserEntry {
+        native_label: "native-1".to_string(),
+        title: None,
+        url: None,
+        loaded_url: None,
+        navigation_generation: 0,
+        is_loading: false,
+        navigation_error: None,
+        opened_at_unix_ms: 0,
+        bootstrap_finished: true,
+        host_ready: true,
+        phase: super::EmbeddedBrowserPhase::Opening,
+    };
+
+    let previous_generation = super::apply_navigation_requested(&mut entry, repeated_url.clone());
+    let current_generation = super::apply_navigation_requested(&mut entry, repeated_url.clone());
+
+    assert!(!super::apply_navigation_failure(
+        &mut entry,
+        previous_generation,
+        -1004,
+        "Previous request failed late.".to_string()
+    ));
+    assert_eq!(entry.navigation_generation, current_generation);
+    assert_eq!(entry.url, Some(repeated_url));
     assert!(entry.is_loading);
     assert_eq!(entry.navigation_error, None);
 }
@@ -576,6 +613,7 @@ fn stale_finished_navigation_does_not_replace_the_current_failure() {
         title: None,
         url: Some("http://localhost:3000/failing".to_string()),
         loaded_url: Some("https://example.com/previous".to_string()),
+        navigation_generation: 1,
         is_loading: false,
         navigation_error: Some(super::EmbeddedBrowserNavigationError {
             code: -1004,
@@ -608,6 +646,7 @@ fn synthetic_finished_navigation_does_not_clear_the_current_failure() {
         title: None,
         url: Some(failed_url.clone()),
         loaded_url: None,
+        navigation_generation: 1,
         is_loading: false,
         navigation_error: Some(super::EmbeddedBrowserNavigationError {
             code: -1004,
@@ -636,6 +675,7 @@ fn current_finished_navigation_completes_loading() {
         title: None,
         url: Some(current_url.clone()),
         loaded_url: None,
+        navigation_generation: 1,
         is_loading: true,
         navigation_error: None,
         opened_at_unix_ms: 0,
@@ -662,6 +702,7 @@ fn mapped_preview_finished_navigation_completes_the_requested_url() {
         title: None,
         url: Some(display_url.clone()),
         loaded_url: None,
+        navigation_generation: 1,
         is_loading: true,
         navigation_error: None,
         opened_at_unix_ms: 0,

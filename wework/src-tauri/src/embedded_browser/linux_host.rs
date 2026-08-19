@@ -1,10 +1,46 @@
-use std::time::Duration;
+use std::{cell::RefCell, collections::VecDeque, rc::Rc, time::Duration};
 
 use gtk::prelude::*;
 use tauri::{AppHandle, LogicalPosition, LogicalSize, Webview, Wry};
-use webkit2gtk::{glib::error::ErrorDomain, NetworkError, PolicyError, WebViewExt};
+use webkit2gtk::{glib::error::ErrorDomain, LoadEvent, NetworkError, PolicyError, WebViewExt};
 
 const HOST_NAME: &str = "wework-embedded-browser-host";
+const MAX_TRACKED_NAVIGATIONS: usize = 32;
+
+#[derive(Clone)]
+struct TrackedNavigation {
+    generation: u64,
+    url: Option<String>,
+}
+
+fn remove_finished_navigation(
+    navigations: &mut VecDeque<TrackedNavigation>,
+    finished_url: Option<&str>,
+) {
+    let index = finished_url
+        .and_then(|url| {
+            navigations
+                .iter()
+                .position(|navigation| navigation.url.as_deref() == Some(url))
+        })
+        .or_else(|| (!navigations.is_empty()).then_some(0));
+    if let Some(index) = index {
+        navigations.remove(index);
+    }
+}
+
+fn take_failed_navigation_generation(
+    navigations: &mut VecDeque<TrackedNavigation>,
+    failing_url: &str,
+) -> Option<u64> {
+    let index = navigations
+        .iter()
+        .position(|navigation| navigation.url.as_deref() == Some(failing_url))
+        .or_else(|| (!navigations.is_empty()).then_some(0))?;
+    navigations
+        .remove(index)
+        .map(|navigation| navigation.generation)
+}
 
 fn find_host(container: &gtk::Box) -> Option<gtk::Fixed> {
     container.children().into_iter().find_map(|child| {
@@ -135,13 +171,72 @@ pub fn register_navigation_failure_handler(
 ) -> Result<(), String> {
     webview
         .with_webview(move |platform_webview| {
+            let navigations = Rc::new(RefCell::new(VecDeque::<TrackedNavigation>::new()));
+            let load_navigations = Rc::clone(&navigations);
+            let load_app = app.clone();
+            let load_native_label = native_label.clone();
+            platform_webview
+                .inner()
+                .connect_load_changed(move |webview, event| {
+                    let mut navigations = load_navigations.borrow_mut();
+                    match event {
+                        LoadEvent::Started => {
+                            let Some(generation) =
+                                crate::embedded_browser::current_navigation_generation(
+                                    &load_app,
+                                    &load_native_label,
+                                )
+                            else {
+                                return;
+                            };
+                            navigations.push_back(TrackedNavigation {
+                                generation,
+                                url: webview.uri().map(|url| url.to_string()),
+                            });
+                            while navigations.len() > MAX_TRACKED_NAVIGATIONS {
+                                navigations.pop_front();
+                            }
+                        }
+                        LoadEvent::Redirected => {
+                            let Some(generation) =
+                                crate::embedded_browser::current_navigation_generation(
+                                    &load_app,
+                                    &load_native_label,
+                                )
+                            else {
+                                return;
+                            };
+                            if let Some(navigation) = navigations.back_mut() {
+                                navigation.generation = generation;
+                                navigation.url = webview.uri().map(|url| url.to_string());
+                            }
+                        }
+                        LoadEvent::Finished => {
+                            let finished_url = webview.uri().map(|url| url.to_string());
+                            remove_finished_navigation(&mut navigations, finished_url.as_deref());
+                        }
+                        _ => {}
+                    }
+                });
+            let failure_navigations = Rc::clone(&navigations);
             platform_webview.inner().connect_load_failed(
-                move |_webview, _event, _failing_uri, error| {
+                move |_webview, _event, failing_uri, error| {
+                    let failing_url = failing_uri.to_string();
+                    let navigation_generation = take_failed_navigation_generation(
+                        &mut failure_navigations.borrow_mut(),
+                        &failing_url,
+                    )
+                    .or_else(|| {
+                        crate::embedded_browser::current_navigation_generation(&app, &native_label)
+                    });
                     if error.matches(NetworkError::Cancelled)
                         || error.matches(PolicyError::FrameLoadInterruptedByPolicyChange)
                     {
                         return false;
                     }
+                    let Some(navigation_generation) = navigation_generation else {
+                        return false;
+                    };
                     let code = error
                         .kind::<NetworkError>()
                         .map(ErrorDomain::code)
@@ -150,6 +245,8 @@ pub fn register_navigation_failure_handler(
                     crate::embedded_browser::handle_navigation_failure(
                         &app,
                         &native_label,
+                        navigation_generation,
+                        Some(failing_url),
                         i64::from(code),
                         error.message().to_string(),
                     );
@@ -160,4 +257,48 @@ pub fn register_navigation_failure_handler(
         .map_err(|error| {
             format!("Failed to register embedded browser navigation failure handler: {error}")
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tracked(generation: u64, url: &str) -> TrackedNavigation {
+        TrackedNavigation {
+            generation,
+            url: Some(url.to_string()),
+        }
+    }
+
+    #[test]
+    fn repeated_url_failure_uses_the_oldest_navigation_generation() {
+        let mut navigations = VecDeque::from([
+            tracked(1, "https://example.com/repeated"),
+            tracked(2, "https://example.com/repeated"),
+        ]);
+
+        assert_eq!(
+            take_failed_navigation_generation(&mut navigations, "https://example.com/repeated"),
+            Some(1)
+        );
+        assert_eq!(
+            navigations.front().map(|navigation| navigation.generation),
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn stale_finished_event_removes_the_oldest_matching_navigation() {
+        let mut navigations = VecDeque::from([
+            tracked(1, "https://example.com/repeated"),
+            tracked(2, "https://example.com/repeated"),
+        ]);
+
+        remove_finished_navigation(&mut navigations, Some("https://example.com/repeated"));
+
+        assert_eq!(
+            navigations.front().map(|navigation| navigation.generation),
+            Some(2)
+        );
+    }
 }

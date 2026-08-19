@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     ffi::{c_void, CStr},
-    sync::{Mutex, OnceLock},
+    sync::{Arc, Mutex, OnceLock},
 };
 
 use block2::Block;
@@ -27,6 +27,7 @@ type AuthenticationChallengeCompletion = Block<dyn Fn(isize, *mut AnyObject)>;
 #[derive(Clone)]
 struct NavigationDelegateContext {
     app: tauri::AppHandle,
+    navigation_generations: Arc<Mutex<HashMap<usize, u64>>>,
 }
 
 static WEBVIEW_NATIVE_LABEL_KEY: u8 = 0;
@@ -140,7 +141,7 @@ unsafe extern "C-unwind" fn handle_navigation_failure(
     _delegate: &AnyObject,
     _command: Sel,
     webview: *mut AnyObject,
-    _navigation: *mut AnyObject,
+    navigation: *mut AnyObject,
     error: *mut AnyObject,
 ) {
     if webview.is_null() || error.is_null() {
@@ -158,12 +159,149 @@ unsafe extern "C-unwind" fn handle_navigation_failure(
     let error = unsafe { &*error };
     let code: isize = unsafe { msg_send![error, code] };
     let message: Retained<NSString> = unsafe { msg_send![error, localizedDescription] };
+    let navigation_generation = if navigation.is_null() {
+        None
+    } else {
+        context
+            .navigation_generations
+            .lock()
+            .ok()
+            .and_then(|mut generations| generations.remove(&(navigation as usize)))
+    }
+    .or_else(|| {
+        crate::embedded_browser::current_navigation_generation(&context.app, &native_label)
+    });
+    let Some(navigation_generation) = navigation_generation else {
+        return;
+    };
+    let failing_url_key = NSString::from_str("NSErrorFailingURLStringKey");
+    let user_info: Retained<AnyObject> = unsafe { msg_send![error, userInfo] };
+    let failing_url_value: *mut AnyObject =
+        unsafe { msg_send![&*user_info, objectForKey: &*failing_url_key] };
+    let failing_url = (!failing_url_value.is_null())
+        .then(|| unsafe { &*failing_url_value.cast::<NSString>() }.to_string());
     crate::embedded_browser::handle_navigation_failure(
         &context.app,
         &native_label,
+        navigation_generation,
+        failing_url,
         code as i64,
         message.to_string(),
     );
+}
+
+unsafe extern "C-unwind" fn handle_navigation_started(
+    delegate: &AnyObject,
+    _command: Sel,
+    webview: *mut AnyObject,
+    navigation: *mut AnyObject,
+) {
+    if !webview.is_null() && !navigation.is_null() {
+        let native_label = unsafe { native_label_for_webview(webview) };
+        let context = webview_contexts().lock().ok().and_then(|contexts| {
+            native_label
+                .as_ref()
+                .and_then(|label| contexts.get(label).cloned())
+        });
+        if let (Some(native_label), Some(context)) = (native_label, context) {
+            if let Some(generation) =
+                crate::embedded_browser::current_navigation_generation(&context.app, &native_label)
+            {
+                if let Ok(mut generations) = context.navigation_generations.lock() {
+                    generations.insert(navigation as usize, generation);
+                }
+            }
+        }
+    }
+    let selector = sel!(webView:didStartProvisionalNavigation:);
+    if let Some(superclass) = delegate
+        .class()
+        .superclass()
+        .filter(|class| class.instance_method(selector).is_some())
+    {
+        let _: () = unsafe {
+            msg_send![
+                super(delegate, superclass),
+                webView: webview,
+                didStartProvisionalNavigation: navigation
+            ]
+        };
+    }
+}
+
+unsafe extern "C-unwind" fn handle_navigation_redirected(
+    delegate: &AnyObject,
+    _command: Sel,
+    webview: *mut AnyObject,
+    navigation: *mut AnyObject,
+) {
+    if !webview.is_null() && !navigation.is_null() {
+        let native_label = unsafe { native_label_for_webview(webview) };
+        let context = webview_contexts().lock().ok().and_then(|contexts| {
+            native_label
+                .as_ref()
+                .and_then(|label| contexts.get(label).cloned())
+        });
+        if let (Some(native_label), Some(context)) = (native_label, context) {
+            if let Some(generation) =
+                crate::embedded_browser::current_navigation_generation(&context.app, &native_label)
+            {
+                if let Ok(mut generations) = context.navigation_generations.lock() {
+                    generations.insert(navigation as usize, generation);
+                }
+            }
+        }
+    }
+    let selector = sel!(webView:didReceiveServerRedirectForProvisionalNavigation:);
+    if let Some(superclass) = delegate
+        .class()
+        .superclass()
+        .filter(|class| class.instance_method(selector).is_some())
+    {
+        let _: () = unsafe {
+            msg_send![
+                super(delegate, superclass),
+                webView: webview,
+                didReceiveServerRedirectForProvisionalNavigation: navigation
+            ]
+        };
+    }
+}
+
+unsafe extern "C-unwind" fn handle_navigation_finished(
+    delegate: &AnyObject,
+    _command: Sel,
+    webview: *mut AnyObject,
+    navigation: *mut AnyObject,
+) {
+    let selector = sel!(webView:didFinishNavigation:);
+    if let Some(superclass) = delegate
+        .class()
+        .superclass()
+        .filter(|class| class.instance_method(selector).is_some())
+    {
+        let _: () = unsafe {
+            msg_send![
+                super(delegate, superclass),
+                webView: webview,
+                didFinishNavigation: navigation
+            ]
+        };
+    }
+    if webview.is_null() || navigation.is_null() {
+        return;
+    }
+    let native_label = unsafe { native_label_for_webview(webview) };
+    let context = webview_contexts().lock().ok().and_then(|contexts| {
+        native_label
+            .as_ref()
+            .and_then(|label| contexts.get(label).cloned())
+    });
+    if let Some(context) = context {
+        if let Ok(mut generations) = context.navigation_generations.lock() {
+            generations.remove(&(navigation as usize));
+        }
+    }
 }
 
 fn navigation_delegate_class(superclass: &AnyClass) -> Result<&'static AnyClass, String> {
@@ -174,6 +312,10 @@ fn navigation_delegate_class(superclass: &AnyClass) -> Result<&'static AnyClass,
                 sel!(webView:didReceiveAuthenticationChallenge:completionHandler:);
             let fail_selector = sel!(webView:didFailNavigation:withError:);
             let provisional_fail_selector = sel!(webView:didFailProvisionalNavigation:withError:);
+            let start_selector = sel!(webView:didStartProvisionalNavigation:);
+            let redirect_selector =
+                sel!(webView:didReceiveServerRedirectForProvisionalNavigation:);
+            let finish_selector = sel!(webView:didFinishNavigation:);
             let has_challenge_handler = superclass.instance_method(challenge_selector).is_some();
             let has_failure_handler = superclass.instance_method(fail_selector).is_some();
             let has_provisional_failure_handler =
@@ -218,6 +360,18 @@ fn navigation_delegate_class(superclass: &AnyClass) -> Result<&'static AnyClass,
                         handle_navigation_failure as unsafe extern "C-unwind" fn(_, _, _, _, _),
                     );
                 }
+                builder.add_method(
+                    start_selector,
+                    handle_navigation_started as unsafe extern "C-unwind" fn(_, _, _, _),
+                );
+                builder.add_method(
+                    redirect_selector,
+                    handle_navigation_redirected as unsafe extern "C-unwind" fn(_, _, _, _),
+                );
+                builder.add_method(
+                    finish_selector,
+                    handle_navigation_finished as unsafe extern "C-unwind" fn(_, _, _, _),
+                );
             }
             Ok(builder.register())
         })
@@ -309,7 +463,13 @@ pub async fn register_navigation_delegate_extensions(
                     webview_contexts()
                         .lock()
                         .map_err(|_| "Embedded browser TLS context lock poisoned".to_string())?
-                        .insert(native_label, NavigationDelegateContext { app });
+                        .insert(
+                            native_label,
+                            NavigationDelegateContext {
+                                app,
+                                navigation_generations: Arc::new(Mutex::new(HashMap::new())),
+                            },
+                        );
                     let _: () = msg_send![
                         &*webview,
                         setNavigationDelegate: std::ptr::null::<AnyObject>()

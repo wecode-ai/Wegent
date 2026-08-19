@@ -2791,6 +2791,66 @@ describe('WorkspaceBrowserPanel', () => {
     })
   })
 
+  test('re-runs an active find only after navigation completes', async () => {
+    let handlePageStateChange!: (pageState: {
+      label: string
+      nativeLabel: string
+      title: string | null
+      url: string | null
+      isLoading: boolean
+    }) => void
+    embeddedBrowserMocks.listenEmbeddedBrowserPageStateChanges.mockImplementation(handler => {
+      handlePageStateChange = handler
+      return Promise.resolve(() => undefined)
+    })
+    embeddedBrowserMocks.evalEmbeddedBrowserJson.mockResolvedValue({
+      query: 'hello',
+      matches: 1,
+      active: 1,
+    })
+    await openExamplePage()
+
+    fireEvent.click(screen.getByTestId('workspace-browser-more-button'))
+    fireEvent.click(screen.getByTestId('workspace-browser-find-item'))
+    fireEvent.change(screen.getByTestId('workspace-browser-find-input'), {
+      target: { value: 'hello' },
+    })
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.evalEmbeddedBrowserJson).toHaveBeenCalledWith(
+        expect.stringContaining('search("hello")'),
+        'workspace-browser'
+      )
+    })
+    embeddedBrowserMocks.evalEmbeddedBrowserJson.mockClear()
+
+    act(() => {
+      handlePageStateChange({
+        label: 'workspace-browser',
+        nativeLabel: 'workspace-browser-native-1',
+        title: null,
+        url: 'https://example.com/next',
+        isLoading: true,
+      })
+    })
+    expect(embeddedBrowserMocks.evalEmbeddedBrowserJson).not.toHaveBeenCalled()
+
+    act(() => {
+      handlePageStateChange({
+        label: 'workspace-browser',
+        nativeLabel: 'workspace-browser-native-1',
+        title: 'Next',
+        url: 'https://example.com/next',
+        isLoading: false,
+      })
+    })
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.evalEmbeddedBrowserJson).toHaveBeenCalledWith(
+        expect.stringContaining('search("hello")'),
+        'workspace-browser'
+      )
+    })
+  })
+
   test('toggles the device toolbar and emulates the preset viewport', async () => {
     await openExamplePage()
 
