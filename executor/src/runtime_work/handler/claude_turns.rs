@@ -266,8 +266,8 @@ impl RuntimeWorkRpcHandler {
                             );
                         }
                     }
-                    handler.finish_local_task(&local_task_id, execution_id, None, "done");
                     let _ = sink.send(builder.response_completed(content)).await;
+                    handler.finish_local_task(&local_task_id, execution_id, None, "done");
                 }
                 ExecutionOutcome::WaitingForUserInput { stop_reason } => {
                     let blocks = transcript
@@ -282,10 +282,10 @@ impl RuntimeWorkRpcHandler {
                         "done",
                         None,
                     );
-                    handler.finish_local_task(&local_task_id, execution_id, None, "done");
                     let _ = sink
                         .send(builder.response_waiting_for_user_input(stop_reason))
                         .await;
+                    handler.finish_local_task(&local_task_id, execution_id, None, "done");
                 }
                 ExecutionOutcome::Failed { message } => {
                     handler.persist_claude_assistant_message(
@@ -296,8 +296,8 @@ impl RuntimeWorkRpcHandler {
                         "failed",
                         Some(message),
                     );
-                    handler.finish_local_task(&local_task_id, execution_id, None, "failed");
                     let _ = sink.send(builder.error(message, "runtime_error")).await;
+                    handler.finish_local_task(&local_task_id, execution_id, None, "failed");
                 }
                 ExecutionOutcome::Cancelled { message } => {
                     handler.persist_claude_assistant_message(
