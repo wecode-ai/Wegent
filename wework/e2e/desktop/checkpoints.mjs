@@ -8,6 +8,7 @@ export const DESKTOP_CHECKPOINTS = [
   'project-assignment-notification',
   'offline-local-project-space',
   'plugin-auto-update',
+  'project-ai-settings',
   'model-routing',
   'permission-modes',
   'core-task-flow',

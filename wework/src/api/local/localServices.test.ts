@@ -744,6 +744,15 @@ describe('createLocalAppServices', () => {
       runtimeProjectKey: 'product',
       runtimeProjectName: 'Product',
       runtimeWorkspaceRoots: ['/Users/me/project', '/Users/me/api'],
+      projectInstructions: 'Run focused project tests.',
+      projectPlugins: [
+        {
+          id: 'quality-gate@team-market',
+          pluginName: 'quality-gate',
+          marketplaceId: 'team-market',
+          displayName: 'Quality Gate',
+        },
+      ],
       cloudProjectId: 'cloud-project-42',
       taskId: 'task-1',
       runtime: 'codex',
@@ -782,6 +791,15 @@ describe('createLocalAppServices', () => {
       runtimeProjectKey: 'product',
       runtimeProjectName: 'Product',
       runtimeWorkspaceRoots: ['/Users/me/project', '/Users/me/api'],
+      projectInstructions: 'Run focused project tests.',
+      projectPlugins: [
+        {
+          id: 'quality-gate@team-market',
+          pluginName: 'quality-gate',
+          marketplaceId: 'team-market',
+          displayName: 'Quality Gate',
+        },
+      ],
       cloudProjectId: 'cloud-project-42',
       taskId: 'task-1',
       runtime: 'codex',
@@ -808,6 +826,8 @@ describe('createLocalAppServices', () => {
         },
       ],
       executionRequest: expect.objectContaining({
+        system_prompt: 'Run focused project tests.',
+        project_plugin_ids: ['quality-gate@team-market'],
         task_id: 'task-1',
         subtask_id: expect.any(String),
         team_id: 0,
@@ -986,7 +1006,7 @@ describe('createLocalAppServices', () => {
     expect(sendPayload.executionRequest.model_config).toEqual({})
   })
 
-  test('keeps the backend model_config when the claim payload provides it', async () => {
+  test('keeps a prepared model_config and applies the selected runtime options', async () => {
     const request = vi.fn().mockImplementation(async (method: string) => {
       if (method === 'runtime.tasks.create') {
         return {
@@ -1021,6 +1041,11 @@ describe('createLocalAppServices', () => {
         api_key: 'short-lived-token',
         codex_catalog_model_id: 'wework-kimi-k2-7',
         codex_responses_compat_proxy: true,
+        reasoning: { effort: 'high' },
+      },
+      modelOptions: {
+        reasoning: 'low',
+        speed: 'fast',
       },
     })
 
@@ -1032,6 +1057,8 @@ describe('createLocalAppServices', () => {
             base_url: 'https://gateway.example/api/runtime-work/llm-responses-proxy',
             api_key: 'short-lived-token',
             codex_catalog_model_id: 'wework-kimi-k2-7',
+            reasoning: { effort: 'low' },
+            service_tier: 'fast',
           }),
         }),
       })
@@ -3228,6 +3255,15 @@ describe('createLocalAppServices', () => {
           workspacePath: '/Users/me/project',
           label: 'Project',
           workspaceSource: 'local',
+          projectSource: 'local_project',
+          projectAiSettings: {
+            instructions: 'Run focused project tests.',
+            modelSelection: {
+              modelName: 'gpt-5.5',
+              modelType: 'runtime',
+              options: { reasoning: 'high' },
+            },
+          },
           tasks: [
             {
               taskId: 'task-1',
@@ -3271,13 +3307,21 @@ describe('createLocalAppServices', () => {
             id: expect.any(Number),
             name: 'Project',
             kind: 'local',
-            source: 'legacy_root',
+            source: 'local_project',
             stateDeviceId: 'device-uuid',
             roots: [{ kind: 'local', path: '/Users/me/project' }],
             pinned: false,
             pinnedOrder: null,
             active: false,
             appearance: null,
+            aiSettings: {
+              instructions: 'Run focused project tests.',
+              modelSelection: {
+                modelName: 'gpt-5.5',
+                modelType: 'runtime',
+                options: { reasoning: 'high' },
+              },
+            },
           },
           deviceWorkspaces: [
             expect.objectContaining({

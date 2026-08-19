@@ -5734,6 +5734,111 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
+  test('uses local project AI settings for a new conversation', async () => {
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: {
+                id: 7,
+                key: 'project-7',
+                name: 'Wegent',
+                source: 'local_project',
+                aiSettings: {
+                  instructions: 'Run focused project tests.',
+                  modelSelection: {
+                    modelName: 'project-model',
+                    modelType: 'runtime',
+                    options: { reasoning: 'medium' },
+                  },
+                  plugins: [
+                    {
+                      id: 'quality-gate@team-market',
+                      pluginName: 'quality-gate',
+                      marketplaceId: 'team-market',
+                      displayName: 'Quality Gate',
+                    },
+                  ],
+                },
+              },
+              deviceWorkspaces: [
+                {
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-alpha',
+                  mapped: true,
+                  available: true,
+                  tasks: [],
+                },
+              ],
+            },
+          ],
+          totalTasks: 0,
+        })
+      ),
+      createRuntimeTask: vi.fn(async request => ({
+        accepted: true,
+        deviceId: request.deviceId,
+        taskId: request.taskId,
+        workspacePath: request.workspacePath,
+        runtime: 'codex',
+      })),
+      getRuntimeTranscript: vi.fn(async (address: RuntimeTranscriptRequest) => ({
+        taskId: address.taskId,
+        workspacePath: address.workspacePath,
+        runtime: 'codex',
+        messages: [],
+      })),
+    })
+    const services = createWorkbenchServices({
+      modelApi: {
+        listModels: vi.fn().mockResolvedValue({
+          data: [
+            {
+              name: 'project-model',
+              type: 'runtime',
+              provider: 'local',
+              config: {
+                weworkModelKind: 'codex-provider',
+                ui: {
+                  family: 'codex-provider',
+                  reasoningEfforts: ['low', 'medium', 'high'],
+                },
+              },
+            },
+          ],
+        }),
+      },
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    } as Partial<WorkbenchServices>)
+
+    renderWorkbench(<ProjectSendProbe />, services)
+
+    await userEvent.click(await screen.findByText('select project'))
+    await userEvent.click(screen.getByText('set input'))
+    await userEvent.click(screen.getByText('send'))
+
+    await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
+    expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelId: 'project-model',
+        modelType: 'runtime',
+        modelOptions: expect.objectContaining({ reasoning: 'medium' }),
+        projectInstructions: 'Run focused project tests.',
+        projectPlugins: [
+          {
+            id: 'quality-gate@team-market',
+            pluginName: 'quality-gate',
+            marketplaceId: 'team-market',
+            displayName: 'Quality Gate',
+          },
+        ],
+      })
+    )
+  })
+
   test('stores one canonical model identity for selection and execution', async () => {
     const runtimeWorkApi = createRuntimeWorkApiMock({
       createRuntimeTask: vi.fn(async request => ({

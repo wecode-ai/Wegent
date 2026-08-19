@@ -1611,10 +1611,17 @@ fn mcp_thread_config_fields(params: &Value) -> Vec<(&'static str, String)> {
         .get("developerInstructions")
         .and_then(Value::as_str)
         .is_some_and(|instructions| instructions.contains("Wework 项目空间 routing:"));
+    let reasoning_effort = params
+        .get("config")
+        .and_then(|config| config.get("model_reasoning_effort"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
     let Some(config) = params.get("config").and_then(Value::as_object) else {
         return vec![
             ("mcp_config_key_count", "0".to_owned()),
             ("mcp_server_names", String::new()),
+            ("reasoning_effort", reasoning_effort),
             (
                 "space_routing_instructions",
                 space_routing_instructions.to_string(),
@@ -1641,6 +1648,7 @@ fn mcp_thread_config_fields(params: &Value) -> Vec<(&'static str, String)> {
     vec![
         ("mcp_config_key_count", mcp_keys.len().to_string()),
         ("mcp_server_names", server_names),
+        ("reasoning_effort", reasoning_effort),
         (
             "space_routing_instructions",
             space_routing_instructions.to_string(),
@@ -2798,6 +2806,9 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchCo
     launch_config
         .config_overrides
         .extend(codex_model_config_overrides(&request.model_config));
+    launch_config
+        .config_overrides
+        .extend(project_plugin_config_overrides(request));
 
     if let Some(model) = &model {
         launch_config
@@ -3037,6 +3048,31 @@ fn codex_model_config_overrides(model_config: &Value) -> Vec<String> {
         codex_model_context_window(model_config).unwrap_or(DEFAULT_CODEX_MODEL_CONTEXT_WINDOW);
     overrides.push(format!("model_context_window={context_window}"));
     overrides
+}
+
+fn project_plugin_config_overrides(request: &ExecutionRequest) -> Vec<String> {
+    if request.runtime_project_key.is_none() {
+        return Vec::new();
+    }
+    request
+        .extra
+        .get("project_plugin_ids")
+        .or_else(|| request.extra.get("projectPluginIds"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .map(|plugin_id| {
+            format!(
+                "{}=true",
+                toml_key_path(&["plugins", &plugin_id, "enabled"]),
+            )
+        })
+        .collect()
 }
 
 fn codex_request_model(request: &ExecutionRequest) -> Option<String> {
@@ -4754,8 +4790,8 @@ fn codex_collaboration_mode_payload(
         "mode": mode,
         "settings": {
             "model": codex_request_model(request),
-            "reasoningEffort": launch_config.effort,
-            "developerInstructions": Value::Null,
+            "reasoning_effort": launch_config.effort,
+            "developer_instructions": Value::Null,
         }
     }))
 }

@@ -76,6 +76,8 @@ pub(crate) struct RuntimeTaskLink {
     pub ephemeral: bool,
     pub runtime_project_key: Option<String>,
     pub runtime_workspace_roots: Vec<String>,
+    pub project_instructions: String,
+    pub project_plugin_ids: Vec<String>,
     #[serde(skip)]
     pub list_order: Option<usize>,
     #[serde(skip)]
@@ -124,6 +126,8 @@ impl RuntimeTaskLink {
             ephemeral: false,
             runtime_project_key: None,
             runtime_workspace_roots: Vec::new(),
+            project_instructions: String::new(),
+            project_plugin_ids: Vec::new(),
             list_order: None,
             sidebar_order: None,
             group_workspace_path: None,
@@ -163,6 +167,8 @@ impl RuntimeTaskLink {
             ephemeral: false,
             runtime_project_key: None,
             runtime_workspace_roots: Vec::new(),
+            project_instructions: String::new(),
+            project_plugin_ids: Vec::new(),
             list_order: None,
             sidebar_order: None,
             group_workspace_path: None,
@@ -279,6 +285,14 @@ impl RuntimeTaskLink {
                 .as_ref()
                 .map(|link| link.runtime_workspace_roots.clone())
                 .unwrap_or_default(),
+            project_instructions: local_link
+                .as_ref()
+                .map(|link| link.project_instructions.clone())
+                .unwrap_or_default(),
+            project_plugin_ids: local_link
+                .as_ref()
+                .map(|link| link.project_plugin_ids.clone())
+                .unwrap_or_default(),
             list_order: None,
             sidebar_order: None,
             group_workspace_path: None,
@@ -311,6 +325,8 @@ impl RuntimeTaskLink {
             ephemeral: self.ephemeral,
             runtime_project_key: self.runtime_project_key.clone(),
             runtime_workspace_roots: self.runtime_workspace_roots.clone(),
+            project_instructions: self.project_instructions.clone(),
+            project_plugin_ids: self.project_plugin_ids.clone(),
             list_order: self.list_order,
             sidebar_order: self.sidebar_order,
             group_workspace_path: self.group_workspace_path.clone(),
@@ -366,6 +382,8 @@ impl Default for RuntimeTaskLink {
             ephemeral: false,
             runtime_project_key: None,
             runtime_workspace_roots: Vec::new(),
+            project_instructions: String::new(),
+            project_plugin_ids: Vec::new(),
             list_order: None,
             sidebar_order: None,
             group_workspace_path: None,
@@ -395,6 +413,7 @@ pub(crate) struct RuntimeWorkspaceLink {
     pub project_active: bool,
     pub project_appearance: Option<Value>,
     pub default_project_space: Option<Value>,
+    pub project_ai_settings: Option<Value>,
 }
 
 impl Default for RuntimeWorkspaceLink {
@@ -416,6 +435,7 @@ impl Default for RuntimeWorkspaceLink {
             project_active: false,
             project_appearance: None,
             default_project_space: None,
+            project_ai_settings: None,
         }
     }
 }
@@ -522,6 +542,9 @@ pub(crate) fn workspace_response(
                 }
                 if let Some(default_project_space) = workspace.default_project_space.clone() {
                     workspace_json["defaultProjectSpace"] = default_project_space;
+                }
+                if let Some(ai_settings) = workspace.project_ai_settings.clone() {
+                    workspace_json["projectAiSettings"] = ai_settings;
                 }
             }
             if let Some(remote_host_id) = remote_host_id {

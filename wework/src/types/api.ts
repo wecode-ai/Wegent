@@ -385,6 +385,7 @@ export interface RuntimeTaskSummary {
   error?: string | null
   runtimeHandle?: Record<string, unknown> | null
   modelSelection?: ModelSelectionConfig | null
+  projectPluginIds?: string[]
   parent?: Record<string, unknown> | null
   children?: Record<string, unknown>[]
   supervisor?: RuntimeSupervisorState | null
@@ -489,11 +490,25 @@ export interface RuntimeProjectRef {
   active?: boolean
   appearance?: RuntimeProjectAppearance | null
   defaultProjectSpace?: RuntimeProjectSpaceRef | null
+  aiSettings?: RuntimeProjectAiSettings | null
 }
 
 export interface RuntimeProjectSpaceRef {
   projectStore: 'local' | 'backend'
   projectId: string
+}
+
+export interface RuntimeProjectAiSettings {
+  instructions?: string
+  modelSelection?: ModelSelectionConfig | null
+  plugins?: RuntimeProjectPluginRef[]
+}
+
+export interface RuntimeProjectPluginRef {
+  id: string
+  pluginName: string
+  marketplaceId: string
+  displayName: string
 }
 
 export interface RuntimeProjectRoot {
@@ -850,6 +865,7 @@ export interface RuntimeLocalProjectUpsertRequest {
   name: string
   roots: string[]
   defaultProjectSpace?: RuntimeProjectSpaceRef | null
+  aiSettings?: RuntimeProjectAiSettings | null
   runtime: 'codex'
 }
 
@@ -860,6 +876,7 @@ export interface RuntimeLocalProjectUpsertResponse {
   name: string
   roots: string[]
   defaultProjectSpace?: RuntimeProjectSpaceRef | null
+  aiSettings?: RuntimeProjectAiSettings | null
   runtime: 'codex'
   error?: string | null
 }
@@ -1272,6 +1289,8 @@ export interface RuntimeTaskCreateRequest {
   runtimeProjectKey?: string
   runtimeProjectName?: string
   runtimeWorkspaceRoots?: string[]
+  projectInstructions?: string
+  projectPlugins?: RuntimeProjectPluginRef[]
   taskId?: string
   teamId: number
   runtime: RuntimeName

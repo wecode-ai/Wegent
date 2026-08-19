@@ -266,6 +266,20 @@ describe('PluginPickerMenu', () => {
     expect(screen.getByTestId('composer-plugin-picker-item-plugin:superpowers')).toBeInTheDocument()
   })
 
+  test('does not retry an empty plugin inventory while the picker is closed', async () => {
+    vi.useFakeTimers()
+    const onListLocalApps = vi.fn().mockResolvedValue([])
+
+    render(<PluginPickerMenu onListLocalApps={onListLocalApps} />)
+    await act(async () => {
+      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(5_000)
+    })
+
+    expect(onListLocalApps).toHaveBeenCalledTimes(1)
+    vi.useRealTimers()
+  })
+
   test('pulls slash React apps via sync event when the shared store was empty', async () => {
     const onListLocalApps = vi.fn().mockResolvedValue([])
     window.addEventListener(COMPOSER_APPS_REQUEST_SYNC_EVENT, () => {

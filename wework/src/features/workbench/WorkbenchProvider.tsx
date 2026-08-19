@@ -15,7 +15,7 @@ import { updateWorkbenchDebugSnapshot, DEBUG_SNAPSHOT_DEBOUNCE_MS } from '@/lib/
 import { navigateTo, parseRuntimeTaskRoute } from '@/lib/navigation'
 import { localSkillReference } from '@/lib/local-skill-reference'
 import { runtimeContextUsageMetrics } from '@/lib/runtime-context-usage'
-import { normalizeRuntimeWorkspacePath } from '@/lib/runtime-project'
+import { normalizeRuntimeWorkspacePath, runtimeProjectUiId } from '@/lib/runtime-project'
 import { resolveLocalWorkbenchDeviceId } from '@/lib/workbench-device'
 import {
   findActiveRuntimeProjectId,
@@ -842,8 +842,27 @@ export function WorkbenchProvider({
         null
       )
     }
+    const runtimeProject =
+      state.currentProject && state.runtimeWork
+        ? state.runtimeWork.projects.find(
+            item => runtimeProjectUiId(item.project) === state.currentProject?.id
+          )?.project
+        : null
+    const projectModelSelection =
+      runtimeProject?.source === 'local_project'
+        ? (runtimeProject.aiSettings?.modelSelection ?? null)
+        : null
+    if (projectModelSelection) return projectModelSelection
     return getNewChatModelSelection(currentUser) ?? null
-  }, [currentUser, state.currentRuntimeTask, state.runtimeWork])
+  }, [currentUser, state.currentProject, state.currentRuntimeTask, state.runtimeWork])
+  const usesLocalProjectScopedSelection = useMemo(() => {
+    if (state.currentRuntimeTask || !state.currentProject || !state.runtimeWork) return false
+    return state.runtimeWork.projects.some(
+      item =>
+        runtimeProjectUiId(item.project) === state.currentProject?.id &&
+        item.project.source === 'local_project'
+    )
+  }, [state.currentProject, state.currentRuntimeTask, state.runtimeWork])
   const defaultModelSelectionConfig = useCallback(
     (models: UnifiedModel[]) => defaultNewChatModelSelection(models),
     []
@@ -884,7 +903,7 @@ export function WorkbenchProvider({
     api: resolvedServices.modelApi,
     locked: false,
     scopeKey: projectChatScopeKey,
-    persistSelection: !state.currentRuntimeTask,
+    persistSelection: !state.currentRuntimeTask && !usesLocalProjectScopedSelection,
     selectionConfig: modelSelectionConfig,
     defaultSelectionConfig: defaultModelSelectionConfig,
     selectionReady: !state.isBootstrapping,
@@ -1994,6 +2013,32 @@ export function WorkbenchProvider({
   const stablePauseCurrentResponse = useStableEvent(runtimeMessaging.pauseCurrentResponse)
   const stableLoadTurnFileChangesDiff = useStableEvent(runtimeMessaging.loadTurnFileChangesDiff)
   const stableRevertTurnFileChanges = useStableEvent(runtimeMessaging.revertTurnFileChanges)
+  const projectPluginNamesKey = useMemo<string | null>(() => {
+    let names: string[]
+    if (state.currentRuntimeTask) {
+      const task = findRuntimeTask(state.runtimeWork, state.currentRuntimeTask)
+      if (!task?.projectPluginIds) return null
+      names = task.projectPluginIds.map(id => {
+        const separator = id.lastIndexOf('@')
+        return separator > 0 ? id.slice(0, separator) : id
+      })
+    } else {
+      if (!state.currentProject || !state.runtimeWork) return null
+      const runtimeProject = state.runtimeWork.projects.find(
+        item => runtimeProjectUiId(item.project) === state.currentProject?.id
+      )?.project
+      if (runtimeProject?.source !== 'local_project') return null
+      names = (runtimeProject.aiSettings?.plugins ?? []).map(plugin => plugin.pluginName)
+    }
+    return JSON.stringify(Array.from(new Set(names)).sort())
+  }, [state.currentProject, state.currentRuntimeTask, state.runtimeWork])
+  const projectPluginNames = useMemo<Set<string> | null>(
+    () =>
+      projectPluginNamesKey === null
+        ? null
+        : new Set(JSON.parse(projectPluginNamesKey) as string[]),
+    [projectPluginNamesKey]
+  )
 
   const listLocalApps = useCallback(
     async (options?: { allowEmptySnapshot?: boolean }) => {
@@ -2057,7 +2102,10 @@ export function WorkbenchProvider({
         const marketplaceItems = marketplaceCache?.marketplaceItems ?? []
 
         // Paint installed plugins before connector sync / relative-logo detail reads.
-        let apps = await loadComposerPluginApps(composerPluginSources, { marketplaceItems })
+        let apps = await loadComposerPluginApps(composerPluginSources, {
+          marketplaceItems,
+          visiblePluginKeys: projectPluginNames ?? undefined,
+        })
         if (apps.length > 0) {
           publishComposerApps(apps)
         }
@@ -2112,6 +2160,7 @@ export function WorkbenchProvider({
           void loadComposerPluginApps(composerPluginSources, {
             enrichRelativeLogos: true,
             marketplaceItems,
+            visiblePluginKeys: projectPluginNames ?? undefined,
           })
             .then(enriched => {
               if (loadGeneration !== localAppsLoadGenerationRef.current || enriched.length === 0) {
@@ -2173,6 +2222,7 @@ export function WorkbenchProvider({
       cloudConnection.token,
       cloudPluginApi,
       localPluginApi,
+      projectPluginNames,
     ]
   )
 

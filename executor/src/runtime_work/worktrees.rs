@@ -2897,6 +2897,8 @@ mod tests {
             ephemeral: false,
             runtime_project_key: None,
             runtime_workspace_roots: Vec::new(),
+            project_instructions: String::new(),
+            project_plugin_ids: Vec::new(),
             list_order: None,
             sidebar_order: None,
             group_workspace_path: None,

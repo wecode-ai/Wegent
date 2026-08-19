@@ -17,6 +17,8 @@ import type {
   DeviceWorkspacePrepareResponse,
   RuntimeTaskSummary,
   LocalDeviceSkill,
+  ModelSelectionConfig,
+  ModelType,
   RuntimeArchiveProjectConversationsRequest,
   RuntimeArchivedConversationBulkRequest,
   RuntimeArchivedConversationBulkResponse,
@@ -637,11 +639,21 @@ function timestampValue(value: unknown): string | number | null {
   return stringValue(value)
 }
 
-function modelSelectionValue(value: unknown) {
+function modelTypeValue(value: unknown): ModelType | null {
+  const modelType = stringValue(value)
+  return modelType === 'public' ||
+    modelType === 'user' ||
+    modelType === 'group' ||
+    modelType === 'runtime'
+    ? modelType
+    : null
+}
+
+function modelSelectionValue(value: unknown): ModelSelectionConfig | null {
   const selection = recordValue(value)
   const modelName = stringValue(selection.modelName) ?? stringValue(selection.model_name)
   if (!modelName) return null
-  const modelType = stringValue(selection.modelType) ?? stringValue(selection.model_type)
+  const modelType = modelTypeValue(selection.modelType) ?? modelTypeValue(selection.model_type)
   const options = recordValue(selection.options)
   return {
     modelName,
@@ -737,6 +749,13 @@ function normalizeRuntimeTaskSummary(
   const turnStatus = stringValue(taskRecord.turnStatus ?? taskRecord.turn_status)
   const continuableValue = taskRecord.continuable
   const continuable = typeof continuableValue === 'boolean' ? continuableValue : undefined
+  const rawProjectPluginIds = taskRecord.projectPluginIds ?? taskRecord.project_plugin_ids
+  const projectPluginIds = Array.isArray(rawProjectPluginIds)
+    ? rawProjectPluginIds
+        .filter((value: unknown): value is string => typeof value === 'string')
+        .map((value: string) => value.trim())
+        .filter(Boolean)
+    : []
 
   const normalized = {
     ...taskRecord,
@@ -757,6 +776,7 @@ function normalizeRuntimeTaskSummary(
     ...(threadStatus ? { threadStatus } : {}),
     ...(turnStatus ? { turnStatus } : {}),
     ...(continuable !== undefined ? { continuable } : {}),
+    ...(projectPluginIds.length > 0 ? { projectPluginIds } : {}),
   }
 
   return normalized as RuntimeTaskSummary
@@ -1387,6 +1407,8 @@ interface BuildLocalRuntimeExecutionRequestInput {
   runtimeProjectKey?: string
   runtimeProjectName?: string
   runtimeWorkspaceRoots?: string[]
+  projectInstructions?: string
+  projectPlugins?: RuntimeTaskCreateRequest['projectPlugins']
   cloudProjectId?: string
   origin?: RuntimeTaskCreateRequest['origin']
   workspaceSource: LocalRuntimeWorkspaceSource
@@ -1442,21 +1464,19 @@ function buildLocalRuntimeExecutionRequest(
   const claudeRuntime = ['claude', 'claudecode', 'claude_code'].includes(
     input.runtime.trim().toLowerCase()
   )
-  const modelConfig =
+  const baseModelConfig =
     input.modelConfig ??
     (claudeRuntime && !input.modelId
       ? {}
-      : applyRuntimeModelOptions(
-          localRuntimeModelConfig(
-            input.runtime,
-            !claudeRuntime && input.requireLocalCodexCatalog,
-            input.modelId,
-            input.modelType,
-            input.modelOptions,
-            input.cloudModelGateway
-          ),
-          input.modelOptions
+      : localRuntimeModelConfig(
+          input.runtime,
+          !claudeRuntime && input.requireLocalCodexCatalog,
+          input.modelId,
+          input.modelType,
+          input.modelOptions,
+          input.cloudModelGateway
         ))
+  const modelConfig = applyRuntimeModelOptions({ ...baseModelConfig }, input.modelOptions)
   const reasoning = runtimeReasoning(input.modelOptions)
   const collaborationMode = runtimeCollaborationMode(input.modelOptions)
   const skillNames = (input.additionalSkills ?? []).map(skillName).filter(isNonEmptyString)
@@ -1500,6 +1520,8 @@ function buildLocalRuntimeExecutionRequest(
     ...(input.runtimePermissionMode ? { claude_permission_mode: input.runtimePermissionMode } : {}),
     mcp_servers: [],
     model_config: modelConfig,
+    system_prompt: input.projectInstructions?.trim() ?? '',
+    project_plugin_ids: (input.projectPlugins ?? []).map(plugin => plugin.id),
     prompt: messageWithApplicationContext(
       input.message,
       input.additionalContext,
@@ -1718,6 +1740,8 @@ async function createLocalRuntimeTaskPayload(
       runtimeProjectKey: normalizedData.runtimeProjectKey,
       runtimeProjectName: normalizedData.runtimeProjectName,
       runtimeWorkspaceRoots: normalizedData.runtimeWorkspaceRoots,
+      projectInstructions: normalizedData.projectInstructions,
+      projectPlugins: normalizedData.projectPlugins,
       cloudProjectId: normalizedData.cloudProjectId,
       origin: normalizedData.origin,
       workspaceSource: runtimeWorkspace?.workspaceSource ?? 'local_path',
@@ -2064,6 +2088,38 @@ function adaptRuntimeWorkListResponse(
       (defaultProjectStore === 'local' || defaultProjectStore === 'backend') && defaultProjectId
         ? { projectStore: defaultProjectStore, projectId: defaultProjectId }
         : null
+    const rawProjectAiSettings = recordValue(
+      workspace.projectAiSettings ?? workspace.project_ai_settings
+    )
+    const projectInstructions =
+      typeof rawProjectAiSettings.instructions === 'string'
+        ? rawProjectAiSettings.instructions
+        : undefined
+    const projectModelSelection = modelSelectionValue(
+      rawProjectAiSettings.modelSelection ?? rawProjectAiSettings.model_selection
+    )
+    const projectPlugins = Array.isArray(rawProjectAiSettings.plugins)
+      ? rawProjectAiSettings.plugins
+          .map(plugin => {
+            const value = recordValue(plugin)
+            const id = stringValue(value.id)
+            const pluginName = stringValue(value.pluginName ?? value.plugin_name)
+            const marketplaceId = stringValue(value.marketplaceId ?? value.marketplace_id)
+            const displayName = stringValue(value.displayName ?? value.display_name)
+            return id && pluginName && marketplaceId
+              ? { id, pluginName, marketplaceId, displayName: displayName || pluginName }
+              : null
+          })
+          .filter((plugin): plugin is NonNullable<typeof plugin> => plugin !== null)
+      : []
+    const aiSettings =
+      projectInstructions !== undefined || projectModelSelection || projectPlugins.length > 0
+        ? {
+            ...(projectInstructions !== undefined ? { instructions: projectInstructions } : {}),
+            modelSelection: projectModelSelection,
+            ...(projectPlugins.length > 0 ? { plugins: projectPlugins } : {}),
+          }
+        : null
     const projectWork: RuntimeWorkListResponse['projects'][number] = {
       project: {
         key: projectKey,
@@ -2087,6 +2143,7 @@ function adaptRuntimeWorkListResponse(
           | RuntimeWorkListResponse['projects'][number]['project']['appearance']
           | null,
         ...(defaultProjectSpace ? { defaultProjectSpace } : {}),
+        ...(aiSettings ? { aiSettings } : {}),
       },
       deviceWorkspaces: [deviceWorkspace],
       totalTasks: tasks.length,

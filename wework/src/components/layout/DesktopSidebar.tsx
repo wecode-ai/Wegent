@@ -50,6 +50,7 @@ import { ActionMenu } from '@/components/common/ActionMenu'
 import { TextInputDialog } from '@/components/common/TextInputDialog'
 import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
 import { LocalProjectEditDialog } from '@/components/projects/LocalProjectEditDialog'
+import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import { TitlebarTooltip } from '@/components/topnav/TitlebarTooltip'
 import { AppReleaseNotesDialog } from '@/features/app-update/AppReleaseNotesDialog'
 import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
@@ -121,6 +122,7 @@ import type {
   RuntimeIMNotificationSettingsResponse,
   RuntimeProjectWork,
   RuntimeProjectAppearanceRequest,
+  RuntimeProjectAiSettings,
   RuntimeProjectSpaceRef,
   RuntimeProjectPinRequest,
   RuntimeProjectReorderRequest,
@@ -128,6 +130,7 @@ import type {
   RuntimeTaskPinRequest,
   RuntimeTaskAddress,
   RuntimeWorkListResponse,
+  UnifiedModel,
   User as UserProfile,
 } from '@/types/api'
 import type { DockerRemoteDeviceCommandResponse } from '@/types/devices'
@@ -271,6 +274,7 @@ interface DesktopSidebarProps {
     name: string
     roots: string[]
     defaultProjectSpace: RuntimeProjectSpaceRef | null
+    aiSettings: RuntimeProjectAiSettings | null
   }) => Promise<void>
   onRemoveProject: (projectId: number) => Promise<void>
   onReorderRuntimeProjects?: (data: RuntimeProjectReorderRequest) => Promise<void>
@@ -282,6 +286,7 @@ interface DesktopSidebarProps {
   onListDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
   onCreateDeviceDirectory: (deviceId: string, path: string) => Promise<void>
   projectSpaceApis?: ProjectSpaceApi[]
+  models?: UnifiedModel[]
   onOpenSettings: (options?: OpenSettingsOptions) => void
   onLogout: () => void
 }
@@ -3108,6 +3113,7 @@ export function DesktopSidebar({
   onListDeviceDirectories,
   onCreateDeviceDirectory,
   projectSpaceApis,
+  models = [],
   onOpenSettings,
   onLogout,
   collapsed = false,
@@ -3122,6 +3128,7 @@ export function DesktopSidebar({
   onPointerLeave,
   onToggleSidebar,
 }: DesktopSidebarProps) {
+  const localProjectPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
   const appearanceContext = useOptionalAppearance()
   const appearance = appearanceContext?.appearance ?? defaultAppearance
   const background = getWorkbenchBackground(appearance, appearanceContext?.resolvedMode ?? 'light')
@@ -4818,6 +4825,8 @@ export function DesktopSidebar({
             onListDeviceDirectories={onListDeviceDirectories}
             onCreateDeviceDirectory={onCreateDeviceDirectory}
             projectSpaceApis={experimentalFeaturesEnabled ? projectSpaceApis : undefined}
+            models={models}
+            pluginApi={localProjectPluginApi}
             onClose={() => setEditingLocalProject(null)}
             onSave={data =>
               onUpdateLocalRuntimeProject
