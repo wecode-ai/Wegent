@@ -3123,6 +3123,7 @@
     "workflow_mode_manual": "Manage tasks myself",
     "workflow_mode_preset": "Preset workflow",
     "workflow_mode_ai": "AI dynamic assignment",
+    "workflow_ai_require_approval": "Require approval before execution",
     "workflow_ai_use_stages": "Constrain AI assignment with the stage DAG",
     "workflow_ai_coordinator": "Dispatch AI",
     "workflow_select_ai_coordinator": "Select the AI that decomposes and assigns tasks",

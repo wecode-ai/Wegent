@@ -788,11 +788,13 @@ class ProjectWorkflowOrchestrationService:
         issue: LoopItem,
         run: ProjectWorkflowRun,
     ) -> WorkflowPlanView:
+        workflow = self._workflow(issue)
         return WorkflowPlanView(
             run_id=run.id,
             issue_id=issue.id,
             stage_id=self._run_stage(run),
             plan_version=self._plan_version(run),
+            approval_policy=workflow.get("approval_policy", "required"),
             status=run.status,
             summary=run.description or "",
             items=[
@@ -821,6 +823,41 @@ class ProjectWorkflowOrchestrationService:
 
 
 project_workflow_orchestration_service = ProjectWorkflowOrchestrationService()
+
+
+async def approve_and_dispatch_workflow_plan(
+    db: Session,
+    *,
+    issue_id: str,
+    user_id: int,
+) -> WorkflowPlanView:
+    """Materialize one plan and dispatch every robot-assigned task."""
+
+    plan = project_workflow_orchestration_service.approve_plan(
+        db,
+        issue_id=issue_id,
+        user_id=user_id,
+    )
+    user = db.get(User, user_id)
+    if user is None:
+        raise ValueError("Workflow plan user is unavailable")
+
+    from app.services.board_team_execution import dispatch_board_team_assignment
+
+    for plan_item in plan.items:
+        if not plan_item.task_id:
+            continue
+        child = db.get(LoopItem, plan_item.task_id)
+        if child is not None and child.assignee_agent_id:
+            await dispatch_board_team_assignment(db, item=child, user=user)
+    refreshed = project_workflow_orchestration_service.get_plan(
+        db,
+        issue_id=issue_id,
+        user_id=user_id,
+    )
+    if refreshed is None:
+        raise RuntimeError("Approved workflow plan is unavailable")
+    return refreshed
 
 
 async def dispatch_workflow_replan(

@@ -633,6 +633,71 @@ def test_ai_workflow_plan_is_approved_idempotently_and_advances_from_checkpoint(
     assert event.subject_id == issue["id"]
 
 
+def test_ai_workflow_plan_can_materialize_automatically(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+    test_user: User,
+    delivery_project: CloudProject,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.project_automations import project_automation_processor
+
+    monkeypatch.setattr(
+        project_automation_processor,
+        "process",
+        AsyncMock(return_value=1),
+    )
+    delivery_project.metadata_json = {
+        **(delivery_project.metadata_json or {}),
+        "workflow_definition": {
+            "version": 1,
+            "stage_mode": "none",
+            "advancement_policy": "ai",
+            "approval_policy": "automatic",
+            "ai_automation_rule_id": "coordinator-rule",
+            "nodes": [],
+        },
+    }
+    test_db.commit()
+
+    created = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Automatically coordinated issue"},
+    )
+    assert created.status_code == 201
+    issue = created.json()
+
+    submitted = test_client.post(
+        f"/api/v1/loop-items/{issue['id']}/workflow-plan",
+        headers=_auth(test_token),
+        json={
+            "summary": "Execute immediately",
+            "items": [
+                {
+                    "client_key": "implementation-1",
+                    "stage_id": "__issue__",
+                    "title": "Implement the issue",
+                    "assignee_type": "user",
+                    "assignee_id": str(test_user.id),
+                    "assignee_name": test_user.user_name,
+                }
+            ],
+        },
+    )
+
+    assert submitted.status_code == 200
+    plan = submitted.json()
+    assert plan["approval_policy"] == "automatic"
+    assert plan["status"] == "running"
+    assert plan["items"][0]["task_id"]
+    child = test_db.get(LoopItem, plan["items"][0]["task_id"])
+    assert child is not None
+    assert child.parent_id == issue["id"]
+    assert child.assignee_user_id == test_user.id
+
+
 def test_ai_workflow_rejects_active_run_from_another_issue(
     test_client: TestClient,
     test_db: Session,

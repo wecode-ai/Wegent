@@ -3120,6 +3120,7 @@
     "workflow_mode_manual": "自己管理任务",
     "workflow_mode_preset": "预置流程",
     "workflow_mode_ai": "AI 动态分配",
+    "workflow_ai_require_approval": "执行前需要人工确认",
     "workflow_ai_use_stages": "使用阶段 DAG 约束 AI 分配",
     "workflow_ai_coordinator": "调度 AI",
     "workflow_select_ai_coordinator": "选择负责拆解和分配任务的 AI",

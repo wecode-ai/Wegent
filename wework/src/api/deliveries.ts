@@ -299,6 +299,7 @@ export type WorkflowNodeStatus =
   | 'failed'
 export type IssueAdvancementPolicy = 'manual' | 'ai'
 export type IssueStageMode = 'none' | 'dag'
+export type WorkflowApprovalPolicy = 'required' | 'automatic'
 
 export interface WorkflowNodeDefinition {
   id: string
@@ -319,7 +320,7 @@ export interface ProjectWorkflowDefinition {
   advancement_policy?: IssueAdvancementPolicy
   coordinator_model?: string | null
   coordinator_prompt?: string
-  approval_policy?: 'required'
+  approval_policy?: WorkflowApprovalPolicy
   ai_automation_rule_id?: string | null
   nodes: WorkflowNodeDefinition[]
 }
@@ -347,7 +348,7 @@ export interface IssueWorkflowInstance {
   advancement_policy?: IssueAdvancementPolicy
   coordinator_model?: string | null
   coordinator_prompt?: string
-  approval_policy?: 'required'
+  approval_policy?: WorkflowApprovalPolicy
   ai_automation_rule_id?: string | null
   orchestration_status?:
     | 'idle'
@@ -384,6 +385,7 @@ export interface WorkflowPlan {
   issue_id: string
   stage_id: string
   plan_version: number
+  approval_policy: WorkflowApprovalPolicy
   status: NonNullable<IssueWorkflowInstance['orchestration_status']>
   summary: string
   items: WorkflowPlanItem[]

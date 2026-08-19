@@ -26,9 +26,11 @@ flowchart LR
     ISSUE_SCOPE --> AI[内置调度员读取范围、提示词与候选能力]
     READY_SCOPE --> AI
     AI --> PLAN[(Workflow Plan Items)]
-    PLAN --> APPROVAL{用户确认}
+    PLAN --> POLICY{执行前需要人工确认}
+    POLICY -->|是| APPROVAL{用户确认}
     APPROVAL -->|退回| RUN
     APPROVAL -->|确认| MATERIALIZE[幂等物化具体任务]
+    POLICY -->|否| MATERIALIZE
     ISSUE --> ENTRY{收集箱拖到待开始}
     ENTRY -->|无阶段 + 手动推进| TASK_COMPOSER
     ENTRY -->|预置流程| START_READY[启动 ready 自动化阶段]
@@ -86,12 +88,12 @@ sequenceDiagram
     participant O as Orchestration 服务
     participant A as 内置 AI 调度员
     participant P as 方案存储
-    participant V as 用户确认
+    participant V as 方案确认
     participant B as Task Binding
     participant E as Execution 服务
     participant R as Runtime scheduler
     participant M as project-space capability
-    participant V as Delivery 服务
+    participant L as Delivery 服务
     participant H as 人工验收服务
     participant D as Issue 动态
     participant I as Issue 投影
@@ -130,11 +132,15 @@ sequenceDiagram
     else AI 调度
         O->>A: 提供 Issue、提示词、当前规划范围与候选能力
         A->>P: 提交结构化任务方案
-        P-->>V: 展示可编辑方案
-        alt 用户退回或重新规划
-            V->>O: 创建下一方案版本
-        else 用户确认
-            V->>B: 按计划项幂等创建并分配具体任务
+        alt 执行前需要人工确认
+            P-->>V: 展示方案
+            alt 用户退回或重新规划
+                V->>O: 创建下一方案版本
+            else 用户确认
+                V->>B: 按计划项幂等创建并分配具体任务
+            end
+        else 自动执行
+            P->>B: 按计划项幂等创建并分配具体任务
         end
     end
     opt 阶段配置自动化动作
@@ -159,8 +165,8 @@ sequenceDiagram
         O->>A: 创建下一阶段 workflow run
     end
     opt 人工阶段声明必要交付物
-        U->>V: 按节点要求上传并提交交付物
-        V->>O: 将 delivered Delivery 绑定到 workflow node
+        U->>L: 按节点要求上传并提交交付物
+        L->>O: 将 delivered Delivery 绑定到 workflow node
     end
     O->>O: 聚合阶段内任务和必要交付物
     alt 人工阶段满足验收前置条件
@@ -210,7 +216,7 @@ sequenceDiagram
 - 编排编辑是本地草稿，只有用户触发清晰可见的“保存编排”主操作后才写入项目；保存成功必须使用服务端返回的定义与项目版本更新页面真值，离开后重新进入必须从项目持久化定义完整回填。
 - AI 调度必须通过创建、指派和启动具体任务推进 Issue。有阶段时每个 AI 创建的任务必须归入一个阶段，并遵守该阶段依赖；无阶段时 AI 可根据 Issue 和提示词自由拆解。
 - AI 调度员是内置云端角色；项目只保存一个云端模型标识，不创建用户可见的调度员实体，也不保存模型密钥。
-- AI 只能提交结构化方案草案。确认前不得创建、指派或启动具体任务；确认后必须通过标准 LoopItem 创建与指派路径物化。
+- AI 只能提交结构化方案。`approval_policy=required` 时必须停在 `awaiting_approval`，确认前不得创建、指派或启动具体任务；`approval_policy=automatic` 时方案校验成功后立即物化。两种策略都必须通过同一套标准 LoopItem 创建与指派路径，且默认值为 `required`。
 - 执行者发现需要返工时必须提交结构化 outcome；`needs_rework` 只废弃当前活动方案，并在有 DAG 时创建同阶段新版本、无 DAG 时创建 Issue 级新版本，不修改历史任务，也不在阶段 DAG 中创建回边。
 - 重复上报同一个任务的同一返工结果必须幂等，不得重复创建方案版本或重复启动调度 AI。
 - 每个方案版本不可变；计划项使用稳定幂等键。重复确认、服务重启或事件重放只能补齐缺失任务，不能重复创建。

@@ -402,6 +402,9 @@ class ProjectAutomationExecution:
         )
         coordinated = bool(workflow and workflow.get("advancement_policy") == "ai")
         uses_stage_dag = bool(workflow and workflow.get("stage_mode") == "dag")
+        requires_approval = bool(
+            workflow and workflow.get("approval_policy", "required") == "required"
+        )
         coordination_instruction = (
             (
                 "请读取当前 ready 阶段、候选执行者能力和上游上下文，"
@@ -426,7 +429,11 @@ class ProjectAutomationExecution:
             ),
             (
                 coordination_instruction
-                + "等待用户确认，不要直接创建、分派或执行任务。"
+                + (
+                    "提交后等待用户确认，不要直接创建、分派或执行任务。"
+                    if requires_approval
+                    else "提交后系统会自动创建、分派并启动任务，不要绕过方案接口直接创建任务。"
+                )
                 if coordinated
                 else "请读取候选执行者并按调度要求完成分派，不要执行任务。"
             ),

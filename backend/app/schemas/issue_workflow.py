@@ -82,7 +82,7 @@ class ProjectWorkflowDefinition(BaseModel):
     advancement_policy: Literal["manual", "ai"] = "manual"
     coordinator_model: str | None = Field(default=None, max_length=255)
     coordinator_prompt: str = Field(default="", max_length=4000)
-    approval_policy: Literal["required"] = "required"
+    approval_policy: Literal["required", "automatic"] = "required"
     ai_automation_rule_id: str | None = Field(default=None, max_length=64)
     nodes: list[WorkflowNodeDefinition] = Field(default_factory=list, max_length=50)
 
@@ -167,7 +167,7 @@ class IssueWorkflowInstance(BaseModel):
     advancement_policy: Literal["manual", "ai"] = "manual"
     coordinator_model: str | None = Field(default=None, max_length=255)
     coordinator_prompt: str = Field(default="", max_length=4000)
-    approval_policy: Literal["required"] = "required"
+    approval_policy: Literal["required", "automatic"] = "required"
     ai_automation_rule_id: str | None = Field(default=None, max_length=64)
     orchestration_status: WorkflowOrchestrationStatus = "idle"
     active_run_id: str | None = Field(default=None, max_length=64)
@@ -283,6 +283,7 @@ class WorkflowPlanView(BaseModel):
     issue_id: str
     stage_id: str
     plan_version: int
+    approval_policy: Literal["required", "automatic"]
     status: WorkflowOrchestrationStatus
     summary: str
     items: list[WorkflowPlanItemView]

@@ -548,19 +548,30 @@ def get_loop_item_workflow_plan(
     "/loop-items/{item_id}/workflow-plan",
     response_model=WorkflowPlanView,
 )
-def submit_loop_item_workflow_plan(
+async def submit_loop_item_workflow_plan(
     item_id: str,
     values: WorkflowPlanSubmit,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_flexible_for_executor),
 ) -> WorkflowPlanView:
     try:
-        return project_workflow_orchestration_service.submit_plan(
+        plan = project_workflow_orchestration_service.submit_plan(
             db,
             issue_id=item_id,
             user_id=current_user.id,
             values=values,
         )
+        if plan.approval_policy == "automatic":
+            from app.services.project_workflow_orchestration import (
+                approve_and_dispatch_workflow_plan,
+            )
+
+            return await approve_and_dispatch_workflow_plan(
+                db,
+                issue_id=item_id,
+                user_id=current_user.id,
+            )
+        return plan
     except ValueError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
 
@@ -575,23 +586,15 @@ async def approve_loop_item_workflow_plan(
     current_user: User = Depends(get_current_user),
 ) -> WorkflowPlanView:
     try:
-        plan = project_workflow_orchestration_service.approve_plan(
-            db, issue_id=item_id, user_id=current_user.id
+        from app.services.project_workflow_orchestration import (
+            approve_and_dispatch_workflow_plan,
         )
-        from app.services.board_team_execution import dispatch_board_team_assignment
 
-        for plan_item in plan.items:
-            if not plan_item.task_id:
-                continue
-            child = db.get(LoopItem, plan_item.task_id)
-            if child is not None and child.assignee_agent_id:
-                await dispatch_board_team_assignment(db, item=child, user=current_user)
-        refreshed = project_workflow_orchestration_service.get_plan(
-            db, issue_id=item_id, user_id=current_user.id
+        return await approve_and_dispatch_workflow_plan(
+            db,
+            issue_id=item_id,
+            user_id=current_user.id,
         )
-        if refreshed is None:
-            raise RuntimeError("Approved workflow plan is unavailable")
-        return refreshed
     except ValueError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
 

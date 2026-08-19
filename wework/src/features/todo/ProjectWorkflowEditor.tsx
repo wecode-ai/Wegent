@@ -762,12 +762,12 @@ export function ProjectWorkflowEditor({
                 const next: ProjectWorkflowDefinition = {
                   ...value,
                   advancement_policy: 'ai',
-                  approval_policy: 'required',
+                  approval_policy: value.approval_policy ?? 'required',
                   coordinator_prompt:
                     value.coordinator_prompt?.trim() ||
                     t(
                       'todo.workflow_default_coordinator_prompt',
-                      '读取当前 Issue 和候选执行者能力。启用阶段 DAG 时只规划当前 ready 阶段，否则围绕整个 Issue 自由拆解。将工作拆成可独立验收的任务，为每个任务推荐执行者并说明理由，然后提交方案等待确认。'
+                      '读取当前 Issue 和候选执行者能力。启用阶段 DAG 时只规划当前 ready 阶段，否则围绕整个 Issue 自由拆解。将工作拆成可独立验收的任务，为每个任务推荐执行者并说明理由，然后提交方案，由系统按确认策略继续。'
                     ),
                   ai_automation_rule_id: value.ai_automation_rule_id ?? coordinatorRule?.id ?? null,
                   coordinator_model: value.coordinator_model ?? coordinatorRule?.model ?? null,
@@ -861,18 +861,34 @@ export function ProjectWorkflowEditor({
               className="mt-1.5 min-h-20 w-full resize-y rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-text-muted"
             />
           </label>
-          <label className="flex items-center gap-2 text-xs text-text-secondary lg:col-span-2">
-            <input
-              type="checkbox"
-              data-testid="project-workflow-ai-use-stages"
-              checked={currentStageMode === 'dag'}
-              onChange={event =>
-                updateDefinition({ stage_mode: event.target.checked ? 'dag' : 'none' })
-              }
-              className="h-4 w-4 rounded border-border"
-            />
-            {t('todo.workflow_ai_use_stages', '使用阶段 DAG 约束 AI 分配')}
-          </label>
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-2 lg:col-span-2">
+            <label className="flex items-center gap-2 text-xs text-text-secondary">
+              <input
+                type="checkbox"
+                data-testid="project-workflow-ai-require-approval"
+                checked={(value.approval_policy ?? 'required') === 'required'}
+                onChange={event =>
+                  updateDefinition({
+                    approval_policy: event.target.checked ? 'required' : 'automatic',
+                  })
+                }
+                className="h-4 w-4 rounded border-border"
+              />
+              {t('todo.workflow_ai_require_approval', '执行前需要人工确认')}
+            </label>
+            <label className="flex items-center gap-2 text-xs text-text-secondary">
+              <input
+                type="checkbox"
+                data-testid="project-workflow-ai-use-stages"
+                checked={currentStageMode === 'dag'}
+                onChange={event =>
+                  updateDefinition({ stage_mode: event.target.checked ? 'dag' : 'none' })
+                }
+                className="h-4 w-4 rounded border-border"
+              />
+              {t('todo.workflow_ai_use_stages', '使用阶段 DAG 约束 AI 分配')}
+            </label>
+          </div>
         </div>
       ) : null}
 

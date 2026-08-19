@@ -363,7 +363,7 @@ describe('ProjectWorkflowEditor', () => {
     })
   })
 
-  test('presents AI advancement as one cloud model with approval before execution', () => {
+  test('presents AI advancement as one cloud model with optional approval', () => {
     const onChange = vi.fn()
     const onRequestConfigureAiCoordinator = vi.fn()
     render(
@@ -387,8 +387,17 @@ describe('ProjectWorkflowEditor', () => {
     expect(
       screen.getByText('调度模型只生成方案；没有机器人时，任务会分配给项目成员。')
     ).toBeInTheDocument()
+    expect(screen.getByTestId('project-workflow-ai-require-approval')).toBeChecked()
     expect(screen.getByTestId('project-workflow-ai-use-stages')).not.toBeChecked()
     expect(screen.queryByText('选择 AI 自动化')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('project-workflow-ai-require-approval'))
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        approval_policy: 'automatic',
+        nodes: [],
+      })
+    )
 
     fireEvent.click(screen.getByTestId('project-workflow-ai-use-stages'))
     expect(onChange).toHaveBeenCalledWith(

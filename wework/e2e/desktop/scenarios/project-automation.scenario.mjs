@@ -540,9 +540,24 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
     await control.command('waitFor', '[data-testid="project-workflow-ai-use-stages"]', {
       timeoutMs: uiTimeoutMs,
     })
+    await control.command('waitFor', '[data-testid="project-workflow-ai-require-approval"]', {
+      timeoutMs: uiTimeoutMs,
+    })
     assert.equal(
       await control.command('getElementCount', '[data-testid="project-workflow-empty-add"]'),
       0
+    )
+    await control.command('click', '[data-testid="project-workflow-ai-require-approval"]')
+    await control.command('clickWhenEnabled', '[data-testid="project-workflow-save"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    await waitForValue(
+      () => cloudRequest(`/api/v1/cloud-projects/${projectId}`),
+      project =>
+        project.workflow_definition?.advancement_policy === 'ai' &&
+        project.workflow_definition?.approval_policy === 'automatic',
+      'The optional AI approval policy was not persisted',
+      uiTimeoutMs
     )
     await control.command('click', '[data-testid="project-workflow-ai-use-stages"]')
     await control.command('waitFor', '[data-testid="project-workflow-empty-add"]', {
@@ -2409,17 +2424,17 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       await control.command('click', '[data-testid="cloud-project-automation-view"]', {
         visible: true,
       })
-      await control.command('waitFor', '[data-testid="project-workflow-stage-stage-1"]', {
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command(
-        'scrollIntoView',
-        '[data-testid="project-workflow-stage-stage-1"]'
-      )
-      await control.command('waitFor', '[data-testid="project-workflow-stage-stage-1"]', {
+      await control.command('waitFor', '[data-testid="project-workflow-dag"]', {
         timeoutMs: uiTimeoutMs,
         visible: true,
       })
+      const restoredWorkflowSnapshot = JSON.parse(
+        await control.command('snapshot', '[data-testid="project-workflow-dag"]')
+      )
+      assert.ok(
+        restoredWorkflowSnapshot.testIds.includes('project-workflow-stage-stage-1'),
+        'The saved workflow stage was not restored after reopening Automation'
+      )
     },
 
     diagnostics() {

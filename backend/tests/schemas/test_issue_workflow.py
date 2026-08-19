@@ -140,3 +140,11 @@ def test_workflow_definition_requires_a_rule_for_ai_advancement() -> None:
         ProjectWorkflowDefinition.model_validate(
             {"version": 1, "advancement_policy": "ai"}
         )
+
+
+def test_workflow_definition_supports_optional_plan_approval() -> None:
+    default_definition = ProjectWorkflowDefinition()
+    automatic_definition = ProjectWorkflowDefinition(approval_policy="automatic")
+
+    assert default_definition.approval_policy == "required"
+    assert automatic_definition.approval_policy == "automatic"

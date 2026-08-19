@@ -167,6 +167,59 @@ def test_project_details_expose_assignable_members(
     ]
 
 
+async def test_submit_workflow_plan_applies_automatic_approval_policy(
+    test_db: Session, test_user: User, monkeypatch
+) -> None:
+    project = _project(test_db, test_user, provider="local")
+    item = LoopItem(
+        id=f"{project.project_key}-99",
+        cloud_project_id=str(project.id),
+        sequence_number=99,
+        title="Automatically coordinated issue",
+        status="pending",
+        priority="none",
+        created_by_user_id=test_user.id,
+        metadata_json={
+            "workflow": {
+                "version": 1,
+                "definition_version": 1,
+                "stage_mode": "none",
+                "advancement_policy": "ai",
+                "approval_policy": "automatic",
+                "ai_automation_rule_id": "coordinator-rule",
+                "orchestration_status": "planning",
+                "nodes": [],
+            }
+        },
+    )
+    test_db.add(item)
+    test_db.commit()
+    monkeypatch.setattr(wework_space, "SessionLocal", lambda: _SessionContext(test_db))
+
+    plan = await wework_space.submit_workflow_plan(
+        _token(test_user),
+        {
+            "summary": "Execute immediately",
+            "items": [
+                {
+                    "client_key": "implementation-1",
+                    "stage_id": "__issue__",
+                    "title": "Implement the issue",
+                    "assignee_type": "user",
+                    "assignee_id": str(test_user.id),
+                    "assignee_name": test_user.user_name,
+                }
+            ],
+        },
+        str(project.id),
+        item.id,
+    )
+
+    assert plan["approval_policy"] == "automatic"
+    assert plan["status"] == "running"
+    assert plan["items"][0]["task_id"]
+
+
 async def test_external_project_tools_route_list_read_and_assignment_to_provider(
     test_db: Session, test_user: User, monkeypatch
 ) -> None:

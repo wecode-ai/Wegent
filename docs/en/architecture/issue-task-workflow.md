@@ -26,9 +26,11 @@ flowchart LR
     ISSUE_SCOPE --> AI[Built-in coordinator reads the scope, prompt, and candidate capabilities]
     READY_SCOPE --> AI
     AI --> PLAN[(Workflow Plan Items)]
-    PLAN --> APPROVAL{User approval}
+    PLAN --> POLICY{Require approval before execution}
+    POLICY -->|yes| APPROVAL{User approval}
     APPROVAL -->|reject| RUN
     APPROVAL -->|approve| MATERIALIZE[Idempotently materialize concrete tasks]
+    POLICY -->|no| MATERIALIZE
     ISSUE --> ENTRY{Drag inbox to pending}
     ENTRY -->|no stages + manual advancement| TASK_COMPOSER
     ENTRY -->|preset workflow| START_READY[Start ready automated stages]
@@ -86,12 +88,12 @@ sequenceDiagram
     participant O as Orchestration service
     participant A as Built-in AI coordinator
     participant P as Plan store
-    participant V as User approval
+    participant V as Plan approval
     participant B as Task binding
     participant E as Execution service
     participant R as Runtime scheduler
     participant M as project-space capability
-    participant V as Delivery service
+    participant L as Delivery service
     participant H as Human review service
     participant D as Issue activity
     participant I as Issue projection
@@ -130,11 +132,15 @@ sequenceDiagram
     else AI coordinated
         O->>A: Provide Issue, prompt, current planning scope, and candidate capabilities
         A->>P: Submit a structured task plan
-        P-->>V: Present an editable plan
-        alt User rejects or replans
-            V->>O: Create the next plan version
-        else User approves
-            V->>B: Idempotently create and assign concrete tasks
+        alt Approval is required before execution
+            P-->>V: Present the plan
+            alt User rejects or replans
+                V->>O: Create the next plan version
+            else User approves
+                V->>B: Idempotently create and assign concrete tasks
+            end
+        else Automatic execution
+            P->>B: Idempotently create and assign concrete tasks
         end
     end
     opt Stage has an automation action
@@ -159,8 +165,8 @@ sequenceDiagram
         O->>A: Create the next stage workflow run
     end
     opt Human stage declares required deliverables
-        U->>V: Upload and submit deliverables for the node
-        V->>O: Bind delivered Delivery to the workflow node
+        U->>L: Upload and submit deliverables for the node
+        L->>O: Bind delivered Delivery to the workflow node
     end
     O->>O: Aggregate stage tasks and required deliverables
     alt Human-stage review prerequisites are satisfied
@@ -210,7 +216,7 @@ Invariants:
 - Orchestration editing is a local draft and is written to the project only after the user invokes a clearly visible Save orchestration primary action. A successful save must adopt the definition and project version returned by the service, and re-entering the page must fully restore the persisted project definition.
 - AI advances an Issue only by creating, assigning, and starting concrete tasks. With stages, every AI-created task belongs to a stage and follows its dependencies. Without stages, AI may decompose work from the Issue and prompt.
 - The AI coordinator is a built-in cloud role. A project stores one cloud model identifier, not a user-visible coordinator entity or model credentials.
-- AI may only submit a structured plan draft. It cannot create, assign, or start concrete tasks before approval; approved plans materialize through the standard LoopItem creation and assignment paths.
+- AI may only submit a structured plan. With `approval_policy=required`, the run must stop at `awaiting_approval`, and no concrete task may be created, assigned, or started before approval. With `approval_policy=automatic`, a valid plan is materialized immediately. Both policies use the same standard LoopItem creation and assignment path, and the default is `required`.
 - When an assignee finds that rework is required, it must submit a structured outcome. `needs_rework` supersedes only the active plan and creates a new version for the same stage when a DAG exists or for the Issue-level scope without a DAG; it does not rewrite historical tasks or add a back edge to the stage DAG.
 - Repeated submission of the same rework outcome for one task must be idempotent and must not create duplicate plan versions or dispatch the coordinator twice.
 - Every plan version is immutable and every plan item has a stable idempotency key. Repeated approval, service restart, or event replay may only fill missing tasks and must not create duplicates.

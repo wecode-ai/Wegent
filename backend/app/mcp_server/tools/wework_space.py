@@ -474,13 +474,13 @@ def get_assignment_candidates(
 
 
 @mcp_tool(server="wework_space")
-def submit_workflow_plan(
+async def submit_workflow_plan(
     token_info: MCPAuthInfo,
     plan: dict[str, Any],
     space_id: str = "",
     item_id: str = "",
 ) -> dict[str, Any]:
-    """Submit an AI orchestration draft for user approval without creating tasks."""
+    """Submit an AI orchestration plan and apply its configured approval policy."""
 
     with SessionLocal() as db:
         project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
@@ -495,6 +495,16 @@ def submit_workflow_plan(
             user_id=token_info.user_id,
             values=WorkflowPlanSubmit.model_validate(plan),
         )
+        if view.approval_policy == "automatic":
+            from app.services.project_workflow_orchestration import (
+                approve_and_dispatch_workflow_plan,
+            )
+
+            view = await approve_and_dispatch_workflow_plan(
+                db,
+                issue_id=issue_id,
+                user_id=token_info.user_id,
+            )
         return view.model_dump(mode="json")
 
 

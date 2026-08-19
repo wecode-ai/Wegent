@@ -168,6 +168,34 @@ def test_manager_prompt_prefers_run_instruction_override():
     assert "Default instruction." not in prompt
 
 
+def test_ai_coordinator_prompt_respects_automatic_approval_policy():
+    prompt = ProjectAutomationExecution._managed_prompt(
+        MagicMock(),
+        owner=SimpleNamespace(id=7),
+        project=SimpleNamespace(id="project-1"),
+        rule=SimpleNamespace(description=""),
+        run=SimpleNamespace(
+            id="run-1",
+            task_id="issue-1",
+            metadata_json={
+                "event": {
+                    "payload": {
+                        "workflow": {
+                            "advancement_policy": "ai",
+                            "stage_mode": "none",
+                            "approval_policy": "automatic",
+                        }
+                    }
+                }
+            },
+        ),
+        context={"trigger": "workflow"},
+    )
+
+    assert "系统会自动创建、分派并启动任务" in prompt
+    assert "提交后等待用户确认" not in prompt
+
+
 def test_manager_activity_binding_persists_execution_identity(monkeypatch):
     activity = SimpleNamespace(
         metadata_json={
