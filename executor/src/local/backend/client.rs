@@ -109,7 +109,7 @@ where
 
     pub async fn emit_liveness_heartbeat(&self) -> Result<(), String> {
         self.transport
-            .emit(HEARTBEAT_EVENT, self.liveness_heartbeat_payload())
+            .emit(HEARTBEAT_EVENT, self.heartbeat_payload())
             .await
     }
 
@@ -167,23 +167,6 @@ where
             "executor_version": self.config.executor_version,
             "capabilities": self.capability_reporter.build_report(),
             "runtime_features": runtime_features(),
-            "runtime_auth_files": build_runtime_auth_file_report(&self.config.runtime_auth_home),
-            "runtime_transfer_host": self.config.runtime_transfer_host,
-        })
-    }
-
-    fn liveness_heartbeat_payload(&self) -> Value {
-        let runtime_capacity = self
-            .runtime_capacity
-            .lock()
-            .expect("runtime capacity lock should not be poisoned")
-            .clone();
-        json!({
-            "device_id": self.config.device_id,
-            "runtime_instance_id": self.config.runtime_instance_id,
-            "running_task_ids": self.running_tasks.running_task_ids(),
-            "runtime_capacity": runtime_capacity,
-            "executor_version": self.config.executor_version,
             "runtime_auth_files": build_runtime_auth_file_report(&self.config.runtime_auth_home),
             "runtime_transfer_host": self.config.runtime_transfer_host,
         })
