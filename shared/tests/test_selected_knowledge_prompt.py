@@ -2,44 +2,51 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from shared.models.knowledge import SelectedKnowledgeRef, SelectedKnowledgeResource
+from shared.models.knowledge import (
+    SelectedKnowledgeContext,
+    SelectedKnowledgeRef,
+    SelectedKnowledgeResource,
+)
 from shared.prompts import render_selected_knowledge_prompt
 
 
 def test_render_selected_knowledge_prompt_preserves_provider_scopes() -> None:
     prompt = render_selected_knowledge_prompt(
-        [
-            SelectedKnowledgeRef(
-                provider="wegent",
-                knowledge_base_id="12",
-                knowledge_base_name="产品知识",
-            ),
-            SelectedKnowledgeRef(
-                provider="dingtalk",
-                knowledge_base_id="workspace-1",
-                knowledge_base_name="团队空间",
-                resources=(
-                    SelectedKnowledgeResource(
-                        scope_type="folder",
-                        resource_id="folder-1",
-                        resource_name="评审资料",
+        SelectedKnowledgeContext(
+            refs=(
+                SelectedKnowledgeRef(
+                    provider="wegent",
+                    knowledge_base_id="12",
+                    knowledge_base_name="产品知识",
+                ),
+                SelectedKnowledgeRef(
+                    provider="dingtalk",
+                    knowledge_base_id="workspace-1",
+                    knowledge_base_name="团队空间",
+                    resources=(
+                        SelectedKnowledgeResource(
+                            scope_type="folder",
+                            resource_id="folder-1",
+                            resource_name="评审资料",
+                        ),
+                    ),
+                ),
+                SelectedKnowledgeRef(
+                    provider="demo",
+                    knowledge_base_id="ap-1",
+                    knowledge_base_name="AP & Docs",
+                    resources=(
+                        SelectedKnowledgeResource(
+                            scope_type="document",
+                            resource_id="doc-1",
+                            resource_name='A < B "说明"',
+                            resource_url="https://example.test/doc?id=1&view=full",
+                        ),
                     ),
                 ),
             ),
-            SelectedKnowledgeRef(
-                provider="demo",
-                knowledge_base_id="ap-1",
-                knowledge_base_name="AP & Docs",
-                resources=(
-                    SelectedKnowledgeResource(
-                        scope_type="document",
-                        resource_id="doc-1",
-                        resource_name='A < B "说明"',
-                        resource_url="https://example.test/doc?id=1&view=full",
-                    ),
-                ),
-            ),
-        ]
+            evidence_required=True,
+        )
     )
 
     assert prompt.count("<source ") == 3
@@ -52,9 +59,42 @@ def test_render_selected_knowledge_prompt_preserves_provider_scopes() -> None:
     assert "id=1&amp;view=full" in prompt
     assert "cross-provider query" in prompt
     assert "resource_id as provider-native tool arguments" in prompt
-    assert "explain why before broadening" in prompt
+    assert "must obtain evidence" in prompt
+    assert "must not use general knowledge" in prompt
+    assert "permission denial" in prompt
+    assert "tool failure" in prompt
+    assert (
+        "must not claim that the knowledge sources contain no relevant content"
+        in prompt
+    )
+
+
+def test_render_selected_knowledge_prompt_allows_declared_fallback_for_task_refs() -> (
+    None
+):
+    prompt = render_selected_knowledge_prompt(
+        SelectedKnowledgeContext(
+            refs=(
+                SelectedKnowledgeRef(
+                    provider="wegent",
+                    knowledge_base_id="12",
+                    knowledge_base_name="产品知识",
+                ),
+            ),
+            evidence_required=False,
+        )
+    )
+
+    assert "inherited task sources" in prompt
+    assert "may use general knowledge" in prompt
+    assert "state that the knowledge sources had no relevant result" in prompt
 
 
 def test_render_selected_knowledge_prompt_ignores_invalid_refs() -> None:
-    assert render_selected_knowledge_prompt([]) == ""
-    assert render_selected_knowledge_prompt([{"provider": "demo"}]) == ""
+    assert render_selected_knowledge_prompt(SelectedKnowledgeContext()) == ""
+    assert (
+        render_selected_knowledge_prompt(
+            SelectedKnowledgeContext(refs=({"provider": "demo"},))  # type: ignore[arg-type]
+        )
+        == ""
+    )

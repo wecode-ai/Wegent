@@ -11,6 +11,7 @@ import yaml
 from fastapi import HTTPException
 
 from app.models.knowledge import KnowledgeDocument, KnowledgeFolder
+from app.models.subtask_context import ContextStatus, ContextType
 from app.services.chat.selected_knowledge import (
     PROVIDER_SKILLS,
     activate_provider_native_knowledge,
@@ -134,6 +135,147 @@ def test_apply_selected_knowledge_context_is_idempotent(
 
     assert request.preload_skills == ["demo-knowledge"]
     assert request.user_selected_skills == ["demo-knowledge"]
+
+
+def test_current_external_selection_replaces_all_task_knowledge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(PROVIDER_SKILLS, "demo", "demo-knowledge")
+    task = SimpleNamespace(
+        json={"spec": {"knowledgeBaseRefs": [{"id": 12, "name": "默认知识"}]}}
+    )
+    request = ExecutionRequest(
+        knowledge_base_ids=[12],
+        external_knowledge_refs=[
+            {
+                "provider": "dingtalk",
+                "mode": "explicit",
+                "id": "task-space",
+                "name": "Task 空间",
+            },
+            {
+                "provider": "demo",
+                "mode": "explicit",
+                "id": "selected-space",
+                "name": "本轮空间",
+            },
+        ],
+    )
+    current_contexts = [
+        SimpleNamespace(
+            context_type=ContextType.EXTERNAL_KNOWLEDGE.value,
+            status=ContextStatus.READY.value,
+            name="本轮空间",
+            type_data={
+                "provider": "demo",
+                "mode": "explicit",
+                "id": "selected-space",
+            },
+        )
+    ]
+
+    skills = apply_selected_knowledge_context(
+        MagicMock(), request, task, current_contexts=current_contexts
+    )
+
+    assert skills == ["demo-knowledge"]
+    assert 'provider="demo"' in request.selected_knowledge_prompt
+    assert 'knowledge_base_id="selected-space"' in request.selected_knowledge_prompt
+    assert 'knowledge_base_name="本轮空间"' in request.selected_knowledge_prompt
+    assert 'knowledge_base_id="12"' not in request.selected_knowledge_prompt
+    assert 'knowledge_base_id="task-space"' not in request.selected_knowledge_prompt
+    assert "explicitly selected by the user" in request.selected_knowledge_prompt
+
+
+def test_current_wegent_document_selection_replaces_all_task_refs() -> None:
+    task = SimpleNamespace(
+        json={"spec": {"knowledgeBaseRefs": [{"id": 12, "name": "默认知识"}]}}
+    )
+    request = ExecutionRequest(
+        knowledge_base_ids=[12, 13],
+        is_user_selected_kb=True,
+        external_knowledge_refs=[
+            {
+                "provider": "dingtalk",
+                "mode": "explicit",
+                "id": "task-space",
+                "name": "Task 空间",
+            }
+        ],
+    )
+    current_contexts = [
+        SimpleNamespace(
+            context_type=ContextType.SELECTED_DOCUMENTS.value,
+            status=ContextStatus.READY.value,
+            name="Selected Documents (1 files)",
+            type_data={"knowledge_base_id": 13, "document_ids": [9]},
+        )
+    ]
+
+    skills = apply_selected_knowledge_context(
+        _KnowledgeMetadataDB(), request, task, current_contexts=current_contexts
+    )
+
+    assert skills == ["wegent-knowledge"]
+    assert 'provider="wegent"' in request.selected_knowledge_prompt
+    assert 'knowledge_base_id="13"' in request.selected_knowledge_prompt
+    assert 'resource_id="9"' in request.selected_knowledge_prompt
+    assert 'knowledge_base_id="12"' not in request.selected_knowledge_prompt
+    assert 'knowledge_base_id="task-space"' not in request.selected_knowledge_prompt
+
+
+def test_current_wegent_subscope_does_not_restore_task_whole_scope() -> None:
+    task = SimpleNamespace(
+        json={"spec": {"knowledgeBaseRefs": [{"id": 12, "name": "默认整库"}]}}
+    )
+    request = ExecutionRequest(knowledge_base_ids=[12], is_user_selected_kb=True)
+    current_contexts = [
+        SimpleNamespace(
+            context_type=ContextType.KNOWLEDGE_BASE.value,
+            status=ContextStatus.READY.value,
+            name="本轮子范围",
+            type_data={
+                "knowledge_id": 12,
+                "scope_restricted": True,
+                "document_ids": [9],
+            },
+        )
+    ]
+
+    apply_selected_knowledge_context(
+        _KnowledgeMetadataDB(), request, task, current_contexts=current_contexts
+    )
+
+    assert 'knowledge_base_name="本轮子范围"' in request.selected_knowledge_prompt
+    assert 'scope_type="document"' in request.selected_knowledge_prompt
+    assert 'resource_id="9"' in request.selected_knowledge_prompt
+
+
+def test_explicit_empty_wegent_scope_keeps_legacy_path() -> None:
+    task = SimpleNamespace(
+        json={"spec": {"knowledgeBaseRefs": [{"id": 12, "name": "默认整库"}]}}
+    )
+    request = ExecutionRequest(knowledge_base_ids=[12], is_user_selected_kb=True)
+    current_contexts = [
+        SimpleNamespace(
+            context_type=ContextType.KNOWLEDGE_BASE.value,
+            status=ContextStatus.READY.value,
+            name="空范围",
+            type_data={
+                "knowledge_id": 12,
+                "scope_restricted": True,
+                "document_ids": [],
+            },
+        )
+    ]
+
+    skills = apply_selected_knowledge_context(
+        MagicMock(), request, task, current_contexts=current_contexts
+    )
+
+    assert skills == []
+    assert request.selected_knowledge_prompt == ""
+    assert request.provider_native_knowledge is False
 
 
 def test_build_selected_knowledge_refs_groups_resources_by_knowledge_base(
@@ -373,6 +515,21 @@ def test_provider_skill_frontmatter_matches_runtime_mcp_resolution(
     activate_provider_native_knowledge(request, [skill_name])
 
     assert request.provider_native_knowledge is True
+
+
+def test_wegent_skill_does_not_broaden_selected_knowledge_queries() -> None:
+    skill_path = (
+        Path(__file__).resolve().parents[3]
+        / "init_data"
+        / "skills"
+        / "wegent-knowledge"
+        / "SKILL.md"
+    )
+    skill = skill_path.read_text(encoding="utf-8")
+
+    assert "First, list available knowledge bases" not in skill
+    assert 'use `scope="all"` directly' not in skill
+    assert "Never broaden the request to the whole knowledge base" in skill
 
 
 def test_activate_provider_native_knowledge_requires_skill_mcp() -> None:

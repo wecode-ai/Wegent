@@ -3,15 +3,17 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
 from app.core.constants import CLIENT_ORIGIN_FRONTEND
+from app.models.subtask_context import ContextStatus, ContextType
 from shared.models import ExecutionRequest
 from shared.models.knowledge import (
     ChatContextsResult,
     KnowledgeBaseScope,
+    KnowledgeBaseToolAccessMode,
     KnowledgeBaseToolsResult,
 )
 
@@ -190,6 +192,7 @@ class TestBuildExecutionRequestUserSubtaskId:
             user_id,
             *,
             preload_selected_kb_skill=True,
+            current_contexts=None,
         ):
             return request
 
@@ -473,6 +476,7 @@ class TestBuildExecutionRequestUserSubtaskId:
                         123,
                         7,
                         preload_selected_kb_skill=True,
+                        current_contexts=ANY,
                     )
 
     async def test_artifact_task_disables_selected_kb_skill_preload(self):
@@ -527,6 +531,7 @@ class TestBuildExecutionRequestUserSubtaskId:
             123,
             7,
             preload_selected_kb_skill=False,
+            current_contexts=ANY,
         )
 
     async def test_does_not_process_contexts_when_user_subtask_id_is_none(self):
@@ -653,6 +658,23 @@ class TestBuildExecutionRequestUserSubtaskId:
         )
 
         mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.order_by.return_value.all.return_value = [
+            SimpleNamespace(
+                context_type=ContextType.KNOWLEDGE_BASE.value,
+                status=ContextStatus.READY.value,
+                type_data={"knowledge_id": 1408},
+            ),
+            SimpleNamespace(
+                context_type=ContextType.EXTERNAL_KNOWLEDGE.value,
+                status=ContextStatus.READY.value,
+                type_data={
+                    "provider": "demo",
+                    "mode": "explicit",
+                    "id": "demo-1",
+                    "name": "示例规范",
+                },
+            ),
+        ]
         request_from_builder = ExecutionRequest(
             task_id=1273,
             subtask_id=1709,
@@ -701,6 +723,7 @@ class TestBuildExecutionRequestUserSubtaskId:
             user_id,
             *,
             preload_selected_kb_skill=True,
+            current_contexts=None,
         ):
             request.knowledge_base_ids = [1408]
             request.is_user_selected_kb = True
@@ -809,6 +832,7 @@ class TestBuildExecutionRequestUserSubtaskId:
             user_id,
             *,
             preload_selected_kb_skill=True,
+            current_contexts=None,
         ):
             request.knowledge_base_ids = [1408]
             request.is_user_selected_kb = True
@@ -856,9 +880,148 @@ class TestBuildExecutionRequestUserSubtaskId:
         assert result is resolved_request
         assert result.provider_native_knowledge is True
 
+    @pytest.mark.parametrize(
+        ("access_mode", "scopes"),
+        [
+            (KnowledgeBaseToolAccessMode.RESTRICTED_SEARCH_ONLY, []),
+            (
+                KnowledgeBaseToolAccessMode.FULL,
+                [
+                    KnowledgeBaseScope(
+                        knowledge_base_id=12,
+                        scope_restricted=True,
+                        document_ids=[],
+                    )
+                ],
+            ),
+        ],
+    )
+    async def test_non_native_kb_does_not_activate_provider_tools(
+        self,
+        access_mode,
+        scopes,
+    ):
+        from app.services.chat import selected_knowledge
+        from app.services.chat.trigger import unified as trigger_unified
+
+        mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.order_by.return_value.all.return_value = (
+            []
+        )
+        request_from_builder = ExecutionRequest(task_id=1, subtask_id=2)
+        mock_builder = MagicMock()
+        mock_builder.build.return_value = request_from_builder
+
+        async def _process_restricted_contexts(
+            db,
+            request,
+            user_subtask_id,
+            user_id,
+            *,
+            preload_selected_kb_skill=True,
+            current_contexts=None,
+        ):
+            request.knowledge_base_ids = [12]
+            request.kb_tool_access_mode = access_mode
+            request.knowledge_base_scopes = scopes
+            return request
+
+        apply_context = MagicMock(return_value=["wegent-knowledge"])
+        with patch.object(trigger_unified, "SessionLocal", return_value=mock_db):
+            with patch(
+                "app.services.execution.TaskRequestBuilder", return_value=mock_builder
+            ):
+                with patch.object(
+                    trigger_unified,
+                    "_process_contexts",
+                    new=AsyncMock(side_effect=_process_restricted_contexts),
+                ):
+                    with patch.object(
+                        selected_knowledge,
+                        "apply_selected_knowledge_context",
+                        apply_context,
+                    ):
+                        result = await trigger_unified.build_execution_request(
+                            task=MagicMock(id=1, json={}),
+                            assistant_subtask=MagicMock(id=2),
+                            team=MagicMock(),
+                            user=MagicMock(id=7),
+                            message="hello",
+                            user_subtask_id=1,
+                        )
+
+        apply_context.assert_not_called()
+        assert result.provider_native_knowledge is False
+
 
 @pytest.mark.unit
 class TestProcessContextsAttachments:
+    @pytest.mark.parametrize(
+        ("access_mode", "scopes"),
+        [
+            (KnowledgeBaseToolAccessMode.RESTRICTED_SEARCH_ONLY, []),
+            (
+                KnowledgeBaseToolAccessMode.FULL,
+                [
+                    KnowledgeBaseScope(
+                        knowledge_base_id=12,
+                        scope_restricted=True,
+                        document_ids=[],
+                    )
+                ],
+            ),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_non_native_kb_keeps_legacy_prompt_and_metadata(
+        self,
+        access_mode,
+        scopes,
+    ):
+        from app.services.chat.trigger import unified as trigger_unified
+
+        request = ExecutionRequest(
+            task_id=1,
+            subtask_id=2,
+            prompt="hello",
+            system_prompt="base",
+            model_config={},
+            bot=[{"shell_type": "ClaudeCode"}],
+        )
+        ctx = ChatContextsResult(
+            final_message="processed",
+            has_table_context=False,
+            table_contexts=[],
+            kb=KnowledgeBaseToolsResult(
+                extra_tools=[],
+                enhanced_system_prompt="base + restricted guidance",
+                kb_meta_prompt="restricted metadata",
+                knowledge_base_ids=[12],
+                knowledge_base_scopes=scopes,
+                kb_tool_access_mode=access_mode,
+            ),
+        )
+
+        with patch(
+            "app.services.chat.preprocessing.prepare_contexts_for_chat",
+            new=AsyncMock(return_value=ctx),
+        ):
+            with patch(
+                "app.services.chat.trigger.unified.context_service.get_attachments_by_subtask",
+                return_value=[],
+            ):
+                result = await trigger_unified._process_contexts(
+                    db=MagicMock(),
+                    request=request,
+                    user_subtask_id=1,
+                    user_id=7,
+                )
+
+        assert result.system_prompt == "base + restricted guidance"
+        assert result.kb_meta_prompt == "restricted metadata"
+        assert result.kb_tool_access_mode == access_mode
+        assert result.preload_skills == []
+
     @pytest.mark.asyncio
     async def test_populates_request_attachments_from_subtask_contexts(self):
         """Executor request should carry attachment metadata for local downloads."""

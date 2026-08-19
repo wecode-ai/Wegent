@@ -6,19 +6,23 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any, NoReturn
 
 from fastapi import HTTPException
 
 from app.models.knowledge import KnowledgeDocument, KnowledgeFolder
+from app.models.subtask_context import ContextStatus, ContextType
 from app.services.execution.skill_mcp import extract_skill_mcp_servers
 from app.services.mcp_provider_registry import get_mcp_service_by_skill_name
 from shared.models.knowledge import (
     KnowledgeScopeType,
+    SelectedKnowledgeContext,
     SelectedKnowledgeRef,
     SelectedKnowledgeResource,
 )
 from shared.prompts import render_selected_knowledge_prompt
+from shared.selected_knowledge import resolve_selected_knowledge_context
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -43,10 +47,22 @@ def apply_selected_knowledge_context(
     db: "Session",
     request: "ExecutionRequest",
     task: "TaskResource",
+    *,
+    current_contexts: Iterable[Any] = (),
 ) -> list[str]:
     """Attach the selected-knowledge prompt and deterministic provider skills."""
-    refs = build_selected_knowledge_refs(db, request, task)
-    if not refs:
+    current_contexts = tuple(current_contexts)
+    if _has_explicit_empty_wegent_scope(current_contexts):
+        request.selected_knowledge_prompt = ""
+        request.provider_native_knowledge = False
+        return []
+    context = build_selected_knowledge_context(
+        db,
+        request,
+        task,
+        current_contexts=current_contexts,
+    )
+    if not context.refs:
         request.selected_knowledge_prompt = ""
         request.provider_native_knowledge = False
         return []
@@ -57,14 +73,14 @@ def apply_selected_knowledge_context(
         request.provider_native_knowledge = False
         return []
 
-    request.selected_knowledge_prompt = render_selected_knowledge_prompt(refs)
+    request.selected_knowledge_prompt = render_selected_knowledge_prompt(context)
     request.provider_native_knowledge = False
 
     request.preload_skills = list(request.preload_skills or [])
     request.user_selected_skills = list(request.user_selected_skills or [])
 
     selected_skills: list[str] = []
-    for ref in refs:
+    for ref in context.refs:
         skill_name = PROVIDER_SKILLS.get(ref.provider)
         if not skill_name or skill_name in selected_skills:
             continue
@@ -159,42 +175,119 @@ def build_selected_knowledge_refs(
 ) -> list[SelectedKnowledgeRef]:
     """Normalize internal task scopes and external refs without querying content."""
     refs = [*_build_wegent_refs(db, request, task), *_build_external_refs(request)]
-    return _merge_selected_knowledge_refs(refs)
+    context = resolve_selected_knowledge_context(task_refs=refs, explicit_refs=())
+    return list(context.refs)
 
 
-def _merge_selected_knowledge_refs(
-    refs: list[SelectedKnowledgeRef],
+def build_selected_knowledge_context(
+    db: "Session",
+    request: "ExecutionRequest",
+    task: "TaskResource",
+    *,
+    current_contexts: Iterable[Any] = (),
+) -> SelectedKnowledgeContext:
+    """Resolve explicit message contexts over inherited task knowledge refs."""
+    task_refs = build_selected_knowledge_refs(db, request, task)
+    explicit_refs = _build_current_explicit_refs(
+        db,
+        current_contexts=current_contexts,
+    )
+    return resolve_selected_knowledge_context(task_refs, explicit_refs)
+
+
+def _has_explicit_empty_wegent_scope(contexts: Iterable[Any]) -> bool:
+    for context in contexts:
+        if (
+            getattr(context, "status", None) != ContextStatus.READY.value
+            or getattr(context, "context_type", None)
+            != ContextType.KNOWLEDGE_BASE.value
+        ):
+            continue
+        data = getattr(context, "type_data", None)
+        if not isinstance(data, dict) or not data.get("scope_restricted"):
+            continue
+        if not _int_values(data.get("folder_ids")) and not _int_values(
+            data.get("document_ids")
+        ):
+            return True
+    return False
+
+
+def _build_current_explicit_refs(
+    db: "Session",
+    *,
+    current_contexts: Iterable[Any],
 ) -> list[SelectedKnowledgeRef]:
-    """Merge selections into one runtime ref per provider knowledge base."""
-    merged: dict[tuple[str, str], SelectedKnowledgeRef] = {}
-    for ref in refs:
-        key = (ref.provider, ref.knowledge_base_id)
-        current = merged.get(key)
-        if current is None:
-            merged[key] = ref
-            continue
-        if not current.resources:
-            continue
-        if not ref.resources:
-            merged[key] = ref
-            continue
+    ready_contexts = [
+        context
+        for context in current_contexts
+        if getattr(context, "status", None) == ContextStatus.READY.value
+    ]
+    wegent_refs = _build_current_wegent_refs(db, ready_contexts)
+    external_values = [
+        {
+            **context.type_data,
+            "name": context.type_data.get("name") or getattr(context, "name", None),
+        }
+        for context in ready_contexts
+        if getattr(context, "context_type", None)
+        == ContextType.EXTERNAL_KNOWLEDGE.value
+        and isinstance(getattr(context, "type_data", None), dict)
+    ]
+    return [*wegent_refs, *_build_external_refs_from_values(external_values)]
 
-        resources = [*current.resources, *ref.resources]
-        seen_resources: set[tuple[str, str | None]] = set()
-        unique_resources: list[SelectedKnowledgeResource] = []
-        for resource in resources:
-            resource_key = (resource.scope_type, resource.resource_id)
-            if resource_key in seen_resources:
-                continue
-            seen_resources.add(resource_key)
-            unique_resources.append(resource)
-        merged[key] = SelectedKnowledgeRef(
-            provider=current.provider,
-            knowledge_base_id=current.knowledge_base_id,
-            knowledge_base_name=current.knowledge_base_name,
-            resources=tuple(unique_resources),
+
+def _build_current_wegent_refs(
+    db: "Session",
+    contexts: Iterable[Any],
+) -> list[SelectedKnowledgeRef]:
+    refs: list[SelectedKnowledgeRef] = []
+    for context in contexts:
+        context_type = str(getattr(context, "context_type", None) or "")
+        if context_type not in {
+            ContextType.KNOWLEDGE_BASE.value,
+            ContextType.SELECTED_DOCUMENTS.value,
+        }:
+            continue
+        data = getattr(context, "type_data", None)
+        if not isinstance(data, dict):
+            continue
+        kb_id = _current_wegent_kb_id(context_type, data)
+        if kb_id is None:
+            continue
+        folder_ids = (
+            _int_values(data.get("folder_ids"))
+            if context_type == ContextType.KNOWLEDGE_BASE.value
+            else []
         )
-    return list(merged.values())
+        document_ids = _int_values(data.get("document_ids"))
+        scope_restricted = bool(data.get("scope_restricted")) or bool(
+            folder_ids or document_ids
+        )
+        resources = (
+            _load_wegent_resources(db, kb_id, folder_ids, document_ids)
+            if scope_restricted
+            else ()
+        )
+        refs.append(
+            SelectedKnowledgeRef(
+                provider="wegent",
+                knowledge_base_id=str(kb_id),
+                knowledge_base_name=str(getattr(context, "name", None) or kb_id),
+                resources=resources,
+            )
+        )
+    return refs
+
+
+def _current_wegent_kb_id(context_type: str, data: dict[str, Any]) -> int | None:
+    key = (
+        "knowledge_id"
+        if context_type == ContextType.KNOWLEDGE_BASE.value
+        else "knowledge_base_id"
+    )
+    values = _int_values([data.get(key)])
+    return values[0] if values else None
 
 
 def _build_wegent_refs(
@@ -206,8 +299,9 @@ def _build_wegent_refs(
     if not selected_ids:
         return []
 
-    task_json = task.json if isinstance(task.json, dict) else {}
-    spec = task_json.get("spec") if isinstance(task_json.get("spec"), dict) else {}
+    task_json: dict[str, Any] = task.json if isinstance(task.json, dict) else {}
+    raw_spec = task_json.get("spec")
+    spec: dict[str, Any] = raw_spec if isinstance(raw_spec, dict) else {}
     kb_refs = {
         int(ref["id"]): ref
         for ref in spec.get("knowledgeBaseRefs") or []
@@ -240,42 +334,7 @@ def _build_wegent_refs(
             )
             continue
 
-        folders = {
-            folder.id: folder.name
-            for folder in db.query(KnowledgeFolder)
-            .filter(
-                KnowledgeFolder.kind_id == kb_id,
-                KnowledgeFolder.id.in_(folder_ids),
-            )
-            .all()
-        }
-        documents = {
-            document.id: document.name
-            for document in db.query(KnowledgeDocument)
-            .filter(
-                KnowledgeDocument.kind_id == kb_id,
-                KnowledgeDocument.id.in_(document_ids),
-            )
-            .all()
-        }
-        resources = tuple(
-            [
-                SelectedKnowledgeResource(
-                    scope_type=KnowledgeScopeType.FOLDER,
-                    resource_id=str(folder_id),
-                    resource_name=folders.get(folder_id, str(folder_id)),
-                )
-                for folder_id in folder_ids
-            ]
-            + [
-                SelectedKnowledgeResource(
-                    scope_type=KnowledgeScopeType.DOCUMENT,
-                    resource_id=str(document_id),
-                    resource_name=documents.get(document_id, str(document_id)),
-                )
-                for document_id in document_ids
-            ]
-        )
+        resources = _load_wegent_resources(db, kb_id, folder_ids, document_ids)
         result.append(
             SelectedKnowledgeRef(
                 provider="wegent",
@@ -285,6 +344,58 @@ def _build_wegent_refs(
             )
         )
     return result
+
+
+def _load_wegent_resources(
+    db: "Session",
+    kb_id: int,
+    folder_ids: list[int],
+    document_ids: list[int],
+) -> tuple[SelectedKnowledgeResource, ...]:
+    folders = (
+        {
+            folder.id: folder.name
+            for folder in db.query(KnowledgeFolder)
+            .filter(
+                KnowledgeFolder.kind_id == kb_id,
+                KnowledgeFolder.id.in_(folder_ids),
+            )
+            .all()
+        }
+        if folder_ids
+        else {}
+    )
+    documents = (
+        {
+            document.id: document.name
+            for document in db.query(KnowledgeDocument)
+            .filter(
+                KnowledgeDocument.kind_id == kb_id,
+                KnowledgeDocument.id.in_(document_ids),
+            )
+            .all()
+        }
+        if document_ids
+        else {}
+    )
+    return tuple(
+        [
+            SelectedKnowledgeResource(
+                scope_type=KnowledgeScopeType.FOLDER,
+                resource_id=str(folder_id),
+                resource_name=folders.get(folder_id, str(folder_id)),
+            )
+            for folder_id in folder_ids
+        ]
+        + [
+            SelectedKnowledgeResource(
+                scope_type=KnowledgeScopeType.DOCUMENT,
+                resource_id=str(document_id),
+                resource_name=documents.get(document_id, str(document_id)),
+            )
+            for document_id in document_ids
+        ]
+    )
 
 
 def _resolve_wegent_scope(
@@ -320,8 +431,14 @@ def _is_knowledge_workbench_task(task_json: dict[str, Any]) -> bool:
 
 
 def _build_external_refs(request: "ExecutionRequest") -> list[SelectedKnowledgeRef]:
+    return _build_external_refs_from_values(request.external_knowledge_refs or [])
+
+
+def _build_external_refs_from_values(
+    values: Iterable[Any],
+) -> list[SelectedKnowledgeRef]:
     result: list[SelectedKnowledgeRef] = []
-    for value in request.external_knowledge_refs or []:
+    for value in values:
         if not isinstance(value, dict):
             continue
         provider = str(value.get("provider") or "").strip().lower()
@@ -334,7 +451,7 @@ def _build_external_refs(request: "ExecutionRequest") -> list[SelectedKnowledgeR
             resource_id = value.get("node_id") or value.get("parent_id")
         elif scope_type == KnowledgeScopeType.DOCUMENT:
             resource_id = value.get("document_id") or value.get("node_id")
-        resources = ()
+        resources: tuple[SelectedKnowledgeResource, ...] = ()
         if scope_type != KnowledgeScopeType.KNOWLEDGE_BASE:
             resources = (
                 SelectedKnowledgeResource(

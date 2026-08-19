@@ -87,18 +87,12 @@ You now have access to Wegent Knowledge Base management tools.
 - Documents may show status "pending" until indexing completes
 - For web scraping, the URL content is fetched and stored as document content
 - `wegent_kb_update_document_content` supports `text` documents and plain-text file documents such as `txt`, `md`, and `markdown`; binary files like `pdf` or `docx` still require creating or replacing the source file instead of inline editing
-- Default behavior: if user doesn't specify scope, use `scope="all"` directly (no extra confirmation).
 - Avoid loops: if a tool call fails, report the error once and stop retrying/re-loading the skill unless the user changes inputs.
 - Long documents should be read incrementally: start with the backend default limit, then continue with `offset = previous_offset + previous_returned_length` while `has_more=true`
 
 ## Example Workflow
 
-1. First, list available knowledge bases:
-   ```
-   wegent_kb_list_knowledge_bases(scope="all")
-   ```
-
-2. List documents in a specific knowledge base:
+1. List documents in a specific knowledge base:
    ```
    wegent_kb_list_documents(knowledge_base_id=123, limit=20, offset=0)
    ```
@@ -108,7 +102,7 @@ You now have access to Wegent Knowledge Base management tools.
    wegent_kb_list_documents(knowledge_base_id=123, limit=20, offset=20)
    ```
 
-3. Create a new knowledge base:
+2. Create a new knowledge base:
    ```
    wegent_kb_create_knowledge_base(
      name="My KB",
@@ -118,7 +112,7 @@ You now have access to Wegent Knowledge Base management tools.
    )
    ```
 
-4. Create a new text document:
+3. Create a new text document:
    ```
    wegent_kb_create_document(
      knowledge_base_id=123,
@@ -128,7 +122,7 @@ You now have access to Wegent Knowledge Base management tools.
    )
    ```
 
-5. Update document content:
+4. Update document content:
    ```text
    wegent_kb_update_document_content(
      document_id=456,
@@ -137,7 +131,7 @@ You now have access to Wegent Knowledge Base management tools.
    )
    ```
 
-6. Read long document content incrementally:
+5. Read long document content incrementally:
    ```text
    wegent_kb_read_document_content(
      document_id=456,
@@ -145,7 +139,7 @@ You now have access to Wegent Knowledge Base management tools.
    )
    ```
 
-7. Search knowledge base using RAG retrieval:
+6. Search knowledge base using RAG retrieval:
    ```text
    wegent_kb_search_knowledge_base(
      knowledge_base_id=123,
@@ -154,7 +148,7 @@ You now have access to Wegent Knowledge Base management tools.
    )
    ```
 
-8. Search within specific documents:
+7. Search within specific documents:
    ```text
    wegent_kb_search_knowledge_base(
      knowledge_base_id=123,

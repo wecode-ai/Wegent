@@ -1247,6 +1247,7 @@ async def prepare_contexts_for_chat(
     context_window: Optional[int] = None,
     model_config: Optional[dict[str, Any]] = None,
     inline_attachment_content: bool = True,
+    contexts: Optional[List[SubtaskContext]] = None,
 ) -> ChatContextsResult:
     """
     Unified context processing based on user_subtask_id.
@@ -1279,7 +1280,11 @@ async def prepare_contexts_for_chat(
     from .tables import parse_table_url
 
     # Get all contexts for this subtask
-    contexts = context_service.get_by_subtask(db, user_subtask_id) or []
+    contexts = (
+        contexts
+        if contexts is not None
+        else context_service.get_by_subtask(db, user_subtask_id) or []
+    )
 
     # Separate contexts by type
     attachment_contexts = [

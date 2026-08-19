@@ -18,6 +18,7 @@ Key changes from the original trigger_ai_response:
 
 import json
 import logging
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from fastapi import HTTPException, status
@@ -45,6 +46,7 @@ from shared.codex_model_catalog import (
     codex_catalog_model_id_for_upstream,
     codex_catalog_model_id_from_config,
 )
+from shared.models.knowledge import KnowledgeBaseToolAccessMode
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -670,6 +672,15 @@ def _ensure_selected_kb_skill_priority(request: "ExecutionRequest") -> None:
         )
 
 
+def _has_explicit_empty_kb_scope(scopes: Iterable[Any]) -> bool:
+    """Return whether an intentionally empty restricted scope is present."""
+    return any(
+        bool(getattr(scope, "scope_restricted", False))
+        and not list(getattr(scope, "document_ids", None) or [])
+        for scope in scopes
+    )
+
+
 async def trigger_ai_response_unified(
     task: TaskResource,
     assistant_subtask: Subtask,
@@ -1123,7 +1134,9 @@ async def build_execution_request(
         context_subtask_id = (
             user_subtask_id if user_subtask_id else processed_subtask_id
         )
+        current_contexts = []
         if context_subtask_id:
+            current_contexts = context_service.get_by_subtask(db, context_subtask_id)
             preload_selected_kb_skill = (
                 task_labels.get("source") != KNOWLEDGE_ARTIFACT_SOURCE
             )
@@ -1133,6 +1146,7 @@ async def build_execution_request(
                 context_subtask_id,
                 user.id,
                 preload_selected_kb_skill=preload_selected_kb_skill,
+                current_contexts=current_contexts,
             )
 
         from app.services.chat.selected_knowledge import (
@@ -1141,8 +1155,18 @@ async def build_execution_request(
         )
 
         provider_skills = []
-        if task_labels.get("source") != KNOWLEDGE_ARTIFACT_SOURCE:
-            provider_skills = apply_selected_knowledge_context(db, request, task)
+        if (
+            task_labels.get("source") != KNOWLEDGE_ARTIFACT_SOURCE
+            and request.kb_tool_access_mode
+            != KnowledgeBaseToolAccessMode.RESTRICTED_SEARCH_ONLY
+            and not _has_explicit_empty_kb_scope(request.knowledge_base_scopes)
+        ):
+            provider_skills = apply_selected_knowledge_context(
+                db,
+                request,
+                task,
+                current_contexts=current_contexts,
+            )
         unresolved_provider_skills = [
             skill_name
             for skill_name in provider_skills
@@ -1175,6 +1199,7 @@ async def _process_contexts(
     user_id: int,
     *,
     preload_selected_kb_skill: bool = True,
+    current_contexts: Optional[List[Any]] = None,
 ) -> "ExecutionRequest":
     """Process contexts (attachments, knowledge bases, etc.) for the request.
 
@@ -1207,6 +1232,7 @@ async def _process_contexts(
         context_window=model_context_window,
         model_config=request.model_config,
         inline_attachment_content=inline_attachment_content,
+        contexts=current_contexts,
     )
 
     # Update request with all processed context results.
@@ -1221,6 +1247,9 @@ async def _process_contexts(
     prepare_provider_native_knowledge = bool(
         ctx.kb.knowledge_base_ids
         and preload_selected_kb_skill
+        and ctx.kb.kb_tool_access_mode
+        != KnowledgeBaseToolAccessMode.RESTRICTED_SEARCH_ONLY
+        and not _has_explicit_empty_kb_scope(ctx.kb.knowledge_base_scopes)
         and _request_shell_type(request) in SUPPORTED_PROVIDER_NATIVE_SHELLS
     )
     request.system_prompt = (

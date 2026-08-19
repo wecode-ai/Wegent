@@ -53,6 +53,14 @@ class SelectedKnowledgeRef:
 
 
 @dataclass(frozen=True)
+class SelectedKnowledgeContext:
+    """Effective provider-native knowledge routing for one request."""
+
+    refs: tuple[SelectedKnowledgeRef, ...] = field(default_factory=tuple)
+    evidence_required: bool = False
+
+
+@dataclass(frozen=True)
 class KnowledgeBaseScope:
     """Per-knowledge-base access scope for knowledge tools."""
 
