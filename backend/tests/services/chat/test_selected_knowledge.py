@@ -18,6 +18,7 @@ from app.services.chat.selected_knowledge import (
     apply_selected_knowledge_context,
     build_selected_knowledge_refs,
     register_provider_skill,
+    select_inherited_external_refs,
     should_prepare_provider_native_knowledge,
 )
 from app.services.execution.skill_mcp import extract_skill_mcp_servers
@@ -47,7 +48,7 @@ class _KnowledgeMetadataDB:
 def test_register_provider_skill_normalizes_provider_and_skill_names(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delitem(PROVIDER_SKILLS, "demo", raising=False)
+    monkeypatch.setitem(PROVIDER_SKILLS, "demo", "original-skill")
 
     register_provider_skill(" Demo ", " demo-knowledge ")
 
@@ -69,6 +70,41 @@ def test_register_provider_skill_rejects_empty_names(
 ) -> None:
     with pytest.raises(ValueError, match="must not be empty"):
         register_provider_skill(provider_id, skill_name)
+
+
+def test_explicit_context_skips_inherited_external_refs() -> None:
+    task_refs = [
+        {
+            "provider": "dingtalk",
+            "mode": "explicit",
+            "id": "stale-space",
+        }
+    ]
+    contexts = [
+        SimpleNamespace(
+            context_type=ContextType.KNOWLEDGE_BASE.value,
+            status=ContextStatus.READY.value,
+            type_data={"knowledge_id": 12},
+        )
+    ]
+
+    refs = select_inherited_external_refs(task_refs, contexts)
+
+    assert refs == []
+
+
+def test_task_external_refs_remain_without_explicit_context() -> None:
+    task_refs = [
+        {
+            "provider": "dingtalk",
+            "mode": "explicit",
+            "id": "task-space",
+        }
+    ]
+
+    refs = select_inherited_external_refs(task_refs, [])
+
+    assert refs == task_refs
 
 
 def test_apply_selected_knowledge_context_deduplicates_provider_skills(

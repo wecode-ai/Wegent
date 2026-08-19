@@ -913,12 +913,7 @@ async def build_execution_request(
         # Task spec is the runtime source of truth. Message-level external
         # contexts are materialized into Task.spec before execution is built.
         task_refs = extract_task_external_knowledge_refs(task)
-        if task_refs:
-            validate_external_knowledge_refs(
-                task_refs,
-                binding_level="conversation",
-            )
-            request.external_knowledge_refs = task_refs
+        request.external_knowledge_refs = task_refs
 
         # Merge reasoning config from API/model selection into model_config.
         # Priority: explicit API reasoning_config > UI model_options > model think_config.
@@ -1099,6 +1094,23 @@ async def build_execution_request(
         current_contexts = []
         if context_subtask_id:
             current_contexts = context_service.get_by_subtask(db, context_subtask_id)
+
+        from app.services.chat.selected_knowledge import (
+            select_inherited_external_refs,
+        )
+
+        inherited_external_refs = select_inherited_external_refs(
+            task_refs,
+            current_contexts,
+        )
+        if inherited_external_refs:
+            validate_external_knowledge_refs(
+                inherited_external_refs,
+                binding_level="conversation",
+            )
+        request.external_knowledge_refs = inherited_external_refs
+
+        if context_subtask_id:
             preload_selected_kb_skill = (
                 task_labels.get("source") != KNOWLEDGE_ARTIFACT_SOURCE
             )

@@ -238,6 +238,16 @@ def has_explicit_knowledge_context(contexts: Iterable[Any]) -> bool:
     )
 
 
+def select_inherited_external_refs(
+    task_refs: Iterable[dict[str, Any]],
+    current_contexts: Iterable[Any],
+) -> list[dict[str, Any]]:
+    """Return Task refs only when this turn has no explicit knowledge selection."""
+    if has_explicit_knowledge_context(current_contexts):
+        return []
+    return list(task_refs)
+
+
 def has_usable_wegent_scope(
     knowledge_base_ids: Iterable[Any] | None,
     scopes: Iterable[Any] | None,
