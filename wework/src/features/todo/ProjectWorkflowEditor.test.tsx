@@ -385,7 +385,7 @@ describe('ProjectWorkflowEditor', () => {
     expect(screen.getByText('调度模型')).toBeInTheDocument()
     expect(screen.getByText('正在准备默认云端模型')).toBeInTheDocument()
     expect(
-      screen.getByText('内置调度员使用一个云端模型生成方案，本身不执行任务。')
+      screen.getByText('调度模型只生成方案；没有机器人时，任务会分配给项目成员。')
     ).toBeInTheDocument()
     expect(screen.getByTestId('project-workflow-ai-use-stages')).not.toBeChecked()
     expect(screen.queryByText('选择 AI 自动化')).not.toBeInTheDocument()

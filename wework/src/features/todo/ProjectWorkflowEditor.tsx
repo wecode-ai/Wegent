@@ -844,7 +844,7 @@ export function ProjectWorkflowEditor({
             <p className="mt-1.5 text-xs text-text-muted">
               {t(
                 'todo.workflow_ai_coordinator_hint',
-                '内置调度员使用一个云端模型生成方案，本身不执行任务。'
+                '调度模型只生成方案；没有机器人时，任务会分配给项目成员。'
               )}
             </p>
           </div>
