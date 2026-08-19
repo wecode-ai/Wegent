@@ -4,6 +4,7 @@
 
 """Independent Excel and CSV truncation strategies."""
 
+from dataclasses import dataclass
 from typing import Any, Dict, List, Sequence, Tuple
 
 from knowledge_engine.excel import (
@@ -14,6 +15,16 @@ from knowledge_engine.excel import (
 )
 
 from .base import BaseTruncationStrategy, SmartTruncationInfo, TruncationType
+
+
+@dataclass(frozen=True)
+class _SheetTruncationResult:
+    """Outcome of truncating one sheet, named instead of positional."""
+
+    text: str
+    kept_rows: int
+    omitted_rows: int
+    marker_complete: bool
 
 
 class ExcelTruncationStrategy(BaseTruncationStrategy):
@@ -28,7 +39,7 @@ class ExcelTruncationStrategy(BaseTruncationStrategy):
         populated_sheets = [sheet for sheet in sheets if sheet.rows]
         total_rows = sum(len(sheet.rows) for sheet in populated_sheets)
         full_text = "\n\n".join(
-            self._format_full_sheet(sheet) for sheet in populated_sheets
+            serialize_excel_sheet_compact(sheet) for sheet in populated_sheets
         )
         info = SmartTruncationInfo(
             truncation_type=TruncationType.SMART,
@@ -53,13 +64,13 @@ class ExcelTruncationStrategy(BaseTruncationStrategy):
         for index, sheet in enumerate(populated_sheets):
             # Sheets that underuse their budget pass the surplus onward.
             budget = remaining_budget // (len(populated_sheets) - index)
-            text, kept, omitted, marker_complete = self._truncate_sheet(sheet, budget)
-            if text:
-                text_parts.append(text)
-            remaining_budget -= len(text)
-            kept_rows += kept
-            omitted_rows += omitted
-            if omitted and not marker_complete:
+            result = self._truncate_sheet(sheet, budget)
+            if result.text:
+                text_parts.append(result.text)
+            remaining_budget -= len(result.text)
+            kept_rows += result.kept_rows
+            omitted_rows += result.omitted_rows
+            if result.omitted_rows and not result.marker_complete:
                 all_markers_complete = False
 
         result = "\n\n".join(text_parts)
@@ -79,20 +90,16 @@ class ExcelTruncationStrategy(BaseTruncationStrategy):
         )
         return result, info
 
-    @staticmethod
-    def _format_full_sheet(sheet: ExcelSheet) -> str:
-        return serialize_excel_sheet_compact(sheet)
-
     def _truncate_sheet(
         self,
         sheet: ExcelSheet,
         max_length: int,
-    ) -> tuple[str, int, int, bool]:
+    ) -> _SheetTruncationResult:
         header = format_excel_sheet_header(sheet.name)
         rows = [format_excel_row_compact(row) for row in sheet.rows]
         total_rows = len(rows)
         if len(header) > max_length:
-            return "", 0, total_rows, False
+            return _SheetTruncationResult("", 0, total_rows, False)
 
         # Count rows with exact length arithmetic and render once, so the
         # greedy fit stays O(n) instead of re-joining the selection per row.
@@ -101,7 +108,7 @@ class ExcelTruncationStrategy(BaseTruncationStrategy):
             prefix_lengths.append(prefix_lengths[-1] + len(row))
 
         if self._selection_length(header, prefix_lengths, 0, 0) > max_length:
-            return header, 0, total_rows, False
+            return _SheetTruncationResult(header, 0, total_rows, False)
 
         head_count = 0
         tail_count = 0
@@ -132,7 +139,9 @@ class ExcelTruncationStrategy(BaseTruncationStrategy):
         kept_rows = head_count + tail_count
         omitted_rows = total_rows - kept_rows
         best_text = self._render_selection(header, rows, head_count, tail_count)
-        return best_text, kept_rows, omitted_rows, omitted_rows > 0
+        return _SheetTruncationResult(
+            best_text, kept_rows, omitted_rows, omitted_rows > 0
+        )
 
     @staticmethod
     def _omission_marker(omitted_rows: int) -> str:

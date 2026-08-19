@@ -189,28 +189,87 @@ def test_reader_loads_workbook_once_and_closes_it(
     workbook.close.assert_called_once_with()
 
 
-def test_reader_retries_verified_stylesheet_type_error_without_styles(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A corrupted-stylesheet workbook (PR #1007) retries once without
-    styles; the module-level patch is restored afterwards."""
-    workbook = MagicMock()
-    workbook.worksheets = []
-    load_workbook = MagicMock(
-        side_effect=[
-            TypeError("expected <class 'openpyxl.styles.fills.Fill'>"),
-            workbook,
-        ]
+def _corrupt_stylesheet(payload: bytes) -> bytes:
+    """Rewrite xl/styles.xml so openpyxl raises the PR #1007 TypeError.
+
+    A fills collection whose declared count exceeds its actual entries
+    makes apply_stylesheet fill from an exhausted iterator, producing
+    TypeError: expected <class 'openpyxl.styles.fills.Fill'>.
+    """
+    corrupt = (
+        b'<?xml version="1.0"?>'
+        b'<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        b'<fonts count="1"><font/></fonts><fills count="3"><fill/></fills>'
+        b'<borders count="1"><border/></borders>'
+        b'<cellStyleXfs count="1"><xf/></cellStyleXfs>'
+        b'<cellXfs count="1"><xf fillId="0" fontId="0" borderId="0" xfId="0"/></cellXfs>'
+        b"</styleSheet>"
     )
-    monkeypatch.setattr(excel_module, "load_workbook", load_workbook)
+    output = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(payload), "r") as source:
+        with zipfile.ZipFile(output, "w") as target:
+            for item in source.infolist():
+                item_payload = source.read(item)
+                if item.filename == "xl/styles.xml":
+                    item_payload = corrupt
+                target.writestr(item, item_payload)
+    return output.getvalue()
+
+
+def test_reader_repairs_corrupted_stylesheet_without_global_patch() -> None:
+    """A corrupted-stylesheet workbook (PR #1007) is repaired at the zip
+    level and read through openpyxl's normal path.
+
+    The retry replaces xl/styles.xml with a degenerate legal stylesheet
+    instead of monkey-patching apply_stylesheet, so no global state is
+    modified and concurrent normal loads can never observe a patched
+    openpyxl.
+    """
     import openpyxl.reader.excel as reader_module
 
     original_apply_stylesheet = reader_module.apply_stylesheet
+    [sheet] = read_excel_sheets(
+        _corrupt_stylesheet(_build_workbook({"A1": "Alice", "B1": 30}))
+    )
 
-    assert read_excel_sheets(b"xlsx") == ()
-
-    assert load_workbook.call_count == 2
+    # Cell data survives the repair with faithful coordinates.
+    assert sheet.name == "Sheet1"
+    assert [serialize_excel_row(row) for row in sheet.rows] == [
+        '{"source_row":1,"cells":[[1,"Alice"],[2,30]]}',
+    ]
+    # The global openpyxl entry point was never touched.
     assert reader_module.apply_stylesheet is original_apply_stylesheet
+
+
+def test_reader_repairs_stylesheet_once_across_both_passes() -> None:
+    """Formula workbooks load twice; the repair must not rebuild the zip
+    for the second pass when the source is corrupt."""
+    payload = _build_workbook({"A1": "Alice", "A2": "=1+1"})
+    cached = _add_formula_cached_value(payload, cached_value=2)
+    corrupt = _corrupt_stylesheet(cached)
+
+    load_calls: list[bytes] = []
+    real_load_workbook = excel_module.load_workbook
+
+    def counting_load(source, **kwargs):
+        load_calls.append(source.read() if hasattr(source, "read") else source)
+        if hasattr(source, "seek"):
+            source.seek(0)
+        return real_load_workbook(source, **kwargs)
+
+    with pytest.MonkeyPatch.context() as patches:
+        patches.setattr(excel_module, "load_workbook", counting_load)
+        [sheet] = read_excel_sheets(corrupt)
+
+    # Both passes succeeded on repaired bytes, formula plus cached result.
+    assert serialize_excel_row(sheet.rows[1]) == (
+        '{"source_row":2,"cells":[[1,{"formula":"=1+1","value":2}]]}'
+    )
+    # One failed attempt on the original bytes, then one repair reused by
+    # both passes: the two successful calls received byte-identical data.
+    assert len(load_calls) == 3
+    assert load_calls[1] == load_calls[2]
+    assert load_calls[0] != load_calls[1]
 
 
 def test_reader_propagates_unrelated_type_error_without_retry(

@@ -10,7 +10,7 @@ import io
 import json
 import logging
 import math
-import threading
+import zipfile
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
@@ -172,13 +172,58 @@ def _read_sheet(worksheet: Any) -> tuple[ExcelSheet, frozenset[tuple[int, int]]]
     return ExcelSheet(name=worksheet.title, rows=tuple(rows)), frozenset(formula_coords)
 
 
-def _workbook_source(source: ExcelSource) -> Any:
-    """Return a workbook source positioned at the start for a fresh load."""
+def _materialize_bytes(source: ExcelSource) -> bytes:
+    """Read the workbook source into bytes once, for repeated loads."""
     if isinstance(source, bytes):
-        return io.BytesIO(source)
-    if hasattr(source, "seek"):
-        source.seek(0)
-    return source
+        return source
+    if isinstance(source, Path):
+        return source.read_bytes()
+    if isinstance(source, str):
+        return Path(source).read_bytes()
+    return source.read()
+
+
+def _open_workbook(source: Any, *, data_only: bool) -> Any:
+    """Load a workbook; read_only keeps coordinates faithful to the file."""
+    return load_workbook(source, read_only=True, data_only=data_only)
+
+
+def _is_stylesheet_type_error(exc: TypeError) -> bool:
+    """Match only the verified OpenPyXL stylesheet parsing failure."""
+    return "openpyxl.styles" in str(exc)
+
+
+# A legal stylesheet with no style definitions at all: openpyxl accepts it,
+# every style lookup degrades to the "General" default, and cell data is
+# untouched. This is byte-for-byte what skipping stylesheet parsing used to
+# produce, so the repair changes no observable output for damaged files.
+_DEGENERATE_STYLESHEET = (
+    b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    b'<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+    b'<numFmts count="0"/><fonts count="0"/><fills count="0"/><borders count="0"/>'
+    b'<cellStyleXfs count="0"/><cellXfs count="0"/><cellStyles count="0"/>'
+    b'<dxfs count="0"/><tableStyles count="0"/>'
+    b"</styleSheet>"
+)
+
+
+def _repair_stylesheet(data: bytes) -> bytes:
+    """Replace xl/styles.xml with a degenerate legal stylesheet.
+
+    Styles carry no cell data, so this only drops the already-unreadable
+    style definitions of a damaged workbook; every other zip entry is
+    copied through unchanged. openpyxl then loads the repaired bytes
+    through its normal path — no global state is modified.
+    """
+    output = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(data), "r") as source:
+        with zipfile.ZipFile(output, "w") as target:
+            for item in source.infolist():
+                payload = source.read(item)
+                if item.filename == "xl/styles.xml":
+                    payload = _DEGENERATE_STYLESHEET
+                target.writestr(item, payload)
+    return output.getvalue()
 
 
 def read_excel_sheets(source: ExcelSource) -> tuple[ExcelSheet, ...]:
@@ -191,15 +236,30 @@ def read_excel_sheets(source: ExcelSource) -> tuple[ExcelSheet, ...]:
     ``{"formula": ..., "value": ...}``. Formula cells that were never
     calculated keep the plain expression. The second pass is skipped
     entirely when no formula cells exist.
+
+    A workbook whose stylesheet cannot be parsed (PR #1007 files) is
+    repaired once — its xl/styles.xml replaced with a degenerate legal
+    one — and both passes load the repaired bytes; openpyxl itself is
+    never patched.
     """
-    formula_book = _open_workbook(_workbook_source(source), data_only=False)
+    data = _materialize_bytes(source)
+    try:
+        formula_book = _open_workbook(io.BytesIO(data), data_only=False)
+    except TypeError as exc:
+        if not _is_stylesheet_type_error(exc):
+            raise
+        logger.warning(
+            "Retrying workbook load with a repaired stylesheet after: %s", exc
+        )
+        data = _repair_stylesheet(data)
+        formula_book = _open_workbook(io.BytesIO(data), data_only=False)
     try:
         sheets = tuple(_read_sheet(worksheet) for worksheet in formula_book.worksheets)
     finally:
         formula_book.close()
     if not any(formula_coords for _, formula_coords in sheets):
         return tuple(sheet for sheet, _ in sheets)
-    cached_book = _open_workbook(_workbook_source(source), data_only=True)
+    cached_book = _open_workbook(io.BytesIO(data), data_only=True)
     try:
         merged = []
         for (sheet, formula_coords), cached_worksheet in zip(
@@ -252,50 +312,6 @@ def _merge_cached_value(
         "value": normalize_excel_value(cached[key]),
     }
     return ExcelCell(source_column=cell.source_column, value=merged)
-
-
-def _open_workbook(source: Any, *, data_only: bool) -> Any:
-    """Load a workbook; read_only keeps coordinates faithful to the file."""
-    try:
-        return load_workbook(source, read_only=True, data_only=data_only)
-    except TypeError as exc:
-        if not _is_stylesheet_type_error(exc):
-            raise
-        return _load_workbook_without_styles(source, data_only=data_only)
-
-
-def _is_stylesheet_type_error(exc: TypeError) -> bool:
-    """Match only the verified OpenPyXL stylesheet parsing failure."""
-    return "openpyxl.styles" in str(exc)
-
-
-_STYLESHEET_RETRY_LOCK = threading.Lock()
-
-
-def _load_workbook_without_styles(source: Any, *, data_only: bool) -> Any:
-    """Retry loading with stylesheet parsing skipped for corrupted files.
-
-    Some real-world workbooks carry malformed style data (e.g. invalid Fill
-    objects) that makes OpenPyXL raise TypeError while applying the
-    stylesheet (see PR #1007). The patch is scoped to the retry and restored
-    afterwards; the lock only serializes this rare path, never normal loads.
-    """
-    import openpyxl.reader.excel as reader_module
-
-    logger.warning("Retrying workbook load without styles after: corrupt stylesheet")
-    with _STYLESHEET_RETRY_LOCK:
-        original_apply_stylesheet = reader_module.apply_stylesheet
-
-        def _skip_stylesheet(archive: Any, workbook: Any) -> Any:
-            return workbook
-
-        reader_module.apply_stylesheet = _skip_stylesheet
-        try:
-            if hasattr(source, "seek"):
-                source.seek(0)
-            return load_workbook(source, read_only=True, data_only=data_only)
-        finally:
-            reader_module.apply_stylesheet = original_apply_stylesheet
 
 
 def serialize_excel_row(row: ExcelRow) -> str:
