@@ -44,7 +44,7 @@ The executor schedules the waiting queue in memory and stores a sealed recovery 
 
 Open **Settings → General → Popout Window** to configure the lightweight input window that is independent of the main interface. The default global shortcut is `⌥⇧Space`. Select the pencil to record another modifier-plus-main-key combination, or select delete to disable the global shortcut.
 
-Wework prewarms the Popout Window in the background after launch, so the first display and later reopens reuse the same WebView. The window is not resizable. Drag any visible surface outside the text input to move it, and press `Esc` to hide it without activating the main window. The transparent area around the visible surface does not receive pointer events, so clicks continue to the application behind it.
+Wework prewarms the Popout Window in the background after launch, so the first display and later reopens reuse the same WebView. The window is not resizable. Drag any visible surface outside the text input to move it, and press `Esc` to hide it without activating the main window. When collapsed, the native window occupies only the rounded visible composer surface, so clicking it focuses the window directly. Opening the model, project, or more menu temporarily expands the window to hold the overlay, then restores its compact size when the menu closes.
 
 Enable **Settings → General → Popout Window → System drag panel** to show a compact action panel at the top of the current screen while dragging files or text from another application. Selecting **Create new chat** activates the Popout Window and adds the dropped content to a new task. Disable the setting to keep the system drag panel hidden.
 

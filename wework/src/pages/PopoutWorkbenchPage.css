@@ -22,20 +22,12 @@
   left: 50%;
   width: 470px;
   height: 154px;
-  overflow: visible;
-  transform: translateX(-50%);
-  isolation: isolate;
-}
-
-.popout-window-collapsed .popout-window-content::before {
-  position: absolute;
-  inset: 0;
-  z-index: -1;
+  overflow: hidden;
   border: 0.5px solid rgb(var(--color-border));
   border-radius: 30px;
   background: rgb(var(--color-bg-surface));
   box-shadow: 0 8px 24px rgb(0 0 0 / 8%);
-  content: '';
+  transform: translateX(-50%);
 }
 
 .popout-window-compact-context .popout-window-content {
@@ -94,6 +86,11 @@
 .popout-window-collapsed [data-testid='chat-message-input'] {
   /* Override the editor's inline desktop auto-resize limit inside the fixed collapsed surface. */
   max-height: 64px !important;
+}
+
+.popout-window-collapsed .composer-prosemirror-editor,
+.popout-window-collapsed .composer-prosemirror-placeholder {
+  padding-top: 12px;
 }
 
 .popout-window-collapsed [data-testid='composer-toolbar'] {
