@@ -56,6 +56,7 @@ cloud_segments=(
   priority-filter
   automation-lifecycle
   project-automation
+  external-event-subscription
   plugin-auto-update
 )
 # Group checkpoints by observed Cloud CI duration and order each shard from
@@ -66,7 +67,7 @@ cloud_shards=(
   model-routing,project-automation,workspace-attachments,plugin-auto-update
   embedded-browser,cloud-worktree-create,workspace-tabs,cloud-worktree-archive-restore,cloud-worktree-device-restart
   resilience,rendering-extensions,cloud-worktree-queued-cancel,priority-filter,cloud-worktree-capability
-  core-task-flow,conversation-state,supervisor-lifecycle,automation-lifecycle,browser-multi-tabs
+  core-task-flow,conversation-state,supervisor-lifecycle,automation-lifecycle,browser-multi-tabs,external-event-subscription
 )
 # Keep the number of core desktop runners fixed as checkpoints grow. Group
 # checkpoints by observed Core CI duration and order each shard so both local
@@ -249,6 +250,12 @@ classify_wework_path() {
       return
       ;;
     wework/e2e/desktop/scenarios/project-automation.scenario.mjs)
+      select_target "core:automation-lifecycle"
+      select_target "core:project-automation"
+      select_target "cloud:all"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/external-event-subscription.scenario.mjs)
       select_target "core:automation-lifecycle"
       select_target "core:project-automation"
       select_target "cloud:all"
