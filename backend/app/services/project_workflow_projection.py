@@ -197,19 +197,29 @@ def apply_workflow_nodes(
         for node in nodes
         if node.get("status") in COMPLETED_NODE_STATUSES and node.get("id")
     }
+    statuses = {str(node.get("id")): node.get("status") for node in nodes}
     for node in nodes:
         dependencies = node.get("depends_on")
         dependencies = dependencies if isinstance(dependencies, list) else []
-        if node.get("status") == "blocked" and all(
-            str(dependency) in completed for dependency in dependencies
-        ):
-            if node.get("node_type") == "wait":
+        if node.get("status") != "blocked":
+            continue
+        if node.get("node_type") == "wait":
+            # A wait node becomes active as soon as its upstream work has
+            # begun (no dependency is still blocked): the robot registers the
+            # external reference while its stage is still running, and only
+            # the terminal event completes the node later.
+            if not any(statuses.get(str(dependency)) == "blocked" for dependency in dependencies):
                 node["status"] = "waiting"
-            elif node.get("node_type") == "end":
+                statuses[str(node.get("id"))] = "waiting"
+            continue
+        if all(str(dependency) in completed for dependency in dependencies):
+            if node.get("node_type") == "end":
                 node["status"] = "completed"
                 completed.add(str(node.get("id")))
+                statuses[str(node.get("id"))] = "completed"
             else:
                 node["status"] = "ready"
+                statuses[str(node.get("id"))] = "ready"
 
     next_workflow = dict(workflow)
     next_workflow["version"] = int(workflow.get("version") or 1) + 1

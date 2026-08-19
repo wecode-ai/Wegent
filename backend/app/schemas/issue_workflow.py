@@ -271,7 +271,8 @@ def release_blocked_nodes(
     """Advance blocked nodes whose dependencies are already completed.
 
     Mirrors the projection pass used on persisted snapshots: a wait node enters
-    ``waiting``, an end node completes immediately, everything else becomes
+    ``waiting`` once its upstream work has begun, an end node completes
+    immediately when its dependencies are done, and everything else becomes
     ``ready``. End nodes join the completed set so later nodes can release in
     the same pass.
     """
@@ -279,18 +280,23 @@ def release_blocked_nodes(
     completed = {
         node.id for node in nodes if node.status in {"completed", "forced_completed"}
     }
+    statuses = {node.id: node.status for node in nodes}
     for node in nodes:
         if node.status != "blocked":
+            continue
+        if node.node_type == "wait":
+            if not any(statuses.get(dependency) == "blocked" for dependency in node.depends_on):
+                node.status = "waiting"
+                statuses[node.id] = "waiting"
             continue
         if not all(dependency in completed for dependency in node.depends_on):
             continue
         if node.node_type == "end":
             node.status = "completed"
             completed.add(node.id)
-        elif node.node_type == "wait":
-            node.status = "waiting"
         else:
             node.status = "ready"
+        statuses[node.id] = node.status
     return nodes
 
 

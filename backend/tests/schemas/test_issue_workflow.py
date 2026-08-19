@@ -74,6 +74,66 @@ def test_workflow_instantiation_completes_start_node_and_unlocks_dependents() ->
     assert workflow.nodes[0].status == "completed"
 
 
+def test_workflow_instantiation_activates_wait_node_before_upstream_completes() -> None:
+    definition = ProjectWorkflowDefinition.model_validate(
+        {
+            "version": 1,
+            "stage_mode": "dag",
+            "advancement_policy": "manual",
+            "nodes": [
+                {
+                    "id": "start",
+                    "name": "开始",
+                    "node_type": "start",
+                    "depends_on": [],
+                    "workspace_policy": "none",
+                },
+                {
+                    "id": "develop",
+                    "name": "开发并提交 MR",
+                    "depends_on": ["start"],
+                    "workspace_policy": "composer",
+                },
+                {
+                    "id": "wait",
+                    "name": "等待外部事件",
+                    "node_type": "wait",
+                    "depends_on": ["develop"],
+                    "workspace_policy": "none",
+                    "wait_config": {
+                        "rules": [
+                            {
+                                "id": "rule-merged",
+                                "event_type": "merged",
+                                "mode": "trigger",
+                                "action": "complete",
+                            }
+                        ]
+                    },
+                },
+                {
+                    "id": "end",
+                    "name": "结束",
+                    "node_type": "end",
+                    "depends_on": ["wait"],
+                    "workspace_policy": "none",
+                },
+            ],
+        }
+    )
+
+    workflow = instantiate_workflow(definition)
+
+    # The wait node listens while its upstream stage is still running so the
+    # robot can register the external reference during the stage execution.
+    assert [node.status for node in workflow.nodes] == [
+        "completed",
+        "ready",
+        "waiting",
+        "blocked",
+    ]
+
+
 @pytest.mark.parametrize(
     "nodes",
     [
