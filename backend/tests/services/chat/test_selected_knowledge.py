@@ -387,7 +387,7 @@ def test_current_external_selection_replaces_all_task_knowledge(
     assert "explicitly selected by the user" in request.selected_knowledge_prompt
 
 
-def test_unknown_explicit_provider_returns_capability_error() -> None:
+def test_unknown_explicit_provider_returns_invalid_selection_error() -> None:
     task = SimpleNamespace(
         json={"spec": {"knowledgeBaseRefs": [{"id": 12, "name": "默认知识"}]}}
     )
@@ -405,10 +405,14 @@ def test_unknown_explicit_provider_returns_capability_error() -> None:
         )
     ]
 
-    with pytest.raises(HTTPException, match="Unsupported knowledge provider"):
+    with pytest.raises(
+        HTTPException, match="Unsupported knowledge provider"
+    ) as exc_info:
         apply_selected_knowledge_context(
             MagicMock(), request, task, current_contexts=current_contexts
         )
+
+    assert exc_info.value.status_code == 400
 
 
 @pytest.mark.parametrize(
@@ -435,7 +439,7 @@ def test_unknown_explicit_provider_returns_capability_error() -> None:
         },
     ],
 )
-def test_invalid_explicit_external_resource_returns_capability_error(
+def test_invalid_explicit_external_resource_returns_invalid_selection_error(
     monkeypatch: pytest.MonkeyPatch,
     type_data: dict,
 ) -> None:
@@ -450,7 +454,9 @@ def test_invalid_explicit_external_resource_returns_capability_error(
         )
     ]
 
-    with pytest.raises(HTTPException, match="Invalid explicit knowledge source"):
+    with pytest.raises(
+        HTTPException, match="Invalid explicit knowledge source"
+    ) as exc_info:
         apply_selected_knowledge_context(
             MagicMock(),
             request,
@@ -459,6 +465,8 @@ def test_invalid_explicit_external_resource_returns_capability_error(
             ),
             current_contexts=current_contexts,
         )
+
+    assert exc_info.value.status_code == 400
 
 
 def test_invalid_explicit_source_rejects_other_valid_sources(
@@ -484,13 +492,17 @@ def test_invalid_explicit_source_rejects_other_valid_sources(
         ),
     ]
 
-    with pytest.raises(HTTPException, match="Unsupported knowledge provider"):
+    with pytest.raises(
+        HTTPException, match="Unsupported knowledge provider"
+    ) as exc_info:
         apply_selected_knowledge_context(
             MagicMock(),
             ExecutionRequest(),
             SimpleNamespace(json={"spec": {}}),
             current_contexts=contexts,
         )
+
+    assert exc_info.value.status_code == 400
 
 
 @pytest.mark.parametrize(
@@ -513,7 +525,9 @@ def test_non_ready_explicit_context_does_not_restore_task_knowledge(
         )
     ]
 
-    with pytest.raises(HTTPException, match="Selected knowledge source is not ready"):
+    with pytest.raises(
+        HTTPException, match="Selected knowledge source is not ready"
+    ) as exc_info:
         apply_selected_knowledge_context(
             MagicMock(),
             ExecutionRequest(knowledge_base_ids=[12]),
@@ -522,6 +536,8 @@ def test_non_ready_explicit_context_does_not_restore_task_knowledge(
             ),
             current_contexts=contexts,
         )
+
+    assert exc_info.value.status_code == 400
 
 
 @pytest.mark.parametrize(
@@ -532,7 +548,7 @@ def test_non_ready_explicit_context_does_not_restore_task_knowledge(
         (ContextType.SELECTED_DOCUMENTS.value, {"knowledge_base_id": True}),
     ],
 )
-def test_invalid_explicit_wegent_id_returns_capability_error(
+def test_invalid_explicit_wegent_id_returns_invalid_selection_error(
     context_type: str,
     type_data: dict,
 ) -> None:
@@ -545,13 +561,17 @@ def test_invalid_explicit_wegent_id_returns_capability_error(
         )
     ]
 
-    with pytest.raises(HTTPException, match="Invalid explicit Wegent knowledge source"):
+    with pytest.raises(
+        HTTPException, match="Invalid explicit Wegent knowledge source"
+    ) as exc_info:
         apply_selected_knowledge_context(
             MagicMock(),
             ExecutionRequest(),
             SimpleNamespace(json={"spec": {}}),
             current_contexts=contexts,
         )
+
+    assert exc_info.value.status_code == 400
 
 
 def test_current_wegent_document_selection_replaces_all_task_refs() -> None:

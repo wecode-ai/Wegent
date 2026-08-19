@@ -182,6 +182,10 @@ def _raise_capability_error(detail: str) -> NoReturn:
     raise HTTPException(status_code=503, detail=detail)
 
 
+def _raise_invalid_selection_error(detail: str) -> NoReturn:
+    raise HTTPException(status_code=400, detail=detail)
+
+
 def build_selected_knowledge_refs(
     db: "Session",
     request: "ExecutionRequest",
@@ -722,11 +726,13 @@ def _validate_explicit_external_contexts(contexts: Iterable[Any]) -> None:
     for value in _current_external_values(contexts):
         provider = str(value.get("provider") or "").strip().lower()
         if provider not in PROVIDER_SKILLS:
-            _raise_capability_error(
+            _raise_invalid_selection_error(
                 f"Unsupported knowledge provider: {provider or '<missing>'}"
             )
         if not str(value.get("id") or "").strip():
-            _raise_capability_error("Invalid explicit knowledge source: missing id")
+            _raise_invalid_selection_error(
+                "Invalid explicit knowledge source: missing id"
+            )
 
         scope_type = str(value.get("target_type") or "knowledge_base")
         if scope_type not in {
@@ -734,20 +740,20 @@ def _validate_explicit_external_contexts(contexts: Iterable[Any]) -> None:
             KnowledgeScopeType.FOLDER,
             KnowledgeScopeType.DOCUMENT,
         }:
-            _raise_capability_error(
+            _raise_invalid_selection_error(
                 f"Invalid explicit knowledge source: unsupported target type "
                 f"{scope_type}"
             )
         if scope_type == KnowledgeScopeType.FOLDER and not (
             value.get("node_id") or value.get("parent_id")
         ):
-            _raise_capability_error(
+            _raise_invalid_selection_error(
                 "Invalid explicit knowledge source: missing folder id"
             )
         if scope_type == KnowledgeScopeType.DOCUMENT and not (
             value.get("document_id") or value.get("node_id")
         ):
-            _raise_capability_error(
+            _raise_invalid_selection_error(
                 "Invalid explicit knowledge source: missing document id"
             )
 
@@ -765,7 +771,7 @@ def validate_explicit_knowledge_contexts(contexts: Iterable[Any]) -> None:
             continue
         status = getattr(context, "status", None)
         if status != ContextStatus.READY.value:
-            _raise_capability_error(
+            _raise_invalid_selection_error(
                 f"Selected knowledge source is not ready: {status or '<missing>'}"
             )
         if context_type == ContextType.EXTERNAL_KNOWLEDGE.value:
@@ -775,7 +781,7 @@ def validate_explicit_knowledge_contexts(contexts: Iterable[Any]) -> None:
             not isinstance(data, dict)
             or _current_wegent_kb_id(str(context_type), data) is None
         ):
-            _raise_capability_error(
+            _raise_invalid_selection_error(
                 "Invalid explicit Wegent knowledge source: missing or invalid "
                 "knowledge base id"
             )
