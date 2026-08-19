@@ -2039,6 +2039,10 @@ export function WorkbenchProvider({
         : new Set(JSON.parse(projectPluginNamesKey) as string[]),
     [projectPluginNamesKey]
   )
+  const projectPluginNamesRef = useRef(projectPluginNames)
+  useLayoutEffect(() => {
+    projectPluginNamesRef.current = projectPluginNames
+  }, [projectPluginNames])
 
   const listLocalApps = useCallback(
     async (options?: { allowEmptySnapshot?: boolean }) => {
@@ -2104,7 +2108,7 @@ export function WorkbenchProvider({
         // Paint installed plugins before connector sync / relative-logo detail reads.
         let apps = await loadComposerPluginApps(composerPluginSources, {
           marketplaceItems,
-          visiblePluginKeys: projectPluginNames ?? undefined,
+          visiblePluginKeys: projectPluginNamesRef.current ?? undefined,
         })
         if (apps.length > 0) {
           publishComposerApps(apps)
@@ -2160,7 +2164,7 @@ export function WorkbenchProvider({
           void loadComposerPluginApps(composerPluginSources, {
             enrichRelativeLogos: true,
             marketplaceItems,
-            visiblePluginKeys: projectPluginNames ?? undefined,
+            visiblePluginKeys: projectPluginNamesRef.current ?? undefined,
           })
             .then(enriched => {
               if (loadGeneration !== localAppsLoadGenerationRef.current || enriched.length === 0) {
@@ -2222,7 +2226,6 @@ export function WorkbenchProvider({
       cloudConnection.token,
       cloudPluginApi,
       localPluginApi,
-      projectPluginNames,
     ]
   )
 
@@ -2251,6 +2254,16 @@ export function WorkbenchProvider({
       window.removeEventListener(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT, clearLocalSkillCache)
     }
   }, [listLocalApps])
+
+  const previousProjectPluginNamesKeyRef = useRef(projectPluginNamesKey)
+  useEffect(() => {
+    if (previousProjectPluginNamesKeyRef.current === projectPluginNamesKey) return
+    previousProjectPluginNamesKeyRef.current = projectPluginNamesKey
+    localAppsCacheRef.current = null
+    localAppsInflightRef.current = null
+    localAppsLoadGenerationRef.current += 1
+    void listLocalApps({ allowEmptySnapshot: true })
+  }, [listLocalApps, projectPluginNamesKey])
 
   // Plugin market UI resolves package logos into the catalog cache; overlay those
   // onto composer apps when the cache arrives after the warm path.

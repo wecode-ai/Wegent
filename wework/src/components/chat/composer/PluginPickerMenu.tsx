@@ -137,11 +137,10 @@ export function PluginPickerMenu({
       if (applySharedApps()) return true
       hasCachedAppsRef.current = false
       setApps([])
-      // Install → notify can race ahead of plugin/installed. Retry while the
-      // user is waiting on the open picker; a closed picker only performs its
-      // single warm load. Otherwise every mounted composer retries in the
-      // background and can overwhelm the desktop IPC channel.
-      if (open && attempt < 30) {
+      // Install → notify can race ahead of plugin/installed. Retry whether the
+      // menu is open or closed so the toolbar does not stay empty after a
+      // transient cloud/list failure on first paint.
+      if (attempt < 30) {
         retryTimer = window.setTimeout(() => load(attempt + 1), attempt < 6 ? 500 : 1000)
       }
       return false

@@ -53,7 +53,6 @@ interface DesktopControlResult {
   ok: boolean
   value?: string
   error?: string
-  waitForNext?: boolean
 }
 
 interface ScrollStabilitySamplePoint {
@@ -593,7 +592,6 @@ async function waitForDesktopControlTick(): Promise<void> {
   const url = desktopControlUrl()
   if (!url) throw new Error('Desktop E2E control URL is not configured')
   const response = await fetch(`${url}/control-tick`, { headers: desktopControlHeaders() })
-  await response.arrayBuffer()
   if (response.status !== 204) {
     throw new Error(`Desktop E2E control tick failed with ${response.status}`)
   }
@@ -1639,25 +1637,15 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
   throw new Error(`Unsupported desktop control action: ${command.action}`)
 }
 
-async function postDesktopControlResult(
-  url: string,
-  result: DesktopControlResult
-): Promise<DesktopControlCommand | null> {
+async function postDesktopControlResult(url: string, result: DesktopControlResult): Promise<void> {
   const response = await fetch(`${url}/results`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
     body: JSON.stringify(result),
   })
-  if (response.status === 204) {
-    await response.arrayBuffer()
-    return null
-  }
   if (!response.ok) {
-    await response.arrayBuffer()
     throw new Error(`Desktop E2E control result failed with ${response.status}`)
   }
-  const payload = (await response.json()) as DesktopControlCommand | { ok: true }
-  return 'action' in payload ? payload : null
 }
 
 async function runDesktopControlClient(url: string, windowLabel: string): Promise<void> {
@@ -1669,48 +1657,33 @@ async function runDesktopControlClient(url: string, windowLabel: string): Promis
   await getCurrentWindow().show()
   await getCurrentWindow().unminimize()
   await getCurrentWindow().setFocus()
+  let commandRequest = pollForCommand()
   await waitForDesktopControlTick()
   const readyResponse = await fetch(`${url}/ready`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
     body: JSON.stringify({ clientId, location: window.location.href, windowLabel }),
   })
-  await readyResponse.arrayBuffer()
   if (!readyResponse.ok) {
     throw new Error(`Desktop E2E control registration failed with ${readyResponse.status}`)
   }
 
-  let nextCommand: DesktopControlCommand | null = null
   while (true) {
     try {
-      let command = nextCommand
-      nextCommand = null
-      if (!command) {
-        const response = await pollForCommand()
-        if (response.status === 204) {
-          await response.arrayBuffer()
-          await new Promise(resolve => window.setTimeout(resolve, DESKTOP_CONTROL_RETRY_DELAY_MS))
-          continue
-        }
-        if (!response.ok) {
-          throw new Error(`Desktop E2E control command failed with ${response.status}`)
-        }
-        command = (await response.json()) as DesktopControlCommand
+      const response = await commandRequest
+      if (response.status === 204) {
+        await new Promise(resolve => window.setTimeout(resolve, DESKTOP_CONTROL_RETRY_DELAY_MS))
+        commandRequest = pollForCommand()
+        continue
       }
+      if (!response.ok) {
+        throw new Error(`Desktop E2E control command failed with ${response.status}`)
+      }
+      const command = (await response.json()) as DesktopControlCommand
+      commandRequest = pollForCommand()
       try {
         const value = await executeDesktopControlCommand(command)
-        const closesControlClient =
-          command.action === 'capture' ||
-          command.action === 'closeMainWindowToTray' ||
-          command.action === 'requestMainWindowClose' ||
-          command.action === 'reloadMainWindow'
-        nextCommand = await postDesktopControlResult(url, {
-          id: command.id,
-          clientId,
-          ok: true,
-          value,
-          waitForNext: !closesControlClient,
-        })
+        await postDesktopControlResult(url, { id: command.id, clientId, ok: true, value })
         if (command.action === 'closeMainWindowToTray') {
           await closeMainWindowToTray()
         } else if (command.action === 'requestMainWindowClose') {
@@ -1725,12 +1698,12 @@ async function runDesktopControlClient(url: string, windowLabel: string): Promis
           clientId,
           ok: false,
           error: error instanceof Error ? error.message : String(error),
-          waitForNext: false,
         })
       }
     } catch (error) {
       console.error('[Wework] Desktop E2E control client failed:', error)
       await new Promise(resolve => window.setTimeout(resolve, DESKTOP_CONTROL_RETRY_DELAY_MS))
+      commandRequest = pollForCommand()
     }
   }
 }

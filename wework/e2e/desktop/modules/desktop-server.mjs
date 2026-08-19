@@ -263,7 +263,6 @@ class DesktopE2EServer {
     this.readyWaiters = []
     this.commandQueue = []
     this.commandResults = new Map()
-    this.commandWaiters = new Map()
     this.commandHistory = []
     this.modelRequests = []
     this.catalogRequests = []
@@ -451,11 +450,6 @@ class DesktopE2EServer {
   async close() {
     for (const response of this.blockedCloudResponses) response.destroy()
     this.blockedCloudResponses.clear()
-    for (const waiter of this.commandWaiters.values()) {
-      clearTimeout(waiter.timeout)
-      waiter.response.destroy()
-    }
-    this.commandWaiters.clear()
     this.desktopScenario?.close?.()
     this.server.closeAllConnections?.()
     this.controlServer.closeAllConnections?.()
@@ -524,11 +518,6 @@ class DesktopE2EServer {
     this.rejectFatalError(this.fatalError)
     for (const pending of this.commandResults.values()) pending.reject(this.fatalError)
     this.commandResults.clear()
-    for (const waiter of this.commandWaiters.values()) {
-      clearTimeout(waiter.timeout)
-      waiter.response.destroy(this.fatalError)
-    }
-    this.commandWaiters.clear()
   }
 
   guard(promise) {
@@ -877,7 +866,6 @@ class DesktopE2EServer {
       this.commandResults.set(id, { clientId, resolve: resolvePromise, reject })
     })
     this.commandQueue.push({ clientId, command, rejectDelivery, resolveDelivery })
-    this.deliverQueuedCommand(clientId)
     try {
       await withTimeout(
         this.guard(Promise.race([delivery, result])),
@@ -894,51 +882,6 @@ class DesktopE2EServer {
       this.commandResults.delete(id)
       throw error
     }
-  }
-
-  deliverQueuedCommand(clientId) {
-    const waiter = this.commandWaiters.get(clientId)
-    if (!waiter) return false
-    const commandIndex = this.commandQueue.findIndex(item => item.clientId === clientId)
-    if (commandIndex < 0) return false
-
-    this.commandWaiters.delete(clientId)
-    clearTimeout(waiter.timeout)
-    const [{ command, resolveDelivery }] = this.commandQueue.splice(commandIndex, 1)
-    this.commandHistory.push({
-      ...command,
-      clientId,
-      deliveredAt: new Date().toISOString(),
-    })
-    resolveDelivery()
-    json(waiter.response, 200, command)
-    return true
-  }
-
-  registerCommandWaiter(clientId, response) {
-    const previousWaiter = this.commandWaiters.get(clientId)
-    if (previousWaiter) {
-      this.commandWaiters.delete(clientId)
-      clearTimeout(previousWaiter.timeout)
-      previousWaiter.response.writeHead(204)
-      previousWaiter.response.end()
-    }
-    const waiter = {
-      response,
-      timeout: setTimeout(() => {
-        if (this.commandWaiters.get(clientId) !== waiter) return
-        this.commandWaiters.delete(clientId)
-        response.writeHead(204)
-        response.end()
-      }, 15_000),
-    }
-    this.commandWaiters.set(clientId, waiter)
-    response.on('close', () => {
-      if (this.commandWaiters.get(clientId) !== waiter) return
-      this.commandWaiters.delete(clientId)
-      clearTimeout(waiter.timeout)
-    })
-    this.deliverQueuedCommand(clientId)
   }
 
   async handleControl(request, response) {
@@ -1469,12 +1412,6 @@ class DesktopE2EServer {
         const replacementError = new Error(
           `Desktop control client ${previousClientId} for ${ready.windowLabel} was replaced by ${ready.clientId}`
         )
-        const previousWaiter = this.commandWaiters.get(previousClientId)
-        if (previousWaiter) {
-          this.commandWaiters.delete(previousClientId)
-          clearTimeout(previousWaiter.timeout)
-          previousWaiter.response.destroy(replacementError)
-        }
         this.commandQueue = this.commandQueue.filter(item => {
           if (item.clientId !== previousClientId) return true
           item.rejectDelivery(replacementError)
@@ -1522,7 +1459,8 @@ class DesktopE2EServer {
         json(response, 200, command)
         return true
       }
-      this.registerCommandWaiter(clientId, response)
+      response.writeHead(204)
+      response.end()
       return true
     }
 
@@ -1553,16 +1491,12 @@ class DesktopE2EServer {
         return true
       }
       this.commandResults.delete(result.id)
-      if (result.waitForNext === false) {
-        json(response, 200, { ok: true })
-      } else {
-        this.registerCommandWaiter(result.clientId, response)
-      }
       if (result.ok) {
         pending.resolve(result.value ?? '')
       } else {
         pending.reject(new Error(result.error ?? `UI action ${result.id} failed`))
       }
+      json(response, 200, { ok: true })
       return true
     }
     return false
