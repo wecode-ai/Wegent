@@ -77,6 +77,7 @@ Any Wework UI, Tauri command, local-runtime, IPC, or desktop integration behavio
 pnpm --filter wework ai:verify start
 pnpm --filter wework ai:verify snapshot --session <session-path>
 pnpm --filter wework ai:verify debug --session <session-path>
+pnpm --filter wework ai:verify active-element --session <session-path>
 pnpm --filter wework ai:verify click --session <session-path> --selector '[data-testid="..."]'
 pnpm --filter wework ai:verify click-at --session <session-path> --value '{"x":640,"y":360}'
 pnpm --filter wework ai:verify click-then-macrotask --session <session-path> --selector '[data-testid="..."]' --target '[data-testid="..."]'

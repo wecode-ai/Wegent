@@ -40,6 +40,8 @@ import { projectSpaceApis } from '@/features/todo/projectSpaceSelection'
 import { WorkbenchBackground } from '@/features/appearance'
 import { useResizableSidebar } from './useResizableSidebar'
 import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
+import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
+import { requestWorkbenchComposerFocus } from '@/lib/workbenchComposerFocus'
 import {
   archiveLocalHarnessSession,
   closeLocalTerminal,
@@ -273,8 +275,10 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
           currentProject: null,
         })
       )
-      if (currentPath === '/' && isSameRuntimeTask(state.currentRuntimeTask, address)) return
-      await onOpenRuntimeTask(address)
+      if (!(currentPath === '/' && isSameRuntimeTask(state.currentRuntimeTask, address))) {
+        await onOpenRuntimeTask(address)
+      }
+      requestWorkbenchComposerFocus(getRuntimeTaskChatScopeKey(address))
     },
     [activateSplitPane, currentPath, onOpenRuntimeTask, state.currentRuntimeTask]
   )
