@@ -90,6 +90,7 @@ def test_prepare_contexts_creates_internal_and_external_contexts() -> None:
         "parent_id": None,
         "target_name": None,
         "resource_url": None,
+        "include_descendants": None,
     }
 
 
