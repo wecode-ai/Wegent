@@ -22,10 +22,13 @@ const FIRST_BROWSER_TAB_CLOSE_SELECTOR =
   FIRST_BROWSER_TAB_SELECTOR + ' [data-testid="right-workspace-browser-tab-1-close-button"]'
 const BROWSER_RELOAD_SELECTOR =
   ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-reload-button"]'
+const BROWSER_NAVIGATION_ERROR_SELECTOR =
+  ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-navigation-error"]'
 const RIGHT_WORKSPACE_NEW_TAB_SELECTOR = '[data-testid="right-workspace-new-tab-button"]'
 const RIGHT_WORKSPACE_TABBAR_SELECTOR = '[data-testid="right-workspace-tabbar"]'
 const FIXTURE_A_PATH = '/embedded-browser-multi-tabs-a'
 const FIXTURE_B_PATH = '/embedded-browser-multi-tabs-b'
+const NAVIGATION_FAILURE_PATH = '/embedded-browser-navigation-failure'
 const FIXTURE_A_TEXT = 'Embedded Browser Multi Tab A'
 const FIXTURE_B_TEXT = 'Embedded Browser Multi Tab B'
 const BRIDGE_RUNTIME_FILE = 'embedded-browser-bridge.json'
@@ -136,6 +139,10 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
         response.end(fixtureHtml(FIXTURE_B_TEXT, FIXTURE_B_TEXT))
         return true
       }
+      if (url.pathname === NAVIGATION_FAILURE_PATH) {
+        request.socket.destroy()
+        return true
+      }
       return false
     },
 
@@ -143,6 +150,7 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
       const bridgeIdentity = await waitForBridgeIdentity(executorHome, uiTimeoutMs)
       const fixtureAUrl = control.url + FIXTURE_A_PATH
       const fixtureBUrl = control.url + FIXTURE_B_PATH
+      const navigationFailureUrl = control.url + NAVIGATION_FAILURE_PATH
 
       await control.command('waitFor', RIGHT_PANEL_TOGGLE_SELECTOR, { timeoutMs: uiTimeoutMs })
       assert.equal(
@@ -173,6 +181,43 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
         'The first browser tab did not restore its favicon after reloading',
         uiTimeoutMs,
         FIRST_BROWSER_TAB_SELECTOR
+      )
+      await control.command('fill', BROWSER_INPUT_SELECTOR, { value: navigationFailureUrl })
+      await control.command('submit', BROWSER_INPUT_SELECTOR)
+      await control.command('waitFor', BROWSER_NAVIGATION_ERROR_SELECTOR, {
+        timeoutMs: uiTimeoutMs,
+      })
+      const navigationFailureText = await control.command(
+        'getText',
+        BROWSER_NAVIGATION_ERROR_SELECTOR
+      )
+      assert.match(
+        navigationFailureText,
+        /页面无法打开|Page couldn't be opened/,
+        'The browser did not explain the navigation failure'
+      )
+      await waitForSnapshot(
+        control,
+        snapshot => !snapshot.testIds.includes('right-workspace-browser-tab-1-loading-icon'),
+        'The browser tab kept loading after navigation failed',
+        uiTimeoutMs,
+        FIRST_BROWSER_TAB_SELECTOR
+      )
+      await control.command('fill', BROWSER_INPUT_SELECTOR, { value: fixtureAUrl })
+      await control.command('submit', BROWSER_INPUT_SELECTOR)
+      await waitForValue(
+        control,
+        BROWSER_INPUT_SELECTOR,
+        fixtureAUrl,
+        uiTimeoutMs,
+        'The browser did not recover after a failed navigation'
+      )
+      await waitForSnapshot(
+        control,
+        snapshot => !snapshot.testIds.includes('workspace-browser-navigation-error'),
+        'The browser kept showing the navigation error after recovery',
+        uiTimeoutMs,
+        ACTIVE_BROWSER_PANEL_SELECTOR
       )
       const firstBrowserLabel = (await callBridge(bridgeIdentity, { action: 'status' })).label
       const secondBrowserLabel = firstBrowserLabel + '-2'

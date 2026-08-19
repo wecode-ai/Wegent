@@ -11,21 +11,21 @@ use std::{
 
 use super::{
     available_logical_entry, bootstrap_is_stable_at_build, bridge_navigation_url,
-    bridge_request_authorized,
-    browser_file_url_from_path, browser_host_is_ready, browser_open_action, browser_webview_url,
-    consume_approved_agent_risk, directory_entry_modified_unix_seconds, directory_listing_html,
-    download_event_owner, file_url_path, format_directory_entry_modified, format_file_size,
-    loaded_browser_url, local_file_browser_title, logical_owner_for_native_label,
-    merge_request_option, native_webview_label, read_http_request, ready_logical_entry,
-    register_agent_approval, register_preview_source, relabel_logical_entry,
-    remove_logical_entry_if_native_matches, resolve_agent_bridge_label,
-    resolve_browser_navigation_url, script_browser_action, script_resolve_inspect_target,
-    script_semantic_inspect, should_block_local_file_preview, should_record_loaded_url,
-    should_replay_browser_open_request, update_logical_entry_if_native_matches,
-    wait_for_browser_ready_with_observer, wait_for_main_thread_barrier, DirectoryEntry,
-    EmbeddedBrowserBridgeRequest, EmbeddedBrowserDownloadPayload, EmbeddedBrowserOpenAction,
-    EmbeddedBrowserPageState, EmbeddedBrowserReadiness, EmbeddedBrowserState,
-    EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV, EMBEDDED_BROWSER_NOT_READY_ERROR,
+    bridge_request_authorized, browser_file_url_from_path, browser_host_is_ready,
+    browser_open_action, browser_webview_url, consume_approved_agent_risk,
+    directory_entry_modified_unix_seconds, directory_listing_html, download_event_owner,
+    file_url_path, format_directory_entry_modified, format_file_size, loaded_browser_url,
+    local_file_browser_title, logical_owner_for_native_label, merge_request_option,
+    native_webview_label, read_http_request, ready_logical_entry, register_agent_approval,
+    register_preview_source, relabel_logical_entry, remove_logical_entry_if_native_matches,
+    resolve_agent_bridge_label, resolve_browser_navigation_url, script_browser_action,
+    script_resolve_inspect_target, script_semantic_inspect, should_block_local_file_preview,
+    should_record_loaded_url, should_replay_browser_open_request,
+    update_logical_entry_if_native_matches, wait_for_browser_ready_with_observer,
+    wait_for_main_thread_barrier, DirectoryEntry, EmbeddedBrowserBridgeRequest,
+    EmbeddedBrowserDownloadPayload, EmbeddedBrowserOpenAction, EmbeddedBrowserPageState,
+    EmbeddedBrowserReadiness, EmbeddedBrowserState, EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV,
+    EMBEDDED_BROWSER_NOT_READY_ERROR,
 };
 use encoding_rs::GB18030;
 use serde_json::{json, Value};
@@ -289,6 +289,7 @@ fn closed_agent_tab_routes_fail_without_retargeting() {
                 url: None,
                 loaded_url: None,
                 is_loading: false,
+                navigation_error: None,
                 opened_at_unix_ms: 0,
                 bootstrap_finished: false,
                 host_ready: false,
@@ -503,12 +504,69 @@ fn page_state_serializes_native_identity() {
         title: Some("Example".to_string()),
         url: Some("https://example.com/".to_string()),
         is_loading: true,
+        navigation_error: None,
     };
 
     let serialized = serde_json::to_value(state).unwrap();
 
     assert_eq!(serialized["nativeLabel"], "workspace-browser-native-41");
     assert_eq!(serialized["isLoading"], true);
+}
+
+#[test]
+fn navigation_failure_ends_loading_and_records_the_requested_url() {
+    let mut entry = super::EmbeddedBrowserEntry {
+        native_label: "native-1".to_string(),
+        title: None,
+        url: Some("http://localhost:3000/".to_string()),
+        loaded_url: None,
+        is_loading: true,
+        navigation_error: None,
+        opened_at_unix_ms: 0,
+        bootstrap_finished: true,
+        host_ready: true,
+        phase: super::EmbeddedBrowserPhase::Opening,
+    };
+
+    assert!(super::apply_navigation_failure(
+        &mut entry,
+        -1004,
+        "Could not connect to the server.".to_string()
+    ));
+    assert!(!entry.is_loading);
+    assert!(entry.bootstrap_finished);
+    assert_eq!(
+        entry.navigation_error,
+        Some(super::EmbeddedBrowserNavigationError {
+            code: -1004,
+            message: "Could not connect to the server.".to_string(),
+            url: Some("http://localhost:3000/".to_string()),
+        })
+    );
+}
+
+#[test]
+fn cancelled_navigation_does_not_replace_the_next_loading_state() {
+    let mut entry = super::EmbeddedBrowserEntry {
+        native_label: "native-1".to_string(),
+        title: None,
+        url: Some("https://example.com/next".to_string()),
+        loaded_url: None,
+        is_loading: true,
+        navigation_error: None,
+        opened_at_unix_ms: 0,
+        bootstrap_finished: true,
+        host_ready: true,
+        phase: super::EmbeddedBrowserPhase::Opening,
+    };
+
+    assert!(!super::apply_navigation_failure(
+        &mut entry,
+        -999,
+        "cancelled".to_string()
+    ));
+    assert!(entry.is_loading);
+    assert_eq!(entry.navigation_error, None);
 }
 
 #[test]

@@ -54,6 +54,7 @@ import {
   type EmbeddedBrowserBounds,
   type EmbeddedBrowserDownloadEvent,
   type EmbeddedBrowserInvalidTlsCertificateEvent,
+  type EmbeddedBrowserNavigationError,
   type EmbeddedBrowserOcclusionChange,
   type EmbeddedBrowserOpenRequest,
 } from '@/lib/embedded-browser'
@@ -366,6 +367,9 @@ export function WorkspaceBrowserTabPanel({
   const [pageUrl, setPageUrl] = useState<string | null>(null)
   const [status, setStatus] = useState<BrowserStatus>('idle')
   const [error, setError] = useState<string | null>(null)
+  const [navigationError, setNavigationError] = useState<EmbeddedBrowserNavigationError | null>(
+    null
+  )
   const [annotationMode, setAnnotationMode] = useState(false)
   const [annotations, setAnnotations] = useState<PageAnnotationDto[]>([])
   const [, setAnnotationScope] = useState<BrowserAnnotationScope | null>(null)
@@ -402,6 +406,18 @@ export function WorkspaceBrowserTabPanel({
   useEffect(() => {
     onLoadingChange?.(status === 'loading')
   }, [onLoadingChange, status])
+
+  const applyNativePageStatus = useCallback(
+    (pageState: {
+      isLoading: boolean
+      navigationError?: EmbeddedBrowserNavigationError | null
+    }) => {
+      const nextNavigationError = pageState.navigationError ?? null
+      setNavigationError(nextNavigationError)
+      setStatus(nextNavigationError ? 'error' : pageState.isLoading ? 'loading' : 'ready')
+    },
+    []
+  )
 
   const applyDownloadEvent = useCallback((download: EmbeddedBrowserDownloadEvent) => {
     setDownloads(current => {
@@ -658,7 +674,7 @@ export function WorkspaceBrowserTabPanel({
     const listener = listenEmbeddedBrowserPageStateChanges(pageState => {
       if (pageState.label && pageState.label !== currentLabelRef.current) return
       if (nativeLabelRef.current && pageState.nativeLabel !== nativeLabelRef.current) return
-      setStatus(pageState.isLoading ? 'loading' : 'ready')
+      applyNativePageStatus(pageState)
       if (pageState.isLoading) return
       setInvalidTlsCertificate(pageState.invalidTlsCertificate ?? null)
       const nextUrl = pageState.url || currentUrlRef.current
@@ -701,7 +717,7 @@ export function WorkspaceBrowserTabPanel({
       disposed = true
       unlisten?.()
     }
-  }, [label, onFaviconChange, onTitleChange, updatePageUrl])
+  }, [applyNativePageStatus, label, onFaviconChange, onTitleChange, updatePageUrl])
 
   const syncEmbeddedBrowserBounds = useCallback(
     async (visible = active) => {
@@ -727,10 +743,12 @@ export function WorkspaceBrowserTabPanel({
         return
       }
       const nativeVisible =
-        visible && (!embeddedBrowserOccludedRef.current || !occlusionSnapshotReadyRef.current)
+        visible &&
+        !navigationError &&
+        (!embeddedBrowserOccludedRef.current || !occlusionSnapshotReadyRef.current)
       await setEmbeddedBrowserBounds(bounds, nativeVisible, label)
     },
-    [active, embeddedBrowserAvailable, label]
+    [active, embeddedBrowserAvailable, label, navigationError]
   )
 
   const hideEmbeddedBrowser = useCallback(async () => {
@@ -1023,7 +1041,7 @@ export function WorkspaceBrowserTabPanel({
         return false
       }
       adoptNativeLabel(pageState.nativeLabel, label)
-      setStatus(pageState.isLoading ? 'loading' : 'ready')
+      applyNativePageStatus(pageState)
       setInvalidTlsCertificate(pageState.invalidTlsCertificate ?? null)
       const nextUrl = pageState.url || currentUrlRef.current
       if (
@@ -1050,6 +1068,7 @@ export function WorkspaceBrowserTabPanel({
   }, [
     embeddedBrowserAvailable,
     adoptNativeLabel,
+    applyNativePageStatus,
     exitAnnotationMode,
     label,
     onFaviconChange,
@@ -1117,7 +1136,7 @@ export function WorkspaceBrowserTabPanel({
           nativeBrowserOpenRef.current = true
           updatePageUrl(pageState.url || openingUrl)
           schedulePostOpenBoundsSync(activeRef.current)
-          setStatus(pageState.isLoading ? 'loading' : 'ready')
+          applyNativePageStatus(pageState)
           return true
         } catch {
           // No existing browser state to recover yet.
@@ -1186,7 +1205,7 @@ export function WorkspaceBrowserTabPanel({
         updatePageUrl(requestId ? openingUrl : pageState.url || openingUrl)
         await revealHiddenBrowser(visible)
         schedulePostOpenBoundsSync(activeRef.current)
-        setStatus(pageState.isLoading ? 'loading' : 'ready')
+        applyNativePageStatus(pageState)
         logBrowserOpenDiagnostic('native_open_succeeded', {
           active,
           label: openingLabel,
@@ -1230,6 +1249,7 @@ export function WorkspaceBrowserTabPanel({
   }, [
     active,
     adoptNativeLabel,
+    applyNativePageStatus,
     browserOpenAttempt,
     currentUrl,
     embeddedBrowserAvailable,
@@ -1257,7 +1277,7 @@ export function WorkspaceBrowserTabPanel({
         if (pageState.title) {
           onTitleChange?.(pageState.title)
         }
-        setStatus(pageState.isLoading ? 'loading' : 'ready')
+        applyNativePageStatus(pageState)
         schedulePostOpenBoundsSync(active)
         if (!annotationModeRef.current) {
           void suspendAnnotationLayer(label)
@@ -1275,6 +1295,7 @@ export function WorkspaceBrowserTabPanel({
   }, [
     active,
     adoptNativeLabel,
+    applyNativePageStatus,
     currentUrl,
     embeddedBrowserAvailable,
     label,
@@ -1769,6 +1790,7 @@ export function WorkspaceBrowserTabPanel({
 
   const reloadCurrentUrl = useCallback(
     (url: string) => {
+      setNavigationError(null)
       if (!embeddedBrowserAvailable || !nativeBrowserOpenRef.current) {
         setCurrentUrl(null)
         window.setTimeout(() => setCurrentUrl(url), 0)
@@ -1800,6 +1822,7 @@ export function WorkspaceBrowserTabPanel({
 
       setAddress(nextUrl)
       setError(null)
+      setNavigationError(null)
       setLocalFilePreviewToast(null)
       setInvalidTlsCertificate(certificate =>
         certificate && haveSameOrigin(certificate.url, nextUrl) ? certificate : null
@@ -2445,7 +2468,22 @@ export function WorkspaceBrowserTabPanel({
                 className="pointer-events-none absolute inset-0 h-full w-full bg-background object-fill"
               />
             ) : null}
-            {status === 'loading' && (
+            {navigationError ? (
+              <div
+                data-testid="workspace-browser-navigation-error"
+                role="alert"
+                className="absolute inset-0 flex flex-col items-center justify-center px-6 text-center"
+              >
+                <CircleAlert className="mb-4 h-7 w-7 text-text-muted" />
+                <p className="text-sm font-medium text-text-primary">
+                  {t('workbench.browser_navigation_failed_title')}
+                </p>
+                <p className="mt-2 max-w-md text-sm leading-[18px] text-text-secondary">
+                  {t('workbench.browser_navigation_failed_desc')}
+                </p>
+              </div>
+            ) : null}
+            {status === 'loading' && !navigationError && (
               <div
                 data-testid="workspace-browser-loading"
                 className="pointer-events-none absolute inset-0 flex items-center justify-center bg-background/40"

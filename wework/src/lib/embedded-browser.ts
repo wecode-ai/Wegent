@@ -52,7 +52,14 @@ export interface EmbeddedBrowserPageState {
   title: string | null
   url: string | null
   isLoading: boolean
+  navigationError?: EmbeddedBrowserNavigationError | null
   invalidTlsCertificate?: EmbeddedBrowserInvalidTlsCertificateEvent | null
+}
+
+export interface EmbeddedBrowserNavigationError {
+  code: number
+  message: string
+  url: string | null
 }
 
 export interface EmbeddedBrowserOpenRequest {

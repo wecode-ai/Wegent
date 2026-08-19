@@ -444,6 +444,78 @@ describe('WorkspaceBrowserPanel', () => {
     expect(onLoadingChange).toHaveBeenLastCalledWith(false)
   })
 
+  test('replaces a failed native page with a clear error state and stops loading', async () => {
+    let handlePageStateChange!: (pageState: {
+      label: string
+      nativeLabel: string
+      title: string | null
+      url: string | null
+      isLoading: boolean
+      navigationError?: {
+        code: number
+        message: string
+        url: string | null
+      } | null
+    }) => void
+    const onLoadingChange = vi.fn()
+    embeddedBrowserMocks.listenEmbeddedBrowserPageStateChanges.mockImplementation(handler => {
+      handlePageStateChange = handler
+      return Promise.resolve(() => undefined)
+    })
+    mockBrowserHostRect()
+    render(<WorkspaceBrowserPanel active onLoadingChange={onLoadingChange} />)
+
+    const input = screen.getByTestId('workspace-browser-url-input')
+    fireEvent.change(input, { target: { value: 'http://localhost:3000' } })
+    fireEvent.submit(input.closest('form')!)
+    await waitFor(() => expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalled())
+
+    act(() => {
+      handlePageStateChange({
+        label: 'workspace-browser',
+        nativeLabel: 'workspace-browser-native-1',
+        title: null,
+        url: 'http://localhost:3000/',
+        isLoading: true,
+        navigationError: null,
+      })
+    })
+    expect(onLoadingChange).toHaveBeenLastCalledWith(true)
+
+    act(() => {
+      handlePageStateChange({
+        label: 'workspace-browser',
+        nativeLabel: 'workspace-browser-native-1',
+        title: null,
+        url: 'http://localhost:3000/',
+        isLoading: false,
+        navigationError: {
+          code: -1004,
+          message: 'Could not connect to the server.',
+          url: 'http://localhost:3000/',
+        },
+      })
+    })
+
+    const failure = screen.getByTestId('workspace-browser-navigation-error')
+    expect(failure).toHaveTextContent('页面无法打开')
+    expect(failure).toHaveTextContent('请检查地址或网络连接，然后重新加载。')
+    expect(screen.queryByTestId('workspace-browser-loading')).not.toBeInTheDocument()
+    expect(onLoadingChange).toHaveBeenLastCalledWith(false)
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.setEmbeddedBrowserBounds).toHaveBeenLastCalledWith(
+        {
+          x: 500,
+          y: 120,
+          width: 400,
+          height: 300,
+        },
+        false,
+        'workspace-browser'
+      )
+    })
+  })
+
   test('warns when the native browser accepts an invalid TLS certificate', async () => {
     let handleInvalidCertificate!: (certificate: {
       nativeLabel: string
