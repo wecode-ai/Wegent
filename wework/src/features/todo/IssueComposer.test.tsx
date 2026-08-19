@@ -96,6 +96,8 @@ describe('IssueComposer', () => {
       'aria-selected',
       'true'
     )
+    expect(screen.getByTestId('workspace-issue-heading')).toHaveTextContent('要推进什么？')
+    expect(screen.getByText('描述目标、问题或交付，创建后会进入当前项目空间。')).toBeVisible()
     expect(screen.queryByText('描述要推进的事情，创建后自动进入所选看板。')).not.toBeInTheDocument()
     expect(screen.queryByTestId('project-work-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('model-selector-button')).not.toBeInTheDocument()
@@ -133,6 +135,7 @@ describe('IssueComposer', () => {
     await userEvent.click(screen.getByTestId('workspace-create-task-tab'))
 
     expect(screen.getByTestId('workspace-create-task-tab')).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByTestId('workspace-issue-heading')).toHaveTextContent('要执行什么？')
     expect(screen.getByTestId('workspace-issue-input')).toHaveTextContent('修复创建流程')
     expect(screen.getByTestId('project-work-button')).toHaveTextContent('Wegent')
     await userEvent.click(screen.getByTestId('project-work-button'))

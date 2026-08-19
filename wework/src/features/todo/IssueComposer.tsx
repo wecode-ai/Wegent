@@ -1,5 +1,5 @@
 import { useContext, useEffect, useRef, useState } from 'react'
-import { ArrowUp, Maximize2, Minimize2, Paperclip, X } from 'lucide-react'
+import { ArrowUp, Bot, LayoutDashboard, Maximize2, Minimize2, Paperclip, X } from 'lucide-react'
 import type { CloudProject } from '@/api/deliveries'
 import { type ProjectChatControls, type ProjectWorkControls } from '@/components/chat/ChatInput'
 import { AttachmentBadges } from '@/components/chat/composer/AttachmentBadges'
@@ -406,10 +406,10 @@ export function IssueComposer({
           focusable[nextIndex]?.focus()
         }}
         className={cn(
-          'w-full max-w-[760px]',
+          'w-full max-w-[736px]',
           presentation === 'popup' &&
             !fullScreen &&
-            'max-h-full overflow-y-auto rounded-2xl border border-border bg-background p-6 shadow-2xl',
+            'max-h-full overflow-y-auto rounded-2xl border border-border bg-background p-6 shadow-xl',
           fullScreen &&
             'fixed bottom-4 left-4 right-4 top-[54px] z-modal flex w-auto max-h-none max-w-none flex-col overflow-hidden rounded-2xl border border-border bg-background p-0 shadow-xl'
         )}
@@ -540,6 +540,54 @@ export function IssueComposer({
           </>
         ) : (
           <>
+            {presentation === 'page' ? (
+              <div className="mb-8 flex flex-col items-center text-center">
+                <Bot className="mb-5 h-9 w-9 text-text-muted/55" aria-hidden="true" />
+                <h1
+                  data-testid="workspace-issue-heading"
+                  className="text-xl font-normal leading-9 tracking-normal text-text-primary/95"
+                >
+                  {creationMode === 'issue'
+                    ? t('todo.issue_composer_title', '要推进什么？')
+                    : t('todo.issue_task_composer_title', '要执行什么？')}
+                </h1>
+                <p className="mt-2 max-w-[520px] text-sm leading-5 text-text-muted">
+                  {creationMode === 'issue'
+                    ? t(
+                        'todo.issue_composer_subtitle',
+                        '描述目标、问题或交付，创建后会进入当前项目空间。'
+                      )
+                    : t(
+                        'todo.issue_task_composer_subtitle',
+                        '描述需要完成的工作，并选择本地工作空间和执行配置。'
+                      )}
+                </p>
+              </div>
+            ) : (
+              <div className="mb-5 flex items-center justify-between">
+                <div className="flex min-w-0 items-center gap-2">
+                  <LayoutDashboard className="h-4 w-4 shrink-0 text-text-muted" />
+                  <div className="min-w-0">
+                    <h2 className="truncate text-sm font-medium text-text-primary">
+                      {t('todo.new_issue', '新建 Issue')}
+                    </h2>
+                    <p className="truncate text-xs text-text-muted">
+                      {selectedWorkItemProject?.name ??
+                        t('workbench.default_work_item_board', '我的任务')}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  data-testid="workspace-issue-close"
+                  onClick={onCancel}
+                  className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary"
+                  aria-label={t('common.close', '关闭')}
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            )}
             <div className="mb-3 flex items-center justify-between">
               <div
                 data-testid="workspace-issue-creation-tabs"
@@ -578,17 +626,38 @@ export function IssueComposer({
                   {t('todo.create_task_tab', '创建任务')}
                 </button>
               </div>
-              {creationMode === 'issue' ? (
-                <button
-                  type="button"
-                  data-testid="workspace-issue-expand"
-                  onClick={() => setFullScreen(true)}
-                  className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary"
-                  aria-label={t('todo.expand_issue_editor', '全屏编辑')}
-                >
-                  <Maximize2 className="h-4 w-4" />
-                </button>
-              ) : null}
+              <div className="flex items-center gap-2">
+                <span className="hidden text-xs text-text-muted sm:inline">
+                  {creationMode === 'issue'
+                    ? t('todo.issue_create_mode_hint', '仅创建，不会启动执行')
+                    : t('todo.task_create_mode_hint', '创建后立即进入执行流程')}
+                </span>
+                {creationMode === 'issue' ? (
+                  <button
+                    type="button"
+                    data-testid="workspace-issue-expand"
+                    onClick={() => setFullScreen(true)}
+                    className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary"
+                    aria-label={t('todo.expand_issue_editor', '全屏编辑')}
+                  >
+                    <Maximize2 className="h-4 w-4" />
+                  </button>
+                ) : null}
+              </div>
+            </div>
+            <div className="mb-2 flex items-center justify-between px-1 text-xs text-text-muted">
+              <span className="flex min-w-0 items-center gap-1.5">
+                <LayoutDashboard className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate">
+                  {selectedWorkItemProject?.name ??
+                    t('workbench.default_work_item_board', '我的任务')}
+                </span>
+              </span>
+              <span className="shrink-0">
+                {creationMode === 'issue'
+                  ? t('todo.issue_submit_shortcut', '⌘↵ 创建')
+                  : t('todo.task_submit_shortcut', '⌘↵ 创建并执行')}
+              </span>
             </div>
             {creationMode === 'task' && workbench?.selectProject && selectedLocalProject ? (
               <ConnectedIssueProjectWork
@@ -603,7 +672,7 @@ export function IssueComposer({
               renderComposer(fallbackProjectWork)
             )}
             {hasDraft ? (
-              <div className="mt-2 flex items-center justify-end gap-2">
+              <div className="mt-3 flex items-center justify-end gap-2">
                 <span
                   data-testid="workspace-issue-draft-status"
                   className="text-xs text-text-muted"
