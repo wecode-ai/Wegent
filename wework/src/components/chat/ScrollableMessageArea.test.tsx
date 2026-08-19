@@ -2055,6 +2055,12 @@ describe('ScrollableMessageArea', () => {
     mockScrollRelativeRect(firstMessageAnchor, scroller, 180, 60)
     act(() => vi.advanceTimersByTime(80))
     expect(scroller.scrollTop).toBe(84)
+    act(() => vi.runOnlyPendingTimers())
+    expect(scroller.scrollTop).toBe(84)
+    expect(getConversationScrollSnapshot('navigation-settle')).toEqual({
+      distanceFromBottomPx: 1216,
+      pinnedToBottom: false,
+    })
     expect(content).toBeInTheDocument()
     vi.stubGlobal('ResizeObserver', originalResizeObserver)
   })
