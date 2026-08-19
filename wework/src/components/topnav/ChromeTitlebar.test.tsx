@@ -85,6 +85,16 @@ describe('ChromeTitlebar', () => {
     expect(screen.getByTestId('titlebar-actions')).toHaveClass('h-full', 'gap-1', 'w-[5rem]')
   })
 
+  test('hides the workspace tab when its kind is not available', () => {
+    renderTitlebar({
+      availableWorkspaceTabKinds: ['task', 'agent', 'auxiliary'],
+    })
+    expect(screen.getByTestId('workspace-tab-strip')).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: '任务' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: '智能体' })).toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: '项目空间' })).not.toBeInTheDocument()
+  })
+
   test('shows the macOS traffic-light spacer and starts native dragging', async () => {
     mockUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)')
     enableTauri()

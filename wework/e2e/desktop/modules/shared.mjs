@@ -1250,6 +1250,7 @@ async function ensureModelOptionVisible(
       await control
         .command('hover', modelSelectorButton, {
           timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+          visible: true,
         })
         .catch(() => undefined)
       menu = JSON.parse(await control.command('snapshot', 'body'))
@@ -1257,6 +1258,7 @@ async function ensureModelOptionVisible(
         await control.command('clickWhenEnabled', modelSelectorButton, {
           stableMs: 100,
           timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+          visible: true,
         })
       }
     }
@@ -1334,8 +1336,11 @@ async function selectE2EModel(
   const modelSelectorButton = `${composerSelector} [data-testid="model-selector-button"]`.trim()
   await control.command('waitFor', modelSelectorButton, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    visible: true,
   })
-  const selectedModelLabel = await control.command('getText', modelSelectorButton)
+  const selectedModelLabel = await control.command('getText', modelSelectorButton, {
+    visible: true,
+  })
   if (labels.some(label => selectedModelLabel.includes(label))) return
 
   await ensureModelOptionVisible(control, modelIds, modelSelectorButton)
@@ -1347,6 +1352,7 @@ async function selectE2EModel(
       await control.command('clickWhenEnabled', modelSelectorButton, {
         stableMs: 100,
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        visible: true,
       })
     }
     await revealGroupedModelOption(control, targetOptionIds)
@@ -1384,7 +1390,9 @@ async function waitForE2EModelLabel(
 ) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
-    const selectedModelLabel = await control.command('getText', modelSelectorButton)
+    const selectedModelLabel = await control.command('getText', modelSelectorButton, {
+      visible: true,
+    })
     if (labels.some(label => selectedModelLabel.includes(label))) return
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }

@@ -156,6 +156,7 @@ export interface ChatInputProps {
   projectChat?: ProjectChatControls
   projectWork?: ProjectWorkControls
   showProjectWorkBar?: boolean
+  showExecutionTools?: boolean
   queuedMessages?: QueuedWorkbenchMessage[]
   guidanceMessages?: GuidanceWorkbenchMessage[]
   codeComments?: CodeCommentContext[]
@@ -563,6 +564,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     projectChat,
     projectWork,
     showProjectWorkBar = true,
+    showExecutionTools = true,
     queuedMessages = [],
     guidanceMessages = [],
     codeComments = [],
@@ -955,6 +957,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
             }
           }
           showProjectWorkBar={showProjectWorkBar}
+          showExecutionTools={showExecutionTools}
           projectWorkBarMiddleContext={projectWorkBarMiddleContext}
           projectWorkBarTrailingContext={projectWorkBarTrailingContext}
           projectWorkBarEndContext={projectWorkBarEndContext}

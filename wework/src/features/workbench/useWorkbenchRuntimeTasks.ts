@@ -113,6 +113,17 @@ export function useWorkbenchRuntimeTasks({
     []
   )
 
+  const reconcileCurrentRuntimeTaskAddress = useCallback(
+    (previousAddress: RuntimeTaskAddress, address: RuntimeTaskAddress) => {
+      dispatch({
+        type: 'runtime_task_address_reconciled',
+        previousAddress,
+        address,
+      })
+    },
+    [dispatch]
+  )
+
   const clearCurrentRuntimeTaskView = useCallback(() => {
     currentRuntimeTaskRef.current = null
     dispatch({ type: 'current_task_cleared' })
@@ -509,6 +520,7 @@ export function useWorkbenchRuntimeTasks({
   return {
     openRuntimeTaskView,
     isCurrentRuntimeTask,
+    reconcileCurrentRuntimeTaskAddress,
     clearCurrentRuntimeTaskView,
     loadRuntimeTranscriptForPane,
     subscribeRuntimeTaskStream,

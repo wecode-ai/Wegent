@@ -590,6 +590,60 @@ describe('startLocalRobotQueueDispatcher', () => {
     stop()
   })
 
+  it('inherits the workspace from the predecessor runtime task', async () => {
+    const claimNext = vi
+      .fn()
+      .mockResolvedValueOnce(
+        execution({
+          runtime_payload: runtimePayload({
+            standaloneChatWorkspace: false,
+            workspaceSourceTask: {
+              deviceId: 'local-device',
+              taskId: 'previous-runtime-task',
+            },
+          }),
+        })
+      )
+      .mockResolvedValue(null)
+    const runtimeWork = [
+      {
+        project: {
+          key: 'a2a',
+          id: 7,
+          name: 'A2A',
+          kind: 'local',
+          source: 'local_project',
+          roots: [{ path: '/Users/me/A2A' }],
+        },
+        deviceWorkspaces: [
+          {
+            deviceId: 'local-device',
+            available: true,
+            workspacePath: '/Users/me/A2A',
+            tasks: [
+              {
+                taskId: 'previous-runtime-task',
+                title: 'Previous',
+                runtime: 'codex',
+                workspacePath: '/Users/me/A2A/.worktrees/previous',
+              },
+            ],
+          },
+        ],
+        totalTasks: 1,
+      },
+    ]
+    const { services: svc, mocks } = services({ claimNext, runtimeWork })
+    const stop = startLocalRobotQueueDispatcher(svc)
+    await vi.advanceTimersByTimeAsync(LOCAL_QUEUE_POLL_MS)
+    await vi.runOnlyPendingTimersAsync()
+
+    const call = mocks.createRuntimeTask.mock.calls[0][0] as Record<string, unknown>
+    expect(call.workspacePath).toBe('/Users/me/A2A/.worktrees/previous')
+    expect(mocks.getHomeDirectory).not.toHaveBeenCalled()
+    stop()
+  })
+
   it('treats local project zero as an unbound standalone workspace', async () => {
     const claimNext = vi
       .fn()

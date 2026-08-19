@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   CalendarClock,
   CheckCircle2,
@@ -72,7 +72,9 @@ export function ProjectAutomationRulesSection({
   modelApi,
   teamApi,
   onOpenTask,
+  onRulesChange,
   projectTags = [],
+  createAiCoordinatorRequestKey = 0,
 }: {
   projectId: string
   api?: AutomationApi
@@ -82,11 +84,14 @@ export function ProjectAutomationRulesSection({
   modelApi?: { listModels: () => Promise<{ data: UnifiedModel[] }> }
   teamApi?: { listTeams: () => Promise<Team[]> }
   onOpenTask?: (taskId: string) => void
+  onRulesChange?: (rules: ProjectAutomationRule[]) => void
   projectTags?: string[]
+  createAiCoordinatorRequestKey?: number
 }) {
   const { t } = useTranslation('common')
   const backendUrl = getRuntimeConfig().wegentBackendUrl || window.location.origin
   const [rules, setRules] = useState<ProjectAutomationRule[]>([])
+  const visibleRules = rules.filter(rule => rule.triggerType !== 'workflow')
   const [agents, setAgents] = useState<ProjectChatAgent[]>([])
   const [devices, setDevices] = useState<DeviceInfo[]>([])
   const [models, setModels] = useState<UnifiedModel[]>([])
@@ -102,6 +107,11 @@ export function ProjectAutomationRulesSection({
     eventId: string
     secret: string
   } | null>(null)
+  const handledAiCoordinatorRequestKey = useRef(createAiCoordinatorRequestKey)
+
+  useEffect(() => {
+    onRulesChange?.(rules)
+  }, [onRulesChange, rules])
 
   const load = useCallback(async () => {
     if (!api || !agentApi) return
@@ -169,6 +179,7 @@ export function ProjectAutomationRulesSection({
   }, [api, load, projectId, runs, selected?.id])
 
   const selectRule = async (rule: ProjectAutomationRule) => {
+    if (rule.triggerType === 'workflow') return
     setSelected(rule)
     setDraft({
       name: rule.name,
@@ -197,14 +208,35 @@ export function ProjectAutomationRulesSection({
     }
   }
 
-  const createRule = (template?: ProjectAutomationTemplate) => {
-    const next = draftFromTemplate(template, agents, models, devices)
-    setSelected(null)
-    setRuns([])
-    setCreatedWebhook(null)
-    setDraft(next.draft)
-    setSchedule(next.schedule)
-  }
+  const createRule = useCallback(
+    (template?: ProjectAutomationTemplate) => {
+      const next = draftFromTemplate(template, agents, models, devices)
+      setSelected(null)
+      setRuns([])
+      setCreatedWebhook(null)
+      setDraft(next.draft)
+      setSchedule(next.schedule)
+    },
+    [agents, devices, models]
+  )
+
+  useEffect(() => {
+    if (createAiCoordinatorRequestKey === handledAiCoordinatorRequestKey.current) return
+    if (!canManage) return
+    handledAiCoordinatorRequestKey.current = createAiCoordinatorRequestKey
+    const timer = window.setTimeout(() => {
+      createRule({
+        name: t('workbench.project_automation_template_board_managed_name'),
+        prompt: t(DEFAULT_AI_MANAGED_PROMPT_KEY),
+        triggerType: 'event',
+        eventType: 'task.created',
+        assignmentMode: 'ai_managed',
+        managerType: 'custom',
+        agentId: null,
+      })
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [canManage, createAiCoordinatorRequestKey, createRule, t])
 
   const save = async () => {
     if (!api || !draft) return
@@ -398,7 +430,9 @@ export function ProjectAutomationRulesSection({
 
   return (
     <section data-testid="project-automation-rules" className="mt-8">
-      <div className={`flex items-center justify-between gap-3${rules.length ? ' mb-3' : ''}`}>
+      <div
+        className={`flex items-center justify-between gap-3${visibleRules.length ? ' mb-3' : ''}`}
+      >
         <div>
           <h3 className="text-heading-md font-semibold">
             {t('workbench.project_automation_rules_title')}
@@ -422,8 +456,8 @@ export function ProjectAutomationRulesSection({
 
       {error && !draft ? <p className="mb-3 text-sm text-red-600">{error}</p> : null}
       <div className="space-y-2" data-testid="project-automation-rule-list">
-        {rules.length ? (
-          rules.map(rule => (
+        {visibleRules.length ? (
+          visibleRules.map(rule => (
             <div
               key={rule.id}
               role="button"

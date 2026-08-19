@@ -16,7 +16,7 @@ interface ProjectAutomationRuleBase {
   projectId: string
   name: string
   prompt: string
-  triggerType: 'schedule' | 'event'
+  triggerType: 'schedule' | 'event' | 'workflow'
   eventType: 'task.created' | null
   eventConfig: Record<string, unknown>
   webhookEventId: string | null
@@ -87,7 +87,7 @@ export interface ProjectAutomationRun {
 interface ProjectAutomationInputBase {
   name: string
   prompt: string
-  triggerType: 'schedule' | 'event'
+  triggerType: 'schedule' | 'event' | 'workflow'
   eventType: 'task.created' | null
   eventConfig: Record<string, unknown>
   cronExpression: string | null
@@ -284,6 +284,18 @@ export function createProjectAutomationApi(client: HttpClient) {
     runNow(projectId: string, automationId: string) {
       return client.post<ProjectAutomationRun>(
         `/v1/cloud-projects/${projectId}/automations/${automationId}/run`,
+        {}
+      )
+    },
+    runWorkflowNode(
+      projectId: string,
+      itemId: string,
+      workflowNodeId: string,
+      automationId: string
+    ) {
+      const query = new URLSearchParams({ automation_id: automationId })
+      return client.post<ProjectAutomationRun>(
+        `/v1/cloud-projects/${projectId}/loop-items/${encodeURIComponent(itemId)}/workflow-nodes/${encodeURIComponent(workflowNodeId)}/run?${query.toString()}`,
         {}
       )
     },

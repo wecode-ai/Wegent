@@ -150,6 +150,24 @@ def test_manager_prompt_is_minimal_visible_assignment_input():
     )
 
 
+def test_manager_prompt_prefers_run_instruction_override():
+    prompt = ProjectAutomationExecution._managed_prompt(
+        MagicMock(),
+        owner=SimpleNamespace(id=7),
+        project=SimpleNamespace(id="project-1"),
+        rule=SimpleNamespace(description="Default instruction."),
+        run=SimpleNamespace(
+            id="run-1",
+            task_id="task-1",
+            metadata_json={"instruction_override": "Stage-specific instruction."},
+        ),
+        context={"trigger": "workflow"},
+    )
+
+    assert prompt.endswith("Stage-specific instruction.")
+    assert "Default instruction." not in prompt
+
+
 def test_manager_activity_binding_persists_execution_identity(monkeypatch):
     activity = SimpleNamespace(
         metadata_json={
