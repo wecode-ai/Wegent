@@ -373,8 +373,8 @@ describe('DesktopSidebar', () => {
 
     expect(remoteSortable).toHaveAttribute('tabindex', '0')
     expect(remoteSortable).toHaveAttribute('role', 'button')
-    expect(remoteActivator).toHaveAttribute('data-sidebar-drag-activator')
-    expect(remoteButton).not.toHaveAttribute('data-sidebar-drag-activator')
+    expect(remoteActivator).not.toHaveAttribute('data-sidebar-drag-activator')
+    expect(remoteButton).toHaveAttribute('data-sidebar-drag-activator')
 
     fireEvent.pointerDown(remoteButton, {
       button: 0,
@@ -391,39 +391,21 @@ describe('DesktopSidebar', () => {
       isPrimary: true,
       pointerId: 1,
     })
-    expect(remoteSortable).not.toHaveAttribute('data-dragging')
-    fireEvent.pointerUp(document, { button: 0, clientX: 220, clientY: 10, pointerId: 1 })
-
-    fireEvent.pointerDown(remoteActivator, {
-      button: 0,
-      buttons: 1,
-      clientX: 20,
-      clientY: 45,
-      isPrimary: true,
-      pointerId: 2,
-    })
-    fireEvent.pointerMove(document, {
-      buttons: 1,
-      clientX: 20,
-      clientY: 10,
-      isPrimary: true,
-      pointerId: 2,
-    })
     expect(remoteSortable).toHaveAttribute('data-dragging', 'true')
     fireEvent.pointerMove(document, {
       buttons: 1,
-      clientX: 20,
+      clientX: 220,
       clientY: 5,
       isPrimary: true,
-      pointerId: 2,
+      pointerId: 1,
     })
     fireEvent.pointerUp(document, {
       button: 0,
       buttons: 0,
-      clientX: 20,
+      clientX: 220,
       clientY: 5,
       isPrimary: true,
-      pointerId: 2,
+      pointerId: 1,
     })
 
     await waitFor(() => expect(onReorderRuntimeProjects).toHaveBeenCalledTimes(1))
@@ -2224,7 +2206,7 @@ describe('DesktopSidebar', () => {
     })
   })
 
-  test('starts task pointer sorting only from its content-sized activator', async () => {
+  test('starts task pointer sorting from the full title area', async () => {
     const onReorderRuntimeProjectTasks = vi.fn().mockResolvedValue(undefined)
     const onOpenRuntimeTask = vi.fn()
     const chatPath = '/Users/alice/Documents/Codex/2026-07-12/manual'
@@ -2283,8 +2265,8 @@ describe('DesktopSidebar', () => {
 
     expect(firstSortable).toContainElement(firstActivator)
     expect(firstActivator).not.toContainElement(firstActions)
-    expect(firstActivator).toHaveAttribute('data-sidebar-drag-activator')
-    expect(firstTitleSpace).not.toHaveAttribute('data-sidebar-drag-activator')
+    expect(firstActivator).not.toHaveAttribute('data-sidebar-drag-activator')
+    expect(firstTitleSpace).toHaveAttribute('data-sidebar-drag-activator')
     expect(firstTrailing).not.toHaveAttribute('data-sidebar-drag-activator')
     expect(firstActions).not.toHaveAttribute('data-sidebar-drag-activator')
     expect(screen.getByTestId('runtime-local-task-row-chat-1')).not.toHaveAttribute(
@@ -2303,7 +2285,7 @@ describe('DesktopSidebar', () => {
     fireEvent.keyDown(document, { key: 'Escape', code: 'Escape' })
     await waitFor(() => expect(firstSortable).not.toHaveAttribute('data-dragging'))
 
-    for (const [pointerId, target] of [firstTitleSpace, firstTrailing, firstActions].entries()) {
+    for (const [pointerId, target] of [firstTrailing, firstActions].entries()) {
       fireEvent.pointerDown(target, {
         button: 0,
         buttons: 1,
