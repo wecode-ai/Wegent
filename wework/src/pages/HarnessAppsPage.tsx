@@ -111,6 +111,7 @@ export function HarnessAppsPage() {
 
   async function previewPackage(path: string) {
     setError(null)
+    setPreview(null)
     try {
       setPreview(await harnessAppsApi.preview(path))
     } catch (previewError) {
@@ -166,11 +167,13 @@ export function HarnessAppsPage() {
     setBusy(item.id)
     setError(null)
     let proxyToken: string | null = null
+    let started = false
     try {
       const launch = await services.localHarnessModelApi?.resolveLaunch('opencode', model)
       if (!launch) throw new Error(t('workbench.harness_apps_model_proxy_unavailable'))
       proxyToken = launch.proxyToken
       const running = await harnessAppsApi.start(item.id, launch.baseUrl)
+      started = true
       storeProxyToken(item.id, launch.proxyToken)
       await refresh()
       if (running.webUrl) {
@@ -178,7 +181,32 @@ export function HarnessAppsPage() {
         openAppTab(running)
       }
     } catch (startError) {
-      if (proxyToken) await services.localHarnessModelApi?.unregisterProxy(proxyToken)
+      let proxyCanBeRevoked = !started
+      if (started) {
+        try {
+          await harnessAppsApi.stop(item.id)
+          proxyCanBeRevoked = true
+        } catch (rollbackError) {
+          console.warn('[Wework] failed to roll back started Harness app', rollbackError)
+        }
+        if (proxyCanBeRevoked) {
+          unregisterHarnessAppTab(item.id)
+          closeAppTabs(item.id)
+          takeProxyToken(item.id)
+          try {
+            await refresh()
+          } catch (refreshError) {
+            console.warn('[Wework] failed to refresh Harness apps after rollback', refreshError)
+          }
+        }
+      }
+      if (proxyToken && proxyCanBeRevoked) {
+        try {
+          await services.localHarnessModelApi?.unregisterProxy(proxyToken)
+        } catch (proxyError) {
+          console.warn('[Wework] failed to unregister Harness model proxy', proxyError)
+        }
+      }
       setError(getErrorMessage(startError, t('workbench.harness_apps_start_failed')))
     } finally {
       setBusy(null)
@@ -282,6 +310,7 @@ export function HarnessAppsPage() {
               <Button
                 size="sm"
                 variant="outline"
+                data-testid="harness-app-empty-select-package"
                 className="mt-5 rounded-lg"
                 onClick={() => void choosePackage()}
               >
@@ -346,7 +375,7 @@ export function HarnessAppsPage() {
                           size="sm"
                           variant="outline"
                           data-testid={`harness-app-stop-${item.id}`}
-                          className="h-9 gap-1 rounded-lg px-3"
+                          className="h-11 gap-1 rounded-lg px-3 sm:h-9"
                           disabled={busy === item.id}
                           onClick={() => void stop(item)}
                         >
@@ -357,7 +386,7 @@ export function HarnessAppsPage() {
                         <Button
                           size="sm"
                           data-testid={`harness-app-start-${item.id}`}
-                          className="h-9 gap-1 rounded-lg px-3"
+                          className="h-11 gap-1 rounded-lg px-3 sm:h-9"
                           disabled={busy === item.id}
                           onClick={() => void start(item)}
                         >
@@ -370,7 +399,7 @@ export function HarnessAppsPage() {
                         variant="ghost"
                         data-testid={`harness-app-delete-${item.id}`}
                         aria-label={t('workbench.harness_apps_delete', '卸载')}
-                        className="h-9 w-9 rounded-lg text-text-muted hover:text-red-600"
+                        className="h-11 w-11 rounded-lg text-text-muted hover:text-red-600 sm:h-9 sm:w-9"
                         disabled={busy === item.id}
                         onClick={() => void remove(item)}
                       >

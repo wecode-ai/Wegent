@@ -42,6 +42,7 @@ export function HarnessAppInstallDialog({
 
   return (
     <div
+      data-testid="harness-app-install-backdrop"
       className="plugin-dialog-overlay fixed inset-0 z-modal flex items-center justify-center px-6"
       onClick={() => {
         if (!busy) onCancel()
@@ -74,9 +75,10 @@ export function HarnessAppInstallDialog({
           </div>
           <button
             type="button"
+            data-testid="harness-app-install-close"
             aria-label={t('common.close', '关闭')}
             disabled={busy}
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-text-muted hover:bg-surface disabled:opacity-40"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-text-muted hover:bg-surface disabled:opacity-40 sm:h-9 sm:w-9"
             onClick={onCancel}
           >
             <X className="h-4 w-4" />
@@ -204,15 +206,23 @@ export function HarnessAppInstallDialog({
         <footer className="plugin-dialog-divider flex shrink-0 items-center justify-between gap-3 border-t px-6 py-4">
           <button
             type="button"
+            data-testid="harness-app-choose-another"
             disabled={busy}
-            className="flex h-9 items-center gap-2 rounded-lg px-2 text-sm font-medium text-text-secondary hover:bg-surface disabled:opacity-40"
+            className="flex h-11 items-center gap-2 rounded-lg px-2 text-sm font-medium text-text-secondary hover:bg-surface disabled:opacity-40 sm:h-9"
             onClick={onChooseAnother}
           >
             <RefreshCw className="h-4 w-4" />
             {t('workbench.harness_apps_choose_another', '重新选择')}
           </button>
           <div className="flex items-center gap-2">
-            <Button size="sm" variant="ghost" disabled={busy} onClick={onCancel}>
+            <Button
+              size="sm"
+              variant="ghost"
+              data-testid="harness-app-install-cancel"
+              disabled={busy}
+              className="h-11 sm:h-9"
+              onClick={onCancel}
+            >
               {t('common.cancel', '取消')}
             </Button>
             {preview.valid && manifest ? (

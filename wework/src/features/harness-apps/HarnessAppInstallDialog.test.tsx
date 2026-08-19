@@ -69,6 +69,10 @@ describe('HarnessAppInstallDialog', () => {
     expect(screen.getByText('DSH 运营文本分类工作台')).toBeInTheDocument()
     expect(screen.getByText('0.1.0-rc.7')).toBeInTheDocument()
     expect(screen.getByText('>=22')).toBeInTheDocument()
+    expect(screen.getByTestId('harness-app-install-backdrop')).toBeInTheDocument()
+    expect(screen.getByTestId('harness-app-install-close')).toBeInTheDocument()
+    expect(screen.getByTestId('harness-app-choose-another')).toBeInTheDocument()
+    expect(screen.getByTestId('harness-app-install-cancel')).toBeInTheDocument()
 
     fireEvent.change(screen.getByTestId('harness-app-model-select'), {
       target: { value: modelOptions[0].key },
