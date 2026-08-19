@@ -11,6 +11,7 @@ import { isTauriRuntime } from '@/lib/runtime-environment'
 
 interface AppIframeProps {
   active?: boolean
+  appKey: string
   src: string
   title: string
   workspaceTabId?: string
@@ -35,11 +36,11 @@ function elementBounds(element: HTMLElement): EmbeddedBrowserBounds | null {
   }
 }
 
-function nativeLabel(title: string, workspaceTabId?: string) {
-  return `app-${title.toLowerCase()}-${workspaceTabId ?? 'default'}`
+function nativeLabel(appKey: string, workspaceTabId?: string) {
+  return `app-${appKey}-${workspaceTabId ?? 'default'}`
 }
 
-export function AppIframe({ active = true, src, title, workspaceTabId }: AppIframeProps) {
+export function AppIframe({ active = true, appKey, src, title, workspaceTabId }: AppIframeProps) {
   const native = isTauriRuntime()
   const hostRef = useRef<HTMLDivElement>(null)
   const openedRef = useRef(false)
@@ -50,7 +51,7 @@ export function AppIframe({ active = true, src, title, workspaceTabId }: AppIfra
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
   const [retryGeneration, setRetryGeneration] = useState(0)
-  const label = nativeLabel(title, workspaceTabId)
+  const label = nativeLabel(appKey, workspaceTabId)
 
   useLayoutEffect(() => {
     activeRef.current = active
@@ -203,7 +204,7 @@ export function AppIframe({ active = true, src, title, workspaceTabId }: AppIfra
     <div
       ref={hostRef}
       className="app-view-surface relative h-full overflow-hidden rounded-xl border border-border/60 bg-background shadow-[0_3px_16px_rgba(0,0,0,0.04)]"
-      data-testid={`app-iframe-${title.toLowerCase()}`}
+      data-testid={`app-iframe-${appKey}`}
       data-workspace-tab-id={workspaceTabId}
       data-src={src}
     >

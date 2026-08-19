@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
@@ -11,6 +12,7 @@ const bundledMarketplaceManifests = [
 
 const bundledPluginExampleManifests = [
   'bundled-plugins/wework-plugin-example/.codex-plugin/plugin.json',
+  'bundled-plugins/wework-plugin-example/.wework-plugin/plugin.json',
   'bundled-plugins/wework-plugin-example/.mcp.json',
 ]
 
@@ -80,6 +82,24 @@ describe('bundled plugin resources', () => {
     for (const manifest of bundledMarketplaceManifests) {
       expect(releaseConfig.bundle.resources).toContain(manifest)
     }
+  })
+
+  test('ships a valid Workbench entry digest in the example plugin', () => {
+    const exampleRoot = resolve(process.cwd(), 'src-tauri/bundled-plugins/wework-plugin-example')
+    const manifest = JSON.parse(
+      readFileSync(resolve(exampleRoot, '.wework-plugin/plugin.json'), 'utf8')
+    ) as {
+      name: string
+      frontend: {
+        entry: string
+        sha256: string
+      }
+    }
+    const frontend = readFileSync(resolve(exampleRoot, manifest.frontend.entry))
+    const digest = createHash('sha256').update(frontend).digest('hex')
+
+    expect(manifest.name).toBe('wework-plugin-example')
+    expect(manifest.frontend.sha256).toBe(digest)
   })
 
   test('uses the shared release config generator in GitHub macOS releases', () => {

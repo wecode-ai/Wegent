@@ -38,9 +38,7 @@
         "enable": true,
         "scope": {
           "requireLiteralLeadingDot": false,
-          "allow": [
-            "**/*"
-          ]
+          "allow": ["**/*"]
         }
       }
     }
@@ -56,10 +54,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "externalBin": [
-      "binaries/wegent-executor",
-      "binaries/dws"
-    ],
+    "externalBin": ["binaries/wegent-executor", "binaries/dws"],
     "resources": [
       "binaries/codex/**/*",
       "bundled-hooks/**/*",
@@ -67,6 +62,7 @@
       "bundled-plugins/wework-personal/.agents/plugins/marketplace.json",
       "bundled-plugins/wework-personal/.claude-plugin/marketplace.json",
       "bundled-plugins/wework-plugin-example/.codex-plugin/plugin.json",
+      "bundled-plugins/wework-plugin-example/.wework-plugin/plugin.json",
       "bundled-plugins/wework-plugin-example/.mcp.json"
     ],
     "android": {

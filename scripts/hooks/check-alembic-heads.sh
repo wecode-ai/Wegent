@@ -193,10 +193,10 @@ HEAD_COUNT=$(echo "$HEADS" | grep -c .)
 NON_STANDARD_COUNT=$(echo "$NON_STANDARD_IDS" | grep -c . || true)
 if [ "$NON_STANDARD_COUNT" -gt 0 ]; then
     echo -e "${YELLOW}⚠️  Non-standard revision ID format detected:${NC}"
-    while IFS= read -r id; do
+    printf '%s' "$NON_STANDARD_IDS" | while IFS= read -r id; do
         [ -z "$id" ] && continue
         echo -e "   ${YELLOW}• $id${NC}"
-    done < <(printf '%s' "$NON_STANDARD_IDS")
+    done
     echo ""
     echo -e "${YELLOW}   Recommendation: Use 'alembic revision --autogenerate' to generate${NC}"
     echo -e "${YELLOW}   standard 12-character hexadecimal revision IDs.${NC}"
@@ -219,11 +219,11 @@ else
     echo -e "${RED}❌ Alembic Multi-Head Check: FAILED${NC}"
     echo ""
     echo -e "${RED}${BOLD}   Multiple heads detected (${HEAD_COUNT}):${NC}"
-    for head in $HEADS; do
+    printf '%s' "$HEADS" | while IFS= read -r head; do
         [ -z "$head" ] && continue
         head_file=$(get_value "$REVISIONS" "$head")
         echo -e "   ${RED}• ${head}${NC} (${head_file})"
-    done < <(printf '%s' "$HEADS")
+    done
     echo ""
 
     # Provide fix instructions

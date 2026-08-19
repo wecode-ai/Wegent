@@ -28,6 +28,8 @@ mod system_lock;
 mod system_sleep;
 mod todo_store;
 mod workbench_background;
+#[cfg(desktop)]
+mod workbench_plugins;
 
 use std::collections::{HashMap, HashSet};
 #[cfg(desktop)]
@@ -4932,6 +4934,9 @@ pub fn run() {
     #[cfg(desktop)]
     let builder = builder.manage(NativeTelemetryState::default());
 
+    #[cfg(desktop)]
+    let builder = builder.manage(workbench_plugins::WorkbenchPluginState::default());
+
     let app = builder
         .manage(appshots::AppshotState::default())
         .manage(embedded_browser::EmbeddedBrowserState::default())
@@ -5104,6 +5109,18 @@ pub fn run() {
             local_workspace_files::list_local_workspace_entries,
             workbench_background::import_workbench_background,
             workbench_background::remove_workbench_background,
+            #[cfg(desktop)]
+            workbench_plugins::workbench_plugin_authorize_capability,
+            #[cfg(desktop)]
+            workbench_plugins::workbench_plugin_inspect,
+            #[cfg(desktop)]
+            workbench_plugins::workbench_plugin_list,
+            #[cfg(desktop)]
+            workbench_plugins::workbench_plugin_request,
+            #[cfg(desktop)]
+            workbench_plugins::workbench_plugin_start,
+            #[cfg(desktop)]
+            workbench_plugins::workbench_plugin_stop,
             pick_workspace_paths,
             read_clipboard_workspace_paths,
             read_dropped_workspace_paths,
@@ -5248,6 +5265,11 @@ pub fn run() {
             }
             tauri::RunEvent::Exit => {
                 shutdown_local_executor_for_app(app_handle, "run_event_exit");
+                #[cfg(desktop)]
+                {
+                    let state = app_handle.state::<workbench_plugins::WorkbenchPluginState>();
+                    workbench_plugins::shutdown(state.inner());
+                }
             }
             _ => {}
         }

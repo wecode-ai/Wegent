@@ -1,0 +1,12 @@
+{
+  "name": "wework-plugin-example",
+  "version": "0.2.0",
+  "apiVersion": "1",
+  "required": false,
+  "pinnedToClientVersion": false,
+  "frontend": {
+    "entry": "workbench/frontend.js",
+    "export": "default",
+    "sha256": "409c1844e41c6a3a769cae15928a52b4e810a2c7f199ad1cb368bbae950a25fc"
+  }
+}
