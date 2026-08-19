@@ -185,6 +185,7 @@ describe('WorkspaceBrowserPanel', () => {
     embeddedBrowserMocks.resolveEmbeddedBrowserAgentApproval.mockResolvedValue(undefined)
     embeddedBrowserMocks.setEmbeddedBrowserAgentControlPaused.mockResolvedValue(undefined)
     embeddedBrowserMocks.setEmbeddedBrowserBounds.mockResolvedValue(undefined)
+    embeddedBrowserMocks.setEmbeddedBrowserZoom.mockResolvedValue(undefined)
   })
 
   test('disables text correction in the browser address bar', () => {
