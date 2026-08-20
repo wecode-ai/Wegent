@@ -164,6 +164,8 @@ fi
 BACKEND_BASE_URL="$(wework_resolve_backend_base_url)"
 BACKEND_PORT="${BACKEND_PORT:-9100}"
 WEWORK_PORT="${REQUESTED_WEWORK_PORT:-${WEWORK_PORT:-1420}}"
+WEWORK_PORT_LOCK_ROOT="${WEWORK_PORT_LOCK_ROOT:-${TMPDIR:-/tmp}/wework-dev-port-locks}"
+WEWORK_PORT_LOCK_DIR=""
 
 if ! [[ "$WEWORK_PORT" =~ ^[0-9]+$ ]] || [ "$WEWORK_PORT" -lt 1 ] || [ "$WEWORK_PORT" -gt 65535 ]; then
   echo "Error: WEWORK_PORT must be a number between 1 and 65535. Got: $WEWORK_PORT" >&2
@@ -188,11 +190,45 @@ is_port_available() {
   ' "$1"
 }
 
+release_wework_port_lock() {
+  if [ -z "$WEWORK_PORT_LOCK_DIR" ]; then
+    return
+  fi
+  rm -f "$WEWORK_PORT_LOCK_DIR/pid"
+  rmdir "$WEWORK_PORT_LOCK_DIR" 2>/dev/null || true
+  WEWORK_PORT_LOCK_DIR=""
+}
+
+try_acquire_wework_port_lock() {
+  local port="$1"
+  local lock_dir="$WEWORK_PORT_LOCK_ROOT/$port"
+  local owner_pid=""
+
+  mkdir -p "$WEWORK_PORT_LOCK_ROOT"
+  if ! mkdir "$lock_dir" 2>/dev/null; then
+    owner_pid="$(cat "$lock_dir/pid" 2>/dev/null || true)"
+    if ! [[ "$owner_pid" =~ ^[0-9]+$ ]] || kill -0 "$owner_pid" 2>/dev/null; then
+      return 1
+    fi
+    rm -f "$lock_dir/pid"
+    rmdir "$lock_dir" 2>/dev/null || return 1
+    mkdir "$lock_dir" 2>/dev/null || return 1
+  fi
+
+  echo "$$" >"$lock_dir/pid"
+  WEWORK_PORT_LOCK_DIR="$lock_dir"
+}
+
 find_available_wework_port() {
   local port="$1"
 
   while [ "$port" -le 65535 ]; do
-    if is_port_available "$port"; then
+    if try_acquire_wework_port_lock "$port"; then
+      if ! is_port_available "$port"; then
+        release_wework_port_lock
+        port="$((port + 1))"
+        continue
+      fi
       AVAILABLE_WEWORK_PORT="$port"
       return 0
     fi
@@ -235,6 +271,7 @@ build_wework_dev_title() {
 
 AVAILABLE_WEWORK_PORT=""
 find_available_wework_port "$WEWORK_PORT"
+trap release_wework_port_lock EXIT
 if [ "$AVAILABLE_WEWORK_PORT" != "$WEWORK_PORT" ]; then
   echo "WEWORK_PORT $WEWORK_PORT is already in use; using $AVAILABLE_WEWORK_PORT instead."
 fi
@@ -305,7 +342,7 @@ else
 fi
 
 TAURI_DEV_CONFIG="$(mktemp -t wework-tauri-dev.XXXXXX.json)"
-trap 'rm -f "$TAURI_DEV_CONFIG"' EXIT
+trap 'rm -f "$TAURI_DEV_CONFIG"; release_wework_port_lock' EXIT
 
 WEWORK_PORT_VALUE="$WEWORK_PORT" \
 BEFORE_DEV_COMMAND_VALUE="$BEFORE_DEV_COMMAND" \
@@ -395,7 +432,13 @@ cleanup_dev_processes() {
   TAURI_PROCESS_GROUP=""
 }
 
-trap cleanup_dev_processes EXIT
+cleanup_dev_resources() {
+  cleanup_dev_processes
+  rm -f "$TAURI_DEV_CONFIG"
+  release_wework_port_lock
+}
+
+trap cleanup_dev_resources EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 

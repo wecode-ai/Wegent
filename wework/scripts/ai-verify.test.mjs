@@ -1,5 +1,12 @@
+import { EventEmitter } from 'node:events'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, test, vi } from 'vitest'
 import {
+  appExitMessage,
+  monitorAppProcess,
+  readSessionForCleanup,
   resolveCommandTimeout,
   resolveStartupTimeout,
   startupFailureMessage,
@@ -77,7 +84,7 @@ describe('startupFailureMessage', () => {
         120000
       )
     ).toBe(
-      'Wework failed to start before its WebView connected to AI verification: spawn bash ENOENT'
+      'Wework failed to start: spawn bash ENOENT before its WebView connected to AI verification'
     )
   })
 
@@ -88,6 +95,64 @@ describe('startupFailureMessage', () => {
     expect(startupFailureMessage({ pid: 42 }, 120000)).toContain(
       'the Tauri launcher was still waiting for its WebView'
     )
+  })
+})
+
+describe('readSessionForCleanup', () => {
+  test('waits for the controller to publish its launcher pid', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-ai-verify-cleanup-'))
+    const sessionPath = join(directory, 'session.json')
+    await writeFile(sessionPath, '{')
+    const update = setTimeout(
+      () =>
+        void writeFile(
+          sessionPath,
+          JSON.stringify({ directory: '/isolated/session', launcherPid: 42 })
+        ),
+      10
+    )
+
+    try {
+      await expect(readSessionForCleanup(sessionPath, 200)).resolves.toEqual({
+        directory: '/isolated/session',
+        launcherPid: 42,
+      })
+    } finally {
+      clearTimeout(update)
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('derives the session directory when parsing never succeeds', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-ai-verify-cleanup-'))
+    const sessionPath = join(directory, 'session.json')
+    try {
+      await expect(readSessionForCleanup(sessionPath, 1)).resolves.toEqual({ directory })
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('monitorAppProcess', () => {
+  test('captures a fast spawn error and rejects pending commands', async () => {
+    const app = new EventEmitter()
+    let appExit
+    let rejectPending
+    const pendingResult = new Promise((_, reject) => {
+      rejectPending = reject
+    })
+    const pendingExpectation = expect(pendingResult).rejects.toThrow(
+      'Wework failed to start: spawn bash ENOENT'
+    )
+
+    monitorAppProcess(app, new Map([['command', { reject: rejectPending }]]), exit => {
+      appExit = exit
+    })
+    app.emit('error', new Error('spawn bash ENOENT'))
+
+    await pendingExpectation
+    expect(appExitMessage(appExit)).toBe('Wework failed to start: spawn bash ENOENT')
   })
 })
 

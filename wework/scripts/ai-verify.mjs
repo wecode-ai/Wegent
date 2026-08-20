@@ -18,6 +18,8 @@ const weworkDir = resolve(scriptDir, '..')
 const defaultTimeoutMs = 30_000
 const startupTimeoutMs = 120_000
 const commandResultGraceMs = 5_000
+const failedStartCleanupGraceMs = 1_000
+const cleanupSessionPollMs = 50
 const corsHeaders = {
   'access-control-allow-headers': 'authorization, content-type',
   'access-control-allow-methods': 'GET, POST, OPTIONS',
@@ -43,7 +45,8 @@ Options:
   --text TEXT               Expected text for wait-for
   --visible true            Require a visible element for wait-for
   --stable MS               Require the wait-for condition to remain stable
-  --timeout MS              Command timeout (default: ${defaultTimeoutMs})`)
+  --timeout MS              Startup timeout for start (default: ${startupTimeoutMs});
+                            command timeout otherwise (default: ${defaultTimeoutMs})`)
 }
 
 function parseArgs(argv) {
@@ -148,35 +151,70 @@ async function removeSessionAuthLink(session) {
   await rm(join(session.directory, 'executor-home', 'codex', 'auth.json'), { force: true })
 }
 
+export async function readSessionForCleanup(sessionPath, timeoutMs = failedStartCleanupGraceMs) {
+  const deadline = Date.now() + timeoutMs
+  let session
+  while (Date.now() <= deadline) {
+    try {
+      session = JSON.parse(await readFile(sessionPath, 'utf8'))
+      if (Number.isInteger(session.launcherPid)) break
+    } catch {
+      // The controller may still be replacing the session file.
+    }
+    const remainingMs = deadline - Date.now()
+    if (remainingMs <= 0) break
+    await new Promise(resolvePromise =>
+      setTimeout(resolvePromise, Math.min(cleanupSessionPollMs, remainingMs))
+    )
+  }
+  return { directory: dirname(sessionPath), ...(session ?? {}) }
+}
+
 async function cleanupFailedStart(sessionPath, controllerPid) {
   await signalProcessGroup(controllerPid, 'TERM')
-  await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
-  let session
-  try {
-    session = JSON.parse(await readFile(sessionPath, 'utf8'))
-  } catch {
-    // The controller may have exited before completing the session file.
-  }
-  await stopOwnedSessionProcesses(session ?? {})
+  const session = await readSessionForCleanup(sessionPath)
+  await stopOwnedSessionProcesses(session)
   await signalProcessGroup(controllerPid, 'KILL')
   await removeSessionAuthLink(session)
 }
 
+export function appExitMessage(appExit) {
+  if (appExit?.error) return `Wework failed to start: ${appExit.error}`
+  if (appExit?.signal !== null && appExit?.signal !== undefined) {
+    return `Wework exited with signal ${appExit.signal}`
+  }
+  return `Wework exited with code ${appExit?.code ?? 'unknown'}`
+}
+
 export function startupFailureMessage(status, timeoutMs) {
   if (status?.appExited) {
-    if (status.appExitError) {
-      return `Wework failed to start before its WebView connected to AI verification: ${status.appExitError}`
-    }
-    const cause =
-      status.appExitSignal !== null
-        ? `signal ${status.appExitSignal}`
-        : `code ${status.appExitCode ?? 'unknown'}`
-    return `Wework exited with ${cause} before its WebView connected to AI verification`
+    return `${appExitMessage({
+      code: status.appExitCode,
+      signal: status.appExitSignal,
+      error: status.appExitError,
+    })} before its WebView connected to AI verification`
   }
   const phase = status?.pid
     ? 'the Tauri launcher was still waiting for its WebView'
     : 'the Tauri launcher had not started'
   return `Timed out after ${timeoutMs}ms while ${phase}`
+}
+
+export function monitorAppProcess(app, pending, onExit) {
+  const rejectPending = message => {
+    for (const waiter of pending.values()) waiter.reject(new Error(message))
+    pending.clear()
+  }
+  app.once('exit', (code, signal) => {
+    const appExit = { code, signal, error: null }
+    onExit(appExit)
+    rejectPending(appExitMessage(appExit))
+  })
+  app.once('error', error => {
+    const appExit = { code: null, signal: null, error: String(error.message ?? error) }
+    onExit(appExit)
+    rejectPending(appExitMessage(appExit))
+  })
 }
 
 async function runServer(sessionPath, token) {
@@ -252,6 +290,7 @@ async function runServer(sessionPath, token) {
         })
       }
       if (request.method === 'POST' && url.pathname === '/command') {
+        if (appExit) return json(response, 410, { error: appExitMessage(appExit) })
         if (!ready) return json(response, 409, { error: 'Wework WebView is not ready' })
         const command = await readBody(request)
         const id = randomUUID()
@@ -339,24 +378,15 @@ async function runServer(sessionPath, token) {
     }),
     stdio: ['ignore', 'pipe', 'pipe'],
   })
-  await writeFile(sessionPath, `${JSON.stringify({ ...updated, launcherPid: app.pid }, null, 2)}\n`)
+  monitorAppProcess(app, pending, exit => {
+    appExit = exit
+  })
   for (const stream of [app.stdout, app.stderr])
     stream?.on(
       'data',
       chunk => void import('node:fs/promises').then(({ appendFile }) => appendFile(log, chunk))
     )
-  app.once('exit', (code, signal) => {
-    appExit = { code, signal }
-    for (const waiter of pending.values())
-      waiter.reject(new Error(`Wework exited with code ${code ?? 'unknown'}`))
-    pending.clear()
-  })
-  app.once('error', error => {
-    appExit = { code: null, signal: null, error: String(error.message ?? error) }
-    for (const waiter of pending.values())
-      waiter.reject(new Error(`Wework failed to start: ${error.message ?? error}`))
-    pending.clear()
-  })
+  await writeFile(sessionPath, `${JSON.stringify({ ...updated, launcherPid: app.pid }, null, 2)}\n`)
 }
 
 async function request(session, token, path, method = 'GET', body) {
