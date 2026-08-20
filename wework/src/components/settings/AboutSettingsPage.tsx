@@ -134,7 +134,7 @@ export function AboutSettingsPage() {
         {appVersion ? `v${appVersion}` : '—'}
       </div>
       <p className="mt-4 max-w-[420px] text-sm leading-6 text-text-secondary">
-        {t('workbench.about_settings_description', '面向办公和编码场景的 AI 工作台。')}
+        {t('workbench.about_settings_description', '面向产研场景的 AI 工作台。')}
       </p>
 
       <SettingsGroup className="mt-7 w-full text-left">

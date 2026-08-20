@@ -8,7 +8,6 @@ import type {
   RuntimeProjectAiSettings,
   RuntimeProjectSpaceRef,
   RuntimeTaskAddress,
-  RuntimeTaskPinRequest,
   RuntimeProjectWork,
   RuntimeWorkListResponse,
   Team,
@@ -87,6 +86,12 @@ export type WorkbenchAction =
       runtimeWork: RuntimeWorkListResponse
     }
   | {
+      type: 'runtime_task_pin_changed'
+      deviceId: string
+      threadId: string
+      pinned: boolean
+    }
+  | {
       type: 'device_status_changed'
       deviceId: string
       status: WorkbenchDeviceStatus
@@ -152,10 +157,6 @@ export type WorkbenchAction =
       type: 'runtime_task_title_updated'
       address: RuntimeTaskAddress
       title: string
-    }
-  | {
-      type: 'runtime_task_pinned_updated'
-      request: RuntimeTaskPinRequest
     }
   | {
       type: 'runtime_task_supervisor_updated'
@@ -370,7 +371,11 @@ function mergeRuntimeTasks(
   const merged = currentTasks
     .map(task => {
       const nextTask = nextById.get(task.taskId)
-      if (nextTask) return shouldReplaceRuntimeTaskProjection(task, nextTask) ? nextTask : task
+      if (nextTask) {
+        return shouldReplaceRuntimeTaskProjection(task, nextTask)
+          ? nextTask
+          : mergeRuntimeTaskListState(task, nextTask)
+      }
       if (
         isFreshOptimisticRuntimeTask(task) &&
         !resolvedTaskKeys.has(runtimeTaskKey(deviceId, task))
@@ -387,6 +392,19 @@ function mergeRuntimeTasks(
     }
   })
   return merged
+}
+
+function mergeRuntimeTaskListState(
+  current: RuntimeTaskSummary,
+  next: RuntimeTaskSummary
+): RuntimeTaskSummary {
+  return {
+    ...current,
+    ...(next.threadId ? { threadId: next.threadId } : {}),
+    ...(next.pinned === undefined ? {} : { pinned: next.pinned }),
+    ...(next.pinnedOrder === undefined ? {} : { pinnedOrder: next.pinnedOrder }),
+    ...(next.sidebarOrder === undefined ? {} : { sidebarOrder: next.sidebarOrder }),
+  }
 }
 
 function isOptimisticRuntimeTask(task: RuntimeTaskSummary): boolean {
@@ -1039,6 +1057,12 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
         ),
       }
     }
+    case 'runtime_task_pin_changed': {
+      return {
+        ...state,
+        runtimeWork: updateRuntimeWorkTaskPinned(state.runtimeWork, action),
+      }
+    }
     case 'device_status_changed': {
       const matchedDevice =
         state.devices.find(device => workbenchDeviceMatchesId(device, action.deviceId)) ?? undefined
@@ -1284,11 +1308,6 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
       return {
         ...state,
         runtimeWork: updateRuntimeWorkTaskTitle(state.runtimeWork, action.address, action.title),
-      }
-    case 'runtime_task_pinned_updated':
-      return {
-        ...state,
-        runtimeWork: updateRuntimeWorkTaskPinned(state.runtimeWork, action.request),
       }
     case 'runtime_task_supervisor_updated':
       return {

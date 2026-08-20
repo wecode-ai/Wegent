@@ -27,6 +27,7 @@ mod bridge_security;
 mod bridge_server;
 mod browser_runtime;
 mod data_clearing;
+mod history;
 #[cfg(target_os = "linux")]
 mod linux_host;
 mod local_file_preview;
@@ -58,6 +59,7 @@ use browser_runtime::{
     wait_for_embedded_browser,
 };
 use data_clearing::{clear_embedded_browser_data, EmbeddedBrowserDataKind};
+use history::{history_file_path, EmbeddedBrowserHistoryStore};
 #[cfg(test)]
 pub(crate) use local_file_preview::{
     browser_file_url_from_path, directory_entry_modified_unix_seconds, directory_listing_html,
@@ -120,6 +122,8 @@ pub struct EmbeddedBrowserState {
     agent_tabs: Arc<Mutex<HashMap<(String, String), AgentTabRoute>>>,
     lifecycle: Arc<AsyncMutex<()>>,
     snapshot_capture: Arc<AsyncMutex<()>>,
+    history: Arc<Mutex<EmbeddedBrowserHistoryStore>>,
+    history_generation: Arc<AtomicU64>,
 }
 
 #[derive(Clone)]
@@ -135,6 +139,16 @@ struct EmbeddedBrowserEntry {
     bootstrap_finished: bool,
     host_ready: bool,
     phase: EmbeddedBrowserPhase,
+    /// Recordable URL of the in-flight navigation, set at on_navigation and
+    /// cleared when the load finishes; used to bind title changes to the
+    /// correct history visit.
+    pending_history_url: Option<String>,
+    /// History generation stamped when the in-flight navigation started; the
+    /// visit is only recorded while no browsing-data clear has intervened.
+    visit_generation: u64,
+    /// Id of the history entry recorded for the currently loaded page; late
+    /// title changes are backfilled against this id.
+    last_history_id: Option<String>,
 }
 
 #[derive(Clone)]
@@ -1524,6 +1538,79 @@ fn current_unix_millis() -> u128 {
         .unwrap_or_default()
 }
 
+pub(super) fn with_history_store<T>(
+    app: &tauri::AppHandle,
+    state: &EmbeddedBrowserState,
+    action: impl FnOnce(&mut EmbeddedBrowserHistoryStore, &PathBuf) -> Result<T, String>,
+) -> Result<T, String> {
+    let path = history_file_path(app)?;
+    let mut store = state
+        .history
+        .lock()
+        .map_err(|_| "Embedded browser history lock poisoned".to_string())?;
+    store.load(&path)?;
+    action(&mut store, &path)
+}
+
+// Record http(s) pages and local files/directories (file:// after preview
+// source mapping); placeholder and custom-protocol pages are excluded.
+fn is_history_recordable_url(url: &str) -> bool {
+    url.starts_with("http://") || url.starts_with("https://") || url.starts_with("file://")
+}
+
+fn history_record_visit(
+    app: &tauri::AppHandle,
+    state: &EmbeddedBrowserState,
+    url: &str,
+    title: Option<String>,
+    expected_generation: u64,
+) -> Option<String> {
+    let now = current_unix_millis() as i64;
+    let result = with_history_store(app, state, |store, path| {
+        // Skip visits whose navigation started before an intervening
+        // browsing-data clear, so cleared history cannot reappear. The check
+        // runs under the store lock, which serializes it against the clear.
+        if state.history_generation.load(Ordering::Relaxed) != expected_generation {
+            return Ok(None);
+        }
+        let id = store.record_visit(url, now, title);
+        store.persist(path)?;
+        Ok(Some(id))
+    });
+    match result {
+        Ok(id) => id,
+        Err(error) => {
+            log_embedded_browser_diagnostic(
+                state,
+                BROWSER_WEBVIEW_LABEL,
+                "history_record_failed",
+                json!({ "url": url, "error": error }),
+            );
+            None
+        }
+    }
+}
+
+fn history_backfill_title(
+    app: &tauri::AppHandle,
+    state: &EmbeddedBrowserState,
+    entry_id: &str,
+    title: &str,
+) {
+    let result = with_history_store(app, state, |store, path| {
+        store.backfill_title(entry_id, title);
+        store.persist(path)
+    });
+    if let Err(error) = result {
+        log_embedded_browser_diagnostic(
+            state,
+            BROWSER_WEBVIEW_LABEL,
+            "history_title_backfill_failed",
+            json!({ "entryId": entry_id, "error": error }),
+        );
+    }
+}
+
 fn handle_bridge_request(
     app: &tauri::AppHandle,
     state: &EmbeddedBrowserState,
@@ -1922,6 +2009,7 @@ pub async fn embedded_browser_open(
     let app_for_navigation = app.clone();
     let app_for_load = app.clone();
     let app_for_popup = app.clone();
+    let app_for_title = app.clone();
     let data_directory = browser_data_directory(&app)?;
 
     let entry = EmbeddedBrowserEntry {
@@ -1940,6 +2028,9 @@ pub async fn embedded_browser_open(
         bootstrap_finished: bootstrap_is_stable_at_build(cfg!(target_os = "macos")),
         host_ready: bridge_ready,
         phase: EmbeddedBrowserPhase::Opening,
+        pending_history_url: None,
+        visit_generation: 0,
+        last_history_id: None,
     };
     state
         .webviews
@@ -1983,6 +2074,30 @@ pub async fn embedded_browser_open(
                     &native_label_for_navigation,
                     &label_for_navigation,
                 );
+                {
+                    // Any navigation drops the previous page's history id; a new
+                    // id is only set after this navigation's visit is actually
+                    // recorded, so failed or skipped recordings never leak the
+                    // previous page's id into later title updates.
+                    let recordable = matches!(url.scheme(), "http" | "https" | "file");
+                    let visit_generation = state.history_generation.load(Ordering::Relaxed);
+                    let pending_url = recordable.then(|| url.to_string());
+                    let _ = update_entry_for_native_label(
+                        &state,
+                        &native_label_for_navigation,
+                        |entry| {
+                            entry.last_history_id = None;
+                            if let Some(pending_url) = pending_url {
+                                // Drop the previous document's title so a title-less
+                                // page does not inherit it when the visit is
+                                // recorded at load finish.
+                                entry.title = None;
+                                entry.pending_history_url = Some(pending_url);
+                                entry.visit_generation = visit_generation;
+                            }
+                        },
+                    );
+                }
                 log_embedded_browser_diagnostic(
                     &state,
                     &owner,
@@ -2118,6 +2233,7 @@ pub async fn embedded_browser_open(
                     .as_deref()
                     .and_then(|url| loaded_browser_url(&load_state_handle, url));
                 let mut outcome = None;
+                let mut record_context = None;
                 if let (Some(finished_url), Some(loaded_url)) =
                     (finished_url.as_deref(), loaded_url.clone())
                 {
@@ -2125,10 +2241,35 @@ pub async fn embedded_browser_open(
                         &load_state_handle,
                         &native_label_for_load,
                         |entry| {
-                            outcome =
-                                Some(apply_navigation_finished(entry, finished_url, loaded_url));
+                            let result = apply_navigation_finished(entry, finished_url, loaded_url);
+                            outcome = Some(result);
+                            if result == NavigationFinishedOutcome::Applied {
+                                entry.pending_history_url = None;
+                                record_context =
+                                    Some((entry.title.clone(), entry.visit_generation));
+                            }
                         },
                     );
+                }
+                if let (Some(loaded_url), Some((document_title, visit_generation))) =
+                    (loaded_url.as_deref(), record_context)
+                {
+                    if is_history_recordable_url(loaded_url) {
+                        let history_id = history_record_visit(
+                            &app_for_load,
+                            &load_state_handle,
+                            loaded_url,
+                            document_title,
+                            visit_generation,
+                        );
+                        if let Some(history_id) = history_id {
+                            let _ = update_entry_for_native_label(
+                                &load_state_handle,
+                                &native_label_for_load,
+                                |entry| entry.last_history_id = Some(history_id),
+                            );
+                        }
+                    }
                 }
                 if bootstrap_finished || matches!(outcome, Some(NavigationFinishedOutcome::Applied))
                 {
@@ -2160,11 +2301,24 @@ pub async fn embedded_browser_open(
             }
         })
         .on_document_title_changed(move |_webview, title| {
+            let mut history_entry_id = None;
             let _ = update_entry_for_native_label(
                 &title_state_handle,
                 &native_label_for_title,
-                |entry| entry.title = Some(title),
+                |entry| {
+                    if entry.pending_history_url.is_none() {
+                        history_entry_id = entry.last_history_id.clone();
+                    }
+                    entry.title = Some(title.clone());
+                },
             );
+            // While a navigation is in flight the visit has not been recorded
+            // yet; the new title is carried into the visit at load finish
+            // instead of being backfilled. Otherwise backfill by the recorded
+            // entry id so same-URL tabs never touch each other's entries.
+            if let Some(entry_id) = history_entry_id {
+                history_backfill_title(&app_for_title, &title_state_handle, &entry_id, &title);
+            }
         })
         .on_new_window(move |url, _features| {
             let parent_label = current_logical_owner_or(
@@ -2251,30 +2405,48 @@ pub async fn embedded_browser_open(
         })
     };
 
-    let webview =
-        match window.add_child(builder, normalized_bounds.position, normalized_bounds.size) {
-            Ok(webview) => webview,
-            Err(error) => {
-                log_embedded_browser_diagnostic(
-                    &state,
+    let creation_position = if visible {
+        normalized_bounds.position
+    } else {
+        LogicalPosition::new(
+            normalized_bounds.position.x + normalized_bounds.size.width / 2.0,
+            normalized_bounds.position.y + normalized_bounds.size.height / 2.0,
+        )
+    };
+    let creation_size = if visible {
+        normalized_bounds.size
+    } else {
+        LogicalSize::new(1.0, 1.0)
+    };
+    let webview = match window.add_child(builder, creation_position, creation_size) {
+        Ok(webview) => webview,
+        Err(error) => {
+            log_embedded_browser_diagnostic(
+                &state,
+                &label,
+                "open_create_failed",
+                json!({
+                    "nativeLabel": &native_label,
+                    "error": error.to_string(),
+                }),
+            );
+            if let Ok(mut webviews) = state.webviews.lock() {
+                remove_logical_entry_if_native_matches(
+                    &mut webviews,
                     &label,
-                    "open_create_failed",
-                    json!({
-                        "nativeLabel": &native_label,
-                        "error": error.to_string(),
-                    }),
+                    &native_label,
+                    |current| current.native_label.as_str(),
                 );
-                if let Ok(mut webviews) = state.webviews.lock() {
-                    remove_logical_entry_if_native_matches(
-                        &mut webviews,
-                        &label,
-                        &native_label,
-                        |current| current.native_label.as_str(),
-                    );
-                }
-                return Err(format!("Failed to create embedded browser: {error}"));
             }
-        };
+            return Err(format!("Failed to create embedded browser: {error}"));
+        }
+    };
+
+    if !visible {
+        webview
+            .hide()
+            .map_err(|error| format!("Failed to hide embedded browser after creation: {error}"))?;
+    }
 
     #[cfg(target_os = "linux")]
     if let Err(error) = apply_webview_bounds(&webview, normalized_bounds) {
@@ -2883,4 +3055,41 @@ pub async fn embedded_browser_clear_data(
     data_kinds: Option<Vec<EmbeddedBrowserDataKind>>,
 ) -> Result<usize, String> {
     clear_embedded_browser_data(app, state, data_kinds).await
+}
+
+#[tauri::command]
+pub fn embedded_browser_history_search(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, EmbeddedBrowserState>,
+    text: String,
+    end_time_ms: Option<i64>,
+    offset: Option<u32>,
+    max_results: Option<u32>,
+) -> Result<Vec<history::EmbeddedBrowserHistoryEntry>, String> {
+    with_history_store(&app, &state, |store, _path| {
+        Ok(store.search(
+            &text,
+            end_time_ms,
+            offset.unwrap_or(0) as usize,
+            max_results.unwrap_or(100) as usize,
+        ))
+    })
+}
+
+#[tauri::command]
+pub fn embedded_browser_history_remove(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, EmbeddedBrowserState>,
+    ids: Vec<String>,
+) -> Result<u32, String> {
+    with_history_store(&app, &state, |store, path| {
+        let removed = store.remove(&ids);
+        if let Err(error) = store.persist(path) {
+            // Keep the in-memory store consistent with the intact file so the
+            // next access reloads the pre-remove entries.
+            store.mark_unloaded();
+            return Err(error);
+        }
+        Ok(removed as u32)
+    })
 }

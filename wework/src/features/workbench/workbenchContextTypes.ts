@@ -3,6 +3,7 @@ import type { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
 import type {
   Attachment,
   BindRuntimeTaskIMSessionsResponse,
+  CloneGitRepositoryInput,
   CreateGitWorkspaceProjectRequest,
   CreateProjectRequest,
   DeleteDeviceWorkspaceRequest,
@@ -102,6 +103,9 @@ export interface SendCurrentInputOptions {
     address: RuntimeTaskAddress,
     context?: { previousAddress?: RuntimeTaskAddress }
   ) => void | Promise<void>
+  prepareRuntimeTask?: (
+    address: RuntimeTaskAddress
+  ) => void | (() => void | Promise<void>) | Promise<void | (() => void | Promise<void>)>
   additionalContext?: RuntimeAdditionalContext
   cloudProjectId?: string
 }
@@ -152,6 +156,7 @@ export interface CreateProjectRuntimeTaskOptions {
   deviceId?: string | null
   additionalContext?: RuntimeAdditionalContext
   onError?: (error: string) => void
+  prepareRuntimeTask?: SendCurrentInputOptions['prepareRuntimeTask']
   onRuntimeTaskOptimisticOpen?: SendCurrentInputOptions['onRuntimeTaskOptimisticOpen']
 }
 
@@ -328,6 +333,7 @@ export interface WorkbenchContextValue {
   getProjectWorkspaceRoot: (deviceId: string) => Promise<string>
   listDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
   createDeviceDirectory: (deviceId: string, path: string) => Promise<void>
+  cloneGitRepository: (deviceId: string, input: CloneGitRepositoryInput) => Promise<void>
   loadEnvironmentInfo: (
     project: ProjectWithTasks | null,
     workspaceTarget?: WorkspaceTarget | null,
@@ -445,6 +451,7 @@ export interface WorkbenchProviderProps {
   lifecycleStore?: RuntimeTaskLifecycleStore
   onStartupReadyChange?: (ready: boolean) => void
   workspaceTabId?: string
+  consumePluginTrials?: boolean
   syncRemoteProjects?: boolean
   syncRuntimeTaskLifecycle?: boolean
 }

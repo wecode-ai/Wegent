@@ -214,19 +214,18 @@ describe('DesktopSidebar', () => {
     vi.unstubAllEnvs()
   })
 
-  test('keeps section header actions out of the flex layout while hidden', () => {
+  test('keeps project and task section header actions visible outside the flex layout', () => {
     renderSidebar()
 
-    const actions = screen.getByTestId('projects-section-toggle-actions')
+    const projectActions = screen.getByTestId('projects-section-toggle-actions')
+    const taskActions = screen.getByTestId('runtime-chat-section-toggle-actions')
 
-    expect(actions).toHaveClass(
-      'absolute',
-      'right-2.5',
-      'z-[70]',
-      'pointer-events-none',
-      'opacity-0'
-    )
+    expect(projectActions).toHaveClass('absolute', 'right-1', 'z-[70]')
+    expect(projectActions).not.toHaveClass('pointer-events-none', 'opacity-0')
+    expect(taskActions).toHaveClass('absolute', 'right-1', 'z-[70]')
+    expect(taskActions).not.toHaveClass('pointer-events-none', 'opacity-0')
     expect(screen.getByTestId('projects-create-button')).toBeInTheDocument()
+    expect(screen.getByTestId('runtime-chat-section-new-chat-button')).toBeInTheDocument()
   })
 
   test('shows a discoverable project creation action when the project list is empty', async () => {
@@ -1466,6 +1465,8 @@ describe('DesktopSidebar', () => {
     const cloudButton = screen.getByTestId('sidebar-cloud-connection-button')
     const projectsHeader = screen.getByTestId('projects-section-toggle')
 
+    expect(pluginsButton.querySelector('.lucide-plug')).toBeInTheDocument()
+
     expect(searchButton.compareDocumentPosition(newChatButton)).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING
     )
@@ -2247,6 +2248,65 @@ describe('DesktopSidebar', () => {
     expect(onSetRuntimeTaskPinned).toHaveBeenCalledWith({
       deviceId: 'local-device',
       threadId: 'optimistic-thread',
+      pinned: true,
+    })
+
+    await act(async () => resolvePinRequest?.())
+  })
+
+  test('moves a project task to the pinned section before the pin request finishes', async () => {
+    let resolvePinRequest: (() => void) | undefined
+    const onSetRuntimeTaskPinned = vi.fn(
+      () =>
+        new Promise<void>(resolve => {
+          resolvePinRequest = resolve
+        })
+    )
+    renderSidebar({
+      runtimeWork: {
+        projects: [
+          {
+            project: {
+              id: 7,
+              key: 'project-7',
+              name: 'Wegent',
+              stateDeviceId: 'local-device',
+            },
+            totalTasks: 1,
+            deviceWorkspaces: [
+              {
+                deviceId: 'local-device',
+                available: true,
+                workspacePath: '/repo/Wegent',
+                tasks: [
+                  {
+                    taskId: 'optimistic-project-task',
+                    threadId: 'optimistic-project-thread',
+                    workspacePath: '/repo/Wegent',
+                    title: 'Optimistic project task',
+                    runtime: 'codex',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 1,
+      },
+      onSetRuntimeTaskPinned,
+    })
+
+    await userEvent.click(screen.getByTestId('project-item-button'))
+    await userEvent.click(screen.getByTestId('runtime-local-task-mark-optimistic-project-task'))
+
+    await waitFor(() => {
+      const pinnedRow = screen.getByTestId('runtime-local-task-row-optimistic-project-task')
+      expect(screen.getByTestId('sidebar-pinned-section')).toContainElement(pinnedRow)
+    })
+    expect(onSetRuntimeTaskPinned).toHaveBeenCalledWith({
+      deviceId: 'local-device',
+      threadId: 'optimistic-project-thread',
       pinned: true,
     })
 
@@ -3440,17 +3500,19 @@ describe('DesktopSidebar', () => {
 
     const taskRow = screen.getByTestId('runtime-local-task-row-codex-1')
     const markButton = screen.getByTestId('runtime-local-task-mark-codex-1')
-    const pinIcon = screen.getByTestId('runtime-local-task-pin-icon-codex-1')
 
     expect(taskRow).not.toHaveAttribute('data-marked')
     expect(taskRow.className).not.toContain('color-sidebar-marked')
 
     await user.click(markButton)
 
-    expect(taskRow).toHaveAttribute('data-marked', 'true')
-    expect(taskRow.className).not.toContain('color-sidebar-marked')
-    expect(pinIcon).toHaveClass('fill-current')
-    expect(markButton).toHaveAttribute('aria-label', '取消置顶')
+    const pinnedTaskRow = screen.getByTestId('runtime-local-task-row-codex-1')
+    const unpinButton = screen.getByTestId('runtime-local-task-mark-codex-1')
+    expect(screen.getByTestId('sidebar-pinned-section')).toContainElement(pinnedTaskRow)
+    expect(pinnedTaskRow).toHaveAttribute('data-marked', 'true')
+    expect(pinnedTaskRow.className).not.toContain('color-sidebar-marked')
+    expect(screen.getByTestId('runtime-local-task-pin-icon-codex-1')).toHaveClass('fill-current')
+    expect(unpinButton).toHaveAttribute('aria-label', '取消置顶')
     expect(onOpenRuntimeTask).not.toHaveBeenCalled()
     expect(onSetRuntimeTaskPinned).toHaveBeenLastCalledWith({
       deviceId: 'local-device',
@@ -3458,12 +3520,17 @@ describe('DesktopSidebar', () => {
       pinned: true,
     })
 
-    await user.click(markButton)
+    await user.click(unpinButton)
 
-    expect(taskRow).not.toHaveAttribute('data-marked')
-    expect(taskRow.className).not.toContain('color-sidebar-marked')
-    expect(pinIcon).not.toHaveClass('fill-current')
-    expect(markButton).toHaveAttribute('aria-label', '置顶任务')
+    const unpinnedTaskRow = screen.getByTestId('runtime-local-task-row-codex-1')
+    const pinButton = screen.getByTestId('runtime-local-task-mark-codex-1')
+    expect(screen.queryByTestId('sidebar-pinned-section')).not.toBeInTheDocument()
+    expect(unpinnedTaskRow).not.toHaveAttribute('data-marked')
+    expect(unpinnedTaskRow.className).not.toContain('color-sidebar-marked')
+    expect(screen.getByTestId('runtime-local-task-pin-icon-codex-1')).not.toHaveClass(
+      'fill-current'
+    )
+    expect(pinButton).toHaveAttribute('aria-label', '置顶任务')
     expect(onSetRuntimeTaskPinned).toHaveBeenLastCalledWith({
       deviceId: 'local-device',
       threadId: 'thread-1',
@@ -3513,7 +3580,10 @@ describe('DesktopSidebar', () => {
       threadId: 'legacy-thread-id',
       pinned: true,
     })
-    expect(pinButton).toHaveAttribute('aria-label', '取消置顶')
+    expect(screen.getByTestId('runtime-local-task-mark-legacy-thread-id')).toHaveAttribute(
+      'aria-label',
+      '取消置顶'
+    )
   })
 
   test('reserves runtime task hover actions without padding the truncated title', async () => {

@@ -1,0 +1,12 @@
+- insert:
+    - id: wework-model-context
+      name: '@wework/dsh-model-context'
+      inject:
+        - tools
+        - web
+      config:
+        baseUrl: !!js process.env.WEWORK_HARNESS_CONTEXT_BASE_URL
+- id: web
+  config:
+    searchProvider: deepseek-official
+    fetchProvider: wework-loopback

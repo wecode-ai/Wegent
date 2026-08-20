@@ -174,6 +174,7 @@ export async function createDesktopScenario({
 
       await control.command('waitFor', CHANGE_REQUEST_BUTTON, {
         text: '#2631',
+        timeoutMs: 4_000,
       })
       await control.command('waitFor', '[data-testid="change-request-checks"]', {
         text: '检查中',

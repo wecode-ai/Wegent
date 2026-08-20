@@ -4,6 +4,7 @@ import {
   createAutomationApiFromIpc,
   createLocalAppServices,
   createRuntimeWorkApiFromIpc,
+  resetLocalRuntimeChatStreamsForTests,
 } from './localServices'
 import {
   clearLocalModelConfigs,
@@ -40,6 +41,18 @@ describe('createLocalAppServices', () => {
   beforeEach(() => {
     localStorage.clear()
     clearLocalModelConfigs()
+    resetLocalRuntimeChatStreamsForTests()
+  })
+
+  test('reuses the runtime event stream for the same local transport', () => {
+    const request = vi.fn().mockResolvedValue({})
+    const subscribe = vi.fn().mockResolvedValue(vi.fn())
+
+    const firstServices = createLocalAppServices({ request, subscribe })
+    const secondServices = createLocalAppServices({ request, subscribe })
+
+    expect(firstServices.chatStream).toBe(secondServices.chatStream)
+    expect(subscribe).toHaveBeenCalledTimes(1)
   })
 
   test('returns local bootstrap data without backend', async () => {
@@ -288,6 +301,96 @@ describe('createLocalAppServices', () => {
     expect(secondLaunch?.env).not.toEqual(
       expect.objectContaining({ ANTHROPIC_API_KEY: 'second-provider-secret' })
     )
+  })
+
+  test('registers user and model context for DeepSeek Harness launches', async () => {
+    const config = saveLocalModelConfig({
+      id: 'context-model',
+      displayName: 'Context Model',
+      modelId: 'context-upstream-model',
+      baseUrl: 'https://models.example.com/v1',
+      apiFormat: 'openai-chat-completions',
+      requestPath: '/chat/completions',
+      apiKey: 'provider-secret',
+      catalogReady: false,
+    })
+    const request = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'runtime.harness_proxy.register') {
+        return {
+          token: 'proxy-token',
+          baseUrl: 'http://127.0.0.1:1234/v1/harness-router/proxy-token',
+        }
+      }
+      if (method === 'runtime.harness_context.register') {
+        return {
+          token: 'context-token',
+          baseUrl: 'http://127.0.0.1:1234/v1/harness-context/context-token',
+        }
+      }
+      return {}
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({
+        running: true,
+        ready: true,
+        deviceId: 'local-device',
+      }),
+      request,
+      subscribe: vi.fn(),
+      user: {
+        id: 7,
+        user_name: 'cloud-user',
+        email: 'cloud@example.com',
+      },
+      cloudModelGateway: {
+        baseUrl: 'https://api.example.com/runtime-work/llm-responses-proxy',
+        apiKey: 'cloud-token',
+      },
+    })
+
+    const launch = await services.localHarnessModelApi?.resolveLaunch('opencode', {
+      key: 'context-model',
+      label: 'Context Model',
+      source: 'local',
+      model: {
+        name: 'local-model:' + config.id,
+        type: 'runtime',
+        provider: 'local',
+        displayName: 'Context Model',
+        modelId: 'context-upstream-model',
+        config: { weworkModelKind: 'model-interface' },
+      },
+    })
+
+    expect(request).toHaveBeenCalledWith(
+      'runtime.harness_context.register',
+      expect.objectContaining({
+        scope: expect.stringMatching(/^harness:opencode:/),
+        user: {
+          id: 7,
+          userName: 'cloud-user',
+          displayName: 'cloud-user',
+          email: 'cloud@example.com',
+          mode: 'cloud',
+        },
+        model: expect.objectContaining({
+          runtimeModelId: 'context-upstream-model',
+          displayName: 'Context Model',
+          modelType: 'runtime',
+        }),
+      })
+    )
+    expect(launch).toMatchObject({
+      context: {
+        token: 'context-token',
+        baseUrl: 'http://127.0.0.1:1234/v1/harness-context/context-token',
+      },
+    })
+    const contextCall = request.mock.calls.find(
+      ([method]) => method === 'runtime.harness_context.register'
+    )
+    expect(JSON.stringify(contextCall)).not.toContain('cloud-token')
+    expect(JSON.stringify(contextCall)).not.toContain('provider-secret')
   })
 
   test('does not expose a custom model until its catalog restart is applied', async () => {

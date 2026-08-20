@@ -51,6 +51,7 @@ from shared.models import (
     RemoteListChunksResponse,
     RemotePurgeKnowledgeIndexRequest,
     RetrievalScope,
+    SearchHints,
 )
 
 # Constants for document reading pagination
@@ -148,6 +149,10 @@ class InternalRetrieveRequest(BaseModel):
     """Simplified retrieve request for internal use."""
 
     query: str = Field(..., description="Search query")
+    search_hints: SearchHints | None = Field(
+        default=None,
+        description="Optional retrieval hints for dense rewrite and sparse planning",
+    )
     user_id: Optional[int] = Field(
         default=None,
         ge=0,
@@ -536,6 +541,7 @@ async def _execute_scoped_retrieve(
             db=db,
             knowledge_base_ids=kb_ids,
             query=request.query,
+            search_hints=request.search_hints,
             max_results=request.max_results,
             scope=retrieval_scope,
             route_mode=request.route_mode,
@@ -738,6 +744,7 @@ async def internal_retrieve(
                 db=db,
                 knowledge_base_ids=knowledge_base_ids,
                 query=request.query,
+                search_hints=request.search_hints,
                 max_results=request.max_results,
                 scope=(
                     RetrievalScope(document_ids=resolved_document_ids)

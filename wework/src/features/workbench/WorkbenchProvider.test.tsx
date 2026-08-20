@@ -4,13 +4,17 @@ import { createContext, StrictMode, useContext, useEffect, useState } from 'reac
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { LOCAL_USER } from '@/api/local/localSession'
+import { resetLocalRuntimeChatStreamsForTests } from '@/api/local/localServices'
 import i18n from '@/i18n'
 import {
   CloudConnectionContext,
   DISCONNECTED_STATE,
   type CloudConnectionContextValue,
 } from '@/features/cloud-connection/CloudConnectionContext'
-import { LOCAL_PLUGIN_SKILLS_CHANGED_EVENT } from '@/features/plugins/pluginTrial'
+import {
+  LOCAL_PLUGIN_SKILLS_CHANGED_EVENT,
+  PLUGIN_TRIAL_QUEUED_EVENT,
+} from '@/features/plugins/pluginTrial'
 import { publishProjectSpaceTaskBindingChanged } from '@/features/todo/projectSpaceSelection'
 import { buildAutomationTaskOptions } from '@/features/automations/automationDraft'
 import { WorkbenchProvider, type WorkbenchServices } from './WorkbenchProvider'
@@ -831,7 +835,18 @@ function RemoteRuntimeCacheProbe() {
   )
 }
 
-function ProjectSendProbe() {
+function PluginTrialInputProbe({ testId }: { testId: string }) {
+  const { paneSession } = useWorkbenchProbeSession()
+  return <span data-testid={testId}>{paneSession.input}</span>
+}
+
+function ProjectSendProbe({
+  prepareRuntimeTask,
+}: {
+  prepareRuntimeTask?: (
+    address: RuntimeTaskAddress
+  ) => void | (() => void | Promise<void>) | Promise<void | (() => void | Promise<void>)>
+} = {}) {
   const { workbench, paneSession, currentRuntimeTask } = useWorkbenchProbeSession()
   const taskLifecycle = useRuntimeTaskLifecycle(currentRuntimeTask)
   const imageAttachment = createImageAttachment()
@@ -1149,6 +1164,7 @@ function ProjectSendProbe() {
             project,
             deviceWorkspaceId: 23,
             runtime: 'codex',
+            prepareRuntimeTask,
           })
         }}
       >
@@ -2105,6 +2121,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     localStorage.clear()
     sessionStorage.clear()
     vi.clearAllMocks()
+    resetLocalRuntimeChatStreamsForTests()
     resetComposerAppsMemory()
     pluginApiMocks.cloudListInstalledPlugins.mockResolvedValue({ items: [] })
     localExecutorMocks.ensureLocalExecutorStarted.mockResolvedValue({
@@ -5226,6 +5243,147 @@ describe('WorkbenchProvider runtime tasks', () => {
         message: '修复 CI',
       })
     )
+  })
+
+  test('does not dispatch an embedded Runtime task before its context is prepared', async () => {
+    const preparation = deferred<void>()
+    const prepareRuntimeTask = vi.fn(() => preparation.promise)
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 7, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  id: 23,
+                  projectId: 7,
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-beta',
+                  mapped: true,
+                  available: true,
+                  tasks: [],
+                },
+              ],
+            },
+          ],
+          totalTasks: 0,
+        })
+      ),
+      createRuntimeTask: vi.fn(async request => ({
+        accepted: true,
+        deviceId: request.deviceId,
+        taskId: request.taskId,
+        workspacePath: request.workspacePath,
+        runtime: 'codex',
+      })),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<ProjectSendProbe prepareRuntimeTask={prepareRuntimeTask} />, services)
+
+    await userEvent.click(await screen.findByText('select project'))
+    await userEvent.click(screen.getByText('send with explicit project workspace'))
+
+    await waitFor(() => expect(prepareRuntimeTask).toHaveBeenCalledTimes(1))
+    expect(runtimeWorkApi.createRuntimeTask).not.toHaveBeenCalled()
+
+    preparation.resolve()
+    await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
+  })
+
+  test('does not dispatch an embedded Runtime task when context preparation fails', async () => {
+    const prepareRuntimeTask = vi.fn(async () => {
+      throw new Error('binding failed')
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 7, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  id: 23,
+                  projectId: 7,
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-beta',
+                  mapped: true,
+                  available: true,
+                  tasks: [],
+                },
+              ],
+            },
+          ],
+          totalTasks: 0,
+        })
+      ),
+      createRuntimeTask: vi.fn(),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<ProjectSendProbe prepareRuntimeTask={prepareRuntimeTask} />, services)
+
+    await userEvent.click(await screen.findByText('select project'))
+    await userEvent.click(screen.getByText('send with explicit project workspace'))
+
+    await waitFor(() => expect(prepareRuntimeTask).toHaveBeenCalledTimes(1))
+    expect(runtimeWorkApi.createRuntimeTask).not.toHaveBeenCalled()
+  })
+
+  test('rolls back a prepared context when the executor rejects task creation', async () => {
+    const rollback = vi.fn(async () => undefined)
+    const prepareRuntimeTask = vi.fn(async () => rollback)
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 7, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  id: 23,
+                  projectId: 7,
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-beta',
+                  mapped: true,
+                  available: true,
+                  tasks: [],
+                },
+              ],
+            },
+          ],
+          totalTasks: 0,
+        })
+      ),
+      createRuntimeTask: vi.fn(async request => ({
+        accepted: false,
+        deviceId: request.deviceId,
+        taskId: request.taskId,
+        error: 'executor rejected task',
+      })),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<ProjectSendProbe prepareRuntimeTask={prepareRuntimeTask} />, services)
+
+    await userEvent.click(await screen.findByText('select project'))
+    await userEvent.click(screen.getByText('send with explicit project workspace'))
+
+    await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(rollback).toHaveBeenCalledTimes(1))
   })
 
   test('prepares a configured model before opening a new task', async () => {
@@ -10441,6 +10599,77 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(sessionStorage.getItem('wework:pending-plugin-trial')).toBeNull()
   })
 
+  test('lets only the active workspace tab consume a queued plugin trial', async () => {
+    const user = { id: 1, user_name: 'alice', email: 'a@b.c' }
+    render(
+      <>
+        <WorkbenchProvider
+          user={user}
+          services={createWorkbenchServices()}
+          consumePluginTrials={false}
+        >
+          <WorkbenchProbeSessionProvider>
+            <PluginTrialInputProbe testId="inactive-plugin-trial-input" />
+          </WorkbenchProbeSessionProvider>
+        </WorkbenchProvider>
+        <WorkbenchProvider user={user} services={createWorkbenchServices()} consumePluginTrials>
+          <WorkbenchProbeSessionProvider>
+            <PluginTrialInputProbe testId="active-plugin-trial-input" />
+          </WorkbenchProbeSessionProvider>
+        </WorkbenchProvider>
+      </>
+    )
+
+    sessionStorage.setItem(
+      'wework:pending-plugin-trial',
+      JSON.stringify({
+        input: '[$Documents](plugin://documents@wegent) ',
+        pluginName: 'Documents',
+        openInNewChat: true,
+      })
+    )
+    act(() => window.dispatchEvent(new Event(PLUGIN_TRIAL_QUEUED_EVENT)))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('active-plugin-trial-input')).toHaveTextContent('Documents')
+    )
+    expect(screen.getByTestId('inactive-plugin-trial-input')).toBeEmptyDOMElement()
+    expect(sessionStorage.getItem('wework:pending-plugin-trial')).toBeNull()
+  })
+
+  test('preserves a queued plugin trial until the workspace tab becomes active', async () => {
+    const user = { id: 1, user_name: 'alice', email: 'a@b.c' }
+    const services = createWorkbenchServices()
+    const renderProvider = (consumePluginTrials: boolean) => (
+      <WorkbenchProvider user={user} services={services} consumePluginTrials={consumePluginTrials}>
+        <WorkbenchProbeSessionProvider>
+          <PluginTrialInputProbe testId="deferred-plugin-trial-input" />
+        </WorkbenchProbeSessionProvider>
+      </WorkbenchProvider>
+    )
+    const view = render(renderProvider(false))
+
+    sessionStorage.setItem(
+      'wework:pending-plugin-trial',
+      JSON.stringify({
+        input: '[$Documents](plugin://documents@wegent) ',
+        pluginName: 'Documents',
+        openInNewChat: true,
+      })
+    )
+    act(() => window.dispatchEvent(new Event(PLUGIN_TRIAL_QUEUED_EVENT)))
+
+    expect(screen.getByTestId('deferred-plugin-trial-input')).toBeEmptyDOMElement()
+    expect(sessionStorage.getItem('wework:pending-plugin-trial')).not.toBeNull()
+
+    view.rerender(renderProvider(true))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('deferred-plugin-trial-input')).toHaveTextContent('Documents')
+    )
+    expect(sessionStorage.getItem('wework:pending-plugin-trial')).toBeNull()
+  })
+
   test('hydrates queued plugin trial input into the current runtime task', async () => {
     renderWorkbench(<ProjectSendProbe />)
 
@@ -13294,7 +13523,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         content: '已经继续修了',
       })
     })
-    await waitFor(() => expect(screen.getByTestId('queued-messages')).toHaveTextContent(''))
+    expect(screen.getByTestId('queued-messages')).toHaveTextContent('sending:继续修')
 
     await act(async () => {
       queuedSend.resolve({
@@ -13303,7 +13532,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       })
       await queuedSend.promise
     })
-    expect(screen.getByTestId('queued-messages')).toHaveTextContent('')
+    await waitFor(() => expect(screen.getByTestId('queued-messages')).toBeEmptyDOMElement())
     expect(screen.getByTestId('follow-up-messages')).toHaveTextContent(
       'user:继续修|assistant:已经继续修了'
     )

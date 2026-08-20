@@ -2,6 +2,10 @@ import { useEffect } from 'react'
 import { render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { WorkspaceTabSurface } from './App'
+import {
+  beginHarnessAppLaunch,
+  clearHarnessAppLaunch,
+} from '@/features/harness-apps/harnessAppLaunchState'
 import { getWorkbenchPluginRuntime } from '@/plugin-runtime/bootstrap'
 
 const appIframeMocks = vi.hoisted(() => ({
@@ -66,6 +70,47 @@ describe('WorkspaceTabSurface', () => {
 
     unmount()
     expect(appIframeMocks.cleanup).toHaveBeenCalledTimes(1)
+    dispose()
+  })
+
+  test('renders the launch surface when a running Harness app opens directly as an iframe', () => {
+    const installationId = 'running-app'
+    const dispose = getWorkbenchPluginRuntime().apps.register({
+      key: `harness-${installationId}`,
+      mode: 'iframe',
+      url: 'http://localhost:3000',
+      hidden: true,
+      labelKey: 'running-app.label',
+      label: 'Running app',
+      descriptionKey: 'running-app.description',
+      description: 'Running app',
+    })
+    beginHarnessAppLaunch(installationId, 'Running app', vi.fn(), 'loadingApp')
+
+    const { unmount } = render(
+      <WorkspaceTabSurface
+        active
+        cloudWebUrl={null}
+        lifecycleStore={{} as never}
+        services={{} as never}
+        tab={{
+          id: 'running-app-tab',
+          kind: 'auxiliary',
+          title: 'Running app',
+          contentRoute: `/app/harness-${installationId}`,
+        }}
+        user={{
+          id: 1,
+          user_name: 'tester',
+          email: 'tester@example.com',
+        }}
+      />
+    )
+
+    expect(screen.getByTestId(`harness-app-launch-${installationId}`)).toBeInTheDocument()
+
+    unmount()
+    clearHarnessAppLaunch(installationId)
     dispose()
   })
 })

@@ -4,6 +4,11 @@ import {
   type HarnessProxyRegistration,
   type LocalHarnessModelOption,
 } from '@/features/local-harness/localHarnessModels'
+import {
+  buildHarnessModelContext,
+  buildHarnessUserContext,
+  type HarnessContextRegistration,
+} from '@/features/harness-apps/harnessContext'
 import { createExecutorClientFromApis } from '@/api/executorAccess'
 import i18n from '@/i18n'
 import type {
@@ -157,7 +162,7 @@ import {
 import { createLocalProjectChatClient } from './localProjectChatClient'
 import { createLocalAITableApi } from '@/api/aitable'
 import { createDwsApi } from '@/api/dws'
-import { LOCAL_USER, saveLocalUserPreferences } from './localSession'
+import { getLocalUser, LOCAL_USER, saveLocalUserPreferences } from './localSession'
 import type { KeybindingOverride } from '@/lib/keybindings'
 import type { LocalHarnessId } from '@/lib/local-harness'
 import {
@@ -357,11 +362,12 @@ function localRuntimeModels(
 }
 
 type LocalExecutorRequest = <T>(method: string, params?: Record<string, unknown>) => Promise<T>
+type LocalExecutorSubscribe = (handler: (event: LocalExecutorEvent) => void) => Promise<() => void>
 
 interface LocalAppServicesDeps {
   ensure?: () => Promise<LocalExecutorStatus>
   request?: LocalExecutorRequest
-  subscribe?: (handler: (event: LocalExecutorEvent) => void) => Promise<() => void>
+  subscribe?: LocalExecutorSubscribe
   cloudModelGateway?: CloudModelGateway
   user?: User
   readWorkspaceTextFile?: typeof readLocalWorkspaceTextFile
@@ -379,6 +385,31 @@ const catalogReconciliationTrackers = new WeakMap<
   LocalExecutorRequest,
   CatalogReconciliationTracker
 >()
+let runtimeChatStreams = new WeakMap<
+  LocalExecutorSubscribe,
+  WeakMap<LocalExecutorRequest, ReturnType<typeof createRuntimeChatStream>>
+>()
+
+export function resetLocalRuntimeChatStreamsForTests(): void {
+  runtimeChatStreams = new WeakMap()
+}
+
+function getRuntimeChatStream(
+  subscribe: LocalExecutorSubscribe,
+  request: LocalExecutorRequest
+): ReturnType<typeof createRuntimeChatStream> {
+  let streamsByRequest = runtimeChatStreams.get(subscribe)
+  if (!streamsByRequest) {
+    streamsByRequest = new WeakMap()
+    runtimeChatStreams.set(subscribe, streamsByRequest)
+  }
+  const existing = streamsByRequest.get(request)
+  if (existing) return existing
+
+  const stream = createRuntimeChatStream({ subscribe, request })
+  streamsByRequest.set(request, stream)
+  return stream
+}
 const CATALOG_IDLE_RESTART_RETRY_DELAY_MS = 100
 const CATALOG_IDLE_RESTART_MAX_ATTEMPTS = 20
 
@@ -3474,10 +3505,33 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
             upstream: harnessProxyUpstream(harnessId, option, deps.cloudModelGateway),
           }
         )
-        return harnessLaunchThroughMessagesProxy(harnessId, option, registration)
+        const launch = harnessLaunchThroughMessagesProxy(harnessId, option, registration)
+        if (harnessId !== 'opencode') return launch
+        try {
+          const context = await request<HarnessContextRegistration>(
+            'runtime.harness_context.register',
+            {
+              scope: 'harness:' + harnessId + ':' + crypto.randomUUID(),
+              user: buildHarnessUserContext(
+                deps.user ?? getLocalUser(),
+                deps.cloudModelGateway ? 'cloud' : 'local'
+              ),
+              model: buildHarnessModelContext(option),
+            }
+          )
+          return { ...launch, context }
+        } catch (error) {
+          await request('runtime.harness_proxy.unregister', { token: registration.token }).catch(
+            () => undefined
+          )
+          throw error
+        }
       },
       async unregisterProxy(token: string) {
         await request('runtime.harness_proxy.unregister', { token })
+      },
+      async unregisterContext(token: string) {
+        await request('runtime.harness_context.unregister', { token })
       },
     },
     localProjectChatClient,
@@ -3516,6 +3570,6 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       uploadRuntimeAuthJson: () => cloudConnectionRequired('uploadRuntimeAuthJson'),
       importRuntimeAuthJson: () => cloudConnectionRequired('importRuntimeAuthJson'),
     },
-    chatStream: createRuntimeChatStream({ subscribe, request }),
+    chatStream: getRuntimeChatStream(subscribe, request),
   } as unknown as WorkbenchServices
 }

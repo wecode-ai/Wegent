@@ -229,6 +229,9 @@ async function createRemoteProject(control, workspacePath, timeoutMs, captureScr
   await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
     value: 'wework-e2e-cloud-device',
   })
+  await control.command('clickWhenEnabled', '[data-testid="remote-project-source-existing"]', {
+    timeoutMs,
+  })
   await control.command('waitFor', '[data-testid="device-folder-path-input"]', { timeoutMs })
   await control.command('fill', '[data-testid="device-folder-path-input"]', {
     value: workspacePath,

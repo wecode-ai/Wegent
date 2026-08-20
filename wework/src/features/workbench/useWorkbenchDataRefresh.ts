@@ -877,7 +877,7 @@ export function useWorkbenchDataRefresh({
         request
       )
       runtimeWorkRef.current = updateRuntimeWorkTaskPinned(runtimeWorkRef.current, request)
-      dispatch({ type: 'runtime_task_pinned_updated', request })
+      dispatch({ type: 'runtime_task_pin_changed', ...request })
       return requestId
     },
     [dispatch]
@@ -898,7 +898,7 @@ export function useWorkbenchDataRefresh({
         rollbackRequest
       )
       runtimeWorkRef.current = updateRuntimeWorkTaskPinned(runtimeWorkRef.current, rollbackRequest)
-      dispatch({ type: 'runtime_task_pinned_updated', request: rollbackRequest })
+      dispatch({ type: 'runtime_task_pin_changed', ...rollbackRequest })
     },
     [dispatch]
   )

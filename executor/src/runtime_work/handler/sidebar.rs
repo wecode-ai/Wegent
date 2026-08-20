@@ -115,11 +115,14 @@ impl RuntimeWorkRpcHandler {
         let project_key = string_field(&payload, "projectKey")
             .or_else(|| string_field(&payload, "project_key"))
             .ok_or_else(|| AppIpcError::new("bad_request", "projectKey is required"))?;
-        let thread_id = string_field(&payload, "threadId")
-            .or_else(|| string_field(&payload, "thread_id"))
-            .ok_or_else(|| AppIpcError::new("bad_request", "threadId is required"))?;
+        let thread_id = self.resolve_sidebar_thread_id(
+            string_field(&payload, "threadId")
+                .or_else(|| string_field(&payload, "thread_id"))
+                .ok_or_else(|| AppIpcError::new("bad_request", "threadId is required"))?,
+        );
         let before_thread_id = string_field(&payload, "beforeThreadId")
-            .or_else(|| string_field(&payload, "before_thread_id"));
+            .or_else(|| string_field(&payload, "before_thread_id"))
+            .map(|thread_id| self.resolve_sidebar_thread_id(thread_id));
         let insert_at_end = bool_field(&payload, "insertAtEnd")
             .or_else(|| bool_field(&payload, "insert_at_end"))
             .unwrap_or(false);
@@ -134,15 +137,26 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn pin_sidebar_task(&self, payload: Value) -> Result<Value, AppIpcError> {
-        let thread_id = string_field(&payload, "threadId")
-            .or_else(|| string_field(&payload, "thread_id"))
-            .ok_or_else(|| AppIpcError::new("bad_request", "threadId is required"))?;
+        let thread_id = self.resolve_sidebar_thread_id(
+            string_field(&payload, "threadId")
+                .or_else(|| string_field(&payload, "thread_id"))
+                .ok_or_else(|| AppIpcError::new("bad_request", "threadId is required"))?,
+        );
         let pinned = bool_field(&payload, "pinned")
             .ok_or_else(|| AppIpcError::new("bad_request", "pinned is required"))?;
         let before_thread_id = string_field(&payload, "beforeThreadId")
-            .or_else(|| string_field(&payload, "before_thread_id"));
+            .or_else(|| string_field(&payload, "before_thread_id"))
+            .map(|thread_id| self.resolve_sidebar_thread_id(thread_id));
         set_codex_global_thread_pinned(&thread_id, pinned, before_thread_id.as_deref())
             .map_err(|error| AppIpcError::new("codex_global_state_error", error))?;
         Ok(sidebar_mutation_response(&self.device_id))
+    }
+
+    pub(super) fn resolve_sidebar_thread_id(&self, thread_id: String) -> String {
+        self.store
+            .get_task(&thread_id)
+            .and_then(|task| task.thread_id)
+            .filter(|provider_thread_id| !provider_thread_id.trim().is_empty())
+            .unwrap_or(thread_id)
     }
 }

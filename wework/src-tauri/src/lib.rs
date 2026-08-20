@@ -7,6 +7,7 @@ mod diagram_image;
 mod embedded_browser;
 #[cfg(target_os = "macos")]
 mod embedded_browser_tls;
+mod execution_environments;
 #[cfg(desktop)]
 mod feedback;
 mod harness_apps;
@@ -5049,6 +5050,7 @@ pub fn run() {
     let app = builder
         .manage(appshots::AppshotState::default())
         .manage(embedded_browser::EmbeddedBrowserState::default())
+        .manage(execution_environments::ExecutionEnvironmentState::default())
         .manage(AppPreferencesWriteState::default())
         .manage(MainWindowLifecycleState::default())
         .manage(LocalWorkspaceOpenState::default())
@@ -5161,6 +5163,8 @@ pub fn run() {
             #[cfg(desktop)]
             storage_maintenance::schedule(app.handle().clone());
             #[cfg(desktop)]
+            execution_environments::setup(app.handle());
+            #[cfg(desktop)]
             if env_flag_enabled(WEBVIEW_DEVTOOLS_ENV) {
                 if let Err(error) = open_main_webview_devtools_impl(app.handle()) {
                     log::warn!("Failed to open Web Inspector from {WEBVIEW_DEVTOOLS_ENV}: {error}");
@@ -5198,6 +5202,8 @@ pub fn run() {
             embedded_browser::embedded_browser_eval_json,
             embedded_browser::embedded_browser_go_back,
             embedded_browser::embedded_browser_go_forward,
+            embedded_browser::embedded_browser_history_remove,
+            embedded_browser::embedded_browser_history_search,
             embedded_browser::embedded_browser_navigate,
             embedded_browser::embedded_browser_open,
             embedded_browser::embedded_browser_pending_open_requests,
@@ -5211,13 +5217,18 @@ pub fn run() {
             embedded_browser::embedded_browser_set_agent_control_paused,
             embedded_browser::embedded_browser_set_zoom,
             embedded_browser::embedded_browser_set_bounds,
+            execution_environments::install_execution_environment,
+            execution_environments::list_execution_environments,
+            execution_environments::remove_execution_environment,
             harness_apps::delete_harness_app,
             harness_apps::install_harness_app,
             harness_apps::list_harness_apps,
             harness_apps::preview_harness_app,
             harness_apps::start_harness_app,
+            harness_apps::store_harness_app_context_token,
             harness_apps::store_harness_app_proxy_token,
             harness_apps::stop_harness_app,
+            harness_apps::take_harness_app_context_token,
             harness_apps::take_harness_app_proxy_token,
             harness_apps::update_harness_app,
             local_terminal::archive_local_harness_session,
@@ -5271,6 +5282,7 @@ pub fn run() {
             local_executor::local_executor_package_plugin,
             local_executor::local_executor_read_plugin_cloud_links,
             local_executor::local_executor_list_personal_marketplace_plugins,
+            local_executor::local_executor_list_wegent_store_plugins,
             local_executor::local_executor_read_plugin_manifest,
             local_executor::local_executor_read_codex_local_config,
             local_executor::local_executor_read_log,

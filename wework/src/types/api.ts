@@ -1536,6 +1536,22 @@ export interface DeviceCommandResponse {
   stderr_truncated?: boolean
 }
 
+export interface CloneGitRepositoryInput {
+  url: string
+  branch?: string
+  targetPath: string
+}
+
+export interface GitCloneProjectOperation extends CloneGitRepositoryInput {
+  id: string
+  deviceId: string
+  name: string
+  status: 'cloning' | 'opening' | 'failed'
+  failureStage?: 'clone' | 'open'
+  failureReason?: 'executor-offline' | 'clone-failed' | 'open-failed'
+  error?: string
+}
+
 export interface TaskContextData {
   id: number
   context_type: 'attachment' | 'knowledge_base'
@@ -2104,6 +2120,7 @@ export interface InstalledPluginComponents {
     slug: string
     authPolicy: 'on_install' | 'on_use' | 'optional'
     localAuth?: PluginLocalAuthDefinition | null
+    description?: string | null
   }>
   lsps: PluginPathComponent[]
   monitors: PluginPathComponent[]
@@ -2255,6 +2272,8 @@ export interface PluginMarketplaceItem {
   installed: boolean
   installedPluginId?: string | number | null
   installedLocally?: boolean
+  /** Materialized package version on this device (may lag catalog `version`). */
+  installedVersion?: string | null
   enabled: boolean
   sourceType: 'marketplace'
   interface?: PluginInterface | null
@@ -2337,6 +2356,18 @@ export interface PluginDeviceSyncResponse {
   deviceId: string
   pendingCount: number
   sync: DeviceCapabilitySyncResponse
+}
+
+export interface PluginDeviceReportItem {
+  installedPluginId: number
+  releaseId: number
+  version: string
+}
+
+export interface PluginDeviceReportResponse {
+  deviceId: string
+  acknowledgedCount: number
+  acknowledgedInstalledPluginIds: number[]
 }
 
 export interface PluginAutoUpdateItem {

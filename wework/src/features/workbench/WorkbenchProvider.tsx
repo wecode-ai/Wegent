@@ -189,6 +189,7 @@ export function WorkbenchProvider({
   lifecycleStore: providedLifecycleStore,
   onStartupReadyChange,
   workspaceTabId,
+  consumePluginTrials = true,
   syncRemoteProjects = true,
   syncRuntimeTaskLifecycle = true,
 }: WorkbenchProviderProps) {
@@ -716,12 +717,13 @@ export function WorkbenchProvider({
   const stableConsumeQueuedPluginTrial = useStableEvent(consumeQueuedPluginTrial)
 
   useEffect(() => {
+    if (!consumePluginTrials) return
     queueMicrotask(stableConsumeQueuedPluginTrial)
     window.addEventListener(PLUGIN_TRIAL_QUEUED_EVENT, stableConsumeQueuedPluginTrial)
     return () => {
       window.removeEventListener(PLUGIN_TRIAL_QUEUED_EVENT, stableConsumeQueuedPluginTrial)
     }
-  }, [stableConsumeQueuedPluginTrial])
+  }, [consumePluginTrials, stableConsumeQueuedPluginTrial])
   useEffect(() => {
     const socketClient = resolvedServices.socketClient
     if (!socketClient) return undefined
@@ -2047,6 +2049,7 @@ export function WorkbenchProvider({
   const stableGetProjectWorkspaceRoot = useStableEvent(projectActions.getProjectWorkspaceRoot)
   const stableListDeviceDirectories = useStableEvent(projectActions.listDeviceDirectories)
   const stableCreateDeviceDirectory = useStableEvent(projectActions.createDeviceDirectory)
+  const stableCloneGitRepository = useStableEvent(projectActions.cloneGitRepository)
   const stableLoadEnvironmentInfo = useStableEvent(projectActions.loadEnvironmentInfo)
   const stableLoadEnvironmentDiff = useStableEvent(projectActions.loadEnvironmentDiff)
   const stableCommitEnvironmentChanges = useStableEvent(projectActions.commitEnvironmentChanges)
@@ -2109,7 +2112,7 @@ export function WorkbenchProvider({
   }, [projectPluginNames])
 
   const listLocalApps = useCallback(
-    async (options?: { allowEmptySnapshot?: boolean }) => {
+    async (options?: { allowEmptySnapshot?: boolean; supersedeInstalledRequest?: boolean }) => {
       const cached = localAppsCacheRef.current
       if (cached && cached.expiresAt > Date.now()) {
         return cached.apps
@@ -2148,7 +2151,9 @@ export function WorkbenchProvider({
               }
             }
             try {
-              const response = await localPluginApi.listInstalledPlugins()
+              const response = await localPluginApi.listInstalledPlugins({
+                shareInflight: !options?.supersedeInstalledRequest,
+              })
               currentComposerDeviceId =
                 peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })?.deviceId ||
                 peekLocalCodexPluginsReadState()?.deviceId ||
@@ -2324,7 +2329,10 @@ export function WorkbenchProvider({
       localAppsRefreshTimerRef.current = window.setTimeout(() => {
         localAppsRefreshTimerRef.current = null
         localAppsInflightRef.current = null
-        void listLocalApps({ allowEmptySnapshot: true })
+        void listLocalApps({
+          allowEmptySnapshot: true,
+          supersedeInstalledRequest: true,
+        })
       }, LOCAL_PLUGIN_SKILLS_REFRESH_DEBOUNCE_MS)
     }
     window.addEventListener(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT, clearLocalSkillCache)
@@ -2348,7 +2356,10 @@ export function WorkbenchProvider({
     localAppsCacheRef.current = null
     localAppsInflightRef.current = null
     localAppsLoadGenerationRef.current += 1
-    void listLocalApps({ allowEmptySnapshot: true })
+    void listLocalApps({
+      allowEmptySnapshot: true,
+      supersedeInstalledRequest: true,
+    })
   }, [listLocalApps, projectPluginNamesKey])
 
   // Plugin market UI resolves package logos into the catalog cache; overlay those
@@ -2669,6 +2680,7 @@ export function WorkbenchProvider({
     getProjectWorkspaceRoot: projectActions.getProjectWorkspaceRoot,
     listDeviceDirectories: projectActions.listDeviceDirectories,
     createDeviceDirectory: projectActions.createDeviceDirectory,
+    cloneGitRepository: projectActions.cloneGitRepository,
     loadEnvironmentInfo: projectActions.loadEnvironmentInfo,
     loadEnvironmentDiff: projectActions.loadEnvironmentDiff,
     commitEnvironmentChanges: projectActions.commitEnvironmentChanges,
@@ -2758,6 +2770,7 @@ export function WorkbenchProvider({
       getProjectWorkspaceRoot: stableGetProjectWorkspaceRoot,
       listDeviceDirectories: stableListDeviceDirectories,
       createDeviceDirectory: stableCreateDeviceDirectory,
+      cloneGitRepository: stableCloneGitRepository,
       loadEnvironmentInfo: stableLoadEnvironmentInfo,
       loadEnvironmentDiff: stableLoadEnvironmentDiff,
       commitEnvironmentChanges: stableCommitEnvironmentChanges,
@@ -2799,6 +2812,7 @@ export function WorkbenchProvider({
       stableCompactRuntimePaneTask,
       stableClearRuntimeGoal,
       stableCheckoutEnvironmentBranch,
+      stableCloneGitRepository,
       stableCommitAndPushEnvironmentChanges,
       stableCommitEnvironmentChanges,
       stableCreateDeviceDirectory,

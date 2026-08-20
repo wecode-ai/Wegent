@@ -1,11 +1,35 @@
 import { useDraggable, useDroppable } from '@dnd-kit/core'
 import { CSS } from '@dnd-kit/utilities'
 import { Archive, Bot, CalendarDays, Ellipsis, Flag, ListTodo } from 'lucide-react'
-import { useState } from 'react'
+import {
+  useCallback,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react'
 import type { CloudLoopItem } from '@/api/deliveries'
+import { AssistantThinkingIndicator } from '@/components/chat/AssistantThinkingIndicator'
+import {
+  getToolActivityFilePaths,
+  getToolActivityKind,
+  getToolActivitySearchItem,
+} from '@/components/chat/blocks/toolBlockActivity'
+import { getInputField } from '@/components/chat/blocks/toolBlockKinds'
 import { Tooltip } from '@/components/ui/tooltip'
+import {
+  getRuntimeConversationLiveActivitySnapshot,
+  subscribeRuntimeConversation,
+} from '@/features/workbench/runtimeConversationCache'
+import {
+  runtimeLiveActivityFromSnapshot,
+  type RuntimeLiveActivity,
+  type RuntimeLiveToolActivity,
+} from '@/features/workbench/runtimeThinking'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
+import type { RuntimeTaskAddress } from '@/types/api'
 import { isLoopItemExecutionActive } from './cloudMyWorkModel'
 import { priorityBadgeClasses } from './todoShared'
 
@@ -44,8 +68,15 @@ export function CloudTodoCardContent({ item, display, agentNames }: CloudTodoCar
 
   return (
     <>
-      <span className="line-clamp-1 pr-5 text-base font-medium leading-5 text-text-primary">
-        {item.title}
+      <span className="flex min-w-0 items-center gap-2 pr-5 text-base font-medium leading-5 text-text-primary">
+        {item.is_unread ? (
+          <span
+            data-testid={`cloud-todo-card-unread-${item.id}`}
+            className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary"
+            aria-hidden="true"
+          />
+        ) : null}
+        <span className="line-clamp-1 min-w-0">{item.title}</span>
       </span>
       {item.description ? (
         <span className="mt-1 line-clamp-2 text-sm leading-[18px] text-text-secondary">
@@ -117,13 +148,17 @@ export function CloudTodoCardContent({ item, display, agentNames }: CloudTodoCar
   )
 }
 
+export interface CloudTodoBoardTaskBinding {
+  id: number
+  device_id: string
+  task_id: string
+  task_title: string | null
+  running: boolean
+}
+
 interface CloudTodoBoardCardProps {
   item: CloudLoopItem
-  taskBindings?: Array<{
-    id: number
-    task_id: string
-    task_title: string | null
-  }>
+  taskBindings?: CloudTodoBoardTaskBinding[]
   onClick: () => void
   onArchive: () => void
   onOpenActivity?: () => void
@@ -138,6 +173,7 @@ export function CloudTodoBoardCard({
   taskBindings = [],
   onClick,
   onArchive,
+  onOpenActivity,
   display,
   agentNames,
   dragDisabled = false,
@@ -146,7 +182,19 @@ export function CloudTodoBoardCard({
   const { t } = useTranslation('common')
   const [menuOpen, setMenuOpen] = useState(false)
   const hasActiveTask = isLoopItemExecutionActive(item)
-  const currentTaskBinding = hasActiveTask ? taskBindings[0] : undefined
+  const runningTaskBinding = taskBindings.find(binding => binding.running)
+  const currentTaskBinding = runningTaskBinding ?? (hasActiveTask ? taskBindings[0] : undefined)
+  const currentTaskAddress = useMemo<RuntimeTaskAddress | null>(
+    () =>
+      currentTaskBinding && (currentTaskBinding.running || hasActiveTask)
+        ? {
+            deviceId: currentTaskBinding.device_id,
+            taskId: currentTaskBinding.task_id,
+          }
+        : null,
+    [currentTaskBinding, hasActiveTask]
+  )
+  const currentActivity = useRuntimeTaskActivity(currentTaskAddress)
   const {
     attributes,
     listeners,
@@ -168,7 +216,7 @@ export function CloudTodoBoardCard({
       data-testid={`cloud-todo-card-drop-${item.id}`}
       style={{ transform: CSS.Translate.toString(transform) }}
       className={cn(
-        'group relative w-full touch-none overflow-hidden rounded-xl border border-border bg-background text-left shadow-sm transition hover:-translate-y-px hover:border-text-primary/15 hover:shadow-md',
+        'group relative h-fit w-full touch-none overflow-hidden rounded-xl border border-border bg-background text-left shadow-sm transition hover:-translate-y-px hover:border-text-primary/15 hover:shadow-md',
         isDragging && 'opacity-25 shadow-none',
         isOver && !isDragging && 'border-focus ring-1 ring-focus/50'
       )}
@@ -226,8 +274,28 @@ export function CloudTodoBoardCard({
 
       {currentTaskBinding ? (
         <div
+          role={onOpenActivity ? 'button' : undefined}
+          tabIndex={onOpenActivity ? 0 : undefined}
+          aria-label={
+            onOpenActivity
+              ? `${t('todo.current_running_task', '正在执行')} ${
+                  currentTaskBinding.task_title || currentTaskBinding.task_id
+                }`
+              : undefined
+          }
           data-testid={`cloud-todo-card-tasks-${item.id}`}
-          className="border-t border-border/60 px-3.5 py-2"
+          onClick={onOpenActivity}
+          onKeyDown={event => {
+            if (!onOpenActivity || (event.key !== 'Enter' && event.key !== ' ')) return
+            event.preventDefault()
+            onOpenActivity()
+          }}
+          className={cn(
+            'w-full border-t border-border/60 px-3.5 py-2 text-left transition',
+            onOpenActivity
+              ? 'cursor-pointer hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-focus/30'
+              : 'cursor-default'
+          )}
         >
           <div className="flex min-w-0 items-center gap-2 text-xs text-text-secondary">
             <ListTodo className="h-3.5 w-3.5" />
@@ -241,8 +309,134 @@ export function CloudTodoBoardCard({
               {currentTaskBinding.task_title || currentTaskBinding.task_id}
             </span>
           </div>
+          {currentActivity.active ? (
+            <RuntimeTaskLiveActivity itemId={item.id} activity={currentActivity} />
+          ) : null}
         </div>
       ) : null}
     </article>
   )
+}
+
+function RuntimeTaskLiveActivity({
+  itemId,
+  activity,
+}: {
+  itemId: string
+  activity: RuntimeLiveActivity
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const lastTool = activity.tools.at(-1)
+  const completedTools = activity.tools.filter(
+    block => block.status === 'done' || block.status === 'error'
+  )
+  const activeTools = activity.tools.filter(
+    block => block.status !== 'done' && block.status !== 'error'
+  )
+
+  useLayoutEffect(() => {
+    const scrollArea = scrollRef.current
+    if (scrollArea) scrollArea.scrollTop = scrollArea.scrollHeight
+  }, [activity.thinking, activity.tools.length, lastTool?.status, lastTool?.toolInput])
+
+  return (
+    <div
+      ref={scrollRef}
+      data-testid={`cloud-todo-card-activity-${itemId}`}
+      className="scrollbar-none ml-5 mt-1.5 h-5 min-w-0 overflow-y-auto border-l border-border/70 pl-2 text-xs leading-5 text-text-muted"
+    >
+      {completedTools.map(block => (
+        <RuntimeTaskToolActivity key={block.id} itemId={itemId} block={block} />
+      ))}
+      {activity.thinking ? (
+        <div className="flex h-5 min-w-0 items-center">
+          <AssistantThinkingIndicator
+            content={activity.thinking}
+            testId={`cloud-todo-card-thinking-${itemId}`}
+            className="text-xs leading-5"
+          />
+        </div>
+      ) : null}
+      {activeTools.map(block => (
+        <RuntimeTaskToolActivity key={block.id} itemId={itemId} block={block} />
+      ))}
+    </div>
+  )
+}
+
+function RuntimeTaskToolActivity({
+  itemId,
+  block,
+}: {
+  itemId: string
+  block: RuntimeLiveActivity['tools'][number]
+}) {
+  const { t } = useTranslation('chat')
+  const running = block.status !== 'done' && block.status !== 'error'
+
+  return (
+    <div
+      data-testid={`cloud-todo-card-tool-${itemId}-${block.id}`}
+      className="flex h-5 min-w-0 items-center"
+    >
+      <span className={cn('min-w-0 truncate', running && 'waiting-thinking-text')}>
+        {runtimeToolActivityText(block, t)}
+      </span>
+    </div>
+  )
+}
+
+function useRuntimeTaskActivity(address: RuntimeTaskAddress | null): RuntimeLiveActivity {
+  const subscribe = useCallback(
+    (listener: () => void) =>
+      address ? subscribeRuntimeConversation(address, listener) : () => undefined,
+    [address]
+  )
+  const getSnapshot = useCallback(
+    () => (address ? getRuntimeConversationLiveActivitySnapshot(address) : ''),
+    [address]
+  )
+  const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+
+  return useMemo(() => runtimeLiveActivityFromSnapshot(snapshot), [snapshot])
+}
+
+function runtimeToolActivityText(
+  block: RuntimeLiveToolActivity,
+  t: ReturnType<typeof useTranslation>['t']
+): string {
+  const kind = getToolActivityKind(block)
+  const paths = getToolActivityFilePaths(block)
+  const path = paths[0] ? displayActivityPath(paths[0]) : ''
+  const command = getInputField(block, 'command', 'cmd', 'commandLine')?.replace(/\s+/g, ' ').trim()
+  const search = getToolActivitySearchItem(block)
+  const running = block.status !== 'done' && block.status !== 'error'
+
+  if (kind === 'command') {
+    return activityLabel(t('tool_activity.command_action'), command)
+  }
+  if (kind === 'file') {
+    return activityLabel(t('tool_activity.file_action'), path)
+  }
+  if (kind === 'search') {
+    return activityLabel(
+      t(running ? 'tool_activity.search_running' : 'tool_activity.search_done'),
+      search?.query
+    )
+  }
+  if (kind === 'edit') {
+    return activityLabel(t('tool_activity.edit_action'), path)
+  }
+  if (kind === 'create') {
+    return activityLabel(t('tool_activity.create_action'), path)
+  }
+  return activityLabel(t('tool_activity.other_action'), block.toolName)
+}
+
+function activityLabel(label: string, detail: string | undefined): string {
+  return detail ? `${label} · ${detail}` : label
+}
+
+function displayActivityPath(path: string): string {
+  return path.replaceAll('\\', '/').split('/').filter(Boolean).at(-1) ?? path
 }

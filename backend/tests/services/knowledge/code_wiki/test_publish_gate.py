@@ -4,9 +4,8 @@
 
 """Tests for the publish gate.
 
-The gate is advisory. One rule still refuses — a version holding no pages, which is a
-run that produced nothing rather than an empty repository — and everything else is
-measured, warned about and published.
+The gate refuses versions that have no pages, lack required section overview pages, or
+contain definite Mermaid errors. Content-size and removal measurements remain advisory.
 
 The two measures below say different things and are kept apart on purpose. A rebuild
 is judged on how much came back, because its version starts empty and its paths carry
@@ -109,15 +108,15 @@ def test_growth_is_never_treated_as_removal():
     assert verdict.passed
 
 
-def test_a_broken_diagram_is_reported_but_does_not_block():
-    """A diagram that will not render is a local display fault, not a bad version."""
+def test_a_broken_diagram_is_rejected_with_the_page_and_error() -> None:
+    """Readers never see a version whose declared diagram cannot render."""
     pages = [
         PageSource(path="index", title="Index", content="```mermaid\nflowchat TD\n```")
     ]
 
     verdict = evaluate_publish_gate(pages, published_paths=["index"])
 
-    assert verdict.passed
+    assert not verdict.passed
     assert len(verdict.warnings) == 1
     assert "index:" in verdict.warnings[0]
 
@@ -146,16 +145,16 @@ def test_a_verdict_with_nothing_wrong_carries_no_diagram_findings():
     assert verdict.diagram_warnings == ()
 
 
-def test_diagrams_can_be_made_blocking_by_policy():
+def test_diagrams_can_be_explicitly_advisory_for_a_non_reader_projection() -> None:
     pages = [
         PageSource(path="index", title="Index", content="```mermaid\nflowchat TD\n```")
     ]
 
     verdict = evaluate_publish_gate(
-        pages, published_paths=["index"], policy=PublishPolicy(block_on_mermaid=True)
+        pages, published_paths=["index"], policy=PublishPolicy(block_on_mermaid=False)
     )
 
-    assert not verdict.passed
+    assert verdict.passed
 
 
 def test_a_rejection_still_carries_its_warnings():

@@ -28,6 +28,7 @@ import {
   createOptimisticRuntimeGuidanceMessage,
 } from './runtimeGuidanceMessages'
 import { updateRuntimeGoalContinuation } from '@/lib/runtime-goal'
+import { getLatestRuntimeLiveActivity, runtimeLiveActivitySnapshot } from './runtimeThinking'
 
 const MAX_CONVERSATION_CACHE_ENTRIES = 50
 const turnsByConversation = new Map<string, RuntimeConversationTurn[]>()
@@ -52,6 +53,7 @@ const virtualMeasurementsByConversation = new Map<string, VirtualItem[]>()
 export interface ConversationScrollSnapshot {
   distanceFromBottomPx: number
   pinnedToBottom: boolean
+  scrollTopPx?: number
 }
 
 export interface RuntimeConversationMetadata {
@@ -176,6 +178,12 @@ export function runtimeConversationMessageHasStartedTurn(
       turn.id !== null &&
       (turn.clientUserMessageId === messageId ||
         turn.items.some(item => item.type === 'user_message' && item.id === messageId))
+  )
+}
+
+export function getRuntimeConversationLiveActivitySnapshot(address: RuntimeTaskAddress): string {
+  return runtimeLiveActivitySnapshot(
+    getLatestRuntimeLiveActivity(getRuntimeConversationMessages(address))
   )
 }
 

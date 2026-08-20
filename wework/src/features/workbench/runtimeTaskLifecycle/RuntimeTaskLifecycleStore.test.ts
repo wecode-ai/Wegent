@@ -292,6 +292,35 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(store.getTask(address)?.execution.running).toBe(false)
   })
 
+  test('keeps a confirmed-active executor snapshot running after a terminal event', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.syncRuntimeWork(
+      runtimeWork(
+        task({
+          running: true,
+          status: 'active',
+          threadStatus: 'active',
+          turnStatus: 'inProgress',
+        })
+      )
+    )
+
+    store.turnSettled(address, null, 'succeeded')
+    store.syncRuntimeWork(
+      runtimeWork(
+        task({
+          running: true,
+          status: 'active',
+          threadStatus: 'active',
+          turnStatus: 'inProgress',
+        })
+      )
+    )
+
+    expect(store.getTask(address)?.execution.running).toBe(true)
+    expect(store.getTask(address)?.turn.outcome).toBe('succeeded')
+  })
+
   test('keeps terminal executor snapshots idle even when running remains true', () => {
     const store = new RuntimeTaskLifecycleStore('test')
     const terminalTask = task({ running: true, status: 'complete' })
