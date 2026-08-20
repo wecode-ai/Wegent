@@ -1169,9 +1169,10 @@ pub async fn start_harness_app(
         .is_some_and(|value| !value.trim().is_empty());
     let context = match (context_base_url, context_token) {
         (Some(base_url), Some(token))
-            if !base_url.trim().is_empty() && !token.trim().is_empty() => {
-                Some((base_url.trim().to_string(), token.trim().to_string()))
-            }
+            if !base_url.trim().is_empty() && !token.trim().is_empty() =>
+        {
+            Some((base_url.trim().to_string(), token.trim().to_string()))
+        }
         (None, None) => None,
         _ => return Err("Smart app context registration is incomplete".to_string()),
     };

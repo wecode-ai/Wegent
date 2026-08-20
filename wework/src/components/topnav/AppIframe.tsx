@@ -56,13 +56,7 @@ function scaledBounds(bounds: EmbeddedBrowserBounds, scale: number): EmbeddedBro
 }
 
 function bootstrapBounds(bounds: EmbeddedBrowserBounds): EmbeddedBrowserBounds {
-  const size = 16
-  return {
-    x: bounds.x + (bounds.width - size) / 2,
-    y: bounds.y + (bounds.height - size) / 2,
-    width: size,
-    height: size,
-  }
+  return scaledBounds(bounds, 0.12)
 }
 
 async function waitForEmbeddedBrowserContent(label: string): Promise<void> {

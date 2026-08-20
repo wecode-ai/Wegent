@@ -173,7 +173,7 @@ describe('AppIframe', () => {
     await waitFor(() =>
       expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledWith(
         'http://localhost:3000',
-        { x: 402, y: 312, width: 16, height: 16 },
+        { x: 362, y: 284, width: 96, height: 72 },
         'app-harness-app-harness-1',
         true,
         true
