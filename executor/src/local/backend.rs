@@ -847,21 +847,11 @@ where
         {
             Ok(true) => {
                 self.refresh_runtime_capacity().await;
-                match self
-                    .client
-                    .send_heartbeat(self.client.config.heartbeat_timeout)
-                    .await
-                {
-                    Ok(true) => Ok(()),
-                    Ok(false) => {
-                        let _ = self.client.disconnect().await;
-                        Err("initial device heartbeat was rejected by backend".to_owned())
-                    }
-                    Err(error) => {
-                        let _ = self.client.disconnect().await;
-                        Err(error)
-                    }
+                if let Err(error) = self.client.emit_liveness_heartbeat().await {
+                    let _ = self.client.disconnect().await;
+                    return Err(error);
                 }
+                Ok(())
             }
             Ok(false) => {
                 let _ = self.client.disconnect().await;
@@ -886,17 +876,12 @@ where
                 }
             }
             self.refresh_runtime_capacity().await;
-            let failure = match self
-                .client
-                .send_heartbeat(self.client.config.heartbeat_timeout)
-                .await
-            {
-                Ok(true) => {
+            let failure = match self.client.emit_liveness_heartbeat().await {
+                Ok(()) => {
                     consecutive_failures = 0;
                     next_heartbeat_at = Instant::now() + self.client.config.heartbeat_interval;
                     continue;
                 }
-                Ok(false) => "heartbeat was rejected by backend".to_owned(),
                 Err(error) => error,
             };
 
@@ -1024,6 +1009,7 @@ pub fn local_backend_heartbeat_failure_log_line(backend_url: &str, error: &str) 
 }
 
 pub async fn serve_local_app_sidecar(config: DeviceConfig) -> Result<(), String> {
+    crate::task_runtime::mcp_http::ensure_space_mcp_http_endpoint().await?;
     let backend_config = LocalBackendConfig::from_device_config(config.clone());
     let app_ipc_device_id = app_ipc_sidecar_device_id(&backend_config);
     let runtime_instance_id = backend_config.runtime_instance_id.clone();

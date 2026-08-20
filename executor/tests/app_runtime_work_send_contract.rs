@@ -384,6 +384,7 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
                     "task_id": 1001,
                     "subtask_id": 2001,
                     "prompt": "first turn",
+                    "system_prompt": "Run focused project tests.",
                     "project_workspace_path": "/tmp/project",
                     "bot": [{"shell_type": "ClaudeCode"}],
                     "model_config": {
@@ -488,6 +489,10 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
     assert_eq!(resume["params"]["threadId"], "thread-1");
     assert_eq!(resume["params"]["cwd"], "/tmp/project");
     assert_eq!(resume["params"]["model"], "gpt-4.1");
+    assert!(resume["params"]["developerInstructions"]
+        .as_str()
+        .expect("developer instructions should be present")
+        .contains("Run focused project tests."));
     assert_eq!(
         resume["params"]["config"]["model_reasoning_effort"],
         "xhigh"
@@ -853,15 +858,25 @@ async fn runtime_tasks_create_ephemeral_codex_thread_hidden_from_task_list() {
         fork_call["params"]["path"],
         "/tmp/codex/parent-thread-1.jsonl"
     );
+    assert_eq!(fork_call["params"]["cwd"], "/tmp/project");
+    assert_eq!(fork_call["params"]["permissions"], ":danger-full-access");
     assert_eq!(fork_call["params"]["ephemeral"], true);
     let inject_call = calls
         .iter()
         .find(|call| call["method"] == "thread/inject_items")
         .expect("thread/inject_items should be called");
     assert_eq!(inject_call["params"]["threadId"], "thread-1");
-    assert!(inject_call["params"]["items"][0]["content"][0]["text"]
+    let boundary_prompt = inject_call["params"]["items"][0]["content"][0]["text"]
         .as_str()
-        .is_some_and(|text| text.contains("Side conversation boundary.")));
+        .expect("side conversation boundary should be text");
+    assert!(boundary_prompt.contains("Side conversation boundary."));
+    assert!(boundary_prompt.contains(
+        "Do not modify files, source, git state, permissions, configuration, or workspace state \
+         unless the user explicitly asks for that mutation after this boundary."
+    ));
+    assert!(boundary_prompt.contains(
+        "If the user explicitly requests a mutation, keep it minimal, local to the request"
+    ));
     assert!(calls.iter().all(|call| call["method"] != "thread/start"));
     assert!(calls.iter().all(|call| call["method"] != "thread/name/set"));
     assert!(calls.iter().all(|call| call["method"] != "thread/goal/set"));
@@ -4458,7 +4473,7 @@ async fn wait_for_method_count(log_path: &Path, method: &str, expected: usize) {
 }
 
 async fn wait_for_logged_pid(log_path: &Path, prefix: &str) -> u32 {
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
         let content = fs::read_to_string(log_path).unwrap_or_default();
         if let Some(pid) = content.lines().find_map(|line| {

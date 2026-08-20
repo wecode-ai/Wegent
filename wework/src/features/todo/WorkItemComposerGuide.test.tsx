@@ -59,7 +59,7 @@ describe('WorkItemComposerGuide', () => {
     render(
       <WorkItemComposerGuide
         project={project}
-        projects={[project, teamProject]}
+        projects={[teamProject]}
         toolbar
         onSelectProject={onSelectProject}
       />
@@ -79,10 +79,8 @@ describe('WorkItemComposerGuide', () => {
     expect(trigger).not.toHaveClass('text-primary', 'font-medium')
 
     await user.click(trigger)
-    expect(screen.getByTestId('work-item-workspace-option-work-items')).toHaveAttribute(
-      'aria-checked',
-      'true'
-    )
+    const menu = screen.getByTestId('work-item-context-menu')
+    expect(menu).not.toHaveTextContent('我的任务')
     expect(screen.getByTestId('work-item-workspace-option-team-work')).toHaveTextContent('团队研发')
 
     await user.click(screen.getByTestId('work-item-workspace-option-team-work'))

@@ -9,7 +9,10 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     process::Command,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex,
+    },
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -24,6 +27,7 @@ const STATE_VERSION: u64 = 3;
 const DEFAULT_KEEP_COUNT: usize = 15;
 const AUTO_PRUNE_BATCH_SIZE: usize = 1;
 pub(crate) const RUNTIME_WORKTREES_VERSION: u64 = 1;
+static WORKTREE_WRITE_PROBE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 const STATE_ACTIVE: &str = "active";
 const STATE_DELETED: &str = "deleted";
@@ -1388,8 +1392,9 @@ fn probe_directory_writable(path: &Path) -> Result<(), String> {
             ancestor = candidate.parent();
         }
     };
+    let probe_sequence = WORKTREE_WRITE_PROBE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
     let probe = probe_parent.join(format!(
-        ".wegent-worktree-write-probe-{}-{}",
+        ".wegent-worktree-write-probe-{}-{}-{probe_sequence}",
         std::process::id(),
         now_ms()
     ));
@@ -2892,6 +2897,8 @@ mod tests {
             ephemeral: false,
             runtime_project_key: None,
             runtime_workspace_roots: Vec::new(),
+            project_instructions: String::new(),
+            project_plugin_ids: Vec::new(),
             list_order: None,
             sidebar_order: None,
             group_workspace_path: None,

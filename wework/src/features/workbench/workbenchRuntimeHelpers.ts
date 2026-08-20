@@ -321,6 +321,49 @@ export function findRuntimeTask(
   return workspace?.tasks.find(item => item.taskId === address?.taskId) ?? null
 }
 
+export function resolveComposerProjectPluginNames(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  currentProjectId: number | null | undefined,
+  currentRuntimeTask: RuntimeTaskAddress | null | undefined
+): string[] | null {
+  const task = findRuntimeTask(runtimeWork, currentRuntimeTask)
+  if (task?.projectPluginIds !== undefined) {
+    return normalizeProjectPluginNames(task.projectPluginIds)
+  }
+
+  if (!runtimeWork) return null
+  const taskProject = currentRuntimeTask
+    ? runtimeWork.projects.find(project =>
+        project.deviceWorkspaces.some(
+          workspace =>
+            (workspace.deviceId === currentRuntimeTask.deviceId ||
+              workspace.remoteHostId === currentRuntimeTask.deviceId) &&
+            workspace.tasks.some(item => item.taskId === currentRuntimeTask.taskId)
+        )
+      )
+    : null
+  const project =
+    taskProject ??
+    (currentProjectId == null
+      ? null
+      : runtimeWork.projects.find(item => runtimeProjectUiId(item.project) === currentProjectId))
+  if (project?.project.source !== 'local_project') return null
+  return normalizeProjectPluginNames(
+    (project.project.aiSettings?.plugins ?? []).map(plugin => plugin.pluginName)
+  )
+}
+
+function normalizeProjectPluginNames(pluginIds: string[]): string[] {
+  return Array.from(
+    new Set(
+      pluginIds.map(id => {
+        const separator = id.lastIndexOf('@')
+        return separator > 0 ? id.slice(0, separator) : id
+      })
+    )
+  ).sort()
+}
+
 export function findRuntimeTaskWorkspace(
   runtimeWork: RuntimeWorkListResponse | null | undefined,
   address: RuntimeTaskAddress | null | undefined
@@ -333,10 +376,26 @@ export function findRuntimeTaskWorkspace(
   return (
     workspaces.find(
       workspace =>
-        workspace.deviceId === address.deviceId &&
+        (workspace.deviceId === address.deviceId || workspace.remoteHostId === address.deviceId) &&
         workspace.tasks.some(task => task.taskId === address.taskId)
     ) ?? null
   )
+}
+
+export function hydrateRuntimeTaskAddress(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  address: RuntimeTaskAddress
+): RuntimeTaskAddress {
+  const workspace = findRuntimeTaskWorkspace(runtimeWork, address)
+  const task = workspace?.tasks.find(item => item.taskId === address.taskId)
+  if (!workspace || !task) return address
+  return {
+    ...address,
+    runtime: task.runtime,
+    workspacePath: getRuntimeTaskWorkspacePath(workspace, task),
+    ...(task.threadId ? { threadId: task.threadId } : {}),
+    ...(task.runtimeHandle ? { runtimeHandle: task.runtimeHandle } : {}),
+  }
 }
 
 export function getRememberedStandaloneDeviceId(

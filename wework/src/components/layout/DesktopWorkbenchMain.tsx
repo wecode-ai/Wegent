@@ -82,6 +82,7 @@ import { WorkItemComposerGuide } from '@/features/todo/WorkItemComposerGuide'
 import {
   DEFAULT_WORK_ITEM_PROJECT_ID,
   DEFAULT_WORK_ITEM_PROJECT_KEY,
+  isDefaultWorkItemProject,
   type CloudProject,
 } from '@/api/deliveries'
 import {
@@ -1660,13 +1661,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           path: soleActiveDeviceWorkspacePath,
           source: 'runtime' as const,
         }
-      : null) ??
-    (currentRuntimeTask && (currentRuntimeTask.workspacePath || runtimeTaskWorkspacePath)
-      ? {
-          deviceId: currentRuntimeTask.deviceId,
-          path: currentRuntimeTask.workspacePath || runtimeTaskWorkspacePath!,
-          source: 'runtime' as const,
-        }
       : null)
   const selectedFileWorkspaceTarget =
     fileWorkspaceTargets.find(
@@ -2641,9 +2635,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     boundCloudProject ?? pendingCloudProject ?? defaultProject ?? defaultWorkItemPreviewProject
   const availableWorkItemProjects =
     cloudProjects.length > 0
-      ? cloudProjects
+      ? cloudProjects.filter(project => !isDefaultWorkItemProject(project))
       : currentWorkItemGuideProject
-        ? [currentWorkItemGuideProject]
+        ? isDefaultWorkItemProject(currentWorkItemGuideProject)
+          ? []
+          : [currentWorkItemGuideProject]
         : []
   const projectSpaceContext =
     currentProjectSpaceRuntimeTask && boundCloudProject && boundCloudItem ? (

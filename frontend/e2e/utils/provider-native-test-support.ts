@@ -5,7 +5,7 @@ import {
   deleteProviderNativeKnowledgeFixture,
   ProviderNativeKnowledgeFixture,
 } from '../fixtures/provider-native-knowledge'
-import { ApiClient, createApiClient } from './api-client'
+import { ApiClient, createApiClient, createBackendRequestHeaders } from './api-client'
 
 export const PROVIDER_NATIVE_API_URL = process.env.E2E_API_URL || 'http://localhost:8000'
 export const PROVIDER_NATIVE_MOCK_URL = process.env.MOCK_MODEL_SERVER_URL || 'http://localhost:9999'
@@ -281,9 +281,16 @@ export async function waitForTaskTerminal(
     await expect
       .poll(
         async () => {
-          const response = await runtimeRequest.get(
-            `${PROVIDER_NATIVE_API_URL}/api/tasks/${taskId}/runtime-check`
-          )
+          let response
+          try {
+            response = await runtimeRequest.get(
+              `${PROVIDER_NATIVE_API_URL}/api/tasks/${taskId}/runtime-check`
+            )
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error)
+            if (!/socket hang up|ECONNRESET/i.test(message)) throw error
+            return `TRANSPORT_ERROR_${message}`
+          }
           if (response.status() !== 200) return `HTTP_${response.status()}`
           const body = (await response.json()) as { task_status: string }
           finalStatus = body.task_status.toUpperCase()
@@ -387,5 +394,5 @@ export function modelToolNames(bodies: Record<string, unknown>[]): string[] {
 }
 
 export function authHeaders(token: string): Record<string, string> {
-  return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
+  return createBackendRequestHeaders(token)
 }

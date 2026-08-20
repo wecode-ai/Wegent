@@ -386,6 +386,7 @@ async function startHarness({
       text: model,
       target: 'span',
       timeoutMs,
+      visible: true,
     }
   )
   await control.command(
@@ -394,6 +395,7 @@ async function startHarness({
     {
       text: model,
       timeoutMs,
+      visible: true,
     }
   )
   const composerSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"]`

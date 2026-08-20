@@ -88,6 +88,22 @@ describe('createProjectChatClient', () => {
     ).resolves.toEqual(message)
   })
 
+  it('subscribes to loop-item invalidation events on the authenticated user socket', async () => {
+    const onChange = vi.fn()
+    const client = createProjectChatClient({
+      socketBaseUrl: 'https://cloud.example.com',
+      socketPath: '/socket.io',
+      getToken: () => 'token',
+    })
+
+    const unsubscribe = await client.subscribeLoopItemChanges!(onChange)
+
+    expect(ensureConnected).toHaveBeenCalled()
+    expect(socket.on).toHaveBeenCalledWith('wework:loop_item:changed', onChange)
+    unsubscribe()
+    expect(socket.off).toHaveBeenCalledWith('wework:loop_item:changed', onChange)
+  })
+
   it('refreshes the newest message window after reconnecting', async () => {
     const refreshed = { ...message, content: 'completed content', status: 'completed' as const }
     socket.emit

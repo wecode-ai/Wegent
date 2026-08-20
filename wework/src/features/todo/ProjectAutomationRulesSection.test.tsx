@@ -51,6 +51,47 @@ const agent = {
 }
 
 describe('ProjectAutomationRulesSection', () => {
+  it('does not open a coordinator draft for users without management permission', async () => {
+    const api = {
+      list: vi.fn().mockResolvedValue([]),
+      create: vi.fn(),
+      update: vi.fn(),
+      delete: vi.fn(),
+      rotateWebhookSecret: vi.fn(),
+      runNow: vi.fn(),
+      listRuns: vi.fn().mockResolvedValue([]),
+      cancelRun: vi.fn(),
+      retryRun: vi.fn(),
+    }
+    const agentApi = {
+      list: vi.fn().mockResolvedValue([agent]),
+      create: vi.fn(),
+      update: vi.fn(),
+    }
+    const view = render(
+      <ProjectAutomationRulesSection
+        projectId="1"
+        api={api}
+        agentApi={agentApi}
+        canManage={false}
+        createAiCoordinatorRequestKey={0}
+      />
+    )
+
+    await waitFor(() => expect(api.list).toHaveBeenCalled())
+    view.rerender(
+      <ProjectAutomationRulesSection
+        projectId="1"
+        api={api}
+        agentApi={agentApi}
+        canManage={false}
+        createAiCoordinatorRequestKey={1}
+      />
+    )
+
+    expect(screen.queryByTestId('project-automation-editor')).not.toBeInTheDocument()
+  })
+
   it('opens a prefilled rule editor from an empty-state template', async () => {
     const api = {
       list: vi.fn().mockResolvedValue([]),

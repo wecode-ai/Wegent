@@ -15,6 +15,7 @@ import { buildRuntimeTaskRoute, isSettingsRoute, navigateTo } from '@/lib/naviga
 import { shouldUseNativeProjectDirectoryPicker } from '@/e2e/automation'
 import { cn } from '@/lib/utils'
 import { DesktopSidebar } from './DesktopSidebar'
+import type { DesktopSidebarAccountSettingsOptions } from './DesktopSidebarAccount'
 import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
 import {
   StandaloneBlankProjectDialog,
@@ -40,6 +41,8 @@ import { projectSpaceApis } from '@/features/todo/projectSpaceSelection'
 import { WorkbenchBackground } from '@/features/appearance'
 import { useResizableSidebar } from './useResizableSidebar'
 import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
+import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
+import { requestWorkbenchComposerFocus } from '@/lib/workbenchComposerFocus'
 import {
   archiveLocalHarnessSession,
   closeLocalTerminal,
@@ -149,6 +152,7 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
     subscribeRuntimeTaskNotifications: onSubscribeRuntimeTaskNotifications,
     unsubscribeRuntimeTaskNotifications: onUnsubscribeRuntimeTaskNotifications,
     runtimeTaskReminders,
+    projectChat,
     services,
     refreshWorkLists,
     workspaceTabId,
@@ -273,8 +277,10 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
           currentProject: null,
         })
       )
-      if (currentPath === '/' && isSameRuntimeTask(state.currentRuntimeTask, address)) return
-      await onOpenRuntimeTask(address)
+      if (!(currentPath === '/' && isSameRuntimeTask(state.currentRuntimeTask, address))) {
+        await onOpenRuntimeTask(address)
+      }
+      requestWorkbenchComposerFocus(getRuntimeTaskChatScopeKey(address))
     },
     [activateSplitPane, currentPath, onOpenRuntimeTask, state.currentRuntimeTask]
   )
@@ -398,6 +404,7 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
   const [sidebarPreviewOpen, setSidebarPreviewOpen] = useState(false)
   const [sidebarResizing, setSidebarResizing] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(() => isSettingsRoute(initialPath))
+  const settingsReturnPathRef = useRef(initialPath === '/todo' ? '/todo' : '/')
   const [autoOpenAddCloudDeviceDialog, setAutoOpenAddCloudDeviceDialog] = useState(false)
   const [blankProjectDialogOpen, setBlankProjectDialogOpen] = useState(false)
   const [standaloneWorkspaceDialogMode, setStandaloneWorkspaceDialogMode] =
@@ -541,10 +548,27 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
   )
 
   const openCloudDeviceSettings = useCallback(() => {
+    settingsReturnPathRef.current = '/'
     setAutoOpenAddCloudDeviceDialog(true)
     setSettingsOpen(true)
     navigateTo('/settings/connections')
   }, [])
+
+  const openSettings = useCallback(
+    (options: DesktopSidebarAccountSettingsOptions | undefined, returnPath: '/' | '/todo') => {
+      settingsReturnPathRef.current = returnPath
+      setAutoOpenAddCloudDeviceDialog(Boolean(options?.autoOpenAddCloudDeviceDialog))
+      setSettingsOpen(true)
+      navigateTo(
+        options?.autoOpenAddCloudDeviceDialog
+          ? '/settings/connections'
+          : options?.settingsPage
+            ? `/settings/${options.settingsPage}`
+            : '/settings'
+      )
+    },
+    []
+  )
 
   const openSidebarPreview = useCallback(() => {
     if (!effectiveSidebarCollapsed) return
@@ -860,17 +884,8 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
       onListDeviceDirectories={onListDeviceDirectories}
       onCreateDeviceDirectory={onCreateDeviceDirectory}
       projectSpaceApis={availableProjectSpaceApis}
-      onOpenSettings={options => {
-        setAutoOpenAddCloudDeviceDialog(Boolean(options?.autoOpenAddCloudDeviceDialog))
-        setSettingsOpen(true)
-        navigateTo(
-          options?.autoOpenAddCloudDeviceDialog
-            ? '/settings/connections'
-            : options?.settingsPage
-              ? `/settings/${options.settingsPage}`
-              : '/settings'
-        )
-      }}
+      models={projectChat.models}
+      onOpenSettings={options => openSettings(options, '/')}
       onLogout={onLogout}
     />
   )
@@ -921,9 +936,11 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
             onOpenRuntimeTask={onOpenRuntimeTask}
             onRefreshWorkLists={refreshWorkLists}
             onBack={() => {
+              const returnPath = settingsReturnPathRef.current
               setSettingsOpen(false)
               setAutoOpenAddCloudDeviceDialog(false)
-              navigateTo('/')
+              setCurrentPath(returnPath)
+              navigateTo(returnPath)
             }}
           />
         )}
@@ -936,6 +953,8 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
                 runtimeWork={state.runtimeWork}
                 services={services}
                 onOpenRuntimeTask={openProjectSpaceRuntimeTask}
+                onOpenSettings={options => openSettings(options, '/todo')}
+                onLogout={onLogout}
                 activeProjectRef={
                   workspaceTabs?.activeTab.kind === 'board'
                     ? boardRouteProjectRef(workspaceTabs.activeTab.contentRoute)

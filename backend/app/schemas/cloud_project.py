@@ -18,6 +18,7 @@ from pydantic import (
 
 from app.core.provider_credentials import mask_provider_config
 from app.schemas.base_role import BaseRole
+from app.schemas.issue_workflow import ProjectWorkflowDefinition
 from app.schemas.tagging import MAX_TAGS_PER_ITEM, normalize_tags
 
 SnowflakeId = Annotated[str, BeforeValidator(str)]
@@ -147,6 +148,7 @@ class CloudProjectUpdate(BaseModel):
     card_display: CloudProjectCardDisplay | None = None
     board_config: CloudProjectBoardConfig | None = None
     ai_automation: CloudProjectAiAutomation | None = None
+    workflow_definition: ProjectWorkflowDefinition | None = None
     version: int = Field(ge=1)
 
     @field_validator("tags", mode="before")
@@ -192,6 +194,9 @@ class CloudProjectResponse(BaseModel):
     ai_automation: CloudProjectAiAutomation = Field(
         default_factory=CloudProjectAiAutomation
     )
+    workflow_definition: ProjectWorkflowDefinition = Field(
+        default_factory=ProjectWorkflowDefinition
+    )
     visibility: ProjectVisibility = "private"
     created_by_user_id: int
     current_user_id: int = 0
@@ -220,6 +225,7 @@ class CloudProjectResponse(BaseModel):
                 "card_display": metadata.get("card_display", {}),
                 "board_config": metadata.get("board_config", {}),
                 "ai_automation": metadata.get("ai_automation", {}),
+                "workflow_definition": metadata.get("workflow_definition", {}),
                 "visibility": (
                     "public" if metadata.get("visibility") == "public" else "private"
                 ),

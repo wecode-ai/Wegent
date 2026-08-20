@@ -27,7 +27,7 @@ const corsHeaders = {
 function usage() {
   console.error(`Usage:
   pnpm --filter wework ai:verify start
-  pnpm --filter wework ai:verify <capture|capture-popout|capture-workspace|snapshot|debug|click|click-at|click-then-macrotask|context-menu|seed-local-project|terminal-snapshot|reload|close-to-tray|request-close|dismiss-popout|drag|drop-file|drop-paths|fill|get-attribute|hover|metrics|navigate|paste-paths|pointer-move|press|scroll-into-view|select-text|show-popout|system-drag-drop|wait-for|window-focus-snapshot|text|status|stop> --session PATH [options]
+  pnpm --filter wework ai:verify <capture|capture-browser|capture-popout|capture-workspace|snapshot|debug|active-element|click|click-at|click-then-macrotask|context-menu|seed-local-project|terminal-snapshot|reload|close-to-tray|request-close|dismiss-popout|drag|drop-file|drop-paths|fill|get-attribute|hover|metrics|navigate|paste-paths|pointer-move|press|scroll-into-view|select-text|show-popout|system-drag-drop|wait-for|window-focus-snapshot|text|status|stop> --session PATH [options]
 
 Options:
   --codex-home-initialization true
@@ -400,10 +400,12 @@ async function main() {
   }
   const action = {
     capture: 'capture',
+    'capture-browser': 'captureEmbeddedBrowser',
     'capture-popout': 'capturePopoutWindow',
     'capture-workspace': 'captureWorkspaceWindow',
     snapshot: 'snapshot',
     debug: 'getWorkbenchDebugSnapshot',
+    'active-element': 'getActiveElementTestId',
     click: 'click',
     'click-at': 'clickAt',
     'click-then-macrotask': 'clickThenMacrotask',
@@ -441,10 +443,12 @@ async function main() {
   const selector =
     options.selector ??
     (command === 'capture' ||
+    command === 'capture-browser' ||
     command === 'capture-popout' ||
     command === 'capture-workspace' ||
     command === 'snapshot' ||
     command === 'debug' ||
+    command === 'active-element' ||
     command === 'click-at' ||
     command === 'seed-local-project' ||
     command === 'terminal-snapshot' ||
@@ -496,7 +500,12 @@ async function main() {
       effectiveTimeoutMs
     )
   }
-  if (command === 'capture' || command === 'capture-popout' || command === 'capture-workspace') {
+  if (
+    command === 'capture' ||
+    command === 'capture-browser' ||
+    command === 'capture-popout' ||
+    command === 'capture-workspace'
+  ) {
     if (!options.output) throw new Error('--output is required')
     const prefix = 'data:image/png;base64,'
     if (!value.value?.startsWith(prefix)) throw new Error('Invalid screenshot payload')

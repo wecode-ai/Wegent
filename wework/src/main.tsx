@@ -2,6 +2,7 @@ import './i18n'
 import { Profiler, StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import 'prosemirror-view/style/prosemirror.css'
+import '@xyflow/react/dist/style.css'
 import './styles/globals.css'
 import App from './App.tsx'
 import { installAppLogging } from './lib/app-logging'
@@ -15,6 +16,7 @@ import { installWeworkAutomationBridge } from './e2e/automation'
 import { installDesktopExtensions } from '@extensions/desktop'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { installFrontendRecoveryBridge } from '@/lib/frontendRecovery'
+import { initializeWorkbenchPluginRuntime } from '@/plugin-runtime/bootstrap'
 
 const isSystemDragPanel = isTauriRuntime() && window.location.pathname === '/system-drag'
 if (!isSystemDragPanel) {
@@ -45,7 +47,45 @@ function renderApp(): void {
   )
 }
 
-if (!isSystemDragPanel) {
-  await installWeworkAutomationBridge()
+function renderStartupFailure(error: unknown): void {
+  console.error('[Wework] Failed to initialize the plugin runtime:', error)
+  createRoot(document.getElementById('root')!).render(
+    <main
+      className="flex min-h-screen items-center justify-center bg-background p-6 text-foreground"
+      data-testid="workbench-startup-error"
+    >
+      <section className="max-w-md space-y-4 rounded-lg border border-border bg-card p-6">
+        <h1 className="heading-section">Wework 启动失败</h1>
+        <p className="text-chat text-muted-foreground">
+          智能应用运行时初始化失败。请重试；如果问题持续，请打开调试面板查看日志。
+        </p>
+        <button
+          className="rounded-md bg-primary px-3 py-2 text-primary-foreground"
+          data-testid="workbench-startup-retry"
+          onClick={() => window.location.reload()}
+          type="button"
+        >
+          重新加载
+        </button>
+      </section>
+    </main>
+  )
 }
-renderApp()
+
+let shouldRenderApp = true
+if (!isSystemDragPanel) {
+  try {
+    await initializeWorkbenchPluginRuntime()
+  } catch (error) {
+    renderStartupFailure(error)
+    shouldRenderApp = false
+  }
+  if (shouldRenderApp) {
+    try {
+      await installWeworkAutomationBridge()
+    } catch (error) {
+      console.error('[Wework] Failed to install the automation bridge:', error)
+    }
+  }
+}
+if (shouldRenderApp) renderApp()
