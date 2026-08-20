@@ -1318,3 +1318,33 @@ def test_loop_item_unread_follows_content_revision_and_read_cursor(
     assert refreshed_member_item.status_code == 200
     assert refreshed_member_item.json()["content_revision"] == 2
     assert refreshed_member_item.json()["is_unread"] is True
+
+
+def test_mark_loop_item_read_repairs_legacy_metadata_without_read_revisions(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+    delivery_project: CloudProject,
+) -> None:
+    created = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Legacy unread projection"},
+    )
+    assert created.status_code == 201
+    item = test_db.get(LoopItem, created.json()["id"])
+    assert item is not None
+    item.metadata_json = {"content_revision": 3, "legacy": True}
+    test_db.commit()
+
+    marked = test_client.post(
+        f"/api/v1/loop-items/{item.id}/read",
+        headers=_auth(test_token),
+    )
+
+    assert marked.status_code == 200
+    assert marked.json()["content_revision"] == 3
+    assert marked.json()["is_unread"] is False
+    test_db.refresh(item)
+    assert item.metadata_json["legacy"] is True
+    assert item.metadata_json["read_revisions"][str(item.created_by_user_id)] == 3

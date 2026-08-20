@@ -35,7 +35,7 @@ sequenceDiagram
     E-->>B: Invalidate and reload
     DB-->>B: is_unread = read_revision < content_revision
     B->>S: Open Issue and mark read
-    S->>DB: Atomically update only this user's read revision
+    S->>DB: Atomically ensure read_revisions object and update this user's cursor
     S-->>B: Return is_unread=false
 ```
 
@@ -54,5 +54,5 @@ Essential invariants:
 - `read_revisions` reuses the LoopItem `metadata_json`, keyed by user ID with the last read `content_revision`; no database table is added.
 - The formula is fixed: an absent read cursor or `read_revision < content_revision` means unread.
 - A meaningful update aligns the actor's read cursor in the same transaction, so a user's own edit does not immediately become unread.
-- Mark-read atomically updates one user's JSON path. It must not read and overwrite the entire `metadata_json`, increment the LoopItem optimistic-lock `version`, or change business `updated_at`.
+- Mark-read must ensure a missing or invalid `read_revisions` value is an object and update one user's JSON path in the same database expression. It must not read and overwrite the entire `metadata_json`, discard other users' cursors, increment the LoopItem optimistic-lock `version`, or change business `updated_at`.
 - The Issue changed event only invalidates projections and is never unread truth. List and detail APIs restore correct state after reconnects or cross-device access.

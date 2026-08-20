@@ -35,7 +35,7 @@ sequenceDiagram
     E-->>B: 失效并重新读取
     DB-->>B: is_unread = read_revision < content_revision
     B->>S: 打开 Issue，标记已读
-    S->>DB: 仅原子更新当前用户 read_revision
+    S->>DB: 原子确保 read_revisions 对象并更新当前用户游标
     S-->>B: 返回 is_unread=false
 ```
 
@@ -54,5 +54,5 @@ sequenceDiagram
 - `read_revisions` 复用 LoopItem 的 `metadata_json`，键为用户 ID，值为最后阅读的 `content_revision`；不得新增数据库表。
 - 判断公式固定为：没有阅读游标，或 `read_revision < content_revision` 时未读。
 - 有效更新的操作者在同一事务中对齐自己的阅读游标，自己的修改不得立即反向标记为未读。
-- 标记已读必须原子更新单个用户的 JSON 路径，不得读取并覆盖整个 `metadata_json`；不得增加 LoopItem 乐观锁 `version` 或改变业务 `updated_at`。
+- 标记已读必须在同一个数据库表达式中确保缺失或非法的 `read_revisions` 为对象，并更新单个用户的 JSON 路径；不得读取并覆盖整个 `metadata_json`，不得丢失其他用户游标，也不得增加 LoopItem 乐观锁 `version` 或改变业务 `updated_at`。
 - Issue changed 事件只负责失效，不作为未读真值；断线重连或跨设备后必须由列表/详情 API 恢复正确状态。

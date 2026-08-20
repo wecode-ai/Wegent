@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import Integer, cast, func
+from sqlalchemy import Integer, case, cast, func
 from sqlalchemy.orm import Session
 
 from app.models.delivery import LoopItem
@@ -63,6 +63,26 @@ def _mysql_read_revision_expression(metadata: object, revision_path: str) -> obj
     return cast(func.coalesce(extracted, str(INITIAL_CONTENT_REVISION)), Integer)
 
 
+def _mysql_mark_read_expression(metadata: object, user_id: int) -> object:
+    """Build one atomic JSON expression that also repairs legacy metadata."""
+
+    read_revisions_path = f"$.{READ_REVISIONS_KEY}"
+    user_path = f'{read_revisions_path}."{user_id}"'
+    revision_path = f"$.{CONTENT_REVISION_KEY}"
+    read_revisions = func.json_extract(metadata, read_revisions_path)
+    read_revisions_object = case(
+        (func.json_type(read_revisions) == "OBJECT", read_revisions),
+        else_=func.json_object(),
+    )
+    return func.json_set(
+        metadata,
+        read_revisions_path,
+        read_revisions_object,
+        user_path,
+        _mysql_read_revision_expression(metadata, revision_path),
+    )
+
+
 def mark_loop_item_read(db: Session, *, item_id: str, user_id: int) -> None:
     """Atomically advance one user's read cursor without touching item version/time."""
 
@@ -71,8 +91,7 @@ def mark_loop_item_read(db: Session, *, item_id: str, user_id: int) -> None:
     dialect = db.get_bind().dialect.name
     if dialect == "mysql":
         metadata = func.coalesce(LoopItem.metadata_json, func.json_object())
-        revision = _mysql_read_revision_expression(metadata, revision_path)
-        next_metadata = func.json_set(metadata, path, revision)
+        next_metadata = _mysql_mark_read_expression(metadata, user_id)
     else:
         metadata = func.coalesce(LoopItem.metadata_json, "{}")
         revision = func.coalesce(
