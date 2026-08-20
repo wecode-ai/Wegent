@@ -136,6 +136,8 @@ Wework 对同一个 `deviceId + taskId` 只维护一份共享的 runtime task li
 
 因此任务完成后的唯一数据流是：executor/Backend task snapshot 或终止 stream 事件进入共享 lifecycle store，投影收敛到 idle，所有 UI 消费者在同一次 store 更新后移除 running 状态。
 
+Wework 不得为了检测终止事件是否丢失而周期读取运行中任务的 transcript。正常生命周期只消费 stream；常驻协调器按终态事件携带的 `deviceId + taskId` 直接收敛共享 lifecycle store，因此不依赖任务 pane 是否挂载，也不会被事件到达后立即读取、但仍处于同一轮收尾竞态中的 task list 重新标记为 running。`executor.event_lagged`、runtime transport replacement 等明确表示本地投影可能过期的信号才触发一次 `runtime.tasks.list` 对账。并发异常信号共享同一个在途请求，在途期间的新信号最多合并成一次串行尾随对账。对账直接使用 executor 已持久化的 `running`、`status`、`completedAt`、`threadStatus` 和 `turnStatus`，不能通过 transcript、turn items 或 rollout JSONL 推导任务是否结束。
+
 每一次继续 LocalTask 的请求都必须携带当前模型选择。Wework 的模型选择器是本轮发送的事实来源：用户本轮选择哪个模型，`runtime.tasks.send` 就传哪个 `modelId`、`modelType` 和模型选项。executor 不从上一次请求恢复模型，也不缓存模型选择；如果请求没有完整 `executionRequest` 且没有 `modelId`，executor 必须返回 `bad_request`，而不是回退到默认模型。本地 IPC 和远程 WebSocket 都只负责传输同一份 canonical 模型选择；本地设备调用远程模型、远程设备调用远程模型，都进入 executor backend 的同一套执行逻辑。新建任务和继续任务都必须复用同一套模型选择路径。
 
 如果当前 LocalTask 仍在回复，Wework 会把新的用户输入放入本地队列，而不是并发调用 `runtime.tasks.send`。用户可以取消队列中的消息；也可以在队列面板中选择“暂停当前回复并发送”，这会先调用：

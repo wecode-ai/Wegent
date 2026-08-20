@@ -17,6 +17,12 @@ const mocks = vi.hoisted(() => ({
   unregister: vi.fn(),
   unregisterProxy: vi.fn(),
   unregisterContext: vi.fn(),
+  workspaceTabs: [] as Array<{
+    id: string
+    kind: string
+    title: string
+    contentRoute: string
+  }>,
 }))
 
 vi.mock('@/api/local/harnessApps', () => ({
@@ -28,6 +34,7 @@ vi.mock('@/api/local/harnessApps', () => ({
 }))
 
 vi.mock('@/features/harness-apps/harnessAppTabs', () => ({
+  harnessAppRoute: (installationId: string) => `/app/harness-${installationId}`,
   takeHarnessAppProxyToken: (installationId: string) => {
     const token = mocks.proxyTokens.get(installationId) ?? null
     mocks.proxyTokens.delete(installationId)
@@ -68,14 +75,7 @@ vi.mock('@/features/workbench/useWorkbench', () => ({
 
 vi.mock('@/features/workspace-tabs/workspaceTabsContextValue', () => ({
   useWorkspaceTabs: () => ({
-    tabs: [
-      {
-        id: 'smart-app-tab',
-        kind: 'auxiliary',
-        title: 'Resident app',
-        contentRoute: '/app/harness-resident-app',
-      },
-    ],
+    tabs: mocks.workspaceTabs,
     closeTab: mocks.closeTab,
     openTab: vi.fn(),
     selectTab: vi.fn(),
@@ -110,9 +110,11 @@ const installation: HarnessAppInstallation = {
 describe('ResidentSmartAppsManager', () => {
   beforeEach(() => {
     Object.entries(mocks).forEach(([key, mock]) => {
-      if (key !== 'proxyTokens') mock.mockReset()
+      if (key !== 'proxyTokens' && key !== 'workspaceTabs') mock.mockReset()
     })
     mocks.proxyTokens.clear()
+    mocks.workspaceTabs.length = 0
+    mocks.unregisterContext.mockResolvedValue(undefined)
     mocks.list.mockResolvedValue([installation])
     mocks.resolveLaunch.mockResolvedValue({
       proxyToken: 'proxy-token',
@@ -124,6 +126,7 @@ describe('ResidentSmartAppsManager', () => {
       webUrl: 'http://127.0.0.1:39000/',
     })
     mocks.stop.mockResolvedValue(undefined)
+    mocks.unregisterProxy.mockResolvedValue(undefined)
   })
 
   test('hosts resident startup on a provider-backed tab instead of an app webview', () => {
@@ -133,6 +136,19 @@ describe('ResidentSmartAppsManager', () => {
         { id: 'applications', contentRoute: '/sites?app_type=smart_app&view=installed' },
         { id: 'smart-app', contentRoute: '/app/harness-resident-app' },
       ])
+    ).toBe('applications')
+  })
+
+  test('prefers the active provider-backed tab so resident startup mounts after reload', () => {
+    expect(
+      findResidentSmartAppsHostTabId(
+        [
+          { id: 'task', contentRoute: '/tasks' },
+          { id: 'applications', contentRoute: '/sites?app_type=smart_app&view=installed' },
+          { id: 'smart-app', contentRoute: '/app/harness-resident-app' },
+        ],
+        'applications'
+      )
     ).toBe('applications')
   })
 
@@ -157,6 +173,20 @@ describe('ResidentSmartAppsManager', () => {
     expect(mocks.register).toHaveBeenCalledOnce()
     expect(mocks.openTab).toHaveBeenCalledOnce()
     expect(mocks.proxyTokens.get(installation.id)).toBe('proxy-token')
+  })
+
+  test('does not steal focus when the resident app tab is already open', async () => {
+    mocks.workspaceTabs.push({
+      id: 'smart-app-tab',
+      kind: 'auxiliary',
+      title: 'Resident app',
+      contentRoute: '/app/harness-resident-app',
+    })
+
+    render(<ResidentSmartAppsManager enabled />)
+
+    await waitFor(() => expect(mocks.register).toHaveBeenCalledOnce())
+    expect(mocks.openTab).not.toHaveBeenCalled()
   })
 
   test('restores a resident app that is already running without starting it again', async () => {
@@ -196,6 +226,12 @@ describe('ResidentSmartAppsManager', () => {
     }
     mocks.list.mockResolvedValue([running])
     mocks.proxyTokens.set(installation.id, 'proxy-token')
+    mocks.workspaceTabs.push({
+      id: 'smart-app-tab',
+      kind: 'auxiliary',
+      title: 'Resident app',
+      contentRoute: '/app/harness-resident-app',
+    })
 
     render(<ResidentSmartAppsManager enabled={false} />)
 

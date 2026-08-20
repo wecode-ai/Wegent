@@ -355,7 +355,13 @@ if [ "$MANAGED_DEV_CODEX" = "true" ]; then
   echo "Using repository Codex: $("$DEV_CODEX_BINARY" --version)"
 fi
 WEWORK_DWS_TARGET="$(resolve_dev_codex_target)" pnpm run prepare:dws
-pnpm run prepare:deepseek-harness
+if [ -z "${WEWORK_HARNESS_RUNTIME_ROOT:-}" ] && [ -z "${WEWORK_DEEPSEEK_HARNESS_ROOT:-}" ]; then
+  pnpm run prepare:harness-runtime -- --materialize
+  export WEWORK_HARNESS_RUNTIME_ROOT="$WEWORK_DIR/node_modules/.cache/harness-runtime-dev"
+else
+  pnpm run prepare:harness-runtime
+fi
+echo "Using Harness runtime root: ${WEWORK_HARNESS_RUNTIME_ROOT:-${WEWORK_DEEPSEEK_HARNESS_ROOT}}"
 TAURI_ARGS=(dev --config "$TAURI_DEV_CONFIG")
 if [ "$WEWORK_RELEASE_UI" = "true" ]; then
   TAURI_ARGS+=(--release)

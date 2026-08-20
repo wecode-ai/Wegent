@@ -116,6 +116,7 @@ struct DescriptionExecution {
 
 pub(super) async fn replace_images_with_descriptions(
     sidecar: Option<&VisionSidecarUpstream>,
+    conversation_id: Option<&str>,
     body: &[u8],
 ) -> Result<Vec<u8>, HttpError> {
     let Some(sidecar) = sidecar else {
@@ -161,7 +162,7 @@ pub(super) async fn replace_images_with_descriptions(
     let mut cache_hits = 0;
     let mut executions = Vec::new();
     for job in unique_jobs {
-        let cache_key = description_cache_key(&job, sidecar);
+        let cache_key = description_cache_key(&job, sidecar, conversation_id);
         let cached = cache_key.as_deref().and_then(|key| {
             description_cache()
                 .lock()
@@ -350,18 +351,22 @@ fn replace_image_blocks(
     }
 }
 
-fn description_cache_key(job: &ImageJob, sidecar: &VisionSidecarUpstream) -> Option<String> {
-    if !job.image_url.starts_with("data:") {
+fn description_cache_key(
+    job: &ImageJob,
+    sidecar: &VisionSidecarUpstream,
+    conversation_id: Option<&str>,
+) -> Option<String> {
+    let conversation_id = conversation_id?.trim();
+    if conversation_id.is_empty() {
         return None;
     }
-    let normalized_context = job.context.split_whitespace().collect::<Vec<_>>().join(" ");
     let identity = [
+        conversation_id,
         sidecar.api_format.as_str(),
         sidecar.request_url.as_str(),
         sidecar.model_id.as_str(),
         job.detail.as_deref().unwrap_or("high"),
         &sha256_hex(job.image_url.as_bytes()),
-        &sha256_hex(normalized_context.as_bytes()),
     ]
     .join("\0");
     Some(sha256_hex(identity.as_bytes()))
@@ -758,6 +763,30 @@ mod tests {
     }
 
     #[test]
+    fn cache_identity_is_conversation_scoped_and_context_independent() {
+        let sidecar = test_sidecar("https://vision.example/v1/responses".to_owned());
+        let first = ImageJob {
+            image_url: "https://images.example/screenshot.png".to_owned(),
+            detail: Some("high".to_owned()),
+            context: "First question".to_owned(),
+        };
+        let later = ImageJob {
+            context: "A later turn asks something else".to_owned(),
+            ..first.clone()
+        };
+
+        assert_eq!(
+            description_cache_key(&first, &sidecar, Some("thread-one")),
+            description_cache_key(&later, &sidecar, Some("thread-one"))
+        );
+        assert_ne!(
+            description_cache_key(&first, &sidecar, Some("thread-one")),
+            description_cache_key(&first, &sidecar, Some("thread-two"))
+        );
+        assert_eq!(description_cache_key(&first, &sidecar, None), None);
+    }
+
+    #[test]
     fn request_context_keeps_text_nearest_the_current_image() {
         let oldest = format!("oldest-marker-{}", "x".repeat(CONTEXT_MAX_CHARS));
         let latest = "latest image request";
@@ -876,7 +905,7 @@ mod tests {
         }))
         .expect("request body");
 
-        let rewritten = replace_images_with_descriptions(Some(&sidecar), &body)
+        let rewritten = replace_images_with_descriptions(Some(&sidecar), None, &body)
             .await
             .expect("vision rewrite");
         let rewritten: Value = serde_json::from_slice(&rewritten).expect("rewritten request");
@@ -932,7 +961,7 @@ mod tests {
         }))
         .expect("request body");
 
-        let rewritten = replace_images_with_descriptions(Some(&sidecar), &body)
+        let rewritten = replace_images_with_descriptions(Some(&sidecar), None, &body)
             .await
             .expect("vision rewrite");
         let rewritten: Value = serde_json::from_slice(&rewritten).expect("rewritten request");
@@ -1010,7 +1039,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn caches_successful_data_image_descriptions() {
+    async fn caches_view_image_descriptions_per_conversation() {
         use axum::{extract::State, routing::post, Json, Router};
         use std::sync::{
             atomic::{AtomicUsize, Ordering},
@@ -1037,26 +1066,70 @@ mod tests {
                 .expect("sidecar server should run");
         });
         let sidecar = test_sidecar(format!("http://{address}/responses"));
-        let body = serde_json::to_vec(&json!({
-            "input": [{
-                "type": "message",
-                "role": "user",
-                "content": [
-                    {"type": "input_text", "text": "Read this unique cache test"},
-                    {"type": "input_image", "image_url": "data:image/png;base64,Y2FjaGU="}
-                ]
-            }]
-        }))
-        .expect("request body");
+        let request_body = |prompt: &str| {
+            serde_json::to_vec(&json!({
+                "model": "deepseek-v4-flash",
+                "input": [
+                    {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": prompt}]
+                    },
+                    {
+                        "type": "function_call",
+                        "call_id": "image_1",
+                        "name": "view_image",
+                        "arguments": "{}"
+                    },
+                    {
+                        "type": "function_call_output",
+                        "call_id": "image_1",
+                        "output": [{
+                            "type": "input_image",
+                            "image_url": "data:image/png;base64,Y2FjaGU="
+                        }]
+                    }
+                ],
+                "tools": [{
+                    "type": "function",
+                    "name": "view_image",
+                    "parameters": {"type": "object"}
+                }]
+            }))
+            .expect("request body")
+        };
+        let first_body = request_body("Inspect the rendered screen");
+        let later_body = request_body("Now fix the issue shown earlier");
 
-        replace_images_with_descriptions(Some(&sidecar), &body)
+        replace_images_with_descriptions(Some(&sidecar), Some("cache-thread"), &first_body)
             .await
             .expect("first vision rewrite");
-        replace_images_with_descriptions(Some(&sidecar), &body)
-            .await
-            .expect("cached vision rewrite");
+        let rewritten =
+            replace_images_with_descriptions(Some(&sidecar), Some("cache-thread"), &later_body)
+                .await
+                .expect("cached vision rewrite");
 
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let rewritten: Value = serde_json::from_slice(&rewritten).expect("rewritten request");
+        assert_eq!(
+            rewritten.pointer("/input/2/output/0/type"),
+            Some(&json!("input_text"))
+        );
+        assert!(rewritten
+            .pointer("/input/2/output/0/text")
+            .and_then(Value::as_str)
+            .is_some_and(|text| text.contains("cached screenshot description")));
+
+        let (converted, _) = super::super::chat::responses_to_chat(&rewritten)
+            .expect("rewritten view_image output should convert for the primary model");
+        let converted_text = converted.to_string();
+        assert!(converted_text.contains("cached screenshot description"));
+        assert!(!converted_text.contains("data:image/png;base64,Y2FjaGU="));
+
+        replace_images_with_descriptions(Some(&sidecar), Some("different-thread"), &later_body)
+            .await
+            .expect("different conversation vision rewrite");
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]
@@ -1128,8 +1201,8 @@ mod tests {
         .expect("second request body");
 
         let (first, second) = tokio::join!(
-            replace_images_with_descriptions(Some(&sidecar), &body),
-            replace_images_with_descriptions(Some(&sidecar), &second_body)
+            replace_images_with_descriptions(Some(&sidecar), None, &body),
+            replace_images_with_descriptions(Some(&sidecar), None, &second_body)
         );
         first.expect("first vision rewrite");
         second.expect("second vision rewrite");
@@ -1157,7 +1230,7 @@ mod tests {
         }))
         .expect("request body");
 
-        let rewritten = replace_images_with_descriptions(Some(&sidecar), &body)
+        let rewritten = replace_images_with_descriptions(Some(&sidecar), None, &body)
             .await
             .expect("vision rewrite");
         let rewritten: Value = serde_json::from_slice(&rewritten).expect("rewritten request");

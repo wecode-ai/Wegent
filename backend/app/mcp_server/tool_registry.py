@@ -225,6 +225,10 @@ def _param_def_to_python_type(param: Dict[str, Any]) -> type:
     Returns:
         Python type, e.g. ``List[dict]`` for ``{"type": "array", "items": {"type": "object"}}``.
     """
+    python_type = param.get("python_type")
+    if isinstance(python_type, type):
+        return python_type
+
     json_type = param.get("type", "string")
     if json_type == "array":
         items = param.get("items", {})
