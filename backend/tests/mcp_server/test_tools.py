@@ -12,8 +12,10 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+from mcp.server.fastmcp import FastMCP
 
 from app.mcp_server.auth import TaskTokenInfo
+from app.mcp_server.tool_registry import _register_tool
 
 
 def get_silent_exit_module():
@@ -127,6 +129,51 @@ class TestKnowledgeTool:
         assert "wegent_kb_list_knowledge_bases" in module.KNOWLEDGE_MCP_TOOLS
         assert "wegent_kb_list_documents" in module.KNOWLEDGE_MCP_TOOLS
         assert "wegent_kb_read_document_content" in module.KNOWLEDGE_MCP_TOOLS
+
+    @pytest.mark.asyncio
+    async def test_search_knowledge_base_publishes_search_hints_schema(self) -> None:
+        """The MCP schema must expose exactly the supported hint fields."""
+        module = get_knowledge_module()
+        server = FastMCP("schema-check")
+        tool_info = module.search_knowledge_base._mcp_tool_info
+        _register_tool(server, tool_info, "knowledge")
+
+        tool = next(
+            item
+            for item in await server.list_tools()
+            if item.name == "wegent_kb_search_knowledge_base"
+        )
+        schema = tool.inputSchema["$defs"]["SearchHints"]
+
+        assert schema["additionalProperties"] is False
+        assert set(schema["properties"]) == {
+            "semantic_query",
+            "keywords",
+            "phrases",
+        }
+
+    @pytest.mark.asyncio
+    async def test_search_knowledge_base_rejects_unknown_search_hint_fields(
+        self,
+    ) -> None:
+        """Invalid hints must stop at the MCP boundary before runtime resolution."""
+        module = get_knowledge_module()
+        token_info = TaskTokenInfo(
+            task_id=1, subtask_id=2, user_id=3, user_name="alice"
+        )
+
+        result = await module.search_knowledge_base(
+            token_info=token_info,
+            knowledge_base_id=7,
+            query="how to disable an experiment",
+            search_hints={"exact_keywords": ["experiment", "disable"]},
+        )
+
+        assert "Invalid search_hints" in result["error"]
+        assert "exact_keywords" in result["error"]
+        assert result["chunks"] == []
+        assert result["sources"] == []
+        assert result["total"] == 0
 
     def test_list_documents_passes_optional_query_params(self):
         """list_documents should pass backward-compatible optional query params."""

@@ -87,6 +87,12 @@ export type WorkbenchAction =
       runtimeWork: RuntimeWorkListResponse
     }
   | {
+      type: 'runtime_task_pin_changed'
+      deviceId: string
+      threadId: string
+      pinned: boolean
+    }
+  | {
       type: 'device_status_changed'
       deviceId: string
       status: WorkbenchDeviceStatus
@@ -1037,6 +1043,36 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
           state.devices,
           runtimeWork
         ),
+      }
+    }
+    case 'runtime_task_pin_changed': {
+      if (!state.runtimeWork) return state
+      const updateWorkspace = (
+        workspace: RuntimeDeviceWorkspace,
+        deviceId = workspace.deviceId
+      ) => {
+        if (deviceId !== action.deviceId) return workspace
+        let changed = false
+        const tasks = workspace.tasks.map(task => {
+          const threadId = task.threadId || (task.runtime === 'codex' ? task.taskId : null)
+          if (threadId !== action.threadId || Boolean(task.pinned) === action.pinned) return task
+          changed = true
+          return { ...task, pinned: action.pinned }
+        })
+        return changed ? { ...workspace, tasks } : workspace
+      }
+      return {
+        ...state,
+        runtimeWork: {
+          ...state.runtimeWork,
+          projects: state.runtimeWork.projects.map(project => ({
+            ...project,
+            deviceWorkspaces: project.deviceWorkspaces.map(workspace =>
+              updateWorkspace(workspace, project.project.stateDeviceId ?? workspace.deviceId)
+            ),
+          })),
+          chats: state.runtimeWork.chats.map(workspace => updateWorkspace(workspace)),
+        },
       }
     }
     case 'device_status_changed': {

@@ -245,6 +245,73 @@ describe('workbenchReducer', () => {
     ])
   })
 
+  test('updates pinned state across project and chat runtime task projections', () => {
+    const projectTask = {
+      taskId: 'project-thread',
+      workspacePath: '/workspace/repo',
+      title: 'Project task',
+      runtime: 'codex' as const,
+      pinned: false,
+    }
+    const chatTask = {
+      taskId: 'chat-task',
+      threadId: 'chat-thread',
+      workspacePath: '/workspace/chat',
+      title: 'Chat task',
+      runtime: 'claude_code' as const,
+      pinned: false,
+    }
+    const state = {
+      ...initialWorkbenchState,
+      runtimeWork: {
+        projects: [
+          {
+            project: {
+              id: 7,
+              name: 'Repo',
+              stateDeviceId: 'project-state-device',
+            },
+            deviceWorkspaces: [
+              {
+                deviceId: 'workspace-device',
+                workspacePath: '/workspace/repo',
+                available: true,
+                tasks: [projectTask],
+              },
+            ],
+            totalTasks: 1,
+          },
+        ],
+        chats: [
+          {
+            deviceId: 'chat-device',
+            workspacePath: '/workspace/chat',
+            workspaceKind: 'chat',
+            available: true,
+            tasks: [chatTask],
+          },
+        ],
+        totalTasks: 2,
+      },
+    }
+
+    const projectUpdated = workbenchReducer(state, {
+      type: 'runtime_task_pin_changed',
+      deviceId: 'project-state-device',
+      threadId: 'project-thread',
+      pinned: true,
+    })
+    const chatUpdated = workbenchReducer(projectUpdated, {
+      type: 'runtime_task_pin_changed',
+      deviceId: 'chat-device',
+      threadId: 'chat-thread',
+      pinned: true,
+    })
+
+    expect(chatUpdated.runtimeWork?.projects[0].deviceWorkspaces[0].tasks[0].pinned).toBe(true)
+    expect(chatUpdated.runtimeWork?.chats[0].tasks[0].pinned).toBe(true)
+  })
+
   test('updates only the matching runtime task supervisor state', () => {
     const state = {
       ...initialWorkbenchState,
