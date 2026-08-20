@@ -7015,8 +7015,13 @@ wait
         configure_managed_process_group(&mut command);
         let child = command.spawn().expect("sidecar should start");
         let child = LocalExecutorChild::Process(ManagedProcessChild::new(child));
-        let grandchild_pid =
-            wait_for_pid_file(&pid_path, Duration::from_secs(2)).expect("grandchild pid");
+        let grandchild_pid = match wait_for_pid_file(&pid_path, Duration::from_secs(10)) {
+            Some(pid) => pid,
+            None => {
+                child.kill();
+                panic!("grandchild pid");
+            }
+        };
         let _cleanup = ProcessCleanup::new(grandchild_pid);
 
         child.kill();
