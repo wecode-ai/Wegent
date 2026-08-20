@@ -38,7 +38,11 @@ from app.services.device.runtime_route import (
     RuntimeRouteError,
     runtime_route_resolver,
 )
-from app.services.device.runtime_rpc_service import RuntimeRpcError, runtime_rpc_service
+from app.services.device.runtime_rpc_service import (
+    RuntimeRpcError,
+    encode_runtime_rpc_response,
+    runtime_rpc_service,
+)
 from app.services.project_chat.service import project_chat_service
 from shared.telemetry.context import set_request_context, set_user_context
 
@@ -197,6 +201,17 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
                 request_id,
                 retryable=error["retryable"],
                 details=error["details"],
+            )
+        try:
+            result = encode_runtime_rpc_response(result, method=method)
+        except RuntimeRpcError as exc:
+            return ipc_error(
+                data,
+                exc.code,
+                str(exc),
+                request_id,
+                retryable=exc.retryable,
+                details=exc.details,
             )
         return {"id": request_id, "ok": True, "result": result}
 

@@ -5,6 +5,7 @@
 use std::{
     collections::VecDeque,
     future::Future,
+    io::Read,
     pin::Pin,
     sync::{Arc, Mutex},
     time::Duration,
@@ -13,11 +14,14 @@ use std::{
 #[cfg(unix)]
 use std::{fs, os::unix::fs::PermissionsExt};
 
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
+use flate2::read::GzDecoder;
 use serde_json::{json, Value};
 use tokio::{sync::broadcast, time::timeout};
 use wegent_executor::{
     config::device::{DeviceConfig, UpdateConfig},
     emitter::ResponsesEventBuilder,
+    local::app_ipc::{AppIpcError, RuntimeWorkHandler},
     local::backend::{
         build_runtime_auth_file_report, is_usable_device_ip, CapabilityReportProvider,
         LocalBackendClient, LocalBackendConfig, LocalBackendEventSink, LocalBackendRunner,
@@ -538,6 +542,40 @@ async fn local_backend_runtime_rpc_handler_uses_default_runtime_work_handler() {
 }
 
 #[tokio::test]
+async fn local_backend_runtime_rpc_handler_compresses_large_ack_payloads() {
+    let transport = RecordingTransport::default();
+    let (event_tx, event_rx) = broadcast::channel(8);
+    let expected = json!({
+        "success": true,
+        "messages": [{
+            "id": "message-1",
+            "role": "assistant",
+            "content": "large transcript 中文🙂".repeat(80_000),
+        }],
+    });
+    let runner = LocalBackendRunner::new_with_shared_runtime_work_handler(
+        local_backend_config(),
+        transport.clone(),
+        Arc::new(StaticRuntimeWorkHandler(expected.clone())),
+        event_rx,
+    );
+    drop(event_tx);
+    runner.register_handlers();
+
+    let handler = transport.handler("runtime:rpc").unwrap();
+    let ack = handler(json!({
+        "method": "runtime.tasks.transcript",
+        "payload": {"localTaskId": "large-1"}
+    }))
+    .await
+    .unwrap();
+
+    assert_eq!(ack["__runtimeRpcEncoding"], "gzip+base64+json");
+    assert!(serde_json::to_vec(&ack).unwrap().len() < 1_000_000);
+    assert_eq!(decode_compressed_runtime_ack(&ack), expected);
+}
+
+#[tokio::test]
 async fn local_backend_relays_events_from_shared_app_runtime_handler() {
     let transport = RecordingTransport::default();
     let (event_tx, _) = broadcast::channel(8);
@@ -852,6 +890,27 @@ impl CapabilityReportProvider for StaticCapabilityReporter {
             "last_sync_at": null,
         })
     }
+}
+
+struct StaticRuntimeWorkHandler(Value);
+
+impl RuntimeWorkHandler for StaticRuntimeWorkHandler {
+    fn handle_runtime_rpc<'a>(
+        &'a self,
+        _data: Value,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
+        Box::pin(async move { Ok(self.0.clone()) })
+    }
+}
+
+fn decode_compressed_runtime_ack(ack: &Value) -> Value {
+    let compressed = BASE64_STANDARD
+        .decode(ack["payload"].as_str().expect("compressed payload"))
+        .expect("valid base64");
+    let mut decoder = GzDecoder::new(compressed.as_slice());
+    let mut raw = Vec::new();
+    decoder.read_to_end(&mut raw).expect("valid gzip");
+    serde_json::from_slice(&raw).expect("valid runtime response")
 }
 
 #[cfg(unix)]

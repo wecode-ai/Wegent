@@ -163,6 +163,7 @@ export const CORE_WORKBENCH_SETTINGS = [
   {
     key: 'browser',
     path: '/settings/browser',
+    aliases: ['/settings/browser/history'],
     icon: AppWindow,
     labelKey: 'settings_nav_browser',
     label: '浏览器',

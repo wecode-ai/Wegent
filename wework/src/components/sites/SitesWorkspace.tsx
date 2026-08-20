@@ -63,7 +63,7 @@ function isSecurityCheckingError(error: unknown): boolean {
 function getInitialAppType(smartAppsEnabled: boolean): ApplicationWorkspaceType {
   if (typeof window === 'undefined') return DEFAULT_APPLICATION_TYPE
   const requestedType = new URLSearchParams(window.location.search).get('app_type')
-  if (smartAppsEnabled && requestedType === 'smart_app') return 'smart_app'
+  if (smartAppsEnabled && (!requestedType || requestedType === 'smart_app')) return 'smart_app'
   return getApplicationTypeDefinition(requestedType ?? '')?.appType ?? DEFAULT_APPLICATION_TYPE
 }
 
@@ -248,6 +248,7 @@ export function SitesWorkspace({
 
   useEffect(() => {
     const handlePopState = () => setActiveAppType(getInitialAppType(smartAppsEnabled))
+    handlePopState()
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
   }, [smartAppsEnabled])
