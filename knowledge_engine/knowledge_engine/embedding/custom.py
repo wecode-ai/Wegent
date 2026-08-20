@@ -97,6 +97,11 @@ class CustomEmbedding(BaseEmbedding):
         )
         response.raise_for_status()
         embedding = response.json()["data"][0]["embedding"]
+        if self._encoding_format == "float" and isinstance(embedding, str):
+            raise ValueError(
+                "Embedding provider returned a string instead of a numeric "
+                "embedding array"
+            )
         if self._encoding_format == "base64" and isinstance(embedding, str):
             raw_embedding = base64.b64decode(embedding, validate=True)
             if len(raw_embedding) % 4 != 0:

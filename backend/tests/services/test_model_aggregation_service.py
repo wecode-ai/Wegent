@@ -54,8 +54,11 @@ class TestModelAggregationService:
     """Tests for model_aggregation_service methods."""
 
     def test_same_name_references_list_smallest_kind_id(
-        self, test_db: Session, test_user: User, monkeypatch
-    ):
+        self,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         """The model list must match runtime's smallest-id reference choice."""
         smallest_id_model = _referenced_model(test_user, "smallest-id-model")
         larger_id_model = _referenced_model(test_user, "larger-id-model")
@@ -88,8 +91,11 @@ class TestModelAggregationService:
         assert shared_models[0]["listingId"] == smallest_id_model.id
 
     def test_same_name_references_filter_the_smallest_kind_id_winner(
-        self, test_db: Session, test_user: User, monkeypatch
-    ):
+        self,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         """Category filters must not replace the runtime-selected Model."""
         smallest_id_model = _referenced_model(test_user, "smallest-id-llm")
         larger_id_model = _referenced_model(
@@ -122,8 +128,11 @@ class TestModelAggregationService:
         assert all(model["name"] != "shared-embedding" for model in models)
 
     def test_same_name_reference_cannot_replace_filtered_direct_model(
-        self, test_db: Session, test_user: User, monkeypatch
-    ):
+        self,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         """Display filters must not replace the direct-first runtime winner."""
         direct_model = _referenced_model(test_user, "direct-llm")
         direct_model.user_id = test_user.id

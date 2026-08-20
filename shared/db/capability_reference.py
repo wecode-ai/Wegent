@@ -42,7 +42,7 @@ def resolve_model_kind(
     if namespace == "default":
         direct_query = direct_query.filter(
             (Kind.user_id == user_id) | (Kind.user_id == 0)
-        ).order_by(Kind.user_id.desc())
+        ).order_by(Kind.user_id.desc(), Kind.id.asc())
     else:
         # Group resources are owned by their namespace rather than the caller.
         # Use the oldest record to keep legacy duplicate names deterministic.

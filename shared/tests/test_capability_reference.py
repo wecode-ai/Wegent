@@ -8,7 +8,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 
 import pytest
-from sqlalchemy import Table
+from sqlalchemy import Table, text
 from sqlalchemy.orm import Session
 
 from shared.db.capability_reference import (
@@ -159,6 +159,47 @@ def test_direct_group_model_takes_priority_over_reference(
 
     assert resolved is not None
     assert resolved.id == direct.id
+
+
+def test_direct_personal_model_prefers_smallest_duplicate_id(
+    model_reference: ModelReferenceScenario,
+) -> None:
+    model_reference.db.execute(
+        text(
+            "CREATE INDEX ix_test_personal_model_duplicates "
+            "ON kinds(kind, name, namespace, is_active, user_id DESC, id DESC)"
+        )
+    )
+    smallest_id_model = Kind(
+        id=102,
+        user_id=99,
+        kind="Model",
+        name="personal-embedding",
+        namespace="default",
+        json={"spec": {"protocol": "smallest-direct"}},
+        is_active=True,
+    )
+    larger_id_model = Kind(
+        id=103,
+        user_id=99,
+        kind="Model",
+        name="personal-embedding",
+        namespace="default",
+        json={"spec": {"protocol": "larger-direct"}},
+        is_active=True,
+    )
+    model_reference.db.add_all([smallest_id_model, larger_id_model])
+    model_reference.db.commit()
+
+    resolved = resolve_model_kind(
+        model_reference.db,
+        name="personal-embedding",
+        namespace="default",
+        user_id=99,
+    )
+
+    assert resolved is not None
+    assert resolved.id == smallest_id_model.id
 
 
 def test_group_model_reference_prefers_smallest_source_id(

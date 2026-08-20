@@ -66,7 +66,7 @@ def test_create_embedding_model_from_crd_resolves_shared_model_reference() -> No
                     "modelConfig": {
                         "env": {
                             "base_url": "https://api.example.com/v1/embeddings",
-                            "model_id": "shared-embedding",
+                            "model_id": "approved-source-model-id",
                         }
                     },
                 }
@@ -97,7 +97,7 @@ def test_create_embedding_model_from_crd_resolves_shared_model_reference() -> No
         with patch(
             "app.services.rag.embedding.factory.engine_create_embedding_model_from_runtime_config",
             return_value=embedding_model,
-        ):
+        ) as create_runtime_model:
             result = create_embedding_model_from_crd(
                 db=database.session,
                 user_id=99,
@@ -105,4 +105,8 @@ def test_create_embedding_model_from_crd_resolves_shared_model_reference() -> No
                 model_namespace="search-team",
             )
 
-    assert result is embedding_model
+    runtime_config = create_runtime_model.call_args.args[0]
+    assert (
+        result,
+        runtime_config.resolved_config["model_id"],
+    ) == (embedding_model, "approved-source-model-id")

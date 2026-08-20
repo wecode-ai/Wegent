@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from pytest_mock import MockerFixture
 
 from knowledge_engine.embedding.custom import CustomEmbedding
 from knowledge_engine.embedding.errors import EmbeddingDimensionMismatchError
@@ -18,7 +19,7 @@ from shared.models import RuntimeEmbeddingModelConfig
 
 
 def test_create_embedding_model_uses_runtime_model_name_when_model_id_missing(
-    mocker,
+    mocker: MockerFixture,
 ) -> None:
     custom_embedding_cls = mocker.patch(
         "knowledge_engine.embedding.factory.CustomEmbedding",
@@ -47,7 +48,9 @@ def test_create_embedding_model_uses_runtime_model_name_when_model_id_missing(
     )
 
 
-def test_create_embedding_model_exposes_additional_input_modalities(mocker) -> None:
+def test_create_embedding_model_exposes_additional_input_modalities(
+    mocker: MockerFixture,
+) -> None:
     embedding_instance = SimpleNamespace()
     custom_embedding_cls = mocker.patch(
         "knowledge_engine.embedding.factory.CustomEmbedding",
@@ -71,7 +74,9 @@ def test_create_embedding_model_exposes_additional_input_modalities(mocker) -> N
 
 
 @pytest.mark.asyncio
-async def test_custom_embedding_supports_async_text_embedding(mocker) -> None:
+async def test_custom_embedding_supports_async_text_embedding(
+    mocker: MockerFixture,
+) -> None:
     embedding = CustomEmbedding(
         api_url="https://api.openai.com/v1/embeddings",
         model="text-embedding-3-small",
@@ -83,7 +88,9 @@ async def test_custom_embedding_supports_async_text_embedding(mocker) -> None:
     assert result == [0.1, 0.2, 0.3]
 
 
-def test_custom_embedding_sends_configured_output_format(mocker) -> None:
+def test_custom_embedding_sends_configured_output_format(
+    mocker: MockerFixture,
+) -> None:
     post = mocker.patch("knowledge_engine.embedding.custom.requests.post")
     post.return_value.json.return_value = {"data": [{"embedding": [0.1, 0.2, 0.3]}]}
     embedding = CustomEmbedding(
@@ -104,7 +111,9 @@ def test_custom_embedding_sends_configured_output_format(mocker) -> None:
     }
 
 
-def test_custom_embedding_omits_unconfigured_output_format(mocker) -> None:
+def test_custom_embedding_omits_unconfigured_output_format(
+    mocker: MockerFixture,
+) -> None:
     post = mocker.patch("knowledge_engine.embedding.custom.requests.post")
     post.return_value.json.return_value = {"data": [{"embedding": [0.1]}]}
     embedding = CustomEmbedding(
@@ -127,7 +136,9 @@ def test_custom_embedding_omits_unconfigured_output_format(mocker) -> None:
     ]
 
 
-def test_custom_embedding_decodes_base64_float_response(mocker) -> None:
+def test_custom_embedding_decodes_base64_float_response(
+    mocker: MockerFixture,
+) -> None:
     encoded = base64.b64encode(struct.pack("<3f", 0.1, 0.2, 0.3)).decode()
     post = mocker.patch("knowledge_engine.embedding.custom.requests.post")
     post.return_value.json.return_value = {"data": [{"embedding": encoded}]}
@@ -143,7 +154,26 @@ def test_custom_embedding_decodes_base64_float_response(mocker) -> None:
     assert result == pytest.approx([0.1, 0.2, 0.3])
 
 
-def test_custom_embedding_rejects_unexpected_response_dimensions(mocker) -> None:
+def test_custom_embedding_rejects_string_float_response(
+    mocker: MockerFixture,
+) -> None:
+    post = mocker.patch("knowledge_engine.embedding.custom.requests.post")
+    post.return_value.json.return_value = {
+        "data": [{"embedding": "not-a-numeric-vector"}]
+    }
+    embedding = CustomEmbedding(
+        api_url="https://api.example.com/v1/embeddings",
+        model="custom-embedding-model",
+        encoding_format="float",
+    )
+
+    with pytest.raises(ValueError, match="numeric embedding array"):
+        embedding.get_text_embedding("release plan")
+
+
+def test_custom_embedding_rejects_unexpected_response_dimensions(
+    mocker: MockerFixture,
+) -> None:
     post = mocker.patch("knowledge_engine.embedding.custom.requests.post")
     post.return_value.json.return_value = {
         "data": [{"embedding": [0.1, 0.2, 0.3, 0.4]}]
