@@ -28,6 +28,8 @@ Skill 为 AI 提供特定任务的操作说明和资源；插件可以组合 Ski
 
 当前 Wework 捆绑 DeepSeek Harness Runtime `0.1.0-rc.8`。智能工作台安装包的 `plugin-manifest.json` 必须声明兼容该版本的 `requirements.dsh`；需要精确绑定当前 Runtime 时，使用 `"dsh": "0.1.0-rc.8"`。
 
+Wework 支持标准 DSH Release ZIP：`plugin-manifest.json` 通过 `packages` 声明各 npm 包的 `name`、`role` 和目标 `path`，ZIP 根目录包含对应的 `.tgz` 文件，其中唯一的 `profile-bundle` 路径必须与 `entry.installPackage` 一致。`entry` 只需要 `installPackage` 和 `profile`，不需要声明 `webUrl`；Wework 会在启动时分配本地地址、安装清单中的全部包，并把用户选择的 Wework 模型绑定到 profile。
+
 安装前需要选择一个 Wework 模型。这个模型只绑定到当前智能工作台，其他智能工作台可以分别选择不同模型。安装完成后，工作台会显示版本、绑定模型和 **已安装 / 运行中 / 启动失败** 状态；工作台停止时可以直接修改绑定模型。点击 **打开** 后，Wework 启动隔离的 Harness 实例，并播放工作台进入顶部标签栏的动效，再把智能工作台作为独立工作区标签页打开；点击 **停止** 会关闭对应标签页并回收实例。打开 **常驻** 后，Wework 每次启动主窗口时都会自动启动该工作台并打开它的标签页。
 
 ### 删除个人插件
