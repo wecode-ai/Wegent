@@ -1537,6 +1537,8 @@
     "smart_apps_marketplace_coming": "The Smart app marketplace is coming soon",
     "smart_apps_marketplace_coming_hint": "Until marketplace content is connected, use Smart App Builder or import a local Smart app package; installed apps remain manageable.",
     "smart_apps_builder_name": "Smart App Builder",
+    "smart_apps_builder_installing": "Preparing Smart App Builder...",
+    "smart_apps_builder_install_failed": "Smart App Builder could not be installed. Try again.",
     "smart_apps_builder_prompt": "Help me create a Smart app, including DSH setup, plugin discovery and composition, built-in-browser testing, packaging, and local installation.",
     "smart_apps_create": "Create Smart app",
     "smart_apps_import_local": "Import local package",

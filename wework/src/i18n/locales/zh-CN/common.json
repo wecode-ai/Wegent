@@ -1535,6 +1535,8 @@
     "smart_apps_marketplace_coming": "智能应用市场即将上线",
     "smart_apps_marketplace_coming_hint": "市场内容接入前，可以使用智能应用开发助手创建，或导入本地智能应用安装包；已安装应用仍可正常管理和运行。",
     "smart_apps_builder_name": "智能应用开发助手",
+    "smart_apps_builder_installing": "正在准备创作助手...",
+    "smart_apps_builder_install_failed": "智能应用开发助手安装失败，请重试。",
     "smart_apps_builder_prompt": "帮我创建一个智能应用，完成 DSH 环境准备、插件检索与拼装、内置浏览器测试、打包和本机安装。",
     "smart_apps_create": "创建智能应用",
     "smart_apps_import_local": "导入本地安装包",
