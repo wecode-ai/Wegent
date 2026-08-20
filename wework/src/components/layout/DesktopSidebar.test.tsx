@@ -1544,6 +1544,101 @@ describe('DesktopSidebar', () => {
     })
   })
 
+  test('preserves manual task-list scrolling across runtime refreshes', async () => {
+    const chatPath = '/Users/alice/.wework/workspace/chats/sidebar-scroll'
+    const runtimeWork = (status: string) => ({
+      projects: [],
+      chats: [
+        {
+          deviceId: 'local-device',
+          deviceName: 'Local Mac',
+          deviceStatus: 'online' as const,
+          available: true,
+          workspacePath: chatPath,
+          workspaceKind: 'chat' as const,
+          tasks: [
+            {
+              taskId: 'active-task',
+              workspacePath: chatPath,
+              workspaceKind: 'chat' as const,
+              title: 'Active task',
+              runtime: 'codex' as const,
+              status,
+            },
+            {
+              taskId: 'other-task',
+              workspacePath: chatPath,
+              workspaceKind: 'chat' as const,
+              title: 'Other task',
+              runtime: 'codex' as const,
+            },
+          ],
+        },
+      ],
+      totalTasks: 2,
+    })
+    const currentRuntimeTask = {
+      deviceId: 'local-device',
+      taskId: 'active-task',
+      workspacePath: chatPath,
+    }
+    const initialProps = createSidebarProps({
+      projects: [],
+      runtimeWork: runtimeWork('running'),
+      currentRuntimeTask,
+    })
+    const lifecycleStore = new RuntimeTaskLifecycleStore('desktop-sidebar-scroll-refresh-test')
+    lifecycleStore.syncRuntimeWork(initialProps.runtimeWork)
+    const view = render(
+      <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+        <DesktopSidebar {...initialProps} />
+      </RuntimeTaskLifecycleProvider>
+    )
+    const scrollIntoView = vi.mocked(Element.prototype.scrollIntoView)
+
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalled())
+    scrollIntoView.mockClear()
+
+    const scrollContainer = screen.getByTestId('sidebar-worklists-scroll')
+    scrollContainer.scrollTop = 180
+    fireEvent.scroll(scrollContainer)
+
+    const refreshedProps = createSidebarProps({
+      projects: [],
+      runtimeWork: runtimeWork('waiting_for_user_input'),
+      currentRuntimeTask: { ...currentRuntimeTask },
+    })
+    act(() => lifecycleStore.syncRuntimeWork(refreshedProps.runtimeWork))
+    view.rerender(
+      <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+        <DesktopSidebar {...refreshedProps} />
+      </RuntimeTaskLifecycleProvider>
+    )
+
+    expect(scrollIntoView).not.toHaveBeenCalled()
+    expect(scrollContainer.scrollTop).toBe(180)
+
+    const switchedProps = createSidebarProps({
+      projects: [],
+      runtimeWork: refreshedProps.runtimeWork,
+      currentRuntimeTask: {
+        deviceId: 'local-device',
+        taskId: 'other-task',
+        workspacePath: chatPath,
+      },
+    })
+    view.rerender(
+      <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+        <DesktopSidebar {...switchedProps} />
+      </RuntimeTaskLifecycleProvider>
+    )
+
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1))
+    expect(scrollIntoView.mock.contexts[0]).toBe(
+      screen.getByTestId('runtime-local-task-row-other-task')
+    )
+  })
+
   test('matches Codex sidebar text emphasis levels', () => {
     renderSidebar({ onToggleSidebar: vi.fn() }, { status: 'disconnected', isConnected: false })
 

@@ -12,6 +12,7 @@ import {
   saveStoredCloudConnection,
 } from '@/features/cloud-connection/cloudConnectionStorage'
 import { invoke } from '@tauri-apps/api/core'
+import { LogicalSize } from '@tauri-apps/api/dpi'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { EditorView } from '@codemirror/view'
 import {
@@ -1248,6 +1249,26 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       await getCurrentWindow().unminimize()
       await getCurrentWindow().setFocus()
       return ''
+    case 'setMainWindowSize': {
+      const currentWindow = getCurrentWindow()
+      const previousSize = (await currentWindow.innerSize()).toLogical(
+        await currentWindow.scaleFactor()
+      )
+      const nextSize = JSON.parse(command.value ?? '{}') as {
+        width?: number
+        height?: number
+      }
+      if (
+        !Number.isFinite(nextSize.width) ||
+        !Number.isFinite(nextSize.height) ||
+        Number(nextSize.width) <= 0 ||
+        Number(nextSize.height) <= 0
+      ) {
+        throw new Error('setMainWindowSize requires positive width and height')
+      }
+      await currentWindow.setSize(new LogicalSize(Number(nextSize.width), Number(nextSize.height)))
+      return JSON.stringify(previousSize)
+    }
     case 'getWindowFocusSnapshot':
       return getWindowFocusSnapshot()
     case 'showSystemDragPanel': {

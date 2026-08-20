@@ -3542,6 +3542,27 @@ export function DesktopSidebar({
     void runArchiveSectionConversations(forceArchiveSectionMode, { force: true })
   }
   const displayedExpandedProjectIds = visibleExpandedProjectIds
+  const currentRuntimeTaskKey = currentRuntimeTask
+    ? getRuntimeNotificationKey(currentRuntimeTask)
+    : null
+  const currentRuntimeTaskPinned = useMemo(
+    () =>
+      Boolean(
+        currentRuntimeTask &&
+        pinnedTaskItems.some(({ workspace, task }) =>
+          isRuntimeTaskSelected(currentRuntimeTask, workspace, task)
+        )
+      ),
+    [currentRuntimeTask, pinnedTaskItems]
+  )
+  const currentRuntimeTaskRowVisible = Boolean(
+    currentRuntimeTaskKey &&
+    (currentRuntimeTaskPinned ||
+      (selectedRuntimeProjectId !== null &&
+        displayedProjectsExpanded &&
+        displayedExpandedProjectIds.has(selectedRuntimeProjectId)) ||
+      (selectedRuntimeChatVisible && displayedChatsExpanded))
+  )
   const autoExpandedProjectKeyRef = useRef<string | null>(null)
 
   const handleToggleProject = (projectId: number) => {
@@ -3650,19 +3671,14 @@ export function DesktopSidebar({
   }, [priorityFilterShortcut, togglePriorityFilter])
 
   useEffect(() => {
-    if (!currentRuntimeTask) return
+    if (!currentRuntimeTaskKey || !currentRuntimeTaskRowVisible) return
 
     const taskRow = document.querySelector(
-      `[data-testid="runtime-local-task-row-${currentRuntimeTask.taskId}"]`
+      `[data-testid="runtime-local-task-row-${currentRuntimeTask?.taskId}"]`
     )
 
     taskRow?.scrollIntoView({ block: 'nearest' })
-  }, [
-    currentRuntimeTask,
-    displayedChatsExpanded,
-    displayedExpandedProjectIds,
-    displayedProjectsExpanded,
-  ])
+  }, [currentRuntimeTask?.taskId, currentRuntimeTaskKey, currentRuntimeTaskRowVisible])
 
   return (
     <aside

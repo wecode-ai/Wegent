@@ -15,6 +15,7 @@ import {
   verifyWorktreeCreationStatus,
   waitForElementInsideScroller,
   waitForElementWidth,
+  waitForOverflowMetrics,
   waitForSnapshot,
 } from './conversation-layout.mjs'
 
@@ -2630,14 +2631,57 @@ last_updated = "2026-07-30T00:00:00Z"`
       })
       await captureVerificationScreenshot(control, '02-background-request-user-input-visible.png')
       await new Promise(resolvePromise => setTimeout(resolvePromise, 3_000))
-      await control.command('click', '[data-testid="request-user-input-option-direction-1"]')
-      await control.command('waitFor', '[data-testid="message-assistant"]', {
-        text: REQUEST_USER_INPUT_COMPLETION_TEXT,
-        visible: true,
-        stableMs: COMPOSER_READY_STABILITY_MS,
-        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-      })
-      await captureVerificationScreenshot(control, '03-delayed-answer-completed.png')
+      const previousWindowSize = JSON.parse(
+        await control.command('setMainWindowSize', 'body', {
+          value: JSON.stringify({ width: 1_200, height: 420 }),
+        })
+      )
+      try {
+        const sidebarScrollerSelector = '[data-testid="sidebar-worklists-scroll"]'
+        await waitForOverflowMetrics(
+          control,
+          sidebarScrollerSelector,
+          'The constrained sidebar task list did not overflow'
+        )
+        await control.command('scrollToRatioAsUser', sidebarScrollerSelector, { value: '1' })
+        const sidebarBeforeRefresh = await getSingleElementMetrics(
+          control,
+          sidebarScrollerSelector,
+          'The manually scrolled sidebar before the runtime refresh'
+        )
+        assert.ok(
+          sidebarBeforeRefresh.scrollTop > 0,
+          'The sidebar task list did not move away from the active task'
+        )
+
+        await control.command('click', '[data-testid="request-user-input-option-direction-1"]')
+        await control.command('waitFor', '[data-testid="message-assistant"]', {
+          text: REQUEST_USER_INPUT_COMPLETION_TEXT,
+          visible: true,
+          stableMs: COMPOSER_READY_STABILITY_MS,
+          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        })
+        await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
+        const sidebarAfterRefresh = await getSingleElementMetrics(
+          control,
+          sidebarScrollerSelector,
+          'The manually scrolled sidebar after the runtime refresh'
+        )
+        assert.ok(
+          Math.abs(sidebarAfterRefresh.scrollTop - sidebarBeforeRefresh.scrollTop) <= 2,
+          `The sidebar task list jumped from ${sidebarBeforeRefresh.scrollTop}px to ${sidebarAfterRefresh.scrollTop}px after the active task refreshed`
+        )
+        await captureVerificationScreenshot(
+          control,
+          '03-sidebar-manual-scroll-preserved.png',
+          sidebarScrollerSelector
+        )
+      } finally {
+        await control.command('setMainWindowSize', 'body', {
+          value: JSON.stringify(previousWindowSize),
+        })
+      }
+      await captureVerificationScreenshot(control, '04-delayed-answer-completed.png')
       await control.command('click', '[data-testid="cancel-plan-mode-button"]')
       if (REQUEST_INPUT_ONLY) return
       if (shouldStopAfterDesktopCheckpoint('core-task-flow')) {
