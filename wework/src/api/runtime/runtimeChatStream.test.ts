@@ -75,6 +75,25 @@ describe('createRuntimeChatStream', () => {
     })
   })
 
+  test('delivers executor lag notifications for lifecycle reconciliation', async () => {
+    let listener!: (event: LocalExecutorEvent) => void
+    subscribe.mockImplementation(async handler => {
+      listener = handler
+      return vi.fn()
+    })
+    const onRuntimeEventLagged = vi.fn()
+    const stream = createRuntimeChatStream({ subscribe, request })
+
+    stream.subscribe({ onRuntimeEventLagged })
+    await Promise.resolve()
+    listener({
+      event: 'executor.event_lagged',
+      payload: { skipped: 7 },
+    })
+
+    expect(onRuntimeEventLagged).toHaveBeenCalledWith({ skipped: 7 })
+  })
+
   test('delivers task-plan events to the global subscription only', async () => {
     let listener!: (event: LocalExecutorEvent) => void
     subscribe.mockImplementation(async handler => {

@@ -367,9 +367,7 @@ async function waitForRuntimePaneReadyToSend(control, timeoutMs) {
     if (lastStatus?.isBusy === false && lastStatus.canSendQueuedMessage === true) return
     await new Promise(resolve => setTimeout(resolve, 100))
   }
-  throw new Error(
-    `The stopped runtime turn did not settle before follow-up: ${JSON.stringify(lastStatus)}`
-  )
+  throw new Error(`The runtime turn did not settle before follow-up: ${JSON.stringify(lastStatus)}`)
 }
 
 function selectShellTool(body, workspacePath, command = 'pwd', timeoutMs = 1_000) {
@@ -433,17 +431,27 @@ async function assertComposerDocked(control, scrollerMetrics, description) {
 }
 
 async function waitForToolDuration(control, minimumSeconds, timeoutMs) {
-  const startedAt = Date.now()
-  let text = ''
   const selector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="tool-block-duration"]`
+  const deadline = Date.now() + timeoutMs
   await control.command('waitFor', selector, { timeoutMs })
-  while (Date.now() - startedAt < timeoutMs) {
+  await new Promise(resolve =>
+    setTimeout(resolve, Math.min(minimumSeconds * 1_000, Math.max(0, deadline - Date.now())))
+  )
+  let text = ''
+  let duration = 0
+  while (Date.now() <= deadline) {
     text = await control.command('getText', selector)
-    const duration = toolDurationSeconds(text)
+    duration = toolDurationSeconds(text)
     if (duration >= minimumSeconds) return duration
-    await new Promise(resolve => setTimeout(resolve, 100))
+    const remainingMs = deadline - Date.now()
+    if (remainingMs <= 0) break
+    await new Promise(resolve => setTimeout(resolve, Math.min(500, remainingMs)))
   }
-  throw new Error(`The running tool duration did not reach ${minimumSeconds}s; latest row: ${text}`)
+  assert.ok(
+    duration >= minimumSeconds,
+    `The running tool duration did not reach ${minimumSeconds}s; latest row: ${text}`
+  )
+  return duration
 }
 
 async function completedToolDuration(control, timeoutMs) {
@@ -1256,6 +1264,7 @@ export function createDesktopScenario({
         text: 'WEWORK_DESKTOP_E2E_STREAMING_TEXT_INITIAL_COMPLETE',
         timeoutMs: uiTimeoutMs,
       })
+      await waitForRuntimePaneReadyToSend(control, uiTimeoutMs)
       const taskRowTestId = await waitForNewTaskRow(
         control,
         knownTaskRows,
@@ -1269,6 +1278,7 @@ export function createDesktopScenario({
           text: historyTurn.completion.split('\n')[0],
           timeoutMs: uiTimeoutMs,
         })
+        await waitForRuntimePaneReadyToSend(control, uiTimeoutMs)
       }
       await capture(control, 'streaming-text-11-ready-to-send.png')
       await control.command('pasteFile', COMPOSER_SELECTOR, {
