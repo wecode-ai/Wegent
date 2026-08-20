@@ -9,6 +9,7 @@ mod embedded_browser;
 mod embedded_browser_tls;
 #[cfg(desktop)]
 mod feedback;
+mod harness_apps;
 mod inline_visualization;
 mod local_executor;
 mod local_terminal;
@@ -28,6 +29,8 @@ mod system_lock;
 mod system_sleep;
 mod todo_store;
 mod workbench_background;
+#[cfg(desktop)]
+mod workbench_plugins;
 
 use std::collections::{HashMap, HashSet};
 #[cfg(desktop)]
@@ -4953,6 +4956,9 @@ pub fn run() {
     #[cfg(desktop)]
     let builder = builder.manage(NativeTelemetryState::default());
 
+    #[cfg(desktop)]
+    let builder = builder.manage(workbench_plugins::WorkbenchPluginState::default());
+
     let app = builder
         .manage(appshots::AppshotState::default())
         .manage(embedded_browser::EmbeddedBrowserState::default())
@@ -4962,6 +4968,7 @@ pub fn run() {
         .manage(TrayVisualState::default())
         .manage(local_executor::LocalExecutorState::default())
         .manage(local_terminal::LocalTerminalState::default())
+        .manage(harness_apps::HarnessAppRuntimeState::default())
         .manage(popout_window::PopoutWindowState::default())
         .manage(system_drag::SystemDragState::default())
         .manage(system_lock::SystemLockState::default())
@@ -5116,6 +5123,15 @@ pub fn run() {
             embedded_browser::embedded_browser_set_agent_control_paused,
             embedded_browser::embedded_browser_set_zoom,
             embedded_browser::embedded_browser_set_bounds,
+            harness_apps::delete_harness_app,
+            harness_apps::install_harness_app,
+            harness_apps::list_harness_apps,
+            harness_apps::preview_harness_app,
+            harness_apps::start_harness_app,
+            harness_apps::store_harness_app_proxy_token,
+            harness_apps::stop_harness_app,
+            harness_apps::take_harness_app_proxy_token,
+            harness_apps::update_harness_app,
             local_terminal::archive_local_harness_session,
             local_terminal::attach_local_terminal,
             local_terminal::close_local_terminal,
@@ -5125,6 +5141,18 @@ pub fn run() {
             local_workspace_files::list_local_workspace_entries,
             workbench_background::import_workbench_background,
             workbench_background::remove_workbench_background,
+            #[cfg(desktop)]
+            workbench_plugins::workbench_plugin_authorize_capability,
+            #[cfg(desktop)]
+            workbench_plugins::workbench_plugin_inspect,
+            #[cfg(desktop)]
+            workbench_plugins::workbench_plugin_list,
+            #[cfg(desktop)]
+            workbench_plugins::workbench_plugin_request,
+            #[cfg(desktop)]
+            workbench_plugins::workbench_plugin_start,
+            #[cfg(desktop)]
+            workbench_plugins::workbench_plugin_stop,
             pick_workspace_paths,
             read_clipboard_workspace_paths,
             read_dropped_workspace_paths,
@@ -5270,6 +5298,13 @@ pub fn run() {
             }
             tauri::RunEvent::Exit => {
                 shutdown_local_executor_for_app(app_handle, "run_event_exit");
+                #[cfg(desktop)]
+                {
+                    let state = app_handle.state::<workbench_plugins::WorkbenchPluginState>();
+                    workbench_plugins::shutdown(state.inner());
+                    let harness_state = app_handle.state::<harness_apps::HarnessAppRuntimeState>();
+                    harness_apps::shutdown(harness_state.inner());
+                }
             }
             _ => {}
         }

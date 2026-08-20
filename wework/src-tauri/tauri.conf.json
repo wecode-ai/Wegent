@@ -8,7 +8,7 @@
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
     "beforeDevCommand": "pnpm run dev",
-    "beforeBuildCommand": "pnpm run build"
+    "beforeBuildCommand": "pnpm run prepare:deepseek-harness && pnpm run build"
   },
   "app": {
     "macOSPrivateApi": true,
@@ -38,9 +38,7 @@
         "enable": true,
         "scope": {
           "requireLiteralLeadingDot": false,
-          "allow": [
-            "**/*"
-          ]
+          "allow": ["**/*"]
         }
       }
     }
@@ -56,12 +54,10 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "externalBin": [
-      "binaries/wegent-executor",
-      "binaries/dws"
-    ],
+    "externalBin": ["binaries/wegent-executor", "binaries/dws"],
     "resources": [
       "binaries/codex/**/*",
+      "bundled-deepseek-harness/*",
       "bundled-hooks/**/*",
       "bundled-plugins/**/*",
       "bundled-plugins/wework-personal/.agents/plugins/marketplace.json",
