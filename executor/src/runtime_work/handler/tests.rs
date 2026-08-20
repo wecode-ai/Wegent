@@ -1058,6 +1058,22 @@ fn start_test_execution(handler: &RuntimeWorkRpcHandler, local_task_id: &str) ->
         .expect("test execution should start")
 }
 
+fn isolated_runtime_work_handler(label: &str) -> (RuntimeWorkRpcHandler, PathBuf) {
+    let root = temp_runtime_work_index_path(label).with_extension("directory");
+    let runtime_work_dir = root.join("runtime-work");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(runtime_work_dir.join("index.json"));
+    handler.worktrees = WorktreeManager::new(runtime_work_dir.join("worktrees.json"));
+    handler.turn_queue_path = Arc::new(runtime_work_dir.join("turn-queue.json"));
+    handler
+        .turn_scheduler
+        .lock()
+        .expect("runtime turn scheduler lock should not be poisoned")
+        .queued_turns
+        .clear();
+    (handler, root)
+}
+
 #[test]
 fn applies_backend_connection_from_the_shared_snapshot() {
     let snapshot: Arc<Mutex<Option<ConnectionConfig>>> =
@@ -1281,7 +1297,7 @@ fn active_codex_items_restore_a_turn_missing_from_paginated_storage() {
 
 #[tokio::test]
 async fn running_codex_transcript_uses_live_cache_without_provider_read() {
-    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    let (handler, root) = isolated_runtime_work_handler("running-live-cache");
     let mut link = RuntimeTaskLink::new_pending(
         "task-1".to_owned(),
         "/tmp/project".to_owned(),
@@ -1357,6 +1373,7 @@ async fn running_codex_transcript_uses_live_cache_without_provider_read() {
         transcript["messages"][2]["blocks"][0]["content"],
         "Writing quicksort"
     );
+    let _ = fs::remove_dir_all(root);
 }
 
 #[tokio::test]
@@ -1364,7 +1381,7 @@ async fn running_codex_transcript_binds_same_second_presentations_to_provider_tu
     const PROVIDER_SECOND: i64 = 1_780_000_000;
     const PRESENTATION_MS: i64 = PROVIDER_SECOND * 1_000 + 900;
 
-    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    let (handler, root) = isolated_runtime_work_handler("same-second-presentations");
     let mut link = RuntimeTaskLink::new_pending(
         "task-1".to_owned(),
         "/tmp/project".to_owned(),
@@ -1480,11 +1497,12 @@ async fn running_codex_transcript_binds_same_second_presentations_to_provider_tu
             if index < 2 { "assistant_text" } else { "block" }
         );
     }
+    let _ = fs::remove_dir_all(root);
 }
 
 #[tokio::test]
 async fn completed_codex_turn_is_cached_before_automatic_continuation_finishes() {
-    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    let (handler, root) = isolated_runtime_work_handler("automatic-continuation-cache");
     let mut link = RuntimeTaskLink::new_pending(
         "task-1".to_owned(),
         "/tmp/project".to_owned(),
@@ -1562,6 +1580,7 @@ async fn completed_codex_turn_is_cached_before_automatic_continuation_finishes()
         transcript["messages"][2]["blocks"][0]["content"],
         "Automatic continuation running"
     );
+    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
