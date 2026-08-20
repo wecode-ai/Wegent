@@ -31,6 +31,7 @@ import { writeCachedRemoteRuntimeWork } from './remoteRuntimeWorkCache'
 import {
   RuntimeTaskLifecycleStore,
   useRuntimeTaskLifecycle,
+  useRuntimeTaskLifecycleStore,
   useRuntimeTaskLifecycleStoreSnapshot,
 } from './runtimeTaskLifecycle'
 import type { ChatStreamHandlers } from '@/stream/chatStream'
@@ -794,6 +795,10 @@ const TOP_LEVEL_STREAM_ADDRESS: RuntimeTaskAddress = {
   workspacePath: '/workspace/project-alpha',
   taskId: 'runtime-a',
 }
+const EPHEMERAL_STREAM_ADDRESS: RuntimeTaskAddress = {
+  ...TOP_LEVEL_STREAM_ADDRESS,
+  runtime: 'codex',
+}
 
 function RuntimeTopLevelStreamLifecycleProbe() {
   const { subscribeRuntimeTaskStream } = useWorkbench()
@@ -811,6 +816,22 @@ function RuntimeTopLevelStreamLifecycleProbe() {
     <span data-testid="top-level-runtime-stream-lifecycle">
       {lifecycle?.derived.isRunning ? 'running' : 'idle'}:{lifecycle?.turn.phase ?? 'missing'}
     </span>
+  )
+}
+
+function EphemeralRuntimeLifecycleProbe() {
+  const workbench = useWorkbench()
+  const lifecycleStore = useRuntimeTaskLifecycleStore()
+
+  useEffect(() => {
+    lifecycleStore.sendRequested(EPHEMERAL_STREAM_ADDRESS)
+    lifecycleStore.sendAccepted(EPHEMERAL_STREAM_ADDRESS)
+  }, [lifecycleStore])
+
+  return (
+    <button type="button" onClick={() => void workbench.openRuntimeTask(EPHEMERAL_STREAM_ADDRESS)}>
+      open ephemeral runtime
+    </button>
   )
 }
 
@@ -12776,6 +12797,98 @@ describe('WorkbenchProvider runtime tasks', () => {
       })
     })
     await waitFor(() => expect(screen.getByTestId('queued-messages')).toHaveTextContent(''))
+  })
+
+  test('uses the transcript to settle an ephemeral task omitted from runtime work', async () => {
+    const streamHandlers: ChatStreamHandlers[] = []
+    const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
+      streamHandlers.push(handlers)
+      return vi.fn()
+    })
+    const sendRuntimeMessage = vi.fn().mockResolvedValue({
+      accepted: true,
+      taskId: 'runtime-a',
+    })
+    const emptyRuntimeWork = createRuntimeWork({
+      projects: [],
+      chats: [],
+      totalTasks: 0,
+    })
+    let executorSettling = false
+    const listRuntimeWork = vi.fn().mockResolvedValue(emptyRuntimeWork)
+    const getRuntimeTranscript = vi.fn().mockImplementation(() =>
+      Promise.resolve({
+        taskId: 'runtime-a',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'claude_code',
+        messages: [{ id: 'runtime-a:user:1', role: 'user', content: 'first message' }],
+        running: !executorSettling,
+        turns: [],
+      })
+    )
+    const services = createWorkbenchServices({
+      runtimeWorkApi: createRuntimeWorkApiMock({
+        listRuntimeWork,
+        getRuntimeTranscript,
+        sendRuntimeMessage,
+      }) as WorkbenchServices['runtimeWorkApi'],
+      cloudBackgroundApi: {
+        listRuntimeWork,
+      },
+      chatStream: {
+        subscribe,
+      } as unknown as WorkbenchServices['chatStream'],
+    })
+
+    renderWorkbench(
+      <>
+        <EphemeralRuntimeLifecycleProbe />
+        <FollowUpProbe />
+      </>,
+      services
+    )
+
+    await userEvent.click(await screen.findByText('open ephemeral runtime'))
+    await waitFor(() => expect(streamHandlers.some(handlers => handlers.onChatStart)).toBe(true))
+    act(() => {
+      for (const handlers of streamHandlers) {
+        handlers.onChatStart?.({
+          taskId: 'runtime-a',
+          subtaskId: '101',
+          shellType: 'Chat',
+          deviceId: 'device-1',
+        })
+      }
+    })
+    await userEvent.click(screen.getByText('set follow-up'))
+    await userEvent.click(screen.getByText('send follow-up'))
+
+    expect(sendRuntimeMessage).not.toHaveBeenCalled()
+    expect(screen.getByTestId('queued-messages')).toHaveTextContent('queued:继续修')
+
+    executorSettling = true
+    act(() => {
+      for (const handlers of streamHandlers) {
+        handlers.onChatDone?.({
+          taskId: 'runtime-a',
+          subtaskId: '101',
+          deviceId: 'device-1',
+          result: { value: 'done' },
+        })
+      }
+    })
+
+    await waitFor(() =>
+      expect(getRuntimeTranscript).toHaveBeenCalledWith(
+        expect.objectContaining({
+          deviceId: 'device-1',
+          taskId: 'runtime-a',
+          refresh: true,
+        })
+      )
+    )
+    await waitFor(() => expect(screen.getByTestId('follow-up-pane-busy')).toHaveTextContent('idle'))
+    expect(sendRuntimeMessage).not.toHaveBeenCalled()
   })
 
   test('ignores a superseded executor settlement snapshot response', async () => {

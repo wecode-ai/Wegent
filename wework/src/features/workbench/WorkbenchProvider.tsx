@@ -1807,7 +1807,15 @@ export function WorkbenchProvider({
           try {
             const task = await refreshRuntimeTask(address)
             if (runtimeTaskSettleSyncGenerationRef.current.get(key) !== generation) return
-            if (!task) continue
+            if (!task) {
+              const transcript = await runtimeTasks.loadRuntimeTranscriptForPane(address, {
+                refresh: true,
+              })
+              if (runtimeTaskSettleSyncGenerationRef.current.get(key) !== generation) return
+              lifecycleStore.syncTranscript(address, transcript)
+              if (lifecycleStore.getTask(address)?.execution.phase === 'idle') return
+              continue
+            }
             const applied = lifecycleStore.syncRuntimeTask(address, task, expectedLifecycle)
             if (applied) updateLocalRuntimeTaskSnapshot(address, task)
 
