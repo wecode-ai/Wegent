@@ -3816,6 +3816,12 @@ export function DesktopSidebar({
                   testId="plugins-button"
                   selected={activeItem === 'plugins'}
                   onClick={onOpenPlugins}
+                  onPointerEnter={() => {
+                    if (!isTauriRuntime()) return
+                    void import('@/components/plugins/workspace/prefetchPluginsWorkspace').then(
+                      module => module.prefetchPluginsWorkspace()
+                    )
+                  }}
                 />
               )}
               {experimentalFeaturesEnabled && (
