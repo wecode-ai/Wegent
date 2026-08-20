@@ -644,6 +644,15 @@ async function verifyBackgroundCompletionRestore({
       },
     }),
   })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes(`my-work-group-done-${taskId}`) &&
+      !snapshot.testIds.includes(`my-work-group-running-${taskId}`),
+    'My Work did not move the settled local task from running to done',
+    DEFAULT_STEP_TIMEOUT_MS,
+    '[data-testid="cloud-my-work-view"]'
+  )
   await control.command('navigate', 'body', { value: '/' })
   await control.command('waitFor', `[data-testid="${taskRowTestId}"]`, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
