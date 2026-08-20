@@ -1757,15 +1757,15 @@ fn turn_started_sets_or_replaces_the_active_turn() {
     });
 
     assert_eq!(
-        started_active_turn_id(None, &notification, &state),
+        observed_active_turn_id(None, &notification, &state),
         Some("turn-2".to_owned())
     );
     assert_eq!(
-        started_active_turn_id(Some("turn-1"), &notification, &state),
+        observed_active_turn_id(Some("turn-1"), &notification, &state),
         Some("turn-2".to_owned())
     );
     assert_eq!(
-        started_active_turn_id(Some("turn-2"), &notification, &state),
+        observed_active_turn_id(Some("turn-2"), &notification, &state),
         None
     );
 }
@@ -1792,7 +1792,7 @@ fn turn_start_response_resolves_the_active_turn_without_a_started_notification()
 }
 
 #[test]
-fn item_notification_cannot_replace_the_active_turn() {
+fn assistant_item_notification_cannot_replace_the_active_turn() {
     let state = CodexRunState::default();
     let notification = json!({
         "method": "item/completed",
@@ -1808,8 +1808,30 @@ fn item_notification_cannot_replace_the_active_turn() {
     });
 
     assert_eq!(
-        started_active_turn_id(Some("turn-1"), &notification, &state),
+        observed_active_turn_id(Some("turn-1"), &notification, &state),
         None
+    );
+}
+
+#[test]
+fn started_user_item_corrects_a_mismatched_turn_start_response() {
+    let state = CodexRunState::default();
+    let notification = json!({
+        "method": "item/started",
+        "params": {
+            "threadId": "thread-1",
+            "turnId": "turn-2",
+            "item": {
+                "id": "message-1",
+                "type": "userMessage",
+                "content": "resume"
+            }
+        }
+    });
+
+    assert_eq!(
+        observed_active_turn_id(Some("turn-1"), &notification, &state),
+        Some("turn-2".to_owned())
     );
 }
 

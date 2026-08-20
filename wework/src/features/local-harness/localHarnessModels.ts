@@ -14,6 +14,7 @@ export interface LocalHarnessModelLaunchConfig {
   modelId: string
   env: Record<string, string>
   proxyToken: string
+  baseUrl: string
 }
 
 export interface HarnessProxyRegistration {
@@ -90,6 +91,7 @@ export function harnessLaunchThroughMessagesProxy(
     return {
       modelId: HARNESS_MODEL_ALIAS,
       proxyToken: registration.token,
+      baseUrl: registration.baseUrl,
       env: {
         ANTHROPIC_BASE_URL: registration.baseUrl,
         ANTHROPIC_API_KEY: 'wework-local-router',
@@ -100,6 +102,7 @@ export function harnessLaunchThroughMessagesProxy(
     return {
       modelId: '__kimi_env_model__',
       proxyToken: registration.token,
+      baseUrl: registration.baseUrl,
       env: {
         KIMI_MODEL_NAME: HARNESS_MODEL_ALIAS,
         KIMI_MODEL_PROVIDER_TYPE: 'anthropic',
@@ -120,6 +123,7 @@ export function harnessLaunchThroughMessagesProxy(
   return {
     modelId: `${providerId}/${HARNESS_MODEL_ALIAS}`,
     proxyToken: registration.token,
+    baseUrl: registration.baseUrl,
     env: {
       OPENCODE_CONFIG_CONTENT: JSON.stringify({
         provider: {
