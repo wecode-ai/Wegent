@@ -114,8 +114,8 @@ Matrix submissions use a 10-second timeout. If the composer already displays a s
 The main desktop flow's short-conversation layout regression stores `short-conversation-00-ready.png`, `short-conversation-01-prompt-filled.png`, `short-conversation-02-completed-top-aligned.png`, and `short-conversation-layout-metrics.json`. The final screenshot and metrics are captured after switching away and reopening the conversation. The gate requires the first message to remain within `160px` of the message viewport's top edge. For focused local diagnosis, run `node wework/e2e/desktop/task-flow.e2e.mjs --short-conversation-only`; the same check remains part of the regular `e2e:desktop` flow rather than a separate CI entrypoint.
 
 The main desktop runner also supports execution through ordered checkpoints.
-The checkpoints are `remote-device-onboarding`, `workspace-tabs`, `priority-filter`,
-`cloud-project-creation`, `telemetry-consent`, `automation-lifecycle`,
+The checkpoints are `remote-device-onboarding`, `workspace-tabs`,
+`cloud-project-creation`, `priority-filter`, `telemetry-consent`, `automation-lifecycle`,
 `project-automation`, `project-assignment-notification`, `offline-local-project-space`,
 `plugin-auto-update`, `project-ai-settings`, `model-routing`, `permission-modes`,
 `core-task-flow`, `task-attachments`, `cloud-git-worktree`,
