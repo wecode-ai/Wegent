@@ -675,6 +675,7 @@ export function createDesktopScenario({
   })
 
   const verifyLongCodeTerminalBurst = async control => {
+    await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
     await control.command('click', '[data-testid="new-chat-button"]')
     await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
     await control.command('fill', COMPOSER_SELECTOR, { value: LONG_CODE_PROMPT })

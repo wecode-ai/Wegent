@@ -63,11 +63,8 @@ describe('MarkdownCodeBlock', () => {
     expect(scrollContainer.querySelector('.token')).toBeInTheDocument()
   })
 
-  test('keeps long completed code as stable plain text', () => {
-    const code = Array.from(
-      { length: 110 },
-      (_, index) => `SELECT ${index + 1} AS value_${index + 1};`
-    ).join('\n')
+  test('keeps completed code over the line limit as stable plain text', () => {
+    const code = Array.from({ length: 81 }, (_, index) => `-- ${index + 1}`).join('\n')
 
     render(<MarkdownCodeBlock lang="sql">{code}</MarkdownCodeBlock>)
 
@@ -75,7 +72,20 @@ describe('MarkdownCodeBlock', () => {
     expect(scrollContainer).toHaveAttribute('data-syntax-highlighted', 'false')
     expect(scrollContainer.querySelector('.token')).not.toBeInTheDocument()
     const plainCode = scrollContainer.querySelector('code')
-    expect(plainCode).toHaveTextContent('SELECT 110 AS value_110;')
+    expect(plainCode).toHaveTextContent('-- 81')
+    expect(plainCode?.parentElement).toHaveStyle({ color: '#abb2bf' })
+  })
+
+  test('keeps completed code over the character limit as stable plain text', () => {
+    const code = `-- ${'x'.repeat(2_000)}`
+
+    render(<MarkdownCodeBlock lang="sql">{code}</MarkdownCodeBlock>)
+
+    const scrollContainer = screen.getByTestId('markdown-code-scroll-container')
+    expect(scrollContainer).toHaveAttribute('data-syntax-highlighted', 'false')
+    expect(scrollContainer.querySelector('.token')).not.toBeInTheDocument()
+    const plainCode = scrollContainer.querySelector('code')
+    expect(plainCode).toHaveTextContent(code)
     expect(plainCode?.parentElement).toHaveStyle({ color: '#abb2bf' })
   })
 })
