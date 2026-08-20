@@ -364,6 +364,33 @@ describe('EnvironmentInfoPopover', () => {
     expect(screen.queryByText('-0')).not.toBeInTheDocument()
   })
 
+  test('shows a resolved branch while the rest of the environment is still loading', () => {
+    const popoverContainer = document.createElement('div')
+    document.body.appendChild(popoverContainer)
+    portalContainers.push(popoverContainer)
+
+    render(
+      <EnvironmentInfoPopover
+        info={{
+          additions: '',
+          deletions: '',
+          executionTarget: 'local',
+          branchName: 'fix/fast-branch-status',
+          loading: true,
+          branchLoading: false,
+        }}
+        popoverContainer={popoverContainer}
+        open
+        onOpenChange={vi.fn()}
+        onListBranches={vi.fn().mockResolvedValue([])}
+        onCheckoutBranch={vi.fn().mockResolvedValue(undefined)}
+      />
+    )
+
+    expect(screen.getByTestId('environment-branch-row')).toHaveTextContent('fix/fast-branch-status')
+    expect(screen.getByTestId('environment-branch-row')).not.toHaveTextContent('加载中')
+  })
+
   test('renders the pull request associated with the current branch', async () => {
     const popoverContainer = document.createElement('div')
     document.body.appendChild(popoverContainer)
