@@ -356,6 +356,7 @@ export function TaskDescriptionEditor({
       className={cn('task-description-editor', className)}
       onMouseOver={handleMouseOver}
       onMouseOut={handleMouseOut}
+      onBlurCapture={emitEditorChange}
       onPasteCapture={handlePasteCapture}
       onCompositionStartCapture={handleCompositionStartCapture}
       onCompositionEndCapture={handleCompositionEndCapture}
