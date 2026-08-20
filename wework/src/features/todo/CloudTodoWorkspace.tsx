@@ -3856,7 +3856,7 @@ export function CloudTodoWorkspace({
                     workItemId: selectedItem.id,
                     initialInput: workflowNode ? workflowStageTaskInput(workflowNode) : '',
                     autoSubmit: false,
-                    backgroundAfterSend: selectedItem.status === 'pending',
+                    backgroundAfterSend: selectedItem.status === 'pending' && !workflowNodeId,
                     workflowNodeId,
                     inheritFromTask,
                   })
