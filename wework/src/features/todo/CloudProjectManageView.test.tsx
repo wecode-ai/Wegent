@@ -47,13 +47,13 @@ describe('CloudProjectManageView incoming hooks', () => {
   test('creates and exposes a copyable incoming URL', async () => {
     const hook = {
       id: 'hook-1',
-      projectId: project.id,
+      project_id: project.id,
       name: '外部系统',
       status: 'active' as const,
-      webhookUrl: 'https://cloud.example/api/v1/incoming-hooks/secret',
+      webhook_url: 'https://cloud.example/api/v1/incoming-hooks/secret',
       version: 1,
-      createdAt: '2026-08-16T00:00:00Z',
-      updatedAt: '2026-08-16T00:00:00Z',
+      created_at: '2026-08-16T00:00:00Z',
+      updated_at: '2026-08-16T00:00:00Z',
     }
     const incomingHookApi = {
       list: vi.fn().mockResolvedValue([]),
@@ -77,9 +77,9 @@ describe('CloudProjectManageView incoming hooks', () => {
     fireEvent.click(screen.getByTestId('incoming-hook-empty-create'))
 
     await waitFor(() => expect(incomingHookApi.create).toHaveBeenCalledWith(project.id, '外部系统'))
-    expect(await screen.findByText(hook.webhookUrl)).toBeInTheDocument()
+    expect(await screen.findByText(hook.webhook_url)).toBeInTheDocument()
 
     fireEvent.click(screen.getByTestId('incoming-hook-copy-hook-1'))
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith(hook.webhookUrl))
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(hook.webhook_url))
   })
 })

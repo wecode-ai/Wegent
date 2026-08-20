@@ -3,9 +3,11 @@
 
 """API coverage for project incoming hooks."""
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.models.delivery import LoopItem, ProjectIncomingEvent, ProjectIncomingHook
 
 
@@ -52,7 +54,10 @@ def test_incoming_hook_buffers_unmatched_event_and_deduplicates(
     }
     first = test_client.post(
         hook["webhook_url"],
-        headers={"X-GitLab-Event": "Merge Request Hook", "X-GitLab-Event-UUID": "delivery-1"},
+        headers={
+            "X-GitLab-Event": "Merge Request Hook",
+            "X-GitLab-Event-UUID": "delivery-1",
+        },
         json=payload,
     )
     assert first.status_code == 202
@@ -63,7 +68,10 @@ def test_incoming_hook_buffers_unmatched_event_and_deduplicates(
 
     duplicate = test_client.post(
         hook["webhook_url"],
-        headers={"X-GitLab-Event": "Merge Request Hook", "X-GitLab-Event-UUID": "delivery-1"},
+        headers={
+            "X-GitLab-Event": "Merge Request Hook",
+            "X-GitLab-Event-UUID": "delivery-1",
+        },
         json=payload,
     )
     assert duplicate.status_code == 202
@@ -78,6 +86,26 @@ def test_incoming_hook_buffers_unmatched_event_and_deduplicates(
     from app.services.external_events.buffer import external_event_buffer
 
     external_event_buffer.clear()
+
+
+def test_incoming_hook_url_uses_configured_public_base(
+    test_client: TestClient,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        settings, "WEGENT_BACKEND_PUBLIC_URL", "https://hooks.example.com"
+    )
+    project = _project(test_client, test_token)
+    hook = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/incoming-hooks",
+        headers=_auth(test_token),
+        json={"name": "Public"},
+    )
+    assert hook.status_code == 201
+    assert hook.json()["webhook_url"].startswith(
+        "https://hooks.example.com/api/v1/incoming-hooks/"
+    )
 
 
 def test_incoming_hook_records_unrecognized_payload_without_creating_issue(
