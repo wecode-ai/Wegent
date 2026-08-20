@@ -257,7 +257,9 @@ function getActivityStats(blocks: ToolBlock[]): ActivityStats {
   )
 }
 
-export function getToolActivityKind(block: ToolBlock): ToolActivityKind {
+export function getToolActivityKind(
+  block: Pick<ToolBlock, 'toolName' | 'toolInput'>
+): ToolActivityKind {
   const name = block.toolName.toLowerCase()
   if (isFileReadToolName(name)) return 'file'
   if (isFileCreateToolName(name)) return 'create'
@@ -271,7 +273,9 @@ export function getToolActivityKind(block: ToolBlock): ToolActivityKind {
   return 'tool'
 }
 
-export function getToolActivityFilePaths(block: ToolBlock): string[] {
+export function getToolActivityFilePaths(
+  block: Pick<ToolBlock, 'toolName' | 'toolInput'>
+): string[] {
   const name = block.toolName.toLowerCase()
   if (isFileReadToolName(name) || isFileCreateToolName(name) || isFileEditToolName(name)) {
     return getFileInputPaths(block)
@@ -283,7 +287,9 @@ export function getToolActivityFilePaths(block: ToolBlock): string[] {
   return getReadCommandFilePaths(command)
 }
 
-export function getToolActivitySearchItem(block: ToolBlock): ToolActivitySearchItem | undefined {
+export function getToolActivitySearchItem(
+  block: Pick<ToolBlock, 'id' | 'toolName' | 'toolInput'>
+): ToolActivitySearchItem | undefined {
   const name = block.toolName.toLowerCase()
   if (isWebSearchToolName(name) || getToolActivityKind(block) !== 'search') return undefined
 

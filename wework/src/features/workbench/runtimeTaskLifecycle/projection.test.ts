@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import type { RuntimeTaskSummary } from '@/types/api'
 import {
+  isRuntimeTaskExecutionRunning,
   normalizeRuntimeTaskSummary,
   runtimeTaskReconciliationSnapshot,
   shouldReplaceRuntimeTaskProjection,
@@ -36,6 +37,14 @@ describe('runtimeTaskProjection', () => {
       running: true,
       turnStatus: 'inProgress',
     })
+  })
+
+  test('recognizes executor-reported running tasks before turn status catches up', () => {
+    expect(isRuntimeTaskExecutionRunning(task({ running: true }))).toBe(true)
+    expect(isRuntimeTaskExecutionRunning(task({ running: true, optimistic: true }))).toBe(false)
+    expect(
+      isRuntimeTaskExecutionRunning(task({ running: true, completedAt: 1_786_676_400_000 }))
+    ).toBe(false)
   })
 
   test('normalizes completed executor state into one terminal projection', () => {
