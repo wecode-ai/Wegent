@@ -464,6 +464,28 @@ describe('WorkspaceBrowserPanel', () => {
     expect(onLoadingChange).toHaveBeenLastCalledWith(false)
   })
 
+  test('reports loading immediately when reloading an open native browser', async () => {
+    const reload = createDeferred<void>()
+    const onLoadingChange = vi.fn()
+    embeddedBrowserMocks.reloadEmbeddedBrowser.mockReturnValueOnce(reload.promise)
+    mockBrowserHostRect()
+    render(<WorkspaceBrowserPanel active onLoadingChange={onLoadingChange} />)
+
+    const input = screen.getByTestId('workspace-browser-url-input')
+    fireEvent.change(input, { target: { value: 'https://example.com' } })
+    fireEvent.submit(input.closest('form')!)
+    await waitFor(() => expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalled())
+    await waitFor(() => expect(onLoadingChange).toHaveBeenLastCalledWith(false))
+
+    fireEvent.click(screen.getByTestId('workspace-browser-reload-button'))
+
+    await waitFor(() => expect(onLoadingChange).toHaveBeenLastCalledWith(true))
+    expect(embeddedBrowserMocks.reloadEmbeddedBrowser).toHaveBeenCalledWith('workspace-browser')
+
+    reload.resolve()
+    await waitFor(() => expect(onLoadingChange).toHaveBeenLastCalledWith(false))
+  })
+
   test('replaces a failed native page with a clear error state and stops loading', async () => {
     let handlePageStateChange!: (pageState: {
       label: string
@@ -2897,5 +2919,19 @@ describe('WorkspaceBrowserPanel', () => {
     fireEvent.click(screen.getByTestId('workspace-browser-settings-item'))
 
     expect(navigationMocks.navigateTo).toHaveBeenCalledWith('/settings/browser')
+  })
+
+  test('navigates to the browsing history page from the more menu above clear data', async () => {
+    await openExamplePage()
+
+    fireEvent.click(screen.getByTestId('workspace-browser-more-button'))
+    const historyItem = screen.getByTestId('workspace-browser-history-item')
+    const clearDataItem = screen.getByTestId('workspace-browser-clear-data-item')
+    expect(
+      historyItem.compareDocumentPosition(clearDataItem) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+
+    fireEvent.click(historyItem)
+    expect(navigationMocks.navigateTo).toHaveBeenCalledWith('/settings/browser/history')
   })
 })
