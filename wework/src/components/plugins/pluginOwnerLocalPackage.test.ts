@@ -4,6 +4,7 @@ import type { InstalledPluginItem } from './PluginManagementRows'
 import {
   findPackableCreatedPlugin,
   isPackableCreatedPlugin,
+  marketplaceItemOwnsLocalCreatedPackage,
   resolveContinueEditingPluginKey,
 } from './pluginOwnerLocalPackage'
 
@@ -85,6 +86,32 @@ describe('pluginOwnerLocalPackage', () => {
     expect(findPackableCreatedPlugin([market, created], ['dev-tools', 'Dev Tools'])).toEqual(
       created
     )
+  })
+
+  test('does not bind local created packages to recipient or catalog listings', () => {
+    expect(
+      marketplaceItemOwnsLocalCreatedPackage({
+        accessRole: 'recipient',
+        latestReleaseId: 12,
+      })
+    ).toBe(false)
+    expect(
+      marketplaceItemOwnsLocalCreatedPackage({
+        accessRole: 'catalog',
+        latestReleaseId: 12,
+      })
+    ).toBe(false)
+    expect(
+      marketplaceItemOwnsLocalCreatedPackage({
+        accessRole: 'owner',
+        latestReleaseId: 12,
+      })
+    ).toBe(true)
+    expect(
+      marketplaceItemOwnsLocalCreatedPackage({
+        latestReleaseId: null,
+      })
+    ).toBe(true)
   })
 
   test('continue-editing prefers packable key and falls back to personal owner listing name', () => {

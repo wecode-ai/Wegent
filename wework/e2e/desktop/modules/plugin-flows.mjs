@@ -50,6 +50,7 @@ import {
 
 import {
   captureVerificationScreenshot,
+  currentRuntimeTaskFromDebugSnapshot,
   waitForControlValueIncludes,
   waitForWorkbenchDebugState,
 } from './workspace-flows.mjs'
@@ -357,6 +358,27 @@ async function openOfficialPluginChat(control, installSelector) {
   const trySelector = `[data-testid="plugin-marketplace-try-${pluginId}"]`
   const detailTrySelector = `[data-testid="plugin-detail-toggle-${pluginId}"]`
   const installedStripSelector = `[data-testid="plugins-installed-strip-item-${pluginId}"]`
+  const activeTabSelector = '[data-testid^="workspace-tab-select-"][aria-selected="true"]'
+  const activeTabTestId = await control.command('getAttribute', activeTabSelector, {
+    value: 'data-testid',
+  })
+  assert.ok(activeTabTestId, 'The plugin trial did not expose its active workspace tab')
+  const activeTabId = activeTabTestId.replace('workspace-tab-select-', '')
+  await control.command('click', '[data-testid="workspace-tab-add"]')
+  await control.command('click', '[data-testid="workspace-tab-add-task"]')
+  await control.command(
+    'waitFor',
+    '[data-testid^="workspace-tab-select-task-"][aria-selected="true"]',
+    {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  await control.command('click', `[data-testid="workspace-tab-select-${activeTabId}"]`)
+  await control.command(
+    'waitFor',
+    `[data-testid="workspace-tab-select-${activeTabId}"][aria-selected="true"]`,
+    { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+  )
   await control.command('click', '[data-testid="plugins-button"]')
   await control.command('waitFor', '[data-testid="plugins-workspace"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -415,10 +437,12 @@ async function createOfficialPluginTask({ control, installSelector, skillPath })
     errorLabel: 'The sent plugin reference degraded to its plain-text mention',
   })
   await control.awaitScenarioRequestCount('official_plugin', 2, WORKBENCH_READY_TIMEOUT_MS)
-  const taskId = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).workbench
-    ?.currentRuntimeTask?.taskId
-  assert.ok(taskId, 'The official plugin conversation did not expose its task ID')
-  return taskId
+  const taskSnapshot = await waitForWorkbenchDebugState(
+    control,
+    snapshot => Boolean(currentRuntimeTaskFromDebugSnapshot(snapshot)?.taskId),
+    'The official plugin conversation did not expose its task ID'
+  )
+  return currentRuntimeTaskFromDebugSnapshot(taskSnapshot).taskId
 }
 
 async function verifyPluginLifecycle({ control, fixture }) {
@@ -948,10 +972,14 @@ async function verifySkillMentionRendering({ control, fixture }) {
     text: QUALIFIED_SKILL_MENTION_COMPLETION_TEXT,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  const qualifiedSkillTaskId = JSON.parse(
-    await control.command('getWorkbenchDebugSnapshot', 'body')
-  ).workbench?.currentRuntimeTask?.taskId
-  assert.ok(qualifiedSkillTaskId, 'The qualified skill conversation did not expose its task ID')
+  const qualifiedSkillTaskSnapshot = await waitForWorkbenchDebugState(
+    control,
+    snapshot => Boolean(currentRuntimeTaskFromDebugSnapshot(snapshot)?.taskId),
+    'The qualified skill conversation did not expose its task ID'
+  )
+  const qualifiedSkillTaskId = currentRuntimeTaskFromDebugSnapshot(
+    qualifiedSkillTaskSnapshot
+  ).taskId
   const officialPluginTaskRow = `[data-testid="runtime-local-task-row-${officialPluginTaskId}"]`
   const qualifiedSkillTaskRow = `[data-testid="runtime-local-task-row-${qualifiedSkillTaskId}"]`
   await control.command('waitFor', officialPluginTaskRow, {

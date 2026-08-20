@@ -4,17 +4,15 @@
 
 """Structural checks on Mermaid diagrams in generated Markdown.
 
-Diagrams are rendered in the browser, so a malformed one spoils a figure rather than a
-page. Withholding an otherwise good page over it would cost more than it saves, so
-these findings are returned to the writing agent as warnings and never block
-publication.
+Diagrams are rendered in the browser, so the checks intentionally report only errors
+that are definitely broken. Those errors reject publication: the writer receives the
+named pages and can correct them before readers see the version.
 
-The checks are structural on purpose: they catch the mistakes a model actually makes —
-a misspelled diagram type, an unclosed fence, unbalanced brackets — without running
-Mermaid itself, which is a JavaScript parser this service cannot host. What they
-cannot do is certify that a diagram renders; they only report what is definitely
-wrong. The warning contract is stable, so swapping in a real parser later would not
-change the callers.
+The checks remain structural — this service cannot host Mermaid's JavaScript renderer.
+They catch the mistakes a model actually makes, including a misspelled diagram type,
+an unclosed fence, unbalanced brackets, and a flowchart node that repeats a subgraph
+ID. They cannot certify every diagram renders. The warning contract is stable, so a
+real parser can be added later without changing the callers.
 """
 
 import re
@@ -73,6 +71,15 @@ KNOWN_DIAGRAM_TYPES: frozenset[str] = frozenset(
 )
 
 BRACKET_PAIRS = {"(": ")", "[": "]", "{": "}"}
+
+# Flowcharts use one ID namespace for nodes and subgraphs. When a node repeats its
+# containing subgraph's ID, Mermaid's Dagre layout tries to make that node its own
+# parent and fails only after parsing with "would create a cycle".
+FLOWCHART_SUBGRAPH = re.compile(r"^\s*subgraph\s+([A-Za-z_][A-Za-z0-9_-]*)\b", re.I)
+FLOWCHART_LABELED_NODE = re.compile(
+    r"\b([A-Za-z_][A-Za-z0-9_-]*)\s*(?:\[[^\]]*\]|\([^)]*\)|\{[^}]*\})"
+)
+FLOWCHART_STANDALONE_NODE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_-]*)\s*$")
 
 # Diagram types where brackets delimit nodes, so an unbalanced one is a real mistake.
 # The check is limited to these because elsewhere brackets are not delimiters at all:
@@ -158,6 +165,67 @@ def _unbalanced_bracket(body: Sequence[str]) -> str:
     return ""
 
 
+def _flowchart_id_collision(body: Sequence[str]) -> str:
+    """Find a node that reuses a subgraph's ID.
+
+    This is deliberately narrow. Mermaid permits a subgraph to appear in an edge,
+    so treating every reference as a node would reject valid diagrams. A labeled or
+    standalone declaration, on the other hand, creates the colliding graph node.
+    """
+    subgraphs = {
+        match.group(1)
+        for line in body
+        if (match := FLOWCHART_SUBGRAPH.match(line)) is not None
+    }
+    if not subgraphs:
+        return ""
+
+    for line in body:
+        if FLOWCHART_SUBGRAPH.match(line):
+            continue
+        declaration = _flowchart_declaration_text(line)
+        node_ids = {
+            match.group(1) for match in FLOWCHART_LABELED_NODE.finditer(declaration)
+        }
+        standalone = FLOWCHART_STANDALONE_NODE.match(declaration)
+        if standalone:
+            node_ids.add(standalone.group(1))
+        collision = next(
+            (node_id for node_id in node_ids if node_id in subgraphs), None
+        )
+        if collision:
+            return (
+                f"node id '{collision}' duplicates a subgraph id; Mermaid would "
+                "make the node its own parent"
+            )
+    return ""
+
+
+def _flowchart_declaration_text(line: str) -> str:
+    """Remove comments and quoted labels before looking for node declarations."""
+    result: list[str] = []
+    quote: str | None = None
+    index = 0
+    while index < len(line):
+        character = line[index]
+        if quote:
+            if character == "\\":
+                index += 2
+                continue
+            if character == quote:
+                quote = None
+            index += 1
+            continue
+        if line.startswith("%%", index):
+            break
+        if character in {"'", '"'}:
+            quote = character
+        else:
+            result.append(character)
+        index += 1
+    return "".join(result)
+
+
 def _iter_mermaid_blocks(markdown: str) -> Iterator[tuple[int, List[str], bool]]:
     """Yield Mermaid fences using the same nesting rules as structural checks."""
     lines = markdown.splitlines()
@@ -233,6 +301,11 @@ def check_mermaid_blocks(markdown: str) -> List[MermaidWarning]:
 
         if diagram_type in BRACKET_CHECKED_TYPES:
             problem = _unbalanced_bracket(body)
+            if problem:
+                warnings.append(MermaidWarning(opened_at, problem))
+
+        if diagram_type in {"flowchart", "graph"}:
+            problem = _flowchart_id_collision(body)
             if problem:
                 warnings.append(MermaidWarning(opened_at, problem))
 

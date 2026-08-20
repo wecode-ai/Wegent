@@ -118,6 +118,12 @@ def test_component_hierarchies_have_substantive_overview_pages(system_prompt: st
     assert "do not invent hierarchy" in normalized_prompt
 
 
+def test_a_single_topic_does_not_become_a_one_page_section(system_prompt: str) -> None:
+    assert "at least two independent child pages" in system_prompt
+    assert "one topical page" in system_prompt
+    assert "generic suffix" in system_prompt
+
+
 def test_high_value_relationships_require_diagram_consideration(
     system_prompt: str,
 ) -> None:
@@ -133,6 +139,12 @@ def test_high_value_relationships_require_diagram_consideration(
     assert "primary boundary or flow" in normalized_prompt
     assert "abstraction level" in system_prompt
     assert "branching, state transition" in normalized_prompt
+
+
+def test_flowchart_node_and_subgraph_ids_must_be_distinct(system_prompt: str) -> None:
+    assert "node and subgraph IDs share one namespace" in system_prompt
+    assert "rpc_group" in system_prompt
+    assert "parent cycle" in system_prompt
 
 
 def test_sensitive_sources_and_values_are_forbidden(system_prompt: str):

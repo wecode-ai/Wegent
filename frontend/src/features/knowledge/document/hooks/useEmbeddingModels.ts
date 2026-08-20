@@ -13,7 +13,8 @@ import { modelApis, UnifiedModel } from '@/apis/models'
  */
 export function useEmbeddingModels(
   scope?: 'personal' | 'group' | 'organization' | 'all',
-  groupName?: string
+  groupName?: string,
+  publicOnly = false
 ) {
   const [models, setModels] = useState<UnifiedModel[]>([])
   const [loading, setLoading] = useState(true)
@@ -33,7 +34,7 @@ export function useEmbeddingModels(
         groupName, // groupName
         'embedding' // modelCategoryType - filter by embedding models
       )
-      const data = response?.data || []
+      const data = (response?.data || []).filter(model => !publicOnly || model.type === 'public')
       // Sort by type priority based on scope, then by name
       // - Personal scope: user > public
       // - Group scope: group > public
@@ -54,7 +55,7 @@ export function useEmbeddingModels(
     } finally {
       setLoading(false)
     }
-  }, [scope, groupName])
+  }, [scope, groupName, publicOnly])
 
   useEffect(() => {
     fetchModels()

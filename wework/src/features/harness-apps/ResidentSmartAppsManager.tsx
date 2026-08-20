@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { harnessAppsApi } from '@/api/local/harnessApps'
 import {
+  harnessAppRoute,
   takeHarnessAppProxyToken,
   takeHarnessAppContextToken,
   openHarnessAppTab,
@@ -29,6 +30,11 @@ export function ResidentSmartAppsManager({ enabled }: ResidentSmartAppsManagerPr
     () => listLocalHarnessModelOptions('opencode', projectChat.models),
     [projectChat.models]
   )
+  const openResidentAppTab = (installation: Parameters<typeof openHarnessAppTab>[1]) => {
+    const tabs = workspaceTabsRef.current
+    if (tabs.tabs.some(tab => tab.contentRoute === harnessAppRoute(installation.id))) return
+    openHarnessAppTab(tabs, installation)
+  }
 
   useEffect(() => {
     workspaceTabsRef.current = workspaceTabs
@@ -113,7 +119,7 @@ export function ResidentSmartAppsManager({ enabled }: ResidentSmartAppsManagerPr
             try {
               if (cancelled) return
               registerHarnessAppTab(installation)
-              openHarnessAppTab(workspaceTabsRef.current, installation)
+              openResidentAppTab(installation)
               completedIds.current.add(installation.id)
             } catch (error) {
               console.warn(
@@ -152,7 +158,7 @@ export function ResidentSmartAppsManager({ enabled }: ResidentSmartAppsManagerPr
             appStarted = true
             if (cancelled) throw new Error('Resident Smart app restoration was cancelled')
             registerHarnessAppTab(running)
-            openHarnessAppTab(workspaceTabsRef.current, running)
+            openResidentAppTab(running)
             await storeHarnessAppProxyToken(installation.id, launch.proxyToken)
             if (contextToken) await storeHarnessAppContextToken(installation.id, contextToken)
             completedIds.current.add(installation.id)
