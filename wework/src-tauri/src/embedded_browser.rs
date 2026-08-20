@@ -1393,10 +1393,15 @@ pub(super) fn with_history_store<T>(
     action(&mut store, &path)
 }
 
-fn history_record_visit(app: &tauri::AppHandle, state: &EmbeddedBrowserState, url: &str) {
+fn history_record_visit(
+    app: &tauri::AppHandle,
+    state: &EmbeddedBrowserState,
+    url: &str,
+    title: Option<String>,
+) {
     let now = current_unix_millis() as i64;
     let result = with_history_store(app, state, |store, path| {
-        store.record_visit(url, now);
+        store.record_visit(url, now, title);
         store.persist(path)
     });
     if let Err(error) = result {
@@ -1879,6 +1884,15 @@ pub async fn embedded_browser_open(
                     &native_label_for_navigation,
                     &label_for_navigation,
                 );
+                if matches!(url.scheme(), "http" | "https") {
+                    // Drop the previous document's title so a title-less page does
+                    // not inherit it when the visit is recorded at load finish.
+                    let _ = update_entry_for_native_label(
+                        &state,
+                        &native_label_for_navigation,
+                        |entry| entry.title = None,
+                    );
+                }
                 log_embedded_browser_diagnostic(
                     &state,
                     &owner,
@@ -2003,17 +2017,26 @@ pub async fn embedded_browser_open(
                 if let Some(loaded_url) =
                     loaded_url.and_then(|url| loaded_browser_url(&load_state_handle, &url))
                 {
-                    if loaded_url.starts_with("http://") || loaded_url.starts_with("https://") {
-                        history_record_visit(&app_for_load, &load_state_handle, &loaded_url);
-                    }
+                    let recordable =
+                        loaded_url.starts_with("http://") || loaded_url.starts_with("https://");
+                    let mut document_title = None;
                     let _ = update_entry_for_native_label(
                         &load_state_handle,
                         &native_label_for_load,
                         |entry| {
+                            document_title = entry.title.clone();
                             entry.url = Some(loaded_url.clone());
-                            entry.loaded_url = Some(loaded_url);
+                            entry.loaded_url = Some(loaded_url.clone());
                         },
                     );
+                    if recordable {
+                        history_record_visit(
+                            &app_for_load,
+                            &load_state_handle,
+                            &loaded_url,
+                            document_title,
+                        );
+                    }
                     emit_page_state_change(
                         &app_for_load,
                         &load_state_handle,

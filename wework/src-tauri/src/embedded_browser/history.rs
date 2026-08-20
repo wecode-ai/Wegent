@@ -36,16 +36,17 @@ pub struct EmbeddedBrowserHistoryStore {
 }
 
 impl EmbeddedBrowserHistoryStore {
-    pub fn record_visit(&mut self, url: &str, visit_time_ms: i64) {
+    pub fn record_visit(&mut self, url: &str, visit_time_ms: i64, title: Option<String>) {
         let id = format!(
             "history-{}-{}",
             visit_time_ms,
             HISTORY_ID_SEQUENCE.fetch_add(1, Ordering::Relaxed)
         );
+        let title = title.filter(|value| !value.is_empty());
         self.entries.push_back(EmbeddedBrowserHistoryEntry {
             id,
             url: url.to_string(),
-            title: None,
+            title,
             visit_time_ms,
         });
         while self.entries.len() > MAX_HISTORY_ENTRIES {
@@ -156,7 +157,25 @@ mod tests {
     use super::*;
 
     fn visit(store: &mut EmbeddedBrowserHistoryStore, url: &str, visit_time_ms: i64) {
-        store.record_visit(url, visit_time_ms);
+        store.record_visit(url, visit_time_ms, None);
+    }
+
+    #[test]
+    fn records_visit_with_title_and_drops_empty_titles() {
+        let mut store = EmbeddedBrowserHistoryStore::default();
+        store.record_visit("https://a.example", 1000, Some("Example".to_string()));
+        store.record_visit("https://b.example", 2000, Some(String::new()));
+        let results = store.search("", None, 0, 100);
+        assert_eq!(results[0].title, None);
+        assert_eq!(results[1].title.as_deref(), Some("Example"));
+    }
+
+    #[test]
+    fn titled_entries_are_not_backfilled_again() {
+        let mut store = EmbeddedBrowserHistoryStore::default();
+        store.record_visit("https://a.example", 1000, Some("Example".to_string()));
+        store.backfill_title("https://a.example", "Other");
+        assert_eq!(store.search("", None, 0, 100)[0].title.as_deref(), Some("Example"));
     }
 
     #[test]
@@ -292,7 +311,7 @@ mod tests {
         let path = std::env::temp_dir().join("wework-browser-history-missing.json");
         let mut store = EmbeddedBrowserHistoryStore::default();
         store.load(&path).unwrap();
-        store.record_visit("https://a.example", 1000);
+        store.record_visit("https://a.example", 1000, None);
         store.load(&path).unwrap();
         assert_eq!(store.search("", None, 0, 100).len(), 1);
     }
