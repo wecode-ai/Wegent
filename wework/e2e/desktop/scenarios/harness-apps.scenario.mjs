@@ -31,6 +31,15 @@ async function setExperimentalFeatures(control, enabled, uiTimeoutMs) {
   )
 }
 
+async function waitForElementCount(control, selector, expected, timeoutMs, message) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    if (Number(await control.command('getElementCount', selector)) === expected) return
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(message)
+}
+
 async function createHarnessPackage(resultDir) {
   const packagePath = join(resultDir, 'dsh-e2e-smoke.zip')
   const zip = new JSZip()
@@ -231,15 +240,25 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       await captureScreenshot(control, 'harness-apps-06-model-and-resident.png', 'body')
 
       await control.command('click', `[data-testid="harness-app-start-${INSTALLATION_ID}"]`)
-      await control.command('waitFor', '[data-testid="smart-app-launch-token"]', {
-        timeoutMs: 120_000,
+      await control.command('waitFor', `[data-testid="harness-app-launch-${INSTALLATION_ID}"]`, {
+        timeoutMs: 30_000,
       })
-      await captureScreenshot(control, 'harness-apps-07-tab-launch-motion.png', 'body')
+      await captureScreenshot(control, 'harness-apps-07-tab-starting.png', 'body')
       const appSurface = `[data-testid="app-iframe-harness-${INSTALLATION_ID}"]`
-      const nativeSnapshot = await control.command('captureEmbeddedBrowser', appSurface, {
-        target: `[data-testid="workspace-tab-select-${managementTabId}"]`,
-        text: APP_ROUTE,
+      await control.command('waitFor', appSurface, {
         timeoutMs: 600_000,
+      })
+      const appTabId = await control.command('getAttribute', appSurface, {
+        value: 'data-workspace-tab-id',
+      })
+      const appWebviewLabel = await control.command('getAttribute', appSurface, {
+        value: 'data-embedded-browser-label',
+      })
+      assert.ok(appTabId, 'Harness app did not expose its workspace tab ID')
+      assert.ok(appWebviewLabel, 'Harness app did not expose its native WebView label')
+      const nativeSnapshot = await control.command('captureEmbeddedBrowser', appSurface, {
+        text: APP_ROUTE,
+        timeoutMs: 30_000,
       })
       assert.ok(
         nativeSnapshot.startsWith('data:image/png;base64,'),
@@ -249,11 +268,83 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         join(resultDir, 'harness-apps-08-native-page.png'),
         Buffer.from(nativeSnapshot.slice('data:image/png;base64,'.length), 'base64')
       )
-
+      const harnessStateKey = '__weworkHarnessTabState'
+      const harnessStateValue = `preserved-${Date.now()}`
+      await control.command('setEmbeddedBrowserWindowValue', 'body', {
+        value: JSON.stringify({
+          key: harnessStateKey,
+          label: appWebviewLabel,
+          value: harnessStateValue,
+        }),
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', `[data-testid="workspace-tab-select-${managementTabId}"]`)
+      await control.command(
+        'waitFor',
+        `[data-testid="workspace-tab-content-${managementTabId}"][aria-hidden="false"]`,
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await control.command('click', `[data-testid="workspace-tab-select-${appTabId}"]`)
+      await control.command(
+        'waitFor',
+        `[data-testid="workspace-tab-content-${appTabId}"][aria-hidden="false"]`,
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      assert.equal(
+        await control.command('getEmbeddedBrowserWindowValue', 'body', {
+          value: JSON.stringify({
+            key: harnessStateKey,
+            label: appWebviewLabel,
+          }),
+          timeoutMs: uiTimeoutMs,
+        }),
+        harnessStateValue,
+        'Switching away from and back to a Harness app reset its in-memory page state'
+      )
+      await control.command('click', `[data-testid="workspace-tab-select-${managementTabId}"]`)
+      await control.command(
+        'waitFor',
+        `[data-testid="workspace-tab-content-${managementTabId}"][aria-hidden="false"]`,
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
       await control.command('waitFor', `[data-testid="harness-app-stop-${INSTALLATION_ID}"]`, {
         timeoutMs: uiTimeoutMs,
       })
       await captureScreenshot(control, 'harness-apps-09-running.png', 'body')
+      await control.command('click', `[data-testid="workspace-tab-close-${appTabId}"]`)
+      await waitForElementCount(
+        control,
+        `[data-testid="app-iframe-harness-${INSTALLATION_ID}"]`,
+        0,
+        uiTimeoutMs,
+        'Closing a running Harness app tab left its app surface mounted'
+      )
+      await control.command('click', `[data-testid="harness-app-open-${INSTALLATION_ID}"]`)
+      await control.command('waitFor', `[data-testid="harness-app-animation-loading-app"]`, {
+        timeoutMs: uiTimeoutMs,
+      })
+      await captureScreenshot(control, 'harness-apps-09a-reopening.png', 'body')
+      await control.command('waitFor', appSurface, {
+        timeoutMs: 30_000,
+      })
+      const reopenedAppTabId = await control.command('getAttribute', appSurface, {
+        value: 'data-workspace-tab-id',
+      })
+      assert.ok(reopenedAppTabId, 'Reopened Harness app did not expose its workspace tab ID')
+      await control.command('click', `[data-testid="workspace-tab-select-${managementTabId}"]`)
+      await control.command(
+        'waitFor',
+        `[data-testid="workspace-tab-content-${managementTabId}"][aria-hidden="false"]`,
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
       await control.command('click', `[data-testid="harness-app-stop-${INSTALLATION_ID}"]`)
       await control.command('waitFor', `[data-testid="harness-app-start-${INSTALLATION_ID}"]`, {
         timeoutMs: 30_000,
@@ -288,7 +379,7 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         {
           target: `[data-testid="workspace-tab-select-${managementTabId}"]`,
           text: APP_ROUTE,
-          timeoutMs: 600_000,
+          timeoutMs: 30_000,
         }
       )
       assert.ok(

@@ -3,19 +3,26 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import logging
+import mimetypes
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List
 
 from llama_index.core import Document, SimpleDirectoryReader
+from llama_index.core.schema import BaseNode
 
 from knowledge_engine.embedding.capabilities import embed_model_supports_image_input
+from knowledge_engine.excel import EXCEL_SOURCE_EXTENSIONS
 from knowledge_engine.ingestion.pipeline import (
     build_ingestion_result,
     prepare_ingestion,
 )
-from knowledge_engine.storage.base import BaseStorageBackend
+from knowledge_engine.readers import ExcelSourceReader
+from knowledge_engine.storage.base import (
+    BaseStorageBackend,
+    resolve_display_text,
+)
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
 from knowledge_engine.text_sanitizer import sanitize_text_for_indexing
 from shared.telemetry.decorators import add_span_event
@@ -33,6 +40,7 @@ SAFE_METADATA_KEYS = {
     "last_modified_date",
     "page_label",
     "page_number",
+    "sheet_name",
 }
 
 
@@ -53,6 +61,13 @@ def sanitize_documents(
 ) -> List[Document]:
     """Sanitize document text before chunking."""
     for doc in documents:
+        if "sheet_name" in doc.metadata:
+            # Canonical Excel row text must survive verbatim: the row-aware
+            # splitter parses it strictly and any rewrite fails indexing.
+            # Presence, not truthiness: an empty sheet name is still an
+            # Excel document, and sanitizer rewrites of data-URL-looking
+            # cell values would fail the strict parser.
+            continue
         result = sanitize_text_for_indexing(
             doc.text,
             sanitize_inline_images=sanitize_inline_images,
@@ -69,6 +84,56 @@ def sanitize_documents(
         )
         doc.set_content(result.text)
 
+    return documents
+
+
+def resolve_extension(suffix: str | None, default: str | None = None) -> str | None:
+    """Resolve the effective extension at one place; empty means absent.
+
+    Both arguments normalize to lowercase: every consumer dispatches on the
+    resolved value, so an uppercase default must not leak dispatch decisions
+    that disagree with what a normalized lookup would find.
+    """
+    normalized = (suffix or "").lower()
+    return normalized or (default or "").lower() or None
+
+
+def load_source_documents(
+    file_path: str,
+    file_extension: str | None,
+) -> List[Document]:
+    """Load source documents with the reader chosen by the resolved extension.
+
+    The caller resolves the extension once and passes it down; reader and
+    splitter dispatch share that single fact, so a suffixless file whose
+    content the caller declared as Excel is still read by the structure-
+    aware reader instead of being decoded as raw bytes.
+    """
+    if file_extension in EXCEL_SOURCE_EXTENSIONS:
+        documents = ExcelSourceReader().load_data(Path(file_path))
+    else:
+        documents = SimpleDirectoryReader(
+            input_files=[file_path],
+        ).load_data()
+    # The reader-direct branch skips SimpleDirectoryReader's file metadata;
+    # restore the same fields (dates in local time, like the reader's) on
+    # every document so sanitize_metadata keeps one shape regardless of
+    # which reader produced it.
+    stat = Path(file_path).stat()
+    file_metadata = {
+        "file_path": str(file_path),
+        "file_name": Path(file_path).name,
+        "file_type": mimetypes.guess_type(str(file_path))[0],
+        "file_size": stat.st_size,
+        "creation_date": datetime.fromtimestamp(stat.st_ctime).strftime("%Y-%m-%d"),
+        "last_modified_date": datetime.fromtimestamp(stat.st_mtime).strftime(
+            "%Y-%m-%d"
+        ),
+    }
+    for document in documents:
+        for key, value in file_metadata.items():
+            if value is not None:
+                document.metadata.setdefault(key, value)
     return documents
 
 
@@ -95,10 +160,17 @@ class DocumentIndexer:
         chunk_metadata: ChunkMetadata,
         **kwargs,
     ) -> Dict:
-        documents = SimpleDirectoryReader(input_files=[file_path]).load_data()
+        # Resolve the extension once at the entry: the actual file suffix
+        # wins and the constructor value is only a default. Reader and
+        # splitter both consume this single resolved fact, so dispatch
+        # cannot disagree and a reused indexer never leaks state across
+        # files.
+        file_extension = resolve_extension(Path(file_path).suffix, self.file_extension)
+        documents = load_source_documents(file_path, file_extension)
         return self._index_documents(
             documents=documents,
             chunk_metadata=chunk_metadata,
+            file_extension=file_extension,
             **kwargs,
         )
 
@@ -109,9 +181,12 @@ class DocumentIndexer:
         chunk_metadata: ChunkMetadata,
         **kwargs,
     ) -> Dict:
+        # Same precedence as index_document: the caller-declared extension
+        # describes the bytes and the constructor value is only a default.
+        effective_extension = resolve_extension(file_extension, self.file_extension)
         # XMind files require special parsing: extract content.json from the ZIP
         # archive and convert the topic tree to Markdown before indexing.
-        if file_extension.lower() == ".xmind":
+        if effective_extension == ".xmind":
             markdown_text = parse_xmind_to_markdown(binary_data)
             filename_without_ext = Path(chunk_metadata.source_file).stem
             documents = [
@@ -123,18 +198,19 @@ class DocumentIndexer:
             return self._index_documents(
                 documents=documents,
                 chunk_metadata=chunk_metadata,
+                file_extension=effective_extension,
                 **kwargs,
             )
 
         with tempfile.NamedTemporaryFile(
-            suffix=file_extension,
+            suffix=effective_extension or "",
             delete=False,
         ) as tmp_file:
             tmp_file.write(binary_data)
             tmp_file_path = tmp_file.name
 
         try:
-            documents = SimpleDirectoryReader(input_files=[tmp_file_path]).load_data()
+            documents = load_source_documents(tmp_file_path, effective_extension)
             filename_without_ext = Path(chunk_metadata.source_file).stem
             for doc in documents:
                 doc.metadata["filename"] = filename_without_ext
@@ -142,6 +218,7 @@ class DocumentIndexer:
             return self._index_documents(
                 documents=documents,
                 chunk_metadata=chunk_metadata,
+                file_extension=effective_extension,
                 **kwargs,
             )
         finally:
@@ -158,6 +235,7 @@ class DocumentIndexer:
         self,
         documents: List[Document],
         chunk_metadata: ChunkMetadata,
+        file_extension: str | None = None,
         **kwargs,
     ) -> Dict:
         add_span_event(
@@ -183,20 +261,21 @@ class DocumentIndexer:
         ingestion_result = build_ingestion_result(
             documents=documents,
             splitter_config=self.splitter_config,
-            file_extension=self.file_extension,
+            file_extension=file_extension,
             embed_model=self.embed_model,
         )
         parser_subtype = ingestion_result.parser_subtype
 
-        if ingestion_result.parent_nodes is not None:
-            chunk_metadata.apply_to_nodes(ingestion_result.parent_nodes)
+        parent_nodes = ingestion_result.parent_nodes
+        nodes = ingestion_result.index_nodes
+
+        if parent_nodes is not None:
+            chunk_metadata.apply_to_nodes(parent_nodes)
             self.storage_backend.save_parent_nodes(
                 knowledge_id=chunk_metadata.knowledge_id,
-                parent_nodes=ingestion_result.parent_nodes,
+                parent_nodes=parent_nodes,
                 **kwargs,
             )
-
-        nodes = ingestion_result.index_nodes
 
         chunk_metadata.apply_to_nodes(nodes)
 
@@ -235,7 +314,7 @@ class DocumentIndexer:
 
     def _build_chunks_metadata(
         self,
-        nodes: List,
+        nodes: List[BaseNode],
         *,
         parser_subtype: str | None = None,
     ) -> Dict[str, Any]:
@@ -243,7 +322,10 @@ class DocumentIndexer:
         current_position = 0
 
         for idx, node in enumerate(nodes):
-            text = node.text if hasattr(node, "text") else str(node)
+            text = resolve_display_text(
+                node.metadata,
+                fallback=node.text or "",
+            )
             text_length = len(text)
             token_count = text_length // 4
             items.append(

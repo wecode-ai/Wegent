@@ -127,6 +127,19 @@ describe('findMarketplaceItemForInstalled', () => {
     expect(findMarketplaceItemForInstalled(plugin, items)?.id).toBe('dingtalk@wework')
   })
 
+  test('matches a wegent store directory to the catalog plugin key', () => {
+    const items = [
+      marketplaceItem({ id: 1, name: 'wegent', latestReleaseId: 2 }),
+      marketplaceItem({ id: 267250, name: 'wegent-sites', latestReleaseId: 6 }),
+    ]
+    const plugin = installedItem({
+      id: '267250-wegent-wegent-sites-0.1.6',
+      pluginKey: '267250-wegent-wegent-sites-0.1.6',
+      marketplace: 'wegent',
+    })
+    expect(findMarketplaceItemForInstalled(plugin, items)?.id).toBe(267250)
+  })
+
   test('returns null for personal plugins with no catalog row', () => {
     const items = [marketplaceItem({ id: 4, name: 'dingtalk', latestReleaseId: 6 })]
     const plugin = installedItem({

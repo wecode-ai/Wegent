@@ -686,8 +686,13 @@ async fn handle_for_token(
     };
     let request_body =
         prepare_model_switch_request(&upstream, request_body, model_routing.model_switched)?;
-    let request_body =
-        vision::replace_images_with_descriptions(vision_sidecar.as_ref(), &request_body).await?;
+    let conversation_id = request_thread_identity(&request_body).map(|identity| identity.thread_id);
+    let request_body = vision::replace_images_with_descriptions(
+        vision_sidecar.as_ref(),
+        conversation_id.as_deref(),
+        &request_body,
+    )
+    .await?;
     let (request_body, conversion, expanded_browser_tools) = prepare_request_with_history(
         &upstream.api_format,
         upstream.responses_tool_capabilities(),

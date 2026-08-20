@@ -1,25 +1,43 @@
+import { useState } from 'react'
 import { Boxes, Download, PackageCheck, WandSparkles } from 'lucide-react'
 import { SmartAppsSectionNav } from '@/components/smart-apps/SmartAppsSectionNav'
 import { Button } from '@/components/ui/button'
 import { queuePluginReferenceTrial } from '@/features/plugins/pluginTrial'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
+import { ensureBundledPluginInstalled } from '@/tauri/localExecutor'
 
 export function SmartAppsMarketplacePage() {
   const { t } = useTranslation('common')
+  const [creating, setCreating] = useState(false)
+  const [createError, setCreateError] = useState<string | null>(null)
 
-  function createSmartApp() {
-    queuePluginReferenceTrial({
-      pluginName: 'smart-app-builder',
-      marketplaceName: 'wework-personal',
-      displayName: t('workbench.smart_apps_builder_name', '智能应用开发助手'),
-      prompt: t(
-        'workbench.smart_apps_builder_prompt',
-        '帮我创建一个智能应用，完成 DSH 环境准备、插件检索与拼装、内置浏览器测试、打包和本机安装。'
-      ),
-      openInNewChat: true,
-    })
-    navigateTo('/')
+  async function createSmartApp() {
+    if (creating) return
+    setCreating(true)
+    setCreateError(null)
+    try {
+      await ensureBundledPluginInstalled('smart-app-builder')
+      const queued = queuePluginReferenceTrial({
+        pluginName: 'smart-app-builder',
+        marketplaceName: 'wework-personal',
+        displayName: t('workbench.smart_apps_builder_name', '智能应用开发助手'),
+        prompt: t(
+          'workbench.smart_apps_builder_prompt',
+          '帮我创建一个智能应用，完成 DSH 环境准备、插件检索与拼装、内置浏览器测试、打包和本机安装。'
+        ),
+        openInNewChat: true,
+      })
+      if (!queued) throw new Error('Smart App Builder reference could not be queued')
+      navigateTo('/')
+    } catch (error) {
+      console.error('[Wework Smart apps] failed to prepare Smart App Builder', error)
+      setCreateError(
+        t('workbench.smart_apps_builder_install_failed', '智能应用开发助手安装失败，请重试。')
+      )
+    } finally {
+      setCreating(false)
+    }
   }
 
   return (
@@ -45,9 +63,16 @@ export function SmartAppsMarketplacePage() {
           )}
         </p>
         <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
-          <Button size="sm" data-testid="smart-apps-marketplace-create" onClick={createSmartApp}>
+          <Button
+            size="sm"
+            data-testid="smart-apps-marketplace-create"
+            disabled={creating}
+            onClick={() => void createSmartApp()}
+          >
             <WandSparkles className="h-4 w-4" />
-            {t('workbench.smart_apps_create', '创建智能应用')}
+            {creating
+              ? t('workbench.smart_apps_builder_installing', '正在准备创作助手...')
+              : t('workbench.smart_apps_create', '创建智能应用')}
           </Button>
           <Button
             size="sm"
@@ -68,6 +93,11 @@ export function SmartAppsMarketplacePage() {
             {t('workbench.smart_apps_view_installed', '查看已安装')}
           </Button>
         </div>
+        {createError && (
+          <p className="mt-3 text-sm text-destructive" role="alert">
+            {createError}
+          </p>
+        )}
       </section>
     </div>
   )

@@ -72,6 +72,7 @@ interface PluginDetailViewProps {
   onSkillRun?: (skillName: string) => void
   shareRecipient?: boolean
   primaryActionIcon?: 'try' | 'install' | 'none'
+  usableOnThisDevice?: boolean
   deleteActionLabel?: string
   deleteActionDisabled?: boolean
   onDeleteAction?: () => void
@@ -127,7 +128,7 @@ function buildComponentItems(plugin: InstalledPlugin): DetailComponentItem[] {
       componentKey: `app:${item.name}`,
       type: 'app',
       name: item.name,
-      description: item.path,
+      description: item.description || item.path,
       toggleable: false,
     })),
     ...components.agents.map(item => ({
@@ -164,7 +165,9 @@ function buildComponentItems(plugin: InstalledPlugin): DetailComponentItem[] {
       componentKey: `connector:${item.slug}`,
       type: 'connector',
       name: item.slug,
-      description: item.authPolicy === 'on_install' ? '安装和使用此插件需要授权' : '可选应用连接',
+      description:
+        item.description ||
+        (item.authPolicy === 'on_install' ? '安装和使用此插件需要授权' : '可选应用连接'),
       toggleable: false,
     })),
     ...components.lsps.map(item => ({
@@ -467,6 +470,7 @@ export function PluginDetailView({
   onSkillRun,
   shareRecipient = false,
   primaryActionIcon = 'try',
+  usableOnThisDevice,
   deleteActionLabel,
   deleteActionDisabled = false,
   onDeleteAction,
@@ -488,7 +492,7 @@ export function PluginDetailView({
     return () => document.removeEventListener('mousedown', handlePointerDown)
   }, [isActionMenuOpen])
   const raw = plugin.raw
-  const isInstalled = raw.spec.installState === 'installed'
+  const isInstalled = usableOnThisDevice ?? raw.spec.installState === 'installed'
   const hasMaterializedOutdatedRelease =
     raw.spec.installState === 'update_available' &&
     Boolean(raw.status.devices?.some(device => Boolean(device.actualReleaseId)))

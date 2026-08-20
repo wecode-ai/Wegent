@@ -6,7 +6,9 @@
 Smart truncation manager for coordinating truncation strategies.
 """
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import List, Optional, Sequence, Tuple
+
+from knowledge_engine.excel import ExcelSheet
 
 from .base import (
     BaseTruncationStrategy,
@@ -39,11 +41,11 @@ class SmartTruncationManager:
         return self._strategies.get(file_type.lower())
 
     def truncate_excel(
-        self, sheets_data: List[Dict[str, Any]], max_length: Optional[int] = None
+        self, sheets: Sequence[ExcelSheet], max_length: Optional[int] = None
     ) -> Tuple[str, SmartTruncationInfo]:
         """Truncate Excel data."""
         strategy = self._strategies["excel"]
-        return strategy.truncate(sheets_data, max_length or self.config.max_length)
+        return strategy.truncate(sheets, max_length or self.config.max_length)
 
     def truncate_csv(
         self, rows: List[List[str]], max_length: Optional[int] = None

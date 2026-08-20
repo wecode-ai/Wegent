@@ -31,6 +31,14 @@ import { stripAppBasePath } from '@/config/runtime'
 import { AppearanceProvider } from '@/features/appearance'
 import { ChromeTitlebar } from '@/components/topnav/ChromeTitlebar'
 import { AppIframe } from '@/components/topnav/AppIframe'
+import { listenHarnessAppLaunchProgress } from '@/api/local/harnessApps'
+import { HarnessAppLaunchSurface } from '@/features/harness-apps/HarnessAppLaunchSurface'
+import {
+  clearHarnessAppLaunch,
+  harnessAppInstallationIdFromPath,
+  updateHarnessAppLaunchPhase,
+  useHarnessAppLaunchState,
+} from '@/features/harness-apps/harnessAppLaunchState'
 import { useChromeTabs } from '@/components/topnav/useChromeTabs'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { AppUpdateProvider } from '@/features/app-update/AppUpdateProvider'
@@ -209,7 +217,7 @@ interface WorkspaceTabSurfaceProps {
   user: User
 }
 
-function WorkspaceTabSurface({
+export function WorkspaceTabSurface({
   active,
   cloudWebUrl,
   lifecycleStore,
@@ -228,7 +236,10 @@ function WorkspaceTabSurface({
   const iframe = workspaceTabIframe(tab, cloudWebUrl)
   const auxiliaryPage = workspaceTabAuxiliaryPage(tabPath, tabSearch)
   const auxiliaryActive = Boolean(auxiliaryPage)
-  const nativeWorkbenchActive = !iframe && !auxiliaryActive
+  const harnessAppInstallationId = harnessAppInstallationIdFromPath(tabPath)
+  const harnessAppLaunch = useHarnessAppLaunchState(harnessAppInstallationId)
+  const harnessAppLaunchActive = Boolean(harnessAppLaunch)
+  const nativeWorkbenchActive = !iframe && !auxiliaryActive && !harnessAppLaunchActive
   const [surfaceHistory, setSurfaceHistory] = useState(() => ({
     iframe,
     hasMountedProvider: !iframe,
@@ -259,14 +270,20 @@ function WorkspaceTabSurface({
   // Task-scoped browser routing is owned by workbench effects and must remain
   // available while another workspace tab is active.
   const keepTaskRuntimeActive = tab.kind === 'task' && renderWorkbench
+  // App WebViews own in-memory page state that is lost when React Activity
+  // disconnects their effects. Keep the current iframe route connected while
+  // inactive; AppIframe hides the native WebView through its active prop.
+  const keepIframeActive = Boolean(iframe)
   return (
     <WorkspaceTabPortalOwner ownerId={tab.id}>
-      <Activity mode={active || keepTaskRuntimeActive ? 'visible' : 'hidden'}>
+      <Activity mode={active || keepTaskRuntimeActive || keepIframeActive ? 'visible' : 'hidden'}>
         <div
           className={cn(
             'min-h-0 min-w-0 overflow-hidden',
             active ? 'relative h-full' : 'absolute inset-0',
-            !active && keepTaskRuntimeActive && 'pointer-events-none invisible'
+            !active &&
+              (keepTaskRuntimeActive || keepIframeActive) &&
+              'pointer-events-none invisible'
           )}
           data-testid={`workspace-tab-content-${tab.id}`}
           data-workspace-tab-content={tab.id}
@@ -279,6 +296,7 @@ function WorkspaceTabSurface({
               user={user}
               onStartupReadyChange={active && !iframe ? onWorkbenchStartupReadyChange : undefined}
               workspaceTabId={tab.id}
+              consumePluginTrials={active && !iframe}
               syncRemoteProjects={active}
               syncRuntimeTaskLifecycle={active}
             >
@@ -304,13 +322,28 @@ function WorkspaceTabSurface({
               ) : null}
             </WorkbenchProvider>
           ) : null}
+          {harnessAppLaunch ? <HarnessAppLaunchSurface launch={harnessAppLaunch} /> : null}
           {renderedIframe ? (
-            <div className={cn('h-full', !iframe && 'hidden')} aria-hidden={!iframe}>
+            <div
+              className={cn(
+                'absolute inset-0',
+                !iframe && 'hidden',
+                harnessAppLaunchActive && 'pointer-events-none opacity-0'
+              )}
+              aria-hidden={!iframe || harnessAppLaunchActive}
+            >
               <AppIframe
                 active={active && Boolean(iframe)}
                 appKey={renderedIframe.appKey}
+                edgeToEdge={Boolean(harnessAppInstallationId)}
+                onReady={
+                  harnessAppInstallationId
+                    ? () => clearHarnessAppLaunch(harnessAppInstallationId)
+                    : undefined
+                }
                 src={renderedIframe.src}
                 title={renderedIframe.title}
+                waitForContent={Boolean(harnessAppInstallationId)}
                 workspaceTabId={tab.id}
               />
             </div>
@@ -375,6 +408,26 @@ function AppRoutes({
   )
 
   useEffect(() => {
+    if (!isTauriRuntime()) return
+    let disposed = false
+    let unlisten: (() => void) | null = null
+    void listenHarnessAppLaunchProgress(progress => {
+      updateHarnessAppLaunchPhase(progress.installationId, progress.phase)
+    })
+      .then(dispose => {
+        if (disposed) dispose()
+        else unlisten = dispose
+      })
+      .catch(error => {
+        console.error('[Wework] failed to listen for Smart app launch progress', error)
+      })
+    return () => {
+      disposed = true
+      unlisten?.()
+    }
+  }, [])
+
+  useEffect(() => {
     track('feature_opened', {
       feature: isPopoutWindow ? 'popout' : telemetryFeatureForPath(path),
     })
@@ -432,7 +485,7 @@ function AppRoutes({
 
   if (!workspaceTabs) return null
   const residentManagerTabId = enableResidentSmartApps
-    ? findResidentSmartAppsHostTabId(workspaceTabs.tabs)
+    ? findResidentSmartAppsHostTabId(workspaceTabs.tabs, workspaceTabs.activeTabId)
     : undefined
 
   return (

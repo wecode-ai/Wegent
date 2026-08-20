@@ -11,7 +11,8 @@ Images (.jpg, .jpeg, .png, .gif, .bmp, .webp), and any text-based files
 detected via MIME type analysis.
 
 Features smart truncation that preserves document structure:
-- Excel/CSV: Header + sample rows + ellipsis + tail rows
+- Excel: Physical source rows + omission marker + tail rows
+- CSV: Header + sample rows + ellipsis + tail rows
 - PDF: First pages + middle summary + last pages
 - Word: Opening paragraphs + middle summary + closing paragraphs
 - PowerPoint: First/last slides + middle summary
@@ -39,8 +40,8 @@ from app.services.attachment.smart_truncation import (
     SmartTruncationConfig,
     SmartTruncationInfo,
     SmartTruncationManager,
-    TruncationType,
 )
+from knowledge_engine.excel import read_excel_sheets, serialize_excel_sheet_compact
 from shared.utils.image_preprocessor import (
     MAX_MODEL_IMAGE_LONG_EDGE,
     prepare_image_bytes_for_model,
@@ -783,29 +784,11 @@ class DocumentParser:
                     DocumentParseError.LEGACY_XLS,
                 )
 
-            from openpyxl import load_workbook
-
-            excel_file = io.BytesIO(binary_data)
-            wb = load_workbook(excel_file, read_only=True, data_only=True)
-
-            text_parts = []
-            for sheet_name in wb.sheetnames:
-                sheet = wb[sheet_name]
-                sheet_text = [f"--- Sheet: {sheet_name} ---"]
-
-                for row in sheet.iter_rows():
-                    row_values = []
-                    for cell in row:
-                        if cell.value is not None:
-                            row_values.append(str(cell.value))
-                    if row_values:
-                        sheet_text.append(" | ".join(row_values))
-
-                if len(sheet_text) > 1:
-                    text_parts.append("\n".join(sheet_text))
-
-            wb.close()
-            return "\n\n".join(text_parts)
+            return "\n\n".join(
+                serialize_excel_sheet_compact(sheet)
+                for sheet in read_excel_sheets(binary_data)
+                if sheet.rows
+            )
 
         except DocumentParseError:
             raise
@@ -1338,54 +1321,13 @@ class DocumentParser:
                 DocumentParseError.PARSE_FAILED,
             ) from e
 
-    def _load_workbook_with_fallback(self, excel_file: "io.BytesIO") -> "Workbook":
-        """
-        Load an openpyxl workbook with a fallback for corrupted stylesheets.
-
-        Some Excel files contain malformed style data (e.g. invalid Fill objects)
-        that cause openpyxl to raise TypeError during stylesheet parsing.
-        When this happens, retry with stylesheet parsing patched out so that
-        cell data can still be extracted without styles.
-
-        Note: openpyxl.reader.excel imports apply_stylesheet via
-        ``from openpyxl.styles.stylesheet import apply_stylesheet``, so we must
-        patch the name in the *reader* module's namespace, not in the stylesheet
-        module itself.
-        """
-        from openpyxl import load_workbook
-
-        try:
-            return load_workbook(excel_file, read_only=True, data_only=True)
-        except TypeError as e:
-            # Corrupted stylesheet (e.g. "expected <class 'openpyxl.styles.fills.Fill'>")
-            # Retry by monkey-patching apply_stylesheet in the reader module namespace
-            # so that the already-bound local reference is replaced.
-            logger.warning(
-                f"Failed to load Excel stylesheet, retrying without styles: {e}"
-            )
-            import openpyxl.reader.excel as _reader_module
-
-            _original_apply = _reader_module.apply_stylesheet
-
-            def _noop_apply_stylesheet(archive, wb):  # noqa: ANN001, ANN202
-                """Skip stylesheet parsing for files with corrupted style data."""
-                return wb
-
-            _reader_module.apply_stylesheet = _noop_apply_stylesheet
-            try:
-                excel_file.seek(0)
-                return load_workbook(excel_file, read_only=True, data_only=True)
-            finally:
-                # Always restore the original function to avoid side effects
-                _reader_module.apply_stylesheet = _original_apply
-
     def _parse_excel_smart(
         self, binary_data: bytes, extension: str, max_length: int
     ) -> Tuple[str, Optional[TruncationInfo]]:
         """
         Parse Excel file with smart row-based truncation.
 
-        Keeps header rows + sample rows + tail rows, omits middle.
+        Keeps complete leading and trailing rows, omitting the middle.
         """
         try:
             if extension == ".xls":
@@ -1394,36 +1336,13 @@ class DocumentParser:
                     DocumentParseError.LEGACY_XLS,
                 )
 
-            excel_file = io.BytesIO(binary_data)
-            wb = self._load_workbook_with_fallback(excel_file)
-
-            # Extract data per sheet
-            sheets_data = []
-            for sheet_name in wb.sheetnames:
-                sheet = wb[sheet_name]
-                rows = []
-
-                for row in sheet.iter_rows():
-                    row_values = []
-                    for cell in row:
-                        row_values.append(cell.value)
-                    # Keep row even if all values are None (to preserve structure)
-                    if any(v is not None for v in row_values):
-                        rows.append(row_values)
-
-                if rows:
-                    sheets_data.append(
-                        {
-                            "name": sheet_name,
-                            "rows": rows,
-                        }
-                    )
-
-            wb.close()
+            sheets = tuple(
+                sheet for sheet in read_excel_sheets(binary_data) if sheet.rows
+            )
 
             # Apply smart truncation
             text, smart_info = self.truncation_manager.truncate_excel(
-                sheets_data, max_length
+                sheets, max_length
             )
 
             truncation_info = None

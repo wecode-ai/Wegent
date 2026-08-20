@@ -7,6 +7,8 @@ import {
   normalizeModelOptions,
 } from '@/lib/model-ui'
 import { LOCAL_MODEL_SETTINGS_CHANGED_EVENT } from '@/features/model-settings/localModelSettings'
+import { findModelForSelection } from './runtimeContextUsage'
+import { modelSelectionIdentityOptions } from './runtimeModelSelection'
 import { WORKBENCH_MODELS_CHANGED_EVENT } from './workbenchCloudDataEvents'
 import type {
   ModelCompatibilityDisabledReason,
@@ -38,25 +40,14 @@ interface UseWorkbenchModelsOptions {
 
 const DEFAULT_MODEL_SCOPE_KEY = 'default'
 
-function findConfiguredModel(
-  models: UnifiedModel[],
-  selectionConfig?: ModelSelectionConfig | null
-): UnifiedModel | null {
-  if (!selectionConfig?.modelName) return null
-  return (
-    models.find(
-      model =>
-        model.name === selectionConfig.modelName &&
-        (!selectionConfig.modelType || model.type === selectionConfig.modelType)
-    ) ?? null
-  )
-}
-
 function toSelectionConfig(model: UnifiedModel, options: ModelOptions): ModelSelectionConfig {
   return {
     modelName: model.name,
     modelType: model.type,
-    options,
+    options: {
+      ...options,
+      ...modelSelectionIdentityOptions(model),
+    },
   }
 }
 
@@ -79,7 +70,18 @@ function getSelectionKey(
   models: UnifiedModel[],
   selectionConfig?: ModelSelectionConfig | null
 ): string {
-  const modelsKey = models.map(model => `${model.type}:${model.name}`).join('|')
+  const modelsKey = models
+    .map(model => {
+      const identity = modelSelectionIdentityOptions(model)
+      return [
+        model.type,
+        model.name,
+        identity.codexProviderId ?? '',
+        identity.weworkCloudModelNamespace ?? '',
+        identity.weworkCloudModelResourceUserId ?? '',
+      ].join(':')
+    })
+    .join('|')
   const options = selectionConfig?.options ?? {}
   const optionsKey = Object.keys(options)
     .sort()
@@ -126,7 +128,7 @@ export function useWorkbenchModels({
     Record<string, string | null>
   >({})
   const effectiveSelectionConfig = useMemo(() => {
-    if (selectionConfig?.modelName && findConfiguredModel(models, selectionConfig)) {
+    if (selectionConfig?.modelName && findModelForSelection(models, selectionConfig)) {
       return selectionConfig
     }
     return defaultSelectionConfig?.(models) ?? selectionConfig ?? null
@@ -159,7 +161,7 @@ export function useWorkbenchModels({
 
   const restoreSelection = useCallback(
     (availableModels: UnifiedModel[], nextSelectionConfig?: ModelSelectionConfig | null) => {
-      const model = findConfiguredModel(availableModels, nextSelectionConfig)
+      const model = findModelForSelection(availableModels, nextSelectionConfig)
       const nextOptions = model
         ? normalizeModelOptions(model, nextSelectionConfig?.options ?? {})
         : (nextSelectionConfig?.options ?? {})
