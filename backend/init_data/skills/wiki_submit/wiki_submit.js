@@ -27,7 +27,7 @@ function readMarkdownInput(args) {
     return fs.readFileSync(filePath, 'utf-8')
   }
 
-  if (args.content !== null) {
+  if (typeof args.content === 'string') {
     return args.content
   }
 
