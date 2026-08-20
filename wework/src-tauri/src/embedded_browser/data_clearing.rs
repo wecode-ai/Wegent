@@ -27,6 +27,7 @@ pub enum EmbeddedBrowserDataKind {
     Cookies,
     Cache,
     Storage,
+    History,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -35,6 +36,7 @@ struct DataKindSet {
     cookies: bool,
     cache: bool,
     storage: bool,
+    history: bool,
 }
 
 impl DataKindSet {
@@ -45,6 +47,7 @@ impl DataKindSet {
                 cookies: true,
                 cache: true,
                 storage: true,
+                history: true,
             };
         };
         if kinds.is_empty() {
@@ -53,6 +56,7 @@ impl DataKindSet {
                 cookies: true,
                 cache: true,
                 storage: true,
+                history: true,
             };
         }
 
@@ -63,6 +67,7 @@ impl DataKindSet {
                     EmbeddedBrowserDataKind::Cookies => data_kinds.cookies = true,
                     EmbeddedBrowserDataKind::Cache => data_kinds.cache = true,
                     EmbeddedBrowserDataKind::Storage => data_kinds.storage = true,
+                    EmbeddedBrowserDataKind::History => data_kinds.history = true,
                 }
                 data_kinds
             })
@@ -79,6 +84,12 @@ pub async fn clear_embedded_browser_data(
     requested_kinds: Option<Vec<EmbeddedBrowserDataKind>>,
 ) -> Result<usize, String> {
     let data_kinds = DataKindSet::from_requested(requested_kinds);
+    if data_kinds.history {
+        super::with_history_store(&app, state.inner(), |store, path| {
+            store.clear();
+            store.persist(path)
+        })?;
+    }
     let _lifecycle = state.lifecycle.lock().await;
     let webviews = {
         let webviews = state
@@ -384,6 +395,7 @@ mod tests {
                 cookies: true,
                 cache: true,
                 storage: true,
+                history: true,
             }
         );
         assert_eq!(
@@ -393,6 +405,7 @@ mod tests {
                 cookies: true,
                 cache: true,
                 storage: true,
+                history: true,
             }
         );
     }
@@ -406,6 +419,7 @@ mod tests {
                 cookies: true,
                 cache: false,
                 storage: false,
+                history: false,
             }
         );
         assert_eq!(
@@ -415,6 +429,7 @@ mod tests {
                 cookies: false,
                 cache: true,
                 storage: false,
+                history: false,
             }
         );
         assert_eq!(
@@ -424,6 +439,7 @@ mod tests {
                 cookies: false,
                 cache: false,
                 storage: true,
+                history: false,
             }
         );
     }
@@ -441,6 +457,21 @@ mod tests {
                 cookies: true,
                 cache: true,
                 storage: false,
+                history: false,
+            }
+        );
+    }
+
+    #[test]
+    fn selects_history_data_kind() {
+        assert_eq!(
+            DataKindSet::from_requested(Some(vec![EmbeddedBrowserDataKind::History])),
+            DataKindSet {
+                all: false,
+                cookies: false,
+                cache: false,
+                storage: false,
+                history: true,
             }
         );
     }

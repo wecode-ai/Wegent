@@ -2497,6 +2497,11 @@ export function WorkspaceBrowserTabPanel({
                   separator: true,
                 },
                 {
+                  label: t('workbench.browser_history'),
+                  testId: 'workspace-browser-history-item',
+                  onSelect: () => navigateTo('/settings/browser/history'),
+                },
+                {
                   label: t('workbench.browser_clear_data'),
                   testId: 'workspace-browser-clear-data-item',
                   disabled: Boolean(clearingDataKind),

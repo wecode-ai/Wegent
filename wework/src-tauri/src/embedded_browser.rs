@@ -27,6 +27,7 @@ mod bridge_security;
 mod bridge_server;
 mod browser_runtime;
 mod data_clearing;
+mod history;
 #[cfg(target_os = "linux")]
 mod linux_host;
 mod local_file_preview;
@@ -58,6 +59,9 @@ use browser_runtime::{
     wait_for_embedded_browser,
 };
 use data_clearing::{clear_embedded_browser_data, EmbeddedBrowserDataKind};
+use history::{
+    history_file_path, EmbeddedBrowserHistorySelector, EmbeddedBrowserHistoryStore,
+};
 #[cfg(test)]
 pub(crate) use local_file_preview::{
     browser_file_url_from_path, directory_entry_modified_unix_seconds, directory_listing_html,
@@ -119,6 +123,7 @@ pub struct EmbeddedBrowserState {
     agent_tabs: Arc<Mutex<HashMap<(String, String), AgentTabRoute>>>,
     lifecycle: Arc<AsyncMutex<()>>,
     snapshot_capture: Arc<AsyncMutex<()>>,
+    history: Arc<Mutex<EmbeddedBrowserHistoryStore>>,
 }
 
 #[derive(Clone)]
@@ -1374,6 +1379,51 @@ fn current_unix_millis() -> u128 {
         .unwrap_or_default()
 }
 
+pub(super) fn with_history_store<T>(
+    app: &tauri::AppHandle,
+    state: &EmbeddedBrowserState,
+    action: impl FnOnce(&mut EmbeddedBrowserHistoryStore, &PathBuf) -> Result<T, String>,
+) -> Result<T, String> {
+    let path = history_file_path(app)?;
+    let mut store = state
+        .history
+        .lock()
+        .map_err(|_| "Embedded browser history lock poisoned".to_string())?;
+    store.load(&path)?;
+    action(&mut store, &path)
+}
+
+fn history_record_visit(app: &tauri::AppHandle, state: &EmbeddedBrowserState, url: &str) {
+    let now = current_unix_millis() as i64;
+    let result = with_history_store(app, state, |store, path| {
+        store.record_visit(url, now);
+        store.persist(path)
+    });
+    if let Err(error) = result {
+        log_embedded_browser_diagnostic(
+            state,
+            BROWSER_WEBVIEW_LABEL,
+            "history_record_failed",
+            json!({ "url": url, "error": error }),
+        );
+    }
+}
+
+fn history_backfill_title(app: &tauri::AppHandle, state: &EmbeddedBrowserState, url: &str, title: &str) {
+    let result = with_history_store(app, state, |store, path| {
+        store.backfill_title(url, title);
+        store.persist(path)
+    });
+    if let Err(error) = result {
+        log_embedded_browser_diagnostic(
+            state,
+            BROWSER_WEBVIEW_LABEL,
+            "history_title_backfill_failed",
+            json!({ "url": url, "error": error }),
+        );
+    }
+}
+
 fn handle_bridge_request(
     app: &tauri::AppHandle,
     state: &EmbeddedBrowserState,
@@ -1770,6 +1820,7 @@ pub async fn embedded_browser_open(
     let app_for_navigation = app.clone();
     let app_for_load = app.clone();
     let app_for_popup = app.clone();
+    let app_for_title = app.clone();
     let data_directory = browser_data_directory(&app)?;
 
     let entry = EmbeddedBrowserEntry {
@@ -1952,6 +2003,9 @@ pub async fn embedded_browser_open(
                 if let Some(loaded_url) =
                     loaded_url.and_then(|url| loaded_browser_url(&load_state_handle, &url))
                 {
+                    if loaded_url.starts_with("http://") || loaded_url.starts_with("https://") {
+                        history_record_visit(&app_for_load, &load_state_handle, &loaded_url);
+                    }
                     let _ = update_entry_for_native_label(
                         &load_state_handle,
                         &native_label_for_load,
@@ -1975,11 +2029,20 @@ pub async fn embedded_browser_open(
             }
         })
         .on_document_title_changed(move |_webview, title| {
+            let mut visited_url = None;
             let _ = update_entry_for_native_label(
                 &title_state_handle,
                 &native_label_for_title,
-                |entry| entry.title = Some(title),
+                |entry| {
+                    visited_url = entry.url.clone();
+                    entry.title = Some(title.clone());
+                },
             );
+            if let Some(url) = visited_url {
+                if url.starts_with("http://") || url.starts_with("https://") {
+                    history_backfill_title(&app_for_title, &title_state_handle, &url, &title);
+                }
+            }
         })
         .on_new_window(move |url, _features| {
             let parent_label = current_logical_owner_or(
@@ -2671,4 +2734,36 @@ pub async fn embedded_browser_clear_data(
     data_kinds: Option<Vec<EmbeddedBrowserDataKind>>,
 ) -> Result<usize, String> {
     clear_embedded_browser_data(app, state, data_kinds).await
+}
+
+#[tauri::command]
+pub fn embedded_browser_history_search(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, EmbeddedBrowserState>,
+    text: String,
+    end_time_ms: Option<i64>,
+    offset: Option<u32>,
+    max_results: Option<u32>,
+) -> Result<Vec<history::EmbeddedBrowserHistoryEntry>, String> {
+    with_history_store(&app, &state, |store, _path| {
+        Ok(store.search(
+            &text,
+            end_time_ms,
+            offset.unwrap_or(0) as usize,
+            max_results.unwrap_or(100) as usize,
+        ))
+    })
+}
+
+#[tauri::command]
+pub fn embedded_browser_history_remove(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, EmbeddedBrowserState>,
+    entries: Vec<EmbeddedBrowserHistorySelector>,
+) -> Result<u32, String> {
+    with_history_store(&app, &state, |store, path| {
+        let removed = store.remove(&entries);
+        store.persist(path)?;
+        Ok(removed as u32)
+    })
 }

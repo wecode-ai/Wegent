@@ -2720,4 +2720,18 @@ describe('WorkspaceBrowserPanel', () => {
 
     expect(navigationMocks.navigateTo).toHaveBeenCalledWith('/settings/browser')
   })
+
+  test('navigates to the browsing history page from the more menu above clear data', async () => {
+    await openExamplePage()
+
+    fireEvent.click(screen.getByTestId('workspace-browser-more-button'))
+    const historyItem = screen.getByTestId('workspace-browser-history-item')
+    const clearDataItem = screen.getByTestId('workspace-browser-clear-data-item')
+    expect(
+      historyItem.compareDocumentPosition(clearDataItem) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+
+    fireEvent.click(historyItem)
+    expect(navigationMocks.navigateTo).toHaveBeenCalledWith('/settings/browser/history')
+  })
 })
