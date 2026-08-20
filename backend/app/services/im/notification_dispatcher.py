@@ -14,6 +14,9 @@ from app.db.session import SessionLocal
 from app.models.im_session import IMPrivateSession
 from app.models.kind import Kind
 from app.services.im.session_service import im_session_service
+from app.services.subscription.notification_service import (
+    subscription_notification_service,
+)
 from shared.utils.crypto import decrypt_sensitive_data
 
 logger = logging.getLogger(__name__)
@@ -134,7 +137,7 @@ class IMNotificationDispatcher:
 
             config = _get_channel_config(channel)
             if session.channel_type == "dingtalk":
-                return await self._send_dingtalk(session, config, text)
+                return await self._send_dingtalk(db, session, config, text)
             if session.channel_type == "telegram":
                 return await self._send_telegram(session, config, text)
             if session.channel_type == "discord":
@@ -233,6 +236,7 @@ class IMNotificationDispatcher:
 
     async def _send_dingtalk(
         self,
+        db: Session,
         session: IMPrivateSession,
         config: dict[str, Any],
         text: str,
@@ -249,9 +253,18 @@ class IMNotificationDispatcher:
                 "error": "Missing DingTalk credentials",
             }
 
+        recipient_id = await self._dingtalk_recipient_id(db, session)
+        if not recipient_id:
+            return {
+                "success": False,
+                "channel_id": session.channel_id,
+                "channel_type": session.channel_type,
+                "error": "Missing DingTalk staff ID",
+            }
+
         sender = DingTalkRobotSender(client_id, client_secret)
         result = await sender.send_text_message(
-            user_ids=[session.sender_id],
+            user_ids=[recipient_id],
             content=text,
         )
         return {
@@ -259,6 +272,36 @@ class IMNotificationDispatcher:
             "channel_type": session.channel_type,
             **result,
         }
+
+    async def _dingtalk_recipient_id(
+        self,
+        db: Session,
+        session: IMPrivateSession,
+    ) -> str:
+        recipient_id = str(session.proactive_recipient_id or "").strip()
+        if recipient_id:
+            return recipient_id
+
+        bindings = subscription_notification_service.get_user_im_bindings(
+            db,
+            user_id=session.user_id,
+        )
+        binding = bindings.get(str(session.channel_id))
+        if (
+            binding is None
+            or binding.channel_type != session.channel_type
+            or str(binding.last_conversation_id or "").strip()
+            != session.conversation_id
+        ):
+            return ""
+
+        recipient_id = str(binding.sender_staff_id or "").strip()
+        if not recipient_id:
+            return ""
+
+        session.proactive_recipient_id = recipient_id
+        await im_session_service.save_session(session)
+        return recipient_id
 
     async def _send_telegram(
         self,
@@ -396,15 +439,7 @@ def _runtime_task_update_message(
         return f"任务「{task_title}」已取消。"
 
     body = content or "任务有新的更新，请打开 Wework 查看完整对话。"
-    return "\n".join(
-        [
-            f"任务「{task_title}」有新的 AI 回复：",
-            "",
-            body,
-            "",
-            "回复这条通知可继续该任务。",
-        ]
-    )
+    return f"任务「{task_title}」有新的 AI 回复：\n\n{body}"
 
 
 im_notification_dispatcher = IMNotificationDispatcher()

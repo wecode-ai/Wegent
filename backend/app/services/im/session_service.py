@@ -64,6 +64,7 @@ class IMSessionService:
         channel_id: int,
         conversation_id: str,
         sender_id: str,
+        proactive_recipient_id: str | None = None,
         display_name: str = "",
     ) -> IMPrivateSession:
         now = datetime.now()
@@ -82,6 +83,7 @@ class IMSessionService:
                 channel_id=channel_id,
                 conversation_id=conversation_id,
                 sender_id=sender_id,
+                proactive_recipient_id=proactive_recipient_id or "",
                 display_name=display_name,
                 last_seen_at=now,
                 created_at=now,
@@ -89,6 +91,8 @@ class IMSessionService:
             )
         else:
             session.sender_id = sender_id
+            if proactive_recipient_id:
+                session.proactive_recipient_id = proactive_recipient_id
             session.display_name = display_name
             session.last_seen_at = now
             session.updated_at = now

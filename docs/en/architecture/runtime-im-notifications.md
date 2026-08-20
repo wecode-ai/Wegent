@@ -17,7 +17,8 @@ flowchart LR
     NORMALIZE --> DISPATCH[IMNotificationDispatcher]
     REDIS --> DISPATCH
     DISPATCH --> TARGET[Task binding / task subscription / global target]
-    TARGET --> IM[DingTalk and other IMs]
+    TARGET --> RECIPIENT[Session-scoped proactive-delivery identity]
+    RECIPIENT --> IM[DingTalk and other IMs]
 ```
 
 ```mermaid
@@ -36,6 +37,7 @@ sequenceDiagram
     D->>N: deviceId + localTaskId + terminal update
     N->>P: Read aggregate away state for a global target
     N->>N: Select binding, subscription, or global target
+    N->>N: Read the target session's proactive-delivery identity
     N-->>I: Send the task update
 ```
 
@@ -46,5 +48,6 @@ sequenceDiagram
 | Runtime terminal envelope        | `executor/src/runtime_work/events.rs`, Runtime handler         |
 | Terminal normalization and relay | `backend/app/api/ws/device_namespace.py`                       |
 | Session selection and sending    | `backend/app/services/im/notification_dispatcher.py`           |
+| Session-scoped proactive identity | `backend/app/models/im_session.py`, channel handlers          |
 
-Invariants: `runtime:event` is the terminal-notification primary path for new executors, while `runtime.tasks.updated` remains only for older executors; the notification entry point accepts only the four terminal types `response.completed`, `response.failed`, `response.incomplete`, and `error`; notification identity is always `deviceId + localTaskId` and never `workspacePath`; an active task binding takes precedence over a task subscription, which takes precedence over the global target; only the global target is gated by aggregate away state, and it must not send while any fresh client is active; a turn with `source.source == "im"` must not echo a notification; a successful terminal update requires non-empty answer content, while failures and cancellations may omit answer text; IM failures must not block Runtime persistence or the Wework relay; logs must not contain answer text, tokens, or channel secrets.
+Invariants: `runtime:event` is the terminal-notification primary path for new executors, while `runtime.tasks.updated` remains only for older executors; the notification entry point accepts only the four terminal types `response.completed`, `response.failed`, `response.incomplete`, and `error`; notification identity is always `deviceId + localTaskId` and never `workspacePath`; an active task binding takes precedence over a task subscription, which takes precedence over the global target; only the global target is gated by aggregate away state, and it must not send while any fresh client is active; a turn with `source.source == "im"` must not echo a notification; the user-mapping mode determines only Wegent user ownership and never the outbound recipient; each DingTalk private session must store and use its own `sender_staff_id`, must not treat the session `sender_id` as a staffId, and must not borrow a staffId from another session owned by the same Wegent user; an existing session may be backfilled only when the user IM binding's `last_conversation_id` exactly matches that session; a successful terminal update requires non-empty answer content, while failures and cancellations may omit answer text; IM failures must not block Runtime persistence or the Wework relay; logs must not contain answer text, tokens, or channel secrets.

@@ -12,6 +12,9 @@ from app.models.im_session import IMPrivateSession
 from app.models.kind import Kind
 from app.services.im.notification_dispatcher import im_notification_dispatcher
 from app.services.im.session_service import im_session_service
+from app.services.subscription.notification_service import (
+    subscription_notification_service,
+)
 from shared.utils.crypto import encrypt_sensitive_data
 
 
@@ -50,6 +53,7 @@ def _create_session(
     channel_id: int,
     channel_type: str,
     sender_id: str,
+    proactive_recipient_id: str = "",
 ) -> IMPrivateSession:
     return IMPrivateSession(
         session_key=im_session_service.build_session_key(
@@ -63,13 +67,14 @@ def _create_session(
         channel_id=channel_id,
         conversation_id=f"conv-{channel_id}",
         sender_id=sender_id,
+        proactive_recipient_id=proactive_recipient_id,
         display_name=f"sender-{sender_id}",
         last_seen_at=datetime.now(),
     )
 
 
 @pytest.mark.asyncio
-async def test_dingtalk_notification_decrypts_channel_secret(
+async def test_dingtalk_notification_uses_private_session_staff_id(
     test_db: Session,
     test_user,
     monkeypatch: pytest.MonkeyPatch,
@@ -87,7 +92,8 @@ async def test_dingtalk_notification_decrypts_channel_secret(
         user_id=test_user.id,
         channel_id=9401,
         channel_type="dingtalk",
-        sender_id="staff-1",
+        sender_id="sender-union-1",
+        proactive_recipient_id="staff-1",
     )
     test_db.commit()
     calls: list[dict[str, Any]] = []
@@ -117,6 +123,83 @@ async def test_dingtalk_notification_decrypts_channel_secret(
         "client_secret": "ding-client-secret",
     }
     assert calls[1] == {"user_ids": ["staff-1"], "content": "已切换"}
+
+
+@pytest.mark.asyncio
+async def test_dingtalk_legacy_binding_backfill_requires_matching_conversation(
+    test_db: Session,
+    test_user,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _create_channel(
+        test_db,
+        channel_id=9403,
+        channel_type="dingtalk",
+        config={
+            "client_id": "ding-client-id",
+            "client_secret": encrypt_sensitive_data("ding-client-secret"),
+        },
+    )
+    session = _create_session(
+        user_id=test_user.id,
+        channel_id=9403,
+        channel_type="dingtalk",
+        sender_id="sender-union-1",
+    )
+    subscription_notification_service.update_user_im_binding(
+        test_db,
+        user_id=test_user.id,
+        channel_id=9403,
+        channel_type="dingtalk",
+        sender_id="sender-union-2",
+        sender_staff_id="staff-2",
+        conversation_id="another-conversation",
+    )
+    test_db.commit()
+    calls: list[list[str]] = []
+
+    class FakeDingTalkRobotSender:
+        def __init__(self, client_id: str, client_secret: str):
+            pass
+
+        async def send_text_message(self, user_ids: list[str], content: str):
+            calls.append(user_ids)
+            return {"success": True}
+
+    monkeypatch.setattr(
+        "app.services.channels.dingtalk.sender.DingTalkRobotSender",
+        FakeDingTalkRobotSender,
+    )
+
+    mismatched = await im_notification_dispatcher.send_text(
+        test_db,
+        session,
+        "不会串发",
+    )
+
+    assert mismatched["success"] is False
+    assert mismatched["error"] == "Missing DingTalk staff ID"
+    assert calls == []
+
+    subscription_notification_service.update_user_im_binding(
+        test_db,
+        user_id=test_user.id,
+        channel_id=9403,
+        channel_type="dingtalk",
+        sender_id="sender-union-1",
+        sender_staff_id="staff-1",
+        conversation_id=session.conversation_id,
+    )
+
+    matched = await im_notification_dispatcher.send_text(
+        test_db,
+        session,
+        "安全回填",
+    )
+
+    assert matched["success"] is True
+    assert calls == [["staff-1"]]
+    assert session.proactive_recipient_id == "staff-1"
 
 
 @pytest.mark.asyncio
@@ -229,8 +312,9 @@ async def test_runtime_task_update_uses_global_im_notification_target(
 
     assert result["sent"] == 1
     assert calls[1]["chat_id"] == 100200300
-    assert "Native Codex task" in calls[1]["text"]
-    assert "Implemented from native Codex" in calls[1]["text"]
+    assert calls[1]["text"] == (
+        "任务「Native Codex task」有新的 AI 回复：\n\n" "Implemented from native Codex"
+    )
 
 
 @pytest.mark.asyncio
