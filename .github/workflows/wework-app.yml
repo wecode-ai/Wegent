@@ -435,7 +435,7 @@ jobs:
             "${{ matrix.rust_target }}" \
             "$MACOS_SIGNING_IDENTITY"
           if [ "${{ needs.prepare-release.outputs.publish_release }}" = "true" ]; then
-            export WEWORK_DEEPSEEK_HARNESS_RUNTIME_BASE_URL="https://github.com/${GH_REPO}/releases/download/${RELEASE_TAG}"
+            export WEWORK_HARNESS_RUNTIME_BASE_URL="https://github.com/${GH_REPO}/releases/download/${RELEASE_TAG}"
           fi
 
           config_override="$(mktemp "$PWD/src-tauri/tauri.ci.XXXXXX.json")"
@@ -587,8 +587,8 @@ jobs:
           cp "$dmg_source" "$dmg_path"
           cp "$archive_source" "$archive_path"
           cp "$signature_source" "$signature_path"
-          runtime_asset_name="$(node -p "require('./wework/src-tauri/bundled-deepseek-harness/runtime.json').assetName")"
-          runtime_source="wework/node_modules/.cache/deepseek-harness-runtime-assets/$runtime_asset_name"
+          runtime_asset_name="$(node -p "require('./wework/src-tauri/bundled-harness-runtime/runtime.json').assetName")"
+          runtime_source="wework/node_modules/.cache/harness-runtime-assets/$runtime_asset_name"
           runtime_path="$artifact_dir/$runtime_asset_name"
           cp "$runtime_source" "$runtime_path"
           shasum -a 256 "$dmg_path"
@@ -741,7 +741,7 @@ jobs:
           if (-not $env:TAURI_SIGNING_PRIVATE_KEY) { throw 'Missing GitHub secret: TAURI_SIGNING_PRIVATE_KEY' }
           if (-not $env:TAURI_UPDATER_PUBKEY) { throw 'Missing GitHub secret: TAURI_UPDATER_PUBKEY' }
           if ('${{ needs.prepare-release.outputs.publish_release }}' -eq 'true') {
-            $env:WEWORK_DEEPSEEK_HARNESS_RUNTIME_BASE_URL = "https://github.com/$env:GH_REPO/releases/download/${{ needs.prepare-release.outputs.release_tag }}"
+            $env:WEWORK_HARNESS_RUNTIME_BASE_URL = "https://github.com/$env:GH_REPO/releases/download/${{ needs.prepare-release.outputs.release_tag }}"
           }
 
           $package = Get-Content package.json -Raw | ConvertFrom-Json
@@ -778,8 +778,8 @@ jobs:
           $signaturePath = "$installerPath.sig"
           Copy-Item $installer.FullName $installerPath
           Copy-Item $signature.FullName $signaturePath
-          $runtimeMetadata = Get-Content 'wework/src-tauri/bundled-deepseek-harness/runtime.json' -Raw | ConvertFrom-Json
-          $runtimeSource = Join-Path 'wework/node_modules/.cache/deepseek-harness-runtime-assets' $runtimeMetadata.assetName
+          $runtimeMetadata = Get-Content 'wework/src-tauri/bundled-harness-runtime/runtime.json' -Raw | ConvertFrom-Json
+          $runtimeSource = Join-Path 'wework/node_modules/.cache/harness-runtime-assets' $runtimeMetadata.assetName
           $runtimePath = Join-Path $artifactDir $runtimeMetadata.assetName
           Copy-Item $runtimeSource $runtimePath
           Get-FileHash $installerPath -Algorithm SHA256

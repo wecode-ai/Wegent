@@ -331,6 +331,11 @@ describe('SitesWorkspace', () => {
     expect(screen.getByTestId('applications-tab-web')).toHaveTextContent('站点')
     expect(screen.getByTestId('applications-tab-miniapp')).toHaveTextContent('小程序')
     expect(screen.getByTestId('applications-tab-smart-app')).toHaveTextContent('智能应用')
+    expect(screen.getAllByRole('tab').map(tab => tab.textContent)).toEqual([
+      '智能应用实验性',
+      '站点',
+      '小程序',
+    ])
 
     await userEvent.click(screen.getByTestId('applications-tab-smart-app'))
 

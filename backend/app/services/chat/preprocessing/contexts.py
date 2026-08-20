@@ -1982,6 +1982,9 @@ def _build_kb_meta_prompt(
             select_kb_summary_text,
         )
         from app.services.knowledge import KnowledgeService
+        from app.services.knowledge.retrieval_capabilities import (
+            derive_retrieval_capabilities,
+        )
         from app.services.knowledge.task_knowledge_base_service import (
             task_knowledge_base_service,
         )
@@ -2054,6 +2057,9 @@ def _build_kb_meta_prompt(
                     "kb_id": kb_id,
                     "kb_name": kb_name,
                     "search_available": bool(retrieval_config.get("retriever_name")),
+                    "retrieval_capabilities": derive_retrieval_capabilities(
+                        retrieval_config
+                    ),
                     "total_document_count": stats["total_document_count"],
                     "searchable_document_count": stats["searchable_document_count"],
                     "spreadsheet_document_count": stats["spreadsheet_document_count"],
