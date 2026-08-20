@@ -60,6 +60,8 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { cn } from '@/lib/utils'
 import { track } from '@/telemetry/client'
+import { runtimeConversationKey } from '@/features/workbench/runtimeConversationCache'
+import { isRuntimeTaskExecutionRunning } from '@/features/workbench/runtimeTaskLifecycle/projection'
 import { hydrateRuntimeTaskAddress } from '@/features/workbench/workbenchRuntimeHelpers'
 import { AITableView } from '@/features/todo/AITableView'
 import type {
@@ -76,6 +78,7 @@ import {
   CloudTodoBoardCard,
   CloudTodoCardContent,
   type BoardCardDisplaySettings,
+  type CloudTodoBoardTaskBinding,
 } from './CloudTodoBoardCard'
 import { CloudProjectManageView } from './CloudProjectManageView'
 import { waitForDwsAuthentication } from './dwsAuth'
@@ -354,6 +357,7 @@ type TaskComposerRequest = {
   workItemId: string
   initialInput: string
   autoSubmit: boolean
+  backgroundAfterSend: boolean
   workflowNodeId?: string
   inheritFromTask?: RuntimeTaskAddress | null
 }
@@ -953,6 +957,7 @@ export function CloudTodoWorkspace({
   const [rootView, setRootView] = useState<RootView>('projects')
   const [projectView, setProjectView] = useState<ProjectView>('board')
   const [selectedItem, setSelectedItem] = useState<LocatedLoopItem | null>(null)
+  const [backgroundTaskItemId, setBackgroundTaskItemId] = useState<string | null>(null)
   // Items of the detail drawer's project when it differs from the board project,
   // so the drawer can stay open without switching the board view.
   const [detailItems, setDetailItems] = useState<LocatedLoopItem[]>([])
@@ -1216,6 +1221,47 @@ export function CloudTodoWorkspace({
     }
     return result
   }, [runtimeWork])
+  const runtimeTaskRunningByAddress = useMemo(() => {
+    const result = new Map<string, boolean>()
+    const workspaces = [
+      ...(runtimeWork?.projects ?? []).flatMap(projectWork => projectWork.deviceWorkspaces),
+      ...(runtimeWork?.chats ?? []),
+    ]
+    for (const workspace of workspaces) {
+      for (const task of workspace.tasks) {
+        result.set(
+          runtimeConversationKey({
+            deviceId: workspace.deviceId,
+            taskId: task.taskId,
+          }),
+          isRuntimeTaskExecutionRunning(task)
+        )
+      }
+    }
+    return result
+  }, [runtimeWork])
+  const boardTaskBindings = useMemo<Record<string, CloudTodoBoardTaskBinding[]>>(
+    () =>
+      Object.fromEntries(
+        Object.entries(itemTaskBindings).map(([itemId, bindings]) => [
+          itemId,
+          bindings.map(binding => ({
+            id: binding.id,
+            device_id: binding.device_id,
+            task_id: binding.task_id,
+            task_title: binding.task_title,
+            running:
+              runtimeTaskRunningByAddress.get(
+                runtimeConversationKey({
+                  deviceId: binding.device_id,
+                  taskId: binding.task_id,
+                })
+              ) ?? false,
+          })),
+        ])
+      ),
+    [itemTaskBindings, runtimeTaskRunningByAddress]
+  )
   const localProjectIdForItem = useCallback(
     (item: CloudLoopItem): number | null => {
       const storedAssociation = loopItemLocalProject(item)
@@ -2212,10 +2258,12 @@ export function CloudTodoWorkspace({
     ) {
       setSelectedTaskBinding(null)
       setSelectedItem(item)
+      setBackgroundTaskItemId(null)
       setTaskComposerRequest({
         workItemId: item.id,
         initialInput: workItemTaskInput(item),
         autoSubmit: false,
+        backgroundAfterSend: true,
       })
       return
     }
@@ -2307,10 +2355,12 @@ export function CloudTodoWorkspace({
       if (shouldOpenTaskComposer) {
         setSelectedTaskBinding(null)
         setSelectedItem(locatedUpdated)
+        setBackgroundTaskItemId(column.status === 'in_progress' ? locatedUpdated.id : null)
         setTaskComposerRequest({
           workItemId: locatedUpdated.id,
           initialInput: workItemTaskInput(locatedUpdated),
           autoSubmit: column.status === 'in_progress',
+          backgroundAfterSend: column.status === 'in_progress',
         })
       } else if (
         nativeGroupBy === 'status' &&
@@ -2318,6 +2368,7 @@ export function CloudTodoWorkspace({
         shouldRevealWorkItemWorkflowActions(item, column.status) &&
         locatedUpdated.can_view_detail !== false
       ) {
+        setBackgroundTaskItemId(null)
         setSelectedTaskBinding(null)
         setSelectedItem(locatedUpdated)
       }
@@ -2518,6 +2569,7 @@ export function CloudTodoWorkspace({
           workItemId: locatedItem.id,
           initialInput: workItemTaskInput(locatedItem),
           autoSubmit: true,
+          backgroundAfterSend: true,
         })
       }
       track('board_item_created', {
@@ -2546,6 +2598,7 @@ export function CloudTodoWorkspace({
   }
 
   function closeIssuePanelStack() {
+    setBackgroundTaskItemId(null)
     setSelectedItem(null)
     closeTaskPanel()
   }
@@ -2559,7 +2612,7 @@ export function CloudTodoWorkspace({
   }
 
   useEffect(() => {
-    if (!selectedItem) return
+    if (!selectedItem || backgroundTaskItemId === selectedItem.id) return
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return
       event.preventDefault()
@@ -2573,7 +2626,7 @@ export function CloudTodoWorkspace({
     }
     window.addEventListener('keydown', handleEscape, true)
     return () => window.removeEventListener('keydown', handleEscape, true)
-  }, [selectedItem, taskPanelOpen])
+  }, [backgroundTaskItemId, selectedItem, taskPanelOpen])
 
   return (
     <div
@@ -3616,24 +3669,36 @@ export function CloudTodoWorkspace({
                                       item={item}
                                       taskBindings={
                                         itemTaskBindingsProjectKey === selectedProjectKey
-                                          ? (itemTaskBindings[item.id] ?? [])
+                                          ? (boardTaskBindings[item.id] ?? [])
                                           : []
                                       }
                                       onClick={() => {
-                                        if (item.can_view_detail !== false) setSelectedItem(item)
+                                        if (item.can_view_detail !== false) {
+                                          setBackgroundTaskItemId(null)
+                                          setSelectedItem(item)
+                                        }
                                       }}
                                       onArchive={() => {
                                         setArchiveError(null)
                                         setArchiveItem(item)
                                       }}
-                                      onOpenActivity={
-                                        selectedProject.location === 'cloud'
-                                          ? () => {
-                                              if (item.can_view_detail !== false)
-                                                setSelectedItem(item)
-                                            }
-                                          : undefined
-                                      }
+                                      onOpenActivity={() => {
+                                        if (item.can_view_detail === false) return
+                                        const binding =
+                                          boardTaskBindings[item.id]?.find(
+                                            candidate => candidate.running
+                                          ) ?? boardTaskBindings[item.id]?.[0]
+                                        if (!binding) return
+                                        setBackgroundTaskItemId(null)
+                                        setSelectedItem(item)
+                                        setSelectedTaskBinding({
+                                          id: binding.id,
+                                          device_id: binding.device_id,
+                                          task_id: binding.task_id,
+                                          task_title: binding.task_title,
+                                          work_item_id: item.id,
+                                        })
+                                      }}
                                       display={boardCardDisplay}
                                       agentNames={agentNameById}
                                       dragDisabled={isAITableProject}
@@ -3722,7 +3787,7 @@ export function CloudTodoWorkspace({
             </>
           )}
         </main>
-        {selectedItem ? (
+        {selectedItem && backgroundTaskItemId !== selectedItem.id ? (
           <button
             type="button"
             data-testid="cloud-todo-detail-dismiss-layer"
@@ -3737,7 +3802,9 @@ export function CloudTodoWorkspace({
             data-conversation-open={taskPanelOpen ? 'true' : 'false'}
             className={cn('todo-panel-stack', taskPanelOpen && 'has-conversation')}
           >
-            {selectedItem.can_view_detail !== false && selectedItemApi ? (
+            {backgroundTaskItemId !== selectedItem.id &&
+            selectedItem.can_view_detail !== false &&
+            selectedItemApi ? (
               <TodoEditor
                 key={selectedItem.id}
                 mode="edit"
@@ -3789,6 +3856,7 @@ export function CloudTodoWorkspace({
                     workItemId: selectedItem.id,
                     initialInput: workflowNode ? workflowStageTaskInput(workflowNode) : '',
                     autoSubmit: false,
+                    backgroundAfterSend: selectedItem.status === 'pending',
                     workflowNodeId,
                     inheritFromTask,
                   })
@@ -3956,7 +4024,7 @@ export function CloudTodoWorkspace({
                     ? selectedTaskBinding.task_title
                     : null
                 }
-                open
+                open={backgroundTaskItemId !== selectedItem.id}
                 embedded
                 initialTaskInput={
                   taskComposerRequest?.workItemId === selectedItem.id
@@ -3975,6 +4043,12 @@ export function CloudTodoWorkspace({
                 }
                 onClose={closeTaskPanel}
                 onAddressChange={address => {
+                  if (
+                    taskComposerRequest?.workItemId === selectedItem.id &&
+                    taskComposerRequest.backgroundAfterSend
+                  ) {
+                    setBackgroundTaskItemId(selectedItem.id)
+                  }
                   setSelectedTaskBinding({
                     id: -Date.now(),
                     device_id: address.deviceId,

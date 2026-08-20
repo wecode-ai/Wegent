@@ -27,6 +27,7 @@ import {
   createOptimisticRuntimeGuidanceMessage,
 } from './runtimeGuidanceMessages'
 import { updateRuntimeGoalContinuation } from '@/lib/runtime-goal'
+import { getLatestRuntimeLiveActivity, runtimeLiveActivitySnapshot } from './runtimeThinking'
 
 const MAX_CONVERSATION_CACHE_ENTRIES = 50
 const turnsByConversation = new Map<string, RuntimeConversationTurn[]>()
@@ -157,6 +158,12 @@ export function settleRuntimeConversationSubagents(address: RuntimeTaskAddress):
 export function getRuntimeConversationMessages(address: RuntimeTaskAddress): WorkbenchMessage[] {
   const key = runtimeConversationKey(address)
   return projectRuntimeConversationTurns(touchEntry(turnsByConversation, key) ?? [])
+}
+
+export function getRuntimeConversationLiveActivitySnapshot(address: RuntimeTaskAddress): string {
+  return runtimeLiveActivitySnapshot(
+    getLatestRuntimeLiveActivity(getRuntimeConversationMessages(address))
+  )
 }
 
 export function subscribeRuntimeConversation(

@@ -1,8 +1,6 @@
 {
-  "mcpServers": {
-    "example": {
-      "command": "node",
-      "args": ["${PLUGIN_ROOT}/mcp/server.mjs"]
-    }
+  "example": {
+    "command": "node",
+    "args": ["${PLUGIN_ROOT}/mcp/server.mjs"]
   }
 }
