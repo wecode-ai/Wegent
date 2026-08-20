@@ -1,6 +1,6 @@
 ---
 description: "Submit wiki documentation pages to Wegent backend API. Simplifies the HTTP POST process for wiki content submission."
-version: "1.4.0"
+version: "1.5.0"
 author: "Wegent Team"
 tags: ["wiki", "documentation", "api", "submission"]
 bindShells: ["ClaudeCode"]
@@ -54,14 +54,20 @@ Remove an accidental page before completing the run.
    always replaces the complete page; it is not a patch.
 3. Choose stable paths before writing. If a path has descendants, submit its substantive
    parent page as well.
+4. Before submitting a page that contains a Mermaid fence, run `validate-mermaid` on
+   the same Markdown file. Correct every reported block before submitting it.
 
 ### Before ending the run
 
 1. Submit every planned finished page, and explicitly remove only pages whose subject
    disappeared in an incremental run.
-2. Run `complete` with the documented commit and an order that starts with `index` and
+2. Re-run `validate-mermaid` for every page whose diagram changed after its last
+   validation. It uses the pinned Mermaid parser plus a matching guard for the known
+   subgraph/node layout cycle, and gives a block line number plus an actionable
+   correction error.
+3. Run `complete` with the documented commit and an order that starts with `index` and
    follows the planned reading route.
-3. Read the response. If publication is refused, restore the missing coverage — in
+4. Read the response. If publication is refused, restore the missing coverage — in
    particular, create every named section overview page — and run `complete` again.
    For every Mermaid diagram, keep node IDs distinct from subgraph IDs (for example
    `rpc_service` inside `rpc_group`), and correct every named diagram error before
@@ -82,6 +88,22 @@ node wiki_submit.js submit \
   --title "Backend Architecture" \
   --file /path/to/page.md
 ```
+
+### Validate Mermaid before submitting or completing
+
+Run this command for every page containing a Mermaid fence before its first `submit`,
+then again after changing any diagram and before `complete`. It has no API or token
+requirements, so it can be run while drafting a local Markdown file.
+
+```bash
+node wiki_submit.js validate-mermaid --file /path/to/page.md
+```
+
+It exits nonzero and names each failing fence's opening line. Rewrite the listed
+diagram, rerun the command, and submit only after it passes. A missing Mermaid parser
+dependency exits with code 2: report that executor-image problem accurately instead of
+claiming the page passed validation. The backend publish gate remains authoritative and
+is the final protection before publication.
 
 ### Submit page content directly
 
