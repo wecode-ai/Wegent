@@ -1578,6 +1578,31 @@ fn recording_provider_thread_removes_cached_messages_but_keeps_presentations() {
 }
 
 #[test]
+fn sidebar_thread_id_resolves_local_task_alias() {
+    let index_path = temp_runtime_work_index_path("sidebar-thread-alias");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let mut link = RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.thread_id = Some("thread-1".to_owned());
+    handler.upsert_local_task(link);
+
+    assert_eq!(
+        handler.resolve_sidebar_thread_id("task-1".to_owned()),
+        "thread-1"
+    );
+    assert_eq!(
+        handler.resolve_sidebar_thread_id("thread-1".to_owned()),
+        "thread-1"
+    );
+
+    let _ = fs::remove_file(index_path);
+}
+
+#[test]
 fn linked_failed_codex_turn_does_not_create_cached_transcript() {
     let index_path = temp_runtime_work_index_path("linked-failure-provider-source");
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
