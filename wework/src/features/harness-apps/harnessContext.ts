@@ -41,7 +41,7 @@ export function buildHarnessUserContext(
 export function buildHarnessModelContext(option: LocalHarnessModelOption): HarnessModelContext {
   const execution = selectedModelExecutionFields(option.model, option.options)
   const context: HarnessModelContext = {
-    runtimeModelId: option.model.modelId?.trim() || execution.modelId,
+    runtimeModelId: option.model.modelId?.trim() || execution.modelId || option.model.name,
     displayName: option.label,
     modelType: execution.modelType ?? option.model.type,
     capabilities: {},
