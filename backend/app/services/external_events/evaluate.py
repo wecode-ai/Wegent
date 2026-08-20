@@ -5,26 +5,29 @@
 
 The wait node is a DAG node whose status stays ``waiting`` while it listens.
 Reruns are an internal state machine (round counter + fresh executions) and
-never add graph edges. Terminal events complete the node and let the end node
-stop the issue automatically.
+never add graph edges. Terminal events complete the node, and the Issue
+enters review once every required stage completes.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any, Iterable
+from typing import Any
 
 from sqlalchemy.orm import Session
 
 from app.models.delivery import ExternalEventBinding, LoopItem, ProjectAutomationRun
 from app.models.loop_item_execution import LoopItemExecution
 from app.schemas.issue_workflow import WaitEventRule, WorkflowNodeInstance
-from app.services.external_events.adapters import NormalizedExternalEvent
+from app.services.external_events.adapters import (
+    NormalizedExternalEvent,
+    event_type_policy,
+)
 from app.services.external_events.binding import (
     ExternalEventBindingService,
     external_event_binding_service,
 )
-from app.services.external_events.buffer import external_event_buffer
+from app.services.external_events.buffer import external_event_buffer, merge_events
 from app.services.loop_item_executions.service import loop_item_execution_service
 from app.services.project_workflow_projection import apply_workflow_nodes
 
@@ -53,7 +56,7 @@ class ExternalEventEvaluationService:
             return
         if node.status != "waiting":
             return
-        rule = self._matching_rule(node, event.event_type)
+        rule = self._matching_rule(node, event.provider, event.event_type)
         if rule is None:
             return
         if rule.action == "complete":
@@ -67,7 +70,14 @@ class ExternalEventEvaluationService:
         *,
         binding: ExternalEventBinding,
     ) -> None:
-        """Settle debounce events after the previous rerun execution ends."""
+        """Settle buffered events after the previous rerun execution ends.
+
+        Parked events are drained per (provider, event_type) using the delivery
+        policy declared by each event type: merge policies fire one round with
+        every event of the first type still waiting; immediate policies fire
+        one event per round, serially. Other event types stay parked until the
+        round they started has ended.
+        """
 
         issue, node = self._issue_and_node(db, binding)
         if issue is None or node is None or node.status != "waiting":
@@ -78,8 +88,54 @@ class ExternalEventEvaluationService:
         )
         if not events:
             return
-        rule = self._matching_rule(node, str(events[0].get("event_type") or ""))
+        rule = self._matching_rule(
+            node,
+            str(events[0].get("provider") or ""),
+            str(events[0].get("event_type") or ""),
+        )
         if rule is None or rule.action != "rerun":
+            return
+        group, rest = self._split_event_groups(events)
+        policy = event_type_policy(
+            str(group[0].get("provider") or ""),
+            str(group[0].get("event_type") or ""),
+        )
+        if policy is not None and policy.merge_while_running:
+            self._park_events(db, binding=binding, events=rest)
+            self._start_rerun(db, binding=binding, node=node, rule=rule, events=group)
+            return
+        fired, *remainder = group
+        self._park_events(db, binding=binding, events=[*remainder, *rest])
+        self._start_rerun(db, binding=binding, node=node, rule=rule, events=[fired])
+
+    def settle_window(
+        self,
+        db: Session,
+        *,
+        binding: ExternalEventBinding,
+        event_type: str,
+        generation: int,
+    ) -> None:
+        """Settle a short-window aggregation when its window expires."""
+
+        issue, node = self._issue_and_node(db, binding)
+        if issue is None or node is None or node.status != "waiting":
+            return
+        rule = self._matching_rule(node, binding.provider, event_type)
+        if rule is None or rule.action != "rerun":
+            return
+        events = external_event_buffer.take_window(
+            task_id=binding.loop_item_id,
+            node_id=self._node_id(binding),
+            event_type=event_type,
+            generation=generation,
+        )
+        if not events:
+            return
+        if self._has_active_execution(db, binding):
+            # A repair round started while the window was open; park the
+            # window events so they settle together when that round ends.
+            self._park_events(db, binding=binding, events=events)
             return
         self._start_rerun(db, binding=binding, node=node, rule=rule, events=events)
 
@@ -113,7 +169,7 @@ class ExternalEventEvaluationService:
         node: WorkflowNodeInstance,
         binding: ExternalEventBinding,
     ) -> None:
-        """Mark the wait node completed and stop the issue via the end node."""
+        """Mark the wait node completed and release the Issue toward review."""
 
         raw_workflow = self._raw_workflow(issue)
         nodes = self._mutable_nodes(raw_workflow)
@@ -140,7 +196,7 @@ class ExternalEventEvaluationService:
         *,
         execution: LoopItemExecution,
     ) -> None:
-        """Settle debounce aggregates when the registered task's run ends."""
+        """Settle parked events when the registered task's run ends."""
 
         if not execution.automation_run_id:
             return
@@ -154,7 +210,7 @@ class ExternalEventEvaluationService:
                 self.settle_aggregate(db, binding=binding)
             except Exception:
                 logger.exception(
-                    "External event debounce settle failed binding=%s execution=%s",
+                    "External event aggregate settle failed binding=%s execution=%s",
                     binding.id,
                     execution.id,
                 )
@@ -167,23 +223,21 @@ class ExternalEventEvaluationService:
         node: WorkflowNodeInstance,
         event: NormalizedExternalEvent,
     ) -> None:
-        if self._has_active_execution(db, binding):
-            external_event_buffer.append(
-                binding.provider,
-                binding.opaque_ref,
-                event.event_type,
-                self._event_dict(event),
-            )
-            external_event_buffer.push_aggregate(
-                task_id=binding.loop_item_id,
-                node_id=self._node_id(binding),
-                provider=binding.provider,
-                opaque_ref=binding.opaque_ref,
-                event_type=event.event_type,
-            )
-            return
-        rule = self._matching_rule(node, event.event_type)
+        rule = self._matching_rule(node, event.provider, event.event_type)
         if rule is None or rule.action != "rerun":
+            return
+        if self._has_active_execution(db, binding):
+            self._park_event(db, binding=binding, event=event)
+            return
+        policy = event_type_policy(event.provider, event.event_type)
+        if policy is not None and policy.window_seconds:
+            self._schedule_window(
+                db,
+                binding=binding,
+                node=node,
+                event=event,
+                window_seconds=policy.window_seconds,
+            )
             return
         pending = external_event_buffer.take_aggregate(
             task_id=binding.loop_item_id,
@@ -194,9 +248,96 @@ class ExternalEventEvaluationService:
             binding.opaque_ref,
             event.event_type,
         )
-        events = self._merge_events([*pending, *buffered, self._event_dict(event)])
-        if events:
-            self._start_rerun(db, binding=binding, node=node, rule=rule, events=events)
+        events = merge_events([*pending, *buffered, self._event_dict(event)])
+        if not events:
+            return
+        group, rest = self._split_event_groups(events)
+        if policy is not None and policy.merge_while_running:
+            self._park_events(db, binding=binding, events=rest)
+            self._start_rerun(db, binding=binding, node=node, rule=rule, events=group)
+            return
+        # Immediate policy: fire rounds one by one. Settle the oldest event of
+        # the first type now and park everything else so the following settles
+        # fire them serially without merging events into one round.
+        fired, *remainder = group
+        self._park_events(db, binding=binding, events=[*remainder, *rest])
+        self._start_rerun(db, binding=binding, node=node, rule=rule, events=[fired])
+
+    def _schedule_window(
+        self,
+        db: Session,
+        *,
+        binding: ExternalEventBinding,
+        node: WorkflowNodeInstance,
+        event: NormalizedExternalEvent,
+        window_seconds: int,
+    ) -> None:
+        """Join or open a short-window aggregation for one windowed event."""
+
+        task_id = binding.loop_item_id
+        node_id = self._node_id(binding)
+        if external_event_buffer.append_window(
+            task_id=task_id,
+            node_id=node_id,
+            event_type=event.event_type,
+            event=self._event_dict(event),
+        ):
+            return
+        snapshot = external_event_buffer.open_window(
+            task_id=task_id,
+            node_id=node_id,
+            event_type=event.event_type,
+            event=self._event_dict(event),
+            window_seconds=window_seconds,
+        )
+        if snapshot is None:
+            return
+        from app.tasks.external_event_tasks import settle_external_event_window
+
+        settle_external_event_window.apply_async(
+            kwargs={
+                "binding_id": str(binding.id),
+                "event_type": event.event_type,
+                "generation": int(snapshot["generation"]),
+            },
+            countdown=window_seconds,
+        )
+
+    def _park_event(
+        self,
+        db: Session,
+        *,
+        binding: ExternalEventBinding,
+        event: NormalizedExternalEvent,
+    ) -> None:
+        self._park_events(db, binding=binding, events=[self._event_dict(event)])
+
+    def _park_events(
+        self,
+        db: Session,
+        *,
+        binding: ExternalEventBinding,
+        events: list[dict[str, Any]],
+    ) -> None:
+        """Park events under the node aggregate while a repair round runs."""
+
+        for event in events:
+            if not isinstance(event, dict) or not event:
+                continue
+            event_type = str(event.get("event_type") or "")
+            external_event_buffer.append(
+                binding.provider,
+                binding.opaque_ref,
+                event_type,
+                event,
+            )
+            external_event_buffer.push_aggregate(
+                task_id=binding.loop_item_id,
+                node_id=self._node_id(binding),
+                provider=binding.provider,
+                opaque_ref=binding.opaque_ref,
+                event_type=event_type,
+            )
 
     def _start_rerun(
         self,
@@ -231,7 +372,21 @@ class ExternalEventEvaluationService:
         agent = self._registered_agent(db, run)
         if agent is None:
             return
-        self._persist_instruction(db, item, instruction)
+        # A repair round is its own run scoped to the wait node, exactly like
+        # a stage rerun owns a fresh run. The stage that reached the gate
+        # stays completed and is never re-activated by the round.
+        rerun_run = self._rerun_run(
+            db,
+            run=run,
+            item=item,
+            issue=issue,
+            node=node,
+            instruction=instruction,
+            agent=agent,
+        )
+        binding_metadata = dict(self._metadata(binding))
+        binding_metadata["automation_run_id"] = str(rerun_run.id)
+        binding.metadata_json = binding_metadata
         execution = loop_item_execution_service.create_for_assignment(
             db,
             loop_item_id=item.id,
@@ -245,7 +400,7 @@ class ExternalEventEvaluationService:
             priority=item.priority,
             automation_context={
                 "rule_id": str(run.parent_id or ""),
-                "run_id": str(run.id),
+                "run_id": str(rerun_run.id),
                 "trigger": "external_event",
             },
         )
@@ -263,6 +418,50 @@ class ExternalEventEvaluationService:
         )
 
     @staticmethod
+    def _rerun_run(
+        db: Session,
+        *,
+        run: ProjectAutomationRun,
+        item: LoopItem,
+        issue: LoopItem,
+        node: WorkflowNodeInstance,
+        instruction: str,
+        agent: Any,
+    ) -> ProjectAutomationRun:
+        """Create the wait-node run that owns one repair round."""
+
+        from app.services.workflow_stage_context import (
+            workflow_stage_context_resolver,
+        )
+
+        snapshot = workflow_stage_context_resolver.resolve(
+            db,
+            item=issue,
+            target_node_id=node.id,
+            target_prompt_override=instruction,
+        )
+        row = ProjectAutomationRun(
+            cloud_project_id=run.cloud_project_id,
+            parent_id=run.parent_id,
+            assignee_agent_id=agent.id,
+            source="external_event",
+            status="pending",
+            due_at=None,
+            task_id=item.id,
+            task_title=item.title or "",
+            created_by_user_id=run.created_by_user_id,
+            metadata_json={
+                "trigger": "external_event",
+                "workflow_node_id": node.id,
+                "workflow_stage_input": snapshot,
+                "rerun_round": int(node.wait_round or 0) + 1,
+            },
+        )
+        db.add(row)
+        db.flush()
+        return row
+
+    @staticmethod
     def _rerun_instruction(rule: WaitEventRule, events: list[dict[str, Any]]) -> str:
         summaries = [
             str(event.get("summary") or "") for event in events if event.get("summary")
@@ -274,17 +473,6 @@ class ExternalEventEvaluationService:
         return (
             f"{base}\n\n外部事件概述：\n{body}" if base else f"外部事件概述：\n{body}"
         )
-
-    @staticmethod
-    def _persist_instruction(db: Session, item: LoopItem, instruction: str) -> None:
-        metadata = dict(item.metadata_json or {})
-        automation = metadata.get("automation")
-        automation = dict(automation) if isinstance(automation, dict) else {}
-        automation["prompt"] = instruction
-        metadata["automation"] = automation
-        item.metadata_json = metadata
-        item.version += 1
-        db.flush()
 
     @staticmethod
     def _registered_agent(db: Session, run: ProjectAutomationRun):
@@ -411,15 +599,52 @@ class ExternalEventEvaluationService:
     @staticmethod
     def _matching_rule(
         node: WorkflowNodeInstance,
+        provider: str,
         event_type: str,
     ) -> WaitEventRule | None:
         config = node.wait_config
         if config is None:
             return None
         return next(
-            (rule for rule in config.rules if rule.event_type == event_type),
+            (
+                rule
+                for rule in config.rules
+                if (rule.provider is None or rule.provider == provider)
+                and rule.event_type == event_type
+            ),
             None,
         )
+
+    @staticmethod
+    def _split_event_groups(
+        events: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Split buffered events into the first (provider, event_type) group and the rest.
+
+        Arrival order is preserved. The first group holds every event whose
+        (provider, event_type) matches the oldest buffered event; everything
+        else is returned as ``rest`` so each event type settles with its own
+        declared delivery policy.
+        """
+
+        if not events:
+            return [], []
+        first = events[0]
+        key = (str(first.get("provider") or ""), str(first.get("event_type") or ""))
+        group: list[dict[str, Any]] = []
+        rest: list[dict[str, Any]] = []
+        for event in events:
+            target = (
+                group
+                if (
+                    str(event.get("provider") or ""),
+                    str(event.get("event_type") or ""),
+                )
+                == key
+                else rest
+            )
+            target.append(event)
+        return group, rest
 
     @staticmethod
     def _event_dict(event: NormalizedExternalEvent) -> dict[str, Any]:
@@ -457,25 +682,6 @@ class ExternalEventEvaluationService:
             occurred_at=None,
             detail=value.get("detail") if isinstance(value.get("detail"), dict) else {},
         )
-
-    @staticmethod
-    def _merge_events(events: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
-        merged: list[dict[str, Any]] = []
-        seen: set[tuple[str, str]] = set()
-        for event in events:
-            if not isinstance(event, dict) or not event:
-                continue
-            event_id = str(event.get("event_id") or "")
-            identity = (
-                ("id", event_id)
-                if event_id
-                else ("type", f"{event.get('event_type')}:{event.get('summary')}")
-            )
-            if identity in seen:
-                continue
-            seen.add(identity)
-            merged.append(event)
-        return merged
 
 
 external_event_evaluation_service = ExternalEventEvaluationService()

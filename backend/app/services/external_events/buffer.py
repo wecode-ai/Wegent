@@ -11,6 +11,9 @@ The buffer serves two purposes with one set of keys:
 - Debounce aggregation: while a rerun is executing, matching events are
   parked under an aggregate key that references the same triple keys instead
   of copying event data. The aggregate settles when the execution ends.
+- Short-window aggregation: adapter-windowed event types (GitLab review
+  comments) are staged under a per-wait-node window key with a deadline; the
+  settle task fires one repair round with every event inside the window.
 
 The buffer is intentionally ephemeral (24h TTL, restart-lossy); the durable
 full event log in ``ProjectIncomingEvent`` remains the audit source.
@@ -21,7 +24,8 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from typing import Any
+import time
+from typing import Any, Iterable
 
 from redis import Redis
 
@@ -31,6 +35,28 @@ logger = logging.getLogger(__name__)
 
 KEY_PREFIX = "wework:external-events:v1"
 TRIPLE_TTL_SECONDS = 24 * 60 * 60
+WINDOW_TTL_PADDING_SECONDS = 60 * 60
+
+
+def merge_events(events: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Deduplicate buffered events by event_id, then by type+summary."""
+
+    merged: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for event in events:
+        if not isinstance(event, dict) or not event:
+            continue
+        event_id = str(event.get("event_id") or "")
+        identity = (
+            ("id", event_id)
+            if event_id
+            else ("type", f"{event.get('event_type')}:{event.get('summary')}")
+        )
+        if identity in seen:
+            continue
+        seen.add(identity)
+        merged.append(event)
+    return merged
 
 
 def _triple_key(provider: str, opaque_ref: str, event_type: str) -> str:
@@ -40,6 +66,10 @@ def _triple_key(provider: str, opaque_ref: str, event_type: str) -> str:
 
 def _aggregate_key(task_id: str, node_id: str) -> str:
     return f"{KEY_PREFIX}:aggregate:{task_id}:{node_id}"
+
+
+def _window_key(task_id: str, node_id: str, event_type: str) -> str:
+    return f"{KEY_PREFIX}:window:{task_id}:{node_id}:{event_type}"
 
 
 def _index_key(provider: str, opaque_ref: str) -> str:
@@ -66,14 +96,15 @@ class ExternalEventBuffer:
         return self._client
 
     @staticmethod
-    def _decode(value: bytes | None) -> list[dict[str, Any]]:
+    def _decode(value: bytes | None) -> list[dict[str, Any]] | dict[str, Any]:
         if not value:
             return []
         try:
             parsed = json.loads(value)
         except (ValueError, TypeError):
             return []
-        return parsed if isinstance(parsed, list) else []
+        # Triple and aggregate keys store lists; window keys store dicts.
+        return parsed if isinstance(parsed, (list, dict)) else []
 
     @staticmethod
     def _encode(events: list[dict[str, Any]]) -> bytes:
@@ -205,6 +236,135 @@ class ExternalEventBuffer:
             provider, opaque_ref, event_type = (str(value) for value in reference)
             events.extend(self.take(provider, opaque_ref, event_type))
         return events
+
+    def append_window(
+        self,
+        *,
+        task_id: str,
+        node_id: str,
+        event_type: str,
+        event: dict[str, Any],
+    ) -> bool:
+        """Join one event to an open short-window aggregation.
+
+        Returns ``True`` when the event was appended to a window that is still
+        inside its deadline, ``False`` when no open window exists (the caller
+        should open a new one and schedule its settle).
+        """
+
+        key = _window_key(task_id, node_id, event_type)
+        try:
+            window = self._decode(self._redis().get(key))
+            if not isinstance(window, dict) or not window.get("events"):
+                return False
+            if time.time() >= float(window.get("deadline") or 0):
+                return False
+            events = merge_events([*window["events"], event])
+            self._redis().set(
+                key,
+                self._encode({**window, "events": events}),
+                ex=int(window.get("deadline") or 0)
+                - int(time.time())
+                + WINDOW_TTL_PADDING_SECONDS,
+            )
+            return True
+        except Exception:
+            logger.exception(
+                "External event buffer window append failed task=%s node=%s type=%s",
+                task_id,
+                node_id,
+                event_type,
+            )
+            return False
+
+    def open_window(
+        self,
+        *,
+        task_id: str,
+        node_id: str,
+        event_type: str,
+        event: dict[str, Any],
+        window_seconds: int,
+    ) -> dict[str, Any] | None:
+        """Open (or reopen) a short-window aggregation and return its snapshot.
+
+        Reopening a window whose deadline passed carries the earlier events
+        into the new generation so a stale settle task can never drop them.
+        The returned snapshot carries the generation the caller must schedule
+        the settle task with.
+        """
+
+        key = _window_key(task_id, node_id, event_type)
+        try:
+            redis = self._redis()
+            existing = self._decode(redis.get(key))
+            generation = (
+                int((existing or {}).get("generation") or 0) + 1
+                if isinstance(existing, dict)
+                else 1
+            )
+            prior_events = (
+                existing.get("events")
+                if isinstance(existing, dict)
+                and isinstance(existing.get("events"), list)
+                else []
+            )
+            deadline = time.time() + window_seconds
+            snapshot = {
+                "generation": generation,
+                "deadline": deadline,
+                "events": merge_events([*prior_events, event]),
+            }
+            redis.set(
+                key,
+                self._encode(snapshot),
+                ex=window_seconds + WINDOW_TTL_PADDING_SECONDS,
+            )
+            return snapshot
+        except Exception:
+            logger.exception(
+                "External event buffer window open failed task=%s node=%s type=%s",
+                task_id,
+                node_id,
+                event_type,
+            )
+            return None
+
+    def take_window(
+        self,
+        *,
+        task_id: str,
+        node_id: str,
+        event_type: str,
+        generation: int,
+    ) -> list[dict[str, Any]]:
+        """Settle one short-window aggregation if its generation still matches.
+
+        A settle task whose generation is stale (a newer window replaced this
+        one while the task was queued) takes nothing; the newer window already
+        carries the events.
+        """
+
+        key = _window_key(task_id, node_id, event_type)
+        try:
+            window = self._decode(self._redis().get(key))
+            if not isinstance(window, dict):
+                return []
+            if int(window.get("generation") or 0) != generation:
+                return []
+            events = (
+                window.get("events") if isinstance(window.get("events"), list) else []
+            )
+            self._redis().delete(key)
+            return events
+        except Exception:
+            logger.exception(
+                "External event buffer window take failed task=%s node=%s type=%s",
+                task_id,
+                node_id,
+                event_type,
+            )
+            return []
 
     def clear(self) -> None:
         """Delete every buffer key (test helper and maintenance entry)."""

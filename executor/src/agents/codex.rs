@@ -100,7 +100,9 @@ pub(crate) const WEWORK_SPACE_DEVELOPER_INSTRUCTIONS: &str = r#"Wework 项目空
 - `wework_space` is a fixed capability connected by the Wework Executor. Do not call MCP resource listing, a browser, Shell, `curl`, or parse `wegent://` URLs to determine whether it is available.
 - For the current bound Issue, call `get_current_context` first. To read its description or attachments, use `get_board_item`, then `list_item_attachments`, then `read_item_attachment`.
 - Use `list_board_items` to list a project's tasks and `search_board_items` for text or structured task searches. Use the matching project-space tool for reads and writes instead of querying local files, executor logs, or backend storage directly.
-- For AI-managed board automation, use `get_board_item` for the current item, `get_assignment_candidates` for eligible members and robots, and `assign_board_item` only after choosing a candidate from that result."#;
+- For AI-managed board automation, use `get_board_item` for the current item, `get_assignment_candidates` for eligible members and robots, and `assign_board_item` only after choosing a candidate from that result.
+- When creating or updating a project space bound to a self-hosted GitHub or GitLab, do not guess the endpoint. Ask the user for the full repository URL including any port or path prefix, or the API address form (https://host/prefix/api/v4/projects/group%2Fproject), and confirm the instance is reachable over HTTPS before writing provider_config.
+- When calling `register_external_reference`, provider "gitlab" covers both gitlab.com and self-hosted GitLab (identical webhooks); use opaque_ref "group/project!<iid>". For any other self-hosted or custom system, the provider must match the x-event-provider header its webhook sends, and the webhook must carry opaque_ref and event_type; use "generic" when the system sets no provider name."#;
 
 const IMAGE_MIME_TYPES: &[&str] = &[
     "image/png",

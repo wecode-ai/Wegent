@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.models.delivery import LoopItem
 from app.schemas.base_role import BaseRole
 from app.services.cloud_projects.access import require_cloud_project_role
+from app.services.external_events.adapters import provider_kind
 from app.services.external_events.binding import external_event_binding_service
 from app.services.external_events.evaluate import external_event_evaluation_service
 from app.services.project_workflow_projection import update_workflow_node
@@ -28,13 +29,17 @@ class ExternalEventRegistrationService:
         provider: str,
         opaque_ref: str,
         automation_run_id: str,
+        workflow_node_id: str | None = None,
     ) -> dict[str, Any]:
         """Bind one provider reference to a waiting workflow node.
 
         Only a task that is executing a preset workflow with a wait node may
-        register. The provider and opaque reference are opaque to Wegent; the
-        wait node rules decide which event types end the wait or rerun the
-        task.
+        register. The provider is classified by provider_kind(): "gitlab" is a
+        native adapter (gitlab.com and self-hosted instances send identical
+        webhooks), any other name is a generic envelope provider whose webhook
+        must match the registered provider. The opaque reference stays opaque
+        to Wegent; the wait node rules decide which event types end the wait or
+        rerun the task.
         """
 
         provider = provider.strip()
@@ -59,16 +64,29 @@ class ExternalEventRegistrationService:
         metadata = issue.metadata_json if isinstance(issue.metadata_json, dict) else {}
         workflow = metadata.get("workflow")
         nodes = workflow.get("nodes") if isinstance(workflow, dict) else None
-        wait_node = next(
-            (
-                candidate
-                for candidate in nodes or []
-                if isinstance(candidate, dict)
-                and candidate.get("node_type") == "wait"
-                and candidate.get("status") in {"ready", "waiting"}
-            ),
-            None,
-        )
+        if workflow_node_id:
+            wait_node = next(
+                (
+                    candidate
+                    for candidate in nodes or []
+                    if isinstance(candidate, dict)
+                    and candidate.get("id") == workflow_node_id
+                    and candidate.get("node_type") == "wait"
+                    and candidate.get("status") in {"ready", "waiting"}
+                ),
+                None,
+            )
+        else:
+            wait_node = next(
+                (
+                    candidate
+                    for candidate in nodes or []
+                    if isinstance(candidate, dict)
+                    and candidate.get("node_type") == "wait"
+                    and candidate.get("status") in {"ready", "waiting"}
+                ),
+                None,
+            )
         if wait_node is None:
             raise ValueError(
                 "This task is not bound to a ready wait node in a preset workflow"
@@ -97,6 +115,7 @@ class ExternalEventRegistrationService:
         return {
             "binding_id": str(binding.id),
             "provider": provider,
+            "provider_kind": provider_kind(provider),
             "opaque_ref": opaque_ref,
             "task_id": item.id,
             "issue_id": issue.id,

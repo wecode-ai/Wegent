@@ -30,3 +30,5 @@ class ProviderEventTypeView(BaseModel):
     event_type: str
     category: str
     description: str = ""
+    window_seconds: int | None = None
+    merge_while_running: bool = False

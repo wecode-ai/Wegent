@@ -50,6 +50,7 @@ from app.services.cloud_projects.service import cloud_project_service
 from app.services.delivery import delivery_service
 from app.services.external_events.binding import external_event_binding_service
 from app.services.external_events.evaluate import external_event_evaluation_service
+from app.services.external_events.reference import bind_references_from_delivery
 from app.services.external_events.registration import (
     external_event_registration_service,
 )
@@ -65,6 +66,7 @@ from app.services.project_workflow_projection import update_workflow_node
 from app.services.workflow_deliverables import (
     fulfilled_requirement_ids,
     missing_requirement_ids,
+    workflow_requirements,
 )
 from app.services.workflow_stage_context import workflow_stage_context_resolver
 from app.stores.tasks import task_store
@@ -764,12 +766,14 @@ def get_delivery_requirements(
         return {
             "workflow_node_id": binding.workflow_node_id,
             "workflow_node": node,
-            "required_deliverables": (node or {}).get("required_deliverables", []),
+            "required_deliverables": workflow_requirements(node or {}, workflow),
             "delivery_ids": (node or {}).get("delivery_ids", []),
             "fulfilled_requirement_ids": sorted(
-                fulfilled_requirement_ids(db, node or {})
+                fulfilled_requirement_ids(db, node or {}, workflow)
             ),
-            "missing_requirement_ids": missing_requirement_ids(db, node or {}),
+            "missing_requirement_ids": missing_requirement_ids(
+                db, node or {}, workflow
+            ),
         }
 
 
@@ -899,8 +903,16 @@ def register_external_reference(
     provider events (e.g. the GitLab MR that this task just opened).
 
     Only the task that is executing a preset workflow with a wait node may
-    register. The provider and opaque reference are opaque to Wegent; the
-    wait node rules decide which event types end the wait or rerun the task.
+    register. provider selects how inbound webhooks match this reference:
+    - "gitlab": GitLab native webhook, identical for gitlab.com and any
+      self-hosted GitLab. opaque_ref must be "group/project!<iid>".
+    - any other name: generic self-hosted or custom system. Its webhook must
+      send the same provider in the x-event-provider header and carry
+      opaque_ref and event_type fields; use "generic" when the system sets no
+      provider name.
+
+    The opaque reference is opaque to Wegent; the wait node rules decide which
+    event types end the wait or rerun the task.
     """
 
     with SessionLocal() as db:
@@ -1000,22 +1012,55 @@ def finalize_delivery(
     space_id: str = "",
     item_id: str = "",
 ) -> dict[str, Any]:
-    """Finalize a Delivery with typed requirement fulfillments."""
+    """Finalize a Delivery with typed requirement fulfillments.
+
+    When the finalized delivery belongs to a stage that a wait node listens on,
+    the system derives the opaque reference from the delivered reference
+    fulfillment and registers the binding automatically, so the wait node can
+    receive provider events without any prompt or manual registration.
+    """
 
     with SessionLocal() as db:
         project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
         resolved_item_id = _item_id(db, token_info, item_id)
         _read_item(db, project, resolved_item_id, token_info.user_id)
-        _delivery_draft_for_binding(db, token_info, resolved_item_id, delivery_id)
-        return _delivery_view(
-            db,
-            delivery_service.finalize(
-                db,
-                delivery_id,
-                token_info.user_id,
-                DeliveryFinalize.model_validate({"fulfillments": fulfillments or []}),
-            ),
+        _, binding = _delivery_draft_for_binding(
+            db, token_info, resolved_item_id, delivery_id
         )
+        delivery = delivery_service.finalize(
+            db,
+            delivery_id,
+            token_info.user_id,
+            DeliveryFinalize.model_validate({"fulfillments": fulfillments or []}),
+        )
+        item = db.get(LoopItem, resolved_item_id)
+        workflow = (
+            item.metadata_json.get("workflow")
+            if item is not None and isinstance(item.metadata_json, dict)
+            else None
+        )
+        node = next(
+            (
+                candidate
+                for candidate in (workflow or {}).get("nodes", [])
+                if isinstance(candidate, dict)
+                and candidate.get("id") == binding.workflow_node_id
+            ),
+            None,
+        )
+        run_id = _board_context(db, token_info).get("project_automation_run_id", "")
+        if item is not None and workflow and node and run_id:
+            bind_references_from_delivery(
+                db,
+                item=item,
+                workflow=workflow,
+                node=node,
+                fulfillments=delivery_service.fulfillment_values(delivery),
+                automation_run_id=run_id,
+                user_id=token_info.user_id,
+            )
+            db.commit()
+        return _delivery_view(db, delivery)
 
 
 @mcp_tool(server="wework_space")
