@@ -7,6 +7,8 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawn } from 'node:child_process'
 
+import { wrapWindowsScriptCommand } from './child-process-command.mjs'
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const source = path.join(root, 'harness-runtime')
 const targetDirectory = path.join(root, 'src-tauri', 'bundled-deepseek-harness')
@@ -23,7 +25,8 @@ const archiveFormatVersion = 'tar-gzip-fast-v1'
 
 function run(command, args, cwd, environment = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
+    const resolved = wrapWindowsScriptCommand(command, args)
+    const child = spawn(resolved.command, resolved.args, {
       cwd,
       env: { ...process.env, ...environment },
       stdio: 'inherit',
@@ -56,6 +59,7 @@ const sourceFingerprint = createHash('sha256')
   .update(sourceContents.map(content => content.toString('base64')).join('\0'))
   .digest('hex')
 const nodeName = process.platform === 'win32' ? 'node.exe' : 'node'
+const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 
 try {
   const currentMetadata = JSON.parse(await readFile(metadata, 'utf8'))
@@ -75,7 +79,7 @@ try {
   await rm(temporaryMetadata, { force: true })
   await mkdir(staging, { recursive: true })
   await Promise.all(sourceFiles.map(file => cp(path.join(source, file), path.join(staging, file))))
-  await run('pnpm', ['install', '--prod', '--frozen-lockfile'], staging)
+  await run(pnpmCommand, ['install', '--prod', '--frozen-lockfile'], staging)
 
   const nodeDirectory = path.join(staging, 'node', 'bin')
   await mkdir(nodeDirectory, { recursive: true })
