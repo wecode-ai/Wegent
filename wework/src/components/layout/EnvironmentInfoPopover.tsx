@@ -472,7 +472,7 @@ export function EnvironmentInfoPopover({
                     <BranchSelector
                       variant="environment"
                       currentBranch={info.branchName}
-                      loading={info.loading}
+                      loading={info.branchLoading ?? info.loading}
                       onRefresh={onRefresh}
                       onListBranches={onListBranches}
                       onCheckoutBranch={onCheckoutBranch}
