@@ -11,8 +11,10 @@ use std::{
 };
 
 use serde_json::{json, Value};
+use tokio::sync::{broadcast, Notify};
 use wegent_executor::{
     config::device::{ConnectionConfig, DeviceConfig, UpdateConfig},
+    local::app_ipc::{AppIpcError, RuntimeWorkHandler},
     local::backend::{
         local_backend_connection_failure_log_line, local_backend_registered_log_line,
         local_backend_starting_log_line, EventHandler, LocalBackendClient, LocalBackendConfig,
@@ -158,6 +160,59 @@ async fn runner_reconnects_after_two_consecutive_heartbeat_failures_to_preserve_
     );
 }
 
+#[tokio::test]
+async fn large_runtime_rpc_does_not_pause_device_heartbeats() {
+    let transport = ScriptedTransport::default();
+    let mut config = local_backend_config();
+    config.heartbeat_interval = Duration::from_millis(40);
+    config.heartbeat_timeout = Duration::from_millis(20);
+    config.reconnect_delay = Duration::from_millis(1);
+    config.reconnect_delay_max = Duration::from_millis(1);
+    let handler = Arc::new(BlockingTranscriptHandler::default());
+    let (event_tx, event_rx) = broadcast::channel(8);
+    let runner = LocalBackendRunner::new_with_shared_runtime_work_handler(
+        config,
+        transport.clone(),
+        handler.clone(),
+        event_rx,
+    )
+    .without_session_gateway();
+    drop(event_tx);
+
+    let runner_task = tokio::spawn(runner.run_forever());
+    transport.wait_for_connects(1).await;
+    let runtime_handler = transport.handler("runtime:rpc").expect("runtime handler");
+    let rpc_task = tokio::spawn(async move {
+        runtime_handler(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {"localTaskId": "large-1"}
+        }))
+        .await
+        .expect("runtime ACK")
+    });
+    handler.started.notified().await;
+
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            if transport.emits_for_event("device:heartbeat").len() >= 3 {
+                return;
+            }
+            transport.notify.notified().await;
+        }
+    })
+    .await
+    .expect("heartbeats should continue while transcript is loading");
+
+    handler.release.notify_one();
+    let ack = rpc_task.await.unwrap();
+    runner_task.abort();
+    let _ = runner_task.await;
+
+    assert_eq!(ack["__runtimeRpcEncoding"], "gzip+base64+json");
+    assert_eq!(transport.connects(), 1);
+    assert_eq!(transport.disconnects(), 0);
+}
+
 #[derive(Clone, Debug)]
 struct RecordedCall {
     event: String,
@@ -215,6 +270,15 @@ impl ScriptedTransport {
             .filter(|emit| emit.event == event)
             .cloned()
             .collect()
+    }
+
+    fn handler(&self, event: &str) -> Option<EventHandler> {
+        self.handlers
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(name, _)| name == event)
+            .map(|(_, handler)| Arc::clone(handler))
     }
 
     async fn wait_for_connects(&self, count: usize) {
@@ -295,6 +359,34 @@ impl LocalBackendTransport for ScriptedTransport {
             .lock()
             .unwrap()
             .push((event.to_owned(), handler));
+    }
+}
+
+#[derive(Default)]
+struct BlockingTranscriptHandler {
+    started: Notify,
+    release: Notify,
+}
+
+impl RuntimeWorkHandler for BlockingTranscriptHandler {
+    fn handle_runtime_rpc<'a>(
+        &'a self,
+        data: Value,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
+        Box::pin(async move {
+            if data.get("method").and_then(Value::as_str) == Some("runtime.tasks.transcript") {
+                self.started.notify_one();
+                self.release.notified().await;
+                return Ok(json!({
+                    "success": true,
+                    "messages": [{
+                        "id": "message-1",
+                        "content": "large transcript ".repeat(80_000),
+                    }],
+                }));
+            }
+            Ok(json!({"success": true, "available": true}))
+        })
     }
 }
 

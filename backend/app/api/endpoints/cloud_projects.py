@@ -46,6 +46,7 @@ from app.schemas.external_event import (
     ExternalReferenceRegister,
     ExternalReferenceResponse,
 )
+from app.schemas.project_board import ProjectBoardSnapshotResponse
 from app.schemas.project_chat import (
     LoopItemApproval,
     LoopItemAssign,
@@ -58,8 +59,10 @@ from app.services.cloud_projects import cloud_project_service
 from app.services.external_events.registration import (
     external_event_registration_service,
 )
+from app.services.loop_item_events import publish_loop_item_changed
 from app.services.loop_items import loop_item_service
 from app.services.loop_items.external_provider import external_loop_item_provider
+from app.services.project_board_snapshot import project_board_snapshot_service
 from app.services.project_chat.service import project_chat_service
 
 router = APIRouter()
@@ -163,6 +166,18 @@ def list_project_chat_agents(
     )
 
 
+@router.get(
+    "/{project_id}/board-snapshot",
+    response_model=ProjectBoardSnapshotResponse,
+)
+def get_project_board_snapshot(
+    project_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ProjectBoardSnapshotResponse:
+    return project_board_snapshot_service.get(db, project_id, current_user.id)
+
+
 @router.post(
     "/{project_id}/chat-agents",
     response_model=ProjectChatAgentView,
@@ -249,6 +264,12 @@ async def assign_loop_item(
     from app.tasks.robot_queue_tasks import consume_queues_background
 
     background_tasks.add_task(consume_queues_background)
+    publish_loop_item_changed(
+        db,
+        item=item,
+        reason="assignment",
+        actor_user_id=current_user.id,
+    )
     access = cloud_project_service.access(db, project_id, current_user.id)
     return LoopItemResponse.model_validate(
         loop_item_service.response_values(db, item, current_user.id, access=access)
@@ -291,6 +312,12 @@ def approve_loop_item_run(
     from app.tasks.robot_queue_tasks import consume_queues_background
 
     background_tasks.add_task(consume_queues_background)
+    publish_loop_item_changed(
+        db,
+        item=item,
+        reason="execution_approved",
+        actor_user_id=current_user.id,
+    )
     access = cloud_project_service.access(db, project_id, current_user.id)
     return LoopItemResponse.model_validate(
         loop_item_service.response_values(db, item, current_user.id, access=access)
@@ -326,6 +353,12 @@ def reject_loop_item_run(
         item_id=item_id,
         user_id=current_user.id,
         values=values,
+    )
+    publish_loop_item_changed(
+        db,
+        item=item,
+        reason="execution_rejected",
+        actor_user_id=current_user.id,
     )
     access = cloud_project_service.access(db, project_id, current_user.id)
     return LoopItemResponse.model_validate(

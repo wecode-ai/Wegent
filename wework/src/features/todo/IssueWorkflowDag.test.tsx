@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { useEffect, type ComponentType, type ReactNode } from 'react'
+import { useEffect, type ComponentType, type MouseEvent, type ReactNode } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { Delivery, WorkflowNodeInstance } from '@/api/deliveries'
 import { IssueWorkflowDag } from './IssueWorkflowDag'
@@ -8,12 +8,18 @@ const fitView = vi.fn()
 
 vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
-    t: (key: string, fallback?: string, values?: Record<string, string | number>): string => {
+    t: (
+      key: string,
+      optionsOrFallback?: { count?: number } | string,
+      values?: Record<string, string | number>
+    ): string => {
+      if (key === 'todo.workflow_task_count') {
+        const count = typeof optionsOrFallback === 'object' ? (optionsOrFallback?.count ?? 0) : 0
+        return `${count} 个任务`
+      }
+      const fallback = typeof optionsOrFallback === 'string' ? optionsOrFallback : undefined
       const text =
         {
-          'todo.workflow_active_stages': '当前阶段',
-          'todo.workflow_node_details': '节点详情',
-          'todo.workflow_next_actions': '下一步',
           'todo.workflow_stage_human_execution': '人工执行',
           'todo.workflow_ai_execution': 'AI 执行',
           'todo.workflow_start_work': '开始处理',
@@ -54,6 +60,10 @@ vi.mock('@/hooks/useTranslation', () => ({
           'todo.workflow_no_stage_tasks': '尚无具体任务',
           'todo.workflow_wait_event_types': '等待：{{types}}',
           'todo.workflow_wait_round': '等待中 · 第 {{round}} 轮修复中',
+          'todo.workflow_wait_repair_queued': '第 {{round}} 轮修复排队中',
+          'todo.workflow_wait_repair_failed': '第 {{round}} 轮修复失败',
+          'todo.workflow_wait_repair_succeeded': '第 {{round}} 轮修复完成',
+          'todo.workflow_more_tasks': '另有 {{count}} 个任务',
         }[key] ??
         fallback ??
         key
@@ -77,6 +87,11 @@ vi.mock('@xyflow/react', () => ({
     children,
     onInit,
     onNodeClick,
+    preventScrolling,
+    zoomOnScroll,
+    zoomOnPinch,
+    zoomOnDoubleClick,
+    panOnDrag,
   }: {
     nodes: Array<{ id: string; type: string; data: Record<string, unknown> }>
     nodeTypes: Record<string, ComponentType<{ data: Record<string, unknown> }>>
@@ -86,13 +101,25 @@ vi.mock('@xyflow/react', () => ({
       event: MouseEvent<HTMLDivElement>,
       node: { id: string; type: string; data: Record<string, unknown> }
     ) => void
+    preventScrolling?: boolean
+    zoomOnScroll?: boolean
+    zoomOnPinch?: boolean
+    zoomOnDoubleClick?: boolean
+    panOnDrag?: boolean
   }) => {
     useEffect(() => {
       onInit?.({ fitView })
     }, [onInit])
 
     return (
-      <div data-testid="mock-react-flow">
+      <div
+        data-testid="mock-react-flow"
+        data-prevent-scrolling={String(preventScrolling)}
+        data-zoom-on-scroll={String(zoomOnScroll)}
+        data-zoom-on-pinch={String(zoomOnPinch)}
+        data-zoom-on-double-click={String(zoomOnDoubleClick)}
+        data-pan-on-drag={String(panOnDrag)}
+      >
         {nodes.map(node => {
           const NodeComponent = nodeTypes[node.type]
           return (
@@ -164,7 +191,73 @@ describe('IssueWorkflowDag', () => {
     )
   })
 
-  test('exposes ready human and AI stage actions outside the zoomable graph', () => {
+  test('activates viewport interactions only after the graph is clicked', () => {
+    render(<IssueWorkflowDag nodes={[stage('编辑')]} tasks={[]} />)
+
+    const graph = screen.getByTestId('cloud-todo-workflow-dag')
+    const flow = screen.getByTestId('mock-react-flow')
+    expect(flow).toHaveAttribute('data-prevent-scrolling', 'false')
+    expect(flow).toHaveAttribute('data-zoom-on-scroll', 'false')
+    expect(flow).toHaveAttribute('data-zoom-on-pinch', 'false')
+    expect(flow).toHaveAttribute('data-zoom-on-double-click', 'false')
+    expect(flow).toHaveAttribute('data-pan-on-drag', 'false')
+
+    fireEvent.pointerDown(graph)
+
+    expect(flow).toHaveAttribute('data-prevent-scrolling', 'true')
+    expect(flow).toHaveAttribute('data-zoom-on-scroll', 'true')
+    expect(flow).toHaveAttribute('data-zoom-on-pinch', 'true')
+    expect(flow).toHaveAttribute('data-zoom-on-double-click', 'true')
+    expect(flow).toHaveAttribute('data-pan-on-drag', 'true')
+
+    fireEvent.pointerDown(document.body)
+
+    expect(flow).toHaveAttribute('data-prevent-scrolling', 'false')
+    expect(flow).toHaveAttribute('data-zoom-on-scroll', 'false')
+    expect(flow).toHaveAttribute('data-zoom-on-pinch', 'false')
+    expect(flow).toHaveAttribute('data-zoom-on-double-click', 'false')
+    expect(flow).toHaveAttribute('data-pan-on-drag', 'false')
+  })
+
+  test('switches the detail panel when a completed graph node is clicked', () => {
+    const onCreateTask = vi.fn()
+    render(
+      <IssueWorkflowDag
+        nodes={[
+          stage('设计', {
+            status: 'completed',
+            task_statuses: { 'device-1:task-1': 'succeeded' },
+          }),
+          stage('开发', { status: 'running', depends_on: ['设计'] }),
+        ]}
+        tasks={[
+          {
+            id: 1,
+            device_id: 'device-1',
+            task_id: 'task-1',
+            task_title: '设计任务',
+            workflow_node_id: '设计',
+          },
+        ]}
+        onCreateTask={onCreateTask}
+      />
+    )
+
+    expect(screen.getByTestId('cloud-todo-workflow-action-开发')).toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-workflow-action-设计')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('mock-flow-node-设计'))
+
+    expect(screen.getByTestId('cloud-todo-workflow-action-设计')).toHaveTextContent('设计任务')
+    expect(screen.queryByTestId('cloud-todo-workflow-action-开发')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-create-workflow-task-设计')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-workflow-node-设计')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+  })
+
+  test('links the selected graph node to the stage action panel', () => {
     const onCreateTask = vi.fn()
     const onRunAutomation = vi.fn()
 
@@ -181,40 +274,21 @@ describe('IssueWorkflowDag', () => {
       />
     )
 
-    expect(screen.getByTestId('cloud-todo-workflow-actions')).toHaveTextContent('当前阶段')
-    expect(screen.getByTestId('cloud-todo-workflow-action-编辑')).toHaveTextContent(
-      '人工执行 · 可开始'
-    )
-    expect(screen.getByTestId('cloud-todo-workflow-action-审阅')).toHaveTextContent(
-      'AI 执行 · 可开始'
-    )
+    expect(screen.getByTestId('cloud-todo-workflow-action-编辑')).toHaveTextContent('人工执行')
+    expect(screen.getByTestId('cloud-todo-workflow-action-编辑')).toHaveTextContent('可开始')
+    expect(screen.queryByTestId('cloud-todo-workflow-action-审阅')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-workflow-action-交付')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByTestId('cloud-todo-create-workflow-task-编辑'))
     expect(onCreateTask).toHaveBeenCalledWith('编辑')
 
+    fireEvent.click(screen.getByTestId('mock-flow-node-审阅'))
+
+    expect(screen.queryByTestId('cloud-todo-workflow-action-编辑')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-workflow-action-审阅')).toHaveTextContent('AI 执行')
+    expect(screen.getByTestId('cloud-todo-workflow-action-审阅')).toHaveTextContent('可开始')
     fireEvent.click(screen.getByTestId('cloud-todo-run-workflow-node-审阅'))
     expect(onRunAutomation).toHaveBeenCalledWith('审阅', 'rule-1')
-  })
-
-  test('offers another task after a human stage has already started', () => {
-    render(
-      <IssueWorkflowDag
-        nodes={[stage('编辑', { status: 'running' })]}
-        tasks={[
-          {
-            id: 1,
-            device_id: 'device-1',
-            task_id: 'task-1',
-            task_title: '已有任务',
-            workflow_node_id: '编辑',
-          },
-        ]}
-        onCreateTask={vi.fn()}
-      />
-    )
-
-    expect(screen.getByTestId('cloud-todo-create-workflow-task-编辑')).toHaveTextContent('添加任务')
   })
 
   test('renders a waiting node with wait events and round text', () => {
@@ -279,7 +353,7 @@ describe('IssueWorkflowDag', () => {
     expect(screen.getByTestId('cloud-todo-workflow-action-编辑')).toBeInTheDocument()
   })
 
-  test('shows the waiting status label for a wait node', () => {
+  test('shows the waiting status label and action panel for a wait node', () => {
     render(
       <IssueWorkflowDag
         nodes={[
@@ -302,42 +376,7 @@ describe('IssueWorkflowDag', () => {
     )
 
     expect(screen.getByTestId('cloud-todo-workflow-node-等待')).toHaveTextContent('等待中')
-    expect(screen.queryByTestId('cloud-todo-workflow-action-等待')).not.toBeInTheDocument()
-  })
-
-  test('switches the detail panel when a completed graph node is clicked', () => {
-    const onCreateTask = vi.fn()
-    render(
-      <IssueWorkflowDag
-        nodes={[
-          stage('设计', {
-            status: 'completed',
-            task_statuses: { 'device-1:task-1': 'succeeded' },
-          }),
-          stage('开发', { status: 'running', depends_on: ['设计'] }),
-        ]}
-        tasks={[
-          {
-            id: 1,
-            device_id: 'device-1',
-            task_id: 'task-1',
-            task_title: '设计任务',
-            workflow_node_id: '设计',
-          },
-        ]}
-        onCreateTask={onCreateTask}
-      />
-    )
-
-    expect(screen.getByTestId('cloud-todo-workflow-action-开发')).toBeInTheDocument()
-    expect(screen.queryByTestId('cloud-todo-workflow-action-设计')).not.toBeInTheDocument()
-
-    fireEvent.click(screen.getByTestId('mock-flow-node-设计'))
-
-    expect(screen.getByText('节点详情')).toBeInTheDocument()
-    expect(screen.getByTestId('cloud-todo-workflow-action-设计')).toHaveTextContent('设计任务')
-    expect(screen.queryByTestId('cloud-todo-workflow-action-开发')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('cloud-todo-create-workflow-task-设计')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-workflow-action-等待')).toHaveTextContent('等待中')
   })
 
   test('prevents duplicate reruns and surfaces the backend rejection', async () => {
@@ -370,6 +409,26 @@ describe('IssueWorkflowDag', () => {
       expect(rerun).not.toBeDisabled()
       expect(screen.getByText('执行设备当前不可用')).toBeInTheDocument()
     })
+  })
+
+  test('offers another task after a human stage has already started', () => {
+    render(
+      <IssueWorkflowDag
+        nodes={[stage('编辑', { status: 'running' })]}
+        tasks={[
+          {
+            id: 1,
+            device_id: 'device-1',
+            task_id: 'task-1',
+            task_title: '已有任务',
+            workflow_node_id: '编辑',
+          },
+        ]}
+        onCreateTask={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('cloud-todo-create-workflow-task-编辑')).toHaveTextContent('添加任务')
   })
 
   test('allows another task while a human stage awaits approval', () => {
@@ -436,7 +495,7 @@ describe('IssueWorkflowDag', () => {
     expect(onOpenTask).toHaveBeenCalledWith(latestTask)
 
     const graphNode = screen.getByTestId('cloud-todo-workflow-node-编辑')
-    expect(graphNode).toHaveTextContent('任务执行2')
+    expect(graphNode).toHaveTextContent('2 个任务')
     expect(within(graphNode).queryByText('最近失败的任务')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByTestId('cloud-todo-create-workflow-task-编辑'))
@@ -477,6 +536,16 @@ describe('IssueWorkflowDag', () => {
     )
 
     expect(screen.getByText(/测试报告/)).toBeInTheDocument()
+    const deliverableProgress = screen.getByTestId('cloud-todo-workflow-deliverable-progress-编辑')
+    const taskList = screen.getByTestId('cloud-todo-workflow-task-list-编辑')
+    const createTask = screen.getByTestId('cloud-todo-create-workflow-task-编辑')
+    expect(
+      deliverableProgress.compareDocumentPosition(taskList) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    expect(
+      taskList.compareDocumentPosition(createTask) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+
     fireEvent.click(screen.getByTestId('cloud-todo-approve-workflow-node-编辑'))
     expect(screen.getByTestId('workflow-stage-completion-dialog')).toBeInTheDocument()
     const fieldset = screen.getByTestId('workflow-deliverable-input-test-report')

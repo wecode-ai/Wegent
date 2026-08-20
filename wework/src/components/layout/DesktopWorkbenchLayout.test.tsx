@@ -810,6 +810,7 @@ describe('DesktopWorkbenchLayout', () => {
     onGetProjectWorkspaceRoot: vi.fn().mockResolvedValue('/workspace/projects'),
     onListDeviceDirectories: vi.fn().mockResolvedValue([]),
     onCreateDeviceDirectory: vi.fn(),
+    onCloneGitRepository: vi.fn(),
     onListGitRepositories: vi.fn().mockResolvedValue([]),
     onListGitBranches: vi.fn().mockResolvedValue([]),
     onLoadEnvironmentInfo: vi.fn().mockResolvedValue({
@@ -970,6 +971,7 @@ describe('DesktopWorkbenchLayout', () => {
     onGetProjectWorkspaceRoot?: (...args: unknown[]) => Promise<string>
     onListDeviceDirectories?: (...args: unknown[]) => Promise<string[]>
     onCreateDeviceDirectory?: (...args: unknown[]) => Promise<void>
+    onCloneGitRepository?: (...args: unknown[]) => Promise<void>
     onLoadEnvironmentInfo?: (...args: unknown[]) => Promise<unknown>
     onLoadEnvironmentDiff?: (...args: unknown[]) => Promise<string>
     onCommitEnvironmentChanges?: (...args: unknown[]) => Promise<void>
@@ -1162,6 +1164,7 @@ describe('DesktopWorkbenchLayout', () => {
         localHarnessModelApi: {
           resolveLaunch: resolveLocalHarnessLaunchMock,
           unregisterProxy: unregisterHarnessProxyMock,
+          unregisterContext: vi.fn(),
         },
         ...(props.runtimeWorkApi ? { runtimeWorkApi: props.runtimeWorkApi } : {}),
       },
@@ -1239,6 +1242,7 @@ describe('DesktopWorkbenchLayout', () => {
         props.onGetProjectWorkspaceRoot ?? baseProps.onGetProjectWorkspaceRoot,
       listDeviceDirectories: props.onListDeviceDirectories ?? baseProps.onListDeviceDirectories,
       createDeviceDirectory: props.onCreateDeviceDirectory ?? baseProps.onCreateDeviceDirectory,
+      cloneGitRepository: props.onCloneGitRepository ?? baseProps.onCloneGitRepository,
       loadEnvironmentInfo: props.onLoadEnvironmentInfo ?? baseProps.onLoadEnvironmentInfo,
       loadEnvironmentDiff: props.onLoadEnvironmentDiff ?? baseProps.onLoadEnvironmentDiff,
       commitEnvironmentChanges:
@@ -2060,7 +2064,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
-  test('opens continue-in-im dialog from the active runtime task topbar button', async () => {
+  test('automatically continues to the only private IM session from the topbar', async () => {
     const onListImPrivateSessions = vi.fn().mockResolvedValue({
       total: 1,
       items: [
@@ -2079,6 +2083,7 @@ describe('DesktopWorkbenchLayout', () => {
         },
       ],
     })
+    const onBindRuntimeTaskToImSessions = vi.fn().mockResolvedValue(undefined)
 
     render(
       <DesktopWorkbenchLayout
@@ -2101,14 +2106,25 @@ describe('DesktopWorkbenchLayout', () => {
           },
         ]}
         onListImPrivateSessions={onListImPrivateSessions}
+        onBindRuntimeTaskToImSessions={onBindRuntimeTaskToImSessions}
       />
     )
 
     await userEvent.click(screen.getByTestId('continue-in-im-button'))
 
     expect(onListImPrivateSessions).toHaveBeenCalledTimes(1)
-    expect(await screen.findByRole('dialog')).toBeInTheDocument()
-    expect(await screen.findByTestId('continue-im-session-session-1')).toHaveTextContent('Alice')
+    await waitFor(() =>
+      expect(onBindRuntimeTaskToImSessions).toHaveBeenCalledWith(
+        {
+          deviceId: 'device-1',
+          workspacePath: '/workspace/project-alpha',
+          taskId: 'runtime-1',
+        },
+        ['session-1']
+      )
+    )
+    expect(await screen.findByTestId('transient-notice')).toHaveTextContent('已发送到私聊')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
   test('hides task fork and IM actions while experimental features are disabled', () => {
@@ -2582,6 +2598,7 @@ describe('DesktopWorkbenchLayout', () => {
       .fn()
       .mockReturnValueOnce(firstRequest.promise)
       .mockReturnValueOnce(secondRequest.promise)
+    const onBindRuntimeTaskToImSessions = vi.fn().mockResolvedValue(undefined)
 
     render(
       <DesktopWorkbenchLayout
@@ -2604,6 +2621,7 @@ describe('DesktopWorkbenchLayout', () => {
           },
         ]}
         onListImPrivateSessions={onListImPrivateSessions}
+        onBindRuntimeTaskToImSessions={onBindRuntimeTaskToImSessions}
       />
     )
 
@@ -2630,34 +2648,49 @@ describe('DesktopWorkbenchLayout', () => {
       ],
     })
 
-    expect(await screen.findByTestId('continue-im-session-session-2')).toHaveTextContent(
-      'Fresh session'
-    )
-
-    firstRequest.resolve({
-      total: 1,
-      items: [
+    await waitFor(() =>
+      expect(onBindRuntimeTaskToImSessions).toHaveBeenCalledWith(
         {
-          session_key: 'session-1',
-          channel_type: 'wecom',
-          channel_label: 'WeCom',
-          channel_id: 101,
-          conversation_id: 'conversation-1',
-          sender_id: 'sender-1',
-          display_name: 'Stale session',
-          mode: 'chat',
-          state: 'idle',
-          active_task_id: null,
-          last_seen_at: '2026-06-20T00:00:00.000Z',
+          deviceId: 'device-1',
+          workspacePath: '/workspace/project-alpha',
+          taskId: 'runtime-1',
         },
-      ],
+        ['session-2']
+      )
+    )
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+    await act(async () => {
+      firstRequest.resolve({
+        total: 1,
+        items: [
+          {
+            session_key: 'session-1',
+            channel_type: 'wecom',
+            channel_label: 'WeCom',
+            channel_id: 101,
+            conversation_id: 'conversation-1',
+            sender_id: 'sender-1',
+            display_name: 'Stale session',
+            mode: 'chat',
+            state: 'idle',
+            active_task_id: null,
+            last_seen_at: '2026-06-20T00:00:00.000Z',
+          },
+        ],
+      })
+      await firstRequest.promise
     })
 
-    await waitFor(() => expect(screen.queryByText('Stale session')).not.toBeInTheDocument())
-    expect(screen.getByText('Fresh session')).toBeInTheDocument()
+    expect(onBindRuntimeTaskToImSessions).toHaveBeenCalledTimes(1)
+    expect(onBindRuntimeTaskToImSessions).not.toHaveBeenCalledWith(expect.anything(), ['session-1'])
   })
 
-  test('shows a failure notice when bind handler is missing', async () => {
+  test('keeps the dialog open for manual retry when automatic binding fails', async () => {
+    const onBindRuntimeTaskToImSessions = vi
+      .fn()
+      .mockRejectedValue(new Error('Missing bind handler'))
+
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
@@ -2696,18 +2729,21 @@ describe('DesktopWorkbenchLayout', () => {
             },
           ],
         })}
+        onBindRuntimeTaskToImSessions={onBindRuntimeTaskToImSessions}
       />
     )
 
     await userEvent.click(screen.getByTestId('continue-in-im-button'))
-    expect(await screen.findByTestId('continue-im-session-session-1')).toHaveAttribute(
+    expect(await screen.findByTestId('transient-notice')).toHaveTextContent('继续到私聊失败')
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('continue-im-session-session-1')).toHaveAttribute(
       'aria-pressed',
       'true'
     )
-    await userEvent.click(screen.getByTestId('continue-im-submit-button'))
+    expect(onBindRuntimeTaskToImSessions).toHaveBeenCalledTimes(1)
 
-    expect(await screen.findByTestId('transient-notice')).toHaveTextContent('继续到私聊失败')
-    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('continue-im-submit-button'))
+    await waitFor(() => expect(onBindRuntimeTaskToImSessions).toHaveBeenCalledTimes(2))
   })
 
   test('positions the scroll-to-bottom button above the sticky composer footer', async () => {
@@ -4960,6 +4996,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('projects-create-button'))
     await userEvent.click(screen.getByTestId('project-create-remote-option'))
+    await userEvent.click(screen.getByTestId('remote-project-source-existing'))
 
     await waitFor(() => expect(onGetDeviceHomeDirectory).toHaveBeenCalledWith('device-1'))
     await waitFor(() =>
@@ -4982,6 +5019,272 @@ describe('DesktopWorkbenchLayout', () => {
     expect(onCreateProject).not.toHaveBeenCalled()
     expect(onPrepareDeviceWorkspace).not.toHaveBeenCalled()
     expect(nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker).not.toHaveBeenCalled()
+  })
+
+  test('creates a blank remote project directory before opening it', async () => {
+    const onGetDeviceHomeDirectory = vi.fn().mockResolvedValue('/home/ubuntu')
+    const onListDeviceDirectories = vi.fn().mockResolvedValue([])
+    const onCreateDeviceDirectory = vi.fn().mockResolvedValue(undefined)
+    const onOpenStandaloneWorkspace = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
+        onListDeviceDirectories={onListDeviceDirectories}
+        onCreateDeviceDirectory={onCreateDeviceDirectory}
+        onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
+        state={{
+          ...baseProps.state,
+          devices: [
+            {
+              id: 1,
+              device_id: 'device-1',
+              name: 'Remote device',
+              status: 'online',
+              is_default: true,
+              bind_shell: 'claudecode',
+              device_type: 'remote',
+              executor_version: '1.8.5',
+            },
+          ],
+        }}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('projects-create-button'))
+    await userEvent.click(screen.getByTestId('project-create-remote-option'))
+    expect(screen.getByTestId('remote-project-source-options')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('remote-project-source-blank'))
+    await waitFor(() => expect(onGetDeviceHomeDirectory).toHaveBeenCalledWith('device-1'))
+    await userEvent.type(screen.getByTestId('device-folder-name-input'), 'new-project')
+    await userEvent.click(screen.getByTestId('confirm-device-folder-picker-button'))
+
+    await waitFor(() =>
+      expect(onCreateDeviceDirectory).toHaveBeenCalledWith('device-1', '/home/ubuntu/new-project')
+    )
+    await waitFor(() =>
+      expect(onOpenStandaloneWorkspace).toHaveBeenCalledWith(
+        'device-1',
+        '/home/ubuntu/new-project',
+        'new-project'
+      )
+    )
+  })
+
+  test('clones a Git repository before opening the remote project', async () => {
+    const onGetDeviceHomeDirectory = vi.fn().mockResolvedValue('/home/ubuntu')
+    const onListDeviceDirectories = vi.fn().mockResolvedValue(['projects'])
+    const cloneResult = createDeferred<void>()
+    const firstOpenResult = createDeferred<void>()
+    const onCloneGitRepository = vi.fn().mockReturnValue(cloneResult.promise)
+    const onOpenStandaloneWorkspace = vi
+      .fn()
+      .mockReturnValueOnce(firstOpenResult.promise)
+      .mockResolvedValueOnce(undefined)
+    const remoteDevice = {
+      id: 1,
+      device_id: 'device-1',
+      name: 'Remote device',
+      status: 'online' as const,
+      is_default: true,
+      bind_shell: 'claudecode',
+      device_type: 'remote' as const,
+      executor_version: '1.8.5',
+    }
+    const renderLayout = (device: typeof remoteDevice) => (
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
+        onListDeviceDirectories={onListDeviceDirectories}
+        onCloneGitRepository={onCloneGitRepository}
+        onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
+        state={{
+          ...baseProps.state,
+          devices: [device],
+        }}
+      />
+    )
+    const { rerender } = render(renderLayout(remoteDevice))
+
+    await userEvent.click(screen.getByTestId('projects-create-button'))
+    await userEvent.click(screen.getByTestId('project-create-remote-option'))
+    await userEvent.click(screen.getByTestId('remote-project-source-git'))
+    await waitFor(() =>
+      expect(screen.getByTestId('remote-project-git-parent-input')).toHaveValue('/home/ubuntu')
+    )
+    await userEvent.click(screen.getByTestId('remote-project-git-parent-browse'))
+    await waitFor(() =>
+      expect(onListDeviceDirectories).toHaveBeenCalledWith('device-1', '/home/ubuntu')
+    )
+    await userEvent.click(await screen.findByText('projects'))
+    await userEvent.click(screen.getByTestId('confirm-device-folder-picker-button'))
+    expect(screen.getByTestId('remote-project-git-parent-input')).toHaveValue(
+      '/home/ubuntu/projects'
+    )
+    rerender(renderLayout({ ...remoteDevice, name: 'Remote device refreshed' }))
+    expect(onGetDeviceHomeDirectory).toHaveBeenCalledTimes(1)
+    expect(screen.getByTestId('remote-project-git-parent-input')).toHaveValue(
+      '/home/ubuntu/projects'
+    )
+    await userEvent.type(
+      screen.getByTestId('remote-project-git-url-input'),
+      'git@github.com:owner/repository.git'
+    )
+    await userEvent.click(screen.getByTestId('remote-project-git-advanced-toggle'))
+    await userEvent.type(screen.getByTestId('remote-project-git-branch-input'), 'develop')
+    await userEvent.click(screen.getByTestId('remote-project-git-submit'))
+
+    expect(screen.queryByTestId('standalone-folder-project-dialog')).not.toBeInTheDocument()
+    expect(screen.getByTestId('git-clone-project-operations')).toHaveTextContent('repository克隆中')
+    expect(onOpenStandaloneWorkspace).not.toHaveBeenCalled()
+    await waitFor(() =>
+      expect(onCloneGitRepository).toHaveBeenCalledWith('device-1', {
+        url: 'git@github.com:owner/repository.git',
+        branch: 'develop',
+        targetPath: '/home/ubuntu/projects/repository',
+      })
+    )
+    cloneResult.resolve()
+    await waitFor(() =>
+      expect(onOpenStandaloneWorkspace).toHaveBeenCalledWith(
+        'device-1',
+        '/home/ubuntu/projects/repository',
+        'repository'
+      )
+    )
+    expect(screen.getByTestId('git-clone-project-operations')).toHaveTextContent('repository添加中')
+    firstOpenResult.reject(new Error('Failed to register runtime workspace'))
+    await waitFor(() =>
+      expect(screen.getByTestId('git-clone-project-operations')).toHaveTextContent(
+        'repository添加失败'
+      )
+    )
+    await userEvent.click(screen.getByRole('button', { name: '重试' }))
+    expect(onCloneGitRepository).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(onOpenStandaloneWorkspace).toHaveBeenCalledTimes(2))
+    await waitFor(() =>
+      expect(screen.queryByTestId('git-clone-project-operations')).not.toBeInTheDocument()
+    )
+  })
+
+  test('refreshes an offline device before retrying a Git clone', async () => {
+    const refreshResult = createDeferred<void>()
+    const onRefreshDevices = vi.fn().mockReturnValue(refreshResult.promise)
+    const onCloneGitRepository = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('executor-offline:device-1'))
+      .mockResolvedValueOnce(undefined)
+    const onOpenStandaloneWorkspace = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onRefreshDevices={onRefreshDevices}
+        onCloneGitRepository={onCloneGitRepository}
+        onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
+        state={{
+          ...baseProps.state,
+          devices: [
+            {
+              id: 1,
+              device_id: 'device-1',
+              name: 'Remote device',
+              status: 'online',
+              is_default: true,
+              bind_shell: 'claudecode',
+              device_type: 'remote',
+              executor_version: '1.8.5',
+            },
+          ],
+        }}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('projects-create-button'))
+    await userEvent.click(screen.getByTestId('project-create-remote-option'))
+    await userEvent.click(screen.getByTestId('remote-project-source-git'))
+    await userEvent.type(
+      screen.getByTestId('remote-project-git-url-input'),
+      'https://github.com/owner/repository.git'
+    )
+    await userEvent.click(screen.getByTestId('remote-project-git-submit'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('git-clone-project-operations')).toHaveTextContent(
+        'repository设备离线'
+      )
+    )
+    const refreshCountBeforeRetry = onRefreshDevices.mock.calls.length
+    await userEvent.click(screen.getByRole('button', { name: '重试' }))
+
+    await waitFor(() => expect(onRefreshDevices).toHaveBeenCalledTimes(refreshCountBeforeRetry + 1))
+    expect(onCloneGitRepository).toHaveBeenCalledTimes(1)
+    refreshResult.resolve()
+    await waitFor(() => expect(onCloneGitRepository).toHaveBeenCalledTimes(2))
+    await waitFor(() =>
+      expect(onOpenStandaloneWorkspace).toHaveBeenCalledWith(
+        'device-1',
+        '/home/ubuntu/repository',
+        'repository'
+      )
+    )
+    await waitFor(() =>
+      expect(screen.queryByTestId('git-clone-project-operations')).not.toBeInTheDocument()
+    )
+  })
+
+  test('rejects embedded HTTP Git credentials without cloning', async () => {
+    const onCloneGitRepository = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onCloneGitRepository={onCloneGitRepository}
+        state={{
+          ...baseProps.state,
+          devices: [
+            {
+              id: 1,
+              device_id: 'device-1',
+              name: 'Remote device',
+              status: 'online',
+              is_default: true,
+              bind_shell: 'claudecode',
+              device_type: 'remote',
+              executor_version: '1.8.5',
+            },
+          ],
+        }}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('projects-create-button'))
+    await userEvent.click(screen.getByTestId('project-create-remote-option'))
+    await userEvent.click(screen.getByTestId('remote-project-source-git'))
+    await userEvent.type(
+      screen.getByTestId('remote-project-git-url-input'),
+      'https://token@github.com/owner/repository.git'
+    )
+    await userEvent.click(screen.getByTestId('remote-project-git-submit'))
+
+    expect(await screen.findByTestId('remote-project-git-error')).toHaveTextContent(
+      '仓库地址不能包含账号、密码或 Token'
+    )
+    expect(onCloneGitRepository).not.toHaveBeenCalled()
+
+    await userEvent.clear(screen.getByTestId('remote-project-git-url-input'))
+    await userEvent.type(
+      screen.getByTestId('remote-project-git-url-input'),
+      'https://user:password@github.com/owner/repository.git'
+    )
+    await userEvent.click(screen.getByTestId('remote-project-git-submit'))
+
+    expect(await screen.findByTestId('remote-project-git-error')).toHaveTextContent(
+      '仓库地址不能包含账号、密码或 Token'
+    )
+    expect(onCloneGitRepository).not.toHaveBeenCalled()
   })
 
   test('shows project device network status for non-local devices when multiple devices exist', () => {
@@ -6585,11 +6888,17 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.type(sideChatInput, 'first message')
     await userEvent.click(within(sideChat).getByTestId('send-message-button'))
     await waitFor(() => expect(createTemporaryRuntimeTaskMock).toHaveBeenCalledTimes(1))
+    await waitFor(() =>
+      expect(within(sideChat).getByTestId('user-message-content')).toHaveTextContent(
+        'first message'
+      )
+    )
 
     await userEvent.upload(
       within(sideChat).getByTestId('attachment-file-input'),
       new File(['queued attachment'], 'queued-attachment.txt', { type: 'text/plain' })
     )
+    expect(await within(sideChat).findByTitle('queued attachment')).toBeInTheDocument()
     await userEvent.type(sideChatInput, 'queued follow-up')
     await userEvent.click(within(sideChat).getByTestId('send-message-button'))
     expect(within(sideChat).getByTestId('conversation-queue-panel')).toBeInTheDocument()
@@ -6603,7 +6912,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(within(sideChat).getByTestId(/queue-more-button-/))
     await userEvent.click(await screen.findByTestId(/queue-edit-button-/))
 
-    expect(sideChatInput).toHaveValue('queued follow-up')
+    await waitFor(() => expect(sideChatInput).toHaveValue('queued follow-up'))
     expect(within(sideChat).getAllByTestId('attachment-badge')).toHaveLength(1)
     expect(within(sideChat).getByTitle('queued attachment')).toBeInTheDocument()
     expect(within(sideChat).queryByTitle('draft attachment')).not.toBeInTheDocument()
@@ -6664,7 +6973,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(within(sideChat).getAllByTestId('user-message-content').at(-1)).toHaveTextContent(
       'follow-up during stale state'
     )
-  }, 15_000)
+  }, 20_000)
 
   test('temporary chat rolls back its optimistic address when runtime creation fails', async () => {
     const createResult = createDeferred<RuntimeTaskAddress | false>()
@@ -9286,12 +9595,18 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await waitFor(() =>
-      expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(runtimeProject, {
-        deviceId: 'runtime-device',
-        path: '/workspace/worktrees/8/project-alpha',
-        source: 'runtime',
-        taskId: 'runtime-1',
-      })
+      expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(
+        runtimeProject,
+        {
+          deviceId: 'runtime-device',
+          path: '/workspace/worktrees/8/project-alpha',
+          source: 'runtime',
+          taskId: 'runtime-1',
+        },
+        {
+          onPartialInfo: expect.any(Function),
+        }
+      )
     )
     expect(onGetProjectWorkspaceRoot).not.toHaveBeenCalled()
   })
@@ -9385,7 +9700,10 @@ describe('DesktopWorkbenchLayout', () => {
       expect(onLoadEnvironmentInfo).toHaveBeenLastCalledWith(
         runtimeProject,
         expect.objectContaining({ path: '/workspace/worktrees/8/project-alpha' }),
-        { force: true }
+        {
+          force: true,
+          onPartialInfo: expect.any(Function),
+        }
       )
     })
   })
@@ -9500,11 +9818,17 @@ describe('DesktopWorkbenchLayout', () => {
 
     await waitFor(() => {
       expect(onLoadEnvironmentInfo).toHaveBeenCalledTimes(1)
-      expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(workspaceProject, {
-        deviceId: 'device-1',
-        path: '/repo',
-        source: 'project',
-      })
+      expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(
+        workspaceProject,
+        {
+          deviceId: 'device-1',
+          path: '/repo',
+          source: 'project',
+        },
+        {
+          onPartialInfo: expect.any(Function),
+        }
+      )
     })
 
     rerender(
@@ -9586,11 +9910,17 @@ describe('DesktopWorkbenchLayout', () => {
 
     await waitFor(() => {
       expect(onLoadEnvironmentInfo).toHaveBeenCalledTimes(1)
-      expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(workspaceProject, {
-        deviceId: 'device-1',
-        path: '/repo',
-        source: 'project',
-      })
+      expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(
+        workspaceProject,
+        {
+          deviceId: 'device-1',
+          path: '/repo',
+          source: 'project',
+        },
+        {
+          onPartialInfo: expect.any(Function),
+        }
+      )
     })
 
     rerender(

@@ -185,7 +185,16 @@ describe('AiChatModal', () => {
     const sidebar = screen.getByTestId('ai-chat-modal-backdrop')
     expect(sidebar.tagName).toBe('ASIDE')
     expect(sidebar).toHaveAttribute('data-presentation', 'sidebar')
-    expect(sidebar).toHaveClass('relative', 'h-full', 'border-l')
+    expect(sidebar).toHaveClass(
+      'task-conversation-workspace-panel',
+      'relative',
+      'h-full',
+      'bg-background'
+    )
+    expect(screen.getByTestId('ai-chat-modal')).toHaveClass(
+      'todo-floating-panel-surface',
+      'bg-background'
+    )
     expect(sidebar).not.toHaveClass('fixed', 'inset-0')
     expect(screen.getByTestId('ai-chat-modal')).toHaveTextContent('新建任务')
     expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute(

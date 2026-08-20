@@ -30,111 +30,36 @@ impl RuntimeWorkRpcHandler {
             return false;
         }
         reconciliation.last_attempt = Some(now);
-        let interrupted_worktree_turns = self
-            .interrupted_worktree_turns
-            .lock()
-            .await
-            .clone()
-            .unwrap_or_default();
-        let interrupted_worktree_task_ids = interrupted_worktree_turns
-            .iter()
-            .map(|turn| turn.local_task_id.clone())
-            .collect::<HashSet<_>>();
         let remaining_queued_turns = self
             .turn_scheduler
             .lock()
             .expect("runtime turn scheduler lock should not be poisoned")
             .queued_turns
             .clone();
-        let queued_task_ids = remaining_queued_turns
-            .iter()
-            .map(|turn| turn.local_task_id.clone())
-            .collect::<HashSet<_>>();
         let worktrees = self.worktrees.clone();
         let store = self.store.clone();
         let result = tokio::task::spawn_blocking(move || {
             let reconciled = worktrees.reconcile()?;
-            let tasks = store.list_task_summaries(true);
-            let interrupted_preparation_errors = reconciled
-                .iter()
-                .filter(|outcome| outcome.interrupted_preparation)
-                .map(|outcome| {
-                    (
-                        normalize_workspace_path(&outcome.record.path),
-                        outcome.record.last_error.clone(),
-                    )
-                })
-                .collect::<HashMap<_, _>>();
             let mut failed_task_ids = HashSet::new();
-            for task in tasks.iter().filter(|task| {
-                !queued_task_ids.contains(&task.local_task_id)
-                    && !matches!(
-                        task.status.as_str(),
-                        "archived" | "cancelled" | "done" | "failed"
-                    )
-                    && worktrees.is_managed_path(Path::new(&task.workspace_path))
-            }) {
-                let normalized_path = normalize_workspace_path(&task.workspace_path);
-                let error = interrupted_preparation_errors
-                    .get(&normalized_path)
-                    .cloned()
-                    .flatten()
-                    .unwrap_or_else(|| {
+            for outcome in reconciled
+                .into_iter()
+                .filter(|outcome| {
+                    outcome.interrupted_preparation || outcome.interrupted_execution
+                })
+            {
+                let task_id = outcome.record.worktree_id;
+                let error = outcome.record.last_error.unwrap_or_else(|| {
+                    if outcome.interrupted_execution {
+                        "Executor restarted while the Worktree task was executing; runtime was not resumed"
+                            .to_owned()
+                    } else {
                         "Executor restarted during Worktree preparation; runtime was not resumed"
                             .to_owned()
-                    });
-                let error = if interrupted_preparation_errors.contains_key(&normalized_path) {
-                    error
-                } else {
-                    "Executor restarted while the Worktree task was active; runtime was not resumed"
-                        .to_owned()
-                };
+                    }
+                });
+                let error = AppIpcError::new("executor_restarted", error);
                 if store
-                    .update_task(&task.local_task_id, |link| {
-                        link.running = false;
-                        link.status = "failed".to_owned();
-                        link.thread_status = "failed".to_owned();
-                        link.turn_status = Some("failed".to_owned());
-                        link.updated_at = now_ms();
-                        link.completed_at = Some(link.updated_at);
-                        if !link.runtime_handle.is_object() {
-                            link.runtime_handle = json!({});
-                        }
-                        if let Some(runtime_handle) = link.runtime_handle.as_object_mut() {
-                            runtime_handle.remove("queuePosition");
-                            runtime_handle
-                                .insert("lastError".to_owned(), Value::String(error.clone()));
-                        }
-                    })
-                    .is_some()
-                {
-                    failed_task_ids.insert(task.local_task_id.clone());
-                }
-            }
-            for task_id in interrupted_worktree_task_ids {
-                if failed_task_ids.contains(&task_id) {
-                    continue;
-                }
-                let error =
-                    "Executor restarted before the queued Worktree task began; runtime was not resumed"
-                        .to_owned();
-                if store
-                    .update_task(&task_id, |link| {
-                        link.running = false;
-                        link.status = "failed".to_owned();
-                        link.thread_status = "failed".to_owned();
-                        link.turn_status = Some("failed".to_owned());
-                        link.updated_at = now_ms();
-                        link.completed_at = Some(link.updated_at);
-                        if !link.runtime_handle.is_object() {
-                            link.runtime_handle = json!({});
-                        }
-                        if let Some(runtime_handle) = link.runtime_handle.as_object_mut() {
-                            runtime_handle.remove("queuePosition");
-                            runtime_handle
-                                .insert("lastError".to_owned(), Value::String(error.clone()));
-                        }
-                    })
+                    .update_task(&task_id, |link| apply_local_task_failure(link, &error))
                     .is_some()
                 {
                     failed_task_ids.insert(task_id);
@@ -159,7 +84,6 @@ impl RuntimeWorkRpcHandler {
                     reconciliation.last_attempt = Some(Instant::now());
                     return false;
                 }
-                *self.interrupted_worktree_turns.lock().await = None;
                 reconciliation.completed = true;
                 true
             }
@@ -180,6 +104,37 @@ impl RuntimeWorkRpcHandler {
                 false
             }
         }
+    }
+
+    pub(super) async fn register_harness_context(
+        &self,
+        payload: Value,
+    ) -> Result<Value, AppIpcError> {
+        let request = harness_context::parse_registration_payload(payload)
+            .map_err(|error| AppIpcError::new("invalid_request", error))?;
+        let loopback = executor_loopback_base_url().ok_or_else(|| {
+            AppIpcError::new(
+                "runtime_unavailable",
+                "Executor HTTP server is not available",
+            )
+        })?;
+        let token =
+            harness_context::register_harness_context(&request.scope, request.user, request.model);
+        Ok(json!({
+            "token": token,
+            "baseUrl": format!("{loopback}/v1/harness-context/{token}")
+        }))
+    }
+
+    pub(super) async fn unregister_harness_context(
+        &self,
+        payload: Value,
+    ) -> Result<Value, AppIpcError> {
+        let token = string_field(&payload, "token")
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| AppIpcError::new("invalid_request", "token is required"))?;
+        harness_context::unregister_harness_context(&token);
+        Ok(json!({"unregistered": true}))
     }
 
     pub(super) async fn get_runtime_capacity(&self) -> Result<Value, AppIpcError> {

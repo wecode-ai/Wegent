@@ -37,7 +37,9 @@ export function PluginOperationNotice({
           <AlertCircle />
         )}
       </span>
-      <span className="min-w-0 flex-1 truncate text-sm font-medium">{notice.message}</span>
+      <span className="min-w-0 flex-1 break-words text-sm font-medium leading-5">
+        {notice.message}
+      </span>
       {notice.actionLabel && notice.onAction ? (
         <button
           type="button"

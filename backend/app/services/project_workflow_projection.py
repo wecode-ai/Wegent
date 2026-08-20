@@ -13,6 +13,7 @@ from app.models.delivery import (
     loop_datetime_is_unset,
 )
 from app.schemas.issue_workflow import strip_structural_nodes
+from app.services.loop_item_unread import advance_content_revision
 
 COMPLETED_NODE_STATUSES = {"completed", "forced_completed"}
 SUCCESS_TASK_STATUSES = {"succeeded", "archived"}
@@ -240,6 +241,7 @@ def apply_workflow_nodes(
     *,
     workflow: dict,
     nodes: list[dict],
+    actor_user_id: int | None = None,
 ) -> LoopItem:
     nodes = strip_structural_nodes(nodes)
     completed = {
@@ -274,7 +276,7 @@ def apply_workflow_nodes(
     next_workflow["nodes"] = nodes
     metadata = dict(item.metadata_json or {})
     metadata["workflow"] = next_workflow
-    item.metadata_json = metadata
+    item.metadata_json = advance_content_revision(metadata, actor_user_id=actor_user_id)
     required = [node for node in nodes if node.get("required", True)]
     if required and all(
         node.get("status") in COMPLETED_NODE_STATUSES for node in required

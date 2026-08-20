@@ -6,6 +6,7 @@ const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const RIGHT_PANEL_TOGGLE_SELECTOR =
   '[data-workspace-tab-portal-owner]:not([hidden]) [data-testid="toggle-right-workspace-panel-button"]'
+const RIGHT_PANEL_EXPAND_SELECTOR = '[data-testid="toggle-right-workspace-panel-expanded-button"]'
 const RIGHT_BROWSER_OPTION_SELECTOR = '[data-testid="right-workspace-browser-option"]'
 const ACTIVE_BROWSER_PANEL_SELECTOR =
   ACTIVE_WORKBENCH_SELECTOR +
@@ -24,6 +25,17 @@ const DEVICE_TOOLBAR_SELECTOR =
   ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-device-toolbar"]'
 const DEVICE_ROTATE_SELECTOR =
   ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-device-rotate-button"]'
+const DEVICE_WIDTH_SELECTOR =
+  ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-device-width-input"]'
+const DEVICE_HEIGHT_SELECTOR =
+  ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-device-height-input"]'
+const DEVICE_ZOOM_SELECTOR =
+  ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-device-zoom-select"]'
+const DEVICE_ZOOM_200_SELECTOR = '[data-testid="workspace-browser-device-zoom-select-option-200"]'
+const DEVICE_RESIZE_LEFT_SELECTOR =
+  ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-device-resize-left"]'
+const DEVICE_RESIZE_RIGHT_SELECTOR =
+  ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-device-resize-right"]'
 const DEVICE_CLOSE_SELECTOR =
   ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-device-close-button"]'
 const SETTINGS_ITEM_SELECTOR = '[data-testid="workspace-browser-settings-item"]'
@@ -220,6 +232,30 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
         4,
         uiTimeoutMs,
         'Rotating the device viewport did not emulate an 844px width'
+      )
+      await control.command('click', RIGHT_PANEL_EXPAND_SELECTOR)
+      await control.command('fill', DEVICE_WIDTH_SELECTOR, { value: '800' })
+      await control.command('fill', DEVICE_HEIGHT_SELECTOR, { value: '600' })
+      await waitForValue(
+        control,
+        DEVICE_WIDTH_SELECTOR,
+        '800',
+        uiTimeoutMs,
+        'The responsive device width did not update'
+      )
+      await control.command('click', DEVICE_ZOOM_SELECTOR)
+      await control.command('click', DEVICE_ZOOM_200_SELECTOR)
+      await control.command('waitFor', DEVICE_RESIZE_LEFT_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await control.command('waitFor', DEVICE_RESIZE_RIGHT_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await control.command('drag', DEVICE_RESIZE_RIGHT_SELECTOR, {
+        target: DEVICE_RESIZE_LEFT_SELECTOR,
+      })
+      await waitForValue(
+        control,
+        DEVICE_WIDTH_SELECTOR,
+        '240',
+        uiTimeoutMs,
+        'Device resizing incorrectly included the 200% page zoom in pointer scaling'
       )
       await control.command('click', DEVICE_CLOSE_SELECTOR)
       await waitForElementGone(
