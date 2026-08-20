@@ -136,13 +136,12 @@ pub(super) fn write_runtime_turn_queue(
     write_private_atomic(queue_path, &envelope)
 }
 
-pub(super) fn partition_restored_turns(
+pub(super) fn remove_worktree_turns_after_restart(
     worktrees: &WorktreeManager,
-    turns: VecDeque<SpawnTurnRequest>,
-) -> (VecDeque<SpawnTurnRequest>, VecDeque<SpawnTurnRequest>) {
-    let mut resumable = VecDeque::new();
-    let mut interrupted_worktrees = VecDeque::new();
-    for turn in turns {
+    turns: &mut VecDeque<SpawnTurnRequest>,
+) -> usize {
+    let initial_count = turns.len();
+    turns.retain(|turn| {
         let deferred_worktree = turn
             .request
             .extra
@@ -152,13 +151,9 @@ pub(super) fn partition_restored_turns(
             .project_workspace_path
             .as_deref()
             .is_some_and(|path| worktrees.is_managed_path(Path::new(path)));
-        if deferred_worktree || managed_worktree {
-            interrupted_worktrees.push_back(turn);
-        } else {
-            resumable.push_back(turn);
-        }
-    }
-    (resumable, interrupted_worktrees)
+        !deferred_worktree && !managed_worktree
+    });
+    initial_count - turns.len()
 }
 
 fn read_runtime_turn_queue_key(queue_path: &Path) -> Result<[u8; 32], String> {
@@ -1453,7 +1448,7 @@ mod tests {
     }
 
     #[test]
-    fn restored_worktree_turns_are_quarantined_from_resumable_queue() {
+    fn restored_worktree_turns_are_removed_from_resumable_queue() {
         let temp = tempfile::tempdir().expect("temporary worktree directory should exist");
         let worktrees = WorktreeManager::new(temp.path().join("runtime-work/worktrees.json"));
         let managed_root = temp.path().join("workspace/worktrees");
@@ -1478,23 +1473,17 @@ mod tests {
                 .to_string(),
         );
 
-        let (resumable, interrupted) =
-            partition_restored_turns(&worktrees, VecDeque::from([normal, deferred, existing]));
+        let mut restored = VecDeque::from([normal, deferred, existing]);
+        let removed = remove_worktree_turns_after_restart(&worktrees, &mut restored);
 
         assert_eq!(
-            resumable
+            restored
                 .iter()
                 .map(|turn| turn.local_task_id.as_str())
                 .collect::<Vec<_>>(),
             vec!["normal"]
         );
-        assert_eq!(
-            interrupted
-                .iter()
-                .map(|turn| turn.local_task_id.as_str())
-                .collect::<Vec<_>>(),
-            vec!["deferred-worktree", "existing-worktree"]
-        );
+        assert_eq!(removed, 2);
     }
 
     #[test]

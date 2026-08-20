@@ -3312,6 +3312,17 @@ describe('ScrollableMessageArea', () => {
   })
 
   test('keeps the restored position while reopened conversation content grows', () => {
+    const resizeCallbacks: ResizeObserverCallback[] = []
+    vi.stubGlobal(
+      'ResizeObserver',
+      class ResizeObserverMock {
+        constructor(callback: ResizeObserverCallback) {
+          resizeCallbacks.push(callback)
+        }
+        observe() {}
+        disconnect() {}
+      }
+    )
     const messageA = {
       id: 'a-growth',
       role: 'assistant' as const,
@@ -3368,7 +3379,7 @@ describe('ScrollableMessageArea', () => {
     )
 
     act(() => {
-      vi.advanceTimersByTime(0)
+      vi.runOnlyPendingTimers()
     })
 
     expect(scroller.scrollTo).toHaveBeenLastCalledWith({
@@ -3382,7 +3393,7 @@ describe('ScrollableMessageArea', () => {
     })
 
     act(() => {
-      vi.advanceTimersByTime(50)
+      resizeCallbacks.forEach(callback => callback([], {} as ResizeObserver))
     })
 
     expect(scroller.scrollTo).toHaveBeenLastCalledWith({

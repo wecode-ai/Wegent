@@ -591,17 +591,17 @@ impl RuntimeWorkRpcHandler {
         let store = RuntimeWorkStore::from_env();
         let worktrees = WorktreeManager::from_env(&device_id);
         let turn_queue_path = turns::runtime_turn_queue_path();
-        let restored_turns =
+        let mut queued_turns =
             turns::read_runtime_turn_queue(&turn_queue_path).unwrap_or_else(|error| {
                 log_executor_event("runtime turn queue restore failed", &[("error", error)]);
                 VecDeque::new()
             });
-        let (queued_turns, interrupted_worktree_turns) =
-            turns::partition_restored_turns(&worktrees, restored_turns);
-        if !interrupted_worktree_turns.is_empty() {
+        let removed_worktree_turn_count =
+            turns::remove_worktree_turns_after_restart(&worktrees, &mut queued_turns);
+        if removed_worktree_turn_count > 0 {
             log_executor_event(
-                "persisted worktree turns quarantined after executor restart",
-                &[("count", interrupted_worktree_turns.len().to_string())],
+                "persisted worktree turns removed after executor restart",
+                &[("count", removed_worktree_turn_count.to_string())],
             );
         }
         let handler = Self {

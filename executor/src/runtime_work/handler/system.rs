@@ -57,23 +57,9 @@ impl RuntimeWorkRpcHandler {
                             .to_owned()
                     }
                 });
+                let error = AppIpcError::new("executor_restarted", error);
                 if store
-                    .update_task(&task_id, |link| {
-                        link.running = false;
-                        link.status = "failed".to_owned();
-                        link.thread_status = "failed".to_owned();
-                        link.turn_status = Some("failed".to_owned());
-                        link.updated_at = now_ms();
-                        link.completed_at = Some(link.updated_at);
-                        if !link.runtime_handle.is_object() {
-                            link.runtime_handle = json!({});
-                        }
-                        if let Some(runtime_handle) = link.runtime_handle.as_object_mut() {
-                            runtime_handle.remove("queuePosition");
-                            runtime_handle
-                                .insert("lastError".to_owned(), Value::String(error.clone()));
-                        }
-                    })
+                    .update_task(&task_id, |link| apply_local_task_failure(link, &error))
                     .is_some()
                 {
                     failed_task_ids.insert(task_id);
