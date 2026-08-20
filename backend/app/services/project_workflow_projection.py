@@ -12,10 +12,37 @@ from app.models.delivery import (
     ProjectAutomationRun,
     loop_datetime_is_unset,
 )
+from app.schemas.issue_workflow import strip_structural_nodes
 
 COMPLETED_NODE_STATUSES = {"completed", "forced_completed"}
 SUCCESS_TASK_STATUSES = {"succeeded", "archived"}
 FAILED_TASK_STATUSES = {"failed", "cancelled"}
+WAIT_NODE_REPAIR_STATUSES = {
+    "pending": "queued",
+    "queued": "queued",
+    "waiting_device": "queued",
+    "running": "running",
+    "succeeded": "succeeded",
+    "skipped": "succeeded",
+    "failed": "failed",
+    "cancelled": "cancelled",
+}
+
+
+def _node_is_wait(item: LoopItem, node_id: str) -> bool:
+    metadata = item.metadata_json if isinstance(item.metadata_json, dict) else {}
+    workflow = metadata.get("workflow")
+    nodes = workflow.get("nodes") if isinstance(workflow, dict) else None
+    return any(
+        isinstance(candidate, dict)
+        and candidate.get("id") == node_id
+        and candidate.get("node_type") == "wait"
+        for candidate in nodes or []
+    )
+
+
+def _wait_repair_status(run_status: str) -> str:
+    return WAIT_NODE_REPAIR_STATUSES.get(run_status, "")
 
 
 def _project_task_status(
@@ -24,6 +51,7 @@ def _project_task_status(
     *,
     task_statuses: dict[str, str],
     ordered_task_ids: list[str],
+    workflow: dict | None = None,
 ) -> str:
     if any(task_statuses.get(task_id) == "running" for task_id in ordered_task_ids):
         return "running"
@@ -35,7 +63,7 @@ def _project_task_status(
 
         return (
             "awaiting_deliverables"
-            if missing_requirement_ids(db, node)
+            if missing_requirement_ids(db, node, workflow)
             else "completed"
         )
     if latest_status in FAILED_TASK_STATUSES:
@@ -47,7 +75,9 @@ def reconcile_workflow_task_nodes(
     db: Session,
     nodes: list[dict],
     bindings: list[LoopItemTaskBinding],
+    workflow: dict | None = None,
 ) -> list[dict]:
+    nodes = strip_structural_nodes(nodes)
     task_ids_by_node: dict[str, list[str]] = {}
     for binding in bindings:
         node_id = binding.workflow_node_id
@@ -78,11 +108,19 @@ def reconcile_workflow_task_nodes(
         if not any(task_id in task_statuses for task_id in ordered_task_ids):
             reconciled.append(node)
             continue
+        if node.get("node_type") == "wait":
+            # A wait node keeps listening during repair rounds; only its task
+            # ownership may change, never its waiting gate status.
+            if node.get("task_ids") != ordered_task_ids:
+                node["task_ids"] = ordered_task_ids
+            reconciled.append(node)
+            continue
         node["status"] = _project_task_status(
             db,
             node,
             task_statuses=task_statuses,
             ordered_task_ids=ordered_task_ids,
+            workflow=workflow,
         )
         node["task_ids"] = ordered_task_ids
         reconciled.append(node)
@@ -166,18 +204,29 @@ def update_workflow_task_status(
                     ]
                 )
             )
-            node_status = _project_task_status(
-                db,
-                node,
-                task_statuses=task_statuses,
-                ordered_task_ids=ordered_task_ids,
-            )
-            if (
-                node.get("status") != node_status
-                or node.get("task_ids") != ordered_task_ids
-            ):
-                changed = True
-            node["status"] = node_status
+            if node.get("node_type") == "wait":
+                # The gate stays waiting while a repair round runs; round
+                # state is tracked separately so events keep flowing.
+                if (
+                    node.get("status") != "waiting"
+                    or node.get("task_ids") != ordered_task_ids
+                ):
+                    changed = True
+                node["status"] = "waiting"
+            else:
+                node_status = _project_task_status(
+                    db,
+                    node,
+                    task_statuses=task_statuses,
+                    ordered_task_ids=ordered_task_ids,
+                    workflow=workflow,
+                )
+                if (
+                    node.get("status") != node_status
+                    or node.get("task_ids") != ordered_task_ids
+                ):
+                    changed = True
+                node["status"] = node_status
             node["task_ids"] = ordered_task_ids
             node["task_statuses"] = task_statuses
         nodes.append(node)
@@ -192,6 +241,7 @@ def apply_workflow_nodes(
     workflow: dict,
     nodes: list[dict],
 ) -> LoopItem:
+    nodes = strip_structural_nodes(nodes)
     completed = {
         str(node.get("id"))
         for node in nodes
@@ -216,13 +266,8 @@ def apply_workflow_nodes(
                 statuses[str(node.get("id"))] = "waiting"
             continue
         if all(str(dependency) in completed for dependency in dependencies):
-            if node.get("node_type") == "end":
-                node["status"] = "completed"
-                completed.add(str(node.get("id")))
-                statuses[str(node.get("id"))] = "completed"
-            else:
-                node["status"] = "ready"
-                statuses[str(node.get("id"))] = "ready"
+            node["status"] = "ready"
+            statuses[str(node.get("id"))] = "ready"
 
     next_workflow = dict(workflow)
     next_workflow["version"] = int(workflow.get("version") or 1) + 1
@@ -253,6 +298,7 @@ def update_workflow_node(
     node_id: str,
     node_status: str,
     automation_run_id: str | None = None,
+    repair_status: str | None = None,
 ) -> LoopItem | None:
     item = db.query(LoopItem).filter(LoopItem.id == item_id).with_for_update().first()
     if item is None:
@@ -275,6 +321,9 @@ def update_workflow_node(
                 changed = True
             if automation_run_id and node.get("automation_run_id") != automation_run_id:
                 node["automation_run_id"] = automation_run_id
+                changed = True
+            if repair_status is not None and node.get("repair_status") != repair_status:
+                node["repair_status"] = repair_status
                 changed = True
         nodes.append(node)
 
@@ -303,12 +352,23 @@ def sync_automation_workflow_node(
     node_status = status_map.get(run.status)
     if node_status is None:
         return None
+    item = db.get(LoopItem, str(run.task_id))
+    if item is None:
+        return None
+    if _node_is_wait(item, node_id):
+        # A wait node keeps listening during repair rounds: only the round
+        # state and run ownership change, never the waiting gate status.
+        return update_workflow_node(
+            db,
+            item_id=str(run.task_id),
+            node_id=node_id,
+            node_status="waiting",
+            automation_run_id=str(run.id),
+            repair_status=_wait_repair_status(run.status),
+        )
     if node_status == "completed":
-        item = db.get(LoopItem, str(run.task_id))
         metadata_json = (
-            item.metadata_json
-            if item is not None and isinstance(item.metadata_json, dict)
-            else {}
+            item.metadata_json if isinstance(item.metadata_json, dict) else {}
         )
         workflow = metadata_json.get("workflow")
         nodes = workflow.get("nodes") if isinstance(workflow, dict) else None
@@ -323,7 +383,7 @@ def sync_automation_workflow_node(
         if node is not None:
             from app.services.workflow_deliverables import missing_requirement_ids
 
-            if missing_requirement_ids(db, node):
+            if missing_requirement_ids(db, node, workflow):
                 node_status = "awaiting_deliverables"
     return update_workflow_node(
         db,

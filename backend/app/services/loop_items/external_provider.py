@@ -475,6 +475,12 @@ class ExternalLoopItemProvider:
         if url.startswith(("https://", "http://")):
             return url
         config, _ = self._config(project)
+        api_base = str(config.get("api_base") or "").rstrip("/")
+        if api_base:
+            # api_base carries the full endpoint (port and relative URL root)
+            # for self-hosted instances, so the web root is its prefix.
+            web_root = re.sub(r"/api/v[34]$", "", api_base)
+            return f"{web_root}/{url.lstrip('/')}"
         domain = str(config.get("domain") or "gitlab.com").rstrip("/")
         return f"https://{domain}/{url.lstrip('/')}"
 

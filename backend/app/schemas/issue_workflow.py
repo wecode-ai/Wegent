@@ -6,7 +6,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 WorkflowContextSource = Literal["final_result", "deliveries", "activity"]
 DeliverableValueType = Literal[
@@ -17,8 +17,7 @@ DeliverableValueType = Literal[
     "pull_request",
     "url",
 ]
-WorkflowNodeType = Literal["stage", "wait", "start", "end"]
-WaitEventMode = Literal["trigger", "debounce"]
+WorkflowNodeType = Literal["stage", "wait"]
 WaitEventAction = Literal["rerun", "complete"]
 WorkflowNodeStatus = Literal[
     "blocked",
@@ -74,10 +73,22 @@ class DeliverableRequirement(BaseModel):
 
 class WaitEventRule(BaseModel):
     id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    # The provider that emits the event. Rules picked from the provider catalog
+    # always carry it; custom rules may leave it empty to match any provider.
+    provider: str | None = Field(default=None, max_length=64)
     event_type: str = Field(min_length=1, max_length=128)
-    mode: WaitEventMode = "trigger"
+    # Delivery policy (window / busy-period merge) is declared by the event
+    # type in the provider catalog and is never stored on the rule.
     action: WaitEventAction = "complete"
     rerun_prompt: str = Field(default="", max_length=20_000)
+
+    @field_validator("provider")
+    @classmethod
+    def _normalize_provider(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
 
 
 class WaitNodeConfig(BaseModel):
@@ -115,8 +126,6 @@ class WorkflowNodeDefinition(BaseModel):
                 raise ValueError("wait nodes cannot run an automation stage")
         elif self.wait_config is not None:
             raise ValueError("only wait nodes may define wait_config")
-        if self.node_type == "start" and self.depends_on:
-            raise ValueError("start node cannot depend on other nodes")
         if unknown := set(self.dependency_context) - set(self.depends_on):
             raise ValueError(
                 "workflow dependency context references non-dependencies: "
@@ -133,6 +142,56 @@ class WorkflowNodeDefinition(BaseModel):
         return self
 
 
+def strip_structural_nodes(nodes: list) -> list:
+    """Drop legacy start/end sentinels so stored data matches the current model.
+
+    Old definitions and snapshots may still carry ``start``/``end`` marker
+    nodes. They carry no semantics: the entry is any node without predecessors
+    and the end is derived from nodes without successors. Stripping also
+    rewires ``depends_on`` and the per-edge context so no dangling reference
+    survives. Returns plain dicts whenever anything was stripped so the parent
+    model re-validates the cleaned shape.
+    """
+
+    def node_type(node: object) -> object:
+        if isinstance(node, dict):
+            return node.get("node_type")
+        return getattr(node, "node_type", None)
+
+    def node_id(node: object) -> object:
+        if isinstance(node, dict):
+            return node.get("id")
+        return getattr(node, "id", None)
+
+    structural = {
+        node_id(node)
+        for node in nodes
+        if node_type(node) in {"start", "end"} and node_id(node)
+    }
+    if not structural:
+        return nodes
+    cleaned = [
+        node if isinstance(node, dict) else node.model_dump()
+        for node in nodes
+        if node_type(node) not in {"start", "end"}
+    ]
+    for node in cleaned:
+        depends_on = [
+            dependency
+            for dependency in (node.get("depends_on") or [])
+            if dependency not in structural
+        ]
+        node["depends_on"] = depends_on
+        context = node.get("dependency_context")
+        if isinstance(context, dict):
+            node["dependency_context"] = {
+                dependency: sources
+                for dependency, sources in context.items()
+                if dependency not in structural
+            }
+    return cleaned
+
+
 class ProjectWorkflowDefinition(BaseModel):
     version: int = Field(default=1, ge=1)
     stage_mode: Literal["none", "dag"] = "none"
@@ -143,9 +202,13 @@ class ProjectWorkflowDefinition(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def infer_legacy_stage_mode(cls, value: object) -> object:
-        if isinstance(value, dict) and "stage_mode" not in value and value.get("nodes"):
-            return {**value, "stage_mode": "dag"}
+    def normalize_legacy_definition(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        if "stage_mode" not in value and value.get("nodes"):
+            value = {**value, "stage_mode": "dag"}
+        if isinstance(value.get("nodes"), list):
+            value = {**value, "nodes": strip_structural_nodes(value["nodes"])}
         return value
 
     @model_validator(mode="after")
@@ -155,19 +218,6 @@ class ProjectWorkflowDefinition(BaseModel):
         node_ids = [node.id for node in self.nodes]
         if len(node_ids) != len(set(node_ids)):
             raise ValueError("workflow node ids must be unique")
-        start_nodes = [node for node in self.nodes if node.node_type == "start"]
-        if len(start_nodes) > 1:
-            raise ValueError("workflow must have at most one start node")
-        end_node_ids = {node.id for node in self.nodes if node.node_type == "end"}
-        if end_node_ids:
-            dependents = {
-                dependency
-                for node in self.nodes
-                for dependency in node.depends_on
-                if dependency in end_node_ids
-            }
-            if dependents:
-                raise ValueError("end node cannot be a dependency of other nodes")
         known = set(node_ids)
         dependencies = {node.id: set(node.depends_on) for node in self.nodes}
         for node_id, node_dependencies in dependencies.items():
@@ -203,6 +253,7 @@ class WorkflowNodeInstance(WorkflowNodeDefinition):
     task_statuses: dict[str, str] = Field(default_factory=dict)
     delivery_ids: list[str] = Field(default_factory=list, max_length=100)
     wait_round: int = Field(default=0, ge=0)
+    repair_status: str | None = Field(default=None, max_length=32)
     decision_history: list["WorkflowNodeDecision"] = Field(
         default_factory=list, max_length=100
     )
@@ -237,6 +288,13 @@ class IssueWorkflowInstance(BaseModel):
     coordinator_prompt: str = Field(default="", max_length=4000)
     ai_automation_rule_id: str | None = Field(default=None, max_length=64)
     nodes: list[WorkflowNodeInstance] = Field(default_factory=list, max_length=50)
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_snapshot(cls, value: object) -> object:
+        if isinstance(value, dict) and isinstance(value.get("nodes"), list):
+            return {**value, "nodes": strip_structural_nodes(value["nodes"])}
+        return value
 
     @model_validator(mode="after")
     def validate_snapshot(self) -> "IssueWorkflowInstance":
@@ -273,10 +331,8 @@ def release_blocked_nodes(
     """Advance blocked nodes whose dependencies are already completed.
 
     Mirrors the projection pass used on persisted snapshots: a wait node enters
-    ``waiting`` once its upstream work has begun, an end node completes
-    immediately when its dependencies are done, and everything else becomes
-    ``ready``. End nodes join the completed set so later nodes can release in
-    the same pass.
+    ``waiting`` once its upstream work has begun, and everything else becomes
+    ``ready`` once its dependencies are done.
     """
 
     completed = {
@@ -295,11 +351,7 @@ def release_blocked_nodes(
             continue
         if not all(dependency in completed for dependency in node.depends_on):
             continue
-        if node.node_type == "end":
-            node.status = "completed"
-            completed.add(node.id)
-        else:
-            node.status = "ready"
+        node.status = "ready"
         statuses[node.id] = node.status
     return nodes
 
@@ -308,18 +360,10 @@ def instantiate_workflow(
     definition: ProjectWorkflowDefinition,
 ) -> IssueWorkflowInstance:
     roots = {node.id for node in definition.nodes if not node.depends_on}
-    # The start node is the workflow entry: it is already satisfied when the
-    # workflow begins, otherwise every stage that depends on it would stay
-    # blocked forever.
-    start_ids = {node.id for node in definition.nodes if node.node_type == "start"}
     nodes = [
         WorkflowNodeInstance(
             **node.model_dump(),
-            status=(
-                "completed"
-                if node.id in start_ids
-                else "ready" if node.id in roots else "blocked"
-            ),
+            status="ready" if node.id in roots else "blocked",
         )
         for node in (definition.nodes if definition.stage_mode == "dag" else [])
     ]
@@ -329,7 +373,7 @@ def instantiate_workflow(
         advancement_policy=definition.advancement_policy,
         coordinator_prompt=definition.coordinator_prompt,
         ai_automation_rule_id=definition.ai_automation_rule_id,
-        # Release nodes whose dependencies are already satisfied (the start
-        # node completes at instantiation), mirroring the projection pass.
+        # Release nodes whose dependencies are already satisfied (roots are
+        # ready at instantiation), mirroring the projection pass.
         nodes=release_blocked_nodes(nodes),
     )

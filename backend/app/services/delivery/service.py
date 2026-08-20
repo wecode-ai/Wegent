@@ -297,7 +297,13 @@ class DeliveryService:
             )
         assets = self.list_assets(db, delivery.id)
         workflow_node = self._workflow_node(item, source_binding)
+        workflow = (
+            item.metadata_json.get("workflow")
+            if isinstance(item.metadata_json, dict)
+            else None
+        )
         fulfillments = self._validate_fulfillments(
+            workflow,
             workflow_node,
             assets,
             values.fulfillments,
@@ -422,6 +428,7 @@ class DeliveryService:
 
     @staticmethod
     def _validate_fulfillments(
+        workflow: dict[str, Any] | None,
         node: dict[str, Any] | None,
         assets: list[DeliveryAsset],
         values: list[DeliveryFulfillment],
@@ -433,10 +440,12 @@ class DeliveryService:
                     "Deliverable fulfillments require a workflow stage",
                 )
             return []
+        from app.services.workflow_deliverables import workflow_requirements
+
         requirements = {
             str(requirement.get("id")): requirement
-            for requirement in node.get("required_deliverables") or []
-            if isinstance(requirement, dict) and requirement.get("id")
+            for requirement in workflow_requirements(node, workflow)
+            if requirement.get("id")
         }
         if requirements and not values:
             raise HTTPException(
@@ -551,7 +560,7 @@ class DeliveryService:
             node is None
             or not node.get("automation_rule_id")
             or node.get("status") != "awaiting_deliverables"
-            or missing_requirement_ids(db, node)
+            or missing_requirement_ids(db, node, workflow)
         ):
             return
         node["status"] = "completed"

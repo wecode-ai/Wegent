@@ -1570,10 +1570,16 @@ class LoopItemService:
             "changes_requested",
             "failed",
         }:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                "Workflow node is not ready",
-            )
+            # A wait node owns repair-round executions while it keeps
+            # listening: the gate stays ``waiting`` and accepts the round's
+            # task binding without advancing the node.
+            if not (
+                node.get("node_type") == "wait" and node.get("status") == "waiting"
+            ):
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    "Workflow node is not ready",
+                )
 
     def bind_project_task(
         self,
