@@ -957,6 +957,8 @@ export function WorkbenchProvider({
     refreshDevices,
     updateLocalRuntimeTaskSupervisor,
     updateLocalRuntimeTaskSnapshot,
+    updateLocalRuntimeTaskPinned,
+    rollbackLocalRuntimeTaskPinned,
     updateLocalRuntimeTaskTitle,
     getRemoteDeviceStartupCommand,
   } = useWorkbenchDataRefresh({
@@ -1606,6 +1608,8 @@ export function WorkbenchProvider({
     executorClient,
     services: resolvedServices,
     refreshWorkLists,
+    updateLocalRuntimeTaskPinned,
+    rollbackLocalRuntimeTaskPinned,
     markRuntimeProjectRemoved,
     invalidateRemoteProjectSync,
     clearRemoteProjectSyncRemoval,

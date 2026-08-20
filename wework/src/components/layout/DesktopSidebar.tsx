@@ -56,6 +56,7 @@ import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
 import type { WeworkInstalledReleaseNotes } from '@/features/app-update/app-release-notes'
 import { SHOW_PLUGINS_NAVIGATION } from '@/features/plugins/visibility'
 import { getRuntimeTaskReminderItemKey } from '@/features/workbench/runtimeTaskReminders'
+import { getRuntimeTaskThreadId } from '@/features/workbench/workbenchRuntimeHelpers'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import { runtimeTaskBoardOrigin } from '@/features/workbench/runtimeTaskOrigin'
 import {
@@ -943,19 +944,6 @@ function getSidebarDeviceStatusLabel(
 
 function getRuntimeNotificationKey(address: RuntimeTaskAddress): string {
   return `${address.deviceId}\0${address.taskId}\0${address.workspacePath ?? ''}`
-}
-
-function getRuntimeTaskThreadId(task: RuntimeTaskSummary): string | null {
-  const explicitThreadId = task.threadId?.trim()
-  if (explicitThreadId) return explicitThreadId
-
-  const runtimeHandleThreadId = [task.runtimeHandle?.threadId, task.runtimeHandle?.thread_id].find(
-    value => typeof value === 'string' && value.trim()
-  )
-  if (typeof runtimeHandleThreadId === 'string') return runtimeHandleThreadId.trim()
-
-  const taskId = task.taskId.trim()
-  return task.runtime === 'codex' && !task.optimistic && taskId ? taskId : null
 }
 
 function isRuntimeTaskNotificationSubscribed(
