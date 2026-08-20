@@ -2,6 +2,7 @@ import { describe, expect, test, vi } from 'vitest'
 import {
   resolveCommandTimeout,
   resolveStartupTimeout,
+  startupFailureMessage,
   takeWritableCommandPoll,
 } from './ai-verify.mjs'
 
@@ -42,12 +43,50 @@ describe('takeWritableCommandPoll', () => {
 describe('resolveStartupTimeout', () => {
   test('accepts finite positive timeout values', () => {
     expect(resolveStartupTimeout('120000')).toBe(120000)
-    expect(resolveStartupTimeout(undefined)).toBe(60000)
+    expect(resolveStartupTimeout(undefined)).toBe(120000)
   })
 
   test.each(['0', '-1', 'Infinity', 'not-a-number'])('rejects invalid timeout %s', timeout => {
     expect(() => resolveStartupTimeout(timeout)).toThrow(
       '--timeout must be a finite positive number'
+    )
+  })
+})
+
+describe('startupFailureMessage', () => {
+  test('reports an exited launcher without waiting for the timeout', () => {
+    expect(
+      startupFailureMessage(
+        {
+          appExited: true,
+          appExitCode: 1,
+          appExitSignal: null,
+        },
+        120000
+      )
+    ).toBe('Wework exited with code 1 before its WebView connected to AI verification')
+  })
+
+  test('reports launcher spawn errors', () => {
+    expect(
+      startupFailureMessage(
+        {
+          appExited: true,
+          appExitError: 'spawn bash ENOENT',
+        },
+        120000
+      )
+    ).toBe(
+      'Wework failed to start before its WebView connected to AI verification: spawn bash ENOENT'
+    )
+  })
+
+  test('distinguishes launcher preparation from WebView connection', () => {
+    expect(startupFailureMessage({ pid: null }, 120000)).toContain(
+      'the Tauri launcher had not started'
+    )
+    expect(startupFailureMessage({ pid: 42 }, 120000)).toContain(
+      'the Tauri launcher was still waiting for its WebView'
     )
   })
 })

@@ -16,7 +16,7 @@ import { buildAiVerifyEnvironment } from './ai-verify-environment.mjs'
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..')
 const defaultTimeoutMs = 30_000
-const startupTimeoutMs = 60_000
+const startupTimeoutMs = 120_000
 const commandResultGraceMs = 5_000
 const corsHeaders = {
   'access-control-allow-headers': 'authorization, content-type',
@@ -134,12 +134,49 @@ async function stopOwnedSessionProcesses(session) {
 }
 
 function signalProcessGroup(processGroupId, signal) {
+  if (!Number.isInteger(processGroupId)) return Promise.resolve()
   return new Promise(resolvePromise => {
     execFile('/bin/kill', [`-${signal}`, `-${processGroupId}`], () => {
       // The process group may already have exited.
       resolvePromise()
     })
   })
+}
+
+async function removeSessionAuthLink(session) {
+  if (!session?.directory) return
+  await rm(join(session.directory, 'executor-home', 'codex', 'auth.json'), { force: true })
+}
+
+async function cleanupFailedStart(sessionPath, controllerPid) {
+  await signalProcessGroup(controllerPid, 'TERM')
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
+  let session
+  try {
+    session = JSON.parse(await readFile(sessionPath, 'utf8'))
+  } catch {
+    // The controller may have exited before completing the session file.
+  }
+  await stopOwnedSessionProcesses(session ?? {})
+  await signalProcessGroup(controllerPid, 'KILL')
+  await removeSessionAuthLink(session)
+}
+
+export function startupFailureMessage(status, timeoutMs) {
+  if (status?.appExited) {
+    if (status.appExitError) {
+      return `Wework failed to start before its WebView connected to AI verification: ${status.appExitError}`
+    }
+    const cause =
+      status.appExitSignal !== null
+        ? `signal ${status.appExitSignal}`
+        : `code ${status.appExitCode ?? 'unknown'}`
+    return `Wework exited with ${cause} before its WebView connected to AI verification`
+  }
+  const phase = status?.pid
+    ? 'the Tauri launcher was still waiting for its WebView'
+    : 'the Tauri launcher had not started'
+  return `Timed out after ${timeoutMs}ms while ${phase}`
 }
 
 async function runServer(sessionPath, token) {
@@ -149,6 +186,8 @@ async function runServer(sessionPath, token) {
   const pending = new Map()
   let ready = null
   let app = null
+  let appExit = null
+  let shutdownPromise = null
   const server = createServer((request, response) => {
     void (async () => {
       const url = new URL(request.url ?? '/', 'http://127.0.0.1')
@@ -203,6 +242,10 @@ async function runServer(sessionPath, token) {
           ready: Boolean(ready),
           readyInfo: ready,
           pid: app?.pid ?? null,
+          appExited: appExit !== null,
+          appExitCode: appExit?.code ?? null,
+          appExitSignal: appExit?.signal ?? null,
+          appExitError: appExit?.error ?? null,
           queuedCommands: queue.length,
           commandPolls: commandPolls.length,
           pendingCommands: pending.size,
@@ -239,7 +282,7 @@ async function runServer(sessionPath, token) {
       }
       if (request.method === 'POST' && url.pathname === '/shutdown') {
         response.once('finish', () => {
-          void stopOwnedSessionProcesses(updated).finally(() => server.close(() => process.exit(0)))
+          void shutdown(0)
         })
         json(response, 200, { ok: true })
         return
@@ -257,6 +300,16 @@ async function runServer(sessionPath, token) {
     controlUrl,
     status: 'starting',
   }
+  const shutdown = exitCode => {
+    if (shutdownPromise) return shutdownPromise
+    shutdownPromise = stopOwnedSessionProcesses({ launcherPid: app?.pid }).finally(() => {
+      server.close(() => process.exit(exitCode))
+      server.closeAllConnections()
+    })
+    return shutdownPromise
+  }
+  process.once('SIGINT', () => void shutdown(130))
+  process.once('SIGTERM', () => void shutdown(143))
   await writeFile(sessionPath, `${JSON.stringify(updated, null, 2)}\n`)
   const log = join(session.directory, 'app.log')
   const executorHome = join(session.directory, 'executor-home')
@@ -292,9 +345,16 @@ async function runServer(sessionPath, token) {
       'data',
       chunk => void import('node:fs/promises').then(({ appendFile }) => appendFile(log, chunk))
     )
-  app.once('exit', code => {
+  app.once('exit', (code, signal) => {
+    appExit = { code, signal }
     for (const waiter of pending.values())
       waiter.reject(new Error(`Wework exited with code ${code ?? 'unknown'}`))
+    pending.clear()
+  })
+  app.once('error', error => {
+    appExit = { code: null, signal: null, error: String(error.message ?? error) }
+    for (const waiter of pending.values())
+      waiter.reject(new Error(`Wework failed to start: ${error.message ?? error}`))
     pending.clear()
   })
 }
@@ -359,39 +419,70 @@ async function main() {
       { detached: true, stdio: 'ignore' }
     )
     child.unref()
-    const startupDeadline = Date.now() + resolveStartupTimeout(options.timeout)
-    while (Date.now() < startupDeadline) {
-      let session
-      try {
-        session = JSON.parse(await readFile(sessionPath, 'utf8'))
-      } catch (error) {
-        if (!(error instanceof SyntaxError)) throw error
-        await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
-        continue
-      }
-      if (session.controlUrl) {
-        try {
-          const status = await request(session, token, '/status')
-          if (status.ready) {
-            console.log(
-              JSON.stringify({ session: sessionPath, controlUrl: session.controlUrl }, null, 2)
-            )
-            return
-          }
-        } catch {
-          // The controller can be briefly unavailable while its process starts.
+    let controllerExit = null
+    let controllerError = null
+    child.once('exit', (code, signal) => {
+      controllerExit = { code, signal }
+    })
+    child.once('error', error => {
+      controllerError = error
+    })
+    const startupTimeout = resolveStartupTimeout(options.timeout)
+    const startupDeadline = Date.now() + startupTimeout
+    let lastStatus = null
+    try {
+      while (Date.now() < startupDeadline) {
+        if (controllerError) {
+          throw new Error(`AI verification controller failed to start: ${controllerError.message}`)
         }
+        if (controllerExit) {
+          throw new Error(
+            `AI verification controller exited with ${
+              controllerExit.signal !== null
+                ? `signal ${controllerExit.signal}`
+                : `code ${controllerExit.code ?? 'unknown'}`
+            } during startup`
+          )
+        }
+        let session
+        try {
+          session = JSON.parse(await readFile(sessionPath, 'utf8'))
+        } catch (error) {
+          if (!(error instanceof SyntaxError)) throw error
+          await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+          continue
+        }
+        if (session.controlUrl) {
+          try {
+            lastStatus = await request(session, token, '/status')
+            if (lastStatus.ready) {
+              console.log(
+                JSON.stringify({ session: sessionPath, controlUrl: session.controlUrl }, null, 2)
+              )
+              return
+            }
+            if (lastStatus.appExited) {
+              throw new Error(startupFailureMessage(lastStatus, startupTimeout))
+            }
+          } catch (error) {
+            if (lastStatus?.appExited) throw error
+            // The controller can be briefly unavailable while its process starts.
+          }
+        }
+        await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
       }
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+      throw new Error(startupFailureMessage(lastStatus, startupTimeout))
+    } catch (error) {
+      await cleanupFailedStart(sessionPath, child.pid)
+      throw error
     }
-    throw new Error('Timed out waiting for the Wework WebView to connect to AI verification')
   }
   if (!options.session) throw new Error('--session is required')
   const session = JSON.parse(await readFile(options.session, 'utf8'))
   if (command === 'stop') {
     await request(session, session.token, '/shutdown', 'POST')
     await stopOwnedSessionProcesses(session)
-    await rm(join(session.directory, 'executor-home', 'codex', 'auth.json'), { force: true })
+    await removeSessionAuthLink(session)
     return
   }
   if (command === 'status') {
