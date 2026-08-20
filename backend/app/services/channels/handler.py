@@ -97,6 +97,7 @@ class MessageContext:
     is_mention: bool  # Whether the bot was mentioned (for group chats)
     raw_message: Any  # Original message object from the channel SDK
     extra_data: Dict[str, Any]  # Channel-specific extra data
+    proactive_recipient_id: Optional[str] = None
     images: List[Dict[str, str]] = field(default_factory=list)
     # Each image dict: {"mime_type": "image/png", "base64_data": "iVBOR..."}
     files: List[Dict[str, Any]] = field(default_factory=list)
@@ -733,6 +734,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                     channel_id=self._channel_id,
                     conversation_id=message_context.conversation_id,
                     sender_id=message_context.sender_id,
+                    proactive_recipient_id=message_context.proactive_recipient_id,
                     display_name=message_context.sender_name or "",
                 )
 
