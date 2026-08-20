@@ -104,7 +104,7 @@ export class RuntimeTaskLifecycleStore {
     const currentSnapshot = this.getTask(address)
     if (
       expectedSnapshot !== undefined &&
-      lifecycleTransitionChanged(expectedSnapshot, currentSnapshot)
+      runtimeTaskLifecycleTransitionChanged(expectedSnapshot, currentSnapshot)
     ) {
       return false
     }
@@ -535,7 +535,7 @@ export function createRuntimeTaskLifecycleOwnershipView(
   })
 }
 
-function lifecycleTransitionChanged(
+export function runtimeTaskLifecycleTransitionChanged(
   expected: RuntimeTaskLifecycleSnapshot | null,
   current: RuntimeTaskLifecycleSnapshot | null
 ): boolean {
@@ -545,7 +545,8 @@ function lifecycleTransitionChanged(
     expected.turn.phase !== current.turn.phase ||
     expected.turn.id !== current.turn.id ||
     expected.turn.outcome !== current.turn.outcome ||
-    expected.goalStatus !== current.goalStatus
+    expected.goalStatus !== current.goalStatus ||
+    expected.continuable !== current.continuable
   )
 }
 

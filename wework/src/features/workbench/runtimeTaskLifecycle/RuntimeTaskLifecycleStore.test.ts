@@ -3,6 +3,7 @@ import type { RuntimeTaskAddress, RuntimeTaskSummary, RuntimeWorkListResponse } 
 import type { RuntimePaneTranscript } from '@/types/workbench'
 import {
   createRuntimeTaskLifecycleOwnershipView,
+  runtimeTaskLifecycleTransitionChanged,
   RuntimeTaskLifecycleStore,
 } from './RuntimeTaskLifecycleStore'
 import { getRuntimeTaskLifecycleKey } from './RuntimeTaskMachine'
@@ -55,6 +56,22 @@ function transcript(overrides: Partial<RuntimePaneTranscript> = {}): RuntimePane
 }
 
 describe('RuntimeTaskLifecycleStore', () => {
+  test('compares lifecycle transitions by stable fields instead of snapshot identity', () => {
+    const store = new RuntimeTaskLifecycleStore('stable-transition-test')
+    store.syncRuntimeWork(runtimeWork(task({ running: true })))
+
+    const first = store.getTask(address)
+    const equivalent = store.getTask(address)
+
+    expect(first).not.toBe(equivalent)
+    expect(runtimeTaskLifecycleTransitionChanged(first, equivalent)).toBe(false)
+    expect(runtimeTaskLifecycleTransitionChanged(null, null)).toBe(false)
+    expect(runtimeTaskLifecycleTransitionChanged(null, first)).toBe(true)
+
+    store.turnStarted(address, 'turn-1')
+    expect(runtimeTaskLifecycleTransitionChanged(first, store.getTask(address))).toBe(true)
+  })
+
   beforeEach(() => localStorage.clear())
 
   test('routes executor snapshots to the matching task machine', () => {

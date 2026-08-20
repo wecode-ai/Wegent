@@ -6648,9 +6648,49 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(within(sideChat).queryByTestId('chat-input-error')).not.toBeInTheDocument()
 
-    await new Promise(resolve => window.setTimeout(resolve, 300))
     expect(sendRuntimePaneMessageMock).toHaveBeenCalledTimes(1)
   }, 20_000)
+
+  test('temporary chat marks a rejected queued send as failed', async () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'workspace-cloud-device',
+      taskId: 'runtime-side-chat-rejected-queue',
+      workspacePath: '/workspace/project',
+    }
+    createTemporaryRuntimeTaskMock.mockImplementation(async (_input, options) => {
+      options?.onRuntimeTaskOptimisticOpen?.(address)
+      return address
+    })
+    sendRuntimePaneMessageMock.mockRejectedValueOnce(new Error('network unavailable'))
+    renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
+
+    const sideChat = await screen.findByTestId('right-workspace-chat-panel')
+    const sideChatInput = within(sideChat).getByTestId('chat-message-input')
+    await userEvent.type(sideChatInput, 'first message')
+    await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+    await waitFor(() => expect(subscribeRuntimeTaskStreamMock).toHaveBeenCalled())
+
+    await userEvent.type(sideChatInput, 'queued follow-up')
+    await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+    expect(within(sideChat).getByTestId('conversation-queue-panel')).toHaveTextContent(
+      'queued follow-up'
+    )
+
+    const streamHandlers = subscribeRuntimeTaskStreamMock.mock.calls.at(-1)?.[1] as
+      | { onAssistantStart?: () => void }
+      | undefined
+    act(() => streamHandlers?.onAssistantStart?.())
+
+    await waitFor(() =>
+      expect(within(sideChat).getByTestId('conversation-queue-panel')).toHaveTextContent(
+        'network unavailable'
+      )
+    )
+    expect(sendRuntimePaneMessageMock).toHaveBeenCalledTimes(1)
+  }, 15_000)
 
   test('temporary chat rolls back its optimistic address when runtime creation fails', async () => {
     const createResult = createDeferred<RuntimeTaskAddress | false>()

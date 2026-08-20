@@ -1,6 +1,7 @@
 export { getRuntimeTaskLifecycleKey } from './RuntimeTaskMachine'
 export {
   createRuntimeTaskLifecycleOwnershipView,
+  runtimeTaskLifecycleTransitionChanged,
   RuntimeTaskLifecycleStore,
 } from './RuntimeTaskLifecycleStore'
 export { RuntimeTaskLifecycleProvider } from './RuntimeTaskLifecycleProvider'

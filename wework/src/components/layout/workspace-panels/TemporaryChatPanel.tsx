@@ -23,6 +23,7 @@ import {
   subscribeRuntimeConversation,
 } from '@/features/workbench/runtimeConversationCache'
 import {
+  runtimeTaskLifecycleTransitionChanged,
   type RuntimeTaskLifecycleSnapshot,
   useRuntimeTaskLifecycle,
   useRuntimeTaskLifecycleStore,
@@ -358,6 +359,20 @@ export function TemporaryChatPanel({
                 : { ...message, status: 'failed', error: sendError || '发送失败' }
           )
         )
+      } catch (caughtError) {
+        queuedMessageBusyBlocksRef.current.delete(queuedMessage.id)
+        const errorMessage = caughtError instanceof Error ? caughtError.message : '发送失败'
+        console.error('[Wework] Temporary chat queued message send failed', {
+          id: queuedMessage.id,
+          error: caughtError,
+        })
+        setQueuedMessages(messages =>
+          messages.map(message =>
+            message.id === queuedMessage.id
+              ? { ...message, status: 'failed', error: errorMessage }
+              : message
+          )
+        )
       } finally {
         queuedMessageSendInFlightIdsRef.current.delete(queuedMessage.id)
       }
@@ -370,8 +385,15 @@ export function TemporaryChatPanel({
     if (queuedMessages.some(message => message.status === 'sending')) return
     const queuedMessage = queuedMessages.find(message => message.status === 'queued')
     if (!queuedMessage) return
+    const hasBlockedSnapshot = queuedMessageBusyBlocksRef.current.has(queuedMessage.id)
     const blockedSnapshot = queuedMessageBusyBlocksRef.current.get(queuedMessage.id)
-    if (blockedSnapshot !== undefined && lifecycleStore.getTask(address) === blockedSnapshot) {
+    if (
+      hasBlockedSnapshot &&
+      !runtimeTaskLifecycleTransitionChanged(
+        blockedSnapshot ?? null,
+        lifecycleStore.getTask(address)
+      )
+    ) {
       return
     }
     queuedMessageBusyBlocksRef.current.delete(queuedMessage.id)

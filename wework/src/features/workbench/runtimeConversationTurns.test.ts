@@ -260,6 +260,53 @@ describe('runtimeConversationTurns', () => {
     })
   })
 
+  test('does not bind an accepted queued user to a turn that predates the send', () => {
+    const turns = appendAcceptedRuntimeConversationUser(
+      [
+        { id: 'turn-1', items: [], status: 'streaming' },
+        { id: 'turn-2', items: [], status: 'streaming' },
+      ],
+      userMessage('client-user-2', 'Second question'),
+      'turn-1',
+      new Set(['turn-1'])
+    )
+
+    expect(turns[0]).toMatchObject({
+      id: 'turn-1',
+      items: [],
+    })
+    expect(turns[0]).not.toHaveProperty('clientUserMessageId')
+    expect(turns[1]).toMatchObject({
+      id: 'turn-2',
+      clientUserMessageId: 'client-user-2',
+      items: [
+        {
+          id: 'client-user-2',
+          message: { subtaskId: 'turn-2', turnId: 'turn-2' },
+        },
+      ],
+    })
+  })
+
+  test('keeps an accepted queued user optimistic when no new turn exists yet', () => {
+    const turns = appendAcceptedRuntimeConversationUser(
+      [{ id: 'turn-1', items: [], status: 'done' }],
+      userMessage('client-user-2', 'Second question'),
+      'turn-1',
+      new Set(['turn-1'])
+    )
+
+    expect(turns).toHaveLength(2)
+    expect(turns[0]).toMatchObject({ id: 'turn-1', items: [] })
+    expect(turns[1]).toMatchObject({
+      id: null,
+      clientUserMessageId: 'client-user-2',
+      items: [{ id: 'client-user-2' }],
+    })
+    expect(turns[1].items[0]).toMatchObject({ type: 'user_message' })
+    expect(turns[1].items[0]).not.toHaveProperty('message.turnId')
+  })
+
   test('corrects a provisional turn id by exact client user message id', () => {
     let turns = reduceRuntimeConversationTurns([], {
       type: 'user_added',

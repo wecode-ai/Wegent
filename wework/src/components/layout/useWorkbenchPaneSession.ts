@@ -14,6 +14,7 @@ import {
   isRuntimeTaskBusyError,
 } from '@/features/workbench/runtimePaneStatus'
 import {
+  runtimeTaskLifecycleTransitionChanged,
   type RuntimeTaskLifecycleSnapshot,
   useRuntimeTaskLifecycle,
   useRuntimeTaskLifecycleStore,
@@ -1501,11 +1502,14 @@ export function useWorkbenchPaneSession({
     if (queuedMessages.some(message => message.status === 'sending')) return
     const queuedMessage = queuedMessages.find(message => message.status === 'queued')
     if (!queuedMessage) return
+    const hasBlockedSnapshot = queuedMessageBusyBlockSnapshotsRef.current.has(queuedMessage.id)
     const blockedSnapshot = queuedMessageBusyBlockSnapshotsRef.current.get(queuedMessage.id)
     if (
-      blockedSnapshot !== undefined &&
-      currentRuntimeTask &&
-      lifecycleStore.getTask(currentRuntimeTask) === blockedSnapshot
+      hasBlockedSnapshot &&
+      !runtimeTaskLifecycleTransitionChanged(
+        blockedSnapshot ?? null,
+        currentRuntimeTask ? lifecycleStore.getTask(currentRuntimeTask) : null
+      )
     ) {
       return
     }
