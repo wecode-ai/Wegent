@@ -49,17 +49,18 @@ sequenceDiagram
 
 ## Code ownership
 
-| Responsibility                     | Code                                                                                           |
-| ---------------------------------- | ---------------------------------------------------------------------------------------------- |
-| Local Executor event parsing       | `wework/src/api/runtime/runtimeChatStream.ts`                                                  |
-| Hybrid stream handler routing      | `wework/src/api/hybrid/hybridServices.ts`                                                      |
-| Event-driven reconciliation coordinator | `wework/src/features/workbench/runtimeTaskLifecycle/RuntimeTaskLifecycleStreamCoordinator.tsx` |
-| Lifecycle truth projection         | `wework/src/features/workbench/runtimeTaskLifecycle/RuntimeTaskLifecycleStore.ts`              |
-| Executor task list and transcript  | `executor/src/runtime_work/handler/queries.rs`                                                 |
+| Responsibility                                | Code                                                                                           |
+| --------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Local Executor event bridge and service reuse | `wework/src/api/local/localServices.ts`, `wework/src/api/runtime/runtimeChatStream.ts`         |
+| Hybrid stream handler routing                 | `wework/src/api/hybrid/hybridServices.ts`                                                      |
+| Event-driven reconciliation coordinator       | `wework/src/features/workbench/runtimeTaskLifecycle/RuntimeTaskLifecycleStreamCoordinator.tsx` |
+| Lifecycle truth projection                    | `wework/src/features/workbench/runtimeTaskLifecycle/RuntimeTaskLifecycleStore.ts`              |
+| Executor task list and transcript             | `executor/src/runtime_work/handler/queries.rs`                                                 |
 
 ## Essential invariants
 
 - The normal lifecycle consumes only the event stream and never reads task lists or transcripts on a timer.
+- The same underlying local Executor transport must reuse one Runtime event stream. Preference refreshes or equivalent identity objects must not rebuild its native listener, which would accumulate listeners and create a terminal-event gap while subscriptions move.
 - A terminal event directly settles the shared lifecycle store by `deviceId + taskId`. The resident coordinator must not depend on a mounted pane or overwrite that terminal signal with a task list read immediately after the event, because the Executor and provider list projections may still be finishing the same turn.
 - `executor.event_lagged` and runtime transport replacement also trigger reconciliation because they explicitly indicate that the local projection may be stale.
 - Concurrent anomaly signals share one in-flight reconciliation request; new signals during that request coalesce into at most one serial trailing reconciliation and never create a concurrent request burst or timed retry loop.

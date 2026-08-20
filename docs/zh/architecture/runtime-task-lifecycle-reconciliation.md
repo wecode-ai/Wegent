@@ -51,7 +51,7 @@ sequenceDiagram
 
 | 职责                             | 代码                                                                                           |
 | -------------------------------- | ---------------------------------------------------------------------------------------------- |
-| 本地 Executor 事件解析           | `wework/src/api/runtime/runtimeChatStream.ts`                                                  |
+| 本地 Executor 事件桥与服务复用   | `wework/src/api/local/localServices.ts`、`wework/src/api/runtime/runtimeChatStream.ts`         |
 | Hybrid stream handler 路由       | `wework/src/api/hybrid/hybridServices.ts`                                                      |
 | 事件驱动对账协调                 | `wework/src/features/workbench/runtimeTaskLifecycle/RuntimeTaskLifecycleStreamCoordinator.tsx` |
 | 生命周期真值投影                 | `wework/src/features/workbench/runtimeTaskLifecycle/RuntimeTaskLifecycleStore.ts`              |
@@ -60,6 +60,7 @@ sequenceDiagram
 ## 必要不变量
 
 - 正常生命周期只消费事件流，不得按时间周期读取 task list 或 transcript。
+- 同一底层本地 Executor transport 必须复用同一个 Runtime 事件流；用户偏好或等值身份对象刷新不得重建原生监听，否则会累计监听器并在订阅切换窗口丢失终态事件。
 - 终态事件按 `deviceId + taskId` 直接收敛共享 lifecycle store；常驻协调器不得依赖 pane 是否挂载，也不得用事件到达后立即读取的 task list 覆盖该终态，因为 Executor 与 provider 的列表投影可能尚未完成同一轮收尾。
 - 明确表示本地投影可能过期的 `executor.event_lagged` 和 runtime transport replacement 同样触发对账。
 - 并发异常信号必须共享同一个在途对账请求；在途期间的新信号最多合并成一次串行尾随对账，不得形成并发请求突发或定时重试循环。

@@ -356,16 +356,19 @@ function AppRoutes({
   const lifecycleStore = useMemo(() => new RuntimeTaskLifecycleStore(user?.id), [user?.id])
   const usesFallbackCloudConnection = cloudConnection.serviceKey.startsWith('fallback:')
   const workbenchIdentity = usesFallbackCloudConnection ? user : (cloudConnection.user ?? user)
+  const workbenchIdentityId = workbenchIdentity?.id
+  const workbenchIdentityName = workbenchIdentity?.user_name
+  const workbenchIdentityEmail = workbenchIdentity?.email
   const runtimeServiceUser = useMemo<User | undefined>(
     () =>
-      workbenchIdentity
+      workbenchIdentityId !== undefined
         ? {
-            id: workbenchIdentity.id,
-            user_name: workbenchIdentity.user_name,
-            email: workbenchIdentity.email,
+            id: workbenchIdentityId,
+            user_name: workbenchIdentityName ?? '',
+            email: workbenchIdentityEmail ?? '',
           }
         : undefined,
-    [workbenchIdentity]
+    [workbenchIdentityEmail, workbenchIdentityId, workbenchIdentityName]
   )
   const services = useMemo(
     () =>
