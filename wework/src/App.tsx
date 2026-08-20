@@ -31,9 +31,12 @@ import { stripAppBasePath } from '@/config/runtime'
 import { AppearanceProvider } from '@/features/appearance'
 import { ChromeTitlebar } from '@/components/topnav/ChromeTitlebar'
 import { AppIframe } from '@/components/topnav/AppIframe'
+import { listenHarnessAppLaunchProgress } from '@/api/local/harnessApps'
 import { HarnessAppLaunchSurface } from '@/features/harness-apps/HarnessAppLaunchSurface'
 import {
+  clearHarnessAppLaunch,
   harnessAppInstallationIdFromPath,
+  updateHarnessAppLaunchPhase,
   useHarnessAppLaunchState,
 } from '@/features/harness-apps/harnessAppLaunchState'
 import { useChromeTabs } from '@/components/topnav/useChromeTabs'
@@ -293,6 +296,7 @@ export function WorkspaceTabSurface({
               user={user}
               onStartupReadyChange={active && !iframe ? onWorkbenchStartupReadyChange : undefined}
               workspaceTabId={tab.id}
+              consumePluginTrials={active && !iframe}
               syncRemoteProjects={active}
               syncRuntimeTaskLifecycle={active}
             >
@@ -316,16 +320,30 @@ export function WorkspaceTabSurface({
                   {auxiliaryPage}
                 </div>
               ) : null}
-              {harnessAppLaunch ? <HarnessAppLaunchSurface launch={harnessAppLaunch} /> : null}
             </WorkbenchProvider>
           ) : null}
+          {harnessAppLaunch ? <HarnessAppLaunchSurface launch={harnessAppLaunch} /> : null}
           {renderedIframe ? (
-            <div className={cn('h-full', !iframe && 'hidden')} aria-hidden={!iframe}>
+            <div
+              className={cn(
+                'absolute inset-0',
+                !iframe && 'hidden',
+                harnessAppLaunchActive && 'pointer-events-none opacity-0'
+              )}
+              aria-hidden={!iframe || harnessAppLaunchActive}
+            >
               <AppIframe
                 active={active && Boolean(iframe)}
                 appKey={renderedIframe.appKey}
+                edgeToEdge={Boolean(harnessAppInstallationId)}
+                onReady={
+                  harnessAppInstallationId
+                    ? () => clearHarnessAppLaunch(harnessAppInstallationId)
+                    : undefined
+                }
                 src={renderedIframe.src}
                 title={renderedIframe.title}
+                waitForContent={Boolean(harnessAppInstallationId)}
                 workspaceTabId={tab.id}
               />
             </div>
@@ -390,6 +408,26 @@ function AppRoutes({
   )
 
   useEffect(() => {
+    if (!isTauriRuntime()) return
+    let disposed = false
+    let unlisten: (() => void) | null = null
+    void listenHarnessAppLaunchProgress(progress => {
+      updateHarnessAppLaunchPhase(progress.installationId, progress.phase)
+    })
+      .then(dispose => {
+        if (disposed) dispose()
+        else unlisten = dispose
+      })
+      .catch(error => {
+        console.error('[Wework] failed to listen for Smart app launch progress', error)
+      })
+    return () => {
+      disposed = true
+      unlisten?.()
+    }
+  }, [])
+
+  useEffect(() => {
     track('feature_opened', {
       feature: isPopoutWindow ? 'popout' : telemetryFeatureForPath(path),
     })
@@ -447,7 +485,7 @@ function AppRoutes({
 
   if (!workspaceTabs) return null
   const residentManagerTabId = enableResidentSmartApps
-    ? findResidentSmartAppsHostTabId(workspaceTabs.tabs)
+    ? findResidentSmartAppsHostTabId(workspaceTabs.tabs, workspaceTabs.activeTabId)
     : undefined
 
   return (

@@ -1465,6 +1465,8 @@ describe('DesktopSidebar', () => {
     const cloudButton = screen.getByTestId('sidebar-cloud-connection-button')
     const projectsHeader = screen.getByTestId('projects-section-toggle')
 
+    expect(pluginsButton.querySelector('.lucide-plug')).toBeInTheDocument()
+
     expect(searchButton.compareDocumentPosition(newChatButton)).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING
     )

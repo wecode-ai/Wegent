@@ -173,4 +173,17 @@ describe('buildInstalledPluginSubtitle', () => {
       buildInstalledPluginSubtitle(plugin, marketplaceItem, (_key, fallback) => fallback)
     ).toBe('创建者 明德 · 定向分享 · 仅可使用')
   })
+
+  test('marks copyable recipient shares as copyable', () => {
+    const plugin = createPlugin()
+    const marketplaceItem = {
+      accessRole: 'recipient',
+      ownerDisplayName: 'qindi',
+      allowCopy: true,
+    } as PluginMarketplaceItem
+
+    expect(
+      buildInstalledPluginSubtitle(plugin, marketplaceItem, (_key, fallback) => fallback)
+    ).toBe('创建者 qindi · 定向分享 · 可复制')
+  })
 })
