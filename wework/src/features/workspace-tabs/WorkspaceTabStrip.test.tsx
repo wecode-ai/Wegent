@@ -7,9 +7,14 @@ import { WorkspaceTabStrip } from './WorkspaceTabStrip'
 import { workspaceTabsStorageKey, type WorkspaceTabKind } from './workspaceTabs'
 
 const openWorkspaceTabWindow = vi.fn().mockResolvedValue(true)
+const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
 
 vi.mock('./workspaceWindow', () => ({
   openWorkspaceTabWindow: (tab: unknown) => openWorkspaceTabWindow(tab),
+}))
+
+vi.mock('@/features/experimental-features/useExperimentalFeaturesEnabled', () => ({
+  useExperimentalFeaturesEnabled: () => experimentalFeatures.enabled,
 }))
 
 const labels = {
@@ -46,6 +51,7 @@ describe('WorkspaceTabStrip', () => {
   beforeEach(() => {
     localStorage.clear()
     openWorkspaceTabWindow.mockClear()
+    experimentalFeatures.enabled = true
     window.history.replaceState({}, '', '/')
   })
 
@@ -103,6 +109,29 @@ describe('WorkspaceTabStrip', () => {
     expect(screen.queryByTestId('workspace-tab-add-board')).not.toBeInTheDocument()
     expect(screen.getByTestId('workspace-tab-add-task')).toBeInTheDocument()
     expect(screen.getByTestId('workspace-tab-add-agent')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-tab-add-smart-app')).toBeInTheDocument()
+  })
+
+  test('opens Smart apps from the top tab add menu', async () => {
+    const user = userEvent.setup()
+    renderStrip()
+
+    await user.click(screen.getByTestId('workspace-tab-add'))
+    await user.click(screen.getByTestId('workspace-tab-add-smart-app'))
+
+    expect(window.location.pathname).toBe('/sites')
+    expect(new URLSearchParams(window.location.search).get('app_type')).toBe('smart_app')
+    expect(screen.getByRole('tab', { name: '应用' })).toHaveAttribute('aria-selected', 'true')
+  })
+
+  test('hides Smart apps from the top tab add menu while experiments are disabled', async () => {
+    experimentalFeatures.enabled = false
+    const user = userEvent.setup()
+    renderStrip()
+
+    await user.click(screen.getByTestId('workspace-tab-add'))
+
+    expect(screen.queryByTestId('workspace-tab-add-smart-app')).not.toBeInTheDocument()
   })
 
   test('opens an allowed fallback tab in a board-only window when board is unavailable', async () => {

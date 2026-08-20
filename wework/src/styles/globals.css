@@ -108,6 +108,34 @@
   display: none;
 }
 
+@keyframes smart-app-workspace-tab-enter {
+  0% {
+    opacity: 0;
+    transform: translateY(5px) scale(0.82);
+    width: 28px;
+  }
+  62% {
+    opacity: 1;
+    transform: translateY(0) scale(1.02);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    width: 144px;
+  }
+}
+
+.smart-app-workspace-tab-enter {
+  animation: smart-app-workspace-tab-enter 240ms cubic-bezier(0.22, 1, 0.36, 1);
+  transform-origin: left center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .smart-app-workspace-tab-enter {
+    animation: none;
+  }
+}
+
 .task-description-editor .bn-editor a:not([href^='wegent://attachments/']) {
   color: rgb(35 121 232);
   text-decoration: underline;

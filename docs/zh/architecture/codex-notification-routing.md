@@ -17,8 +17,10 @@ flowchart LR
     B --> D1[线程 A 通知流]
     B --> D2[线程 B 通知流]
     C --> E[Runtime 后台状态路由]
-    D1 --> F1[线程 A turn 状态机]
-    D2 --> F2[线程 B turn 状态机]
+    D1 --> F1[线程 A 活跃 turn 校正]
+    D2 --> F2[线程 B 活跃 turn 校正]
+    F1 --> G1[线程 A turn 状态机]
+    F2 --> G2[线程 B turn 状态机]
 ```
 
 ## 时序图
@@ -33,6 +35,8 @@ sequenceDiagram
     H->>B: 仅投递到线程 B
     H->>H: 同时投递到全局流
     Note over A: 线程 A 队列不受影响
+    C->>H: 线程 A item/started(userMessage)
+    H->>A: 用协议 turnId 校正 turn/start 返回值
     C->>H: 线程 A turn/completed
     H->>A: 投递完成通知
     A->>A: 生成唯一终态
@@ -53,4 +57,6 @@ sequenceDiagram
 - 带 `threadId` 的通知只能进入匹配线程的 turn 流；全局流仍接收全部通知。
 - 无 `threadId` 的进程退出通知必须到达所有活跃线程。
 - 线程订阅必须在可能启动该线程 turn 的请求之前建立。
+- 根用户消息的 `item/started` 所携带的协议 `turnId` 必须校正 `turn/start` 返回的过期 turn ID，后续同一 turn 的 Goal 与完成通知不得被误判为 stale。
+- 助手消息等非根用户消息不得替换当前活跃 turn。
 - 全局后台路由掉队不得把无关活跃 turn 标记为失败。

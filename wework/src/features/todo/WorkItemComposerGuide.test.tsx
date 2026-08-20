@@ -6,12 +6,6 @@ import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import type { ProjectSpaceApi } from '@/features/todo/projectSpaceSelection'
 import { WorkItemComposerGuide } from './WorkItemComposerGuide'
 
-const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
-
-vi.mock('@/features/experimental-features/useExperimentalFeaturesEnabled', () => ({
-  useExperimentalFeaturesEnabled: () => experimentalFeatures.enabled,
-}))
-
 const project = {
   id: 'work-items',
   project_key: 'WORK',
@@ -59,20 +53,13 @@ const taskBindings = [
 ]
 
 describe('WorkItemComposerGuide', () => {
-  test('stays hidden while experimental features are disabled', () => {
-    experimentalFeatures.enabled = false
-    const { container } = render(<WorkItemComposerGuide project={project} />)
-    expect(container).toBeEmptyDOMElement()
-    experimentalFeatures.enabled = true
-  })
-
   test('shows the default workspace as the selected destination for a new task', async () => {
     const user = userEvent.setup()
     const onSelectProject = vi.fn()
     render(
       <WorkItemComposerGuide
         project={project}
-        projects={[project, teamProject]}
+        projects={[teamProject]}
         toolbar
         onSelectProject={onSelectProject}
       />
@@ -92,10 +79,8 @@ describe('WorkItemComposerGuide', () => {
     expect(trigger).not.toHaveClass('text-primary', 'font-medium')
 
     await user.click(trigger)
-    expect(screen.getByTestId('work-item-workspace-option-work-items')).toHaveAttribute(
-      'aria-checked',
-      'true'
-    )
+    const menu = screen.getByTestId('work-item-context-menu')
+    expect(menu).not.toHaveTextContent('我的任务')
     expect(screen.getByTestId('work-item-workspace-option-team-work')).toHaveTextContent('团队研发')
 
     await user.click(screen.getByTestId('work-item-workspace-option-team-work'))

@@ -1978,7 +1978,7 @@ async fn read_shared_turn_notifications(
 
         let notification_turn_id = root_turn_notification_id(&message, state);
         if let Some(turn_id) =
-            started_active_turn_id(options.active_turn_id.as_deref(), &message, state)
+            observed_active_turn_id(options.active_turn_id.as_deref(), &message, state)
         {
             if let Some(previous_turn_id) = options.active_turn_id.as_deref() {
                 log_executor_event(
@@ -1987,7 +1987,7 @@ async fn read_shared_turn_notifications(
                         ("thread_id", thread_id.to_owned()),
                         ("previous_turn_id", previous_turn_id.to_owned()),
                         ("turn_id", turn_id.clone()),
-                        ("source", "turn_started_notification".to_owned()),
+                        ("source", "protocol_start_notification".to_owned()),
                     ],
                 );
             }
@@ -2483,12 +2483,20 @@ async fn notification_belongs_to_thread(
     }
 }
 
-fn started_active_turn_id(
+fn observed_active_turn_id(
     active_turn_id: Option<&str>,
     message: &Value,
     state: &CodexRunState,
 ) -> Option<String> {
-    if message.get("method").and_then(Value::as_str) != Some("turn/started") {
+    let method = message.get("method").and_then(Value::as_str);
+    let starts_root_turn = method == Some("turn/started")
+        || (method == Some("item/started")
+            && message_params(message)
+                .get("item")
+                .and_then(|item| item.get("type"))
+                .and_then(Value::as_str)
+                == Some("userMessage"));
+    if !starts_root_turn {
         return None;
     }
     root_turn_notification_id(message, state)

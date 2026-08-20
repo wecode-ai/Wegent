@@ -29,10 +29,15 @@ function project(id: string, name: string, projectStore: 'local' | 'backend'): C
 
 describe('projectSpaceSelection', () => {
   test('lists local and cloud project spaces without querying per-project bindings', async () => {
+    const defaultProject = {
+      ...project('default-work-items', 'My Tasks', 'local'),
+      project_key: 'WORK',
+      metadata: { system_kind: 'default_work_items' },
+    }
     const localProject = project('space-local', 'Local board', 'local')
     const cloudProject = project('space-cloud', 'Cloud board', 'backend')
     const localApi = {
-      listCloudProjects: vi.fn().mockResolvedValue({ items: [localProject] }),
+      listCloudProjects: vi.fn().mockResolvedValue({ items: [defaultProject, localProject] }),
     } as unknown as ProjectSpaceApi
     const cloudApi = {
       listCloudProjects: vi.fn().mockResolvedValue({ items: [cloudProject] }),

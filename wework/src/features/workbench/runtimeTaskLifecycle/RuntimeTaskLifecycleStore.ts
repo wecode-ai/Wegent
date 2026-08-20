@@ -51,8 +51,8 @@ export class RuntimeTaskLifecycleStore {
 
   constructor(userId: number | string | null | undefined) {
     const storageScope = `wework.runtimeTaskLifecycle.${userId ?? 'anonymous'}`
-    this.unreadStorageKey = `${storageScope}.unread`
-    this.runningStorageKey = `${storageScope}.running`
+    this.unreadStorageKey = `${storageScope}.unread.v2`
+    this.runningStorageKey = `${storageScope}.running.v2`
     this.previousRunningTaskKeys = readStoredTaskKeys(this.runningStorageKey)
     this.persistedRunningSerialized = serializeTaskKeys(this.previousRunningTaskKeys)
   }
