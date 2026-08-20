@@ -3,7 +3,12 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import logging
+import os
 import time
+from datetime import datetime
+from pathlib import Path
+from typing import Generator
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -35,7 +40,7 @@ class FakeQueueListener(QueueListenerThatRaisesOnSecondStop):
 
 
 @pytest.fixture
-def reset_file_handler(monkeypatch):
+def reset_file_handler(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]:
     monkeypatch.delenv("WEGENT_LOG_FILE_PATH", raising=False)
     yield
     if logger_module._FILE_HANDLER is not None:
@@ -80,7 +85,7 @@ def test_queue_listener_shutdown_callback_is_idempotent(mocker):
         logging.Logger.manager.loggerDict.pop(logger.name, None)
 
 
-def test_hourly_file_handler_rolls_over_on_next_natural_hour(tmp_path):
+def test_hourly_file_handler_rolls_over_on_next_natural_hour(tmp_path: Path) -> None:
     handler = HourlyRotatingFileHandler(
         tmp_path / "info.log",
         when="h",
@@ -99,7 +104,53 @@ def test_hourly_file_handler_rolls_over_on_next_natural_hour(tmp_path):
         handler.close()
 
 
-def test_setup_logger_writes_to_hourly_file(tmp_path, monkeypatch, reset_file_handler):
+@pytest.mark.skipif(not hasattr(time, "tzset"), reason="tzset is unavailable")
+def test_hourly_archive_names_are_unique_across_dst_fall_back(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_tz = os.environ.get("TZ")
+    monkeypatch.setenv("TZ", "America/New_York")
+    time.tzset()
+    handler = HourlyRotatingFileHandler(
+        tmp_path / "info.log",
+        when="h",
+        interval=1,
+        backupCount=0,
+        encoding="utf-8",
+    )
+    handler.suffix = "%Y%m%d-%H%z"
+
+    try:
+        timezone = ZoneInfo("America/New_York")
+        first_hour = datetime(2026, 11, 1, 1, 30, tzinfo=timezone, fold=0)
+        second_hour = datetime(2026, 11, 1, 1, 30, tzinfo=timezone, fold=1)
+
+        first_suffix = time.strftime(
+            handler.suffix,
+            time.localtime(first_hour.timestamp()),
+        )
+        second_suffix = time.strftime(
+            handler.suffix,
+            time.localtime(second_hour.timestamp()),
+        )
+
+        assert first_suffix == "20261101-01-0400"
+        assert second_suffix == "20261101-01-0500"
+    finally:
+        handler.close()
+        if original_tz is None:
+            monkeypatch.delenv("TZ")
+        else:
+            monkeypatch.setenv("TZ", original_tz)
+        time.tzset()
+
+
+def test_setup_logger_writes_to_hourly_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    reset_file_handler: None,
+) -> None:
     log_file = tmp_path / "executor_manager" / "info.log"
     monkeypatch.setenv("WEGENT_LOG_FILE_PATH", str(log_file))
     logger = setup_logger(
@@ -113,7 +164,7 @@ def test_setup_logger_writes_to_hourly_file(tmp_path, monkeypatch, reset_file_ha
             "INFO - executor manager file logging\n"
         )
         assert isinstance(logger_module._FILE_HANDLER, HourlyRotatingFileHandler)
-        assert logger_module._FILE_HANDLER.suffix == "%Y%m%d-%H"
+        assert logger_module._FILE_HANDLER.suffix == "%Y%m%d-%H%z"
         assert logger_module._FILE_HANDLER.backupCount == 0
     finally:
         for handler in list(logger.handlers):

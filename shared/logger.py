@@ -164,7 +164,7 @@ def _file_log_handler(
             encoding="utf-8",
             utc=False,
         )
-        handler.suffix = "%Y%m%d-%H"
+        handler.suffix = "%Y%m%d-%H%z"
         handler.setFormatter(logging.Formatter(format, datefmt))
         if include_request_id:
             handler.addFilter(RequestIdFilter())
