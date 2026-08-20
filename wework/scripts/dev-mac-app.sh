@@ -296,11 +296,15 @@ if [ -z "${WEWORK_EXECUTOR_SIDECAR:-}" ]; then
 fi
 export WEWORK_EXECUTOR_SIDECAR
 
-if [ "$WEWORK_RELEASE_UI" = "true" ]; then
-  BEFORE_DEV_COMMAND="pnpm run build && pnpm exec vite preview --host 0.0.0.0 --port $WEWORK_PORT --strictPort"
-else
-  BEFORE_DEV_COMMAND="pnpm exec vite --host 0.0.0.0 --port $WEWORK_PORT --strictPort"
-fi
+configure_before_dev_command() {
+  if [ "$WEWORK_RELEASE_UI" = "true" ]; then
+    BEFORE_DEV_COMMAND="pnpm run build && pnpm exec vite preview --host 0.0.0.0 --port $WEWORK_PORT --strictPort"
+  else
+    BEFORE_DEV_COMMAND="pnpm exec vite --host 0.0.0.0 --port $WEWORK_PORT --strictPort"
+  fi
+}
+
+configure_before_dev_command
 install_wegent_sccache_with_homebrew
 configure_wegent_cargo_target_dir "$PROJECT_DIR" "wework-src-tauri"
 
@@ -344,30 +348,34 @@ fi
 TAURI_DEV_CONFIG="$(mktemp -t wework-tauri-dev.XXXXXX.json)"
 trap 'rm -f "$TAURI_DEV_CONFIG"; release_wework_port_lock' EXIT
 
-WEWORK_PORT_VALUE="$WEWORK_PORT" \
-BEFORE_DEV_COMMAND_VALUE="$BEFORE_DEV_COMMAND" \
-WEWORK_RELEASE_UI_VALUE="$WEWORK_RELEASE_UI" \
-WEWORK_APP_IDENTIFIER_VALUE="${WEWORK_APP_IDENTIFIER:-}" \
-WEWORK_DISABLE_BACKGROUND_THROTTLING_VALUE="${WEWORK_DISABLE_BACKGROUND_THROTTLING:-0}" \
-WEWORK_DIR_VALUE="$WEWORK_DIR" \
-TAURI_DEV_CONFIG_VALUE="$TAURI_DEV_CONFIG" \
-python3 "$SCRIPT_DIR/create-tauri-dev-config.py"
+write_tauri_dev_config() {
+  WEWORK_PORT_VALUE="$WEWORK_PORT" \
+  BEFORE_DEV_COMMAND_VALUE="$BEFORE_DEV_COMMAND" \
+  WEWORK_RELEASE_UI_VALUE="$WEWORK_RELEASE_UI" \
+  WEWORK_APP_IDENTIFIER_VALUE="${WEWORK_APP_IDENTIFIER:-}" \
+  WEWORK_DISABLE_BACKGROUND_THROTTLING_VALUE="${WEWORK_DISABLE_BACKGROUND_THROTTLING:-0}" \
+  WEWORK_DIR_VALUE="$WEWORK_DIR" \
+  TAURI_DEV_CONFIG_VALUE="$TAURI_DEV_CONFIG" \
+  python3 "$SCRIPT_DIR/create-tauri-dev-config.py"
+}
 
-echo "Starting WeWork mac app"
-echo "  RELEASE_UI=$WEWORK_RELEASE_UI"
-echo "  WEWORK_PORT=$WEWORK_PORT"
-echo "  WEWORK_DEV_TITLE=$WEWORK_DEV_TITLE"
-echo "  WEWORK_DEV_WORKTREE=$WEWORK_DEV_WORKTREE"
-echo "  WEWORK_DEV_BRANCH=${WEWORK_DEV_BRANCH:-<detached>}"
-echo "  WEWORK_APP_IDENTIFIER=${WEWORK_APP_IDENTIFIER:-io.wecode.wework}"
-echo "  MACOS_BUILD_TARGET=${MACOS_BUILD_TARGET:-<native>}"
-echo "  VITE_WEGENT_BACKEND_URL=$VITE_WEGENT_BACKEND_URL"
-echo "  VITE_WEGENT_SOCKET_URL=${VITE_WEGENT_SOCKET_URL:-<backend URL>}"
-echo "  WEWORK_EXECUTOR_SIDECAR=${WEWORK_EXECUTOR_SIDECAR:-<bundled sidecar>}"
-echo "  WEWORK_SHARED_EXECUTOR_HOME=${WEWORK_SHARED_EXECUTOR_HOME:-0}"
-echo "  EXECUTOR_ISOLATION=${EXECUTOR_ISOLATION_OVERRIDE:-auto}"
-echo "  CODEX_BINARY_PATH=${CODEX_BINARY_PATH:-${CODEX_BIN:-codex}}"
-echo "  CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-<cargo default>}"
+print_startup_configuration() {
+  echo "Starting WeWork mac app"
+  echo "  RELEASE_UI=$WEWORK_RELEASE_UI"
+  echo "  WEWORK_PORT=$WEWORK_PORT"
+  echo "  WEWORK_DEV_TITLE=$WEWORK_DEV_TITLE"
+  echo "  WEWORK_DEV_WORKTREE=$WEWORK_DEV_WORKTREE"
+  echo "  WEWORK_DEV_BRANCH=${WEWORK_DEV_BRANCH:-<detached>}"
+  echo "  WEWORK_APP_IDENTIFIER=${WEWORK_APP_IDENTIFIER:-io.wecode.wework}"
+  echo "  MACOS_BUILD_TARGET=${MACOS_BUILD_TARGET:-<native>}"
+  echo "  VITE_WEGENT_BACKEND_URL=$VITE_WEGENT_BACKEND_URL"
+  echo "  VITE_WEGENT_SOCKET_URL=${VITE_WEGENT_SOCKET_URL:-<backend URL>}"
+  echo "  WEWORK_EXECUTOR_SIDECAR=${WEWORK_EXECUTOR_SIDECAR:-<bundled sidecar>}"
+  echo "  WEWORK_SHARED_EXECUTOR_HOME=${WEWORK_SHARED_EXECUTOR_HOME:-0}"
+  echo "  EXECUTOR_ISOLATION=${EXECUTOR_ISOLATION_OVERRIDE:-auto}"
+  echo "  CODEX_BINARY_PATH=${CODEX_BINARY_PATH:-${CODEX_BIN:-codex}}"
+  echo "  CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-<cargo default>}"
+}
 
 if [ "${WEWORK_MALLOC_STACK_LOGGING:-}" = "1" ]; then
   export MallocStackLogging=1
@@ -376,7 +384,9 @@ if [ "${WEWORK_MALLOC_STACK_LOGGING:-}" = "1" ]; then
   echo "  MallocStackLoggingNoCompact=1"
 fi
 
+write_tauri_dev_config
 if [ "${WEWORK_DRY_RUN:-}" = "1" ]; then
+  print_startup_configuration
   echo "  TAURI_DEV_CONFIG=$TAURI_DEV_CONFIG"
   cat "$TAURI_DEV_CONFIG"
   exit 0
@@ -405,6 +415,21 @@ if [ -z "${WEWORK_NODE_RUNTIME_ROOT:-}" ]; then
   export WEWORK_NODE_RUNTIME_ROOT="$WEWORK_DIR/node_modules/.cache/execution-runtime-node-dev"
 fi
 echo "Using Node runtime root: $WEWORK_NODE_RUNTIME_ROOT"
+
+if ! is_port_available "$WEWORK_PORT"; then
+  occupied_port="$WEWORK_PORT"
+  release_wework_port_lock
+  AVAILABLE_WEWORK_PORT=""
+  find_available_wework_port "$((occupied_port + 1))"
+  WEWORK_PORT="$AVAILABLE_WEWORK_PORT"
+  export WEWORK_DEV_PORT="$WEWORK_PORT"
+  export VITE_WEWORK_DEV_PORT="$WEWORK_PORT"
+  configure_before_dev_command
+  write_tauri_dev_config
+  echo "WEWORK_PORT $occupied_port became unavailable during preparation; using $WEWORK_PORT instead."
+fi
+
+print_startup_configuration
 TAURI_ARGS=(dev --config "$TAURI_DEV_CONFIG")
 if [ "$WEWORK_RELEASE_UI" = "true" ]; then
   TAURI_ARGS+=(--release)

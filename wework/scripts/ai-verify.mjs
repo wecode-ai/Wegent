@@ -341,10 +341,12 @@ async function runServer(sessionPath, token) {
   }
   const shutdown = exitCode => {
     if (shutdownPromise) return shutdownPromise
-    shutdownPromise = stopOwnedSessionProcesses({ launcherPid: app?.pid }).finally(() => {
-      server.close(() => process.exit(exitCode))
-      server.closeAllConnections()
-    })
+    shutdownPromise = stopOwnedSessionProcesses({ launcherPid: app?.pid })
+      .then(() => removeSessionAuthLink(session))
+      .finally(() => {
+        server.close(() => process.exit(exitCode))
+        server.closeAllConnections()
+      })
     return shutdownPromise
   }
   process.once('SIGINT', () => void shutdown(130))
@@ -484,6 +486,7 @@ async function main() {
         }
         if (session.controlUrl) {
           try {
+            lastStatus = null
             lastStatus = await request(session, token, '/status')
             if (lastStatus.ready) {
               console.log(
