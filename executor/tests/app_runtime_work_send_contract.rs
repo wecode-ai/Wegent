@@ -346,6 +346,11 @@ async fn claude_runtime_task_uses_conversation_events_and_resumes_follow_up() {
     assert!(runtime_events.iter().any(|event| {
         event["event"] == "response.created" && event["payload"]["runtime"] == "claude_code"
     }));
+    assert!(runtime_events.iter().any(|event| {
+        event["event"] == "response.completed"
+            && event["payload"]["runtime"] == "claude_code"
+            && event["payload"]["taskTitle"] == "first turn"
+    }));
 }
 
 #[tokio::test]
