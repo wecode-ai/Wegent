@@ -1392,6 +1392,7 @@ function filterRuntimeChatStreamHandlers(
     onRuntimeGoalContinuation: route(handlers.onRuntimeGoalContinuation),
     onRuntimePlanUpdated: route(handlers.onRuntimePlanUpdated),
     onGuidanceApplied: route(handlers.onGuidanceApplied),
+    onRuntimeEventLagged: handlers.onRuntimeEventLagged,
     onRuntimeTransportReplaced: includeTransportReplacement
       ? handlers.onRuntimeTransportReplaced
       : undefined,

@@ -349,7 +349,11 @@ spec:
       substantive overview page of its own. Explain its responsibility, boundaries,
       internal map and where readers should go next; do not leave a parent such as
       `modules` or `modules/alchemy` as an empty navigation node, and do not invent
-      hierarchy solely to mirror directories.
+      hierarchy solely to mirror directories. Create a slash-separated section only
+      when its overview is meaningful and it has at least two independent child pages;
+      otherwise write one topical page at the existing level. Titles must name the
+      actual subject and reader purpose, never a generic suffix such as "part",
+      "section", "module part", or their translated equivalents.
     - Before finishing, check that every major component and cross-component workflow
       has substantive coverage rather than only a passing mention in a broad page.
 
@@ -364,6 +368,10 @@ spec:
       than one boundary should show its flow or state machine.
     - Ground every participant and relationship in inspected source. Prefer a few strong
       diagrams; simple navigation and reference pages need none.
+    - In a flowchart, node and subgraph IDs share one namespace. Use distinct IDs such
+      as `rpc_group` and `rpc_service` even when their visible labels are both "RPC";
+      reusing an ID makes Mermaid create a parent cycle. Prefer a simple `flowchart`
+      for a system-context map unless another diagram type is necessary.
 
     ## Git history
 

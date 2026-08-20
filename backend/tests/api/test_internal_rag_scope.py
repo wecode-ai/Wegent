@@ -66,6 +66,17 @@ def test_internal_retrieve_request_rejects_empty_document_ids():
         )
 
 
+def test_internal_retrieve_request_accepts_search_hints() -> None:
+    request = InternalRetrieveRequest(
+        query="release checklist",
+        knowledge_base_id=1,
+        search_hints={"keywords": ["release"], "phrases": ["release checklist"]},
+    )
+
+    assert request.search_hints is not None
+    assert request.search_hints.phrases == ["release checklist"]
+
+
 @pytest.mark.asyncio
 async def test_execute_scoped_retrieve_empty_restricted_scope_returns_empty_total():
     request = InternalRetrieveRequest(

@@ -117,6 +117,15 @@ export function isRuntimeTaskConfirmedActive(task: RuntimeTaskSummary): boolean 
   )
 }
 
+export function isRuntimeTaskExecutionRunning(task: RuntimeTaskSummary): boolean {
+  const normalizedTask = normalizeRuntimeTaskSummary(task)
+  return (
+    normalizedTask.optimistic !== true &&
+    normalizedTask.running === true &&
+    normalizedTask.completedAt == null
+  )
+}
+
 function isRuntimeTaskOptimisticallyActive(task: RuntimeTaskSummary): boolean {
   return (
     task.optimistic === true &&
