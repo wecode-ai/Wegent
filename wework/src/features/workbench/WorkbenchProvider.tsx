@@ -1984,6 +1984,7 @@ export function WorkbenchProvider({
   const stableGetProjectWorkspaceRoot = useStableEvent(projectActions.getProjectWorkspaceRoot)
   const stableListDeviceDirectories = useStableEvent(projectActions.listDeviceDirectories)
   const stableCreateDeviceDirectory = useStableEvent(projectActions.createDeviceDirectory)
+  const stableCloneGitRepository = useStableEvent(projectActions.cloneGitRepository)
   const stableLoadEnvironmentInfo = useStableEvent(projectActions.loadEnvironmentInfo)
   const stableLoadEnvironmentDiff = useStableEvent(projectActions.loadEnvironmentDiff)
   const stableCommitEnvironmentChanges = useStableEvent(projectActions.commitEnvironmentChanges)
@@ -2606,6 +2607,7 @@ export function WorkbenchProvider({
     getProjectWorkspaceRoot: projectActions.getProjectWorkspaceRoot,
     listDeviceDirectories: projectActions.listDeviceDirectories,
     createDeviceDirectory: projectActions.createDeviceDirectory,
+    cloneGitRepository: projectActions.cloneGitRepository,
     loadEnvironmentInfo: projectActions.loadEnvironmentInfo,
     loadEnvironmentDiff: projectActions.loadEnvironmentDiff,
     commitEnvironmentChanges: projectActions.commitEnvironmentChanges,
@@ -2695,6 +2697,7 @@ export function WorkbenchProvider({
       getProjectWorkspaceRoot: stableGetProjectWorkspaceRoot,
       listDeviceDirectories: stableListDeviceDirectories,
       createDeviceDirectory: stableCreateDeviceDirectory,
+      cloneGitRepository: stableCloneGitRepository,
       loadEnvironmentInfo: stableLoadEnvironmentInfo,
       loadEnvironmentDiff: stableLoadEnvironmentDiff,
       commitEnvironmentChanges: stableCommitEnvironmentChanges,
@@ -2736,6 +2739,7 @@ export function WorkbenchProvider({
       stableCompactRuntimePaneTask,
       stableClearRuntimeGoal,
       stableCheckoutEnvironmentBranch,
+      stableCloneGitRepository,
       stableCommitAndPushEnvironmentChanges,
       stableCommitEnvironmentChanges,
       stableCreateDeviceDirectory,

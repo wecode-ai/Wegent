@@ -17,8 +17,8 @@ flowchart LR
     B --> D1[Thread A stream]
     B --> D2[Thread B stream]
     C --> E[Runtime background router]
-    D1 --> F1[Thread A active-turn correction]
-    D2 --> F2[Thread B active-turn correction]
+    D1 --> F1[Thread A turn identity correction]
+    D2 --> F2[Thread B turn identity correction]
     F1 --> G1[Thread A turn state]
     F2 --> G2[Thread B turn state]
 ```
@@ -49,6 +49,7 @@ sequenceDiagram
 | Responsibility | Code |
 | --- | --- |
 | App-server process and notification hub | `executor/src/agents/codex.rs` |
+| Active turn identity correction | `executor/src/agents/codex.rs` |
 | Active turn state machine | `executor/src/agents/codex/run_state.rs` |
 | Runtime background projection | `executor/src/runtime_work/handler/notifications.rs` |
 | Shared app-server contract tests | `executor/tests/codex_app_server_contract.rs` |
@@ -61,5 +62,5 @@ sequenceDiagram
 - A thread subscription exists before any request that may start its turn.
 - A turn ID returned by `turn/start` is provisional until the first trusted protocol event confirms it; `turn/started`, a root user message's `item/started`, and an earlier `thread/goal/updated` or `thread/goal/cleared` during that provisional turn correct the active turn with their protocol `turnId`.
 - Goal state notifications enter the same turn state machine even when they precede the root user message, and later notifications from that turn are not discarded as stale.
-- Assistant and other non-root-user item notifications cannot replace the active turn.
+- When both the request and root user item carry a client user message ID, they must match; assistant and other non-root-user items cannot replace the active turn.
 - Lag in the global background router must not fail unrelated active turns.

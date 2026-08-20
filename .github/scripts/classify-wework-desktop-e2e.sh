@@ -40,6 +40,7 @@ cloud_worktree_segments=(
   cloud-worktree-device-restart
 )
 cloud_segments=(
+  cloud-project-creation
   core-task-flow
   "${cloud_worktree_segments[@]}"
   model-routing
@@ -67,7 +68,7 @@ cloud_shards=(
   model-routing,project-automation,workspace-attachments,plugin-auto-update
   embedded-browser,cloud-worktree-create,workspace-tabs,cloud-worktree-archive-restore,cloud-worktree-device-restart
   resilience,rendering-extensions,cloud-worktree-queued-cancel,priority-filter,cloud-worktree-capability
-  core-task-flow,conversation-state,supervisor-lifecycle,automation-lifecycle,browser-multi-tabs
+  core-task-flow,conversation-state,supervisor-lifecycle,automation-lifecycle,browser-multi-tabs,cloud-project-creation
 )
 # Keep the number of core desktop runners fixed as checkpoints grow. Group
 # checkpoints by observed Core CI duration and order each shard so the serial

@@ -265,7 +265,7 @@ if ! sed -n '/^  e2e-tests:/,/^  executor-e2e-tests:/p' \
   grep -F 'image: ${{ needs.prepare-platform-e2e-image.outputs.image }}' \
     >/dev/null ||
   ! sed -n '/^  e2e-tests:/,/^  executor-e2e-tests:/p' \
-    "$workflow_dir/e2e-tests.yml" |
+  "$workflow_dir/e2e-tests.yml" |
     grep -F 'setup-toolchain: "false"' >/dev/null ||
   sed -n '/^  e2e-tests:/,/^  executor-e2e-tests:/p' \
     "$workflow_dir/e2e-tests.yml" |
