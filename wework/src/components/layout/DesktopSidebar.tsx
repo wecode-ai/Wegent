@@ -1500,7 +1500,8 @@ function RuntimeTaskRow({
     [task, workspace]
   )
   const changeRequestMonitor = useMemo(
-    () => (workbench?.services ? getChangeRequestMonitor(workbench.services.deviceApi) : null),
+    () =>
+      workbench?.services?.deviceApi ? getChangeRequestMonitor(workbench.services.deviceApi) : null,
     [workbench]
   )
   const changeRequestSnapshot = useTaskChangeRequest(changeRequestMonitor, changeRequestTarget)

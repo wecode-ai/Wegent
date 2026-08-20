@@ -944,7 +944,7 @@ export function CloudTodoWorkspace({
   const { t } = useTranslation('common')
   const workbench = useContext(WorkbenchContext)
   const changeRequestMonitor = useMemo(
-    () => getChangeRequestMonitor(services.deviceApi),
+    () => (services.deviceApi ? getChangeRequestMonitor(services.deviceApi) : null),
     [services.deviceApi]
   )
   const projectSpaceApis = useMemo(() => {
@@ -2768,7 +2768,8 @@ export function CloudTodoWorkspace({
       data-sidebar-collapsed={embedded || sidebarCollapsed}
     >
       {selectedProjectKey === itemTaskBindingsProjectKey &&
-      selectedProject?.pull_request_automation?.enabled
+      selectedProject?.pull_request_automation?.enabled &&
+      changeRequestMonitor
         ? Object.entries(boardTaskBindings).map(([itemId, bindings]) => {
             const binding = bindings.find(candidate => candidate.running) ?? bindings[0]
             return binding?.changeRequestTarget ? (

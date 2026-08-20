@@ -300,6 +300,10 @@ export function parseChangeRequest(
       : null
   const mergedAt = stringValue(record, 'mergedAt', 'merged_at')
   const state = mergedAt ? 'merged' : normalizeChangeRequestState(stringValue(record, 'state'))
+  const headBranch =
+    stringValue(record, 'headRefName', 'source_branch', 'sourceBranch') ||
+    (head ? stringValue(head, 'ref') : '')
+  const updatedAt = stringValue(record, 'updatedAt', 'updated_at')
 
   return {
     provider,
@@ -313,11 +317,8 @@ export function parseChangeRequest(
     ),
     mergeability: normalizeMergeability(provider, record),
     mergeQueue: 'unknown',
-    headBranch:
-      stringValue(record, 'headRefName', 'source_branch', 'sourceBranch') ||
-      (head ? stringValue(head, 'ref') : '') ||
-      null,
-    updatedAt: stringValue(record, 'updatedAt', 'updated_at') || null,
+    ...(headBranch ? { headBranch } : {}),
+    ...(updatedAt ? { updatedAt } : {}),
   }
 }
 
