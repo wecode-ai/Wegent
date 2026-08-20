@@ -4,8 +4,10 @@
 """Focused contracts for the shared project chat persistence service."""
 
 import uuid
+from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 from fastapi import HTTPException
@@ -1892,13 +1894,13 @@ def test_device_runtime_projection_invalidates_only_material_issue_changes(
     test_db.commit()
 
     @contextmanager
-    def same_session():
+    def same_session() -> Iterator[Session]:
         yield test_db
 
     published_events: list[tuple[str, str]] = []
     runtime_events = 0
 
-    def handle_runtime_event(db: Session, **_kwargs) -> LoopItemExecution:
+    def handle_runtime_event(db: Session, **_kwargs: Any) -> LoopItemExecution:
         nonlocal runtime_events
         runtime_events += 1
         if runtime_events == 1:

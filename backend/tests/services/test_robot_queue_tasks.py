@@ -5,6 +5,8 @@
 """Focused contracts for the cloud Wework execution dispatcher."""
 
 import uuid
+from collections.abc import Iterator
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -782,12 +784,12 @@ async def test_stale_reconciliation_uses_runtime_turn_status(test_db: Session) -
         },
     }
 
-    def _stale_for_reconciliation(db: Session):
+    def _stale_for_reconciliation(db: Session) -> list[LoopItemExecution]:
         db.query(LoopItemExecution).count()
         assert db.in_transaction()
         return [execution]
 
-    async def _emit_runtime_rpc(**_kwargs):
+    async def _emit_runtime_rpc(**_kwargs: Any) -> dict[str, Any]:
         assert not test_db.in_transaction()
         return response
 
@@ -837,7 +839,7 @@ async def test_device_reconnect_reconciles_active_execution_without_open_transac
     session_open = False
 
     @contextmanager
-    def _test_session():
+    def _test_session() -> Iterator[Session]:
         nonlocal session_open
         assert not session_open
         session_open = True
@@ -846,7 +848,7 @@ async def test_device_reconnect_reconciles_active_execution_without_open_transac
         finally:
             session_open = False
 
-    async def _emit(**kwargs):
+    async def _emit(**_kwargs: Any) -> dict[str, Any]:
         assert session_open is False
         return {
             "accepted": True,

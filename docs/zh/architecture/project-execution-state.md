@@ -80,7 +80,9 @@ sequenceDiagram
     end
     opt Backend 重启后设备重连
         R-->>S: 当前 Runtime 任务快照
-        S->>S: 主动对账所有绑定到该设备的活动执行
+        S->>S: 先补建缺失的活动投影，再对账所有绑定到该设备的活动执行
+        S->>S: 提交状态与活动投影
+        S-->>U: 提交后推送活动更新
     end
     S-->>U: 将 0 归一化为 null 后只读投影
     U->>R: 加载执行 transcript
@@ -101,6 +103,6 @@ sequenceDiagram
 | 本地 IPC 和 Runtime RPC                 | `executor/src/local/app_ipc.rs`、Backend device runtime service                             |
 | transcript 加载与 UI 投影               | Wework runtime IPC、pane session 与执行详情组件                                             |
 
-不变量：attempt 身份和事件序列必须匹配；迟到事件不能覆盖新 attempt；终态与 slot 释放原子发生；取消发送不等于取消成功。Runtime 必须先原子关闭该 attempt 的事件出口，再中止任务并发送唯一取消终态，已分离的流式回调不得在取消开始后继续投影内容，作用域退出必须保证停止 ACK。启动请求已发出但确认丢失时不得盲目重发；只有 Runtime 权威任务列表确认精确 `runtime_task_id` 不存在，才能清除启动栅栏并把同一执行意图重新排队。只有停止 ACK，或在 `cancel_requested` 后由 Runtime 权威任务列表确认精确 `runtime_task_id` 已不存在，才能写 cancelled 并释放 slot；Backend 重启后，设备首次重连必须主动查询 Runtime 任务快照并对账该设备的活动执行，不能只等待旧 lease 过期；`loop_item_executions.team_id/backend_task_id=0` 只表示未绑定，存在性判断必须使用正 ID 语义，API/UI 必须归一化为 `null`；容量属于各设备 Runtime scheduler，聚合容量不是执行真值；队列持久化和排队任务 ID 必须来自同一个 scheduler 快照；“立即执行”允许指定排队任务临时突破 `slot_max`，此时 `slot_used` 必须由活动任务 ID 精确投影，且在活动数重新低于上限前不得自动启动其他排队任务；运行中的 transcript 必须优先返回 Runtime 实时缓存，不得等待可能被活动回合占用的 Provider 历史接口；transcript 可用性不是执行状态真值，详情读取超时必须结束加载、保留已有内容并提供重试，不得把执行改为失败或停止；UI 不推导或回写运行状态。
+不变量：attempt 身份和事件序列必须匹配；迟到事件不能覆盖新 attempt；终态与 slot 释放原子发生；取消发送不等于取消成功。Runtime 必须先原子关闭该 attempt 的事件出口，再中止任务并发送唯一取消终态，已分离的流式回调不得在取消开始后继续投影内容，作用域退出必须保证停止 ACK。启动请求已发出但确认丢失时不得盲目重发；只有 Runtime 权威任务列表确认精确 `runtime_task_id` 不存在，才能清除启动栅栏并把同一执行意图重新排队。只有停止 ACK，或在 `cancel_requested` 后由 Runtime 权威任务列表确认精确 `runtime_task_id` 已不存在，才能写 cancelled 并释放 slot；Backend 重启后，设备首次重连必须主动查询 Runtime 任务快照并对账该设备的活动执行，不能只等待旧 lease 过期；重连对账必须先补建缺失的活动投影，再应用 running/terminal 快照，并在事务提交后推送活动，Runtime RPC 与活动推送期间不得持有 SQL 事务；`loop_item_executions.team_id/backend_task_id=0` 只表示未绑定，存在性判断必须使用正 ID 语义，API/UI 必须归一化为 `null`；容量属于各设备 Runtime scheduler，聚合容量不是执行真值；队列持久化和排队任务 ID 必须来自同一个 scheduler 快照；“立即执行”允许指定排队任务临时突破 `slot_max`，此时 `slot_used` 必须由活动任务 ID 精确投影，且在活动数重新低于上限前不得自动启动其他排队任务；运行中的 transcript 必须优先返回 Runtime 实时缓存，不得等待可能被活动回合占用的 Provider 历史接口；transcript 可用性不是执行状态真值，详情读取超时必须结束加载、保留已有内容并提供重试，不得把执行改为失败或停止；UI 不推导或回写运行状态。
 
 详细状态矩阵与验收见 [项目执行状态真实性重构](../wework/developer-guide/wework-project-execution-state-truth-refactoring.md)。

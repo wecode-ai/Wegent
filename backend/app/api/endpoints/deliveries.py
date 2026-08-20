@@ -133,7 +133,13 @@ def _schedule_workflow_plan_executions(
     execution_ids = workflow_plan_execution_ids(db, plan)
     db.rollback()
     for execution_id in execution_ids:
-        schedule_board_robot_execution_by_id(execution_id)
+        try:
+            schedule_board_robot_execution_by_id(execution_id)
+        except Exception:
+            logger.exception(
+                "Workflow plan execution scheduling failed execution_id=%s",
+                execution_id,
+            )
 
 
 def _approve_and_dispatch_workflow_plan(

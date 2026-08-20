@@ -645,6 +645,7 @@ class ProjectAutomationExecution:
         db: Session,
         *,
         run_id: str,
+        user_id: int,
         workflow_run_id: str,
         plan_version: int,
         commit: bool = True,
@@ -654,6 +655,8 @@ class ProjectAutomationExecution:
         run = db.get(ProjectAutomationRun, run_id)
         if run is None or run.status in TERMINAL_RUN_STATUSES:
             raise RuntimeError("AI-managed automation run is not active")
+        if run.created_by_user_id != user_id:
+            raise RuntimeError("AI manager does not own this automation run")
         activity = self._activity(db, run)
         if activity is None:
             raise RuntimeError("AI manager activity is unavailable")
@@ -702,6 +705,7 @@ class ProjectAutomationExecution:
             self.record_manager_plan_submission(
                 db,
                 run_id=run_id,
+                user_id=user_id,
                 workflow_run_id=view.run_id,
                 plan_version=view.plan_version,
                 commit=False,
@@ -711,61 +715,6 @@ class ProjectAutomationExecution:
         except Exception:
             db.rollback()
             raise
-
-    def reconcile_manager_workflow_plan_binding(
-        self,
-        db: Session,
-        *,
-        run_id: str,
-        workflow_run_id: str,
-    ) -> bool:
-        """Repair a durable plan whose manager audit binding was missed."""
-
-        run = db.get(ProjectAutomationRun, run_id)
-        workflow_run = db.get(ProjectWorkflowRun, workflow_run_id)
-        if run is None or workflow_run is None or workflow_run.parent_id != run.task_id:
-            return False
-        changed = False
-        workflow_metadata = dict(workflow_run.metadata_json or {})
-        if str(workflow_metadata.get("project_automation_run_id") or "") != run.id:
-            workflow_metadata["project_automation_run_id"] = run.id
-            workflow_run.metadata_json = workflow_metadata
-            changed = True
-        activity = self._activity(db, run)
-        if activity is not None:
-            activity_metadata = dict(activity.metadata_json or {})
-            expected_plan_version = int(workflow_metadata.get("plan_version") or 0)
-            if (
-                str(activity_metadata.get("workflow_plan_run_id") or "")
-                != str(workflow_run.id)
-                or int(activity_metadata.get("workflow_plan_version") or 0)
-                != expected_plan_version
-            ):
-                activity_metadata["workflow_plan_run_id"] = workflow_run.id
-                activity_metadata["workflow_plan_version"] = expected_plan_version
-                changed = True
-            if run.status == "failed" and run.description == MISSING_MANAGER_PLAN_ERROR:
-                activity.status = "completed"
-                activity_metadata["run_status"] = "completed"
-                activity_metadata.pop("error", None)
-                changed = True
-            activity.metadata_json = activity_metadata
-        if run.status == "failed" and run.description == MISSING_MANAGER_PLAN_ERROR:
-            run.status = "succeeded"
-            run.description = (
-                workflow_run.description or "AI manager submitted workflow plan."
-            )
-            run.version += 1
-            from app.services.project_workflow_projection import (
-                sync_automation_workflow_node,
-            )
-
-            sync_automation_workflow_node(db, run)
-            changed = True
-        if not changed:
-            return False
-        self._commit_and_push_activity(db, run)
-        return True
 
     def finalize_manager_result(
         self,
@@ -807,10 +756,13 @@ class ProjectAutomationExecution:
             workflow_plan = self._workflow_plan_for_manager_run(db, run)
             if workflow_plan is not None:
                 workflow_plan_run_id = str(workflow_plan.id)
+                workflow_metadata = dict(workflow_plan.metadata_json or {})
+                workflow_metadata["project_automation_run_id"] = run.id
+                workflow_plan.metadata_json = workflow_metadata
                 if activity is not None:
                     activity_metadata["workflow_plan_run_id"] = workflow_plan_run_id
                     activity_metadata["workflow_plan_version"] = int(
-                        (workflow_plan.metadata_json or {}).get("plan_version") or 0
+                        workflow_metadata.get("plan_version") or 0
                     )
                     activity.metadata_json = activity_metadata
         selected_type = str(activity_metadata.get("selected_assignee_type") or "")

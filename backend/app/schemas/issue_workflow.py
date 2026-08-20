@@ -21,13 +21,6 @@ WorkflowOrchestrationStatus = Literal[
     "failed",
 ]
 WorkflowPlanItemAssigneeType = Literal["user", "agent", "team"]
-WorkflowTaskStatus = Literal[
-    "inbox",
-    "pending",
-    "in_progress",
-    "in_review",
-    "completed",
-]
 ISSUE_WORKFLOW_SCOPE_ID = "__issue__"
 DeliverableValueType = Literal[
     "text",
@@ -301,7 +294,7 @@ class WorkflowPlanItemView(WorkflowPlanItemCreate):
     id: str
     stage_id: str = Field(min_length=1, max_length=64)
     task_id: str | None = None
-    task_status: WorkflowTaskStatus | None = None
+    task_status: str | None = None
     outcome_verdict: Literal["passed", "needs_rework"] | None = None
     outcome_summary: str = ""
     status: Literal["proposed", "materialized", "superseded"]

@@ -291,6 +291,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
   let createdBoardItem = null
   let createdChildItem = null
   let workflowPlan = null
+  let workflowPlanApprovalRequested = false
   let cloudApi = null
   let cloudProject = null
   let cloudAgent = null
@@ -441,6 +442,25 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       CLOUD_DEVICE_ID,
       'Cloud robot response lost its persisted execution device'
     )
+    const workflowManagerRule = await cloudRequest(
+      `/api/v1/cloud-projects/${projectId}/automations`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          name: 'Workflow approval persistence',
+          prompt: 'Create and assign concrete child tasks for the current Issue.',
+          triggerType: 'event',
+          eventType: 'task.created',
+          eventConfig: {},
+          assignmentMode: 'ai_managed',
+          managerType: 'custom',
+          model: CLOUD_MODEL_NAME,
+          executionEnvironment: 'cloud',
+          executionDeviceId: CLOUD_DEVICE_ID,
+          enabled: false,
+        }),
+      }
+    )
 
     await control.command('waitFor', '[data-testid="workspace-tab-add"]', {
       timeoutMs: uiTimeoutMs,
@@ -579,6 +599,28 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     await control.command('waitFor', '[data-testid="project-automation-rules"]', {
       timeoutMs: uiTimeoutMs,
     })
+
+    await control.command('click', '[data-testid="project-workflow-mode-ai"]')
+    await control.command('waitFor', '[data-testid="project-workflow-ai-rule"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('fill', '[data-testid="project-workflow-ai-rule"]', {
+      value: workflowManagerRule.id,
+    })
+    await control.command('click', '[data-testid="project-workflow-ai-require-approval"]')
+    await control.command('clickWhenEnabled', '[data-testid="project-workflow-save"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    const persistedAiWorkflowProject = await waitForValue(
+      () => cloudRequest(`/api/v1/cloud-projects/${projectId}`),
+      project =>
+        project.workflow_definition?.advancement_policy === 'ai' &&
+        project.workflow_definition?.approval_policy === 'automatic' &&
+        project.workflow_definition?.ai_automation_rule_id === workflowManagerRule.id,
+      'The AI workflow approval option was not persisted by the real backend',
+      uiTimeoutMs
+    )
+    assert.equal(persistedAiWorkflowProject.workflow_definition.approval_policy, 'automatic')
 
     await control.command('click', '[data-testid="project-workflow-mode-workflow"]')
     await control.command('click', '[data-testid="project-workflow-empty-add"]')
@@ -1400,6 +1442,30 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       )
       if (request.method === 'GET' && workflowPlanMatch) {
         json(response, 200, workflowPlan?.issue_id === workflowPlanMatch[1] ? workflowPlan : null)
+        return true
+      }
+      const approveWorkflowPlanMatch = url.pathname.match(
+        /^\/api\/v1\/loop-items\/(AUTO-\d+)\/workflow-plan\/approve$/
+      )
+      if (
+        request.method === 'POST' &&
+        approveWorkflowPlanMatch &&
+        workflowPlan?.issue_id === approveWorkflowPlanMatch[1]
+      ) {
+        assert.equal(workflowPlan.status, 'awaiting_approval')
+        workflowPlanApprovalRequested = true
+        workflowPlan = {
+          ...workflowPlan,
+          status: 'dispatching',
+        }
+        createdBoardItem = {
+          ...createdBoardItem,
+          workflow: {
+            ...createdBoardItem.workflow,
+            orchestration_status: 'dispatching',
+          },
+        }
+        json(response, 200, workflowPlan)
         return true
       }
       if (
@@ -2432,6 +2498,133 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       workflowPlan = {
         ...workflowPlan,
         status: 'awaiting_approval',
+        summary: '实现并验证 AI 编排生命周期',
+        items: [
+          {
+            id: 'workflow-plan-item-approval-e2e',
+            client_key: 'implement-approval',
+            stage_id: '__issue__',
+            title: '实现 AI 编排生命周期',
+            description: '确认后创建并启动子任务',
+            assignee_type: 'agent',
+            assignee_id: AGENT_ID,
+            assignee_name: AGENT.name,
+            rationale: '开发能力匹配',
+            task_id: null,
+            task_status: null,
+            outcome_verdict: null,
+            outcome_summary: '',
+            status: 'proposed',
+          },
+        ],
+        manager_run: {
+          ...workflowPlan.manager_run,
+          status: 'succeeded',
+          recent_activity: '方案生成完成',
+          error: null,
+        },
+      }
+      readyCount = control.readyCount
+      await control.command('reloadMainWindow', 'body')
+      await withTimeout(
+        control.awaitReadyAfter(readyCount),
+        uiTimeoutMs * 3,
+        'The project board did not reconnect for workflow approval verification'
+      )
+      await control.command('click', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
+        visible: true,
+      })
+      await control.command(
+        'click',
+        `${activeBoard} [data-testid="cloud-todo-card-${aiManagedItemId}"]`,
+        { visible: true }
+      )
+      await control.command(
+        'waitFor',
+        `${activeBoard} [data-testid="cloud-todo-workflow-approve"]`,
+        {
+          timeoutMs: uiTimeoutMs,
+          visible: true,
+        }
+      )
+      await control.command('click', `${activeBoard} [data-testid="cloud-todo-workflow-approve"]`, {
+        visible: true,
+      })
+      await control.command(
+        'waitFor',
+        `${activeBoard} [data-testid="cloud-todo-workflow-plan-status"]`,
+        {
+          text: '正在创建并分配任务',
+          timeoutMs: uiTimeoutMs,
+          visible: true,
+        }
+      )
+      assert.equal(workflowPlanApprovalRequested, true)
+
+      createdChildItem = {
+        ...createdBoardItem,
+        id: aiManagedChildId,
+        sequence_number: Number(aiManagedChildId.split('-')[1]),
+        parent_id: aiManagedItemId,
+        title: '实现 AI 编排生命周期',
+        status: 'in_progress',
+        workflow: null,
+      }
+      createdBoardItem = {
+        ...createdBoardItem,
+        status: 'in_progress',
+        workflow: {
+          ...createdBoardItem.workflow,
+          orchestration_status: 'running',
+        },
+      }
+      workflowPlan = {
+        ...workflowPlan,
+        status: 'running',
+        items: workflowPlan.items.map(item => ({
+          ...item,
+          task_id: aiManagedChildId,
+          task_status: 'in_progress',
+          status: 'materialized',
+        })),
+      }
+      readyCount = control.readyCount
+      await control.command('reloadMainWindow', 'body')
+      await withTimeout(
+        control.awaitReadyAfter(readyCount),
+        uiTimeoutMs * 3,
+        'The project board did not reconnect for workflow running verification'
+      )
+      await control.command('click', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
+        visible: true,
+      })
+      await control.command(
+        'click',
+        `${activeBoard} [data-testid="cloud-todo-card-${aiManagedItemId}"]`,
+        { visible: true }
+      )
+      await control.command(
+        'waitFor',
+        `${activeBoard} [data-testid="cloud-todo-workflow-plan-status"]`,
+        {
+          text: '子任务执行中',
+          timeoutMs: uiTimeoutMs,
+          visible: true,
+        }
+      )
+
+      createdChildItem = null
+      createdBoardItem = {
+        ...createdBoardItem,
+        status: 'pending',
+        workflow: {
+          ...createdBoardItem.workflow,
+          orchestration_status: 'awaiting_approval',
+        },
+      }
+      workflowPlan = {
+        ...workflowPlan,
+        status: 'awaiting_approval',
         summary: '实现并验证 AI 编排可观测性',
         items: [
           {
@@ -2941,6 +3134,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         retryRequested,
         boardTeamAssignmentPayload,
         managerToolCalls,
+        workflowPlanApprovalRequested,
         rules,
         runs,
       }

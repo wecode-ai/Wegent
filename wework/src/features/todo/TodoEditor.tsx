@@ -82,6 +82,25 @@ function supportsAssignApi(api: DeliveryApi): boolean {
   return typeof (api as { assignLoopItem?: unknown }).assignLoopItem === 'function'
 }
 
+type WorkflowPlanAction =
+  | 'approveWorkflowPlan'
+  | 'approveWorkflowReview'
+  | 'pauseWorkflowPlan'
+  | 'resumeWorkflowPlan'
+  | 'replanWorkflowPlan'
+
+type WorkflowPlanMethod = (itemId: string) => Promise<WorkflowPlan>
+
+function workflowPlanMethod(
+  api: DeliveryApi,
+  action: WorkflowPlanAction
+): WorkflowPlanMethod | null {
+  const method = (api as DeliveryApi & Partial<Record<WorkflowPlanAction, WorkflowPlanMethod>>)[
+    action
+  ]
+  return typeof method === 'function' ? method : null
+}
+
 type WorkflowErrorKind = 'timeout' | 'offline' | 'assignee' | 'model' | 'generic'
 
 function workflowErrorKind(error: string): WorkflowErrorKind {
@@ -952,19 +971,9 @@ export function TodoEditor(props: TodoEditorProps) {
         ? memberNameById(projectMembers, item.created_by_user_id)
         : null)
 
-  async function mutateWorkflowPlan(
-    action:
-      | 'approveWorkflowPlan'
-      | 'approveWorkflowReview'
-      | 'pauseWorkflowPlan'
-      | 'resumeWorkflowPlan'
-      | 'replanWorkflowPlan'
-  ) {
+  async function mutateWorkflowPlan(action: WorkflowPlanAction) {
     if (!item || workflowPlanBusy) return
-    const method = (
-      api as DeliveryApi &
-        Record<typeof action, ((itemId: string) => Promise<WorkflowPlan>) | undefined>
-    )[action]
+    const method = workflowPlanMethod(api, action)
     if (!method) return
     setWorkflowPlanBusy(true)
     setWorkflowPlanErrorState({ itemId: item.id, error: null })
@@ -1952,7 +1961,9 @@ export function TodoEditor(props: TodoEditorProps) {
                             <button
                               type="button"
                               data-testid="cloud-todo-workflow-replan"
-                              disabled={workflowPlanBusy}
+                              disabled={
+                                workflowPlanBusy || !workflowPlanMethod(api, 'replanWorkflowPlan')
+                              }
                               onClick={() => void mutateWorkflowPlan('replanWorkflowPlan')}
                               className="h-7 rounded-lg bg-text-primary px-2.5 text-xs font-medium text-background disabled:opacity-40"
                             >
@@ -1963,7 +1974,9 @@ export function TodoEditor(props: TodoEditorProps) {
                               <button
                                 type="button"
                                 data-testid="cloud-todo-workflow-replan"
-                                disabled={workflowPlanBusy}
+                                disabled={
+                                  workflowPlanBusy || !workflowPlanMethod(api, 'replanWorkflowPlan')
+                                }
                                 onClick={() => void mutateWorkflowPlan('replanWorkflowPlan')}
                                 className="h-7 rounded-lg px-2 text-xs text-text-secondary hover:bg-muted disabled:opacity-40"
                               >
@@ -1972,7 +1985,10 @@ export function TodoEditor(props: TodoEditorProps) {
                               <button
                                 type="button"
                                 data-testid="cloud-todo-workflow-approve"
-                                disabled={workflowPlanBusy}
+                                disabled={
+                                  workflowPlanBusy ||
+                                  !workflowPlanMethod(api, 'approveWorkflowPlan')
+                                }
                                 onClick={() => void mutateWorkflowPlan('approveWorkflowPlan')}
                                 className="h-7 rounded-lg bg-text-primary px-2.5 text-xs font-medium text-background disabled:opacity-40"
                               >
@@ -1984,7 +2000,9 @@ export function TodoEditor(props: TodoEditorProps) {
                               <button
                                 type="button"
                                 data-testid="cloud-todo-workflow-replan"
-                                disabled={workflowPlanBusy}
+                                disabled={
+                                  workflowPlanBusy || !workflowPlanMethod(api, 'replanWorkflowPlan')
+                                }
                                 onClick={() => void mutateWorkflowPlan('replanWorkflowPlan')}
                                 className="h-7 rounded-lg px-2 text-xs text-text-secondary hover:bg-muted disabled:opacity-40"
                               >
@@ -1993,7 +2011,10 @@ export function TodoEditor(props: TodoEditorProps) {
                               <button
                                 type="button"
                                 data-testid="cloud-todo-workflow-review"
-                                disabled={workflowPlanBusy}
+                                disabled={
+                                  workflowPlanBusy ||
+                                  !workflowPlanMethod(api, 'approveWorkflowReview')
+                                }
                                 onClick={() => void mutateWorkflowPlan('approveWorkflowReview')}
                                 className="h-7 rounded-lg bg-text-primary px-2.5 text-xs font-medium text-background disabled:opacity-40"
                               >
@@ -2004,7 +2025,9 @@ export function TodoEditor(props: TodoEditorProps) {
                             <button
                               type="button"
                               data-testid="cloud-todo-workflow-resume"
-                              disabled={workflowPlanBusy}
+                              disabled={
+                                workflowPlanBusy || !workflowPlanMethod(api, 'resumeWorkflowPlan')
+                              }
                               onClick={() => void mutateWorkflowPlan('resumeWorkflowPlan')}
                               className="h-7 rounded-lg bg-text-primary px-2.5 text-xs font-medium text-background disabled:opacity-40"
                             >
@@ -2015,7 +2038,9 @@ export function TodoEditor(props: TodoEditorProps) {
                             <button
                               type="button"
                               data-testid="cloud-todo-workflow-pause"
-                              disabled={workflowPlanBusy}
+                              disabled={
+                                workflowPlanBusy || !workflowPlanMethod(api, 'pauseWorkflowPlan')
+                              }
                               onClick={() => void mutateWorkflowPlan('pauseWorkflowPlan')}
                               className="h-7 rounded-lg px-2 text-xs text-text-secondary hover:bg-muted disabled:opacity-40"
                             >
@@ -2025,7 +2050,9 @@ export function TodoEditor(props: TodoEditorProps) {
                             <button
                               type="button"
                               data-testid="cloud-todo-workflow-replan"
-                              disabled={workflowPlanBusy}
+                              disabled={
+                                workflowPlanBusy || !workflowPlanMethod(api, 'replanWorkflowPlan')
+                              }
                               onClick={() => void mutateWorkflowPlan('replanWorkflowPlan')}
                               className="h-7 rounded-lg bg-text-primary px-2.5 text-xs font-medium text-background disabled:opacity-40"
                             >
@@ -2035,7 +2062,9 @@ export function TodoEditor(props: TodoEditorProps) {
                             <button
                               type="button"
                               data-testid="cloud-todo-workflow-rerun"
-                              disabled={workflowPlanBusy}
+                              disabled={
+                                workflowPlanBusy || !workflowPlanMethod(api, 'replanWorkflowPlan')
+                              }
                               onClick={() => void mutateWorkflowPlan('replanWorkflowPlan')}
                               className="h-7 rounded-lg px-2 text-xs text-text-secondary hover:bg-muted disabled:opacity-40"
                             >

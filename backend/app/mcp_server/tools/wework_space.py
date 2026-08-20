@@ -576,7 +576,13 @@ async def submit_workflow_plan(
     )
 
     for execution_id in execution_ids:
-        schedule_board_robot_execution_by_id(execution_id)
+        try:
+            schedule_board_robot_execution_by_id(execution_id)
+        except Exception:
+            logger.exception(
+                "Workflow plan execution scheduling failed execution_id=%s",
+                execution_id,
+            )
     return result
 
 

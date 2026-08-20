@@ -56,13 +56,15 @@ class IssueWorkflowStartService:
         workflow: IssueWorkflowInstance,
         user_id: int,
     ) -> int:
+        rule_id = workflow.ai_automation_rule_id
+        if not rule_id:
+            return 0
         planning_run = issue_workflow_planning_service.ensure_run(
             db,
             issue=item,
             user_id=user_id,
         )
-        rule_id = workflow.ai_automation_rule_id
-        if not rule_id or self._has_run(db, item, rule_id, planning_run.id):
+        if self._has_run(db, item, rule_id, planning_run.id):
             return 0
         return await project_automation_processor.process(
             db,

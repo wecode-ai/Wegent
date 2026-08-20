@@ -53,6 +53,9 @@ sequenceDiagram
     Note over H,P: 配置重载可能产生 cancelled → starting → ready；cancelled 不是永久连接失败
     Note over W,G: Wework 启动的 Executor 是 Provider 与 MCP Endpoint 的唯一生命周期所有者
     Note over H,P: Codex 仅作为 MCP Client，不再创建 stdio MCP 子进程
+    alt Endpoint 启动超时、健康检查失败或 Executor 退出
+        P->>P: 发送 shutdown 并等待 server thread 回收
+    end
     P->>G: 校验连接凭证与可选 ContextGrant
     G-->>P: 返回未绑定或已绑定的 capability scope
     H->>P: get_current_context / read_item_attachment
@@ -105,6 +108,7 @@ sequenceDiagram
 - Wework 不连接 Backend 时，本地项目的 Issue、描述和附件读取必须可用；Backend 是云项目 Provider，不是本地能力成立的前提。
 - Plugin 只是 Codex Adapter。Gateway、ContextGrant 和工具契约不得依赖 Codex 专有类型。
 - Wework 启动 Executor 时必须同时启动唯一常驻的 loopback MCP Endpoint。Codex app-server 只能连接该 Endpoint，不得再执行 `executor space-mcp-server` 创建 stdio 子进程。
+- 常驻 Endpoint 的监听器、shutdown 信号和 server thread 必须由同一生命周期对象持有；启动超时、启动失败、健康检查失败或 Executor 退出时，必须先触发优雅停止并等待 thread 回收，不能留下无归属监听器。
 - Plugin 的 MCP 声明是产品打包入口；Runtime 负责提供默认启用状态、实际 Executor 路径和可选的会话 ContextGrant，不能依赖插件市场页面曾被打开或异步安装时序。
 - 项目空间 MCP 默认对所有 Agent session 启用。每个普通任务都必须先进入“我的任务”基础归属；Composer 选择项目空间只增加项目上下文，未选择时使用默认“我的任务”上下文。项目会话通过 ContextGrant 获得默认 `space_id`，Issue 会话获得 `space_id + item_id`；两者都获得越界保护。
 - ContextGrant 必须按 Agent session 隔离且不向模型暴露。其一小时有效期只限制新 MCP 会话的启动，启动后租约跟随该会话 Adapter 生命周期；长任务不会在执行中被中断，Adapter 退出即撤销。模型参数、prompt 文本和全局“当前项目”均不是授权来源。

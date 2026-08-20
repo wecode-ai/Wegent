@@ -222,9 +222,11 @@ export function TaskActivityView({
   const workflowManagerMessage = useMemo(
     () =>
       workflowManagerRunId
-        ? messages.find(
-            message => String(message.metadata.automation_run_id ?? '') === workflowManagerRunId
-          )
+        ? messages
+            .filter(
+              message => String(message.metadata.automation_run_id ?? '') === workflowManagerRunId
+            )
+            .at(-1)
         : undefined,
     [messages, workflowManagerRunId]
   )

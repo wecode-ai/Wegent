@@ -1431,9 +1431,19 @@ describe('TaskActivityView', () => {
       status: 'streaming',
       runtimeAddress: { deviceId: 'device-1', taskId: 'manager-runtime-1' },
     }
+    const previousManagerMessage: ProjectChatMessage = {
+      ...managerMessage,
+      messageId: 'manager-message-previous',
+      status: 'completed',
+      runtimeAddress: null,
+    }
     const client = {
       subscribe: vi.fn(async () => ({
-        snapshot: { messages: [managerMessage], latestSequence: 2, currentUserId: '1' },
+        snapshot: {
+          messages: [previousManagerMessage, managerMessage],
+          latestSequence: 3,
+          currentUserId: '1',
+        },
         unsubscribe: vi.fn(),
       })),
       send: vi.fn(async () => userMessage),

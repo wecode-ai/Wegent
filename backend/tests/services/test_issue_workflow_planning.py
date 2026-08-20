@@ -19,7 +19,11 @@ from app.models.delivery import (
 from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.user import User
-from app.schemas.issue_workflow import WorkflowPlanSubmit, WorkflowTaskOutcomeSubmit
+from app.schemas.issue_workflow import (
+    WorkflowPlanItemView,
+    WorkflowPlanSubmit,
+    WorkflowTaskOutcomeSubmit,
+)
 from app.services.issue_workflow_planning import issue_workflow_planning_service
 
 
@@ -126,6 +130,53 @@ def _plan(robot: ProjectChatAgent) -> WorkflowPlanSubmit:
             ],
         }
     )
+
+
+def test_submit_creates_and_preserves_active_run_snapshot(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    project = _project(test_db, test_user)
+    robot = _robot(test_db, project, test_user)
+    issue = _issue(test_db, project, test_user)
+
+    view = issue_workflow_planning_service.submit(
+        test_db,
+        issue_id=issue.id,
+        user_id=test_user.id,
+        values=_plan(robot),
+    )
+
+    test_db.refresh(issue)
+    workflow = issue.metadata_json["workflow"]
+    assert workflow["active_run_id"] == view.run_id
+    assert workflow["active_plan_version"] == view.plan_version
+    assert workflow["orchestration_status"] == "awaiting_approval"
+    restored = issue_workflow_planning_service.get(
+        test_db,
+        issue_id=issue.id,
+        user_id=test_user.id,
+    )
+    assert restored is not None
+    assert restored.run_id == view.run_id
+
+
+def test_plan_item_view_accepts_configurable_board_status() -> None:
+    item = WorkflowPlanItemView.model_validate(
+        {
+            "id": "plan-item-1",
+            "client_key": "implement",
+            "stage_id": "__issue__",
+            "title": "Implement",
+            "description": "",
+            "assignee_type": "user",
+            "assignee_id": "7",
+            "task_status": "custom_validation",
+            "status": "materialized",
+        }
+    )
+
+    assert item.task_status == "custom_validation"
 
 
 def test_required_plan_materializes_once_after_approval(

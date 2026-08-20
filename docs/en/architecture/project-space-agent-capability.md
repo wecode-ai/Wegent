@@ -53,6 +53,9 @@ sequenceDiagram
     Note over H,P: Configuration reloads may emit cancelled → starting → ready; cancelled is not a permanent connection failure
     Note over W,G: The Executor started by Wework is the sole lifecycle owner of the Provider and MCP Endpoint
     Note over H,P: Codex is only an MCP Client and no longer creates a stdio MCP child process
+    alt Endpoint startup times out, health check fails, or Executor exits
+        P->>P: Signal shutdown and wait for the server thread to terminate
+    end
     P->>G: Validate connection credentials and the optional ContextGrant
     G-->>P: Return an unbound or bound capability scope
     H->>P: get_current_context / read_item_attachment
@@ -105,6 +108,7 @@ Invariants:
 - Local-project Issues, descriptions, and attachments remain available when Wework is disconnected from Backend. Backend is the cloud-project Provider, not a prerequisite for local capability.
 - The Plugin is only the Codex Adapter. Gateway, ContextGrant, and tool contracts must not depend on Codex-specific types.
 - Starting Executor must also start the single persistent loopback MCP Endpoint. Codex app-server may only connect to that Endpoint and must never execute `executor space-mcp-server` to create a stdio child process.
+- The persistent Endpoint listener, shutdown signal, and server thread belong to one lifecycle object. Startup timeout, startup failure, failed health check, or Executor exit signals graceful shutdown and joins the thread instead of leaving an unowned listener.
 - The Plugin MCP declaration is the product packaging entry point. Runtime supplies the default-enabled state, actual Executor path, and optional session ContextGrant, so correctness cannot depend on opening the plugin marketplace UI or on asynchronous installation timing.
 - The project-space MCP is enabled by default for every Agent session. Every generic task first receives mandatory My Tasks base membership; Composer project-space selection only adds project context, while no selection uses the default My Tasks context. Project conversations receive a default `space_id`; Issue conversations receive `space_id + item_id`. Both receive out-of-scope protection through ContextGrant.
 - A ContextGrant is Agent-session scoped and hidden from the model. Its one-hour validity only limits bootstrap of a new MCP session; once accepted, the lease follows the session adapter lifecycle, so a long-running turn is not interrupted and adapter exit revokes access. Model arguments, prompt text, and a global current-project value are never authorization sources.

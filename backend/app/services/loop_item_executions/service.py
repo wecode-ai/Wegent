@@ -2488,13 +2488,22 @@ class LoopItemExecutionService:
 
         if activity is None:
             return
+        message_id = activity.message_id
         try:
             db.refresh(activity)
-            self._push_activity(activity)
+            from app.services.project_chat.service import project_chat_service
+
+            payload = project_chat_service.to_view(activity).model_dump(by_alias=True)
+            # ``refresh`` starts a read transaction. End it before publishing to
+            # Redis so a slow transport cannot retain a SQL connection or locks.
+            db.commit()
+            self._push_activity(payload)
         except Exception:
+            if db.in_transaction():
+                db.rollback()
             logger.exception(
                 "[LoopItemExecution] Committed activity push failed message=%s",
-                activity.message_id,
+                message_id,
             )
 
     def push_linked_activity_after_commit(
@@ -2594,13 +2603,10 @@ class LoopItemExecutionService:
         return None
 
     @staticmethod
-    def _push_activity(row: ProjectChatMessage) -> None:
+    def _push_activity(payload: dict[str, Any]) -> None:
         from app.services.project_chat.push import push_project_chat_message
-        from app.services.project_chat.service import project_chat_service
 
-        push_project_chat_message(
-            project_chat_service.to_view(row).model_dump(by_alias=True)
-        )
+        push_project_chat_message(payload)
 
     @staticmethod
     def _set_automation_run_status(
@@ -3331,7 +3337,7 @@ class LoopItemExecutionService:
         running: bool,
         turn_status: Optional[str] = None,
     ) -> Optional[LoopItemExecution]:
-        """Apply a trusted ``runtime.tasks.list`` observation."""
+        """Apply a trusted snapshot and restore its missing activity projection."""
 
         row = db.get(LoopItemExecution, execution_id)
         if row is None or row.status not in CAPACITY_STATUSES:
@@ -3339,6 +3345,12 @@ class LoopItemExecutionService:
         normalized = runtime_status.lower().strip()
         normalized_turn = (turn_status or "").lower().strip()
         if normalized == "missing" and row.status == STATUS_CANCEL_REQUESTED:
+            self.open_execution_activity(
+                db,
+                execution=row,
+                commit=False,
+                push=False,
+            )
             return self.confirm_runtime_cancelled(
                 db,
                 execution_id=row.id,
@@ -3351,6 +3363,12 @@ class LoopItemExecutionService:
             and row.termination_reason == "start_confirmation_timeout"
             and not loop_datetime_value_is_unset(row.start_requested_at)
         ):
+            self.open_execution_activity(
+                db,
+                execution=row,
+                commit=False,
+                push=False,
+            )
             return self.fail(
                 db,
                 execution_id=row.id,
@@ -3380,8 +3398,16 @@ class LoopItemExecutionService:
                 row.started_at = now
             row.version += 1
             self._set_automation_run_status(db, row, "running")
+            db.flush()
+            self.open_execution_activity(
+                db,
+                execution=row,
+                commit=False,
+                push=False,
+            )
             db.commit()
             db.refresh(row)
+            self.push_linked_activity_after_commit(db, execution=row)
             return row
         terminal = {
             "completed": STATUS_COMPLETED,
@@ -3403,8 +3429,20 @@ class LoopItemExecutionService:
             normalized
         )
         if terminal == STATUS_COMPLETED:
+            self.open_execution_activity(
+                db,
+                execution=row,
+                commit=False,
+                push=False,
+            )
             return self.complete(db, execution_id=row.id, note="Runtime reconciled")
         if terminal == STATUS_FAILED:
+            self.open_execution_activity(
+                db,
+                execution=row,
+                commit=False,
+                push=False,
+            )
             return self.fail(
                 db,
                 execution_id=row.id,
@@ -3412,6 +3450,12 @@ class LoopItemExecutionService:
                 termination_reason="runtime_reconciled_failed",
             )
         if terminal == STATUS_CANCELLED:
+            self.open_execution_activity(
+                db,
+                execution=row,
+                commit=False,
+                push=False,
+            )
             return self._transition_terminal(
                 db,
                 execution_id=row.id,
@@ -3432,16 +3476,32 @@ class LoopItemExecutionService:
             row.heartbeat_at = now
             row.lease_expires_at = now + timedelta(seconds=DEFAULT_LEASE_SECONDS)
             row.version += 1
+            db.flush()
+            self.open_execution_activity(
+                db,
+                execution=row,
+                commit=False,
+                push=False,
+            )
             db.commit()
             db.refresh(row)
+            self.push_linked_activity_after_commit(db, execution=row)
             return row
         row.sync_state = SYNC_DIVERGED
         row.error_message = (
             f"Runtime returned unrecognized status '{runtime_status or 'missing'}'"
         )[:2000]
         row.version += 1
+        db.flush()
+        self.open_execution_activity(
+            db,
+            execution=row,
+            commit=False,
+            push=False,
+        )
         db.commit()
         db.refresh(row)
+        self.push_linked_activity_after_commit(db, execution=row)
         return row
 
     def stall_scan(

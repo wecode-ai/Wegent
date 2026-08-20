@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -137,3 +137,25 @@ async def test_start_dispatches_ai_coordinator_once(
         == 0
     )
     process.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_start_without_ai_rule_does_not_create_planning_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ensure_run = MagicMock()
+    monkeypatch.setattr(issue_workflow_planning_service, "ensure_run", ensure_run)
+
+    started = await issue_workflow_start_service._start_ai(
+        SimpleNamespace(),
+        SimpleNamespace(
+            id="ISSUE-3",
+            cloud_project_id="11",
+        ),
+        SimpleNamespace(id=11, task_provider="local"),
+        SimpleNamespace(ai_automation_rule_id=None),
+        7,
+    )
+
+    assert started == 0
+    ensure_run.assert_not_called()

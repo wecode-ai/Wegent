@@ -135,14 +135,14 @@ sequenceDiagram
             A-->>P: Confirm execution termination
         end
         A->>X: submit_workflow_plan + current automation run ID
-        X->>P: Atomically persist the versioned plan and manager-run binding
+        X->>P: Validate manager-run ownership and atomically persist the plan plus audit binding
         alt Human confirmation is required
             P-->>U: Show tasks, assignees, dependencies, and rationale
             U->>P: Approve or reject and request replanning
         end
         P->>B: Idempotently create, assign, and start concrete child tasks
         B-->>D: Continuously project assignee, status, recent result, and execution entry per plan item
-        Note over A,B: The AI steward coordinates but never executes
+        Note over A,B: The AI steward coordinates but never executes; with stages, every task belongs to a stage
     end
     opt Stage has an automation action
         O->>E: Create a queued execution
@@ -210,10 +210,13 @@ Invariants:
 - The AI steward is the board control plane, not a business-task executor. It may read the current Issue and eligible assignees, submit a structured plan, and respond to replanning requests. It must not assign the original Issue to itself or perform development, testing, or delivery work for child tasks.
 - Issue creation is the primary trigger for AI dynamic assignment. Later entry into Pending only recovers a snapshot that has not started and cannot create a second AI steward run. Issue detail must make that trigger semantic explicit.
 - The AI orchestration card is a continuous planning and execution projection. During planning it shows the steward run state, execution environment, recent activity, and a run-details entry instead of an indefinite spinner. User-visible progress contains verifiable events only and never exposes hidden model reasoning.
+- The AI orchestration card projects only the newest steward activity for the current automation run. A later continuation or replanning activity replaces the older activity as the run-details entry. Approve, pause, resume, and replan controls are actionable only when the current client exposes the corresponding API method; the UI must not offer a clickable action that is guaranteed to fail.
 - Every AI orchestration attempt has a stable `run_id` and monotonically increasing plan version. Replanning marks the previous version superseded and preserves history; it never deletes completed child tasks or overwrites audit records.
 - `submit_workflow_plan` is the only AI orchestration submission path. Every plan item contains a stable client key, title, description, and assignee. The service binds every item to the active planning scope from the current run: Issue scope without a DAG, or the current ready stage with a DAG. The model must not discover, guess, or override `stage_id`. The service revalidates that the assignee is still active and that the current stage remains plannable; model-provided names and states are never trusted.
 - The Executor REST adapter and ProjectSpace MCP both pass the current automation run ID into the same plan-submission main path. No route may create a plan without binding the manager run.
 - `submit_workflow_plan` persists the plan, plan items, `project_automation_run_id`, and the activity message's `workflow_plan_run_id` in one short transaction. Any binding failure rolls back the whole submission. The transaction never spans a model call, network request, or Runtime dispatch wait; the database session is released before asynchronous execution activation. AI manager completion requires at least one persisted, active plan item as the business-success truth; an empty `planning` run pre-created by the trigger is not a submitted plan. If a legacy record lacks plan metadata, recovery may only use the durable `workflow_run_id` in that manager run's event payload; it must never guess from plan recency.
+- An automation run may submit a plan only for its own `created_by_user_id`. An ownership mismatch fails before the plan audit binding is written and rolls back the whole submission.
+- Plan reads and UI projections never repair data, commit transactions, or publish network messages. Legacy repair runs through an explicit write path whose caller owns the transaction boundary.
 - Plan submission, approval, pause, resume, replanning, review, and rework reporting each publish one Issue invalidation after their short transaction commits so the AI orchestration card, execution tasks, and board status reload server truth in the same refresh cycle. They cannot depend on the 15-second poll or a manual reload.
 - Human confirmation before execution is a project orchestration option. When enabled, plan submission only enters `awaiting_approval` and cannot create, assign, or start child tasks. When disabled, materialization may start immediately. Humans can approve, reject and replan, pause, or resume, and every action records actor, time, and reason.
 - Plan materialization is idempotent by `run_id + plan_version + client_key`. One transaction creates direct child `LoopItem` records under the parent Issue, records their plan source and stage, and assigns them. Existing execution activators run only after commit. Repeated approval, refresh, restart, or event replay cannot create duplicate child tasks.

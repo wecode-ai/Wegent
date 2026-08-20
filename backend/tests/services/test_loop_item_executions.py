@@ -2948,19 +2948,95 @@ def test_runtime_reconciliation_uses_terminal_turn_status(
         error="Runtime event was lost",
     )
 
-    reconciled = loop_item_execution_service.reconcile_runtime_snapshot(
-        test_db,
-        execution_id=claimed.id,
-        runtime_status="active",
-        running=False,
-        turn_status="completed",
-    )
+    with patch(
+        "app.services.project_chat.push.push_project_chat_message"
+    ) as push_message:
+        reconciled = loop_item_execution_service.reconcile_runtime_snapshot(
+            test_db,
+            execution_id=claimed.id,
+            runtime_status="active",
+            running=False,
+            turn_status="completed",
+        )
 
     assert reconciled is not None
     assert reconciled.status == "completed"
     assert reconciled.observed_state == "succeeded"
     assert reconciled.sync_state == "in_sync"
     assert execution_display_state(reconciled) == "succeeded"
+    activity = (
+        test_db.query(ProjectChatMessage)
+        .filter(
+            ProjectChatMessage.runtime_device_id == claimed.runtime_device_id,
+            ProjectChatMessage.runtime_task_id == claimed.runtime_task_id,
+            loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+        )
+        .one()
+    )
+    assert activity.status == "completed"
+    assert activity.metadata_json["run_status"] == "completed"
+    push_message.assert_called_once()
+
+
+def test_runtime_reconciliation_restores_missing_running_activity(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    execution = _make_execution(
+        test_db, _make_item(test_db, project, test_user), bot, test_user
+    )
+    claimed = loop_item_execution_service.claim_batch_for_device(
+        test_db,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
+    )[0]
+    loop_item_execution_service.request_runtime_start(
+        test_db,
+        execution_id=claimed.id,
+        runtime_device_id=claimed.runtime_device_id,
+        runtime_task_id=claimed.runtime_task_id,
+    )
+    assert (
+        test_db.query(ProjectChatMessage)
+        .filter(
+            ProjectChatMessage.runtime_device_id == claimed.runtime_device_id,
+            ProjectChatMessage.runtime_task_id == claimed.runtime_task_id,
+            loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+        )
+        .count()
+        == 0
+    )
+
+    with patch(
+        "app.services.project_chat.push.push_project_chat_message"
+    ) as push_message:
+        reconciled = loop_item_execution_service.reconcile_runtime_snapshot(
+            test_db,
+            execution_id=claimed.id,
+            runtime_status="running",
+            running=True,
+        )
+
+    assert reconciled is not None
+    assert reconciled.status == "running"
+    activity = (
+        test_db.query(ProjectChatMessage)
+        .filter(
+            ProjectChatMessage.runtime_device_id == claimed.runtime_device_id,
+            ProjectChatMessage.runtime_task_id == claimed.runtime_task_id,
+            loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+        )
+        .one()
+    )
+    assert activity.status == "streaming"
+    assert activity.metadata_json["run_status"] == "running"
+    push_message.assert_called_once()
 
 
 def test_runtime_queued_snapshot_is_accepted_not_running(
@@ -3385,7 +3461,9 @@ def test_local_runtime_payload_leaves_model_materialization_to_app(
     assert "api_key" not in str(payload)
     if executor_type == "automation_manager":
         assert f"project_id: {project.id}" in payload["message"]
-        assert "你是看板的 AI 管家，只负责编排，不执行具体任务。" in payload["message"]
+        assert (  # noqa: RUF001
+            "你是看板的 AI 管家，只负责编排，不执行具体任务。" in payload["message"]
+        )
         assert "submit_workflow_plan" in payload["message"]
         assert f"task_id: {item.id}" in payload["message"]
         assert f"automation_run_id: {run.id}" in payload["message"]
@@ -4190,6 +4268,28 @@ def test_manager_completion_recovers_persisted_workflow_plan_binding(
     }
     test_db.commit()
 
+    before_repair = issue_workflow_planning_service.get(
+        test_db,
+        issue_id=item.id,
+        user_id=test_user.id,
+    )
+
+    test_db.refresh(run)
+    test_db.refresh(activity)
+    test_db.refresh(workflow_run)
+    assert before_repair is not None
+    assert before_repair.manager_run is not None
+    assert before_repair.manager_run.status == "failed"
+    assert run.status == "failed"
+    assert activity.status == "failed"
+    assert activity.metadata_json.get("workflow_plan_run_id") is None
+    assert workflow_run.metadata_json.get("project_automation_run_id") is None
+
+    project_automation_execution.finalize_manager_result(
+        test_db,
+        run_id=run.id,
+        content="Plan submitted.",
+    )
     plan = issue_workflow_planning_service.get(
         test_db,
         issue_id=item.id,

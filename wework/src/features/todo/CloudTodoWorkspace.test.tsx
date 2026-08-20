@@ -1718,6 +1718,63 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByTestId('cloud-todo-workflow-replan')).toHaveTextContent('重新生成')
   })
 
+  it('disables a workflow action when its API method is unavailable', async () => {
+    const managedItem = {
+      ...item,
+      workflow: {
+        version: 1,
+        definition_version: 1,
+        stage_mode: 'none' as const,
+        advancement_policy: 'ai' as const,
+        approval_policy: 'required' as const,
+        ai_automation_rule_id: 'manager-rule',
+        orchestration_status: 'awaiting_approval' as const,
+        active_run_id: 'workflow-run-1',
+        active_plan_version: 1,
+        current_stage_id: null,
+        nodes: [],
+      },
+    }
+    const plan = {
+      run_id: 'workflow-run-1',
+      issue_id: managedItem.id,
+      stage_id: '__issue__',
+      plan_version: 1,
+      approval_policy: 'required' as const,
+      status: 'awaiting_approval' as const,
+      summary: '等待确认',
+      items: [],
+      manager_run: null,
+    }
+    const workbenchServices = services()
+    workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({
+      items: [managedItem],
+    }))
+    workbenchServices.deliveryApi!.getLoopItem = vi.fn(async () => managedItem)
+    workbenchServices.deliveryApi!.listTaskBindings = vi.fn(async () => [])
+    workbenchServices.deliveryApi!.getWorkflowPlan = vi.fn(async () => plan)
+    workbenchServices.deliveryApi!.replanWorkflowPlan = vi.fn(async () => plan)
+    ;(
+      workbenchServices.deliveryApi as unknown as {
+        approveWorkflowPlan?: unknown
+      }
+    ).approveWorkflowPlan = undefined
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
+
+    expect(await screen.findByTestId('cloud-todo-workflow-approve')).toBeDisabled()
+    expect(screen.getByTestId('cloud-todo-workflow-replan')).toBeEnabled()
+  })
+
   it('reviews all AI child tasks once and keeps them visible after completion', async () => {
     const managedItem = {
       ...item,

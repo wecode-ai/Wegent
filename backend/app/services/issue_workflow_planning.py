@@ -105,6 +105,7 @@ class IssueWorkflowPlanningService:
         if workflow.get("advancement_policy") != "ai":
             raise ValueError("Issue is not configured for AI coordination")
         run = self.ensure_run(db, issue=issue, user_id=user_id)
+        workflow = self._workflow(issue)
         if run.status not in {"planning", "failed"}:
             raise ValueError("The active workflow run is not accepting a plan")
         stage_id = self._run_stage(run)
@@ -447,16 +448,6 @@ class IssueWorkflowPlanningService:
         if automation_run_id:
             automation_run = db.get(ProjectAutomationRun, automation_run_id)
             if automation_run is not None:
-                from app.services.project_automation_execution import (
-                    project_automation_execution,
-                )
-
-                project_automation_execution.reconcile_manager_workflow_plan_binding(
-                    db,
-                    run_id=automation_run.id,
-                    workflow_run_id=run.id,
-                )
-                db.refresh(automation_run)
                 return automation_run
         candidates = (
             db.query(ProjectAutomationRun)
@@ -480,16 +471,6 @@ class IssueWorkflowPlanningService:
                 isinstance(payload, dict)
                 and str(payload.get("workflow_run_id") or "") == workflow_run_id
             ):
-                from app.services.project_automation_execution import (
-                    project_automation_execution,
-                )
-
-                project_automation_execution.reconcile_manager_workflow_plan_binding(
-                    db,
-                    run_id=candidate.id,
-                    workflow_run_id=run.id,
-                )
-                db.refresh(candidate)
                 return candidate
         return None
 

@@ -202,3 +202,27 @@ def test_manager_activity_binding_persists_execution_identity(monkeypatch):
         "run_status": "queued",
         "execution_device_id": "device-1",
     }
+
+
+def test_manager_plan_submission_rejects_non_owner_before_writes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ProjectAutomationExecution()
+    run = SimpleNamespace(status="running", created_by_user_id=8)
+    db = MagicMock()
+    db.get.return_value = run
+    find_activity = MagicMock()
+    monkeypatch.setattr(service, "_activity", find_activity)
+
+    with pytest.raises(RuntimeError, match="does not own"):
+        service.record_manager_plan_submission(
+            db,
+            run_id="run-1",
+            user_id=7,
+            workflow_run_id="workflow-run-1",
+            plan_version=1,
+        )
+
+    find_activity.assert_not_called()
+    db.flush.assert_not_called()
+    db.commit.assert_not_called()
