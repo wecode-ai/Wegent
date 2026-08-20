@@ -9563,12 +9563,18 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await waitFor(() =>
-      expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(runtimeProject, {
-        deviceId: 'runtime-device',
-        path: '/workspace/worktrees/8/project-alpha',
-        source: 'runtime',
-        taskId: 'runtime-1',
-      })
+      expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(
+        runtimeProject,
+        {
+          deviceId: 'runtime-device',
+          path: '/workspace/worktrees/8/project-alpha',
+          source: 'runtime',
+          taskId: 'runtime-1',
+        },
+        {
+          onPartialInfo: expect.any(Function),
+        }
+      )
     )
     expect(onGetProjectWorkspaceRoot).not.toHaveBeenCalled()
   })
@@ -9662,7 +9668,10 @@ describe('DesktopWorkbenchLayout', () => {
       expect(onLoadEnvironmentInfo).toHaveBeenLastCalledWith(
         runtimeProject,
         expect.objectContaining({ path: '/workspace/worktrees/8/project-alpha' }),
-        { force: true }
+        {
+          force: true,
+          onPartialInfo: expect.any(Function),
+        }
       )
     })
   })
@@ -9777,11 +9786,17 @@ describe('DesktopWorkbenchLayout', () => {
 
     await waitFor(() => {
       expect(onLoadEnvironmentInfo).toHaveBeenCalledTimes(1)
-      expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(workspaceProject, {
-        deviceId: 'device-1',
-        path: '/repo',
-        source: 'project',
-      })
+      expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(
+        workspaceProject,
+        {
+          deviceId: 'device-1',
+          path: '/repo',
+          source: 'project',
+        },
+        {
+          onPartialInfo: expect.any(Function),
+        }
+      )
     })
 
     rerender(
@@ -9863,11 +9878,17 @@ describe('DesktopWorkbenchLayout', () => {
 
     await waitFor(() => {
       expect(onLoadEnvironmentInfo).toHaveBeenCalledTimes(1)
-      expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(workspaceProject, {
-        deviceId: 'device-1',
-        path: '/repo',
-        source: 'project',
-      })
+      expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(
+        workspaceProject,
+        {
+          deviceId: 'device-1',
+          path: '/repo',
+          source: 'project',
+        },
+        {
+          onPartialInfo: expect.any(Function),
+        }
+      )
     })
 
     rerender(
