@@ -3064,6 +3064,12 @@ fn project_plugin_config_overrides(request: &ExecutionRequest) -> Vec<String> {
         .filter_map(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
+        .filter(|value| {
+            value.chars().all(|character| {
+                character.is_ascii_alphanumeric()
+                    || matches!(character, '-' | '_' | '.' | '@' | '/')
+            })
+        })
         .collect::<BTreeSet<_>>()
         .into_iter()
         .map(|plugin_id| format!("{}=true", toml_key_path(&["plugins", plugin_id, "enabled"]),))

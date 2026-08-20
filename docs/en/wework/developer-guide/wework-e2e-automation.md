@@ -116,7 +116,7 @@ The main desktop flow's short-conversation layout regression stores `short-conve
 The main desktop runner also supports execution through ordered checkpoints.
 The checkpoints are `workspace-tabs`, `priority-filter`, `telemetry-consent`,
 `automation-lifecycle`, `project-automation`, `plugin-auto-update`,
-`model-routing`, `permission-modes`, `core-task-flow`, `runtime-task-queue`,
+`project-ai-settings`, `model-routing`, `permission-modes`, `core-task-flow`, `runtime-task-queue`,
 `split-workbench`, `window-lifecycle`, `goal-lifecycle`,
 `supervisor-lifecycle`, `resilience`, `conversation-state`, `temporary-chat`,
 `workspace-attachments`, `rendering-extensions`, `change-request-status`,

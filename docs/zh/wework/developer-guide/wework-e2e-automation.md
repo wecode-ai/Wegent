@@ -116,7 +116,7 @@ node e2e/utils/mock-connector-upstream-server.mjs
 主桌面 runner 也支持按有序 checkpoint 分段执行。当前 checkpoint 依次为
 `workspace-tabs`、`priority-filter`、`telemetry-consent`、
 `automation-lifecycle`、`project-automation`、`plugin-auto-update`、
-`model-routing`、`permission-modes`、`core-task-flow`、`runtime-task-queue`、
+`project-ai-settings`、`model-routing`、`permission-modes`、`core-task-flow`、`runtime-task-queue`、
 `split-workbench`、`window-lifecycle`、`goal-lifecycle`、
 `supervisor-lifecycle`、`resilience`、
 `conversation-state`、`temporary-chat`、`workspace-attachments`、`rendering-extensions`、

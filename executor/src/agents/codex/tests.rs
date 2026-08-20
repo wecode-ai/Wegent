@@ -710,6 +710,31 @@ fn non_project_launch_keeps_global_plugin_configuration() {
 }
 
 #[test]
+fn project_plugin_overrides_reject_malformed_plugin_ids() {
+    let mut request = ExecutionRequest {
+        runtime_project_key: Some("local:/repo".to_owned()),
+        ..ExecutionRequest::default()
+    };
+    request.extra.insert(
+        "project_plugin_ids".to_owned(),
+        json!([
+            "valid-plugin@team",
+            "scoped/plugin_name@team.marketplace",
+            "invalid=plugin@team",
+            "invalid\"plugin@team"
+        ]),
+    );
+
+    assert_eq!(
+        project_plugin_config_overrides(&request),
+        vec![
+            "plugins.\"scoped/plugin_name@team.marketplace\".enabled=true",
+            "plugins.\"valid-plugin@team\".enabled=true",
+        ]
+    );
+}
+
+#[test]
 fn custom_model_without_catalog_entry_uses_upstream_id() {
     let request = ExecutionRequest {
         model_config: json!({

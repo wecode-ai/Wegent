@@ -508,10 +508,13 @@ async function verifyProjectAiSettings({
     `[data-testid="local-project-plugin-toggle-${PLUGIN_NAME}"]`,
     { timeoutMs: WORKBENCH_READY_TIMEOUT_MS }
   )
-  await control.command('waitFor', `[data-testid="local-project-plugin-toggle-${PLUGIN_NAME}"]`, {
-    text: '移出项目',
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
+  await waitForSnapshot(
+    control,
+    snapshot => /移出项目|Remove from project/.test(snapshot.text),
+    'The project plugin toggle did not switch to its installed state',
+    WORKBENCH_READY_TIMEOUT_MS,
+    `[data-testid="local-project-plugin-toggle-${PLUGIN_NAME}"]`
+  )
   await captureVerificationScreenshot(control, 'project-ai-settings-05-plugin-installed.png')
   await saveProjectAiSettings(control)
   const codexConfig = await readFile(join(codexHome, 'config.toml'), 'utf8')
