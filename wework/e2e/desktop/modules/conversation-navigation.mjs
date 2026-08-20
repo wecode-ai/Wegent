@@ -950,16 +950,17 @@ async function verifyVisionSidecar({ composerSelector, control, modelCase, proje
   control.setScenario('vision_sidecar')
   control.visionSidecarRequests = []
 
+  await control.command(
+    'clickWhenEnabled',
+    `${projectRowSelector} [data-testid="project-new-conversation-button"]`,
+    { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+  )
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await selectE2EModel(control, modelCase.mainOptionId, modelCase.mainLabel)
+
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    await control.command(
-      'clickWhenEnabled',
-      `${projectRowSelector} [data-testid="project-new-conversation-button"]`,
-      { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
-    )
-    await control.command('waitFor', composerSelector, {
-      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-    })
-    await selectE2EModel(control, modelCase.mainOptionId, modelCase.mainLabel)
     await control.command('dropFile', composerSelector, {
       filename: 'vision-sidecar.png',
       mimeType: 'image/png',
@@ -975,10 +976,14 @@ async function verifyVisionSidecar({ composerSelector, control, modelCase, proje
         : `${modelCase.source}-vision-sidecar-03-cache-request-ready.png`
     )
     await sendPrompt(control, composerSelector, VISION_SIDECAR_PROMPT)
-    await control.command('waitFor', '[data-testid="message-assistant"]', {
-      text: VISION_SIDECAR_COMPLETION_TEXT,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    })
+    await waitForSnapshot(
+      control,
+      snapshot =>
+        countTextOccurrences(snapshot.text, VISION_SIDECAR_COMPLETION_TEXT) >= attempt + 1,
+      `Vision sidecar turn ${attempt + 1} did not complete in the same conversation`,
+      DEFAULT_STEP_TIMEOUT_MS,
+      ACTIVE_WORKBENCH_SELECTOR
+    )
     await captureVerificationScreenshot(
       control,
       attempt === 0

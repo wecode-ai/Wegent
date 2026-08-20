@@ -34,8 +34,13 @@ sequenceDiagram
     alt visionSidecarModel is complete and valid
         W->>E: Primary config + vision_sidecar
         opt Message contains images
-            E->>V: Non-streaming image-description request
-            V-->>E: Text description
+            E->>E: Look up thread_id + sidecar + image identity
+            alt Image is new to this conversation
+                E->>V: Non-streaming image-description request
+                V-->>E: Text description stored in conversation cache
+            else Image was already described in this conversation
+                E->>E: Reuse the existing text description
+            end
             E->>E: Remove input_image in place and insert description
         end
         E->>P: Text-only primary request
@@ -54,10 +59,10 @@ sequenceDiagram
 | Local/cloud sidecar upstream configuration       | `wework/src/api/local/localServices.ts`                  |
 | Base catalog and upstream-model identity metadata | `shared/assets/codex-models/`                           |
 | Generic vision catalog derivation and selection | `executor/src/server/codex_model_catalog.rs`             |
-| Image description, cache, limits, replacement    | `executor/src/server/local_model_proxy/vision.rs`        |
+| User/tool-output image description, conversation cache, limits, replacement | `executor/src/server/local_model_proxy/vision.rs` |
 | Proxy registration and primary forwarding        | `executor/src/server/local_model_proxy/mod.rs`           |
 | Cloud Model to Codex catalog identity mapping    | Wework runtime selection and Backend trigger paths       |
 
-Invariants: the vision model comes only from an explicit `modelConfig.visionSidecarModel` reference and is never selected automatically from sign-in state, model names, or defaults; an absent, structurally invalid, stale, inaccessible, inactive, non-image-capable, or `apiFormat`-mismatched reference must not configure a sidecar, advertise image capability, preprocess images, or make an additional model call; the explicit reference contains model name, type, namespace, resource owner, and `apiFormat`, but no provider credential; runtime configuration carries only the applicable gateway credential or executor-bound local credential, neither of which is exposed to Codex or logs; with a configured sidecar, Executor derives a hidden vision catalog from the effective base catalog and changes only its identity, display metadata, visibility, and input modalities while preserving all reasoning, tool, context, and compaction capabilities; without a sidecar, the base catalog remains selected; adding a base model must not require sidecar-specific constants, mappings, or copied catalog entries; the original image reaches only the referenced vision model and the primary model receives text; sidecar timeouts, invalid images, or upstream failures remove the original image and insert an explicit failure description; logs contain no images, credentials, or prompt bodies.
+Invariants: the vision model comes only from an explicit `modelConfig.visionSidecarModel` reference and is never selected automatically from sign-in state, model names, or defaults; an absent, structurally invalid, stale, inaccessible, inactive, non-image-capable, or `apiFormat`-mismatched reference must not configure a sidecar, advertise image capability, preprocess images, or make an additional model call; the explicit reference contains model name, type, namespace, resource owner, and `apiFormat`, but no provider credential; runtime configuration carries only the applicable gateway credential or executor-bound local credential, neither of which is exposed to Codex or logs; with a configured sidecar, Executor derives a hidden vision catalog from the effective base catalog and changes only its identity, display metadata, visibility, and input modalities while preserving all reasoning, tool, context, and compaction capabilities; without a sidecar, the base catalog remains selected; adding a base model must not require sidecar-specific constants, mappings, or copied catalog entries; `input_image` blocks in user messages and in tool `function_call_output.output` values such as `view_image` are both recognized and replaced in place before primary-protocol conversion; for a given Codex `thread_id`, each sidecar, image source, and detail combination is successfully described at most once and later turns reuse the description, while cache identity excludes turn-varying prompt text and never crosses conversations; the original image reaches only the referenced vision model and the primary model receives text; sidecar timeouts, invalid images, or upstream failures remove the original image and insert an explicit failure description; logs contain no images, credentials, or prompt bodies.
 
 See [Wework settings](../wework/settings.md) for configuration and limits.
