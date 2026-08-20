@@ -20,6 +20,7 @@ import {
   MessageSquarePlus,
   Pause,
   Pin,
+  Plug,
   Plus,
   RotateCw,
   Search,
@@ -3810,7 +3811,7 @@ export function DesktopSidebar({
               />
               {SHOW_PLUGINS_NAVIGATION && (
                 <DesktopSidebarNavItem
-                  icon={Sparkles}
+                  icon={Plug}
                   label={t('workbench.plugins', '插件')}
                   testId="plugins-button"
                   selected={activeItem === 'plugins'}
