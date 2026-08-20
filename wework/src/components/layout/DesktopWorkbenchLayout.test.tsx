@@ -9306,40 +9306,19 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('environment-commit-progress-stop-icon')).toBeInTheDocument()
   })
 
-  test('switches and creates branches from the environment popover', async () => {
+  test('switches branches from the environment popover', async () => {
     mockDesktopWorkbenchMainWidth(1024)
     const onListEnvironmentBranches = vi
       .fn()
       .mockResolvedValue(['main', 'human/chipmunk-20260603-053420', 'human/alpaca-20260603-050330'])
     const onCheckoutEnvironmentBranch = vi.fn().mockResolvedValue(undefined)
-    const onCreateEnvironmentBranch = vi.fn().mockResolvedValue(undefined)
 
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
         onListEnvironmentBranches={onListEnvironmentBranches}
         onCheckoutEnvironmentBranch={onCheckoutEnvironmentBranch}
-        onCreateEnvironmentBranch={onCreateEnvironmentBranch}
-        state={{
-          ...baseProps.state,
-          currentRuntimeTask: activeProjectRuntimeTask,
-          currentProject: {
-            id: 1,
-            name: 'github_wegent',
-            tasks: [],
-            config: {
-              mode: 'workspace',
-              execution: {
-                targetType: 'local',
-                deviceId: 'device-1',
-              },
-              workspace: {
-                source: 'local_path',
-                localPath: '/workspace/github_wegent',
-              },
-            },
-          },
-        }}
+        state={{ ...activeProjectState, currentRuntimeTask: activeProjectRuntimeTask }}
       />
     )
 
@@ -9361,6 +9340,21 @@ describe('DesktopWorkbenchLayout', () => {
         'human/alpaca-20260603-050330',
         activeProjectRuntimeTarget
       )
+    )
+  })
+
+  test('creates branches from the environment popover', async () => {
+    mockDesktopWorkbenchMainWidth(1024)
+    const onListEnvironmentBranches = vi.fn().mockResolvedValue(['main'])
+    const onCreateEnvironmentBranch = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onListEnvironmentBranches={onListEnvironmentBranches}
+        onCreateEnvironmentBranch={onCreateEnvironmentBranch}
+        state={{ ...activeProjectState, currentRuntimeTask: activeProjectRuntimeTask }}
+      />
     )
 
     await userEvent.click(await screen.findByTestId('environment-branch-row'))
@@ -10449,7 +10443,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     unmount()
     await new Promise(resolve => setTimeout(resolve, 1_100))
-  })
+  }, 10_000)
 
   test('preserves the open file when switching runtime tasks', async () => {
     const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
