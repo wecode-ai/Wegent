@@ -3509,6 +3509,7 @@
     "workflow_add_stage_task": "Add task",
     "workflow_view_execution_short": "View",
     "workflow_task_executions": "Task runs",
+    "workflow_task_count": "{{count}} tasks",
     "workflow_task_status_running": "Running",
     "workflow_task_status_succeeded": "Succeeded",
     "workflow_task_status_failed": "Failed",

@@ -346,38 +346,44 @@ export function TaskActivityView({
 
   // Newest parent comments render at the top, so newly sent comments are
   // visible without scrolling the list to its end.
-  const scrollTaskCommentsToTop = useCallback((behavior: ScrollBehavior = 'auto') => {
-    const scroller = findTaskCommentScrollContainer(listRef.current)
-    if (scroller) {
-      if (typeof scroller.scrollTo === 'function') {
-        scroller.scrollTo({ top: 0, behavior })
-      } else {
-        scroller.scrollTop = 0
+  const scrollTaskCommentsToTop = useCallback(
+    (behavior: ScrollBehavior = 'auto') => {
+      const scroller = resolveTaskCommentScrollContainer(listRef.current, linear)
+      if (scroller) {
+        if (typeof scroller.scrollTo === 'function') {
+          scroller.scrollTo({ top: 0, behavior })
+        } else {
+          scroller.scrollTop = 0
+        }
       }
-    }
-  }, [])
+    },
+    [linear]
+  )
 
   // Card replies grow inside their own card; keep the card's bottom visible
   // (where the new reply and the streaming AI response appear) instead of
   // jumping to the end of the whole comment list.
-  const revealCardBottom = useCallback((cardId: string, behavior: ScrollBehavior = 'auto') => {
-    const card = listRef.current?.querySelector<HTMLElement>(
-      `[data-testid="cloud-task-activity-card-${cardId}"]`
-    )
-    const scroller = findTaskCommentScrollContainer(listRef.current)
-    if (!card || !scroller) return
-    const scrollerRect = scroller.getBoundingClientRect()
-    const cardRect = card.getBoundingClientRect()
-    if (cardRect.bottom > scrollerRect.bottom) {
-      scroller.scrollTo({
-        top: scroller.scrollTop + cardRect.bottom - scrollerRect.bottom + 12,
-        behavior,
-      })
-    }
-  }, [])
+  const revealCardBottom = useCallback(
+    (cardId: string, behavior: ScrollBehavior = 'auto') => {
+      const card = listRef.current?.querySelector<HTMLElement>(
+        `[data-testid="cloud-task-activity-card-${cardId}"]`
+      )
+      const scroller = resolveTaskCommentScrollContainer(listRef.current, linear)
+      if (!card || !scroller) return
+      const scrollerRect = scroller.getBoundingClientRect()
+      const cardRect = card.getBoundingClientRect()
+      if (cardRect.bottom > scrollerRect.bottom) {
+        scroller.scrollTo({
+          top: scroller.scrollTop + cardRect.bottom - scrollerRect.bottom + 12,
+          behavior,
+        })
+      }
+    },
+    [linear]
+  )
 
   useEffect(() => {
-    const scroller = findTaskCommentScrollContainer(listRef.current)
+    const scroller = resolveTaskCommentScrollContainer(listRef.current, linear)
     if (!scroller) return
     const updateFollowState = () => {
       if (followCardRef.current) {
@@ -396,7 +402,7 @@ export function TaskActivityView({
     }
     scroller.addEventListener('scroll', updateFollowState, { passive: true })
     return () => scroller.removeEventListener('scroll', updateFollowState)
-  }, [compact, loading, messages.length])
+  }, [compact, linear, loading, messages.length])
 
   useEffect(() => {
     if (
@@ -2038,4 +2044,11 @@ function findTaskCommentScrollContainer(element: HTMLElement | null): HTMLElemen
     current = current.parentElement
   }
   return null
+}
+
+function resolveTaskCommentScrollContainer(
+  element: HTMLElement | null,
+  linear: boolean
+): HTMLElement | null {
+  return linear ? element : findTaskCommentScrollContainer(element)
 }

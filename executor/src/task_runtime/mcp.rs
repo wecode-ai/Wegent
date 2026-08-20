@@ -747,12 +747,6 @@ async fn call_tool_with_runtime_context(
         .and_then(Value::as_str)
         .map(ToOwned::to_owned)
         .or_else(|| default_project_id.clone());
-    if requested_project_id.as_deref().is_some_and(|project_id| {
-        is_dingtalk_aitable_project(runtime, project_id) && is_task_provider_tool(name)
-    }) {
-        let project_id = requested_project_id.as_deref().unwrap_or_default();
-        return text_result(dingtalk_route_redirect(runtime, project_id), false);
-    }
     let is_locally_routed = requested_project_id
         .as_deref()
         .is_some_and(|project_id| is_locally_routed_project(runtime, project_id, name));
@@ -1350,21 +1344,62 @@ async fn call_tool_with_runtime_context(
         _ => return text_result(format!("Unknown wework_space tool: {name}"), true),
     };
     match result {
-        Ok(value) => text_result(value.to_string(), false),
-        Err(error) => text_result(error.to_string(), true),
+        Ok(mut value) => {
+            if let Some(project_id) = requested_project_id.as_deref() {
+                if is_dingtalk_project(runtime, project_id)
+                    && is_dingtalk_read_tool(name)
+                    && primary_document_read_failed(&value)
+                {
+                    if let Some(item_id) = default_item_id.as_deref() {
+                        if let Ok(fallback) = runtime.dws_read_fallback(project_id, item_id) {
+                            value["bundled_dws_fallback"] = fallback;
+                        }
+                    }
+                }
+            }
+            text_result(value.to_string(), false)
+        }
+        Err(error) => {
+            let fallback = requested_project_id
+                .as_deref()
+                .filter(|project_id| {
+                    is_dingtalk_project(runtime, project_id) && is_dingtalk_read_tool(name)
+                })
+                .and_then(|project_id| {
+                    default_item_id.as_deref().and_then(|item_id| {
+                        runtime
+                            .dws_read_fallback(project_id, item_id)
+                            .ok()
+                            .map(|fallback| {
+                                json!({
+                                    "provider_error": error.to_string(),
+                                    "bundled_dws_fallback": fallback,
+                                })
+                            })
+                    })
+                });
+            match fallback {
+                Some(value) => text_result(value.to_string(), false),
+                None => text_result(error.to_string(), true),
+            }
+        }
     }
 }
 
-fn is_locally_routed_project(runtime: &TaskRuntime, project_id: &str, _tool_name: &str) -> bool {
-    runtime
+fn is_locally_routed_project(runtime: &TaskRuntime, project_id: &str, tool_name: &str) -> bool {
+    let project = runtime
         .list_projects()
         .unwrap_or_default()
         .into_iter()
-        .find(|project| project.id == project_id)
-        .is_some_and(|project| project.metadata["project_store"].as_str() == Some("local"))
+        .find(|project| project.id == project_id);
+    project.is_some_and(|project| {
+        project.metadata["project_store"].as_str() == Some("local")
+            || (project.metadata["task_provider"].as_str() == Some("dingtalk_aitable")
+                && is_dingtalk_read_tool(tool_name))
+    })
 }
 
-fn is_dingtalk_aitable_project(runtime: &TaskRuntime, project_id: &str) -> bool {
+fn is_dingtalk_project(runtime: &TaskRuntime, project_id: &str) -> bool {
     runtime
         .list_projects()
         .unwrap_or_default()
@@ -1375,63 +1410,15 @@ fn is_dingtalk_aitable_project(runtime: &TaskRuntime, project_id: &str) -> bool 
         })
 }
 
-fn dingtalk_route_redirect(runtime: &TaskRuntime, project_id: &str) -> String {
-    let binding = runtime
-        .list_projects()
-        .unwrap_or_default()
-        .into_iter()
-        .find(|project| project.id == project_id)
-        .map(|project| {
-            json!({
-                "route": "dws",
-                "product": "aitable",
-                "space_id": project.id,
-                "space_name": project.name,
-                "base_id": project.metadata["provider_config"]["base_id"],
-                "table_id": project.metadata["provider_config"]["table_id"],
-                "view_id": project.metadata["provider_config"].get("view_id").cloned(),
-                "instruction": "Use these bound IDs directly. Do not search or list DingTalk bases, and do not switch resources if access fails. Use list_spaces only when the user explicitly names another Wework project."
-            })
-        })
-        .unwrap_or_else(|| {
-            json!({
-                "route": "dws",
-                "product": "aitable",
-                "space_id": project_id,
-                "instruction": "Resolve the Wework project binding before using dws. Do not guess or search for a replacement table."
-            })
-        });
-    binding.to_string()
+fn is_dingtalk_read_tool(name: &str) -> bool {
+    matches!(name, "get_current_context" | "get_board_item")
 }
 
-fn is_task_provider_tool(name: &str) -> bool {
-    matches!(
-        name,
-        "list_board_items"
-            | "search_board_items"
-            | "get_current_context"
-            | "get_board_item"
-            | "get_assignment_candidates"
-            | "submit_workflow_plan"
-            | "report_workflow_outcome"
-            | "assign_board_item"
-            | "create_board_item"
-            | "update_board_item"
-            | "add_board_item_comment"
-            | "list_item_attachments"
-            | "upload_item_attachment"
-            | "read_item_attachment"
-            | "delete_item_attachment"
-            | "reorder_board_items"
-            | "describe_space_table"
-            | "list_table_records"
-            | "create_table_record"
-            | "update_table_record"
-            | "delete_table_record"
-            | "create_table_field"
-            | "update_table_field"
-            | "delete_table_field"
-    )
+fn primary_document_read_failed(value: &Value) -> bool {
+    value
+        .pointer("/item/metadata/primary_document/error")
+        .or_else(|| value.pointer("/metadata/primary_document/error"))
+        .is_some()
 }
 
 async fn call_backend_tool(
@@ -2822,19 +2809,8 @@ fn is_automation_manager_tool(name: &str) -> bool {
 }
 
 fn tools_for_bound_project(runtime: &TaskRuntime, project_id: Option<&str>) -> Vec<Value> {
-    let dingtalk_bound =
-        project_id.is_some_and(|project_id| is_dingtalk_aitable_project(runtime, project_id));
-    if !dingtalk_bound {
-        return tools();
-    }
+    let _ = (runtime, project_id);
     tools()
-        .into_iter()
-        .filter(|tool| {
-            tool["name"]
-                .as_str()
-                .map_or(true, |name| !is_task_provider_tool(name))
-        })
-        .collect()
 }
 
 fn tool(name: &str, description: &str, input_schema: Value) -> Value {
@@ -3200,7 +3176,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn hides_wework_task_tools_for_a_bound_dingtalk_table() {
+    async fn keeps_project_space_reads_visible_for_bound_dingtalk_issues() {
         let directory = tempfile::tempdir().unwrap();
         let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
         store
@@ -3214,7 +3190,11 @@ mod tests {
                 task_provider: TaskProviderKind::DingtalkAitable,
                 provider_config: json!({
                     "base_id": "base-1",
-                    "table_id": "table-1"
+                    "table_id": "table-1",
+                    "board_mapping": {
+                        "title_field_id": "fld-title",
+                        "status_field_id": "fld-status"
+                    }
                 }),
                 version: 1,
             })
@@ -3227,40 +3207,31 @@ mod tests {
             .collect::<Vec<_>>();
 
         for tool_name in [
+            "get_current_context",
+            "get_board_item",
             "list_board_items",
             "search_board_items",
+            "list_item_attachments",
+            "read_item_attachment",
             "describe_space_table",
             "list_table_records",
             "create_table_record",
             "update_table_record",
         ] {
-            assert!(!names.iter().any(|name| name == tool_name));
+            assert!(names.iter().any(|name| name == tool_name));
         }
         assert!(names.iter().any(|name| name == "list_space_files"));
         assert!(names.iter().any(|name| name == "list_deliveries"));
-
-        let redirect: Value =
-            serde_json::from_str(&dingtalk_route_redirect(&runtime, "cloud-aitable")).unwrap();
-        assert_eq!(redirect["route"], "dws");
-        assert_eq!(redirect["product"], "aitable");
-        assert_eq!(redirect["base_id"], "base-1");
-        assert_eq!(redirect["table_id"], "table-1");
-        assert!(redirect["instruction"]
-            .as_str()
-            .unwrap()
-            .contains("Do not search or list DingTalk bases"));
-
-        let stale_call = call_tool(
+        assert!(is_locally_routed_project(
             &runtime,
-            "list_board_items",
-            json!({"space_id": "cloud-aitable"}),
-        )
-        .await;
-        assert_eq!(stale_call["isError"], false);
-        assert!(stale_call["content"][0]["text"]
-            .as_str()
-            .unwrap()
-            .contains("\"base_id\":\"base-1\""));
+            "cloud-aitable",
+            "get_current_context"
+        ));
+        assert!(!is_locally_routed_project(
+            &runtime,
+            "cloud-aitable",
+            "list_space_files"
+        ));
     }
 
     #[test]

@@ -63,6 +63,13 @@ from app.services.loop_item_status_history import (
     project_board_statuses,
     write_status_change,
 )
+from app.services.loop_item_unread import (
+    advance_content_revision,
+    content_revision,
+    initialize_content_revision,
+    is_unread,
+    mark_loop_item_read,
+)
 from app.services.loop_items.assignment_notification import (
     notify_project_task_assignee,
 )
@@ -146,6 +153,8 @@ class LoopItemService:
             team = db.get(Kind, item.assignee_team_id)
             values["assignee_team_name"] = team.name if team else None
         metadata = item.metadata_json if isinstance(item.metadata_json, dict) else {}
+        values["content_revision"] = content_revision(metadata)
+        values["is_unread"] = is_unread(metadata, user_id)
         automation = metadata.get("automation")
         values["automation"] = automation if isinstance(automation, dict) else None
         ai_state = metadata.get(TASK_AI_STATE_KEY)
@@ -528,6 +537,7 @@ class LoopItemService:
                 trigger="create",
                 by_user_id=user_id,
             )
+        task_metadata = initialize_content_revision(task_metadata, user_id)
         item = LoopItem(
             id=f"{project.project_key}-{sequence}",
             cloud_project_id=project.id,
@@ -859,6 +869,26 @@ class LoopItemService:
         item = self.get(db, item_id, user_id)
         self._require_item_access(db, item, user_id, edit=True)
         updates = values.model_dump(exclude={"version"}, exclude_unset=True)
+        meaningful_change = any(
+            field in values.model_fields_set
+            and (
+                field in {"tags", "workflow"}
+                or getattr(item, field, None) != getattr(values, field)
+            )
+            for field in (
+                "title",
+                "description",
+                "status",
+                "assignee_user_id",
+                "assignee_agent_id",
+                "assignee_team_id",
+                "priority",
+                "due_at",
+                "parent_id",
+                "tags",
+                "workflow",
+            )
+        )
         if "assignee_team_id" in values.model_fields_set:
             team_id = values.assignee_team_id
             if team_id:
@@ -1002,6 +1032,13 @@ class LoopItemService:
             # Reset the manual lane position so the TODO lands at the top of
             # its new lane instead of an arbitrary stale position.
             updates["sort_order"] = 0
+        if meaningful_change:
+            metadata = updates.get("metadata_json")
+            if not isinstance(metadata, dict):
+                metadata = dict(item.metadata_json or {})
+            updates["metadata_json"] = advance_content_revision(
+                metadata, actor_user_id=user_id
+            )
         updates = adapt_loop_node_values_for_dialect(
             updates,
             db.get_bind().dialect.name,
@@ -1023,6 +1060,14 @@ class LoopItemService:
             )
 
             request_execution_cancellations(cancelled_runs)
+        return item
+
+    def mark_read(self, db: Session, item_id: str, user_id: int) -> LoopItem:
+        item = self.get(db, item_id, user_id)
+        mark_loop_item_read(db, item_id=item.id, user_id=user_id)
+        db.commit()
+        db.expire(item)
+        db.refresh(item)
         return item
 
     def assign(
@@ -1173,6 +1218,7 @@ class LoopItemService:
                 status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown assignee type"
             )
 
+        metadata = advance_content_revision(metadata, actor_user_id=user_id)
         updated = self._versioned_metadata_update(
             db, item, values.version, metadata, **assignee_updates
         )
@@ -1230,7 +1276,7 @@ class LoopItemService:
         loop_item_execution_service.approve(
             db, execution_id=execution.id, user_id=user_id
         )
-        metadata = dict(item.metadata_json or {})
+        metadata = advance_content_revision(item.metadata_json, actor_user_id=user_id)
         # The versioned update commits both the run approval and the item
         # change in one transaction; on a version race it rolls the approval
         # back instead of half-applying it.
@@ -1275,7 +1321,7 @@ class LoopItemService:
             user_id=user_id,
             reason=values.reason,
         )
-        metadata = dict(item.metadata_json or {})
+        metadata = advance_content_revision(item.metadata_json, actor_user_id=user_id)
         # Same transaction rule as approve_run: the versioned update owns the
         # commit so a stale-version request cannot half-apply the rejection.
         updated = self._versioned_metadata_update(db, item, values.version, metadata)
@@ -1701,6 +1747,32 @@ class LoopItemService:
             .all()
         )
 
+    def list_project_task_bindings(
+        self,
+        db: Session,
+        project_id: int,
+        user_id: int,
+        *,
+        item_ids: list[str],
+    ) -> list[LoopItemTaskBinding]:
+        require_cloud_project_role(db, project_id, user_id)
+        if not item_ids:
+            return []
+        return (
+            db.query(LoopItemTaskBinding)
+            .filter(
+                LoopItemTaskBinding.cloud_project_id == project_id,
+                LoopItemTaskBinding.loop_item_id.in_(item_ids),
+                loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
+            )
+            .order_by(
+                LoopItemTaskBinding.loop_item_id.asc(),
+                LoopItemTaskBinding.linked_at.desc(),
+                LoopItemTaskBinding.id.desc(),
+            )
+            .all()
+        )
+
     def unbind_task(
         self,
         db: Session,
@@ -1866,6 +1938,8 @@ class LoopItemService:
                     "status_history": (
                         status_history if isinstance(status_history, list) else []
                     ),
+                    "content_revision": content_revision(metadata),
+                    "is_unread": is_unread(metadata, user_id),
                     "execution_id": getattr(execution, "id", None),
                     "execution_state": (
                         execution_display_state(execution)

@@ -1,0 +1,65 @@
+{
+  "actor": {
+    "id": "codex",
+    "kind": "ai"
+  },
+  "authority": "ai",
+  "base_revision": "A00000040",
+  "changes": [
+    {
+      "action": "update",
+      "change_id": "chg-9e34b975d563",
+      "confidence": 1.0,
+      "evidence": [
+        "docs/zh/architecture/issue-task-workflow.md"
+      ],
+      "object": null,
+      "plane": "model",
+      "predicate": null,
+      "reason": "明确有阶段 Issue 的 DAG 与唯一选中阶段面板联动，以及无阶段扁平任务形态",
+      "subject": "arch://wegent/flow/issue-task-conversation-entry",
+      "timestamp": "2026-08-19T14:12:13Z"
+    },
+    {
+      "action": "verify",
+      "change_id": "chg-86ee57d3861f",
+      "confidence": 1.0,
+      "evidence": [
+        "wework/src/features/todo/IssueWorkflowDag.tsx,wework/src/features/todo/TodoEditor.tsx,wework/src/features/todo/task-detail-layout.css,wework/src/features/todo/IssueWorkflowDag.test.tsx,wework/e2e/desktop/scenarios/project-automation.scenario.mjs"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "实现 DAG 选中态与下方面板同步、当前阶段自动跟随、灰阶节点与阶段面板以及无阶段列表，并加入单测和桌面 E2E",
+      "subject": "arch://wegent/flow/issue-task-conversation-entry",
+      "timestamp": "2026-08-19T14:12:13Z"
+    },
+    {
+      "action": "observe",
+      "change_id": "chg-00ff68137bd2",
+      "confidence": 1.0,
+      "evidence": [
+        "wework/test-results/desktop-e2e/2026-08-19T14-08-46-294Z-5153/project-automation-00-workflow-task-statuses.png"
+      ],
+      "object": null,
+      "plane": "runtime",
+      "predicate": null,
+      "reason": "真实桌面项目自动化检查点验证阶段 DAG、选中阶段面板、任务状态以及节点切换后恢复当前阶段",
+      "subject": "arch://wegent/flow/issue-task-conversation-entry",
+      "timestamp": "2026-08-19T14:12:13Z"
+    }
+  ],
+  "created_at": "2026-08-19T14:12:00Z",
+  "id": "tx-2f7137b1f36c",
+  "intent": "按 demo HTML 将 Issue 详情阶段区域改为 DAG 在上、唯一选中阶段面板在下，并保证节点点击与当前阶段推进联动，同时保留无阶段扁平任务形态",
+  "merged_revision": "A00000041",
+  "read_set": [
+    "arch://wegent/flow/issue-task-conversation-entry"
+  ],
+  "resolutions": [],
+  "status": "merged",
+  "updated_at": "2026-08-19T14:12:14Z",
+  "write_set": [
+    "arch://wegent/flow/issue-task-conversation-entry"
+  ]
+}

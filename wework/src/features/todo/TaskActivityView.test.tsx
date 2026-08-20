@@ -815,6 +815,54 @@ describe('TaskActivityView', () => {
     expect(scrollTo).not.toHaveBeenCalledWith({ top: 1200, behavior: 'auto' })
   })
 
+  it('keeps linear activity auto-follow inside the comment list', async () => {
+    const user = userEvent.setup()
+    const client = {
+      subscribe: vi.fn(async () => ({
+        snapshot: { messages: [], latestSequence: 0, currentUserId: '1' },
+        unsubscribe: vi.fn(),
+      })),
+      send: vi.fn(async () => userMessage),
+      startAgentResponse: vi.fn(async () => agentMessage),
+      failAgentResponse: vi.fn(async () => agentMessage),
+      dispose: vi.fn(),
+    } satisfies ProjectChatClient
+
+    render(
+      <div data-testid="issue-detail-scroll-container">
+        <TaskActivityView
+          client={client}
+          currentUserId={1}
+          project={{ id: '11', name: 'Wework' } as never}
+          task={
+            {
+              id: 'WEG-1',
+              title: 'Inspect changes',
+              description: 'Review the current diff',
+              status: 'inbox',
+              version: 1,
+              assignee_agent_id: '12',
+            } as never
+          }
+          linear
+        />
+      </div>
+    )
+
+    const outer = screen.getByTestId('issue-detail-scroll-container')
+    const list = await screen.findByTestId('cloud-task-activity-list')
+    const outerScrollTo = vi.fn()
+    const listScrollTo = vi.fn()
+    Object.defineProperty(outer, 'scrollTo', { value: outerScrollTo, configurable: true })
+    Object.defineProperty(list, 'scrollTo', { value: listScrollTo, configurable: true })
+
+    await user.type(screen.getByTestId('cloud-task-activity-composer'), '新评论')
+    await user.click(screen.getByRole('button', { name: '发送消息' }))
+
+    await waitFor(() => expect(listScrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'auto' }))
+    expect(outerScrollTo).not.toHaveBeenCalled()
+  })
+
   it('places only the current user on the right when an AI has the same id', async () => {
     const collidingAgent = {
       ...agentMessage,

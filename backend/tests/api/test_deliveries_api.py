@@ -17,15 +17,23 @@ from sqlalchemy.orm import Session
 
 from app.api.endpoints import deliveries as deliveries_endpoint
 from app.core.security import create_access_token, get_password_hash
-from app.models.cloud_project import CloudProject
-from app.models.delivery import LoopItem, ProjectAutomationRule, ProjectAutomationRun
+from app.models.cloud_project import CloudProject, LoopItemTaskBinding
+from app.models.delivery import (
+    Delivery,
+    LoopItem,
+    ProjectAutomationRule,
+    ProjectAutomationRun,
+)
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.issue_workflow import WorkflowPlanView
 from app.services.delivery import delivery_service
-from app.services.delivery.storage import DeliveryStorageUnavailableError
+from app.services.delivery.storage import (
+    DeliveryObjectNotFoundError,
+    DeliveryStorageUnavailableError,
+)
 from app.services.issue_workflow_planning import issue_workflow_planning_service
 from app.services.project_automations import project_automation_execution
 
@@ -50,7 +58,10 @@ class FakeDeliveryStorage:
         self.objects[object_key] = json.dumps(value).encode()
 
     def get_bytes(self, object_key: str, max_bytes: int | None = None) -> bytes:
-        value = self.objects[object_key]
+        try:
+            value = self.objects[object_key]
+        except KeyError as exc:
+            raise DeliveryObjectNotFoundError(object_key) from exc
         if max_bytes is not None and len(value) > max_bytes:
             raise ValueError("too large")
         return value
@@ -230,7 +241,6 @@ def test_loop_items_support_unbounded_hierarchy_and_reject_cycles(
         root["id"],
         child["id"],
     }
-
     cycle = test_client.patch(
         f"/api/v1/loop-items/{root['id']}",
         headers=headers,
@@ -238,6 +248,43 @@ def test_loop_items_support_unbounded_hierarchy_and_reject_cycles(
     )
     assert cycle.status_code == 422
     assert cycle.json()["detail"] == "TODO hierarchy cannot contain a cycle"
+
+
+def test_board_snapshot_returns_first_screen_dependencies(
+    test_client: TestClient,
+    test_token: str,
+    delivery_project: CloudProject,
+    test_user: User,
+) -> None:
+    headers = _auth(test_token)
+    item = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=headers,
+        json={"title": "Snapshot item"},
+    ).json()
+    binding = test_client.post(
+        f"/api/v1/loop-items/{item['id']}/tasks",
+        headers=headers,
+        json={
+            "deviceId": "local-device",
+            "taskId": "snapshot-runtime-task",
+            "taskTitle": "Snapshot runtime task",
+        },
+    )
+    assert binding.status_code == 201
+
+    response = test_client.get(
+        f"/api/v1/cloud-projects/{delivery_project.id}/board-snapshot",
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    snapshot = response.json()
+    assert [entry["id"] for entry in snapshot["items"]] == [item["id"]]
+    assert snapshot["task_bindings"] == [binding.json()]
+    assert snapshot["members"][0]["user_id"] == test_user.id
+    assert snapshot["members"][0]["role"] == "Owner"
+    assert snapshot["agents"] == []
 
 
 def test_loop_item_reorder_orders_one_lane(
@@ -1066,6 +1113,105 @@ def test_workflow_task_binding_requires_a_ready_non_automated_stage(
     assert serialized.status_code == 200
 
 
+def test_workflow_task_binding_survives_missing_dependency_delivery_content(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+    delivery_project: CloudProject,
+    delivery_storage: FakeDeliveryStorage,
+) -> None:
+    delivery_project.metadata_json = {
+        **(delivery_project.metadata_json or {}),
+        "workflow_definition": {
+            "version": 1,
+            "stage_mode": "dag",
+            "advancement_policy": "manual",
+            "nodes": [
+                {
+                    "id": "develop",
+                    "name": "Develop",
+                    "kind": "my_task",
+                    "depends_on": [],
+                    "required": True,
+                    "workspace_policy": "composer",
+                },
+                {
+                    "id": "deploy",
+                    "name": "Deploy",
+                    "kind": "my_task",
+                    "depends_on": ["develop"],
+                    "dependency_context": {"develop": ["deliveries"]},
+                    "required": True,
+                    "workspace_policy": "inherit",
+                },
+            ],
+        },
+    }
+    test_db.commit()
+    item = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Missing dependency delivery"},
+    ).json()
+    source_task = {
+        "deviceId": "local-device",
+        "taskId": "develop-task",
+        "taskTitle": "Develop",
+        "workflowNodeId": "develop",
+    }
+    source_binding = test_client.post(
+        f"/api/v1/loop-items/{item['id']}/tasks",
+        headers=_auth(test_token),
+        json=source_task,
+    )
+    assert source_binding.status_code == 201
+    draft = test_client.post(
+        f"/api/v1/loop-items/{item['id']}/deliveries",
+        headers=_auth(test_token),
+        json={"markdown": "# Develop", "source_task": source_task},
+    ).json()
+    finalized = test_client.post(
+        f"/api/v1/deliveries/{draft['id']}/finalize",
+        headers=_auth(test_token),
+    )
+    assert finalized.status_code == 200
+
+    delivery = test_db.get(Delivery, draft["id"])
+    assert delivery is not None
+    delivery_storage.objects.pop(delivery.markdown_object_key)
+    stored_item = test_db.get(LoopItem, item["id"])
+    assert stored_item is not None
+    metadata = dict(stored_item.metadata_json or {})
+    workflow = dict(metadata["workflow"])
+    nodes = [dict(node) for node in workflow["nodes"]]
+    nodes[0]["status"] = "completed"
+    nodes[1]["status"] = "ready"
+    workflow["nodes"] = nodes
+    metadata["workflow"] = workflow
+    stored_item.metadata_json = metadata
+    test_db.commit()
+
+    response = test_client.post(
+        f"/api/v1/loop-items/{item['id']}/tasks",
+        headers=_auth(test_token),
+        json={
+            "deviceId": "local-device",
+            "taskId": "deploy-task",
+            "workflowNodeId": "deploy",
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json()["workflow_node_id"] == "deploy"
+    binding = test_db.get(LoopItemTaskBinding, response.json()["id"])
+    assert binding is not None
+    stage_input = binding.metadata_json["workflow_stage_input"]
+    dependency_delivery = stage_input["dependencies"][0]["deliveries"][0]
+    assert dependency_delivery["id"] == draft["id"]
+    assert dependency_delivery["markdown"] == ""
+    assert dependency_delivery["content_available"] is False
+
+
 def test_binding_subscription_backend_task_uses_task_store(
     test_client: TestClient,
     test_db: Session,
@@ -1330,3 +1476,99 @@ def test_project_member_can_discover_shared_todo_and_delivery(
     )
     assert member_collaborators.status_code == 200
     assert [row["user_id"] for row in member_collaborators.json()] == [member.id]
+
+
+def test_loop_item_unread_follows_content_revision_and_read_cursor(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+    delivery_project: CloudProject,
+) -> None:
+    created = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Unread projection"},
+    )
+    assert created.status_code == 201
+    item = created.json()
+    assert item["content_revision"] == 1
+    assert item["is_unread"] is False
+
+    member = User(
+        user_name="unread-member",
+        password_hash=get_password_hash("member-password"),
+        email="unread-member@example.com",
+        is_active=True,
+    )
+    test_db.add(member)
+    test_db.flush()
+    test_db.add(
+        ResourceMember.create(
+            resource_type=ResourceType.CLOUD_PROJECT.value,
+            resource_id=delivery_project.id,
+            entity_id=str(member.id),
+            status=MemberStatus.APPROVED.value,
+        )
+    )
+    test_db.commit()
+    member_token = create_access_token(data={"sub": member.user_name})
+
+    member_item = test_client.get(
+        f"/api/v1/loop-items/{item['id']}", headers=_auth(member_token)
+    )
+    assert member_item.status_code == 200
+    assert member_item.json()["is_unread"] is True
+
+    version_before_read = member_item.json()["version"]
+    marked = test_client.post(
+        f"/api/v1/loop-items/{item['id']}/read", headers=_auth(member_token)
+    )
+    assert marked.status_code == 200
+    assert marked.json()["is_unread"] is False
+    assert marked.json()["version"] == version_before_read
+
+    updated = test_client.patch(
+        f"/api/v1/loop-items/{item['id']}",
+        headers=_auth(test_token),
+        json={"version": item["version"], "title": "Unread projection updated"},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["content_revision"] == 2
+    assert updated.json()["is_unread"] is False
+
+    refreshed_member_item = test_client.get(
+        f"/api/v1/loop-items/{item['id']}", headers=_auth(member_token)
+    )
+    assert refreshed_member_item.status_code == 200
+    assert refreshed_member_item.json()["content_revision"] == 2
+    assert refreshed_member_item.json()["is_unread"] is True
+
+
+def test_mark_loop_item_read_repairs_legacy_metadata_without_read_revisions(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+    delivery_project: CloudProject,
+) -> None:
+    created = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Legacy unread projection"},
+    )
+    assert created.status_code == 201
+    item = test_db.get(LoopItem, created.json()["id"])
+    assert item is not None
+    item.metadata_json = {"content_revision": 3, "legacy": True}
+    test_db.commit()
+
+    marked = test_client.post(
+        f"/api/v1/loop-items/{item.id}/read",
+        headers=_auth(test_token),
+    )
+
+    assert marked.status_code == 200
+    assert marked.json()["content_revision"] == 3
+    assert marked.json()["is_unread"] is False
+    test_db.refresh(item)
+    assert item.metadata_json["legacy"] is True
+    assert item.metadata_json["read_revisions"][str(item.created_by_user_id)] == 3
