@@ -20,6 +20,8 @@ import { delimiter, dirname, join, resolve, basename, isAbsolute } from 'node:pa
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 
+import { wrapWindowsScriptCommand } from './child-process-command.mjs'
+
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 
@@ -433,16 +435,9 @@ function resolveCommand(command) {
 
 function run(command, args, options = {}) {
   return new Promise((resolvePromise, rejectPromise) => {
-    let finalCommand = resolveCommand(command)
-    let finalArgs = args
-
-    if (
-      process.platform === 'win32' &&
-      (finalCommand.endsWith('.cmd') || finalCommand.endsWith('.bat'))
-    ) {
-      finalArgs = ['/c', finalCommand, ...args]
-      finalCommand = 'cmd.exe'
-    }
+    const resolved = wrapWindowsScriptCommand(resolveCommand(command), args)
+    const finalCommand = resolved.command
+    const finalArgs = resolved.args
 
     const child = spawn(finalCommand, finalArgs, {
       stdio: 'inherit',
