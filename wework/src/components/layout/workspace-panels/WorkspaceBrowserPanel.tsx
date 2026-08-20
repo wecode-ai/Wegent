@@ -1874,10 +1874,10 @@ export function WorkspaceBrowserTabPanel({
   const reloadCurrentUrl = useCallback(
     (url: string) => {
       setNavigationError(null)
-      if (!embeddedBrowserAvailable || !nativeBrowserOpenRef.current) {
+      if (!embeddedBrowserAvailable) {
         setCurrentUrl(null)
         window.setTimeout(() => setCurrentUrl(url), 0)
-        setStatus(embeddedBrowserAvailable ? 'loading' : 'ready')
+        setStatus('ready')
         return
       }
 
@@ -1889,6 +1889,8 @@ export function WorkspaceBrowserTabPanel({
         return
       }
 
+      setStatus('loading')
+      setError(null)
       void runBrowserCommand(() => reloadEmbeddedBrowser(label))
     },
     [embeddedBrowserAvailable, label, runBrowserCommand]
@@ -2518,6 +2520,11 @@ export function WorkspaceBrowserTabPanel({
                   label: '',
                   testId: 'workspace-browser-more-separator-actions',
                   separator: true,
+                },
+                {
+                  label: t('workbench.browser_history'),
+                  testId: 'workspace-browser-history-item',
+                  onSelect: () => navigateTo('/settings/browser/history'),
                 },
                 {
                   label: t('workbench.browser_clear_data'),

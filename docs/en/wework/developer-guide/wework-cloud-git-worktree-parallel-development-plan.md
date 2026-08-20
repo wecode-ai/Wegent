@@ -9,13 +9,9 @@ sidebar_position: 20
 - Created: August 17, 2026
 - Status: core implementation, the real-Tauri cloud lifecycle, and the Remote Docker container lifecycle are complete; only managed-production persistent-volume and instance-replacement acceptance still require the target environment
 - Objective: let local devices, managed cloud devices, and user-managed Remote Docker devices share one managed Git Worktree capability
-- Delivery model: one primary agent owns the goal, architecture truth, shared contracts, integration, and final verification; sub-agents implement disjoint workstreams in parallel
+- Delivery model: one primary agent owns the goal, shared contracts, integration, and final verification; sub-agents implement disjoint workstreams in parallel
 
-This document records the implementation plan, parallel ownership, and acceptance status; it is not the architecture source of truth. The architecture truth is now established in:
-
-- `docs/zh/architecture/git-worktree-execution.md`
-- `docs/en/architecture/git-worktree-execution.md`
-- the corresponding rows in both architecture indexes
+This document records the implementation plan, parallel ownership, and acceptance status.
 
 ## 2. Target model
 
@@ -128,14 +124,12 @@ Wave 0 is serialized and owned by the primary agent. In Wave 1, Wework availabil
 Owns:
 
 - goal status and dependency tracking;
-- architecture truth and shared request/response contracts;
+- shared request/response contracts;
 - cross-module decisions and conflict resolution;
 - review, integration, broad tests, real Tauri verification, and final acceptance.
 
 Exclusive write scope:
 
-- both `git-worktree-execution.md` architecture files;
-- both architecture indexes;
 - shared cross-layer contracts and final integration files.
 
 ### Agent A: Wework types and availability
@@ -390,7 +384,7 @@ Wave 4:
 
 The goal is complete only when:
 
-- both architecture truth files and indexes are updated;
+- cross-layer shared contracts are confirmed;
 - local, cloud, and Remote Docker use the same Executor Worktree data plane;
 - Wework no longer hard-codes capability from device type;
 - old, offline, and non-Git targets have explicit unavailable reasons;
@@ -405,14 +399,14 @@ The goal is complete only when:
 
 As of August 18, 2026, the core code work in this plan has been completed through goal mode and parallel sub-agent work. The real Remote Docker container lifecycle has passed, leaving only the managed-production persistent-volume gate:
 
-| Wave | Result                                                                                                                                         |
-| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| A0   | Chinese and English architecture truth, indexes, protocol boundaries, and invariants are frozen                                                |
-| A1   | Wework now has unified Local, Cloud, Remote, and `device_path` types and Worktree availability                                                 |
-| A2   | Executor now owns versioned capability, preflight, deferred creation, identity checks, snapshots, restore, cleanup, and restart reconciliation |
-| A3   | Backend now owns logical-device routing, authorization, structured RPC errors, and `runtime_features` projection                               |
-| B    | Hybrid creation, planned/final path reconciliation, tool path routing, and DeviceWorkspace preferences are complete                            |
-| C    | stop acknowledgement, archival snapshot deletion, unarchive restore, settings, and automatic cleanup are complete                              |
+| Wave | Result                                                                                                                                                              |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A0   | Cross-layer protocol boundaries and invariants are frozen                                                                                                           |
+| A1   | Wework now has unified Local, Cloud, Remote, and `device_path` types and Worktree availability                                                                      |
+| A2   | Executor now owns versioned capability, preflight, deferred creation, identity checks, snapshots, restore, cleanup, and restart reconciliation                      |
+| A3   | Backend now owns logical-device routing, authorization, structured RPC errors, and `runtime_features` projection                                                    |
+| B    | Hybrid creation, planned/final path reconciliation, tool path routing, and DeviceWorkspace preferences are complete                                                 |
+| C    | stop acknowledgement, archival snapshot deletion, unarchive restore, settings, and automatic cleanup are complete                                                   |
 | D    | cross-layer contracts, CI classification, six atomic checkpoints, and the real-Tauri cloud lifecycle are complete; target-environment acceptance is described below |
 
 The real-Tauri `cloud-git-worktree` aggregate expanded and verified six independently runnable checkpoints:

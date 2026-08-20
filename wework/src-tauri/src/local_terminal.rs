@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex, OnceLock};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{Emitter, Manager, State};
 
 use crate::{agent_plugins, normalized_non_empty, process_environment};
@@ -535,35 +535,12 @@ fn read_command_version_once_with_timeout(
         }
     });
 
-    let deadline = Instant::now() + timeout;
-    loop {
-        if let Ok(version) = version_receiver.try_recv() {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Some(version);
-        }
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                if !status.success() {
-                    return None;
-                }
-                return version_receiver
-                    .recv_timeout(Duration::from_millis(100))
-                    .ok();
-            }
-            Ok(None) if Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(20));
-            }
-            Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return version_receiver
-                    .recv_timeout(Duration::from_millis(100))
-                    .ok();
-            }
-            Err(_) => return None,
-        }
+    let version = version_receiver.recv_timeout(timeout).ok();
+    if child.try_wait().ok().flatten().is_none() {
+        let _ = child.kill();
     }
+    let _ = child.wait();
+    version
 }
 
 fn read_command_version_once(path: &Path, args: &[&str]) -> Option<String> {
@@ -1097,6 +1074,18 @@ pub fn start_local_harness(
         .clone()
         .or_else(|| resume_record.as_ref().map(|record| record.cwd.clone()));
     let mut env = request.env.unwrap_or_default();
+    if definition.id == CLAUDE_CODE_HARNESS_ID {
+        if let Ok(node_bin) = crate::execution_environments::node_bin_directory(&app) {
+            let current_path = env
+                .get("PATH")
+                .cloned()
+                .unwrap_or_else(process_environment::normalized_current_path);
+            env.insert(
+                "PATH".to_string(),
+                process_environment::prepend_path(&current_path, node_bin),
+            );
+        }
+    }
     let mut configured_args = request.args.unwrap_or_default();
     let plugin_roots = request
         .plugin_roots
@@ -1769,13 +1758,16 @@ mod tests {
         permissions.set_mode(0o755);
         fs::set_permissions(&executable, permissions).unwrap();
 
-        let started_at = Instant::now();
-        let timeout = Duration::from_secs(3);
+        let started_at = std::time::Instant::now();
         assert_eq!(
-            read_command_version_once_with_timeout(&executable, &["--version"], timeout),
+            read_command_version_once_with_timeout(
+                &executable,
+                &["--version"],
+                HARNESS_VERSION_TIMEOUT
+            ),
             Some("0.35.0".to_string())
         );
-        assert!(started_at.elapsed() < Duration::from_secs(4));
+        assert!(started_at.elapsed() < HARNESS_VERSION_TIMEOUT);
 
         fs::remove_dir_all(test_root).unwrap();
     }

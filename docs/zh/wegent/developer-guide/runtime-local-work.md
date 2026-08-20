@@ -93,6 +93,8 @@ POST /api/runtime-work/transcript
 
 Backend 将 `deviceId + localTaskId` 转发给对应设备的 `runtime.tasks.transcript`。原生 Codex 任务通过 Codex session path 或 session 文件发现定位；非 Codex/导入类任务可以使用 `workspacePath` 作为本地索引查找提示，或者通过本机 LocalTask 索引按 `localTaskId` 定位。executor 读取原生运行时 transcript，并返回标准化消息。
 
+云端和远程设备通过两段 Socket.IO ACK 返回 runtime RPC 结果：executor → Backend，以及 Backend → Wework。executor 对超过 512 KiB 的第一段 ACK 使用 `gzip+base64+json` envelope 压缩，Backend 解压并完成设备 ID 投影等服务处理；如果浏览器侧结果仍超过 512 KiB，Backend 会用同一 envelope 再压缩第二段 ACK，Wework 在交给调用方前解压。本地 App IPC 始终返回原始 JSON。每段压缩 envelope 都必须保留在 Socket.IO 1 MB 限制以内，无法满足时返回小型 `runtime_rpc_response_too_large` 错误，不能发送超限数据导致设备连接和心跳一起断开。executor 的耗时能力同步回调在独立任务中运行，避免阻塞 Socket.IO 收包循环和连接保活。
+
 ### Codex 会话读取路径与性能
 
 Wework 的 Codex 本机会话只使用一条主读取路径，避免列表、打开、刷新各自实现一套 transcript 逻辑：

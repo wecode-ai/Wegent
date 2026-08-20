@@ -826,7 +826,13 @@ function PluginTrialInputProbe({ testId }: { testId: string }) {
   return <span data-testid={testId}>{paneSession.input}</span>
 }
 
-function ProjectSendProbe() {
+function ProjectSendProbe({
+  prepareRuntimeTask,
+}: {
+  prepareRuntimeTask?: (
+    address: RuntimeTaskAddress
+  ) => void | (() => void | Promise<void>) | Promise<void | (() => void | Promise<void>)>
+} = {}) {
   const { workbench, paneSession, currentRuntimeTask } = useWorkbenchProbeSession()
   const taskLifecycle = useRuntimeTaskLifecycle(currentRuntimeTask)
   const imageAttachment = createImageAttachment()
@@ -1144,6 +1150,7 @@ function ProjectSendProbe() {
             project,
             deviceWorkspaceId: 23,
             runtime: 'codex',
+            prepareRuntimeTask,
           })
         }}
       >
@@ -5271,6 +5278,147 @@ describe('WorkbenchProvider runtime tasks', () => {
         message: '修复 CI',
       })
     )
+  })
+
+  test('does not dispatch an embedded Runtime task before its context is prepared', async () => {
+    const preparation = deferred<void>()
+    const prepareRuntimeTask = vi.fn(() => preparation.promise)
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 7, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  id: 23,
+                  projectId: 7,
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-beta',
+                  mapped: true,
+                  available: true,
+                  tasks: [],
+                },
+              ],
+            },
+          ],
+          totalTasks: 0,
+        })
+      ),
+      createRuntimeTask: vi.fn(async request => ({
+        accepted: true,
+        deviceId: request.deviceId,
+        taskId: request.taskId,
+        workspacePath: request.workspacePath,
+        runtime: 'codex',
+      })),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<ProjectSendProbe prepareRuntimeTask={prepareRuntimeTask} />, services)
+
+    await userEvent.click(await screen.findByText('select project'))
+    await userEvent.click(screen.getByText('send with explicit project workspace'))
+
+    await waitFor(() => expect(prepareRuntimeTask).toHaveBeenCalledTimes(1))
+    expect(runtimeWorkApi.createRuntimeTask).not.toHaveBeenCalled()
+
+    preparation.resolve()
+    await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
+  })
+
+  test('does not dispatch an embedded Runtime task when context preparation fails', async () => {
+    const prepareRuntimeTask = vi.fn(async () => {
+      throw new Error('binding failed')
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 7, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  id: 23,
+                  projectId: 7,
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-beta',
+                  mapped: true,
+                  available: true,
+                  tasks: [],
+                },
+              ],
+            },
+          ],
+          totalTasks: 0,
+        })
+      ),
+      createRuntimeTask: vi.fn(),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<ProjectSendProbe prepareRuntimeTask={prepareRuntimeTask} />, services)
+
+    await userEvent.click(await screen.findByText('select project'))
+    await userEvent.click(screen.getByText('send with explicit project workspace'))
+
+    await waitFor(() => expect(prepareRuntimeTask).toHaveBeenCalledTimes(1))
+    expect(runtimeWorkApi.createRuntimeTask).not.toHaveBeenCalled()
+  })
+
+  test('rolls back a prepared context when the executor rejects task creation', async () => {
+    const rollback = vi.fn(async () => undefined)
+    const prepareRuntimeTask = vi.fn(async () => rollback)
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 7, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  id: 23,
+                  projectId: 7,
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-beta',
+                  mapped: true,
+                  available: true,
+                  tasks: [],
+                },
+              ],
+            },
+          ],
+          totalTasks: 0,
+        })
+      ),
+      createRuntimeTask: vi.fn(async request => ({
+        accepted: false,
+        deviceId: request.deviceId,
+        taskId: request.taskId,
+        error: 'executor rejected task',
+      })),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<ProjectSendProbe prepareRuntimeTask={prepareRuntimeTask} />, services)
+
+    await userEvent.click(await screen.findByText('select project'))
+    await userEvent.click(screen.getByText('send with explicit project workspace'))
+
+    await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(rollback).toHaveBeenCalledTimes(1))
   })
 
   test('prepares a configured model before opening a new task', async () => {

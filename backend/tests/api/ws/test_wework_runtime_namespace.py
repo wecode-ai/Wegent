@@ -5,6 +5,7 @@
 """Tests for the Wework runtime IPC relay namespace."""
 
 import asyncio
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -13,6 +14,7 @@ import pytest
 from app.api.ws import device_namespace, local_task_responses, wework_runtime_namespace
 from app.api.ws.device_namespace import DeviceNamespace
 from app.api.ws.wework_runtime_namespace import WeworkRuntimeNamespace
+from app.core.socketio import SOCKETIO_MAX_HTTP_BUFFER_SIZE
 
 
 def _im_source() -> dict:
@@ -352,6 +354,48 @@ async def test_runtime_request_relays_to_device_runtime_rpc(monkeypatch):
         payload={"message": "hello"},
         timeout_seconds=75,
     )
+
+
+@pytest.mark.asyncio
+async def test_runtime_request_compresses_large_result_for_wework(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    namespace = WeworkRuntimeNamespace()
+    runtime_rpc = AsyncMock(
+        return_value={
+            "success": True,
+            "messages": [{"id": "m1", "content": "历史消息🙂" * 100000}],
+        }
+    )
+    monkeypatch.setattr(
+        wework_runtime_namespace.runtime_rpc_service,
+        "call",
+        runtime_rpc,
+    )
+    monkeypatch.setattr(
+        namespace,
+        "get_session",
+        AsyncMock(return_value={"user_id": 7}),
+    )
+
+    response = await namespace.on_runtime_request(
+        "browser-sid",
+        {
+            "id": "req-1",
+            "device_id": "cloud-device",
+            "method": "runtime.tasks.transcript",
+            "params": {"localTaskId": "runtime-1"},
+        },
+    )
+
+    assert response["ok"] is True
+    assert response["result"]["__runtimeRpcEncoding"] == "gzip+base64+json"
+    encoded_response = json.dumps(
+        response,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    assert len(encoded_response) < SOCKETIO_MAX_HTTP_BUFFER_SIZE
 
 
 @pytest.mark.asyncio
