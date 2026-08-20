@@ -4,6 +4,7 @@ import {
   createAutomationApiFromIpc,
   createLocalAppServices,
   createRuntimeWorkApiFromIpc,
+  resetLocalRuntimeChatStreamsForTests,
 } from './localServices'
 import {
   clearLocalModelConfigs,
@@ -40,6 +41,18 @@ describe('createLocalAppServices', () => {
   beforeEach(() => {
     localStorage.clear()
     clearLocalModelConfigs()
+    resetLocalRuntimeChatStreamsForTests()
+  })
+
+  test('reuses the runtime event stream for the same local transport', () => {
+    const request = vi.fn().mockResolvedValue({})
+    const subscribe = vi.fn().mockResolvedValue(vi.fn())
+
+    const firstServices = createLocalAppServices({ request, subscribe })
+    const secondServices = createLocalAppServices({ request, subscribe })
+
+    expect(firstServices.chatStream).toBe(secondServices.chatStream)
+    expect(subscribe).toHaveBeenCalledTimes(1)
   })
 
   test('returns local bootstrap data without backend', async () => {
@@ -288,6 +301,96 @@ describe('createLocalAppServices', () => {
     expect(secondLaunch?.env).not.toEqual(
       expect.objectContaining({ ANTHROPIC_API_KEY: 'second-provider-secret' })
     )
+  })
+
+  test('registers user and model context for DeepSeek Harness launches', async () => {
+    const config = saveLocalModelConfig({
+      id: 'context-model',
+      displayName: 'Context Model',
+      modelId: 'context-upstream-model',
+      baseUrl: 'https://models.example.com/v1',
+      apiFormat: 'openai-chat-completions',
+      requestPath: '/chat/completions',
+      apiKey: 'provider-secret',
+      catalogReady: false,
+    })
+    const request = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'runtime.harness_proxy.register') {
+        return {
+          token: 'proxy-token',
+          baseUrl: 'http://127.0.0.1:1234/v1/harness-router/proxy-token',
+        }
+      }
+      if (method === 'runtime.harness_context.register') {
+        return {
+          token: 'context-token',
+          baseUrl: 'http://127.0.0.1:1234/v1/harness-context/context-token',
+        }
+      }
+      return {}
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({
+        running: true,
+        ready: true,
+        deviceId: 'local-device',
+      }),
+      request,
+      subscribe: vi.fn(),
+      user: {
+        id: 7,
+        user_name: 'cloud-user',
+        email: 'cloud@example.com',
+      },
+      cloudModelGateway: {
+        baseUrl: 'https://api.example.com/runtime-work/llm-responses-proxy',
+        apiKey: 'cloud-token',
+      },
+    })
+
+    const launch = await services.localHarnessModelApi?.resolveLaunch('opencode', {
+      key: 'context-model',
+      label: 'Context Model',
+      source: 'local',
+      model: {
+        name: 'local-model:' + config.id,
+        type: 'runtime',
+        provider: 'local',
+        displayName: 'Context Model',
+        modelId: 'context-upstream-model',
+        config: { weworkModelKind: 'model-interface' },
+      },
+    })
+
+    expect(request).toHaveBeenCalledWith(
+      'runtime.harness_context.register',
+      expect.objectContaining({
+        scope: expect.stringMatching(/^harness:opencode:/),
+        user: {
+          id: 7,
+          userName: 'cloud-user',
+          displayName: 'cloud-user',
+          email: 'cloud@example.com',
+          mode: 'cloud',
+        },
+        model: expect.objectContaining({
+          runtimeModelId: 'context-upstream-model',
+          displayName: 'Context Model',
+          modelType: 'runtime',
+        }),
+      })
+    )
+    expect(launch).toMatchObject({
+      context: {
+        token: 'context-token',
+        baseUrl: 'http://127.0.0.1:1234/v1/harness-context/context-token',
+      },
+    })
+    const contextCall = request.mock.calls.find(
+      ([method]) => method === 'runtime.harness_context.register'
+    )
+    expect(JSON.stringify(contextCall)).not.toContain('cloud-token')
+    expect(JSON.stringify(contextCall)).not.toContain('provider-secret')
   })
 
   test('does not expose a custom model until its catalog restart is applied', async () => {
@@ -744,6 +847,15 @@ describe('createLocalAppServices', () => {
       runtimeProjectKey: 'product',
       runtimeProjectName: 'Product',
       runtimeWorkspaceRoots: ['/Users/me/project', '/Users/me/api'],
+      projectInstructions: 'Run focused project tests.',
+      projectPlugins: [
+        {
+          id: 'quality-gate@team-market',
+          pluginName: 'quality-gate',
+          marketplaceId: 'team-market',
+          displayName: 'Quality Gate',
+        },
+      ],
       cloudProjectId: 'cloud-project-42',
       taskId: 'task-1',
       runtime: 'codex',
@@ -782,6 +894,15 @@ describe('createLocalAppServices', () => {
       runtimeProjectKey: 'product',
       runtimeProjectName: 'Product',
       runtimeWorkspaceRoots: ['/Users/me/project', '/Users/me/api'],
+      projectInstructions: 'Run focused project tests.',
+      projectPlugins: [
+        {
+          id: 'quality-gate@team-market',
+          pluginName: 'quality-gate',
+          marketplaceId: 'team-market',
+          displayName: 'Quality Gate',
+        },
+      ],
       cloudProjectId: 'cloud-project-42',
       taskId: 'task-1',
       runtime: 'codex',
@@ -808,6 +929,8 @@ describe('createLocalAppServices', () => {
         },
       ],
       executionRequest: expect.objectContaining({
+        system_prompt: 'Run focused project tests.',
+        project_plugin_ids: ['quality-gate@team-market'],
         task_id: 'task-1',
         subtask_id: expect.any(String),
         team_id: 0,
@@ -986,7 +1109,7 @@ describe('createLocalAppServices', () => {
     expect(sendPayload.executionRequest.model_config).toEqual({})
   })
 
-  test('keeps the backend model_config when the claim payload provides it', async () => {
+  test('keeps a prepared model_config and applies the selected runtime options', async () => {
     const request = vi.fn().mockImplementation(async (method: string) => {
       if (method === 'runtime.tasks.create') {
         return {
@@ -1021,6 +1144,11 @@ describe('createLocalAppServices', () => {
         api_key: 'short-lived-token',
         codex_catalog_model_id: 'wework-kimi-k2-7',
         codex_responses_compat_proxy: true,
+        reasoning: { effort: 'high' },
+      },
+      modelOptions: {
+        reasoning: 'low',
+        speed: 'fast',
       },
     })
 
@@ -1032,6 +1160,8 @@ describe('createLocalAppServices', () => {
             base_url: 'https://gateway.example/api/runtime-work/llm-responses-proxy',
             api_key: 'short-lived-token',
             codex_catalog_model_id: 'wework-kimi-k2-7',
+            reasoning: { effort: 'low' },
+            service_tier: 'fast',
           }),
         }),
       })
@@ -3228,6 +3358,23 @@ describe('createLocalAppServices', () => {
           workspacePath: '/Users/me/project',
           label: 'Project',
           workspaceSource: 'local',
+          projectSource: 'local_project',
+          projectAiSettings: {
+            instructions: 'Run focused project tests.',
+            modelSelection: {
+              modelName: 'gpt-5.5',
+              modelType: 'runtime',
+              options: { reasoning: 'high' },
+            },
+            quickPhrases: [
+              {
+                id: 'project-review',
+                title: 'Review project constraints',
+                content: 'Read the project constraints first.',
+                mode: 'plan',
+              },
+            ],
+          },
           tasks: [
             {
               taskId: 'task-1',
@@ -3271,13 +3418,29 @@ describe('createLocalAppServices', () => {
             id: expect.any(Number),
             name: 'Project',
             kind: 'local',
-            source: 'legacy_root',
+            source: 'local_project',
             stateDeviceId: 'device-uuid',
             roots: [{ kind: 'local', path: '/Users/me/project' }],
             pinned: false,
             pinnedOrder: null,
             active: false,
             appearance: null,
+            aiSettings: {
+              instructions: 'Run focused project tests.',
+              modelSelection: {
+                modelName: 'gpt-5.5',
+                modelType: 'runtime',
+                options: { reasoning: 'high' },
+              },
+              quickPhrases: [
+                {
+                  id: 'project-review',
+                  title: 'Review project constraints',
+                  content: 'Read the project constraints first.',
+                  mode: 'plan',
+                },
+              ],
+            },
           },
           deviceWorkspaces: [
             expect.objectContaining({

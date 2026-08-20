@@ -29,6 +29,9 @@ flowchart LR
     ISSUE --> DETAIL
     BINDING --> DETAIL
     DELIVERY --> DETAIL
+    DETAIL -->|independent request / arrival| BINDING_VIEW[Linked-task section]
+    DETAIL -->|independent request / arrival| DELIVERY_VIEW[Delivery section]
+    DETAIL -->|independent request / arrival| DIRECTORY_VIEW[Member / agent / team section]
     DETAIL --> VIEW[Task terminal state / stage state / delivery N/M]
 
     DELIVERY --> FILE_INDEX[Project delivery-file index + Issue/task ancestry]
@@ -57,8 +60,17 @@ sequenceDiagram
         D-->>E: publish Issue changed
     end
     E-->>U: invalidate the current Issue projection
-    U->>O: reload Issue, TaskBinding, and Delivery data
-    O-->>U: return a consistent stage state and delivery coverage
+    par Independently refresh detail sections in one invalidation cycle
+        U->>O: Read TaskBinding data
+        O-->>U: Render linked tasks immediately
+    and
+        U->>O: Read Delivery and attachment data
+        O-->>U: Render deliveries and attachments independently
+    and
+        U->>O: Read member, agent, and team directories
+        O-->>U: Render assignment sources independently
+    end
+    Note over O,U: Fast local TaskBinding data does not wait for slower remote directories
 
     alt Status persistence fails
         O-->>W: explicit observable failure with bounded retry
@@ -73,15 +85,16 @@ sequenceDiagram
     U-->>U: Project read-only folders without copying or moving assets
 ```
 
-| Edge                                              | Code ownership                                                                                   |
-| ------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| Runtime lifecycle → Issue status synchronization  | Wework `deliveries` API and the Backend `project_workflow_projection` atomic task-status command |
-| TaskBinding + task status → stage state           | Wework `issueWorkflow`, Backend workflow projection                                              |
-| Delivery finalize → fulfillment and node binding  | Backend Delivery service, `wework-space` MCP                                                     |
-| fulfillment → N/M coverage and approval gate      | Backend deliverable projection, workflow decision service                                        |
-| Issue changed → detail refresh                    | Backend `loop_item_events`, Wework `projectChatSocket`, and `CloudTodoWorkspace`                 |
-| Issue, TaskBinding, Delivery → UI                 | Wework `TodoEditor`, `IssueWorkflowDag`                                                          |
-| Delivery asset + LoopItem ancestry → file manager | Backend `cloud_files` service and cloud-project API, Wework `CloudFilesView`                     |
+| Edge                                                    | Code ownership                                                                                   |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Runtime lifecycle → Issue status synchronization        | Wework `deliveries` API and the Backend `project_workflow_projection` atomic task-status command |
+| TaskBinding + task status → stage state                 | Wework `issueWorkflow`, Backend workflow projection                                              |
+| Delivery finalize → fulfillment and node binding        | Backend Delivery service, `wework-space` MCP                                                     |
+| fulfillment → N/M coverage and approval gate            | Backend deliverable projection, workflow decision service                                        |
+| Issue changed → detail refresh                          | Backend `loop_item_events`, Wework `projectChatSocket`, and `CloudTodoWorkspace`                 |
+| Issue, TaskBinding, Delivery → UI                       | Wework `TodoEditor`, `IssueWorkflowDag`                                                          |
+| Independent detail loading and stale-response isolation | Wework `TodoEditor`                                                                              |
+| Delivery asset + LoopItem ancestry → file manager       | Backend `cloud_files` service and cloud-project API, Wework `CloudFilesView`                     |
 
 Essential invariants:
 
@@ -89,7 +102,7 @@ Essential invariants:
 - A human task may display queued only when Runtime explicitly reports queued. An unknown newly bound task state must preserve the backend stage state or display synchronizing; it must not infer queued.
 - Stage state is derived from TaskBinding order and persisted terminal truth: any running task wins, otherwise the latest bound trusted terminal state wins; a successful human stage enters `awaiting_approval`.
 - Delivery finalize atomically freezes the Delivery, typed fulfillments, and node `delivery_id`. Only persisted `fulfillments[].requirement_id` values count toward N/M.
-- Runtime-state updates and Delivery finalize both invalidate the Issue-detail projection. A refresh must read Issue, TaskBinding, and Delivery together instead of mixing cache versions.
+- Runtime-state updates and Delivery finalize both invalidate the Issue-detail projection. The same invalidation cycle must request fresh Issue, TaskBinding, and Delivery data while isolating stale responses; each detail section renders as soon as its own data arrives, and fast local TaskBinding data must not wait for independent remote member, agent, or team directories.
 - Status-persistence failures return structured errors and use bounded retry. They must not create an unbounded PATCH loop or change UI semantics.
 - Human approval uses a server-side live recomputation of stage state and delivery coverage, never a client cache or a possibly stale node snapshot.
 - The project delivery-file index returns the complete persisted parent chain from the root Issue to the task owning the Delivery. The frontend must not infer task hierarchy from titles, identifiers, or file paths.

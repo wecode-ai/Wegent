@@ -1,0 +1,250 @@
+.animation {
+  position: relative;
+  display: flex;
+  width: 7rem;
+  height: 7rem;
+  align-items: center;
+  justify-content: center;
+}
+
+.core {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  width: 3.5rem;
+  height: 3.5rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgb(var(--color-border) / 0.4);
+  border-radius: 1rem;
+  background: rgb(var(--color-bg-surface));
+  box-shadow: 0 2px 4px -1px rgb(0 0 0 / 8%);
+}
+
+.orbit {
+  position: absolute;
+  width: 6.5rem;
+  height: 6.5rem;
+  border: 1px dashed rgb(var(--color-text-muted) / 0.45);
+  border-radius: 9999px;
+  animation: harness-runtime-orbit-ring 2.4s linear infinite;
+}
+
+.packet {
+  position: absolute;
+  z-index: 3;
+  left: calc(50% - 0.375rem);
+  top: calc(50% - 0.375rem);
+  width: 0.75rem;
+  height: 0.75rem;
+  border: 1px solid rgb(var(--color-focus) / 0.7);
+  border-radius: 0.25rem;
+  background: color-mix(in srgb, rgb(var(--color-focus)) 14%, rgb(var(--color-bg-surface)));
+  box-shadow: 0 0 0 3px rgb(var(--color-focus) / 0.08);
+  animation: harness-runtime-packet-orbit 1.8s linear infinite;
+}
+
+.corePreparing {
+  animation: harness-runtime-core-breathe 1.8s ease-in-out infinite;
+}
+
+.module {
+  position: absolute;
+  z-index: 3;
+  display: flex;
+  width: 1.75rem;
+  height: 1.75rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgb(var(--color-border) / 0.55);
+  border-radius: 0.5rem;
+  background: rgb(var(--color-bg-surface));
+  color: rgb(var(--color-text-secondary));
+  box-shadow: 0 1px 2px -1px rgb(0 0 0 / 8%);
+}
+
+.moduleTop {
+  animation: harness-module-top 2s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
+.moduleRight {
+  animation: harness-module-right 2s 0.18s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
+.moduleBottom {
+  animation: harness-module-bottom 2s 0.36s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
+.moduleLeft {
+  animation: harness-module-left 2s 0.54s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
+.coreLoading {
+  animation: harness-runtime-core-assemble 2s ease-in-out infinite;
+}
+
+.lid {
+  position: absolute;
+  z-index: 4;
+  top: 1.7rem;
+  width: 3rem;
+  height: 0.75rem;
+  transform-origin: center bottom;
+  border: 1px solid rgb(var(--color-border) / 0.45);
+  border-radius: 0.5rem 0.5rem 0.25rem 0.25rem;
+  background: rgb(var(--color-bg-surface));
+  animation: harness-runtime-lid-open 1.8s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
+.pulse {
+  position: absolute;
+  width: 4rem;
+  height: 4rem;
+  border: 1px solid rgb(var(--color-focus) / 0.48);
+  border-radius: 9999px;
+  opacity: 0;
+  animation: harness-runtime-ready-pulse 1.8s ease-out infinite;
+}
+
+.pulseDelayed {
+  animation-delay: 0.55s;
+}
+
+.coreStarting {
+  animation: harness-runtime-core-ready 1.8s ease-in-out infinite;
+}
+
+@keyframes harness-runtime-orbit-ring {
+  from {
+    transform: rotate(0deg) scaleY(0.72);
+  }
+  to {
+    transform: rotate(360deg) scaleY(0.72);
+  }
+}
+
+@keyframes harness-runtime-packet-orbit {
+  from {
+    transform: rotate(0deg) translateX(3.25rem) rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg) translateX(3.25rem) rotate(-360deg);
+  }
+}
+
+@keyframes harness-runtime-core-breathe {
+  0%,
+  100% {
+    transform: scale(0.96);
+  }
+  50% {
+    transform: scale(1);
+  }
+}
+
+@keyframes harness-module-top {
+  0%,
+  100% {
+    transform: translateY(-3.25rem) scale(0.88);
+    opacity: 0.45;
+  }
+  58%,
+  72% {
+    transform: translateY(-1.5rem) scale(0.72);
+    opacity: 1;
+  }
+}
+
+@keyframes harness-module-right {
+  0%,
+  100% {
+    transform: translateX(3.25rem) scale(0.88);
+    opacity: 0.45;
+  }
+  58%,
+  72% {
+    transform: translateX(1.5rem) scale(0.72);
+    opacity: 1;
+  }
+}
+
+@keyframes harness-module-bottom {
+  0%,
+  100% {
+    transform: translateY(3.25rem) scale(0.88);
+    opacity: 0.45;
+  }
+  58%,
+  72% {
+    transform: translateY(1.5rem) scale(0.72);
+    opacity: 1;
+  }
+}
+
+@keyframes harness-module-left {
+  0%,
+  100% {
+    transform: translateX(-3.25rem) scale(0.88);
+    opacity: 0.45;
+  }
+  58%,
+  72% {
+    transform: translateX(-1.5rem) scale(0.72);
+    opacity: 1;
+  }
+}
+
+@keyframes harness-runtime-core-assemble {
+  0%,
+  48%,
+  100% {
+    transform: scale(0.94);
+  }
+  68% {
+    transform: scale(1.05);
+  }
+}
+
+@keyframes harness-runtime-lid-open {
+  0%,
+  22%,
+  100% {
+    transform: translateY(0) rotateX(0deg);
+  }
+  52%,
+  78% {
+    transform: translateY(-0.65rem) rotateX(58deg);
+  }
+}
+
+@keyframes harness-runtime-ready-pulse {
+  0%,
+  28% {
+    transform: scale(0.72);
+    opacity: 0;
+  }
+  42% {
+    opacity: 0.7;
+  }
+  88%,
+  100% {
+    transform: scale(1.65);
+    opacity: 0;
+  }
+}
+
+@keyframes harness-runtime-core-ready {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  52% {
+    transform: translateY(-0.2rem);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animation * {
+    animation: none !important;
+  }
+}

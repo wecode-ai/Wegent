@@ -2,7 +2,7 @@ use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -17,6 +17,7 @@ const TERMINAL_EXIT_EVENT: &str = "local-terminal-exit";
 const DEFAULT_UTF8_LANG: &str = "en_US.UTF-8";
 const DEFAULT_UTF8_LC_CTYPE: &str = "UTF-8";
 const HARNESS_VERSION_TIMEOUT: Duration = Duration::from_secs(5);
+const HARNESS_VERSION_ATTEMPTS: usize = 2;
 const OPEN_CODE_HARNESS_ID: &str = "opencode";
 const CLAUDE_CODE_HARNESS_ID: &str = "claude_code";
 const KIMI_CODE_HARNESS_ID: &str = "kimi_code";
@@ -497,7 +498,11 @@ fn preferred_home_directory(
         .or(fallback_home)
 }
 
-fn read_command_version(path: &Path, args: &[&str]) -> Option<String> {
+fn read_command_version_once_with_timeout(
+    path: &Path,
+    args: &[&str],
+    timeout: Duration,
+) -> Option<String> {
     let mut command = Command::new(path);
     command
         .args(args)
@@ -510,21 +515,41 @@ fn read_command_version(path: &Path, args: &[&str]) -> Option<String> {
         command.creation_flags(0x0800_0000);
     }
     let mut child = command.spawn().ok()?;
-    let deadline = Instant::now() + HARNESS_VERSION_TIMEOUT;
+    let stdout = child.stdout.take()?;
+    let (version_sender, version_receiver) = mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
+        let mut line = String::new();
+        while reader
+            .read_line(&mut line)
+            .ok()
+            .filter(|read| *read > 0)
+            .is_some()
+        {
+            let version = line.trim();
+            if !version.is_empty() {
+                let _ = version_sender.send(version.to_string());
+                return;
+            }
+            line.clear();
+        }
+    });
+
+    let deadline = Instant::now() + timeout;
     loop {
+        if let Ok(version) = version_receiver.try_recv() {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Some(version);
+        }
         match child.try_wait() {
             Ok(Some(status)) => {
                 if !status.success() {
                     return None;
                 }
-                let mut version = String::new();
-                child.stdout.take()?.read_to_string(&mut version).ok()?;
-                return version
-                    .lines()
-                    .next()
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(ToOwned::to_owned);
+                return version_receiver
+                    .recv_timeout(Duration::from_millis(100))
+                    .ok();
             }
             Ok(None) if Instant::now() < deadline => {
                 std::thread::sleep(Duration::from_millis(20));
@@ -532,11 +557,21 @@ fn read_command_version(path: &Path, args: &[&str]) -> Option<String> {
             Ok(None) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return None;
+                return version_receiver
+                    .recv_timeout(Duration::from_millis(100))
+                    .ok();
             }
             Err(_) => return None,
         }
     }
+}
+
+fn read_command_version_once(path: &Path, args: &[&str]) -> Option<String> {
+    read_command_version_once_with_timeout(path, args, HARNESS_VERSION_TIMEOUT)
+}
+
+fn read_command_version(path: &Path, args: &[&str]) -> Option<String> {
+    (0..HARNESS_VERSION_ATTEMPTS).find_map(|_| read_command_version_once(path, args))
 }
 
 fn harness_launch_args(
@@ -574,31 +609,46 @@ fn harness_initial_terminal_input(
     Some(format!("\u{1b}[200~{prompt}\u{1b}[201~\r"))
 }
 
+fn map_local_harnesses_in_parallel<T, F>(mapper: F) -> Vec<T>
+where
+    T: Send,
+    F: Fn(LocalHarnessDefinition) -> T + Sync,
+{
+    std::thread::scope(|scope| {
+        let mapper = &mapper;
+        let handles = LOCAL_HARNESSES
+            .iter()
+            .copied()
+            .map(|definition| scope.spawn(move || mapper(definition)))
+            .collect::<Vec<_>>();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("local harness detection panicked"))
+            .collect()
+    })
+}
+
 #[tauri::command]
 pub async fn list_local_harnesses(
     executable_overrides: Option<HashMap<String, Option<String>>>,
 ) -> Result<Vec<LocalHarnessDescriptor>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        LOCAL_HARNESSES
-            .iter()
-            .map(|definition| {
-                let executable_override = executable_overrides
-                    .as_ref()
-                    .and_then(|overrides| overrides.get(definition.id))
-                    .and_then(|value| value.as_deref());
-                let executable_path =
-                    resolve_local_harness_executable(*definition, executable_override);
-                let version = executable_path
-                    .as_deref()
-                    .and_then(|path| read_command_version(path, definition.version_args));
-                LocalHarnessDescriptor {
-                    id: definition.id.to_string(),
-                    installed: executable_path.is_some(),
-                    executable_path: executable_path.map(|path| path.display().to_string()),
-                    version,
-                }
-            })
-            .collect()
+        map_local_harnesses_in_parallel(|definition| {
+            let executable_override = executable_overrides
+                .as_ref()
+                .and_then(|overrides| overrides.get(definition.id))
+                .and_then(|value| value.as_deref());
+            let executable_path = resolve_local_harness_executable(definition, executable_override);
+            let version = executable_path
+                .as_deref()
+                .and_then(|path| read_command_version(path, definition.version_args));
+            LocalHarnessDescriptor {
+                id: definition.id.to_string(),
+                installed: executable_path.is_some(),
+                executable_path: executable_path.map(|path| path.display().to_string()),
+                version,
+            }
+        })
     })
     .await
     .map_err(|error| format!("Failed to detect local harnesses: {error}"))
@@ -1630,6 +1680,8 @@ pub fn close_local_terminal(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
 
     #[test]
     fn decodes_utf8_output_across_read_boundaries() {
@@ -1658,6 +1710,98 @@ mod tests {
             resolve_utf8_locale_value(Some("zh_CN.UTF-8"), "en_US.UTF-8"),
             "zh_CN.UTF-8"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn retries_transient_harness_version_detection_failures() {
+        let test_root = std::env::temp_dir().join(format!(
+            "wework-harness-version-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&test_root).unwrap();
+        let executable = test_root.join("harness");
+        let attempts = test_root.join("attempts");
+        fs::write(
+            &executable,
+            format!(
+                "#!/bin/sh\nif [ ! -f '{}' ]; then touch '{}'; exit 1; fi\nprintf '0.35.0\\n'\n",
+                attempts.display(),
+                attempts.display()
+            ),
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&executable).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&executable, permissions).unwrap();
+
+        assert_eq!(
+            read_command_version(&executable, &["--version"]),
+            Some("0.35.0".to_string())
+        );
+
+        fs::remove_dir_all(test_root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reads_harness_version_before_process_exit() {
+        let test_root = std::env::temp_dir().join(format!(
+            "wework-harness-version-output-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&test_root).unwrap();
+        let executable = test_root.join("harness");
+        fs::write(&executable, "#!/bin/sh\nprintf '0.35.0\\n'\nexec sleep 5\n").unwrap();
+        let mut permissions = fs::metadata(&executable).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&executable, permissions).unwrap();
+
+        let started_at = Instant::now();
+        assert_eq!(
+            read_command_version_once_with_timeout(
+                &executable,
+                &["--version"],
+                Duration::from_secs(1)
+            ),
+            Some("0.35.0".to_string())
+        );
+        assert!(started_at.elapsed() < Duration::from_secs(1));
+
+        fs::remove_dir_all(test_root).unwrap();
+    }
+
+    #[test]
+    fn detects_local_harnesses_in_parallel_and_preserves_order() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let active = AtomicUsize::new(0);
+        let max_active = AtomicUsize::new(0);
+        let ids = map_local_harnesses_in_parallel(|definition| {
+            let current = active.fetch_add(1, Ordering::SeqCst) + 1;
+            max_active.fetch_max(current, Ordering::SeqCst);
+            std::thread::sleep(Duration::from_millis(50));
+            active.fetch_sub(1, Ordering::SeqCst);
+            definition.id
+        });
+
+        assert_eq!(
+            ids,
+            vec![
+                OPEN_CODE_HARNESS_ID,
+                CLAUDE_CODE_HARNESS_ID,
+                KIMI_CODE_HARNESS_ID
+            ]
+        );
+        assert_eq!(max_active.load(Ordering::SeqCst), LOCAL_HARNESSES.len());
     }
 
     #[test]

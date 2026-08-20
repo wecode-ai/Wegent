@@ -3,7 +3,6 @@ import type {
   RuntimeGoalStatus,
   RuntimeTaskAddress,
   RuntimeTaskSummary,
-  RuntimeTranscriptResponse,
   RuntimeWorkListResponse,
 } from '@/types/api'
 import type { RuntimePaneTranscript } from '@/types/workbench'
@@ -51,8 +50,8 @@ export class RuntimeTaskLifecycleStore {
 
   constructor(userId: number | string | null | undefined) {
     const storageScope = `wework.runtimeTaskLifecycle.${userId ?? 'anonymous'}`
-    this.unreadStorageKey = `${storageScope}.unread`
-    this.runningStorageKey = `${storageScope}.running`
+    this.unreadStorageKey = `${storageScope}.unread.v2`
+    this.runningStorageKey = `${storageScope}.running.v2`
     this.previousRunningTaskKeys = readStoredTaskKeys(this.runningStorageKey)
     this.persistedRunningSerialized = serializeTaskKeys(this.previousRunningTaskKeys)
   }
@@ -123,7 +122,14 @@ export class RuntimeTaskLifecycleStore {
 
   syncRuntimeTranscriptSnapshot(
     address: RuntimeTaskAddress,
-    transcript: Pick<RuntimeTranscriptResponse, 'running' | 'turns'>
+    transcript: {
+      running?: boolean
+      turns: Array<{
+        id: string | null
+        status?: string | null
+        completedAt?: string | number | null
+      }>
+    }
   ): void {
     if (transcript.running === true) {
       const current = this.getTask(address)
@@ -238,6 +244,7 @@ export class RuntimeTaskLifecycleStore {
     transcript: RuntimePaneTranscript,
     options: SyncTranscriptOptions = {}
   ): void {
+    this.syncRuntimeTranscriptSnapshot(address, transcript)
     const streamingTurn = transcript.turns.findLast(
       turn => turn.status === 'pending' || turn.status === 'streaming'
     )

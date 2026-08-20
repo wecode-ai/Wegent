@@ -117,6 +117,10 @@ async function waitForWorkbenchTask(control, taskId, message) {
   throw new Error(message)
 }
 
+function currentRuntimeTaskFromDebugSnapshot(snapshot) {
+  return snapshot?.workbench?.currentRuntimeTask ?? snapshot?.pane?.currentRuntimeTask ?? null
+}
+
 async function waitForWorkbenchDebugState(
   control,
   predicate,
@@ -551,28 +555,35 @@ async function verifyWorkspaceIssueCreation(control) {
 }
 
 async function verifyDefaultTaskBoardAssociation(control, projectRowSelector) {
-  await ensureExperimentalFeaturesEnabled(control)
-  await control.command(
-    'click',
-    `${projectRowSelector} [data-testid="project-new-conversation-button"]`
-  )
-  await control.command('waitFor', '[data-testid="project-work-button"]', {
-    text: 'workspace',
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  const taskTabTestId = await control.command(
-    'getAttribute',
-    '[data-tab-kind="task"][aria-selected="true"]',
-    { value: 'data-testid' }
-  )
-  assert.ok(taskTabTestId, 'The active task tab identity was unavailable before association setup')
+  await ensureExperimentalFeaturesDisabled(control)
+  try {
+    await control.command(
+      'click',
+      `${projectRowSelector} [data-testid="project-new-conversation-button"]`
+    )
+    await control.command('waitFor', '[data-testid="project-work-button"]', {
+      text: 'workspace',
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    const taskTabTestId = await control.command(
+      'getAttribute',
+      '[data-tab-kind="task"][aria-selected="true"]',
+      { value: 'data-testid' }
+    )
+    assert.ok(
+      taskTabTestId,
+      'The active task tab identity was unavailable before association setup'
+    )
 
-  await control.command('waitFor', '[data-testid="project-space-context-pill"]', {
-    text: '我的任务',
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await captureVerificationScreenshot(control, 'workspace-01-new-task.png')
-  return taskTabTestId
+    await control.command('waitFor', '[data-testid="project-space-context-pill"]', {
+      text: '我的任务',
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await captureVerificationScreenshot(control, 'workspace-01-new-task.png')
+    return taskTabTestId
+  } finally {
+    await ensureExperimentalFeaturesEnabled(control)
+  }
 }
 
 async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
@@ -1188,6 +1199,7 @@ export {
   waitForControlSelectionOffset,
   waitForPersistedComposerInput,
   waitForWorkbenchTask,
+  currentRuntimeTaskFromDebugSnapshot,
   waitForWorkbenchDebugState,
   captureVerificationScreenshot,
   verifyWorkspaceDocumentTabs,

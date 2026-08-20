@@ -7,7 +7,6 @@ import {
   ChevronDown,
   ChevronRight,
   Columns2,
-  Download,
   Edit3,
   FolderOpen,
   FolderPlus,
@@ -21,12 +20,12 @@ import {
   MessageSquarePlus,
   Pause,
   Pin,
+  Plug,
   Plus,
   RotateCw,
   Search,
   SquareTerminal,
   Sparkles,
-  UserRound,
   X,
 } from 'lucide-react'
 import {
@@ -50,6 +49,7 @@ import { ActionMenu } from '@/components/common/ActionMenu'
 import { TextInputDialog } from '@/components/common/TextInputDialog'
 import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
 import { LocalProjectEditDialog } from '@/components/projects/LocalProjectEditDialog'
+import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import { TitlebarTooltip } from '@/components/topnav/TitlebarTooltip'
 import { AppReleaseNotesDialog } from '@/features/app-update/AppReleaseNotesDialog'
 import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
@@ -80,7 +80,6 @@ import {
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useConfiguredKeybinding } from '@/hooks/useConfiguredKeybinding'
 import { useTranslation } from '@/hooks/useTranslation'
-import { getRuntimeConfig } from '@/config/runtime'
 import {
   canUseForProjectCreation,
   isCloudDevice,
@@ -114,13 +113,16 @@ import {
   useOptionalAppearance,
 } from '@/features/appearance'
 import type {
+  CloneGitRepositoryInput,
   DeviceInfo,
+  GitCloneProjectOperation,
   RuntimeTaskSummary,
   ProjectWithTasks,
   RuntimeDeviceWorkspace,
   RuntimeIMNotificationSettingsResponse,
   RuntimeProjectWork,
   RuntimeProjectAppearanceRequest,
+  RuntimeProjectAiSettings,
   RuntimeProjectSpaceRef,
   RuntimeProjectPinRequest,
   RuntimeProjectReorderRequest,
@@ -128,6 +130,7 @@ import type {
   RuntimeTaskPinRequest,
   RuntimeTaskAddress,
   RuntimeWorkListResponse,
+  UnifiedModel,
   User as UserProfile,
 } from '@/types/api'
 import type { DockerRemoteDeviceCommandResponse } from '@/types/devices'
@@ -138,7 +141,10 @@ import type {
   ArchiveRuntimeTaskResult,
 } from '@/features/workbench/workbenchContextTypes'
 import { getWorkbenchPaneKey } from './workbenchPaneIdentity'
-import { DesktopSettingsMenu } from './DesktopSettingsMenu'
+import {
+  DesktopSidebarAccount,
+  type DesktopSidebarAccountSettingsOptions,
+} from './DesktopSidebarAccount'
 import { DesktopWindowControls } from './DesktopWindowControls'
 import {
   DesktopSidebarHeader,
@@ -190,6 +196,7 @@ interface DesktopSidebarProps {
   devices: DeviceInfo[]
   cloudWorkStatus?: CloudWorkStatus
   runtimeWork?: RuntimeWorkListResponse | null
+  gitCloneOperations?: GitCloneProjectOperation[]
   currentRuntimeTask?: RuntimeTaskAddress | null
   splitGroupMemberships?: Readonly<Record<string, WorkbenchSplitGroupMembership>>
   standaloneDeviceId?: string | null
@@ -271,6 +278,7 @@ interface DesktopSidebarProps {
     name: string
     roots: string[]
     defaultProjectSpace: RuntimeProjectSpaceRef | null
+    aiSettings: RuntimeProjectAiSettings | null
   }) => Promise<void>
   onRemoveProject: (projectId: number) => Promise<void>
   onReorderRuntimeProjects?: (data: RuntimeProjectReorderRequest) => Promise<void>
@@ -281,7 +289,12 @@ interface DesktopSidebarProps {
   onGetDeviceHomeDirectory: (deviceId: string) => Promise<string>
   onListDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
   onCreateDeviceDirectory: (deviceId: string, path: string) => Promise<void>
+  onCloneGitRepository?: (deviceId: string, input: CloneGitRepositoryInput) => Promise<void>
+  onStartGitCloneProject?: (deviceId: string, input: CloneGitRepositoryInput) => void
+  onRetryGitCloneOperation?: (operation: GitCloneProjectOperation) => void
+  onDismissGitCloneOperation?: (operationId: string) => void
   projectSpaceApis?: ProjectSpaceApi[]
+  models?: UnifiedModel[]
   onOpenSettings: (options?: OpenSettingsOptions) => void
   onLogout: () => void
 }
@@ -297,10 +310,7 @@ function getRuntimeTaskPinOverrideKey(deviceId: string, threadId: string) {
   return `${deviceId}\0${threadId}`
 }
 
-interface OpenSettingsOptions {
-  autoOpenAddCloudDeviceDialog?: boolean
-  settingsPage?: 'about' | 'connections'
-}
+type OpenSettingsOptions = DesktopSidebarAccountSettingsOptions
 
 type ProjectCreateMenuPosition = {
   top: number
@@ -353,17 +363,6 @@ const PROJECT_APPEARANCE_COLOR_VALUES: Record<string, string> = {
   red: '#ef4444',
   yellow: '#eab308',
 }
-function getSidebarAccountSummary(user: UserProfile | null, fallback: string) {
-  const userName = user?.user_name?.trim()
-  const email = user?.email?.trim()
-  const label = userName || email || fallback
-  const detail = email && email !== label ? email : fallback
-  return {
-    label,
-    detail,
-  }
-}
-
 function getStandaloneDeviceLabel(device: DeviceInfo): string {
   return device.name || device.device_id
 }
@@ -1247,117 +1246,6 @@ function GlobalImNotificationBell({
   )
 }
 
-function SidebarAppUpdateButton({ onBeforeInstall }: { onBeforeInstall?: () => void }) {
-  const { t } = useTranslation('common')
-  const appUpdate = useOptionalAppUpdate()
-  const buttonRef = useRef<HTMLButtonElement | null>(null)
-  const [errorTooltipPosition, setErrorTooltipPosition] = useState<{
-    left: number
-    top: number
-  } | null>(null)
-  const availableUpdate = appUpdate?.availableUpdate ?? null
-  const status = appUpdate?.status ?? 'idle'
-  const downloadProgress = appUpdate?.downloadProgress ?? null
-  const error = appUpdate?.error ?? null
-  const busy = status === 'checking' || status === 'installing'
-  const downloadPercent = downloadProgress
-    ? calculateSidebarUpdateDownloadPercent(
-        downloadProgress.downloadedBytes,
-        downloadProgress.totalBytes
-      )
-    : null
-
-  const showErrorTooltip = () => {
-    if (!error || !buttonRef.current) return
-    const rect = buttonRef.current.getBoundingClientRect()
-    setErrorTooltipPosition({
-      left: Math.min(rect.right + 8, Math.max(8, window.innerWidth - 268)),
-      top: Math.min(Math.max(8, rect.top + rect.height / 2), window.innerHeight - 8),
-    })
-  }
-
-  if (!appUpdate || !availableUpdate) return null
-
-  const title = availableUpdate
-    ? formatSidebarTemplate(
-        t('workbench.app_update_install', {
-          defaultValue: '更新到 {{version}}',
-          version: availableUpdate.version,
-        }),
-        { version: availableUpdate.version }
-      )
-    : t('workbench.app_update_check', '检查更新')
-  const downloadTitle =
-    downloadPercent === null
-      ? t('workbench.app_update_downloading', { defaultValue: '正在下载更新' })
-      : formatSidebarTemplate(
-          t('workbench.app_update_downloading_progress', {
-            defaultValue: '正在下载更新 {{progress}}%',
-            progress: downloadPercent,
-          }),
-          { progress: String(downloadPercent) }
-        )
-
-  return (
-    <div
-      className="group/update relative shrink-0"
-      onPointerEnter={showErrorTooltip}
-      onPointerLeave={() => setErrorTooltipPosition(null)}
-      onFocus={showErrorTooltip}
-      onBlur={() => setErrorTooltipPosition(null)}
-    >
-      <button
-        ref={buttonRef}
-        type="button"
-        data-testid="sidebar-app-update-button"
-        disabled={busy}
-        onClick={() => {
-          onBeforeInstall?.()
-          if (availableUpdate) {
-            void appUpdate.installUpdate()
-            return
-          }
-          void appUpdate.checkNow()
-        }}
-        title={error ?? (status === 'installing' ? downloadTitle : title)}
-        aria-label={error ?? (status === 'installing' ? downloadTitle : title)}
-        className={cn(
-          'group relative inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition-colors disabled:cursor-not-allowed disabled:opacity-60',
-          error
-            ? 'text-red-500 hover:bg-red-500/10'
-            : 'text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]'
-        )}
-      >
-        {status === 'installing' && downloadPercent !== null ? (
-          <SidebarUpdateDownloadProgress progress={downloadPercent} />
-        ) : busy ? (
-          <Loader2 className="h-4 w-4 animate-spin" />
-        ) : (
-          <Download className="sidebar-update-download-icon h-4 w-4" />
-        )}
-        {availableUpdate && !busy && (
-          <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-primary ring-2 ring-[rgb(var(--color-sidebar-hover))]" />
-        )}
-        {error && (
-          <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-red-500 ring-2 ring-[rgb(var(--color-sidebar-hover))]" />
-        )}
-      </button>
-      {error && errorTooltipPosition
-        ? createPortal(
-            <div
-              data-testid="sidebar-app-update-error"
-              style={errorTooltipPosition}
-              className="fixed z-system-popover w-[260px] -translate-y-1/2 rounded-lg border border-red-500/20 bg-popover px-3 py-2 text-xs font-medium leading-5 text-red-500 shadow-[0_12px_28px_rgba(0,0,0,0.18)] [overflow-wrap:anywhere]"
-            >
-              {error}
-            </div>,
-            document.body
-          )
-        : null}
-    </div>
-  )
-}
-
 function SidebarReleaseNotesCard({
   releaseNotes,
   onOpen,
@@ -1405,33 +1293,6 @@ function SidebarReleaseNotesCard({
         <X className="h-4 w-4" aria-hidden="true" />
       </button>
     </aside>
-  )
-}
-
-function calculateSidebarUpdateDownloadPercent(
-  downloadedBytes: number,
-  totalBytes: number | null
-): number | null {
-  if (!totalBytes || totalBytes <= 0) return null
-  return Math.min(100, Math.round((downloadedBytes / totalBytes) * 100))
-}
-
-function SidebarUpdateDownloadProgress({ progress }: { progress: number }) {
-  return (
-    <span
-      data-testid="sidebar-app-update-download-progress"
-      role="progressbar"
-      aria-label={`Update download ${progress}%`}
-      aria-valuemin={0}
-      aria-valuemax={100}
-      aria-valuenow={progress}
-      className="flex h-4 w-4 items-center justify-center rounded-full"
-      style={{
-        background: `conic-gradient(rgb(var(--color-primary)) ${progress}%, rgb(var(--color-sidebar-hover)) 0)`,
-      }}
-    >
-      <span className="h-2 w-2 rounded-full bg-[rgb(var(--color-sidebar))]" />
-    </span>
   )
 }
 
@@ -3060,6 +2921,7 @@ export function DesktopSidebar({
   devices,
   cloudWorkStatus,
   runtimeWork,
+  gitCloneOperations = [],
   currentRuntimeTask,
   splitGroupMemberships = EMPTY_SPLIT_GROUP_MEMBERSHIPS,
   standaloneDeviceId,
@@ -3107,7 +2969,12 @@ export function DesktopSidebar({
   onGetDeviceHomeDirectory,
   onListDeviceDirectories,
   onCreateDeviceDirectory,
+  onCloneGitRepository,
+  onStartGitCloneProject,
+  onRetryGitCloneOperation,
+  onDismissGitCloneOperation,
   projectSpaceApis,
+  models = [],
   onOpenSettings,
   onLogout,
   collapsed = false,
@@ -3122,6 +2989,7 @@ export function DesktopSidebar({
   onPointerLeave,
   onToggleSidebar,
 }: DesktopSidebarProps) {
+  const localProjectPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
   const appearanceContext = useOptionalAppearance()
   const appearance = appearanceContext?.appearance ?? defaultAppearance
   const background = getWorkbenchBackground(appearance, appearanceContext?.resolvedMode ?? 'light')
@@ -3135,26 +3003,12 @@ export function DesktopSidebar({
   const resizing = resizingProp ?? internalResizable.resizing
   const handleResizeStart = onResizeStartProp ?? internalResizable.handleResizeStart
   const showCloudConnectionEntry = isCloudConnectionUiAvailable()
-  const cloud = useOptionalCloudConnection()
-  const defaultWegentBackendUrl = getRuntimeConfig().wegentBackendUrl
-  const usesCloudAccount = showCloudConnectionEntry && Boolean(defaultWegentBackendUrl)
-  const requiresCloudLogin = usesCloudAccount && !cloud.isConnected
   const platform = getPlatform()
   const usesOverlayTitlebar = false
   const isWindowsTauri = isTauriRuntime() && platform === 'win'
   const appUpdate = useOptionalAppUpdate()
-  const hasAvailableAppUpdate = Boolean(appUpdate?.availableUpdate)
   const installedReleaseNotes = appUpdate?.installedReleaseNotes ?? null
   const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
-  const sidebarAccount = requiresCloudLogin
-    ? {
-        label: t('workbench.account_cloud_title', 'Wegent 账户'),
-        detail: t('workbench.account_not_logged_in', '未登录'),
-      }
-    : getSidebarAccountSummary(
-        usesCloudAccount ? cloud.user : user,
-        t('workbench.account_fallback', '当前账号')
-      )
 
   const storageScope = getDesktopSidebarStorageScope(user)
   const projectsExpandedStorageKey = getDesktopSidebarStorageKey(storageScope, 'projectsExpanded')
@@ -3165,10 +3019,9 @@ export function DesktopSidebar({
     'expandedProjectIds'
   )
   const storageScopeRef = useRef(storageScope)
-  const [settingsMenuOpen, setSettingsMenuOpen] = useState(false)
   const [releaseNotesDialogOpen, setReleaseNotesDialogOpen] = useState(false)
-  const [accountCloudDialogOpen, setAccountCloudDialogOpen] = useState(false)
   const [imNotificationMenuOpen, setImNotificationMenuOpen] = useState(false)
+  const settingsMenuRef = useRef<HTMLDivElement>(null)
   const [archiveSectionMode, setArchiveSectionMode] = useState<'projects' | 'chats' | null>(null)
   const [forceArchiveSectionMode, setForceArchiveSectionMode] = useState<
     'projects' | 'chats' | null
@@ -3182,7 +3035,6 @@ export function DesktopSidebar({
   const [isArchivingProjectSection, setIsArchivingProjectSection] = useState(false)
   const [isArchivingChatSection, setIsArchivingChatSection] = useState(false)
   const [isArchivingPriority, setIsArchivingPriority] = useState(false)
-  const settingsMenuRef = useRef<HTMLDivElement>(null)
   const [projectCreateDialogOpen, setProjectCreateDialogOpen] = useState(false)
   const [standaloneWorkspaceDialogMode, setStandaloneWorkspaceDialogMode] =
     useState<StandaloneWorkspaceDialogMode | null>(null)
@@ -3705,6 +3557,23 @@ export function DesktopSidebar({
   }
 
   useEffect(() => {
+    if (!imNotificationMenuOpen) return
+
+    const handleOutsidePointer = (event: globalThis.MouseEvent | globalThis.PointerEvent) => {
+      if (!settingsMenuRef.current?.contains(event.target as Node)) {
+        setImNotificationMenuOpen(false)
+      }
+    }
+
+    document.addEventListener('pointerdown', handleOutsidePointer)
+    document.addEventListener('mousedown', handleOutsidePointer)
+    return () => {
+      document.removeEventListener('pointerdown', handleOutsidePointer)
+      document.removeEventListener('mousedown', handleOutsidePointer)
+    }
+  }, [imNotificationMenuOpen])
+
+  useEffect(() => {
     if (selectedRuntimeProjectId === null || !selectedRuntimeProjectAutoExpandKey) return
 
     const scopedAutoExpandKey = `${storageScope}:${selectedRuntimeProjectAutoExpandKey}`
@@ -3779,27 +3648,6 @@ export function DesktopSidebar({
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [priorityFilterShortcut, togglePriorityFilter])
-
-  useEffect(() => {
-    if (!settingsMenuOpen && !imNotificationMenuOpen) {
-      return
-    }
-
-    const handleOutsidePointer = (event: globalThis.MouseEvent | globalThis.PointerEvent) => {
-      if (!settingsMenuRef.current?.contains(event.target as Node)) {
-        setSettingsMenuOpen(false)
-        setImNotificationMenuOpen(false)
-      }
-    }
-
-    document.addEventListener('pointerdown', handleOutsidePointer)
-    document.addEventListener('mousedown', handleOutsidePointer)
-
-    return () => {
-      document.removeEventListener('pointerdown', handleOutsidePointer)
-      document.removeEventListener('mousedown', handleOutsidePointer)
-    }
-  }, [imNotificationMenuOpen, settingsMenuOpen])
 
   useEffect(() => {
     if (!currentRuntimeTask) return
@@ -3963,11 +3811,17 @@ export function DesktopSidebar({
               />
               {SHOW_PLUGINS_NAVIGATION && (
                 <DesktopSidebarNavItem
-                  icon={Sparkles}
+                  icon={Plug}
                   label={t('workbench.plugins', '插件')}
                   testId="plugins-button"
                   selected={activeItem === 'plugins'}
                   onClick={onOpenPlugins}
+                  onPointerEnter={() => {
+                    if (!isTauriRuntime()) return
+                    void import('@/components/plugins/workspace/prefetchPluginsWorkspace').then(
+                      module => module.prefetchPluginsWorkspace()
+                    )
+                  }}
                 />
               )}
               {experimentalFeaturesEnabled && (
@@ -4219,7 +4073,7 @@ export function DesktopSidebar({
                     <DesktopSidebarSectionHeader
                       title={t('workbench.projects', '项目')}
                       expanded={displayedProjectsExpanded}
-                      hasContent={sidebarProjects.length > 0}
+                      hasContent={sidebarProjects.length > 0 || gitCloneOperations.length > 0}
                       toggleTestId="projects-section-toggle"
                       iconTestId="projects-section-chevron-right"
                       onToggle={() => setProjectsExpanded(expanded => !expanded)}
@@ -4352,78 +4206,137 @@ export function DesktopSidebar({
                       </div>,
                       document.body
                     )}
-                  {displayedProjectsExpanded && showEmptyProjectCreateAction && (
-                    <DesktopSidebarNavItem
-                      icon={Plus}
-                      label={t('workbench.new_project', '新建项目')}
-                      testId="projects-empty-create-button"
-                      onClick={openProjectCreateDialog}
-                    />
-                  )}
-                  {displayedProjectsExpanded && sidebarProjects.length > 0 && (
-                    <SidebarSortableList
-                      testId="runtime-project-sortable-list"
-                      className="space-y-1"
-                      items={regularSortableProjects}
-                      getId={({ project, runtimeProjectWork }) =>
-                        runtimeProjectWork
-                          ? `${sidebarStateDeviceId || runtimeProjectWork.project.stateDeviceId || 'device'}:${getRuntimeProjectSidebarStateKey(runtimeProjectWork.project)}`
-                          : `project:${project.id}`
-                      }
-                      getLabel={({ project }) => project.name}
-                      canDrag={({ runtimeProjectWork }) =>
-                        Boolean(runtimeProjectWork?.project.key && onReorderRuntimeProjects)
-                      }
-                      onMove={async (moved, before) => {
-                        const movedRuntimeProject = moved.runtimeProjectWork
-                        if (!movedRuntimeProject || !onReorderRuntimeProjects) {
-                          throw new Error('Runtime project ordering is unavailable')
-                        }
-                        const request = getRuntimeProjectReorderRequest(
-                          movedRuntimeProject,
-                          before?.runtimeProjectWork,
-                          sidebarStateDeviceId
-                        )
-                        if (!request) throw new Error('Runtime project ordering is unavailable')
-                        await onReorderRuntimeProjects(request)
-                      }}
-                      renderItem={({ project, runtimeProjectWork }) => (
-                        <ProjectItem
-                          project={project}
-                          expanded={displayedExpandedProjectIds.has(project.id)}
-                          localHarnessSessions={
-                            localHarnessSessionsByProjectId.get(project.id) ?? []
-                          }
-                          activeLocalHarnessSessionId={activeLocalHarnessSessionId}
-                          devices={devices}
-                          runtimeProjectWork={runtimeProjectWork}
-                          currentRuntimeTask={currentRuntimeTask}
-                          splitGroupMemberships={splitGroupMemberships}
-                          unreadTaskKeys={visibleUnreadRuntimeTaskKeys}
-                          imNotificationSettings={imNotificationSettings}
-                          showDeviceMarker={false}
-                          sidebarStateDeviceId={sidebarStateDeviceId}
-                          onToggleProject={handleToggleProject}
-                          onStartNewProjectChat={onStartNewProjectChat}
-                          onRemoveProject={onRemoveProject}
-                          onCreatePermanentWorktree={onCreatePermanentWorktree}
-                          onReorderRuntimeProjects={onReorderRuntimeProjects}
-                          onSetRuntimeProjectPinned={onSetRuntimeProjectPinned}
-                          onSetRuntimeProjectAppearance={onSetRuntimeProjectAppearance}
-                          onReorderRuntimeProjectTasks={onReorderRuntimeProjectTasks}
-                          onSetRuntimeTaskPinned={onSetRuntimeTaskPinned}
-                          onRenameProject={openProjectEditor}
-                          onOpenRuntimeTask={onOpenRuntimeTask}
-                          onMarkRuntimeTaskRead={onMarkRuntimeTaskRead}
-                          onRenameRuntimeTask={onRenameRuntimeTask}
-                          onArchiveRuntimeTask={onArchiveRuntimeTask}
-                          onArchiveProjectConversations={onArchiveProjectConversations}
-                          onToggleRuntimeTaskNotification={onToggleRuntimeTaskNotification}
-                          onOpenLocalHarnessSession={onOpenLocalHarnessSession}
-                          onCloseLocalHarnessSession={onCloseLocalHarnessSession}
+                  {displayedProjectsExpanded && (
+                    <>
+                      {showEmptyProjectCreateAction && gitCloneOperations.length === 0 && (
+                        <DesktopSidebarNavItem
+                          icon={Plus}
+                          label={t('workbench.new_project', '新建项目')}
+                          testId="projects-empty-create-button"
+                          onClick={openProjectCreateDialog}
                         />
                       )}
-                    />
+                      {gitCloneOperations.length > 0 && (
+                        <div
+                          data-testid="git-clone-project-operations"
+                          className="mb-1 space-y-0.5"
+                        >
+                          {gitCloneOperations.map(operation => (
+                            <div
+                              key={operation.id}
+                              data-testid={`git-clone-project-operation-${operation.id}`}
+                              className="flex min-h-[30px] items-center gap-2 rounded-[10px] px-2.5 text-sm text-[rgb(var(--color-sidebar-text-primary))]"
+                              title={operation.error || operation.targetPath}
+                            >
+                              {operation.status !== 'failed' ? (
+                                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+                              ) : (
+                                <span className="h-2 w-2 shrink-0 rounded-full bg-red-500" />
+                              )}
+                              <span className="min-w-0 flex-1 truncate">{operation.name}</span>
+                              <span className="shrink-0 text-xs text-[rgb(var(--color-sidebar-text-muted))]">
+                                {operation.status === 'cloning'
+                                  ? t('workbench.remote_project_git_cloning', '克隆中')
+                                  : operation.status === 'opening'
+                                    ? t('workbench.remote_project_git_opening', '添加中')
+                                    : operation.failureReason === 'executor-offline'
+                                      ? t('workbench.remote_project_device_offline', '设备离线')
+                                      : operation.failureStage === 'open'
+                                        ? t('workbench.remote_project_git_open_failed', '添加失败')
+                                        : t('workbench.remote_project_git_failed', '克隆失败')}
+                              </span>
+                              {operation.status === 'failed' && (
+                                <>
+                                  <button
+                                    type="button"
+                                    data-testid={`retry-git-clone-project-${operation.id}`}
+                                    onClick={() => onRetryGitCloneOperation?.(operation)}
+                                    className="flex h-7 w-7 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
+                                    aria-label={t('workbench.retry', '重试')}
+                                  >
+                                    <RotateCw className="h-3.5 w-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    data-testid={`dismiss-git-clone-project-${operation.id}`}
+                                    onClick={() => onDismissGitCloneOperation?.(operation.id)}
+                                    className="flex h-7 w-7 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
+                                    aria-label={t('workbench.remove', '移除')}
+                                  >
+                                    <X className="h-3.5 w-3.5" />
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {sidebarProjects.length > 0 && (
+                        <SidebarSortableList
+                          testId="runtime-project-sortable-list"
+                          className="space-y-1"
+                          items={regularSortableProjects}
+                          getId={({ project, runtimeProjectWork }) =>
+                            runtimeProjectWork
+                              ? `${sidebarStateDeviceId || runtimeProjectWork.project.stateDeviceId || 'device'}:${getRuntimeProjectSidebarStateKey(runtimeProjectWork.project)}`
+                              : `project:${project.id}`
+                          }
+                          getLabel={({ project }) => project.name}
+                          canDrag={({ runtimeProjectWork }) =>
+                            Boolean(runtimeProjectWork?.project.key && onReorderRuntimeProjects)
+                          }
+                          onMove={async (moved, before) => {
+                            const movedRuntimeProject = moved.runtimeProjectWork
+                            if (!movedRuntimeProject || !onReorderRuntimeProjects) {
+                              throw new Error('Runtime project ordering is unavailable')
+                            }
+                            const request = getRuntimeProjectReorderRequest(
+                              movedRuntimeProject,
+                              before?.runtimeProjectWork,
+                              sidebarStateDeviceId
+                            )
+                            if (!request) throw new Error('Runtime project ordering is unavailable')
+                            await onReorderRuntimeProjects(request)
+                          }}
+                          renderItem={({ project, runtimeProjectWork }) => (
+                            <ProjectItem
+                              project={project}
+                              expanded={displayedExpandedProjectIds.has(project.id)}
+                              localHarnessSessions={
+                                localHarnessSessionsByProjectId.get(project.id) ?? []
+                              }
+                              activeLocalHarnessSessionId={activeLocalHarnessSessionId}
+                              devices={devices}
+                              runtimeProjectWork={runtimeProjectWork}
+                              currentRuntimeTask={currentRuntimeTask}
+                              splitGroupMemberships={splitGroupMemberships}
+                              unreadTaskKeys={visibleUnreadRuntimeTaskKeys}
+                              imNotificationSettings={imNotificationSettings}
+                              showDeviceMarker={false}
+                              sidebarStateDeviceId={sidebarStateDeviceId}
+                              onToggleProject={handleToggleProject}
+                              onStartNewProjectChat={onStartNewProjectChat}
+                              onRemoveProject={onRemoveProject}
+                              onCreatePermanentWorktree={onCreatePermanentWorktree}
+                              onReorderRuntimeProjects={onReorderRuntimeProjects}
+                              onSetRuntimeProjectPinned={onSetRuntimeProjectPinned}
+                              onSetRuntimeProjectAppearance={onSetRuntimeProjectAppearance}
+                              onReorderRuntimeProjectTasks={onReorderRuntimeProjectTasks}
+                              onSetRuntimeTaskPinned={onSetRuntimeTaskPinned}
+                              onRenameProject={openProjectEditor}
+                              onOpenRuntimeTask={onOpenRuntimeTask}
+                              onMarkRuntimeTaskRead={onMarkRuntimeTaskRead}
+                              onRenameRuntimeTask={onRenameRuntimeTask}
+                              onArchiveRuntimeTask={onArchiveRuntimeTask}
+                              onArchiveProjectConversations={onArchiveProjectConversations}
+                              onToggleRuntimeTaskNotification={onToggleRuntimeTaskNotification}
+                              onOpenLocalHarnessSession={onOpenLocalHarnessSession}
+                              onCloseLocalHarnessSession={onCloseLocalHarnessSession}
+                            />
+                          )}
+                        />
+                      )}
+                    </>
                   )}
                 </section>
 
@@ -4584,123 +4497,42 @@ export function DesktopSidebar({
             />
           )}
 
-          <div ref={settingsMenuRef} className="group/account relative shrink-0">
-            <div className="relative flex h-[60px] items-center rounded-[10px] transition-colors group-hover/account:bg-[rgb(var(--color-sidebar-hover))] group-focus-within/account:bg-[rgb(var(--color-sidebar-hover))]">
-              <button
-                type="button"
-                data-testid="settings-button"
-                onClick={() => {
-                  setImNotificationMenuOpen(false)
-                  setSettingsMenuOpen(open => !open)
-                }}
-                className={cn(
-                  'flex h-[60px] min-w-0 flex-1 items-center gap-3 rounded-[10px] py-2 pl-1.5 text-left text-[rgb(var(--color-sidebar-text-primary))]',
-                  hasAvailableAppUpdate ? 'pr-[72px]' : 'pr-10'
-                )}
-                title={t('workbench.account_and_settings', '账户与设置')}
-                aria-label={t('workbench.account_and_settings', '账户与设置')}
-                aria-expanded={settingsMenuOpen}
-              >
-                <span
-                  data-testid="sidebar-account-avatar"
-                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/20 text-primary"
-                >
-                  <UserRound className="h-5 w-5" aria-hidden="true" />
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-base font-semibold leading-[18px]">
-                    {sidebarAccount.label}
-                  </span>
-                  <span className="block truncate text-xs font-medium leading-4 text-[rgb(var(--color-sidebar-text-secondary))]">
-                    {sidebarAccount.detail}
-                  </span>
-                </span>
-              </button>
-              <div className="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-0.5">
-                {hasAvailableAppUpdate && (
-                  <div data-testid="sidebar-app-update-action">
-                    <SidebarAppUpdateButton
-                      onBeforeInstall={() => {
-                        setSettingsMenuOpen(false)
-                        setImNotificationMenuOpen(false)
-                      }}
-                    />
-                  </div>
-                )}
-                {experimentalFeaturesEnabled && (
-                  <GlobalImNotificationBell
-                    devices={devices}
-                    imNotificationSettings={imNotificationSettings}
-                    menuOpen={imNotificationMenuOpen}
-                    menuContainerRef={settingsMenuRef}
-                    onMenuOpenChange={open => {
-                      if (open) setSettingsMenuOpen(false)
-                      setImNotificationMenuOpen(open)
-                    }}
-                    onToggleGlobalImNotification={onToggleGlobalImNotification}
-                    onOpenGlobalImNotificationSettings={onOpenGlobalImNotificationSettings}
-                    onOpenSettings={() => onOpenSettings()}
-                    onAddCloudDevice={() => {
-                      if (onOpenStandaloneFolderProject) {
-                        onOpenStandaloneFolderProject('remote', 'add-device')
-                      } else {
-                        setStandaloneRemoteDialogIntent('add-device')
-                        setStandaloneWorkspaceDialogMode('remote')
-                      }
-                    }}
-                  />
-                )}
-              </div>
-              {settingsMenuOpen && (
-                <DesktopSettingsMenu
-                  user={user}
-                  showLogout={usesCloudAccount ? cloud.isConnected : undefined}
-                  onOpenSettings={() => {
-                    setSettingsMenuOpen(false)
-                    onOpenSettings()
+          <DesktopSidebarAccount
+            user={user}
+            onOpenSettings={onOpenSettings}
+            onLogout={onLogout}
+            containerRef={settingsMenuRef}
+            trailingActions={
+              experimentalFeaturesEnabled ? (
+                <GlobalImNotificationBell
+                  devices={devices}
+                  imNotificationSettings={imNotificationSettings}
+                  menuOpen={imNotificationMenuOpen}
+                  menuContainerRef={settingsMenuRef}
+                  onMenuOpenChange={open => {
+                    setImNotificationMenuOpen(open)
                   }}
-                  onOpenAbout={() => {
-                    setSettingsMenuOpen(false)
-                    onOpenSettings({ settingsPage: 'about' })
-                  }}
-                  onLogin={
-                    requiresCloudLogin
-                      ? () => {
-                          setSettingsMenuOpen(false)
-                          setAccountCloudDialogOpen(true)
-                        }
-                      : undefined
-                  }
-                  onLogout={() => {
-                    setSettingsMenuOpen(false)
-                    if (usesCloudAccount) {
-                      cloud.disconnect()
-                      return
+                  onToggleGlobalImNotification={onToggleGlobalImNotification}
+                  onOpenGlobalImNotificationSettings={onOpenGlobalImNotificationSettings}
+                  onOpenSettings={() => onOpenSettings()}
+                  onAddCloudDevice={() => {
+                    if (onOpenStandaloneFolderProject) {
+                      onOpenStandaloneFolderProject('remote', 'add-device')
+                    } else {
+                      setStandaloneRemoteDialogIntent('add-device')
+                      setStandaloneWorkspaceDialogMode('remote')
                     }
-                    onLogout()
                   }}
                 />
-              )}
-            </div>
-          </div>
+              ) : null
+            }
+          />
 
           {installedReleaseNotes && (
             <AppReleaseNotesDialog
               open={releaseNotesDialogOpen}
               releaseNotes={installedReleaseNotes}
               onClose={() => setReleaseNotesDialogOpen(false)}
-            />
-          )}
-
-          {accountCloudDialogOpen && (
-            <CloudConnectionDialog
-              open
-              onlineCloudDeviceCount={0}
-              onClose={() => setAccountCloudDialogOpen(false)}
-              onOpenSettings={() => {
-                setAccountCloudDialogOpen(false)
-                onOpenSettings({ settingsPage: 'connections' })
-              }}
             />
           )}
 
@@ -4715,6 +4547,8 @@ export function DesktopSidebar({
             onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
             onListDeviceDirectories={onListDeviceDirectories}
             onCreateDeviceDirectory={onCreateDeviceDirectory}
+            onCloneGitRepository={onCloneGitRepository}
+            onStartGitCloneProject={onStartGitCloneProject}
             onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
             onGetRemoteDeviceStartupCommand={onGetRemoteDeviceStartupCommand}
             onRefreshDevices={onRefreshDevices}
@@ -4818,6 +4652,8 @@ export function DesktopSidebar({
             onListDeviceDirectories={onListDeviceDirectories}
             onCreateDeviceDirectory={onCreateDeviceDirectory}
             projectSpaceApis={experimentalFeaturesEnabled ? projectSpaceApis : undefined}
+            models={models}
+            pluginApi={localProjectPluginApi}
             onClose={() => setEditingLocalProject(null)}
             onSave={data =>
               onUpdateLocalRuntimeProject

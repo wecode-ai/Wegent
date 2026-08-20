@@ -4,13 +4,17 @@ import { createContext, StrictMode, useContext, useEffect, useState } from 'reac
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { LOCAL_USER } from '@/api/local/localSession'
+import { resetLocalRuntimeChatStreamsForTests } from '@/api/local/localServices'
 import i18n from '@/i18n'
 import {
   CloudConnectionContext,
   DISCONNECTED_STATE,
   type CloudConnectionContextValue,
 } from '@/features/cloud-connection/CloudConnectionContext'
-import { LOCAL_PLUGIN_SKILLS_CHANGED_EVENT } from '@/features/plugins/pluginTrial'
+import {
+  LOCAL_PLUGIN_SKILLS_CHANGED_EVENT,
+  PLUGIN_TRIAL_QUEUED_EVENT,
+} from '@/features/plugins/pluginTrial'
 import { publishProjectSpaceTaskBindingChanged } from '@/features/todo/projectSpaceSelection'
 import { WorkbenchProvider, type WorkbenchServices } from './WorkbenchProvider'
 import { useWorkbench } from './useWorkbench'
@@ -781,6 +785,11 @@ function RemoteRuntimeCacheProbe() {
       </span>
     </div>
   )
+}
+
+function PluginTrialInputProbe({ testId }: { testId: string }) {
+  const { paneSession } = useWorkbenchProbeSession()
+  return <span data-testid={testId}>{paneSession.input}</span>
 }
 
 function ProjectSendProbe() {
@@ -2057,6 +2066,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     localStorage.clear()
     sessionStorage.clear()
     vi.clearAllMocks()
+    resetLocalRuntimeChatStreamsForTests()
     resetComposerAppsMemory()
     pluginApiMocks.cloudListInstalledPlugins.mockResolvedValue({ items: [] })
     localExecutorMocks.ensureLocalExecutorStarted.mockResolvedValue({
@@ -2365,6 +2375,205 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
 
     await waitFor(() => expect(getComposerApps()).toEqual([]))
+  })
+
+  test('coalesces repeated local plugin change events into one composer refresh', async () => {
+    setTauriRuntime()
+    localExecutorMocks.requestLocalExecutor.mockImplementation(
+      async (method: string, params?: unknown) => {
+        if (method === 'runtime.tasks.list') {
+          return { projects: [], chats: [], totalTasks: 0 }
+        }
+        if (method === 'codex.app_server_request') {
+          const request = params as { method?: string }
+          if (request.method === 'plugin/installed') {
+            return { marketplaces: [] }
+          }
+          if (request.method === 'app/list') {
+            return { data: [], nextCursor: null }
+          }
+        }
+        return {}
+      }
+    )
+
+    renderWorkbench(<RuntimeTaskSkillsProbe />)
+
+    await waitFor(() =>
+      expect(
+        localExecutorMocks.requestLocalExecutor.mock.calls.some(
+          ([method, params]) =>
+            method === 'codex.app_server_request' &&
+            (params as { method?: string }).method === 'plugin/installed'
+        )
+      ).toBe(true)
+    )
+    await new Promise(resolve => window.setTimeout(resolve, 300))
+    localExecutorMocks.requestLocalExecutor.mockClear()
+
+    act(() => {
+      window.dispatchEvent(new Event(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT))
+      window.dispatchEvent(new Event(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT))
+      window.dispatchEvent(new Event(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT))
+    })
+
+    const pluginInstalledRequestCount = () =>
+      localExecutorMocks.requestLocalExecutor.mock.calls.filter(
+        ([method, params]) =>
+          method === 'codex.app_server_request' &&
+          (params as { method?: string }).method === 'plugin/installed'
+      ).length
+    await waitFor(() => expect(pluginInstalledRequestCount()).toBe(2))
+    await new Promise(resolve => window.setTimeout(resolve, 300))
+    expect(pluginInstalledRequestCount()).toBe(2)
+  })
+
+  test('ignores a superseded project plugin load after switching projects', async () => {
+    const alphaLoad = deferred<{ marketplaces: unknown[] }>()
+    let pluginLoadScope: 'alpha' | 'beta' = 'alpha'
+    const installedMarketplace = {
+      name: 'team-market',
+      path: '/tmp/team-market',
+      interface: { displayName: 'Team Market' },
+      plugins: [
+        {
+          name: 'alpha-plugin',
+          id: 'alpha-plugin',
+          installed: true,
+          enabled: false,
+          interface: { displayName: 'Alpha Plugin' },
+        },
+        {
+          name: 'beta-plugin',
+          id: 'beta-plugin',
+          installed: true,
+          enabled: false,
+          interface: { displayName: 'Beta Plugin' },
+        },
+      ],
+    }
+    localExecutorMocks.requestLocalExecutor.mockImplementation(
+      async (method: string, params?: unknown) => {
+        if (method === 'runtime.tasks.list') {
+          return { projects: [], chats: [], totalTasks: 0 }
+        }
+        if (method === 'codex.app_server_request') {
+          const request = params as { method?: string }
+          if (request.method === 'app/list') {
+            return { data: [], nextCursor: null }
+          }
+          if (request.method === 'plugin/installed') {
+            if (pluginLoadScope === 'alpha') return alphaLoad.promise
+            return { marketplaces: [installedMarketplace] }
+          }
+        }
+        return {}
+      }
+    )
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: {
+                id: 7,
+                key: 'project:7',
+                name: 'Alpha',
+                source: 'local_project',
+                aiSettings: {
+                  plugins: [
+                    {
+                      id: 'alpha-plugin@team-market',
+                      pluginName: 'alpha-plugin',
+                      marketplaceId: 'team-market',
+                      displayName: 'Alpha Plugin',
+                    },
+                  ],
+                },
+              },
+              deviceWorkspaces: [
+                {
+                  id: 22,
+                  projectId: 7,
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-alpha',
+                  mapped: true,
+                  available: true,
+                  tasks: [],
+                },
+              ],
+            },
+            {
+              project: {
+                id: 8,
+                key: 'project:8',
+                name: 'Beta',
+                source: 'local_project',
+                aiSettings: {
+                  plugins: [
+                    {
+                      id: 'beta-plugin@team-market',
+                      pluginName: 'beta-plugin',
+                      marketplaceId: 'team-market',
+                      displayName: 'Beta Plugin',
+                    },
+                  ],
+                },
+              },
+              deviceWorkspaces: [
+                {
+                  id: 33,
+                  projectId: 8,
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-beta',
+                  mapped: true,
+                  available: true,
+                  tasks: [],
+                },
+              ],
+            },
+          ],
+          totalTasks: 0,
+        })
+      ),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<ProjectWorkPreferenceProbe />, services)
+
+    await screen.findByText('select project 7 workspace 22')
+    setTauriRuntime()
+    await userEvent.click(screen.getByText('select project 7 workspace 22'))
+    await waitFor(() =>
+      expect(
+        localExecutorMocks.requestLocalExecutor.mock.calls.some(
+          ([method, params]) =>
+            method === 'codex.app_server_request' &&
+            (params as { method?: string }).method === 'plugin/installed'
+        )
+      ).toBe(true)
+    )
+
+    pluginLoadScope = 'beta'
+    await userEvent.click(screen.getByText('select project 8'))
+
+    await waitFor(() =>
+      expect(getComposerApps().map(app => app.id)).toEqual(['plugin:beta-plugin'])
+    )
+
+    alphaLoad.resolve({ marketplaces: [installedMarketplace] })
+    await act(async () => {
+      await alphaLoad.promise
+      await Promise.resolve()
+    })
+
+    expect(getComposerApps().map(app => app.id)).toEqual(['plugin:beta-plugin'])
   })
 
   test('settles a background runtime task while rejecting a stale running snapshot', async () => {
@@ -5734,6 +5943,111 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
+  test('uses local project AI settings for a new conversation', async () => {
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: {
+                id: 7,
+                key: 'project-7',
+                name: 'Wegent',
+                source: 'local_project',
+                aiSettings: {
+                  instructions: 'Run focused project tests.',
+                  modelSelection: {
+                    modelName: 'project-model',
+                    modelType: 'runtime',
+                    options: { reasoning: 'medium' },
+                  },
+                  plugins: [
+                    {
+                      id: 'quality-gate@team-market',
+                      pluginName: 'quality-gate',
+                      marketplaceId: 'team-market',
+                      displayName: 'Quality Gate',
+                    },
+                  ],
+                },
+              },
+              deviceWorkspaces: [
+                {
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-alpha',
+                  mapped: true,
+                  available: true,
+                  tasks: [],
+                },
+              ],
+            },
+          ],
+          totalTasks: 0,
+        })
+      ),
+      createRuntimeTask: vi.fn(async request => ({
+        accepted: true,
+        deviceId: request.deviceId,
+        taskId: request.taskId,
+        workspacePath: request.workspacePath,
+        runtime: 'codex',
+      })),
+      getRuntimeTranscript: vi.fn(async (address: RuntimeTranscriptRequest) => ({
+        taskId: address.taskId,
+        workspacePath: address.workspacePath,
+        runtime: 'codex',
+        messages: [],
+      })),
+    })
+    const services = createWorkbenchServices({
+      modelApi: {
+        listModels: vi.fn().mockResolvedValue({
+          data: [
+            {
+              name: 'project-model',
+              type: 'runtime',
+              provider: 'local',
+              config: {
+                weworkModelKind: 'codex-provider',
+                ui: {
+                  family: 'codex-provider',
+                  reasoningEfforts: ['low', 'medium', 'high'],
+                },
+              },
+            },
+          ],
+        }),
+      },
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    } as Partial<WorkbenchServices>)
+
+    renderWorkbench(<ProjectSendProbe />, services)
+
+    await userEvent.click(await screen.findByText('select project'))
+    await userEvent.click(screen.getByText('set input'))
+    await userEvent.click(screen.getByText('send'))
+
+    await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
+    expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelId: 'project-model',
+        modelType: 'runtime',
+        modelOptions: expect.objectContaining({ reasoning: 'medium' }),
+        projectInstructions: 'Run focused project tests.',
+        projectPlugins: [
+          {
+            id: 'quality-gate@team-market',
+            pluginName: 'quality-gate',
+            marketplaceId: 'team-market',
+            displayName: 'Quality Gate',
+          },
+        ],
+      })
+    )
+  })
+
   test('stores one canonical model identity for selection and execution', async () => {
     const runtimeWorkApi = createRuntimeWorkApiMock({
       createRuntimeTask: vi.fn(async request => ({
@@ -6833,6 +7147,13 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(runtimeWorkApi.openRuntimeWorkspace).not.toHaveBeenCalled()
     await waitFor(() =>
       expect(screen.getByTestId('current-project-name')).toHaveTextContent('Product')
+    )
+    expect(readLastProjectId(1)).toBe(
+      runtimeProjectUiId({
+        key: 'multi-project',
+        stateDeviceId: 'device-1',
+        name: 'Product',
+      })
     )
   })
 
@@ -9870,6 +10191,77 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() => expect(screen.getByTestId('standalone-chat-key')).toHaveTextContent('1'))
     expect(screen.getByTestId('composer-input')).toHaveTextContent('Documents')
     expect(screen.getByTestId('trial-plugin-app')).toHaveTextContent('documents')
+    expect(sessionStorage.getItem('wework:pending-plugin-trial')).toBeNull()
+  })
+
+  test('lets only the active workspace tab consume a queued plugin trial', async () => {
+    const user = { id: 1, user_name: 'alice', email: 'a@b.c' }
+    render(
+      <>
+        <WorkbenchProvider
+          user={user}
+          services={createWorkbenchServices()}
+          consumePluginTrials={false}
+        >
+          <WorkbenchProbeSessionProvider>
+            <PluginTrialInputProbe testId="inactive-plugin-trial-input" />
+          </WorkbenchProbeSessionProvider>
+        </WorkbenchProvider>
+        <WorkbenchProvider user={user} services={createWorkbenchServices()} consumePluginTrials>
+          <WorkbenchProbeSessionProvider>
+            <PluginTrialInputProbe testId="active-plugin-trial-input" />
+          </WorkbenchProbeSessionProvider>
+        </WorkbenchProvider>
+      </>
+    )
+
+    sessionStorage.setItem(
+      'wework:pending-plugin-trial',
+      JSON.stringify({
+        input: '[$Documents](plugin://documents@wegent) ',
+        pluginName: 'Documents',
+        openInNewChat: true,
+      })
+    )
+    act(() => window.dispatchEvent(new Event(PLUGIN_TRIAL_QUEUED_EVENT)))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('active-plugin-trial-input')).toHaveTextContent('Documents')
+    )
+    expect(screen.getByTestId('inactive-plugin-trial-input')).toBeEmptyDOMElement()
+    expect(sessionStorage.getItem('wework:pending-plugin-trial')).toBeNull()
+  })
+
+  test('preserves a queued plugin trial until the workspace tab becomes active', async () => {
+    const user = { id: 1, user_name: 'alice', email: 'a@b.c' }
+    const services = createWorkbenchServices()
+    const renderProvider = (consumePluginTrials: boolean) => (
+      <WorkbenchProvider user={user} services={services} consumePluginTrials={consumePluginTrials}>
+        <WorkbenchProbeSessionProvider>
+          <PluginTrialInputProbe testId="deferred-plugin-trial-input" />
+        </WorkbenchProbeSessionProvider>
+      </WorkbenchProvider>
+    )
+    const view = render(renderProvider(false))
+
+    sessionStorage.setItem(
+      'wework:pending-plugin-trial',
+      JSON.stringify({
+        input: '[$Documents](plugin://documents@wegent) ',
+        pluginName: 'Documents',
+        openInNewChat: true,
+      })
+    )
+    act(() => window.dispatchEvent(new Event(PLUGIN_TRIAL_QUEUED_EVENT)))
+
+    expect(screen.getByTestId('deferred-plugin-trial-input')).toBeEmptyDOMElement()
+    expect(sessionStorage.getItem('wework:pending-plugin-trial')).not.toBeNull()
+
+    view.rerender(renderProvider(true))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('deferred-plugin-trial-input')).toHaveTextContent('Documents')
+    )
     expect(sessionStorage.getItem('wework:pending-plugin-trial')).toBeNull()
   })
 

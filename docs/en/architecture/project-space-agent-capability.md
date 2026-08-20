@@ -9,7 +9,13 @@ Scope: installation, session enablement, Issue-context binding, local offline ac
 ```mermaid
 flowchart LR
     ISSUE[Issue / project conversation] --> GRANT[Session ContextGrant<br/>session_id + space_id + item_id + scopes]
-    GENERIC[Generic task] --> SESSION[Agent Session]
+    GENERIC[Generic task] --> MY_TASKS[My Tasks base membership<br/>local Runtime truth]
+    GENERIC --> ROUTE{Composer project-space selection}
+    ROUTE -->|none selected| DEFAULT_CONTEXT[Default My Tasks context]
+    ROUTE -->|selected| SELECTED[Selected project-space context]
+    DEFAULT_CONTEXT --> SESSION[Agent Session]
+    SELECTED --> SESSION
+    MY_TASKS --> MY_WORK[My Tasks personal projection]
     GRANT --> SESSION
     SESSION --> CLIENT[Agent Harness MCP Client<br/>optional session ContextGrant]
     CLIENT --> ENDPOINT[Persistent Executor loopback MCP Endpoint]
@@ -36,12 +42,15 @@ sequenceDiagram
     participant B as Backend Provider
 
     W->>G: Prepare the local Project-space Provider with the app
-    W->>H: Create Agent Session
+    W->>W: Add the task to its My Tasks base membership
+    W->>W: Resolve Composer project-space selection; use the default My Tasks context when none is selected
+    W->>H: Create Agent Session with optional project-space context
     W->>H: Supply a valid default-enabled transport declaration
     opt Project or Issue conversation
         W->>H: Inject a short-lived ContextGrant
     end
     H->>P: Connect to the persistent MCP Endpoint during Thread startup
+    Note over H,P: Configuration reloads may emit cancelled → starting → ready; cancelled is not a permanent connection failure
     Note over W,G: The Executor started by Wework is the sole lifecycle owner of the Provider and MCP Endpoint
     Note over H,P: Codex is only an MCP Client and no longer creates a stdio MCP child process
     P->>G: Validate connection credentials and the optional ContextGrant
@@ -74,19 +83,21 @@ sequenceDiagram
     P-->>H: MCP tool result
 ```
 
-| Edge                                                 | Code ownership                                                       |
-| ---------------------------------------------------- | -------------------------------------------------------------------- |
-| Wework startup to Local Provider lifecycle           | Wework Tauri local executor; Executor local ProjectSpace provider    |
-| Agent Session to ContextGrant                        | Wework Runtime message metadata; Executor session context registry   |
+| Edge                                                 | Code ownership                                                        |
+| ---------------------------------------------------- | --------------------------------------------------------------------- |
+| Wework startup to Local Provider lifecycle           | Wework Tauri local executor; Executor local ProjectSpace provider     |
+| Generic task to My Tasks base membership             | Wework Runtime Work, `runtimeMyWorkItems`                             |
+| Composer selection to optional project-space context | Wework `WorkItemComposerGuide`, `useWorkbenchCloudProjectContext`     |
+| Agent Session to ContextGrant                        | Wework Runtime message metadata; Executor session context registry    |
 | Agent Session to persistent MCP Endpoint             | Executor Codex adapter; Executor `task_runtime/mcp_http.rs`           |
 | Codex to project-space capability                    | Codex MCP Client; Executor loopback Endpoint                          |
 | Plugin to Codex usage instructions                   | Bundled Wework `wework-space` Skill Plugin                            |
-| Gateway to Local Provider                            | Executor `task_runtime` and local ProjectSpace provider              |
-| Gateway to Backend Provider                          | Executor authenticated Backend ProjectSpace client                   |
+| Gateway to Local Provider                            | Executor `task_runtime` and local ProjectSpace provider               |
+| Gateway to Backend Provider                          | Executor authenticated Backend ProjectSpace client                    |
 | MCP to Delivery lifecycle                            | Executor `task_runtime/mcp.rs`, Delivery API, and local ProjectSpace  |
 | Delivery to current workflow node                    | ContextGrant Runtime address, `LoopItemTaskBinding`, Delivery service |
-| Cloud Agent to Backend MCP                           | Backend `wework_space` MCP                                           |
-| Shared tool contract to every Adapter                | Shared schema, tool names, permission semantics, and contract tests  |
+| Cloud Agent to Backend MCP                           | Backend `wework_space` MCP                                            |
+| Shared tool contract to every Adapter                | Shared schema, tool names, permission semantics, and contract tests   |
 
 Invariants:
 
@@ -95,9 +106,9 @@ Invariants:
 - The Plugin is only the Codex Adapter. Gateway, ContextGrant, and tool contracts must not depend on Codex-specific types.
 - Starting Executor must also start the single persistent loopback MCP Endpoint. Codex app-server may only connect to that Endpoint and must never execute `executor space-mcp-server` to create a stdio child process.
 - The Plugin MCP declaration is the product packaging entry point. Runtime supplies the default-enabled state, actual Executor path, and optional session ContextGrant, so correctness cannot depend on opening the plugin marketplace UI or on asynchronous installation timing.
-- The project-space MCP is enabled by default for every Agent session. Generic tasks remain unbound and may select a project explicitly; project or Issue conversations receive default `space_id/item_id` values and out-of-scope protection through ContextGrant.
+- The project-space MCP is enabled by default for every Agent session. Every generic task first receives mandatory My Tasks base membership; Composer project-space selection only adds project context, while no selection uses the default My Tasks context. Project conversations receive a default `space_id`; Issue conversations receive `space_id + item_id`. Both receive out-of-scope protection through ContextGrant.
 - A ContextGrant is Agent-session scoped and hidden from the model. Its one-hour validity only limits bootstrap of a new MCP session; once accepted, the lease follows the session adapter lifecycle, so a long-running turn is not interrupted and adapter exit revokes access. Model arguments, prompt text, and a global current-project value are never authorization sources.
-- Generic tasks do not bind project context. Project conversations may bind only `space_id`; Issue conversations bind `space_id + item_id`.
+- My Tasks base membership and project-space context are orthogonal dimensions. Base membership is mandatory for every task and provides personal aggregation and offline visibility. Project-space context may be absent or point to one selected project space and supplies the Agent's current context. Clearing a project-space selection only removes the extra context and never removes My Tasks base membership. Project conversations may bind only `space_id`; Issue conversations bind `space_id + item_id`.
 - `get_current_context` returns an explicit unbound result when no context exists. MCP startup failure, missing permission, cloud-project offline, and uncached data are distinct errors.
 - The Gateway rejects explicit `space_id/item_id` outside the ContextGrant scope and never trusts identifiers supplied by the model.
 - Delivery write tools are available only to an Issue session bound to `space_id + item_id + device_id + task_id`. `source_task` and `workflow_node_id` are derived from the ContextGrant and the active `TaskBinding`; the model cannot specify or override them.
@@ -105,7 +116,7 @@ Invariants:
 - Local and cloud Providers expose the same `get_workflow_stage_context` semantics and return the scope-checked input snapshot frozen when the TaskBinding starts; reads never rebuild drifting predecessor data.
 - `create_delivery` chat selection is resolved server-side from the current Issue timeline and supports all messages, the latest N messages, or explicit message IDs; model-supplied message content is never trusted as the result of a selection.
 - Delivery-asset download verifies that the asset belongs to a Delivery visible under the current Issue. Upload and discard operate only on a still-draft Delivery created by the current session. `finalize_delivery` reuses the immutable snapshot boundary and binds the Delivery to the unique workflow node of its source TaskBinding.
-- Before the first model turn, Runtime validates persistent Endpoint readiness, fixed capability configuration, and ContextGrant. It must not call `mcpServerStatus/list` or another inventory API that can actively start, restart, or enumerate MCP servers. Runtime only observes connection status emitted by Codex app-server. A capability connection failure terminates the current execution while the conversation UI preserves both the user message and failed assistant response.
+- Before the first model turn, Runtime validates persistent Endpoint readiness, fixed capability configuration, and ContextGrant. It must not call `mcpServerStatus/list` or another inventory API that can actively start, restart, or enumerate MCP servers. Runtime only observes connection status emitted by Codex app-server. An explicit `failed` or `error` capability status terminates the current execution while the conversation UI preserves both the user message and failed assistant response. An error-free `cancelled` emitted during configuration reload is transitional, so Runtime continues waiting for a subsequent `starting` / `ready` or terminal status and never discards model output that already completed.
 - A bound Issue conversation that reads the current description or attachments follows one deterministic path: `get_current_context` → `get_board_item` → `list_item_attachments` → `read_item_attachment`. It must not use MCP resource listing, a browser, Shell, `curl`, or direct `wegent://` parsing to infer capability availability.
 - Local, remote, and Backend MCP implementations share the same tool schema and contract tests. Providers choose data location without changing tool semantics.
 - After migration, the per-task `ensure_space_mcp_server` service-injection path is removed; two primary paths must not remain.

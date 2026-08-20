@@ -1,6 +1,7 @@
 export const DESKTOP_CHECKPOINTS = [
   'remote-device-onboarding',
   'workspace-tabs',
+  'cloud-project-creation',
   'priority-filter',
   'telemetry-consent',
   'automation-lifecycle',
@@ -8,6 +9,7 @@ export const DESKTOP_CHECKPOINTS = [
   'project-assignment-notification',
   'offline-local-project-space',
   'plugin-auto-update',
+  'project-ai-settings',
   'model-routing',
   'permission-modes',
   'core-task-flow',
@@ -35,6 +37,7 @@ export const DESKTOP_CHECKPOINTS = [
   'claude-runtime',
   'local-file-preview',
   'local-harness',
+  'harness-apps',
   'browser-multi-tabs',
   'embedded-browser',
   'browser-toolbar-actions',

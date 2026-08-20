@@ -11,6 +11,7 @@ import type {
   AccessibleKnowledgeResponse,
   ChunkListResponse,
   ChunkResponse,
+  KnowledgeBaseRetrievalProfile,
   DocumentDetailResponse,
   DocumentContentReadResponse,
   KnowledgeBase,
@@ -442,6 +443,13 @@ export interface KnowledgeConfig {
  */
 export async function getKnowledgeConfig(): Promise<KnowledgeConfig> {
   return apiClient.get<KnowledgeConfig>('/knowledge-bases/config')
+}
+
+/** Get the authenticated-user-readable retrieval baseline for new knowledge bases. */
+export async function getKnowledgeBaseRetrievalProfile(): Promise<KnowledgeBaseRetrievalProfile> {
+  return apiClient.get<KnowledgeBaseRetrievalProfile>(
+    '/knowledge-bases/code-wiki-retrieval-profile'
+  )
 }
 
 /**
