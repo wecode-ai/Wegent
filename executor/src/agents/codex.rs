@@ -2525,9 +2525,7 @@ fn observed_active_turn_id(
             }
             "root_user_message_notification"
         }
-        Some("thread/goal/updated" | "thread/goal/cleared")
-            if active_turn_id.is_some() =>
-        {
+        Some("thread/goal/updated" | "thread/goal/cleared") if active_turn_id.is_some() => {
             "goal_status_notification"
         }
         _ => return None,
