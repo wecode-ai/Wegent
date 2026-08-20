@@ -82,6 +82,15 @@ describe('BrowserHistoryPage', () => {
     expect(screen.getAllByTestId(/browser-history-group-toggle-/)).toHaveLength(2)
   })
 
+  test('keeps loaded entries visible without flashing back to loading', async () => {
+    render(<BrowserHistoryPage />)
+    expect(await screen.findByText('Rust Book')).toBeInTheDocument()
+    await new Promise(resolve => setTimeout(resolve, 400))
+    expect(screen.getByText('Rust Book')).toBeInTheDocument()
+    expect(screen.queryByTestId('browser-history-loading')).not.toBeInTheDocument()
+    expect(searchHistoryMock).toHaveBeenCalledTimes(1)
+  })
+
   test('expands a collapsed day group on toggle', async () => {
     render(<BrowserHistoryPage />)
     await screen.findByText('Rust Book')

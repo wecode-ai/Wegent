@@ -207,6 +207,9 @@ export function BrowserHistoryPage() {
   const generationRef = useRef(0)
 
   useEffect(() => {
+    // Skip the initial mount (searchInput === query): re-scheduling a load for
+    // an unchanged query would flash the loading state over rendered entries.
+    if (searchInput === query) return
     const timer = window.setTimeout(() => {
       setQuery(searchInput)
       setLoading(true)
@@ -214,7 +217,7 @@ export function BrowserHistoryPage() {
       setPaginationError(false)
     }, SEARCH_DEBOUNCE_MS)
     return () => window.clearTimeout(timer)
-  }, [searchInput])
+  }, [searchInput, query])
 
   const loadFirstPage = useCallback(async (text: string) => {
     const generation = ++generationRef.current
