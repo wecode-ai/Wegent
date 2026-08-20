@@ -8,6 +8,7 @@ import {
   useMemo,
   useCallback,
   useEffect,
+  type ReactNode,
   type Dispatch,
   type SetStateAction,
 } from 'react'
@@ -157,6 +158,7 @@ export interface ChatAreaState {
   resetAttachment: () => void
   isAttachmentReadyToSend: boolean
   isUploading: boolean
+  weiboBindingPrompt: ReactNode
 
   // Welcome config
   welcomeConfig: WelcomeConfigResponse | null
@@ -321,6 +323,7 @@ export function useChatAreaState({
     reset: resetAttachment,
     isReadyToSend: isAttachmentReadyToSend,
     isUploading,
+    weiboBindingPrompt,
   } = useMultiAttachment({
     maxAttachments: effectiveMaxAttachments,
     showTruncationToast: isChatShell(selectedTeam),
@@ -633,6 +636,7 @@ export function useChatAreaState({
     resetAttachment,
     isAttachmentReadyToSend,
     isUploading,
+    weiboBindingPrompt,
 
     // Welcome config
     welcomeConfig,

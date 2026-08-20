@@ -1352,9 +1352,15 @@ export async function saveVideoMetadata(
 export async function uploadFile(
   file: File,
   onProgress?: (progress: number) => void,
-  _abortSignal?: AbortSignal,
+  abortSignal?: AbortSignal,
   storagePurpose: 'default' | 'video_reference' = 'default'
 ): Promise<AttachmentResponse> {
+  const extension = getFileExtension(file.name)
+
+  if (storagePurpose === 'default' && isVideoExtension(extension)) {
+    return uploadVideo(file, onProgress, abortSignal)
+  }
+
   return uploadAttachment(file, onProgress, storagePurpose)
 }
 
