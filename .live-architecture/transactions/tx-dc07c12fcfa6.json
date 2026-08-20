@@ -1,0 +1,22 @@
+{
+  "actor": {
+    "id": "codex",
+    "kind": "ai"
+  },
+  "authority": "ai",
+  "base_revision": "A00000049",
+  "changes": [],
+  "created_at": "2026-08-20T09:05:38Z",
+  "id": "tx-dc07c12fcfa6",
+  "intent": "Fix the Wework board refresh type contract so cloud snapshots remain complete while local boards keep their existing split local reads",
+  "read_set": [
+    "arch://wegent/contract/board-snapshot-completeness",
+    "arch://wegent/flow/board-read-snapshot"
+  ],
+  "resolutions": [],
+  "status": "open",
+  "updated_at": "2026-08-20T09:05:47Z",
+  "write_set": [
+    "arch://wegent/flow/board-read-snapshot"
+  ]
+}

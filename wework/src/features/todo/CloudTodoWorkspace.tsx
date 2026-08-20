@@ -338,6 +338,12 @@ type LocatedLoopItem = CloudLoopItem & {
   project_store?: RuntimeProjectSpaceRef['projectStore']
 }
 type LoopItemTaskBinding = Awaited<ReturnType<DeliveryApi['listTaskBindings']>>[number]
+type BoardReadResult = {
+  items: CloudLoopItem[]
+  task_bindings?: LoopItemTaskBinding[]
+  members?: CloudProjectMember[]
+  agents?: ProjectChatAgent[]
+}
 type SelectedTaskBinding = Pick<
   LoopItemTaskBinding,
   'id' | 'device_id' | 'task_id' | 'task_title'
@@ -1905,17 +1911,13 @@ export function CloudTodoWorkspace({
         selectedProject?.task_provider === 'dingtalk_aitable' && services.aitableApi
           ? services.aitableApi.configureProject(selectedProject)
           : Promise.resolve()
-      void prepare
-        .then(() =>
-          selectedProject.location === 'cloud'
-            ? selectedProjectApi.getBoardSnapshot(selectedProjectId)
-            : selectedProjectApi.listLoopItems(selectedProjectId).then(response => ({
-                ...response,
-                task_bindings: null,
-                members: null,
-                agents: null,
-              }))
-        )
+      const readBoard = async (): Promise<BoardReadResult> => {
+        await prepare
+        return selectedProject.location === 'cloud'
+          ? selectedProjectApi.getBoardSnapshot(selectedProjectId)
+          : selectedProjectApi.listLoopItems(selectedProjectId)
+      }
+      void readBoard()
         .then(response => {
           if (!active) return
           setDingtalkAuthPrompt(false)
