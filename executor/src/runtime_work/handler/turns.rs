@@ -830,7 +830,7 @@ impl RuntimeWorkRpcHandler {
                 );
                 let _ = mapper_handle.await;
                 handler.persist_and_clear_active_codex_transcript(&turn_local_task_id, "cancelled");
-                handler.finish_local_task(&turn_local_task_id, execution_id, None, "cancelled");
+                handler.settle_cancelled_local_task_execution(&turn_local_task_id, execution_id);
                 handler.clear_active_codex_turn(&turn_local_task_id, execution_id);
                 handler.mark_thread_event_routes_idle_for_local_task(&turn_local_task_id);
                 handler.clear_active_request_user_input(&turn_local_task_id, execution_id);

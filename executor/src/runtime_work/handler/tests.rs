@@ -417,6 +417,81 @@ async fn stopped_turn_guard_acknowledges_scope_exit() {
 }
 
 #[tokio::test]
+async fn runtime_terminal_cancellation_settles_execution_after_stop_request_times_out() {
+    let root =
+        temp_runtime_work_index_path("stopped-turn-final-consistency").with_extension("directory");
+    let source = root.join("source");
+    let managed_root = root.join("workspace/worktrees");
+    initialize_test_repository(&source);
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(root.join("runtime-work/index.json"));
+    handler.worktrees = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
+    handler
+        .worktrees
+        .update_settings(WorktreeSettingsPatch {
+            worktree_root: Some(managed_root.display().to_string()),
+            ..WorktreeSettingsPatch::default()
+        })
+        .unwrap();
+    let worktree = handler
+        .worktrees
+        .prepare(&source, "task-1", None, false)
+        .unwrap();
+    handler.upsert_local_task(RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        worktree.path.clone(),
+        "Task".to_owned(),
+    ));
+    let (cancel_tx, cancel_rx) = oneshot::channel();
+    let (stopped_tx, stopped_rx) = oneshot::channel();
+    let execution_id = handler
+        .start_local_task_execution(
+            "task-1".to_owned(),
+            Some(&worktree.path),
+            cancel_tx,
+            stopped_rx,
+        )
+        .expect("local execution should start");
+    let _stopped_sender = stopped_tx;
+
+    assert!(
+        !handler
+            .abort_active_turn_with_timeout("task-1", Duration::from_millis(20))
+            .await,
+        "the stop request should time out while the turn scope remains active"
+    );
+    tokio::time::timeout(Duration::from_secs(1), cancel_rx)
+        .await
+        .expect("the stop attempt should send cancellation")
+        .expect("the runtime cancellation receiver should remain available");
+    assert!(handler.is_active_local_task("task-1"));
+
+    handler.settle_cancelled_local_task_execution("task-1", execution_id);
+
+    assert!(
+        !handler.is_active_local_task("task-1"),
+        "the runtime terminal result must settle stale active state without another stop request"
+    );
+    let task = handler
+        .store
+        .get_task("task-1")
+        .expect("the stopped task should remain persisted");
+    assert_eq!(task.status, "cancelled");
+    assert!(!task.running);
+    assert!(task.completed_at.is_some());
+    let restarted = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
+    assert!(
+        restarted
+            .reconcile()
+            .expect("restart reconciliation should succeed")
+            .iter()
+            .all(|outcome| !outcome.interrupted_execution),
+        "the runtime terminal result must clear durable execution evidence"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
 async fn unarchive_restores_managed_worktree_before_reactivating_task() {
     let root =
         temp_runtime_work_index_path("unarchive-worktree-restore").with_extension("directory");

@@ -45,6 +45,11 @@ from app.api.ws.events import ServerEvents
 from app.api.ws.local_task_responses import (
     LocalTaskResponsesHandler,
     emit_response_api_event,
+    is_runtime_terminal_event_type,
+    is_terminal_event,
+    local_task_terminal_status,
+    runtime_subtask_id,
+    runtime_terminal_event,
 )
 from app.api.ws.wework_runtime_namespace import (
     PROJECT_CHAT_AGENT_CHUNK_EVENT,
@@ -2274,7 +2279,119 @@ class DeviceNamespace(socketio.AsyncNamespace):
             device_id=device_id,
             payload=payload["payload"],
         )
+        await self._notify_runtime_event(
+            user_id=user_id,
+            device_id=device_id,
+            payload=payload["payload"],
+        )
         return {"success": True}
+
+    async def _notify_runtime_event(
+        self,
+        *,
+        user_id: int,
+        device_id: str,
+        payload: dict[str, Any],
+    ) -> None:
+        """Best-effort IM delivery for one terminal native Runtime event."""
+
+        source = payload.get("source")
+        source_name = source.get("source") if isinstance(source, dict) else None
+        if source_name == "im":
+            return
+
+        local_task_id = str(payload.get("taskId") or "").strip()
+        event_type = str(payload.get("event_type") or "").strip()
+        if (
+            not local_task_id
+            or not event_type
+            or not is_runtime_terminal_event_type(event_type)
+        ):
+            return
+
+        event_data = payload.get("data")
+        event_data = event_data if isinstance(event_data, dict) else {}
+        subtask_id = runtime_subtask_id(payload, device_id, local_task_id)
+        event = runtime_terminal_event(
+            event_type=event_type,
+            event_data=event_data,
+            subtask_id=subtask_id,
+        ) or self._local_task_responses.execution_event(
+            event_type=event_type,
+            event_data=event_data,
+            subtask_id=subtask_id,
+            message_id=None,
+        )
+        if event is None or not is_terminal_event(event):
+            return
+
+        status = local_task_terminal_status(event)
+        result = event.result if isinstance(event.result, dict) else {}
+        content = str(result.get("value") or event.error or "")
+        if status == "COMPLETED" and not content.strip():
+            logger.info(
+                "[RuntimeTaskNotification] Skipped empty Runtime reply: "
+                "user_id=%s device_id=%s local_task_id=%s event_type=%s",
+                user_id,
+                device_id,
+                local_task_id,
+                event_type,
+            )
+            return
+
+        title = str(
+            payload.get("taskTitle")
+            or payload.get("task_title")
+            or event_data.get("title")
+            or local_task_id
+        ).strip()
+        try:
+            notification = (
+                await im_notification_dispatcher.send_runtime_task_update_for_user(
+                    user_id=user_id,
+                    address={
+                        "deviceId": device_id,
+                        "localTaskId": local_task_id,
+                    },
+                    title=title or local_task_id,
+                    status=status,
+                    content=content,
+                    source=str(source_name) if source_name else None,
+                )
+            )
+        except Exception:
+            logger.exception(
+                "[RuntimeTaskNotification] Runtime event IM delivery failed: "
+                "user_id=%s device_id=%s local_task_id=%s event_type=%s",
+                user_id,
+                device_id,
+                local_task_id,
+                event_type,
+            )
+            return
+
+        notified = int(notification.get("sent") or 0)
+        results = _summarize_runtime_notification_results(notification)
+        if results and notified <= 0:
+            logger.warning(
+                "[RuntimeTaskNotification] Runtime event was not delivered: "
+                "user_id=%s device_id=%s local_task_id=%s event_type=%s results=%s",
+                user_id,
+                device_id,
+                local_task_id,
+                event_type,
+                results,
+            )
+        else:
+            logger.info(
+                "[RuntimeTaskNotification] Runtime event dispatched: "
+                "user_id=%s device_id=%s local_task_id=%s event_type=%s sent=%s",
+                user_id,
+                device_id,
+                local_task_id,
+                event_type,
+                notified,
+            )
 
     async def _publish_task_completed_event(
         self,

@@ -305,6 +305,30 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         harnessStateValue,
         'Switching away from and back to a Harness app reset its in-memory page state'
       )
+      const taskTabSelector = '[role="tab"][data-tab-kind="task"]'
+      await control.command('click', taskTabSelector)
+      await control.command(
+        'waitFor',
+        '[data-testid="workbench-main-header"] [data-testid="titlebar-main-actions"]',
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await control.command(
+        'waitFor',
+        '[data-testid="workbench-main-header"] [data-testid="toggle-right-workspace-panel-button"]',
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await control.command('click', `[data-testid="workspace-tab-select-${appTabId}"]`)
+      await control.command(
+        'waitFor',
+        `[data-testid="workspace-tab-content-${appTabId}"][aria-hidden="false"]`,
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
       await control.command('click', `[data-testid="workspace-tab-select-${managementTabId}"]`)
       await control.command(
         'waitFor',

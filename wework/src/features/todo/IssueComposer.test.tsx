@@ -74,6 +74,7 @@ async function replaceIssueDescription(value: string) {
   const editor = screen.getByTestId('workspace-issue-description')
   await user.click(editor)
   await user.keyboard('{Control>}a{/Control}{Backspace}')
+  await waitFor(() => expect(editor).toHaveTextContent(''))
   if (value) {
     fireEvent.paste(editor, {
       clipboardData: {
