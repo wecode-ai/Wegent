@@ -44,7 +44,7 @@ def render_selected_knowledge_prompt(
         "- For content questions, search or read evidence only within the sources above.",
         "- Use only the MCP tools belonging to each source's provider; do not translate the selection into a cross-provider query.",
         "- A source without resource children selects the whole knowledge base.",
-        "- For a folder resource, honor include_descendants exactly; when omitted, stay within the provider-native selected folder scope without broadening it.",
+        "- A folder resource selects the entire folder subtree; keep discovery within that subtree.",
         "- For a document resource, read that exact document before using broader search.",
         "- Use knowledge_base_id and resource_id as provider-native tool arguments; names, paths, and URLs are context only.",
         "- Do not broaden to other knowledge sources unless the user explicitly authorizes it.",
@@ -116,7 +116,7 @@ def _normalize_ref(
     }
 
 
-def _normalize_resource(value: Any) -> dict[str, str | bool | None] | None:
+def _normalize_resource(value: Any) -> dict[str, str | None] | None:
     if not isinstance(value, dict):
         return None
     scope_type = str(value.get("scope_type") or "").strip()
@@ -131,7 +131,6 @@ def _normalize_resource(value: Any) -> dict[str, str | bool | None] | None:
         "resource_name": _optional_string(value.get("resource_name")),
         "resource_path": _optional_string(value.get("resource_path")),
         "resource_url": _optional_string(value.get("resource_url")),
-        "include_descendants": _optional_bool(value.get("include_descendants")),
     }
 
 
@@ -157,25 +156,15 @@ def _render_source(ref: dict[str, Any]) -> list[str]:
 
 def _render_attributes(attributes: dict[str, Any]) -> str:
     return " ".join(
-        f'{name}="{escape(_attribute_text(value), quote=True)}"'
+        f'{name}="{escape(str(value), quote=True)}"'
         for name, value in attributes.items()
         if value not in (None, "")
     )
 
 
-def _attribute_text(value: Any) -> str:
-    if isinstance(value, bool):
-        return str(value).lower()
-    return str(value)
-
-
 def _optional_string(value: Any) -> str | None:
     text = str(value or "").strip()
     return text or None
-
-
-def _optional_bool(value: Any) -> bool | None:
-    return value if isinstance(value, bool) else None
 
 
 def _normalize_topics(value: Any) -> tuple[str, ...]:

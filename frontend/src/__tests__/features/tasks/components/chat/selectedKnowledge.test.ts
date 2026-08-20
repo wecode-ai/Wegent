@@ -149,30 +149,19 @@ describe('normalizeSelectedExternalKnowledgeRefs', () => {
 })
 
 describe('buildExternalContextId', () => {
-  it('distinguishes scopes and every descendant policy state', () => {
-    const refs = ['organization', 'personal'].flatMap(scope =>
-      [undefined, false, true].map(includeDescendants => ({
-        provider: 'dingtalk',
-        mode: 'explicit' as const,
-        scope,
-        id: 'workspace-1',
-        target_type: 'folder' as const,
-        node_id: 'folder-1',
-        include_descendants: includeDescendants,
-      }))
-    )
+  it('distinguishes provider scopes without a descendant policy dimension', () => {
+    const refs = ['organization', 'personal'].map(scope => ({
+      provider: 'dingtalk',
+      mode: 'explicit' as const,
+      scope,
+      id: 'workspace-1',
+      target_type: 'folder' as const,
+      node_id: 'folder-1',
+    }))
 
     const ids = refs.map(buildExternalContextId)
 
     expect(new Set(ids).size).toBe(refs.length)
-    expect(ids).toContain(
-      'external:dingtalk:explicit:organization:workspace-1:folder:folder-1:provider-default'
-    )
-    expect(ids).toContain(
-      'external:dingtalk:explicit:organization:workspace-1:folder:folder-1:false'
-    )
-    expect(ids).toContain(
-      'external:dingtalk:explicit:organization:workspace-1:folder:folder-1:true'
-    )
+    expect(ids).toContain('external:dingtalk:explicit:organization:workspace-1:folder:folder-1')
   })
 })

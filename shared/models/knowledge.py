@@ -40,7 +40,6 @@ class SelectedKnowledgeResource:
     resource_name: str | None = None
     resource_path: str | None = None
     resource_url: str | None = None
-    include_descendants: bool | None = None
 
 
 @dataclass(frozen=True)

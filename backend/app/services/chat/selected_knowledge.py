@@ -289,6 +289,11 @@ def _enrich_wegent_routing_metadata(
         enriched_refs.append(
             replace(
                 ref,
+                knowledge_base_name=str(
+                    spec.get("name")
+                    or getattr(knowledge_base, "name", "")
+                    or ref.knowledge_base_name
+                ),
                 routing_summary=sanitize_prompt_text(
                     routing_summary,
                     max_len=ROUTING_SUMMARY_MAX_LENGTH,
@@ -471,9 +476,6 @@ def _build_current_wegent_refs(
             else []
         )
         document_ids = _int_values(data.get("document_ids"))
-        include_descendants = (
-            bool(data.get("include_subfolders", True)) if folder_ids else None
-        )
         scope_restricted = bool(data.get("scope_restricted")) or bool(
             folder_ids or document_ids
         )
@@ -485,7 +487,6 @@ def _build_current_wegent_refs(
                 kb_id,
                 folder_ids,
                 document_ids,
-                include_descendants=include_descendants,
             )
             if scope_restricted
             else ()
@@ -494,7 +495,11 @@ def _build_current_wegent_refs(
             SelectedKnowledgeRef(
                 provider="wegent",
                 knowledge_base_id=str(kb_id),
-                knowledge_base_name=str(getattr(context, "name", None) or kb_id),
+                knowledge_base_name=(
+                    ""
+                    if context_type == ContextType.SELECTED_DOCUMENTS.value
+                    else str(getattr(context, "name", None) or kb_id)
+                ),
                 resources=resources,
             )
         )
@@ -535,7 +540,6 @@ def _build_wegent_refs(
             scope_restricted,
             folder_ids,
             document_ids,
-            include_descendants,
         ) = _resolve_wegent_scope(
             request,
             kb_id,
@@ -559,7 +563,6 @@ def _build_wegent_refs(
             kb_id,
             folder_ids,
             document_ids,
-            include_descendants=include_descendants,
         )
         result.append(
             SelectedKnowledgeRef(
@@ -577,8 +580,6 @@ def _load_wegent_resources(
     kb_id: int,
     folder_ids: list[int],
     document_ids: list[int],
-    *,
-    include_descendants: bool | None = None,
 ) -> tuple[SelectedKnowledgeResource, ...]:
     folders = (
         {
@@ -612,7 +613,6 @@ def _load_wegent_resources(
                 scope_type=KnowledgeScopeType.FOLDER,
                 resource_id=str(folder_id),
                 resource_name=folders.get(folder_id, str(folder_id)),
-                include_descendants=include_descendants,
             )
             for folder_id in folder_ids
         ]
@@ -633,7 +633,7 @@ def _resolve_wegent_scope(
     persisted_scope: dict[str, Any],
     *,
     prefer_request_scope: bool,
-) -> tuple[bool, list[int], list[int], bool | None]:
+) -> tuple[bool, list[int], list[int]]:
     if prefer_request_scope:
         for request_scope in request.knowledge_base_scopes or []:
             if request_scope.knowledge_base_id != kb_id:
@@ -642,7 +642,6 @@ def _resolve_wegent_scope(
                 request_scope.scope_restricted,
                 [],
                 _int_values(request_scope.document_ids),
-                None,
             )
 
     folder_ids = _int_values(persisted_scope.get("folderIds"))
@@ -650,7 +649,6 @@ def _resolve_wegent_scope(
         bool(persisted_scope.get("scopeRestricted")),
         folder_ids,
         _int_values(persisted_scope.get("explicitDocumentIds")),
-        (bool(persisted_scope.get("includeSubfolders", True)) if folder_ids else None),
     )
 
 
@@ -693,21 +691,12 @@ def _build_external_refs_from_values(
             continue
         resources: tuple[SelectedKnowledgeResource, ...] = ()
         if scope_type != KnowledgeScopeType.KNOWLEDGE_BASE:
-            include_descendants = None
-            if scope_type == KnowledgeScopeType.FOLDER:
-                raw_include_descendants = value.get(
-                    "include_descendants",
-                    value.get("include_subfolders"),
-                )
-                if isinstance(raw_include_descendants, bool):
-                    include_descendants = raw_include_descendants
             resources = (
                 SelectedKnowledgeResource(
                     scope_type=scope_type,
                     resource_id=(str(resource_id) if resource_id is not None else None),
                     resource_name=value.get("target_name"),
                     resource_url=value.get("resource_url"),
-                    include_descendants=include_descendants,
                 ),
             )
         result.append(

@@ -348,7 +348,6 @@ function toBackendContext(
         node_id: context.external_node_id,
         document_id: context.external_document_id,
         parent_id: context.external_parent_id,
-        include_descendants: context.external_include_descendants,
       },
     }
   }

@@ -217,8 +217,10 @@ def test_selected_wegent_source_includes_bounded_routing_metadata(
         captured_ids.extend(kb_ids)
         return {
             13: SimpleNamespace(
+                name="product-release",
                 json={
                     "spec": {
+                        "name": "产品发布知识库",
                         "summaryEnabled": True,
                         "summary": {
                             "status": "completed",
@@ -233,7 +235,7 @@ def test_selected_wegent_source_includes_bounded_routing_metadata(
                             ],
                         },
                     }
-                }
+                },
             )
         }
 
@@ -248,10 +250,10 @@ def test_selected_wegent_source_includes_bounded_routing_metadata(
     )
     current_contexts = [
         SimpleNamespace(
-            context_type=ContextType.KNOWLEDGE_BASE.value,
+            context_type=ContextType.SELECTED_DOCUMENTS.value,
             status=ContextStatus.READY.value,
-            name="本轮知识",
-            type_data={"knowledge_id": 13},
+            name="Selected Documents (1 files)",
+            type_data={"knowledge_base_id": 13, "document_ids": [9]},
         )
     ]
 
@@ -264,6 +266,8 @@ def test_selected_wegent_source_includes_bounded_routing_metadata(
 
     assert captured_ids == [13]
     assert 'knowledge_base_id="13"' in request.selected_knowledge_prompt
+    assert 'knowledge_base_name="产品发布知识库"' in (request.selected_knowledge_prompt)
+    assert "Selected Documents" not in request.selected_knowledge_prompt
     assert 'routing_summary="产品 发布流程"' in request.selected_knowledge_prompt
     assert 'routing_topics="产品, 发布, 流程, 权限, 协作"' in (
         request.selected_knowledge_prompt
@@ -607,6 +611,8 @@ def test_current_wegent_document_selection_replaces_all_task_refs() -> None:
     assert 'provider="wegent"' in request.selected_knowledge_prompt
     assert 'knowledge_base_id="13"' in request.selected_knowledge_prompt
     assert 'resource_id="9"' in request.selected_knowledge_prompt
+    assert "Selected Documents" not in request.selected_knowledge_prompt
+    assert "knowledge_base_name" not in request.selected_knowledge_prompt
     assert 'knowledge_base_id="12"' not in request.selected_knowledge_prompt
     assert 'knowledge_base_id="task-space"' not in request.selected_knowledge_prompt
 
@@ -839,7 +845,7 @@ def test_restricted_wegent_is_excluded_from_final_native_context() -> None:
     assert 'provider="wegent"' not in request.selected_knowledge_prompt
 
 
-def test_external_folder_preserves_include_descendants_false() -> None:
+def test_external_folder_selects_the_entire_subtree() -> None:
     request = ExecutionRequest(
         external_knowledge_refs=[
             {
@@ -848,7 +854,6 @@ def test_external_folder_preserves_include_descendants_false() -> None:
                 "id": "space-1",
                 "target_type": "folder",
                 "node_id": "folder-1",
-                "include_descendants": False,
             }
         ]
     )
@@ -858,10 +863,13 @@ def test_external_folder_preserves_include_descendants_false() -> None:
     )
 
     assert 'resource_id="folder-1"' in request.selected_knowledge_prompt
-    assert 'include_descendants="false"' in request.selected_knowledge_prompt
+    assert "include_descendants" not in request.selected_knowledge_prompt
+    assert "folder resource selects the entire folder subtree" in (
+        request.selected_knowledge_prompt
+    )
 
 
-def test_current_wegent_folder_preserves_include_subfolders_false() -> None:
+def test_current_wegent_folder_uses_provider_subtree_semantics() -> None:
     request = ExecutionRequest(knowledge_base_ids=[12], is_user_selected_kb=True)
     contexts = [
         SimpleNamespace(
@@ -885,7 +893,10 @@ def test_current_wegent_folder_preserves_include_subfolders_false() -> None:
     )
 
     assert 'resource_id="3"' in request.selected_knowledge_prompt
-    assert 'include_descendants="false"' in request.selected_knowledge_prompt
+    assert "include_descendants" not in request.selected_knowledge_prompt
+    assert "folder resource selects the entire folder subtree" in (
+        request.selected_knowledge_prompt
+    )
 
 
 def test_build_selected_knowledge_refs_groups_resources_by_knowledge_base(
@@ -1054,8 +1065,10 @@ def test_chat_preserves_persisted_folder_and_document_scope() -> None:
         "设计资料",
         "接口约定",
     ]
-    assert 'include_descendants="false"' in request.selected_knowledge_prompt
-    assert "honor include_descendants exactly" in request.selected_knowledge_prompt
+    assert "include_descendants" not in request.selected_knowledge_prompt
+    assert "folder resource selects the entire folder subtree" in (
+        request.selected_knowledge_prompt
+    )
 
 
 def test_workbench_prefers_request_scope_over_whole_task_binding() -> None:
@@ -1193,10 +1206,9 @@ def test_wegent_skill_does_not_broaden_selected_knowledge_queries() -> None:
 
     assert "First, list available knowledge bases" not in skill
     assert 'use `scope="all"` directly' not in skill
-    assert "always includes all descendant folders" not in skill
-    assert "set `include_subfolders`" in skill
-    assert "resource's `include_descendants` value" in skill
-    assert "omit `include_subfolders` to use the Provider default" in skill
+    assert "set `include_subfolders=true`" in skill
+    assert "always includes its entire descendant subtree" in skill
+    assert "include_descendants" not in skill
     assert "Never broaden the request to the whole knowledge base" in skill
 
 

@@ -37,7 +37,7 @@ def test_later_child_selection_can_narrow_existing_whole_knowledge_base() -> Non
     assert merged == [_ref("document", "doc-d1")]
 
 
-def test_normalize_preserves_external_folder_descendant_policy() -> None:
+def test_normalize_drops_external_folder_descendant_policy() -> None:
     refs = normalize_external_knowledge_refs(
         [
             {
@@ -51,4 +51,4 @@ def test_normalize_preserves_external_folder_descendant_policy() -> None:
         ]
     )
 
-    assert refs[0]["include_descendants"] is False
+    assert "include_descendants" not in refs[0]

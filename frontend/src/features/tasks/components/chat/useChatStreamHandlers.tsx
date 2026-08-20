@@ -604,7 +604,6 @@ export function useChatStreamHandlers({
         external_node_id?: string
         external_document_id?: string
         external_parent_id?: string
-        external_include_descendants?: boolean
         video_count?: number
         site?: string | null
         source_url?: string
@@ -688,7 +687,6 @@ export function useChatStreamHandlers({
           external_node_id: ref.node_id,
           external_document_id: ref.document_id,
           external_parent_id: ref.parent_id,
-          external_include_descendants: ref.include_descendants,
         })
       })
 
@@ -1390,7 +1388,6 @@ export function useChatStreamHandlers({
                   node_id: ctx.external_node_id,
                   document_id: ctx.external_document_id,
                   parent_id: ctx.external_parent_id,
-                  include_descendants: ctx.external_include_descendants,
                 },
               })
             }
@@ -1425,7 +1422,6 @@ export function useChatStreamHandlers({
           external_node_id?: string | null
           external_document_id?: string | null
           external_parent_id?: string | null
-          external_include_descendants?: boolean | null
           video_count?: number | null
           site?: string | null
           source_url?: string | null
@@ -1456,7 +1452,6 @@ export function useChatStreamHandlers({
             external_node_id: ctx.external_node_id ?? undefined,
             external_document_id: ctx.external_document_id ?? undefined,
             external_parent_id: ctx.external_parent_id ?? undefined,
-            external_include_descendants: ctx.external_include_descendants ?? undefined,
             video_count: ctx.video_count ?? undefined,
             site: ctx.site ?? undefined,
             source_url: ctx.source_url ?? undefined,

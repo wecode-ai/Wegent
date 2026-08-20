@@ -68,31 +68,6 @@ def test_same_knowledge_base_resources_merge_and_whole_scope_wins() -> None:
     assert whole.refs[0].resources == ()
 
 
-def test_duplicate_folder_scope_merges_include_descendants_with_union_semantics() -> (
-    None
-):
-    folder_only = SelectedKnowledgeResource(
-        scope_type="folder",
-        resource_id="folder-1",
-        include_descendants=False,
-    )
-    folder_tree = SelectedKnowledgeResource(
-        scope_type="folder",
-        resource_id="folder-1",
-        include_descendants=True,
-    )
-
-    context = resolve_selected_knowledge_context(
-        task_refs=[],
-        explicit_refs=[
-            _ref("wegent", "kb-1", folder_only),
-            _ref("wegent", "kb-1", folder_tree),
-        ],
-    )
-
-    assert context.refs[0].resources == (folder_tree,)
-
-
 def test_duplicate_refs_preserve_routing_metadata() -> None:
     first = SelectedKnowledgeRef(
         provider="wegent",

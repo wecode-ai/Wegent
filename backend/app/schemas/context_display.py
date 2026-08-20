@@ -58,7 +58,6 @@ def build_context_display_fields(
             "external_node_id": data.get("node_id"),
             "external_document_id": data.get("document_id"),
             "external_parent_id": data.get("parent_id"),
-            "external_include_descendants": data.get("include_descendants"),
         }
 
     return {}

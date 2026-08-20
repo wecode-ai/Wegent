@@ -81,7 +81,7 @@ You now have access to Wegent Knowledge Base management tools.
 ## Usage Notes
 
 - All operations inherit the current user's permissions
-- For a folder in `<selected_knowledge_sources>`, pass its original ID through `folder_id`/`folder_ids` and set `include_subfolders` to the resource's `include_descendants` value. If `include_descendants` is omitted, omit `include_subfolders` to use the Provider default. Never broaden the request to the whole knowledge base to discover descendants.
+- For a folder in `<selected_knowledge_sources>`, pass its original ID through `folder_id`/`folder_ids` and set `include_subfolders=true`. A selected folder always includes its entire descendant subtree. Never broaden the request to the whole knowledge base to discover descendants.
 - For a selected document, pass its original ID through `document_ids` instead of broadening to the whole knowledge base.
 - After creating or updating documents, indexing happens asynchronously
 - Documents may show status "pending" until indexing completes

@@ -34,7 +34,6 @@ export interface ExternalKnowledgeRef {
   parent_id?: string
   target_name?: string
   resource_url?: string
-  include_descendants?: boolean
 }
 
 /**
