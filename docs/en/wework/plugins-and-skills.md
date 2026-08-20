@@ -22,6 +22,8 @@ Open **+ → Smart apps** from the top tab bar to go directly to **Applications 
 
 For an existing package, choose **Import local package** from the marketplace, or switch to **Installed** and choose **Import package** or drop a ZIP package onto the page. The installation dialog shows the app name, version, description, and required DeepSeek Harness runtime and Node.js versions. If validation fails, Wework reports the package issue without writing it to the local app directory.
 
+The current Wework build bundles DeepSeek Harness Runtime `0.1.0-rc.8`. A Smart app package must declare a compatible `requirements.dsh` value in `plugin-manifest.json`; use `"dsh": "0.1.0-rc.8"` when the package should require the exact bundled runtime.
+
 Choose a Wework model before installation. The model is bound only to that Smart app, so other Smart apps can use different models. After installation, each app shows its version, bound model, and **Installed**, **Running**, or **Failed to start** state; you can change the bound model while the app is stopped. Choose **Open** to start an isolated Harness instance, animate it into the top tab strip, and open it in its own workspace tab. Choose **Stop** to close that tab and reclaim the instance. Enable **Resident** to start the app and open its tab automatically whenever the Wework main window starts.
 
 ## Delete a personal plugin

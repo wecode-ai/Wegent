@@ -7,6 +7,7 @@ mod diagram_image;
 mod embedded_browser;
 #[cfg(target_os = "macos")]
 mod embedded_browser_tls;
+mod execution_environments;
 #[cfg(desktop)]
 mod feedback;
 mod harness_apps;
@@ -5049,6 +5050,7 @@ pub fn run() {
     let app = builder
         .manage(appshots::AppshotState::default())
         .manage(embedded_browser::EmbeddedBrowserState::default())
+        .manage(execution_environments::ExecutionEnvironmentState::default())
         .manage(AppPreferencesWriteState::default())
         .manage(MainWindowLifecycleState::default())
         .manage(LocalWorkspaceOpenState::default())
@@ -5161,6 +5163,8 @@ pub fn run() {
             #[cfg(desktop)]
             storage_maintenance::schedule(app.handle().clone());
             #[cfg(desktop)]
+            execution_environments::setup(app.handle());
+            #[cfg(desktop)]
             if env_flag_enabled(WEBVIEW_DEVTOOLS_ENV) {
                 if let Err(error) = open_main_webview_devtools_impl(app.handle()) {
                     log::warn!("Failed to open Web Inspector from {WEBVIEW_DEVTOOLS_ENV}: {error}");
@@ -5213,6 +5217,9 @@ pub fn run() {
             embedded_browser::embedded_browser_set_agent_control_paused,
             embedded_browser::embedded_browser_set_zoom,
             embedded_browser::embedded_browser_set_bounds,
+            execution_environments::install_execution_environment,
+            execution_environments::list_execution_environments,
+            execution_environments::remove_execution_environment,
             harness_apps::delete_harness_app,
             harness_apps::install_harness_app,
             harness_apps::list_harness_apps,
