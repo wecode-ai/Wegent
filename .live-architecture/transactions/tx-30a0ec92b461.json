@@ -1,4 +1,9 @@
 {
+  "abandoned": {
+    "by": "codex",
+    "reason": "User removed the DWS upgrade capability; the upgrade lifecycle is no longer part of the intended design",
+    "timestamp": "2026-08-20T08:15:31Z"
+  },
   "actor": {
     "id": "codex",
     "kind": "ai"
@@ -13,8 +18,8 @@
     "arch://wegent/flow/issue-runtime-project-space-binding"
   ],
   "resolutions": [],
-  "status": "open",
-  "updated_at": "2026-08-20T07:27:00Z",
+  "status": "abandoned",
+  "updated_at": "2026-08-20T08:15:31Z",
   "write_set": [
     "arch://wegent/flow/dws-runtime-lifecycle"
   ]

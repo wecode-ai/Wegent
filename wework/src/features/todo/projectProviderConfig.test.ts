@@ -38,7 +38,7 @@ describe('parseDingTalkAITableLink', () => {
 })
 
 describe('dingtalkAITableRuntimeContext', () => {
-  it('routes AI Table work to dws with stable project identifiers and no credentials', () => {
+  it('routes AI Table work through project-space tools with stable identifiers', () => {
     const context = dingtalkAITableRuntimeContext({
       id: 'space-1',
       name: 'DingTalk tasks',
@@ -65,10 +65,10 @@ describe('dingtalkAITableRuntimeContext', () => {
       '"named_space_reference": "list_spaces_then_use_that_space_binding"'
     )
     expect(context?.dingtalkAITableProject.value).toContain(
-      '"explicit_dingtalk_search": "allow_dws_search"'
+      '"explicit_dingtalk_search": "allow_provider_search"'
     )
     expect(context?.dingtalkAITableProject.value).toContain('"title_field_id": "field-title"')
-    expect(context?.dingtalkAITableProject.value).toContain('the dws skill')
+    expect(context?.dingtalkAITableProject.value).toContain('use the wework_space tools')
     expect(context?.dingtalkAITableProject.value).toContain(
       'do not silently switch to another table'
     )

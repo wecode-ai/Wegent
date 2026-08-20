@@ -1823,6 +1823,16 @@ esac
             item.metadata["primary_document"]["content"]["result"]["markdown"],
             "seedance2.0 mini\n千问3.8Max\nwan3.0"
         );
+        let fallback = runtime
+            .dws_read_fallback(&project.id, "aitable:AIT:record-1")
+            .unwrap();
+        assert_eq!(
+            fallback["binary_path"],
+            directory.path().join("dws").display().to_string()
+        );
+        assert_eq!(fallback["record_id"], "record-1");
+        assert_eq!(fallback["environment"]["DWS_DISABLE_KEYCHAIN"], "1");
+        assert_eq!(fallback["commands"][0][0], "aitable");
     }
 
     #[cfg(unix)]

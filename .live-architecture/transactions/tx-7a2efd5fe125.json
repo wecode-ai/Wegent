@@ -1,0 +1,23 @@
+{
+  "actor": {
+    "id": "codex",
+    "kind": "ai"
+  },
+  "authority": "ai",
+  "base_revision": "A00000047",
+  "changes": [],
+  "created_at": "2026-08-20T08:17:42Z",
+  "id": "tx-7a2efd5fe125",
+  "intent": "Load a project-space board through one authoritative snapshot request containing items, task bindings, members, and active agents, eliminating first-screen N+1 requests while preserving live refresh semantics",
+  "read_set": [
+    "arch://wegent/flow/board-item-unread-projection",
+    "arch://wegent/flow/issue-runtime-project-space-binding"
+  ],
+  "resolutions": [],
+  "status": "open",
+  "updated_at": "2026-08-20T08:18:37Z",
+  "write_set": [
+    "arch://wegent/contract/board-snapshot-completeness",
+    "arch://wegent/flow/board-read-snapshot"
+  ]
+}

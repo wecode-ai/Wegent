@@ -130,14 +130,14 @@ export function dingtalkAITableRuntimeContext(
     resolution_policy: {
       implicit_reference: 'use_default_target',
       named_space_reference: 'list_spaces_then_use_that_space_binding',
-      explicit_dingtalk_search: 'allow_dws_search',
+      explicit_dingtalk_search: 'allow_provider_search',
       ambiguous_reference: 'ask_or_list_candidates',
       bound_target_failure: 'report_error_without_switching_resources',
     },
   }
   const rules = [
     'The project resource binding above is authoritative.',
-    'For an implicit reference such as "this project" or "my tasks", use the default target IDs directly with the dws skill and its aitable commands. Do not search or list DingTalk bases first.',
+    'For an implicit reference such as "this project" or "my tasks", use the wework_space tools with the bound project and item IDs. Do not search or list DingTalk bases first.',
     "If the user explicitly names another Wework project, use wework_space list_spaces to resolve it, then use that project's provider binding.",
     'Only search DingTalk bases when the user explicitly asks to find an arbitrary DingTalk resource outside the bound Wework project.',
     'Inspect the live table schema before referring to fields. Never guess identifiers or field names.',
@@ -150,7 +150,7 @@ export function dingtalkAITableRuntimeContext(
         ]
       : []),
     'If the bound resource cannot be accessed, report that error and do not silently switch to another table.',
-    'Follow dws confirmation requirements for destructive operations.',
+    'Follow project-space tool confirmation requirements for destructive operations.',
   ]
   return {
     dingtalkAITableProject: {

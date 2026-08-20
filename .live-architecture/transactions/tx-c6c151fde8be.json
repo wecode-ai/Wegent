@@ -1,4 +1,9 @@
 {
+  "abandoned": {
+    "by": "codex",
+    "reason": "Superseded by the user-approved unified project-space read path with bundled DWS only as an explicit fallback",
+    "timestamp": "2026-08-20T08:15:31Z"
+  },
   "actor": {
     "id": "codex",
     "kind": "ai"
@@ -13,8 +18,8 @@
     "arch://wegent/diagnostic/issue-runtime-context-trace"
   ],
   "resolutions": [],
-  "status": "open",
-  "updated_at": "2026-08-20T06:55:24Z",
+  "status": "abandoned",
+  "updated_at": "2026-08-20T08:15:31Z",
   "write_set": [
     "arch://wegent/contract/issue-runtime-current-context",
     "arch://wegent/flow/issue-runtime-project-space-binding"
