@@ -206,6 +206,7 @@ verify_uploaded_artifacts() {
   local dmg_path
   local latest_dmg_url
   local platform
+  local runtime_asset
 
   archive_path="$(find "$OUTPUT_DIR" -maxdepth 1 -type f \
     -name "WeWork_${VERSION}_*.app.tar.gz" -print | sort | tail -1)"
@@ -242,6 +243,16 @@ verify_uploaded_artifacts() {
     fi
     echo "Latest DMG: $latest_dmg_url"
   fi
+  while IFS= read -r runtime_asset; do
+    if ! curl -fsSI -o /dev/null "$UPDATE_BASE_URL/$runtime_asset"; then
+      echo "Runtime asset is not publicly readable: $UPDATE_BASE_URL/$runtime_asset" >&2
+      exit 1
+    fi
+  done < <(
+    node -e \
+      "const m=require(process.argv[1]); for (const a of m.assets) console.log(a.name)" \
+      "$OUTPUT_DIR/release-runtime-assets.json"
+  )
 }
 
 generate_channel_manifests() {
@@ -291,6 +302,17 @@ promote_release_artifacts() {
   find "$build_output_dir" -maxdepth 1 -type f ! -name latest.json \
     -exec cp -f {} "$OUTPUT_DIR/" \;
   cp -f "$build_output_dir/latest.json" "$OUTPUT_DIR/latest.json"
+}
+
+runtime_platform_for_target() {
+  case "$MACOS_BUILD_TARGET" in
+    aarch64-apple-darwin) printf 'macos-arm64\n' ;;
+    x86_64-apple-darwin) printf 'macos-x64\n' ;;
+    *)
+      echo "MinIO releases follow the GitHub per-architecture flow; unsupported target: $MACOS_BUILD_TARGET" >&2
+      exit 1
+      ;;
+  esac
 }
 
 while [ "$#" -gt 0 ]; do
@@ -434,6 +456,7 @@ fi
 
 configure_release_credentials
 wework_configure_internal_updater_key "$PROJECT_DIR" "$UPDATER_KEY_PATH"
+export APPLE_SIGNING_IDENTITY="$MACOS_APP_SIGN_IDENTITY"
 mkdir -p "$OUTPUT_DIR"
 OUTPUT_DIR="$(cd "$OUTPUT_DIR" && pwd)"
 BUILD_OUTPUT_DIR="$(mktemp -d "$OUTPUT_DIR/.build-${VERSION}.XXXXXX")"
@@ -470,12 +493,19 @@ if [ -n "$BRAND_CONFIG" ]; then
 fi
 
 if ! CARGO_TARGET_DIR="$PROJECT_TAURI_TARGET_DIR" \
+  WEWORK_HARNESS_RUNTIME_BASE_URL="$UPDATE_BASE_URL" \
+  WEWORK_EXECUTION_RUNTIME_BASE_URL="$UPDATE_BASE_URL" \
+  VITE_WEWORK_RELEASE_CHANNEL="$CHANNEL" \
   bash "$SCRIPT_DIR/release-mac-app.sh" "${RELEASE_ARGS[@]}"; then
   echo "macOS release build failed; refusing to upload existing artifacts." >&2
   exit 1
 fi
 
 promote_release_artifacts "$BUILD_OUTPUT_DIR"
+node "$SCRIPT_DIR/collect-release-runtime-assets.mjs" \
+  "$OUTPUT_DIR" \
+  "$UPDATE_BASE_URL" \
+  "$(runtime_platform_for_target)"
 generate_channel_manifests
 
 if [ "$UPLOAD" = "true" ]; then

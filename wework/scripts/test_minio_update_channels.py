@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sys
 from pathlib import Path
 from types import ModuleType
 
 import pytest
 
 SCRIPT_DIR = Path(__file__).parent
+sys.path.insert(0, str(SCRIPT_DIR))
 
 
 def load_script(name: str) -> ModuleType:
@@ -150,3 +152,80 @@ def test_stable_versions_sort_after_beta_versions() -> None:
         assert module.version_parts("1.2.3-beta.2") > module.version_parts(
             "1.2.3-beta.1"
         )
+
+
+@pytest.mark.parametrize(
+    "script",
+    (
+        "upload-mac-release-to-s3.py",
+        "upload-windows-release-to-s3.py",
+    ),
+)
+def test_runtime_assets_are_loaded_from_the_release_manifest(
+    script: str, tmp_path: Path
+) -> None:
+    module = load_script(script)
+    harness = tmp_path / "harness-runtime-macos-arm64-fixture.tar.gz"
+    node = tmp_path / "node-runtime-macos-arm64-fixture.tar.gz"
+    harness.write_bytes(b"harness")
+    node.write_bytes(b"node")
+    (tmp_path / "release-runtime-assets.json").write_text(
+        json.dumps(
+            {
+                "assets": [
+                    {"kind": "harness", "name": harness.name},
+                    {"kind": "node", "name": node.name},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert module.load_runtime_assets(tmp_path) == [harness, node]
+
+
+@pytest.mark.parametrize(
+    "script",
+    (
+        "upload-mac-release-to-s3.py",
+        "upload-windows-release-to-s3.py",
+    ),
+)
+def test_runtime_asset_manifest_requires_both_runtime_kinds(
+    script: str, tmp_path: Path
+) -> None:
+    module = load_script(script)
+    (tmp_path / "release-runtime-assets.json").write_text(
+        json.dumps({"assets": [{"kind": "harness", "name": "harness.tar.gz"}]}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit, match="harness and node"):
+        module.load_runtime_assets(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "script",
+    (
+        "upload-mac-release-to-s3.py",
+        "upload-windows-release-to-s3.py",
+    ),
+)
+def test_runtime_asset_manifest_rejects_paths_outside_the_release_directory(
+    script: str, tmp_path: Path
+) -> None:
+    module = load_script(script)
+    (tmp_path / "release-runtime-assets.json").write_text(
+        json.dumps(
+            {
+                "assets": [
+                    {"kind": "harness", "name": "../harness-runtime.tar.gz"},
+                    {"kind": "node", "name": "node-runtime.tar.gz"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit, match="invalid asset name"):
+        module.load_runtime_assets(tmp_path)
