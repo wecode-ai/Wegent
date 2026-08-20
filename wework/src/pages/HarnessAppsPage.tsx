@@ -177,7 +177,7 @@ export function HarnessAppsPage({ importRequested = false }: HarnessAppsPageProp
       proxyToken = launch.proxyToken
       const running = await harnessAppsApi.start(item.id, launch.baseUrl)
       started = true
-      storeHarnessAppProxyToken(item.id, launch.proxyToken)
+      await storeHarnessAppProxyToken(item.id, launch.proxyToken)
       await refresh()
       if (running.webUrl) {
         await launchAnimation
@@ -207,7 +207,7 @@ export function HarnessAppsPage({ importRequested = false }: HarnessAppsPageProp
         if (proxyCanBeRevoked) {
           unregisterHarnessAppTab(item.id)
           closeAppTabs(item.id)
-          takeHarnessAppProxyToken(item.id)
+          await takeHarnessAppProxyToken(item.id)
           try {
             await refresh()
           } catch (refreshError) {
@@ -234,7 +234,7 @@ export function HarnessAppsPage({ importRequested = false }: HarnessAppsPageProp
       await harnessAppsApi.stop(item.id)
       unregisterHarnessAppTab(item.id)
       closeAppTabs(item.id)
-      const token = takeHarnessAppProxyToken(item.id)
+      const token = await takeHarnessAppProxyToken(item.id)
       if (token) await services.localHarnessModelApi?.unregisterProxy(token)
       await refresh()
     } catch (stopError) {

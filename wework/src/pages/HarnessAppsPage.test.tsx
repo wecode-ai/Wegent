@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   register: vi.fn(),
   resolveLaunch: vi.fn(),
   selectTab: vi.fn(),
+  proxyTokens: new Map<string, string>(),
   t: vi.fn((_key: string, fallback?: string) => fallback ?? _key),
   unregister: vi.fn(),
   unregisterProxy: vi.fn(),
@@ -44,6 +45,14 @@ vi.mock('@/features/harness-apps/harnessAppTabs', async importOriginal => {
   return {
     ...original,
     registerHarnessAppTab: mocks.register,
+    storeHarnessAppProxyToken: async (installationId: string, token: string) => {
+      mocks.proxyTokens.set(installationId, token)
+    },
+    takeHarnessAppProxyToken: async (installationId: string) => {
+      const token = mocks.proxyTokens.get(installationId) ?? null
+      mocks.proxyTokens.delete(installationId)
+      return token
+    },
     unregisterHarnessAppTab: mocks.unregister,
   }
 })
@@ -155,7 +164,7 @@ describe('HarnessAppsPage', () => {
     mocks.selectTab.mockReset()
     mocks.unregister.mockReset()
     mocks.unregisterProxy.mockReset()
-    sessionStorage.clear()
+    mocks.proxyTokens.clear()
     workspaceTabs.tabs = []
     mocks.api.stop.mockResolvedValue(undefined)
     mocks.dialogOpen.mockResolvedValue('/tmp/dsh-ops-text-classifier.zip')
@@ -203,9 +212,7 @@ describe('HarnessAppsPage', () => {
         'http://127.0.0.1:41000/v1/harness-router/proxy-token'
       )
     })
-    expect(sessionStorage.getItem(`wework:harness-app:${installed.id}:proxy-token`)).toBe(
-      'proxy-token'
-    )
+    expect(mocks.proxyTokens.get(installed.id)).toBe('proxy-token')
     expect(mocks.register).toHaveBeenCalledWith(running)
     expect(mocks.openTab).toHaveBeenCalledWith('auxiliary', {
       title: running.manifest.displayName,
@@ -262,7 +269,7 @@ describe('HarnessAppsPage', () => {
     await waitFor(() => expect(mocks.api.stop).toHaveBeenCalledWith(installed.id))
     expect(mocks.unregister).toHaveBeenCalledWith(installed.id)
     expect(mocks.unregisterProxy).toHaveBeenCalledWith('proxy-token')
-    expect(sessionStorage.getItem(`wework:harness-app:${installed.id}:proxy-token`)).toBeNull()
+    expect(mocks.proxyTokens.has(installed.id)).toBe(false)
     expect(mocks.openTab).not.toHaveBeenCalled()
   })
 
@@ -280,9 +287,7 @@ describe('HarnessAppsPage', () => {
     await waitFor(() => expect(mocks.api.stop).toHaveBeenCalledWith(installed.id))
     expect(mocks.unregister).not.toHaveBeenCalled()
     expect(mocks.unregisterProxy).not.toHaveBeenCalled()
-    expect(sessionStorage.getItem(`wework:harness-app:${installed.id}:proxy-token`)).toBe(
-      'proxy-token'
-    )
+    expect(mocks.proxyTokens.get(installed.id)).toBe('proxy-token')
     expect(mocks.register).toHaveBeenCalledWith(running)
     expect(mocks.openTab).toHaveBeenCalledWith('auxiliary', {
       title: running.manifest.displayName,
@@ -323,7 +328,7 @@ describe('HarnessAppsPage', () => {
         contentRoute: route,
       },
     ]
-    sessionStorage.setItem(`wework:harness-app:${running.id}:proxy-token`, 'proxy-token')
+    mocks.proxyTokens.set(running.id, 'proxy-token')
     mocks.api.list.mockResolvedValue([running])
 
     render(<HarnessAppsPage />)
@@ -333,7 +338,7 @@ describe('HarnessAppsPage', () => {
     expect(mocks.unregister).toHaveBeenCalledWith(running.id)
     expect(mocks.closeTab).toHaveBeenCalledWith('harness-tab')
     expect(mocks.unregisterProxy).toHaveBeenCalledWith('proxy-token')
-    expect(sessionStorage.getItem(`wework:harness-app:${running.id}:proxy-token`)).toBeNull()
+    expect(mocks.proxyTokens.has(running.id)).toBe(false)
   })
 
   test('closes a mounted app surface after its tab route has changed', async () => {

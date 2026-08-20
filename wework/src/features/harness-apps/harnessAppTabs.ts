@@ -1,5 +1,6 @@
 import type { HarnessAppInstallation } from '@/api/local/harnessApps'
 import type { WorkspaceTabsContextValue } from '@/features/workspace-tabs/workspaceTabsContextValue'
+import { invoke } from '@tauri-apps/api/core'
 import { getWorkbenchPluginRuntime } from '@/plugin-runtime/bootstrap'
 
 const disposers = new Map<string, () => void>()
@@ -54,17 +55,10 @@ export function openHarnessAppTab(
   })
 }
 
-export function harnessAppProxyTokenKey(installationId: string): string {
-  return `wework:harness-app:${installationId}:proxy-token`
+export function takeHarnessAppProxyToken(installationId: string): Promise<string | null> {
+  return invoke<string | null>('take_harness_app_proxy_token', { installationId })
 }
 
-export function takeHarnessAppProxyToken(installationId: string): string | null {
-  const key = harnessAppProxyTokenKey(installationId)
-  const token = sessionStorage.getItem(key)
-  sessionStorage.removeItem(key)
-  return token
-}
-
-export function storeHarnessAppProxyToken(installationId: string, token: string): void {
-  sessionStorage.setItem(harnessAppProxyTokenKey(installationId), token)
+export function storeHarnessAppProxyToken(installationId: string, token: string): Promise<void> {
+  return invoke<void>('store_harness_app_proxy_token', { installationId, token })
 }

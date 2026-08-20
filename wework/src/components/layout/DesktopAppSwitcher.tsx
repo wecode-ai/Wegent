@@ -144,10 +144,14 @@ export function DesktopAppSwitcher({
       }))
   }, [activeApp, cloudConnection?.isConnected, registeredApps, t])
   const displayedAppKey = rollingLabel ? displayedKey : activeApp
-  const selected =
-    options.find(option => option.key === displayedAppKey) ??
+  const selected = options.find(option => option.key === displayedAppKey) ??
     options.find(option => option.key === 'wework') ??
-    options[0]
+    options[0] ?? {
+      key: activeApp,
+      label: activeApp,
+      description: '',
+      disabled: true,
+    }
   const selectedIndex = options.findIndex(option => option.key === selected.key)
   const triggerTestId = testIds?.[selected.key] ?? `chrome-tab-${selected.key}`
 

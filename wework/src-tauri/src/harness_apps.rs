@@ -85,6 +85,7 @@ pub struct HarnessAppPreview {
 
 pub struct HarnessAppRuntimeState {
     children: Mutex<HashMap<String, Child>>,
+    proxy_tokens: Mutex<HashMap<String, String>>,
     registry: Mutex<()>,
     runtime: Mutex<()>,
 }
@@ -93,6 +94,7 @@ impl Default for HarnessAppRuntimeState {
     fn default() -> Self {
         Self {
             children: Mutex::new(HashMap::new()),
+            proxy_tokens: Mutex::new(HashMap::new()),
             registry: Mutex::new(()),
             runtime: Mutex::new(()),
         }
@@ -454,6 +456,37 @@ pub fn update_harness_app(
     let updated = installation.clone();
     write_registry(&app, &installations)?;
     Ok(updated)
+}
+
+#[tauri::command]
+pub fn store_harness_app_proxy_token(
+    state: State<'_, HarnessAppRuntimeState>,
+    installation_id: String,
+    token: String,
+) -> Result<(), String> {
+    let installation_id = installation_id.trim();
+    let token = token.trim();
+    if installation_id.is_empty() || token.is_empty() {
+        return Err("Smart app proxy token registration is invalid".to_string());
+    }
+    state
+        .proxy_tokens
+        .lock()
+        .map_err(|_| "Harness app proxy token lock failed".to_string())?
+        .insert(installation_id.to_string(), token.to_string());
+    Ok(())
+}
+
+#[tauri::command]
+pub fn take_harness_app_proxy_token(
+    state: State<'_, HarnessAppRuntimeState>,
+    installation_id: String,
+) -> Result<Option<String>, String> {
+    Ok(state
+        .proxy_tokens
+        .lock()
+        .map_err(|_| "Harness app proxy token lock failed".to_string())?
+        .remove(installation_id.trim()))
 }
 
 fn free_port() -> Result<u16, String> {
@@ -1035,6 +1068,9 @@ pub fn stop_harness_app(
 }
 
 pub fn shutdown(state: &HarnessAppRuntimeState) {
+    if let Ok(mut proxy_tokens) = state.proxy_tokens.lock() {
+        proxy_tokens.clear();
+    }
     let Ok(mut children) = state.children.lock() else {
         return;
     };

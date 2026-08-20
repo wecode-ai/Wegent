@@ -71,7 +71,7 @@ export function ResidentSmartAppsManager({ enabled }: ResidentSmartAppsManagerPr
             }
           }
           if (!stopped) continue
-          const proxyToken = takeHarnessAppProxyToken(installation.id)
+          const proxyToken = await takeHarnessAppProxyToken(installation.id)
           if (proxyToken) {
             await services.localHarnessModelApi?.unregisterProxy(proxyToken).catch(() => undefined)
           }
@@ -136,13 +136,13 @@ export function ResidentSmartAppsManager({ enabled }: ResidentSmartAppsManagerPr
             if (cancelled) throw new Error('Resident Smart app restoration was cancelled')
             registerHarnessAppTab(running)
             openHarnessAppTab(workspaceTabsRef.current, running)
-            storeHarnessAppProxyToken(installation.id, launch.proxyToken)
+            await storeHarnessAppProxyToken(installation.id, launch.proxyToken)
             completedIds.current.add(installation.id)
           } catch (error) {
             if (appStarted) {
               await harnessAppsApi.stop(installation.id).catch(() => undefined)
               unregisterHarnessAppTab(installation.id)
-              takeHarnessAppProxyToken(installation.id)
+              await takeHarnessAppProxyToken(installation.id)
             }
             if (proxyToken) {
               await services.localHarnessModelApi

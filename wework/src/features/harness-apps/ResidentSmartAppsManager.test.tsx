@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   openTab: vi.fn(),
   register: vi.fn(),
   resolveLaunch: vi.fn(),
+  proxyTokens: new Map<string, string>(),
   start: vi.fn(),
   stop: vi.fn(),
   unregister: vi.fn(),
@@ -27,16 +28,16 @@ vi.mock('@/api/local/harnessApps', () => ({
 
 vi.mock('@/features/harness-apps/harnessAppTabs', () => ({
   takeHarnessAppProxyToken: (installationId: string) => {
-    const key = `wework:harness-app:${installationId}:proxy-token`
-    const token = sessionStorage.getItem(key)
-    sessionStorage.removeItem(key)
+    const token = mocks.proxyTokens.get(installationId) ?? null
+    mocks.proxyTokens.delete(installationId)
     return token
   },
   openHarnessAppTab: (_tabs: unknown, installation: HarnessAppInstallation) =>
     mocks.openTab(installation),
   registerHarnessAppTab: (installation: HarnessAppInstallation) => mocks.register(installation),
-  storeHarnessAppProxyToken: (installationId: string, token: string) =>
-    sessionStorage.setItem(`wework:harness-app:${installationId}:proxy-token`, token),
+  storeHarnessAppProxyToken: (installationId: string, token: string) => {
+    mocks.proxyTokens.set(installationId, token)
+  },
   unregisterHarnessAppTab: (installationId: string) => mocks.unregister(installationId),
 }))
 
@@ -104,8 +105,10 @@ const installation: HarnessAppInstallation = {
 
 describe('ResidentSmartAppsManager', () => {
   beforeEach(() => {
-    Object.values(mocks).forEach(mock => mock.mockReset())
-    sessionStorage.clear()
+    Object.entries(mocks).forEach(([key, mock]) => {
+      if (key !== 'proxyTokens') mock.mockReset()
+    })
+    mocks.proxyTokens.clear()
     mocks.list.mockResolvedValue([installation])
     mocks.resolveLaunch.mockResolvedValue({
       proxyToken: 'proxy-token',
@@ -149,9 +152,7 @@ describe('ResidentSmartAppsManager', () => {
     )
     expect(mocks.register).toHaveBeenCalledOnce()
     expect(mocks.openTab).toHaveBeenCalledOnce()
-    expect(sessionStorage.getItem(`wework:harness-app:${installation.id}:proxy-token`)).toBe(
-      'proxy-token'
-    )
+    expect(mocks.proxyTokens.get(installation.id)).toBe('proxy-token')
   })
 
   test('restores a resident app that is already running without starting it again', async () => {
@@ -180,7 +181,7 @@ describe('ResidentSmartAppsManager', () => {
     await waitFor(() => expect(mocks.stop).toHaveBeenCalledWith(installation.id))
     expect(mocks.unregister).toHaveBeenCalledWith(installation.id)
     expect(mocks.unregisterProxy).toHaveBeenCalledWith('proxy-token')
-    expect(sessionStorage.getItem(`wework:harness-app:${installation.id}:proxy-token`)).toBeNull()
+    expect(mocks.proxyTokens.has(installation.id)).toBe(false)
   })
 
   test('stops running Smart apps and closes their tabs when experiments are disabled', async () => {
@@ -190,7 +191,7 @@ describe('ResidentSmartAppsManager', () => {
       webUrl: 'http://127.0.0.1:39000/',
     }
     mocks.list.mockResolvedValue([running])
-    sessionStorage.setItem(`wework:harness-app:${installation.id}:proxy-token`, 'proxy-token')
+    mocks.proxyTokens.set(installation.id, 'proxy-token')
 
     render(<ResidentSmartAppsManager enabled={false} />)
 
