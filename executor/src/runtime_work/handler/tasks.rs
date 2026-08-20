@@ -276,6 +276,7 @@ impl RuntimeWorkRpcHandler {
         let mut request = execution_request(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
+        set_runtime_task_title(&mut request, &title);
         if is_codex_runtime(&runtime) {
             if let (Some(project_key), Some(project_name)) = (
                 request.runtime_project_key.as_deref(),
@@ -717,6 +718,9 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
         if let Some(link) = existing_link.as_ref() {
+            set_runtime_task_title(&mut request, &link.title);
+        }
+        if let Some(link) = existing_link.as_ref() {
             mark_runtime_model_switch(&mut request, link, &payload);
         }
         if let Some(link) = existing_link.as_ref() {
@@ -1018,6 +1022,7 @@ impl RuntimeWorkRpcHandler {
             .or_else(|| workspace_path(&payload))
             .unwrap_or_default();
         apply_runtime_payload_metadata(&mut request, &payload);
+        set_runtime_task_title(&mut request, &existing_link.title);
         mark_runtime_model_switch(&mut request, &existing_link, &payload);
         restore_cloud_project_id(&mut request, &existing_link.runtime_handle);
         restore_origin(&mut request, &existing_link.runtime_handle);

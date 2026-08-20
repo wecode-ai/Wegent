@@ -376,6 +376,14 @@ impl RuntimeWorkRpcHandler {
         if let Some(source) = request.extra.get("source") {
             payload["payload"]["source"] = source.clone();
         }
+        if matches!(
+            event_type,
+            "response.completed" | "response.failed" | "response.incomplete" | "error"
+        ) {
+            if let Some(title) = runtime_task_title(request) {
+                payload["payload"]["taskTitle"] = Value::String(title);
+            }
+        }
         let _ = event_tx.send(payload);
     }
 
