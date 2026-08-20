@@ -231,10 +231,10 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       await captureScreenshot(control, 'harness-apps-06-model-and-resident.png', 'body')
 
       await control.command('click', `[data-testid="harness-app-start-${INSTALLATION_ID}"]`)
-      await control.command('waitFor', '[data-testid="smart-app-launch-token"]', {
-        timeoutMs: 120_000,
+      await control.command('waitFor', `[data-testid="harness-app-launch-${INSTALLATION_ID}"]`, {
+        timeoutMs: 30_000,
       })
-      await captureScreenshot(control, 'harness-apps-07-tab-launch-motion.png', 'body')
+      await captureScreenshot(control, 'harness-apps-07-tab-starting.png', 'body')
       const appSurface = `[data-testid="app-iframe-harness-${INSTALLATION_ID}"]`
       await control.command('waitFor', appSurface, {
         timeoutMs: 600_000,
@@ -260,7 +260,7 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       const nativeSnapshot = await control.command('captureEmbeddedBrowser', appSurface, {
         target: `[data-testid="workspace-tab-select-${managementTabId}"]`,
         text: APP_ROUTE,
-        timeoutMs: 600_000,
+        timeoutMs: 30_000,
       })
       assert.ok(
         nativeSnapshot.startsWith('data:image/png;base64,'),
@@ -329,7 +329,7 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         {
           target: `[data-testid="workspace-tab-select-${managementTabId}"]`,
           text: APP_ROUTE,
-          timeoutMs: 600_000,
+          timeoutMs: 30_000,
         }
       )
       assert.ok(

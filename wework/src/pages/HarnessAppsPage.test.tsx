@@ -206,6 +206,10 @@ describe('HarnessAppsPage', () => {
     render(<HarnessAppsPage />)
     fireEvent.click(await screen.findByTestId(`harness-app-start-${installed.id}`))
 
+    expect(mocks.openTab).toHaveBeenCalledWith('auxiliary', {
+      title: installed.manifest.displayName,
+      contentRoute: `/app/harness-${installed.id}`,
+    })
     await waitFor(() => {
       expect(mocks.api.start).toHaveBeenCalledWith(
         installed.id,
@@ -214,10 +218,7 @@ describe('HarnessAppsPage', () => {
     })
     expect(mocks.proxyTokens.get(installed.id)).toBe('proxy-token')
     expect(mocks.register).toHaveBeenCalledWith(running)
-    expect(mocks.openTab).toHaveBeenCalledWith('auxiliary', {
-      title: running.manifest.displayName,
-      contentRoute: `/app/harness-${running.id}`,
-    })
+    expect(mocks.openTab).toHaveBeenCalledTimes(1)
   })
 
   test('changes the model of an installed Smart app', async () => {
@@ -270,7 +271,8 @@ describe('HarnessAppsPage', () => {
     expect(mocks.unregister).toHaveBeenCalledWith(installed.id)
     expect(mocks.unregisterProxy).toHaveBeenCalledWith('proxy-token')
     expect(mocks.proxyTokens.has(installed.id)).toBe(false)
-    expect(mocks.openTab).not.toHaveBeenCalled()
+    expect(mocks.openTab).toHaveBeenCalledTimes(1)
+    expect(mocks.closeTab).not.toHaveBeenCalled()
   })
 
   test('preserves the model proxy when a started app cannot be rolled back', async () => {
@@ -289,10 +291,7 @@ describe('HarnessAppsPage', () => {
     expect(mocks.unregisterProxy).not.toHaveBeenCalled()
     expect(mocks.proxyTokens.get(installed.id)).toBe('proxy-token')
     expect(mocks.register).toHaveBeenCalledWith(running)
-    expect(mocks.openTab).toHaveBeenCalledWith('auxiliary', {
-      title: running.manifest.displayName,
-      contentRoute: `/app/harness-${running.id}`,
-    })
+    expect(mocks.openTab).toHaveBeenCalledTimes(1)
   })
 
   test('clears an old preview when replacement package inspection fails', async () => {
