@@ -1071,7 +1071,7 @@ fn codex_cached_transcripts_never_expose_offset_pagination() {
 #[test]
 fn active_codex_items_replace_stale_paginated_items() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    handler.begin_active_codex_transcript("task-1", "turn-1");
+    handler.begin_active_codex_transcript("task-1", "thread-1", "turn-1");
     handler.record_active_codex_transcript_item(
         "task-1",
         "turn-1",
@@ -1148,7 +1148,7 @@ fn active_codex_items_replace_stale_paginated_items() {
 #[test]
 fn late_codex_items_do_not_recreate_cleared_active_transcript() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    handler.begin_active_codex_transcript("task-1", "turn-1");
+    handler.begin_active_codex_transcript("task-1", "thread-1", "turn-1");
     handler.clear_active_codex_transcript("task-1");
 
     handler.record_active_codex_transcript_item(
@@ -1178,7 +1178,7 @@ fn late_codex_items_do_not_recreate_cleared_active_transcript() {
 #[test]
 fn active_codex_items_restore_a_turn_missing_from_paginated_storage() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    handler.begin_active_codex_transcript("task-1", "turn-live");
+    handler.begin_active_codex_transcript("task-1", "thread-1", "turn-live");
     handler.record_active_codex_transcript_item(
         "task-1",
         "turn-live",
@@ -1224,7 +1224,7 @@ async fn running_codex_transcript_uses_live_cache_without_provider_read() {
     );
     handler.upsert_local_task(link);
     start_test_execution(&handler, "task-1");
-    handler.begin_active_codex_transcript("task-1", "turn-completed");
+    handler.begin_active_codex_transcript("task-1", "thread-1", "turn-completed");
     handler.record_active_codex_transcript_item(
         "task-1",
         "turn-completed",
@@ -1242,7 +1242,7 @@ async fn running_codex_transcript_uses_live_cache_without_provider_read() {
         }),
     );
     handler.persist_and_clear_active_codex_transcript("task-1", "completed");
-    handler.begin_active_codex_transcript("task-1", "turn-live");
+    handler.begin_active_codex_transcript("task-1", "thread-1", "turn-live");
     handler.record_active_codex_transcript_item(
         "task-1",
         "turn-live",
@@ -1304,7 +1304,7 @@ async fn completed_codex_turn_is_cached_before_automatic_continuation_finishes()
     );
     handler.upsert_local_task(link);
     start_test_execution(&handler, "task-1");
-    handler.begin_active_codex_transcript("task-1", "turn-initial");
+    handler.begin_active_codex_transcript("task-1", "thread-1", "turn-initial");
     handler.persist_completed_codex_turn_from_notification(
         "task-1",
         &json!({
@@ -1364,6 +1364,43 @@ async fn completed_codex_turn_is_cached_before_automatic_continuation_finishes()
         transcript["messages"][2]["blocks"][0]["content"],
         "Automatic continuation running"
     );
+}
+
+#[test]
+fn recording_a_new_provider_thread_clears_completed_transcript_cache() {
+    let index_path = temp_runtime_work_index_path("completed-transcript-thread-switch");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let mut link = RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.thread_id = Some("thread-1".to_owned());
+    append_completed_transcript_messages(
+        &mut link.runtime_handle,
+        "thread-1",
+        vec![json!({"id": "message-1", "role": "assistant"})],
+    );
+    handler.upsert_local_task(link);
+
+    handler.record_local_task_thread("task-1", "thread-2");
+
+    let link = handler
+        .local_task_link("task-1")
+        .expect("task should remain stored");
+    assert_eq!(link.thread_id.as_deref(), Some("thread-2"));
+    assert!(completed_transcript_messages(&link).is_empty());
+    assert!(link
+        .runtime_handle
+        .get("completedTranscriptMessages")
+        .is_none());
+    assert!(link
+        .runtime_handle
+        .get("completedTranscriptThreadId")
+        .is_none());
+
+    let _ = fs::remove_file(index_path);
 }
 
 #[tokio::test]

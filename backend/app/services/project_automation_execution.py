@@ -663,6 +663,14 @@ class ProjectAutomationExecution:
         workflow_run = db.get(ProjectWorkflowRun, workflow_run_id)
         if workflow_run is None or workflow_run.parent_id != run.task_id:
             raise RuntimeError("AI manager workflow plan does not match its Issue")
+        run_metadata = run.metadata_json if isinstance(run.metadata_json, dict) else {}
+        event = run_metadata.get("event")
+        payload = event.get("payload") if isinstance(event, dict) else None
+        expected_workflow_run_id = (
+            payload.get("workflow_run_id") if isinstance(payload, dict) else None
+        )
+        if expected_workflow_run_id != workflow_run_id:
+            raise RuntimeError("AI manager workflow plan is no longer active")
         workflow_run.metadata_json = {
             **(workflow_run.metadata_json or {}),
             "project_automation_run_id": run.id,

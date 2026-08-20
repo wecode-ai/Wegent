@@ -732,11 +732,14 @@ impl RuntimeWorkRpcHandler {
                     active_turn_handler.record_active_codex_turn(
                         &active_turn_local_task_id,
                         active_turn_execution_id,
-                        thread_id,
+                        thread_id.clone(),
                         turn_id.clone(),
                     );
-                    active_turn_handler
-                        .begin_active_codex_transcript(&active_turn_local_task_id, &turn_id);
+                    active_turn_handler.begin_active_codex_transcript(
+                        &active_turn_local_task_id,
+                        &thread_id,
+                        &turn_id,
+                    );
                     active_turn_handler.record_runtime_turn_id(
                         &active_turn_local_task_id,
                         &active_turn_subtask_id,

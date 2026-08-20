@@ -226,3 +226,40 @@ def test_manager_plan_submission_rejects_non_owner_before_writes(
     find_activity.assert_not_called()
     db.flush.assert_not_called()
     db.commit.assert_not_called()
+
+
+def test_manager_plan_submission_rejects_stale_workflow_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ProjectAutomationExecution()
+    run = SimpleNamespace(
+        id="run-1",
+        status="running",
+        created_by_user_id=7,
+        task_id="issue-1",
+        metadata_json={
+            "event": {"payload": {"workflow_run_id": "workflow-run-current"}}
+        },
+    )
+    activity = SimpleNamespace(metadata_json={})
+    stale_workflow_run = SimpleNamespace(
+        parent_id="issue-1",
+        metadata_json={},
+    )
+    db = MagicMock()
+    db.get.side_effect = [run, stale_workflow_run]
+    monkeypatch.setattr(service, "_activity", MagicMock(return_value=activity))
+
+    with pytest.raises(RuntimeError, match="no longer active"):
+        service.record_manager_plan_submission(
+            db,
+            run_id="run-1",
+            user_id=7,
+            workflow_run_id="workflow-run-stale",
+            plan_version=2,
+        )
+
+    assert stale_workflow_run.metadata_json == {}
+    assert activity.metadata_json == {}
+    db.flush.assert_not_called()
+    db.commit.assert_not_called()

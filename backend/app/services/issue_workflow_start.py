@@ -9,6 +9,7 @@ from app.models.delivery import (
     CloudProject,
     LoopItem,
     ProjectAutomationRun,
+    loop_datetime_is_unset,
 )
 from app.schemas.issue_workflow import IssueWorkflowInstance
 from app.services.issue_workflow_planning import issue_workflow_planning_service
@@ -129,6 +130,7 @@ class IssueWorkflowStartService:
                 ProjectAutomationRun.cloud_project_id == item.cloud_project_id,
                 ProjectAutomationRun.parent_id == rule_id,
                 ProjectAutomationRun.task_id == item.id,
+                loop_datetime_is_unset(ProjectAutomationRun.deleted_at),
             )
             .all()
         )

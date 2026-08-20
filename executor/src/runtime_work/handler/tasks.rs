@@ -1564,6 +1564,9 @@ impl RuntimeWorkRpcHandler {
     ) {
         let presentation = user_message_presentation(payload);
         let updated = self.store.update_task(local_task_id, |link| {
+            if link.thread_id.as_deref() != Some(thread_id) {
+                clear_completed_transcript_messages(&mut link.runtime_handle);
+            }
             link.thread_id = Some(thread_id.to_owned());
             clear_runtime_handle_messages(&mut link.runtime_handle);
             if let Some(presentation) = presentation.clone() {

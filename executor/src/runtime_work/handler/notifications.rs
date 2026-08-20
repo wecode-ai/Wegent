@@ -5,13 +5,19 @@
 use super::*;
 
 impl RuntimeWorkRpcHandler {
-    pub(super) fn begin_active_codex_transcript(&self, local_task_id: &str, turn_id: &str) {
+    pub(super) fn begin_active_codex_transcript(
+        &self,
+        local_task_id: &str,
+        thread_id: &str,
+        turn_id: &str,
+    ) {
         let Ok(mut active_items) = self.active_codex_transcript_items.lock() else {
             return;
         };
         active_items.insert(
             local_task_id.to_owned(),
             ActiveCodexTranscriptItems {
+                thread_id: thread_id.to_owned(),
                 turn_id: turn_id.to_owned(),
                 items: Vec::new(),
             },
@@ -59,7 +65,11 @@ impl RuntimeWorkRpcHandler {
             return;
         }
         self.store.update_task(local_task_id, |link| {
-            append_completed_transcript_messages(&mut link.runtime_handle, messages);
+            append_completed_transcript_messages(
+                &mut link.runtime_handle,
+                &active.thread_id,
+                messages,
+            );
             link.updated_at = link.updated_at.max(completed_at);
         });
     }
@@ -84,6 +94,12 @@ impl RuntimeWorkRpcHandler {
         let Some(turn_id) = string_field(&turn, "id") else {
             return;
         };
+        let thread_id = string_field(notification.params, "threadId")
+            .or_else(|| {
+                self.local_task_link(local_task_id)
+                    .and_then(|link| link.thread_id)
+            })
+            .unwrap_or_default();
         let completed_at = timestamp_ms_field(&turn, "completedAt").unwrap_or_else(now_ms);
         let messages = transcript_messages(&json!({"turns": [turn]}), &self.device_id)
             .into_iter()
@@ -94,7 +110,11 @@ impl RuntimeWorkRpcHandler {
             .collect::<Vec<_>>();
         if !messages.is_empty() {
             self.store.update_task(local_task_id, |link| {
-                append_completed_transcript_messages(&mut link.runtime_handle, messages);
+                append_completed_transcript_messages(
+                    &mut link.runtime_handle,
+                    &thread_id,
+                    messages,
+                );
                 link.updated_at = link.updated_at.max(completed_at);
             });
         }
@@ -400,6 +420,9 @@ impl RuntimeWorkRpcHandler {
             return;
         }
         self.store.update_task(local_task_id, |link| {
+            if link.thread_id.as_deref() != Some(thread_id) {
+                clear_completed_transcript_messages(&mut link.runtime_handle);
+            }
             link.thread_id = Some(thread_id.to_owned());
             clear_runtime_handle_messages(&mut link.runtime_handle);
             link.updated_at = now_ms();

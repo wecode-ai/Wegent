@@ -11,6 +11,17 @@ pub(crate) fn cached_messages(link: &RuntimeTaskLink) -> Vec<Value> {
 }
 
 pub(crate) fn completed_transcript_messages(link: &RuntimeTaskLink) -> Vec<Value> {
+    let Some(thread_id) = link.thread_id.as_deref() else {
+        return Vec::new();
+    };
+    if link
+        .runtime_handle
+        .get("completedTranscriptThreadId")
+        .and_then(Value::as_str)
+        != Some(thread_id)
+    {
+        return Vec::new();
+    }
     runtime_handle_messages(&link.runtime_handle, "completedTranscriptMessages")
 }
 
@@ -30,8 +41,34 @@ pub(crate) fn append_runtime_handle_message(runtime_handle: &mut Value, message:
 
 pub(crate) fn append_completed_transcript_messages(
     runtime_handle: &mut Value,
+    thread_id: &str,
     messages: Vec<Value>,
 ) {
+    if thread_id.trim().is_empty() {
+        return;
+    }
+    if !runtime_handle.is_object() {
+        *runtime_handle = Value::Object(Map::new());
+    }
+    {
+        let object = runtime_handle
+            .as_object_mut()
+            .expect("runtime handle object was just inserted");
+        if object
+            .get("completedTranscriptThreadId")
+            .and_then(Value::as_str)
+            != Some(thread_id)
+        {
+            object.insert(
+                "completedTranscriptMessages".to_owned(),
+                Value::Array(Vec::new()),
+            );
+        }
+        object.insert(
+            "completedTranscriptThreadId".to_owned(),
+            Value::String(thread_id.to_owned()),
+        );
+    }
     let completed_messages =
         runtime_handle_array_mut(runtime_handle, "completedTranscriptMessages");
     for message in messages {
@@ -49,6 +86,13 @@ pub(crate) fn append_completed_transcript_messages(
 pub(crate) fn clear_runtime_handle_messages(runtime_handle: &mut Value) {
     if let Some(object) = runtime_handle.as_object_mut() {
         object.remove("messages");
+    }
+}
+
+pub(crate) fn clear_completed_transcript_messages(runtime_handle: &mut Value) {
+    if let Some(object) = runtime_handle.as_object_mut() {
+        object.remove("completedTranscriptMessages");
+        object.remove("completedTranscriptThreadId");
     }
 }
 
@@ -118,4 +162,39 @@ fn runtime_handle_array_mut<'a>(runtime_handle: &'a mut Value, key: &str) -> &'a
         .get_mut(key)
         .and_then(Value::as_array_mut)
         .expect("runtime handle array was just inserted")
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn completed_transcript_cache_is_scoped_to_provider_thread() {
+        let mut link = RuntimeTaskLink {
+            thread_id: Some("thread-1".to_owned()),
+            ..RuntimeTaskLink::default()
+        };
+        append_completed_transcript_messages(
+            &mut link.runtime_handle,
+            "thread-1",
+            vec![json!({"id": "message-1", "role": "assistant"})],
+        );
+
+        assert_eq!(completed_transcript_messages(&link).len(), 1);
+
+        link.thread_id = Some("thread-2".to_owned());
+        assert!(completed_transcript_messages(&link).is_empty());
+
+        append_completed_transcript_messages(
+            &mut link.runtime_handle,
+            "thread-2",
+            vec![json!({"id": "message-2", "role": "assistant"})],
+        );
+
+        let messages = completed_transcript_messages(&link);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["id"], "message-2");
+    }
 }

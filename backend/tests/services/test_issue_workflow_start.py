@@ -1,8 +1,13 @@
+import uuid
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from sqlalchemy.orm import Session
 
+from app.models.delivery import CloudProject, LoopItem, ProjectAutomationRun
+from app.models.user import User
 from app.services.issue_workflow_planning import issue_workflow_planning_service
 from app.services.issue_workflow_start import issue_workflow_start_service
 from app.services.project_automations import (
@@ -159,3 +164,52 @@ async def test_start_without_ai_rule_does_not_create_planning_run(
 
     assert started == 0
     ensure_run.assert_not_called()
+
+
+def test_has_run_ignores_soft_deleted_attempt(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    public_id = str(uuid.uuid4())
+    project = CloudProject(
+        public_id=public_id,
+        project_key=f"START{uuid.uuid4().hex[:6].upper()}",
+        name="Workflow start project",
+        description="",
+        created_by_user_id=test_user.id,
+        storage_prefix=f"projects/{public_id}",
+        metadata_json={},
+    )
+    test_db.add(project)
+    test_db.flush()
+    item = LoopItem(
+        id=f"T{uuid.uuid4().hex[:10]}",
+        cloud_project_id=project.id,
+        title="Restart managed workflow",
+        description="",
+        status="pending",
+        priority="none",
+        created_by_user_id=test_user.id,
+        metadata_json={},
+    )
+    test_db.add(item)
+    test_db.flush()
+    test_db.add(
+        ProjectAutomationRun(
+            cloud_project_id=project.id,
+            parent_id="ai-manager-rule",
+            task_id=item.id,
+            status="cancelled",
+            created_by_user_id=test_user.id,
+            metadata_json={"event": {"payload": {"workflow_run_id": "workflow-run-1"}}},
+            deleted_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        )
+    )
+    test_db.commit()
+
+    assert not issue_workflow_start_service._has_run(
+        test_db,
+        item,
+        "ai-manager-rule",
+        "workflow-run-1",
+    )

@@ -137,6 +137,7 @@ def _manager_run(
     user: User,
     *,
     status: str = "running",
+    workflow_run_id: str = "",
 ) -> tuple[ProjectAutomationRun, ProjectChatMessage]:
     rule = ProjectAutomationRule(
         id=f"rule-{uuid.uuid4().hex[:10]}",
@@ -172,7 +173,10 @@ def _manager_run(
         },
         status="streaming" if status == "running" else "failed",
     )
-    run.metadata_json = {"activity_message_id": message_id}
+    run.metadata_json = {
+        "activity_message_id": message_id,
+        "event": {"payload": {"workflow_run_id": workflow_run_id}},
+    }
     db.add_all([rule, run, activity])
     db.commit()
     return run, activity
@@ -300,7 +304,13 @@ async def test_ai_manager_submits_structured_plan_for_current_issue(
         issue=item,
         user_id=test_user.id,
     )
-    manager_run, activity = _manager_run(test_db, project, item, test_user)
+    manager_run, activity = _manager_run(
+        test_db,
+        project,
+        item,
+        test_user,
+        workflow_run_id=workflow_run.id,
+    )
     test_db.commit()
     monkeypatch.setattr(wework_space, "SessionLocal", lambda: _SessionContext(test_db))
     monkeypatch.setattr(
@@ -347,6 +357,7 @@ async def test_ai_manager_plan_submission_rolls_back_when_run_binding_fails(
         item,
         test_user,
         status="failed",
+        workflow_run_id=workflow_run.id,
     )
     test_db.commit()
     monkeypatch.setattr(wework_space, "SessionLocal", lambda: _SessionContext(test_db))
