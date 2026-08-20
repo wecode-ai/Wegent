@@ -1621,7 +1621,7 @@
     "plugins_import_issue_manifest_fields": "Use the example package to complete the required plugin.json field shown below.",
     "plugins_import_issue_skills": "Set skills to ./skills/ and make sure the directory exists.",
     "plugins_import_issue_skill_manifest": "Every Skill directory needs a SKILL.md starting with YAML frontmatter containing name and description.",
-    "plugins_import_issue_mcp": ".mcp.json must be valid JSON containing an mcpServers object.",
+    "plugins_import_issue_mcp": ".mcp.json must be a valid MCP server map or contain an mcp_servers / mcpServers object.",
     "plugins_import_issue_asset": "plugin.json references a missing icon asset. Add the file or remove that field.",
     "plugins_import_issue_zip": "This is not a valid ZIP. Download the example and package the same directory structure.",
     "plugins_import_issue_limit": "The package exceeds a limit: at most 50 MB zipped, 200 MB expanded, and 5,000 entries.",

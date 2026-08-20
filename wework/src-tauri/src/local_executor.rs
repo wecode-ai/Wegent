@@ -17,7 +17,7 @@ use tauri::{async_runtime::Mutex as AsyncMutex, Emitter, Manager, State};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
-use crate::process_environment;
+use crate::{agent_plugins::mcp_server_map, process_environment};
 
 const LOCAL_EXECUTOR_EVENT: &str = "local-executor:event";
 const LOCAL_EXECUTOR_SIDECAR: &str = "wegent-executor";
@@ -3769,6 +3769,67 @@ fn plugin_interface_string<'a>(manifest: &'a Value, key: &str) -> &'a str {
         .trim()
 }
 
+fn read_plugin_mcp_document(
+    root: &Path,
+    manifest: &Value,
+) -> Result<Option<Value>, LocalPluginImportIssue> {
+    let (path, display_path) = match manifest.get("mcpServers") {
+        Some(declaration) if declaration.is_object() => return Ok(Some(declaration.clone())),
+        Some(declaration) => {
+            let Some(relative) = declaration.as_str().map(str::trim) else {
+                return Err(plugin_import_issue(
+                    "mcp_manifest_invalid",
+                    Some(".codex-plugin/plugin.json"),
+                    "plugin.json field `mcpServers` must be a relative path or an object",
+                ));
+            };
+            let Some(trimmed) = relative.strip_prefix("./") else {
+                return Err(plugin_import_issue(
+                    "mcp_path_invalid",
+                    Some(".codex-plugin/plugin.json"),
+                    "plugin.json field `mcpServers` must start with `./`",
+                ));
+            };
+            if safe_archive_path(trimmed).is_err() || !root.join(trimmed).is_file() {
+                return Err(plugin_import_issue(
+                    "mcp_path_invalid",
+                    Some(".codex-plugin/plugin.json"),
+                    "plugin.json field `mcpServers` must resolve to a file inside the plugin",
+                ));
+            }
+            (root.join(trimmed), trimmed.to_string())
+        }
+        None => {
+            let Some(relative) = ["mcp.json", ".mcp.json"]
+                .into_iter()
+                .find(|relative| root.join(relative).is_file())
+            else {
+                return Ok(None);
+            };
+            (root.join(relative), relative.to_string())
+        }
+    };
+    let document = fs::read(&path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .ok_or_else(|| {
+            plugin_import_issue(
+                "mcp_manifest_invalid",
+                Some(&display_path),
+                "MCP configuration must contain valid JSON",
+            )
+        })?;
+    Ok(Some(document))
+}
+
+fn valid_plugin_mcp_document(document: &Value) -> bool {
+    mcp_server_map(document).is_some_and(|servers| {
+        servers
+            .iter()
+            .all(|(name, server)| !name.trim().is_empty() && server.is_object())
+    })
+}
+
 fn validate_plugin_import_manifest(root: &Path, manifest: &Value) -> Vec<LocalPluginImportIssue> {
     let mut issues = Vec::new();
     let name = manifest_string(manifest, "name");
@@ -3898,33 +3959,16 @@ fn validate_plugin_import_manifest(root: &Path, manifest: &Value) -> Vec<LocalPl
             }
         }
     }
-    if let Some(mcp) = manifest.get("mcpServers") {
-        if let Some(path) = mcp.as_str() {
-            if path != "./.mcp.json" {
-                issues.push(plugin_import_issue(
-                    "mcp_path_invalid",
-                    Some(".codex-plugin/plugin.json"),
-                    "String field `mcpServers` must be `./.mcp.json`",
-                ));
-            }
-            match fs::read(root.join(".mcp.json"))
-                .ok()
-                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-            {
-                Some(value) if value.get("mcpServers").is_some_and(Value::is_object) => {}
-                _ => issues.push(plugin_import_issue(
-                    "mcp_manifest_invalid",
-                    Some(".mcp.json"),
-                    ".mcp.json must contain a JSON object named `mcpServers`",
-                )),
-            }
-        } else if !mcp.is_object() {
+    match read_plugin_mcp_document(root, manifest) {
+        Ok(Some(document)) if !valid_plugin_mcp_document(&document) => {
             issues.push(plugin_import_issue(
                 "mcp_manifest_invalid",
-                Some(".codex-plugin/plugin.json"),
-                "plugin.json field `mcpServers` must be `./.mcp.json` or an object",
+                Some(".mcp.json"),
+                "MCP configuration must be a direct server map or contain an `mcp_servers` or `mcpServers` object",
             ));
         }
+        Err(issue) => issues.push(issue),
+        _ => {}
     }
     if let Some(interface) = manifest.get("interface").and_then(Value::as_object) {
         for key in ["composerIcon", "logo", "logoDark"] {
@@ -3952,21 +3996,12 @@ fn plugin_component_summary(root: &Path, manifest: &Value) -> (usize, usize, Vec
                 .count()
         })
         .unwrap_or(0);
-    let declared_mcp = manifest.get("mcpServers");
-    let mcp = declared_mcp
-        .filter(|value| value.is_object())
+    let document = read_plugin_mcp_document(root, manifest).ok().flatten();
+    let mcp = document
+        .as_ref()
+        .and_then(mcp_server_map)
         .cloned()
-        .or_else(|| {
-            let should_read_mcp_file = declared_mcp
-                .and_then(Value::as_str)
-                .is_some_and(|path| path == "./.mcp.json")
-                || (declared_mcp.is_none() && root.join(".mcp.json").is_file());
-            should_read_mcp_file
-                .then(|| root.join(".mcp.json"))
-                .and_then(|path| fs::read(path).ok())
-                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-                .and_then(|value| value.get("mcpServers").cloned())
-        });
+        .map(Value::Object);
     let mcp_server_count = mcp
         .as_ref()
         .and_then(Value::as_object)
@@ -5607,8 +5642,24 @@ mod tests {
     }
 
     fn valid_plugin_import_zip(version: &str) -> Vec<u8> {
+        valid_plugin_import_zip_with_mcp(
+            version,
+            br#"{"example":{"command":"node","args":["mcp/server.mjs"]}}"#,
+        )
+    }
+
+    fn valid_plugin_import_zip_with_mcp(version: &str, mcp: &[u8]) -> Vec<u8> {
+        valid_plugin_import_zip_at_path(version, "./.mcp.json", ".mcp.json", mcp)
+    }
+
+    fn valid_plugin_import_zip_at_path(
+        version: &str,
+        manifest_path: &str,
+        archive_path: &str,
+        mcp: &[u8],
+    ) -> Vec<u8> {
         let manifest = format!(
-            r#"{{"name":"example-plugin","version":"{version}","description":"Example plugin","author":{{"name":"Wework"}},"skills":"./skills/","mcpServers":"./.mcp.json","interface":{{"displayName":"Example Plugin","shortDescription":"Example","longDescription":"Example plugin package","developerName":"Wework","category":"Productivity","capabilities":["Skill","MCP"],"defaultPrompt":"Use the example plugin."}}}}"#
+            r#"{{"name":"example-plugin","version":"{version}","description":"Example plugin","author":{{"name":"Wework"}},"skills":"./skills/","mcpServers":"{manifest_path}","interface":{{"displayName":"Example Plugin","shortDescription":"Example","longDescription":"Example plugin package","developerName":"Wework","category":"Productivity","capabilities":["Skill","MCP"],"defaultPrompt":"Use the example plugin."}}}}"#
         );
         plugin_copy_zip(&[
             (".codex-plugin/plugin.json", manifest.as_bytes()),
@@ -5616,10 +5667,7 @@ mod tests {
                 "skills/example/SKILL.md",
                 b"---\nname: example\ndescription: Example skill\n---\n\n# Example\n",
             ),
-            (
-                ".mcp.json",
-                br#"{"mcpServers":{"example":{"command":"node","args":["mcp/server.mjs"]}}}"#,
-            ),
+            (archive_path, mcp),
             ("mcp/server.mjs", b"process.stdin.resume()\n"),
         ])
     }
@@ -5639,6 +5687,79 @@ mod tests {
         assert_eq!(preview.skill_count, 1);
         assert_eq!(preview.mcp_server_count, 1);
         assert_eq!(preview.executable_capabilities, vec!["stdio MCP: example"]);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn previews_standard_and_legacy_wrapped_mcp_server_maps() {
+        for (label, document) in [
+            (
+                "snake-case",
+                br#"{"mcp_servers":{"example":{"url":"https://mcp.example.com/mcp"}}}"#.as_slice(),
+            ),
+            (
+                "camel-case",
+                br#"{"mcpServers":{"example":{"url":"https://mcp.example.com/mcp"}}}"#.as_slice(),
+            ),
+        ] {
+            let root = import_test_root(label);
+            fs::create_dir_all(&root).unwrap();
+            let archive_path = root.join("example-plugin.zip");
+            fs::write(
+                &archive_path,
+                valid_plugin_import_zip_with_mcp("1.2.3", document),
+            )
+            .unwrap();
+
+            let preview = preview_plugin_import(&archive_path, &root).unwrap();
+
+            assert!(preview.valid, "unexpected issues: {:?}", preview.issues);
+            assert_eq!(preview.mcp_server_count, 1);
+            let _ = fs::remove_dir_all(root);
+        }
+    }
+
+    #[test]
+    fn previews_mcp_server_map_from_safe_manifest_relative_path() {
+        let root = import_test_root("custom-mcp-path");
+        fs::create_dir_all(&root).unwrap();
+        let archive_path = root.join("example-plugin.zip");
+        fs::write(
+            &archive_path,
+            valid_plugin_import_zip_at_path(
+                "1.2.3",
+                "./config/remote.mcp.json",
+                "config/remote.mcp.json",
+                br#"{"remote":{"url":"https://mcp.example.com/mcp"}}"#,
+            ),
+        )
+        .unwrap();
+
+        let preview = preview_plugin_import(&archive_path, &root).unwrap();
+
+        assert!(preview.valid, "unexpected issues: {:?}", preview.issues);
+        assert_eq!(preview.mcp_server_count, 1);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rejects_mcp_wrapper_with_non_object_server_map() {
+        let root = import_test_root("invalid-mcp-wrapper");
+        fs::create_dir_all(&root).unwrap();
+        let archive_path = root.join("example-plugin.zip");
+        fs::write(
+            &archive_path,
+            valid_plugin_import_zip_with_mcp("1.2.3", br#"{"mcp_servers":[]}"#),
+        )
+        .unwrap();
+
+        let preview = preview_plugin_import(&archive_path, &root).unwrap();
+
+        assert!(!preview.valid);
+        assert!(preview
+            .issues
+            .iter()
+            .any(|issue| issue.code == "mcp_manifest_invalid"));
         let _ = fs::remove_dir_all(root);
     }
 
