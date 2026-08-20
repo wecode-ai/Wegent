@@ -123,15 +123,42 @@ async function waitForSnapshot(control, predicate, message, timeoutMs, selector 
 }
 
 export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
+  let fixtureAResponseGate = null
+  let fixtureAResponseCount = 0
+
+  const holdNextFixtureAResponse = () => {
+    let release
+    fixtureAResponseGate = new Promise(resolve => {
+      release = resolve
+    })
+    return () => release?.()
+  }
+
+  const waitForFixtureAResponseCount = async expected => {
+    const startedAt = Date.now()
+    while (Date.now() - startedAt < uiTimeoutMs) {
+      if (fixtureAResponseCount >= expected) return
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+    throw new Error(`Timed out waiting for fixture A response ${expected}`)
+  }
+
   return {
     async handleHttp(request, response, url) {
       if (request.method !== 'GET') return false
       if (url.pathname === FIXTURE_A_PATH) {
         const html = fixtureHtml(FIXTURE_A_TEXT, FIXTURE_A_TEXT)
+        const responseGate = fixtureAResponseGate
+        fixtureAResponseGate = null
         response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
         response.write(html.slice(0, 120))
-        await new Promise(resolve => setTimeout(resolve, 1000))
+        if (responseGate) {
+          await responseGate
+        } else {
+          await new Promise(resolve => setTimeout(resolve, 1000))
+        }
         response.end(html.slice(120))
+        fixtureAResponseCount += 1
         return true
       }
       if (url.pathname === FIXTURE_B_PATH) {
@@ -171,10 +198,16 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
         uiTimeoutMs,
         'The first browser tab did not load the A fixture'
       )
+      await waitForFixtureAResponseCount(1)
+      const releaseReloadResponse = holdNextFixtureAResponse()
       await control.command('click', BROWSER_RELOAD_SELECTOR)
-      await control.command('waitFor', FIRST_BROWSER_LOADING_ICON_SELECTOR, {
-        timeoutMs: uiTimeoutMs,
-      })
+      try {
+        await control.command('waitFor', FIRST_BROWSER_LOADING_ICON_SELECTOR, {
+          timeoutMs: uiTimeoutMs,
+        })
+      } finally {
+        releaseReloadResponse()
+      }
       await waitForSnapshot(
         control,
         snapshot => !snapshot.testIds.includes('right-workspace-browser-tab-1-loading-icon'),
@@ -204,10 +237,15 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
         FIRST_BROWSER_TAB_SELECTOR
       )
       await control.command('fill', BROWSER_INPUT_SELECTOR, { value: fixtureAUrl })
+      const releaseRecoveryResponse = holdNextFixtureAResponse()
       await control.command('submit', BROWSER_INPUT_SELECTOR)
-      await control.command('waitFor', FIRST_BROWSER_LOADING_ICON_SELECTOR, {
-        timeoutMs: uiTimeoutMs,
-      })
+      try {
+        await control.command('waitFor', FIRST_BROWSER_LOADING_ICON_SELECTOR, {
+          timeoutMs: uiTimeoutMs,
+        })
+      } finally {
+        releaseRecoveryResponse()
+      }
       await waitForSnapshot(
         control,
         snapshot => !snapshot.testIds.includes('right-workspace-browser-tab-1-loading-icon'),

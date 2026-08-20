@@ -2376,6 +2376,93 @@ describe('DesktopSidebar', () => {
     await act(async () => resolvePinRequest?.())
   })
 
+  test('preserves the latest pin intent until ordered runtime updates acknowledge it', async () => {
+    const requests: Array<{ pinned: boolean; resolve: () => void }> = []
+    const onSetRuntimeTaskPinned = vi.fn(
+      (data: { pinned: boolean }) =>
+        new Promise<void>(resolve => {
+          requests.push({ pinned: data.pinned, resolve })
+        })
+    )
+    const chatPath = '/Users/alice/Documents/Codex/2026-07-12/rapid-pin'
+    const runtimeWork = (pinned: boolean) => ({
+      projects: [],
+      chats: [
+        {
+          deviceId: 'local-device',
+          available: true,
+          workspacePath: chatPath,
+          workspaceKind: 'chat' as const,
+          tasks: [
+            {
+              taskId: 'rapid-pin-chat',
+              threadId: 'rapid-pin-thread',
+              workspacePath: chatPath,
+              workspaceKind: 'chat' as const,
+              title: 'Rapid pin task',
+              runtime: 'codex' as const,
+              pinned,
+            },
+          ],
+        },
+      ],
+      totalTasks: 1,
+    })
+    const initialRuntimeWork = runtimeWork(false)
+    const props = createSidebarProps({
+      runtimeWork: initialRuntimeWork,
+      onSetRuntimeTaskPinned,
+    })
+    const lifecycleStore = new RuntimeTaskLifecycleStore('desktop-sidebar-rapid-pin-test')
+    lifecycleStore.syncRuntimeWork(initialRuntimeWork)
+    const view = render(
+      <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+        <DesktopSidebar {...props} />
+      </RuntimeTaskLifecycleProvider>
+    )
+
+    await userEvent.click(screen.getByTestId('runtime-local-task-mark-rapid-pin-chat'))
+    await waitFor(() => expect(onSetRuntimeTaskPinned).toHaveBeenCalledTimes(1))
+    expect(requests[0]?.pinned).toBe(true)
+
+    await userEvent.click(screen.getByTestId('runtime-local-task-mark-rapid-pin-chat'))
+    expect(screen.queryByTestId('sidebar-pinned-section')).not.toBeInTheDocument()
+    expect(onSetRuntimeTaskPinned).toHaveBeenCalledTimes(1)
+
+    await act(async () => requests[0]?.resolve())
+    await waitFor(() => expect(onSetRuntimeTaskPinned).toHaveBeenCalledTimes(2))
+    expect(requests[1]?.pinned).toBe(false)
+
+    const firstAcknowledgement = runtimeWork(true)
+    act(() => lifecycleStore.syncRuntimeWork(firstAcknowledgement))
+    view.rerender(
+      <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+        <DesktopSidebar {...props} runtimeWork={firstAcknowledgement} />
+      </RuntimeTaskLifecycleProvider>
+    )
+    expect(screen.queryByTestId('sidebar-pinned-section')).not.toBeInTheDocument()
+
+    await act(async () => requests[1]?.resolve())
+    const latestAcknowledgement = runtimeWork(false)
+    act(() => lifecycleStore.syncRuntimeWork(latestAcknowledgement))
+    view.rerender(
+      <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+        <DesktopSidebar {...props} runtimeWork={latestAcknowledgement} />
+      </RuntimeTaskLifecycleProvider>
+    )
+
+    const externalPinUpdate = runtimeWork(true)
+    act(() => lifecycleStore.syncRuntimeWork(externalPinUpdate))
+    view.rerender(
+      <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+        <DesktopSidebar {...props} runtimeWork={externalPinUpdate} />
+      </RuntimeTaskLifecycleProvider>
+    )
+    expect(screen.getByTestId('sidebar-pinned-section')).toContainElement(
+      screen.getByTestId('runtime-local-task-row-rapid-pin-chat')
+    )
+  })
+
   test('moves a project task to the pinned section before the pin request finishes', async () => {
     let resolvePinRequest: (() => void) | undefined
     const onSetRuntimeTaskPinned = vi.fn(

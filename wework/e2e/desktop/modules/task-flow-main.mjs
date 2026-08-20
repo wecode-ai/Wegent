@@ -2648,7 +2648,8 @@ last_updated = "2026-07-30T00:00:00Z"`
         const overflowMetrics = await waitForOverflowMetrics(
           control,
           sidebarScrollerSelector,
-          'The constrained sidebar task list did not overflow'
+          'The constrained sidebar task list did not overflow',
+          DEFAULT_STEP_TIMEOUT_MS
         )
         const maxScrollTop = overflowMetrics.scrollHeight - overflowMetrics.clientHeight
         assert.ok(maxScrollTop > 8, 'The constrained sidebar did not have a non-edge scroll range')
