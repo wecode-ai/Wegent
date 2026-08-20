@@ -14,7 +14,7 @@ import type { RetrievalConfigDraft } from '@/types/knowledge'
 import { RetrievalSettingsSection } from '@/features/knowledge/document/components/RetrievalSettingsSection'
 import { createDefaultRetrievalProfile } from '@/features/knowledge/document/components/retrievalConfig'
 
-export function CodeWikiRetrievalProfileSection() {
+export function KnowledgeBaseRetrievalProfileSection() {
   const { t } = useTranslation('admin')
   const { toast } = useToast()
   const [profile, setProfile] = useState<RetrievalConfigDraft>(createDefaultRetrievalProfile)
@@ -23,7 +23,7 @@ export function CodeWikiRetrievalProfileSection() {
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
-    void adminApis.getCodeWikiRetrievalProfile().then(response => {
+    void adminApis.getKnowledgeBaseRetrievalProfile().then(response => {
       if (response.retrieval_config) setProfile(response.retrieval_config)
       setHealth(response.health.status)
       setFallbackReason(response.health.fallback_reason)
@@ -33,7 +33,7 @@ export function CodeWikiRetrievalProfileSection() {
   const save = async () => {
     setSaving(true)
     try {
-      const response = await adminApis.updateCodeWikiRetrievalProfile(profile)
+      const response = await adminApis.updateKnowledgeBaseRetrievalProfile(profile)
       setHealth(response.health.status)
       setFallbackReason(response.health.fallback_reason)
       toast({ title: t('system_config.code_wiki_profile_saved') })

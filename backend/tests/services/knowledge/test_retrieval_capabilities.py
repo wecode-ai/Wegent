@@ -2,7 +2,7 @@
 
 import pytest
 
-from app.services.knowledge.retrieval_capabilities import (
+from app.schemas.retrieval_capabilities import (
     derive_retrieval_capabilities,
 )
 
@@ -23,7 +23,7 @@ from app.services.knowledge.retrieval_capabilities import (
             {"retrieval_mode": "hybrid"},
             {
                 "retrieval_mode": "hybrid",
-                "semantic_query": False,
+                "semantic_query": True,
                 "keywords": True,
                 "phrases": True,
             },

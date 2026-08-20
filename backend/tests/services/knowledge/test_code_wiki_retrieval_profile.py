@@ -1,12 +1,12 @@
-"""Contract tests for Code Wiki retrieval-profile validation."""
+"""Contract tests for knowledge-base retrieval-profile validation."""
 
 from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
 
-from app.schemas.knowledge import CodeWikiRetrievalProfileUpdate
-from app.services.knowledge.code_wiki.retrieval_profile import profile_health
+from app.schemas.knowledge import KnowledgeBaseRetrievalProfileUpdate
+from app.services.knowledge.retrieval_profile import profile_health
 
 
 class _Query:
@@ -31,14 +31,16 @@ class _Db:
 
 
 def test_profile_requires_complete_resource_references() -> None:
-    with pytest.raises(ValidationError, match="requires a retriever and embedding model"):
-        CodeWikiRetrievalProfileUpdate.model_validate(
+    with pytest.raises(
+        ValidationError, match="requires a retriever and embedding model"
+    ):
+        KnowledgeBaseRetrievalProfileUpdate.model_validate(
             {"retrieval_config": {"retrieval_mode": "hybrid"}}
         )
 
 
 def test_profile_accepts_complete_retrieval_configuration() -> None:
-    profile = CodeWikiRetrievalProfileUpdate.model_validate(
+    profile = KnowledgeBaseRetrievalProfileUpdate.model_validate(
         {
             "retrieval_config": {
                 "retriever_name": "shared-milvus",
@@ -58,7 +60,7 @@ def test_profile_accepts_complete_retrieval_configuration() -> None:
 
 def test_profile_rejects_unsupported_retrieval_mode() -> None:
     with pytest.raises(ValidationError, match="unsupported retrieval mode"):
-        CodeWikiRetrievalProfileUpdate.model_validate(
+        KnowledgeBaseRetrievalProfileUpdate.model_validate(
             {
                 "retrieval_config": {
                     "retriever_name": "shared-milvus",

@@ -72,15 +72,15 @@ export interface RetrievalConfigDraft {
   }
 }
 
-export interface CodeWikiRetrievalProfileHealth {
+export interface KnowledgeBaseRetrievalProfileHealth {
   status: 'missing' | 'valid' | 'invalid'
   fallback_reason: string | null
 }
 
-export interface CodeWikiRetrievalProfile {
+export interface KnowledgeBaseRetrievalProfile {
   version: number
   retrieval_config: RetrievalConfigDraft | null
-  health: CodeWikiRetrievalProfileHealth
+  health: KnowledgeBaseRetrievalProfileHealth
 }
 
 // Splitter Config types

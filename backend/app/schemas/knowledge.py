@@ -24,7 +24,6 @@ from app.schemas.kind import (
     RetrieverRef,
     SummaryModelRef,
 )
-from app.services.knowledge.retrieval_capabilities import derive_retrieval_capabilities
 from app.schemas.knowledge_multimodal import (
     DocumentReindexRequest,
     MultimodalAnalysisFieldsMixin,
@@ -36,6 +35,7 @@ from app.schemas.knowledge_search import KnowledgeSearchRequest
 
 # Import SplitterConfig from rag.py to use unified splitter configuration
 from app.schemas.rag import SplitterConfig
+from app.schemas.retrieval_capabilities import derive_retrieval_capabilities
 from app.services.knowledge.splitter_config import normalize_splitter_config
 
 logger = logging.getLogger(__name__)
@@ -193,28 +193,28 @@ class RetrievalConfigCreate(BaseModel):
     )
 
 
-class CodeWikiRetrievalProfileUpdate(BaseModel):
+class KnowledgeBaseRetrievalProfileUpdate(BaseModel):
     """Administrator-managed default retrieval configuration for new knowledge bases."""
 
     retrieval_config: RetrievalConfigCreate
 
     @model_validator(mode="after")
-    def require_complete_resource_references(self) -> "CodeWikiRetrievalProfileUpdate":
+    def require_complete_resource_references(
+        self,
+    ) -> "KnowledgeBaseRetrievalProfileUpdate":
         config = self.retrieval_config
         if not config.retriever_name or not config.embedding_config:
             raise ValueError(
                 "Retrieval profile requires a retriever and embedding model"
             )
         if not config.embedding_config.model_name:
-            raise ValueError(
-                "Retrieval profile requires an embedding model name"
-            )
+            raise ValueError("Retrieval profile requires an embedding model name")
         if config.retrieval_mode not in {"vector", "keyword", "hybrid"}:
             raise ValueError("Retrieval profile has an unsupported retrieval mode")
         return self
 
 
-class CodeWikiRetrievalProfileHealth(BaseModel):
+class KnowledgeBaseRetrievalProfileHealth(BaseModel):
     """Safe validation state shown to admins and knowledge base creators."""
 
     status: Literal["missing", "valid", "invalid"]
@@ -227,12 +227,12 @@ class CodeWikiRetrievalProfileHealth(BaseModel):
     ] = None
 
 
-class CodeWikiRetrievalProfileResponse(BaseModel):
+class KnowledgeBaseRetrievalProfileResponse(BaseModel):
     """Public-readable profile containing references but never connection details."""
 
     version: int
     retrieval_config: Optional[RetrievalConfigCreate] = None
-    health: CodeWikiRetrievalProfileHealth
+    health: KnowledgeBaseRetrievalProfileHealth
 
 
 # Scopes a model reference may name. Four, not three: `runtime` is a real scope --

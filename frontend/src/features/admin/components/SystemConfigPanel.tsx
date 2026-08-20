@@ -53,7 +53,7 @@ import {
 } from '@/components/ui/select'
 import { formatFileSize, uploadAttachment } from '@/apis/attachments'
 import { MarketplaceTagsConfigSection } from './MarketplaceTagsConfigSection'
-import { CodeWikiRetrievalProfileSection } from './CodeWikiRetrievalProfileSection'
+import { KnowledgeBaseRetrievalProfileSection } from './KnowledgeBaseRetrievalProfileSection'
 
 // Common form data type for both slogans and tips
 type ItemFormData = {
@@ -1315,7 +1315,7 @@ const SystemConfigPanel: React.FC = () => {
         </Dialog>
       )}
 
-      <CodeWikiRetrievalProfileSection />
+      <KnowledgeBaseRetrievalProfileSection />
 
       {/* Slogan Dialogs */}
       {renderEditDialog(

@@ -22,8 +22,8 @@ jest.mock('@/apis/admin', () => ({
     getPublicTeams: jest.fn(),
     getQuickLaunchFunctionsConfig: jest.fn(),
     updateQuickLaunchFunctionsConfig: jest.fn(),
-    getCodeWikiRetrievalProfile: jest.fn(),
-    updateCodeWikiRetrievalProfile: jest.fn(),
+    getKnowledgeBaseRetrievalProfile: jest.fn(),
+    updateKnowledgeBaseRetrievalProfile: jest.fn(),
   },
 }))
 
@@ -158,7 +158,7 @@ describe('SystemConfigPanel', () => {
       version: 8,
       functions: [],
     })
-    mockedAdminApis.getCodeWikiRetrievalProfile.mockResolvedValue({
+    mockedAdminApis.getKnowledgeBaseRetrievalProfile.mockResolvedValue({
       version: 0,
       retrieval_config: null,
       health: { status: 'missing', fallback_reason: null },

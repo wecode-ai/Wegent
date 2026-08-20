@@ -43,7 +43,6 @@ from app.schemas.knowledge import (
     AllGroupedKnowledgeResponse,
     BatchDocumentIds,
     BatchOperationResult,
-    CodeWikiRetrievalProfileResponse,
     ContentOrigin,
     DocumentContentUpdate,
     DocumentDetailResponse,
@@ -52,6 +51,7 @@ from app.schemas.knowledge import (
     KnowledgeBaseCreate,
     KnowledgeBaseListResponse,
     KnowledgeBaseResponse,
+    KnowledgeBaseRetrievalProfileResponse,
     KnowledgeBaseTypeUpdate,
     KnowledgeBaseUpdate,
     KnowledgeDocumentCreate,
@@ -74,13 +74,13 @@ from app.services.knowledge import (
     KnowledgeService,
     knowledge_base_qa_service,
 )
-from app.services.knowledge.code_wiki.retrieval_profile import get_profile
 from app.services.knowledge.orchestrator import (
     DEFAULT_KNOWLEDGE_LIST_LIMIT,
     MAX_DOCUMENT_READ_LIMIT,
     MAX_KNOWLEDGE_LIST_LIMIT,
     knowledge_orchestrator,
 )
+from app.services.knowledge.retrieval_profile import get_profile
 from shared.telemetry.decorators import (
     add_span_event,
     trace_async,
@@ -315,12 +315,12 @@ def get_knowledge_config():
 
 @router.get(
     "/code-wiki-retrieval-profile",
-    response_model=CodeWikiRetrievalProfileResponse,
+    response_model=KnowledgeBaseRetrievalProfileResponse,
 )
-def get_code_wiki_retrieval_profile(
+def get_knowledge_base_retrieval_profile(
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
-) -> CodeWikiRetrievalProfileResponse:
+) -> KnowledgeBaseRetrievalProfileResponse:
     """Return safe public resource references for new knowledge base forms."""
     del current_user
     retrieval_config, version, health = get_profile(db)

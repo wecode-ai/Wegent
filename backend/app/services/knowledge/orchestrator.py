@@ -48,7 +48,7 @@ from app.services.knowledge.document_read_service import (
     document_read_service,
 )
 from app.services.knowledge.knowledge_service import KnowledgeService
-from app.services.knowledge.code_wiki.retrieval_profile import (
+from app.services.knowledge.retrieval_profile import (
     get_profile,
     merge_profile_defaults,
 )

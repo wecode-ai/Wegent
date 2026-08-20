@@ -1,4 +1,4 @@
-"""Safe, derived retrieval capabilities exposed to Agents and clients."""
+"""Safe retrieval capability metadata shared by responses and runtime context."""
 
 from __future__ import annotations
 
@@ -8,11 +8,7 @@ from typing import Any
 def derive_retrieval_capabilities(
     retrieval_config: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    """Describe optional query hints that should be advertised to agents.
-
-    The returned value intentionally contains no resource identifiers or connection
-    settings. It is safe for prompts and knowledge-base discovery responses.
-    """
+    """Describe optional query hints that are useful for a retrieval mode."""
     config = retrieval_config if isinstance(retrieval_config, dict) else {}
     mode = config.get("retrieval_mode")
     if mode not in {"vector", "keyword", "hybrid"}:
@@ -25,9 +21,9 @@ def derive_retrieval_capabilities(
 
     return {
         "retrieval_mode": mode,
-        # The caller's query already drives vector retrieval. Do not ask an agent
-        # to construct a redundant semantic rewrite for vector or hybrid search.
-        "semantic_query": False,
+        # A vector-only caller's original query is already its dense query. Hybrid
+        # retrieval additionally benefits from an optional semantic rewrite.
+        "semantic_query": mode == "hybrid",
         "keywords": mode in {"keyword", "hybrid"},
         "phrases": mode in {"keyword", "hybrid"},
     }

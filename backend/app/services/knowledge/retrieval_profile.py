@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal, TypedDict
 
 from sqlalchemy import tuple_
 from sqlalchemy.orm import Session
@@ -10,12 +10,26 @@ from sqlalchemy.orm import Session
 from app.models.kind import Kind
 from app.models.system_config import SystemConfig
 
-CODE_WIKI_RETRIEVAL_PROFILE_KEY = "code_wiki_retrieval_profile"
+KNOWLEDGE_BASE_RETRIEVAL_PROFILE_KEY = "knowledge_base_retrieval_profile"
+
+
+class RetrievalProfileHealth(TypedDict):
+    """Safe health state for the shared retrieval default."""
+
+    status: Literal["missing", "valid", "invalid"]
+    fallback_reason: (
+        Literal[
+            "retriever_unavailable",
+            "embedding_model_unavailable",
+            "profile_incomplete",
+        ]
+        | None
+    )
 
 
 def profile_health(
     db: Session, retrieval_config: dict[str, Any] | None
-) -> dict[str, str | None]:
+) -> RetrievalProfileHealth:
     """Validate public resource references without exposing their configuration."""
     if not retrieval_config:
         return {"status": "missing", "fallback_reason": None}
@@ -64,11 +78,13 @@ def profile_health(
     return {"status": "valid", "fallback_reason": None}
 
 
-def get_profile(db: Session) -> tuple[dict[str, Any] | None, int, dict[str, str | None]]:
+def get_profile(
+    db: Session,
+) -> tuple[dict[str, Any] | None, int, RetrievalProfileHealth]:
     """Return the stored profile and live reference health."""
     config = (
         db.query(SystemConfig)
-        .filter(SystemConfig.config_key == CODE_WIKI_RETRIEVAL_PROFILE_KEY)
+        .filter(SystemConfig.config_key == KNOWLEDGE_BASE_RETRIEVAL_PROFILE_KEY)
         .first()
     )
     value = config.config_value if config else {}
@@ -87,16 +103,16 @@ def save_profile(
     *,
     retrieval_config: dict[str, Any],
     updated_by: int,
-) -> tuple[dict[str, Any], int, dict[str, str | None]]:
+) -> tuple[dict[str, Any], int, RetrievalProfileHealth]:
     """Create or replace the profile while retaining only safe references."""
     config = (
         db.query(SystemConfig)
-        .filter(SystemConfig.config_key == CODE_WIKI_RETRIEVAL_PROFILE_KEY)
+        .filter(SystemConfig.config_key == KNOWLEDGE_BASE_RETRIEVAL_PROFILE_KEY)
         .first()
     )
     if config is None:
         config = SystemConfig(
-            config_key=CODE_WIKI_RETRIEVAL_PROFILE_KEY,
+            config_key=KNOWLEDGE_BASE_RETRIEVAL_PROFILE_KEY,
             config_value={"retrieval_config": retrieval_config},
             version=1,
             updated_by=updated_by,

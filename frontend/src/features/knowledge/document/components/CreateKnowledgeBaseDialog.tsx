@@ -39,7 +39,7 @@ import type {
   RagConfigMode,
 } from '@/types/knowledge'
 import { GenerationTaskRow } from '@/features/knowledge/code-wiki/GenerationTaskRow'
-import { getCodeWikiRetrievalProfile } from '@/apis/knowledge'
+import { getKnowledgeBaseRetrievalProfile } from '@/apis/knowledge'
 import { KnowledgeBaseForm } from './KnowledgeBaseForm'
 import { createDefaultRetrievalConfig } from './retrievalConfig'
 import { useMultimodalKBConfig } from '@/features/knowledge/multimodal/hooks/useMultimodalKBConfig'
@@ -207,7 +207,7 @@ export function CreateKnowledgeBaseDialog({
     profileAppliedRef.current = true
     let cancelled = false
 
-    void getCodeWikiRetrievalProfile()
+    void getKnowledgeBaseRetrievalProfile()
       .then(profile => {
         if (cancelled) return
         if (profile.health.status === 'valid' && profile.retrieval_config) {
@@ -284,7 +284,10 @@ export function CreateKnowledgeBaseDialog({
         name: name.trim(),
         description: description.trim() || undefined,
         direct_access_requirement: directAccessRequirement,
-        retrieval_config: ragConfigMode === 'disabled' ? undefined : retrievalConfig,
+        retrieval_config:
+          ragConfigMode === 'disabled' || !retrievalConfigChangedRef.current
+            ? undefined
+            : retrievalConfig,
         rag_config_mode: ragConfigMode,
         summary_enabled: summaryEnabled,
         summary_model_ref: summaryEnabled ? summaryModelRef : null,

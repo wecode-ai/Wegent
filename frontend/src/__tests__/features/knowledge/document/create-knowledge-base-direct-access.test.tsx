@@ -6,7 +6,7 @@ import '@testing-library/jest-dom'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import { CreateKnowledgeBaseDialog } from '@/features/knowledge/document/components/CreateKnowledgeBaseDialog'
-import { getCodeWikiRetrievalProfile } from '@/apis/knowledge'
+import { getKnowledgeBaseRetrievalProfile } from '@/apis/knowledge'
 import type { DirectAccessRequirement, KnowledgeBaseCreate } from '@/types/knowledge'
 
 jest.mock('@/hooks/useTranslation', () => ({
@@ -14,7 +14,7 @@ jest.mock('@/hooks/useTranslation', () => ({
 }))
 
 jest.mock('@/apis/knowledge', () => ({
-  getCodeWikiRetrievalProfile: jest.fn().mockResolvedValue({
+  getKnowledgeBaseRetrievalProfile: jest.fn().mockResolvedValue({
     version: 1,
     retrieval_config: {
       retriever_name: 'public-retriever',
@@ -35,11 +35,15 @@ jest.mock('@/features/knowledge/document/components/KnowledgeBaseForm', () => ({
     onDirectAccessRequirementChange,
     onNameChange,
     onSummaryEnabledChange,
+    onRetrievalConfigChange,
+    onRetrievalConfigUserChange,
   }: {
     directAccessRequirement: DirectAccessRequirement
     onDirectAccessRequirementChange: (value: DirectAccessRequirement) => void
     onNameChange: (value: string) => void
     onSummaryEnabledChange: (value: boolean) => void
+    onRetrievalConfigChange: (value: { top_k: number }) => void
+    onRetrievalConfigUserChange: () => void
   }) => (
     <div>
       <button type="button" onClick={() => onNameChange('Private docs')}>
@@ -47,6 +51,15 @@ jest.mock('@/features/knowledge/document/components/KnowledgeBaseForm', () => ({
       </button>
       <button type="button" onClick={() => onSummaryEnabledChange(false)}>
         disable summary
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          onRetrievalConfigChange({ top_k: 9 })
+          onRetrievalConfigUserChange()
+        }}
+      >
+        change retrieval settings
       </button>
       <button
         type="button"
@@ -86,7 +99,7 @@ describe('CreateKnowledgeBaseDialog direct access requirement', () => {
 
     render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={onSubmit} />)
 
-    await waitFor(() => expect(getCodeWikiRetrievalProfile).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(getKnowledgeBaseRetrievalProfile).toHaveBeenCalledTimes(1))
     expect(screen.getByTestId('knowledge-base-direct-access-read')).toBeChecked()
     fireEvent.click(screen.getByRole('button', { name: 'set name' }))
     fireEvent.click(screen.getByRole('button', { name: 'disable summary' }))
@@ -97,16 +110,27 @@ describe('CreateKnowledgeBaseDialog direct access requirement', () => {
       expect(onSubmit).toHaveBeenCalledWith(
         expect.objectContaining({
           direct_access_requirement: 'edit',
-          retrieval_config: {
-            retriever_name: 'public-retriever',
-            retriever_namespace: 'default',
-            embedding_config: { model_name: 'public-embedding', model_namespace: 'default' },
-            retrieval_mode: 'hybrid',
-            top_k: 8,
-            score_threshold: 0.3,
-            hybrid_weights: { vector_weight: 0.6, keyword_weight: 0.4 },
-          },
+          retrieval_config: undefined,
         })
+      )
+    })
+  })
+
+  it('submits a retrieval configuration after the creator changes it', async () => {
+    const onSubmit = jest.fn(async (_data: Omit<KnowledgeBaseCreate, 'namespace'>) => {})
+    ;(getKnowledgeBaseRetrievalProfile as jest.Mock).mockClear()
+
+    render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={onSubmit} />)
+
+    await waitFor(() => expect(getKnowledgeBaseRetrievalProfile).toHaveBeenCalledTimes(1))
+    fireEvent.click(screen.getByRole('button', { name: 'set name' }))
+    fireEvent.click(screen.getByRole('button', { name: 'disable summary' }))
+    fireEvent.click(screen.getByRole('button', { name: 'change retrieval settings' }))
+    fireEvent.click(screen.getByRole('button', { name: 'common:actions.create' }))
+
+    await waitFor(() => {
+      expect(onSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({ retrieval_config: { top_k: 9 } })
       )
     })
   })
