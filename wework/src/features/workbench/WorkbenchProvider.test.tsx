@@ -4,6 +4,7 @@ import { createContext, StrictMode, useContext, useEffect, useState } from 'reac
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { LOCAL_USER } from '@/api/local/localSession'
+import { resetLocalRuntimeChatStreamsForTests } from '@/api/local/localServices'
 import i18n from '@/i18n'
 import {
   CloudConnectionContext,
@@ -2065,6 +2066,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     localStorage.clear()
     sessionStorage.clear()
     vi.clearAllMocks()
+    resetLocalRuntimeChatStreamsForTests()
     resetComposerAppsMemory()
     pluginApiMocks.cloudListInstalledPlugins.mockResolvedValue({ items: [] })
     localExecutorMocks.ensureLocalExecutorStarted.mockResolvedValue({
