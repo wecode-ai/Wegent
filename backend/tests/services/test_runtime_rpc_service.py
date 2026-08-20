@@ -38,6 +38,34 @@ def _compressed_runtime_rpc_response(response: dict):
     }
 
 
+def test_encode_runtime_rpc_response_compresses_large_browser_result() -> None:
+    from app.services.device.runtime_rpc_service import (
+        RUNTIME_RPC_COMPRESSED_ENCODING,
+        RUNTIME_RPC_ENCODING_KEY,
+        RuntimeRpcService,
+        encode_runtime_rpc_response,
+    )
+
+    expected = {
+        "success": True,
+        "messages": [{"id": "m1", "content": "历史消息🙂" * 100000}],
+    }
+
+    encoded = encode_runtime_rpc_response(
+        expected,
+        method="runtime.tasks.transcript",
+    )
+
+    assert encoded[RUNTIME_RPC_ENCODING_KEY] == RUNTIME_RPC_COMPRESSED_ENCODING
+    assert (
+        RuntimeRpcService._decode_response(
+            encoded,
+            method="runtime.tasks.transcript",
+        )
+        == expected
+    )
+
+
 class _SocketManager:
     def __init__(self, *, connected: bool = True):
         self.connected = connected
@@ -151,6 +179,39 @@ async def test_runtime_rpc_service_decodes_compressed_ack(monkeypatch):
         AsyncMock(return_value=_compressed_runtime_rpc_response(expected))
     )
     monkeypatch.setattr(module, "get_sio", lambda: sio)
+
+    result = await module.RuntimeRpcService().call(
+        user_id=7,
+        device_id="device-1",
+        method="runtime.tasks.transcript",
+        payload={"localTaskId": "codex-1"},
+        timeout_seconds=30,
+    )
+
+    assert result == expected
+
+
+@pytest.mark.asyncio
+async def test_runtime_rpc_service_preserves_oversized_response_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.device import runtime_rpc_service as module
+
+    expected = {
+        "success": False,
+        "code": "runtime_rpc_response_too_large",
+        "error": "Runtime RPC response exceeded the Socket.IO payload limit",
+    }
+    monkeypatch.setattr(
+        module.runtime_route_resolver,
+        "resolve",
+        AsyncMock(return_value=_runtime_route()),
+    )
+    monkeypatch.setattr(
+        module,
+        "get_sio",
+        lambda: _socketio_with_call(AsyncMock(return_value=expected)),
+    )
 
     result = await module.RuntimeRpcService().call(
         user_id=7,

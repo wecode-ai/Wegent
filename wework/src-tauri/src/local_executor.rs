@@ -1714,6 +1714,11 @@ fn local_executor_sidecar_env(
     app: &tauri::AppHandle,
 ) -> Vec<(String, String)> {
     let mut envs = local_executor_backend_env(inner);
+    if let Ok(node_bin) = crate::execution_environments::node_bin_directory(app) {
+        if let Some((_, path)) = envs.iter_mut().find(|(key, _)| key == "PATH") {
+            *path = process_environment::prepend_path(path, node_bin);
+        }
+    }
     if let Some(path) = non_empty_env(MANAGED_HOOKS_DIR_ENV) {
         envs.push((MANAGED_HOOKS_DIR_ENV.to_string(), path));
     }
