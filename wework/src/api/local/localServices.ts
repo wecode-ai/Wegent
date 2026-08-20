@@ -362,11 +362,12 @@ function localRuntimeModels(
 }
 
 type LocalExecutorRequest = <T>(method: string, params?: Record<string, unknown>) => Promise<T>
+type LocalExecutorSubscribe = (handler: (event: LocalExecutorEvent) => void) => Promise<() => void>
 
 interface LocalAppServicesDeps {
   ensure?: () => Promise<LocalExecutorStatus>
   request?: LocalExecutorRequest
-  subscribe?: (handler: (event: LocalExecutorEvent) => void) => Promise<() => void>
+  subscribe?: LocalExecutorSubscribe
   cloudModelGateway?: CloudModelGateway
   user?: User
   readWorkspaceTextFile?: typeof readLocalWorkspaceTextFile
@@ -384,6 +385,31 @@ const catalogReconciliationTrackers = new WeakMap<
   LocalExecutorRequest,
   CatalogReconciliationTracker
 >()
+let runtimeChatStreams = new WeakMap<
+  LocalExecutorSubscribe,
+  WeakMap<LocalExecutorRequest, ReturnType<typeof createRuntimeChatStream>>
+>()
+
+export function resetLocalRuntimeChatStreamsForTests(): void {
+  runtimeChatStreams = new WeakMap()
+}
+
+function getRuntimeChatStream(
+  subscribe: LocalExecutorSubscribe,
+  request: LocalExecutorRequest
+): ReturnType<typeof createRuntimeChatStream> {
+  let streamsByRequest = runtimeChatStreams.get(subscribe)
+  if (!streamsByRequest) {
+    streamsByRequest = new WeakMap()
+    runtimeChatStreams.set(subscribe, streamsByRequest)
+  }
+  const existing = streamsByRequest.get(request)
+  if (existing) return existing
+
+  const stream = createRuntimeChatStream({ subscribe, request })
+  streamsByRequest.set(request, stream)
+  return stream
+}
 const CATALOG_IDLE_RESTART_RETRY_DELAY_MS = 100
 const CATALOG_IDLE_RESTART_MAX_ATTEMPTS = 20
 
@@ -3544,6 +3570,6 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       uploadRuntimeAuthJson: () => cloudConnectionRequired('uploadRuntimeAuthJson'),
       importRuntimeAuthJson: () => cloudConnectionRequired('importRuntimeAuthJson'),
     },
-    chatStream: createRuntimeChatStream({ subscribe, request }),
+    chatStream: getRuntimeChatStream(subscribe, request),
   } as unknown as WorkbenchServices
 }
