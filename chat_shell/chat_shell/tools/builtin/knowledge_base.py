@@ -16,8 +16,8 @@ from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field, PrivateAttr
 
-from shared.models.knowledge import KnowledgeBaseScope, KnowledgeBaseToolAccessMode
 from shared.models import SearchHints
+from shared.models.knowledge import KnowledgeBaseScope, KnowledgeBaseToolAccessMode
 
 from ...compression.config import get_model_context_config
 from ..knowledge_content_cleaner import get_content_cleaner
@@ -1543,9 +1543,9 @@ class KnowledgeBaseTool(BaseTool):
             "knowledge_base_ids": self.knowledge_base_ids,
             "max_results": max_results,
             "route_mode": route_mode,
-            "search_hints": search_hints.model_dump(exclude_none=True)
-            if search_hints
-            else None,
+            "search_hints": (
+                search_hints.model_dump(exclude_none=True) if search_hints else None
+            ),
             "runtime_context": self._build_runtime_context(),
         }
         if self.external_knowledge_refs:

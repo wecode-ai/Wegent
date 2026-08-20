@@ -95,6 +95,8 @@ POST /api/runtime-work/transcript
 
 Backend forwards `deviceId + localTaskId` to the owning device with `runtime.tasks.transcript`. Native Codex tasks are located through their Codex session path or session-file discovery. Non-Codex/imported tasks may use `workspacePath` as a local-index lookup hint, or locate the task from the local LocalTask index by `localTaskId`. The executor reads the native runtime transcript and returns normalized messages.
 
+Cloud and remote devices return runtime RPC results through two Socket.IO acknowledgement hops: executor → Backend and Backend → Wework. The executor compresses first-hop ACKs larger than 512 KiB in the existing `gzip+base64+json` envelope. Backend decodes them and applies service processing such as device ID projection; if the browser-facing result still exceeds 512 KiB, Backend compresses the second-hop ACK in the same envelope and Wework decodes it before resolving the caller. Local App IPC always keeps the original JSON response. Every compressed envelope must remain below the Socket.IO 1 MB limit. If it cannot, the sender returns a small `runtime_rpc_response_too_large` error instead of transmitting an oversized packet that disconnects the device and its heartbeat. The executor runs the potentially slow capability-sync callback in a separate task so it cannot block the Socket.IO receive loop and connection keepalive.
+
 ### Codex Transcript Read Path And Performance
 
 Wework uses one primary read path for local Codex conversations so list, open, and refresh do not each implement separate transcript logic:
