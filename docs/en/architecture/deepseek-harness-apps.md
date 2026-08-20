@@ -9,12 +9,14 @@ Scope: Wework imports a DeepSeek Harness package as a Smart app, binds it to one
 ```mermaid
 flowchart LR
     EXPERIMENT[Experimental features toggle] --> PLUS[Top tab bar +]
+    EXPERIMENT --> SIDEBAR[Sidebar Applications entry]
     EXPERIMENT --> APPS[Applications workspace]
     EXPERIMENT --> ROUTES[Smart app view and resident restoration]
     PLUS --> APPS
+    SIDEBAR --> APPS
     APPS --> SITES[Sites]
     APPS --> MINIAPP[Mini Programs]
-    APPS --> MARKET[Smart apps]
+    APPS -->|Default /sites| MARKET[Smart apps]
     ROUTES --> MARKET
     MARKET --> DEFAULTS[Register bundled marketplace and idempotently install defaults]
     DEFAULTS --> BUILDER[Smart App Builder plugin]
@@ -68,9 +70,14 @@ sequenceDiagram
     participant D as DeepSeek Harness
     participant W as Native WebView
 
-    U->>C: + → Smart apps
-    C->>A: Open the Applications workspace
-    A->>M: Select Smart apps beside Sites and Mini Programs
+    alt Open from the top tab bar
+        U->>C: + → Smart apps
+        C->>A: Open /sites?app_type=smart_app
+    else Open from the sidebar
+        U->>A: Applications
+        A->>A: Open the default /sites path
+    end
+    A->>M: Select Smart apps by default beside Sites and Mini Programs
     alt Create a Smart app
         U->>M: Create Smart app
         M->>M: Register wework-personal and confirm smart-app-builder is installed
@@ -138,7 +145,7 @@ sequenceDiagram
 | Resident app startup restoration                                                       | `wework/src/features/harness-apps/ResidentSmartAppsManager.tsx`                                                                                            |
 | Starting / failed state, workspace tabs, and native WebViews                           | `wework/src/App.tsx`, `wework/src/features/harness-apps/`, `wework/src/features/workspace-tabs/workspaceTabs.ts`                                           |
 
-Application-type navigation order invariant: when experimental Smart apps are enabled, Smart apps appear before Sites and Mini Programs.
+Application-type navigation order and default-route invariant: when experimental Smart apps are enabled, Smart apps appear before Sites and Mini Programs; the sidebar Applications entry continues to open the default `/sites` path, that path selects Smart apps automatically without adding an `app_type` query parameter to represent the default, and an explicit application-type query parameter continues to override the default selection.
 
 Invariants: all user-facing names use “Smart apps,” while DeepSeek Harness appears only as a runtime implementation detail; Smart apps belong to the Applications workspace and must appear as a peer application type beside Sites and Mini Programs, while the plugin marketplace and plugin management page do not host Smart app management UI; `smart-app-builder` may exist as a development-tool plugin, but its product entry belongs to the experimental Smart app marketplace, its workflow keeps DSH source read-only, composes external plugin packages, verifies them in the Wework built-in browser, and ends installation through native preview, version validation, and model confirmation instead of editing the local installation registry; the entire Smart apps feature is experimental, so when the toggle is off the top “+” and Applications workspace expose no Smart apps entry, direct visits to `/sites?app_type=smart_app` and stale app tabs leave the feature, and resident apps are not restored; when enabled, `/sites?app_type=smart_app` owns the Smart app marketplace and installed management views, while running apps use independent tabs, with no mixing of the Applications workspace, management view, and runtime tab responsibilities; top tab bar “+ → Smart apps” opens the Smart apps type inside Applications, while the workspace tab title remains “Applications”; DeepSeek Harness source remains read-only; application installers contain only a small runtime descriptor and never the DSH runtime archive or recursively registered `node_modules`; runtime release assets use the exact `harness-runtime-<platform>-<content-fingerprint>.tar.gz` naming convention, while the descriptor pins an HTTPS download URL, SHA-256, and byte length; first use downloads to a temporary file, validates it completely, atomically activates an archive-hash cache entry, and then extracts by content fingerprint under app data; failed, truncated, or mismatched downloads never activate or pollute the cache, and concurrent app launches share one download and extraction critical section; production macOS builds sign every Mach-O file in staging with a Developer ID, secure timestamp, and hardened runtime before creating the release asset, and signing mode and identity are part of the content fingerprint so unsigned or differently signed assets are never reused; the archived Node then receives the V8 JIT and executable-memory entitlements after generic Mach-O pre-signing and passes a real V8 Isolate startup check instead of only `node --version`; packages are validated before being written to immutable `name/version` directories; the package DSH version range must contain the actual runtime version; every Smart app instance owns an isolated `DSH_HOME`, port, and process group; the bound model is persisted and can only be changed while the app is stopped, while credentials exist only in the runtime proxy and child environment; Resident means that the main window automatically starts the app and opens its tab once per Wework launch; a normal Open action creates and selects the app's single tab immediately, shows real “prepare runtime, load app, start app” stages tied to the current app name with continuous motion, reuses that same tab for the native WebView after HTTP readiness, and shows failure plus retry in the same tab without allowing tab-strip motion or backend startup time to block tab creation; switching to another workspace tab only hides the running Smart app host and suspends interaction, without disconnecting React effects or closing or recreating the native WebView, and switching back restores the same page and in-memory state; starting, stopping, or failing one instance cannot affect another; stop, uninstall, disabling experimental features, and Wework exit reclaim the complete process group.
 Plugins marked `INSTALLED_BY_DEFAULT` in the `wework-personal` catalog are installed idempotently after bundled marketplace registration. The Smart app creation entry confirms `smart-app-builder` is installed before writing the plugin-referenced fresh-chat draft and navigating; installation failure stays on the marketplace page instead of opening an empty chat. Default-plugin reconciliation reads existing plugin configuration through the Executor-explicitly-allowed Codex `config/read` method and treats a present but user-disabled plugin as configured, so default synchronization must never re-enable it.
