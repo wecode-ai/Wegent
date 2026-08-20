@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useRef } from 'react'
 import type { Dispatch } from 'react'
 import {
   checkoutProjectBranch,
@@ -75,6 +75,8 @@ export function useWorkbenchProjectActions({
   clearRemoteProjectSyncRemoval,
   enqueueRemoteProjectStateMutation,
 }: UseWorkbenchProjectActionsOptions) {
+  const runtimeTaskPinMutationTailsRef = useRef(new Map<string, Promise<void>>())
+
   const createProject = useCallback(
     async (data: CreateProjectRequest, options: ProjectMutationOptions = {}) => {
       const project = await services.projectApi.createProject(data)
@@ -455,14 +457,28 @@ export function useWorkbenchProjectActions({
 
   const setRuntimeTaskPinned = useCallback(
     async (data: RuntimeTaskPinRequest) => {
-      const requestId = updateLocalRuntimeTaskPinned(data)
+      const key = `${data.deviceId}\0${data.threadId}`
+      const previousMutation = runtimeTaskPinMutationTailsRef.current.get(key) ?? Promise.resolve()
+      const mutation = previousMutation
+        .catch(() => undefined)
+        .then(async () => {
+          const requestId = updateLocalRuntimeTaskPinned(data)
+          try {
+            await executorClient.runtime.setRuntimeTaskPinned(data)
+          } catch (error) {
+            rollbackLocalRuntimeTaskPinned(data, requestId)
+            throw error
+          }
+          await refreshWorkLists()
+        })
+      runtimeTaskPinMutationTailsRef.current.set(key, mutation)
       try {
-        await executorClient.runtime.setRuntimeTaskPinned(data)
-      } catch (error) {
-        rollbackLocalRuntimeTaskPinned(data, requestId)
-        throw error
+        await mutation
+      } finally {
+        if (runtimeTaskPinMutationTailsRef.current.get(key) === mutation) {
+          runtimeTaskPinMutationTailsRef.current.delete(key)
+        }
       }
-      await refreshWorkLists()
     },
     [executorClient, refreshWorkLists, rollbackLocalRuntimeTaskPinned, updateLocalRuntimeTaskPinned]
   )

@@ -731,6 +731,7 @@ function RuntimeTaskPinProbe() {
       <span data-testid="runtime-task-pin-error">{error}</span>
       <button
         type="button"
+        data-testid="pin-runtime-task"
         onClick={() =>
           void workbench
             .setRuntimeTaskPinned({
@@ -742,6 +743,21 @@ function RuntimeTaskPinProbe() {
         }
       >
         pin runtime task
+      </button>
+      <button
+        type="button"
+        data-testid="unpin-runtime-task"
+        onClick={() =>
+          void workbench
+            .setRuntimeTaskPinned({
+              deviceId: 'state-device',
+              threadId: 'thread-a',
+              pinned: false,
+            })
+            .catch(() => setError('failed'))
+        }
+      >
+        unpin runtime task
       </button>
     </div>
   )
@@ -2169,7 +2185,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() =>
       expect(screen.getByTestId('runtime-task-pin-state')).toHaveTextContent('unpinned')
     )
-    await userEvent.click(screen.getByText('pin runtime task'))
+    await userEvent.click(screen.getByTestId('pin-runtime-task'))
 
     await waitFor(() =>
       expect(screen.getByTestId('runtime-task-pin-state')).toHaveTextContent('pinned')
@@ -2232,7 +2248,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() =>
       expect(screen.getByTestId('runtime-task-pin-state')).toHaveTextContent('unpinned')
     )
-    await userEvent.click(screen.getByText('pin runtime task'))
+    await userEvent.click(screen.getByTestId('pin-runtime-task'))
     await waitFor(() =>
       expect(screen.getByTestId('runtime-task-pin-state')).toHaveTextContent('pinned')
     )
@@ -2242,6 +2258,84 @@ describe('WorkbenchProvider runtime tasks', () => {
       await Promise.resolve()
     })
 
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-task-pin-error')).toHaveTextContent('failed')
+    )
+    expect(screen.getByTestId('runtime-task-pin-state')).toHaveTextContent('unpinned')
+    expect(screen.getByTestId('automation-task-options')).toHaveTextContent('none')
+  })
+
+  test('serializes repeated task pin mutations before applying their optimistic state', async () => {
+    const pinRequest = deferred<void>()
+    const unpinRequest = deferred<void>()
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: {
+                key: 'local:/workspace/project-alpha',
+                name: 'Wegent',
+                stateDeviceId: 'state-device',
+              },
+              deviceWorkspaces: [
+                {
+                  deviceId: 'device-1',
+                  workspacePath: '/workspace/project-alpha',
+                  available: true,
+                  tasks: [
+                    {
+                      taskId: 'runtime-a',
+                      threadId: 'thread-a',
+                      workspacePath: '/workspace/project-alpha',
+                      title: 'Pinned automation target',
+                      runtime: 'codex',
+                      pinned: false,
+                    },
+                  ],
+                },
+              ],
+              totalTasks: 1,
+            },
+          ],
+          chats: [],
+          totalTasks: 1,
+        })
+      ),
+      setRuntimeTaskPinned: vi
+        .fn()
+        .mockReturnValueOnce(pinRequest.promise)
+        .mockReturnValueOnce(unpinRequest.promise),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<RuntimeTaskPinProbe />, services)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-task-pin-state')).toHaveTextContent('unpinned')
+    )
+    await userEvent.click(screen.getByTestId('pin-runtime-task'))
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-task-pin-state')).toHaveTextContent('pinned')
+    )
+    await userEvent.click(screen.getByTestId('unpin-runtime-task'))
+
+    expect(runtimeWorkApi.setRuntimeTaskPinned).toHaveBeenCalledTimes(1)
+    expect(screen.getByTestId('runtime-task-pin-state')).toHaveTextContent('pinned')
+
+    await act(async () => {
+      pinRequest.reject(new Error('pin failed'))
+      await Promise.resolve()
+    })
+    await waitFor(() => expect(runtimeWorkApi.setRuntimeTaskPinned).toHaveBeenCalledTimes(2))
+    expect(screen.getByTestId('runtime-task-pin-state')).toHaveTextContent('unpinned')
+
+    await act(async () => {
+      unpinRequest.reject(new Error('unpin failed'))
+      await Promise.resolve()
+    })
     await waitFor(() =>
       expect(screen.getByTestId('runtime-task-pin-error')).toHaveTextContent('failed')
     )
@@ -12830,6 +12924,87 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('runtime-open-messages').textContent?.match(/继续修/g)).toHaveLength(
       1
     )
+  })
+
+  test('keeps a direct busy rejection queued until the task lifecycle changes', async () => {
+    let streamHandlers: ChatStreamHandlers = {}
+    const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
+      if (hasRuntimeStreamHandler(handlers)) streamHandlers = handlers
+      return vi.fn()
+    })
+    const sendRuntimeMessage = vi.fn().mockResolvedValue({
+      accepted: true,
+      taskId: 'runtime-a',
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      getRuntimeTranscript: vi.fn().mockResolvedValue({
+        taskId: 'runtime-a',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'codex',
+        messages: [{ id: 'runtime-a:user:1', role: 'user', content: 'first message' }],
+      }),
+      sendRuntimeMessage,
+    })
+    const uploadLocalAttachmentToCloud = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('runtime task is already running'))
+      .mockResolvedValue(createImageAttachment({ id: 46 }))
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      attachmentApi: {
+        uploadAttachment: vi.fn(),
+        uploadLocalAttachmentToCloud,
+      },
+      chatStream: {
+        subscribe,
+      } as unknown as WorkbenchServices['chatStream'],
+    })
+
+    renderWorkbench(
+      <>
+        <RuntimeOpenProbe />
+        <FollowUpProbe />
+      </>,
+      services
+    )
+
+    await userEvent.click(await screen.findByText('open runtime a'))
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('first message')
+    )
+    await userEvent.click(screen.getByText('set follow-up'))
+    await userEvent.click(screen.getByText('add local image attachment'))
+    await userEvent.click(screen.getByText('send follow-up'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('queued-messages')).toHaveTextContent('queued:继续修')
+    )
+    expect(uploadLocalAttachmentToCloud).toHaveBeenCalledTimes(1)
+    expect(sendRuntimeMessage).not.toHaveBeenCalled()
+
+    await act(async () => {
+      streamHandlers.onChatStart?.({
+        taskId: 'runtime-a',
+        subtaskId: 'provider-active-turn',
+        shellType: 'Chat',
+        deviceId: 'device-1',
+      })
+    })
+    expect(uploadLocalAttachmentToCloud).toHaveBeenCalledTimes(1)
+    expect(sendRuntimeMessage).not.toHaveBeenCalled()
+
+    await act(async () => {
+      streamHandlers.onChatDone?.({
+        taskId: 'runtime-a',
+        subtaskId: 'provider-active-turn',
+        deviceId: 'device-1',
+        result: { value: 'done' },
+      })
+    })
+
+    await waitFor(() => expect(uploadLocalAttachmentToCloud).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(sendRuntimeMessage).toHaveBeenCalledTimes(1))
+    expect(screen.getByTestId('queued-messages')).toHaveTextContent('sending:继续修')
   })
 
   test('waits for the sent queued runtime message to start before sending the next queued item', async () => {

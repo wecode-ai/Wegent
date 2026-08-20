@@ -91,6 +91,7 @@ import {
   removeRuntimeConversationTurn,
   reconcileRuntimeConversationSnapshot,
   replaceRuntimeConversationFromUserMessage,
+  runtimeConversationMessageHasStartedTurn,
   runtimeConversationSnapshotSettlesLatestTurn,
   runtimeConversationKey,
   restoreOptimisticallyInterruptedRuntimeConversation,
@@ -1430,7 +1431,12 @@ export function useWorkbenchPaneSession({
       setQueuedMessages(messages =>
         messages.map(message =>
           message.id === queuedMessage.id
-            ? { ...message, status: 'sending', deliveryMode: 'message' }
+            ? {
+                ...message,
+                status: 'sending',
+                deliveryMode: 'message',
+                awaitingTurnStart: false,
+              }
             : message
         )
       )
@@ -1446,11 +1452,15 @@ export function useWorkbenchPaneSession({
         })
         if (sent) {
           queuedMessageBusyBlockSnapshotsRef.current.delete(queuedMessage.id)
-          if (
-            currentRuntimeTask &&
-            lifecycleStore.getTask(currentRuntimeTask)?.turn.phase === 'streaming'
-          ) {
-            settleRuntimeConversationAcceptedMessage(currentRuntimeTask)
+          if (!currentRuntimeTask) return
+          if (runtimeConversationMessageHasStartedTurn(currentRuntimeTask, queuedMessage.id)) {
+            settleRuntimeConversationAcceptedMessage(currentRuntimeTask, queuedMessage.id)
+          } else {
+            setQueuedMessages(messages =>
+              messages.map(message =>
+                message.id === queuedMessage.id ? { ...message, awaitingTurnStart: true } : message
+              )
+            )
           }
           return
         }
@@ -1473,8 +1483,18 @@ export function useWorkbenchPaneSession({
             message.id !== queuedMessage.id
               ? message
               : isRuntimeTaskBusyError(sendError)
-                ? { ...message, status: 'queued', error: undefined }
-                : { ...message, status: 'failed', error: '发送失败' }
+                ? {
+                    ...message,
+                    status: 'queued',
+                    awaitingTurnStart: undefined,
+                    error: undefined,
+                  }
+                : {
+                    ...message,
+                    status: 'failed',
+                    awaitingTurnStart: undefined,
+                    error: '发送失败',
+                  }
           )
         )
       } catch (error) {
@@ -1486,7 +1506,12 @@ export function useWorkbenchPaneSession({
         setQueuedMessages(messages =>
           messages.map(message =>
             message.id === queuedMessage.id
-              ? { ...message, status: 'failed', error: '发送失败' }
+              ? {
+                  ...message,
+                  status: 'failed',
+                  awaitingTurnStart: undefined,
+                  error: '发送失败',
+                }
               : message
           )
         )
@@ -2065,6 +2090,10 @@ export function useWorkbenchPaneSession({
             resetAttachments()
             clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
           } else if (isRuntimeTaskBusyError(sendError)) {
+            queuedMessageBusyBlockSnapshotsRef.current.set(
+              queuedMessage.id,
+              currentRuntimeTask ? lifecycleStore.getTask(currentRuntimeTask) : null
+            )
             setQueuedMessages(messages => [...messages, queuedMessage])
             setInput('')
             resetAttachments()
@@ -2114,6 +2143,10 @@ export function useWorkbenchPaneSession({
           setInput('')
           setCodeCommentContexts([])
         } else if (isRuntimeTaskBusyError(sendError)) {
+          queuedMessageBusyBlockSnapshotsRef.current.set(
+            queuedMessage.id,
+            currentRuntimeTask ? lifecycleStore.getTask(currentRuntimeTask) : null
+          )
           setQueuedMessages(messages => [...messages, queuedMessage])
           setInput('')
         } else {

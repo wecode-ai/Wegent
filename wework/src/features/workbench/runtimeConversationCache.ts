@@ -166,6 +166,19 @@ export function getRuntimeConversationTurnIds(address: RuntimeTaskAddress): Read
   )
 }
 
+export function runtimeConversationMessageHasStartedTurn(
+  address: RuntimeTaskAddress,
+  messageId: string
+): boolean {
+  const key = runtimeConversationKey(address)
+  return (touchEntry(turnsByConversation, key) ?? []).some(
+    turn =>
+      turn.id !== null &&
+      (turn.clientUserMessageId === messageId ||
+        turn.items.some(item => item.type === 'user_message' && item.id === messageId))
+  )
+}
+
 export function subscribeRuntimeConversation(
   address: RuntimeTaskAddress,
   listener: (action?: RuntimePaneMessageAction) => void
@@ -388,14 +401,19 @@ export function cacheRuntimeConversationQueuedMessagesByKey(
   cacheBoundedEntry(queuedMessagesByConversation, key, messages)
 }
 
-export function settleRuntimeConversationAcceptedMessage(address: RuntimeTaskAddress): void {
+export function settleRuntimeConversationAcceptedMessage(
+  address: RuntimeTaskAddress,
+  messageId?: string
+): void {
   const key = runtimeConversationKey(address)
   const queuedMessages = queuedMessagesByConversation.get(key)
   if (!queuedMessages) return
 
-  const nextQueuedMessages = queuedMessages.filter(
-    message => message.status !== 'sending' || message.deliveryMode !== 'message'
-  )
+  const nextQueuedMessages = queuedMessages.filter(message => {
+    if (message.status !== 'sending' || message.deliveryMode !== 'message') return true
+    if (messageId) return message.id !== messageId
+    return message.awaitingTurnStart !== true
+  })
   if (nextQueuedMessages.length === queuedMessages.length) return
 
   cacheRuntimeConversationQueuedMessagesByKey(key, nextQueuedMessages)

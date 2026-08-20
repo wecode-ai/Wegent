@@ -78,6 +78,7 @@ describe('runtimeConversationCache', () => {
         content: 'first queued message',
         status: 'sending',
         deliveryMode: 'message',
+        awaitingTurnStart: true,
         createdAt: '2026-08-09T00:00:00.000Z',
       },
       {
@@ -94,6 +95,28 @@ describe('runtimeConversationCache', () => {
       expect.objectContaining({
         id: 'next-message',
         status: 'queued',
+      }),
+    ])
+  })
+
+  test('keeps an unaccepted queued send when an unrelated runtime turn starts', () => {
+    cacheRuntimeConversationQueuedMessages(address, [
+      {
+        id: 'in-flight-message',
+        content: 'message awaiting executor acceptance',
+        status: 'sending',
+        deliveryMode: 'message',
+        awaitingTurnStart: false,
+        createdAt: '2026-08-09T00:00:00.000Z',
+      },
+    ])
+
+    settleRuntimeConversationAcceptedMessage(address)
+
+    expect(getRuntimeConversationQueuedMessages(address)).toEqual([
+      expect.objectContaining({
+        id: 'in-flight-message',
+        status: 'sending',
       }),
     ])
   })
