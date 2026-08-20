@@ -2845,7 +2845,8 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByTestId('workspace-issue-composer')).toBeVisible()
     expect(screen.getByTestId('workspace-issue-input')).toHaveValue('Issue with details')
     expect(screen.getByTestId('workspace-issue-composer')).toHaveClass('fixed')
-    expect(screen.queryByRole('heading', { name: '新建 Issue' })).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '新建 Issue' })).toBeVisible()
+    expect(screen.getByTestId('workspace-issue-close')).toBeVisible()
   })
 
   it('only offers direct creation in intake columns', async () => {

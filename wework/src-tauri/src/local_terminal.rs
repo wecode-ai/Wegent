@@ -17,6 +17,7 @@ const TERMINAL_EXIT_EVENT: &str = "local-terminal-exit";
 const DEFAULT_UTF8_LANG: &str = "en_US.UTF-8";
 const DEFAULT_UTF8_LC_CTYPE: &str = "UTF-8";
 const HARNESS_VERSION_TIMEOUT: Duration = Duration::from_secs(5);
+const HARNESS_VERSION_ATTEMPTS: usize = 2;
 const OPEN_CODE_HARNESS_ID: &str = "opencode";
 const CLAUDE_CODE_HARNESS_ID: &str = "claude_code";
 const KIMI_CODE_HARNESS_ID: &str = "kimi_code";
@@ -497,7 +498,7 @@ fn preferred_home_directory(
         .or(fallback_home)
 }
 
-fn read_command_version(path: &Path, args: &[&str]) -> Option<String> {
+fn read_command_version_once(path: &Path, args: &[&str]) -> Option<String> {
     let mut command = Command::new(path);
     command
         .args(args)
@@ -537,6 +538,10 @@ fn read_command_version(path: &Path, args: &[&str]) -> Option<String> {
             Err(_) => return None,
         }
     }
+}
+
+fn read_command_version(path: &Path, args: &[&str]) -> Option<String> {
+    (0..HARNESS_VERSION_ATTEMPTS).find_map(|_| read_command_version_once(path, args))
 }
 
 fn harness_launch_args(
@@ -1630,6 +1635,8 @@ pub fn close_local_terminal(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
 
     #[test]
     fn decodes_utf8_output_across_read_boundaries() {
@@ -1658,6 +1665,41 @@ mod tests {
             resolve_utf8_locale_value(Some("zh_CN.UTF-8"), "en_US.UTF-8"),
             "zh_CN.UTF-8"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn retries_transient_harness_version_detection_failures() {
+        let test_root = std::env::temp_dir().join(format!(
+            "wework-harness-version-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&test_root).unwrap();
+        let executable = test_root.join("harness");
+        let attempts = test_root.join("attempts");
+        fs::write(
+            &executable,
+            format!(
+                "#!/bin/sh\nif [ ! -f '{}' ]; then touch '{}'; exit 1; fi\nprintf '0.35.0\\n'\n",
+                attempts.display(),
+                attempts.display()
+            ),
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&executable).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&executable, permissions).unwrap();
+
+        assert_eq!(
+            read_command_version(&executable, &["--version"]),
+            Some("0.35.0".to_string())
+        );
+
+        fs::remove_dir_all(test_root).unwrap();
     }
 
     #[test]

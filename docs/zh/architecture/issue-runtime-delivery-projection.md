@@ -29,6 +29,9 @@ flowchart LR
     ISSUE --> DETAIL
     BINDING --> DETAIL
     DELIVERY --> DETAIL
+    DETAIL -->|独立请求 / 独立到达| BINDING_VIEW[关联任务区]
+    DETAIL -->|独立请求 / 独立到达| DELIVERY_VIEW[交付区]
+    DETAIL -->|独立请求 / 独立到达| DIRECTORY_VIEW[成员 / 机器人 / 团队区]
     DETAIL --> VIEW[任务终态 / 阶段状态 / 交付 N/M]
 
     DELIVERY --> FILE_INDEX[项目交付文件索引 + Issue/任务祖先链]
@@ -57,8 +60,17 @@ sequenceDiagram
         D-->>E: 发布 Issue changed
     end
     E-->>U: 失效当前 Issue 投影
-    U->>O: 重新读取 Issue、TaskBinding 和 Delivery
-    O-->>U: 返回一致的阶段状态和交付覆盖
+    par 同一失效周期内独立刷新详情分区
+        U->>O: 读取 TaskBinding
+        O-->>U: 立即渲染关联任务
+    and
+        U->>O: 读取 Delivery 与附件
+        O-->>U: 独立渲染交付与附件
+    and
+        U->>O: 读取成员、机器人与团队目录
+        O-->>U: 独立渲染指派来源
+    end
+    Note over O,U: 快速本地 TaskBinding 不等待较慢的远端目录请求
 
     alt 状态写入失败
         O-->>W: 明确失败，可观测且有界重试
@@ -81,6 +93,7 @@ sequenceDiagram
 | fulfillment → N/M 覆盖与审批门禁              | Backend deliverable projection、workflow decision service                       |
 | Issue changed → 详情刷新                      | Backend `loop_item_events`、Wework `projectChatSocket` 与 `CloudTodoWorkspace`  |
 | Issue、TaskBinding、Delivery → UI             | Wework `TodoEditor`、`IssueWorkflowDag`                                         |
+| 详情分区独立加载与过期响应隔离                | Wework `TodoEditor`                                                             |
 | Delivery asset + LoopItem 父子链 → 文件管理器 | Backend `cloud_files` service 与 cloud-project API、Wework `CloudFilesView`     |
 
 必要不变量：
@@ -89,7 +102,7 @@ sequenceDiagram
 - 人工任务只有 Runtime 明确报告 queued 时才能显示排队中。新绑定任务状态未知时必须保留后端阶段状态或显示“同步中”，不得推导 queued。
 - 阶段状态由 TaskBinding 顺序和持久化终态确定：任一 running 优先，否则使用最近绑定任务的可信终态；人工阶段成功后进入 `awaiting_approval`。
 - Delivery finalize 必须在同一事务内固化 Delivery、typed fulfillments 和节点 `delivery_id`；只有 `fulfillments[].requirement_id` 计入 N/M。
-- Runtime 状态更新和 Delivery finalize 都必须使 Issue 详情投影失效。刷新后必须同时读取 Issue、TaskBinding 和 Delivery，禁止混合不同版本的缓存。
+- Runtime 状态更新和 Delivery finalize 都必须使 Issue 详情投影失效。同一失效周期必须重新请求 Issue、TaskBinding 和 Delivery，并隔离已经过期的响应；各详情分区必须在自己的数据到达后立即渲染，不得让本地 TaskBinding 等快速来源等待成员、机器人、团队等独立远端目录请求。
 - 状态写入失败必须返回结构化错误并执行有界重试，不得形成无上限 PATCH 循环；失败不得改变 UI 语义。
 - 人工审批必须使用服务端实时重算的阶段状态和交付覆盖，不得信任客户端缓存或可能滞后的节点快照。
 - 项目交付文件索引必须返回从根 Issue 到交付所属任务的完整、持久化父子链；前端不得通过标题、编号或文件路径猜测任务层级。
