@@ -263,6 +263,7 @@ fn codex_project_workspaces(project_index: &CodexGlobalProjectIndex) -> Vec<Runt
             project_active: project.active,
             project_appearance: project.appearance.clone(),
             default_project_space: project.default_project_space.clone(),
+            project_ai_settings: project.ai_settings.clone(),
         })
         .collect()
 }
@@ -350,6 +351,12 @@ fn runtime_event_request_from_link(link: &RuntimeTaskLink) -> ExecutionRequest {
         prompt: Value::String(link.title.clone()),
         ..ExecutionRequest::default()
     };
+    if !link.project_plugin_ids.is_empty() {
+        request.extra.insert(
+            "project_plugin_ids".to_owned(),
+            json!(link.project_plugin_ids),
+        );
+    }
     if let Some(permission_mode) = link
         .runtime_handle
         .get("modelSelection")

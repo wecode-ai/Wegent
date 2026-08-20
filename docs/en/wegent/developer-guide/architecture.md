@@ -621,6 +621,51 @@ sequenceDiagram
     Frontend->>User: 14. Display result
 ```
 
+### Wework Local Project Settings Flow
+
+A Wework local project can store project instructions, a default model, and
+project plugin relationships, and project quick phrases. The project record
+lives in Codex global state. When a new conversation is created, the frontend
+copies only execution-related settings into the task request. The Executor
+persists that snapshot in `RuntimeTaskLink` and injects it into Codex. Wework's
+composer reads quick phrases directly from the current project and does not
+send them in the execution request.
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Wework
+    participant State as Codex Global State
+    participant Executor
+    participant Codex
+
+    User->>Wework: Configure project instructions, model, plugins, and quick phrases
+    Wework->>State: Persist project-scoped settings
+    User->>Wework: Open quick phrases in the project composer
+    Wework->>State: Read project quick phrases
+    Wework->>Wework: Place project phrases before global phrases
+    User->>Wework: Create a new project conversation
+    Wework->>Executor: Send the instructions, model, and plugin snapshot
+    Executor->>Executor: Persist it in RuntimeTaskLink
+    Executor->>Codex: Inject instructions, model, and plugin overrides
+```
+
+Core invariants:
+
+- Project instructions, the default model, and plugins affect only new
+  conversations; existing conversations keep the snapshot captured when they
+  were created.
+- Project quick phrases are composer presets and never enter the Executor.
+  Current-project phrases precede device-wide phrases, while the device stash
+  remains global.
+- A project plugin represents a project installation relationship. Its package
+  may reuse the global cache and remain globally disabled while being enabled
+  for tasks in that project.
+- Codex receives the union of globally enabled plugins and the current task's
+  project plugins.
+- Projects do not own separate marketplaces; installation sources and policy
+  still come from global marketplaces.
+
 ### Communication Protocols
 
 | Communication Type | Protocol | Purpose |

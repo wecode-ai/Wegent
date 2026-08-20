@@ -5,6 +5,8 @@ import type {
   RuntimeTaskSummary,
   ProjectWithTasks,
   RuntimeDeviceWorkspace,
+  RuntimeProjectAiSettings,
+  RuntimeProjectSpaceRef,
   RuntimeTaskAddress,
   RuntimeProjectWork,
   RuntimeWorkListResponse,
@@ -91,6 +93,14 @@ export type WorkbenchAction =
   | { type: 'bootstrap_failed'; error: string }
   | { type: 'project_created'; project: ProjectWithTasks }
   | { type: 'project_selected'; project: ProjectWithTasks }
+  | {
+      type: 'runtime_local_project_updated'
+      projectKey: string
+      name: string
+      roots: string[]
+      defaultProjectSpace: RuntimeProjectSpaceRef | null
+      aiSettings: RuntimeProjectAiSettings | null
+    }
   | { type: 'runtime_project_removed'; projectId: number }
   | { type: 'device_workspace_prepared'; mapping: DeviceWorkspaceResponse }
   | {
@@ -1062,6 +1072,29 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
         pendingProjectWorkspaceProjectId: null,
         standaloneWorkspacePath: null,
         currentRuntimeTask: null,
+      }
+    case 'runtime_local_project_updated':
+      return {
+        ...state,
+        runtimeWork: state.runtimeWork
+          ? {
+              ...state.runtimeWork,
+              projects: state.runtimeWork.projects.map(projectWork =>
+                projectWork.project.key === action.projectKey
+                  ? {
+                      ...projectWork,
+                      project: {
+                        ...projectWork.project,
+                        name: action.name,
+                        roots: action.roots.map(path => ({ kind: 'local', path })),
+                        defaultProjectSpace: action.defaultProjectSpace,
+                        aiSettings: action.aiSettings,
+                      },
+                    }
+                  : projectWork
+              ),
+            }
+          : state.runtimeWork,
       }
     case 'runtime_project_removed': {
       const removedCurrentProject = state.currentProject?.id === action.projectId

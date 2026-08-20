@@ -6,6 +6,10 @@ import { constants as zlibConstants, createGzip } from 'node:zlib'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawn } from 'node:child_process'
+import {
+  macosSigningFingerprint,
+  signPreparedMacOsBinaries,
+} from './lib/deepseek-harness-signing.mjs'
 
 import { wrapWindowsScriptCommand } from './child-process-command.mjs'
 
@@ -21,7 +25,7 @@ const temporaryArchive = path.join(cacheDirectory, `wework-deepseek-harness-${pr
 const temporaryTar = temporaryArchive.slice(0, -3)
 const temporaryMetadata = `${temporaryArchive}.json`
 const sourceFiles = ['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', '.npmrc']
-const archiveFormatVersion = 'tar-gzip-fast-v1'
+const archiveFormatVersion = 'tar-gzip-fast-v2'
 
 function run(command, args, cwd, environment = {}) {
   return new Promise((resolve, reject) => {
@@ -55,6 +59,8 @@ const sourceFingerprint = createHash('sha256')
   .update(archiveFormatVersion)
   .update('\0')
   .update(process.version)
+  .update('\0')
+  .update(macosSigningFingerprint(process.platform, process.env.APPLE_SIGNING_IDENTITY))
   .update('\0')
   .update(sourceContents.map(content => content.toString('base64')).join('\0'))
   .digest('hex')
@@ -97,6 +103,7 @@ try {
   )}\n`
   await writeFile(path.join(staging, 'runtime.json'), runtimeMetadata)
   await writeFile(path.join(staging, '.resource-placeholder'), '')
+  await signPreparedMacOsBinaries(staging)
 
   await run('tar', ['-cf', temporaryTar, '-C', staging, '.'], root, {
     COPYFILE_DISABLE: '1',

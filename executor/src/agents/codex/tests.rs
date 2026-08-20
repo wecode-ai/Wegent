@@ -263,8 +263,40 @@ fn mcp_thread_diagnostics_report_names_without_config_values() {
 
     assert_eq!(fields["mcp_config_key_count"], "4");
     assert_eq!(fields["mcp_server_names"], "example,wework_space");
+    assert_eq!(fields["reasoning_effort"], "");
     assert_eq!(fields["space_routing_instructions"], "false");
     assert!(!fields.values().any(|value| value.contains("secret-token")));
+}
+
+#[test]
+fn vision_sidecar_thread_start_forwards_selected_reasoning_effort() {
+    let request = ExecutionRequest {
+        model_config: json!({
+            "model_id": "deepseek-v4-pro",
+            "codex_catalog_model_id": "wework-deepseek-v4-pro",
+            "codex_responses_compat_proxy": true,
+            "reasoning": {
+                "effort": "low",
+            },
+            "vision_sidecar": {
+                "model_id": "vision-model",
+                "request_url": "http://models.local/v1/responses",
+                "api_key": "test-key",
+            },
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    let launch_config =
+        build_codex_launch_config(&request).expect("Codex launch config should be built");
+    let params = thread_start_params(&request, &launch_config);
+
+    assert_eq!(
+        codex_request_model(&request).as_deref(),
+        Some("wework-deepseek-v4-pro-vision-sidecar")
+    );
+    assert_eq!(launch_config.effort.as_deref(), Some("low"));
+    assert_eq!(params["config"]["model_reasoning_effort"], "low");
 }
 
 #[test]
@@ -632,6 +664,74 @@ fn codex_launch_config_enables_streaming_patch_updates() {
     assert!(launch_config
         .config_overrides
         .contains(&CODEX_DISABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE.to_owned()));
+}
+
+#[test]
+fn project_launch_config_adds_project_plugins_without_disabling_global_plugins() {
+    let _lock = crate::test_env::lock();
+    let root = unique_test_path("project-plugin-isolation");
+    let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
+    fs::create_dir_all(&root).expect("test Codex home should be created");
+    fs::write(
+        root.join("config.toml"),
+        "[plugins.\"global-only@team\"]\nenabled = true\n\
+         [plugins.\"project-tool@team\"]\nenabled = false\n",
+    )
+    .expect("plugin config should be written");
+    env::set_var(WEGENT_CODEX_HOME_ENV, &root);
+    let mut request = ExecutionRequest {
+        runtime_project_key: Some("local:/repo".to_owned()),
+        ..ExecutionRequest::default()
+    };
+    request.extra.insert(
+        "project_plugin_ids".to_owned(),
+        json!(["project-tool@team"]),
+    );
+
+    let launch_config =
+        build_codex_launch_config(&request).expect("Codex launch config should be built");
+
+    assert!(!launch_config
+        .config_overrides
+        .iter()
+        .any(|value| value.contains("global-only@team")));
+    assert!(launch_config
+        .config_overrides
+        .iter()
+        .any(|value| { value == "plugins.\"project-tool@team\".enabled=true" }));
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn non_project_launch_keeps_global_plugin_configuration() {
+    let request = ExecutionRequest::default();
+
+    assert!(project_plugin_config_overrides(&request).is_empty());
+}
+
+#[test]
+fn project_plugin_overrides_reject_malformed_plugin_ids() {
+    let mut request = ExecutionRequest {
+        runtime_project_key: Some("local:/repo".to_owned()),
+        ..ExecutionRequest::default()
+    };
+    request.extra.insert(
+        "project_plugin_ids".to_owned(),
+        json!([
+            "valid-plugin@team",
+            "scoped/plugin_name@team.marketplace",
+            "invalid=plugin@team",
+            "invalid\"plugin@team"
+        ]),
+    );
+
+    assert_eq!(
+        project_plugin_config_overrides(&request),
+        vec![
+            "plugins.\"scoped/plugin_name@team.marketplace\".enabled=true",
+            "plugins.\"valid-plugin@team\".enabled=true",
+        ]
+    );
 }
 
 #[test]
@@ -2066,10 +2166,10 @@ fn turn_start_params_includes_plan_collaboration_mode_when_requested() {
     assert_eq!(params["collaborationMode"]["mode"], "plan");
     assert_eq!(params["collaborationMode"]["settings"]["model"], "gpt-5.5");
     assert_eq!(
-        params["collaborationMode"]["settings"]["reasoningEffort"],
+        params["collaborationMode"]["settings"]["reasoning_effort"],
         "high"
     );
-    assert!(params["collaborationMode"]["settings"]["developerInstructions"].is_null());
+    assert!(params["collaborationMode"]["settings"]["developer_instructions"].is_null());
 }
 
 #[test]
@@ -3096,10 +3196,10 @@ fn turn_start_params_includes_default_collaboration_mode_when_requested() {
     assert_eq!(params["collaborationMode"]["mode"], "default");
     assert_eq!(params["collaborationMode"]["settings"]["model"], "gpt-5.5");
     assert_eq!(
-        params["collaborationMode"]["settings"]["reasoningEffort"],
+        params["collaborationMode"]["settings"]["reasoning_effort"],
         "medium"
     );
-    assert!(params["collaborationMode"]["settings"]["developerInstructions"].is_null());
+    assert!(params["collaborationMode"]["settings"]["developer_instructions"].is_null());
 }
 
 #[test]

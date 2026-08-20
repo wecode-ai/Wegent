@@ -114,23 +114,29 @@ node e2e/utils/mock-connector-upstream-server.mjs
 主桌面流程的短对话布局回归会保存 `short-conversation-00-ready.png`、`short-conversation-01-prompt-filled.png`、`short-conversation-02-completed-top-aligned.png` 和 `short-conversation-layout-metrics.json`。最后一个截图和 metrics 均在切走并重新打开对话后生成；门禁要求首条消息距离消息视口顶部不超过 `160px`。本地排查该回归时可直接运行 `node wework/e2e/desktop/task-flow.e2e.mjs --short-conversation-only`，但该检查同时属于常规 `e2e:desktop` 主流程，不是独立 CI 入口。
 
 主桌面 runner 也支持按有序 checkpoint 分段执行。当前 checkpoint 依次为
-`workspace-tabs`、`priority-filter`、`telemetry-consent`、
-`automation-lifecycle`、`project-automation`、`plugin-auto-update`、
-`model-routing`、`permission-modes`、`core-task-flow`、`runtime-task-queue`、
-`split-workbench`、`window-lifecycle`、`goal-lifecycle`、
-`supervisor-lifecycle`、`resilience`、
-`conversation-state`、`temporary-chat`、`workspace-attachments`、`rendering-extensions`、
-`change-request-status`、`claude-runtime`、`local-file-preview`、`local-harness`、
-`browser-multi-tabs` 和 `embedded-browser`。
+`remote-device-onboarding`、`workspace-tabs`、`priority-filter`、`telemetry-consent`、
+`automation-lifecycle`、`project-automation`、`project-assignment-notification`、
+`offline-local-project-space`、`plugin-auto-update`、`project-ai-settings`、
+`model-routing`、`permission-modes`、`core-task-flow`、`task-attachments`、
+`cloud-git-worktree`、`cloud-worktree-capability`、`cloud-worktree-create`、
+`cloud-worktree-queued-cancel`、`cloud-worktree-tools`、`cloud-worktree-archive-restore`、
+`cloud-worktree-device-restart`、`context-compaction`、`runtime-task-queue`、
+`codex-notification-isolation`、`split-workbench`、`window-lifecycle`、`goal-lifecycle`、
+`supervisor-lifecycle`、`resilience`、`conversation-state`、`temporary-chat`、
+`workspace-attachments`、`rendering-extensions`、`change-request-status`、
+`claude-runtime`、`local-file-preview`、`local-harness`、`browser-multi-tabs`、
+`embedded-browser` 和 `browser-toolbar-actions`。
 `--segment <checkpoint>` 在公共启动和项目初始化后只运行指定 checkpoint；
 `--from-segment <checkpoint>` 从指定 checkpoint 开始并继续执行所有后续
 checkpoint。跳过上游时，每个 checkpoint 会自行建立最小前置 fixture，不依赖只有
 完整流程才创建的任务或 UI 状态。PR CI 会根据改动的功能路径组合最小 segment
 矩阵；共享桌面基础设施、merge queue、定时任务和 `ci:all` 仍运行完整桌面套件。
 完整 Core 和 Cloud 套件各固定使用 5 个 GitHub Actions matrix job；每个 job
-通过隔离的 Xvfb、端口、应用数据和 Executor Home 同时运行 2 个 checkpoint。
-分片按 CI 实测耗时平衡，新增或明显变慢的 checkpoint 必须重新校准分片，不能靠
-增加 runner、删覆盖或重跑失败用例来缩短关键路径。CI 会先构建一次 Core Tauri
+串行运行其 checkpoint，避免多个真实 Tauri、WebView 和 Executor 栈在同一
+GitHub runner 上争用 CPU 和内存，导致正常异步状态越过统一的 10 秒门槛。
+跨 runner 的 10 个 matrix job 仍提供套件级并行。分片按 CI 实测耗时平衡，
+新增或明显变慢的 checkpoint 必须重新校准分片，不能靠增加 runner、删覆盖或
+重跑失败用例来缩短关键路径。CI 会先构建一次 Core Tauri
 应用、Executor 和 Codex artifact，其中 `--build-only` 会在同一 runner 内并行
 编译相互独立的 Tauri 应用和 Executor；各 Core/Cloud 分片下载并复用该 artifact，
 不再重复执行 Vite、Tauri 和 Executor 构建。Rust 构建同时复用由 `main`
