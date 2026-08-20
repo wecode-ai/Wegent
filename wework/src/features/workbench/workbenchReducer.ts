@@ -364,7 +364,11 @@ function mergeRuntimeTasks(
   const merged = currentTasks
     .map(task => {
       const nextTask = nextById.get(task.taskId)
-      if (nextTask) return shouldReplaceRuntimeTaskProjection(task, nextTask) ? nextTask : task
+      if (nextTask) {
+        return shouldReplaceRuntimeTaskProjection(task, nextTask)
+          ? nextTask
+          : mergeRuntimeTaskListState(task, nextTask)
+      }
       if (
         isFreshOptimisticRuntimeTask(task) &&
         !resolvedTaskKeys.has(runtimeTaskKey(deviceId, task))
@@ -381,6 +385,19 @@ function mergeRuntimeTasks(
     }
   })
   return merged
+}
+
+function mergeRuntimeTaskListState(
+  current: RuntimeTaskSummary,
+  next: RuntimeTaskSummary
+): RuntimeTaskSummary {
+  return {
+    ...current,
+    ...(next.threadId ? { threadId: next.threadId } : {}),
+    pinned: next.pinned,
+    pinnedOrder: next.pinnedOrder,
+    sidebarOrder: next.sidebarOrder,
+  }
 }
 
 function isOptimisticRuntimeTask(task: RuntimeTaskSummary): boolean {

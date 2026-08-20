@@ -1676,6 +1676,86 @@ describe('workbenchReducer', () => {
     ])
   })
 
+  test('refreshes sidebar metadata without replacing a newer lifecycle projection', () => {
+    const state = workbenchReducer(initialWorkbenchState, {
+      type: 'runtime_work_refreshed',
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, name: 'Repo' },
+            deviceWorkspaces: [
+              {
+                deviceId: 'device-1',
+                workspacePath: '/workspace/repo',
+                available: true,
+                tasks: [
+                  {
+                    taskId: 'completed-task',
+                    workspacePath: '/workspace/repo',
+                    title: 'Completed task',
+                    runtime: 'codex',
+                    running: false,
+                    status: 'done',
+                    completedAt: 200,
+                    updatedAt: 200,
+                    pinned: false,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 1,
+      },
+    })
+
+    const refreshed = workbenchReducer(state, {
+      type: 'runtime_work_refreshed',
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, name: 'Repo' },
+            deviceWorkspaces: [
+              {
+                deviceId: 'device-1',
+                workspacePath: '/workspace/repo',
+                available: true,
+                tasks: [
+                  {
+                    taskId: 'completed-task',
+                    threadId: 'provider-thread',
+                    workspacePath: '/workspace/repo',
+                    title: 'Completed task',
+                    runtime: 'codex',
+                    running: false,
+                    status: 'active',
+                    updatedAt: 100,
+                    pinned: true,
+                    pinnedOrder: 0,
+                    sidebarOrder: 3,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 1,
+      },
+    })
+
+    expect(refreshed.runtimeWork?.projects[0].deviceWorkspaces[0].tasks[0]).toMatchObject({
+      taskId: 'completed-task',
+      threadId: 'provider-thread',
+      status: 'done',
+      completedAt: 200,
+      pinned: true,
+      pinnedOrder: 0,
+      sidebarOrder: 3,
+    })
+  })
+
   test('keeps chat and project workspace task ordering separate when paths overlap', () => {
     const state = workbenchReducer(initialWorkbenchState, {
       type: 'lists_refreshed',
