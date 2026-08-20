@@ -21,7 +21,7 @@ Before changing a flow below, update its connection graph, sequence diagram, cod
 | Text-model vision delegation                       | [model-vision-delegation.md](model-vision-delegation.md)                     | Explicit model reference, catalog capability, sidecar configuration, image replacement, failure isolation     |
 | Wework host plugin runtime                         | [workbench-plugin-runtime.md](workbench-plugin-runtime.md)                   | Profile composition, services and UI slots, dynamic modules, sidecars, teardown, and recovery                 |
 | Smart apps (DeepSeek Harness runtime)              | [deepseek-harness-apps.md](deepseek-harness-apps.md)                         | Application-type navigation, package validation, version binding, model proxying, instances, tabs, and cleanup |
-| IM private-chat runtime streaming                  | [im-runtime-streaming.md](im-runtime-streaming.md)                           | Callback key, `runtime:event` envelope, relay and IM forwarding, terminal event, failure isolation            |
+| IM private-chat runtime streaming                  | [im-runtime-streaming.md](im-runtime-streaming.md)                           | Callback key, `runtime:event` envelope, compact progress projection, terminal event, failure isolation         |
 | Codex notification isolation                       | [codex-notification-routing.md](codex-notification-routing.md)               | Shared app-server, thread routing, burst isolation, process exit, terminal projection                         |
 
 Detailed product prose remains in the existing developer guides. This directory contains only reviewable architecture truth.
