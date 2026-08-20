@@ -2307,31 +2307,39 @@ describe('DesktopSidebar', () => {
         })
     )
     const chatPath = '/Users/alice/Documents/Codex/2026-07-12/optimistic-pin'
-    renderSidebar({
-      runtimeWork: {
-        projects: [],
-        chats: [
-          {
-            deviceId: 'local-device',
-            available: true,
-            workspacePath: chatPath,
-            workspaceKind: 'chat',
-            tasks: [
-              {
-                taskId: 'optimistic-chat',
-                threadId: 'optimistic-thread',
-                workspacePath: chatPath,
-                workspaceKind: 'chat',
-                title: 'Optimistic pinned task',
-                runtime: 'codex',
-              },
-            ],
-          },
-        ],
-        totalTasks: 1,
-      },
+    const runtimeWork = {
+      projects: [],
+      chats: [
+        {
+          deviceId: 'local-device',
+          available: true,
+          workspacePath: chatPath,
+          workspaceKind: 'chat' as const,
+          tasks: [
+            {
+              taskId: 'optimistic-chat',
+              threadId: 'optimistic-thread',
+              workspacePath: chatPath,
+              workspaceKind: 'chat' as const,
+              title: 'Optimistic pinned task',
+              runtime: 'codex',
+            },
+          ],
+        },
+      ],
+      totalTasks: 1,
+    }
+    const props = createSidebarProps({
+      runtimeWork,
       onSetRuntimeTaskPinned,
     })
+    const lifecycleStore = new RuntimeTaskLifecycleStore('desktop-sidebar-pin-refresh-test')
+    lifecycleStore.syncRuntimeWork(runtimeWork)
+    const view = render(
+      <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+        <DesktopSidebar {...props} />
+      </RuntimeTaskLifecycleProvider>
+    )
 
     await userEvent.click(screen.getByTestId('runtime-local-task-mark-optimistic-chat'))
 
@@ -2346,6 +2354,24 @@ describe('DesktopSidebar', () => {
       threadId: 'optimistic-thread',
       pinned: true,
     })
+
+    const staleRuntimeWork = {
+      ...runtimeWork,
+      chats: runtimeWork.chats.map(workspace => ({
+        ...workspace,
+        tasks: workspace.tasks.map(task => ({ ...task })),
+      })),
+    }
+    act(() => lifecycleStore.syncRuntimeWork(staleRuntimeWork))
+    view.rerender(
+      <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+        <DesktopSidebar {...props} runtimeWork={staleRuntimeWork} />
+      </RuntimeTaskLifecycleProvider>
+    )
+
+    expect(screen.getByTestId('sidebar-pinned-section')).toContainElement(
+      screen.getByTestId('runtime-local-task-row-optimistic-chat')
+    )
 
     await act(async () => resolvePinRequest?.())
   })

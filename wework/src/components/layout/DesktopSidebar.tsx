@@ -303,7 +303,6 @@ interface RuntimeTaskPinOverride {
   base: boolean
   value: boolean
   requestId: number
-  source: RuntimeWorkListResponse | null | undefined
 }
 
 function getRuntimeTaskPinOverrideKey(deviceId: string, threadId: string) {
@@ -3168,12 +3167,10 @@ export function DesktopSidebar({
             )
           : undefined
         const pinned =
-          override && override.source === runtimeWork && override.base === persistedPinned
-            ? override.value
-            : persistedPinned
+          override && override.base === persistedPinned ? override.value : persistedPinned
         return pinned === persistedPinned ? item : { ...item, task: { ...item.task, pinned } }
       }),
-    [chatTaskItems, chatTaskPinOverrides, runtimeWork]
+    [chatTaskItems, chatTaskPinOverrides]
   )
   const regularChatTaskItems = useMemo(
     () => chatTaskItemsWithPinState.filter(({ task }) => !task.pinned),
@@ -3361,7 +3358,7 @@ export function DesktopSidebar({
     const base = Boolean(chatTask.task.pinned)
     setChatTaskPinOverrides(current => {
       const next = new Map(current)
-      next.set(key, { base, value: data.pinned, requestId, source: runtimeWork })
+      next.set(key, { base, value: data.pinned, requestId })
       return next
     })
     try {
