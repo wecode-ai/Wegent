@@ -470,12 +470,14 @@ export function createHybridWorkbenchServices(
     if (cached) return cached
     const api = createRuntimeWorkApiFromIpc(
       (method, params) =>
-        cloudRuntimeIpc.request(
-          method,
-          params,
-          logicalDeviceId,
-          method === 'runtime.tasks.transcript' ? RUNTIME_TRANSCRIPT_ACK_TIMEOUT_MS : undefined
-        ),
+        method === 'runtime.tasks.transcript'
+          ? cloudRuntimeIpc.request(
+              method,
+              params,
+              logicalDeviceId,
+              RUNTIME_TRANSCRIPT_ACK_TIMEOUT_MS
+            )
+          : cloudRuntimeIpc.request(method, params, logicalDeviceId),
       async () => logicalDeviceId,
       {
         resolveDeviceId: async data => cloudDeviceIdFromData(data) ?? logicalDeviceId,
