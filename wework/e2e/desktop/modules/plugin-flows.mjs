@@ -1,5 +1,3 @@
-import JSZip from 'jszip'
-
 import {
   assertMentionRenderedAsToken,
   closeComposerPluginPicker,
@@ -59,6 +57,7 @@ import {
 } from './workspace-flows.mjs'
 
 async function createDirectRemoteMcpPluginZip(root) {
+  const { default: JSZip } = await import('jszip')
   const archivePath = join(root, 'direct-remote-mcp-plugin.zip')
   const zip = new JSZip()
   zip.file(
