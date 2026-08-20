@@ -119,11 +119,7 @@ describe('BrowserHistoryPage', () => {
     await screen.findByText('Rust Book')
     await userEvent.click(screen.getByTestId('browser-history-entry-menu-history-1'))
     await userEvent.click(await screen.findByTestId('browser-history-entry-remove-history-1'))
-    await waitFor(() =>
-      expect(removeEntriesMock).toHaveBeenCalledWith([
-        { url: 'https://docs.example/rust', visitTimeMs: todayNoon + 6000 },
-      ])
-    )
+    await waitFor(() => expect(removeEntriesMock).toHaveBeenCalledWith(['history-1']))
   })
 
   test('removes selected entries in bulk', async () => {
@@ -131,11 +127,7 @@ describe('BrowserHistoryPage', () => {
     await screen.findByText('Rust Book')
     await userEvent.click(screen.getByTestId('browser-history-entry-select-history-1'))
     await userEvent.click(await screen.findByTestId('browser-history-remove-selected'))
-    await waitFor(() =>
-      expect(removeEntriesMock).toHaveBeenCalledWith([
-        { url: 'https://docs.example/rust', visitTimeMs: todayNoon + 6000 },
-      ])
-    )
+    await waitFor(() => expect(removeEntriesMock).toHaveBeenCalledWith(['history-1']))
   })
 
   test('shows an error state with retry when loading fails', async () => {

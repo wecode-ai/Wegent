@@ -85,6 +85,12 @@ pub async fn clear_embedded_browser_data(
 ) -> Result<usize, String> {
     let data_kinds = DataKindSet::from_requested(requested_kinds);
     if data_kinds.history {
+        // Bump the history generation first so page loads that started before
+        // this clear cannot re-record their visit afterwards.
+        state
+            .inner()
+            .history_generation
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         super::with_history_store(&app, state.inner(), |store, path| {
             store.clear();
             store.persist(path)

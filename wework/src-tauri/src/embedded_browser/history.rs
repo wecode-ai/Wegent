@@ -21,13 +21,6 @@ pub struct EmbeddedBrowserHistoryEntry {
     pub visit_time_ms: i64,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct EmbeddedBrowserHistorySelector {
-    pub url: String,
-    pub visit_time_ms: i64,
-}
-
 #[derive(Default)]
 pub struct EmbeddedBrowserHistoryStore {
     // Entries are ordered by ascending visit time; the newest visit is last.
@@ -94,15 +87,10 @@ impl EmbeddedBrowserHistoryStore {
             .collect()
     }
 
-    pub fn remove(&mut self, selectors: &[EmbeddedBrowserHistorySelector]) -> usize {
+    pub fn remove(&mut self, ids: &[String]) -> usize {
         let before = self.entries.len();
-        self.entries.retain(|entry| {
-            !selectors
-                .iter()
-                .any(|selector| {
-                    selector.url == entry.url && selector.visit_time_ms == entry.visit_time_ms
-                })
-        });
+        self.entries
+            .retain(|entry| !ids.iter().any(|id| id == &entry.id));
         before - self.entries.len()
     }
 
@@ -175,7 +163,10 @@ mod tests {
         let mut store = EmbeddedBrowserHistoryStore::default();
         store.record_visit("https://a.example", 1000, Some("Example".to_string()));
         store.backfill_title("https://a.example", "Other");
-        assert_eq!(store.search("", None, 0, 100)[0].title.as_deref(), Some("Example"));
+        assert_eq!(
+            store.search("", None, 0, 100)[0].title.as_deref(),
+            Some("Example")
+        );
     }
 
     #[test]
@@ -253,19 +244,21 @@ mod tests {
     }
 
     #[test]
-    fn removes_entries_by_url_and_visit_time() {
+    fn removes_entries_by_id() {
         let mut store = EmbeddedBrowserHistoryStore::default();
         visit(&mut store, "https://a.example", 1000);
         visit(&mut store, "https://a.example", 2000);
-        visit(&mut store, "https://b.example", 3000);
-        let removed = store.remove(&[EmbeddedBrowserHistorySelector {
-            url: "https://a.example".to_string(),
-            visit_time_ms: 1000,
-        }]);
+        // Same URL in the same millisecond: only the targeted id is removed.
+        visit(&mut store, "https://a.example", 1000);
+        let target_id = store.entries[0].id.clone();
+        let other_same_millis_id = store.entries[2].id.clone();
+        let removed = store.remove(&[target_id.clone()]);
         assert_eq!(removed, 1);
         let results = store.search("", None, 0, 100);
         assert_eq!(results.len(), 2);
-        assert_eq!(results[1].visit_time_ms, 2000);
+        let remaining_ids: Vec<&str> = results.iter().map(|entry| entry.id.as_str()).collect();
+        assert!(!remaining_ids.contains(&target_id.as_str()));
+        assert!(remaining_ids.contains(&other_same_millis_id.as_str()));
     }
 
     #[test]
@@ -288,8 +281,10 @@ mod tests {
 
     #[test]
     fn persists_and_loads_entries() {
-        let directory =
-            std::env::temp_dir().join(format!("wework-browser-history-test-{}", std::process::id()));
+        let directory = std::env::temp_dir().join(format!(
+            "wework-browser-history-test-{}",
+            std::process::id()
+        ));
         let path = directory.join("browser-history.json");
         let _ = fs::remove_dir_all(&directory);
         let mut store = EmbeddedBrowserHistoryStore::default();

@@ -74,8 +74,10 @@ pub struct EmbeddedBrowserHistoryEntry {
 **写入点**（均在 [embedded_browser.rs](../../../../wework/src-tauri/src/embedded_browser.rs) 已有回调内）：
 
 1. `on_page_load`（`PageLoadEvent::Finished`）：复用现有 `loaded_browser_url` 过滤（排除 `about:blank`、映射本地预览页），最终 URL 为 `http`/`https`/`file` 时追加一条记录（本地文件/目录记录的是预览映射后的源 `file://` URL，从历史的条目打开会重新走预览管线）。选择加载完成而非 `on_navigation`，避免记录被拒绝或重定向的请求。
-2. `on_document_title_changed`：按 `native_label` 当前 URL 找到**最近一条**同 URL 记录回填 `title`（避免产生第二条记录）。
+2. 标题与导航绑定：`on_navigation` 时在 webview 条目上标记 `pending_history_url` 并清空旧标题；`on_document_title_changed` 若发生在导航进行中（标题通常先于 Finished 触发）则不回填历史，新标题由 Finished 时的记录直接携带；仅当无进行中导航（加载完成后 JS 改标题）才按当前 URL 回填最近一条无标题记录。
 3. favicon：不入库；前端渲染时按 `${origin}/favicon.ico` 直接加载 `<img>`，`onError` 回退默认 Globe 图标。相比 Codex 的 dataURL 存储更轻，代价是图标可能 404 或随站点变化。
+
+**清除竞态**：`EmbeddedBrowserState.history_generation`（原子计数器）。清除浏览数据时先递增 generation 再清空存储；每次导航开始把当前 generation 记到 webview 条目，加载完成记录历史时在 store 锁内校验 generation 未变才写入——清除开始后完成加载的旧页面不会复活已清除的记录。
 
 **持久化**：JSON 文件 `app_data_dir()/browser-history.json`（沿用 `opener_store.rs` 的 app_data_dir 模式，不引入 SQLite）。内存中 `VecDeque`，容量上限 **5000 条**，超出按 FIFO 淘汰；每次变更后写临时文件再 rename 原子落盘，首次访问时懒加载。
 
@@ -90,7 +92,7 @@ embedded_browser_history_search(
 ) -> Vec<EmbeddedBrowserHistoryEntry>   // 按 visitTimeMs 倒序
 
 embedded_browser_history_remove(
-  entries: Vec<{ url: String, visitTimeMs: i64 }>
+  ids: Vec<String>         // 按记录 id 删除，避免同 URL 同毫秒碰撞误删
 ) -> u32                   // 实际删除条数
 
 embedded_browser_clear_data(dataKinds) // 现有命令，新增 History kind
@@ -118,9 +120,9 @@ embedded_browser_clear_data(dataKinds) // 现有命令，新增 History kind
 ### 交互细节（对齐 Codex）
 
 - **打开条目**：点击标题链接 `preventDefault` 后在内置浏览器中打开该 URL（复用 `openEmbeddedBrowser` 流程）；删除/加载中行整体禁用。
-- **单条删除**：`embedded_browser_history_remove([{url, visitTimeMs}])`，成功后从选中集合剔除并刷新查询。
-- **批量删除**：勾选项映射为 `{url, visitTimeMs}[]` 一次提交；进行中全部行禁用。
-- **条目唯一键** `` `${url}\0${visitTimeMs}` ``；分组键 `toDateString()`。
+- **单条删除**：`embedded_browser_history_remove([id])`，成功后从选中集合剔除并刷新查询。
+- **批量删除**：勾选的记录 id 一次提交；进行中全部行禁用。
+- **条目唯一键**为记录 `id`（后端生成）；分组键 `toDateString()`。
 
 ### 状态文案
 

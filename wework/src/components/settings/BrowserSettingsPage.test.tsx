@@ -61,8 +61,7 @@ vi.mock('@/lib/navigation', () => ({
 vi.mock('@/lib/embedded-browser-history', () => ({
   searchEmbeddedBrowserHistory: searchHistoryMock,
   removeEmbeddedBrowserHistoryEntries: vi.fn(),
-  embeddedBrowserHistoryEntryKey: (entry: { url: string; visitTimeMs: number }) =>
-    `${entry.url} ${entry.visitTimeMs}`,
+  embeddedBrowserHistoryEntryKey: (entry: { id: string }) => entry.id,
   embeddedBrowserHistoryNextCursor: vi.fn(() => null),
 }))
 

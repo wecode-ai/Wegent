@@ -24,9 +24,7 @@ describe('embedded-browser-history', () => {
   })
 
   test('builds stable entry keys from url and visit time', () => {
-    expect(embeddedBrowserHistoryEntryKey(entry('https://a.test', 1000))).toBe(
-      'https://a.test 1000'
-    )
+    expect(embeddedBrowserHistoryEntryKey(entry('https://a.test', 1000))).toBe('history-1000')
   })
 
   test('returns no cursor when the last page was not full', () => {
@@ -68,16 +66,10 @@ describe('embedded-browser-history', () => {
 
   test('removes history entries by selector', async () => {
     invokeMock.mockResolvedValue(2)
-    const removed = await removeEmbeddedBrowserHistoryEntries([
-      { url: 'https://a.test', visitTimeMs: 1000 },
-      { url: 'https://b.test', visitTimeMs: 2000 },
-    ])
+    const removed = await removeEmbeddedBrowserHistoryEntries(['history-1000', 'history-2000'])
     expect(removed).toBe(2)
     expect(invokeMock).toHaveBeenCalledWith('embedded_browser_history_remove', {
-      entries: [
-        { url: 'https://a.test', visitTimeMs: 1000 },
-        { url: 'https://b.test', visitTimeMs: 2000 },
-      ],
+      ids: ['history-1000', 'history-2000'],
     })
   })
 })

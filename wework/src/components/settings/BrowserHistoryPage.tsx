@@ -11,7 +11,6 @@ import {
   searchEmbeddedBrowserHistory,
   type EmbeddedBrowserHistoryCursor,
   type EmbeddedBrowserHistoryEntry,
-  type EmbeddedBrowserHistorySelector,
 } from '@/lib/embedded-browser-history'
 import { navigateTo } from '@/lib/navigation'
 import { ClearBrowserDataDialog } from './ClearBrowserDataDialog'
@@ -288,12 +287,12 @@ export function BrowserHistoryPage() {
   const groups = useMemo(() => groupHistoryEntries(entries), [entries])
 
   const removeEntries = useCallback(
-    async (selectors: EmbeddedBrowserHistorySelector[]) => {
-      if (removing || selectors.length === 0) return
+    async (ids: string[]) => {
+      if (removing || ids.length === 0) return
       setRemoving(true)
       try {
-        await removeEmbeddedBrowserHistoryEntries(selectors)
-        const removedKeys = new Set(selectors.map(embeddedBrowserHistoryEntryKey))
+        await removeEmbeddedBrowserHistoryEntries(ids)
+        const removedKeys = new Set(ids)
         setSelected(current => {
           const next = new Set(current)
           removedKeys.forEach(key => next.delete(key))
@@ -310,11 +309,11 @@ export function BrowserHistoryPage() {
     [removing, query, loadFirstPage, t]
   )
 
-  const selectedSelectors = useMemo(
+  const selectedIds = useMemo(
     () =>
       entries
         .filter(entry => selected.has(embeddedBrowserHistoryEntryKey(entry)))
-        .map(entry => ({ url: entry.url, visitTimeMs: entry.visitTimeMs })),
+        .map(entry => entry.id),
     [entries, selected]
   )
 
@@ -427,9 +426,7 @@ export function BrowserHistoryPage() {
                       disabled={removing}
                       locale={locale}
                       onOpen={() => openEntryInBrowser(entry.url)}
-                      onRemove={() =>
-                        void removeEntries([{ url: entry.url, visitTimeMs: entry.visitTimeMs }])
-                      }
+                      onRemove={() => void removeEntries([entry.id])}
                       onSelect={checked => {
                         const key = embeddedBrowserHistoryEntryKey(entry)
                         setSelected(current => {
@@ -504,12 +501,12 @@ export function BrowserHistoryPage() {
           {t('workbench.browser_history_all_time')}
         </h2>
         <div className="flex items-center gap-2">
-          {selectedSelectors.length > 0 ? (
+          {selectedIds.length > 0 ? (
             <button
               type="button"
               data-testid="browser-history-remove-selected"
               disabled={removing}
-              onClick={() => void removeEntries(selectedSelectors)}
+              onClick={() => void removeEntries(selectedIds)}
               className="inline-flex h-8 items-center gap-1.5 rounded-md bg-muted px-3 text-sm font-medium text-text-primary hover:bg-hover disabled:opacity-50"
             >
               {removing ? <Loader2 className="h-4 w-4 animate-spin" /> : null}

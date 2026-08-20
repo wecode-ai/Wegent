@@ -59,9 +59,7 @@ use browser_runtime::{
     wait_for_embedded_browser,
 };
 use data_clearing::{clear_embedded_browser_data, EmbeddedBrowserDataKind};
-use history::{
-    history_file_path, EmbeddedBrowserHistorySelector, EmbeddedBrowserHistoryStore,
-};
+use history::{history_file_path, EmbeddedBrowserHistoryStore};
 #[cfg(test)]
 pub(crate) use local_file_preview::{
     browser_file_url_from_path, directory_entry_modified_unix_seconds, directory_listing_html,
@@ -124,6 +122,7 @@ pub struct EmbeddedBrowserState {
     lifecycle: Arc<AsyncMutex<()>>,
     snapshot_capture: Arc<AsyncMutex<()>>,
     history: Arc<Mutex<EmbeddedBrowserHistoryStore>>,
+    history_generation: Arc<AtomicU64>,
 }
 
 #[derive(Clone)]
@@ -136,6 +135,13 @@ struct EmbeddedBrowserEntry {
     bootstrap_finished: bool,
     host_ready: bool,
     phase: EmbeddedBrowserPhase,
+    /// Recordable URL of the in-flight navigation, set at on_navigation and
+    /// cleared when the load finishes; used to bind title changes to the
+    /// correct history visit.
+    pending_history_url: Option<String>,
+    /// History generation stamped when the in-flight navigation started; the
+    /// visit is only recorded while no browsing-data clear has intervened.
+    visit_generation: u64,
 }
 
 #[derive(Clone)]
@@ -1404,9 +1410,16 @@ fn history_record_visit(
     state: &EmbeddedBrowserState,
     url: &str,
     title: Option<String>,
+    expected_generation: u64,
 ) {
     let now = current_unix_millis() as i64;
     let result = with_history_store(app, state, |store, path| {
+        // Skip visits whose navigation started before an intervening
+        // browsing-data clear, so cleared history cannot reappear. The check
+        // runs under the store lock, which serializes it against the clear.
+        if state.history_generation.load(Ordering::Relaxed) != expected_generation {
+            return Ok(());
+        }
         store.record_visit(url, now, title);
         store.persist(path)
     });
@@ -1420,7 +1433,12 @@ fn history_record_visit(
     }
 }
 
-fn history_backfill_title(app: &tauri::AppHandle, state: &EmbeddedBrowserState, url: &str, title: &str) {
+fn history_backfill_title(
+    app: &tauri::AppHandle,
+    state: &EmbeddedBrowserState,
+    url: &str,
+    title: &str,
+) {
     let result = with_history_store(app, state, |store, path| {
         store.backfill_title(url, title);
         store.persist(path)
@@ -1847,6 +1865,8 @@ pub async fn embedded_browser_open(
         bootstrap_finished: bootstrap_is_stable_at_build(cfg!(target_os = "macos")),
         host_ready: bridge_ready,
         phase: EmbeddedBrowserPhase::Opening,
+        pending_history_url: None,
+        visit_generation: 0,
     };
     state
         .webviews
@@ -1893,10 +1913,16 @@ pub async fn embedded_browser_open(
                 if matches!(url.scheme(), "http" | "https" | "file") {
                     // Drop the previous document's title so a title-less page does
                     // not inherit it when the visit is recorded at load finish.
+                    let visit_generation = state.history_generation.load(Ordering::Relaxed);
+                    let pending_url = url.to_string();
                     let _ = update_entry_for_native_label(
                         &state,
                         &native_label_for_navigation,
-                        |entry| entry.title = None,
+                        |entry| {
+                            entry.title = None;
+                            entry.pending_history_url = Some(pending_url);
+                            entry.visit_generation = visit_generation;
+                        },
                     );
                 }
                 log_embedded_browser_diagnostic(
@@ -2025,11 +2051,14 @@ pub async fn embedded_browser_open(
                 {
                     let recordable = is_history_recordable_url(&loaded_url);
                     let mut document_title = None;
+                    let mut visit_generation = 0;
                     let _ = update_entry_for_native_label(
                         &load_state_handle,
                         &native_label_for_load,
                         |entry| {
                             document_title = entry.title.clone();
+                            visit_generation = entry.visit_generation;
+                            entry.pending_history_url = None;
                             entry.url = Some(loaded_url.clone());
                             entry.loaded_url = Some(loaded_url.clone());
                         },
@@ -2040,6 +2069,7 @@ pub async fn embedded_browser_open(
                             &load_state_handle,
                             &loaded_url,
                             document_title,
+                            visit_generation,
                         );
                     }
                     emit_page_state_change(
@@ -2058,14 +2088,21 @@ pub async fn embedded_browser_open(
         })
         .on_document_title_changed(move |_webview, title| {
             let mut visited_url = None;
+            let mut navigation_in_flight = false;
             let _ = update_entry_for_native_label(
                 &title_state_handle,
                 &native_label_for_title,
                 |entry| {
-                    visited_url = entry.url.clone();
+                    navigation_in_flight = entry.pending_history_url.is_some();
+                    if !navigation_in_flight {
+                        visited_url = entry.url.clone();
+                    }
                     entry.title = Some(title.clone());
                 },
             );
+            // While a navigation is in flight the entry URL still points at the
+            // previous page; the new title is carried into the visit recorded
+            // at load finish instead of being backfilled here.
             if let Some(url) = visited_url {
                 if is_history_recordable_url(&url) {
                     history_backfill_title(&app_for_title, &title_state_handle, &url, &title);
@@ -2787,10 +2824,10 @@ pub fn embedded_browser_history_search(
 pub fn embedded_browser_history_remove(
     app: tauri::AppHandle,
     state: tauri::State<'_, EmbeddedBrowserState>,
-    entries: Vec<EmbeddedBrowserHistorySelector>,
+    ids: Vec<String>,
 ) -> Result<u32, String> {
     with_history_store(&app, &state, |store, path| {
-        let removed = store.remove(&entries);
+        let removed = store.remove(&ids);
         store.persist(path)?;
         Ok(removed as u32)
     })

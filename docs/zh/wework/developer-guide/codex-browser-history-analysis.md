@@ -141,4 +141,3 @@ interface HistoryEntry {
 3. **UI 复用现有设置页骨架**：wework 已有设置路由与列表行组件，历史页可作为浏览器设置子页，按 Codex 的"面包屑 + 吸顶搜索 + 按天折叠组 + 无限滚动"结构实现。
 4. **favicon 存储**：导航时抓取 favicon 存为 data URL 或本地缓存文件，渲染时校验 `data:image/` 前缀并准备默认图标兜底。
 5. **权限与策略**：删除能力单独门控（对应 `dataRemovalPermitted`），AI 读取历史需要独立的审批设置（对应 `iabHistoryApproval`），这两个维度在需求阶段就要拆开。
-

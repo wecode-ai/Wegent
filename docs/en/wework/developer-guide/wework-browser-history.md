@@ -74,8 +74,10 @@ pub struct EmbeddedBrowserHistoryEntry {
 **Write points** (all inside existing callbacks in [embedded_browser.rs](../../../../wework/src-tauri/src/embedded_browser.rs)):
 
 1. `on_page_load` (`PageLoadEvent::Finished`): append an entry when the final URL — filtered by the existing `loaded_browser_url` (excludes `about:blank`, maps local preview pages) — is `http`/`https`/`file`. Local files and directories are recorded as their source `file://` URL after preview mapping, so opening them from history re-runs the preview pipeline. Recording at load completion instead of `on_navigation` avoids recording rejected or redirected requests.
-2. `on_document_title_changed`: backfill `title` on the **most recent** entry matching the webview's current URL (no duplicate record).
+2. Title binding to navigation: `on_navigation` marks `pending_history_url` on the webview entry and clears the stale title; a `on_document_title_changed` firing mid-navigation (titles usually arrive before Finished) does not backfill history — the new title is carried by the visit recorded at Finished. Only with no navigation in flight (script-driven title changes after load) does it backfill the most recent untitled entry for the current URL.
 3. Favicon: not persisted; the frontend loads `${origin}/favicon.ico` directly in an `<img>` and falls back to a default Globe icon on error. Lighter than Codex's data URL storage, at the cost of possible 404s or icon changes.
+
+**Clear race**: `EmbeddedBrowserState.history_generation` (atomic counter). Clearing browsing data bumps the generation before wiping the store; each navigation stamps the current generation on the webview entry, and the load-finished recording verifies under the store lock that the generation is unchanged — a page that started loading before a clear cannot resurrect cleared entries.
 
 **Persistence**: JSON file `app_data_dir()/browser-history.json` (following the `opener_store.rs` app_data_dir pattern; no SQLite). In-memory `VecDeque` capped at **5000 entries** with FIFO eviction; every mutation writes a temporary file and atomically renames it; the file is lazily loaded on first access.
 
@@ -90,7 +92,7 @@ embedded_browser_history_search(
 ) -> Vec<EmbeddedBrowserHistoryEntry>   // ordered by visitTimeMs descending
 
 embedded_browser_history_remove(
-  entries: Vec<{ url: String, visitTimeMs: i64 }>
+  ids: Vec<String>         // delete by record id, avoiding same-URL same-millisecond collisions
 ) -> u32                   // number of entries actually removed
 
 embedded_browser_clear_data(dataKinds) // existing command, gains a History kind
@@ -118,9 +120,9 @@ New component `src/components/settings/BrowserHistoryPage.tsx` (expected 600+ li
 ### Interaction details (mirroring Codex)
 
 - **Opening an entry**: the title link calls `preventDefault` and opens the URL in the embedded browser (reusing the `openEmbeddedBrowser` flow); rows are disabled while deleting or loading.
-- **Single delete**: `embedded_browser_history_remove([{url, visitTimeMs}])`; on success the entry is dropped from the selection set and the query refreshes.
-- **Bulk delete**: selected entries are mapped to `{url, visitTimeMs}[]` and submitted in one call; all rows are disabled in flight.
-- Entry key `` `${url}\0${visitTimeMs}` ``; group key `toDateString()`.
+- **Single delete**: `embedded_browser_history_remove([id])`; on success the entry is dropped from the selection set and the query refreshes.
+- **Bulk delete**: selected record ids are submitted in one call; all rows are disabled in flight.
+- Entry key is the backend-assigned record `id`; group key `toDateString()`.
 
 ### State copy
 

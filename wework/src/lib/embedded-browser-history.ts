@@ -9,11 +9,6 @@ export interface EmbeddedBrowserHistoryEntry {
   visitTimeMs: number
 }
 
-export interface EmbeddedBrowserHistorySelector {
-  url: string
-  visitTimeMs: number
-}
-
 // Cursor for history pagination: entries strictly older than endTimeMs are
 // returned, and offset skips previously returned entries that fall inside the
 // cursor window.
@@ -22,10 +17,8 @@ export interface EmbeddedBrowserHistoryCursor {
   offset: number
 }
 
-export function embeddedBrowserHistoryEntryKey(
-  entry: EmbeddedBrowserHistoryEntry | EmbeddedBrowserHistorySelector
-): string {
-  return `${entry.url} ${entry.visitTimeMs}`
+export function embeddedBrowserHistoryEntryKey(entry: EmbeddedBrowserHistoryEntry): string {
+  return entry.id
 }
 
 export function embeddedBrowserHistoryNextCursor(
@@ -51,8 +44,6 @@ export async function searchEmbeddedBrowserHistory(
   })
 }
 
-export async function removeEmbeddedBrowserHistoryEntries(
-  entries: EmbeddedBrowserHistorySelector[]
-): Promise<number> {
-  return invoke<number>('embedded_browser_history_remove', { entries })
+export async function removeEmbeddedBrowserHistoryEntries(ids: string[]): Promise<number> {
+  return invoke<number>('embedded_browser_history_remove', { ids })
 }
