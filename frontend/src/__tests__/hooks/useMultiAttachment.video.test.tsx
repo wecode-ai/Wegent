@@ -7,6 +7,15 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { uploadFile } from '@/apis/attachments'
 import { useMultiAttachment } from '@/hooks/useMultiAttachment'
 
+let mockUser: { weibo_uid?: string | null } | null = { weibo_uid: '1234567890' }
+
+jest.mock('@/features/common/UserContext', () => ({
+  useUser: () => ({
+    user: mockUser,
+    refresh: jest.fn(),
+  }),
+}))
+
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
     t: (key: string) => key,
@@ -58,6 +67,7 @@ describe('useMultiAttachment video upload', () => {
   const revokeObjectURL = jest.fn()
 
   beforeEach(() => {
+    mockUser = { weibo_uid: '1234567890' }
     Object.defineProperty(URL, 'createObjectURL', {
       configurable: true,
       value: createObjectURL,
@@ -83,7 +93,7 @@ describe('useMultiAttachment video upload', () => {
     jest.clearAllMocks()
   })
 
-  it('uploads video immediately without requiring a Weibo binding', async () => {
+  it('uploads video immediately for a user with a Weibo binding', async () => {
     render(<UploadHarness />)
 
     fireEvent.click(screen.getByTestId('upload-video'))
@@ -99,6 +109,7 @@ describe('useMultiAttachment video upload', () => {
   })
 
   it('passes the video reference storage purpose to the upload API', async () => {
+    mockUser = null
     render(<UploadHarness storagePurpose="video_reference" />)
 
     fireEvent.click(screen.getByTestId('upload-video'))
