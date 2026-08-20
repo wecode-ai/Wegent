@@ -2424,6 +2424,9 @@ describe('DesktopSidebar', () => {
     await userEvent.click(screen.getByTestId('runtime-local-task-mark-rapid-pin-chat'))
     await waitFor(() => expect(onSetRuntimeTaskPinned).toHaveBeenCalledTimes(1))
     expect(requests[0]?.pinned).toBe(true)
+    expect(screen.getByTestId('sidebar-pinned-section')).toContainElement(
+      screen.getByTestId('runtime-local-task-row-rapid-pin-chat')
+    )
 
     await userEvent.click(screen.getByTestId('runtime-local-task-mark-rapid-pin-chat'))
     expect(screen.queryByTestId('sidebar-pinned-section')).not.toBeInTheDocument()
@@ -2461,6 +2464,60 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('sidebar-pinned-section')).toContainElement(
       screen.getByTestId('runtime-local-task-row-rapid-pin-chat')
     )
+  })
+
+  test('preserves a later pin intent when an earlier queued request fails', async () => {
+    const requests: Array<{
+      pinned: boolean
+      reject: (error: Error) => void
+      resolve: () => void
+    }> = []
+    const onSetRuntimeTaskPinned = vi.fn(
+      (data: { pinned: boolean }) =>
+        new Promise<void>((resolve, reject) => {
+          requests.push({ pinned: data.pinned, reject, resolve })
+        })
+    )
+    const chatPath = '/Users/alice/Documents/Codex/2026-07-12/rejected-rapid-pin'
+    const runtimeWork = {
+      projects: [],
+      chats: [
+        {
+          deviceId: 'local-device',
+          available: true,
+          workspacePath: chatPath,
+          workspaceKind: 'chat' as const,
+          tasks: [
+            {
+              taskId: 'rejected-rapid-pin-chat',
+              threadId: 'rejected-rapid-pin-thread',
+              workspacePath: chatPath,
+              workspaceKind: 'chat' as const,
+              title: 'Rejected rapid pin task',
+              runtime: 'codex' as const,
+              pinned: false,
+            },
+          ],
+        },
+      ],
+      totalTasks: 1,
+    }
+    renderSidebar({ runtimeWork, onSetRuntimeTaskPinned })
+
+    await userEvent.click(screen.getByTestId('runtime-local-task-mark-rejected-rapid-pin-chat'))
+    await waitFor(() => expect(onSetRuntimeTaskPinned).toHaveBeenCalledTimes(1))
+    expect(requests[0]?.pinned).toBe(true)
+
+    await userEvent.click(screen.getByTestId('runtime-local-task-mark-rejected-rapid-pin-chat'))
+    expect(screen.queryByTestId('sidebar-pinned-section')).not.toBeInTheDocument()
+    expect(onSetRuntimeTaskPinned).toHaveBeenCalledTimes(1)
+
+    await act(async () => requests[0]?.reject(new Error('Pin request failed')))
+    await waitFor(() => expect(onSetRuntimeTaskPinned).toHaveBeenCalledTimes(2))
+    expect(requests[1]?.pinned).toBe(false)
+    expect(screen.queryByTestId('sidebar-pinned-section')).not.toBeInTheDocument()
+
+    await act(async () => requests[1]?.resolve())
   })
 
   test('moves a project task to the pinned section before the pin request finishes', async () => {

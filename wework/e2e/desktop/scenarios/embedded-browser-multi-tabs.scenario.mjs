@@ -124,6 +124,7 @@ async function waitForSnapshot(control, predicate, message, timeoutMs, selector 
 
 export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
   let fixtureAResponseGate = null
+  let fixtureARequestStartCount = 0
   let fixtureAResponseCount = 0
 
   const holdNextFixtureAResponse = () => {
@@ -143,6 +144,15 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
     throw new Error(`Timed out waiting for fixture A response ${expected}`)
   }
 
+  const waitForFixtureARequestStartCount = async expected => {
+    const startedAt = Date.now()
+    while (Date.now() - startedAt < uiTimeoutMs) {
+      if (fixtureARequestStartCount >= expected) return
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+    throw new Error(`Timed out waiting for fixture A request ${expected}`)
+  }
+
   return {
     async handleHttp(request, response, url) {
       if (request.method !== 'GET') return false
@@ -150,6 +160,7 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
         const html = fixtureHtml(FIXTURE_A_TEXT, FIXTURE_A_TEXT)
         const responseGate = fixtureAResponseGate
         fixtureAResponseGate = null
+        fixtureARequestStartCount += 1
         response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
         response.write(html.slice(0, 120))
         if (responseGate) {
@@ -199,9 +210,11 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
         'The first browser tab did not load the A fixture'
       )
       await waitForFixtureAResponseCount(1)
+      const expectedReloadRequestStartCount = fixtureARequestStartCount + 1
       const releaseReloadResponse = holdNextFixtureAResponse()
       await control.command('click', BROWSER_RELOAD_SELECTOR)
       try {
+        await waitForFixtureARequestStartCount(expectedReloadRequestStartCount)
         await control.command('waitFor', FIRST_BROWSER_LOADING_ICON_SELECTOR, {
           timeoutMs: uiTimeoutMs,
         })
@@ -237,9 +250,11 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
         FIRST_BROWSER_TAB_SELECTOR
       )
       await control.command('fill', BROWSER_INPUT_SELECTOR, { value: fixtureAUrl })
+      const expectedRecoveryRequestStartCount = fixtureARequestStartCount + 1
       const releaseRecoveryResponse = holdNextFixtureAResponse()
       await control.command('submit', BROWSER_INPUT_SELECTOR)
       try {
+        await waitForFixtureARequestStartCount(expectedRecoveryRequestStartCount)
         await control.command('waitFor', FIRST_BROWSER_LOADING_ICON_SELECTOR, {
           timeoutMs: uiTimeoutMs,
         })
