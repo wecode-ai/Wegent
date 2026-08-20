@@ -2029,7 +2029,7 @@
     "environment_change_request_configure": "配置代码托管工具",
     "about_settings_title": "关于",
     "about_settings_subtitle": "了解 Wework 的版本和产品信息",
-    "about_settings_description": "面向办公和编码场景的 AI 工作台。",
+    "about_settings_description": "面向产研场景的 AI 工作台。",
     "general_settings_title": "通用",
     "general_settings_subtitle": "管理 Wework 的启动和后台运行行为",
     "general_settings_runtime_title": "运行",
