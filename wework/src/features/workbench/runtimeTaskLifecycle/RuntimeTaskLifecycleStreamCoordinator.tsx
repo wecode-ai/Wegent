@@ -5,7 +5,12 @@ import {
 } from '../workbenchServices'
 import type { RuntimeTaskLifecycleStore } from './RuntimeTaskLifecycleStore'
 
-type ReconciliationReason = 'terminal_event' | 'event_lagged' | 'runtime_replaced'
+type ReconciliationReason = 'event_lagged' | 'runtime_replaced'
+
+interface TerminalEventPayload {
+  taskId?: string
+  deviceId?: string
+}
 
 export function RuntimeTaskLifecycleStreamCoordinator({
   services,
@@ -52,24 +57,24 @@ export function RuntimeTaskLifecycleStreamCoordinator({
       })
     }
 
-    const reconcileUnhandledTerminalEvent = (payload: { taskId?: string; deviceId?: string }) => {
-      queueMicrotask(() => {
-        if (disposed) return
-        const snapshot = store.getSnapshot()
-        const matchingTaskStillRunning = [...snapshot.runningTaskKeys].some(key => {
-          const lifecycle = snapshot.tasks.get(key)
-          if (!lifecycle) return false
-          if (payload.taskId && lifecycle.address.taskId !== payload.taskId) return false
-          if (payload.deviceId && lifecycle.address.deviceId !== payload.deviceId) return false
-          return true
-        })
-        if (matchingTaskStillRunning) reconcile('terminal_event')
-      })
+    const settleMatchingTask = (
+      payload: TerminalEventPayload,
+      outcome: 'succeeded' | 'failed' | 'cancelled'
+    ) => {
+      if (!payload.taskId) return
+      const snapshot = store.getSnapshot()
+      for (const key of snapshot.runningTaskKeys) {
+        const lifecycle = snapshot.tasks.get(key)
+        if (!lifecycle || lifecycle.address.taskId !== payload.taskId) continue
+        if (payload.deviceId && lifecycle.address.deviceId !== payload.deviceId) continue
+        store.turnSettled(lifecycle.address, null, outcome)
+      }
     }
 
     const unsubscribe = services.chatStream.subscribe({
-      onChatDone: reconcileUnhandledTerminalEvent,
-      onChatError: reconcileUnhandledTerminalEvent,
+      onChatDone: payload => settleMatchingTask(payload, 'succeeded'),
+      onChatError: payload =>
+        settleMatchingTask(payload, isCancelledTerminalEvent(payload) ? 'cancelled' : 'failed'),
       onRuntimeEventLagged: payload => {
         console.warn('[Wework] Runtime event stream lagged; reconciling task state', payload)
         reconcile('event_lagged')
@@ -84,4 +89,12 @@ export function RuntimeTaskLifecycleStreamCoordinator({
   }, [executorClient, services.chatStream, store])
 
   return null
+}
+
+function isCancelledTerminalEvent(payload: { error: string; type?: string }): boolean {
+  const error = payload.error.trim().toLowerCase()
+  const type = payload.type?.trim().toLowerCase()
+  return [error, type].some(value =>
+    value ? ['interrupted', 'cancelled', 'canceled', 'aborted'].includes(value) : false
+  )
 }

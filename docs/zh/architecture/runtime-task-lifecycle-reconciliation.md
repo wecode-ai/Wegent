@@ -15,7 +15,9 @@ flowchart LR
     EXEC[Executor 任务状态] --> STREAM[Runtime 事件流]
     STREAM --> STORE[Lifecycle Store]
     STORE --> UI[运行状态 UI 投影]
-    STREAM --> SIGNAL[终态事件、掉队或 Transport 替换]
+    STREAM --> TERMINAL[终态事件]
+    TERMINAL --> STORE
+    STREAM --> SIGNAL[掉队或 Transport 替换]
     SIGNAL --> LIST[runtime.tasks.list]
     LIST --> STORE
     TRANSCRIPT[runtime.tasks.transcript] -. 用户打开会话或消息同步 .-> UI
@@ -34,7 +36,10 @@ sequenceDiagram
     S-->>L: 增量投影
     alt 没有终态或异常信号
         Note over C: 不发起状态轮询
-    else 终态事件、executor.event_lagged 或 runtime transport replacement
+    else 终态事件
+        S-->>C: response.completed / failed / incomplete
+        C->>L: turnSettled
+    else executor.event_lagged 或 runtime transport replacement
         S-->>C: 投影可能过期
         C->>E: runtime.tasks.list
         E-->>C: 持久化任务快照
@@ -55,8 +60,8 @@ sequenceDiagram
 ## 必要不变量
 
 - 正常生命周期只消费事件流，不得按时间周期读取 task list 或 transcript。
-- 任务面板正常消费终态事件并刷新任务快照；事件循环结束后若对应任务仍为 running，常驻协调器必须补充一次 `runtime.tasks.list` 对账，以覆盖面板订阅缺席或未匹配的情况。
+- 终态事件按 `deviceId + taskId` 直接收敛共享 lifecycle store；常驻协调器不得依赖 pane 是否挂载，也不得用事件到达后立即读取的 task list 覆盖该终态，因为 Executor 与 provider 的列表投影可能尚未完成同一轮收尾。
 - 明确表示本地投影可能过期的 `executor.event_lagged` 和 runtime transport replacement 同样触发对账。
-- 并发终态或异常信号必须共享同一个在途对账请求；在途期间的新信号最多合并成一次串行尾随对账，不得形成并发请求突发或定时重试循环。
+- 并发异常信号必须共享同一个在途对账请求；在途期间的新信号最多合并成一次串行尾随对账，不得形成并发请求突发或定时重试循环。
 - 任务终态由 Executor 持久化状态字段投影，不得从 transcript、turn items 或 rollout JSONL 推导。
 - Transcript 读取只服务于用户查看会话或明确的消息同步，不承担生命周期心跳职责。
