@@ -74,7 +74,7 @@ pub struct EmbeddedBrowserHistoryEntry {
 **写入点**（均在 [embedded_browser.rs](../../../../wework/src-tauri/src/embedded_browser.rs) 已有回调内）：
 
 1. `on_page_load`（`PageLoadEvent::Finished`）：复用现有 `loaded_browser_url` 过滤（排除 `about:blank`、映射本地预览页），最终 URL 为 `http`/`https`/`file` 时追加一条记录（本地文件/目录记录的是预览映射后的源 `file://` URL，从历史的条目打开会重新走预览管线）。选择加载完成而非 `on_navigation`，避免记录被拒绝或重定向的请求。
-2. 标题与导航绑定：`on_navigation` 时在 webview 条目上标记 `pending_history_url` 并清空旧标题；`on_document_title_changed` 若发生在导航进行中（标题通常先于 Finished 触发）则不回填历史，新标题由 Finished 时的记录直接携带。Finished 记录后把返回的记录 id 存到 webview 条目 `last_history_id`，加载完成后的标题变化按该 id 精确回填——两个标签先后访问同一 URL 时不会写错记录。
+2. 标题与导航绑定：任何 scheme 的 `on_navigation` 都会清空 webview 条目的 `last_history_id`；可记录 scheme（http/https/file）同时标记 `pending_history_url` 并清空旧标题。`on_document_title_changed` 若发生在导航进行中（标题通常先于 Finished 触发）则不回填历史，新标题由 Finished 时的记录直接携带。Finished 记录成功后才把返回的记录 id 写入 `last_history_id`（generation 跳过或落盘失败则不设置），加载完成后的标题变化按该 id 精确回填——同 URL 多标签、记录失败、自定义协议页都不会把新标题写到上一页的记录。
 3. favicon：不入库；前端渲染时按 `${origin}/favicon.ico` 直接加载 `<img>`，`onError` 回退默认 Globe 图标。相比 Codex 的 dataURL 存储更轻，代价是图标可能 404 或随站点变化。
 
 **清除竞态**：`EmbeddedBrowserState.history_generation`（原子计数器）。清除浏览数据时，先完成生命周期锁与 webview 就绪检查（检查不过直接报错、历史不受影响），然后递增 generation 再清空存储；每次导航开始把当前 generation 记到 webview 条目，加载完成记录历史时在 store 锁内校验 generation 未变才写入——清除开始后完成加载的旧页面不会复活已清除的记录。删除/清空若内存已改但落盘失败，会把 store 标记为未加载，下次访问从完好的文件恢复。

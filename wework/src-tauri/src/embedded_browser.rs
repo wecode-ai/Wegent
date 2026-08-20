@@ -1919,18 +1919,27 @@ pub async fn embedded_browser_open(
                     &native_label_for_navigation,
                     &label_for_navigation,
                 );
-                if matches!(url.scheme(), "http" | "https" | "file") {
-                    // Drop the previous document's title so a title-less page does
-                    // not inherit it when the visit is recorded at load finish.
+                {
+                    // Any navigation drops the previous page's history id; a new
+                    // id is only set after this navigation's visit is actually
+                    // recorded, so failed or skipped recordings never leak the
+                    // previous page's id into later title updates.
+                    let recordable = matches!(url.scheme(), "http" | "https" | "file");
                     let visit_generation = state.history_generation.load(Ordering::Relaxed);
-                    let pending_url = url.to_string();
+                    let pending_url = recordable.then(|| url.to_string());
                     let _ = update_entry_for_native_label(
                         &state,
                         &native_label_for_navigation,
                         |entry| {
-                            entry.title = None;
-                            entry.pending_history_url = Some(pending_url);
-                            entry.visit_generation = visit_generation;
+                            entry.last_history_id = None;
+                            if let Some(pending_url) = pending_url {
+                                // Drop the previous document's title so a title-less
+                                // page does not inherit it when the visit is
+                                // recorded at load finish.
+                                entry.title = None;
+                                entry.pending_history_url = Some(pending_url);
+                                entry.visit_generation = visit_generation;
+                            }
                         },
                     );
                 }
