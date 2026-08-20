@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 use crate::logging::{format_executor_log, write_executor_error_line, write_executor_log_line};
 
 const RUNTIME_RPC_COMPRESSION_THRESHOLD_BYTES: usize = 512 * 1024;
-const RUNTIME_RPC_MAX_ENCODED_BYTES: usize = 900_000;
+const RUNTIME_RPC_MAX_ENCODED_BYTES: usize = 980_000;
 const RUNTIME_RPC_COMPRESSED_ENCODING: &str = "gzip+base64+json";
 
 pub(super) fn encode_runtime_rpc_response(method: &str, response: Value) -> Value {
@@ -154,19 +154,30 @@ mod tests {
     }
 
     #[test]
-    fn rejects_compressed_envelopes_that_still_exceed_socket_budget() {
-        let mut state = 0x9e3779b97f4a7c15_u64;
-        let bytes = (0..RUNTIME_RPC_MAX_ENCODED_BYTES)
-            .map(|_| {
-                state ^= state << 13;
-                state ^= state >> 7;
-                state ^= state << 17;
-                state as u8
-            })
-            .collect::<Vec<_>>();
+    fn accepts_compressed_envelopes_near_the_socket_budget() {
         let response = json!({
             "success": true,
-            "payload": BASE64_STANDARD.encode(bytes),
+            "payload": BASE64_STANDARD.encode(deterministic_bytes(715_000)),
+        });
+
+        let encoded = encode_runtime_rpc_response("runtime.tasks.transcript", response);
+        let encoded_bytes = serde_json::to_vec(&encoded).unwrap().len();
+
+        assert_eq!(
+            encoded["__runtimeRpcEncoding"],
+            RUNTIME_RPC_COMPRESSED_ENCODING
+        );
+        assert!(encoded_bytes > 900_000);
+        assert!(encoded_bytes < RUNTIME_RPC_MAX_ENCODED_BYTES);
+    }
+
+    #[test]
+    fn rejects_compressed_envelopes_that_still_exceed_socket_budget() {
+        let response = json!({
+            "success": true,
+            "payload": BASE64_STANDARD.encode(deterministic_bytes(
+                RUNTIME_RPC_MAX_ENCODED_BYTES
+            )),
         });
 
         let encoded = encode_runtime_rpc_response("runtime.tasks.transcript", response);
@@ -174,5 +185,17 @@ mod tests {
         assert_eq!(encoded["success"], false);
         assert_eq!(encoded["code"], "runtime_rpc_response_too_large");
         assert!(serde_json::to_vec(&encoded).unwrap().len() < 1_000_000);
+    }
+
+    fn deterministic_bytes(length: usize) -> Vec<u8> {
+        let mut state = 0x9e3779b97f4a7c15_u64;
+        (0..length)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                state as u8
+            })
+            .collect()
     }
 }

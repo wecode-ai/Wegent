@@ -5,6 +5,11 @@ const WEWORK_RUNTIME_NAMESPACE = '/wework-runtime'
 const REQUEST_EVENT = 'runtime:request'
 const RUNTIME_EVENT = 'runtime:event'
 const ACK_TIMEOUT_MS = 75_000
+const RUNTIME_RPC_COMPRESSED_ENCODING = 'gzip+base64+json'
+
+interface DecompressionStreamConstructor {
+  new (format: string): TransformStream<Uint8Array, Uint8Array>
+}
 
 interface RuntimeIpcClientOptions {
   socketBaseUrl: string
@@ -102,10 +107,53 @@ async function emitRuntimeRequest<T>(
           reject(new Error(formatRuntimeIpcError(ack)))
           return
         }
-        resolve((ack.result ?? null) as T)
+        void decodeRuntimeIpcResult<T>(ack.result ?? null).then(resolve, reject)
       }
     )
   })
+}
+
+async function decodeRuntimeIpcResult<T>(result: unknown): Promise<T> {
+  if (!isCompressedRuntimeIpcResult(result)) {
+    return result as T
+  }
+
+  const DecompressionStreamCtor = (
+    globalThis as unknown as {
+      DecompressionStream?: DecompressionStreamConstructor
+    }
+  ).DecompressionStream
+  if (!DecompressionStreamCtor) {
+    throw new Error('Runtime RPC gzip decompression is not supported')
+  }
+
+  const binary = window.atob(result.payload)
+  const payload = new Uint8Array(binary.length)
+  for (let index = 0; index < binary.length; index += 1) {
+    payload[index] = binary.charCodeAt(index)
+  }
+  const source = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(payload)
+      controller.close()
+    },
+  })
+  const stream = source.pipeThrough(new DecompressionStreamCtor('gzip'))
+  const decoded = await new Response(stream).text()
+  return JSON.parse(decoded) as T
+}
+
+function isCompressedRuntimeIpcResult(
+  result: unknown
+): result is { __runtimeRpcEncoding: string; payload: string } {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) {
+    return false
+  }
+  const value = result as Record<string, unknown>
+  return (
+    value.__runtimeRpcEncoding === RUNTIME_RPC_COMPRESSED_ENCODING &&
+    typeof value.payload === 'string'
+  )
 }
 
 function formatRuntimeIpcError(ack: RuntimeIpcAck<unknown>): string {

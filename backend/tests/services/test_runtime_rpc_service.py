@@ -38,6 +38,34 @@ def _compressed_runtime_rpc_response(response: dict):
     }
 
 
+def test_encode_runtime_rpc_response_compresses_large_browser_result() -> None:
+    from app.services.device.runtime_rpc_service import (
+        RUNTIME_RPC_COMPRESSED_ENCODING,
+        RUNTIME_RPC_ENCODING_KEY,
+        RuntimeRpcService,
+        encode_runtime_rpc_response,
+    )
+
+    expected = {
+        "success": True,
+        "messages": [{"id": "m1", "content": "历史消息🙂" * 100000}],
+    }
+
+    encoded = encode_runtime_rpc_response(
+        expected,
+        method="runtime.tasks.transcript",
+    )
+
+    assert encoded[RUNTIME_RPC_ENCODING_KEY] == RUNTIME_RPC_COMPRESSED_ENCODING
+    assert (
+        RuntimeRpcService._decode_response(
+            encoded,
+            method="runtime.tasks.transcript",
+        )
+        == expected
+    )
+
+
 class _SocketManager:
     def __init__(self, *, connected: bool = True):
         self.connected = connected
