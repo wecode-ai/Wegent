@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.models.user import User
+from app.schemas.oauth_provider import OAUTH_AUDIENCE, OAUTH_CLIENT_KIND
 from app.schemas.token_issuer import (
     SigningKeyCreateRequest,
     SigningKeyKind,
@@ -270,6 +271,12 @@ class OutboundTokenService:
             raise OutboundTokenValidationError(
                 "default_ttl_seconds must be <= max_ttl_seconds"
             )
+        self._validate_oauth_client_issuer_policy(
+            db,
+            issuer_id=issuer_id,
+            audience=payload.audience or resource.spec.audience,
+            max_ttl_seconds=max_ttl,
+        )
         resource.spec.defaultTtlSeconds = default_ttl
         resource.spec.maxTtlSeconds = max_ttl
         if payload.description is not None:
@@ -332,8 +339,57 @@ class OutboundTokenService:
         row = self._get_kind_or_raise(
             db, TOKEN_ISSUER_KIND, issuer_id, TokenIssuerNotFoundError
         )
+        referenced_clients = self._get_oauth_client_references(db, issuer_id)
+        if referenced_clients:
+            names = ", ".join(client.name for client in referenced_clients[:3])
+            raise OutboundTokenValidationError(
+                f"Token issuer '{row.name}' is still referenced by OAuth client(s): {names}",
+                error_code="TOKEN_ISSUER_DELETE_BLOCKED_BY_OAUTH_CLIENT",
+            )
         db.delete(row)
         db.commit()
+
+    def _validate_oauth_client_issuer_policy(
+        self,
+        db: Session,
+        *,
+        issuer_id: int,
+        audience: str,
+        max_ttl_seconds: int,
+    ) -> None:
+        clients = self._get_oauth_client_references(db, issuer_id)
+        if not clients:
+            return
+        if audience != OAUTH_AUDIENCE:
+            raise OutboundTokenValidationError(
+                f"OAuth client TokenIssuer audience must remain '{OAUTH_AUDIENCE}'",
+                error_code="TOKEN_ISSUER_AUDIENCE_REQUIRED_BY_OAUTH_CLIENT",
+            )
+        largest_client_ttl = max(
+            int(client.json["spec"]["accessTtlSeconds"]) for client in clients
+        )
+        if max_ttl_seconds < largest_client_ttl:
+            raise OutboundTokenValidationError(
+                "TokenIssuer maximum TTL cannot be lower than a referenced OAuth client TTL",
+                error_code="TOKEN_ISSUER_MAX_TTL_REQUIRED_BY_OAUTH_CLIENT",
+            )
+
+    def _get_oauth_client_references(self, db: Session, issuer_id: int) -> list[Kind]:
+        rows = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == OAUTH_CLIENT_KIND,
+                Kind.user_id == SYSTEM_USER_ID,
+                Kind.namespace == SYSTEM_NAMESPACE,
+            )
+            .all()
+        )
+        return [
+            row
+            for row in rows
+            if row.json.get("spec", {}).get("tokenIssuerRef", {}).get("kindId")
+            == issuer_id
+        ]
 
     def issue_token(
         self,
@@ -407,6 +463,57 @@ class OutboundTokenService:
             kid=signing_key.resource.spec.kid,
             issued_at=claims["iat"],
             expires_at=claims["exp"],
+        )
+
+    def sign_claims(
+        self,
+        db: Session,
+        *,
+        issuer_id: int,
+        subject: str,
+        expires_in: int,
+        claims: dict,
+    ) -> TokenIssueResponse:
+        """Sign constrained deployment claims with an existing TokenIssuer."""
+        issuer_row = self._get_kind_or_raise(
+            db, TOKEN_ISSUER_KIND, issuer_id, TokenIssuerNotFoundError
+        )
+        issuer = TokenIssuerKind.model_validate(issuer_row.json)
+        if not issuer.spec.enabled or not issuer_row.is_active:
+            raise OutboundTokenValidationError("Token issuer is disabled")
+        if expires_in <= 0 or expires_in > issuer.spec.maxTtlSeconds:
+            raise OutboundTokenValidationError("Requested TTL exceeds issuer policy")
+
+        signing_key = self._resolve_signing_key_for_issuance(
+            db, issuer.spec.signingKeyRef.kindId
+        )
+        issued_at = datetime.now(timezone.utc)
+        expires_at = issued_at + timedelta(seconds=expires_in)
+        reserved = {
+            "iss": issuer.spec.issuer,
+            "sub": subject,
+            "aud": issuer.spec.audience,
+            "iat": int(issued_at.timestamp()),
+            "exp": int(expires_at.timestamp()),
+            "jti": str(uuid.uuid4()),
+            "issuer_id": issuer_row.id,
+        }
+        reserved.update(
+            {key: value for key, value in claims.items() if key not in reserved}
+        )
+        token = jwt.encode(
+            reserved,
+            signing_key.private_key_pem,
+            algorithm="RS256",
+            headers={"kid": signing_key.resource.spec.kid},
+        )
+        return TokenIssueResponse(
+            access_token=token,
+            expires_in=expires_in,
+            issuer_id=issuer_row.id,
+            kid=signing_key.resource.spec.kid,
+            issued_at=reserved["iat"],
+            expires_at=reserved["exp"],
         )
 
     def _collect_extra_claims(

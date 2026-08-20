@@ -68,6 +68,14 @@ Skills 是 Claude Code 的能力扩展包：
 - **管理 Skills**：查看、下载、更新、删除
 - **使用 Skills**：在 Bot 中引用 Skills
 
+### OAuth Apps 管理
+
+管理员可以在 **设置 → API Keys → OAuth Apps** 中登记外部 OAuth Client，用于让外部系统通过 Wegent 证明当前用户身份。
+
+每个 OAuth App 需要配置 Client 类型、精确的 Redirect URI、专用 TokenIssuer、access token 有效期和 refresh token 有效期。外部 access token 只允许读取 OAuth userinfo，并且只返回用户 `id`、`user_name` 和 `email`；它不能调用 Wegent 业务 API，也不会授予角色、资源权限或 Git 凭据等内部权限。
+
+切换 Client 类型、更换 TokenIssuer、轮换 secret、禁用或删除 OAuth App 时，现有 refresh token 会失效。生产环境应使用 HTTPS 的 Backend 公网地址，并为外部 Client 登记完全匹配的 Redirect URI。
+
 ### 已归档聊天管理
 
 桌面版 Wework 的设置中可以查看已归档的 Project 和 Conversation 聊天。删除单个已归档聊天或执行“删除全部”时，界面会先显示确认弹窗；确认后才会永久删除对应的本地运行时会话记录。批量删除只作用于当前归档列表中的项目，不会影响未归档聊天。

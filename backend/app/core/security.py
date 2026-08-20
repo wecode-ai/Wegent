@@ -283,6 +283,8 @@ def verify_token(token: str) -> Dict[str, Any]:
         payload = jwt.decode(
             token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
         )
+        if payload.get("scope") is not None:
+            raise credentials_exception
         username: str = payload.get("sub")
         if username is None:
             raise credentials_exception
@@ -384,6 +386,13 @@ def get_current_user_from_token(token: str, db: Session) -> Optional[User]:
             payload = jwt.decode(
                 token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
             )
+            if payload.get("scope") is not None:
+                if is_telemetry_enabled():
+                    span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
+                    span.set_attribute(
+                        SpanAttributes.AUTH_FAILURE_REASON, "scoped_token_rejected"
+                    )
+                return None
             username: str = payload.get("sub")
             if username is None:
                 if is_telemetry_enabled():

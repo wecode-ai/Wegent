@@ -437,7 +437,8 @@
     "description": "管理服务密钥、个人 API 密钥和对外签发配置",
     "service_keys": "服务密钥",
     "personal_keys": "个人密钥",
-    "outbound_tokens": "对外签发"
+    "outbound_tokens": "对外签发",
+    "oauth_clients": "OAuth 应用"
   },
   "service_keys": {
     "title": "服务密钥管理",
@@ -594,6 +595,44 @@
       "signing_key_name_required": "签名密钥（SigningKey）名称不能为空",
       "audience_required": "受众（aud）不能为空",
       "invalid_ttl": "TTL 配置不合法"
+    }
+  },
+  "oauth_clients": {
+    "title": "外部 OAuth 应用",
+    "description": "管理可请求 Wegent 用户身份信息的外部应用。外部 token 不能访问 Wegent 业务接口。",
+    "create": "创建 OAuth Client",
+    "create_title": "创建 OAuth Client",
+    "edit_title": "编辑 OAuth Client",
+    "dialog_description": "redirect URI 必须精确匹配；只有 userinfo.read 权限可用。",
+    "empty": "暂无 OAuth Client",
+    "no_issuer": "请先在“对外签发”中创建并启用 audience 为 wegent-userinfo 的 TokenIssuer。",
+    "name": "应用名称",
+    "type": "Client 类型",
+    "confidential": "Confidential（服务端应用）",
+    "public": "Public（桌面或移动应用）",
+    "redirect_uris": "Redirect URI（每行一个）",
+    "issuer": "TokenIssuer",
+    "access_ttl": "Access token TTL（秒）",
+    "refresh_ttl": "Refresh token TTL（秒）",
+    "description_label": "描述",
+    "enabled": "启用",
+    "rotate": "轮换 Secret",
+    "secret_title": "保存 Client 凭据",
+    "secret_warning": "Client secret 只显示这一次。轮换 secret 会撤销该 Client 的所有 refresh token。",
+    "create_success": "OAuth Client 创建成功",
+    "update_success": "OAuth Client 更新成功",
+    "delete_success": "OAuth Client 已删除",
+    "copy_success": "已复制",
+    "delete_title": "删除 OAuth Client",
+    "delete_description": "确定删除“{{name}}”吗？该 Client 的所有 refresh token 将立即失效。",
+    "errors": {
+      "load_failed": "加载 OAuth Client 失败",
+      "save_failed": "保存 OAuth Client 失败",
+      "toggle_failed": "切换 OAuth Client 状态失败",
+      "rotate_failed": "轮换 Client secret 失败",
+      "delete_failed": "删除 OAuth Client 失败",
+      "copy_failed": "复制失败",
+      "required": "请填写名称、至少一个 redirect URI，并选择 TokenIssuer"
     }
   },
   "task_run_monitor": {

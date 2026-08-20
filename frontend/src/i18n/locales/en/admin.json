@@ -437,7 +437,8 @@
     "description": "Manage service keys, personal API keys, and outbound token issuance",
     "service_keys": "Service Keys",
     "personal_keys": "Personal Keys",
-    "outbound_tokens": "Outbound Issuance"
+    "outbound_tokens": "Outbound Issuance",
+    "oauth_clients": "OAuth Apps"
   },
   "service_keys": {
     "title": "Service Key Management",
@@ -594,6 +595,44 @@
       "signing_key_name_required": "SigningKey name is required",
       "audience_required": "Audience is required",
       "invalid_ttl": "TTL configuration is invalid"
+    }
+  },
+  "oauth_clients": {
+    "title": "External OAuth Applications",
+    "description": "Manage external applications that may request Wegent user identity. External tokens cannot access Wegent business APIs.",
+    "create": "Create OAuth Client",
+    "create_title": "Create OAuth Client",
+    "edit_title": "Edit OAuth Client",
+    "dialog_description": "Redirect URIs must match exactly. Only the userinfo.read permission is available.",
+    "empty": "No OAuth Clients",
+    "no_issuer": "Create and enable a TokenIssuer with audience wegent-userinfo in Outbound Issuance first.",
+    "name": "Application Name",
+    "type": "Client Type",
+    "confidential": "Confidential (server application)",
+    "public": "Public (desktop or mobile application)",
+    "redirect_uris": "Redirect URIs (one per line)",
+    "issuer": "TokenIssuer",
+    "access_ttl": "Access token TTL (seconds)",
+    "refresh_ttl": "Refresh token TTL (seconds)",
+    "description_label": "Description",
+    "enabled": "Enabled",
+    "rotate": "Rotate Secret",
+    "secret_title": "Save Client Credentials",
+    "secret_warning": "The client secret is shown only once. Rotating it revokes every refresh token for this client.",
+    "create_success": "OAuth Client created",
+    "update_success": "OAuth Client updated",
+    "delete_success": "OAuth Client deleted",
+    "copy_success": "Copied",
+    "delete_title": "Delete OAuth Client",
+    "delete_description": "Delete “{{name}}”? Every refresh token for this client will be revoked immediately.",
+    "errors": {
+      "load_failed": "Failed to load OAuth Clients",
+      "save_failed": "Failed to save OAuth Client",
+      "toggle_failed": "Failed to change OAuth Client status",
+      "rotate_failed": "Failed to rotate client secret",
+      "delete_failed": "Failed to delete OAuth Client",
+      "copy_failed": "Failed to copy",
+      "required": "Enter a name and at least one redirect URI, then select a TokenIssuer"
     }
   },
   "task_run_monitor": {

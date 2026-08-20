@@ -201,6 +201,24 @@ class RedisCache:
             logger.error(f"Error deleting cache key {key}: {str(e)}")
             return False
 
+    async def pop(self, key: str) -> Optional[Any]:
+        """Atomically return and delete one cache value."""
+        try:
+            client = await self._get_client()
+            try:
+                data = await client.getdel(key)
+                if data is None:
+                    return None
+                try:
+                    return orjson.loads(data)
+                except Exception:
+                    return data
+            finally:
+                await client.aclose()
+        except Exception as e:
+            logger.error(f"Error popping cache key {key}: {str(e)}")
+            return None
+
     async def cleanup_expired(self):
         """No-op: Redis handles expiration via TTL."""
         return None

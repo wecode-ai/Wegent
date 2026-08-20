@@ -37,6 +37,7 @@ from app.models.loop_item_execution import LoopItemExecution
 from app.models.marketplace_resource import MarketplaceResource
 from app.models.namespace import Namespace
 from app.models.namespace_member import NamespaceMember
+from app.models.oauth_refresh_token import OAuthRefreshToken
 from app.models.plugin_marketplace import (
     Plugin,
     PluginDeviceInstallation,
@@ -101,6 +102,7 @@ __all__ = [
     "Namespace",
     "NamespaceMember",
     "APIKey",
+    "OAuthRefreshToken",
     "KnowledgeDocument",
     "KnowledgeArtifactRecord",
     "Project",

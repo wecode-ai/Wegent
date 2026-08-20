@@ -8,6 +8,7 @@ import {
   updateQuickLaunchFunctionsConfig,
 } from './admin-quick-launch'
 import { outboundTokenAdminApis } from './outboundTokens'
+import { oauthClientAdminApis } from './oauthProvider'
 import { RetrieverCRD } from './retrievers'
 import type { SkillRefMeta } from '@/types/api'
 import type { KnowledgeBaseRetrievalProfile, RetrievalConfigDraft } from '@/types/knowledge'
@@ -31,6 +32,13 @@ export type {
   TokenIssuerListResponse,
   TokenIssuerUpdateRequest,
 } from './outboundTokens'
+export type {
+  OAuthClient,
+  OAuthClientCreateRequest,
+  OAuthClientListResponse,
+  OAuthClientType,
+  OAuthClientUpdateRequest,
+} from './oauthProvider'
 
 // Admin User Types
 export type UserRole = 'admin' | 'user'
@@ -769,6 +777,7 @@ export async function restartAllCloudDevices(): Promise<AdminDeviceBatchStartRes
 // Admin API Services
 export const adminApis = {
   ...outboundTokenAdminApis,
+  ...oauthClientAdminApis,
   getQuickLaunchFunctionsConfig,
   updateQuickLaunchFunctionsConfig,
   upgradeAllLocalDevices,

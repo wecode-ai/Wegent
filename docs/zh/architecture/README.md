@@ -24,5 +24,6 @@ sidebar_position: 1
 | IM 私聊续聊本地 Runtime              | [im-runtime-streaming.md](im-runtime-streaming.md)                                   | callback key、`runtime:event` 信封、紧凑进度投影、终态、失败隔离      |
 | Codex 通知流隔离                     | [codex-notification-routing.md](codex-notification-routing.md)                       | 共享 app-server、线程路由、突发隔离、进程退出、终态投影               |
 | Runtime 任务生命周期对账             | [runtime-task-lifecycle-reconciliation.md](runtime-task-lifecycle-reconciliation.md) | 事件流、掉队检测、异常对账、终态投影、transcript 读取边界             |
+| 外部 OAuth 身份令牌                  | [external-oauth-provider.md](external-oauth-provider.md)                             | Client 注册、授权码、PKCE、刷新轮换、userinfo、Wegent API 认证隔离    |
 
 详细产品说明继续放在原开发指南；本目录只保存可评审的架构真值。

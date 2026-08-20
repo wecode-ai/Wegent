@@ -68,6 +68,14 @@ Skills are Claude Code capability extension packages:
 - **Manage Skills**: View, download, update, delete
 - **Use Skills**: Reference Skills in Bots
 
+### OAuth Apps Management
+
+Administrators can register external OAuth clients from **Settings → API Keys → OAuth Apps** so external systems can verify the current Wegent user's identity.
+
+Each OAuth App requires a client type, exact redirect URI, dedicated TokenIssuer, access-token TTL, and refresh-token TTL. External access tokens may read only OAuth userinfo, which returns `id`, `user_name`, and `email`; they cannot call Wegent business APIs and do not grant roles, resource permissions, Git credentials, or other internal privileges.
+
+Changing the client type, changing the TokenIssuer, rotating the secret, disabling the app, or deleting the app invalidates existing refresh tokens. Production deployments should use an HTTPS public Backend URL and register redirect URIs that exactly match each external client.
+
 ### Archived Chat Management
 
 Desktop Wework settings can show archived Project and Conversation chats. Deleting one archived chat or using **Delete all** first opens a confirmation dialog; the app only permanently deletes the selected local runtime conversation records after confirmation. Bulk deletion applies only to the items currently listed as archived and does not affect non-archived chats.
