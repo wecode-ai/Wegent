@@ -315,6 +315,18 @@ export class RuntimeTaskLifecycleStore {
     const eventChanged = machine.dispatch(canonicalEvent)
     let changed = eventChanged
     const next = machine.getSnapshot()
+    if (canonicalEvent.type === 'turn_settled' && previous.task?.running === true) {
+      console.info('[Wework] Runtime turn settled before executor became idle', {
+        deviceId: canonicalAddress.deviceId,
+        taskId: canonicalAddress.taskId,
+        turnId: canonicalEvent.turnId ?? previous.turn.id,
+        previousExecutionPhase: previous.execution.phase,
+        nextExecutionPhase: next.execution.phase,
+        previousTurnPhase: previous.turn.phase,
+        nextTurnPhase: next.turn.phase,
+        executorSnapshotRunning: previous.task.running,
+      })
+    }
     if (
       wasRunning &&
       !next.derived.isRunning &&

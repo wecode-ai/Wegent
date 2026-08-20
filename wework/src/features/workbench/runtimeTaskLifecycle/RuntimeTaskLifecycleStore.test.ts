@@ -236,14 +236,19 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(store.getTask(address)?.turn.outcome).toBeNull()
   })
 
-  test('rejects a stale running snapshot after a terminal event without a matching start', () => {
+  test('keeps execution running after turn settlement until the executor becomes idle', () => {
     const store = new RuntimeTaskLifecycleStore('test')
     store.syncRuntimeWork(runtimeWork(task({ running: true })))
 
     store.turnSettled(address, null, 'succeeded')
-    const accepted = store.syncRuntimeTask(address, task({ running: true }))
 
-    expect(accepted).toBe(false)
+    expect(store.getTask(address)?.turn.phase).toBe('idle')
+    expect(store.getTask(address)?.turn.outcome).toBe('succeeded')
+    expect(store.getTask(address)?.execution.running).toBe(true)
+
+    const accepted = store.syncRuntimeTask(address, task({ running: false }))
+
+    expect(accepted).toBe(true)
     expect(store.getTask(address)?.execution.running).toBe(false)
   })
 
@@ -759,7 +764,7 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(store.getTask(address)?.execution.running).toBe(false)
   })
 
-  test('ignores a completed active snapshot after a terminal turn event', () => {
+  test('keeps a completed turn busy while executor snapshots remain active', () => {
     const store = new RuntimeTaskLifecycleStore('test')
     store.syncRuntimeWork(runtimeWork(task({ running: true })))
     store.turnStarted(address, 'turn-1')
@@ -778,9 +783,9 @@ describe('RuntimeTaskLifecycleStore', () => {
     )
 
     const snapshot = store.getTask(address)
-    expect(snapshot?.execution.running).toBe(false)
+    expect(snapshot?.execution.running).toBe(true)
     expect(snapshot?.turn.phase).toBe('idle')
-    expect(snapshot?.derived.isBusy).toBe(false)
+    expect(snapshot?.derived.isBusy).toBe(true)
   })
 
   test('accepts an executor-confirmed autonomous turn after the previous turn settles', () => {
@@ -804,7 +809,7 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(snapshot?.derived.shouldShowSidebarRunning).toBe(true)
   })
 
-  test('does not let an optimistic active projection revive a settled turn', () => {
+  test('does not let an optimistic projection settle an executor that remains active', () => {
     const store = new RuntimeTaskLifecycleStore('test')
     store.syncRuntimeWork(runtimeWork(task({ running: true })))
     store.turnStarted(address, 'turn-1')
@@ -823,9 +828,9 @@ describe('RuntimeTaskLifecycleStore', () => {
     )
 
     const snapshot = store.getTask(address)
-    expect(snapshot?.execution.phase).toBe('idle')
+    expect(snapshot?.execution.phase).toBe('running')
     expect(snapshot?.turn.phase).toBe('idle')
-    expect(snapshot?.derived.shouldShowSidebarRunning).toBe(false)
+    expect(snapshot?.derived.shouldShowSidebarRunning).toBe(true)
   })
 
   test('ignores a settled event from an older turn after a newer turn starts', () => {

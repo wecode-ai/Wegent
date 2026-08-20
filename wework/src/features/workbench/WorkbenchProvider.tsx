@@ -167,6 +167,7 @@ export type { WorkbenchServices } from './workbenchServices'
 const LOCAL_SKILLS_CACHE_TTL_MS = 30_000
 const LOCAL_PLUGIN_SKILLS_REFRESH_DEBOUNCE_MS = 250
 const EMPTY_PLUGIN_TRIAL_TEMPLATES: PluginPathComponent[] = []
+const RUNTIME_TASK_SETTLE_SYNC_DELAYS_MS = [0, 250, 500, 1_000, 2_000, 3_000] as const
 
 function findFirstSelectableProject(
   projects: ProjectWithTasks[],
@@ -250,6 +251,7 @@ export function WorkbenchProvider({
   const trackingStatusSignaturesRef = useRef(new Map<string, string>())
   const [trackingBindingRevision, setTrackingBindingRevision] = useState(0)
   const trackingTitleSignaturesRef = useRef(new Map<string, string>())
+  const runtimeTaskSettleSyncGenerationRef = useRef(new Map<string, number>())
   const [state, dispatch] = useReducer(workbenchReducer, initialWorkbenchState)
   // The cloud connection context falls back to a synthetic "backend" user when
   // no real cloud provider is mounted; never let that placeholder override the
@@ -1768,6 +1770,60 @@ export function WorkbenchProvider({
         })
       })
   })
+  const syncRuntimeTaskUntilExecutorSettles = useStableEvent(
+    async (address: RuntimeTaskAddress) => {
+      const key = runtimeConversationKey(address)
+      const generation = (runtimeTaskSettleSyncGenerationRef.current.get(key) ?? 0) + 1
+      runtimeTaskSettleSyncGenerationRef.current.set(key, generation)
+
+      try {
+        for (const delayMs of RUNTIME_TASK_SETTLE_SYNC_DELAYS_MS) {
+          if (delayMs > 0) {
+            await new Promise(resolve => window.setTimeout(resolve, delayMs))
+          }
+          if (runtimeTaskSettleSyncGenerationRef.current.get(key) !== generation) return
+
+          const expectedLifecycle = lifecycleStore.getTask(address)
+          if (expectedLifecycle?.turn.phase === 'streaming') return
+
+          try {
+            const task = await refreshRuntimeTask(address)
+            if (!task) continue
+            const applied = lifecycleStore.syncRuntimeTask(address, task, expectedLifecycle)
+            if (applied) updateLocalRuntimeTaskSnapshot(address, task)
+
+            const currentLifecycle = lifecycleStore.getTask(address)
+            if (
+              currentLifecycle?.execution.phase === 'idle' ||
+              currentLifecycle?.turn.phase === 'streaming'
+            ) {
+              return
+            }
+          } catch (error) {
+            console.warn('[Wework] Runtime task settle snapshot sync failed', {
+              deviceId: address.deviceId,
+              taskId: address.taskId,
+              delayMs,
+              error,
+            })
+          }
+        }
+
+        const lifecycle = lifecycleStore.getTask(address)
+        console.warn('[Wework] Runtime task remained busy after turn settlement polling', {
+          deviceId: address.deviceId,
+          taskId: address.taskId,
+          executionPhase: lifecycle?.execution.phase ?? null,
+          turnPhase: lifecycle?.turn.phase ?? null,
+          executorSnapshotRunning: lifecycle?.task?.running ?? null,
+        })
+      } finally {
+        if (runtimeTaskSettleSyncGenerationRef.current.get(key) === generation) {
+          runtimeTaskSettleSyncGenerationRef.current.delete(key)
+        }
+      }
+    }
+  )
   const syncRuntimeGoalSnapshot = useStableEvent((address: RuntimeTaskAddress) => {
     const expectedGoalStatus = lifecycleStore.getTask(address)?.goalStatus
     if (expectedGoalStatus === null || expectedGoalStatus === undefined) return
@@ -1853,7 +1909,7 @@ export function WorkbenchProvider({
               turnId,
               outcome === 'succeeded' ? 'success' : outcome === 'failed' ? 'failure' : 'cancelled'
             )
-            syncRuntimeTaskSnapshot(address)
+            void syncRuntimeTaskUntilExecutorSettles(address)
             syncRuntimeGoalSnapshot(address)
           },
           onContextUsageUpdated: updateCanonicalRuntimeContextUsage,
@@ -1897,6 +1953,7 @@ export function WorkbenchProvider({
       settleCanonicalRuntimeGuidance,
       syncRuntimeGoalSnapshot,
       syncRuntimeTaskSnapshot,
+      syncRuntimeTaskUntilExecutorSettles,
       syncRuntimeTaskTitle,
       updateCanonicalRuntimeContextUsage,
       updateLocalRuntimeTaskSnapshot,

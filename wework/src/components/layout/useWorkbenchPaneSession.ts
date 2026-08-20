@@ -14,6 +14,7 @@ import {
   isRuntimeTaskBusyError,
 } from '@/features/workbench/runtimePaneStatus'
 import {
+  type RuntimeTaskLifecycleSnapshot,
   useRuntimeTaskLifecycle,
   useRuntimeTaskLifecycleStore,
 } from '@/features/workbench/runtimeTaskLifecycle'
@@ -70,6 +71,7 @@ import {
 } from '@/lib/browser-annotation-context'
 import {
   abortRuntimeConversationHydration,
+  appendAcceptedRuntimeConversationMessage,
   applyRuntimeConversationAction,
   appendOptimisticRuntimeConversationGuidance,
   beginRuntimeConversationHydration,
@@ -81,6 +83,7 @@ import {
   getRuntimeConversationMetadata,
   getRuntimeConversationQueuedMessagesByKey,
   getRuntimeConversationQueuePausedByKey,
+  getRuntimeConversationTurnIds,
   markRuntimeConversationGuidanceInterrupted,
   optimisticallyInterruptRuntimeConversation,
   removeOptimisticRuntimeConversationGuidance,
@@ -147,7 +150,6 @@ interface PendingRuntimeGoalState {
 }
 
 const runtimePaneGoalSeeds = new Map<string, PendingRuntimeGoalState>()
-const QUEUED_MESSAGE_BUSY_RETRY_DELAYS_MS = [250, 500, 1_000, 2_000, 3_000, 3_250] as const
 const DEFAULT_RUNTIME_TRANSCRIPT_PAGE_SIZE = 50
 const configuredRuntimeTranscriptPageSize = Number(
   import.meta.env.VITE_WEWORK_E2E_TRANSCRIPT_PAGE_SIZE
@@ -310,6 +312,9 @@ export function useWorkbenchPaneSession({
   const loadedTranscriptRangesRef = useRef<LoadedTranscriptRange[]>([])
   const interruptAndSendInFlightRef = useRef(false)
   const queuedMessageSendInFlightIdsRef = useRef(new Set<string>())
+  const queuedMessageBusyBlockSnapshotsRef = useRef(
+    new Map<string, RuntimeTaskLifecycleSnapshot | null>()
+  )
   const pendingMessageActionsRef = useRef<RuntimePaneMessageAction[]>([])
   const rebuildingTranscriptRef = useRef(false)
   const rebuildingTranscriptIdentityRef = useRef<string | null>(null)
@@ -1012,6 +1017,9 @@ export function useWorkbenchPaneSession({
       const attachments = localRuntimeAttachments(messageAttachments)
       const terminalContext = readRuntimeTerminalAdditionalContext(currentRuntimeTask)
       const additionalContext = { ...message.additionalContext, ...terminalContext }
+      const turnIdsBeforeSend = appendedLocalMessage
+        ? new Set<string>()
+        : getRuntimeConversationTurnIds(currentRuntimeTask)
       const sent = await sendRuntimePaneMessage(
         {
           address: currentRuntimeTask,
@@ -1045,11 +1053,14 @@ export function useWorkbenchPaneSession({
                   runtimeGoalRequest: message.runtimeGoalRequest,
                   codeComments: message.codeComments,
                 })
+          const activeTurnId = lifecycleStore.getTask(currentRuntimeTask)?.turn.id ?? null
           setMessages(
-            applyRuntimeConversationAction(currentRuntimeTask, {
-              type: 'user_added',
-              message: visibleMessage,
-            })
+            appendAcceptedRuntimeConversationMessage(
+              currentRuntimeTask,
+              visibleMessage,
+              activeTurnId,
+              turnIdsBeforeSend
+            )
           )
         }
         markRuntimeTerminalAdditionalContextDelivered(terminalContext)
@@ -1063,7 +1074,7 @@ export function useWorkbenchPaneSession({
       }
       return sent
     },
-    [currentRuntimeTask, sendRuntimePaneMessage, setError]
+    [currentRuntimeTask, lifecycleStore, sendRuntimePaneMessage, setError]
   )
 
   const interruptAndSendQueuedMessage = useCallback(
@@ -1424,43 +1435,49 @@ export function useWorkbenchPaneSession({
       )
 
       try {
-        for (let attempt = 0; attempt <= QUEUED_MESSAGE_BUSY_RETRY_DELAYS_MS.length; attempt += 1) {
-          let sendError: string | null = null
-          const sent = await sendRuntimeMessage(queuedMessage, {
-            appendLocalMessage: attempt === 0,
-            initialGoal: queuedMessage.initialGoal,
-            silentBusyRetry: attempt > 0,
-            onError: error => {
-              sendError = error
-            },
-          })
-          if (sent) {
-            if (
-              currentRuntimeTask &&
-              lifecycleStore.getTask(currentRuntimeTask)?.turn.phase === 'streaming'
-            ) {
-              settleRuntimeConversationAcceptedMessage(currentRuntimeTask)
-            }
-            return
-          }
+        let sendError: string | null = null
+        const sent = await sendRuntimeMessage(queuedMessage, {
+          appendLocalMessage: false,
+          initialGoal: queuedMessage.initialGoal,
+          onError: error => {
+            sendError = error
+          },
+        })
+        if (sent) {
+          queuedMessageBusyBlockSnapshotsRef.current.delete(queuedMessage.id)
           if (
-            !isRuntimeTaskBusyError(sendError) ||
-            attempt === QUEUED_MESSAGE_BUSY_RETRY_DELAYS_MS.length
+            currentRuntimeTask &&
+            lifecycleStore.getTask(currentRuntimeTask)?.turn.phase === 'streaming'
           ) {
-            setQueuedMessages(messages =>
-              messages.map(message =>
-                message.id === queuedMessage.id
-                  ? { ...message, status: 'failed', error: '发送失败' }
-                  : message
-              )
-            )
-            return
+            settleRuntimeConversationAcceptedMessage(currentRuntimeTask)
           }
-          await new Promise(resolve =>
-            window.setTimeout(resolve, QUEUED_MESSAGE_BUSY_RETRY_DELAYS_MS[attempt])
-          )
+          return
         }
+        if (isRuntimeTaskBusyError(sendError)) {
+          const lifecycle = currentRuntimeTask ? lifecycleStore.getTask(currentRuntimeTask) : null
+          queuedMessageBusyBlockSnapshotsRef.current.set(queuedMessage.id, lifecycle)
+          console.info('[Wework] Queued runtime message remains queued while executor is busy', {
+            id: queuedMessage.id,
+            deviceId: currentRuntimeTask?.deviceId ?? null,
+            taskId: currentRuntimeTask?.taskId ?? null,
+            executionPhase: lifecycle?.execution.phase ?? null,
+            turnPhase: lifecycle?.turn.phase ?? null,
+            executorSnapshotRunning: lifecycle?.task?.running ?? null,
+          })
+        } else {
+          queuedMessageBusyBlockSnapshotsRef.current.delete(queuedMessage.id)
+        }
+        setQueuedMessages(messages =>
+          messages.map(message =>
+            message.id !== queuedMessage.id
+              ? message
+              : isRuntimeTaskBusyError(sendError)
+                ? { ...message, status: 'queued', error: undefined }
+                : { ...message, status: 'failed', error: '发送失败' }
+          )
+        )
       } catch (error) {
+        queuedMessageBusyBlockSnapshotsRef.current.delete(queuedMessage.id)
         console.error('[Wework] Queued runtime message send failed', {
           id: queuedMessage.id,
           error,
@@ -1484,6 +1501,15 @@ export function useWorkbenchPaneSession({
     if (queuedMessages.some(message => message.status === 'sending')) return
     const queuedMessage = queuedMessages.find(message => message.status === 'queued')
     if (!queuedMessage) return
+    const blockedSnapshot = queuedMessageBusyBlockSnapshotsRef.current.get(queuedMessage.id)
+    if (
+      blockedSnapshot !== undefined &&
+      currentRuntimeTask &&
+      lifecycleStore.getTask(currentRuntimeTask) === blockedSnapshot
+    ) {
+      return
+    }
+    queuedMessageBusyBlockSnapshotsRef.current.delete(queuedMessage.id)
     const canStartQueuedGoal =
       Boolean(queuedMessage.initialGoal) &&
       Boolean(currentRuntimeTask) &&
@@ -1497,6 +1523,7 @@ export function useWorkbenchPaneSession({
     void sendQueuedMessage(queuedMessage)
   }, [
     currentRuntimeTask,
+    lifecycleStore,
     paneStatus.canSendQueuedMessage,
     paneStatus.isResponseActive,
     paneStatus.taskExecution.continuable,
@@ -1524,6 +1551,7 @@ export function useWorkbenchPaneSession({
   const sendQueuedMessageAsGuidance = useCallback(
     async (queuedMessage: RuntimePaneQueuedMessage) => {
       const id = queuedMessage.id
+      queuedMessageBusyBlockSnapshotsRef.current.delete(id)
       if (!currentRuntimeTask) {
         setQueuedMessages(messages =>
           messages.map(message =>
@@ -2166,6 +2194,7 @@ export function useWorkbenchPaneSession({
 
   const cancelQueuedMessage = useCallback(
     (id: string) => {
+      queuedMessageBusyBlockSnapshotsRef.current.delete(id)
       setQueuedMessages(messages => messages.filter(message => message.id !== id))
     },
     [setQueuedMessages]
@@ -2176,7 +2205,10 @@ export function useWorkbenchPaneSession({
     const interruptedGuidance = queuedMessages.find(isInterruptedGuidance)
     const queuedMessage =
       interruptedGuidance ?? queuedMessages.find(message => message.status === 'queued')
-    if (queuedMessage) void sendQueuedMessage(queuedMessage)
+    if (queuedMessage) {
+      queuedMessageBusyBlockSnapshotsRef.current.delete(queuedMessage.id)
+      void sendQueuedMessage(queuedMessage)
+    }
   }, [queuedMessages, sendQueuedMessage, setQueuedMessagesPaused])
 
   const resumeQueuedMessagesWithInput = useCallback(
@@ -2201,6 +2233,7 @@ export function useWorkbenchPaneSession({
   )
 
   const clearQueuedMessages = useCallback(() => {
+    queuedMessageBusyBlockSnapshotsRef.current.clear()
     setQueuedMessages([])
     setQueuedMessagesPaused(false)
   }, [setQueuedMessages, setQueuedMessagesPaused])
@@ -2231,6 +2264,7 @@ export function useWorkbenchPaneSession({
       const queuedMessage = queuedMessages.find(message => message.id === id)
       if (!queuedMessage || queuedMessage.status === 'sending') return
 
+      queuedMessageBusyBlockSnapshotsRef.current.delete(id)
       setInput(queuedMessage.content)
       queuedMessage.attachments?.forEach(attachment => {
         addExistingAttachment(attachment)
@@ -2253,6 +2287,7 @@ export function useWorkbenchPaneSession({
     async (id: string) => {
       const queuedMessage = queuedMessages.find(message => message.id === id)
       if (!queuedMessage) return
+      queuedMessageBusyBlockSnapshotsRef.current.delete(id)
       const submittedInput = input.trim()
       const currentAttachments = attachmentState.attachments
       const combinedMessage: RuntimePaneQueuedMessage = {

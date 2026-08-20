@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from 'vitest'
 import {
+  appendAcceptedRuntimeConversationUser,
   appendRuntimeConversationGuidance,
   mergeRuntimeConversationTurns,
   projectRuntimeConversationTurns,
@@ -181,6 +182,82 @@ describe('runtimeConversationTurns', () => {
       [null, 'client-user-1'],
       ['turn-2', 'client-user-2'],
     ])
+  })
+
+  test('inserts an accepted queued user before a turn that started before send resolved', () => {
+    let turns = reduceRuntimeConversationTurns([], {
+      type: 'assistant_started',
+      subtaskId: 'turn-2',
+    })
+    turns = reduceRuntimeConversationTurns(turns, {
+      type: 'assistant_chunk',
+      subtaskId: 'turn-2',
+      itemId: 'assistant-2',
+      content: 'Second answer',
+    })
+
+    turns = appendAcceptedRuntimeConversationUser(
+      turns,
+      userMessage('client-user-2', 'Second question'),
+      'turn-2',
+      new Set()
+    )
+
+    expect(projectRuntimeConversationTurns(turns).map(message => message.content)).toEqual([
+      'Second question',
+      'Second answer',
+    ])
+    expect(turns[0]).toMatchObject({
+      id: 'turn-2',
+      clientUserMessageId: 'client-user-2',
+      items: [
+        {
+          id: 'client-user-2',
+          message: { subtaskId: 'turn-2', turnId: 'turn-2' },
+        },
+        { id: 'assistant-2', type: 'assistant_text' },
+      ],
+    })
+  })
+
+  test('binds an accepted queued user after its new turn already completed', () => {
+    let turns = reduceRuntimeConversationTurns(
+      [
+        {
+          id: 'turn-1',
+          items: [],
+          status: 'done',
+        },
+      ],
+      {
+        type: 'assistant_started',
+        subtaskId: 'turn-2',
+      }
+    )
+    turns = reduceRuntimeConversationTurns(turns, {
+      type: 'assistant_done',
+      subtaskId: 'turn-2',
+      itemId: 'assistant-2',
+      content: 'Second answer',
+      blocks: [],
+    })
+
+    turns = appendAcceptedRuntimeConversationUser(
+      turns,
+      userMessage('client-user-2', 'Second question'),
+      null,
+      new Set(['turn-1'])
+    )
+
+    expect(projectRuntimeConversationTurns(turns).map(message => message.content)).toEqual([
+      'Second question',
+      'Second answer',
+    ])
+    expect(turns[1]).toMatchObject({
+      id: 'turn-2',
+      clientUserMessageId: 'client-user-2',
+      status: 'done',
+    })
   })
 
   test('corrects a provisional turn id by exact client user message id', () => {

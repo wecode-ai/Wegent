@@ -17,6 +17,7 @@ import type {
 } from '@/types/workbench'
 import type { VirtualItem } from '@tanstack/react-virtual'
 import {
+  appendAcceptedRuntimeConversationUser,
   appendRuntimeConversationGuidance,
   mergeRuntimeConversationTurns,
   projectRuntimeConversationTurns,
@@ -158,6 +159,13 @@ export function getRuntimeConversationMessages(address: RuntimeTaskAddress): Wor
   return projectRuntimeConversationTurns(touchEntry(turnsByConversation, key) ?? [])
 }
 
+export function getRuntimeConversationTurnIds(address: RuntimeTaskAddress): ReadonlySet<string> {
+  const key = runtimeConversationKey(address)
+  return new Set(
+    (touchEntry(turnsByConversation, key) ?? []).flatMap(turn => (turn.id ? [turn.id] : []))
+  )
+}
+
 export function subscribeRuntimeConversation(
   address: RuntimeTaskAddress,
   listener: (action?: RuntimePaneMessageAction) => void
@@ -274,6 +282,17 @@ export function applyRuntimeConversationAction(
   cacheBoundedEntry(turnsByConversation, key, nextTurns)
   notifyRuntimeConversation(key, action)
   return projectRuntimeConversationTurns(nextTurns)
+}
+
+export function appendAcceptedRuntimeConversationMessage(
+  address: RuntimeTaskAddress,
+  message: WorkbenchMessage,
+  activeTurnId: string | null,
+  turnIdsBeforeSend: ReadonlySet<string>
+): WorkbenchMessage[] {
+  return updateRuntimeConversationTurns(address, turns =>
+    appendAcceptedRuntimeConversationUser(turns, message, activeTurnId, turnIdsBeforeSend)
+  )
 }
 
 export function updateRuntimeConversationBlocks(

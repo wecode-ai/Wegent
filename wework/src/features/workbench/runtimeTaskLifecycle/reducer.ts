@@ -143,14 +143,16 @@ export function reduceRuntimeTaskLifecycle(
       if (event.turnId && state.activeTurnId && event.turnId !== state.activeTurnId) {
         return state
       }
+      const executorSnapshotStillRunning =
+        state.task?.running === true && !isTerminalTaskStatus(state.task.status)
+      const keepExecutionRunning = state.goalStatus === 'active' || executorSnapshotStillRunning
       return {
         ...state,
-        executionPhase: state.goalStatus === 'active' ? state.executionPhase : 'idle',
+        executionPhase: keepExecutionRunning ? state.executionPhase : 'idle',
         turnPhase: 'idle',
         turnOutcome: event.outcome ?? state.turnOutcome,
         activeTurnId: null,
-        expectedExecutorRunning:
-          state.goalStatus === 'active' ? state.expectedExecutorRunning : false,
+        expectedExecutorRunning: keepExecutionRunning ? state.expectedExecutorRunning : false,
       }
     }
 

@@ -15,12 +15,15 @@ import {
   isRuntimeTaskBusyError,
 } from '@/features/workbench/runtimePaneStatus'
 import {
+  appendAcceptedRuntimeConversationMessage,
   applyRuntimeConversationAction,
   getRuntimeConversationMessages,
+  getRuntimeConversationTurnIds,
   removeRuntimeConversationTurn,
   subscribeRuntimeConversation,
 } from '@/features/workbench/runtimeConversationCache'
 import {
+  type RuntimeTaskLifecycleSnapshot,
   useRuntimeTaskLifecycle,
   useRuntimeTaskLifecycleStore,
 } from '@/features/workbench/runtimeTaskLifecycle'
@@ -39,9 +42,6 @@ import type {
   RuntimeTaskAddress,
 } from '@/types/api'
 import type { RuntimePaneQueuedMessage, WorkbenchMessage } from '@/types/workbench'
-
-const QUEUED_MESSAGE_RETRY_DELAY_MS = 250
-const QUEUED_MESSAGE_MAX_BUSY_RETRIES = 40
 
 function createUserMessage(content: string, id = `side-user-${Date.now()}`): WorkbenchMessage {
   const createdAt = new Date().toISOString()
@@ -164,6 +164,7 @@ export function TemporaryChatPanel({
   )
   const busy = sending || paneStatus.isBusy
   const queuedMessageSendInFlightIdsRef = useRef(new Set<string>())
+  const queuedMessageBusyBlocksRef = useRef(new Map<string, RuntimeTaskLifecycleSnapshot | null>())
   const queuedMessagesRef = useRef(queuedMessages)
   const createdAddressKeyRef = useRef<string | null>(null)
   const autoSubmittedInitialInputRef = useRef(false)
@@ -171,6 +172,10 @@ export function TemporaryChatPanel({
   useEffect(() => {
     queuedMessagesRef.current = queuedMessages
   }, [queuedMessages])
+
+  useEffect(() => {
+    queuedMessageBusyBlocksRef.current.clear()
+  }, [address])
 
   const updateAddress = useCallback(
     (nextAddress: RuntimeTaskAddress | null) => {
@@ -291,63 +296,73 @@ export function TemporaryChatPanel({
       )
 
       try {
-        for (let attempt = 0; attempt <= QUEUED_MESSAGE_MAX_BUSY_RETRIES; attempt += 1) {
-          let sendError: string | null = null
-          const messageAttachments = queuedMessage.attachments ?? []
-          const attachmentIds = remoteAttachmentIds(messageAttachments)
-          const attachments = localRuntimeAttachments(messageAttachments)
-          const sent = await sendRuntimePaneMessage(
-            {
-              address,
-              message: queuedMessage.content,
-              clientUserMessageId: queuedMessage.id,
-              ...(sendEphemeral ? { ephemeral: true } : {}),
-              ...(queuedMessage.modelId
-                ? {
-                    modelId: queuedMessage.modelId,
-                    modelType: queuedMessage.modelType,
-                  }
-                : {}),
-              ...(queuedMessage.modelOptions ? { modelOptions: queuedMessage.modelOptions } : {}),
-              ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
-              ...(attachments.length > 0 ? { attachments } : {}),
-              ...runtimeContext,
+        let sendError: string | null = null
+        const messageAttachments = queuedMessage.attachments ?? []
+        const attachmentIds = remoteAttachmentIds(messageAttachments)
+        const attachments = localRuntimeAttachments(messageAttachments)
+        const turnIdsBeforeSend = getRuntimeConversationTurnIds(address)
+        const sent = await sendRuntimePaneMessage(
+          {
+            address,
+            message: queuedMessage.content,
+            clientUserMessageId: queuedMessage.id,
+            ...(sendEphemeral ? { ephemeral: true } : {}),
+            ...(queuedMessage.modelId
+              ? {
+                  modelId: queuedMessage.modelId,
+                  modelType: queuedMessage.modelType,
+                }
+              : {}),
+            ...(queuedMessage.modelOptions ? { modelOptions: queuedMessage.modelOptions } : {}),
+            ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
+            ...(attachments.length > 0 ? { attachments } : {}),
+            ...runtimeContext,
+          },
+          {
+            onError: message => {
+              sendError = message
             },
-            {
-              onError: message => {
-                sendError = message
-              },
-            }
+          }
+        )
+        if (sent) {
+          queuedMessageBusyBlocksRef.current.delete(queuedMessage.id)
+          const activeTurnId = lifecycleStore.getTask(address)?.turn.id ?? null
+          setMessages(
+            appendAcceptedRuntimeConversationMessage(
+              address,
+              createUserMessage(queuedMessage.content, queuedMessage.id),
+              activeTurnId,
+              turnIdsBeforeSend
+            )
           )
-          if (sent) {
-            setMessages(
-              applyRuntimeConversationAction(address, {
-                type: 'user_added',
-                message: createUserMessage(queuedMessage.content, queuedMessage.id),
-              })
-            )
-            setQueuedMessages(messages =>
-              messages.filter(message => message.id !== queuedMessage.id)
-            )
-            return
-          }
-          if (!isRuntimeTaskBusyError(sendError) || attempt === QUEUED_MESSAGE_MAX_BUSY_RETRIES) {
-            setQueuedMessages(messages =>
-              messages.map(message =>
-                message.id === queuedMessage.id
-                  ? { ...message, status: 'failed', error: sendError || '发送失败' }
-                  : message
-              )
-            )
-            return
-          }
-          await new Promise(resolve => window.setTimeout(resolve, QUEUED_MESSAGE_RETRY_DELAY_MS))
+          setQueuedMessages(messages => messages.filter(message => message.id !== queuedMessage.id))
+          return
         }
+        const blockedByBusy = isRuntimeTaskBusyError(sendError)
+        if (blockedByBusy) {
+          queuedMessageBusyBlocksRef.current.set(queuedMessage.id, lifecycleStore.getTask(address))
+          console.info('[Wework] Temporary chat message remains queued while executor is busy', {
+            id: queuedMessage.id,
+            deviceId: address.deviceId,
+            taskId: address.taskId,
+          })
+        } else {
+          queuedMessageBusyBlocksRef.current.delete(queuedMessage.id)
+        }
+        setQueuedMessages(messages =>
+          messages.map(message =>
+            message.id !== queuedMessage.id
+              ? message
+              : blockedByBusy
+                ? { ...message, status: 'queued', error: undefined }
+                : { ...message, status: 'failed', error: sendError || '发送失败' }
+          )
+        )
       } finally {
         queuedMessageSendInFlightIdsRef.current.delete(queuedMessage.id)
       }
     },
-    [address, runtimeContext, sendEphemeral, sendRuntimePaneMessage]
+    [address, lifecycleStore, runtimeContext, sendEphemeral, sendRuntimePaneMessage]
   )
 
   useEffect(() => {
@@ -355,8 +370,13 @@ export function TemporaryChatPanel({
     if (queuedMessages.some(message => message.status === 'sending')) return
     const queuedMessage = queuedMessages.find(message => message.status === 'queued')
     if (!queuedMessage) return
+    const blockedSnapshot = queuedMessageBusyBlocksRef.current.get(queuedMessage.id)
+    if (blockedSnapshot !== undefined && lifecycleStore.getTask(address) === blockedSnapshot) {
+      return
+    }
+    queuedMessageBusyBlocksRef.current.delete(queuedMessage.id)
     void sendQueuedMessage(queuedMessage)
-  }, [address, busy, queuedMessages, sendQueuedMessage])
+  }, [address, busy, lifecycleStore, queuedMessages, sendQueuedMessage])
 
   const sendQueuedMessageAsGuidance = useCallback(
     async (queuedMessage: RuntimePaneQueuedMessage, forceActiveTurn = false): Promise<boolean> => {
@@ -378,6 +398,7 @@ export function TemporaryChatPanel({
           : message
       )
       queuedMessagesRef.current = sendingMessages
+      queuedMessageBusyBlocksRef.current.delete(queuedMessage.id)
       setQueuedMessages(sendingMessages)
       const messageAttachments = queuedMessage.attachments ?? []
       const attachmentIds = remoteAttachmentIds(messageAttachments)
@@ -536,6 +557,10 @@ export function TemporaryChatPanel({
         })
       )
       if (isRuntimeTaskBusyError(sendError)) {
+        queuedMessageBusyBlocksRef.current.set(
+          queuedMessage.id,
+          lifecycleStore.getTask(targetAddress)
+        )
         const pendingMessages = [...queuedMessagesRef.current, queuedMessage]
         queuedMessagesRef.current = pendingMessages
         setQueuedMessages(pendingMessages)
@@ -558,6 +583,7 @@ export function TemporaryChatPanel({
       currentProject,
       input,
       busy,
+      lifecycleStore,
       queuedMessages.length,
       sideChatProjectChat,
       selectedModelFields,
@@ -579,6 +605,7 @@ export function TemporaryChatPanel({
   }, [autoSubmitInitialInput, initialInput, send])
 
   const cancelQueuedMessage = useCallback((id: string) => {
+    queuedMessageBusyBlocksRef.current.delete(id)
     setQueuedMessages(messages =>
       messages.filter(message => message.id !== id || message.status === 'sending')
     )
@@ -588,6 +615,7 @@ export function TemporaryChatPanel({
     (id: string) => {
       const queuedMessage = queuedMessages.find(message => message.id === id)
       if (!queuedMessage || queuedMessage.status === 'sending') return
+      queuedMessageBusyBlocksRef.current.delete(id)
       setInput(queuedMessage.content)
       sideChatProjectChat.resetAttachments()
       queuedMessage.attachments?.forEach(sideChatProjectChat.addExistingAttachment)
