@@ -40,6 +40,7 @@ import {
   buildExecutor,
   codexUpstreamApiFormat,
   mcpElicitationConfigToml,
+  prepareHarnessRuntimeRoot,
   resolveDesktopCodexBinary,
   toolDetailsMcpConfigToml,
   verifyCloudProjectFlow,
@@ -999,6 +1000,8 @@ async function main() {
       )
     }
 
+    const harnessRuntimeRoot =
+      SELECTED_DESKTOP_SEGMENT === 'harness-apps' ? await prepareHarnessRuntimeRoot() : null
     const appEnvironment = {
       ...process.env,
       CODEX_BINARY_PATH: resolvedAppCodexBinary,
@@ -1029,6 +1032,7 @@ async function main() {
       WEWORK_E2E_POSTHOG_HOST: control.url,
       WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR: '127.0.0.1:0',
       WEWORK_EXECUTOR_SIDECAR: executorBinary,
+      ...(harnessRuntimeRoot ? { WEWORK_HARNESS_RUNTIME_ROOT: harnessRuntimeRoot } : {}),
       ...(RUNS_PLUGIN_E2E
         ? {
             GIT_CONFIG_COUNT: '1',

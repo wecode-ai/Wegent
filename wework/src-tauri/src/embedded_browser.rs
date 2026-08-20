@@ -2251,30 +2251,48 @@ pub async fn embedded_browser_open(
         })
     };
 
-    let webview =
-        match window.add_child(builder, normalized_bounds.position, normalized_bounds.size) {
-            Ok(webview) => webview,
-            Err(error) => {
-                log_embedded_browser_diagnostic(
-                    &state,
+    let creation_position = if visible {
+        normalized_bounds.position
+    } else {
+        LogicalPosition::new(
+            normalized_bounds.position.x + normalized_bounds.size.width / 2.0,
+            normalized_bounds.position.y + normalized_bounds.size.height / 2.0,
+        )
+    };
+    let creation_size = if visible {
+        normalized_bounds.size
+    } else {
+        LogicalSize::new(1.0, 1.0)
+    };
+    let webview = match window.add_child(builder, creation_position, creation_size) {
+        Ok(webview) => webview,
+        Err(error) => {
+            log_embedded_browser_diagnostic(
+                &state,
+                &label,
+                "open_create_failed",
+                json!({
+                    "nativeLabel": &native_label,
+                    "error": error.to_string(),
+                }),
+            );
+            if let Ok(mut webviews) = state.webviews.lock() {
+                remove_logical_entry_if_native_matches(
+                    &mut webviews,
                     &label,
-                    "open_create_failed",
-                    json!({
-                        "nativeLabel": &native_label,
-                        "error": error.to_string(),
-                    }),
+                    &native_label,
+                    |current| current.native_label.as_str(),
                 );
-                if let Ok(mut webviews) = state.webviews.lock() {
-                    remove_logical_entry_if_native_matches(
-                        &mut webviews,
-                        &label,
-                        &native_label,
-                        |current| current.native_label.as_str(),
-                    );
-                }
-                return Err(format!("Failed to create embedded browser: {error}"));
             }
-        };
+            return Err(format!("Failed to create embedded browser: {error}"));
+        }
+    };
+
+    if !visible {
+        webview
+            .hide()
+            .map_err(|error| format!("Failed to hide embedded browser after creation: {error}"))?;
+    }
 
     #[cfg(target_os = "linux")]
     if let Err(error) = apply_webview_bounds(&webview, normalized_bounds) {

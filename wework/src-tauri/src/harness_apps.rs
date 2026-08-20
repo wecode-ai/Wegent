@@ -12,7 +12,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tar::Archive;
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
@@ -21,8 +21,9 @@ use std::os::windows::process::CommandExt;
 
 const DIRECTORY: &str = "harness-apps";
 const REGISTRY: &str = "installations.json";
-const BUNDLED_RUNTIME_DIRECTORY: &str = "bundled-deepseek-harness";
+const BUNDLED_RUNTIME_DIRECTORY: &str = "bundled-harness-runtime";
 const BUNDLED_RUNTIME_METADATA: &str = "runtime.json";
+const HARNESS_APP_LAUNCH_PROGRESS_EVENT: &str = "harness-app-launch-progress";
 const MAX_RUNTIME_ARCHIVE_BYTES: u64 = 200 * 1024 * 1024;
 const MAX_ARCHIVE_BYTES: u64 = 50 * 1024 * 1024;
 const MAX_EXTRACTED_BYTES: u64 = 250 * 1024 * 1024;
@@ -83,12 +84,20 @@ pub struct HarnessAppPreview {
     issues: Vec<String>,
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HarnessAppLaunchProgress {
+    installation_id: String,
+    phase: &'static str,
+}
+
 pub struct HarnessAppRuntimeState {
     children: Mutex<HashMap<String, Child>>,
     proxy_tokens: Mutex<HashMap<String, String>>,
     context_tokens: Mutex<HashMap<String, String>>,
     registry: Mutex<()>,
     runtime: Arc<Mutex<()>>,
+    start_locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 impl Default for HarnessAppRuntimeState {
@@ -99,6 +108,7 @@ impl Default for HarnessAppRuntimeState {
             context_tokens: Mutex::new(HashMap::new()),
             registry: Mutex::new(()),
             runtime: Arc::new(Mutex::new(())),
+            start_locks: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -585,7 +595,7 @@ fn read_node_version(node: &Path) -> Result<Version, String> {
 }
 
 fn resolve_dsh_runtime(app: &tauri::AppHandle) -> Result<DshRuntime, String> {
-    if let Ok(runtime_root) = std::env::var("WEWORK_DEEPSEEK_HARNESS_RUNTIME_ROOT") {
+    if let Ok(runtime_root) = std::env::var("WEWORK_HARNESS_RUNTIME_ROOT") {
         return resolve_managed_dsh_runtime(PathBuf::from(runtime_root));
     }
     if let Ok(source_root) = std::env::var("WEWORK_DEEPSEEK_HARNESS_ROOT") {
@@ -1073,6 +1083,18 @@ pub async fn start_harness_app(
     context_base_url: Option<String>,
     context_token: Option<String>,
 ) -> Result<HarnessAppInstallation, String> {
+    let start_lock = {
+        let mut start_locks = state
+            .start_locks
+            .lock()
+            .map_err(|_| "Harness app start lock failed")?;
+        Arc::clone(
+            start_locks
+                .entry(installation_id.clone())
+                .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(()))),
+        )
+    };
+    let _start_guard = start_lock.lock().await;
     {
         let mut children = state
             .children
@@ -1092,6 +1114,16 @@ pub async fn start_harness_app(
             children.remove(&installation_id);
         }
     }
+    let emit_progress = |phase| {
+        let _ = app.emit(
+            HARNESS_APP_LAUNCH_PROGRESS_EVENT,
+            HarnessAppLaunchProgress {
+                installation_id: installation_id.clone(),
+                phase,
+            },
+        );
+    };
+    emit_progress("preparingRuntime");
     let runtime_app = app.clone();
     let runtime_lock = Arc::clone(&state.runtime);
     let runtime = tauri::async_runtime::spawn_blocking(move || {
@@ -1128,6 +1160,7 @@ pub async fn start_harness_app(
             installation.manifest.requirements.node, runtime.node_version
         ));
     }
+    emit_progress("loadingApp");
     let home = root(&app)?.join("instances").join(&installation.id);
     fs::create_dir_all(&home)
         .map_err(|error| format!("Failed to create Harness app home: {error}"))?;
@@ -1136,9 +1169,10 @@ pub async fn start_harness_app(
         .is_some_and(|value| !value.trim().is_empty());
     let context = match (context_base_url, context_token) {
         (Some(base_url), Some(token))
-            if !base_url.trim().is_empty() && !token.trim().is_empty() => {
-                Some((base_url.trim().to_string(), token.trim().to_string()))
-            }
+            if !base_url.trim().is_empty() && !token.trim().is_empty() =>
+        {
+            Some((base_url.trim().to_string(), token.trim().to_string()))
+        }
         (None, None) => None,
         _ => return Err("Smart app context registration is incomplete".to_string()),
     };
@@ -1170,6 +1204,7 @@ pub async fn start_harness_app(
         &install_package,
         "Harness app bundle",
     )?;
+    emit_progress("startingApp");
     let port = free_port()?;
     let args = vec![
         "--profile".to_string(),
