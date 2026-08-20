@@ -30,7 +30,7 @@ describe('AppIframe', () => {
   })
 
   test('renders iframe with src and title', () => {
-    render(<AppIframe src="http://localhost:3000" title="Wegent" />)
+    render(<AppIframe appKey="wegent" src="http://localhost:3000" title="Wegent" />)
     const iframe = screen.getByTitle('Wegent')
     expect(iframe).toBeInTheDocument()
     expect(iframe).toHaveAttribute('src', 'http://localhost:3000')
@@ -38,25 +38,61 @@ describe('AppIframe', () => {
   })
 
   test('shows loading spinner initially', () => {
-    render(<AppIframe src="http://localhost:3000" title="Wegent" />)
+    render(<AppIframe appKey="wegent" src="http://localhost:3000" title="Wegent" />)
     expect(screen.getByText('Loading Wegent...')).toBeInTheDocument()
   })
 
+  test('keeps app identity stable when the display title is localized', async () => {
+    runtimeMocks.isTauriRuntime.mockReturnValue(true)
+    const boundsSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      bottom: 620,
+      height: 600,
+      left: 10,
+      right: 810,
+      top: 20,
+      width: 800,
+      x: 10,
+      y: 20,
+      toJSON: () => ({}),
+    })
+    const { container } = render(
+      <AppIframe
+        appKey="wegent"
+        src="http://localhost:3000"
+        title="智能体"
+        workspaceTabId="agent-localized"
+      />
+    )
+
+    expect(container.querySelector('[data-testid="app-iframe-wegent"]')).toHaveAttribute(
+      'data-embedded-browser-label',
+      'app-wegent-agent-localized'
+    )
+    await waitFor(() =>
+      expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledWith(
+        'http://localhost:3000',
+        { x: 10, y: 20, width: 800, height: 600 },
+        'app-wegent-agent-localized'
+      )
+    )
+    boundsSpy.mockRestore()
+  })
+
   test('hides loading on iframe load', () => {
-    render(<AppIframe src="http://localhost:3000" title="Wegent" />)
+    render(<AppIframe appKey="wegent" src="http://localhost:3000" title="Wegent" />)
     const iframe = screen.getByTitle('Wegent')
     fireEvent.load(iframe)
     expect(screen.queryByText('Loading Wegent...')).not.toBeInTheDocument()
   })
 
   test('has sandbox attribute for security', () => {
-    render(<AppIframe src="http://localhost:3000" title="Wegent" />)
+    render(<AppIframe appKey="wegent" src="http://localhost:3000" title="Wegent" />)
     const iframe = screen.getByTitle('Wegent')
     expect(iframe).toHaveAttribute('sandbox')
   })
 
   test('allows popup links to escape the iframe sandbox', () => {
-    render(<AppIframe src="http://localhost:3000" title="Wegent" />)
+    render(<AppIframe appKey="wegent" src="http://localhost:3000" title="Wegent" />)
     const iframe = screen.getByTitle('Wegent')
     expect(iframe).toHaveAttribute(
       'sandbox',
@@ -78,7 +114,12 @@ describe('AppIframe', () => {
       toJSON: () => ({}),
     })
     const { container } = render(
-      <AppIframe src="http://localhost:3000" title="Wegent" workspaceTabId="agent-1" />
+      <AppIframe
+        appKey="wegent"
+        src="http://localhost:3000"
+        title="Wegent"
+        workspaceTabId="agent-1"
+      />
     )
 
     await waitFor(() =>
@@ -108,7 +149,12 @@ describe('AppIframe', () => {
 
     render(
       <StrictMode>
-        <AppIframe src="http://localhost:3000" title="Wegent" workspaceTabId="agent-strict" />
+        <AppIframe
+          appKey="wegent"
+          src="http://localhost:3000"
+          title="Wegent"
+          workspaceTabId="agent-strict"
+        />
       </StrictMode>
     )
 
@@ -134,20 +180,33 @@ describe('AppIframe', () => {
       toJSON: () => ({}),
     })
     const { rerender } = render(
-      <AppIframe active src="http://localhost:3000" title="Wegent" workspaceTabId="agent-1" />
+      <AppIframe
+        active
+        appKey="wegent"
+        src="http://localhost:3000"
+        title="Wegent"
+        workspaceTabId="agent-1"
+      />
     )
     await waitFor(() => expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledTimes(1))
 
     rerender(
       <AppIframe
         active={false}
+        appKey="wegent"
         src="http://localhost:3000"
         title="Wegent"
         workspaceTabId="agent-1"
       />
     )
     rerender(
-      <AppIframe active src="http://localhost:3000" title="Wegent" workspaceTabId="agent-1" />
+      <AppIframe
+        active
+        appKey="wegent"
+        src="http://localhost:3000"
+        title="Wegent"
+        workspaceTabId="agent-1"
+      />
     )
 
     await waitFor(() =>
@@ -187,13 +246,20 @@ describe('AppIframe', () => {
       toJSON: () => ({}),
     })
     const { rerender } = render(
-      <AppIframe active src="http://localhost:3000" title="Wegent" workspaceTabId="agent-1" />
+      <AppIframe
+        active
+        appKey="wegent"
+        src="http://localhost:3000"
+        title="Wegent"
+        workspaceTabId="agent-1"
+      />
     )
     await waitFor(() => expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledTimes(1))
 
     rerender(
       <AppIframe
         active={false}
+        appKey="wegent"
         src="http://localhost:3000"
         title="Wegent"
         workspaceTabId="agent-1"

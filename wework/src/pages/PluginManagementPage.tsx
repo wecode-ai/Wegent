@@ -105,6 +105,20 @@ export function PluginManagementPage() {
     startStandaloneChat()
   }
 
+  const topBarLeftActions =
+    !isMobile && sidebarCollapsed && !isTauri ? (
+      <DesktopWindowControls
+        sidebarCollapsed
+        onToggleSidebar={() => setSidebarCollapsed(false)}
+        onNewChat={handleNewChat}
+      />
+    ) : !isMobile && !isTauri ? (
+      <DesktopWindowControls
+        sidebarCollapsed={false}
+        onToggleSidebar={() => setSidebarCollapsed(true)}
+      />
+    ) : undefined
+
   return (
     <div className="flex h-full overflow-hidden bg-background text-text-primary">
       {!isMobile && (
@@ -200,20 +214,7 @@ export function PluginManagementPage() {
         cloudApiBaseUrl={cloudConnection.apiBaseUrl}
         cloudToken={cloudConnection.token}
         sidebarCollapsed={sidebarCollapsed && !isMobile}
-        topBarLeftActions={
-          !isMobile && sidebarCollapsed && !isTauri ? (
-            <DesktopWindowControls
-              sidebarCollapsed
-              onToggleSidebar={() => setSidebarCollapsed(false)}
-              onNewChat={handleNewChat}
-            />
-          ) : !isMobile && !isTauri ? (
-            <DesktopWindowControls
-              sidebarCollapsed={false}
-              onToggleSidebar={() => setSidebarCollapsed(true)}
-            />
-          ) : undefined
-        }
+        topBarLeftActions={topBarLeftActions}
       />
       <WorkbenchSearchDialog
         open={searchOpen}

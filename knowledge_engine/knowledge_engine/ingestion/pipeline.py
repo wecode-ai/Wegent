@@ -18,6 +18,7 @@ from llama_index.core.node_parser import (
 from llama_index.core.node_parser import SentenceSplitter as LlamaSentenceSplitter
 from llama_index.core.schema import BaseNode, TransformComponent
 
+from knowledge_engine.excel import EXCEL_SOURCE_EXTENSIONS
 from knowledge_engine.ingestion.metadata import (
     build_ingestion_metadata,
     enrich_nodes_metadata,
@@ -34,9 +35,15 @@ from knowledge_engine.splitter.config import (
     SplitterConfigModel,
     normalize_runtime_splitter_config,
 )
+from knowledge_engine.splitter.excel_rows import (
+    EXCEL_ROWS_PARSER_SUBTYPE,
+    build_excel_hierarchical_nodes,
+    build_excel_row_nodes,
+)
 from knowledge_engine.splitter.file_aware import resolve_file_aware_parser_subtype
 from knowledge_engine.splitter.hierarchical import build_hierarchical_nodes
 from knowledge_engine.splitter.markdown_enhancement import enhance_markdown_nodes
+from shared.telemetry.decorators import add_span_event
 
 DEFAULT_FILE_AWARE_EXTENSION = ".txt"
 QA_PAIR_PARSER_SUBTYPE = "qa_pair"
@@ -151,6 +158,11 @@ def build_ingestion_result(
         splitter_config,
         file_extension=file_extension,
     )
+    if file_extension in EXCEL_SOURCE_EXTENSIONS:
+        return _build_excel_ingestion_result(
+            documents=documents,
+            preparation=preparation,
+        )
     if preparation.normalized_splitter_config.chunk_strategy == "hierarchical":
         hierarchical_config = preparation.normalized_splitter_config.hierarchical_config
         if hierarchical_config is None:
@@ -250,6 +262,110 @@ def build_ingestion_result(
         normalized_splitter_config=preparation.normalized_splitter_config,
         ingestion_metadata=preparation.ingestion_metadata,
         parser_subtype=preparation.parser_subtype,
+    )
+
+
+def _build_excel_ingestion_result(
+    *,
+    documents: list[Document],
+    preparation: IngestionPreparation,
+) -> IngestionResult:
+    """Chunk Excel documents row-atomically for any configured strategy.
+
+    Excel structural integrity is format correctness, so prose-oriented
+    splitters never see Excel text: semantic degrades to row packing, and
+    hierarchical packs rows at both levels.
+    """
+    config = preparation.normalized_splitter_config
+    ingestion_metadata = build_ingestion_metadata(
+        config,
+        parser_subtype=EXCEL_ROWS_PARSER_SUBTYPE,
+    )
+    if config.chunk_strategy == "hierarchical":
+        return _build_excel_hierarchical_result(
+            documents=documents,
+            config=config,
+            ingestion_metadata=ingestion_metadata,
+        )
+    return _build_excel_flat_result(
+        documents=documents,
+        config=config,
+        ingestion_metadata=ingestion_metadata,
+    )
+
+
+def _build_excel_hierarchical_result(
+    *,
+    documents: list[Document],
+    config: NormalizedSplitterConfig,
+    ingestion_metadata: dict[str, Any],
+) -> IngestionResult:
+    """Build two-level row-atomic nodes for hierarchical Excel indexing."""
+    hierarchical_config = config.hierarchical_config
+    if hierarchical_config is None:
+        raise ValueError("hierarchical_config is required for hierarchical strategy")
+    if hierarchical_config.child_chunk_overlap:
+        add_span_event(
+            "rag.indexer.excel.overlap_ignored",
+            {"child_chunk_overlap": str(hierarchical_config.child_chunk_overlap)},
+        )
+    nodes = build_excel_hierarchical_nodes(
+        documents=documents,
+        parent_chunk_size=hierarchical_config.parent_chunk_size,
+        child_chunk_size=hierarchical_config.child_chunk_size,
+    )
+    child_nodes = enrich_nodes_metadata(
+        nodes.child_nodes,
+        ingestion_metadata=ingestion_metadata,
+    )
+    parent_nodes = enrich_nodes_metadata(
+        nodes.parent_nodes,
+        ingestion_metadata=ingestion_metadata,
+    )
+    return IngestionResult(
+        index_nodes=child_nodes,
+        parent_nodes=parent_nodes,
+        child_nodes=child_nodes,
+        normalized_splitter_config=config,
+        ingestion_metadata=ingestion_metadata,
+        parser_subtype=EXCEL_ROWS_PARSER_SUBTYPE,
+    )
+
+
+def _build_excel_flat_result(
+    *,
+    documents: list[Document],
+    config: NormalizedSplitterConfig,
+    ingestion_metadata: dict[str, Any],
+) -> IngestionResult:
+    """Build row-atomic flat nodes, degrading semantic strategy to flat."""
+    if config.chunk_strategy == "semantic":
+        add_span_event(
+            "rag.indexer.excel.semantic_not_applicable",
+            {"fallback": "row_atomic_flat"},
+        )
+        flat_config = FlatChunkConfig()
+    else:
+        flat_config = config.flat_config or FlatChunkConfig()
+    if flat_config.chunk_overlap:
+        add_span_event(
+            "rag.indexer.excel.overlap_ignored",
+            {"chunk_overlap": str(flat_config.chunk_overlap)},
+        )
+    nodes = build_excel_row_nodes(
+        documents=documents,
+        chunk_size=flat_config.chunk_size,
+    )
+    return IngestionResult(
+        index_nodes=enrich_nodes_metadata(
+            nodes,
+            ingestion_metadata=ingestion_metadata,
+        ),
+        parent_nodes=None,
+        child_nodes=None,
+        normalized_splitter_config=config,
+        ingestion_metadata=ingestion_metadata,
+        parser_subtype=EXCEL_ROWS_PARSER_SUBTYPE,
     )
 
 

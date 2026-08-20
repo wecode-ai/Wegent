@@ -2,13 +2,13 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "WeWork",
   "mainBinaryName": "WeWork",
-  "version": "0.2.0",
+  "version": "0.2.1-beta.3",
   "identifier": "io.wecode.wework",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
     "beforeDevCommand": "pnpm run dev",
-    "beforeBuildCommand": "pnpm run build"
+    "beforeBuildCommand": "pnpm run prepare:deepseek-harness && pnpm run build"
   },
   "app": {
     "macOSPrivateApi": true,
@@ -57,6 +57,7 @@
     "externalBin": ["binaries/wegent-executor", "binaries/dws"],
     "resources": [
       "binaries/codex/**/*",
+      "bundled-deepseek-harness/*",
       "bundled-hooks/**/*",
       "bundled-plugins/**/*",
       "bundled-plugins/wework-personal/.agents/plugins/marketplace.json",

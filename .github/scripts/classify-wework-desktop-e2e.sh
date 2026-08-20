@@ -7,6 +7,7 @@ core_segments=(
   priority-filter
   automation-lifecycle
   project-automation
+  project-ai-settings
   model-routing
   permission-modes
   core-task-flow
@@ -59,7 +60,7 @@ cloud_segments=(
   plugin-auto-update
 )
 # Group checkpoints by observed Cloud CI duration and order each shard from
-# longest to shortest so the five runners keep both local workers busy.
+# longest to shortest so the five serial runners finish at similar times.
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 cloud_shards=(
   goal-lifecycle,window-lifecycle,cloud-worktree-tools,telemetry-consent
@@ -69,12 +70,12 @@ cloud_shards=(
   core-task-flow,conversation-state,supervisor-lifecycle,automation-lifecycle,browser-multi-tabs
 )
 # Keep the number of core desktop runners fixed as checkpoints grow. Group
-# checkpoints by observed Core CI duration and order each shard so both local
-# workers stay balanced while reusing the same prebuilt application.
+# checkpoints by observed Core CI duration and order each shard so the serial
+# runners stay balanced while reusing the same prebuilt application.
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 core_shards=(
   rendering-extensions,resilience,runtime-task-queue
-  model-routing,window-lifecycle
+  project-ai-settings,model-routing,window-lifecycle
   core-task-flow,embedded-browser,automation-lifecycle,priority-filter,temporary-chat
   claude-runtime,workspace-attachments,local-harness,supervisor-lifecycle,codex-notification-isolation,local-file-preview
   conversation-state,goal-lifecycle,workspace-tabs,project-automation,permission-modes
@@ -202,6 +203,7 @@ classify_wework_path() {
       wework/src/features/plugins/* | \
       wework/src/pages/Plugin*)
       select_target "plugins:plugin-lifecycle"
+      select_target "core:project-ai-settings"
       return
       ;;
     wework/src/components/sites/* | \
@@ -271,6 +273,7 @@ classify_wework_path() {
     wework/src/components/layout/DesktopSidebar.tsx)
       select_target "core:priority-filter"
       select_target "core:core-task-flow"
+      select_target "core:project-ai-settings"
       select_target "core:workspace-attachments"
       return
       ;;
@@ -295,6 +298,10 @@ classify_wework_path() {
       select_target "core:core-task-flow"
       select_target "core:workspace-attachments"
       select_cloud_worktree_checkpoints
+      if [[ "$path" == wework/src/api/local/localServices* || \
+        "$path" == wework/src/features/workbench/WorkbenchProvider* ]]; then
+        select_target "core:project-ai-settings"
+      fi
       if [[ "$path" == wework/src/features/workbench/useWorkbenchRuntimeTasks* ]]; then
         select_target "core:runtime-task-queue"
       fi
@@ -355,6 +362,7 @@ classify_wework_path() {
       wework/src/components/chat/composer/AttachmentBadges* | \
       wework/src/components/chat/composer/WorktreeBranchSelector* | \
       wework/src/components/chat/composer/composerPathTransfer*)
+      select_target "core:project-ai-settings"
       select_target "core:workspace-attachments"
       return
       ;;
@@ -375,6 +383,7 @@ classify_wework_path() {
     # Claude conversations cover both local and remote executor routing.
     wework/src/features/workbench/useWorkbenchRuntimeMessaging*)
       select_target "core:core-task-flow"
+      select_target "core:project-ai-settings"
       select_target "core:claude-runtime"
       select_cloud_worktree_checkpoints
       return
@@ -434,6 +443,7 @@ classify_wework_path() {
       wework/src/features/local-runtime/* | \
       wework/src/stream/*)
       select_target "core:core-task-flow"
+      select_target "core:project-ai-settings"
       select_target "core:model-routing"
       return
       ;;

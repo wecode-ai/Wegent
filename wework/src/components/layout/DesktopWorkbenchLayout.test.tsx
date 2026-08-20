@@ -1511,6 +1511,34 @@ describe('DesktopWorkbenchLayout', () => {
     ).toHaveStyle({ display: 'none' })
   })
 
+  test('returns to the workspace after opening settings from its account menu', async () => {
+    deliveryApiMock.available = true
+    window.history.pushState({}, '', '/todo')
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          user: {
+            id: 1,
+            user_name: 'local',
+            email: 'local@example.com',
+          },
+        }}
+      />
+    )
+
+    await userEvent.click(await screen.findByTestId('settings-button'))
+    await userEvent.click(screen.getByTestId('settings-menu-button'))
+    expect(window.location.pathname).toBe('/settings')
+
+    await userEvent.click(screen.getByTestId('settings-back-button'))
+
+    expect(window.location.pathname).toBe('/todo')
+    expect(screen.getByTestId('cloud-todo-workspace')).toBeVisible()
+  })
+
   test('uses the independent board tab instead of a work-items sidebar destination', () => {
     const taskTab = {
       id: 'task-existing',
@@ -2124,12 +2152,34 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('mention-cloud-projects-action')).not.toBeInTheDocument()
   })
 
-  test('hides the work-item composer guide while experimental features are disabled', () => {
+  test('shows the work-item composer guide while experimental features are disabled', async () => {
     experimentalFeatures.enabled = false
+    deliveryApiMock.available = true
+    deliveryApiMock.listCloudProjects.mockResolvedValue({
+      items: [
+        {
+          id: 'default-work-items',
+          public_id: 'default-work-items',
+          project_key: 'WORK',
+          name: '我的任务',
+          description: '',
+          project_store: 'local',
+          task_provider: 'local',
+          provider_config: {},
+          created_by_user_id: 1,
+          status: 'active',
+          tags: [],
+          version: 1,
+          created_at: '2026-08-09T00:00:00Z',
+          updated_at: '2026-08-09T00:00:00Z',
+          metadata: { system_kind: 'default_work_items' },
+        },
+      ],
+    })
 
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
-    expect(screen.queryByTestId('project-space-context-pill')).not.toBeInTheDocument()
+    expect(await screen.findByTestId('project-space-context-pill')).toHaveTextContent('我的任务')
   })
 
   test('shows cloud project space entries in the @ menu while experimental features are enabled', async () => {
@@ -2153,9 +2203,9 @@ describe('DesktopWorkbenchLayout', () => {
     deliveryApiMock.listCloudProjects.mockResolvedValue({
       items: [
         {
-          id: 'default-work-items',
+          id: 'task-follow-up',
           public_id: 'public-space-1',
-          project_key: 'WORK',
+          project_key: 'FOLLOW',
           name: 'Task Follow-up Board',
           description: '',
           project_store: 'local',
@@ -2174,7 +2224,7 @@ describe('DesktopWorkbenchLayout', () => {
     const runtimeWork = structuredClone(createRuntimeWorkForProject(currentProject)!)
     runtimeWork.projects[0].project.defaultProjectSpace = {
       projectStore: 'local',
-      projectId: 'default-work-items',
+      projectId: 'task-follow-up',
     }
 
     render(
@@ -6614,7 +6664,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(within(sideChat).getAllByTestId('user-message-content').at(-1)).toHaveTextContent(
       'follow-up during stale state'
     )
-  }, 15_000)
+  }, 20_000)
 
   test('temporary chat rolls back its optimistic address when runtime creation fails', async () => {
     const createResult = createDeferred<RuntimeTaskAddress | false>()

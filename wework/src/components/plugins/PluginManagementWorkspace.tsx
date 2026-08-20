@@ -929,15 +929,16 @@ export function PluginManagementWorkspace({
           'pt-[27px]',
         ].join(' ')}
       >
-        <header className="mb-6">
-          <h1 className="heading-base tracking-tight text-text-primary">
-            {t('workbench.plugins_manage_plugins', '管理插件')}
-          </h1>
-          <p className="mt-1 text-sm leading-5 text-text-secondary">
-            {t('workbench.plugins_manage_plugins_description', '管理已安装插件。')}
-          </p>
+        <header className="mb-5">
+          <div>
+            <h1 className="heading-base tracking-tight text-text-primary">
+              {t('workbench.plugins_manage_plugins', '管理插件')}
+            </h1>
+            <p className="mt-1 text-sm leading-5 text-text-secondary">
+              {t('workbench.plugins_manage_plugins_description', '管理已安装插件。')}
+            </p>
+          </div>
         </header>
-
         {isLoadingPlugins ? (
           <div className="py-10 text-sm text-text-secondary">
             {t('workbench.plugins_loading_plugins', '正在加载插件')}

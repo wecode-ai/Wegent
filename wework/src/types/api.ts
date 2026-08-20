@@ -385,6 +385,7 @@ export interface RuntimeTaskSummary {
   error?: string | null
   runtimeHandle?: Record<string, unknown> | null
   modelSelection?: ModelSelectionConfig | null
+  projectPluginIds?: string[]
   parent?: Record<string, unknown> | null
   children?: Record<string, unknown>[]
   supervisor?: RuntimeSupervisorState | null
@@ -489,11 +490,33 @@ export interface RuntimeProjectRef {
   active?: boolean
   appearance?: RuntimeProjectAppearance | null
   defaultProjectSpace?: RuntimeProjectSpaceRef | null
+  aiSettings?: RuntimeProjectAiSettings | null
 }
 
 export interface RuntimeProjectSpaceRef {
   projectStore: 'local' | 'backend'
   projectId: string
+}
+
+export interface RuntimeProjectAiSettings {
+  instructions?: string
+  modelSelection?: ModelSelectionConfig | null
+  plugins?: RuntimeProjectPluginRef[]
+  quickPhrases?: RuntimeProjectQuickPhrase[]
+}
+
+export interface RuntimeProjectQuickPhrase {
+  id: string
+  title: string
+  content: string
+  mode: 'normal' | 'plan' | 'goal'
+}
+
+export interface RuntimeProjectPluginRef {
+  id: string
+  pluginName: string
+  marketplaceId: string
+  displayName: string
 }
 
 export interface RuntimeProjectRoot {
@@ -850,6 +873,7 @@ export interface RuntimeLocalProjectUpsertRequest {
   name: string
   roots: string[]
   defaultProjectSpace?: RuntimeProjectSpaceRef | null
+  aiSettings?: RuntimeProjectAiSettings | null
   runtime: 'codex'
 }
 
@@ -860,6 +884,7 @@ export interface RuntimeLocalProjectUpsertResponse {
   name: string
   roots: string[]
   defaultProjectSpace?: RuntimeProjectSpaceRef | null
+  aiSettings?: RuntimeProjectAiSettings | null
   runtime: 'codex'
   error?: string | null
 }
@@ -1272,6 +1297,8 @@ export interface RuntimeTaskCreateRequest {
   runtimeProjectKey?: string
   runtimeProjectName?: string
   runtimeWorkspaceRoots?: string[]
+  projectInstructions?: string
+  projectPlugins?: RuntimeProjectPluginRef[]
   taskId?: string
   teamId: number
   runtime: RuntimeName
@@ -2083,6 +2110,29 @@ export interface InstalledPluginComponents {
   monitors: PluginPathComponent[]
   bins: PluginPathComponent[]
   settings?: Record<string, unknown> | null
+  workbench?: WorkbenchPluginComponent | null
+}
+
+export interface WorkbenchFrontendModule {
+  entry: string
+  export: string
+  sha256: string
+}
+
+export interface WorkbenchDesktopSidecar {
+  command: string
+  args: string[]
+  sha256: string
+  capabilities: string[]
+}
+
+export interface WorkbenchPluginComponent {
+  apiVersion: '1'
+  required: boolean
+  pinnedToClientVersion: boolean
+  clientVersion?: string | null
+  frontend?: WorkbenchFrontendModule | null
+  desktop?: WorkbenchDesktopSidecar | null
 }
 
 export interface PluginLocalAuthDefinition {

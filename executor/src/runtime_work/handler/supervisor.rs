@@ -558,6 +558,7 @@ impl RuntimeWorkRpcHandler {
             task_id: local_task_id.to_owned(),
             subtask_id: format!("supervisor-correction-{}", now_ms()),
             prompt: Value::String(message.to_owned()),
+            system_prompt: link.project_instructions.clone(),
             project_workspace_path: Some(link.workspace_path.clone()),
             runtime_workspace_roots: link.runtime_workspace_roots.clone(),
             runtime_project_key: link.runtime_project_key.clone(),
@@ -571,6 +572,12 @@ impl RuntimeWorkRpcHandler {
             "client_user_message_id".to_owned(),
             Value::String(client_user_message_id.clone()),
         );
+        if !link.project_plugin_ids.is_empty() {
+            request.extra.insert(
+                "project_plugin_ids".to_owned(),
+                json!(link.project_plugin_ids),
+            );
+        }
         request.extra.insert(
             "runtime_message_source".to_owned(),
             Value::String("supervisor".to_owned()),

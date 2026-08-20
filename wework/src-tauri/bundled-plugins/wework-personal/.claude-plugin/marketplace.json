@@ -11,6 +11,12 @@
       "description": "Provides project-space, Issue, attachment, and delivery tools to Wework Agent sessions.",
       "source": "./plugins/wework-space",
       "version": "0.1.0"
+    },
+    {
+      "name": "smart-app-builder",
+      "description": "Builds, tests, packages, and installs DeepSeek Harness Smart apps for Wework.",
+      "source": "./plugins/smart-app-builder",
+      "version": "0.1.0"
     }
   ]
 }

@@ -66,18 +66,7 @@ read_device_config_field() {
     command -v python3 >/dev/null 2>&1 || {
         fail "python3 is required to inspect persisted device config"
     }
-    python3 - "$config_path" "$field" <<'PY'
-import json
-import sys
-
-path, field = sys.argv[1:]
-with open(path, encoding="utf-8") as stream:
-    payload = json.load(stream)
-value = payload.get(field)
-if not isinstance(value, str) or not value.strip():
-    raise SystemExit(f"missing non-empty {field} in {path}")
-print(value.strip(), end="")
-PY
+    python3 "$JSON_HELPER" read-config "$config_path" "$field"
 }
 
 run_executor_rpc() {
@@ -87,98 +76,14 @@ run_executor_rpc() {
         fail "python3 is required to exercise the Executor Worktree RPC"
     }
     [ -x "$EXECUTOR_BIN" ] || fail "Executor binary is not executable: $EXECUTOR_BIN"
-    python3 - "$EXECUTOR_BIN" "$DEVICE_ID" "$method" "$params_json" <<'PY'
-import json
-import os
-import queue
-import subprocess
-import sys
-import threading
-import time
-
-executor_bin, device_id, method, params_json = sys.argv[1:]
-request_id = f"acceptance-{os.getpid()}"
-try:
-    params = json.loads(params_json)
-except json.JSONDecodeError as error:
-    raise SystemExit(f"invalid RPC params JSON: {error}") from error
-
-env = os.environ.copy()
-env["WEGENT_APP_IPC_DEVICE_ID"] = device_id
-env["WEGENT_BACKEND_URL"] = ""
-env["WEGENT_SOCKET_URL"] = ""
-process = subprocess.Popen(
-    [executor_bin],
-    stdin=subprocess.PIPE,
-    stdout=subprocess.PIPE,
-    stderr=subprocess.PIPE,
-    text=True,
-    bufsize=1,
-    env=env,
-)
-assert process.stdin is not None
-assert process.stdout is not None
-assert process.stderr is not None
-request = {
-    "type": "request",
-    "id": request_id,
-    "method": method,
-    "params": params,
-}
-process.stdin.write(json.dumps(request, separators=(",", ":")) + "\n")
-process.stdin.flush()
-
-lines = queue.Queue()
-
-def read_stdout():
-    for output_line in process.stdout:
-        lines.put(output_line)
-    lines.put(None)
-
-reader = threading.Thread(target=read_stdout, daemon=True)
-reader.start()
-deadline = time.monotonic() + 20
-response = None
-try:
-    while time.monotonic() < deadline:
-        remaining = max(0.0, deadline - time.monotonic())
-        try:
-            line = lines.get(timeout=min(0.25, remaining))
-        except queue.Empty:
-            if process.poll() is not None:
-                break
-            continue
-        if line is None:
-            break
-        try:
-            message = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if message.get("type") == "response" and message.get("id") == request_id:
-            response = message
-            break
-finally:
-    process.terminate()
-    try:
-        process.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait(timeout=5)
-
-if response is None:
-    stderr = process.stderr.read().strip()
-    raise SystemExit(
-        f"Executor RPC {method} produced no response"
-        + (f": {stderr}" if stderr else "")
-    )
-if response.get("ok") is not True:
-    error = response.get("error") or {}
-    raise SystemExit(
-        f"Executor RPC {method} failed: "
-        f"{error.get('code', 'unknown')}: {error.get('message', 'unknown error')}"
-    )
-print(json.dumps(response.get("result"), separators=(",", ":")))
-PY
+    local script_dir="${0%/*}"
+    [ "$script_dir" != "$0" ] || script_dir="."
+    python3 \
+        "$script_dir/executor-rpc-probe.py" \
+        "$EXECUTOR_BIN" \
+        "$DEVICE_ID" \
+        "$method" \
+        "$params_json"
 }
 
 assert_worktree_capability() {
@@ -186,24 +91,8 @@ assert_worktree_capability() {
     capability="$(run_executor_rpc "runtime.worktrees.capabilities" '{}')" || {
         fail "Executor Worktree capability RPC failed"
     }
-    python3 - "$capability" "$DEVICE_ID" <<'PY'
-import json
-import sys
-
-payload = json.loads(sys.argv[1])
-device_id = sys.argv[2]
-worktrees = payload.get("runtimeWorktrees")
-if payload.get("success") is not True:
-    raise SystemExit("capability response was not successful")
-if payload.get("deviceId") != device_id:
-    raise SystemExit("capability response belongs to another logical device")
-if not isinstance(worktrees, dict):
-    raise SystemExit("capability response omitted runtimeWorktrees")
-if worktrees.get("managed") is not True or worktrees.get("preflight") is not True:
-    raise SystemExit("managed Worktree capability is unavailable")
-if worktrees.get("persistentStorageVerified") is not True:
-    raise SystemExit("persistent storage is not verified by the Executor capability")
-PY
+    # The JSON helper requires runtimeWorktrees.persistentStorageVerified=true.
+    python3 "$JSON_HELPER" assert-capability "$capability" "$DEVICE_ID"
 }
 
 prepare_worktree_via_executor() {
@@ -211,26 +100,10 @@ prepare_worktree_via_executor() {
     response="$(
         run_executor_rpc \
             "runtime.worktrees.prepare" \
-            "$(python3 - "$SOURCE_REPO" "$WORKTREE_ID" <<'PY'
-import json
-import sys
-
-print(json.dumps({"sourcePath": sys.argv[1], "worktreeId": sys.argv[2]}))
-PY
-)"
+            "$(python3 "$JSON_HELPER" prepare-params "$SOURCE_REPO" "$WORKTREE_ID")"
     )" || fail "Executor failed to prepare the acceptance Worktree"
     local prepared_path
-    prepared_path="$(python3 - "$response" <<'PY'
-import json
-import sys
-
-payload = json.loads(sys.argv[1])
-path = payload.get("path")
-if payload.get("success") is not True or not isinstance(path, str) or not path:
-    raise SystemExit("prepare response omitted a successful Worktree path")
-print(path, end="")
-PY
-)"
+    prepared_path="$(python3 "$JSON_HELPER" prepared-path "$response")"
     [ "$prepared_path" = "$WORKTREE_PATH" ] || {
         fail "Executor prepared an unexpected Worktree path: $prepared_path"
     }
@@ -241,27 +114,13 @@ assert_worktree_listed() {
     response="$(run_executor_rpc "runtime.worktrees.list" '{}')" || {
         fail "Executor failed to list persisted Worktrees"
     }
-    python3 - "$response" "$DEVICE_ID" "$WORKTREE_ID" "$WORKTREE_PATH" <<'PY'
-import json
-import sys
-
-payload = json.loads(sys.argv[1])
-device_id, worktree_id, worktree_path = sys.argv[2:]
-items = payload.get("items")
-if payload.get("success") is not True or payload.get("deviceId") != device_id:
-    raise SystemExit("Worktree list response has the wrong device identity")
-if not isinstance(items, list):
-    raise SystemExit("Worktree list response omitted items")
-matches = [
-    item
-    for item in items
-    if item.get("worktreeId") == worktree_id and item.get("path") == worktree_path
-]
-if len(matches) != 1:
-    raise SystemExit("persisted Worktree was not listed exactly once")
-if matches[0].get("deviceId") != device_id:
-    raise SystemExit("persisted Worktree belongs to another logical device")
-PY
+    python3 \
+        "$JSON_HELPER" \
+        assert-listed \
+        "$response" \
+        "$DEVICE_ID" \
+        "$WORKTREE_ID" \
+        "$WORKTREE_PATH"
 }
 
 assert_worktree_absent() {
@@ -272,33 +131,13 @@ assert_worktree_absent() {
     response="$(run_executor_rpc "runtime.worktrees.list" '{}')" || {
         fail "Executor failed to list Worktrees after deletion"
     }
-    python3 - "$response" "$WORKTREE_ID" "$WORKTREE_PATH" <<'PY'
-import json
-import sys
-
-payload = json.loads(sys.argv[1])
-worktree_id, worktree_path = sys.argv[2:]
-items = payload.get("items")
-if payload.get("success") is not True or not isinstance(items, list):
-    raise SystemExit("Worktree list response is invalid after deletion")
-if any(
-    item.get("worktreeId") == worktree_id or item.get("path") == worktree_path
-    for item in items
-):
-    raise SystemExit("deleted Worktree remains in Executor state")
-PY
+    python3 "$JSON_HELPER" assert-absent "$response" "$WORKTREE_ID" "$WORKTREE_PATH"
 }
 
 delete_worktree_via_executor() {
     run_executor_rpc \
         "runtime.worktrees.delete" \
-        "$(python3 - "$WORKTREE_PATH" <<'PY'
-import json
-import sys
-
-print(json.dumps({"path": sys.argv[1], "preserveSnapshot": False}))
-PY
-)" \
+        "$(python3 "$JSON_HELPER" delete-params "$WORKTREE_PATH")" \
         >/dev/null || fail "Executor failed to delete the acceptance Worktree"
 }
 
@@ -486,6 +325,9 @@ INSTANCE_ID="${WEGENT_ACCEPTANCE_INSTANCE_ID:-}"
 VOLUME_ID="${WEGENT_ACCEPTANCE_VOLUME_ID:-}"
 PROBE_ID="${WEGENT_ACCEPTANCE_PROBE_ID:-git-worktree-persistence}"
 EXECUTOR_BIN="${WEGENT_ACCEPTANCE_EXECUTOR_BIN:-$EXECUTOR_HOME/bin/wegent-executor}"
+SCRIPT_DIR="${0%/*}"
+[ "$SCRIPT_DIR" != "$0" ] || SCRIPT_DIR="."
+JSON_HELPER="$SCRIPT_DIR/executor-persistence-json.py"
 
 [ -n "$EXECUTOR_HOME" ] || fail "WEGENT_EXECUTOR_HOME is required"
 [ -n "$WORKSPACE_ROOT" ] || fail "LOCAL_WORKSPACE_ROOT is required"

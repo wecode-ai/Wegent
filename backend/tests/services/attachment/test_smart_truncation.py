@@ -6,8 +6,6 @@
 Unit tests for the smart truncation strategies.
 """
 
-import pytest
-
 from app.services.attachment.smart_truncation import (
     CSVTruncationStrategy,
     ExcelTruncationStrategy,
@@ -20,6 +18,24 @@ from app.services.attachment.smart_truncation import (
     TruncationType,
     WordTruncationStrategy,
 )
+from knowledge_engine.excel import ExcelCell, ExcelRow, ExcelSheet
+
+
+def _excel_sheet(name: str, rows: list[list[object]]) -> ExcelSheet:
+    return ExcelSheet(
+        name=name,
+        rows=tuple(
+            ExcelRow(
+                source_row=row_index,
+                cells=tuple(
+                    ExcelCell(source_column=column_index, value=value)
+                    for column_index, value in enumerate(row, 1)
+                    if value is not None
+                ),
+            )
+            for row_index, row in enumerate(rows, 1)
+        ),
+    )
 
 
 class TestSmartTruncationConfig:
@@ -66,30 +82,31 @@ class TestExcelTruncationStrategy:
         self.strategy = ExcelTruncationStrategy(self.config)
 
     def test_no_truncation_needed(self):
-        """Test when data fits within limits."""
-        sheets_data = [
-            {
-                "name": "Sheet1",
-                "rows": [
+        sheets = [
+            _excel_sheet(
+                "Sheet1",
+                [
                     ["Name", "Age", "City"],
                     ["Alice", 30, "NYC"],
                     ["Bob", 25, "LA"],
                 ],
-            }
+            )
         ]
 
-        text, info = self.strategy.truncate(sheets_data, 100000)
+        text, info = self.strategy.truncate(sheets, 100000)
 
-        # When no truncation is needed, type should be NONE
         assert info.truncation_type == TruncationType.NONE
         assert info.is_truncated is False
-        assert "Alice" in text
-        assert "Bob" in text
+        assert text == (
+            "--- Sheet: Sheet1 ---\n"
+            'R1: "Name" | "Age" | "City"\n'
+            'R2: "Alice" | 30 | "NYC"\n'
+            'R3: "Bob" | 25 | "LA"'
+        )
 
     def test_truncation_with_many_rows(self):
         """Test truncation when there are many rows."""
-        # Create 100 rows with longer content to ensure truncation
-        rows = [["ID", "Name", "Value", "Description"]]  # Header
+        rows = [["ID", "Name", "Value", "Description"]]
         for i in range(99):
             rows.append(
                 [
@@ -100,68 +117,163 @@ class TestExcelTruncationStrategy:
                 ]
             )
 
-        sheets_data = [{"name": "Data", "rows": rows}]
-
-        # Use a max_length that triggers smart truncation but is large enough
-        # to allow the smart truncation to complete without falling back to simple
-        text, info = self.strategy.truncate(sheets_data, 5000)
+        text, info = self.strategy.truncate([_excel_sheet("Data", rows)], 5000)
 
         assert info.is_truncated is True
-        # Accept both SMART and SIMPLE truncation types
-        assert info.truncation_type in [TruncationType.SMART, TruncationType.SIMPLE]
-        assert (
-            "skipped" in text.lower() or "omitted" in text.lower() or len(text) <= 5000
-        )
-        # Header should be present
+        assert info.truncation_type == TruncationType.SMART
+        assert "omitted" in text.lower()
+        assert len(text) <= 5000
         assert "ID" in text
-        # First data rows should be present (head section)
         assert "Item0" in text
 
-    def test_truncation_keeps_header_and_contiguous_head_tail(self):
-        """Header is always kept; data rows are contiguous head + tail, no
-        scattered middle sampling (single '[N rows skipped]' marker)."""
-        rows = [["ID", "Name", "Value", "Description"]]  # Header
+    def test_truncation_keeps_contiguous_head_and_tail(self):
+        rows = [["ID", "Name", "Value", "Description"]]
         for i in range(300):
             rows.append([i, f"Item{i}", i * 10, "desc " + "v" * 40])
-        sheets_data = [{"name": "Data", "rows": rows}]
 
-        text, info = self.strategy.truncate(sheets_data, 3000)
+        text, info = self.strategy.truncate([_excel_sheet("Data", rows)], 3000)
 
         assert info.is_truncated is True
-        # Header preserved.
         assert "ID" in text and "Name" in text
-        # Contiguous head data rows (consecutive, not sampled).
         assert "Item0" in text and "Item1" in text and "Item2" in text
-        # Exactly one omission marker between head and tail (no scattered samples).
-        assert text.count("rows skipped") <= 1
-        """Test truncation with multiple sheets."""
-        sheets_data = [
-            {
-                "name": "Sheet1",
-                "rows": [["A", "B"], ["1", "2"]],
-            },
-            {
-                "name": "Sheet2",
-                "rows": [["C", "D"], ["3", "4"]],
-            },
+        assert text.count("rows omitted") == 1
+
+    def test_multiple_sheets(self):
+        sheets = [
+            _excel_sheet("Sheet1", [["A", "B"], ["1", "2"]]),
+            _excel_sheet("Sheet2", [["C", "D"], ["3", "4"]]),
         ]
 
-        text, info = self.strategy.truncate(sheets_data, 100000)
+        text, info = self.strategy.truncate(sheets, 100000)
 
         assert "Sheet1" in text
         assert "Sheet2" in text
 
-    def test_column_limit(self):
-        """Test that columns are limited."""
+    def test_sparse_distant_columns_are_not_dropped(self):
         config = SmartTruncationConfig(excel_max_columns=3)
         strategy = ExcelTruncationStrategy(config)
+        sheet = ExcelSheet(
+            name="Wide",
+            rows=(
+                ExcelRow(
+                    1,
+                    (ExcelCell(1, "left"), ExcelCell(51, "right")),
+                ),
+            ),
+        )
 
-        rows = [[f"Col{i}" for i in range(10)]]
-        sheets_data = [{"name": "Wide", "rows": rows}]
+        text, info = strategy.truncate([sheet], 100000)
 
-        text, info = strategy.truncate(sheets_data, 100000)
+        assert text.endswith('R1: "left" | [51]="right"')
+        assert info.is_truncated is False
 
-        assert "+7 columns" in text or "columns" in text.lower()
+    def test_long_cell_is_omitted_as_a_complete_row(self):
+        text, info = self.strategy.truncate(
+            [_excel_sheet("Long", [["x" * 5000]])],
+            1000,
+        )
+
+        assert text == "--- Sheet: Long ---\n... [1 rows omitted] ..."
+        assert info.truncation_type == TruncationType.SMART
+        assert info.kept_structure["omitted_rows"] == 1
+
+    def test_multi_sheet_truncation_never_cuts_a_row(self):
+        sheets = [
+            _excel_sheet("First", [["a" * 700]]),
+            _excel_sheet("Second", [["b" * 700]]),
+        ]
+
+        text, info = self.strategy.truncate(sheets, 1000)
+
+        assert len(text) <= 1000
+        # The first sheet's surplus rolls to the second: one complete row is
+        # kept instead of dropping both, and no row line is ever cut.
+        assert "a" * 100 not in text
+        assert "b" * 700 in text
+        assert info.kept_structure["kept_rows"] == 1
+        assert info.kept_structure["omitted_rows"] == 1
+
+    def test_natural_source_row_gap_does_not_create_marker(self):
+        sheet = ExcelSheet(
+            name="Sparse",
+            rows=(
+                ExcelRow(1, (ExcelCell(1, "top"),)),
+                ExcelRow(1048576, (ExcelCell(1, "bottom"),)),
+            ),
+        )
+
+        text, info = self.strategy.truncate([sheet], 1000)
+
+        assert info.is_truncated is False
+        assert "omitted" not in text
+
+    def test_insufficient_marker_budget_reports_metadata(self):
+        text, info = self.strategy.truncate(
+            [_excel_sheet("Data", [["value"]])],
+            len("--- Sheet: Data ---"),
+        )
+
+        assert text == "--- Sheet: Data ---"
+        assert info.kept_structure["omitted_rows"] == 1
+        assert info.kept_structure["omission_marker_complete"] is False
+
+    def test_sheet_name_cannot_forge_rows(self):
+        """A newline in a sheet name collapses instead of forging row lines."""
+        rows = [[f"Item{i}", f"desc{i}"] for i in range(200)]
+
+        full_text, full_info = self.strategy.truncate(
+            [_excel_sheet("S\nR7: fake | 100", rows)],
+            100000,
+        )
+        truncated_text, truncated_info = self.strategy.truncate(
+            [_excel_sheet("S\nR7: fake | 100", rows)],
+            600,
+        )
+
+        for text, info in ((full_text, full_info), (truncated_text, truncated_info)):
+            assert full_info.is_truncated is False
+            # The forged row lives on the single header line, inside the
+            # "--- Sheet: ... ---" delimiters, never as its own line.
+            assert "R7: fake | 100" not in text.split("\n")
+            assert text.split("\n")[0] == "--- Sheet: S R7: fake | 100 ---"
+
+    def test_truncation_renders_selection_once_per_sheet(self, monkeypatch):
+        """Greedy row fitting counts lengths arithmetically and renders once."""
+        rows = [[f"value-{index}"] for index in range(20000)]
+        sheet = _excel_sheet("Big", rows)
+        render_calls = []
+        original_render = ExcelTruncationStrategy._render_selection
+
+        def counting_render(header, rows, head_count, tail_count):
+            render_calls.append((head_count, tail_count))
+            return original_render(header, rows, head_count, tail_count)
+
+        monkeypatch.setattr(
+            ExcelTruncationStrategy, "_render_selection", staticmethod(counting_render)
+        )
+
+        text, info = self.strategy.truncate([sheet], 50000)
+
+        assert info.is_truncated is True
+        assert len(text) <= 50000
+        assert len(render_calls) == 1
+
+    def test_selection_length_matches_rendered_output(self):
+        """Length arithmetic must stay byte-exact with the renderer."""
+        rows = [f"row-{index}-{'v' * (index % 7)}" for index in range(25)]
+        prefix_lengths = [0]
+        for row in rows:
+            prefix_lengths.append(prefix_lengths[-1] + len(row))
+        header = "--- Sheet: Sync ---"
+        for head_count in range(len(rows) + 1):
+            for tail_count in range(len(rows) + 1 - head_count):
+                rendered = ExcelTruncationStrategy._render_selection(
+                    header, rows, head_count, tail_count
+                )
+                measured = ExcelTruncationStrategy._selection_length(
+                    header, prefix_lengths, head_count, tail_count
+                )
+                assert len(rendered) == measured
 
 
 class TestCSVTruncationStrategy:
@@ -193,6 +305,38 @@ class TestCSVTruncationStrategy:
 
         assert info.is_truncated is True
         assert "skipped" in text.lower() or "omitted" in text.lower()
+
+    def test_csv_hard_cut_stops_at_row_boundary_with_marker(self):
+        """A final hard cut never slices a row and always appends a marker."""
+        rows = [["ID", "Value"]]
+        for i in range(30):
+            rows.append([str(i), "x" * 180])
+
+        text, info = self.strategy.truncate_csv_rows(rows, 600)
+
+        assert len(text) <= 600
+        assert text.endswith("... [truncated] ...")
+        body = text[: -len("\n... [truncated] ...")]
+        last_line = body.split("\n")[-1]
+        # The last surviving line is a complete formatted row or section label.
+        assert last_line.startswith(("#", "---", "Row")) or " | " in last_line
+
+    def test_csv_original_length_set_without_truncation(self):
+        rows = [["a", "b"], ["1", "2"]]
+
+        text, info = self.strategy.truncate_csv_rows(rows, 10000)
+
+        assert info.truncation_type == TruncationType.NONE
+        assert info.original_length == len(text)
+
+    def test_csv_keeps_existing_pipe_format(self):
+        text, info = self.strategy.truncate_csv_rows(
+            [["a | b", "line 1\nline 2"]],
+            100000,
+        )
+
+        assert info.is_truncated is False
+        assert text == "--- Sheet: CSV Data ---\na | b | line 1\nline 2"
 
 
 class TestPDFTruncationStrategy:
@@ -412,14 +556,9 @@ class TestSmartTruncationManager:
 
     def test_truncate_excel(self):
         """Test Excel truncation through manager."""
-        sheets_data = [
-            {
-                "name": "Test",
-                "rows": [[f"Row{i}"] for i in range(100)],
-            }
-        ]
+        sheets = [_excel_sheet("Test", [[f"Row{i}"] for i in range(100)])]
 
-        text, info = self.manager.truncate_excel(sheets_data)
+        text, info = self.manager.truncate_excel(sheets)
 
         assert isinstance(text, str)
         assert isinstance(info, SmartTruncationInfo)

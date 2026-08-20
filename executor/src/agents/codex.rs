@@ -1611,10 +1611,17 @@ fn mcp_thread_config_fields(params: &Value) -> Vec<(&'static str, String)> {
         .get("developerInstructions")
         .and_then(Value::as_str)
         .is_some_and(|instructions| instructions.contains("Wework 项目空间 routing:"));
+    let reasoning_effort = params
+        .get("config")
+        .and_then(|config| config.get("model_reasoning_effort"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
     let Some(config) = params.get("config").and_then(Value::as_object) else {
         return vec![
             ("mcp_config_key_count", "0".to_owned()),
             ("mcp_server_names", String::new()),
+            ("reasoning_effort", reasoning_effort),
             (
                 "space_routing_instructions",
                 space_routing_instructions.to_string(),
@@ -1641,6 +1648,7 @@ fn mcp_thread_config_fields(params: &Value) -> Vec<(&'static str, String)> {
     vec![
         ("mcp_config_key_count", mcp_keys.len().to_string()),
         ("mcp_server_names", server_names),
+        ("reasoning_effort", reasoning_effort),
         (
             "space_routing_instructions",
             space_routing_instructions.to_string(),
@@ -1978,7 +1986,7 @@ async fn read_shared_turn_notifications(
 
         let notification_turn_id = root_turn_notification_id(&message, state);
         if let Some(turn_id) =
-            started_active_turn_id(options.active_turn_id.as_deref(), &message, state)
+            observed_active_turn_id(options.active_turn_id.as_deref(), &message, state)
         {
             if let Some(previous_turn_id) = options.active_turn_id.as_deref() {
                 log_executor_event(
@@ -1987,7 +1995,7 @@ async fn read_shared_turn_notifications(
                         ("thread_id", thread_id.to_owned()),
                         ("previous_turn_id", previous_turn_id.to_owned()),
                         ("turn_id", turn_id.clone()),
-                        ("source", "turn_started_notification".to_owned()),
+                        ("source", "protocol_start_notification".to_owned()),
                     ],
                 );
             }
@@ -2104,7 +2112,7 @@ fn required_mcp_startup_failure(message: &Value) -> Option<String> {
         .get("status")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    if !matches!(status, "failed" | "error" | "cancelled") {
+    if !matches!(status, "failed" | "error") {
         return None;
     }
     let reason = params
@@ -2483,12 +2491,22 @@ async fn notification_belongs_to_thread(
     }
 }
 
-fn started_active_turn_id(
+fn observed_active_turn_id(
     active_turn_id: Option<&str>,
     message: &Value,
     state: &CodexRunState,
 ) -> Option<String> {
-    if message.get("method").and_then(Value::as_str) != Some("turn/started") {
+    let method = message.get("method").and_then(Value::as_str);
+    let starts_root_turn = method == Some("turn/started")
+        || (method == Some("item/started")
+            && message_params(message)
+                .get("item")
+                .and_then(|item| item.get("type"))
+                .and_then(Value::as_str)
+                == Some("userMessage"));
+    let confirms_provisional_turn = active_turn_id.is_some()
+        && matches!(method, Some("thread/goal/updated" | "thread/goal/cleared"));
+    if !starts_root_turn && !confirms_provisional_turn {
         return None;
     }
     root_turn_notification_id(message, state)
@@ -2798,6 +2816,9 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchCo
     launch_config
         .config_overrides
         .extend(codex_model_config_overrides(&request.model_config));
+    launch_config
+        .config_overrides
+        .extend(project_plugin_config_overrides(request));
 
     if let Some(model) = &model {
         launch_config
@@ -3037,6 +3058,32 @@ fn codex_model_config_overrides(model_config: &Value) -> Vec<String> {
         codex_model_context_window(model_config).unwrap_or(DEFAULT_CODEX_MODEL_CONTEXT_WINDOW);
     overrides.push(format!("model_context_window={context_window}"));
     overrides
+}
+
+fn project_plugin_config_overrides(request: &ExecutionRequest) -> Vec<String> {
+    if request.runtime_project_key.is_none() {
+        return Vec::new();
+    }
+    request
+        .extra
+        .get("project_plugin_ids")
+        .or_else(|| request.extra.get("projectPluginIds"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .filter(|value| {
+            value.chars().all(|character| {
+                character.is_ascii_alphanumeric()
+                    || matches!(character, '-' | '_' | '.' | '@' | '/')
+            })
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .map(|plugin_id| format!("{}=true", toml_key_path(&["plugins", plugin_id, "enabled"]),))
+        .collect()
 }
 
 fn codex_request_model(request: &ExecutionRequest) -> Option<String> {
@@ -4754,8 +4801,8 @@ fn codex_collaboration_mode_payload(
         "mode": mode,
         "settings": {
             "model": codex_request_model(request),
-            "reasoningEffort": launch_config.effort,
-            "developerInstructions": Value::Null,
+            "reasoning_effort": launch_config.effort,
+            "developer_instructions": Value::Null,
         }
     }))
 }
