@@ -5198,6 +5198,8 @@ pub fn run() {
             embedded_browser::embedded_browser_eval_json,
             embedded_browser::embedded_browser_go_back,
             embedded_browser::embedded_browser_go_forward,
+            embedded_browser::embedded_browser_history_remove,
+            embedded_browser::embedded_browser_history_search,
             embedded_browser::embedded_browser_navigate,
             embedded_browser::embedded_browser_open,
             embedded_browser::embedded_browser_pending_open_requests,
