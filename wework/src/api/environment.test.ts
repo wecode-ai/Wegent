@@ -1182,7 +1182,7 @@ describe('loadProjectEnvironment', () => {
     const forcedRefresh = loadProjectEnvironment(api, project, undefined, { force: true })
 
     await vi.waitFor(() => {
-      expect(executeCommand).toHaveBeenCalledTimes(3)
+      expect(executeCommand).toHaveBeenCalledTimes(4)
     })
 
     resolveBranch({
@@ -1196,6 +1196,122 @@ describe('loadProjectEnvironment', () => {
     expect(initialInfo).toEqual(refreshedInfo)
     expect(initialInfo.branchName).toBe('fix/environment-refresh')
     expect(executeCommand).toHaveBeenCalledTimes(5)
+  })
+
+  test('publishes pull request status before a slow branch diff finishes', async () => {
+    let resolveShortStat: (value: {
+      success: boolean
+      stdout: string
+      stderr: string
+    }) => void = () => {}
+    const shortStatResult = new Promise<{
+      success: boolean
+      stdout: string
+      stderr: string
+    }>(resolve => {
+      resolveShortStat = resolve
+    })
+    const executeCommand = vi.fn((_: string, data: { command_key: string }) => {
+      if (data.command_key === 'git_branch') {
+        return Promise.resolve({
+          success: true,
+          stdout: 'fix/fast-pr-status\n',
+          stderr: '',
+        })
+      }
+      if (data.command_key === 'git_branch_diff_shortstat') {
+        return shortStatResult
+      }
+      if (data.command_key === 'git_remote_url') {
+        return Promise.resolve({
+          success: true,
+          stdout: 'https://github.com/wecode-ai/Wegent.git\n',
+          stderr: '',
+        })
+      }
+      if (data.command_key === 'git_github_pull_requests') {
+        return Promise.resolve({
+          success: true,
+          stdout: [
+            {
+              number: 301,
+              url: 'https://github.com/wecode-ai/Wegent/pull/301',
+              title: 'fix(wework): show PR status immediately',
+              state: 'OPEN',
+              isDraft: false,
+              statusCheckRollup: [],
+              mergeable: 'MERGEABLE',
+              mergeStateStatus: 'CLEAN',
+            },
+          ],
+          stderr: '',
+        })
+      }
+      if (data.command_key === 'git_github_pull_request_merge_queue') {
+        return Promise.resolve({
+          success: true,
+          stdout: { data: { resource: { mergeQueueEntry: null } } },
+          stderr: '',
+        })
+      }
+      return Promise.resolve({
+        success: true,
+        stdout: '',
+        stderr: '',
+      })
+    })
+    const onPartialInfo = vi.fn()
+    const load = loadProjectEnvironment(
+      { executeCommand },
+      {
+        id: 1003,
+        name: 'Wegent',
+        config: {
+          mode: 'workspace' as const,
+          execution: {
+            targetType: 'local' as const,
+            deviceId: 'device-123',
+          },
+          workspace: {
+            source: 'local_path' as const,
+            localPath: '/workspace/Wegent',
+          },
+        },
+      },
+      undefined,
+      { onPartialInfo }
+    )
+
+    await vi.waitFor(() => {
+      expect(onPartialInfo).toHaveBeenCalledWith(
+        expect.objectContaining({
+          branchName: 'fix/fast-pr-status',
+          changeRequest: expect.objectContaining({
+            state: 'found',
+            changeRequest: expect.objectContaining({ number: 301 }),
+          }),
+        })
+      )
+    })
+
+    let settled = false
+    void load.then(() => {
+      settled = true
+    })
+    await Promise.resolve()
+    expect(settled).toBe(false)
+
+    resolveShortStat({
+      success: true,
+      stdout: ' 2 files changed, 3 insertions(+), 1 deletion(-)',
+      stderr: '',
+    })
+
+    await expect(load).resolves.toMatchObject({
+      additions: '+3',
+      deletions: '-1',
+      changeRequest: expect.objectContaining({ state: 'found' }),
+    })
   })
 
   test('uses git diff against HEAD for tracked uncommitted changes', async () => {

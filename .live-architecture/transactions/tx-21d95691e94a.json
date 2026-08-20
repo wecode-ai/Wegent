@@ -1,0 +1,80 @@
+{
+  "actor": {
+    "id": "codex",
+    "kind": "ai"
+  },
+  "authority": "ai",
+  "base_revision": "A00000046",
+  "changes": [
+    {
+      "action": "assert",
+      "change_id": "chg-2fa50cd6d158",
+      "confidence": 1.0,
+      "evidence": [
+        "user confirmation 2026-08-20"
+      ],
+      "object": null,
+      "plane": "intent",
+      "predicate": null,
+      "reason": "Clicking an unread Issue must persist a numeric read cursor and immediately project the item as read on MySQL.",
+      "subject": "arch://wegent/flow/board-item-unread-projection",
+      "timestamp": "2026-08-20T06:56:13Z"
+    },
+    {
+      "action": "update",
+      "change_id": "chg-dda1f49de78a",
+      "confidence": 1.0,
+      "evidence": [
+        "backend/app/services/loop_item_unread.py,backend/tests/services/test_loop_item_unread.py"
+      ],
+      "object": "backend/app/services/loop_item_unread.py",
+      "plane": "implementation",
+      "predicate": "implemented-by",
+      "reason": "MySQL JSON_EXTRACT is unquoted and cast to an integer before JSON_SET, preserving the read_revisions numeric contract.",
+      "subject": "arch://wegent/flow/board-item-unread-projection",
+      "timestamp": "2026-08-20T06:56:13Z"
+    },
+    {
+      "action": "verify",
+      "change_id": "chg-2f446dcbfe42",
+      "confidence": 1.0,
+      "evidence": [
+        "25 focused backend tests passed on 2026-08-20"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Unread API and MySQL SQL compilation regression coverage passed.",
+      "subject": "arch://wegent/flow/board-item-unread-projection",
+      "timestamp": "2026-08-20T06:56:13Z"
+    },
+    {
+      "action": "observe",
+      "change_id": "chg-fe63cddca286",
+      "confidence": 1.0,
+      "evidence": [
+        "local MySQL JSON_SET execution on 2026-08-20 produced integer read_revisions.86=2"
+      ],
+      "object": null,
+      "plane": "runtime",
+      "predicate": null,
+      "reason": "Runtime MySQL evidence confirms the corrected expression stores a JSON number rather than a JSON string.",
+      "subject": "arch://wegent/flow/board-item-unread-projection",
+      "timestamp": "2026-08-20T06:56:13Z"
+    }
+  ],
+  "created_at": "2026-08-20T06:53:13Z",
+  "id": "tx-21d95691e94a",
+  "intent": "修复 MySQL 下看板 Issue 标记已读时 read_revision 被写成字符串、导致点击后仍显示未读的问题",
+  "merged_revision": "A00000047",
+  "read_set": [
+    "arch://wegent/flow/board-item-unread-projection",
+    "backend/app/services/loop_item_unread.py"
+  ],
+  "resolutions": [],
+  "status": "merged",
+  "updated_at": "2026-08-20T06:56:13Z",
+  "write_set": [
+    "arch://wegent/flow/board-item-unread-projection"
+  ]
+}

@@ -13,6 +13,7 @@ import {
   type CloudProjectFile,
   type CloudProjectId,
   type CloudProjectMember,
+  type ProjectBoardSnapshot,
   type CloudTaskContext,
   type ProjectTaskAttachment,
   type Delivery,
@@ -629,6 +630,8 @@ function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLo
         : null,
     can_view_detail: !isPublicVisitor || ownsTask,
     can_edit: ['Owner', 'Maintainer', 'Developer'].includes(role) || ownsTask,
+    content_revision: 1,
+    is_unread: false,
     assignee_user_id: record.assignee_user_id ?? null,
     assignee_agent_id: record.assignee_agent_id ?? null,
     execution_id: record.execution_id ?? null,
@@ -819,6 +822,29 @@ export function createLocalDeliveryApi(
       }
       return { items }
     },
+    async getBoardSnapshot(projectId: CloudProjectId): Promise<ProjectBoardSnapshot> {
+      const records = await request<LocalLoopItemRecord[]>('todos.list', {
+        project_id: projectId,
+      })
+      rememberTasks(projectId, records)
+      const items = records.map(record => localTask(record))
+      const taskBindings = await Promise.all(
+        items.map(item =>
+          request<LocalTaskBindingRecord[]>('todos.bindings', {
+            task_id: item.id,
+          })
+        )
+      )
+      return {
+        items,
+        task_bindings: taskBindings.flat().map(record => ({
+          ...record,
+          id: Number(record.id),
+        })),
+        members: [],
+        agents: [],
+      }
+    },
     async listLoopItemExecutions(
       projectId: CloudProjectId,
       options: { agent_id?: string; status?: string } = {}
@@ -912,6 +938,9 @@ export function createLocalDeliveryApi(
       })
       taskProjects.set(record.id, projectId)
       return localTask(record)
+    },
+    async markLoopItemRead(itemId: string) {
+      return api.getLoopItem(itemId)
     },
     async approveLoopItemRun(projectId: CloudProjectId, itemId: string): Promise<CloudLoopItem> {
       const executions = await request<LocalLoopItemExecution[]>('executions.list', {

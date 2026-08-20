@@ -18,7 +18,6 @@ const source = path.join(root, 'harness-runtime')
 const targetDirectory = path.join(root, 'src-tauri', 'bundled-harness-runtime')
 const metadata = path.join(targetDirectory, 'runtime.json')
 const placeholder = path.join(targetDirectory, '.resource-placeholder')
-const nodeEntitlements = path.join(root, 'scripts', 'deepseek-harness-node.entitlements.plist')
 const cacheDirectory = path.join(root, 'node_modules', '.cache')
 const staging = path.join(cacheDirectory, `wework-harness-runtime-${process.pid}`)
 const temporaryArchive = path.join(cacheDirectory, `wework-harness-runtime-${process.pid}.tar.gz`)
@@ -108,24 +107,6 @@ async function sha256(pathname) {
   return hash.digest('hex')
 }
 
-async function prepareManagedNode(nodePath) {
-  if (process.platform === 'darwin') {
-    const identity = process.env.APPLE_SIGNING_IDENTITY?.trim() || '-'
-    const args = [
-      '--force',
-      '--options',
-      'runtime',
-      '--entitlements',
-      nodeEntitlements,
-      '--sign',
-      identity,
-    ]
-    if (identity !== '-') args.splice(1, 0, '--timestamp')
-    await run('codesign', [...args, nodePath], root)
-  }
-  await run(nodePath, ['-e', 'process.stdout.write(process.versions.node)'], root)
-}
-
 if (process.argv.includes('--clean')) {
   await resetTargetDirectory()
   process.exit(0)
@@ -138,7 +119,6 @@ const sourceEntries = [
     name: path.join(pluginDirectory, file),
     path: path.join(source, pluginDirectory, file),
   })),
-  { name: 'deepseek-harness-node-entitlements', path: nodeEntitlements },
 ]
 const sourceContents = await Promise.all(sourceEntries.map(entry => readFile(entry.path)))
 const sourceFingerprint = createHash('sha256')
@@ -161,7 +141,6 @@ const baseUrl =
   'https://github.com/wecode-ai/Wegent/releases/download/wework-updater'
 const downloadUrl =
   process.env.WEWORK_HARNESS_RUNTIME_URL?.trim() || `${baseUrl.replace(/\/+$/, '')}/${assetName}`
-const nodeName = process.platform === 'win32' ? 'node.exe' : 'node'
 const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 
 try {
@@ -198,16 +177,10 @@ try {
   )
   await run(pnpmCommand, ['install', '--prod', '--frozen-lockfile'], staging)
 
-  const nodeDirectory = path.join(staging, 'node', 'bin')
-  await mkdir(nodeDirectory, { recursive: true })
-  const managedNode = path.join(nodeDirectory, nodeName)
-  await cp(process.execPath, managedNode)
-
   const packageJson = JSON.parse(sourceContents[0].toString('utf8'))
   const runtimeMetadata = `${JSON.stringify(
     {
       dshVersion: packageJson.dependencies['@deepseek-ai/dsh'],
-      nodeVersion: process.version,
       sourceFingerprint,
     },
     null,
@@ -216,7 +189,6 @@ try {
   await writeFile(path.join(staging, 'runtime.json'), runtimeMetadata)
   await writeFile(path.join(staging, '.resource-placeholder'), '')
   await signPreparedMacOsBinaries(staging)
-  await prepareManagedNode(managedNode)
 
   await run('tar', ['-cf', temporaryTar, '-C', staging, '.'], root, {
     COPYFILE_DISABLE: '1',
@@ -231,7 +203,6 @@ try {
   const descriptor = `${JSON.stringify(
     {
       dshVersion: packageJson.dependencies['@deepseek-ai/dsh'],
-      nodeVersion: process.version,
       sourceFingerprint,
       archiveSha256,
       archiveBytes,
