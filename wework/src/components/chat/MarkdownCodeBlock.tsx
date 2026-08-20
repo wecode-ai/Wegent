@@ -69,11 +69,14 @@ const CODE_ACTION_BUTTON_CLASS =
 
 const CODE_FONT_FAMILY =
   'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace'
+const MAX_HIGHLIGHTED_CODE_CHARS = 2_000
+const MAX_HIGHLIGHTED_CODE_LINES = 80
 
 const codeCustomStyle: CSSProperties = {
   margin: 0,
   padding: '0.75rem 1rem',
   background: 'transparent',
+  color: '#abb2bf',
   fontSize: 'var(--text-code)',
   lineHeight: '1.8',
 }
@@ -84,12 +87,14 @@ interface MarkdownCodeBlockProps {
   lang?: string
   children: ReactNode
   compact?: boolean
+  isStreaming?: boolean
 }
 
 export function MarkdownCodeBlock({
   lang = '',
   children,
   compact = false,
+  isStreaming = false,
 }: MarkdownCodeBlockProps) {
   const [copied, setCopied] = useState(false)
   const text = String(children).replace(/\n$/, '')
@@ -108,6 +113,7 @@ export function MarkdownCodeBlock({
   const codeStyle = getCodeCustomStyle(effectiveWrapLines)
   const codeProps = getCodeTagProps(effectiveWrapLines)
   const lineProps = getLineProps(effectiveWrapLines)
+  const shouldHighlight = shouldHighlightCode(text, isStreaming)
 
   const handleCopy = async () => {
     await copyCodeText(text)
@@ -179,28 +185,40 @@ export function MarkdownCodeBlock({
       <div
         data-testid="markdown-code-scroll-container"
         data-wrap={effectiveWrapLines ? 'true' : 'false'}
+        data-syntax-highlighted={shouldHighlight ? 'true' : 'false'}
         className={
           effectiveWrapLines
             ? 'max-w-full select-none overflow-x-hidden'
             : 'max-w-full select-none overflow-x-auto'
         }
       >
-        <SyntaxHighlighter
-          language={language || 'text'}
-          style={oneDark}
-          customStyle={codeStyle}
-          codeTagProps={codeProps}
-          lineProps={lineProps}
-          PreTag="div"
-          showLineNumbers={false}
-          wrapLines={effectiveWrapLines}
-          wrapLongLines={effectiveWrapLines}
-        >
-          {text}
-        </SyntaxHighlighter>
+        {shouldHighlight ? (
+          <SyntaxHighlighter
+            language={language || 'text'}
+            style={oneDark}
+            customStyle={codeStyle}
+            codeTagProps={codeProps}
+            lineProps={lineProps}
+            PreTag="div"
+            showLineNumbers={false}
+            wrapLines={effectiveWrapLines}
+            wrapLongLines={effectiveWrapLines}
+          >
+            {text}
+          </SyntaxHighlighter>
+        ) : (
+          <pre style={codeStyle}>
+            <code {...codeProps}>{text}</code>
+          </pre>
+        )}
       </div>
     </div>
   )
+}
+
+function shouldHighlightCode(text: string, isStreaming: boolean): boolean {
+  if (isStreaming || text.length > MAX_HIGHLIGHTED_CODE_CHARS) return false
+  return text.split('\n', MAX_HIGHLIGHTED_CODE_LINES + 1).length <= MAX_HIGHLIGHTED_CODE_LINES
 }
 
 function normalizeLanguage(lang: string): string {
