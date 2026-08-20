@@ -2280,7 +2280,7 @@ async fn runtime_tasks_send_rejects_running_local_task_until_cancelled() {
 }
 
 #[tokio::test]
-async fn runtime_tasks_send_rejects_provider_active_turn_after_local_execution_settles() {
+async fn runtime_tasks_send_delegates_provider_turn_admission_to_codex() {
     let _lock = env_lock().await;
     let executor_home = temp_path("runtime-send-provider-active-home", "dir");
     let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
@@ -2295,19 +2295,7 @@ async fn runtime_tasks_send_rejects_provider_active_turn_after_local_execution_s
     let fake_codex = write_fake_codex_hanging_turn(&log_path);
     let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
 
-    let transcript = handler
-        .handle_runtime_rpc(json!({
-            "method": "runtime.tasks.transcript",
-            "payload": {
-                "workspacePath": "/tmp/project",
-                "taskId": "local-task-1"
-            }
-        }))
-        .await
-        .expect("provider-active transcript should load");
-    assert_eq!(transcript["running"], true);
-
-    let rejected = handler
+    let sent = handler
         .handle_runtime_rpc(json!({
             "method": "runtime.tasks.send",
             "payload": {
@@ -2322,22 +2310,44 @@ async fn runtime_tasks_send_rejects_provider_active_turn_after_local_execution_s
             }
         }))
         .await
-        .expect("provider-active send should return a contract response");
+        .expect("provider-active send should be delegated to Codex");
 
     assert_eq!(
-        rejected,
+        sent,
         json!({
-            "success": false,
-            "error": "runtime task is already running",
-            "code": "bad_request"
+            "success": true,
+            "accepted": true,
+            "deviceId": "device-1",
+            "taskId": "local-task-1",
+            "runtime": "codex",
+            "status": "running",
+            "queuePosition": null
         })
     );
+    wait_for_codex_call(&log_path, "turn/start").await;
     let calls = read_json_lines(&log_path);
-    assert!(calls.iter().any(|call| call["method"] == "thread/read"));
     assert!(
-        calls.iter().all(|call| call["method"] != "turn/start"),
-        "send must not create an overlapping Codex turn: {calls:?}"
+        calls
+            .iter()
+            .all(|call| call["method"] != "thread/read" && call["method"] != "thread/turns/list"),
+        "Executor must not use a provider state snapshot to decide turn admission: {calls:?}"
     );
+    assert!(
+        calls.iter().any(|call| call["method"] == "turn/start"),
+        "Codex must atomically decide whether the turn is started or steered: {calls:?}"
+    );
+
+    let cancelled = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.cancel",
+            "payload": {
+                "workspacePath": "/tmp/project",
+                "taskId": "local-task-1"
+            }
+        }))
+        .await
+        .expect("delegated turn should remain cancellable");
+    assert_eq!(cancelled["accepted"], true);
 }
 
 #[tokio::test]
