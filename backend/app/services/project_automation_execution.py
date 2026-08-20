@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy.orm import Session
@@ -890,7 +890,9 @@ class ProjectAutomationExecution:
         row.metadata_json = activity_metadata
 
     @staticmethod
-    def _activity_payload(db: Session, run: ProjectAutomationRun) -> dict | None:
+    def _activity_payload(
+        db: Session, run: ProjectAutomationRun
+    ) -> dict[str, Any] | None:
         db.flush()
         row = ProjectAutomationExecution._activity(db, run)
         if row is None:
@@ -909,7 +911,7 @@ class ProjectAutomationExecution:
         self._push_activity(payload)
 
     @staticmethod
-    def _push_activity(payload: dict | None) -> None:
+    def _push_activity(payload: dict[str, Any] | None) -> None:
         if payload is not None:
             push_project_chat_message(payload)
 

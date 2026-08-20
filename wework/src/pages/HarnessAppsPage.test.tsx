@@ -127,7 +127,7 @@ const installed: HarnessAppInstallation = {
   manifest: {
     name: 'dsh-ops-text-classifier',
     displayName: 'DSH operations',
-    version: '0.1.0-rc.7',
+    version: '0.1.0-rc.8',
     type: 'deepseek-harness-plugin-bundle',
     description: 'Classify operations text',
     entry: {
@@ -135,7 +135,7 @@ const installed: HarnessAppInstallation = {
       profile: 'ops',
       webUrl: 'http://127.0.0.1:3080/',
     },
-    requirements: { dsh: '0.1.0-rc.7', node: '>=22' },
+    requirements: { dsh: '0.1.0-rc.8', node: '>=22' },
   },
   packagePath: '/tmp/package',
   sha256: 'hash',
@@ -149,7 +149,7 @@ const installed: HarnessAppInstallation = {
 
 const running: HarnessAppInstallation = {
   ...installed,
-  runtimeVersion: '0.1.0-rc.7',
+  runtimeVersion: '0.1.0-rc.8',
   state: 'running',
   webUrl: 'http://127.0.0.1:39000/',
 }

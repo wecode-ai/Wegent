@@ -362,6 +362,12 @@ else
   pnpm run prepare:harness-runtime
 fi
 echo "Using Harness runtime root: ${WEWORK_HARNESS_RUNTIME_ROOT:-${WEWORK_DEEPSEEK_HARNESS_ROOT}}"
+
+if [ -z "${WEWORK_NODE_RUNTIME_ROOT:-}" ]; then
+  pnpm run prepare:execution-runtime -- --materialize
+  export WEWORK_NODE_RUNTIME_ROOT="$WEWORK_DIR/node_modules/.cache/execution-runtime-node-dev"
+fi
+echo "Using Node runtime root: $WEWORK_NODE_RUNTIME_ROOT"
 TAURI_ARGS=(dev --config "$TAURI_DEV_CONFIG")
 if [ "$WEWORK_RELEASE_UI" = "true" ]; then
   TAURI_ARGS+=(--release)

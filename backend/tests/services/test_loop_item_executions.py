@@ -73,7 +73,9 @@ def independent_session_database(tmp_path):
         engine.dispose()
 
 
-def test_project_automation_activity_push_commits_before_network(monkeypatch):
+def test_project_automation_activity_push_commits_before_network(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     events: list[object] = []
     run = MagicMock()
     row = MagicMock()
