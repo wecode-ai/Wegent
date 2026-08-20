@@ -143,9 +143,6 @@ export function AboutSettingsPage() {
           label={t('workbench.app_update_auto_update', {
             defaultValue: '自动更新',
           })}
-          description={t('workbench.app_update_auto_update_description', {
-            defaultValue: '默认开启。检测到新版本后在后台静默下载。',
-          })}
           control={
             <SettingsSwitch
               data-testid="about-auto-update-switch"

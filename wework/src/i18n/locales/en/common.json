@@ -903,7 +903,6 @@
     "app_update_check_failed": "Failed to check for updates",
     "app_update_install_failed": "Failed to install update",
     "app_update_auto_update": "Automatic updates",
-    "app_update_auto_update_description": "Downloads new versions in the background.",
     "app_update_beta_channel": "Receive Beta updates",
     "app_update_beta_channel_description": "Receive both Beta and stable releases, and update to whichever has the higher version.",
     "app_release_notes_updated": "Wework updated to v{{version}}",
