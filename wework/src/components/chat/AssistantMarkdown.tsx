@@ -23,9 +23,9 @@ import { openExternalUrl } from '@/lib/external-links'
 import { getRecognizedLink } from '@/lib/link-preview'
 import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
 import { isTauriRuntime } from '@/lib/runtime-environment'
-import { fetchAttachmentBlob } from '@/api/attachments'
 import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
 import type { TurnFileChangesSummary } from '@/types/api'
+import { useAttachmentDownload } from './AttachmentDownloadContext'
 
 const ASSISTANT_MARKDOWN_LINK_CLASS = [
   'inline-flex min-w-0 max-w-full items-center gap-1 rounded-md px-0.5 align-baseline',
@@ -589,6 +589,7 @@ function AssistantMarkdownLink({
 }
 
 function AssistantMarkdownImage({ src, alt }: { src?: string; alt?: string }) {
+  const fetchAttachmentBlob = useAttachmentDownload()
   const rawSrc = typeof src === 'string' ? src.trim() : ''
   const [authenticatedPreview, setAuthenticatedPreview] = useState<{
     rawSrc: string
@@ -647,7 +648,7 @@ function AssistantMarkdownImage({ src, alt }: { src?: string; alt?: string }) {
         URL.revokeObjectURL(objectUrl)
       }
     }
-  }, [isAuthenticatedSrc, rawSrc])
+  }, [fetchAttachmentBlob, isAuthenticatedSrc, rawSrc])
 
   if (hasError) {
     return (

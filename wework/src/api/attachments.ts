@@ -7,6 +7,7 @@ export const MAX_FILE_SIZE = 100 * 1024 * 1024
 export interface AttachmentApi {
   uploadAttachment: (file: File, onProgress?: (progress: number) => void) => Promise<Attachment>
   deleteAttachment: (attachmentId: number) => Promise<void>
+  fetchAttachmentBlob: (attachmentId: number) => Promise<Blob>
 }
 
 interface CreateAttachmentApiOptions {
@@ -124,6 +125,10 @@ export function createAttachmentApi(options: CreateAttachmentApiOptions = {}): A
       const client = createHttpClient({ baseUrl: apiBaseUrl, getToken })
       await client.delete(`/attachments/${attachmentId}`)
     },
+    fetchAttachmentBlob(attachmentId) {
+      const client = createHttpClient({ baseUrl: apiBaseUrl, getToken })
+      return client.getBlob(`/attachments/${attachmentId}/download`)
+    },
   }
 }
 
@@ -139,6 +144,5 @@ export function deleteAttachment(attachmentId: number): Promise<void> {
 }
 
 export function fetchAttachmentBlob(attachmentId: number): Promise<Blob> {
-  const client = createHttpClient({ baseUrl: getRuntimeConfig().apiBaseUrl })
-  return client.getBlob(`/attachments/${attachmentId}/download`)
+  return createAttachmentApi().fetchAttachmentBlob(attachmentId)
 }
