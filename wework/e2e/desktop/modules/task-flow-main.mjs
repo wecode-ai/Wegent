@@ -2300,16 +2300,6 @@ last_updated = "2026-07-30T00:00:00Z"`
       })
       phase = 'private-im-model-binding'
       await control.command('click', '[data-testid="continue-in-im-button"]')
-      await control.command(
-        'waitFor',
-        '[data-testid="continue-im-session-desktop-e2e-im-session"]',
-        {
-          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-        }
-      )
-      await control.command('clickWhenEnabled', '[data-testid="continue-im-submit-button"]', {
-        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-      })
       await withTimeout(
         (async () => {
           while (control.runtimeImBindingRequests.length === 0) {
@@ -2318,6 +2308,19 @@ last_updated = "2026-07-30T00:00:00Z"`
         })(),
         DEFAULT_STEP_TIMEOUT_MS,
         'The runtime task was not bound to the private IM session'
+      )
+      await withTimeout(
+        (async () => {
+          while (
+            Number(
+              await control.command('getElementCount', '[data-testid="continue-im-dialog-overlay"]')
+            ) !== 0
+          ) {
+            await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
+          }
+        })(),
+        DEFAULT_STEP_TIMEOUT_MS,
+        'The single private IM session dialog did not close after automatic binding'
       )
       const runtimeImBinding = control.runtimeImBindingRequests.at(-1)
       assert.equal(
