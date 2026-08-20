@@ -112,7 +112,9 @@ import {
   useOptionalAppearance,
 } from '@/features/appearance'
 import type {
+  CloneGitRepositoryInput,
   DeviceInfo,
+  GitCloneProjectOperation,
   RuntimeTaskSummary,
   ProjectWithTasks,
   RuntimeDeviceWorkspace,
@@ -193,6 +195,7 @@ interface DesktopSidebarProps {
   devices: DeviceInfo[]
   cloudWorkStatus?: CloudWorkStatus
   runtimeWork?: RuntimeWorkListResponse | null
+  gitCloneOperations?: GitCloneProjectOperation[]
   currentRuntimeTask?: RuntimeTaskAddress | null
   splitGroupMemberships?: Readonly<Record<string, WorkbenchSplitGroupMembership>>
   standaloneDeviceId?: string | null
@@ -285,6 +288,10 @@ interface DesktopSidebarProps {
   onGetDeviceHomeDirectory: (deviceId: string) => Promise<string>
   onListDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
   onCreateDeviceDirectory: (deviceId: string, path: string) => Promise<void>
+  onCloneGitRepository?: (deviceId: string, input: CloneGitRepositoryInput) => Promise<void>
+  onStartGitCloneProject?: (deviceId: string, input: CloneGitRepositoryInput) => void
+  onRetryGitCloneOperation?: (operation: GitCloneProjectOperation) => void
+  onDismissGitCloneOperation?: (operationId: string) => void
   projectSpaceApis?: ProjectSpaceApi[]
   models?: UnifiedModel[]
   onOpenSettings: (options?: OpenSettingsOptions) => void
@@ -2913,6 +2920,7 @@ export function DesktopSidebar({
   devices,
   cloudWorkStatus,
   runtimeWork,
+  gitCloneOperations = [],
   currentRuntimeTask,
   splitGroupMemberships = EMPTY_SPLIT_GROUP_MEMBERSHIPS,
   standaloneDeviceId,
@@ -2960,6 +2968,10 @@ export function DesktopSidebar({
   onGetDeviceHomeDirectory,
   onListDeviceDirectories,
   onCreateDeviceDirectory,
+  onCloneGitRepository,
+  onStartGitCloneProject,
+  onRetryGitCloneOperation,
+  onDismissGitCloneOperation,
   projectSpaceApis,
   models = [],
   onOpenSettings,
@@ -4054,7 +4066,7 @@ export function DesktopSidebar({
                     <DesktopSidebarSectionHeader
                       title={t('workbench.projects', '项目')}
                       expanded={displayedProjectsExpanded}
-                      hasContent={sidebarProjects.length > 0}
+                      hasContent={sidebarProjects.length > 0 || gitCloneOperations.length > 0}
                       toggleTestId="projects-section-toggle"
                       iconTestId="projects-section-chevron-right"
                       onToggle={() => setProjectsExpanded(expanded => !expanded)}
@@ -4187,78 +4199,137 @@ export function DesktopSidebar({
                       </div>,
                       document.body
                     )}
-                  {displayedProjectsExpanded && showEmptyProjectCreateAction && (
-                    <DesktopSidebarNavItem
-                      icon={Plus}
-                      label={t('workbench.new_project', '新建项目')}
-                      testId="projects-empty-create-button"
-                      onClick={openProjectCreateDialog}
-                    />
-                  )}
-                  {displayedProjectsExpanded && sidebarProjects.length > 0 && (
-                    <SidebarSortableList
-                      testId="runtime-project-sortable-list"
-                      className="space-y-1"
-                      items={regularSortableProjects}
-                      getId={({ project, runtimeProjectWork }) =>
-                        runtimeProjectWork
-                          ? `${sidebarStateDeviceId || runtimeProjectWork.project.stateDeviceId || 'device'}:${getRuntimeProjectSidebarStateKey(runtimeProjectWork.project)}`
-                          : `project:${project.id}`
-                      }
-                      getLabel={({ project }) => project.name}
-                      canDrag={({ runtimeProjectWork }) =>
-                        Boolean(runtimeProjectWork?.project.key && onReorderRuntimeProjects)
-                      }
-                      onMove={async (moved, before) => {
-                        const movedRuntimeProject = moved.runtimeProjectWork
-                        if (!movedRuntimeProject || !onReorderRuntimeProjects) {
-                          throw new Error('Runtime project ordering is unavailable')
-                        }
-                        const request = getRuntimeProjectReorderRequest(
-                          movedRuntimeProject,
-                          before?.runtimeProjectWork,
-                          sidebarStateDeviceId
-                        )
-                        if (!request) throw new Error('Runtime project ordering is unavailable')
-                        await onReorderRuntimeProjects(request)
-                      }}
-                      renderItem={({ project, runtimeProjectWork }) => (
-                        <ProjectItem
-                          project={project}
-                          expanded={displayedExpandedProjectIds.has(project.id)}
-                          localHarnessSessions={
-                            localHarnessSessionsByProjectId.get(project.id) ?? []
-                          }
-                          activeLocalHarnessSessionId={activeLocalHarnessSessionId}
-                          devices={devices}
-                          runtimeProjectWork={runtimeProjectWork}
-                          currentRuntimeTask={currentRuntimeTask}
-                          splitGroupMemberships={splitGroupMemberships}
-                          unreadTaskKeys={visibleUnreadRuntimeTaskKeys}
-                          imNotificationSettings={imNotificationSettings}
-                          showDeviceMarker={false}
-                          sidebarStateDeviceId={sidebarStateDeviceId}
-                          onToggleProject={handleToggleProject}
-                          onStartNewProjectChat={onStartNewProjectChat}
-                          onRemoveProject={onRemoveProject}
-                          onCreatePermanentWorktree={onCreatePermanentWorktree}
-                          onReorderRuntimeProjects={onReorderRuntimeProjects}
-                          onSetRuntimeProjectPinned={onSetRuntimeProjectPinned}
-                          onSetRuntimeProjectAppearance={onSetRuntimeProjectAppearance}
-                          onReorderRuntimeProjectTasks={onReorderRuntimeProjectTasks}
-                          onSetRuntimeTaskPinned={onSetRuntimeTaskPinned}
-                          onRenameProject={openProjectEditor}
-                          onOpenRuntimeTask={onOpenRuntimeTask}
-                          onMarkRuntimeTaskRead={onMarkRuntimeTaskRead}
-                          onRenameRuntimeTask={onRenameRuntimeTask}
-                          onArchiveRuntimeTask={onArchiveRuntimeTask}
-                          onArchiveProjectConversations={onArchiveProjectConversations}
-                          onToggleRuntimeTaskNotification={onToggleRuntimeTaskNotification}
-                          onOpenLocalHarnessSession={onOpenLocalHarnessSession}
-                          onCloseLocalHarnessSession={onCloseLocalHarnessSession}
+                  {displayedProjectsExpanded && (
+                    <>
+                      {showEmptyProjectCreateAction && gitCloneOperations.length === 0 && (
+                        <DesktopSidebarNavItem
+                          icon={Plus}
+                          label={t('workbench.new_project', '新建项目')}
+                          testId="projects-empty-create-button"
+                          onClick={openProjectCreateDialog}
                         />
                       )}
-                    />
+                      {gitCloneOperations.length > 0 && (
+                        <div
+                          data-testid="git-clone-project-operations"
+                          className="mb-1 space-y-0.5"
+                        >
+                          {gitCloneOperations.map(operation => (
+                            <div
+                              key={operation.id}
+                              data-testid={`git-clone-project-operation-${operation.id}`}
+                              className="flex min-h-[30px] items-center gap-2 rounded-[10px] px-2.5 text-sm text-[rgb(var(--color-sidebar-text-primary))]"
+                              title={operation.error || operation.targetPath}
+                            >
+                              {operation.status !== 'failed' ? (
+                                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+                              ) : (
+                                <span className="h-2 w-2 shrink-0 rounded-full bg-red-500" />
+                              )}
+                              <span className="min-w-0 flex-1 truncate">{operation.name}</span>
+                              <span className="shrink-0 text-xs text-[rgb(var(--color-sidebar-text-muted))]">
+                                {operation.status === 'cloning'
+                                  ? t('workbench.remote_project_git_cloning', '克隆中')
+                                  : operation.status === 'opening'
+                                    ? t('workbench.remote_project_git_opening', '添加中')
+                                    : operation.failureReason === 'executor-offline'
+                                      ? t('workbench.remote_project_device_offline', '设备离线')
+                                      : operation.failureStage === 'open'
+                                        ? t('workbench.remote_project_git_open_failed', '添加失败')
+                                        : t('workbench.remote_project_git_failed', '克隆失败')}
+                              </span>
+                              {operation.status === 'failed' && (
+                                <>
+                                  <button
+                                    type="button"
+                                    data-testid={`retry-git-clone-project-${operation.id}`}
+                                    onClick={() => onRetryGitCloneOperation?.(operation)}
+                                    className="flex h-7 w-7 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
+                                    aria-label={t('workbench.retry', '重试')}
+                                  >
+                                    <RotateCw className="h-3.5 w-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    data-testid={`dismiss-git-clone-project-${operation.id}`}
+                                    onClick={() => onDismissGitCloneOperation?.(operation.id)}
+                                    className="flex h-7 w-7 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
+                                    aria-label={t('workbench.remove', '移除')}
+                                  >
+                                    <X className="h-3.5 w-3.5" />
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {sidebarProjects.length > 0 && (
+                        <SidebarSortableList
+                          testId="runtime-project-sortable-list"
+                          className="space-y-1"
+                          items={regularSortableProjects}
+                          getId={({ project, runtimeProjectWork }) =>
+                            runtimeProjectWork
+                              ? `${sidebarStateDeviceId || runtimeProjectWork.project.stateDeviceId || 'device'}:${getRuntimeProjectSidebarStateKey(runtimeProjectWork.project)}`
+                              : `project:${project.id}`
+                          }
+                          getLabel={({ project }) => project.name}
+                          canDrag={({ runtimeProjectWork }) =>
+                            Boolean(runtimeProjectWork?.project.key && onReorderRuntimeProjects)
+                          }
+                          onMove={async (moved, before) => {
+                            const movedRuntimeProject = moved.runtimeProjectWork
+                            if (!movedRuntimeProject || !onReorderRuntimeProjects) {
+                              throw new Error('Runtime project ordering is unavailable')
+                            }
+                            const request = getRuntimeProjectReorderRequest(
+                              movedRuntimeProject,
+                              before?.runtimeProjectWork,
+                              sidebarStateDeviceId
+                            )
+                            if (!request) throw new Error('Runtime project ordering is unavailable')
+                            await onReorderRuntimeProjects(request)
+                          }}
+                          renderItem={({ project, runtimeProjectWork }) => (
+                            <ProjectItem
+                              project={project}
+                              expanded={displayedExpandedProjectIds.has(project.id)}
+                              localHarnessSessions={
+                                localHarnessSessionsByProjectId.get(project.id) ?? []
+                              }
+                              activeLocalHarnessSessionId={activeLocalHarnessSessionId}
+                              devices={devices}
+                              runtimeProjectWork={runtimeProjectWork}
+                              currentRuntimeTask={currentRuntimeTask}
+                              splitGroupMemberships={splitGroupMemberships}
+                              unreadTaskKeys={visibleUnreadRuntimeTaskKeys}
+                              imNotificationSettings={imNotificationSettings}
+                              showDeviceMarker={false}
+                              sidebarStateDeviceId={sidebarStateDeviceId}
+                              onToggleProject={handleToggleProject}
+                              onStartNewProjectChat={onStartNewProjectChat}
+                              onRemoveProject={onRemoveProject}
+                              onCreatePermanentWorktree={onCreatePermanentWorktree}
+                              onReorderRuntimeProjects={onReorderRuntimeProjects}
+                              onSetRuntimeProjectPinned={onSetRuntimeProjectPinned}
+                              onSetRuntimeProjectAppearance={onSetRuntimeProjectAppearance}
+                              onReorderRuntimeProjectTasks={onReorderRuntimeProjectTasks}
+                              onSetRuntimeTaskPinned={onSetRuntimeTaskPinned}
+                              onRenameProject={openProjectEditor}
+                              onOpenRuntimeTask={onOpenRuntimeTask}
+                              onMarkRuntimeTaskRead={onMarkRuntimeTaskRead}
+                              onRenameRuntimeTask={onRenameRuntimeTask}
+                              onArchiveRuntimeTask={onArchiveRuntimeTask}
+                              onArchiveProjectConversations={onArchiveProjectConversations}
+                              onToggleRuntimeTaskNotification={onToggleRuntimeTaskNotification}
+                              onOpenLocalHarnessSession={onOpenLocalHarnessSession}
+                              onCloseLocalHarnessSession={onCloseLocalHarnessSession}
+                            />
+                          )}
+                        />
+                      )}
+                    </>
                   )}
                 </section>
 
@@ -4469,6 +4540,8 @@ export function DesktopSidebar({
             onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
             onListDeviceDirectories={onListDeviceDirectories}
             onCreateDeviceDirectory={onCreateDeviceDirectory}
+            onCloneGitRepository={onCloneGitRepository}
+            onStartGitCloneProject={onStartGitCloneProject}
             onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
             onGetRemoteDeviceStartupCommand={onGetRemoteDeviceStartupCommand}
             onRefreshDevices={onRefreshDevices}

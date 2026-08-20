@@ -5,6 +5,8 @@ const WEWORK_RUNTIME_NAMESPACE = '/wework-runtime'
 const REQUEST_EVENT = 'runtime:request'
 const RUNTIME_EVENT = 'runtime:event'
 const ACK_TIMEOUT_MS = 75_000
+const COMMAND_ACK_GRACE_MS = 10_000
+const MAX_COMMAND_TIMEOUT_SECONDS = 600
 
 interface RuntimeIpcClientOptions {
   socketBaseUrl: string
@@ -76,11 +78,16 @@ async function emitRuntimeRequest<T>(
   if (!targetDeviceId) {
     throw new Error(`Cloud runtime request ${method} missing deviceId`)
   }
+  const relayTimeoutSeconds = resolveRelayTimeoutSeconds(method, params)
+  const acknowledgementTimeoutMs =
+    method === 'device.execute_command'
+      ? relayTimeoutSeconds * 1000 + COMMAND_ACK_GRACE_MS
+      : ACK_TIMEOUT_MS
 
   return new Promise<T>((resolve, reject) => {
     const timeout = window.setTimeout(() => {
       reject(new Error(`${method} timed out`))
-    }, ACK_TIMEOUT_MS)
+    }, acknowledgementTimeoutMs)
 
     client.socket.emit(
       REQUEST_EVENT,
@@ -90,7 +97,7 @@ async function emitRuntimeRequest<T>(
         method,
         params,
         device_id: targetDeviceId,
-        timeout_seconds: Math.ceil(ACK_TIMEOUT_MS / 1000),
+        timeout_seconds: relayTimeoutSeconds,
       },
       (ack: RuntimeIpcAck<T> | undefined) => {
         window.clearTimeout(timeout)
@@ -106,6 +113,17 @@ async function emitRuntimeRequest<T>(
       }
     )
   })
+}
+
+function resolveRelayTimeoutSeconds(method: string, params: Record<string, unknown>): number {
+  if (method !== 'device.execute_command') {
+    return Math.ceil(ACK_TIMEOUT_MS / 1000)
+  }
+  const requested = params.timeout_seconds
+  if (typeof requested !== 'number' || !Number.isFinite(requested) || requested <= 0) {
+    return Math.ceil(ACK_TIMEOUT_MS / 1000)
+  }
+  return Math.min(Math.ceil(requested), MAX_COMMAND_TIMEOUT_SECONDS)
 }
 
 function formatRuntimeIpcError(ack: RuntimeIpcAck<unknown>): string {
