@@ -1224,6 +1224,24 @@ async fn running_codex_transcript_uses_live_cache_without_provider_read() {
     );
     handler.upsert_local_task(link);
     start_test_execution(&handler, "task-1");
+    handler.begin_active_codex_transcript("task-1", "turn-completed");
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-completed",
+        &json!({
+            "method": "item/completed",
+            "params": {
+                "turnId": "turn-completed",
+                "item": {
+                    "id": "message-completed",
+                    "type": "agentMessage",
+                    "phase": "final_answer",
+                    "text": "Initial implementation complete"
+                }
+            }
+        }),
+    );
+    handler.persist_and_clear_active_codex_transcript("task-1", "completed");
     handler.begin_active_codex_transcript("task-1", "turn-live");
     handler.record_active_codex_transcript_item(
         "task-1",
@@ -1254,11 +1272,97 @@ async fn running_codex_transcript_uses_live_cache_without_provider_read() {
         .expect("running transcript should use the live cache");
 
     assert_eq!(transcript["running"], true);
-    assert_eq!(transcript["messages"].as_array().unwrap().len(), 2);
+    assert_eq!(transcript["messages"].as_array().unwrap().len(), 3);
     assert_eq!(transcript["messages"][0]["content"], "Implement quicksort");
     assert_eq!(
-        transcript["messages"][1]["blocks"][0]["content"],
+        transcript["messages"][1]["content"],
+        "Initial implementation complete"
+    );
+    assert_eq!(
+        transcript["messages"][2]["blocks"][0]["content"],
         "Writing quicksort"
+    );
+}
+
+#[tokio::test]
+async fn completed_codex_turn_is_cached_before_automatic_continuation_finishes() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    let mut link = RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.thread_id = Some("thread-1".to_owned());
+    set_runtime_handle_messages(
+        &mut link.runtime_handle,
+        vec![json!({
+            "id": "user-1",
+            "role": "user",
+            "content": "Keep the goal active",
+            "createdAt": 1_780_000_000_000_i64,
+        })],
+    );
+    handler.upsert_local_task(link);
+    start_test_execution(&handler, "task-1");
+    handler.begin_active_codex_transcript("task-1", "turn-initial");
+    handler.persist_completed_codex_turn_from_notification(
+        "task-1",
+        &json!({
+            "method": "turn/completed",
+            "params": {
+                "threadId": "thread-1",
+                "turn": {
+                    "id": "turn-initial",
+                    "status": "completed",
+                    "completedAt": 1_780_000_001,
+                    "items": [{
+                        "id": "message-initial",
+                        "type": "agentMessage",
+                        "phase": "final_answer",
+                        "text": "Initial goal turn complete"
+                    }]
+                }
+            }
+        }),
+    );
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-continuation",
+        &json!({
+            "method": "item/completed",
+            "params": {
+                "turnId": "turn-continuation",
+                "item": {
+                    "id": "message-continuation",
+                    "type": "agentMessage",
+                    "phase": "commentary",
+                    "text": "Automatic continuation running"
+                }
+            }
+        }),
+    );
+
+    let transcript = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "taskId": "task-1",
+                "workspacePath": "/tmp/project"
+            }
+        }))
+        .await
+        .expect("running transcript should retain the completed goal turn");
+
+    assert_eq!(transcript["running"], true);
+    assert_eq!(transcript["messages"].as_array().unwrap().len(), 3);
+    assert_eq!(transcript["messages"][0]["content"], "Keep the goal active");
+    assert_eq!(
+        transcript["messages"][1]["content"],
+        "Initial goal turn complete"
+    );
+    assert_eq!(
+        transcript["messages"][2]["blocks"][0]["content"],
+        "Automatic continuation running"
     );
 }
 

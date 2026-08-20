@@ -232,7 +232,16 @@ impl RuntimeWorkRpcHandler {
                 .filter(|link| runtime_has_provider_transcript_reader(&link.runtime))
             {
                 let mut messages = cached_runtime_transcript_messages(link);
+                messages.extend(completed_transcript_messages(link));
                 messages.extend(self.active_codex_transcript_messages(&local_task_id));
+                let presentation_page_messages = messages.clone();
+                attach_user_message_presentations_for_page(
+                    &mut messages,
+                    user_message_presentations(link),
+                    &presentation_page_messages,
+                    false,
+                    false,
+                );
                 log_runtime_transcript_finished(RuntimeTranscriptLog {
                     started_at,
                     local_task_id: &local_task_id,

@@ -7,14 +7,11 @@ use serde_json::{Map, Value};
 use super::response::RuntimeTaskLink;
 
 pub(crate) fn cached_messages(link: &RuntimeTaskLink) -> Vec<Value> {
-    link.runtime_handle
-        .get("messages")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter(|message| message.is_object())
-        .cloned()
-        .collect()
+    runtime_handle_messages(&link.runtime_handle, "messages")
+}
+
+pub(crate) fn completed_transcript_messages(link: &RuntimeTaskLink) -> Vec<Value> {
+    runtime_handle_messages(&link.runtime_handle, "completedTranscriptMessages")
 }
 
 pub(crate) fn set_runtime_handle_messages(runtime_handle: &mut Value, messages: Vec<Value>) {
@@ -29,6 +26,24 @@ pub(crate) fn set_runtime_handle_messages(runtime_handle: &mut Value, messages: 
 
 pub(crate) fn append_runtime_handle_message(runtime_handle: &mut Value, message: Value) {
     runtime_handle_messages_mut(runtime_handle).push(message);
+}
+
+pub(crate) fn append_completed_transcript_messages(
+    runtime_handle: &mut Value,
+    messages: Vec<Value>,
+) {
+    let completed_messages =
+        runtime_handle_array_mut(runtime_handle, "completedTranscriptMessages");
+    for message in messages {
+        let message_id = message.get("id").and_then(Value::as_str);
+        if let Some(existing) = completed_messages.iter_mut().find(|existing| {
+            message_id.is_some() && existing.get("id").and_then(Value::as_str) == message_id
+        }) {
+            *existing = message;
+        } else {
+            completed_messages.push(message);
+        }
+    }
 }
 
 pub(crate) fn clear_runtime_handle_messages(runtime_handle: &mut Value) {
@@ -72,6 +87,17 @@ pub(crate) fn append_runtime_handle_user_message_presentation(
 
 fn runtime_handle_messages_mut(runtime_handle: &mut Value) -> &mut Vec<Value> {
     runtime_handle_array_mut(runtime_handle, "messages")
+}
+
+fn runtime_handle_messages(runtime_handle: &Value, key: &str) -> Vec<Value> {
+    runtime_handle
+        .get(key)
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|message| message.is_object())
+        .cloned()
+        .collect()
 }
 
 fn runtime_handle_user_message_presentations_mut(runtime_handle: &mut Value) -> &mut Vec<Value> {

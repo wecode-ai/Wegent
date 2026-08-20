@@ -643,6 +643,10 @@ impl RuntimeWorkRpcHandler {
                 while let Some(message) = notification_rx.recv().await {
                     mapper_handler
                         .sync_runtime_task_goal_from_notification(&mapper_local_task_id, &message);
+                    mapper_handler.persist_completed_codex_turn_from_notification(
+                        &mapper_local_task_id,
+                        &message,
+                    );
                     let active_turn = mapper_hook_turn
                         .lock()
                         .expect("hook turn context lock should not be poisoned")
@@ -802,7 +806,7 @@ impl RuntimeWorkRpcHandler {
                     }),
                 );
                 let _ = mapper_handle.await;
-                handler.clear_active_codex_transcript(&turn_local_task_id);
+                handler.persist_and_clear_active_codex_transcript(&turn_local_task_id, "cancelled");
                 handler.finish_local_task(&turn_local_task_id, execution_id, None, "cancelled");
                 handler.clear_active_codex_turn(&turn_local_task_id, execution_id);
                 handler.mark_thread_event_routes_idle_for_local_task(&turn_local_task_id);
@@ -811,7 +815,18 @@ impl RuntimeWorkRpcHandler {
             }
 
             let _ = mapper_handle.await;
-            handler.clear_active_codex_transcript(&turn_local_task_id);
+            let transcript_status = match result.as_ref() {
+                Ok(turn) => match turn.outcome {
+                    ExecutionOutcome::Completed { .. }
+                    | ExecutionOutcome::WaitingForUserInput { .. } => "completed",
+                    ExecutionOutcome::Cancelled { .. } => "cancelled",
+                    ExecutionOutcome::Failed { .. } => "failed",
+                    ExecutionOutcome::Running => "inProgress",
+                },
+                Err(_) => "failed",
+            };
+            handler
+                .persist_and_clear_active_codex_transcript(&turn_local_task_id, transcript_status);
             let active_turn = hook_turn
                 .lock()
                 .expect("hook turn context lock should not be poisoned")
