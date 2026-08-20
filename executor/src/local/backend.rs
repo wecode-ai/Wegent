@@ -665,13 +665,47 @@ where
         Arc::new(move |payload| {
             let capability_sync_handler = capability_sync_handler.clone();
             Box::pin(async move {
-                let Some(handler) = capability_sync_handler else {
-                    return Some(json!({
+                let started_at = Instant::now();
+                write_executor_log_line(&format_executor_log(
+                    "device capability sync started",
+                    &[(
+                        "mode",
+                        payload
+                            .get("mode")
+                            .and_then(Value::as_str)
+                            .unwrap_or("merge")
+                            .to_owned(),
+                    )],
+                ));
+                let response = match capability_sync_handler {
+                    Some(handler) => handler.handle_sync_capabilities(payload).await,
+                    None => json!({
                         "success": false,
                         "error": "Capability sync handler is not available",
-                    }));
+                    }),
                 };
-                Some(handler.handle_sync_capabilities(payload).await)
+                write_executor_log_line(&format_executor_log(
+                    "device capability sync finished",
+                    &[
+                        ("elapsed_ms", started_at.elapsed().as_millis().to_string()),
+                        (
+                            "ok",
+                            response
+                                .get("success")
+                                .and_then(Value::as_bool)
+                                .unwrap_or(false)
+                                .to_string(),
+                        ),
+                        (
+                            "error",
+                            response
+                                .get("error")
+                                .map(Value::to_string)
+                                .unwrap_or_default(),
+                        ),
+                    ],
+                ));
+                Some(response)
             })
         })
     }
