@@ -69,6 +69,8 @@ interface TaskActivityViewProps {
   // message list and a composer pinned to the bottom
   rail?: boolean
   linear?: boolean
+  workflowManagerRunId?: string | null
+  onWorkflowManagerExecutionChange?: (action: (() => void) | null) => void
 }
 
 interface TaskCardQueuedReply extends RuntimePaneQueuedMessage {
@@ -90,6 +92,8 @@ export function TaskActivityView({
   selfManagedExecution = false,
   rail = false,
   linear = false,
+  workflowManagerRunId = null,
+  onWorkflowManagerExecutionChange,
 }: TaskActivityViewProps) {
   const { t } = useTranslation('common')
   const { services, state, createProjectRuntimeTask, cancelRuntimeTask, sendRuntimePaneMessage } =
@@ -212,6 +216,66 @@ export function TaskActivityView({
   const taskAiMessageId = task.ai_state?.project_chat_message_id
   const taskAiRuntimeDeviceId = task.ai_state?.runtime_device_id
   const taskAiRuntimeTaskId = task.ai_state?.runtime_task_id
+  const workflowManagerMessage = useMemo(
+    () =>
+      workflowManagerRunId
+        ? messages.find(
+            message => String(message.metadata.automation_run_id ?? '') === workflowManagerRunId
+          )
+        : undefined,
+    [messages, workflowManagerRunId]
+  )
+  const workflowManagerRuntimeAddress = useMemo(() => {
+    const address = workflowManagerMessage?.runtimeAddress
+    if (!address?.deviceId || !address.taskId) return null
+    return findRuntimeTask(state.runtimeWork, address) ? address : null
+  }, [state.runtimeWork, workflowManagerMessage])
+  const workflowManagerBackendExecution = useMemo(
+    () => (workflowManagerMessage ? backendTaskExecution(workflowManagerMessage) : null),
+    [workflowManagerMessage]
+  )
+  const openWorkflowManagerExecution = useCallback(() => {
+    if (!workflowManagerMessage) return
+    if (workflowManagerRuntimeAddress) {
+      setExecutionDetail({
+        address: workflowManagerRuntimeAddress,
+        senderName: workflowManagerMessage.sender.name,
+        runId:
+          typeof workflowManagerMessage.metadata.run_id === 'string'
+            ? workflowManagerMessage.metadata.run_id
+            : null,
+        modelName:
+          typeof workflowManagerMessage.metadata.model === 'string'
+            ? workflowManagerMessage.metadata.model
+            : null,
+        runStatus: resolveMessageRunStatus(task.ai_state, workflowManagerMessage),
+      })
+      return
+    }
+    if (workflowManagerBackendExecution) {
+      void openExternalUrl(workflowManagerBackendExecution.executionUrl)
+    }
+  }, [
+    task.ai_state,
+    workflowManagerBackendExecution,
+    workflowManagerMessage,
+    workflowManagerRuntimeAddress,
+  ])
+
+  useEffect(() => {
+    if (!onWorkflowManagerExecutionChange) return
+    const available = Boolean(
+      workflowManagerMessage && (workflowManagerRuntimeAddress || workflowManagerBackendExecution)
+    )
+    onWorkflowManagerExecutionChange(available ? openWorkflowManagerExecution : null)
+    return () => onWorkflowManagerExecutionChange(null)
+  }, [
+    onWorkflowManagerExecutionChange,
+    openWorkflowManagerExecution,
+    workflowManagerBackendExecution,
+    workflowManagerMessage,
+    workflowManagerRuntimeAddress,
+  ])
 
   useEffect(() => {
     const agentApi = projectChatAgentApi ?? services.projectChatAgentApi

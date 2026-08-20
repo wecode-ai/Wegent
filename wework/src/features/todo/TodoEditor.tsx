@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -17,6 +18,7 @@ import {
   CircleUserRound,
   Copy,
   Download,
+  ExternalLink,
   File,
   FileText,
   Flag,
@@ -685,6 +687,9 @@ export function TodoEditor(props: TodoEditorProps) {
     plan: WorkflowPlan | null
   } | null>(null)
   const [workflowPlanBusy, setWorkflowPlanBusy] = useState(false)
+  const [openWorkflowManagerExecution, setOpenWorkflowManagerExecution] = useState<
+    (() => void) | null
+  >(null)
   const [workflowPlanErrorState, setWorkflowPlanErrorState] = useState<{
     itemId: string
     error: string | null
@@ -871,6 +876,9 @@ export function TodoEditor(props: TodoEditorProps) {
   }[workflowPlanStatus]
   const planItems = workflowPlan?.items ?? []
   const workflowManager = workflowPlan?.manager_run
+  const registerWorkflowManagerExecution = useCallback((action: (() => void) | null) => {
+    setOpenWorkflowManagerExecution(() => action)
+  }, [])
   const rawWorkflowError = workflowManager?.error || workflowPlanError || ''
   const workflowError =
     rawWorkflowError || workflowPlanStatus === 'failed'
@@ -1303,6 +1311,8 @@ export function TodoEditor(props: TodoEditorProps) {
         projectChatAgentApi={props.projectChatAgentApi}
         localProjects={props.localProjects}
         selfManagedExecution={props.selfManagedExecution}
+        workflowManagerRunId={workflowManager?.id}
+        onWorkflowManagerExecutionChange={registerWorkflowManagerExecution}
         linear
       />
     ) : null
@@ -2022,7 +2032,8 @@ export function TodoEditor(props: TodoEditorProps) {
                           {workflowPlan.summary}
                         </p>
                       ) : null}
-                      {['planning', 'failed', 'paused'].includes(workflowPlanStatus) ? (
+                      {workflowManager ||
+                      ['planning', 'failed', 'paused'].includes(workflowPlanStatus) ? (
                         <div
                           className="mt-2 rounded-lg border border-border bg-background px-3 py-2"
                           data-testid="cloud-todo-workflow-manager-run"
@@ -2032,12 +2043,23 @@ export function TodoEditor(props: TodoEditorProps) {
                             <span className="font-medium text-text-primary">
                               {t('todo.workflow_manager')}
                             </span>
-                            <span className="text-text-muted">
+                            <span className="min-w-0 flex-1 truncate text-text-muted">
                               {workflowManager?.recent_activity ||
                                 (workflowPlanStatus === 'planning'
                                   ? t('todo.workflow_manager_entering_queue')
                                   : workflowPlanStatusLabel)}
                             </span>
+                            {openWorkflowManagerExecution ? (
+                              <button
+                                type="button"
+                                data-testid="cloud-todo-workflow-manager-open-execution"
+                                onClick={openWorkflowManagerExecution}
+                                className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
+                              >
+                                <ExternalLink className="h-3.5 w-3.5" />
+                                {t('workbench.task_activity_view_execution')}
+                              </button>
+                            ) : null}
                           </div>
                           <p className="mt-1 truncate text-xs text-text-muted">
                             {[workflowManager?.model, workflowManager?.device_id]
