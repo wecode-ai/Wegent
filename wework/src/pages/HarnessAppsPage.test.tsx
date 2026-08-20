@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => ({
   t: vi.fn((_key: string, fallback?: string) => fallback ?? _key),
   unregister: vi.fn(),
   unregisterProxy: vi.fn(),
+  unregisterContext: vi.fn(),
 }))
 
 vi.mock('@/api/local/harnessApps', () => ({
@@ -48,11 +49,13 @@ vi.mock('@/features/harness-apps/harnessAppTabs', async importOriginal => {
     storeHarnessAppProxyToken: async (installationId: string, token: string) => {
       mocks.proxyTokens.set(installationId, token)
     },
+    storeHarnessAppContextToken: async () => undefined,
     takeHarnessAppProxyToken: async (installationId: string) => {
       const token = mocks.proxyTokens.get(installationId) ?? null
       mocks.proxyTokens.delete(installationId)
       return token
     },
+    takeHarnessAppContextToken: async () => null,
     unregisterHarnessAppTab: mocks.unregister,
   }
 })
@@ -80,6 +83,7 @@ vi.mock('@/features/workbench/useWorkbench', () => ({
       localHarnessModelApi: {
         resolveLaunch: mocks.resolveLaunch,
         unregisterProxy: mocks.unregisterProxy,
+        unregisterContext: mocks.unregisterContext,
       },
     },
   }),

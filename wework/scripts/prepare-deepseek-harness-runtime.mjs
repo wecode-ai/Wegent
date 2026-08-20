@@ -1,4 +1,4 @@
-import { access, cp, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { access, cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { createReadStream, createWriteStream } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { pipeline } from 'node:stream/promises'
@@ -25,8 +25,23 @@ const temporaryArchive = path.join(cacheDirectory, `wework-deepseek-harness-${pr
 const temporaryTar = temporaryArchive.slice(0, -3)
 const temporaryMetadata = `${temporaryArchive}.json`
 const sourceFiles = ['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', '.npmrc']
+const pluginDirectory = 'plugins'
 const archiveFormatVersion = 'tar-gzip-fast-v2'
 const assetDirectory = path.join(cacheDirectory, 'deepseek-harness-runtime-assets')
+
+async function listFiles(directory, relative = '') {
+  const entries = await readdir(path.join(directory, relative), { withFileTypes: true })
+  const files = []
+  for (const entry of entries) {
+    const child = path.join(relative, entry.name)
+    if (entry.isDirectory()) {
+      files.push(...(await listFiles(directory, child)))
+    } else if (entry.isFile()) {
+      files.push(child)
+    }
+  }
+  return files
+}
 
 function run(command, args, cwd, environment = {}) {
   return new Promise((resolve, reject) => {
@@ -90,10 +105,16 @@ if (process.argv.includes('--clean')) {
   process.exit(0)
 }
 
-const sourceContents = await Promise.all([
-  ...sourceFiles.map(file => readFile(path.join(source, file))),
-  readFile(nodeEntitlements),
-])
+const pluginFiles = await listFiles(path.join(source, pluginDirectory))
+const sourceEntries = [
+  ...sourceFiles.map(file => ({ name: file, path: path.join(source, file) })),
+  ...pluginFiles.map(file => ({
+    name: path.join(pluginDirectory, file),
+    path: path.join(source, pluginDirectory, file),
+  })),
+  { name: 'deepseek-harness-node-entitlements', path: nodeEntitlements },
+]
+const sourceContents = await Promise.all(sourceEntries.map(entry => readFile(entry.path)))
 const sourceFingerprint = createHash('sha256')
   .update(archiveFormatVersion)
   .update('\0')
@@ -101,7 +122,11 @@ const sourceFingerprint = createHash('sha256')
   .update('\0')
   .update(macosSigningFingerprint(process.platform, process.env.APPLE_SIGNING_IDENTITY))
   .update('\0')
-  .update(sourceContents.map(content => content.toString('base64')).join('\0'))
+  .update(
+    sourceEntries
+      .map((entry, index) => `${entry.name}\0${sourceContents[index].toString('base64')}`)
+      .join('\0')
+  )
   .digest('hex')
 const assetName = `deepseek-harness-runtime-${runtimePlatform()}-${sourceFingerprint}.tar.gz`
 const assetPath = path.join(assetDirectory, assetName)
@@ -136,6 +161,13 @@ try {
   await rm(temporaryMetadata, { force: true })
   await mkdir(staging, { recursive: true })
   await Promise.all(sourceFiles.map(file => cp(path.join(source, file), path.join(staging, file))))
+  await Promise.all(
+    pluginFiles.map(async file => {
+      const destination = path.join(staging, pluginDirectory, file)
+      await mkdir(path.dirname(destination), { recursive: true })
+      await cp(path.join(source, pluginDirectory, file), destination)
+    })
+  )
   await run(pnpmCommand, ['install', '--prod', '--frozen-lockfile'], staging)
 
   const nodeDirectory = path.join(staging, 'node', 'bin')

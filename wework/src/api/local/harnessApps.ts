@@ -53,10 +53,17 @@ export const harnessAppsApi = {
       modelKey,
     })
   },
-  start(installationId: string, modelBaseUrl: string | null) {
+  start(
+    installationId: string,
+    modelBaseUrl: string | null,
+    contextBaseUrl: string | null = null,
+    contextToken: string | null = null
+  ) {
     return invoke<HarnessAppInstallation>('start_harness_app', {
       installationId,
       modelBaseUrl,
+      contextBaseUrl,
+      contextToken,
     })
   },
   stop(installationId: string) {
