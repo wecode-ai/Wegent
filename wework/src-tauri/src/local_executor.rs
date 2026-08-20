@@ -600,6 +600,7 @@ pub struct BundledPluginMarketplace {
     id: String,
     path: String,
     plugin_count: usize,
+    default_plugin_names: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1571,6 +1572,35 @@ fn marketplace_plugin_names(manifest_path: &Path) -> Result<HashSet<String>, Str
     Ok(names)
 }
 
+fn marketplace_default_plugin_names(manifest_path: &Path) -> Result<Vec<String>, String> {
+    let content = fs::read_to_string(manifest_path)
+        .map_err(|error| format!("failed to read {}: {error}", manifest_path.display()))?;
+    let manifest: Value = serde_json::from_str(&content)
+        .map_err(|error| format!("invalid marketplace {}: {error}", manifest_path.display()))?;
+    let plugins = manifest
+        .get("plugins")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            format!(
+                "marketplace {} must contain a plugins array",
+                manifest_path.display()
+            )
+        })?;
+    let mut names = plugins
+        .iter()
+        .filter(|plugin| {
+            plugin
+                .pointer("/policy/installation")
+                .and_then(Value::as_str)
+                == Some("INSTALLED_BY_DEFAULT")
+        })
+        .filter_map(|plugin| plugin.get("name").and_then(Value::as_str))
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    names.sort();
+    Ok(names)
+}
+
 fn remove_bundled_marketplace_path(path: &Path) -> Result<(), String> {
     if path.is_dir() {
         fs::remove_dir_all(path)
@@ -1591,6 +1621,7 @@ fn initialize_bundled_plugin_marketplace_from_paths(
     let claude_manifest = source.join(".claude-plugin/marketplace.json");
     let codex_plugins = marketplace_plugin_names(&codex_manifest)?;
     let claude_plugins = marketplace_plugin_names(&claude_manifest)?;
+    let default_plugin_names = marketplace_default_plugin_names(&codex_manifest)?;
     if codex_plugins != claude_plugins {
         return Err(
             "Bundled Codex and Claude Code marketplace plugin names must match".to_string(),
@@ -1626,6 +1657,7 @@ fn initialize_bundled_plugin_marketplace_from_paths(
         id: WEWORK_PERSONAL_MARKETPLACE_ID.to_string(),
         path: destination.display().to_string(),
         plugin_count: codex_plugins.len(),
+        default_plugin_names,
     })
 }
 
@@ -6081,6 +6113,7 @@ mod tests {
 
         assert_eq!(first.id, WEWORK_PERSONAL_MARKETPLACE_ID);
         assert_eq!(first.plugin_count, 0);
+        assert!(first.default_plugin_names.is_empty());
         assert_eq!(first.path, second.path);
         assert!(destination
             .join(".agents/plugins/marketplace.json")
@@ -6089,6 +6122,46 @@ mod tests {
             .join(".claude-plugin/marketplace.json")
             .is_file());
         assert!(!destination.join("stale.txt").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn exposes_bundled_plugins_marked_for_default_installation() {
+        let root = import_test_root("bundled-plugin-marketplace-defaults");
+        let source = root.join("source");
+        let destination = root.join("destination/wework-personal");
+        fs::create_dir_all(source.join(".agents/plugins")).unwrap();
+        fs::create_dir_all(source.join(".claude-plugin")).unwrap();
+        fs::write(
+            source.join(".agents/plugins/marketplace.json"),
+            r#"{
+  "name": "wework-personal",
+  "plugins": [
+    {"name":"available","policy":{"installation":"AVAILABLE"}},
+    {"name":"smart-app-builder","policy":{"installation":"INSTALLED_BY_DEFAULT"}}
+  ]
+}"#,
+        )
+        .unwrap();
+        fs::write(
+            source.join(".claude-plugin/marketplace.json"),
+            r#"{
+  "name": "wework-personal",
+  "plugins": [
+    {"name":"available"},
+    {"name":"smart-app-builder"}
+  ]
+}"#,
+        )
+        .unwrap();
+
+        let initialized =
+            initialize_bundled_plugin_marketplace_from_paths(&source, &destination).unwrap();
+
+        assert_eq!(
+            initialized.default_plugin_names,
+            vec!["smart-app-builder".to_string()]
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
