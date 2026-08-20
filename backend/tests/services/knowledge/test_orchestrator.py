@@ -343,7 +343,9 @@ class TestKnowledgeOrchestrator:
                 return_value=(profile, 1, {"status": "valid", "fallback_reason": None}),
             ),
             patch.object(orchestrator, "get_default_retriever") as mock_get_retriever,
-            patch.object(orchestrator, "get_default_embedding_model") as mock_get_embedding,
+            patch.object(
+                orchestrator, "get_default_embedding_model"
+            ) as mock_get_embedding,
         ):
             result = orchestrator._resolve_retrieval_config(
                 db=mock_db,
