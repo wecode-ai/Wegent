@@ -139,6 +139,7 @@ import {
   getRememberedStandaloneDeviceId,
   getDefaultProjectDeviceWorkspaceId,
   readLastProjectId,
+  resolveComposerProjectPluginNames,
   writeLastProjectId,
 } from './workbenchRuntimeHelpers'
 import {
@@ -2016,23 +2017,12 @@ export function WorkbenchProvider({
   const stableLoadTurnFileChangesDiff = useStableEvent(runtimeMessaging.loadTurnFileChangesDiff)
   const stableRevertTurnFileChanges = useStableEvent(runtimeMessaging.revertTurnFileChanges)
   const projectPluginNamesKey = useMemo<string | null>(() => {
-    let names: string[]
-    if (state.currentRuntimeTask) {
-      const task = findRuntimeTask(state.runtimeWork, state.currentRuntimeTask)
-      if (!task?.projectPluginIds) return null
-      names = task.projectPluginIds.map(id => {
-        const separator = id.lastIndexOf('@')
-        return separator > 0 ? id.slice(0, separator) : id
-      })
-    } else {
-      if (!state.currentProject || !state.runtimeWork) return null
-      const runtimeProject = state.runtimeWork.projects.find(
-        item => runtimeProjectUiId(item.project) === state.currentProject?.id
-      )?.project
-      if (runtimeProject?.source !== 'local_project') return null
-      names = (runtimeProject.aiSettings?.plugins ?? []).map(plugin => plugin.pluginName)
-    }
-    return JSON.stringify(Array.from(new Set(names)).sort())
+    const names = resolveComposerProjectPluginNames(
+      state.runtimeWork,
+      state.currentProject?.id,
+      state.currentRuntimeTask
+    )
+    return names === null ? null : JSON.stringify(names)
   }, [state.currentProject, state.currentRuntimeTask, state.runtimeWork])
   const projectPluginNames = useMemo<Set<string> | null>(
     () =>
