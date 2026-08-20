@@ -170,6 +170,10 @@ class IMNotificationDispatcher:
         user_id: int,
         address: dict[str, Any],
     ) -> list[IMPrivateSession]:
+        settings = await im_session_service.get_global_notification_settings(user_id)
+        if not settings.enabled:
+            return []
+
         active_sessions = await im_session_service.list_active_runtime_task_sessions(
             db,
             user_id=user_id,
@@ -188,8 +192,7 @@ class IMNotificationDispatcher:
         if subscribed_sessions:
             return _dedupe_sessions(subscribed_sessions)
 
-        settings = await im_session_service.get_global_notification_settings(user_id)
-        if not settings.enabled or not settings.session_key:
+        if not settings.session_key:
             return []
         if not await im_session_service.is_user_away_for_im_notifications(user_id):
             return []

@@ -4,6 +4,7 @@
 
 from datetime import datetime
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy.orm import Session
@@ -16,6 +17,13 @@ from app.services.subscription.notification_service import (
     subscription_notification_service,
 )
 from shared.utils.crypto import encrypt_sensitive_data
+
+
+@pytest.fixture(autouse=True)
+def isolate_im_session_cache(fake_im_session_cache: Any) -> Any:
+    """Keep dispatcher tests from mutating the developer's Redis state."""
+
+    return fake_im_session_cache
 
 
 def _create_channel(
@@ -354,6 +362,104 @@ async def test_runtime_task_update_suppresses_global_target_while_client_is_acti
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("target_kind", ["active", "subscribed"])
+async def test_runtime_task_update_master_switch_suppresses_session_targets(
+    test_db: Session,
+    test_user,
+    fake_im_session_cache,
+    monkeypatch: pytest.MonkeyPatch,
+    target_kind: str,
+) -> None:
+    address = {
+        "deviceId": "device-1",
+        "localTaskId": "codex-thread-1",
+    }
+    session = _create_session(
+        user_id=test_user.id,
+        channel_id=9413,
+        channel_type="dingtalk",
+        sender_id="sender-union-1",
+        proactive_recipient_id="staff-1",
+    )
+    await im_session_service.save_session(session)
+    if target_kind == "active":
+        await im_session_service.bind_active_runtime_task(
+            test_db,
+            session=session,
+            runtime_task=address,
+        )
+    else:
+        await im_session_service.subscribe_runtime_task_notification(
+            test_db,
+            session=session,
+            runtime_task=address,
+        )
+
+    send_text = AsyncMock(return_value={"success": True})
+    monkeypatch.setattr(im_notification_dispatcher, "send_text", send_text)
+
+    result = await im_notification_dispatcher.send_runtime_task_update(
+        test_db,
+        user_id=test_user.id,
+        address=address,
+        title="Native Codex task",
+        status="updated",
+        content="Suppressed update",
+        source="codex_watcher",
+    )
+
+    assert result == {"sent": 0, "results": []}
+    send_text.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_runtime_task_update_uses_active_session_when_master_switch_enabled(
+    test_db: Session,
+    test_user,
+    fake_im_session_cache,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    address = {
+        "deviceId": "device-1",
+        "localTaskId": "codex-thread-1",
+    }
+    session = _create_session(
+        user_id=test_user.id,
+        channel_id=9413,
+        channel_type="dingtalk",
+        sender_id="sender-union-1",
+        proactive_recipient_id="staff-1",
+    )
+    await im_session_service.save_session(session)
+    await im_session_service.bind_active_runtime_task(
+        test_db,
+        session=session,
+        runtime_task=address,
+    )
+    await im_session_service.enable_global_notification(test_db, session=session)
+    await im_session_service.update_im_notification_presence(
+        user_id=test_user.id,
+        client_id="wework-client",
+        away=False,
+    )
+    send_text = AsyncMock(return_value={"success": True})
+    monkeypatch.setattr(im_notification_dispatcher, "send_text", send_text)
+
+    result = await im_notification_dispatcher.send_runtime_task_update(
+        test_db,
+        user_id=test_user.id,
+        address=address,
+        title="Native Codex task",
+        status="updated",
+        content="Bound update",
+        source="codex_watcher",
+    )
+
+    assert result["sent"] == 1
+    send_text.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_runtime_task_update_uses_subscribed_native_codex_task(
     test_db: Session,
     test_user,
@@ -377,6 +483,7 @@ async def test_runtime_task_update_uses_subscribed_native_codex_task(
         "workspacePath": "/repo/Wegent",
     }
     await im_session_service.save_session(session)
+    await im_session_service.enable_global_notification(test_db, session=session)
     await im_session_service.update_im_notification_presence(
         user_id=test_user.id,
         client_id="wework-client",

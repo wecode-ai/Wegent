@@ -15,7 +15,8 @@ flowchart LR
     DEVICE --> WEWORK[Wework Runtime relay]
     DEVICE --> NORMALIZE[Terminal normalization]
     NORMALIZE --> DISPATCH[IMNotificationDispatcher]
-    REDIS --> DISPATCH
+    SWITCH[User proactive-notification master switch] --> DISPATCH
+    REDIS --> TARGET
     DISPATCH --> TARGET[Task binding / task subscription / global target]
     TARGET --> RECIPIENT[Session-scoped proactive-delivery identity]
     RECIPIENT --> IM[DingTalk and other IMs]
@@ -35,10 +36,17 @@ sequenceDiagram
     D->>W: Persist and relay the terminal event first
     D->>D: Normalize title, status, content, and source
     D->>N: deviceId + localTaskId + terminal update
-    N->>P: Read aggregate away state for a global target
-    N->>N: Select binding, subscription, or global target
-    N->>N: Read the target session's proactive-delivery identity
-    N-->>I: Send the task update
+    N->>P: Read the proactive-notification master switch
+    alt Master switch is off
+        N-->>N: Skip every proactive task notification
+    else Master switch is on
+        N->>N: Select binding, subscription, or global target
+        opt The global target is selected
+            N->>P: Read aggregate away state
+        end
+        N->>N: Read the target session's proactive-delivery identity
+        N-->>I: Send the task update
+    end
 ```
 
 | Boundary                         | Code ownership                                                 |
@@ -50,4 +58,4 @@ sequenceDiagram
 | Session selection and sending    | `backend/app/services/im/notification_dispatcher.py`           |
 | Session-scoped proactive identity | `backend/app/models/im_session.py`, channel handlers          |
 
-Invariants: `runtime:event` is the terminal-notification primary path for new executors, while `runtime.tasks.updated` remains only for older executors; the notification entry point accepts only the four terminal types `response.completed`, `response.failed`, `response.incomplete`, and `error`; notification identity is always `deviceId + localTaskId` and never `workspacePath`; an active task binding takes precedence over a task subscription, which takes precedence over the global target; only the global target is gated by aggregate away state, and it must not send while any fresh client is active; a turn with `source.source == "im"` must not echo a notification; the user-mapping mode determines only Wegent user ownership and never the outbound recipient; each DingTalk private session must store and use its own `sender_staff_id`, must not treat the session `sender_id` as a staffId, and must not borrow a staffId from another session owned by the same Wegent user; an existing session may be backfilled only when the user IM binding's `last_conversation_id` exactly matches that session; a successful terminal update requires non-empty answer content, while failures and cancellations may omit answer text; IM failures must not block Runtime persistence or the Wework relay; logs must not contain answer text, tokens, or channel secrets.
+Invariants: `runtime:event` is the terminal-notification primary path for new executors, while `runtime.tasks.updated` remains only for older executors; the notification entry point accepts only the four terminal types `response.completed`, `response.failed`, `response.incomplete`, and `error`; notification identity is always `deviceId + localTaskId` and never `workspacePath`; when the user's proactive-notification master switch is off, active task bindings, task subscriptions, and the global target must not receive proactive task messages such as “the task has a new AI reply,” while existing bindings and subscriptions remain configured without sending; after the master switch is enabled, an active task binding takes precedence over a task subscription, which takes precedence over the global target; only the global target is additionally gated by aggregate away state, and it must not send while any fresh client is active; a turn with `source.source == "im"` must not echo a notification, and the normal streaming-card response to an inbound IM message is a separate path unaffected by the proactive-notification master switch; the user-mapping mode determines only Wegent user ownership and never the outbound recipient; each DingTalk private session must store and use its own `sender_staff_id`, must not treat the session `sender_id` as a staffId, and must not borrow a staffId from another session owned by the same Wegent user; an existing session may be backfilled only when the user IM binding's `last_conversation_id` exactly matches that session; a successful terminal update requires non-empty answer content, while failures and cancellations may omit answer text; IM failures must not block Runtime persistence or the Wework relay; logs must not contain answer text, tokens, or channel secrets.
