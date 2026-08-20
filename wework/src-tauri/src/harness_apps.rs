@@ -984,13 +984,21 @@ fn prepare_instance_bundle(
             })
             .collect::<Vec<_>>()
             .join("\n");
-        if !replaced_provider || !replaced_model {
+        if replaced_provider != replaced_model {
             return Err(
-                "Harness app bundle does not expose provider/model fields for Wework binding"
+                "Harness app bundle exposes an incomplete provider/model pair for Wework binding"
                     .to_string(),
             );
         }
-        fs::write(&patch_path, format!("{patched}\n"))
+        let model_patch = if replaced_provider {
+            format!("{patched}\n")
+        } else {
+            format!(
+                "{patched}\n\n- id: agent-default-model\n  config:\n    provider: \
+                 wework-local\n    model: wework-selected\n"
+            )
+        };
+        fs::write(&patch_path, model_patch)
             .map_err(|error| format!("Failed to write instance model patch: {error}"))?;
     }
     Ok(install_package)

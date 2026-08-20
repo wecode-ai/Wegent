@@ -136,6 +136,68 @@ fn instance_patch_binds_provider_and_model() {
         .is_file());
 }
 
+#[test]
+fn instance_patch_adds_agent_default_model_when_the_bundle_has_no_model_fields() {
+    let directory = tempdir().unwrap();
+    let package = directory.path().join("package");
+    let bundle = package.join("packages/bundle/test");
+    fs::create_dir_all(&bundle).unwrap();
+    fs::write(
+        bundle.join("cordis.patch.yml"),
+        "- insert:\n    - id: scanner\n      name: scanner\n",
+    )
+    .unwrap();
+    let installation = HarnessAppInstallation {
+        id: "test-capability".to_string(),
+        manifest: serde_json::from_str(&manifest("0.1.0-rc.7")).unwrap(),
+        package_path: package.display().to_string(),
+        sha256: "hash".to_string(),
+        model_key: Some("model".to_string()),
+        resident: false,
+        runtime_version: None,
+        state: "installed".to_string(),
+        web_url: None,
+        error: None,
+    };
+
+    let output = prepare_instance_bundle(&installation, directory.path(), true).unwrap();
+    let patch = fs::read_to_string(output.join("cordis.patch.yml")).unwrap();
+
+    assert!(patch.contains("- id: scanner"));
+    assert!(patch.contains("- id: agent-default-model"));
+    assert!(patch.contains("provider: wework-local"));
+    assert!(patch.contains("model: wework-selected"));
+}
+
+#[test]
+fn instance_patch_rejects_an_incomplete_model_pair() {
+    let directory = tempdir().unwrap();
+    let package = directory.path().join("package");
+    let bundle = package.join("packages/bundle/test");
+    fs::create_dir_all(&bundle).unwrap();
+    fs::write(
+        bundle.join("cordis.patch.yml"),
+        "- insert:\n    - id: scanner\n      config:\n        provider: deepseek\n",
+    )
+    .unwrap();
+    let installation = HarnessAppInstallation {
+        id: "test-capability".to_string(),
+        manifest: serde_json::from_str(&manifest("0.1.0-rc.7")).unwrap(),
+        package_path: package.display().to_string(),
+        sha256: "hash".to_string(),
+        model_key: Some("model".to_string()),
+        resident: false,
+        runtime_version: None,
+        state: "installed".to_string(),
+        web_url: None,
+        error: None,
+    };
+
+    let error = prepare_instance_bundle(&installation, directory.path(), true).unwrap_err();
+
+    assert!(error.contains("incomplete provider/model pair"));
+}
+
 #[cfg(unix)]
 #[test]
 fn node_version_check_initializes_the_runtime() {
