@@ -9,6 +9,7 @@ import {
   FolderOpen,
   GitCommit,
   GitBranch,
+  GitMerge,
   GitPullRequest,
   Info,
   Link2,
@@ -569,13 +570,23 @@ export function EnvironmentInfoPopover({
                                 !changeRequest.draft &&
                                 changeRequest.mergeQueue !== 'queued' &&
                                 'text-green-500',
-                              changeRequest.state === 'merged' && 'text-green-500',
+                              changeRequest.state === 'merged' && 'text-violet-500',
                               changeRequest.state === 'closed' && 'text-red-500',
                               changeRequest.mergeability === 'conflicting' && 'text-red-500'
                             )}
                             aria-hidden="true"
                           >
-                            <GitPullRequest className="h-[18px] w-[18px]" />
+                            {changeRequest.state === 'merged' ? (
+                              <GitMerge
+                                data-testid="change-request-merged-icon"
+                                className="h-[18px] w-[18px]"
+                              />
+                            ) : (
+                              <GitPullRequest
+                                data-testid="change-request-pull-request-icon"
+                                className="h-[18px] w-[18px]"
+                              />
+                            )}
                             {changeRequest.mergeability === 'conflicting' ? (
                               <span className="absolute -bottom-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-background text-red-500">
                                 <TriangleAlert className="h-3 w-3 fill-background" />
