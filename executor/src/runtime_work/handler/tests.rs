@@ -2051,6 +2051,35 @@ fn cached_user_message_does_not_fallback_to_prompt() {
 }
 
 #[test]
+fn cached_user_message_preserves_attachment_only_messages() {
+    let request = ExecutionRequest {
+        subtask_id: "42".to_owned(),
+        ..ExecutionRequest::default()
+    };
+
+    let message = cached_user_message(
+        "local-task",
+        &request,
+        &json!({
+            "clientUserMessageId": "runtime-local-pane-1",
+            "attachments": [{
+                "id": -1,
+                "filename": "pasted-feedback.zip",
+                "file_size": 18,
+                "mime_type": "application/zip",
+                "local_path": "/tmp/pasted-feedback.zip"
+            }]
+        }),
+    )
+    .expect("an attachment should be a visible user message without text");
+
+    assert_eq!(message["content"], "");
+    assert_eq!(message["clientUserMessageId"], "runtime-local-pane-1");
+    assert_eq!(message["attachments"][0]["filename"], "pasted-feedback.zip");
+    assert_eq!(message["attachments"][0]["status"], "ready");
+}
+
+#[test]
 fn user_message_presentation_preserves_visible_content_and_references() {
     let presentation = user_message_presentation(&json!({
         "clientUserMessageId": "runtime-local-pane-1",
@@ -2100,6 +2129,27 @@ fn user_message_presentation_preserves_plain_visible_content() {
     assert_eq!(presentation["content"], "合并到main");
     assert_eq!(presentation["ensureVisible"], true);
     assert_eq!(presentation["references"], json!([]));
+}
+
+#[test]
+fn user_message_presentation_preserves_attachment_only_messages() {
+    let presentation = user_message_presentation(&json!({
+        "clientUserMessageId": "runtime-local-pane-1",
+        "attachments": [{
+            "id": -1,
+            "filename": "pasted-feedback.zip",
+            "file_size": 18,
+            "mime_type": "application/zip",
+            "local_path": "/tmp/pasted-feedback.zip"
+        }]
+    }))
+    .expect("an attachment should create presentation metadata without text");
+
+    assert_eq!(presentation["content"], "");
+    assert_eq!(
+        presentation["attachments"][0]["filename"],
+        "pasted-feedback.zip"
+    );
 }
 
 #[test]
@@ -2211,6 +2261,36 @@ fn transcript_combines_provider_content_with_local_presentations_by_client_user_
                 "href": "plugin://openai-developers@openai-curated"
             }
         ])
+    );
+}
+
+#[test]
+fn transcript_restores_attachment_presentation_over_internal_provider_context() {
+    let mut provider_messages = vec![json!({
+        "id": "provider-user",
+        "clientUserMessageId": "runtime-local-pane-1",
+        "role": "user",
+        "content": "<attachment>\nAvailable attachments:\n- pasted-feedback.zip\n</attachment>"
+    })];
+    let presentations = vec![json!({
+        "clientUserMessageId": "runtime-local-pane-1",
+        "content": "",
+        "attachments": [{
+            "id": -1,
+            "filename": "pasted-feedback.zip",
+            "file_size": 18,
+            "mime_type": "application/zip",
+            "status": "ready",
+            "local_path": "/tmp/pasted-feedback.zip"
+        }]
+    })];
+
+    attach_user_message_presentations(&mut provider_messages, presentations);
+
+    assert_eq!(provider_messages[0]["content"], "");
+    assert_eq!(
+        provider_messages[0]["attachments"][0]["filename"],
+        "pasted-feedback.zip"
     );
 }
 
