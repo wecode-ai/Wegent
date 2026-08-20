@@ -1,7 +1,7 @@
 ---
 description: "Knowledge base management and search tools for Wegent. Provides capabilities to list, create, update, and search knowledge bases and documents using RAG retrieval. Use this skill when the user wants to manage knowledge bases, documents, or search for information programmatically."
 displayName: "知识库工具"
-version: "1.1.0"
+version: "1.1.1"
 author: "Wegent Team"
 tags: ["knowledge", "knowledge-base", "document", "rag"]
 bindShells:
@@ -73,6 +73,7 @@ You now have access to Wegent Knowledge Base management tools.
 - **wegent_kb_search_knowledge_base**: Search documents using RAG retrieval
   - knowledge_base_id: Knowledge base ID to search
   - query: Search query text
+  - search_hints: Optional query plan. Only use `semantic_query` (string), `keywords` (array of terms), and `phrases` (array of exact multi-word matches). Never use `exact_keywords`.
   - max_results: Maximum results to return (default: 10, max: 50)
   - document_ids: Optional list of document IDs to filter search scope
   - folder_ids: Optional list of selected folder IDs

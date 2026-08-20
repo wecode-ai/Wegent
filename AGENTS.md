@@ -4,6 +4,7 @@ Wegent is an AI-native operating system for defining, organizing, and running ag
 
 ## Repository map
 
+<!-- prettier-ignore -->
 | Area | Technology | Responsibility |
 | --- | --- | --- |
 | `backend/` | FastAPI, SQLAlchemy, MySQL | REST API and business logic |
@@ -40,7 +41,7 @@ Code uses CRD terms. In Chinese UI, `Team` is “智能体” and `Bot` is “�
 ## Engineering rules
 
 - Diagnose problems from logs, actual code, and other concrete evidence first. When evidence is insufficient, add focused diagnostic logging before changing behavior; do not guess.
-- Architecture-governed logic is cataloged in `docs/zh/architecture/README.md`; keep `docs/en/architecture/README.md` synchronized. Before changing a cataloged flow, update its connection graph, sequence diagram, code-ownership table, and essential invariants first, then trace every affected edge against the code before implementation. If a new flow needs this protection, add one topic file and one catalog row instead of expanding an unrelated architecture document.
+- Architecture-governed logic lives in independently maintained topic files under `docs/zh/architecture/`; keep the matching files under `docs/en/architecture/` synchronized. The architecture README files are stable governance entry points and must not duplicate a manually maintained topic catalog. Before changing a governed flow, update its connection graph, sequence diagram, code-ownership table, and essential invariants first, then trace every affected edge against the code before implementation. If a new flow needs this protection, create one Chinese topic file and its matching English file instead of expanding an unrelated architecture document.
 - Architecture topic files are diagram-first and concise: one independently maintainable file per flow, with only scope, connection graphs, sequence diagrams, code ownership, and essential invariants. Put background, API reference, migration history, test instructions, and product prose in their existing guides and link to them; do not accumulate all architecture diagrams in one file.
 - Comments are English. Use clear names, type hints for Python, and keep functions focused (prefer under 50 lines).
 - Before adding code, search for and reuse existing components, services, utilities, and patterns. Extract shared logic instead of duplicating it.
