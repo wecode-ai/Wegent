@@ -538,6 +538,15 @@ describe('DesktopWorkbenchLayout', () => {
     return { promise, resolve, reject }
   }
 
+  function setComposerValue(container: HTMLElement, value: string) {
+    const editor = within(container).getByTestId('chat-message-input') as HTMLElement & {
+      value: string
+    }
+    act(() => {
+      editor.value = value
+    })
+  }
+
   function getDesktopWorkbenchMainElement() {
     const main = screen.getByTestId('desktop-workbench-content').closest('main')
     if (!main) {
@@ -6723,12 +6732,11 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
 
     const sideChat = await screen.findByTestId('right-workspace-chat-panel')
-    const sideChatInput = within(sideChat).getByTestId('chat-message-input')
-    await userEvent.type(sideChatInput, 'first message')
+    setComposerValue(sideChat, 'first message')
     await userEvent.click(within(sideChat).getByTestId('send-message-button'))
     await waitFor(() => expect(createTemporaryRuntimeTaskMock).toHaveBeenCalledTimes(1))
 
-    await userEvent.type(sideChatInput, 'queued follow-up')
+    setComposerValue(sideChat, 'queued follow-up')
     await userEvent.click(within(sideChat).getByTestId('send-message-button'))
 
     expect(sendRuntimePaneMessageMock).not.toHaveBeenCalled()
@@ -6769,8 +6777,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
 
     const sideChat = await screen.findByTestId('right-workspace-chat-panel')
-    const sideChatInput = within(sideChat).getByTestId('chat-message-input')
-    await userEvent.type(sideChatInput, 'first message')
+    setComposerValue(sideChat, 'first message')
     await userEvent.click(within(sideChat).getByTestId('send-message-button'))
     await waitFor(() => expect(createTemporaryRuntimeTaskMock).toHaveBeenCalledTimes(1))
 
@@ -6779,7 +6786,7 @@ describe('DesktopWorkbenchLayout', () => {
       | undefined
     act(() => streamHandlers?.onAssistantStart?.())
 
-    await userEvent.type(sideChatInput, 'direct follow-up')
+    setComposerValue(sideChat, 'direct follow-up')
     await userEvent.click(within(sideChat).getByTestId('send-message-button'))
 
     const userMessages = await within(sideChat).findAllByTestId('user-message-content')
@@ -6813,12 +6820,11 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
 
     const sideChat = await screen.findByTestId('right-workspace-chat-panel')
-    const sideChatInput = within(sideChat).getByTestId('chat-message-input')
-    await userEvent.type(sideChatInput, 'first message')
+    setComposerValue(sideChat, 'first message')
     await userEvent.click(within(sideChat).getByTestId('send-message-button'))
     await waitFor(() => expect(createTemporaryRuntimeTaskMock).toHaveBeenCalledTimes(1))
 
-    await userEvent.type(sideChatInput, 'guide the current response')
+    setComposerValue(sideChat, 'guide the current response')
     await userEvent.click(within(sideChat).getByTestId('send-mode-menu-button'))
     await userEvent.click(await screen.findByTestId('guide-current-turn-option'))
 
