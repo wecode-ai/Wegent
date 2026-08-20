@@ -163,6 +163,7 @@ import { normalizeAiModelId } from '@/telemetry/modelCatalog'
 export type { WorkbenchServices } from './workbenchServices'
 
 const LOCAL_SKILLS_CACHE_TTL_MS = 30_000
+const LOCAL_PLUGIN_SKILLS_REFRESH_DEBOUNCE_MS = 250
 const EMPTY_PLUGIN_TRIAL_TEMPLATES: PluginPathComponent[] = []
 
 function findFirstSelectableProject(
@@ -278,6 +279,7 @@ export function WorkbenchProvider({
   const localAppsCacheRef = useRef<{ expiresAt: number; apps: LocalDeviceApp[] } | null>(null)
   const localAppsInflightRef = useRef<Promise<LocalDeviceApp[]> | null>(null)
   const localAppsLoadGenerationRef = useRef(0)
+  const localAppsRefreshTimerRef = useRef<number | null>(null)
   const localPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
   const cloudPluginApi = useMemo(() => {
     const runtime = getRuntimeConfig()
@@ -2055,6 +2057,14 @@ export function WorkbenchProvider({
       }
 
       const loadGeneration = localAppsLoadGenerationRef.current
+      const visiblePluginKeys = projectPluginNamesRef.current
+        ? new Set(projectPluginNamesRef.current)
+        : undefined
+      const isCurrentLoad = () => loadGeneration === localAppsLoadGenerationRef.current
+      const publishCurrentComposerApps = (apps: LocalDeviceApp[]) => {
+        if (!isCurrentLoad() || apps.length === 0) return
+        publishComposerApps(apps)
+      }
       const loadPromise = (async () => {
         // Composer only needs installed membership. Never await Codex plugin/list
         // here — it reconciles for ~10s and stalls turns on the shared app-server
@@ -2108,11 +2118,9 @@ export function WorkbenchProvider({
         // Paint installed plugins before connector sync / relative-logo detail reads.
         let apps = await loadComposerPluginApps(composerPluginSources, {
           marketplaceItems,
-          visiblePluginKeys: projectPluginNamesRef.current ?? undefined,
+          visiblePluginKeys,
         })
-        if (apps.length > 0) {
-          publishComposerApps(apps)
-        }
+        publishCurrentComposerApps(apps)
 
         if (cloudConnection.isConnected && cloudConnection.apiBaseUrl && cloudConnection.token) {
           try {
@@ -2151,23 +2159,21 @@ export function WorkbenchProvider({
               }))
             const existingIds = new Set(apps.map(app => app.id))
             apps = [...apps, ...connectorApps.filter(app => !existingIds.has(app.id))]
-            if (apps.length > 0) {
-              publishComposerApps(apps)
-            }
+            publishCurrentComposerApps(apps)
           } catch (error) {
             console.warn('[Wework] Failed to load Wegent connector apps.', error)
           }
         }
 
         // Best-effort package logo hydration after the picker is already usable.
-        if (loadGeneration === localAppsLoadGenerationRef.current) {
+        if (isCurrentLoad()) {
           void loadComposerPluginApps(composerPluginSources, {
             enrichRelativeLogos: true,
             marketplaceItems,
-            visiblePluginKeys: projectPluginNamesRef.current ?? undefined,
+            visiblePluginKeys,
           })
             .then(enriched => {
-              if (loadGeneration !== localAppsLoadGenerationRef.current || enriched.length === 0) {
+              if (!isCurrentLoad() || enriched.length === 0) {
                 return
               }
               const byId = new Map(apps.map(app => [app.id, app]))
@@ -2184,12 +2190,10 @@ export function WorkbenchProvider({
             })
         }
 
-        const isCurrentGeneration = loadGeneration === localAppsLoadGenerationRef.current
-        // Always publish non-empty results. A skills-changed bump may invalidate cache
-        // ownership mid-flight, but the picker still needs the installed plugin list.
+        const isCurrentGeneration = isCurrentLoad()
         if (apps.length > 0) {
-          publishComposerApps(apps)
           if (isCurrentGeneration) {
+            publishComposerApps(apps)
             localAppsCacheRef.current = {
               expiresAt: Date.now() + LOCAL_SKILLS_CACHE_TTL_MS,
               apps,
@@ -2206,7 +2210,9 @@ export function WorkbenchProvider({
         // Never pin an empty TTL cache, and never wipe the shared last-known list on a
         // transient []. Slash keeps React state; returning/keeping getComposerApps()
         // is what stops the toolbar picker from saying no plugins are installed.
-        localAppsCacheRef.current = null
+        if (isCurrentGeneration) {
+          localAppsCacheRef.current = null
+        }
         const kept = getComposerApps()
         return kept.length > 0 ? kept : apps
       })()
@@ -2233,6 +2239,10 @@ export function WorkbenchProvider({
   // plugin cache so the conversation toolbar can paint without waiting for
   // `/` or a plugin-picker click.
   useEffect(() => {
+    if (localAppsRefreshTimerRef.current !== null) {
+      window.clearTimeout(localAppsRefreshTimerRef.current)
+      localAppsRefreshTimerRef.current = null
+    }
     localSkillsCacheRef.current.clear()
     localAppsCacheRef.current = null
     localAppsInflightRef.current = null
@@ -2242,16 +2252,26 @@ export function WorkbenchProvider({
     const clearLocalSkillCache = () => {
       localSkillsCacheRef.current.clear()
       localAppsCacheRef.current = null
-      localAppsInflightRef.current = null
       localAppsLoadGenerationRef.current += 1
       // Keep the composer apps snapshot until a current-generation load replaces
       // or clears it. Clearing here races install→notify and blanks the picker
       // while the refresh is still in flight.
-      void listLocalApps({ allowEmptySnapshot: true })
+      if (localAppsRefreshTimerRef.current !== null) {
+        window.clearTimeout(localAppsRefreshTimerRef.current)
+      }
+      localAppsRefreshTimerRef.current = window.setTimeout(() => {
+        localAppsRefreshTimerRef.current = null
+        localAppsInflightRef.current = null
+        void listLocalApps({ allowEmptySnapshot: true })
+      }, LOCAL_PLUGIN_SKILLS_REFRESH_DEBOUNCE_MS)
     }
     window.addEventListener(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT, clearLocalSkillCache)
     return () => {
       window.removeEventListener(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT, clearLocalSkillCache)
+      if (localAppsRefreshTimerRef.current !== null) {
+        window.clearTimeout(localAppsRefreshTimerRef.current)
+        localAppsRefreshTimerRef.current = null
+      }
     }
   }, [listLocalApps])
 
@@ -2259,6 +2279,10 @@ export function WorkbenchProvider({
   useEffect(() => {
     if (previousProjectPluginNamesKeyRef.current === projectPluginNamesKey) return
     previousProjectPluginNamesKeyRef.current = projectPluginNamesKey
+    if (localAppsRefreshTimerRef.current !== null) {
+      window.clearTimeout(localAppsRefreshTimerRef.current)
+      localAppsRefreshTimerRef.current = null
+    }
     localAppsCacheRef.current = null
     localAppsInflightRef.current = null
     localAppsLoadGenerationRef.current += 1
