@@ -3,11 +3,13 @@ import {
   buildRuntimeTaskTitle,
   findProjectDeviceWorkspace,
   getDefaultProjectDeviceWorkspaceId,
+  hydrateRuntimeTaskAddress,
   MAX_RUNTIME_TASK_TITLE_LENGTH,
   mergeRuntimeTaskHandles,
   projectTaskAddresses,
   readLastProjectId,
   removeRuntimeTasks,
+  resolveComposerProjectPluginNames,
   truncateRuntimeTaskTitle,
   updateRuntimeWorkTaskTitle,
   writeLastProjectId,
@@ -96,6 +98,197 @@ describe('workbenchRuntimeHelpers', () => {
         },
       },
     ])
+  })
+
+  test('hydrates an inherited task address with its exact worktree path', () => {
+    const runtimeWork: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: { key: 'local:/workspace/project', name: 'Project' },
+          deviceWorkspaces: [
+            {
+              deviceId: 'local-device',
+              available: true,
+              workspacePath: '/workspace/worktrees/login',
+              workspaceKind: 'worktree',
+              worktreeId: 'login',
+              tasks: [
+                {
+                  taskId: 'development-task',
+                  threadId: 'development-thread',
+                  workspacePath: '/workspace/worktrees/login',
+                  title: 'Develop login',
+                  runtime: 'codex',
+                  runtimeHandle: { threadId: 'development-thread' },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    }
+
+    expect(
+      hydrateRuntimeTaskAddress(runtimeWork, {
+        deviceId: 'local-device',
+        taskId: 'development-task',
+      })
+    ).toEqual({
+      deviceId: 'local-device',
+      taskId: 'development-task',
+      runtime: 'codex',
+      threadId: 'development-thread',
+      workspacePath: '/workspace/worktrees/login',
+      runtimeHandle: { threadId: 'development-thread' },
+    })
+  })
+
+  test('uses project plugins for a new conversation draft without captured task plugins', () => {
+    const runtimeWork: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: {
+            id: 7,
+            key: 'local:/workspace/project',
+            name: 'Project',
+            source: 'local_project',
+            aiSettings: {
+              plugins: [
+                {
+                  id: 'quality-gate@team-market',
+                  pluginName: 'quality-gate',
+                  marketplaceId: 'team-market',
+                  displayName: 'Quality Gate',
+                },
+              ],
+            },
+          },
+          deviceWorkspaces: [
+            {
+              deviceId: 'local-device',
+              available: true,
+              mapped: true,
+              workspacePath: '/workspace/project',
+              tasks: [
+                {
+                  taskId: 'draft-task',
+                  workspacePath: '/workspace/project',
+                  title: 'New conversation',
+                  runtime: 'codex',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    }
+
+    expect(
+      resolveComposerProjectPluginNames(runtimeWork, 7, {
+        deviceId: 'local-device',
+        taskId: 'draft-task',
+        workspacePath: '/workspace/project',
+      })
+    ).toEqual(['quality-gate'])
+  })
+
+  test('keeps an existing task pinned to its captured project plugins', () => {
+    const runtimeWork: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: {
+            id: 7,
+            key: 'local:/workspace/project',
+            name: 'Project',
+            source: 'local_project',
+            aiSettings: {
+              plugins: [
+                {
+                  id: 'current-plugin@team-market',
+                  pluginName: 'current-plugin',
+                  marketplaceId: 'team-market',
+                  displayName: 'Current Plugin',
+                },
+              ],
+            },
+          },
+          deviceWorkspaces: [
+            {
+              deviceId: 'local-device',
+              available: true,
+              mapped: true,
+              workspacePath: '/workspace/project',
+              tasks: [
+                {
+                  taskId: 'existing-task',
+                  workspacePath: '/workspace/project',
+                  title: 'Existing conversation',
+                  runtime: 'codex',
+                  projectPluginIds: ['captured-plugin@personal'],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    }
+
+    expect(
+      resolveComposerProjectPluginNames(runtimeWork, 7, {
+        deviceId: 'local-device',
+        taskId: 'existing-task',
+        workspacePath: '/workspace/project',
+      })
+    ).toEqual(['captured-plugin'])
+  })
+
+  test('hydrates inherited worktree details through the remote host identity', () => {
+    const runtimeWork: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: { key: 'local:/workspace/project', name: 'Project' },
+          deviceWorkspaces: [
+            {
+              deviceId: 'local-device',
+              remoteHostId: 'device-1',
+              available: true,
+              workspacePath: '/workspace/worktrees/login',
+              workspaceKind: 'worktree',
+              worktreeId: 'login',
+              tasks: [
+                {
+                  taskId: 'development-task',
+                  threadId: 'development-thread',
+                  workspacePath: '/workspace/worktrees/login',
+                  title: 'Develop login',
+                  runtime: 'codex',
+                  runtimeHandle: { threadId: 'development-thread' },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    }
+
+    expect(
+      hydrateRuntimeTaskAddress(runtimeWork, {
+        deviceId: 'device-1',
+        taskId: 'development-task',
+      })
+    ).toMatchObject({
+      workspacePath: '/workspace/worktrees/login',
+      threadId: 'development-thread',
+      runtimeHandle: { threadId: 'development-thread' },
+    })
   })
 
   test('merges runtime task handles without dropping existing metadata', () => {

@@ -7,6 +7,7 @@ core_segments=(
   priority-filter
   automation-lifecycle
   project-automation
+  project-ai-settings
   model-routing
   permission-modes
   core-task-flow
@@ -15,6 +16,7 @@ core_segments=(
   supervisor-lifecycle
   resilience
   runtime-task-queue
+  codex-notification-isolation
   conversation-state
   temporary-chat
   workspace-attachments
@@ -38,6 +40,7 @@ cloud_worktree_segments=(
   cloud-worktree-device-restart
 )
 cloud_segments=(
+  cloud-project-creation
   core-task-flow
   "${cloud_worktree_segments[@]}"
   model-routing
@@ -58,24 +61,25 @@ cloud_segments=(
   plugin-auto-update
 )
 # Group checkpoints by observed Cloud CI duration and order each shard from
-# longest to shortest so the five serial workers finish at similar times.
+# longest to shortest so the five serial runners finish at similar times.
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 cloud_shards=(
-  core-task-flow,cloud-worktree-create
-  cloud-worktree-capability,cloud-worktree-tools,model-routing,embedded-browser,telemetry-consent
-  cloud-worktree-queued-cancel,window-lifecycle,conversation-state,browser-multi-tabs
-  cloud-worktree-device-restart,resilience,goal-lifecycle,supervisor-lifecycle
-  cloud-worktree-archive-restore,rendering-extensions,workspace-attachments,workspace-tabs,priority-filter,automation-lifecycle,project-automation,plugin-auto-update
+  goal-lifecycle,window-lifecycle,cloud-worktree-tools,telemetry-consent
+  model-routing,project-automation,workspace-attachments,plugin-auto-update
+  embedded-browser,cloud-worktree-create,workspace-tabs,cloud-worktree-archive-restore,cloud-worktree-device-restart
+  resilience,rendering-extensions,cloud-worktree-queued-cancel,priority-filter,cloud-worktree-capability
+  core-task-flow,conversation-state,supervisor-lifecycle,automation-lifecycle,browser-multi-tabs,cloud-project-creation
 )
-# Keep the number of core desktop runners fixed as checkpoints grow. Each
-# runner reuses the same prebuilt application and executes its shard serially.
+# Keep the number of core desktop runners fixed as checkpoints grow. Group
+# checkpoints by observed Core CI duration and order each shard so the serial
+# runners stay balanced while reusing the same prebuilt application.
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 core_shards=(
-  core-task-flow
-  model-routing,embedded-browser,claude-runtime,local-harness
-  window-lifecycle,conversation-state,temporary-chat
-  resilience,runtime-task-queue,goal-lifecycle,supervisor-lifecycle
-  rendering-extensions,workspace-attachments,workspace-tabs,priority-filter,automation-lifecycle,project-automation,permission-modes,local-file-preview
+  rendering-extensions,resilience,runtime-task-queue
+  project-ai-settings,model-routing,window-lifecycle
+  core-task-flow,embedded-browser,automation-lifecycle,priority-filter,temporary-chat
+  claude-runtime,workspace-attachments,local-harness,supervisor-lifecycle,codex-notification-isolation,local-file-preview
+  conversation-state,goal-lifecycle,workspace-tabs,project-automation,permission-modes
 )
 
 validate_core_shards() {
@@ -200,6 +204,7 @@ classify_wework_path() {
       wework/src/features/plugins/* | \
       wework/src/pages/Plugin*)
       select_target "plugins:plugin-lifecycle"
+      select_target "core:project-ai-settings"
       return
       ;;
     wework/src/components/sites/* | \
@@ -269,6 +274,7 @@ classify_wework_path() {
     wework/src/components/layout/DesktopSidebar.tsx)
       select_target "core:priority-filter"
       select_target "core:core-task-flow"
+      select_target "core:project-ai-settings"
       select_target "core:workspace-attachments"
       return
       ;;
@@ -293,6 +299,10 @@ classify_wework_path() {
       select_target "core:core-task-flow"
       select_target "core:workspace-attachments"
       select_cloud_worktree_checkpoints
+      if [[ "$path" == wework/src/api/local/localServices* || \
+        "$path" == wework/src/features/workbench/WorkbenchProvider* ]]; then
+        select_target "core:project-ai-settings"
+      fi
       if [[ "$path" == wework/src/features/workbench/useWorkbenchRuntimeTasks* ]]; then
         select_target "core:runtime-task-queue"
       fi
@@ -353,6 +363,7 @@ classify_wework_path() {
       wework/src/components/chat/composer/AttachmentBadges* | \
       wework/src/components/chat/composer/WorktreeBranchSelector* | \
       wework/src/components/chat/composer/composerPathTransfer*)
+      select_target "core:project-ai-settings"
       select_target "core:workspace-attachments"
       return
       ;;
@@ -361,7 +372,10 @@ classify_wework_path() {
     wework/src-tauri/src/embedded_browser* | \
       wework/src/lib/embedded-browser* | \
       wework/src/lib/browser-url* | \
+      wework/src/lib/browser-device-toolbar* | \
       wework/src/components/layout/workspace-panels/WorkspaceBrowserPanel* | \
+      wework/src/components/layout/workspace-panels/BrowserDeviceToolbar* | \
+      wework/src/components/layout/workspace-panels/browser-find/* | \
       wework/e2e/desktop/scenarios/embedded-browser-agent.scenario.mjs)
       select_target "core:embedded-browser"
       return
@@ -370,6 +384,7 @@ classify_wework_path() {
     # Claude conversations cover both local and remote executor routing.
     wework/src/features/workbench/useWorkbenchRuntimeMessaging*)
       select_target "core:core-task-flow"
+      select_target "core:project-ai-settings"
       select_target "core:claude-runtime"
       select_cloud_worktree_checkpoints
       return
@@ -409,6 +424,10 @@ classify_wework_path() {
       select_target "core:runtime-task-queue"
       return
       ;;
+    wework/e2e/desktop/scenarios/codex-notification-isolation.scenario.mjs)
+      select_target "core:codex-notification-isolation"
+      return
+      ;;
 
     # Assistant/tool rendering and desktop extension surfaces.
     wework/src/components/chat/blocks/* | \
@@ -425,6 +444,7 @@ classify_wework_path() {
       wework/src/features/local-runtime/* | \
       wework/src/stream/*)
       select_target "core:core-task-flow"
+      select_target "core:project-ai-settings"
       select_target "core:model-routing"
       return
       ;;

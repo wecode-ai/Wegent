@@ -269,6 +269,160 @@ describe('useWorkbenchCloudProjectContext', () => {
     expect(deliveryApi.listLoopItems).toHaveBeenCalledOnce()
   })
 
+  test('keeps concurrent pending project-space selections isolated by pane', async () => {
+    const firstProject = {
+      ...project(DEFAULT_WORK_ITEM_PROJECT_ID, 'local'),
+      project_key: DEFAULT_WORK_ITEM_PROJECT_KEY,
+      metadata: { system_kind: 'default_work_items' },
+    }
+    const secondProject = project('space-default', 'local')
+    const firstTask = { deviceId: 'device-1', taskId: 'runtime-1' }
+    const secondTask = { deviceId: 'device-1', taskId: 'runtime-2' }
+    const firstItem = loopItem(firstProject.id)
+    const secondItem = { ...loopItem(secondProject.id), id: 'todo-2' }
+    const firstTrackProjectTask = vi.fn().mockResolvedValue({ item: firstItem })
+    const secondTrackProjectTask = vi.fn().mockResolvedValue({ item: secondItem })
+    const firstServices = {
+      deliveryApi: {
+        findCloudContextForTask: vi.fn().mockRejectedValue(new Error('Not bound yet')),
+        listCloudProjects: vi.fn().mockResolvedValue({ items: [firstProject] }),
+        listCloudFiles: vi.fn().mockResolvedValue({ items: [] }),
+        listLoopItems: vi.fn().mockResolvedValue({ items: [] }),
+        listDeliveries: vi.fn().mockResolvedValue({ items: [] }),
+        trackProjectTask: firstTrackProjectTask,
+      },
+    } as unknown as WorkbenchServices
+    const secondServices = {
+      deliveryApi: {
+        findCloudContextForTask: vi.fn().mockRejectedValue(new Error('Not bound yet')),
+        listCloudProjects: vi.fn().mockResolvedValue({ items: [secondProject] }),
+        listCloudFiles: vi.fn().mockResolvedValue({ items: [] }),
+        listLoopItems: vi.fn().mockResolvedValue({ items: [] }),
+        listDeliveries: vi.fn().mockResolvedValue({ items: [] }),
+        trackProjectTask: secondTrackProjectTask,
+      },
+    } as unknown as WorkbenchServices
+    const firstHook = renderHook(
+      ({ currentRuntimeTask }: { currentRuntimeTask: RuntimeTaskAddress | null }) =>
+        useWorkbenchCloudProjectContext({
+          active: true,
+          currentRuntimeTask,
+          currentProjectId: 1,
+          defaultProjectSpace: null,
+          paneKey: 'project:1',
+          runtimeTaskTitle: 'First task',
+          services: firstServices,
+          userId: 1,
+        }),
+      { initialProps: { currentRuntimeTask: null } }
+    )
+    const secondHook = renderHook(
+      ({ currentRuntimeTask }: { currentRuntimeTask: RuntimeTaskAddress | null }) =>
+        useWorkbenchCloudProjectContext({
+          active: true,
+          currentRuntimeTask,
+          currentProjectId: 2,
+          defaultProjectSpace: {
+            projectStore: secondProject.project_store,
+            projectId: secondProject.id,
+          },
+          paneKey: 'project:2',
+          runtimeTaskTitle: 'Second task',
+          services: secondServices,
+          userId: 1,
+        }),
+      { initialProps: { currentRuntimeTask: null } }
+    )
+
+    await waitFor(() => expect(firstHook.result.current.pendingCloudProject).toEqual(firstProject))
+    await waitFor(() =>
+      expect(secondHook.result.current.pendingCloudProject).toEqual(secondProject)
+    )
+
+    const firstSubmission = await firstHook.result.current.prepareSubmission('First task')
+    const secondSubmission = await secondHook.result.current.prepareSubmission('Second task')
+    act(() => {
+      firstSubmission.onRuntimeTaskCreated(firstTask)
+      secondSubmission.onRuntimeTaskCreated(secondTask)
+    })
+    firstHook.rerender({ currentRuntimeTask: firstTask })
+    secondHook.rerender({ currentRuntimeTask: secondTask })
+
+    await waitFor(() =>
+      expect(firstTrackProjectTask).toHaveBeenCalledWith(
+        firstProject.id,
+        firstTask,
+        'First task',
+        'First task'
+      )
+    )
+    await waitFor(() =>
+      expect(secondTrackProjectTask).toHaveBeenCalledWith(
+        secondProject.id,
+        secondTask,
+        'Second task',
+        'Second task'
+      )
+    )
+    secondHook.unmount()
+    firstHook.unmount()
+  })
+
+  test('falls back to My Tasks after clearing an extra project-space selection', async () => {
+    const configuredProject = project('space-default', 'local')
+    const defaultBoard = {
+      ...project(DEFAULT_WORK_ITEM_PROJECT_ID, 'local'),
+      project_key: DEFAULT_WORK_ITEM_PROJECT_KEY,
+      name: '我的任务',
+      metadata: { system_kind: 'default_work_items' },
+    }
+    const localApi = {
+      listCloudProjects: vi.fn().mockResolvedValue({
+        items: [configuredProject, defaultBoard],
+      }),
+      listCloudFiles: vi.fn().mockResolvedValue({ items: [] }),
+      listLoopItems: vi.fn().mockResolvedValue({ items: [] }),
+      listDeliveries: vi.fn().mockResolvedValue({ items: [] }),
+    }
+    const services = {
+      projectSpaceApis: {
+        local: localApi,
+        defaultLocation: 'local',
+      },
+    } as unknown as WorkbenchServices
+    const { result } = renderHook(() =>
+      useWorkbenchCloudProjectContext({
+        active: true,
+        currentRuntimeTask: null,
+        currentProjectId: 42,
+        defaultProjectSpace: {
+          projectStore: configuredProject.project_store,
+          projectId: configuredProject.id,
+        },
+        paneKey: 'project:42',
+        runtimeTaskTitle: null,
+        services,
+        userId: 1,
+      })
+    )
+
+    await waitFor(() => expect(result.current.pendingCloudProject).toEqual(configuredProject))
+
+    act(() => result.current.clearPendingProjectContext())
+
+    expect(result.current.pendingCloudProject).toBeNull()
+    expect(result.current.defaultProject).toEqual(defaultBoard)
+
+    let submission: Awaited<ReturnType<typeof result.current.prepareSubmission>> | undefined
+    await act(async () => {
+      submission = await result.current.prepareSubmission('只加入我的任务')
+    })
+
+    expect(submission?.additionalContext?.cloudCollaboration?.value).toContain(
+      `Current cloud project: 我的任务 (id=${DEFAULT_WORK_ITEM_PROJECT_ID}).`
+    )
+  })
+
   test('tracks the default work-item project when the user configured nothing', async () => {
     const defaultBoard = {
       ...project(DEFAULT_WORK_ITEM_PROJECT_ID, 'local'),
@@ -764,7 +918,7 @@ describe('useWorkbenchCloudProjectContext', () => {
     expect(workspaceTabs.selectTab).toHaveBeenCalledOnce()
     expect(workspaceTabs.selectTab).toHaveBeenCalledWith(boardTab.id, {
       title: '我的任务',
-      contentRoute: `/todo?projectStore=${cloudProject.project_store}&projectId=${cloudProject.id}&itemId=${item.id}`,
+      contentRoute: `/todo?projectStore=${cloudProject.project_store}&projectId=${cloudProject.id}`,
     })
     expect(workspaceTabs.tabs).toEqual([taskTab, boardTab])
   })

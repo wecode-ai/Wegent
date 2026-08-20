@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import '@/i18n'
 import type { ProjectChatClient, ProjectChatMessage } from '@/api/backend/projectChatSocket'
+import { clearRuntimeConversationCacheForTests } from '@/features/workbench/runtimeConversationCache'
 import { TaskActivityView } from './TaskActivityView'
 import type { Attachment } from '@/types/api'
 
@@ -155,6 +156,7 @@ const agentMessage: ProjectChatMessage = {
 
 describe('TaskActivityView', () => {
   beforeEach(() => {
+    clearRuntimeConversationCacheForTests()
     agentsMock.value = [
       {
         id: '12',
@@ -262,7 +264,7 @@ describe('TaskActivityView', () => {
       />
     )
 
-    expect(screen.getByTestId('cloud-task-activity-WEG-1')).toHaveTextContent('评论 / 动态')
+    expect(screen.getByTestId('cloud-task-activity-WEG-1')).toHaveTextContent('动态')
     expect(screen.queryByTestId('cloud-task-activity-close')).not.toBeInTheDocument()
     await user.type(screen.getByTestId('cloud-task-activity-composer'), '继续处理')
     await user.click(screen.getByRole('button', { name: '发送消息' }))
@@ -2281,8 +2283,9 @@ describe('TaskActivityView', () => {
     )
   })
 
-  it('blocks sending from the card composer while the card session is still running', async () => {
+  it('queues a card reply while its session is running and sends it after completion', async () => {
     const user = userEvent.setup()
+    let emitMessage: ((message: ProjectChatMessage) => void) | null = null
     const rootMessage: ProjectChatMessage = {
       ...userMessage,
       rootMessageId: null,
@@ -2296,14 +2299,17 @@ describe('TaskActivityView', () => {
       replyToMessageId: userMessage.messageId,
     }
     const client = {
-      subscribe: vi.fn(async () => ({
-        snapshot: {
-          messages: [rootMessage, runningAgentMessage],
-          latestSequence: 2,
-          currentUserId: '1',
-        },
-        unsubscribe: vi.fn(),
-      })),
+      subscribe: vi.fn(async (_projectId, _taskId, _afterSequence, onMessage) => {
+        emitMessage = onMessage
+        return {
+          snapshot: {
+            messages: [rootMessage, runningAgentMessage],
+            latestSequence: 2,
+            currentUserId: '1',
+          },
+          unsubscribe: vi.fn(),
+        }
+      }),
       send: vi.fn(async () => userMessage),
       startAgentResponse: vi.fn(async () => agentMessage),
       failAgentResponse: vi.fn(async () => ({ ...agentMessage, status: 'failed' as const })),
@@ -2352,8 +2358,28 @@ describe('TaskActivityView', () => {
 
     expect(client.send).not.toHaveBeenCalled()
     expect(
-      screen.getByTestId(`cloud-task-activity-card-error-${rootMessage.messageId}`)
-    ).toHaveTextContent('当前回复仍在进行中，请稍后再发送')
+      within(
+        screen.getByTestId(`cloud-task-activity-card-queue-${rootMessage.messageId}`)
+      ).getByText('继续处理')
+    ).toBeInTheDocument()
+
+    emitMessage?.({ ...runningAgentMessage, status: 'completed' })
+
+    await waitFor(() => expect(client.send).toHaveBeenCalledOnce())
+    expect(sendRuntimePaneMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        address: { deviceId: 'device-1', taskId: 'parent-session-1' },
+        message: '继续处理',
+      }),
+      expect.any(Object)
+    )
+    await waitFor(() =>
+      expect(
+        within(
+          screen.getByTestId(`cloud-task-activity-card-queue-${rootMessage.messageId}`)
+        ).queryByText('继续处理')
+      ).not.toBeInTheDocument()
+    )
   })
 
   it('allows a plain new comment while another parent session is still running', async () => {

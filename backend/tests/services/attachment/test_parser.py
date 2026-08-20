@@ -10,7 +10,7 @@ import base64
 import io
 import json
 import zipfile
-from unittest.mock import MagicMock, patch
+from datetime import datetime
 
 import pytest
 
@@ -43,6 +43,66 @@ def _build_xmind_archive() -> bytes:
     with zipfile.ZipFile(archive, "w") as zf:
         zf.writestr("content.json", json.dumps(content))
     return archive.getvalue()
+
+
+def _build_xlsx_with_incorrect_dimension(declared_range: str = "A1") -> bytes:
+    """Build a workbook whose declared range hides rows after the header."""
+    from openpyxl import Workbook
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "6月"
+    sheet.append(["序号", "课程标题", "分享人", "备注"])
+    sheet.append([1, None, "张三", None])
+    sheet.append([2, "课程B", "李四", " "])
+
+    source = io.BytesIO()
+    workbook.save(source)
+    workbook.close()
+
+    rewritten = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(source.getvalue()), "r") as source_zip:
+        with zipfile.ZipFile(rewritten, "w") as target_zip:
+            for item in source_zip.infolist():
+                payload = source_zip.read(item.filename)
+                if item.filename == "xl/worksheets/sheet1.xml":
+                    actual_range = b'<dimension ref="A1:D3"/>'
+                    assert actual_range in payload
+                    payload = payload.replace(
+                        actual_range,
+                        f'<dimension ref="{declared_range}"/>'.encode(),
+                    )
+                target_zip.writestr(item, payload)
+    return rewritten.getvalue()
+
+
+def _build_xlsx_with_special_values() -> bytes:
+    """Build a workbook containing delimiters, newlines, blanks, and a date."""
+    from openpyxl import Workbook
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Values"
+    sheet.append(["a | b", "line 1\nline 2", None, datetime(2026, 1, 2, 3, 4, 5)])
+    source = io.BytesIO()
+    workbook.save(source)
+    workbook.close()
+    return source.getvalue()
+
+
+def _build_xlsx_with_formula() -> bytes:
+    """Build a workbook whose formula has no cached calculation result."""
+    from openpyxl import Workbook
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Formula"
+    sheet["A1"] = "Result"
+    sheet["A2"] = "=1+1"
+    source = io.BytesIO()
+    workbook.save(source)
+    workbook.close()
+    return source.getvalue()
 
 
 class TestDocumentParser:
@@ -115,6 +175,55 @@ class TestDocumentParser:
         max_length = DocumentParser.get_max_text_length()
         assert max_length > 0
         assert isinstance(max_length, int)
+
+    @pytest.mark.parametrize("declared_range", ["A1", "A1:D2", "A1:B3"])
+    @pytest.mark.parametrize("use_smart_truncation", [True, False])
+    def test_excel_resets_incorrect_dimension_and_preserves_empty_cells(
+        self, use_smart_truncation: bool, declared_range: str
+    ) -> None:
+        """Both Excel branches read hidden rows without shifting later columns."""
+        result = self.parser.parse(
+            _build_xlsx_with_incorrect_dimension(declared_range),
+            ".xlsx",
+            use_smart_truncation=use_smart_truncation,
+        )
+
+        assert "--- Sheet: 6月 ---" in result.text
+        assert 'R2: 1 | [3]="张三"' in result.text
+        assert 'R3: 2 | "课程B" | "李四" | " "' in result.text
+
+    def test_excel_smart_and_normal_paths_format_rows_identically(self) -> None:
+        payload = _build_xlsx_with_special_values()
+
+        normal_result = self.parser.parse(
+            payload,
+            ".xlsx",
+            use_smart_truncation=False,
+        )
+        smart_result = self.parser.parse(
+            payload,
+            ".xlsx",
+            use_smart_truncation=True,
+        )
+
+        assert normal_result.text == smart_result.text
+        assert normal_result.text == (
+            "--- Sheet: Values ---\n"
+            'R1: "a | b" | "line 1\\nline 2" | [4]="2026-01-02T03:04:05"'
+        )
+
+    @pytest.mark.parametrize("use_smart_truncation", [True, False])
+    def test_excel_preserves_uncached_formula_expression(
+        self,
+        use_smart_truncation: bool,
+    ) -> None:
+        result = self.parser.parse(
+            _build_xlsx_with_formula(),
+            ".xlsx",
+            use_smart_truncation=use_smart_truncation,
+        )
+
+        assert 'R2: "=1+1"' in result.text
 
     def test_validate_file_size_within_limit(self):
         """Test file size validation within limit."""

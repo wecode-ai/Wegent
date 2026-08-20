@@ -249,6 +249,21 @@ describe('createHttpClient', () => {
     }
   })
 
+  test('restores blob type from response headers', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      headers: new Headers({ 'Content-Type': 'image/png' }),
+      blob: async () => new Blob(['image']),
+    })
+    const client = createHttpClient({ baseUrl: 'https://cloud.example.com/api' })
+
+    const blob = await client.getBlob('/attachments/1/download')
+
+    expect(blob.type).toBe('image/png')
+    await expect(blob.text()).resolves.toBe('image')
+  })
+
   test('throws ApiError with parsed detail message', async () => {
     fetchMock.mockResolvedValueOnce({
       ok: false,

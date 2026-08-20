@@ -286,6 +286,28 @@ async def run_automation(
     )
 
 
+@router.post(
+    "/{project_id}/loop-items/{item_id}/workflow-nodes/{workflow_node_id}/run",
+    response_model=ProjectAutomationRunView,
+)
+async def run_workflow_node(
+    project_id: str,
+    item_id: str,
+    workflow_node_id: str,
+    automation_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ProjectAutomationRunView:
+    return await project_automation_service.run_for_workflow_node(
+        db,
+        project_id,
+        automation_id,
+        item_id,
+        workflow_node_id,
+        current_user.id,
+    )
+
+
 @router.get(
     "/{project_id}/automations/{automation_id}/runs",
     response_model=list[ProjectAutomationRunView],

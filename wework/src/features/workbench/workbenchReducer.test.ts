@@ -3,6 +3,69 @@ import { initialWorkbenchState, workbenchReducer } from './workbenchReducer'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 
 describe('workbenchReducer', () => {
+  test('applies a local project mutation response before the next list refresh', () => {
+    const state = {
+      ...initialWorkbenchState,
+      runtimeWork: {
+        projects: [
+          {
+            project: {
+              id: 17,
+              key: 'local-project:demo',
+              name: 'Demo',
+              source: 'local_project',
+              roots: [{ kind: 'local', path: '/old' }],
+              aiSettings: {
+                instructions: 'Old instructions',
+                plugins: [],
+              },
+            },
+            deviceWorkspaces: [],
+            totalTasks: 0,
+          },
+        ],
+        chats: [],
+        totalTasks: 0,
+      },
+    }
+
+    const next = workbenchReducer(state, {
+      type: 'runtime_local_project_updated',
+      projectKey: 'local-project:demo',
+      name: 'Renamed demo',
+      roots: ['/new'],
+      defaultProjectSpace: null,
+      aiSettings: {
+        instructions: 'Project instructions',
+        plugins: [
+          {
+            id: 'project-plugin@personal',
+            pluginName: 'project-plugin',
+            marketplaceId: 'personal',
+            displayName: 'Project plugin',
+          },
+        ],
+      },
+    })
+
+    expect(next.runtimeWork?.projects[0]?.project).toMatchObject({
+      name: 'Renamed demo',
+      roots: [{ kind: 'local', path: '/new' }],
+      defaultProjectSpace: null,
+      aiSettings: {
+        instructions: 'Project instructions',
+        plugins: [
+          {
+            id: 'project-plugin@personal',
+            pluginName: 'project-plugin',
+            marketplaceId: 'personal',
+            displayName: 'Project plugin',
+          },
+        ],
+      },
+    })
+  })
+
   test('updates the workbench user when the active identity changes', () => {
     const state = workbenchReducer(
       { ...initialWorkbenchState, user: { id: 1, user_name: 'alice', email: 'a@b.c' } },
@@ -505,6 +568,79 @@ describe('workbenchReducer', () => {
     expect(opened.currentRuntimeTask?.taskId).toBe('runtime-1')
   })
 
+  test('reconciles an accepted task address without depending on work-list projection', () => {
+    const state = {
+      ...initialWorkbenchState,
+      currentRuntimeTask: {
+        deviceId: 'device-1',
+        taskId: 'runtime-1',
+        runtimeHandle: {
+          modelSelection: {
+            modelName: 'local-model:luna',
+            modelType: 'runtime',
+            options: {},
+          },
+        },
+      },
+    }
+
+    const reconciled = workbenchReducer(state, {
+      type: 'runtime_task_address_reconciled',
+      previousAddress: {
+        deviceId: 'device-1',
+        taskId: 'runtime-1',
+      },
+      address: {
+        deviceId: 'device-1',
+        taskId: 'runtime-1',
+        workspacePath: '/workspace/worktrees/runtime-1/repo',
+        runtimeHandle: {
+          threadId: 'thread-1',
+        },
+      },
+    })
+
+    expect(reconciled.currentRuntimeTask).toEqual({
+      deviceId: 'device-1',
+      taskId: 'runtime-1',
+      workspacePath: '/workspace/worktrees/runtime-1/repo',
+      runtimeHandle: {
+        modelSelection: {
+          modelName: 'local-model:luna',
+          modelType: 'runtime',
+          options: {},
+        },
+        threadId: 'thread-1',
+      },
+    })
+  })
+
+  test('does not reconcile an accepted address after the user switches tasks', () => {
+    const state = {
+      ...initialWorkbenchState,
+      currentRuntimeTask: {
+        deviceId: 'device-1',
+        taskId: 'runtime-2',
+        workspacePath: '/workspace/current',
+      },
+    }
+
+    const reconciled = workbenchReducer(state, {
+      type: 'runtime_task_address_reconciled',
+      previousAddress: {
+        deviceId: 'device-1',
+        taskId: 'runtime-1',
+      },
+      address: {
+        deviceId: 'device-1',
+        taskId: 'runtime-1',
+        workspacePath: '/workspace/worktrees/runtime-1/repo',
+      },
+    })
+
+    expect(reconciled).toBe(state)
+  })
+
   test('keeps project tasks only in the project list returned by the server', () => {
     const refreshed = workbenchReducer(initialWorkbenchState, {
       type: 'lists_refreshed',
@@ -891,7 +1027,7 @@ describe('workbenchReducer', () => {
         deviceId: 'device-uuid',
         taskId: 'task-1',
         threadId: 'direct-thread-id',
-        ...(currentDeviceId === 'local-device' ? { workspacePath: '/Users/me/chat' } : {}),
+        workspacePath: '/Users/me/chat',
         runtimeHandle: {
           threadId: '019ee7f6-456a-78a1-96b1-66451afc310e',
         },
@@ -951,6 +1087,88 @@ describe('workbenchReducer', () => {
         options: {},
       },
       threadId: 'ready-thread',
+    })
+  })
+
+  test('does not hydrate a pathless optimistic task from its base workspace', () => {
+    const state = {
+      ...initialWorkbenchState,
+      currentRuntimeTask: {
+        deviceId: 'device-1',
+        taskId: 'task-1',
+      },
+    }
+
+    const optimistic = workbenchReducer(state, {
+      type: 'runtime_work_refreshed',
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 1, name: 'Project' },
+            deviceWorkspaces: [
+              {
+                deviceId: 'device-1',
+                workspacePath: '/workspace/project',
+                available: true,
+                mapped: true,
+                tasks: [
+                  {
+                    taskId: 'task-1',
+                    workspacePath: '',
+                    title: 'Queued Worktree',
+                    runtime: 'codex',
+                    status: 'queued',
+                    optimistic: true,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 1,
+      },
+    })
+
+    expect(optimistic.currentRuntimeTask).toEqual({
+      deviceId: 'device-1',
+      taskId: 'task-1',
+    })
+
+    const hydrated = workbenchReducer(optimistic, {
+      type: 'runtime_work_refreshed',
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 1, name: 'Project' },
+            deviceWorkspaces: [
+              {
+                deviceId: 'device-1',
+                workspacePath: '/workspace/project',
+                available: true,
+                mapped: true,
+                tasks: [
+                  {
+                    taskId: 'task-1',
+                    workspacePath: '/executor/worktrees/task-1/project',
+                    title: 'Queued Worktree',
+                    runtime: 'codex',
+                    status: 'queued',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 1,
+      },
+    })
+
+    expect(hydrated.currentRuntimeTask).toEqual({
+      deviceId: 'device-1',
+      taskId: 'task-1',
+      workspacePath: '/executor/worktrees/task-1/project',
     })
   })
 

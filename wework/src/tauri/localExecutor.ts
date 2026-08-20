@@ -62,6 +62,7 @@ export interface BundledPluginMarketplace {
   id: string
   path: string
   pluginCount: number
+  defaultPluginNames?: string[]
 }
 
 let ensureLocalExecutorStartedPromise: Promise<LocalExecutorStatus> | null = null
@@ -77,6 +78,46 @@ function isExecutorHealthy(status: LocalExecutorStatus): boolean {
 
 function normalizedMarketplacePath(path: string | null | undefined): string {
   return (path ?? '').trim().replace(/\\/g, '/').replace(/\/+$/, '')
+}
+
+function bundledMarketplaceManifestPath(path: string): string {
+  return `${normalizedMarketplacePath(path)}/.agents/plugins/marketplace.json`
+}
+
+async function installBundledMarketplaceDefaults(
+  marketplace: BundledPluginMarketplace
+): Promise<void> {
+  const defaultPluginNames = marketplace.defaultPluginNames ?? []
+  if (defaultPluginNames.length === 0) return
+  const response = await invoke<{
+    config: { plugins?: Record<string, unknown> | null }
+  }>(LOCAL_EXECUTOR_COMMANDS.request, {
+    method: 'codex.app_server_request',
+    params: {
+      method: 'config/read',
+      params: {
+        includeLayers: false,
+        cwd: null,
+      },
+    },
+  })
+  const configuredPluginKeys = new Set(Object.keys(response.config.plugins ?? {}))
+  for (const pluginName of defaultPluginNames) {
+    if (configuredPluginKeys.has(`${pluginName}@${marketplace.id}`)) continue
+    // The local path identifies the bundled catalog. Codex resolves each
+    // plugin entry's declared source, which may itself be local or remote.
+    await invoke(LOCAL_EXECUTOR_COMMANDS.request, {
+      method: 'codex.app_server_request',
+      params: {
+        method: 'plugin/install',
+        params: {
+          marketplacePath: bundledMarketplaceManifestPath(marketplace.path),
+          remoteMarketplaceName: null,
+          pluginName,
+        },
+      },
+    })
+  }
 }
 
 async function reconcileBundledPluginMarketplace(
@@ -138,6 +179,7 @@ async function reconcileBundledPluginMarketplace(
       `Bundled plugin marketplace resolved to ${added.marketplaceName || 'an unknown name'}`
     )
   }
+  await installBundledMarketplaceDefaults(marketplace)
   reconciledBundledPluginMarketplaceKey = reconciliationKey
 }
 
@@ -170,6 +212,17 @@ export async function ensureBundledPluginMarketplaceRegistered(): Promise<void> 
   })
   reconcileBundledPluginMarketplacePromise = reconciliation
   return reconciliation
+}
+
+export async function ensureBundledPluginInstalled(pluginName: string): Promise<void> {
+  const normalizedPluginName = pluginName.trim()
+  if (!normalizedPluginName) throw new Error('Bundled plugin name is required')
+  await ensureLocalExecutorStarted()
+  const marketplace = initializedBundledPluginMarketplace
+  if (!marketplace?.defaultPluginNames?.includes(normalizedPluginName)) {
+    throw new Error(`Bundled plugin ${normalizedPluginName} is not installed by default`)
+  }
+  await ensureBundledPluginMarketplaceRegistered()
 }
 
 export function getInitializedBundledPluginMarketplace(): BundledPluginMarketplace | null {

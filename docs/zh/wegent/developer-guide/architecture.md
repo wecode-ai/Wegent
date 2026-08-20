@@ -380,7 +380,7 @@ Codex agent message 的实时文本必须按显式 phase 分类：只有 `final`
 
 Wework 的内置浏览器 MCP 由 Rust executor 的 `browser-mcp-server` 子命令提供，并通过每个 Tauri 实例独立分配的本地桥接地址控制右侧浏览器。打包 App 无需安装 Node.js 或单独部署 browser MCP server，多实例也不会共享固定端口。
 
-项目空间的 `wework_space` MCP 由 Rust executor 的 `space-mcp-server` 子命令提供，只注入携带项目空间上下文的 Codex 执行：请求绑定 `cloudProjectId`，或消息包含 `cloud://projects` 引用（例如工作台输入框的云空间引用选择）。Claude Code 等编码 agent 不注入项目空间 MCP，Wegent 编码任务因此不会暴露项目空间工具。
+项目空间的 `wework_space` MCP 由 Wework 启动的 Rust executor 通过动态 loopback 端口常驻提供。Codex 只接收该实例的 URL、实例凭证和可选 ContextGrant，不再启动 `space-mcp-server` stdio 子进程。普通会话保持未绑定；项目或 Issue 会话通过 ContextGrant 获得默认 `space_id/item_id` 与越界保护。
 
 Wework 的 Codex 自定义指令配置只持久化用户输入；内置浏览器路由规则不写入该字段。executor 在每次创建、继续或 fork Codex 线程前，将用户自定义指令、任务级系统指令和内置浏览器规则组合为该线程的 `developerInstructions` 请求参数。配置归一化会移除历史版本遗留的全部浏览器规则，避免设置页显示重复内容，同时新线程仍始终获得浏览器工具的使用约束。
 
@@ -392,7 +392,7 @@ Wework 的本地模型调用统一以 Codex Responses 协议进入 executor。ex
 
 Codex model catalog 中的 `supports_search_tool` 表示模型可以参与 App 延迟发现流程，不等同于上游接口原生支持 `tool_search` 或 namespace tool。Wework 对官方和自定义模型启用该 catalog 能力，使 Codex 在首轮请求中仅提供轻量 `tool_search`，而不是注入全部 Remote App Schema；搜索命中后才加载对应 App namespace。executor 在协议边界单独维护 `native_tool_search` 和 `native_namespace_tools`：支持原生工具搜索的 GPT 5.4+ Responses 云模型会直接透传。模型配置可以通过 `native_tool_search` 或 `nativeToolSearch` 以及 `native_namespace_tools` 或 `nativeNamespaceTools` 覆盖推断结果；显式配置 `false` 会关闭对应的自动推断。其他 Responses、Chat Completions 和 Anthropic Messages 上游会把 `tool_search` 与 namespace tool 转为普通 function 调用，并在返回 Codex 前恢复原始语义。第三方 Responses 兼容桥接在转换 tool-search 调用和输出 item 时，会移除其类型专属的 `id`，仅使用 `call_id` 关联调用与结果；原生 Responses 直通会保留原始 item 字段。因此 DeepSeek、Kimi 等第三方模型无需原生实现 Codex 专用工具，也能按需使用 App，同时普通消息不会承担完整 App 工具目录的上下文成本。
 
-文本模型可引用一个声明图片输入能力的视觉 sidecar。对于本地模型，该引用来自 Wework 本机模型配置；对于云端 Model CRD，该引用由 Wegent Web 写入 `modelConfig.visionSidecarModel`，Wework 只解析 Backend 聚合模型中携带的模型身份和协议，不编辑云端配置。Codex 仍按带图片的 Responses 请求工作，但 executor 会在协议转换和发送主请求前调用 sidecar，把每个 `input_image` 原位替换为受限长度的文字描述。配置 sidecar 的主模型统一使用仅内部可见、声明图片输入能力的 `wework-vision-sidecar` catalog 条目，因此该机制不依赖特定模型或提供商，且原始图片不会发送给文本主模型。sidecar 支持 Responses、Chat Completions 和 Anthropic Messages，上游密钥仍只保留在 executor 中。实现使用有界 LRU 描述缓存、进程级并发限制、单轮图片数量和内嵌数据大小限制；超时、非法图片或上游失败会生成明确的失败描述并移除原始图片，同时日志只记录协议、计数、缓存命中和耗时等聚合诊断字段。
+文本模型可显式引用一个声明图片输入能力的视觉 sidecar。对于本地模型，该引用来自 Wework 本机模型配置；对于云端 Model CRD，该引用由 Wegent Web 写入 `modelConfig.visionSidecarModel`，Wework 只解析 Backend 聚合模型中携带的模型身份和协议，不编辑云端配置，也不会按登录态或模型名称自动选择默认值。Codex 仍按带图片的 Responses 请求工作，但 executor 会在协议转换和发送主请求前调用 sidecar，把每个 `input_image` 原位替换为受限长度的文字描述。配置 sidecar 后，executor 从当前基础 catalog 通用派生一个只增加图片输入能力的隐藏 catalog，完整保留原模型的推理、工具、上下文和压缩能力；新增模型无需再增加 sidecar 专用映射或复制 catalog。未配置 sidecar 的模型保持原始纯文本 catalog，不执行额外视觉调用。原始图片不会发送给文本主模型。sidecar 支持 Responses、Chat Completions 和 Anthropic Messages，上游密钥仍只保留在 executor 中。实现使用有界 LRU 描述缓存、进程级并发限制、单轮图片数量和内嵌数据大小限制；超时、非法图片或上游失败会生成明确的失败描述并移除原始图片，同时日志只记录协议、计数、缓存命中和耗时等聚合诊断字段。受约束的数据流与不变量见[文本模型视觉委托](../../architecture/model-vision-delegation.md)。
 
 #### 任务监督与运行时就绪
 
@@ -620,6 +620,40 @@ sequenceDiagram
     Backend->>Frontend: 13. WebSocket 推送
     Frontend->>User: 14. 显示结果
 ```
+
+### Wework 本地项目设置流
+
+Wework 的本地项目可以保存项目指令、默认模型、项目插件关系和项目快捷短语。
+项目记录保存在 Codex 全局状态中。创建新对话时，前端只把执行相关设置写入任务
+请求，Executor 再把这份快照持久化到 `RuntimeTaskLink` 并注入 Codex；快捷短语
+由 Wework Composer 直接按当前项目读取，不进入任务执行请求。
+
+```mermaid
+sequenceDiagram
+    participant User as 用户
+    participant Wework as Wework
+    participant State as Codex 全局状态
+    participant Executor as Executor
+    participant Codex as Codex
+
+    User->>Wework: 配置项目指令、模型、插件和快捷短语
+    Wework->>State: 保存项目级设置
+    User->>Wework: 打开项目输入框快捷短语
+    Wework->>State: 读取项目快捷短语
+    Wework->>Wework: 项目短语排在全局短语之前
+    User->>Wework: 在项目中创建新对话
+    Wework->>Executor: 发送指令、模型和插件快照
+    Executor->>Executor: 持久化到 RuntimeTaskLink
+    Executor->>Codex: 注入指令、模型和项目插件覆盖
+```
+
+核心不变量：
+
+- 项目指令、默认模型和插件只影响新对话；已有对话继续使用创建时的快照。
+- 项目快捷短语是 Composer 预设，不进入 Executor。当前项目的短语排在设备全局短语之前，设备暂存区仍保持全局。
+- 项目插件表示项目安装关系。插件包可以复用全局缓存，但保持全局禁用时仍可在所属项目任务中启用。
+- Codex 的有效插件集合是“全局启用插件”和“当前任务的项目插件”的并集。
+- 项目不拥有独立插件市场；安装来源仍是全局市场及其权限策略。
 
 ### 通信协议
 

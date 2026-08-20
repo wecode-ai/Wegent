@@ -2,7 +2,29 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
+import { requestWorkbenchComposerFocus } from '@/lib/workbenchComposerFocus'
 import { BufferedChatInput } from './BufferedChatInput'
+
+function createProjectChat(scopeKey: string) {
+  return {
+    models: [],
+    skills: [],
+    selectedModel: null,
+    selectedModelOptions: {},
+    selectedSkills: [],
+    attachments: [],
+    uploadingFiles: new Map(),
+    errors: new Map(),
+    isOptionsLocked: false,
+    setSelectedModel: vi.fn(),
+    setSelectedModelOption: vi.fn(),
+    toggleSkill: vi.fn(),
+    handleFileSelect: vi.fn(),
+    removeAttachment: vi.fn(),
+    listLocalSkills: vi.fn(),
+    scopeKey,
+  }
+}
 
 describe('BufferedChatInput', () => {
   afterEach(() => {
@@ -403,5 +425,81 @@ describe('BufferedChatInput', () => {
     await waitFor(() => {
       expect(screen.getByTestId('chat-message-input')).toHaveValue('unfinished draft')
     })
+  })
+
+  test('focuses the matching composer when a conversation is selected', async () => {
+    render(
+      <>
+        <button type="button">Conversation</button>
+        <BufferedChatInput
+          value=""
+          onChange={vi.fn()}
+          onSubmit={vi.fn()}
+          disabled={false}
+          projectChat={createProjectChat('runtime:device-1:task-1')}
+        />
+      </>
+    )
+    const conversation = screen.getByRole('button', { name: 'Conversation' })
+    conversation.focus()
+
+    requestWorkbenchComposerFocus('runtime:device-1:task-1')
+
+    await waitFor(() => expect(screen.getByTestId('chat-message-input')).toHaveFocus())
+  })
+
+  test('focuses a selected conversation after its composer mounts', async () => {
+    requestWorkbenchComposerFocus('runtime:device-1:task-1')
+
+    render(
+      <BufferedChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        projectChat={createProjectChat('runtime:device-1:task-1')}
+      />
+    )
+
+    await waitFor(() => expect(screen.getByTestId('chat-message-input')).toHaveFocus())
+  })
+
+  test('does not focus a disabled or non-matching composer', async () => {
+    const projectChat = createProjectChat('runtime:device-1:task-1')
+    const { rerender } = render(
+      <>
+        <button type="button">Conversation</button>
+        <BufferedChatInput
+          value=""
+          onChange={vi.fn()}
+          onSubmit={vi.fn()}
+          disabled={false}
+          projectChat={projectChat}
+        />
+      </>
+    )
+    const conversation = screen.getByRole('button', { name: 'Conversation' })
+    conversation.focus()
+
+    requestWorkbenchComposerFocus('runtime:device-1:task-2')
+    await new Promise(resolve => window.requestAnimationFrame(resolve))
+    expect(conversation).toHaveFocus()
+
+    rerender(
+      <>
+        <button type="button">Conversation</button>
+        <BufferedChatInput
+          value=""
+          onChange={vi.fn()}
+          onSubmit={vi.fn()}
+          disabled
+          projectChat={projectChat}
+        />
+      </>
+    )
+    screen.getByRole('button', { name: 'Conversation' }).focus()
+    requestWorkbenchComposerFocus('runtime:device-1:task-1')
+    await new Promise(resolve => window.requestAnimationFrame(resolve))
+    expect(screen.getByRole('button', { name: 'Conversation' })).toHaveFocus()
   })
 })

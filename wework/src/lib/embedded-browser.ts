@@ -47,10 +47,19 @@ export interface EmbeddedBrowserBounds {
 }
 
 export interface EmbeddedBrowserPageState {
+  label?: string
   nativeLabel: string
   title: string | null
   url: string | null
+  isLoading: boolean
+  navigationError?: EmbeddedBrowserNavigationError | null
   invalidTlsCertificate?: EmbeddedBrowserInvalidTlsCertificateEvent | null
+}
+
+export interface EmbeddedBrowserNavigationError {
+  code: number
+  message: string
+  url: string | null
 }
 
 export interface EmbeddedBrowserOpenRequest {
@@ -334,6 +343,16 @@ export async function goForwardEmbeddedBrowser(
   label = DEFAULT_EMBEDDED_BROWSER_LABEL
 ): Promise<void> {
   await invoke('embedded_browser_go_forward', browserArgs(label))
+}
+
+export async function setEmbeddedBrowserZoom(
+  scaleFactor: number,
+  label = DEFAULT_EMBEDDED_BROWSER_LABEL
+): Promise<void> {
+  await invoke('embedded_browser_set_zoom', {
+    ...browserArgs(label),
+    scaleFactor,
+  })
 }
 
 export async function evalEmbeddedBrowser(

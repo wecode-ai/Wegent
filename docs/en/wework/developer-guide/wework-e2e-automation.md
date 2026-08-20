@@ -114,14 +114,20 @@ Matrix submissions use a 10-second timeout. If the composer already displays a s
 The main desktop flow's short-conversation layout regression stores `short-conversation-00-ready.png`, `short-conversation-01-prompt-filled.png`, `short-conversation-02-completed-top-aligned.png`, and `short-conversation-layout-metrics.json`. The final screenshot and metrics are captured after switching away and reopening the conversation. The gate requires the first message to remain within `160px` of the message viewport's top edge. For focused local diagnosis, run `node wework/e2e/desktop/task-flow.e2e.mjs --short-conversation-only`; the same check remains part of the regular `e2e:desktop` flow rather than a separate CI entrypoint.
 
 The main desktop runner also supports execution through ordered checkpoints.
-The checkpoints are `workspace-tabs`, `priority-filter`, `telemetry-consent`,
-`automation-lifecycle`, `project-automation`, `plugin-auto-update`,
-`model-routing`, `permission-modes`, `core-task-flow`, `runtime-task-queue`,
-`split-workbench`, `window-lifecycle`, `goal-lifecycle`,
-`supervisor-lifecycle`, `resilience`, `conversation-state`, `temporary-chat`,
-`workspace-attachments`, `rendering-extensions`, `change-request-status`,
-`claude-runtime`, `local-file-preview`, `local-harness`, `browser-multi-tabs`,
-and `embedded-browser`.
+The checkpoints are `remote-device-onboarding`, `workspace-tabs`,
+`cloud-project-creation`, `priority-filter`, `telemetry-consent`, `automation-lifecycle`,
+`project-automation`, `project-assignment-notification`, `offline-local-project-space`,
+`plugin-auto-update`, `project-ai-settings`, `model-routing`, `permission-modes`,
+`core-task-flow`, `task-attachments`, `cloud-git-worktree`,
+`cloud-worktree-capability`, `cloud-worktree-create`, `cloud-worktree-queued-cancel`,
+`cloud-worktree-tools`, `cloud-worktree-archive-restore`,
+`cloud-worktree-device-restart`, `context-compaction`, `runtime-task-queue`,
+`codex-notification-isolation`, `split-workbench`, `window-lifecycle`,
+`goal-lifecycle`, `supervisor-lifecycle`, `resilience`, `conversation-state`,
+`temporary-chat`, `workspace-attachments`, `rendering-extensions`,
+`change-request-status`, `claude-runtime`, `local-file-preview`, `local-harness`,
+`harness-apps`, `browser-multi-tabs`, `embedded-browser`, and
+`browser-toolbar-actions`.
 `--segment <checkpoint>` performs common startup and project
 initialization, then runs only the selected checkpoint.
 `--from-segment <checkpoint>` starts there and continues through every later
@@ -129,15 +135,30 @@ checkpoint. When upstream checkpoints are skipped, each checkpoint establishes
 its own minimal fixtures instead of depending on tasks or UI state created only
 by the complete flow. PR CI builds the smallest segment matrix for the changed
 feature paths. Shared desktop infrastructure, merge queue, scheduled runs, and
-`ci:all` still run the complete desktop suites. The complete Core suite expands
-every checkpoint into an independent GitHub Actions matrix job so the
-checkpoints run in parallel instead of serially inside one
-`Wework Desktop E2E (Core)` job. CI first builds one Core Tauri application,
-Executor, and Codex artifact with fixed test ports. Each checkpoint installs
-only desktop runtime dependencies and reuses that artifact instead of
-reinstalling pnpm, Rust, Python, or uv and rebuilding Vite, Tauri, and Executor.
-The plugin and cloud suites require different build-time configuration, so they
-remain independent jobs that run alongside the Core build. Merge queue validates
+`ci:all` still run the complete desktop suites. The complete Core and Cloud
+suites each use five fixed GitHub Actions matrix jobs. Every job runs its
+checkpoints serially so multiple real Tauri, WebView, and Executor stacks do not
+contend for CPU and memory on the same GitHub runner and push normal asynchronous
+state beyond the shared 10-second step timeout. The ten matrix jobs still provide
+suite-level parallelism across runners. Shards are balanced from observed CI
+durations; a new or materially slower checkpoint requires rebalancing instead of
+adding runners, removing coverage, or rerunning failures. CI first builds one Core Tauri
+application, Executor, and Codex artifact. In `--build-only` mode, the
+independent Tauri and Executor builds run concurrently on the same runner. Every
+Core and Cloud shard downloads and reuses that artifact instead of rebuilding
+Vite, Tauri, and Executor. Rust builds reuse both the `main`-owned Cargo target
+cache and sccache compiler units: the target cache bounds PR and first-run
+latency, while sccache reduces incremental compilation after dependency or
+source changes. Archiving strips Linux debug symbols only from the copied
+artifact binaries, leaving the original build outputs unchanged while reducing
+upload and download time across the ten shards. Desktop E2E builds skip the
+duplicate TypeScript typecheck that the parallel Lint workflow runs in full,
+while retaining the real Vite and Tauri artifact build; test coverage and the
+type gate remain unchanged. The plugin suite requires an independent build
+configuration and continues to run in parallel with the shared Core build.
+Both successful and failed runs retain complete diagnostics; uploads disable
+redundant compression for PNG and other already-compressed evidence so artifact
+archiving does not extend the pipeline tail. Merge queue validates
 the final commit that enters `main`, so Tests, Lint, Platform E2E, and Wework E2E
 do not repeat the same validation after the merge through a `push main` trigger. The
 mapping lives in `.github/scripts/classify-wework-desktop-e2e.sh` and must be updated when new

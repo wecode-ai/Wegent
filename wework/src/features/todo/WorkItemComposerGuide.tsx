@@ -43,7 +43,11 @@ function isCurrentBinding(binding: TaskBinding, currentTask?: RuntimeTaskAddress
   )
 }
 
-export function WorkItemComposerGuide({
+export function WorkItemComposerGuide(props: WorkItemComposerGuideProps) {
+  return <WorkItemComposerGuideContent {...props} />
+}
+
+function WorkItemComposerGuideContent({
   project,
   item,
   api,
@@ -322,7 +326,7 @@ export function WorkItemComposerGuide({
                     className="flex h-9 w-full items-center gap-2.5 rounded-lg px-2 text-left text-sm text-text-muted hover:bg-muted hover:text-text-primary"
                   >
                     <X className="h-4 w-4 shrink-0" />
-                    <span>{t('workbench.disable_work_item', '不使用工作空间')}</span>
+                    <span>{t('workbench.clear_extra_project_space', '不加入其他项目空间')}</span>
                   </button>
                 ) : null}
               </>

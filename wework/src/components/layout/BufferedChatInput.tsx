@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   ChatInput,
   type ChatInputHandle,
@@ -6,6 +6,11 @@ import {
   type ChatSubmitOptions,
 } from '@/components/chat/ChatInput'
 import { recordComposerDiagnostic } from '@/components/chat/composer/composerDiagnostics'
+import {
+  consumeWorkbenchComposerFocusRequest,
+  WORKBENCH_COMPOSER_FOCUS_EVENT,
+  type WorkbenchComposerFocusDetail,
+} from '@/lib/workbenchComposerFocus'
 
 export interface BufferedChatInputInsertion {
   id: number
@@ -49,6 +54,25 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   const isComposingRef = useRef(false)
   const scopeKeyRef = useRef(scopeKey)
   scopeKeyRef.current = scopeKey
+
+  useLayoutEffect(() => {
+    const focusComposer = () => {
+      composerRef.current?.focus()
+    }
+    const focusRequestedComposer = (event: Event) => {
+      const detail = (event as CustomEvent<WorkbenchComposerFocusDetail>).detail
+      if (props.disabled || !scopeKey || detail?.scopeKey !== scopeKey) return
+      consumeWorkbenchComposerFocusRequest(scopeKey)
+      focusComposer()
+    }
+    window.addEventListener(WORKBENCH_COMPOSER_FOCUS_EVENT, focusRequestedComposer)
+    if (!props.disabled && scopeKey && consumeWorkbenchComposerFocusRequest(scopeKey)) {
+      focusComposer()
+    }
+    return () => {
+      window.removeEventListener(WORKBENCH_COMPOSER_FOCUS_EVENT, focusRequestedComposer)
+    }
+  }, [props.disabled, scopeKey])
 
   const setComposerValue = useCallback((nextValue: string, cursor: number) => {
     programmaticUpdateDepthRef.current += 1

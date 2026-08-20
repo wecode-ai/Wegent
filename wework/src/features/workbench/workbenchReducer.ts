@@ -5,6 +5,8 @@ import type {
   RuntimeTaskSummary,
   ProjectWithTasks,
   RuntimeDeviceWorkspace,
+  RuntimeProjectAiSettings,
+  RuntimeProjectSpaceRef,
   RuntimeTaskAddress,
   RuntimeProjectWork,
   RuntimeWorkListResponse,
@@ -21,7 +23,6 @@ import {
 } from '@/lib/runtime-project'
 import { workbenchDeviceMatchesId } from '@/lib/workbench-device'
 import {
-  getRuntimeTaskWorkspacePath,
   mergeRuntimeTaskHandles,
   removeRuntimeTasks,
   updateRuntimeWorkTask,
@@ -92,6 +93,14 @@ export type WorkbenchAction =
   | { type: 'bootstrap_failed'; error: string }
   | { type: 'project_created'; project: ProjectWithTasks }
   | { type: 'project_selected'; project: ProjectWithTasks }
+  | {
+      type: 'runtime_local_project_updated'
+      projectKey: string
+      name: string
+      roots: string[]
+      defaultProjectSpace: RuntimeProjectSpaceRef | null
+      aiSettings: RuntimeProjectAiSettings | null
+    }
   | { type: 'runtime_project_removed'; projectId: number }
   | { type: 'device_workspace_prepared'; mapping: DeviceWorkspaceResponse }
   | {
@@ -121,6 +130,11 @@ export type WorkbenchAction =
       type: 'runtime_task_opened'
       address: RuntimeTaskAddress
       project: ProjectWithTasks | null
+    }
+  | {
+      type: 'runtime_task_address_reconciled'
+      previousAddress: RuntimeTaskAddress
+      address: RuntimeTaskAddress
     }
   | {
       type: 'runtime_task_optimistic_upserted'
@@ -635,7 +649,7 @@ function findRuntimeTaskAddressByTaskId(
       deviceId: workspace.deviceId,
       taskId,
       ...(task.runtime !== 'codex' ? { runtime: task.runtime } : {}),
-      workspacePath: getRuntimeTaskWorkspacePath(workspace, task),
+      ...(task.workspacePath ? { workspacePath: task.workspacePath } : {}),
       ...(task.taskId ? { taskId: task.taskId } : {}),
       ...(task.threadId ? { threadId: task.threadId } : {}),
       ...(task.runtimeHandle ? { runtimeHandle: task.runtimeHandle } : {}),
@@ -667,8 +681,12 @@ function reconcileCurrentRuntimeTaskAddress(
     )
     return {
       ...currentRuntimeTask,
+      workspacePath: hydratedCurrentDeviceTask.workspacePath,
       ...(hydratedCurrentDeviceTask.threadId
         ? { threadId: hydratedCurrentDeviceTask.threadId }
+        : {}),
+      ...(hydratedCurrentDeviceTask.workspacePath
+        ? { workspacePath: hydratedCurrentDeviceTask.workspacePath }
         : {}),
       ...(runtimeHandle ? { runtimeHandle } : {}),
     }
@@ -1055,6 +1073,29 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
         standaloneWorkspacePath: null,
         currentRuntimeTask: null,
       }
+    case 'runtime_local_project_updated':
+      return {
+        ...state,
+        runtimeWork: state.runtimeWork
+          ? {
+              ...state.runtimeWork,
+              projects: state.runtimeWork.projects.map(projectWork =>
+                projectWork.project.key === action.projectKey
+                  ? {
+                      ...projectWork,
+                      project: {
+                        ...projectWork.project,
+                        name: action.name,
+                        roots: action.roots.map(path => ({ kind: 'local', path })),
+                        defaultProjectSpace: action.defaultProjectSpace,
+                        aiSettings: action.aiSettings,
+                      },
+                    }
+                  : projectWork
+              ),
+            }
+          : state.runtimeWork,
+      }
     case 'runtime_project_removed': {
       const removedCurrentProject = state.currentProject?.id === action.projectId
       const runtimeWork = state.runtimeWork
@@ -1196,6 +1237,28 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
         currentProject: action.project,
         currentRuntimeTask: action.address,
       }
+    case 'runtime_task_address_reconciled': {
+      const currentRuntimeTask = state.currentRuntimeTask
+      if (
+        !currentRuntimeTask ||
+        currentRuntimeTask.deviceId !== action.previousAddress.deviceId ||
+        currentRuntimeTask.taskId !== action.previousAddress.taskId
+      ) {
+        return state
+      }
+      const runtimeHandle = mergeRuntimeTaskHandles(
+        currentRuntimeTask.runtimeHandle,
+        action.address.runtimeHandle
+      )
+      return {
+        ...state,
+        currentRuntimeTask: {
+          ...currentRuntimeTask,
+          ...action.address,
+          ...(runtimeHandle ? { runtimeHandle } : {}),
+        },
+      }
+    }
     case 'runtime_task_optimistic_upserted':
       return {
         ...state,

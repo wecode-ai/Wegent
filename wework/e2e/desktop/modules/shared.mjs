@@ -250,6 +250,7 @@ const VISION_SIDECAR_PROMPT =
   'WEWORK_DESKTOP_E2E_VISION_SIDECAR: describe the attached verification image.'
 const VISION_SIDECAR_DESCRIPTION = 'The verification image is a solid red square.'
 const VISION_SIDECAR_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_VISION_SIDECAR_COMPLETE'
+const VISION_SIDECAR_MAIN_REQUEST_SCENARIO = 'vision_sidecar_main'
 const MULTIMODAL_VISION_PROMPT =
   'WEWORK_DESKTOP_E2E_MULTIMODAL_VISION: inspect the attached verification image.'
 const MULTIMODAL_VISION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_MULTIMODAL_VISION_COMPLETE'
@@ -263,8 +264,8 @@ const LOCAL_VISION_SIDECAR_CASE = {
 const CLOUD_VISION_SIDECAR_CASE = {
   source: 'cloud',
   mainOptionId: 'desktop-e2e-cloud-vision-main',
-  mainLabel: 'Desktop E2E Cloud Vision Main',
-  mainModelId: 'desktop-e2e-cloud-vision-main-upstream',
+  mainLabel: 'Desktop E2E DeepSeek Flash Vision Main',
+  mainModelId: 'deepseek-v4-flash',
   sidecarModelId: 'desktop-e2e-cloud-vision-sidecar-upstream',
 }
 const CLOUD_MULTIMODAL_VISION_CASE = {
@@ -1154,6 +1155,15 @@ async function reactivateMacApplication(appIdentifier) {
   await runChecked('open', ['-g', '-b', appIdentifier])
 }
 
+function requestMacosApplicationQuit(processId) {
+  commandOutput('osascript', [
+    '-l',
+    'JavaScript',
+    '-e',
+    `ObjC.import("AppKit"); const app = $.NSRunningApplication.runningApplicationWithProcessIdentifier(${processId}); app ? Boolean(app.terminate) : false`,
+  ])
+}
+
 async function triggerModelReloadUntilCloudFailure(control) {
   const failedCloudModelRequest = control.awaitFailedCloudModelRequest()
   for (let attempt = 0; attempt < 10 && control.failedCloudModelRequests === 0; attempt += 1) {
@@ -1250,6 +1260,7 @@ async function ensureModelOptionVisible(
       await control
         .command('hover', modelSelectorButton, {
           timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+          visible: true,
         })
         .catch(() => undefined)
       menu = JSON.parse(await control.command('snapshot', 'body'))
@@ -1257,6 +1268,7 @@ async function ensureModelOptionVisible(
         await control.command('clickWhenEnabled', modelSelectorButton, {
           stableMs: 100,
           timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+          visible: true,
         })
       }
     }
@@ -1289,7 +1301,24 @@ async function confirmLocalProjectName(control, name) {
 }
 
 async function createSingleRootLocalProject(control, workspacePath, name) {
-  await control.command('click', '[data-testid="projects-create-button"]')
+  const sidebarSnapshot = await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes('projects-empty-create-button') ||
+      snapshot.testIds.includes('runtime-project-sortable-list'),
+    'The project section did not settle into an empty or populated state'
+  )
+  const createButtonSelector = sidebarSnapshot.testIds.includes('projects-empty-create-button')
+    ? '[data-testid="projects-empty-create-button"]'
+    : '[data-testid="projects-create-button"]'
+  if (createButtonSelector.includes('projects-empty-create-button')) {
+    assert.match(
+      await control.command('getText', createButtonSelector),
+      /New project|新建项目/,
+      'The empty project section did not expose a localized creation action'
+    )
+  }
+  await control.command('click', createButtonSelector)
   await control.command('click', '[data-testid="project-create-local-option"]')
   await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -1317,8 +1346,11 @@ async function selectE2EModel(
   const modelSelectorButton = `${composerSelector} [data-testid="model-selector-button"]`.trim()
   await control.command('waitFor', modelSelectorButton, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    visible: true,
   })
-  const selectedModelLabel = await control.command('getText', modelSelectorButton)
+  const selectedModelLabel = await control.command('getText', modelSelectorButton, {
+    visible: true,
+  })
   if (labels.some(label => selectedModelLabel.includes(label))) return
 
   await ensureModelOptionVisible(control, modelIds, modelSelectorButton)
@@ -1330,6 +1362,7 @@ async function selectE2EModel(
       await control.command('clickWhenEnabled', modelSelectorButton, {
         stableMs: 100,
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        visible: true,
       })
     }
     await revealGroupedModelOption(control, targetOptionIds)
@@ -1367,7 +1400,9 @@ async function waitForE2EModelLabel(
 ) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
-    const selectedModelLabel = await control.command('getText', modelSelectorButton)
+    const selectedModelLabel = await control.command('getText', modelSelectorButton, {
+      visible: true,
+    })
     if (labels.some(label => selectedModelLabel.includes(label))) return
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
@@ -1543,6 +1578,7 @@ export {
   VISION_SIDECAR_PROMPT,
   VISION_SIDECAR_DESCRIPTION,
   VISION_SIDECAR_COMPLETION_TEXT,
+  VISION_SIDECAR_MAIN_REQUEST_SCENARIO,
   MULTIMODAL_VISION_PROMPT,
   MULTIMODAL_VISION_COMPLETION_TEXT,
   LOCAL_VISION_SIDECAR_CASE,
@@ -1748,6 +1784,7 @@ export {
   waitForExecutorReadyEvidence,
   waitForLogPattern,
   reactivateMacApplication,
+  requestMacosApplicationQuit,
   triggerModelReloadUntilCloudFailure,
   sendPromptUntilScenarioRequest,
   visibleModelOptionId,

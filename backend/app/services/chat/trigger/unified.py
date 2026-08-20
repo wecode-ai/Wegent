@@ -41,6 +41,10 @@ from app.services.user_runtime_config import (
     UserRuntimeConfigError,
     user_runtime_config_service,
 )
+from shared.codex_model_catalog import (
+    codex_catalog_model_id_for_upstream,
+    codex_catalog_model_id_from_config,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -200,20 +204,44 @@ def _catalog_model_id_from_model_options(
     model_options: Optional[Dict[str, Any]],
 ) -> Optional[str]:
     """Extract catalog model id override from UI model options."""
-    if not model_options:
+    return codex_catalog_model_id_from_config(
+        model_options,
+        (
+            "weworkCloudModelCodexCatalogModelId",
+            "weworkCloudModelCatalogModelId",
+            "codex_catalog_model_id",
+            "codexCatalogModelId",
+        ),
+    )
+
+
+def _catalog_model_id_from_model_spec(
+    model_spec: Any,
+) -> Optional[str]:
+    """Resolve a catalog ID from non-secret fields in a Model spec."""
+    if not isinstance(model_spec, dict):
         return None
-    catalog_id = (
-        model_options.get("weworkCloudModelCodexCatalogModelId")
-        or model_options.get("weworkCloudModelCatalogModelId")
-        or model_options.get("codex_catalog_model_id")
-        or model_options.get("codexCatalogModelId")
+    model_config = model_spec.get("modelConfig")
+    if not isinstance(model_config, dict):
+        return None
+    env = model_config.get("env")
+    if not isinstance(env, dict):
+        return None
+    explicit_catalog_model_id = _catalog_model_id_from_model_options(env)
+    if explicit_catalog_model_id:
+        return explicit_catalog_model_id
+    upstream_api_format = _canonical_codex_upstream_api_format(
+        str(
+            model_spec.get("apiFormat")
+            or model_config.get("apiFormat")
+            or model_spec.get("protocol")
+            or model_config.get("protocol")
+            or ""
+        )
     )
-    result = (
-        catalog_id.strip()
-        if isinstance(catalog_id, str) and catalog_id.strip()
-        else None
+    return codex_catalog_model_id_for_upstream(
+        env.get("model_id") or env.get("modelId"), upstream_api_format
     )
-    return result
 
 
 def _should_ignore_unavailable_task_model_override(payload: Any) -> bool:
@@ -316,6 +344,10 @@ def _build_codex_runtime_model_config(
                     resolved_config["temperature"] = full_config["temperature"]
                 if full_config.get("think_config"):
                     resolved_config["think_config"] = dict(full_config["think_config"])
+                if full_config.get("codex_catalog_model_id"):
+                    resolved_config["codex_catalog_model_id"] = str(
+                        full_config["codex_catalog_model_id"]
+                    )
                 # Upstream wire format mirrors the App's
                 # getCloudModelUpstreamApiFormat inference: claude-family
                 # models go through the Anthropic Messages protocol instead of
@@ -368,8 +400,16 @@ def _build_codex_runtime_model_config(
         resolved_config["model_provider"] = str(provider_id)
     if provider_name:
         resolved_config["provider_name"] = str(provider_name)
-    if catalog_model_id:
-        resolved_config["codex_catalog_model_id"] = catalog_model_id
+    effective_catalog_model_id = (
+        catalog_model_id
+        or resolved_config.get("codex_catalog_model_id")
+        or codex_catalog_model_id_for_upstream(
+            resolved_config.get("model_id"),
+            resolved_config.get("upstream_api_format"),
+        )
+    )
+    if effective_catalog_model_id:
+        resolved_config["codex_catalog_model_id"] = effective_catalog_model_id
     return resolved_config
 
 
@@ -470,7 +510,9 @@ def _build_cloud_gateway_model_config(
         {"sub": creator.user_name, "user_id": creator.id},
         expires_delta=30,
     )
-    return {
+    model_spec = kind.json.get("spec") if isinstance(kind.json, dict) else None
+    catalog_model_id = _catalog_model_id_from_model_spec(model_spec)
+    config = {
         "model": "openai",
         "model_id": model_name,
         "api_format": "responses",
@@ -487,6 +529,9 @@ def _build_cloud_gateway_model_config(
         },
         "runtime_config": {"codex": {"use_user_config": False, "configured": True}},
     }
+    if catalog_model_id:
+        config["codex_catalog_model_id"] = catalog_model_id
+    return config
 
 
 def build_wework_runtime_model_config(
@@ -511,16 +556,15 @@ def build_wework_runtime_model_config(
     )
     if gateway_config is None:
         return resolved
-    upstream_model_id = str(resolved.get("model_id") or "").lower()
-    inferred_catalog_model_id = (
-        "wework-kimi-k2-7" if "kimi-k2.7" in upstream_model_id else None
+    resolved_catalog_model_id = resolved.get(
+        "codex_catalog_model_id"
+    ) or codex_catalog_model_id_for_upstream(
+        resolved.get("model_id"), resolved.get("upstream_api_format")
     )
-    gateway_config.setdefault(
-        "codex_catalog_model_id",
-        resolved.get("codex_catalog_model_id")
-        or inferred_catalog_model_id
-        or "wework-gpt-5.6-sol",
-    )
+    if resolved_catalog_model_id:
+        gateway_config["codex_catalog_model_id"] = resolved_catalog_model_id
+    else:
+        gateway_config.setdefault("codex_catalog_model_id", "wework-gpt-5.6-sol")
     gateway_config["codex_responses_compat_proxy"] = True
     return gateway_config
 

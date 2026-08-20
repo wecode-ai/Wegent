@@ -20,7 +20,7 @@ A project UI identity combines the state-owning device with the project key. Ide
 
 A task UI identity combines the state-owning device with the task ID. Live-list refreshes merge tasks only by that identity; title, workspace path, and runtime kind are not identity fields. Distinct tasks can share a title, such as consecutive attachment-only submissions with no text, so neither the frontend nor Executor may infer duplicates from those display fields.
 
-Tasks without a manual order are sorted by the completion time of their latest turn; a new task that has never completed uses its creation time. When an existing task starts another streaming turn, it retains the previous turn's completion time until the current turn completes. Opening or resuming a running task, receiving streaming deltas, and ordinary task-summary synchronization must therefore not move a task row solely because `updatedAt` changed.
+New project tasks that have not entered the manual order appear before existing manually ordered tasks; multiple unordered tasks are sorted by their latest activity. Tasks with a manual order continue to follow `sidebarOrder`. This keeps an optimistic task without `sidebarOrder` at the top immediately, then preserves its position after Executor returns the persisted order instead of dropping it to the bottom.
 
 ## Project model
 

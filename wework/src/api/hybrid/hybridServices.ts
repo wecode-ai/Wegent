@@ -28,6 +28,7 @@ import {
   mergeRuntimeWorkLists as mergeRuntimeWorkPair,
 } from '@/features/workbench/workbenchCloudStatus'
 import { supportsCloudExecution } from '@/features/cloud-connection/modelExecution'
+import { resolveCloudVisionSidecarReference } from '@/features/workbench/runtimeModelSelection'
 import type {
   Attachment,
   ArchivedConversationItem,
@@ -141,7 +142,21 @@ function annotateLocalModels(models: UnifiedModel[]): UnifiedModel[] {
 }
 
 function annotateCloudModels(models: UnifiedModel[]): UnifiedModel[] {
-  return models.filter(supportsCloudExecution)
+  const compatibleModels = models.filter(supportsCloudExecution)
+  return compatibleModels.map(model => {
+    const config = recordValue(model.config)
+    if (!Object.hasOwn(config, 'visionSidecarModel')) return model
+    const visionSidecarModel = resolveCloudVisionSidecarReference(
+      config.visionSidecarModel,
+      compatibleModels
+    )
+    if (visionSidecarModel) {
+      return { ...model, config: { ...config, visionSidecarModel } }
+    }
+    const sanitizedConfig = { ...config }
+    delete sanitizedConfig.visionSidecarModel
+    return { ...model, config: sanitizedConfig }
+  })
 }
 
 function normalizedModelId(model: UnifiedModel): string {
@@ -1315,6 +1330,7 @@ export function createHybridWorkbenchServices(
     attachmentApi: {
       uploadAttachment: localServices.attachmentApi!.uploadAttachment,
       deleteAttachment: localServices.attachmentApi!.deleteAttachment,
+      fetchAttachmentBlob: cloudServices.attachmentApi!.fetchAttachmentBlob,
       uploadLocalAttachmentToCloud: attachment =>
         uploadLocalAttachmentToCloud(attachment, cloudServices.attachmentApi!.uploadAttachment),
     },

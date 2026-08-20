@@ -3,6 +3,7 @@ import type { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
 import type {
   Attachment,
   BindRuntimeTaskIMSessionsResponse,
+  CloneGitRepositoryInput,
   CreateGitWorkspaceProjectRequest,
   CreateProjectRequest,
   DeleteDeviceWorkspaceRequest,
@@ -39,6 +40,7 @@ import type {
   RuntimeTaskCreateRequest,
   RuntimeTaskForkTarget,
   RuntimeProjectAppearanceRequest,
+  RuntimeProjectAiSettings,
   RuntimeProjectSpaceRef,
   RuntimeProjectPinRequest,
   RuntimeProjectReorderRequest,
@@ -115,6 +117,12 @@ export interface CreateTemporaryRuntimeTaskOptions {
 
 export interface CreateProjectRuntimeTaskOptions {
   project?: ProjectWithTasks | null
+  /** Select a project workspace without mutating the global workbench
+   * selection, for embedded project-space composers. */
+  deviceWorkspaceId?: number | null
+  /** Reuse the exact workspace or worktree from a previous runtime task
+   * without inheriting its conversation. */
+  workspaceSource?: RuntimeTaskAddress | null
   /** Project-space entry points can pin the shell independently from the
    * globally selected model. */
   runtime?: RuntimeName
@@ -309,6 +317,7 @@ export interface WorkbenchContextValue {
     name: string
     roots: string[]
     defaultProjectSpace: RuntimeProjectSpaceRef | null
+    aiSettings: RuntimeProjectAiSettings | null
   }) => Promise<void>
   removeProject: (projectId: number) => Promise<void>
   reorderRuntimeProjects: (data: RuntimeProjectReorderRequest) => Promise<void>
@@ -320,6 +329,7 @@ export interface WorkbenchContextValue {
   getProjectWorkspaceRoot: (deviceId: string) => Promise<string>
   listDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
   createDeviceDirectory: (deviceId: string, path: string) => Promise<void>
+  cloneGitRepository: (deviceId: string, input: CloneGitRepositoryInput) => Promise<void>
   loadEnvironmentInfo: (
     project: ProjectWithTasks | null,
     workspaceTarget?: WorkspaceTarget | null,
@@ -437,6 +447,7 @@ export interface WorkbenchProviderProps {
   lifecycleStore?: RuntimeTaskLifecycleStore
   onStartupReadyChange?: (ready: boolean) => void
   workspaceTabId?: string
+  consumePluginTrials?: boolean
   syncRemoteProjects?: boolean
   syncRuntimeTaskLifecycle?: boolean
 }

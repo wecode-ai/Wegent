@@ -43,6 +43,164 @@ struct RuntimeWorkIndex {
     deleted_archived_task_ids: HashMap<String, i64>,
 }
 
+#[derive(Clone, Default, Deserialize, Serialize)]
+#[serde(default)]
+struct PersistedRuntimeWorkIndex {
+    version: u64,
+    tasks: HashMap<String, PersistedRuntimeTask>,
+    workspaces: HashMap<String, RuntimeWorkspaceLink>,
+    #[serde(default, deserialize_with = "deserialize_deleted_archived_task_ids")]
+    deleted_archived_task_ids: HashMap<String, i64>,
+}
+
+#[derive(Clone, Default, Deserialize, Serialize)]
+#[serde(from = "PersistedRuntimeTaskInput")]
+#[serde(default)]
+struct PersistedRuntimeTask {
+    local_task_id: String,
+    thread_id: Option<String>,
+    workspace_path: String,
+    title: String,
+    runtime: String,
+    archived: bool,
+    continuable: bool,
+    goal_status: Option<String>,
+    supervisor: Option<super::response::RuntimeSupervisorState>,
+    created_at: i64,
+    updated_at: i64,
+    runtime_handle: Value,
+    parent: Option<Value>,
+    ephemeral: bool,
+    runtime_project_key: Option<String>,
+    runtime_workspace_roots: Vec<String>,
+    project_instructions: String,
+    project_plugin_ids: Vec<String>,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(default)]
+struct PersistedRuntimeTaskInput {
+    local_task_id: String,
+    thread_id: Option<String>,
+    workspace_path: String,
+    title: String,
+    runtime: String,
+    archived: bool,
+    status: Option<String>,
+    continuable: bool,
+    goal_status: Option<String>,
+    supervisor: Option<super::response::RuntimeSupervisorState>,
+    created_at: i64,
+    updated_at: i64,
+    runtime_handle: Value,
+    parent: Option<Value>,
+    ephemeral: bool,
+    runtime_project_key: Option<String>,
+    runtime_workspace_roots: Vec<String>,
+    project_instructions: String,
+    project_plugin_ids: Vec<String>,
+}
+
+impl From<PersistedRuntimeTaskInput> for PersistedRuntimeTask {
+    fn from(input: PersistedRuntimeTaskInput) -> Self {
+        Self {
+            local_task_id: input.local_task_id,
+            thread_id: input.thread_id,
+            workspace_path: input.workspace_path,
+            title: input.title,
+            runtime: input.runtime,
+            archived: input.archived
+                || input
+                    .status
+                    .as_deref()
+                    .is_some_and(|status| status.eq_ignore_ascii_case("archived")),
+            continuable: input.continuable,
+            goal_status: input.goal_status,
+            supervisor: input.supervisor,
+            created_at: input.created_at,
+            updated_at: input.updated_at,
+            runtime_handle: input.runtime_handle,
+            parent: input.parent,
+            ephemeral: input.ephemeral,
+            runtime_project_key: input.runtime_project_key,
+            runtime_workspace_roots: input.runtime_workspace_roots,
+            project_instructions: input.project_instructions,
+            project_plugin_ids: input.project_plugin_ids,
+        }
+    }
+}
+
+impl PersistedRuntimeTask {
+    fn from_runtime(link: &RuntimeTaskLink) -> Self {
+        Self {
+            local_task_id: link.local_task_id.clone(),
+            thread_id: link.thread_id.clone(),
+            workspace_path: link.workspace_path.clone(),
+            title: link.title.clone(),
+            runtime: link.runtime.clone(),
+            archived: link.status == "archived",
+            continuable: link.continuable,
+            goal_status: link.goal_status.clone(),
+            supervisor: link.supervisor.clone(),
+            created_at: link.created_at,
+            updated_at: link.updated_at,
+            runtime_handle: persisted_runtime_handle(&link.runtime_handle),
+            parent: link.parent.clone(),
+            ephemeral: link.ephemeral,
+            runtime_project_key: link.runtime_project_key.clone(),
+            runtime_workspace_roots: link.runtime_workspace_roots.clone(),
+            project_instructions: link.project_instructions.clone(),
+            project_plugin_ids: link.project_plugin_ids.clone(),
+        }
+    }
+
+    fn into_runtime(self) -> RuntimeTaskLink {
+        RuntimeTaskLink {
+            local_task_id: self.local_task_id,
+            thread_id: self.thread_id,
+            workspace_path: self.workspace_path,
+            title: self.title,
+            runtime: self.runtime,
+            status: if self.archived {
+                "archived".to_owned()
+            } else {
+                "active".to_owned()
+            },
+            running: false,
+            continuable: self.continuable,
+            thread_status: "notLoaded".to_owned(),
+            turn_status: None,
+            goal_status: self.goal_status,
+            supervisor: self.supervisor,
+            git_info: None,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+            completed_at: None,
+            runtime_handle: persisted_runtime_handle(&self.runtime_handle),
+            parent: self.parent,
+            ephemeral: self.ephemeral,
+            runtime_project_key: self.runtime_project_key,
+            runtime_workspace_roots: self.runtime_workspace_roots,
+            project_instructions: self.project_instructions,
+            project_plugin_ids: self.project_plugin_ids,
+            list_order: None,
+            sidebar_order: None,
+            group_workspace_path: None,
+            group_project_key: None,
+            pinned: false,
+            pinned_order: None,
+        }
+    }
+}
+
+fn persisted_runtime_handle(runtime_handle: &Value) -> Value {
+    let mut persisted = runtime_handle.as_object().cloned().unwrap_or_default();
+    persisted.remove("queuePosition");
+    persisted.remove("lastError");
+    persisted.remove("lastErrorCode");
+    Value::Object(persisted)
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct IndexFileSignature {
     len: u64,
@@ -234,74 +392,32 @@ fn read_index_from_path(index_path: &Path) -> RuntimeWorkIndex {
     let Ok(content) = fs::read_to_string(index_path) else {
         return empty_index();
     };
-    let Ok(mut value) = serde_json::from_str::<Value>(&content) else {
+    let Ok(persisted) = serde_json::from_str::<PersistedRuntimeWorkIndex>(&content) else {
         return empty_index();
     };
-    restore_persisted_task_metadata(&mut value);
-    serde_json::from_value::<RuntimeWorkIndex>(value).unwrap_or_else(|_| empty_index())
+    RuntimeWorkIndex {
+        version: persisted.version,
+        tasks: persisted
+            .tasks
+            .into_iter()
+            .map(|(task_id, task)| (task_id, task.into_runtime()))
+            .collect(),
+        workspaces: persisted.workspaces,
+        deleted_archived_task_ids: persisted.deleted_archived_task_ids,
+    }
 }
 
 fn serialize_index(index: &RuntimeWorkIndex) -> Result<Vec<u8>, serde_json::Error> {
-    let mut value = serde_json::to_value(index)?;
-    strip_transient_task_state(&mut value);
-    serde_json::to_vec(&value)
-}
-
-fn strip_transient_task_state(index: &mut Value) {
-    for task in index
-        .get_mut("tasks")
-        .and_then(Value::as_object_mut)
-        .into_iter()
-        .flat_map(|tasks| tasks.values_mut())
-    {
-        let Some(task) = task.as_object_mut() else {
-            continue;
-        };
-        let archived = task
-            .get("status")
-            .and_then(Value::as_str)
-            .is_some_and(|status| status.eq_ignore_ascii_case("archived"));
-        task.remove("status");
-        task.remove("running");
-        task.remove("thread_status");
-        task.remove("turn_status");
-        task.insert("archived".to_owned(), Value::Bool(archived));
-    }
-}
-
-fn restore_persisted_task_metadata(index: &mut Value) {
-    for task in index
-        .get_mut("tasks")
-        .and_then(Value::as_object_mut)
-        .into_iter()
-        .flat_map(|tasks| tasks.values_mut())
-    {
-        let Some(task) = task.as_object_mut() else {
-            continue;
-        };
-        let legacy_status = task
-            .remove("status")
-            .and_then(|value| value.as_str().map(str::to_owned));
-        let archived = task
-            .remove("archived")
-            .and_then(|value| value.as_bool())
-            .unwrap_or_else(|| {
-                legacy_status
-                    .as_deref()
-                    .is_some_and(|status| status.eq_ignore_ascii_case("archived"))
-            });
-        task.insert(
-            "status".to_owned(),
-            Value::String(if archived {
-                "archived".to_owned()
-            } else {
-                "active".to_owned()
-            }),
-        );
-        task.remove("running");
-        task.remove("thread_status");
-        task.remove("turn_status");
-    }
+    serde_json::to_vec(&PersistedRuntimeWorkIndex {
+        version: index.version,
+        tasks: index
+            .tasks
+            .iter()
+            .map(|(task_id, task)| (task_id.clone(), PersistedRuntimeTask::from_runtime(task)))
+            .collect(),
+        workspaces: index.workspaces.clone(),
+        deleted_archived_task_ids: index.deleted_archived_task_ids.clone(),
+    })
 }
 
 fn index_file_signature(index_path: &Path) -> Option<IndexFileSignature> {
@@ -656,6 +772,7 @@ mod tests {
         assert!(!persisted_owner.contains_key("status"));
         assert!(!persisted_owner.contains_key("thread_status"));
         assert!(!persisted_owner.contains_key("turn_status"));
+        assert!(!persisted_owner.contains_key("completed_at"));
         assert_eq!(persisted_owner.get("archived"), Some(&Value::Bool(false)));
     }
 
@@ -686,6 +803,34 @@ mod tests {
     }
 
     #[test]
+    fn persisted_project_context_restores_with_task_metadata() {
+        let directory = tempfile::tempdir().expect("temporary directory should be created");
+        let index_path = directory.path().join("index.json");
+        let store = RuntimeWorkStore::new(index_path.clone());
+        let mut task = RuntimeTaskLink::new_pending(
+            "project-context-task".to_owned(),
+            "/tmp/project-context".to_owned(),
+            "Project context".to_owned(),
+        );
+        task.project_instructions = "Follow the project instructions".to_owned();
+        task.project_plugin_ids = vec!["plugin-a".to_owned(), "plugin-b".to_owned()];
+
+        store.upsert_task(task);
+
+        let restored = RuntimeWorkStore::new(index_path)
+            .get_task("project-context-task")
+            .expect("project context task should be restored");
+        assert_eq!(
+            restored.project_instructions,
+            "Follow the project instructions"
+        );
+        assert_eq!(
+            restored.project_plugin_ids,
+            vec!["plugin-a".to_owned(), "plugin-b".to_owned()]
+        );
+    }
+
+    #[test]
     fn terminal_turn_status_is_not_persisted() {
         let directory = tempfile::tempdir().expect("temporary directory should be created");
         let index_path = directory.path().join("index.json");
@@ -700,6 +845,13 @@ mod tests {
         );
         completed.status = "done".to_owned();
         completed.turn_status = Some("completed".to_owned());
+        completed.completed_at = Some(1_780_000_000_000);
+        completed.runtime_handle = serde_json::json!({
+            "queuePosition": 1,
+            "lastError": "transient",
+            "lastErrorCode": "transient_error",
+            "modelSelection": {"modelName": "gpt-5.6-sol"}
+        });
 
         store.upsert_task(completed);
 
@@ -713,6 +865,14 @@ mod tests {
         assert!(!task.contains_key("running"));
         assert!(!task.contains_key("thread_status"));
         assert!(!task.contains_key("turn_status"));
+        assert!(!task.contains_key("completed_at"));
+        assert!(task["runtime_handle"].get("queuePosition").is_none());
+        assert!(task["runtime_handle"].get("lastError").is_none());
+        assert!(task["runtime_handle"].get("lastErrorCode").is_none());
+        assert_eq!(
+            task["runtime_handle"]["modelSelection"]["modelName"],
+            "gpt-5.6-sol"
+        );
 
         let restored = RuntimeWorkStore::new(index_path)
             .get_task("completed-task")
@@ -721,10 +881,13 @@ mod tests {
         assert_eq!(restored.status, "active");
         assert_eq!(restored.thread_status, "notLoaded");
         assert_eq!(restored.turn_status, None);
+        assert_eq!(restored.completed_at, None);
+        assert!(restored.runtime_handle.get("queuePosition").is_none());
+        assert!(restored.runtime_handle.get("lastError").is_none());
     }
 
     #[test]
-    fn legacy_archived_status_migrates_to_archive_metadata() {
+    fn legacy_archived_status_is_migrated_at_the_deserialization_boundary() {
         let directory = tempfile::tempdir().expect("temporary directory should be created");
         let index_path = directory.path().join("index.json");
         fs::write(
@@ -743,9 +906,20 @@ mod tests {
         )
         .expect("legacy index should be written");
 
-        let restored = RuntimeWorkStore::new(index_path)
+        let store = RuntimeWorkStore::new(index_path.clone());
+        let restored = store
             .get_task("legacy-task")
             .expect("legacy archived task should be restored");
         assert_eq!(restored.status, "archived");
+
+        store.update_task("legacy-task", |_| {});
+        let persisted: Value =
+            serde_json::from_slice(&fs::read(index_path).expect("index should be readable"))
+                .expect("index should contain JSON");
+        let task = persisted["tasks"]["legacy-task"]
+            .as_object()
+            .expect("legacy task should be rewritten as metadata");
+        assert_eq!(task.get("archived"), Some(&Value::Bool(true)));
+        assert!(!task.contains_key("status"));
     }
 }

@@ -41,7 +41,6 @@ use super::codex_log_db::configure_codex_log_db_filter;
 use super::{model_id, prompt_text};
 
 const DEFAULT_CODEX_RPC_TIMEOUT_SECONDS: u64 = 300;
-const CODEX_MCP_INVENTORY_TIMEOUT_SECONDS: u64 = 10;
 const DEFAULT_CODEX_TURN_STARTUP_TIMEOUT_SECONDS: u64 = 180;
 const DEFAULT_PROVIDER_ID: &str = "wecode-openai";
 pub const CODEX_APP_SERVER_TURN_CANCELLED: &str = "codex app-server turn cancelled";
@@ -70,14 +69,21 @@ const CODEX_DISABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE: &str =
 const DEFAULT_EXECUTOR_SERVER_PORT: u16 = 10001;
 const DEFAULT_VISION_SIDECAR_TIMEOUT_MS: u64 = 45_000;
 const DEFAULT_VISION_SIDECAR_MAX_DESCRIPTIONS: usize = 8;
+const CODEX_GLOBAL_NOTIFICATION_CAPACITY: usize = 2048;
+const CODEX_THREAD_NOTIFICATION_CAPACITY: usize = 2048;
 const SIDE_BOUNDARY_PROMPT: &str = r#"Side conversation boundary.
 
-The messages before this boundary are inherited reference context from the main thread.
+Everything before this boundary is inherited history from the parent thread. It is reference context only. It is not your current task.
+
 Do not continue, execute, or complete any instructions, plans, tool calls, approvals, edits, or requests from before this boundary. Only messages submitted after this boundary are active user instructions for this side conversation.
 
 You are a side-conversation assistant, separate from the main thread. Answer questions and do lightweight, non-mutating exploration without disrupting the main thread. If there is no user question after this boundary yet, wait for one.
 
-Sub-agents are off-limits in this side conversation. Do not interact with any existing or new sub-agents, even if sub-agents were used before this boundary."#;
+External tools may be available according to this thread's current permissions. Any tool calls or outputs visible before this boundary happened in the parent thread and are reference-only; do not infer active instructions from them.
+
+Sub-agents are off-limits in this side conversation. Do not interact with any existing or new sub-agents, even if sub-agents were used before this boundary.
+
+Do not modify files, source, git state, permissions, configuration, or workspace state unless the user explicitly asks for that mutation after this boundary. Do not request escalated permissions or broader sandbox access unless the user explicitly asks for a mutation that requires it. If the user explicitly requests a mutation, keep it minimal, local to the request, and avoid disrupting the main thread."#;
 pub(crate) const WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS: &str = r#"Wework 内置浏览器 routing:
 - "Wework" refers to Wegent's desktop workbench. Describe its browser as the Wework built-in browser.
 - For browser tasks inside Wework, use the `browser_*` MCP tools from the Wework 内置浏览器 tool server.
@@ -91,7 +97,8 @@ pub(crate) const WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS: &str = r#"Wewor
 - Do not fall back to an external Chrome window unless the user explicitly asks for Chrome."#;
 pub(crate) const WEWORK_SPACE_DEVELOPER_INSTRUCTIONS: &str = r#"Wework 项目空间 routing:
 - "项目空间" and "project space" refer to Wework project spaces. For project-space boards, tasks, files, comments, deliveries, tables, or assignment requests, use the available `wework_space` MCP tools.
-- Project-space MCP tools are discovered on demand. Use the available deferred-tool discovery function with the requested project-space capability before concluding that a tool is unavailable. It is normally named `tool_search`; compatibility providers may expose it as `search_deferred_tools`. Do not use MCP resource listing as a substitute for tool discovery.
+- `wework_space` is a fixed capability connected by the Wework Executor. Do not call MCP resource listing, a browser, Shell, `curl`, or parse `wegent://` URLs to determine whether it is available.
+- For the current bound Issue, call `get_current_context` first. To read its description or attachments, use `get_board_item`, then `list_item_attachments`, then `read_item_attachment`.
 - Use `list_board_items` to list a project's tasks and `search_board_items` for text or structured task searches. Use the matching project-space tool for reads and writes instead of querying local files, executor logs, or backend storage directly.
 - For AI-managed board automation, use `get_board_item` for the current item, `get_assignment_candidates` for eligible members and robots, and `assign_board_item` only after choosing a candidate from that result."#;
 
@@ -537,18 +544,19 @@ impl CodexAppServerClient {
     pub(crate) async fn subscribe_notifications(
         &self,
     ) -> Result<broadcast::Receiver<Value>, String> {
-        Ok(self.ensure_process().await?.notifications.subscribe())
+        Ok(self.ensure_process().await?.notifications.subscribe_all())
     }
 
-    async fn subscribe_notifications_for_launch_config(
+    async fn subscribe_thread_notifications_for_launch_config(
         &self,
         launch_config: &CodexLaunchConfig,
+        thread_id: &str,
     ) -> Result<broadcast::Receiver<Value>, String> {
         Ok(self
             .ensure_process_for_launch_config(launch_config)
             .await?
             .notifications
-            .subscribe())
+            .subscribe_thread(thread_id))
     }
 
     async fn existing_process(&self) -> Result<CodexAppServerHandle, String> {
@@ -881,11 +889,65 @@ impl Default for CodexAppServerSharedState {
 
 type PendingCodexResponse = oneshot::Sender<Result<Value, String>>;
 
+#[derive(Clone)]
+struct CodexNotificationHub {
+    all: broadcast::Sender<Value>,
+    threads: Arc<StdMutex<HashMap<String, broadcast::Sender<Value>>>>,
+}
+
+impl CodexNotificationHub {
+    fn new() -> Self {
+        let (all, _) = broadcast::channel(CODEX_GLOBAL_NOTIFICATION_CAPACITY);
+        Self {
+            all,
+            threads: Arc::new(StdMutex::new(HashMap::new())),
+        }
+    }
+
+    fn subscribe_all(&self) -> broadcast::Receiver<Value> {
+        self.all.subscribe()
+    }
+
+    fn subscribe_thread(&self, thread_id: &str) -> broadcast::Receiver<Value> {
+        let mut threads = self
+            .threads
+            .lock()
+            .expect("Codex notification thread registry should not be poisoned");
+        threads
+            .entry(thread_id.to_owned())
+            .or_insert_with(|| {
+                let (sender, _) = broadcast::channel(CODEX_THREAD_NOTIFICATION_CAPACITY);
+                sender
+            })
+            .subscribe()
+    }
+
+    fn send(&self, message: Value) {
+        let _ = self.all.send(message.clone());
+        let thread_id =
+            stream_thread_id(message_params(&message)).or_else(|| stream_thread_id(&message));
+        let mut threads = self
+            .threads
+            .lock()
+            .expect("Codex notification thread registry should not be poisoned");
+        threads.retain(|_, sender| sender.receiver_count() > 0);
+        if let Some(thread_id) = thread_id {
+            if let Some(sender) = threads.get(&thread_id) {
+                let _ = sender.send(message);
+            }
+            return;
+        }
+        for sender in threads.values() {
+            let _ = sender.send(message.clone());
+        }
+    }
+}
+
 struct CodexAppServerProcess {
     child: Child,
     stdin: Arc<Mutex<ChildStdin>>,
     pending: Arc<Mutex<HashMap<u64, PendingCodexResponse>>>,
-    notifications: broadcast::Sender<Value>,
+    notifications: CodexNotificationHub,
     reader_task: tokio::task::JoinHandle<()>,
 }
 
@@ -914,7 +976,7 @@ impl Drop for CodexAppServerProcess {
 struct CodexAppServerHandle {
     stdin: Arc<Mutex<ChildStdin>>,
     pending: Arc<Mutex<HashMap<u64, PendingCodexResponse>>>,
-    notifications: broadcast::Sender<Value>,
+    notifications: CodexNotificationHub,
 }
 
 impl CodexAppServerHandle {
@@ -975,7 +1037,7 @@ async fn start_persistent_codex_app_server(
     match result {
         Ok((stdin, stdout, next_id)) => {
             let pending = Arc::new(Mutex::new(HashMap::new()));
-            let (notifications, _) = broadcast::channel(2048);
+            let notifications = CodexNotificationHub::new();
             let reader_task = tokio::spawn(read_persistent_codex_app_server_stdout(
                 stdout,
                 Arc::clone(&pending),
@@ -1064,7 +1126,7 @@ fn codex_router_auth_command() -> (&'static str, Vec<String>) {
 async fn read_persistent_codex_app_server_stdout(
     mut stdout: BufReader<ChildStdout>,
     pending: Arc<Mutex<HashMap<u64, PendingCodexResponse>>>,
-    notifications: broadcast::Sender<Value>,
+    notifications: CodexNotificationHub,
 ) {
     loop {
         let mut line = String::new();
@@ -1121,7 +1183,7 @@ async fn read_persistent_codex_app_server_stdout(
 
         log_codex_mcp_startup_status(&message);
 
-        let _ = notifications.send(message);
+        notifications.send(message);
     }
 }
 
@@ -1175,8 +1237,8 @@ fn log_codex_mcp_startup_status(message: &Value) {
     );
 }
 
-fn notify_shared_process_closed(notifications: &broadcast::Sender<Value>, message: &str) {
-    let _ = notifications.send(json!({
+fn notify_shared_process_closed(notifications: &CodexNotificationHub, message: &str) {
+    notifications.send(json!({
         "method": "codex/app-server/exited",
         "params": {
             "message": message,
@@ -1346,8 +1408,8 @@ async fn run_codex_app_server_turn_on_shared_client(
     let result: Result<CodexAppServerTurn, String> = async {
         let request = &prepared.request;
         let awaits_initial_goal_turn = initial_thread_goal.is_some() && !request.ephemeral;
-        let mut notification_rx = client
-            .subscribe_notifications_for_launch_config(&launch_config)
+        client
+            .ensure_process_for_launch_config(&launch_config)
             .await?;
         let mut state = CodexRunState::default();
         let thread_plan = codex_thread_plan(
@@ -1392,6 +1454,9 @@ async fn run_codex_app_server_turn_on_shared_client(
         state.set_root_thread_id(thread_id.clone());
         bind_local_proxy_thread(&launch_config, &thread_id)?;
         subscribed_thread_id = Some(thread_id.clone());
+        let mut notification_rx = client
+            .subscribe_thread_notifications_for_launch_config(&launch_config, &thread_id)
+            .await?;
         if let Some(callback) = thread_started {
             callback(thread_id.clone());
         }
@@ -1432,6 +1497,7 @@ async fn run_codex_app_server_turn_on_shared_client(
             }
         }
         let wait_for_goal_continuation = state.goal_is_active();
+        let expected_client_user_message_id = request_client_user_message_id(request);
 
         let mut turn_fields = codex_turn_fields(request, &thread_id);
         client.mark_thread_active(&thread_id).await;
@@ -1471,19 +1537,6 @@ async fn run_codex_app_server_turn_on_shared_client(
             if let Some(callback) = active_turn_started.as_ref() {
                 callback(thread_id.clone(), turn_id.clone());
             }
-            if !request.mcp_servers.is_empty() {
-                let inventory_client = client.clone();
-                let inventory_request = request.clone();
-                let inventory_thread_id = thread_id.clone();
-                tokio::spawn(async move {
-                    log_codex_mcp_inventory(
-                        &inventory_client,
-                        &inventory_request,
-                        &inventory_thread_id,
-                    )
-                    .await;
-                });
-            }
             log_executor_event(
                 "codex shared active turn resolved",
                 &[
@@ -1502,6 +1555,7 @@ async fn run_codex_app_server_turn_on_shared_client(
             startup_deadline,
             SharedTurnNotificationOptions {
                 active_turn_id,
+                expected_client_user_message_id,
                 notifications,
                 cancellation,
                 request_user_input_answers,
@@ -1554,122 +1608,22 @@ async fn run_codex_app_server_turn_on_shared_client(
     result
 }
 
-async fn log_codex_mcp_inventory(
-    client: &CodexAppServerClient,
-    request: &ExecutionRequest,
-    thread_id: &str,
-) {
-    let response = timeout(
-        Duration::from_secs(CODEX_MCP_INVENTORY_TIMEOUT_SECONDS),
-        client.request(
-            "mcpServerStatus/list",
-            json!({"threadId": thread_id, "detail": "full"}),
-        ),
-    )
-    .await;
-    match response {
-        Ok(Ok(response)) => {
-            let inventories = mcp_inventory_diagnostic_fields(&response);
-            if inventories.is_empty() {
-                let mut fields = task_fields(&request.task_id, &request.subtask_id);
-                fields.extend([
-                    ("thread_id", thread_id.to_owned()),
-                    ("server_count", "0".to_owned()),
-                ]);
-                log_executor_event("codex MCP inventory", &fields);
-                return;
-            }
-            for inventory in inventories {
-                let mut fields = task_fields(&request.task_id, &request.subtask_id);
-                fields.push(("thread_id", thread_id.to_owned()));
-                fields.extend(inventory);
-                log_executor_event("codex MCP inventory", &fields);
-            }
-        }
-        Ok(Err(error)) => {
-            let mut fields = task_fields(&request.task_id, &request.subtask_id);
-            fields.extend([("thread_id", thread_id.to_owned()), ("error", error)]);
-            log_executor_event("codex MCP inventory failed", &fields);
-        }
-        Err(_) => {
-            let mut fields = task_fields(&request.task_id, &request.subtask_id);
-            fields.extend([
-                ("thread_id", thread_id.to_owned()),
-                (
-                    "timeout_seconds",
-                    CODEX_MCP_INVENTORY_TIMEOUT_SECONDS.to_string(),
-                ),
-            ]);
-            log_executor_event("codex MCP inventory timed out", &fields);
-        }
-    }
-}
-
-fn mcp_inventory_diagnostic_fields(response: &Value) -> Vec<Vec<(&'static str, String)>> {
-    response
-        .get("data")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .map(|server| {
-            let tools = server
-                .get("tools")
-                .and_then(Value::as_object)
-                .cloned()
-                .unwrap_or_default();
-            let tool_names = tools
-                .iter()
-                .map(|(key, tool)| {
-                    tool.get("name")
-                        .and_then(Value::as_str)
-                        .unwrap_or(key)
-                        .to_owned()
-                })
-                .collect::<BTreeSet<_>>()
-                .into_iter()
-                .collect::<Vec<_>>()
-                .join(",");
-            vec![
-                (
-                    "server_name",
-                    server
-                        .get("name")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .to_owned(),
-                ),
-                ("tool_count", tools.len().to_string()),
-                ("tool_names", tool_names),
-                (
-                    "resource_count",
-                    server
-                        .get("resources")
-                        .and_then(Value::as_array)
-                        .map_or(0, Vec::len)
-                        .to_string(),
-                ),
-                (
-                    "resource_template_count",
-                    server
-                        .get("resourceTemplates")
-                        .and_then(Value::as_array)
-                        .map_or(0, Vec::len)
-                        .to_string(),
-                ),
-            ]
-        })
-        .collect()
-}
-
 fn mcp_thread_config_fields(params: &Value) -> Vec<(&'static str, String)> {
     let space_routing_instructions = params
         .get("developerInstructions")
         .and_then(Value::as_str)
         .is_some_and(|instructions| instructions.contains("Wework 项目空间 routing:"));
+    let reasoning_effort = params
+        .get("config")
+        .and_then(|config| config.get("model_reasoning_effort"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
     let Some(config) = params.get("config").and_then(Value::as_object) else {
         return vec![
             ("mcp_config_key_count", "0".to_owned()),
             ("mcp_server_names", String::new()),
+            ("reasoning_effort", reasoning_effort),
             (
                 "space_routing_instructions",
                 space_routing_instructions.to_string(),
@@ -1696,6 +1650,7 @@ fn mcp_thread_config_fields(params: &Value) -> Vec<(&'static str, String)> {
     vec![
         ("mcp_config_key_count", mcp_keys.len().to_string()),
         ("mcp_server_names", server_names),
+        ("reasoning_effort", reasoning_effort),
         (
             "space_routing_instructions",
             space_routing_instructions.to_string(),
@@ -1921,6 +1876,7 @@ fn codex_outcome_name(outcome: &ExecutionOutcome) -> &'static str {
 
 struct SharedTurnNotificationOptions {
     active_turn_id: Option<String>,
+    expected_client_user_message_id: Option<String>,
     notifications: Option<CodexNotificationSender>,
     cancellation: Option<oneshot::Receiver<()>>,
     request_user_input_answers: Option<CodexRequestUserInputReceiver>,
@@ -2024,11 +1980,21 @@ async fn read_shared_turn_notifications(
             continue;
         }
         log_codex_raw_turn_message(&message);
+        if let Some(error) = required_mcp_startup_failure(&message) {
+            if let Some(sender) = &options.notifications {
+                let _ = sender.send(message);
+            }
+            return Err(error);
+        }
 
         let notification_turn_id = root_turn_notification_id(&message, state);
-        if let Some(turn_id) =
-            started_active_turn_id(options.active_turn_id.as_deref(), &message, state)
-        {
+        let active_turn_update = observed_active_turn_id(
+            options.active_turn_id.as_deref(),
+            options.expected_client_user_message_id.as_deref(),
+            &message,
+            state,
+        );
+        if let Some((turn_id, source)) = active_turn_update {
             if let Some(previous_turn_id) = options.active_turn_id.as_deref() {
                 log_executor_event(
                     "codex shared active turn corrected",
@@ -2036,7 +2002,7 @@ async fn read_shared_turn_notifications(
                         ("thread_id", thread_id.to_owned()),
                         ("previous_turn_id", previous_turn_id.to_owned()),
                         ("turn_id", turn_id.clone()),
-                        ("source", "turn_started_notification".to_owned()),
+                        ("source", source.to_owned()),
                     ],
                 );
             }
@@ -2137,6 +2103,35 @@ async fn read_shared_turn_notifications(
             state.reset_turn_output();
         }
     }
+}
+
+fn required_mcp_startup_failure(message: &Value) -> Option<String> {
+    if message.get("method").and_then(Value::as_str) != Some("mcpServer/startupStatus/updated") {
+        return None;
+    }
+    let params = message_params(message);
+    if params.get("name").and_then(Value::as_str)
+        != Some(crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME)
+    {
+        return None;
+    }
+    let status = params
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !matches!(status, "failed" | "error") {
+        return None;
+    }
+    let reason = params
+        .get("failureReason")
+        .or_else(|| params.get("error"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    Some(match reason {
+        Some(reason) => format!("required project-space capability failed to connect: {reason}"),
+        None => format!("required project-space capability failed to connect ({status})"),
+    })
 }
 
 fn should_wait_for_goal_continuation(
@@ -2503,16 +2498,41 @@ async fn notification_belongs_to_thread(
     }
 }
 
-fn started_active_turn_id(
+fn observed_active_turn_id(
     active_turn_id: Option<&str>,
+    expected_client_user_message_id: Option<&str>,
     message: &Value,
     state: &CodexRunState,
-) -> Option<String> {
-    if message.get("method").and_then(Value::as_str) != Some("turn/started") {
-        return None;
-    }
+) -> Option<(String, &'static str)> {
+    let method = message.get("method").and_then(Value::as_str);
+    let source = match method {
+        Some("turn/started") => "turn_started_notification",
+        Some("item/started") => {
+            let item = message_params(message).get("item")?;
+            if string_value(item, "type").as_deref() != Some("userMessage") {
+                return None;
+            }
+            let client_user_message_id = string_value(item, "clientId")
+                .or_else(|| string_value(item, "clientUserMessageId"))
+                .or_else(|| string_value(item, "client_user_message_id"));
+            if let (Some(expected), Some(observed)) = (
+                expected_client_user_message_id,
+                client_user_message_id.as_deref(),
+            ) {
+                if observed != expected {
+                    return None;
+                }
+            }
+            "root_user_message_notification"
+        }
+        Some("thread/goal/updated" | "thread/goal/cleared") if active_turn_id.is_some() => {
+            "goal_status_notification"
+        }
+        _ => return None,
+    };
     root_turn_notification_id(message, state)
         .filter(|turn_id| active_turn_id != Some(turn_id.as_str()))
+        .map(|turn_id| (turn_id, source))
 }
 
 fn turn_start_response_id(response: &Value) -> Option<String> {
@@ -2586,24 +2606,17 @@ fn spawn_codex_app_server(
         .map_err(|error| format!("failed to start codex app-server: {error}"))
 }
 
-fn codex_thread_developer_instructions(
-    user_instructions: &str,
-    task_instructions: &str,
-    include_space_instructions: bool,
-) -> String {
-    let mut instructions = vec![
+fn codex_thread_developer_instructions(user_instructions: &str, task_instructions: &str) -> String {
+    [
         user_instructions.trim(),
         task_instructions.trim(),
         WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS,
-    ];
-    if include_space_instructions {
-        instructions.push(WEWORK_SPACE_DEVELOPER_INSTRUCTIONS);
-    }
-    instructions
-        .into_iter()
-        .filter(|instructions| !instructions.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n\n")
+        WEWORK_SPACE_DEVELOPER_INSTRUCTIONS,
+    ]
+    .into_iter()
+    .filter(|instructions| !instructions.is_empty())
+    .collect::<Vec<_>>()
+    .join("\n\n")
 }
 
 pub(crate) fn strip_wework_browser_instructions(instructions: &str) -> &str {
@@ -2825,6 +2838,9 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchCo
     launch_config
         .config_overrides
         .extend(codex_model_config_overrides(&request.model_config));
+    launch_config
+        .config_overrides
+        .extend(project_plugin_config_overrides(request));
 
     if let Some(model) = &model {
         launch_config
@@ -2877,6 +2893,9 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchCo
     launch_config
         .config_overrides
         .extend(cdp_browser_mcp_config_overrides(request));
+    launch_config
+        .config_overrides
+        .extend(project_space_mcp_config_overrides(request)?);
     launch_config
         .config_overrides
         .extend(runtime_capabilities::request_mcp_config_overrides(request));
@@ -3063,6 +3082,32 @@ fn codex_model_config_overrides(model_config: &Value) -> Vec<String> {
     overrides
 }
 
+fn project_plugin_config_overrides(request: &ExecutionRequest) -> Vec<String> {
+    if request.runtime_project_key.is_none() {
+        return Vec::new();
+    }
+    request
+        .extra
+        .get("project_plugin_ids")
+        .or_else(|| request.extra.get("projectPluginIds"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .filter(|value| {
+            value.chars().all(|character| {
+                character.is_ascii_alphanumeric()
+                    || matches!(character, '-' | '_' | '.' | '@' | '/')
+            })
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .map(|plugin_id| format!("{}=true", toml_key_path(&["plugins", plugin_id, "enabled"]),))
+        .collect()
+}
+
 fn codex_request_model(request: &ExecutionRequest) -> Option<String> {
     let compat_proxy = bool_value(
         request
@@ -3073,11 +3118,20 @@ fn codex_request_model(request: &ExecutionRequest) -> Option<String> {
     .unwrap_or(false);
     let catalog_model_id = non_empty_config(&request.model_config, "codex_catalog_model_id")
         .or_else(|| non_empty_config(&request.model_config, "codexCatalogModelId"));
-    if compat_proxy {
-        catalog_model_id.clone().or_else(|| model_id(request))
-    } else {
-        model_id(request)
+    if !compat_proxy {
+        return model_id(request);
     }
+    let base_model_id = catalog_model_id.or_else(|| model_id(request))?;
+    if vision_sidecar_upstream(&request.model_config)
+        .ok()
+        .flatten()
+        .is_some()
+    {
+        return Some(codex_model_catalog::vision_sidecar_catalog_model_id(
+            &base_model_id,
+        ));
+    }
+    Some(base_model_id)
 }
 
 fn codex_web_search_mode(model_config: &Value) -> Option<String> {
@@ -3695,6 +3749,83 @@ fn cdp_browser_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String> {
     overrides
 }
 
+fn project_space_mcp_config_overrides(request: &ExecutionRequest) -> Result<Vec<String>, String> {
+    let server_name = crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME;
+    let key = toml_key_path(&["mcp_servers", server_name]);
+    let grant = crate::task_runtime::mcp::encoded_space_context_grant(request);
+    let endpoint = crate::task_runtime::mcp_http::space_mcp_http_endpoint()
+        .ok_or_else(|| "project-space MCP endpoint is not ready".to_owned())?;
+    let mut overrides = vec![
+        format!("{key}.enabled=true"),
+        format!("{key}.url={}", toml_value(&endpoint.url)),
+        format!(
+            "{}={}",
+            toml_key_path(&["mcp_servers", server_name, "http_headers", "Authorization",]),
+            toml_value(&format!("Bearer {}", endpoint.token))
+        ),
+        format!("{key}.tool_timeout_sec=60"),
+    ];
+    if let Some(grant) = grant {
+        overrides.extend([
+            format!(
+                "{key}.default_tools_approval_mode={}",
+                toml_value("approve")
+            ),
+            format!(
+                "{}={}",
+                toml_key_path(&[
+                    "mcp_servers",
+                    server_name,
+                    "http_headers",
+                    "X-Wework-Space-Context-Grant",
+                ]),
+                toml_value(&grant)
+            ),
+        ]);
+    }
+    let backend_url = request
+        .backend_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| env::var("WEGENT_BACKEND_URL").ok())
+        .filter(|value| !value.trim().is_empty());
+    if let Some(backend_url) = backend_url {
+        overrides.push(format!(
+            "{}={}",
+            toml_key_path(&[
+                "mcp_servers",
+                server_name,
+                "http_headers",
+                "X-Wework-Space-Backend-Url",
+            ]),
+            toml_value(backend_url.trim())
+        ));
+    }
+    let auth_token = request
+        .auth_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| env::var("WEGENT_AUTH_TOKEN").ok())
+        .filter(|value| !value.trim().is_empty());
+    if let Some(auth_token) = auth_token {
+        overrides.push(format!(
+            "{}={}",
+            toml_key_path(&[
+                "mcp_servers",
+                server_name,
+                "http_headers",
+                "X-Wework-Space-Backend-Token",
+            ]),
+            toml_value(auth_token.trim())
+        ));
+    }
+    Ok(overrides)
+}
+
 fn embedded_browser_label(request: &ExecutionRequest) -> Option<String> {
     let task_id = request.task_id.trim();
     if task_id.is_empty() {
@@ -3789,6 +3920,7 @@ async fn prepare_codex_execution_request(
     request: ExecutionRequest,
     cancellation: Option<&mut oneshot::Receiver<()>>,
 ) -> Result<PreparedCodexExecutionRequest, String> {
+    crate::task_runtime::mcp_http::ensure_space_mcp_http_endpoint().await?;
     let mut request = if let Some(cancellation) = cancellation {
         tokio::select! {
             biased;
@@ -4560,21 +4692,11 @@ fn insert_codex_developer_instructions(
     let instructions = codex_thread_developer_instructions(
         &launch_config.user_developer_instructions,
         &request.system_prompt,
-        request_has_mcp_server(request, "wework_space"),
     );
     params.insert(
         "developerInstructions".to_owned(),
         Value::String(instructions),
     );
-}
-
-fn request_has_mcp_server(request: &ExecutionRequest, name: &str) -> bool {
-    request.mcp_servers.iter().any(|server| {
-        server
-            .get("name")
-            .and_then(Value::as_str)
-            .is_some_and(|server_name| server_name == name)
-    })
 }
 
 fn append_thread_launch_params(
@@ -4625,17 +4747,10 @@ fn turn_start_params(
     let mut params = serde_json::Map::new();
     params.insert("threadId".to_owned(), Value::String(thread_id.to_owned()));
     params.insert("input".to_owned(), Value::Array(input));
-    if let Some(client_user_message_id) = request
-        .extra
-        .get("client_user_message_id")
-        .or_else(|| request.extra.get("clientUserMessageId"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
+    if let Some(client_user_message_id) = request_client_user_message_id(request) {
         params.insert(
             "clientUserMessageId".to_owned(),
-            Value::String(client_user_message_id.to_owned()),
+            Value::String(client_user_message_id),
         );
     }
     params.insert(
@@ -4667,6 +4782,17 @@ fn turn_start_params(
         params.insert("outputSchema".to_owned(), output_schema);
     }
     Value::Object(params)
+}
+
+fn request_client_user_message_id(request: &ExecutionRequest) -> Option<String> {
+    request
+        .extra
+        .get("client_user_message_id")
+        .or_else(|| request.extra.get("clientUserMessageId"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
 }
 
 fn codex_output_schema(request: &ExecutionRequest) -> Option<Value> {
@@ -4701,8 +4827,8 @@ fn codex_collaboration_mode_payload(
         "mode": mode,
         "settings": {
             "model": codex_request_model(request),
-            "reasoningEffort": launch_config.effort,
-            "developerInstructions": Value::Null,
+            "reasoning_effort": launch_config.effort,
+            "developer_instructions": Value::Null,
         }
     }))
 }

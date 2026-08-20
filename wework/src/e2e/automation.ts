@@ -34,7 +34,11 @@ import { LOCAL_EXECUTOR_COMMANDS } from '@/tauri/localExecutor'
 import { executeVerificationControlCommand } from './verification-control'
 import { evalEmbeddedBrowserJson } from '@/lib/embedded-browser'
 import { selectDesktopControlOption } from './desktop-control-select'
-import { getAppPreferences, updateAppPreferences } from '@/tauri/appPreferences'
+import {
+  getAppPreferences,
+  updateAppPreferences,
+  type AppPreferencesPatch,
+} from '@/tauri/appPreferences'
 import type { LocalHarnessId } from '@/lib/local-harness'
 import { getDesktopE2ERuntimeConfig, loadDesktopE2ERuntimeConfig } from './runtime-config'
 import { getDesktopE2EClipboardText, installDesktopE2EClipboard } from './clipboard'
@@ -156,6 +160,93 @@ async function getEmbeddedBrowserLocalStorageItem(command: DesktopControlCommand
     `localStorage.getItem(${JSON.stringify(input.key)})`,
     input.label
   )
+}
+
+async function setEmbeddedBrowserWindowValue(command: DesktopControlCommand) {
+  const input = embeddedBrowserStorageInput(command)
+  return evalEmbeddedBrowserWhenReady<string>(
+    command,
+    input.label,
+    `(globalThis[${JSON.stringify(input.key)}] = ${JSON.stringify(input.value)})`
+  )
+}
+
+async function getEmbeddedBrowserWindowValue(command: DesktopControlCommand) {
+  const input = embeddedBrowserStorageInput(command)
+  return evalEmbeddedBrowserWhenReady<string | null>(
+    command,
+    input.label,
+    `globalThis[${JSON.stringify(input.key)}] ?? null`
+  )
+}
+
+async function evalEmbeddedBrowserWhenReady<T>(
+  command: DesktopControlCommand,
+  label: string,
+  expression: string
+): Promise<T> {
+  const timeoutMs = command.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS
+  const startedAt = Date.now()
+  let lastError = 'Embedded browser is not ready'
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      return await evalEmbeddedBrowserJson<T>(expression, label)
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error)
+      await waitForDesktopControlTick()
+    }
+  }
+  throw new Error(`Timed out evaluating embedded browser "${label}": ${lastError}`)
+}
+
+async function captureEmbeddedBrowserWhenReady(command: DesktopControlCommand): Promise<string> {
+  const timeoutMs = command.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS
+  const startedAt = Date.now()
+  const configuredLabel = command.value?.trim()
+  let lastError = 'Embedded browser host is not ready'
+  while (Date.now() - startedAt < timeoutMs) {
+    const label =
+      configuredLabel ||
+      document.querySelector<HTMLElement>(command.selector)?.dataset.embeddedBrowserLabel?.trim()
+    if (!label) {
+      await waitForDesktopControlTick()
+      continue
+    }
+    try {
+      const page = await evalEmbeddedBrowserJson<{
+        readyState: string
+        textLength: number
+      }>(
+        `({
+          readyState: document.readyState,
+          textLength: (document.body?.innerText ?? '').trim().length
+        })`,
+        label
+      )
+      if (page.readyState === 'complete' && page.textLength > 0) {
+        if (command.text && !window.location.href.includes(command.text)) {
+          throw new Error(`current route does not include "${command.text}"`)
+        }
+        const snapshot = await invoke<string>('embedded_browser_capture_snapshot', { label })
+        const targetSelector = command.target?.trim()
+        if (targetSelector) {
+          const target = findDesktopControlElements(targetSelector)[0]
+          if (!target) throw new Error(`Unable to find target selector "${targetSelector}"`)
+          if (!desktopControlElementEnabled(target)) {
+            throw new Error(`Target selector "${targetSelector}" is disabled`)
+          }
+          target.click()
+          await waitForDesktopControlTick()
+        }
+        return snapshot
+      }
+      lastError = `page state is ${page.readyState} with ${page.textLength} visible text characters`
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error)
+    }
+    await waitForDesktopControlTick()
+  }
+  throw new Error(`Timed out capturing embedded browser for "${command.selector}": ${lastError}`)
 }
 
 function hasTestId(testId: string): boolean {
@@ -536,7 +627,7 @@ function desktopControlElementEnabled(element: HTMLElement): boolean {
   return !('disabled' in element) || !(element as HTMLButtonElement).disabled
 }
 
-function desktopControlElementVisible(element: HTMLElement): boolean {
+function desktopControlElementRendered(element: HTMLElement): boolean {
   let current: HTMLElement | null = element
   while (current) {
     const style = window.getComputedStyle(current)
@@ -551,9 +642,14 @@ function desktopControlElementVisible(element: HTMLElement): boolean {
   }
 
   const rect = element.getBoundingClientRect()
+  return rect.width > 0 && rect.height > 0
+}
+
+function desktopControlElementVisible(element: HTMLElement): boolean {
+  if (!desktopControlElementRendered(element)) return false
+
+  const rect = element.getBoundingClientRect()
   return !(
-    rect.width <= 0 ||
-    rect.height <= 0 ||
     rect.bottom <= 0 ||
     rect.right <= 0 ||
     rect.top >= window.innerHeight ||
@@ -770,6 +866,18 @@ async function waitForDesktopControlElement(command: DesktopControlCommand): Pro
 
   while (Date.now() - startedAt < timeoutMs) {
     const elements = findDesktopControlElements(command.selector)
+    if (command.visible === false) {
+      const visibleElements = elements.filter(desktopControlElementVisible)
+      if (visibleElements.length === 0) {
+        matchedAt ??= Date.now()
+        if (Date.now() - matchedAt >= (command.stableMs ?? 0)) return ''
+      } else {
+        matchedAt = null
+      }
+      await waitForDesktopControlTick()
+      continue
+    }
+
     const matchingElements = command.visible
       ? elements.filter(desktopControlElementVisible)
       : elements
@@ -984,12 +1092,14 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return invoke<string>('capture_popout_webview')
     case 'captureWorkspaceWindow':
       return invoke<string>('capture_workspace_webview')
+    case 'captureEmbeddedBrowser':
+      return captureEmbeddedBrowserWhenReady(command)
     case 'closeMainWindowToTray':
       return ''
     case 'requestMainWindowClose':
       return ''
     case 'reloadMainWindow':
-      return ''
+      return command.value === 'capture' ? captureDesktopControlScreenshot(command.selector) : ''
     case 'getTestIdOrder':
       return desktopControlTestIdOrder(command.selector)
     case 'reorderRuntimeProjectTasks':
@@ -1083,6 +1193,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return (await setEmbeddedBrowserLocalStorageItem(command)) ?? ''
     case 'getEmbeddedBrowserLocalStorageItem':
       return (await getEmbeddedBrowserLocalStorageItem(command)) ?? ''
+    case 'setEmbeddedBrowserWindowValue':
+      return (await setEmbeddedBrowserWindowValue(command)) ?? ''
+    case 'getEmbeddedBrowserWindowValue':
+      return (await getEmbeddedBrowserWindowValue(command)) ?? ''
     case 'setLocalProxyUrl': {
       const proxyUrl = command.value?.trim() ?? ''
       const config = saveLocalProxyUrl(proxyUrl)
@@ -1104,6 +1218,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         })),
       })
       return JSON.stringify(updated.localHarnesses)
+    }
+    case 'setAppPreferences': {
+      const patch = JSON.parse(command.value ?? '{}') as AppPreferencesPatch
+      const preferences = await updateAppPreferences(patch)
+      return JSON.stringify(preferences)
     }
     case 'toggleSidebar': {
       const event = new Event('wework:desktop-sidebar-toggle-request', { cancelable: true })
@@ -1333,7 +1452,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'getClipboardText':
       return getDesktopE2EClipboardText()
     case 'scrollIntoView': {
-      const element = findDesktopControlElements(command.selector)[0]
+      const elements = findDesktopControlElements(command.selector)
+      const element = command.visible ? elements.find(desktopControlElementRendered) : elements[0]
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
       element.scrollIntoView({ block: 'center', inline: 'nearest' })
       element.dispatchEvent(new Event('scroll', { bubbles: true }))
@@ -1486,17 +1606,25 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       const startedAt = Date.now()
       let lastFailure = `Unable to find selector "${command.selector}" containing "${text}"`
       while (Date.now() - startedAt < timeoutMs) {
-        const container = findDesktopControlElements(command.selector).find(element =>
-          (element.textContent ?? '').includes(text)
+        const container = findDesktopControlElements(command.selector).find(
+          element =>
+            (!command.visible || desktopControlElementVisible(element)) &&
+            (element.textContent ?? '').includes(text)
         )
         const target = container?.querySelector<HTMLElement>(targetSelector)
-        if (target && desktopControlElementEnabled(target)) {
+        if (
+          target &&
+          (!command.visible || desktopControlElementVisible(target)) &&
+          desktopControlElementEnabled(target)
+        ) {
           target.scrollIntoView({ block: 'center', inline: 'nearest' })
           target.click()
           return target.textContent?.trim() ?? ''
         }
         if (container && !target) {
           lastFailure = `Unable to find descendant "${targetSelector}" inside "${command.selector}"`
+        } else if (target && command.visible && !desktopControlElementVisible(target)) {
+          lastFailure = `Descendant "${targetSelector}" inside "${command.selector}" is hidden`
         } else if (target && !desktopControlElementEnabled(target)) {
           lastFailure = `Descendant "${targetSelector}" inside "${command.selector}" is disabled`
         }
@@ -1551,6 +1679,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'getWorkbenchDebugSnapshot':
       return JSON.stringify(getWorkbenchDebugSnapshot())
+    case 'getActiveElementTestId':
+      return document.activeElement?.getAttribute('data-testid') ?? ''
     case 'getLocalExecutorStatus':
       return JSON.stringify(await invoke(LOCAL_EXECUTOR_COMMANDS.status))
     case 'getLocalExecutorLog':

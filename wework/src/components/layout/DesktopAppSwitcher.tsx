@@ -11,12 +11,13 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
-import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { useTranslation } from '@/hooks/useTranslation'
 import { dispatchOpenSettingsShortcut } from '@/lib/keybindings'
 import { cn } from '@/lib/utils'
+import { type WorkbenchAppContribution, useActiveWorkbenchApps } from '@/plugin-runtime/apps'
+import { CORE_WORKBENCH_APPS } from '@/plugin-runtime/core-apps-data'
 
-export type DesktopAppKey = 'wework' | 'todo' | 'apps' | 'wegent'
+export type DesktopAppKey = string
 
 interface DesktopAppSwitcherProps {
   activeApp: DesktopAppKey
@@ -112,7 +113,6 @@ export function DesktopAppSwitcher({
 }: DesktopAppSwitcherProps) {
   const { t } = useTranslation('common')
   const cloudConnection = useContext(CloudConnectionContext)
-  const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   const triggerRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const timerRef = useRef<number | null>(null)
@@ -124,41 +124,34 @@ export function DesktopAppSwitcher({
   const [displayedKey, setDisplayedKey] = useState<DesktopAppKey>(activeApp)
   const [rollingLabel, setRollingLabel] = useState<RollingLabel | null>(null)
   const [menuBlurred, setMenuBlurred] = useState(false)
+  const registeredApps = useActiveWorkbenchApps()
 
   const options = useMemo<AppOption[]>(() => {
-    const appOptions: AppOption[] = [
-      {
-        key: 'wework',
-        label: t('workbench.app_wework_label', '任务'),
-        description: t('workbench.app_wework_description', '使用 AI 解决具体问题'),
-      },
-    ]
-
-    if (experimentalFeaturesEnabled || activeApp === 'todo') {
-      appOptions.push({
-        key: 'todo',
-        label: t('workbench.app_weloop_label', '项目空间'),
-        description: t('workbench.app_weloop_description', '用 AI 管理项目的规划、执行与反馈'),
-      })
-    }
-
-    appOptions.push({
-      key: 'wegent',
-      label: t('workbench.app_wegent_label', '智能体'),
-      description: t('workbench.app_wegent_description', '构建并交付可嵌入业务的云端智能体'),
-      availabilityLabel: cloudConnection?.isConnected
-        ? undefined
-        : t('workbench.app_wegent_requires_cloud', '连接云端后可用'),
-      disabled: !cloudConnection?.isConnected && activeApp !== 'wegent',
-    })
-
-    return appOptions
-  }, [activeApp, cloudConnection?.isConnected, experimentalFeaturesEnabled, t])
+    const apps: readonly WorkbenchAppContribution[] =
+      registeredApps.length > 0 ? registeredApps : CORE_WORKBENCH_APPS
+    return apps
+      .filter(app => !app.hiddenInSwitcher)
+      .map(app => ({
+        key: app.key,
+        label: t(app.labelKey, app.label),
+        description: t(app.descriptionKey, app.description),
+        availabilityLabel:
+          app.requiresCloud && !cloudConnection?.isConnected
+            ? t('workbench.app_wegent_requires_cloud', '连接云端后可用')
+            : undefined,
+        disabled:
+          Boolean(app.requiresCloud) && !cloudConnection?.isConnected && activeApp !== app.key,
+      }))
+  }, [activeApp, cloudConnection?.isConnected, registeredApps, t])
   const displayedAppKey = rollingLabel ? displayedKey : activeApp
-  const selected =
-    options.find(option => option.key === displayedAppKey) ??
+  const selected = options.find(option => option.key === displayedAppKey) ??
     options.find(option => option.key === 'wework') ??
-    options[0]
+    options[0] ?? {
+      key: activeApp,
+      label: activeApp,
+      description: '',
+      disabled: true,
+    }
   const selectedIndex = options.findIndex(option => option.key === selected.key)
   const triggerTestId = testIds?.[selected.key] ?? `chrome-tab-${selected.key}`
 

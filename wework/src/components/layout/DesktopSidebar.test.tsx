@@ -27,6 +27,10 @@ import {
   dispatchWorkbenchSidebarPaneDragCancel,
   dispatchWorkbenchSidebarPaneDragStart,
 } from './workbenchPaneDrag'
+import {
+  cacheRuntimeConversationQueuePaused,
+  clearRuntimeConversationCacheForTests,
+} from '@/features/workbench/runtimeConversationCache'
 
 const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
 
@@ -201,9 +205,11 @@ describe('DesktopSidebar', () => {
     setActiveKeybindings([])
     Element.prototype.scrollIntoView = vi.fn()
     vi.mocked(openLocalWorkspace).mockReset()
+    clearRuntimeConversationCacheForTests()
   })
 
   afterEach(() => {
+    clearRuntimeConversationCacheForTests()
     vi.useRealTimers()
     vi.unstubAllEnvs()
   })
@@ -221,6 +227,50 @@ describe('DesktopSidebar', () => {
       'opacity-0'
     )
     expect(screen.getByTestId('projects-create-button')).toBeInTheDocument()
+  })
+
+  test('shows a discoverable project creation action when the project list is empty', async () => {
+    renderSidebar({
+      projects: [],
+      runtimeWork: { projects: [], chats: [], totalTasks: 0 },
+      cloudWorkStatus: cloudWorkStatus({
+        availability: 'empty',
+        checks: { runtimeWork: 'empty' },
+      }),
+    })
+
+    const createButton = screen.getByTestId('projects-empty-create-button')
+    expect(createButton).toHaveTextContent('新建项目')
+
+    await userEvent.click(createButton)
+
+    expect(screen.getByTestId('projects-create-button-menu')).toBeInTheDocument()
+  })
+
+  test('does not show the empty project creation action while projects are syncing', () => {
+    renderSidebar({
+      projects: [],
+      runtimeWork: { projects: [], chats: [], totalTasks: 0 },
+      cloudWorkStatus: cloudWorkStatus({
+        availability: 'syncing',
+        checks: { runtimeWork: 'syncing' },
+      }),
+    })
+
+    expect(screen.queryByTestId('projects-empty-create-button')).not.toBeInTheDocument()
+  })
+
+  test('does not show the empty project creation action before runtime work loads', () => {
+    renderSidebar({
+      projects: [],
+      runtimeWork: null,
+      cloudWorkStatus: cloudWorkStatus({
+        availability: 'idle',
+        checks: { runtimeWork: 'idle' },
+      }),
+    })
+
+    expect(screen.queryByTestId('projects-empty-create-button')).not.toBeInTheDocument()
   })
 
   test('keeps the sidebar color stable across browser focus changes', () => {
@@ -367,16 +417,26 @@ describe('DesktopSidebar', () => {
     ) as HTMLElement
     const remoteActivator = screen.getByTestId('project-drag-activator-8')
     const remoteButton = remoteActivator.closest('button') as HTMLButtonElement
+    const remoteMetadata = screen.getByTestId('project-device-status-8')
 
     mockSidebarSortableRect(localSortable, 0)
     mockSidebarSortableRect(remoteSortable, 30)
 
     expect(remoteSortable).toHaveAttribute('tabindex', '0')
     expect(remoteSortable).toHaveAttribute('role', 'button')
-    expect(remoteActivator).toHaveAttribute('data-sidebar-drag-activator')
-    expect(remoteButton).not.toHaveAttribute('data-sidebar-drag-activator')
+    expect(remoteActivator).not.toHaveAttribute('data-sidebar-drag-activator')
+    expect(remoteButton).toHaveAttribute('data-sidebar-drag-activator')
+    expect(remoteMetadata).toHaveClass(
+      'pointer-events-auto',
+      'group-hover/project:opacity-0',
+      'group-focus-within/project:opacity-0'
+    )
+    expect(remoteMetadata).not.toHaveClass(
+      'group-hover/project:invisible',
+      'group-focus-within/project:invisible'
+    )
 
-    fireEvent.pointerDown(remoteButton, {
+    fireEvent.pointerDown(remoteMetadata, {
       button: 0,
       buttons: 1,
       clientX: 220,
@@ -392,19 +452,26 @@ describe('DesktopSidebar', () => {
       pointerId: 1,
     })
     expect(remoteSortable).not.toHaveAttribute('data-dragging')
-    fireEvent.pointerUp(document, { button: 0, clientX: 220, clientY: 10, pointerId: 1 })
+    fireEvent.pointerUp(document, {
+      button: 0,
+      buttons: 0,
+      clientX: 220,
+      clientY: 10,
+      isPrimary: true,
+      pointerId: 1,
+    })
 
-    fireEvent.pointerDown(remoteActivator, {
+    fireEvent.pointerDown(remoteButton, {
       button: 0,
       buttons: 1,
-      clientX: 20,
+      clientX: 220,
       clientY: 45,
       isPrimary: true,
       pointerId: 2,
     })
     fireEvent.pointerMove(document, {
       buttons: 1,
-      clientX: 20,
+      clientX: 220,
       clientY: 10,
       isPrimary: true,
       pointerId: 2,
@@ -412,7 +479,7 @@ describe('DesktopSidebar', () => {
     expect(remoteSortable).toHaveAttribute('data-dragging', 'true')
     fireEvent.pointerMove(document, {
       buttons: 1,
-      clientX: 20,
+      clientX: 220,
       clientY: 5,
       isPrimary: true,
       pointerId: 2,
@@ -420,7 +487,7 @@ describe('DesktopSidebar', () => {
     fireEvent.pointerUp(document, {
       button: 0,
       buttons: 0,
-      clientX: 20,
+      clientX: 220,
       clientY: 5,
       isPrimary: true,
       pointerId: 2,
@@ -1399,6 +1466,8 @@ describe('DesktopSidebar', () => {
     const cloudButton = screen.getByTestId('sidebar-cloud-connection-button')
     const projectsHeader = screen.getByTestId('projects-section-toggle')
 
+    expect(pluginsButton.querySelector('.lucide-plug')).toBeInTheDocument()
+
     expect(searchButton.compareDocumentPosition(newChatButton)).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING
     )
@@ -2224,7 +2293,7 @@ describe('DesktopSidebar', () => {
     })
   })
 
-  test('starts task pointer sorting only from its content-sized activator', async () => {
+  test('starts task pointer sorting from the full title area', async () => {
     const onReorderRuntimeProjectTasks = vi.fn().mockResolvedValue(undefined)
     const onOpenRuntimeTask = vi.fn()
     const chatPath = '/Users/alice/Documents/Codex/2026-07-12/manual'
@@ -2283,8 +2352,8 @@ describe('DesktopSidebar', () => {
 
     expect(firstSortable).toContainElement(firstActivator)
     expect(firstActivator).not.toContainElement(firstActions)
-    expect(firstActivator).toHaveAttribute('data-sidebar-drag-activator')
-    expect(firstTitleSpace).not.toHaveAttribute('data-sidebar-drag-activator')
+    expect(firstActivator).not.toHaveAttribute('data-sidebar-drag-activator')
+    expect(firstTitleSpace).toHaveAttribute('data-sidebar-drag-activator')
     expect(firstTrailing).not.toHaveAttribute('data-sidebar-drag-activator')
     expect(firstActions).not.toHaveAttribute('data-sidebar-drag-activator')
     expect(screen.getByTestId('runtime-local-task-row-chat-1')).not.toHaveAttribute(
@@ -2303,7 +2372,7 @@ describe('DesktopSidebar', () => {
     fireEvent.keyDown(document, { key: 'Escape', code: 'Escape' })
     await waitFor(() => expect(firstSortable).not.toHaveAttribute('data-dragging'))
 
-    for (const [pointerId, target] of [firstTitleSpace, firstTrailing, firstActions].entries()) {
+    for (const [pointerId, target] of [firstTrailing, firstActions].entries()) {
       fireEvent.pointerDown(target, {
         button: 0,
         buttons: 1,
@@ -2815,6 +2884,79 @@ describe('DesktopSidebar', () => {
     expect(runningStatus).not.toHaveTextContent('运行中')
     expect(runningStatus.querySelector('svg')).not.toBeNull()
     expect(screen.queryByTestId('runtime-local-task-running-codex-idle')).not.toBeInTheDocument()
+  })
+
+  test('shows a paused status when a running task has a paused follow-up queue', async () => {
+    renderSidebar({
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, name: 'Wegent' },
+            totalTasks: 1,
+            deviceWorkspaces: [
+              {
+                id: 91,
+                deviceId: 'local-device',
+                deviceName: 'Local Mac',
+                deviceStatus: 'online',
+                available: true,
+                workspacePath: '/repo/Wegent',
+                tasks: [
+                  {
+                    taskId: 'paused-follow-up',
+                    workspacePath: '/repo/Wegent',
+                    title: 'Paused follow-up',
+                    runtime: 'codex',
+                    running: true,
+                    updatedAt: '2026-08-19T03:00:00Z',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 1,
+      },
+    })
+
+    await userEvent.click(screen.getByTestId('project-item-button'))
+    expect(screen.getByTestId('runtime-local-task-running-paused-follow-up')).toBeInTheDocument()
+
+    act(() => {
+      cacheRuntimeConversationQueuePaused(
+        {
+          deviceId: 'local-device',
+          taskId: 'paused-follow-up',
+          workspacePath: '/repo/Wegent',
+        },
+        true
+      )
+    })
+
+    expect(screen.getByTestId('runtime-local-task-queue-paused-paused-follow-up')).toHaveAttribute(
+      'aria-label',
+      '追问队列已暂停'
+    )
+    expect(
+      screen.queryByTestId('runtime-local-task-running-paused-follow-up')
+    ).not.toBeInTheDocument()
+
+    act(() => {
+      cacheRuntimeConversationQueuePaused(
+        {
+          deviceId: 'local-device',
+          taskId: 'paused-follow-up',
+          workspacePath: '/repo/Wegent',
+        },
+        false
+      )
+    })
+
+    expect(screen.getByTestId('runtime-local-task-running-paused-follow-up')).toBeInTheDocument()
+    expect(
+      screen.queryByTestId('runtime-local-task-queue-paused-paused-follow-up')
+    ).not.toBeInTheDocument()
   })
 
   test('shows queued positions and runs queue actions through the workbench', async () => {

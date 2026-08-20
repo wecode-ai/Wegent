@@ -380,7 +380,7 @@ Live Codex agent-message text must be classified by an explicit phase: only `fin
 
 Wework's built-in browser MCP is provided by the Rust executor's `browser-mcp-server` subcommand and controls the right-side browser through a local bridge address allocated independently for each Tauri instance. The packaged app does not require Node.js or a separately deployed browser MCP server, and multiple instances do not share a fixed port.
 
-The project-space `wework_space` MCP is provided by the Rust executor's `space-mcp-server` subcommand and is injected only into Codex runs that carry a project-space context: the request binds a `cloudProjectId`, or the message contains a `cloud://projects` reference (for example the workbench cloud-space reference picker). Coding agents such as Claude Code never receive the project-space MCP, so Wegent coding tasks do not expose project-space tools.
+The project-space `wework_space` MCP is hosted persistently by the Rust executor started with Wework on a dynamically allocated loopback port. Codex receives only that instance's URL, instance credential, and optional ContextGrant; it no longer starts a `space-mcp-server` stdio child. Generic sessions remain unbound, while project or Issue sessions receive default `space_id/item_id` values and scope protection through ContextGrant.
 
 Wework's Codex custom-instruction configuration persists only user input; built-in browser-routing rules are not written to that field. Before each Codex thread is started, resumed, or forked, the executor combines the user custom instructions, task-level system instructions, and built-in browser rules into the thread request's `developerInstructions` parameter. Configuration normalization removes every historical browser-rules block so settings never display duplicate content, while new threads always receive the browser-tool usage constraints.
 
@@ -392,7 +392,7 @@ Wework local model calls enter the executor through the Codex Responses protocol
 
 The Codex model catalog's `supports_search_tool` flag means that a model can participate in deferred App discovery; it does not mean that the upstream wire API natively implements `tool_search` or namespace tools. Wework enables this catalog capability for official and custom models so Codex exposes only a compact `tool_search` on the first turn instead of injecting every Remote App schema, then loads the matching App namespace after discovery. The executor independently tracks `native_tool_search` and `native_namespace_tools` at the protocol boundary. GPT 5.4+ cloud models using Responses pass native tool search through unchanged. Model configuration can override the inferred capabilities with `native_tool_search` or `nativeToolSearch` and `native_namespace_tools` or `nativeNamespaceTools`; an explicit `false` disables the corresponding inference. Other Responses, Chat Completions, and Anthropic Messages upstreams receive ordinary function representations of `tool_search` and namespace tools, and the executor restores the original Codex semantics on the response path. When the third-party Responses compatibility bridge converts tool-search call and output items, it removes their type-specific `id` and uses only `call_id` to associate calls with results; native Responses passthrough preserves the native item fields. Third-party models such as DeepSeek and Kimi can therefore use Apps on demand without implementing Codex-specific tools, while ordinary messages avoid the context cost of the complete App tool catalog.
 
-A text-only model can reference a model that declares image input capability as a vision sidecar. Local-model references come from Wework's device-local model configuration. For a cloud Model CRD, the Wegent web UI writes the reference to `modelConfig.visionSidecarModel`; Wework only parses the referenced model identity and protocol from the Backend's aggregated model and does not edit cloud configuration. Codex still works with an image-bearing Responses request, but before protocol conversion and the primary request the executor calls the sidecar and replaces each `input_image` in place with a bounded text description. Every configured primary model uses the internal image-capable `wework-vision-sidecar` catalog entry, so the mechanism is independent of any specific model or provider and the original image is never sent to the text-only primary model. The sidecar supports Responses, Chat Completions, and Anthropic Messages, and its upstream credentials remain inside the executor. The implementation uses a bounded LRU description cache, a process-wide concurrency limit, per-turn image limits, and embedded-data size validation. Timeouts, invalid images, and upstream failures produce an explicit failure description while removing the original image; logs contain only aggregate protocol, count, cache, and timing diagnostics.
+A text-only model can explicitly reference a model that declares image input capability as a vision sidecar. Local-model references come from Wework's device-local model configuration. For a cloud Model CRD, the Wegent web UI writes the reference to `modelConfig.visionSidecarModel`; Wework only parses the referenced model identity and protocol from the Backend's aggregated model, does not edit cloud configuration, and never selects a default from sign-in state or model names. Codex still works with an image-bearing Responses request, but before protocol conversion and the primary request the executor calls the sidecar and replaces each `input_image` in place with a bounded text description. With a configured sidecar, executor generically derives a hidden catalog that adds image input to the current base catalog while preserving all reasoning, tool, context, and compaction capabilities; adding a model requires no sidecar-specific mapping or copied catalog. An unconfigured model keeps its original text-only catalog and makes no extra vision call. The original image is never sent to the text-only primary model. The sidecar supports Responses, Chat Completions, and Anthropic Messages, and its upstream credentials remain inside the executor. The implementation uses a bounded LRU description cache, a process-wide concurrency limit, per-turn image limits, and embedded-data size validation. Timeouts, invalid images, and upstream failures produce an explicit failure description while removing the original image; logs contain only aggregate protocol, count, cache, and timing diagnostics. See [text-model vision delegation](../../architecture/model-vision-delegation.md) for the governed data flow and invariants.
 
 #### Task supervision and runtime readiness
 
@@ -620,6 +620,51 @@ sequenceDiagram
     Backend->>Frontend: 13. WebSocket push
     Frontend->>User: 14. Display result
 ```
+
+### Wework Local Project Settings Flow
+
+A Wework local project can store project instructions, a default model, and
+project plugin relationships, and project quick phrases. The project record
+lives in Codex global state. When a new conversation is created, the frontend
+copies only execution-related settings into the task request. The Executor
+persists that snapshot in `RuntimeTaskLink` and injects it into Codex. Wework's
+composer reads quick phrases directly from the current project and does not
+send them in the execution request.
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Wework
+    participant State as Codex Global State
+    participant Executor
+    participant Codex
+
+    User->>Wework: Configure project instructions, model, plugins, and quick phrases
+    Wework->>State: Persist project-scoped settings
+    User->>Wework: Open quick phrases in the project composer
+    Wework->>State: Read project quick phrases
+    Wework->>Wework: Place project phrases before global phrases
+    User->>Wework: Create a new project conversation
+    Wework->>Executor: Send the instructions, model, and plugin snapshot
+    Executor->>Executor: Persist it in RuntimeTaskLink
+    Executor->>Codex: Inject instructions, model, and plugin overrides
+```
+
+Core invariants:
+
+- Project instructions, the default model, and plugins affect only new
+  conversations; existing conversations keep the snapshot captured when they
+  were created.
+- Project quick phrases are composer presets and never enter the Executor.
+  Current-project phrases precede device-wide phrases, while the device stash
+  remains global.
+- A project plugin represents a project installation relationship. Its package
+  may reuse the global cache and remain globally disabled while being enabled
+  for tasks in that project.
+- Codex receives the union of globally enabled plugins and the current task's
+  project plugins.
+- Projects do not own separate marketplaces; installation sources and policy
+  still come from global marketplaces.
 
 ### Communication Protocols
 
