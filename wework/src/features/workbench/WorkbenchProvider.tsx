@@ -2048,7 +2048,7 @@ export function WorkbenchProvider({
   }, [projectPluginNames])
 
   const listLocalApps = useCallback(
-    async (options?: { allowEmptySnapshot?: boolean }) => {
+    async (options?: { allowEmptySnapshot?: boolean; supersedeInstalledRequest?: boolean }) => {
       const cached = localAppsCacheRef.current
       if (cached && cached.expiresAt > Date.now()) {
         return cached.apps
@@ -2087,7 +2087,9 @@ export function WorkbenchProvider({
               }
             }
             try {
-              const response = await localPluginApi.listInstalledPlugins()
+              const response = await localPluginApi.listInstalledPlugins({
+                shareInflight: !options?.supersedeInstalledRequest,
+              })
               currentComposerDeviceId =
                 peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })?.deviceId ||
                 peekLocalCodexPluginsReadState()?.deviceId ||
@@ -2263,7 +2265,10 @@ export function WorkbenchProvider({
       localAppsRefreshTimerRef.current = window.setTimeout(() => {
         localAppsRefreshTimerRef.current = null
         localAppsInflightRef.current = null
-        void listLocalApps({ allowEmptySnapshot: true })
+        void listLocalApps({
+          allowEmptySnapshot: true,
+          supersedeInstalledRequest: true,
+        })
       }, LOCAL_PLUGIN_SKILLS_REFRESH_DEBOUNCE_MS)
     }
     window.addEventListener(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT, clearLocalSkillCache)
@@ -2287,7 +2292,10 @@ export function WorkbenchProvider({
     localAppsCacheRef.current = null
     localAppsInflightRef.current = null
     localAppsLoadGenerationRef.current += 1
-    void listLocalApps({ allowEmptySnapshot: true })
+    void listLocalApps({
+      allowEmptySnapshot: true,
+      supersedeInstalledRequest: true,
+    })
   }, [listLocalApps, projectPluginNamesKey])
 
   // Plugin market UI resolves package logos into the catalog cache; overlay those

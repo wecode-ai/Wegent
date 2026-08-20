@@ -1423,6 +1423,67 @@ describe('local codex plugin readState cache', () => {
     expect(order).toEqual(['installed-start', 'installed-end', 'list-start'])
   })
 
+  test('listInstalledPlugins can supersede an in-flight membership read', async () => {
+    let installedRequestCount = 0
+    let resolveFirstInstalled: ((value: unknown) => void) | null = null
+    mocks.requestLocalExecutor.mockImplementation(
+      async (
+        method: string,
+        params: {
+          method?: string
+        }
+      ) => {
+        if (method !== 'codex.app_server_request') {
+          throw new Error(`Unexpected executor method ${method}`)
+        }
+        if (params.method !== 'plugin/installed') {
+          throw new Error(`Unexpected app-server method ${params.method}`)
+        }
+        installedRequestCount += 1
+        if (installedRequestCount === 1) {
+          return await new Promise(resolve => {
+            resolveFirstInstalled = resolve
+          })
+        }
+        return {
+          marketplaces: [
+            {
+              ...personalMarketplace,
+              plugins: [
+                {
+                  name: 'current-plugin',
+                  id: 'current-plugin',
+                  installed: true,
+                  enabled: true,
+                  interface: { displayName: 'Current Plugin' },
+                },
+              ],
+            },
+          ],
+        }
+      }
+    )
+
+    const api = createLocalCodexPluginApi()
+    const superseded = api.listInstalledPlugins({ refresh: true })
+    await vi.waitFor(() => expect(installedRequestCount).toBe(1))
+
+    const current = api.listInstalledPlugins({ refresh: true, shareInflight: false })
+    await expect(current).resolves.toEqual(
+      expect.objectContaining({
+        items: [
+          expect.objectContaining({
+            metadata: expect.objectContaining({ name: 'current-plugin' }),
+          }),
+        ],
+      })
+    )
+    expect(installedRequestCount).toBe(2)
+
+    resolveFirstInstalled?.({ marketplaces: [personalMarketplace] })
+    await superseded
+  })
+
   test('listInstalledPlugins uses plugin/installed and never waits on plugin/list', async () => {
     mocks.requestLocalExecutor.mockImplementation(
       async (

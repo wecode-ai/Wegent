@@ -180,6 +180,8 @@ export interface LocalCodexPluginApi {
   readMarketplacePluginDetail(marketplaceId: string, pluginName: string): Promise<InstalledPlugin>
   listInstalledPlugins(options?: {
     refresh?: boolean
+    /** Start a new membership read when a newer refresh supersedes a pending one. */
+    shareInflight?: boolean
   }): Promise<InstalledPluginListResponse & { deviceId?: string }>
   listSkills(params?: { cwds?: string[]; forceReload?: boolean }): Promise<LocalDeviceSkill[]>
   listApps(params?: { forceRefetch?: boolean }): Promise<LocalDeviceApp[]>
@@ -832,7 +834,18 @@ function withFilteredMarketplaceItems(
   }
 }
 
-function requestPluginInstalled(): Promise<{ marketplaces: CodexPluginMarketplaceEntry[] }> {
+function requestPluginInstalled(options: { shareInflight?: boolean } = {}): Promise<{
+  marketplaces: CodexPluginMarketplaceEntry[]
+}> {
+  if (options.shareInflight === false) {
+    return codexAppServerRequest<{ marketplaces: CodexPluginMarketplaceEntry[] }>(
+      'plugin/installed',
+      {
+        cwds: null,
+        installSuggestionPluginNames: null,
+      }
+    )
+  }
   if (!inflightPluginInstalled) {
     const request = codexAppServerRequest<{
       marketplaces: CodexPluginMarketplaceEntry[]
@@ -2560,14 +2573,14 @@ async function readDetailForInstalledPlugin(plugin: InstalledPlugin): Promise<In
   return detailed
 }
 
-async function loadInstalledPluginsOnly(): Promise<{
+async function loadInstalledPluginsOnly(options: { shareInflight?: boolean } = {}): Promise<{
   installedPlugins: InstalledPlugin[]
   deviceId: string
 }> {
   const executorStatus = await ensureLocalExecutorStarted()
   await ensureBundledPluginMarketplaceRegistered()
   const [installedResponse, storePlugins] = await Promise.all([
-    requestPluginInstalled(),
+    requestPluginInstalled({ shareInflight: options.shareInflight }),
     listWegentStorePluginsFromDisk(),
   ])
   const bundled = getInitializedBundledPluginMarketplace()
@@ -2941,7 +2954,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
           return { items: peeked.installedPlugins, deviceId: peeked.deviceId }
         }
       }
-      const loaded = await loadInstalledPluginsOnly()
+      const loaded = await loadInstalledPluginsOnly({ shareInflight: options?.shareInflight })
       const installedPlugins = loaded.installedPlugins
       if (cachedState) {
         cachedState = {
