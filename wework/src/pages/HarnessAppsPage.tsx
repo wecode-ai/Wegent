@@ -26,11 +26,17 @@ import {
   openHarnessAppTab,
   registerHarnessAppTab,
   storeHarnessAppProxyToken,
+  storeHarnessAppContextToken,
+  takeHarnessAppContextToken,
   takeHarnessAppProxyToken,
   unregisterHarnessAppTab,
 } from '@/features/harness-apps/harnessAppTabs'
+import {
+  beginHarnessAppLaunch,
+  clearHarnessAppLaunch,
+  failHarnessAppLaunch,
+} from '@/features/harness-apps/harnessAppLaunchState'
 import { HarnessAppInstallDialog } from '@/features/harness-apps/HarnessAppInstallDialog'
-import { animateSmartAppIntoTab } from '@/features/harness-apps/smartAppLaunchAnimation'
 import { Button } from '@/components/ui/button'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
@@ -157,32 +163,39 @@ export function HarnessAppsPage({ importRequested = false }: HarnessAppsPageProp
     return modelOptions.find(option => option.key === item.modelKey) ?? null
   }
 
-  async function start(item: HarnessAppInstallation, launchOrigin: DOMRect | null = null) {
+  async function start(item: HarnessAppInstallation) {
     const model = selectedModel(item)
     if (!model) {
       setError(t('workbench.harness_apps_model_missing'))
       return
     }
-    const launchAnimation = animateSmartAppIntoTab({
-      origin: launchOrigin,
-      title: item.manifest.displayName,
-    })
+    beginHarnessAppLaunch(item.id, item.manifest.displayName, () => void start(item))
+    if (workspaceTabs) openHarnessAppTab(workspaceTabs, item)
     setBusy(item.id)
     setError(null)
     let proxyToken: string | null = null
+    let contextToken: string | null = null
     let started = false
     try {
       const launch = await services.localHarnessModelApi?.resolveLaunch('opencode', model)
       if (!launch) throw new Error(t('workbench.harness_apps_model_proxy_unavailable'))
       proxyToken = launch.proxyToken
-      const running = await harnessAppsApi.start(item.id, launch.baseUrl)
+      contextToken = launch.context?.token ?? null
+      const running = launch.context
+        ? await harnessAppsApi.start(
+            item.id,
+            launch.baseUrl,
+            launch.context.baseUrl,
+            launch.context.token
+          )
+        : await harnessAppsApi.start(item.id, launch.baseUrl)
       started = true
       await storeHarnessAppProxyToken(item.id, launch.proxyToken)
+      if (contextToken) await storeHarnessAppContextToken(item.id, contextToken)
       await refresh()
       if (running.webUrl) {
-        await launchAnimation
         registerHarnessAppTab(running)
-        if (workspaceTabs) openHarnessAppTab(workspaceTabs, running)
+        clearHarnessAppLaunch(item.id)
       }
     } catch (startError) {
       let proxyCanBeRevoked = !started
@@ -197,7 +210,7 @@ export function HarnessAppsPage({ importRequested = false }: HarnessAppsPageProp
             const running = installations.find(installation => installation.id === item.id)
             if (running?.state === 'running' && running.webUrl) {
               registerHarnessAppTab(running)
-              if (workspaceTabs) openHarnessAppTab(workspaceTabs, running)
+              clearHarnessAppLaunch(item.id)
             }
             setItems(installations)
           } catch (recoveryError) {
@@ -206,8 +219,8 @@ export function HarnessAppsPage({ importRequested = false }: HarnessAppsPageProp
         }
         if (proxyCanBeRevoked) {
           unregisterHarnessAppTab(item.id)
-          closeAppTabs(item.id)
           await takeHarnessAppProxyToken(item.id)
+          await takeHarnessAppContextToken(item.id)
           try {
             await refresh()
           } catch (refreshError) {
@@ -222,7 +235,16 @@ export function HarnessAppsPage({ importRequested = false }: HarnessAppsPageProp
           console.warn('[Wework] failed to unregister Harness model proxy', proxyError)
         }
       }
-      setError(getErrorMessage(startError, t('workbench.harness_apps_start_failed')))
+      const message = getErrorMessage(startError, t('workbench.harness_apps_start_failed'))
+      failHarnessAppLaunch(item.id, message)
+      setError(message)
+      if (contextToken && proxyCanBeRevoked) {
+        try {
+          await services.localHarnessModelApi?.unregisterContext(contextToken)
+        } catch (contextError) {
+          console.warn('[Wework] failed to unregister Harness context', contextError)
+        }
+      }
     } finally {
       setBusy(null)
     }
@@ -233,9 +255,12 @@ export function HarnessAppsPage({ importRequested = false }: HarnessAppsPageProp
     try {
       await harnessAppsApi.stop(item.id)
       unregisterHarnessAppTab(item.id)
+      clearHarnessAppLaunch(item.id)
       closeAppTabs(item.id)
       const token = await takeHarnessAppProxyToken(item.id)
       if (token) await services.localHarnessModelApi?.unregisterProxy(token)
+      const contextToken = await takeHarnessAppContextToken(item.id)
+      if (contextToken) await services.localHarnessModelApi?.unregisterContext(contextToken)
       await refresh()
     } catch (stopError) {
       setError(getErrorMessage(stopError, t('workbench.harness_apps_stop_failed')))
@@ -472,9 +497,7 @@ export function HarnessAppsPage({ importRequested = false }: HarnessAppsPageProp
                         data-testid={`harness-app-start-${item.id}`}
                         className="h-11 gap-1 rounded-lg px-3 sm:h-9"
                         disabled={busy === item.id}
-                        onClick={event =>
-                          void start(item, event.currentTarget.getBoundingClientRect())
-                        }
+                        onClick={() => void start(item)}
                       >
                         <Play className="h-4 w-4" />
                         {t('workbench.harness_apps_open', '打开')}

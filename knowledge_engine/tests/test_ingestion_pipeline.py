@@ -640,6 +640,7 @@ def test_document_indexer_indexes_flat_nodes_with_enriched_metadata() -> None:
                 text="# Intro\n\n## Details\n\nUseful body paragraph with enough detail."
             )
         ],
+        file_extension=".md",
         chunk_metadata=ChunkMetadata(
             knowledge_id="1",
             doc_ref="doc_1",
@@ -811,6 +812,7 @@ def test_document_indexer_hierarchical_routes_through_ingestion_result_contract(
             documents=[
                 Document(text="# Intro\n\n## Details\n\nHierarchical content."),
             ],
+            file_extension=".md",
             chunk_metadata=ChunkMetadata(
                 knowledge_id="1",
                 doc_ref="doc_1",
@@ -889,6 +891,7 @@ def test_document_indexer_hierarchical_chunk_metadata_counts_indexed_nodes_only(
             documents=[
                 Document(text="Short hierarchical content."),
             ],
+            file_extension=".md",
             chunk_metadata=ChunkMetadata(
                 knowledge_id="1",
                 doc_ref="doc_2",

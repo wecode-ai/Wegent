@@ -1130,6 +1130,10 @@ export function useWorkbenchRuntimeMessaging({
               runtimeProjectKey: selectedRuntimeProject.key,
               runtimeProjectName: selectedRuntimeProject.name,
               runtimeWorkspaceRoots,
+              ...(selectedRuntimeProject.aiSettings?.instructions?.trim()
+                ? { projectInstructions: selectedRuntimeProject.aiSettings.instructions.trim() }
+                : {}),
+              projectPlugins: selectedRuntimeProject.aiSettings?.plugins ?? [],
             }
           : {}),
         ...(options?.ephemeral ? { ephemeral: true } : {}),

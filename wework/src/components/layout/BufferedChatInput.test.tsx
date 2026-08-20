@@ -448,6 +448,22 @@ describe('BufferedChatInput', () => {
     await waitFor(() => expect(screen.getByTestId('chat-message-input')).toHaveFocus())
   })
 
+  test('focuses a selected conversation after its composer mounts', async () => {
+    requestWorkbenchComposerFocus('runtime:device-1:task-1')
+
+    render(
+      <BufferedChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        projectChat={createProjectChat('runtime:device-1:task-1')}
+      />
+    )
+
+    await waitFor(() => expect(screen.getByTestId('chat-message-input')).toHaveFocus())
+  })
+
   test('does not focus a disabled or non-matching composer', async () => {
     const projectChat = createProjectChat('runtime:device-1:task-1')
     const { rerender } = render(

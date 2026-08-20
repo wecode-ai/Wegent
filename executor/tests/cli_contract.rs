@@ -102,7 +102,7 @@ fn app_sidecar_reserves_stdout_for_jsonl_before_backend_startup() {
         .env("DEVICE_PUBLIC_BASE_URL", "")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::null())
         .spawn()
         .expect("start app stdio sidecar");
     let mut stdout = BufReader::new(child.stdout.take().expect("capture app stdio stdout"));

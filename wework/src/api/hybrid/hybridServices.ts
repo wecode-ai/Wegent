@@ -1330,6 +1330,7 @@ export function createHybridWorkbenchServices(
     attachmentApi: {
       uploadAttachment: localServices.attachmentApi!.uploadAttachment,
       deleteAttachment: localServices.attachmentApi!.deleteAttachment,
+      fetchAttachmentBlob: cloudServices.attachmentApi!.fetchAttachmentBlob,
       uploadLocalAttachmentToCloud: attachment =>
         uploadLocalAttachmentToCloud(attachment, cloudServices.attachmentApi!.uploadAttachment),
     },

@@ -53,6 +53,7 @@ sequenceDiagram
         W->>H: 注入短期 ContextGrant
     end
     H->>P: Thread 启动时连接常驻 MCP Endpoint
+    Note over H,P: 配置重载可能产生 cancelled → starting → ready；cancelled 不是永久连接失败
     Note over W,G: Wework 启动的 Executor 是 Provider 与 MCP Endpoint 的唯一生命周期所有者
     Note over H,P: Codex 仅作为 MCP Client，不再创建 stdio MCP 子进程
     P->>G: 校验连接凭证与可选 ContextGrant
@@ -129,8 +130,8 @@ sequenceDiagram
 - 本地与云端 Provider 必须提供同语义的 `get_workflow_stage_context`，返回 TaskBinding 启动时固化且经过 scope 校验的输入快照；不得在每次读取时重新拼接可漂移的前序数据。
 - `create_delivery` 的聊天快照选择由服务端从当前 Issue 时间线解析，支持全部、最近 N 条和指定消息 ID；不得信任模型提交的伪造消息内容作为“选择结果”。
 - Delivery 附件下载必须校验附件属于当前 Issue 下可见的 Delivery；上传和丢弃仅允许操作当前会话创建且仍为 draft 的 Delivery。`finalize_delivery` 必须复用既有不可变快照边界，并将交付绑定到来源 TaskBinding 的唯一 workflow node。
-- Runtime 在首轮前只校验常驻 Endpoint readiness、固定能力配置与 ContextGrant，不得调用 `mcpServerStatus/list` 或其他工具清单接口主动启动、重启或盘点 MCP。Runtime 只被动记录 Codex app-server 的连接状态；能力连接失败必须终止当前执行，并由会话 UI 保留用户消息和失败回复。
-- 已绑定 Issue 会话读取当前描述或附件时必须先走确定路径：`get_current_context` → `get_board_item` → `list_item_attachments` → `read_item_attachment`。不得用 MCP resource listing、浏览器、Shell、`curl` 或直接解析 `wegent://` 判断能力是否存在。
+- Runtime 在首轮前只校验常驻 Endpoint readiness、固定能力配置与 ContextGrant，不得调用 `mcpServerStatus/list` 或其他工具清单接口主动启动、重启或盘点 MCP。Runtime 只被动记录 Codex app-server 的连接状态；带明确失败语义的 `failed` 或 `error` 必须终止当前执行，并由会话 UI 保留用户消息和失败回复；配置重载产生的无错误 `cancelled` 是过渡态，Runtime 必须继续等待后续 `starting` / `ready` 或终态，不能丢弃已经完成的模型输出。
+- 已绑定的 Issue 会话读取当前描述或附件时必须走确定路径：`get_current_context` → `get_board_item` → `list_item_attachments` → `read_item_attachment`。不得用 MCP resource listing、浏览器、Shell、`curl` 或直接解析 `wegent://` 判断能力是否存在。
 - 本地、远程和 Backend MCP 使用相同工具 schema 与契约测试；Provider 只决定数据来源，不改变工具语义。
 - 钉钉 AI 表格 Issue 也必须先走统一 `wework_space` 读取接口。Gateway 使用 ContextGrant 的稳定 `item_id` 解析 `record_id`，由 AI Table Provider 使用 Wework 内置 DWS 与隔离登录态读取唯一记录的全部字段、`get-primary-doc-id` 和 `doc read`；Agent 不得自行搜索表格或默认调用 Shell。
 - 只有 Provider 无法完成读取或主文档读取失败时，工具结果才可返回 `bundled_dws_fallback`。Fallback 必须包含 Wework 内置 DWS 的绝对路径、绑定的 `base_id + table_id + record_id` 和仅对该子进程生效的隔离环境；不得修改用户 PATH、HOME 或全局 DWS 配置，不得调用裸 `dws` 或用户安装的 DWS。

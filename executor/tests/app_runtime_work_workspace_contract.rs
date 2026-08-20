@@ -294,6 +294,20 @@ async fn runtime_local_project_rpc_persists_multiple_roots() {
                 "defaultProjectSpace": {
                     "projectStore": "backend",
                     "projectId": "space-1"
+                },
+                "aiSettings": {
+                    "instructions": "Run focused tests before finishing.",
+                    "modelSelection": {
+                        "modelName": "gpt-5.5",
+                        "modelType": "runtime",
+                        "options": {"reasoning": "high"}
+                    },
+                    "plugins": [{
+                        "id": "quality-gate@team-market",
+                        "pluginName": "quality-gate",
+                        "marketplaceId": "team-market",
+                        "displayName": "Quality Gate"
+                    }]
                 }
             }
         }))
@@ -307,11 +321,32 @@ async fn runtime_local_project_rpc_persists_multiple_roots() {
         response["defaultProjectSpace"],
         json!({"projectStore": "backend", "projectId": "space-1"})
     );
+    assert_eq!(
+        response["aiSettings"],
+        json!({
+            "instructions": "Run focused tests before finishing.",
+            "modelSelection": {
+                "modelName": "gpt-5.5",
+                "modelType": "runtime",
+                "options": {"reasoning": "high"}
+            },
+            "plugins": [{
+                "id": "quality-gate@team-market",
+                "pluginName": "quality-gate",
+                "marketplaceId": "team-market",
+                "displayName": "Quality Gate"
+            }]
+        })
+    );
     let state = read_json_file(&codex_home.join(".codex-global-state.json"));
     assert_eq!(state["local-projects"]["product"]["name"], "Product");
     assert_eq!(
         state["local-projects"]["product"]["defaultProjectSpace"],
         json!({"projectStore": "backend", "projectId": "space-1"})
+    );
+    assert_eq!(
+        state["local-projects"]["product"]["aiSettings"],
+        response["aiSettings"]
     );
     assert_eq!(
         state["project-writable-roots"]["product"]
@@ -329,15 +364,37 @@ async fn runtime_local_project_rpc_persists_multiple_roots() {
                 "runtime": "codex",
                 "projectKey": "product",
                 "name": "Product",
-                "roots": [first_root, second_root],
-                "defaultProjectSpace": null
+                "roots": [first_root, second_root]
             }
         }))
         .await
-        .expect("clearing the default project space should succeed");
+        .expect("updating a project without AI settings should succeed");
+    let state = read_json_file(&codex_home.join(".codex-global-state.json"));
+    assert_eq!(
+        state["local-projects"]["product"]["aiSettings"],
+        response["aiSettings"]
+    );
+
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.projects.upsert_local",
+            "payload": {
+                "runtime": "codex",
+                "projectKey": "product",
+                "name": "Product",
+                "roots": [first_root, second_root],
+                "defaultProjectSpace": null,
+                "aiSettings": null
+            }
+        }))
+        .await
+        .expect("clearing the default project space and AI settings should succeed");
     let state = read_json_file(&codex_home.join(".codex-global-state.json"));
     assert!(state["local-projects"]["product"]
         .get("defaultProjectSpace")
+        .is_none());
+    assert!(state["local-projects"]["product"]
+        .get("aiSettings")
         .is_none());
 }
 

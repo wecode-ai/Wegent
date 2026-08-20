@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { deleteAttachment, uploadAttachment } from './attachments'
+import { createAttachmentApi, deleteAttachment, uploadAttachment } from './attachments'
 
 const originalCreateObjectUrl = URL.createObjectURL
 
@@ -28,6 +28,7 @@ vi.mock('./http', () => ({
 function mockClient(overrides = {}) {
   return {
     get: vi.fn(),
+    getBlob: vi.fn(),
     post: vi.fn(),
     put: vi.fn(),
     delete: vi.fn(),
@@ -94,5 +95,24 @@ describe('attachment API', () => {
       getToken: expect.any(Function),
     })
     expect(deleteRequest).toHaveBeenCalledWith('/attachments/12')
+  })
+
+  test('downloads through the configured backend client', async () => {
+    const blob = new Blob(['image'], { type: 'image/png' })
+    const getBlob = vi.fn().mockResolvedValue(blob)
+    httpMocks.createHttpClient.mockReturnValue(mockClient({ getBlob }))
+    const getToken = vi.fn(() => 'cloud-token')
+
+    const result = await createAttachmentApi({
+      apiBaseUrl: 'https://cloud.example.com/api',
+      getToken,
+    }).fetchAttachmentBlob(42)
+
+    expect(httpMocks.createHttpClient).toHaveBeenCalledWith({
+      baseUrl: 'https://cloud.example.com/api',
+      getToken,
+    })
+    expect(getBlob).toHaveBeenCalledWith('/attachments/42/download')
+    expect(result).toBe(blob)
   })
 })
