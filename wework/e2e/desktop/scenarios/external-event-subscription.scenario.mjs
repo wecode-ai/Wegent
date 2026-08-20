@@ -194,10 +194,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       timeoutMs: uiTimeoutMs,
     })
     await control.command('click', '[data-testid="project-workflow-mode-workflow"]')
-    await control.command('waitFor', '[data-testid="project-workflow-start-start"]', {
+    await control.command('waitFor', '[data-testid="project-workflow-dag"]', {
       timeoutMs: uiTimeoutMs,
     })
-    await control.command('waitFor', '[data-testid="project-workflow-end-end"]', {
+    await control.command('waitFor', '[data-testid="project-workflow-add"]', {
       timeoutMs: uiTimeoutMs,
     })
 
@@ -242,11 +242,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       'fill',
       '[data-testid="project-workflow-wait-rule-event-wait-1-rule-2"]',
       { value: 'ci_failed' }
-    )
-    await control.command(
-      'select',
-      '[data-testid="project-workflow-wait-rule-mode-wait-1-rule-2"]',
-      { value: 'debounce' }
     )
     await control.command(
       'select',
@@ -311,8 +306,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
           wait?.node_type === 'wait' &&
           wait.wait_config?.rules?.some(rule => rule.event_type === 'merged') &&
           wait.wait_config?.rules?.some(
-            rule =>
-              rule.event_type === 'ci_failed' && rule.mode === 'debounce' && rule.action === 'rerun'
+            rule => rule.event_type === 'ci_failed' && rule.action === 'rerun'
           ) &&
           stage?.automation_rule_id === workflowRule.id &&
           stage?.workspace_policy === 'none'
@@ -536,16 +530,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       await control.command('waitFor', '[data-testid="cloud-todo-workflow-node-wait-1"]', {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command(
-        'waitFor',
-        '[data-testid="cloud-todo-workflow-wait-mode-wait-1-trigger"]',
-        { timeoutMs: uiTimeoutMs }
-      )
-      await control.command(
-        'waitFor',
-        '[data-testid="cloud-todo-workflow-wait-mode-wait-1-debounce"]',
-        { timeoutMs: uiTimeoutMs }
-      )
       await captureScreenshot(control, 'external-event-04-issue-workflow-instantiated.png')
 
       const runs = await waitForValue(
@@ -645,7 +629,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
             item.status === 'in_review'
           )
         },
-        'The merged event did not complete the wait/end nodes and move the Issue to in_review',
+        'The merged event did not complete the wait node and move the Issue to in_review',
         uiTimeoutMs * 3
       ).then(response => response.items.find(candidate => candidate.id === issue.id))
       const finalStatuses = nodeStatuses(issue)

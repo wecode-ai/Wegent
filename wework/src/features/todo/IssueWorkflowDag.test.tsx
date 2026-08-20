@@ -52,8 +52,6 @@ vi.mock('@/hooks/useTranslation', () => ({
           'todo.workflow_decision_reason_placeholder': '填写原因',
           'todo.workflow_wait_dependencies': '等待前置阶段',
           'todo.workflow_no_stage_tasks': '尚无具体任务',
-          'todo.workflow_wait_mode_trigger': 'trigger',
-          'todo.workflow_wait_mode_debounce': 'debounce',
           'todo.workflow_wait_event_types': '等待：{{types}}',
           'todo.workflow_wait_round': '等待中 · 第 {{round}} 轮修复中',
         }[key] ??
@@ -219,7 +217,7 @@ describe('IssueWorkflowDag', () => {
     expect(screen.getByTestId('cloud-todo-create-workflow-task-编辑')).toHaveTextContent('添加任务')
   })
 
-  test('renders a waiting node with mode badges, events, and round text', () => {
+  test('renders a waiting node with wait events and round text', () => {
     render(
       <IssueWorkflowDag
         nodes={[
@@ -232,13 +230,11 @@ describe('IssueWorkflowDag', () => {
                 {
                   id: 'rule-1',
                   event_type: 'ci_failed',
-                  mode: 'debounce',
                   action: 'rerun',
                 },
                 {
                   id: 'rule-2',
                   event_type: 'merged',
-                  mode: 'trigger',
                   action: 'complete',
                 },
               ],
@@ -250,23 +246,22 @@ describe('IssueWorkflowDag', () => {
     )
 
     expect(screen.getByTestId('cloud-todo-workflow-node-等待')).toHaveTextContent('等待中')
-    expect(screen.getByTestId('cloud-todo-workflow-wait-mode-等待-debounce')).toBeInTheDocument()
-    expect(screen.getByTestId('cloud-todo-workflow-wait-mode-等待-trigger')).toBeInTheDocument()
     expect(screen.getByTestId('cloud-todo-workflow-node-等待')).toHaveTextContent(
       '等待：ci_failed / merged'
     )
     expect(screen.getByTestId('cloud-todo-workflow-node-等待')).toHaveTextContent(
       '等待中 · 第 2 轮修复中'
     )
-    expect(screen.queryByTestId('cloud-todo-workflow-action-等待')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-workflow-action-等待')).toHaveTextContent('等待中')
   })
 
-  test('renders start and end endpoint nodes without stage actions', () => {
+  test('ignores legacy start/end sentinels and renders only real stages', () => {
     render(
       <IssueWorkflowDag
         nodes={[
           stage('开始', { node_type: 'start', status: 'completed' }),
           stage('编辑'),
+          stage('审阅', { depends_on: ['编辑'] }),
           stage('结束', { node_type: 'end', status: 'blocked' }),
         ]}
         tasks={[]}
@@ -274,8 +269,11 @@ describe('IssueWorkflowDag', () => {
       />
     )
 
-    expect(screen.getByTestId('cloud-todo-workflow-node-开始')).toBeInTheDocument()
-    expect(screen.getByTestId('cloud-todo-workflow-node-结束')).toBeInTheDocument()
+    // Legacy start/end sentinels are stripped on render; the flow simply ends
+    // at the last stage with no end marker.
+    expect(screen.queryByTestId('cloud-todo-workflow-node-开始')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-workflow-node-结束')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-workflow-end-marker-审阅')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-workflow-action-开始')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-workflow-action-结束')).not.toBeInTheDocument()
     expect(screen.getByTestId('cloud-todo-workflow-action-编辑')).toBeInTheDocument()
@@ -293,7 +291,6 @@ describe('IssueWorkflowDag', () => {
                 {
                   id: 'rule-1',
                   event_type: 'merged',
-                  mode: 'trigger',
                   action: 'complete',
                 },
               ],

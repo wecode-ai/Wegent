@@ -107,7 +107,7 @@ def test_workflow_projection_unlocks_dependencies_and_updates_issue_status(
     assert item.status == "in_review"
 
 
-def test_workflow_projection_auto_completes_wait_and_end_nodes(
+def test_workflow_projection_reaches_review_when_required_stages_complete(
     test_db: Session,
     workflow_project: CloudProject,
 ) -> None:
@@ -129,19 +129,10 @@ def test_workflow_projection_auto_completes_wait_and_end_nodes(
                 "advancement_policy": "manual",
                 "nodes": [
                     {
-                        "id": "start",
-                        "name": "Start",
-                        "node_type": "start",
-                        "depends_on": [],
-                        "required": False,
-                        "workspace_policy": "none",
-                        "status": "completed",
-                    },
-                    {
                         "id": "develop",
                         "name": "Develop",
                         "node_type": "stage",
-                        "depends_on": ["start"],
+                        "depends_on": [],
                         "required": True,
                         "workspace_policy": "composer",
                         "status": "running",
@@ -159,20 +150,10 @@ def test_workflow_projection_auto_completes_wait_and_end_nodes(
                                 {
                                     "id": "r",
                                     "event_type": "merged",
-                                    "mode": "trigger",
                                     "action": "complete",
                                 }
                             ]
                         },
-                    },
-                    {
-                        "id": "end",
-                        "name": "End",
-                        "node_type": "end",
-                        "depends_on": ["wait"],
-                        "required": True,
-                        "workspace_policy": "none",
-                        "status": "blocked",
                     },
                 ],
             }
@@ -181,17 +162,24 @@ def test_workflow_projection_auto_completes_wait_and_end_nodes(
     test_db.add(item)
     test_db.commit()
 
-    update_workflow_node(test_db, item_id=item.id, node_id="develop", node_status="completed")
+    update_workflow_node(
+        test_db, item_id=item.id, node_id="develop", node_status="completed"
+    )
     test_db.commit()
     assert item.status == "in_progress"
-    nodes = {node["id"]: node["status"] for node in item.metadata_json["workflow"]["nodes"]}
+    nodes = {
+        node["id"]: node["status"] for node in item.metadata_json["workflow"]["nodes"]
+    }
     assert nodes["wait"] == "waiting"
-    assert nodes["end"] == "blocked"
 
-    update_workflow_node(test_db, item_id=item.id, node_id="wait", node_status="completed")
+    update_workflow_node(
+        test_db, item_id=item.id, node_id="wait", node_status="completed"
+    )
     test_db.commit()
-    nodes = {node["id"]: node["status"] for node in item.metadata_json["workflow"]["nodes"]}
-    assert nodes["end"] == "completed"
+    nodes = {
+        node["id"]: node["status"] for node in item.metadata_json["workflow"]["nodes"]
+    }
+    assert nodes["wait"] == "completed"
     assert item.status == "in_review"
 
 
@@ -217,19 +205,10 @@ def test_workflow_projection_activates_wait_node_while_stage_is_running(
                 "advancement_policy": "manual",
                 "nodes": [
                     {
-                        "id": "start",
-                        "name": "Start",
-                        "node_type": "start",
-                        "depends_on": [],
-                        "required": False,
-                        "workspace_policy": "none",
-                        "status": "completed",
-                    },
-                    {
                         "id": "develop",
                         "name": "Develop",
                         "node_type": "stage",
-                        "depends_on": ["start"],
+                        "depends_on": [],
                         "required": True,
                         "workspace_policy": "composer",
                         "status": "ready",
@@ -247,20 +226,10 @@ def test_workflow_projection_activates_wait_node_while_stage_is_running(
                                 {
                                     "id": "r",
                                     "event_type": "merged",
-                                    "mode": "trigger",
                                     "action": "complete",
                                 }
                             ]
                         },
-                    },
-                    {
-                        "id": "end",
-                        "name": "End",
-                        "node_type": "end",
-                        "depends_on": ["wait"],
-                        "required": True,
-                        "workspace_policy": "none",
-                        "status": "blocked",
                     },
                 ],
             }
@@ -269,11 +238,14 @@ def test_workflow_projection_activates_wait_node_while_stage_is_running(
     test_db.add(item)
     test_db.commit()
 
-    update_workflow_node(test_db, item_id=item.id, node_id="develop", node_status="running")
+    update_workflow_node(
+        test_db, item_id=item.id, node_id="develop", node_status="running"
+    )
     test_db.commit()
 
-    nodes = {node["id"]: node["status"] for node in item.metadata_json["workflow"]["nodes"]}
+    nodes = {
+        node["id"]: node["status"] for node in item.metadata_json["workflow"]["nodes"]
+    }
     assert nodes["develop"] == "running"
     assert nodes["wait"] == "waiting"
-    assert nodes["end"] == "blocked"
     assert item.status == "in_progress"

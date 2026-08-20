@@ -98,38 +98,17 @@ vi.mock('@xyflow/react', () => ({
   ),
 }))
 
-const startNode = {
-  id: 'start',
-  name: '开始',
-  node_type: 'start' as const,
-  depends_on: [],
-  required: false,
-  workspace_policy: 'none' as const,
-  automation_rule_id: null,
-}
-
-const endNode = {
-  id: 'end',
-  name: '结束',
-  node_type: 'end' as const,
-  depends_on: ['test'],
-  required: true,
-  workspace_policy: 'none' as const,
-  automation_rule_id: null,
-}
-
 const workflow: ProjectWorkflowDefinition = {
   version: 1,
   stage_mode: 'dag',
   advancement_policy: 'manual',
   nodes: [
-    startNode,
     {
       id: 'develop',
       name: '开发',
       prompt: '实现 Issue 中描述的功能',
       node_type: 'stage',
-      depends_on: ['start'],
+      depends_on: [],
       required: true,
       workspace_policy: 'composer',
       automation_rule_id: null,
@@ -144,7 +123,6 @@ const workflow: ProjectWorkflowDefinition = {
       workspace_policy: 'inherit',
       automation_rule_id: null,
     },
-    endNode,
   ],
 }
 
@@ -183,19 +161,18 @@ describe('ProjectWorkflowEditor', () => {
     expect(screen.getByTestId('project-workflow-save')).not.toHaveClass('bg-foreground')
   })
 
-  test('renders structural start and end nodes alongside stage cards', () => {
+  test('renders stage cards without any start or end node', () => {
     render(
       <ProjectWorkflowEditor value={workflow} busy={false} onChange={vi.fn()} onSave={vi.fn()} />
     )
 
-    expect(screen.getByTestId('project-workflow-start-start')).toBeInTheDocument()
-    expect(screen.getByTestId('project-workflow-end-end')).toBeInTheDocument()
     expect(screen.getByTestId('project-workflow-stage-develop')).toBeInTheDocument()
-    expect(screen.getAllByText('开始').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('结束').length).toBeGreaterThan(0)
+    expect(screen.queryByTestId('project-workflow-end-marker-test')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('project-workflow-start-start')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('project-workflow-end-end')).not.toBeInTheDocument()
   })
 
-  test('auto-creates start and end nodes when a dag workflow has none', () => {
+  test('keeps an empty dag empty and gates saving until a stage is added', () => {
     const onChange = vi.fn()
     render(
       <ProjectWorkflowEditor
@@ -206,39 +183,9 @@ describe('ProjectWorkflowEditor', () => {
       />
     )
 
-    expect(onChange).toHaveBeenCalledWith({
-      version: 1,
-      stage_mode: 'dag',
-      advancement_policy: 'manual',
-      nodes: [
-        expect.objectContaining({ id: 'start', node_type: 'start', depends_on: [] }),
-        expect.objectContaining({
-          id: 'end',
-          node_type: 'end',
-          depends_on: ['start'],
-        }),
-      ],
-    })
-    expect(screen.getByTestId('project-workflow-start-start')).toBeInTheDocument()
-    expect(screen.getByTestId('project-workflow-end-end')).toBeInTheDocument()
-  })
-
-  test('keeps structural nodes out of the removal path', () => {
-    render(
-      <ProjectWorkflowEditor value={workflow} busy={false} onChange={vi.fn()} onSave={vi.fn()} />
-    )
-
-    fireEvent.click(screen.getByTestId('project-workflow-start-start'))
-    expect(screen.getByTestId('project-workflow-inspector-start')).toBeInTheDocument()
-    expect(screen.queryByTestId('project-workflow-remove-start')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('project-workflow-insert-before-start')).not.toBeInTheDocument()
-    expect(screen.getByTestId('project-workflow-insert-after-start')).toBeInTheDocument()
-
-    fireEvent.click(screen.getByTestId('project-workflow-end-end'))
-    expect(screen.getByTestId('project-workflow-inspector-end')).toBeInTheDocument()
-    expect(screen.queryByTestId('project-workflow-remove-end')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('project-workflow-insert-after-end')).not.toBeInTheDocument()
-    expect(screen.getByTestId('project-workflow-insert-before-end')).toBeInTheDocument()
+    expect(onChange).not.toHaveBeenCalled()
+    expect(screen.getByTestId('project-workflow-save')).toBeDisabled()
+    expect(screen.queryByTestId('project-workflow-stage-develop')).not.toBeInTheDocument()
   })
 
   test('shows a compact graph and edits the selected stage in the inspector', () => {
@@ -248,7 +195,7 @@ describe('ProjectWorkflowEditor', () => {
     )
 
     expect(screen.getByTestId('project-workflow-dag')).toBeInTheDocument()
-    expect(screen.getByTestId('project-workflow-inspector-start')).toBeInTheDocument()
+    expect(screen.getByTestId('project-workflow-inspector-develop')).toBeInTheDocument()
     expect(screen.getByText('运行测试并修复失败')).toBeInTheDocument()
 
     fireEvent.click(screen.getByTestId('project-workflow-stage-test'))
@@ -261,12 +208,10 @@ describe('ProjectWorkflowEditor', () => {
       ...workflow,
       nodes: [
         workflow.nodes[0],
-        workflow.nodes[1],
         {
-          ...workflow.nodes[2],
+          ...workflow.nodes[1],
           prompt: '验证开发结果并提交报告',
         },
-        workflow.nodes[3],
       ],
     })
 
@@ -278,26 +223,19 @@ describe('ProjectWorkflowEditor', () => {
       ...workflow,
       nodes: [
         workflow.nodes[0],
-        workflow.nodes[1],
         {
-          ...workflow.nodes[2],
+          ...workflow.nodes[1],
           dependency_context: {
             develop: ['final_result', 'deliveries', 'activity'],
           },
         },
-        workflow.nodes[3],
       ],
     })
 
     fireEvent.click(screen.getByTestId('project-workflow-edge-delete-develop-test'))
     expect(onChange).toHaveBeenLastCalledWith({
       ...workflow,
-      nodes: [
-        workflow.nodes[0],
-        workflow.nodes[1],
-        { ...workflow.nodes[2], depends_on: [], dependency_context: {} },
-        workflow.nodes[3],
-      ],
+      nodes: [workflow.nodes[0], { ...workflow.nodes[1], depends_on: [], dependency_context: {} }],
     })
 
     fireEvent.click(screen.getByTestId('project-workflow-add'))
@@ -307,7 +245,6 @@ describe('ProjectWorkflowEditor', () => {
       nodes: [
         workflow.nodes[0],
         workflow.nodes[1],
-        workflow.nodes[2],
         expect.objectContaining({
           id: 'stage-1',
           name: '新阶段 1',
@@ -316,10 +253,6 @@ describe('ProjectWorkflowEditor', () => {
           dependency_context: {
             test: ['final_result', 'deliveries'],
           },
-        }),
-        expect.objectContaining({
-          id: 'end',
-          depends_on: ['stage-1'],
         }),
       ],
     })
@@ -365,9 +298,8 @@ describe('ProjectWorkflowEditor', () => {
     const expectedDefinition: ProjectWorkflowDefinition = {
       ...workflow,
       nodes: [
-        workflow.nodes[0],
         {
-          ...workflow.nodes[1],
+          ...workflow.nodes[0],
           required_deliverables: [
             {
               id: 'deliverable-1',
@@ -385,8 +317,7 @@ describe('ProjectWorkflowEditor', () => {
             },
           ],
         },
-        workflow.nodes[2],
-        workflow.nodes[3],
+        workflow.nodes[1],
       ],
     }
     expect(onChange).toHaveBeenLastCalledWith(expectedDefinition)
@@ -394,14 +325,50 @@ describe('ProjectWorkflowEditor', () => {
     expect(screen.queryByTestId('workflow-deliverable-requirements-dialog')).not.toBeInTheDocument()
   })
 
+  test('wraps long deliverable acceptance descriptions inside the inspector list', () => {
+    const onChange = vi.fn()
+    render(
+      <ProjectWorkflowEditor
+        value={{
+          ...workflow,
+          nodes: [
+            {
+              ...workflow.nodes[0],
+              required_deliverables: [
+                {
+                  id: 'report',
+                  name: '测试报告',
+                  description:
+                    'https://very-long-acceptance-' + 'x'.repeat(300) + '.example.com/说明',
+                  value_type: 'text',
+                },
+              ],
+            },
+          ],
+        }}
+        busy={false}
+        onChange={onChange}
+        onSave={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('project-workflow-stage-develop'))
+    const list = screen.getByTestId('project-workflow-deliverable-list-develop')
+    const tile = screen.getByTestId('project-workflow-deliverable-report')
+    expect(list).toHaveClass('min-w-0')
+    expect(tile.querySelectorAll('span > span')[1]).toHaveClass(
+      'whitespace-normal',
+      '[overflow-wrap:anywhere]'
+    )
+  })
+
   test('edits an existing deliverable by clicking its compact tile', () => {
     const onChange = vi.fn()
     const workflowWithDeliverable: ProjectWorkflowDefinition = {
       ...workflow,
       nodes: [
-        workflow.nodes[0],
         {
-          ...workflow.nodes[1],
+          ...workflow.nodes[0],
           required_deliverables: [
             {
               id: 'backend-wiki',
@@ -412,8 +379,7 @@ describe('ProjectWorkflowEditor', () => {
             },
           ],
         },
-        workflow.nodes[2],
-        workflow.nodes[3],
+        workflow.nodes[1],
       ],
     }
     render(
@@ -452,9 +418,8 @@ describe('ProjectWorkflowEditor', () => {
     expect(onChange).toHaveBeenLastCalledWith({
       ...workflowWithDeliverable,
       nodes: [
-        workflowWithDeliverable.nodes[0],
         {
-          ...workflowWithDeliverable.nodes[1],
+          ...workflowWithDeliverable.nodes[0],
           required_deliverables: [
             {
               id: 'backend-wiki',
@@ -465,8 +430,7 @@ describe('ProjectWorkflowEditor', () => {
             },
           ],
         },
-        workflowWithDeliverable.nodes[2],
-        workflowWithDeliverable.nodes[3],
+        workflowWithDeliverable.nodes[1],
       ],
     })
   })
@@ -510,7 +474,6 @@ describe('ProjectWorkflowEditor', () => {
       stage_mode: 'dag',
       nodes: [
         workflow.nodes[0],
-        workflow.nodes[1],
         expect.objectContaining({
           id: 'stage-1',
           name: '新阶段 1',
@@ -520,13 +483,12 @@ describe('ProjectWorkflowEditor', () => {
           },
         }),
         {
-          ...workflow.nodes[2],
+          ...workflow.nodes[1],
           depends_on: ['stage-1'],
           dependency_context: {
             'stage-1': ['final_result', 'deliveries'],
           },
         },
-        workflow.nodes[3],
       ],
     })
   })
@@ -541,12 +503,7 @@ describe('ProjectWorkflowEditor', () => {
     fireEvent.keyDown(screen.getByTestId('mock-react-flow'), { key: 'Delete' })
     expect(onChange).toHaveBeenLastCalledWith({
       ...workflow,
-      nodes: [
-        workflow.nodes[0],
-        workflow.nodes[1],
-        { ...workflow.nodes[2], depends_on: [], dependency_context: {} },
-        workflow.nodes[3],
-      ],
+      nodes: [workflow.nodes[0], { ...workflow.nodes[1], depends_on: [], dependency_context: {} }],
     })
 
     onChange.mockClear()
@@ -554,31 +511,7 @@ describe('ProjectWorkflowEditor', () => {
     fireEvent.keyDown(screen.getByTestId('mock-react-flow'), { key: 'Backspace' })
     expect(onChange).toHaveBeenLastCalledWith({
       ...workflow,
-      nodes: [
-        workflow.nodes[0],
-        workflow.nodes[1],
-        {
-          ...workflow.nodes[3],
-          depends_on: ['develop'],
-          dependency_context: {
-            develop: ['final_result', 'deliveries'],
-          },
-        },
-      ],
-    })
-  })
-
-  test('does not delete structural nodes with the keyboard', () => {
-    const onChange = vi.fn()
-    render(
-      <ProjectWorkflowEditor value={workflow} busy={false} onChange={onChange} onSave={vi.fn()} />
-    )
-
-    fireEvent.click(screen.getByTestId('project-workflow-start-start'))
-    fireEvent.keyDown(screen.getByTestId('mock-react-flow'), { key: 'Delete' })
-    expect(onChange).toHaveBeenLastCalledWith({
-      ...workflow,
-      nodes: workflow.nodes,
+      nodes: [workflow.nodes[0]],
     })
   })
 
@@ -588,14 +521,12 @@ describe('ProjectWorkflowEditor', () => {
       ...workflow,
       nodes: [
         workflow.nodes[0],
-        workflow.nodes[1],
         {
-          ...workflow.nodes[2],
+          ...workflow.nodes[1],
           dependency_context: {
             develop: ['activity'],
           },
         },
-        workflow.nodes[3],
       ],
     }
     render(
@@ -617,7 +548,6 @@ describe('ProjectWorkflowEditor', () => {
       stage_mode: 'dag',
       nodes: [
         workflow.nodes[0],
-        workflow.nodes[1],
         expect.objectContaining({
           id: 'stage-1',
           depends_on: ['develop'],
@@ -626,18 +556,17 @@ describe('ProjectWorkflowEditor', () => {
           },
         }),
         {
-          ...workflowWithContext.nodes[2],
+          ...workflowWithContext.nodes[1],
           depends_on: ['stage-1'],
           dependency_context: {
             'stage-1': ['final_result', 'deliveries'],
           },
         },
-        workflow.nodes[3],
       ],
     })
   })
 
-  test('adds a wait node before the end node and rewires it', () => {
+  test('adds a wait node at the end of the workflow', () => {
     const onChange = vi.fn()
     const { rerender } = render(
       <ProjectWorkflowEditor value={workflow} busy={false} onChange={onChange} onSave={vi.fn()} />
@@ -651,7 +580,6 @@ describe('ProjectWorkflowEditor', () => {
       nodes: [
         workflow.nodes[0],
         workflow.nodes[1],
-        workflow.nodes[2],
         {
           id: 'wait-1',
           name: '新等待 1',
@@ -670,19 +598,10 @@ describe('ProjectWorkflowEditor', () => {
               {
                 id: 'rule-1',
                 event_type: '',
-                mode: 'trigger',
                 action: 'complete',
                 rerun_prompt: '',
               },
             ],
-          },
-        },
-        {
-          ...workflow.nodes[3],
-          id: 'end',
-          depends_on: ['wait-1'],
-          dependency_context: {
-            'wait-1': ['final_result', 'deliveries'],
           },
         },
       ],
@@ -697,23 +616,10 @@ describe('ProjectWorkflowEditor', () => {
       />
     )
     expect(screen.getByTestId('project-workflow-wait-wait-1')).toBeInTheDocument()
-    expect(screen.getByTestId('project-workflow-wait-mode-wait-1-trigger')).toBeInTheDocument()
   })
 
-  test('prunes stale dependency context while rewiring the end node', () => {
-    const initial: ProjectWorkflowDefinition = {
-      version: 1,
-      stage_mode: 'dag',
-      advancement_policy: 'manual',
-      nodes: [
-        startNode,
-        {
-          ...endNode,
-          depends_on: ['start'],
-          dependency_context: { start: ['final_result', 'deliveries'] },
-        },
-      ],
-    }
+  test('appends stages after the current tail without rewriting existing edges', () => {
+    const initial = workflow
     const onChange = vi.fn()
     const { rerender } = render(
       <ProjectWorkflowEditor value={initial} busy={false} onChange={onChange} onSave={vi.fn()} />
@@ -721,11 +627,15 @@ describe('ProjectWorkflowEditor', () => {
 
     fireEvent.click(screen.getByTestId('project-workflow-add'))
     const afterStage = onChange.mock.calls.at(-1)![0] as ProjectWorkflowDefinition
-    expect(afterStage.nodes.find(node => node.id === 'end')).toEqual(
+    expect(afterStage.nodes.at(-1)).toEqual(
       expect.objectContaining({
-        depends_on: ['stage-1'],
-        dependency_context: { 'stage-1': ['final_result', 'deliveries'] },
+        id: 'stage-1',
+        depends_on: ['test'],
+        dependency_context: { test: ['final_result', 'deliveries'] },
       })
+    )
+    expect(afterStage.nodes.find(node => node.id === 'test')).toEqual(
+      expect.objectContaining({ depends_on: ['develop'] })
     )
     rerender(
       <ProjectWorkflowEditor value={afterStage} busy={false} onChange={onChange} onSave={vi.fn()} />
@@ -733,11 +643,14 @@ describe('ProjectWorkflowEditor', () => {
 
     fireEvent.click(screen.getByTestId('project-workflow-add-wait'))
     const afterWait = onChange.mock.calls.at(-1)![0] as ProjectWorkflowDefinition
-    expect(afterWait.nodes.find(node => node.id === 'end')).toEqual(
+    expect(afterWait.nodes.find(node => node.id === 'wait-1')).toEqual(
       expect.objectContaining({
-        depends_on: ['wait-1'],
-        dependency_context: { 'wait-1': ['final_result', 'deliveries'] },
+        depends_on: ['stage-1'],
+        dependency_context: { 'stage-1': ['final_result', 'deliveries'] },
       })
+    )
+    expect(afterWait.nodes.find(node => node.id === 'stage-1')).toEqual(
+      expect.objectContaining({ depends_on: ['test'] })
     )
   })
 
@@ -747,8 +660,6 @@ describe('ProjectWorkflowEditor', () => {
       ...workflow,
       nodes: [
         workflow.nodes[0],
-        workflow.nodes[1],
-        workflow.nodes[2],
         {
           id: 'wait-1',
           name: '等待外部事件',
@@ -758,15 +669,10 @@ describe('ProjectWorkflowEditor', () => {
           workspace_policy: 'none',
           automation_rule_id: null,
           wait_config: {
-            rules: [
-              { id: 'rule-1', event_type: '', mode: 'trigger', action: 'rerun', rerun_prompt: '' },
-            ],
+            rules: [{ id: 'rule-1', event_type: '', action: 'rerun', rerun_prompt: '' }],
           },
         },
-        {
-          ...workflow.nodes[3],
-          depends_on: ['wait-1'],
-        },
+        workflow.nodes[1],
       ],
     }
     const { rerender } = render(
@@ -834,10 +740,6 @@ describe('ProjectWorkflowEditor', () => {
     )
     expect(screen.getByTestId('project-workflow-save')).toBeEnabled()
 
-    fireEvent.change(screen.getByTestId('project-workflow-wait-rule-mode-wait-1-rule-1'), {
-      target: { value: 'debounce' },
-    })
-
     fireEvent.click(screen.getByTestId('project-workflow-wait-rule-add-wait-1'))
     expect(onChange).toHaveBeenLastCalledWith(
       expect.objectContaining({
@@ -864,12 +766,10 @@ describe('ProjectWorkflowEditor', () => {
                 rules: [
                   {
                     ...node.wait_config!.rules[0],
-                    mode: 'debounce',
                   },
                   {
                     id: 'rule-2',
                     event_type: '',
-                    mode: 'trigger',
                     action: 'complete',
                     rerun_prompt: '',
                   },
@@ -913,6 +813,55 @@ describe('ProjectWorkflowEditor', () => {
     expect(screen.getByTestId('project-workflow-save')).toBeEnabled()
   })
 
+  test('shows no trigger policy controls in the wait rule panel', () => {
+    const onChange = vi.fn()
+    const workflowWithWait: ProjectWorkflowDefinition = {
+      ...workflow,
+      nodes: [
+        workflow.nodes[0],
+        workflow.nodes[1],
+        {
+          id: 'wait-1',
+          name: '等待外部事件',
+          node_type: 'wait',
+          depends_on: ['test'],
+          required: true,
+          workspace_policy: 'none',
+          automation_rule_id: null,
+          wait_config: {
+            rules: [
+              {
+                id: 'rule-1',
+                event_type: 'ci_failed',
+                action: 'rerun',
+                rerun_prompt: '',
+              },
+            ],
+          },
+        },
+      ],
+    }
+    render(
+      <ProjectWorkflowEditor
+        value={workflowWithWait}
+        busy={false}
+        onChange={onChange}
+        onSave={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('project-workflow-wait-wait-1'))
+    expect(
+      screen.getByTestId('project-workflow-wait-rule-action-wait-1-rule-1')
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByTestId('project-workflow-wait-rule-mode-wait-1-rule-1')
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByTestId('project-workflow-wait-rule-policy-wait-1-rule-1')
+    ).not.toBeInTheDocument()
+  })
+
   test('picks adapter event types from a dropdown and supports custom values', () => {
     const onChange = vi.fn()
     const catalog = [
@@ -921,18 +870,27 @@ describe('ProjectWorkflowEditor', () => {
         event_type: 'merged',
         category: 'lifecycle',
         description: 'The merge request was merged',
+        reference_kind: 'pull_request',
+        reference_name: 'GitLab MR',
+        opaque_ref_format: 'group/project!iid',
       },
       {
         provider: 'gitlab',
         event_type: 'ci_failed',
         category: 'ci',
         description: 'A pipeline for the merge request failed',
+        reference_kind: 'pull_request',
+        reference_name: 'GitLab MR',
+        opaque_ref_format: 'group/project!iid',
       },
       {
         provider: 'gitlab',
         event_type: 'review_comment',
         category: 'review',
         description: 'A new comment was added to the merge request',
+        reference_kind: 'pull_request',
+        reference_name: 'GitLab MR',
+        opaque_ref_format: 'group/project!iid',
       },
     ]
     const workflowWithWait: ProjectWorkflowDefinition = {
@@ -940,7 +898,6 @@ describe('ProjectWorkflowEditor', () => {
       nodes: [
         workflow.nodes[0],
         workflow.nodes[1],
-        workflow.nodes[2],
         {
           id: 'wait-1',
           name: '等待外部事件',
@@ -954,16 +911,11 @@ describe('ProjectWorkflowEditor', () => {
               {
                 id: 'rule-1',
                 event_type: '',
-                mode: 'trigger',
                 action: 'complete',
                 rerun_prompt: '',
               },
             ],
           },
-        },
-        {
-          ...workflow.nodes[3],
-          depends_on: ['wait-1'],
         },
       ],
     }
@@ -992,7 +944,13 @@ describe('ProjectWorkflowEditor', () => {
           expect.objectContaining({
             id: 'wait-1',
             wait_config: {
-              rules: [expect.objectContaining({ id: 'rule-1', event_type: 'ci_failed' })],
+              rules: [
+                expect.objectContaining({
+                  id: 'rule-1',
+                  event_type: 'ci_failed',
+                  provider: 'gitlab',
+                }),
+              ],
             },
           }),
         ]),
@@ -1009,6 +967,7 @@ describe('ProjectWorkflowEditor', () => {
         externalEventCatalog={catalog}
       />
     )
+    expect(screen.getByText(/opaque_ref 形如 group\/project!iid/)).toBeInTheDocument()
 
     fireEvent.click(screen.getByTestId('project-workflow-wait-rule-event-wait-1-rule-1'))
     fireEvent.click(
@@ -1096,14 +1055,12 @@ describe('ProjectWorkflowEditor', () => {
     expect(onChange).toHaveBeenLastCalledWith({
       ...workflow,
       nodes: [
-        workflow.nodes[0],
         {
-          ...workflow.nodes[1],
+          ...workflow.nodes[0],
           automation_rule_id: 'workflow-rule-1',
           workspace_policy: 'none',
         },
-        workflow.nodes[2],
-        workflow.nodes[3],
+        workflow.nodes[1],
       ],
     })
   })

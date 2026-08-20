@@ -33,3 +33,12 @@ def test_external_event_catalog_lists_adapter_event_types(
     for event in gitlab:
         assert event["category"]
         assert event["description"]
+        assert "window_seconds" in event
+        assert "merge_while_running" in event
+
+    policies = {event["event_type"]: event for event in gitlab}
+    assert policies["merged"]["window_seconds"] is None
+    assert policies["merged"]["merge_while_running"] is False
+    assert policies["ci_failed"]["merge_while_running"] is True
+    assert policies["review_comment"]["window_seconds"] == 5
+    assert policies["review_comment"]["merge_while_running"] is True

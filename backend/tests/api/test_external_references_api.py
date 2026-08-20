@@ -33,19 +33,10 @@ def _workflow_definition() -> dict:
         "advancement_policy": "manual",
         "nodes": [
             {
-                "id": "start-1",
-                "name": "Start",
-                "node_type": "start",
-                "depends_on": [],
-                "required": False,
-                "workspace_policy": "none",
-                "status": "completed",
-            },
-            {
                 "id": "stage-1",
                 "name": "Develop MR",
                 "node_type": "stage",
-                "depends_on": ["start-1"],
+                "depends_on": [],
                 "required": True,
                 "workspace_policy": "composer",
                 "status": "completed",
@@ -63,21 +54,11 @@ def _workflow_definition() -> dict:
                         {
                             "id": "rule-merged",
                             "event_type": "merged",
-                            "mode": "trigger",
                             "action": "complete",
                             "rerun_prompt": "",
                         }
                     ]
                 },
-            },
-            {
-                "id": "end-1",
-                "name": "End",
-                "node_type": "end",
-                "depends_on": ["wait-1"],
-                "required": True,
-                "workspace_policy": "none",
-                "status": "blocked",
             },
         ],
     }

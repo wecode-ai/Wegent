@@ -4,6 +4,7 @@ import {
   dingtalkAITableRuntimeContext,
   parseDingTalkAITableLink,
   projectSpaceChatRuntimeContext,
+  repositoryAddress,
   repositoryProviderConfig,
 } from './projectProviderConfig'
 
@@ -16,6 +17,100 @@ describe('repositoryProviderConfig', () => {
       domain: 'gitlab.example.com',
       api_base: 'https://gitlab.example.com/api/v4',
     })
+  })
+
+  it('keeps the port for self-hosted GitLab and derives the API base from the origin', () => {
+    expect(
+      repositoryProviderConfig('https://gitlab.example.com:8443/hongyu91/tab-prompt', 'gitlab')
+    ).toEqual({
+      repository: 'hongyu91/tab-prompt',
+      domain: 'gitlab.example.com',
+      api_base: 'https://gitlab.example.com:8443/api/v4',
+    })
+  })
+
+  it('parses the explicit API URL form for GitLab behind a relative URL root', () => {
+    expect(
+      repositoryProviderConfig(
+        'https://gitlab.example.com/gitlab/api/v4/projects/weibo%2Fcommon%2Fwegent',
+        'gitlab'
+      )
+    ).toEqual({
+      repository: 'weibo/common/wegent',
+      domain: 'gitlab.example.com',
+      api_base: 'https://gitlab.example.com/gitlab/api/v4',
+    })
+  })
+
+  it('parses the GitHub Enterprise API URL form', () => {
+    expect(
+      repositoryProviderConfig('https://ghe.example.com/api/v3/repos/owner/repository', 'github')
+    ).toEqual({
+      repository: 'owner/repository',
+      domain: 'ghe.example.com',
+      api_base: 'https://ghe.example.com/api/v3',
+    })
+  })
+
+  it('collapses a gitlab.com API URL to the default configuration', () => {
+    expect(
+      repositoryProviderConfig('https://gitlab.com/api/v4/projects/group%2Fproject', 'gitlab')
+    ).toEqual({ repository: 'group/project' })
+  })
+
+  it('does not mistake a nested group named api for an API URL', () => {
+    expect(
+      repositoryProviderConfig('https://gitlab.example.com/group/api/v4/project', 'gitlab')
+    ).toEqual({
+      repository: 'group/api/v4/project',
+      domain: 'gitlab.example.com',
+      api_base: 'https://gitlab.example.com/api/v4',
+    })
+  })
+
+  it('keeps the self-hosted domain for SSH addresses', () => {
+    expect(repositoryProviderConfig('git@gitlab.example.com:group/project.git', 'gitlab')).toEqual({
+      repository: 'group/project',
+      domain: 'gitlab.example.com',
+      api_base: 'https://gitlab.example.com/api/v4',
+    })
+  })
+})
+
+describe('repositoryAddress', () => {
+  it('reconstructs the default web URL from repository only', () => {
+    expect(
+      repositoryAddress({
+        task_provider: 'gitlab',
+        provider_config: { repository: 'group/project' },
+      } as CloudProject)
+    ).toBe('https://gitlab.com/group/project')
+  })
+
+  it('reconstructs the port from the stored API base', () => {
+    expect(
+      repositoryAddress({
+        task_provider: 'gitlab',
+        provider_config: {
+          repository: 'group/project',
+          domain: 'gitlab.example.com',
+          api_base: 'https://gitlab.example.com:8443/api/v4',
+        },
+      } as CloudProject)
+    ).toBe('https://gitlab.example.com:8443/group/project')
+  })
+
+  it('round-trips a relative URL root through the API address form', () => {
+    expect(
+      repositoryAddress({
+        task_provider: 'gitlab',
+        provider_config: {
+          repository: 'group/project',
+          domain: 'gitlab.example.com',
+          api_base: 'https://gitlab.example.com/gitlab/api/v4',
+        },
+      } as CloudProject)
+    ).toBe('https://gitlab.example.com/gitlab/api/v4/projects/group%2Fproject')
   })
 })
 

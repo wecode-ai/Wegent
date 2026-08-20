@@ -110,12 +110,41 @@ def test_normalize_ignores_unrelated_gitlab_events() -> None:
     )
 
 
+def test_normalize_ignores_gitlab_system_notes() -> None:
+    assert (
+        normalize_external_event(
+            {
+                "object_kind": "note",
+                "object_attributes": {
+                    "id": 203,
+                    "noteable_type": "MergeRequest",
+                    "system": True,
+                    "note": "alice pushed 2 commits",
+                },
+                "merge_request": {"iid": 7},
+                "project": {"path_with_namespace": "acme/app"},
+                "user": {"username": "alice"},
+            },
+            {"x-gitlab-event": "Note Hook"},
+        )
+        is None
+    )
+
+
 def test_normalize_ignores_unstructured_payloads() -> None:
     assert normalize_external_event({"unknown": True}, {}) is None
 
 
 def test_parse_incoming_body_json_and_form() -> None:
     payload = {"event_type": "merged", "opaque_ref": "acme/app!7"}
-    assert parse_incoming_body(b'{"event_type":"merged","opaque_ref":"acme/app!7"}', "application/json") == payload
-    form = parse_incoming_body(b"payload=%7B%22event_type%22%3A%22merged%22%7D", "application/x-www-form-urlencoded")
+    assert (
+        parse_incoming_body(
+            b'{"event_type":"merged","opaque_ref":"acme/app!7"}', "application/json"
+        )
+        == payload
+    )
+    form = parse_incoming_body(
+        b"payload=%7B%22event_type%22%3A%22merged%22%7D",
+        "application/x-www-form-urlencoded",
+    )
     assert form.get("event_type") == "merged"

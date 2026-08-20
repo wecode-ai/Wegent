@@ -2,6 +2,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.schemas.issue_workflow import (
+    IssueWorkflowInstance,
     ProjectWorkflowDefinition,
     instantiate_workflow,
 )
@@ -36,7 +37,7 @@ def test_workflow_definition_instantiates_ready_roots() -> None:
     assert [node.status for node in workflow.nodes] == ["ready", "blocked"]
 
 
-def test_workflow_instantiation_completes_start_node_and_unlocks_dependents() -> None:
+def test_workflow_definition_strips_legacy_start_and_end_nodes() -> None:
     definition = ProjectWorkflowDefinition.model_validate(
         {
             "version": 1,
@@ -67,11 +68,13 @@ def test_workflow_instantiation_completes_start_node_and_unlocks_dependents() ->
         }
     )
 
-    workflow = instantiate_workflow(definition)
+    # Structural sentinels carry no semantics: the entry is any node without
+    # predecessors, so loading old data strips them and rewires dependencies.
+    assert [node.id for node in definition.nodes] == ["develop"]
+    assert definition.nodes[0].depends_on == []
 
-    assert [node.status for node in workflow.nodes] == ["completed", "ready", "blocked"]
-    assert workflow.nodes[0].node_type == "start"
-    assert workflow.nodes[0].status == "completed"
+    workflow = instantiate_workflow(definition)
+    assert [node.status for node in workflow.nodes] == ["ready"]
 
 
 def test_workflow_instantiation_activates_wait_node_before_upstream_completes() -> None:
@@ -82,16 +85,9 @@ def test_workflow_instantiation_activates_wait_node_before_upstream_completes() 
             "advancement_policy": "manual",
             "nodes": [
                 {
-                    "id": "start",
-                    "name": "开始",
-                    "node_type": "start",
-                    "depends_on": [],
-                    "workspace_policy": "none",
-                },
-                {
                     "id": "develop",
                     "name": "开发并提交 MR",
-                    "depends_on": ["start"],
+                    "depends_on": [],
                     "workspace_policy": "composer",
                 },
                 {
@@ -105,18 +101,10 @@ def test_workflow_instantiation_activates_wait_node_before_upstream_completes() 
                             {
                                 "id": "rule-merged",
                                 "event_type": "merged",
-                                "mode": "trigger",
                                 "action": "complete",
                             }
                         ]
                     },
-                },
-                {
-                    "id": "end",
-                    "name": "结束",
-                    "node_type": "end",
-                    "depends_on": ["wait"],
-                    "workspace_policy": "none",
                 },
             ],
         }
@@ -127,10 +115,8 @@ def test_workflow_instantiation_activates_wait_node_before_upstream_completes() 
     # The wait node listens while its upstream stage is still running so the
     # robot can register the external reference during the stage execution.
     assert [node.status for node in workflow.nodes] == [
-        "completed",
         "ready",
         "waiting",
-        "blocked",
     ]
 
 
@@ -244,7 +230,6 @@ def test_workflow_definition_accepts_wait_nodes_with_rules() -> None:
             "version": 1,
             "stage_mode": "dag",
             "nodes": [
-                {"id": "start", "name": "Start", "node_type": "start"},
                 {"id": "develop", "name": "Develop", "node_type": "stage"},
                 {
                     "id": "wait",
@@ -256,7 +241,90 @@ def test_workflow_definition_accepts_wait_nodes_with_rules() -> None:
                             {
                                 "id": "merged",
                                 "event_type": "merged",
-                                "mode": "trigger",
+                                "action": "complete",
+                            },
+                            {
+                                "id": "ci",
+                                "event_type": "ci_failed",
+                                "action": "rerun",
+                                "rerun_prompt": "Fix the pipeline",
+                            },
+                        ]
+                    },
+                },
+            ],
+        }
+    )
+
+    assert [node.node_type for node in definition.nodes] == [
+        "stage",
+        "wait",
+    ]
+    wait = definition.nodes[1]
+    assert wait.wait_config is not None
+    assert [rule.event_type for rule in wait.wait_config.rules] == [
+        "merged",
+        "ci_failed",
+    ]
+
+
+def test_wait_rule_provider_is_optional_and_normalized() -> None:
+    definition = ProjectWorkflowDefinition.model_validate(
+        {
+            "version": 1,
+            "stage_mode": "dag",
+            "nodes": [
+                {
+                    "id": "wait",
+                    "name": "Wait",
+                    "node_type": "wait",
+                    "depends_on": [],
+                    "wait_config": {
+                        "rules": [
+                            {
+                                "id": "merged",
+                                "provider": " gitlab ",
+                                "event_type": "merged",
+                                "action": "complete",
+                            },
+                            {
+                                "id": "custom",
+                                "provider": "",
+                                "event_type": "my_event",
+                                "action": "rerun",
+                            },
+                            {
+                                "id": "legacy",
+                                "event_type": "ci_failed",
+                                "action": "rerun",
+                            },
+                        ]
+                    },
+                },
+            ],
+        }
+    )
+    rules = definition.nodes[0].wait_config.rules
+    assert rules[0].provider == "gitlab"
+    assert rules[1].provider is None
+    assert rules[2].provider is None
+
+
+def test_wait_rule_ignores_legacy_mode_keys() -> None:
+    definition = ProjectWorkflowDefinition.model_validate(
+        {
+            "version": 1,
+            "stage_mode": "dag",
+            "nodes": [
+                {
+                    "id": "wait",
+                    "name": "Wait",
+                    "node_type": "wait",
+                    "wait_config": {
+                        "rules": [
+                            {
+                                "id": "merged",
+                                "event_type": "merged",
                                 "action": "complete",
                             },
                             {
@@ -264,33 +332,18 @@ def test_workflow_definition_accepts_wait_nodes_with_rules() -> None:
                                 "event_type": "ci_failed",
                                 "mode": "debounce",
                                 "action": "rerun",
-                                "rerun_prompt": "Fix the pipeline",
                             },
                         ]
                     },
                 },
-                {
-                    "id": "end",
-                    "name": "End",
-                    "node_type": "end",
-                    "depends_on": ["wait"],
-                },
             ],
         }
     )
-
-    assert [node.node_type for node in definition.nodes] == [
-        "start",
-        "stage",
-        "wait",
-        "end",
-    ]
-    wait = definition.nodes[2]
-    assert wait.wait_config is not None
-    assert [rule.event_type for rule in wait.wait_config.rules] == [
-        "merged",
-        "ci_failed",
-    ]
+    rules = definition.nodes[0].wait_config.rules
+    assert [rule.event_type for rule in rules] == ["merged", "ci_failed"]
+    # Delivery policy moved to the provider catalog: a persisted ``mode`` key
+    # from older definitions is tolerated and dropped, never validated.
+    assert "mode" not in rules[1].model_dump()
 
 
 def test_workflow_definition_rejects_wait_node_without_config() -> None:
@@ -329,27 +382,67 @@ def test_workflow_definition_rejects_config_on_stage_nodes() -> None:
         )
 
 
-def test_workflow_definition_rejects_multiple_start_nodes() -> None:
-    with pytest.raises(ValidationError):
-        ProjectWorkflowDefinition.model_validate(
-            {
-                "version": 1,
-                "nodes": [
-                    {"id": "s1", "name": "S1", "node_type": "start"},
-                    {"id": "s2", "name": "S2", "node_type": "start"},
-                ],
-            }
-        )
+def test_workflow_definition_strips_multiple_legacy_start_nodes() -> None:
+    definition = ProjectWorkflowDefinition.model_validate(
+        {
+            "version": 1,
+            "nodes": [
+                {"id": "s1", "name": "S1", "node_type": "start"},
+                {"id": "s2", "name": "S2", "node_type": "start"},
+                {"id": "stage", "name": "Stage", "depends_on": ["s1", "s2"]},
+            ],
+        }
+    )
+
+    assert [node.id for node in definition.nodes] == ["stage"]
+    assert definition.nodes[0].depends_on == []
 
 
-def test_workflow_definition_rejects_dependency_on_end_node() -> None:
-    with pytest.raises(ValidationError):
-        ProjectWorkflowDefinition.model_validate(
-            {
-                "version": 1,
-                "nodes": [
-                    {"id": "end", "name": "End", "node_type": "end"},
-                    {"id": "later", "name": "Later", "depends_on": ["end"]},
-                ],
-            }
-        )
+def test_workflow_definition_strips_dependency_on_legacy_end_node() -> None:
+    definition = ProjectWorkflowDefinition.model_validate(
+        {
+            "version": 1,
+            "nodes": [
+                {"id": "end", "name": "End", "node_type": "end"},
+                {"id": "later", "name": "Later", "depends_on": ["end"]},
+            ],
+        }
+    )
+
+    assert [node.id for node in definition.nodes] == ["later"]
+    assert definition.nodes[0].depends_on == []
+
+
+def test_workflow_snapshot_strips_legacy_start_and_end_nodes() -> None:
+    instance = IssueWorkflowInstance.model_validate(
+        {
+            "version": 1,
+            "definition_version": 1,
+            "stage_mode": "dag",
+            "advancement_policy": "manual",
+            "nodes": [
+                {
+                    "id": "start",
+                    "name": "开始",
+                    "node_type": "start",
+                    "status": "completed",
+                },
+                {
+                    "id": "develop",
+                    "name": "开发",
+                    "depends_on": ["start"],
+                    "status": "ready",
+                },
+                {
+                    "id": "end",
+                    "name": "结束",
+                    "node_type": "end",
+                    "depends_on": ["develop"],
+                    "status": "blocked",
+                },
+            ],
+        }
+    )
+
+    assert [node.id for node in instance.nodes] == ["develop"]
+    assert instance.nodes[0].depends_on == []

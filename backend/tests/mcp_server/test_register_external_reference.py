@@ -57,19 +57,10 @@ def _issue(db: Session, user: User) -> LoopItem:
                 "advancement_policy": "manual",
                 "nodes": [
                     {
-                        "id": "start-1",
-                        "name": "Start",
-                        "node_type": "start",
-                        "depends_on": [],
-                        "required": False,
-                        "workspace_policy": "none",
-                        "status": "completed",
-                    },
-                    {
                         "id": "stage-1",
                         "name": "Develop MR",
                         "node_type": "stage",
-                        "depends_on": ["start-1"],
+                        "depends_on": [],
                         "required": True,
                         "workspace_policy": "composer",
                         "status": "completed",
@@ -87,21 +78,11 @@ def _issue(db: Session, user: User) -> LoopItem:
                                 {
                                     "id": "rule-merged",
                                     "event_type": "merged",
-                                    "mode": "trigger",
                                     "action": "complete",
                                     "rerun_prompt": "",
                                 }
                             ]
                         },
-                    },
-                    {
-                        "id": "end-1",
-                        "name": "End",
-                        "node_type": "end",
-                        "depends_on": ["wait-1"],
-                        "required": True,
-                        "workspace_policy": "none",
-                        "status": "blocked",
                     },
                 ],
             }
@@ -221,9 +202,7 @@ def test_register_external_reference_rejects_issue_without_wait_node(
     project_id = str(item.cloud_project_id)
     metadata = dict(item.metadata_json or {})
     workflow = dict(metadata["workflow"])
-    workflow["nodes"] = [
-        node for node in workflow["nodes"] if node["id"] != "wait-1"
-    ]
+    workflow["nodes"] = [node for node in workflow["nodes"] if node["id"] != "wait-1"]
     metadata["workflow"] = workflow
     item.metadata_json = metadata
     test_db.commit()

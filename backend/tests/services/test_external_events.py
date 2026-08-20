@@ -112,19 +112,10 @@ def _workflow_definition() -> dict:
         "advancement_policy": "manual",
         "nodes": [
             {
-                "id": "start-1",
-                "name": "Start",
-                "node_type": "start",
-                "depends_on": [],
-                "required": False,
-                "workspace_policy": "none",
-                "status": "completed",
-            },
-            {
                 "id": "stage-1",
                 "name": "Develop MR",
                 "node_type": "stage",
-                "depends_on": ["start-1"],
+                "depends_on": [],
                 "required": True,
                 "workspace_policy": "composer",
                 "status": "completed",
@@ -142,28 +133,17 @@ def _workflow_definition() -> dict:
                         {
                             "id": "rule-merged",
                             "event_type": "merged",
-                            "mode": "trigger",
                             "action": "complete",
                             "rerun_prompt": "",
                         },
                         {
                             "id": "rule-ci",
                             "event_type": "ci_failed",
-                            "mode": "trigger",
                             "action": "rerun",
                             "rerun_prompt": "CI failed, please fix it",
                         },
                     ]
                 },
-            },
-            {
-                "id": "end-1",
-                "name": "End",
-                "node_type": "end",
-                "depends_on": ["wait-1"],
-                "required": True,
-                "workspace_policy": "none",
-                "status": "blocked",
             },
         ],
     }
@@ -210,20 +190,22 @@ def _binding(
     )
 
 
-def _merged_event() -> NormalizedExternalEvent:
+def _merged_event(event_id: str = "mr-7") -> NormalizedExternalEvent:
     return NormalizedExternalEvent(
         provider="gitlab",
         opaque_ref="acme/app!7",
         event_type="merged",
-        event_id="mr-7",
-        summary="MR !7 merged",
+        event_id=event_id,
+        summary=f"MR !{event_id} merged",
         source_url="https://gitlab.example/acme/app/-/merge_requests/7",
         occurred_at=datetime.now(timezone.utc),
         detail={"kind": "merge_request"},
     )
 
 
-def _ci_event(event_id: str = "pipeline-1") -> NormalizedExternalEvent:
+def _ci_event(
+    event_id: str = "pipeline-1",
+) -> NormalizedExternalEvent:
     return NormalizedExternalEvent(
         provider="gitlab",
         opaque_ref="acme/app!7",
@@ -233,6 +215,19 @@ def _ci_event(event_id: str = "pipeline-1") -> NormalizedExternalEvent:
         source_url=None,
         occurred_at=datetime.now(timezone.utc),
         detail={"kind": "pipeline"},
+    )
+
+
+def _comment_event(event_id: str = "note-1") -> NormalizedExternalEvent:
+    return NormalizedExternalEvent(
+        provider="gitlab",
+        opaque_ref="acme/app!7",
+        event_type="review_comment",
+        event_id=event_id,
+        summary=f"Comment #{event_id}",
+        source_url=None,
+        occurred_at=datetime.now(timezone.utc),
+        detail={"kind": "note"},
     )
 
 
@@ -258,7 +253,6 @@ def test_trigger_complete_ends_wait_node_and_issue(
         for node in issue.metadata_json["workflow"]["nodes"]
     }
     assert nodes["wait-1"] == "completed"
-    assert nodes["end-1"] == "completed"
     assert issue.status == "in_review"
 
     remaining = external_event_binding_service.route(
@@ -354,9 +348,21 @@ def test_rerun_queues_new_execution_and_bumps_round(
     )
     test_db.commit()
 
+    test_db.refresh(binding)
+    rerun_run = test_db.get(
+        ProjectAutomationRun, (binding.metadata_json or {}).get("automation_run_id")
+    )
+    assert rerun_run is not None
+    assert rerun_run.metadata_json["workflow_node_id"] == "wait-1"
+    snapshot = rerun_run.metadata_json["workflow_stage_input"]
+    assert snapshot["target_stage"]["id"] == "wait-1"
+    prompt = snapshot["target_stage"]["prompt"]
+    assert "CI failed, please fix it" in prompt
+    assert "Pipeline #pipeline-1 failed" in prompt
+
     execution = (
         test_db.query(LoopItemExecution)
-        .filter(LoopItemExecution.automation_run_id == run_id)
+        .filter(LoopItemExecution.automation_run_id == str(rerun_run.id))
         .order_by(LoopItemExecution.id.desc())
         .first()
     )
@@ -370,8 +376,113 @@ def test_rerun_queues_new_execution_and_bumps_round(
         if node["id"] == "wait-1"
     )
     assert wait_node["wait_round"] == 1
-    automation = issue.metadata_json.get("automation") or {}
-    assert "CI failed" in str(automation.get("prompt") or "")
+    assert wait_node["status"] == "waiting"
+    assert wait_node.get("repair_status") == "queued"
+
+
+def test_wait_node_rerun_keeps_gate_waiting_and_never_reopens_stage(
+    test_db: Session,
+    workflow_project: CloudProject,
+    test_user: User,
+) -> None:
+    issue = _issue(test_db, workflow_project, test_user.id)
+    agent = ProjectChatAgent(
+        cloud_project_id=workflow_project.id,
+        loop_item_id=issue.id,
+        assignee_agent_id="",
+        title="Fix robot",
+        name="Fix robot",
+        description="",
+        created_by_user_id=test_user.id,
+        status="active",
+    )
+    test_db.add(agent)
+    test_db.flush()
+    run = ProjectAutomationRun(
+        cloud_project_id=workflow_project.id,
+        parent_id="rule-1",
+        loop_item_id=issue.id,
+        task_id=issue.id,
+        task_title=issue.title,
+        assignee_agent_id=agent.id,
+        source="manual",
+        status="succeeded",
+        created_by_user_id=test_user.id,
+    )
+    test_db.add(run)
+    test_db.flush()
+    test_db.commit()
+    binding = external_event_binding_service.create(
+        test_db,
+        provider="gitlab",
+        opaque_ref="acme/app!7",
+        cloud_project_id=str(workflow_project.id),
+        loop_item_id=issue.id,
+        issue_item_id=issue.id,
+        workflow_node_id="wait-1",
+        automation_run_id=str(run.id),
+        created_by_user_id=test_user.id,
+    )
+    test_db.commit()
+
+    external_event_evaluation_service.evaluate_event(
+        test_db, binding=binding, event=_ci_event()
+    )
+    test_db.commit()
+
+    test_db.refresh(binding)
+    rerun_run = test_db.get(
+        ProjectAutomationRun, (binding.metadata_json or {}).get("automation_run_id")
+    )
+    assert rerun_run is not None
+    test_db.refresh(issue)
+    nodes = {str(node["id"]): node for node in issue.metadata_json["workflow"]["nodes"]}
+    assert nodes["wait-1"]["status"] == "waiting"
+    assert nodes["wait-1"]["wait_round"] == 1
+    assert nodes["wait-1"].get("repair_status") == "queued"
+    assert nodes["stage-1"]["status"] == "completed"
+    assert nodes["stage-1"].get("repair_status") is None
+
+    from app.services.project_workflow_projection import (
+        sync_automation_workflow_node,
+    )
+
+    rerun_run.status = "running"
+    sync_automation_workflow_node(test_db, rerun_run)
+    test_db.commit()
+    test_db.refresh(issue)
+    wait_node = next(
+        node
+        for node in issue.metadata_json["workflow"]["nodes"]
+        if node["id"] == "wait-1"
+    )
+    stage_node = next(
+        node
+        for node in issue.metadata_json["workflow"]["nodes"]
+        if node["id"] == "stage-1"
+    )
+    assert wait_node["status"] == "waiting"
+    assert wait_node.get("repair_status") == "running"
+    assert wait_node.get("automation_run_id") == str(rerun_run.id)
+    assert stage_node["status"] == "completed"
+
+    rerun_run.status = "succeeded"
+    sync_automation_workflow_node(test_db, rerun_run)
+    test_db.commit()
+    test_db.refresh(issue)
+    wait_node = next(
+        node
+        for node in issue.metadata_json["workflow"]["nodes"]
+        if node["id"] == "wait-1"
+    )
+    stage_node = next(
+        node
+        for node in issue.metadata_json["workflow"]["nodes"]
+        if node["id"] == "stage-1"
+    )
+    assert wait_node["status"] == "waiting"
+    assert wait_node.get("repair_status") == "succeeded"
+    assert stage_node["status"] == "completed"
 
 
 def test_buffer_append_dedupe_and_take() -> None:
@@ -443,6 +554,84 @@ def test_buffer_reference_compensation_and_aggregate() -> None:
     assert buffer.take("gitlab", "acme/app!7", "ci_failed") == []
 
 
+def test_buffer_window_open_append_and_generation_take() -> None:
+    buffer = ExternalEventBuffer(url="redis://fake")
+    buffer._client = FakeRedis()
+
+    snapshot = buffer.open_window(
+        task_id="task-1",
+        node_id="node-1",
+        event_type="ci_failed",
+        event={"event_id": "1", "summary": "first", "event_type": "ci_failed"},
+        window_seconds=5,
+    )
+    assert snapshot is not None
+    assert snapshot["generation"] == 1
+    assert len(snapshot["events"]) == 1
+
+    assert buffer.append_window(
+        task_id="task-1",
+        node_id="node-1",
+        event_type="ci_failed",
+        event={"event_id": "2", "summary": "second", "event_type": "ci_failed"},
+    )
+    assert not buffer.append_window(
+        task_id="task-1",
+        node_id="node-1",
+        event_type="merged",
+        event={"event_id": "3", "summary": "other", "event_type": "merged"},
+    )
+
+    # A stale generation never settles the window; the live one does.
+    assert (
+        buffer.take_window(
+            task_id="task-1",
+            node_id="node-1",
+            event_type="ci_failed",
+            generation=snapshot["generation"] + 1,
+        )
+        == []
+    )
+    settled = buffer.take_window(
+        task_id="task-1",
+        node_id="node-1",
+        event_type="ci_failed",
+        generation=snapshot["generation"],
+    )
+    assert [event["event_id"] for event in settled] == ["1", "2"]
+    assert (
+        buffer.take_window(
+            task_id="task-1",
+            node_id="node-1",
+            event_type="ci_failed",
+            generation=snapshot["generation"],
+        )
+        == []
+    )
+
+
+def test_buffer_window_reopen_merges_prior_events_and_bumps_generation() -> None:
+    buffer = ExternalEventBuffer(url="redis://fake")
+    buffer._client = FakeRedis()
+
+    first = buffer.open_window(
+        task_id="task-1",
+        node_id="node-1",
+        event_type="ci_failed",
+        event={"event_id": "1", "summary": "first", "event_type": "ci_failed"},
+        window_seconds=5,
+    )
+    second = buffer.open_window(
+        task_id="task-1",
+        node_id="node-1",
+        event_type="ci_failed",
+        event={"event_id": "2", "summary": "second", "event_type": "ci_failed"},
+        window_seconds=5,
+    )
+    assert second["generation"] == first["generation"] + 1
+    assert [event["event_id"] for event in second["events"]] == ["1", "2"]
+
+
 def test_binding_dedupe_route_and_archive(
     test_db: Session,
     workflow_project: CloudProject,
@@ -477,7 +666,7 @@ def test_binding_dedupe_route_and_archive(
     )
 
 
-def test_debounce_settles_after_execution_end(
+def test_merge_policy_settles_after_execution_end(
     test_db: Session,
     workflow_project: CloudProject,
     test_user: User,
@@ -491,9 +680,8 @@ def test_debounce_settles_after_execution_end(
     wait_node["wait_config"] = {
         "rules": [
             {
-                "id": "rule-ci-debounce",
+                "id": "rule-ci",
                 "event_type": "ci_failed",
-                "mode": "debounce",
                 "action": "rerun",
                 "rerun_prompt": "Fix CI",
             }
@@ -559,19 +747,27 @@ def test_debounce_settles_after_execution_end(
         == 1
     )
 
-    # The execution ends: the aggregate settles and queues the next round.
+    # The execution ends: the aggregate settles and queues the next round as
+    # a wait-node-scoped rerun run.
     external_event_evaluation_service.on_execution_terminal(
         test_db, execution=execution
     )
     test_db.commit()
     executions = (
         test_db.query(LoopItemExecution)
-        .filter(LoopItemExecution.automation_run_id == run_id)
+        .filter(LoopItemExecution.loop_item_id == issue.id)
         .order_by(LoopItemExecution.id.asc())
         .all()
     )
     assert len(executions) == 2
     assert executions[1].attempt_no == 2
+    test_db.refresh(binding)
+    rerun_run = test_db.get(
+        ProjectAutomationRun, (binding.metadata_json or {}).get("automation_run_id")
+    )
+    assert rerun_run is not None
+    assert rerun_run.metadata_json["workflow_node_id"] == "wait-1"
+    assert executions[1].automation_run_id == str(rerun_run.id)
     test_db.refresh(issue)
     wait_node = next(
         node
@@ -579,6 +775,422 @@ def test_debounce_settles_after_execution_end(
         if node["id"] == "wait-1"
     )
     assert wait_node["wait_round"] == 1
+
+
+def test_immediate_policy_fires_one_round_per_event_after_execution_ends(
+    test_db: Session,
+    workflow_project: CloudProject,
+    test_user: User,
+) -> None:
+    issue = _issue(test_db, workflow_project, test_user.id)
+    _set_wait_rules(
+        issue,
+        [
+            {
+                "id": "rule-merged",
+                "event_type": "merged",
+                "action": "rerun",
+                "rerun_prompt": "Handle merge",
+            }
+        ],
+    )
+    run_id = _repair_agent_run(
+        test_db, project=workflow_project, issue=issue, user_id=test_user.id
+    )
+    binding = external_event_binding_service.create(
+        test_db,
+        provider="gitlab",
+        opaque_ref="acme/app!7",
+        cloud_project_id=str(workflow_project.id),
+        loop_item_id=issue.id,
+        issue_item_id=issue.id,
+        workflow_node_id="wait-1",
+        automation_run_id=run_id,
+        created_by_user_id=test_user.id,
+    )
+    test_db.commit()
+
+    execution = loop_item_execution_for_run(
+        test_db,
+        agent=db_get_agent(test_db, run_id),
+        issue=issue,
+        run_id=run_id,
+        user_id=test_user.id,
+    )
+    test_db.commit()
+    external_event_evaluation_service.evaluate_event(
+        test_db, binding=binding, event=_merged_event("mr-1")
+    )
+    external_event_evaluation_service.evaluate_event(
+        test_db, binding=binding, event=_merged_event("mr-2")
+    )
+    test_db.commit()
+
+    # The run ends: the immediate policy settles one event per round, serially.
+    external_event_evaluation_service.on_execution_terminal(
+        test_db, execution=execution
+    )
+    test_db.commit()
+    executions = (
+        test_db.query(LoopItemExecution)
+        .filter(LoopItemExecution.loop_item_id == issue.id)
+        .order_by(LoopItemExecution.id.asc())
+        .all()
+    )
+    assert len(executions) == 2
+    assert executions[1].attempt_no == 2
+    first_round = _round_run(test_db, executions[1])
+    prompt = first_round.metadata_json["workflow_stage_input"]["target_stage"]["prompt"]
+    assert "MR !mr-1 merged" in prompt
+    assert "MR !mr-2 merged" not in prompt
+
+    # The next round's end settles the remaining event as its own round.
+    external_event_evaluation_service.on_execution_terminal(
+        test_db, execution=executions[1]
+    )
+    test_db.commit()
+    executions = (
+        test_db.query(LoopItemExecution)
+        .filter(LoopItemExecution.loop_item_id == issue.id)
+        .order_by(LoopItemExecution.id.asc())
+        .all()
+    )
+    assert len(executions) == 3
+    assert executions[2].attempt_no == 3
+    second_round = _round_run(test_db, executions[2])
+    prompt = second_round.metadata_json["workflow_stage_input"]["target_stage"][
+        "prompt"
+    ]
+    assert "MR !mr-2 merged" in prompt
+    assert "MR !mr-1 merged" not in prompt
+    test_db.refresh(issue)
+    wait_node = next(
+        node
+        for node in issue.metadata_json["workflow"]["nodes"]
+        if node["id"] == "wait-1"
+    )
+    assert wait_node["wait_round"] == 2
+
+
+def _set_wait_rules(issue: LoopItem, rules: list[dict]) -> None:
+    wait_node = next(
+        node
+        for node in issue.metadata_json["workflow"]["nodes"]
+        if node["id"] == "wait-1"
+    )
+    wait_node["wait_config"] = {"rules": rules}
+
+
+def _repair_agent_run(
+    test_db: Session,
+    *,
+    project: CloudProject,
+    issue: LoopItem,
+    user_id: int,
+    status: str = "running",
+) -> str:
+    agent = ProjectChatAgent(
+        cloud_project_id=project.id,
+        loop_item_id=issue.id,
+        title="Fix robot",
+        name="Fix robot",
+        description="",
+        created_by_user_id=user_id,
+        status="active",
+    )
+    test_db.add(agent)
+    test_db.flush()
+    run = ProjectAutomationRun(
+        cloud_project_id=project.id,
+        parent_id="rule-1",
+        loop_item_id=issue.id,
+        task_id=issue.id,
+        task_title=issue.title,
+        assignee_agent_id=agent.id,
+        source="manual",
+        status=status,
+        created_by_user_id=user_id,
+    )
+    test_db.add(run)
+    test_db.flush()
+    test_db.commit()
+    return str(run.id)
+
+
+def test_windowed_event_merges_within_deadline_and_settles_once(
+    test_db: Session,
+    workflow_project: CloudProject,
+    test_user: User,
+) -> None:
+    from unittest.mock import patch
+
+    from app.tasks.external_event_tasks import settle_external_event_window
+
+    issue = _issue(test_db, workflow_project, test_user.id)
+    _set_wait_rules(
+        issue,
+        [
+            {
+                "id": "rule-comment",
+                "event_type": "review_comment",
+                "action": "rerun",
+                "rerun_prompt": "Handle review",
+            }
+        ],
+    )
+    run_id = _repair_agent_run(
+        test_db,
+        project=workflow_project,
+        issue=issue,
+        user_id=test_user.id,
+        status="succeeded",
+    )
+    binding = external_event_binding_service.create(
+        test_db,
+        provider="gitlab",
+        opaque_ref="acme/app!7",
+        cloud_project_id=str(workflow_project.id),
+        loop_item_id=issue.id,
+        issue_item_id=issue.id,
+        workflow_node_id="wait-1",
+        automation_run_id=run_id,
+        created_by_user_id=test_user.id,
+    )
+    test_db.commit()
+
+    scheduled: list[dict] = []
+    with patch.object(settle_external_event_window, "apply_async") as apply:
+        apply.side_effect = lambda **kwargs: scheduled.append(kwargs)
+        external_event_evaluation_service.evaluate_event(
+            test_db,
+            binding=binding,
+            event=_comment_event("note-1"),
+        )
+        external_event_evaluation_service.evaluate_event(
+            test_db,
+            binding=binding,
+            event=_comment_event("note-2"),
+        )
+        test_db.commit()
+        assert len(scheduled) == 1
+        assert scheduled[0]["kwargs"]["event_type"] == "review_comment"
+        assert scheduled[0]["countdown"] == 5
+        generation = scheduled[0]["kwargs"]["generation"]
+
+    assert (
+        test_db.query(LoopItemExecution)
+        .filter(LoopItemExecution.loop_item_id == issue.id)
+        .count()
+        == 0
+    )
+    external_event_evaluation_service.settle_window(
+        test_db,
+        binding=binding,
+        event_type="review_comment",
+        generation=generation,
+    )
+    test_db.commit()
+
+    executions = (
+        test_db.query(LoopItemExecution)
+        .filter(LoopItemExecution.loop_item_id == issue.id)
+        .order_by(LoopItemExecution.id.asc())
+        .all()
+    )
+    assert len(executions) == 1
+    assert executions[0].attempt_no == 1
+    round_run = _round_run(test_db, executions[0])
+    prompt = round_run.metadata_json["workflow_stage_input"]["target_stage"]["prompt"]
+    assert "Comment #note-1" in prompt
+    assert "Comment #note-2" in prompt
+    test_db.refresh(issue)
+    wait_node = next(
+        node
+        for node in issue.metadata_json["workflow"]["nodes"]
+        if node["id"] == "wait-1"
+    )
+    assert wait_node["wait_round"] == 1
+
+
+def test_windowed_event_stale_generation_does_not_fire(
+    test_db: Session,
+    workflow_project: CloudProject,
+    test_user: User,
+) -> None:
+    issue = _issue(test_db, workflow_project, test_user.id)
+    _set_wait_rules(
+        issue,
+        [
+            {
+                "id": "rule-comment",
+                "event_type": "review_comment",
+                "action": "rerun",
+                "rerun_prompt": "Handle review",
+            }
+        ],
+    )
+    run_id = _repair_agent_run(
+        test_db,
+        project=workflow_project,
+        issue=issue,
+        user_id=test_user.id,
+        status="succeeded",
+    )
+    binding = external_event_binding_service.create(
+        test_db,
+        provider="gitlab",
+        opaque_ref="acme/app!7",
+        cloud_project_id=str(workflow_project.id),
+        loop_item_id=issue.id,
+        issue_item_id=issue.id,
+        workflow_node_id="wait-1",
+        automation_run_id=run_id,
+        created_by_user_id=test_user.id,
+    )
+    test_db.commit()
+
+    from unittest.mock import patch
+
+    from app.tasks.external_event_tasks import settle_external_event_window
+
+    scheduled: list[dict] = []
+    with patch.object(settle_external_event_window, "apply_async") as apply:
+        apply.side_effect = lambda **kwargs: scheduled.append(kwargs)
+        external_event_evaluation_service.evaluate_event(
+            test_db,
+            binding=binding,
+            event=_comment_event("note-1"),
+        )
+        test_db.commit()
+        generation = scheduled[0]["kwargs"]["generation"]
+
+    external_event_evaluation_service.settle_window(
+        test_db,
+        binding=binding,
+        event_type="review_comment",
+        generation=generation + 1,
+    )
+    test_db.commit()
+    assert (
+        test_db.query(LoopItemExecution)
+        .filter(LoopItemExecution.loop_item_id == issue.id)
+        .count()
+        == 0
+    )
+
+    external_event_evaluation_service.settle_window(
+        test_db,
+        binding=binding,
+        event_type="review_comment",
+        generation=generation,
+    )
+    test_db.commit()
+    assert (
+        test_db.query(LoopItemExecution)
+        .filter(LoopItemExecution.loop_item_id == issue.id)
+        .count()
+        == 1
+    )
+
+
+def test_windowed_event_parks_while_repair_round_active(
+    test_db: Session,
+    workflow_project: CloudProject,
+    test_user: User,
+) -> None:
+    issue = _issue(test_db, workflow_project, test_user.id)
+    _set_wait_rules(
+        issue,
+        [
+            {
+                "id": "rule-comment",
+                "event_type": "review_comment",
+                "action": "rerun",
+                "rerun_prompt": "Handle review",
+            }
+        ],
+    )
+    run_id = _repair_agent_run(
+        test_db, project=workflow_project, issue=issue, user_id=test_user.id
+    )
+    binding = external_event_binding_service.create(
+        test_db,
+        provider="gitlab",
+        opaque_ref="acme/app!7",
+        cloud_project_id=str(workflow_project.id),
+        loop_item_id=issue.id,
+        issue_item_id=issue.id,
+        workflow_node_id="wait-1",
+        automation_run_id=run_id,
+        created_by_user_id=test_user.id,
+    )
+    test_db.commit()
+
+    from unittest.mock import patch
+
+    from app.tasks.external_event_tasks import settle_external_event_window
+
+    scheduled: list[dict] = []
+    with patch.object(settle_external_event_window, "apply_async") as apply:
+        apply.side_effect = lambda **kwargs: scheduled.append(kwargs)
+        external_event_evaluation_service.evaluate_event(
+            test_db,
+            binding=binding,
+            event=_comment_event("note-1"),
+        )
+        test_db.commit()
+        generation = scheduled[0]["kwargs"]["generation"]
+
+    execution = loop_item_execution_for_run(
+        test_db,
+        agent=db_get_agent(test_db, run_id),
+        issue=issue,
+        run_id=run_id,
+        user_id=test_user.id,
+    )
+    test_db.commit()
+
+    # A repair round is active when the window expires: events park instead
+    # of starting a concurrent round, then settle when the round ends.
+    external_event_evaluation_service.settle_window(
+        test_db,
+        binding=binding,
+        event_type="review_comment",
+        generation=generation,
+    )
+    test_db.commit()
+    assert (
+        test_db.query(LoopItemExecution)
+        .filter(LoopItemExecution.loop_item_id == issue.id)
+        .count()
+        == 1
+    )
+    external_event_evaluation_service.on_execution_terminal(
+        test_db, execution=execution
+    )
+    test_db.commit()
+    executions = (
+        test_db.query(LoopItemExecution)
+        .filter(LoopItemExecution.loop_item_id == issue.id)
+        .order_by(LoopItemExecution.id.asc())
+        .all()
+    )
+    assert len(executions) == 2
+    assert executions[1].attempt_no == 2
+
+
+def db_get_agent(test_db: Session, run_id: str) -> ProjectChatAgent:
+    run = test_db.get(ProjectAutomationRun, run_id)
+    assert run is not None and run.assignee_agent_id
+    agent = test_db.get(ProjectChatAgent, run.assignee_agent_id)
+    assert agent is not None
+    return agent
+
+
+def _round_run(test_db: Session, execution: LoopItemExecution) -> ProjectAutomationRun:
+    run = test_db.get(ProjectAutomationRun, execution.automation_run_id)
+    assert run is not None
+    return run
 
 
 def loop_item_execution_for_run(
@@ -655,3 +1267,136 @@ def test_provider_event_catalog_covers_adapter_outputs() -> None:
         event = normalize_external_event(payload, {})
         assert event is not None
         assert event.event_type in produced
+
+
+def test_provider_catalog_declares_event_type_delivery_policies() -> None:
+    from app.services.external_events.adapters import (
+        GITLAB_COMMENT_AGGREGATE_WINDOW_SECONDS,
+        event_type_policy,
+    )
+
+    merged = event_type_policy("gitlab", "merged")
+    assert merged is not None
+    assert merged.window_seconds is None
+    assert merged.merge_while_running is False
+
+    ci = event_type_policy("gitlab", "ci_failed")
+    assert ci is not None
+    assert ci.window_seconds is None
+    assert ci.merge_while_running is True
+
+    comment = event_type_policy("gitlab", "review_comment")
+    assert comment is not None
+    assert comment.window_seconds == GITLAB_COMMENT_AGGREGATE_WINDOW_SECONDS
+    assert comment.merge_while_running is True
+
+    # Providers outside the catalog have no declaration: the default
+    # (immediate) policy applies at runtime.
+    assert event_type_policy("github", "merged") is None
+
+
+def test_rule_matching_is_scoped_to_provider(
+    test_db: Session,
+    workflow_project: CloudProject,
+    test_user: User,
+) -> None:
+    issue = _issue(test_db, workflow_project, test_user.id)
+    _set_wait_rules(
+        issue,
+        [
+            {
+                "id": "rule-merged",
+                "provider": "gitlab",
+                "event_type": "merged",
+                "action": "complete",
+                "rerun_prompt": "",
+            }
+        ],
+    )
+    binding = _binding(
+        test_db, project=workflow_project, issue=issue, user_id=test_user.id
+    )
+    test_db.commit()
+
+    # A github "merged" event does not match the gitlab rule: the gate stays.
+    github_merged = NormalizedExternalEvent(
+        provider="github",
+        opaque_ref="owner/repo#7",
+        event_type="merged",
+        event_id="pr-7",
+        summary="PR #7 merged",
+        source_url=None,
+        occurred_at=None,
+        detail={},
+    )
+    external_event_evaluation_service.evaluate_event(
+        test_db, binding=binding, event=github_merged
+    )
+    test_db.commit()
+    test_db.refresh(issue)
+    nodes = {
+        str(node["id"]): node["status"]
+        for node in issue.metadata_json["workflow"]["nodes"]
+    }
+    assert nodes["wait-1"] == "waiting"
+
+    # The matching gitlab event completes the node.
+    external_event_evaluation_service.evaluate_event(
+        test_db, binding=binding, event=_merged_event()
+    )
+    test_db.commit()
+    test_db.refresh(issue)
+    nodes = {
+        str(node["id"]): node["status"]
+        for node in issue.metadata_json["workflow"]["nodes"]
+    }
+    assert nodes["wait-1"] == "completed"
+
+
+def test_rule_without_provider_matches_any_provider(
+    test_db: Session,
+    workflow_project: CloudProject,
+    test_user: User,
+) -> None:
+    issue = _issue(test_db, workflow_project, test_user.id)
+    _set_wait_rules(
+        issue,
+        [
+            {
+                "id": "rule-merged",
+                "event_type": "merged",
+                "action": "complete",
+                "rerun_prompt": "",
+            }
+        ],
+    )
+    binding = _binding(
+        test_db,
+        project=workflow_project,
+        issue=issue,
+        user_id=test_user.id,
+        provider="github",
+        opaque_ref="owner/repo#7",
+    )
+    test_db.commit()
+    external_event_evaluation_service.evaluate_event(
+        test_db,
+        binding=binding,
+        event=NormalizedExternalEvent(
+            provider="github",
+            opaque_ref="owner/repo#7",
+            event_type="merged",
+            event_id="pr-7",
+            summary="PR #7 merged",
+            source_url=None,
+            occurred_at=None,
+            detail={},
+        ),
+    )
+    test_db.commit()
+    test_db.refresh(issue)
+    nodes = {
+        str(node["id"]): node["status"]
+        for node in issue.metadata_json["workflow"]["nodes"]
+    }
+    assert nodes["wait-1"] == "completed"

@@ -17,6 +17,15 @@ from app.services.external_events.registration import (
 )
 
 
+def test_provider_kind_classifies_native_and_generic_providers() -> None:
+    from app.services.external_events.adapters import provider_kind
+
+    assert provider_kind("gitlab") == "native"
+    assert provider_kind("gitea") == "generic"
+    assert provider_kind("my-crm") == "generic"
+    assert provider_kind(" generic ") == "generic"
+
+
 def _workflow_definition() -> dict:
     return {
         "version": 1,
@@ -24,19 +33,10 @@ def _workflow_definition() -> dict:
         "advancement_policy": "manual",
         "nodes": [
             {
-                "id": "start-1",
-                "name": "Start",
-                "node_type": "start",
-                "depends_on": [],
-                "required": False,
-                "workspace_policy": "none",
-                "status": "completed",
-            },
-            {
                 "id": "stage-1",
                 "name": "Develop MR",
                 "node_type": "stage",
-                "depends_on": ["start-1"],
+                "depends_on": [],
                 "required": True,
                 "workspace_policy": "composer",
                 "status": "completed",
@@ -54,21 +54,11 @@ def _workflow_definition() -> dict:
                         {
                             "id": "rule-merged",
                             "event_type": "merged",
-                            "mode": "trigger",
                             "action": "complete",
                             "rerun_prompt": "",
                         }
                     ]
                 },
-            },
-            {
-                "id": "end-1",
-                "name": "End",
-                "node_type": "end",
-                "depends_on": ["wait-1"],
-                "required": True,
-                "workspace_policy": "none",
-                "status": "blocked",
             },
         ],
     }
@@ -140,6 +130,30 @@ def test_register_creates_binding_and_marks_wait_node_waiting(
         if node["id"] == "wait-1"
     )
     assert wait_node["status"] == "waiting"
+
+
+def test_register_generic_provider_passes_through_unchanged(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    project, item = _issue(test_db, test_user)
+
+    result = external_event_registration_service.register(
+        test_db,
+        user_id=test_user.id,
+        cloud_project_id=str(project.id),
+        loop_item_id=item.id,
+        provider="gitea",
+        opaque_ref="acme/app#7",
+        automation_run_id="run-1",
+    )
+
+    assert result["provider"] == "gitea"
+    assert result["provider_kind"] == "generic"
+    binding = test_db.get(ExternalEventBinding, result["binding_id"])
+    assert binding is not None
+    assert binding.provider == "gitea"
+    assert binding.opaque_ref == "acme/app#7"
 
 
 def test_register_requires_automation_run_id(
