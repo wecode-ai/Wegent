@@ -59,7 +59,7 @@ cloud_segments=(
   plugin-auto-update
 )
 # Group checkpoints by observed Cloud CI duration and order each shard from
-# longest to shortest so the five runners keep both local workers busy.
+# longest to shortest so the five serial runners finish at similar times.
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 cloud_shards=(
   goal-lifecycle,window-lifecycle,cloud-worktree-tools,telemetry-consent
@@ -69,8 +69,8 @@ cloud_shards=(
   core-task-flow,conversation-state,supervisor-lifecycle,automation-lifecycle,browser-multi-tabs
 )
 # Keep the number of core desktop runners fixed as checkpoints grow. Group
-# checkpoints by observed Core CI duration and order each shard so both local
-# workers stay balanced while reusing the same prebuilt application.
+# checkpoints by observed Core CI duration and order each shard so the serial
+# runners stay balanced while reusing the same prebuilt application.
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 core_shards=(
   rendering-extensions,resilience,runtime-task-queue
