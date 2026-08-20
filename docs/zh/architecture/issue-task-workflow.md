@@ -33,6 +33,7 @@ flowchart LR
     STAGE --> REQUIREMENT[必要交付物契约]
     HUMAN --> BINDING[(LoopItemTaskBinding)]
     AI --> PLAN[(版本化 Workflow Run / Plan Items)]
+    PLAN --> MANAGER_AUDIT[(AI 管家运行关联 / Activity 审计)]
     PLAN --> APPROVAL{执行前需要人工确认?}
     APPROVAL -->|是| PLAN_REVIEW[人工确认 / 驳回 / 重规划]
     PLAN_REVIEW -->|确认| MATERIALIZE[幂等物化任务]
@@ -82,6 +83,7 @@ sequenceDiagram
     participant G as 阶段 DAG 编辑器
     participant O as Orchestration 服务
     participant A as AI 调度员
+    participant X as Executor REST 适配器
     participant P as Workflow Plan
     participant B as 子任务 / Task Binding
     participant E as Execution 服务
@@ -132,7 +134,8 @@ sequenceDiagram
             P->>A: 请求取消对应 AI 管家执行
             A-->>P: 确认执行终止
         end
-        A->>P: submit_workflow_plan 提交版本化结构方案
+        A->>X: submit_workflow_plan + 当前 automation run ID
+        X->>P: 原子提交版本化结构方案与管家运行关联
         alt 执行前需要人工确认
             P-->>U: 展示任务、执行者、依赖与理由
             U->>P: 确认 / 驳回并要求重规划
@@ -172,7 +175,7 @@ sequenceDiagram
 | 阶段 DAG 编辑与前后插入              | Wework `ProjectWorkflowEditor`                                            |
 | 编排显式保存与重新进入回填           | Wework `ProjectAutomationView`、`ProjectWorkflowEditor`、ProjectSpace API |
 | 项目编排定义与 Issue 快照            | Backend workflow schema/service；Wework 自动化页 DAG UI                   |
-| AI 方案提交、版本与审批门            | Backend workflow planning service、ProjectSpace MCP、Issue 详情           |
+| AI 方案提交、版本与审批门            | Executor REST 适配器、Backend workflow planning service、ProjectSpace MCP、Issue 详情 |
 | AI 管家运行状态、取消与详情入口      | Project automation run、Issue 动态、Wework AI 编排卡片                    |
 | 方案项 → 子任务物化与启动            | Backend workflow planning service、`loop_items/service.py`、现有激活器    |
 | 依赖边 → 后继阶段上下文              | Workflow node dependency context；Composer / automation instruction       |
@@ -208,11 +211,15 @@ sequenceDiagram
 - Issue 创建即是 AI 动态分配的主触发点；后续进入待开始仅补偿尚未启动的快照，不得创建第二个 AI 管家运行。Issue 详情必须明确显示该触发语义。
 - AI 编排卡片是规划与执行的连续投影。规划中必须显示 AI 管家运行状态、执行环境、最近活动和运行详情入口；不得仅显示无限期旋转状态。用户可见进度只包含可验证事件，不展示模型隐含推理。
 - 每次 AI 编排必须产生稳定 `run_id` 和单调递增的方案版本。重新规划只把上一版本标记为 superseded 并保留历史，不得删除已完成子任务或覆盖审计记录。
-- `submit_workflow_plan` 是 AI 编排的唯一提交入口。每个方案项必须包含稳定 client key、标题、说明、执行者和可选阶段；服务端必须重新校验执行者仍为项目活跃成员、阶段存在且已 ready，不能信任模型返回的名称或状态。
+- `submit_workflow_plan` 是 AI 编排的唯一提交入口。每个方案项必须包含稳定 client key、标题、说明和执行者；活动规划范围由服务端根据当前 run 统一绑定，无阶段时使用 Issue 级范围，有阶段时使用当前 ready 阶段，模型不得查询、猜测或覆盖 `stage_id`。服务端必须重新校验执行者仍为项目活跃成员及当前阶段仍可规划，不能信任模型返回的名称或状态。
+- Executor REST 适配器和 ProjectSpace MCP 都必须把当前 automation run ID 传入同一个计划提交主流程；不得存在只创建方案、不绑定管家运行的旁路。
+- `submit_workflow_plan` 必须在同一短事务内持久化方案、方案项、`project_automation_run_id` 与活动消息中的 `workflow_plan_run_id`。任一关联写入失败时必须整体回滚；事务不得跨模型调用、网络请求或 Runtime 派发等待，提交后必须释放数据库会话再异步激活执行。AI 管家完成回调必须以“已持久化至少一个有效方案项”为业务成功真值；仅由触发器预创建、仍为空的 `planning` run 不得算作方案提交。旧记录缺少方案元数据时，只能通过该管家运行事件中持久化的 `workflow_run_id` 做确定性恢复，不得按时间猜测最新方案。
+- 方案提交、确认、暂停、恢复、重规划、评审和返工上报在短事务提交后都必须发布一次 Issue 失效通知，使 AI 编排卡片、执行任务和看板状态在同一刷新周期内重新读取服务端真值；不得依赖 15 秒轮询或手动刷新。
 - “执行前需要人工确认”为项目编排配置。开启时，提交方案只进入 `awaiting_approval`，不得创建、分派或启动子任务；关闭时可直接物化。人工可以确认、驳回并重规划、暂停或恢复，所有动作必须记录操作者、时间与原因。
 - 方案物化必须以 `run_id + plan_version + client_key` 幂等，并在同一事务内创建父 Issue 的直接子 `LoopItem`、写入方案来源和阶段归属、完成分派。事务提交后才调用现有执行激活器；重复确认、页面刷新、服务重启或事件重放不得创建重复子任务。
 - 同一 Issue 同时最多存在一个活动编排 run。新事件若命中活动 run 必须复用它；显式重新规划创建新版本，显式重新执行才创建新 run。已完成子任务默认不重复执行，失败或中断任务可从未完成项继续。
-- 暂停编排必须同时停止当前方案版本的 AI 管家运行和尚未完成的子任务执行，并保留已完成、待验收子任务及全部历史。恢复只能在旧 AI 管家与子任务执行确认终止后，为规划或未完成任务创建下一次执行尝试；重复恢复不得创建并发 AI 管家或重复子任务执行。
+- 已完成 Issue 显式重新执行时，创建新规划 run 的同一短事务必须把父 Issue 从 `completed` 重开为 `pending`；方案确认并物化子任务后再进入 `in_progress`。历史方案、已完成子任务和审计记录继续保留。
+- 暂停编排必须同时停止当前方案版本的 AI 管家运行和尚未完成的子任务执行，并保留已完成、待验收子任务及全部历史。执行进入 `cancel_requested` 后，Runtime 返回的任何失败或取消终态都必须归并为取消，不得触发自动重试。恢复只能在旧 AI 管家与子任务执行确认终止后，为规划或未完成任务创建下一次执行尝试；重复恢复不得创建并发 AI 管家或重复子任务执行。
 - Issue 从“收集箱”拖到“待开始”时，任务入口必须读取该 Issue 的编排快照。仅“无阶段 + 手动推进”属于自己管理任务，需暂缓移动并打开新建任务 Composer；预置流程必须直接写入“待开始”并启动全部 ready 的自动化阶段，AI 推进必须启动快照绑定的调度员。两者都不得打开新建任务 Composer，也不得为绕过弹窗而创建空白 Runtime Task；重复进入不得为同一阶段或 AI 调度员创建重复运行。
 - 预置流程中的人工阶段由用户显式开始。Issue 详情必须在缩放流程图之外展示所有 ready 人工阶段的主操作，明确标注“人工执行”并提供“开始处理”；流程图只承担结构与进度展示，不能把唯一入口藏在会缩放的节点内部。点击“开始处理”只打开绑定该阶段的任务 Composer，首条消息发送前仍不得创建空白 Runtime Task。
 - 人工阶段的 Runtime Task 创建后，只先写入 `LoopItemTaskBinding`。Runtime Task 云上下文必须返回该绑定的 `workflow_node_id`，绑定完成必须触发已知 Runtime 生命周期重放；不得把人工任务写成 `LoopItemExecution` 的 queued 状态，也不得在 Runtime 尚未确认 running 时由 UI 伪造“排队中”或“进行中”。
@@ -232,7 +239,7 @@ sequenceDiagram
 - 运行时底层错误必须保留在运行详情中；编排卡片只展示可操作的用户错误、恢复动作和简短原因。启动超时、设备离线、模型不可用和执行者失效必须有不同提示。
 - 阶段自动化只决定何时、如何创建或启动具体执行，不是与“任务”并列的实体类型。
 - `inherit` 只从明确的前驱 Runtime Task 读取已确认的 workspace/worktree/branch；没有可继承来源时必须回到标准 Composer 选择，不得猜测目录。
-- queued、待审批或依赖未满足只投影为“待开始”；只有 Runtime 确认 running 才投影为“进行中”。
+- queued、待审批或依赖未满足只投影为“待开始”；只有 Runtime 确认 running 才投影为“进行中”。Runtime 首次确认 running 时，执行记录、活动消息和子任务状态必须在同一短事务内完成投影后再提交，并在提交后仅针对状态实质变化发布一次 Issue 失效通知，不得按流式文本分片重复刷新，也不得依赖 15 秒轮询或手动刷新才能看到进度。
 - 自动阶段完成由阶段内执行的可信终态聚合得到；人工阶段完成还必须经过批准或强制推进。Issue 完成由全部必要阶段和自由任务聚合得到。任一单个任务或交付物完成不得直接完成仍有未验收工作的阶段或 Issue。
 - DAG 必须无环；任务归入阶段前，该阶段必须存在；阶段开始前依赖必须全部满足；边级上下文只能引用直接前置阶段；UI 不得直接写 running。
 - Issue“动态”是执行过程的统一投影。流式卡片只展示 Runtime 真值的紧凑摘要；完成后展示 final content 摘要；附件事件引用真实交付资产。

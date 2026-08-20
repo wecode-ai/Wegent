@@ -8,18 +8,20 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.db.session import SessionLocal
 from app.models.delivery import (
     CloudProject,
     LoopItem,
     ProjectAutomationRule,
     ProjectAutomationRun,
     ProjectChatAgent,
+    ProjectWorkflowPlanItem,
     ProjectWorkflowRun,
     loop_datetime_is_unset,
     loop_unset_datetime_for_connection,
@@ -52,6 +54,10 @@ from app.services.project_chat.service import project_chat_service
 from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
+MISSING_MANAGER_PLAN_ERROR = "AI manager finished without submitting a workflow plan."
+
+if TYPE_CHECKING:
+    from app.schemas.issue_workflow import WorkflowPlanSubmit, WorkflowPlanView
 
 
 class AutomationRunNotRetryable(RuntimeError):
@@ -288,7 +294,7 @@ class ProjectAutomationExecution:
         run.version += 1
         self._bind_activity_to_execution(db, run=run, execution=execution)
         db.commit()
-        self._push_activity(db, run)
+        self._push_activity(str(run.id))
         logger.info(
             "[ProjectAutomation] Queued custom manager run=%s execution=%s device=%s",
             run.id,
@@ -404,6 +410,8 @@ class ProjectAutomationExecution:
                 "你是看板的 AI 管家，只负责编排，不执行具体任务。"
                 "请读取当前 Issue 和候选执行者，将工作拆成可独立验收的子任务，"
                 "然后调用 submit_workflow_plan 提交结构化方案。"
+                "方案项不需要提供 stage_id，平台会绑定当前活动规划范围；"
+                "不要查询、猜测或伪造阶段标识。"
                 "不要直接修改原 Issue 的负责人。"
             ),
         ]
@@ -641,6 +649,7 @@ class ProjectAutomationExecution:
         run_id: str,
         workflow_run_id: str,
         plan_version: int,
+        commit: bool = True,
     ) -> None:
         """Record the manager's durable orchestration action."""
 
@@ -662,7 +671,104 @@ class ProjectAutomationExecution:
             "workflow_plan_run_id": workflow_run_id,
             "workflow_plan_version": plan_version,
         }
+        if commit:
+            db.commit()
+        else:
+            db.flush()
+
+    def submit_manager_workflow_plan(
+        self,
+        db: Session,
+        *,
+        run_id: str,
+        issue_id: str,
+        user_id: int,
+        values: WorkflowPlanSubmit,
+    ) -> WorkflowPlanView:
+        """Persist one manager plan and its audit binding atomically."""
+
+        from app.schemas.issue_workflow import WorkflowPlanSubmit
+        from app.services.issue_workflow_planning import (
+            issue_workflow_planning_service,
+        )
+
+        validated = WorkflowPlanSubmit.model_validate(values)
+        try:
+            view = issue_workflow_planning_service.submit(
+                db,
+                issue_id=issue_id,
+                user_id=user_id,
+                values=validated,
+                commit=False,
+            )
+            self.record_manager_plan_submission(
+                db,
+                run_id=run_id,
+                workflow_run_id=view.run_id,
+                plan_version=view.plan_version,
+                commit=False,
+            )
+            db.commit()
+            return view
+        except Exception:
+            db.rollback()
+            raise
+
+    def reconcile_manager_workflow_plan_binding(
+        self,
+        db: Session,
+        *,
+        run_id: str,
+        workflow_run_id: str,
+    ) -> bool:
+        """Repair a durable plan whose manager audit binding was missed."""
+
+        run = db.get(ProjectAutomationRun, run_id)
+        workflow_run = db.get(ProjectWorkflowRun, workflow_run_id)
+        if run is None or workflow_run is None or workflow_run.parent_id != run.task_id:
+            return False
+        changed = False
+        workflow_metadata = dict(workflow_run.metadata_json or {})
+        if str(workflow_metadata.get("project_automation_run_id") or "") != run.id:
+            workflow_metadata["project_automation_run_id"] = run.id
+            workflow_run.metadata_json = workflow_metadata
+            changed = True
+        activity = self._activity(db, run)
+        if activity is not None:
+            activity_metadata = dict(activity.metadata_json or {})
+            expected_plan_version = int(workflow_metadata.get("plan_version") or 0)
+            if (
+                str(activity_metadata.get("workflow_plan_run_id") or "")
+                != str(workflow_run.id)
+                or int(activity_metadata.get("workflow_plan_version") or 0)
+                != expected_plan_version
+            ):
+                activity_metadata["workflow_plan_run_id"] = workflow_run.id
+                activity_metadata["workflow_plan_version"] = expected_plan_version
+                changed = True
+            if run.status == "failed" and run.description == MISSING_MANAGER_PLAN_ERROR:
+                activity.status = "completed"
+                activity_metadata["run_status"] = "completed"
+                activity_metadata.pop("error", None)
+                changed = True
+            activity.metadata_json = activity_metadata
+        if run.status == "failed" and run.description == MISSING_MANAGER_PLAN_ERROR:
+            run.status = "succeeded"
+            run.description = (
+                workflow_run.description or "AI manager submitted workflow plan."
+            )
+            run.version += 1
+            from app.services.project_workflow_projection import (
+                sync_automation_workflow_node,
+            )
+
+            sync_automation_workflow_node(db, run)
+            changed = True
+        if not changed:
+            return False
         db.commit()
+        self._push_activity(str(run.id))
+        return True
 
     def finalize_manager_result(
         self,
@@ -700,6 +806,16 @@ class ProjectAutomationExecution:
             )
         activity_metadata = dict(activity.metadata_json or {}) if activity else {}
         workflow_plan_run_id = str(activity_metadata.get("workflow_plan_run_id") or "")
+        if not workflow_plan_run_id:
+            workflow_plan = self._workflow_plan_for_manager_run(db, run)
+            if workflow_plan is not None:
+                workflow_plan_run_id = str(workflow_plan.id)
+                if activity is not None:
+                    activity_metadata["workflow_plan_run_id"] = workflow_plan_run_id
+                    activity_metadata["workflow_plan_version"] = int(
+                        (workflow_plan.metadata_json or {}).get("plan_version") or 0
+                    )
+                    activity.metadata_json = activity_metadata
         selected_type = str(activity_metadata.get("selected_assignee_type") or "")
         selected_id = str(activity_metadata.get("selected_assignee_id") or "")
         selected_agent_id = (
@@ -736,14 +852,16 @@ class ProjectAutomationExecution:
                 )
         run_changed = False
         if manager_action_recorded:
-            if run.status not in TERMINAL_RUN_STATUSES:
+            if run.status not in TERMINAL_RUN_STATUSES or (
+                run.status == "failed" and run.description == MISSING_MANAGER_PLAN_ERROR
+            ):
                 run.status = "succeeded"
                 run.completed_at = utcnow()
                 run.version += 1
                 run_changed = True
         elif run.status not in TERMINAL_RUN_STATUSES:
             run.status = "failed"
-            run.description = "AI manager finished without submitting a workflow plan."
+            run.description = MISSING_MANAGER_PLAN_ERROR
             run.completed_at = utcnow()
             run.version += 1
             run_changed = True
@@ -761,7 +879,7 @@ class ProjectAutomationExecution:
             if run_changed:
                 db.commit()
                 if push_activity:
-                    self._push_activity(db, run)
+                    self._push_activity(str(run.id))
             return run_changed
         if activity is not None:
             activity.status = expected_activity_status
@@ -786,7 +904,7 @@ class ProjectAutomationExecution:
             }
         db.commit()
         if push_activity:
-            self._push_activity(db, run)
+            self._push_activity(str(run.id))
         return True
 
     @staticmethod
@@ -823,12 +941,18 @@ class ProjectAutomationExecution:
         row.metadata_json = activity_metadata
 
     @staticmethod
-    def _push_activity(db: Session, run: ProjectAutomationRun) -> None:
-        row = ProjectAutomationExecution._activity(db, run)
-        if row is not None:
-            push_project_chat_message(
-                project_chat_service.to_view(row).model_dump(by_alias=True)
-            )
+    def _push_activity(run_id: str) -> None:
+        payload: dict | None = None
+        with SessionLocal() as read_db:
+            run = read_db.get(ProjectAutomationRun, run_id)
+            if run is not None:
+                row = ProjectAutomationExecution._activity(read_db, run)
+                if row is not None:
+                    payload = project_chat_service.to_view(row).model_dump(
+                        by_alias=True
+                    )
+        if payload is not None:
+            push_project_chat_message(payload)
 
     def _fail_run(self, db: Session, *, run_id: str, error: str) -> None:
         run = db.get(ProjectAutomationRun, run_id)
@@ -849,7 +973,7 @@ class ProjectAutomationExecution:
             content=error or "AI 托管任务派发失败。",
         )
         db.commit()
-        self._push_activity(db, run)
+        self._push_activity(str(run.id))
 
     @staticmethod
     def finish_activity(
@@ -923,6 +1047,61 @@ class ProjectAutomationExecution:
             )
             .order_by(LoopItemExecution.id.desc())
             .first()
+        )
+
+    @staticmethod
+    def _workflow_plan_for_manager_run(
+        db: Session,
+        run: ProjectAutomationRun,
+    ) -> ProjectWorkflowRun | None:
+        candidates = (
+            db.query(ProjectWorkflowRun)
+            .filter(ProjectWorkflowRun.parent_id == run.task_id)
+            .order_by(ProjectWorkflowRun.created_at.desc())
+            .all()
+        )
+        for candidate in candidates:
+            candidate_metadata = (
+                candidate.metadata_json
+                if isinstance(candidate.metadata_json, dict)
+                else {}
+            )
+            if str(candidate_metadata.get("project_automation_run_id") or "") == str(
+                run.id
+            ) and ProjectAutomationExecution._workflow_plan_has_items(db, candidate):
+                return candidate
+        run_metadata = metadata(run)
+        event = run_metadata.get("event")
+        payload = event.get("payload") if isinstance(event, dict) else None
+        workflow_run_id = (
+            str(payload.get("workflow_run_id") or "")
+            if isinstance(payload, dict)
+            else ""
+        )
+        if not workflow_run_id:
+            return None
+        candidate = db.get(ProjectWorkflowRun, workflow_run_id)
+        if candidate is None or candidate.parent_id != run.task_id:
+            return None
+        return (
+            candidate
+            if ProjectAutomationExecution._workflow_plan_has_items(db, candidate)
+            else None
+        )
+
+    @staticmethod
+    def _workflow_plan_has_items(
+        db: Session,
+        run: ProjectWorkflowRun,
+    ) -> bool:
+        return (
+            db.query(ProjectWorkflowPlanItem.id)
+            .filter(
+                ProjectWorkflowPlanItem.parent_id == run.id,
+                ProjectWorkflowPlanItem.status != "superseded",
+            )
+            .first()
+            is not None
         )
 
 

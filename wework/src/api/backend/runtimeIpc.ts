@@ -5,6 +5,7 @@ const WEWORK_RUNTIME_NAMESPACE = '/wework-runtime'
 const REQUEST_EVENT = 'runtime:request'
 const RUNTIME_EVENT = 'runtime:event'
 const ACK_TIMEOUT_MS = 75_000
+export const RUNTIME_TRANSCRIPT_ACK_TIMEOUT_MS = 15_000
 
 interface RuntimeIpcClientOptions {
   socketBaseUrl: string
@@ -23,7 +24,12 @@ interface RuntimeIpcAck<T> {
 }
 
 export interface CloudRuntimeIpcClient {
-  request: <T>(method: string, params?: Record<string, unknown>, deviceId?: string) => Promise<T>
+  request: <T>(
+    method: string,
+    params?: Record<string, unknown>,
+    deviceId?: string,
+    timeoutMs?: number
+  ) => Promise<T>
   subscribe: (handler: (event: LocalExecutorEvent) => void) => Promise<() => void>
   dispose: () => void
 }
@@ -46,9 +52,10 @@ export function createCloudRuntimeIpcClient(
     request<T>(
       method: string,
       params: Record<string, unknown> = {},
-      deviceId?: string
+      deviceId?: string,
+      timeoutMs = ACK_TIMEOUT_MS
     ): Promise<T> {
-      return emitRuntimeRequest<T>(client, method, params, deviceId)
+      return emitRuntimeRequest<T>(client, method, params, deviceId, timeoutMs)
     },
     async subscribe(handler: (event: LocalExecutorEvent) => void): Promise<() => void> {
       await client.ensureConnected()
@@ -68,7 +75,8 @@ async function emitRuntimeRequest<T>(
   client: AuthenticatedSocketClient,
   method: string,
   params: Record<string, unknown>,
-  deviceId?: string
+  deviceId?: string,
+  timeoutMs = ACK_TIMEOUT_MS
 ): Promise<T> {
   await client.ensureConnected()
   const requestId = `cloud-runtime-${nextRequestId++}`
@@ -80,7 +88,7 @@ async function emitRuntimeRequest<T>(
   return new Promise<T>((resolve, reject) => {
     const timeout = window.setTimeout(() => {
       reject(new Error(`${method} timed out`))
-    }, ACK_TIMEOUT_MS)
+    }, timeoutMs)
 
     client.socket.emit(
       REQUEST_EVENT,
@@ -90,7 +98,7 @@ async function emitRuntimeRequest<T>(
         method,
         params,
         device_id: targetDeviceId,
-        timeout_seconds: Math.ceil(ACK_TIMEOUT_MS / 1000),
+        timeout_seconds: Math.ceil(timeoutMs / 1000),
       },
       (ack: RuntimeIpcAck<T> | undefined) => {
         window.clearTimeout(timeout)

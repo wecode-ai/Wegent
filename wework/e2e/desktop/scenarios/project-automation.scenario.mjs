@@ -1274,7 +1274,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
             items: [
               {
                 client_key: 'implement',
-                stage_id: '__issue__',
                 title: '实现并验证自动化任务',
                 description: '完成 Issue 中的工作并提交可复核结果。',
                 assignee_type: 'agent',
@@ -2423,6 +2422,86 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         }
       )
 
+      createdBoardItem = {
+        ...createdBoardItem,
+        workflow: {
+          ...createdBoardItem.workflow,
+          orchestration_status: 'awaiting_approval',
+        },
+      }
+      workflowPlan = {
+        ...workflowPlan,
+        status: 'awaiting_approval',
+        summary: '实现并验证 AI 编排可观测性',
+        items: [
+          {
+            id: 'workflow-plan-item-e2e',
+            client_key: 'implement',
+            stage_id: '__issue__',
+            title: '实现 AI 编排可观测性',
+            description: '显示子任务状态与结果',
+            assignee_type: 'agent',
+            assignee_id: AGENT_ID,
+            assignee_name: AGENT.name,
+            rationale: '开发能力匹配',
+            task_id: null,
+            task_status: null,
+            outcome_verdict: null,
+            outcome_summary: '',
+            status: 'proposed',
+          },
+        ],
+        manager_run: {
+          ...workflowPlan.manager_run,
+          status: 'failed',
+          recent_activity: 'AI 管家执行失败',
+          error: 'AI manager finished without submitting a workflow plan.',
+        },
+      }
+      readyCount = control.readyCount
+      await control.command('reloadMainWindow', 'body')
+      await withTimeout(
+        control.awaitReadyAfter(readyCount),
+        uiTimeoutMs * 3,
+        'The project board did not reconnect for manager conflict verification'
+      )
+      await control.command('click', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
+        visible: true,
+      })
+      await control.command(
+        'click',
+        `${activeBoard} [data-testid="cloud-todo-card-${aiManagedItemId}"]`,
+        { visible: true }
+      )
+      await control.command(
+        'waitFor',
+        `${activeBoard} [data-testid="cloud-todo-workflow-plan-status"]`,
+        {
+          text: '生成方案失败',
+          timeoutMs: uiTimeoutMs,
+          visible: true,
+        }
+      )
+      await control.command(
+        'waitFor',
+        `${activeBoard} [data-testid="cloud-todo-workflow-replan"]`,
+        {
+          text: '重新生成',
+          timeoutMs: uiTimeoutMs,
+          visible: true,
+        }
+      )
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            `${activeBoard} [data-testid="cloud-todo-workflow-approve"]`
+          )
+        ),
+        0,
+        'A failed AI manager must not leave the approval action available'
+      )
+
       createdChildItem = {
         ...createdBoardItem,
         id: aiManagedChildId,
@@ -2443,6 +2522,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         ...workflowPlan,
         status: 'awaiting_review',
         summary: '实现并验证 AI 编排可观测性',
+        manager_run: {
+          ...workflowPlan.manager_run,
+          status: 'succeeded',
+          recent_activity: '方案生成完成',
+          error: null,
+        },
         items: [
           {
             id: 'workflow-plan-item-e2e',
@@ -2490,7 +2575,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         'waitFor',
         `${activeBoard} [data-testid="cloud-todo-open-plan-task-${aiManagedChildId}"]`,
         {
-          text: '查看任务',
+          text: '查看子任务',
           timeoutMs: uiTimeoutMs,
           visible: true,
         }

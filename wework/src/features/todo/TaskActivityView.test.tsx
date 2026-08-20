@@ -1467,6 +1467,47 @@ describe('TaskActivityView', () => {
     )
   })
 
+  it('refreshes the workflow plan when the AI manager finishes', async () => {
+    const managerMessage: ProjectChatMessage = {
+      ...agentMessage,
+      messageId: 'manager-message-completed',
+      type: 'text',
+      content: '方案已成功提交，正在等待审批。',
+      metadata: {
+        kind: 'project_automation_run',
+        automation_run_id: 'manager-run-1',
+        run_id: 'manager-run-1',
+        run_status: 'completed',
+      },
+      status: 'completed',
+    }
+    const client = {
+      subscribe: vi.fn(async () => ({
+        snapshot: { messages: [managerMessage], latestSequence: 2, currentUserId: '1' },
+        unsubscribe: vi.fn(),
+      })),
+      send: vi.fn(async () => userMessage),
+      startAgentResponse: vi.fn(async () => agentMessage),
+      failAgentResponse: vi.fn(async () => ({ ...agentMessage, status: 'failed' as const })),
+      dispose: vi.fn(),
+    } satisfies ProjectChatClient
+    const onWorkflowManagerFinished = vi.fn()
+
+    render(
+      <TaskActivityView
+        client={client}
+        currentUserId={1}
+        project={{ id: '11', name: 'Wework' } as never}
+        task={{ id: 'WEG-1', title: 'Inspect changes', status: 'in_progress' } as never}
+        workflowManagerRunId="manager-run-1"
+        onWorkflowManagerFinished={onWorkflowManagerFinished}
+        linear
+      />
+    )
+
+    await waitFor(() => expect(onWorkflowManagerFinished).toHaveBeenCalledTimes(1))
+  })
+
   it('shows the stop action for a running AI run inside the floating panel', async () => {
     runtimeWorkMock.value = {
       projects: [],

@@ -1530,12 +1530,15 @@ async fn call_backend_tool(
             .await?;
             return Ok(normalize_assignment_candidates(members, robots));
         }
-        "submit_workflow_plan" => client
-            .post(format!(
-                "{base}/loop-items/{}/workflow-plan",
-                encode_segment(task_id()?)
-            ))
-            .json(arguments.get("plan").unwrap_or(arguments)),
+        "submit_workflow_plan" => {
+            let request = client
+                .post(format!(
+                    "{base}/loop-items/{}/workflow-plan",
+                    encode_segment(task_id()?)
+                ))
+                .json(arguments.get("plan").unwrap_or(arguments));
+            with_automation_run_header(request, grant)
+        }
         "report_workflow_outcome" => client
             .post(format!(
                 "{base}/loop-items/{}/workflow-outcome",
@@ -1997,6 +2000,16 @@ async fn call_backend_tool(
     Ok(value)
 }
 
+fn with_automation_run_header(
+    request: reqwest::RequestBuilder,
+    grant: Option<&SpaceContextGrant>,
+) -> reqwest::RequestBuilder {
+    match grant.and_then(|value| value.automation_run_id.as_deref()) {
+        Some(run_id) => request.header("X-Wegent-Automation-Run-ID", run_id),
+        None => request,
+    }
+}
+
 async fn download_backend_object(
     client: &reqwest::Client,
     access: &Value,
@@ -2356,7 +2369,7 @@ fn tools() -> Vec<Value> {
         ),
         tool(
             "submit_workflow_plan",
-            "Submit the AI manager's structured child-task plan",
+            "Submit the AI manager's structured child-task plan; the platform binds the active planning scope",
             json!({
                 "type": "object",
                 "properties": {
@@ -2373,7 +2386,6 @@ fn tools() -> Vec<Value> {
                                     "type": "object",
                                     "properties": {
                                         "client_key": {"type": "string"},
-                                        "stage_id": {"type": "string"},
                                         "title": {"type": "string"},
                                         "description": {"type": "string"},
                                         "assignee_type": {"enum": ["user", "agent", "team"]},
@@ -2383,7 +2395,6 @@ fn tools() -> Vec<Value> {
                                     },
                                     "required": [
                                         "client_key",
-                                        "stage_id",
                                         "title",
                                         "assignee_type",
                                         "assignee_id"
@@ -3050,6 +3061,28 @@ mod tests {
         assert_eq!(grant.space_id.as_deref(), Some("cloud-42"));
         assert_eq!(grant.automation_run_id.as_deref(), Some("run-1"));
         assert!(grant.automation_manager);
+    }
+
+    #[test]
+    fn workflow_plan_request_carries_automation_run_header() {
+        let grant = SpaceContextGrant {
+            automation_run_id: Some("run-1".to_owned()),
+            ..SpaceContextGrant::default()
+        };
+        let request = with_automation_run_header(
+            reqwest::Client::new().post("http://backend.test/workflow-plan"),
+            Some(&grant),
+        )
+        .build()
+        .expect("workflow plan request");
+
+        assert_eq!(
+            request
+                .headers()
+                .get("X-Wegent-Automation-Run-ID")
+                .and_then(|value| value.to_str().ok()),
+            Some("run-1")
+        );
     }
 
     #[test]

@@ -71,6 +71,7 @@ interface TaskActivityViewProps {
   linear?: boolean
   workflowManagerRunId?: string | null
   onWorkflowManagerExecutionChange?: (action: (() => void) | null) => void
+  onWorkflowManagerFinished?: () => void
 }
 
 interface TaskCardQueuedReply extends RuntimePaneQueuedMessage {
@@ -94,6 +95,7 @@ export function TaskActivityView({
   linear = false,
   workflowManagerRunId = null,
   onWorkflowManagerExecutionChange,
+  onWorkflowManagerFinished,
 }: TaskActivityViewProps) {
   const { t } = useTranslation('common')
   const { services, state, createProjectRuntimeTask, cancelRuntimeTask, sendRuntimePaneMessage } =
@@ -209,6 +211,7 @@ export function TaskActivityView({
   const listRef = useRef<HTMLDivElement>(null)
   const followCardRef = useRef<string | null>(null)
   const refreshedRunIds = useRef(new Set<string>())
+  const refreshedWorkflowManagerMessageIds = useRef(new Set<string>())
   const queuedCardReplyInFlightRef = useRef<string | null>(null)
   const compact = rail || linear
 
@@ -276,6 +279,16 @@ export function TaskActivityView({
     workflowManagerMessage,
     workflowManagerRuntimeAddress,
   ])
+
+  useEffect(() => {
+    if (!workflowManagerMessage || !onWorkflowManagerFinished) return
+    if (!['completed', 'failed', 'cancelled', 'canceled'].includes(workflowManagerMessage.status)) {
+      return
+    }
+    if (refreshedWorkflowManagerMessageIds.current.has(workflowManagerMessage.messageId)) return
+    refreshedWorkflowManagerMessageIds.current.add(workflowManagerMessage.messageId)
+    onWorkflowManagerFinished()
+  }, [onWorkflowManagerFinished, workflowManagerMessage])
 
   useEffect(() => {
     const agentApi = projectChatAgentApi ?? services.projectChatAgentApi

@@ -1863,6 +1863,93 @@ def test_device_runtime_projection_accepts_local_task_id(
     assert projected["message"]["content"] == "Completed through localTaskId"
 
 
+def test_device_runtime_projection_invalidates_only_material_issue_changes(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = create_project(test_db, test_user)
+    task = LoopItem(
+        id="CHAT-RUNTIME-INVALIDATION-1",
+        cloud_project_id=project.id,
+        sequence_number=1,
+        title="Project runtime state",
+        description="",
+        status="pending",
+        assignee_agent_id="12",
+        created_by_user_id=test_user.id,
+    )
+    execution = LoopItemExecution(
+        loop_item_id=task.id,
+        cloud_project_id=project.id,
+        executor_owner_user_id=test_user.id,
+        agent_id="12",
+        execution_environment="local",
+        execution_device_id="local-device",
+        status="claimed",
+        runtime_device_id="local-device",
+        runtime_task_id="runtime-invalidation-1",
+    )
+    test_db.add_all([task, execution])
+    test_db.commit()
+
+    @contextmanager
+    def same_session():
+        yield test_db
+
+    published_events: list[tuple[str, str]] = []
+    runtime_events = 0
+
+    def handle_runtime_event(db: Session, **_kwargs) -> LoopItemExecution:
+        nonlocal runtime_events
+        runtime_events += 1
+        if runtime_events == 1:
+            current = db.get(LoopItem, task.id)
+            assert current is not None
+            current.status = "in_progress"
+            current.version += 1
+            db.commit()
+        db.refresh(execution)
+        return execution
+
+    monkeypatch.setattr(
+        "app.api.ws.device_namespace.get_db_session",
+        same_session,
+    )
+    monkeypatch.setattr(
+        "app.api.ws.device_namespace.loop_item_execution_service.handle_runtime_event",
+        handle_runtime_event,
+    )
+    monkeypatch.setattr(
+        "app.api.ws.device_namespace.publish_loop_item_changed",
+        lambda db, *, item, reason, actor_user_id: published_events.append(
+            (item.id, reason)
+        ),
+    )
+    monkeypatch.setattr(
+        "app.tasks.robot_queue_tasks.publish_run_event",
+        lambda *_args: None,
+    )
+
+    for sequence, event_name in enumerate(
+        ("response.created", "response.output_text.delta"),
+        start=1,
+    ):
+        _project_chat_runtime_event_sync(
+            "local-device",
+            {
+                "event": event_name,
+                "payload": {
+                    "taskId": "runtime-invalidation-1",
+                    "eventSeq": sequence,
+                    "data": {"delta": "working"},
+                },
+            },
+        )
+
+    assert published_events == [
+        (task.id, "runtime_execution_status"),
+    ]
+
+
 def test_execution_truth_rejection_blocks_project_chat_projection(
     test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
 ) -> None:

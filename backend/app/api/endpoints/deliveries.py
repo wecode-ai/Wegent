@@ -11,6 +11,7 @@ from fastapi import (
     Depends,
     File,
     Form,
+    Header,
     HTTPException,
     Query,
     UploadFile,
@@ -68,6 +69,7 @@ from app.services.loop_items.provider_router import (
     loop_item_attachment_provider_router,
     loop_item_provider_router,
 )
+from app.services.project_automation_execution import project_automation_execution
 from app.services.project_automations import project_automation_service
 from app.services.project_workflow_projection import update_workflow_task_status
 from app.services.workflow_stage_context import workflow_stage_context_resolver
@@ -101,7 +103,40 @@ def _delivery_response(db: Session, delivery: Delivery) -> DeliveryResponse:
     )
 
 
-async def _approve_and_dispatch_workflow_plan(
+def _publish_workflow_plan_changed(
+    db: Session,
+    *,
+    item_id: str,
+    user_id: int,
+    reason: str,
+) -> None:
+    item = db.get(LoopItem, item_id, populate_existing=True)
+    if item is None:
+        return
+    publish_loop_item_changed(
+        db,
+        item=item,
+        reason=reason,
+        actor_user_id=user_id,
+    )
+
+
+def _schedule_workflow_plan_executions(
+    db: Session,
+    plan: WorkflowPlanView,
+) -> None:
+    from app.services.board_team_execution import (
+        schedule_board_robot_execution_by_id,
+        workflow_plan_execution_ids,
+    )
+
+    execution_ids = workflow_plan_execution_ids(db, plan)
+    db.rollback()
+    for execution_id in execution_ids:
+        schedule_board_robot_execution_by_id(execution_id)
+
+
+def _approve_and_dispatch_workflow_plan(
     db: Session,
     *,
     item_id: str,
@@ -112,7 +147,7 @@ async def _approve_and_dispatch_workflow_plan(
         issue_id=item_id,
         user_id=user.id,
     )
-    await _dispatch_workflow_plan_children(db, plan=plan, user=user)
+    _schedule_workflow_plan_executions(db, plan)
     refreshed = issue_workflow_planning_service.get(
         db,
         issue_id=item_id,
@@ -121,22 +156,6 @@ async def _approve_and_dispatch_workflow_plan(
     if refreshed is None:
         raise RuntimeError("Approved workflow plan is unavailable")
     return refreshed
-
-
-async def _dispatch_workflow_plan_children(
-    db: Session,
-    *,
-    plan: WorkflowPlanView,
-    user: User,
-) -> None:
-    from app.services.board_team_execution import dispatch_board_team_assignment
-
-    for plan_item in plan.items:
-        if not plan_item.task_id:
-            continue
-        child = db.get(LoopItem, plan_item.task_id)
-        if child is not None and child.assignee_agent_id:
-            await dispatch_board_team_assignment(db, item=child, user=user)
 
 
 async def _dispatch_workflow_manager(
@@ -630,22 +649,43 @@ def get_loop_item_workflow_plan(
 async def submit_loop_item_workflow_plan(
     item_id: str,
     values: WorkflowPlanSubmit,
+    automation_run_id: str = Header(
+        default="",
+        alias="X-Wegent-Automation-Run-ID",
+        include_in_schema=False,
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_flexible_for_executor),
 ) -> WorkflowPlanView:
     try:
-        plan = issue_workflow_planning_service.submit(
-            db,
-            issue_id=item_id,
-            user_id=current_user.id,
-            values=values,
+        plan = (
+            project_automation_execution.submit_manager_workflow_plan(
+                db,
+                run_id=automation_run_id,
+                issue_id=item_id,
+                user_id=current_user.id,
+                values=values,
+            )
+            if automation_run_id
+            else issue_workflow_planning_service.submit(
+                db,
+                issue_id=item_id,
+                user_id=current_user.id,
+                values=values,
+            )
         )
         if plan.approval_policy == "automatic":
-            return await _approve_and_dispatch_workflow_plan(
+            plan = _approve_and_dispatch_workflow_plan(
                 db,
                 item_id=item_id,
                 user=current_user,
             )
+        _publish_workflow_plan_changed(
+            db,
+            item_id=item_id,
+            user_id=current_user.id,
+            reason="workflow_plan_submitted",
+        )
         return plan
     except ValueError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
@@ -661,11 +701,18 @@ async def approve_loop_item_workflow_plan(
     current_user: User = Depends(get_current_user),
 ) -> WorkflowPlanView:
     try:
-        return await _approve_and_dispatch_workflow_plan(
+        plan = _approve_and_dispatch_workflow_plan(
             db,
             item_id=item_id,
             user=current_user,
         )
+        _publish_workflow_plan_changed(
+            db,
+            item_id=item_id,
+            user_id=current_user.id,
+            reason="workflow_plan_approved",
+        )
+        return plan
     except ValueError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
 
@@ -687,11 +734,18 @@ async def pause_loop_item_workflow_plan(
         )
         if current is not None:
             await _cancel_workflow_manager(db, plan=current, user=current_user)
-        return issue_workflow_planning_service.pause(
+        plan = issue_workflow_planning_service.pause(
             db,
             issue_id=item_id,
             user_id=current_user.id,
         )
+        _publish_workflow_plan_changed(
+            db,
+            item_id=item_id,
+            user_id=current_user.id,
+            reason="workflow_plan_paused",
+        )
+        return plan
     except ValueError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
 
@@ -721,11 +775,13 @@ async def resume_loop_item_workflow_plan(
         if plan.status == "planning":
             await _dispatch_workflow_manager(db, item_id=item_id, user=current_user)
         elif plan.status == "running":
-            await _dispatch_workflow_plan_children(
-                db,
-                plan=plan,
-                user=current_user,
-            )
+            _schedule_workflow_plan_executions(db, plan)
+        _publish_workflow_plan_changed(
+            db,
+            item_id=item_id,
+            user_id=current_user.id,
+            reason="workflow_plan_resumed",
+        )
         return plan
     except ValueError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
@@ -760,6 +816,12 @@ async def replan_loop_item_workflow_plan(
             user_id=current_user.id,
         )
         await _dispatch_workflow_manager(db, item_id=item_id, user=current_user)
+        _publish_workflow_plan_changed(
+            db,
+            item_id=item_id,
+            user_id=current_user.id,
+            reason="workflow_plan_replanned",
+        )
         return plan
     except ValueError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
@@ -782,6 +844,12 @@ async def approve_loop_item_workflow_review(
         )
         if plan.status == "planning":
             await _dispatch_workflow_manager(db, item_id=item_id, user=current_user)
+        _publish_workflow_plan_changed(
+            db,
+            item_id=item_id,
+            user_id=current_user.id,
+            reason="workflow_plan_reviewed",
+        )
         return plan
     except ValueError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
@@ -810,6 +878,12 @@ async def report_loop_item_workflow_outcome(
                 item_id=plan.issue_id,
                 user=current_user,
             )
+        _publish_workflow_plan_changed(
+            db,
+            item_id=plan.issue_id,
+            user_id=current_user.id,
+            reason="workflow_outcome_reported",
+        )
         return plan
     except ValueError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc

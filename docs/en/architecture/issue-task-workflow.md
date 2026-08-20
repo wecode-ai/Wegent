@@ -33,6 +33,7 @@ flowchart LR
     STAGE --> REQUIREMENT[Required deliverable contract]
     HUMAN --> BINDING[(LoopItemTaskBinding)]
     AI --> PLAN[(Versioned Workflow Run / Plan Items)]
+    PLAN --> MANAGER_AUDIT[(AI manager run binding / Activity audit)]
     PLAN --> APPROVAL{Human confirmation required?}
     APPROVAL -->|yes| PLAN_REVIEW[Approve / reject / replan]
     PLAN_REVIEW -->|approve| MATERIALIZE[Idempotently materialize tasks]
@@ -82,6 +83,7 @@ sequenceDiagram
     participant G as Stage DAG editor
     participant O as Orchestration service
     participant A as AI coordinator
+    participant X as Executor REST adapter
     participant P as Workflow plan
     participant B as Child task / binding
     participant E as Execution service
@@ -132,7 +134,8 @@ sequenceDiagram
             P->>A: Request cancellation of the matching AI steward execution
             A-->>P: Confirm execution termination
         end
-        A->>P: Submit a versioned structured plan through submit_workflow_plan
+        A->>X: submit_workflow_plan + current automation run ID
+        X->>P: Atomically persist the versioned plan and manager-run binding
         alt Human confirmation is required
             P-->>U: Show tasks, assignees, dependencies, and rationale
             U->>P: Approve or reject and request replanning
@@ -172,7 +175,7 @@ sequenceDiagram
 | Stage DAG editing and adjacent insertion                  | Wework `ProjectWorkflowEditor`                                                            |
 | Explicit orchestration save and re-entry restoration      | Wework `ProjectAutomationView`, `ProjectWorkflowEditor`, and ProjectSpace API             |
 | Project orchestration definition and Issue snapshot       | Backend workflow schemas/services; Wework Automation DAG UI                               |
-| AI plan submission, versioning, and approval gate         | Backend workflow planning service, ProjectSpace MCP, and Issue detail                     |
+| AI plan submission, versioning, and approval gate         | Executor REST adapter, Backend workflow planning service, ProjectSpace MCP, and Issue detail |
 | AI steward runtime state, cancellation, and details entry | Project automation run, Issue activity, and the Wework AI orchestration card              |
 | Plan item to child-task materialization and activation    | Backend workflow planning service, `loop_items/service.py`, and existing activators       |
 | Dependency edge to successor context                      | Workflow node dependency context; Composer / automation instruction                       |
@@ -208,11 +211,15 @@ Invariants:
 - Issue creation is the primary trigger for AI dynamic assignment. Later entry into Pending only recovers a snapshot that has not started and cannot create a second AI steward run. Issue detail must make that trigger semantic explicit.
 - The AI orchestration card is a continuous planning and execution projection. During planning it shows the steward run state, execution environment, recent activity, and a run-details entry instead of an indefinite spinner. User-visible progress contains verifiable events only and never exposes hidden model reasoning.
 - Every AI orchestration attempt has a stable `run_id` and monotonically increasing plan version. Replanning marks the previous version superseded and preserves history; it never deletes completed child tasks or overwrites audit records.
-- `submit_workflow_plan` is the only AI orchestration submission path. Every plan item contains a stable client key, title, description, assignee, and optional stage. The service revalidates that the assignee is still active in the project and that the stage exists and is ready; model-provided names and states are never trusted.
+- `submit_workflow_plan` is the only AI orchestration submission path. Every plan item contains a stable client key, title, description, and assignee. The service binds every item to the active planning scope from the current run: Issue scope without a DAG, or the current ready stage with a DAG. The model must not discover, guess, or override `stage_id`. The service revalidates that the assignee is still active and that the current stage remains plannable; model-provided names and states are never trusted.
+- The Executor REST adapter and ProjectSpace MCP both pass the current automation run ID into the same plan-submission main path. No route may create a plan without binding the manager run.
+- `submit_workflow_plan` persists the plan, plan items, `project_automation_run_id`, and the activity message's `workflow_plan_run_id` in one short transaction. Any binding failure rolls back the whole submission. The transaction never spans a model call, network request, or Runtime dispatch wait; the database session is released before asynchronous execution activation. AI manager completion requires at least one persisted, active plan item as the business-success truth; an empty `planning` run pre-created by the trigger is not a submitted plan. If a legacy record lacks plan metadata, recovery may only use the durable `workflow_run_id` in that manager run's event payload; it must never guess from plan recency.
+- Plan submission, approval, pause, resume, replanning, review, and rework reporting each publish one Issue invalidation after their short transaction commits so the AI orchestration card, execution tasks, and board status reload server truth in the same refresh cycle. They cannot depend on the 15-second poll or a manual reload.
 - Human confirmation before execution is a project orchestration option. When enabled, plan submission only enters `awaiting_approval` and cannot create, assign, or start child tasks. When disabled, materialization may start immediately. Humans can approve, reject and replan, pause, or resume, and every action records actor, time, and reason.
 - Plan materialization is idempotent by `run_id + plan_version + client_key`. One transaction creates direct child `LoopItem` records under the parent Issue, records their plan source and stage, and assigns them. Existing execution activators run only after commit. Repeated approval, refresh, restart, or event replay cannot create duplicate child tasks.
 - One Issue has at most one active orchestration run. A repeated event reuses that run; explicit replanning creates a new plan version, while explicit rerun creates a new run. Completed child tasks do not rerun by default, and failed or interrupted work resumes from unfinished items.
-- Pausing orchestration stops both the AI steward run and unfinished child-task executions for the current plan version while preserving completed or review-ready child tasks and all history. Resume creates a new planning or child-task attempt only after the old steward and task executions confirm termination; repeated resume cannot create concurrent stewards or duplicate task executions.
+- When a completed Issue is explicitly rerun, the same short transaction that creates the new planning run reopens the parent Issue from `completed` to `pending`; it moves to `in_progress` only after plan approval and child-task materialization. Historical plans, completed child tasks, and audit records remain intact.
+- Pausing orchestration stops both the AI steward run and unfinished child-task executions for the current plan version while preserving completed or review-ready child tasks and all history. Once an execution enters `cancel_requested`, every failed or cancelled Runtime terminal event is folded into cancellation and can never trigger automatic retry. Resume creates a new planning or child-task attempt only after the old steward and task executions confirm termination; repeated resume cannot create concurrent stewards or duplicate task executions.
 - When an Issue is dragged from Inbox to Pending, task entry must read that Issue's orchestration snapshot. Only no stages plus manual advancement is self-managed and therefore defers the move to open the new-task Composer. A preset workflow must persist Pending and start every ready automated stage; AI advancement must start the coordinator bound by the snapshot. Neither path may open the new-task Composer or create a blank Runtime Task merely to bypass it, and repeated entry must not create duplicate runs for the same stage or AI coordinator.
 - Human stages in a preset workflow start only through an explicit user action. Issue detail must expose every ready human stage as a primary action outside the zoomable graph, label it as human execution, and provide Start work; the graph is structure and progress, never the only action entry. Start work opens the task Composer bound to that stage, and still creates no blank Runtime Task before the first message.
 - After a Runtime Task is created for a human stage, the first persistent action is only `LoopItemTaskBinding`. Runtime Task cloud context must expose that binding's `workflow_node_id`, and binding completion must replay the known Runtime lifecycle. The UI must not represent the human task as a queued `LoopItemExecution` or invent Queued/In Progress before Runtime confirms running.
@@ -232,7 +239,7 @@ Invariants:
 - Low-level runtime errors remain available in run details. The orchestration card shows actionable user-facing errors, recovery actions, and a concise cause. Startup timeout, offline device, unavailable model, and inactive assignee require distinct messages.
 - Stage automation controls when and how a concrete execution is created or started; it is not an entity type parallel to Task.
 - `inherit` reads a confirmed workspace/worktree/branch only from an explicit predecessor Runtime Task. Without an inheritable source, the standard Composer must request a selection instead of guessing.
-- Queued, approval-pending, and dependency-blocked work projects to Pending. Only Runtime-confirmed running work projects to In Progress.
+- Queued, approval-pending, and dependency-blocked work projects to Pending. Only Runtime-confirmed running work projects to In Progress. On the first Runtime-confirmed running event, the execution record, activity message, and child-task status must be projected in one short transaction before commit, followed by exactly one Issue invalidation for a material state change. Streaming text chunks must not trigger repeated board refreshes, and progress must not depend on the 15-second poll or a manual reload.
 - An automated stage completes from the trusted terminal state of its executions. A human stage additionally requires approval or force advancement. An Issue completes from all required stages and free tasks. Completing one task or delivery cannot complete a stage or Issue with unreviewed work.
 - The DAG must be acyclic. A referenced stage must exist, dependencies must be satisfied before a stage starts, edge context may reference direct predecessors only, and the UI must never write running directly.
 - Issue Activity is the unified execution projection. Streaming cards show compact Runtime truth, completed cards show a final-content summary, and attachment events reference real delivery assets.

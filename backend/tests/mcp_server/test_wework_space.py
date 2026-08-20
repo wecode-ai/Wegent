@@ -9,11 +9,19 @@ import uuid
 from datetime import datetime
 from types import SimpleNamespace
 
+import pytest
 from sqlalchemy.orm import Session
 
 from app.mcp_server.auth import MCPAuthInfo
 from app.mcp_server.tools import wework_space
-from app.models.delivery import CloudProject, LoopItem, ProjectChatAgent
+from app.models.delivery import (
+    CloudProject,
+    LoopItem,
+    ProjectAutomationRule,
+    ProjectAutomationRun,
+    ProjectChatAgent,
+)
+from app.models.project_chat_message import ProjectChatMessage
 from app.models.user import User
 from app.schemas.issue_workflow import WorkflowPlanSubmit
 from app.services.issue_workflow_planning import issue_workflow_planning_service
@@ -26,8 +34,9 @@ class _SessionContext:
     def __enter__(self) -> Session:
         return self._db
 
-    def __exit__(self, *_args: object) -> None:
-        return None
+    def __exit__(self, exc_type: object, *_args: object) -> None:
+        if exc_type is not None:
+            self._db.rollback()
 
 
 def _project(db: Session, user: User, *, provider: str) -> CloudProject:
@@ -110,7 +119,6 @@ def _workflow_plan(robot: ProjectChatAgent) -> dict[str, object]:
         "items": [
             {
                 "client_key": "implement",
-                "stage_id": "__issue__",
                 "title": "Implement the change",
                 "description": "Implement the requested change and add tests.",
                 "assignee_type": "agent",
@@ -120,6 +128,54 @@ def _workflow_plan(robot: ProjectChatAgent) -> dict[str, object]:
             }
         ],
     }
+
+
+def _manager_run(
+    db: Session,
+    project: CloudProject,
+    item: LoopItem,
+    user: User,
+    *,
+    status: str = "running",
+) -> tuple[ProjectAutomationRun, ProjectChatMessage]:
+    rule = ProjectAutomationRule(
+        id=f"rule-{uuid.uuid4().hex[:10]}",
+        cloud_project_id=project.id,
+        title="Managed planning",
+        status="enabled",
+        created_by_user_id=user.id,
+        metadata_json={"assignment_mode": "ai_managed", "manager_type": "custom"},
+    )
+    run = ProjectAutomationRun(
+        cloud_project_id=project.id,
+        parent_id=rule.id,
+        task_id=item.id,
+        title="Managed run",
+        status=status,
+        created_by_user_id=user.id,
+        metadata_json={},
+    )
+    message_id = str(uuid.uuid4())
+    activity = ProjectChatMessage(
+        message_id=message_id,
+        client_message_id=message_id,
+        project_id=str(project.id),
+        task_id=item.id,
+        sender_type="agent",
+        sender_id=f"automation_manager:{rule.id}",
+        sender_name="AI manager",
+        message_type="agent_status",
+        content="",
+        metadata_json={
+            "automation_run_id": str(run.id),
+            "run_status": status,
+        },
+        status="streaming" if status == "running" else "failed",
+    )
+    run.metadata_json = {"activity_message_id": message_id}
+    db.add_all([rule, run, activity])
+    db.commit()
+    return run, activity
 
 
 def test_local_project_tools_use_canonical_loop_item_service(
@@ -244,8 +300,8 @@ async def test_ai_manager_submits_structured_plan_for_current_issue(
         issue=item,
         user_id=test_user.id,
     )
+    manager_run, activity = _manager_run(test_db, project, item, test_user)
     test_db.commit()
-    recorded: list[tuple[str, str, int]] = []
     monkeypatch.setattr(wework_space, "SessionLocal", lambda: _SessionContext(test_db))
     monkeypatch.setattr(
         wework_space,
@@ -254,15 +310,8 @@ async def test_ai_manager_submits_structured_plan_for_current_issue(
             "source": "project_automation",
             "space_id": str(project.id),
             "item_id": item.id,
-            "project_automation_run_id": "automation-run-1",
+            "project_automation_run_id": str(manager_run.id),
         },
-    )
-    monkeypatch.setattr(
-        wework_space.project_automation_execution,
-        "record_manager_plan_submission",
-        lambda _db, *, run_id, workflow_run_id, plan_version: recorded.append(
-            (run_id, workflow_run_id, plan_version)
-        ),
     )
 
     submitted = await wework_space.submit_workflow_plan(
@@ -270,10 +319,64 @@ async def test_ai_manager_submits_structured_plan_for_current_issue(
         _workflow_plan(robot),
     )
 
+    test_db.refresh(workflow_run)
+    test_db.refresh(activity)
     assert submitted["run_id"] == workflow_run.id
+    assert submitted["stage_id"] == "__issue__"
+    assert submitted["items"][0]["stage_id"] == "__issue__"
     assert submitted["status"] == "awaiting_approval"
     assert submitted["items"][0]["task_id"] is None
-    assert recorded == [("automation-run-1", workflow_run.id, 1)]
+    assert workflow_run.metadata_json["project_automation_run_id"] == manager_run.id
+    assert activity.metadata_json["workflow_plan_run_id"] == workflow_run.id
+    assert activity.metadata_json["workflow_plan_version"] == 1
+
+
+async def test_ai_manager_plan_submission_rolls_back_when_run_binding_fails(
+    test_db: Session, test_user: User, monkeypatch
+) -> None:
+    project = _project(test_db, test_user, provider="local")
+    item, robot = _workflow_issue(test_db, project, test_user)
+    workflow_run = issue_workflow_planning_service.ensure_run(
+        test_db,
+        issue=item,
+        user_id=test_user.id,
+    )
+    manager_run, _activity = _manager_run(
+        test_db,
+        project,
+        item,
+        test_user,
+        status="failed",
+    )
+    test_db.commit()
+    monkeypatch.setattr(wework_space, "SessionLocal", lambda: _SessionContext(test_db))
+    monkeypatch.setattr(
+        wework_space,
+        "_board_context",
+        lambda *_args, **_kwargs: {
+            "source": "project_automation",
+            "space_id": str(project.id),
+            "item_id": item.id,
+            "project_automation_run_id": str(manager_run.id),
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="not active"):
+        await wework_space.submit_workflow_plan(
+            _token(test_user),
+            _workflow_plan(robot),
+        )
+
+    test_db.expire_all()
+    restored = issue_workflow_planning_service.get(
+        test_db,
+        issue_id=item.id,
+        user_id=test_user.id,
+    )
+    assert restored is not None
+    assert restored.run_id == workflow_run.id
+    assert restored.status == "planning"
+    assert restored.items == []
 
 
 async def test_workflow_child_reports_one_parent_review_outcome(

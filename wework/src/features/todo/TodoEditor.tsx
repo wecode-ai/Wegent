@@ -686,6 +686,7 @@ export function TodoEditor(props: TodoEditorProps) {
     itemId: string
     plan: WorkflowPlan | null
   } | null>(null)
+  const workflowPlanRequestIdRef = useRef(0)
   const [workflowPlanBusy, setWorkflowPlanBusy] = useState(false)
   const [openWorkflowManagerExecution, setOpenWorkflowManagerExecution] = useState<
     (() => void) | null
@@ -783,7 +784,7 @@ export function TodoEditor(props: TodoEditorProps) {
     props.teamApi,
   ])
 
-  useEffect(() => {
+  const refreshWorkflowPlan = useCallback(() => {
     if (editItemId == null || item?.workflow?.advancement_policy !== 'ai') return
     const getWorkflowPlan = (
       api as DeliveryApi & {
@@ -791,26 +792,25 @@ export function TodoEditor(props: TodoEditorProps) {
       }
     ).getWorkflowPlan
     if (!getWorkflowPlan) return
-    let active = true
+    const requestId = ++workflowPlanRequestIdRef.current
     void getWorkflowPlan(editItemId)
       .then(plan => {
-        if (active) {
-          setWorkflowPlanState({ itemId: editItemId, plan })
-          setWorkflowPlanErrorState({ itemId: editItemId, error: null })
-        }
+        if (requestId !== workflowPlanRequestIdRef.current) return
+        setWorkflowPlanState({ itemId: editItemId, plan })
+        setWorkflowPlanErrorState({ itemId: editItemId, error: null })
       })
       .catch(error => {
-        if (active) {
-          setWorkflowPlanErrorState({
-            itemId: editItemId,
-            error: error instanceof Error ? error.message : String(error),
-          })
-        }
+        if (requestId !== workflowPlanRequestIdRef.current) return
+        setWorkflowPlanErrorState({
+          itemId: editItemId,
+          error: error instanceof Error ? error.message : String(error),
+        })
       })
-    return () => {
-      active = false
-    }
-  }, [api, editItemId, item?.workflow?.advancement_policy, props.taskRefreshKey])
+  }, [api, editItemId, item?.workflow?.advancement_policy])
+
+  useEffect(() => {
+    refreshWorkflowPlan()
+  }, [props.taskRefreshKey, refreshWorkflowPlan])
 
   // Assignee sources are independent: one unavailable directory must not hide
   // otherwise valid members, robots, or Wegent Teams.
@@ -876,6 +876,10 @@ export function TodoEditor(props: TodoEditorProps) {
   }[workflowPlanStatus]
   const planItems = workflowPlan?.items ?? []
   const workflowManager = workflowPlan?.manager_run
+  const workflowManagerPlanConflict =
+    (workflowPlanStatus === 'awaiting_approval' && workflowManager?.status === 'failed') ||
+    (workflowPlanStatus === 'planning' &&
+      ['completed', 'succeeded'].includes(workflowManager?.status ?? ''))
   const registerWorkflowManagerExecution = useCallback((action: (() => void) | null) => {
     setOpenWorkflowManagerExecution(() => action)
   }, [])
@@ -1313,6 +1317,7 @@ export function TodoEditor(props: TodoEditorProps) {
         selfManagedExecution={props.selfManagedExecution}
         workflowManagerRunId={workflowManager?.id}
         onWorkflowManagerExecutionChange={registerWorkflowManagerExecution}
+        onWorkflowManagerFinished={refreshWorkflowPlan}
         linear
       />
     ) : null
@@ -1929,19 +1934,31 @@ export function TodoEditor(props: TodoEditorProps) {
                       className="mt-6 rounded-xl border border-border bg-muted/20 p-3"
                       data-testid="cloud-todo-workflow-plan"
                     >
-                      <div className="flex items-center gap-2">
-                        <Sparkles className="h-4 w-4 text-text-secondary" />
-                        <h3 className="text-sm font-semibold text-text-primary">
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
+                        <Sparkles className="h-4 w-4 shrink-0 text-text-secondary" />
+                        <h3 className="shrink-0 whitespace-nowrap text-sm font-semibold text-text-primary">
                           {t('todo.workflow_plan_title', 'AI 编排方案')}
                         </h3>
                         <span
-                          className="text-xs text-text-muted"
+                          className="shrink-0 whitespace-nowrap text-xs text-text-muted"
                           data-testid="cloud-todo-workflow-plan-status"
                         >
-                          {workflowPlanStatusLabel}
+                          {workflowManagerPlanConflict
+                            ? t('todo.workflow_plan_failed', '生成方案失败')
+                            : workflowPlanStatusLabel}
                         </span>
-                        <div className="ml-auto flex items-center gap-1.5">
-                          {workflowPlanStatus === 'awaiting_approval' ? (
+                        <div className="ml-auto flex shrink-0 items-center gap-1.5 whitespace-nowrap">
+                          {workflowManagerPlanConflict ? (
+                            <button
+                              type="button"
+                              data-testid="cloud-todo-workflow-replan"
+                              disabled={workflowPlanBusy}
+                              onClick={() => void mutateWorkflowPlan('replanWorkflowPlan')}
+                              className="h-7 rounded-lg bg-text-primary px-2.5 text-xs font-medium text-background disabled:opacity-40"
+                            >
+                              {t('todo.workflow_plan_retry', '重新生成')}
+                            </button>
+                          ) : workflowPlanStatus === 'awaiting_approval' ? (
                             <>
                               <button
                                 type="button"

@@ -541,6 +541,9 @@ def test_completed_workflow_can_run_again_without_rewriting_history(
 
     assert restarted.status == "planning"
     assert restarted.plan_version == completed.plan_version + 1
+    test_db.refresh(issue)
+    assert issue.status == "pending"
+    assert issue.completed_at is None
     previous_run = test_db.get(ProjectWorkflowRun, completed.run_id)
     assert previous_run is not None
     assert previous_run.status == "completed"

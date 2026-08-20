@@ -276,7 +276,7 @@ class WorkflowPlanItemCreate(BaseModel):
         max_length=64,
         pattern=r"^[A-Za-z0-9_-]+$",
     )
-    stage_id: str = Field(min_length=1, max_length=64)
+    stage_id: str = Field(default="", max_length=64)
     title: str = Field(min_length=1, max_length=255)
     description: str = Field(default="", max_length=100_000)
     assignee_type: WorkflowPlanItemAssigneeType
@@ -299,6 +299,7 @@ class WorkflowPlanSubmit(BaseModel):
 
 class WorkflowPlanItemView(WorkflowPlanItemCreate):
     id: str
+    stage_id: str = Field(min_length=1, max_length=64)
     task_id: str | None = None
     task_status: WorkflowTaskStatus | None = None
     outcome_verdict: Literal["passed", "needs_rework"] | None = None

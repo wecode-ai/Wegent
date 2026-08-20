@@ -101,6 +101,12 @@ impl RuntimeWorkRpcHandler {
         }));
     }
 
+    pub(super) fn active_codex_transcript_messages(&self, local_task_id: &str) -> Vec<Value> {
+        let mut thread = json!({"turns": []});
+        self.merge_active_codex_transcript(local_task_id, &mut thread);
+        transcript_messages(&thread, &self.device_id)
+    }
+
     pub(super) async fn ensure_notification_router(&self) {
         if self
             .notification_router

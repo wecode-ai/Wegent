@@ -527,54 +527,57 @@ async def submit_workflow_plan(
     space_id: str = "",
     item_id: str = "",
 ) -> dict[str, Any]:
-    """Submit the current AI manager's structured child-task plan."""
+    """Submit a child-task plan; the server binds its active planning scope."""
 
+    execution_ids: list[int] = []
     with SessionLocal() as db:
-        project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
-        resolved_item_id = _item_id(db, token_info, item_id)
-        context = _board_context(db, token_info)
-        run_id = context.get("project_automation_run_id")
-        if (
-            context.get("source") != "project_automation"
-            or not run_id
-            or resolved_item_id != context.get("item_id")
-        ):
-            raise ValueError(
-                "submit_workflow_plan is only available to the current AI manager"
+        try:
+            project = _project(
+                db, _space_id(db, token_info, space_id), token_info.user_id
             )
-        view = issue_workflow_planning_service.submit(
-            db,
-            issue_id=resolved_item_id,
-            user_id=token_info.user_id,
-            values=WorkflowPlanSubmit.model_validate(plan),
-        )
-        project_automation_execution.record_manager_plan_submission(
-            db,
-            run_id=run_id,
-            workflow_run_id=view.run_id,
-            plan_version=view.plan_version,
-        )
-        if view.approval_policy == "automatic":
-            view = issue_workflow_planning_service.approve(
+            resolved_item_id = _item_id(db, token_info, item_id)
+            context = _board_context(db, token_info)
+            run_id = context.get("project_automation_run_id")
+            if (
+                context.get("source") != "project_automation"
+                or not run_id
+                or resolved_item_id != context.get("item_id")
+            ):
+                raise ValueError(
+                    "submit_workflow_plan is only available to the current AI manager"
+                )
+            view = project_automation_execution.submit_manager_workflow_plan(
                 db,
+                run_id=run_id,
                 issue_id=resolved_item_id,
                 user_id=token_info.user_id,
+                values=WorkflowPlanSubmit.model_validate(plan),
             )
-            user = _user(db, token_info.user_id)
-            from app.services.board_team_execution import (
-                dispatch_board_team_assignment,
-            )
+            if view.approval_policy == "automatic":
+                view = issue_workflow_planning_service.approve(
+                    db,
+                    issue_id=resolved_item_id,
+                    user_id=token_info.user_id,
+                )
+                from app.services.board_team_execution import (
+                    workflow_plan_execution_ids,
+                )
 
-            for item in view.items:
-                if not item.task_id:
-                    continue
-                child = db.get(LoopItem, item.task_id)
-                if child is not None and child.assignee_agent_id:
-                    await dispatch_board_team_assignment(db, item=child, user=user)
-        return {
-            **view.model_dump(mode="json"),
-            "project_id": str(project.id),
-        }
+                execution_ids = workflow_plan_execution_ids(db, view)
+            result = {
+                **view.model_dump(mode="json"),
+                "project_id": str(project.id),
+            }
+        except Exception:
+            db.rollback()
+            raise
+    from app.services.board_team_execution import (
+        schedule_board_robot_execution_by_id,
+    )
+
+    for execution_id in execution_ids:
+        schedule_board_robot_execution_by_id(execution_id)
+    return result
 
 
 @mcp_tool(server="wework_space")

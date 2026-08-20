@@ -98,6 +98,7 @@ class IssueWorkflowPlanningService:
         issue_id: str,
         user_id: int,
         values: WorkflowPlanSubmit,
+        commit: bool = True,
     ) -> WorkflowPlanView:
         issue = self._issue(db, issue_id, user_id, for_update=True)
         workflow = self._workflow(issue)
@@ -108,12 +109,13 @@ class IssueWorkflowPlanningService:
             raise ValueError("The active workflow run is not accepting a plan")
         stage_id = self._run_stage(run)
         self._validate_stage(workflow, stage_id)
-        for item in values.items:
-            if item.stage_id != stage_id:
-                raise ValueError("Plan items must target the active planning scope")
+        items = [
+            item.model_copy(update={"stage_id": stage_id}) for item in values.items
+        ]
+        for item in items:
             self._validate_assignee(db, issue, user_id, item)
         self._supersede_items(db, run.id)
-        for order, item in enumerate(values.items):
+        for order, item in enumerate(items):
             db.add(
                 ProjectWorkflowPlanItem(
                     cloud_project_id=issue.cloud_project_id,
@@ -135,7 +137,10 @@ class IssueWorkflowPlanningService:
         run.version += 1
         workflow["orchestration_status"] = run.status
         self._write_workflow(issue, workflow)
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
         db.refresh(run)
         return self._view(db, issue, run)
 
@@ -442,6 +447,16 @@ class IssueWorkflowPlanningService:
         if automation_run_id:
             automation_run = db.get(ProjectAutomationRun, automation_run_id)
             if automation_run is not None:
+                from app.services.project_automation_execution import (
+                    project_automation_execution,
+                )
+
+                project_automation_execution.reconcile_manager_workflow_plan_binding(
+                    db,
+                    run_id=automation_run.id,
+                    workflow_run_id=run.id,
+                )
+                db.refresh(automation_run)
                 return automation_run
         candidates = (
             db.query(ProjectAutomationRun)
@@ -465,6 +480,16 @@ class IssueWorkflowPlanningService:
                 isinstance(payload, dict)
                 and str(payload.get("workflow_run_id") or "") == workflow_run_id
             ):
+                from app.services.project_automation_execution import (
+                    project_automation_execution,
+                )
+
+                project_automation_execution.reconcile_manager_workflow_plan_binding(
+                    db,
+                    run_id=candidate.id,
+                    workflow_run_id=run.id,
+                )
+                db.refresh(candidate)
                 return candidate
         return None
 
@@ -571,6 +596,14 @@ class IssueWorkflowPlanningService:
         workflow["active_run_id"] = None
         self._write_workflow(issue, workflow)
         run = self.ensure_run(db, issue=issue, user_id=user_id)
+        if issue.status == "completed":
+            self._set_item_status(
+                db,
+                issue,
+                "pending",
+                trigger="workflow_replanned",
+                by_user_id=user_id,
+            )
         db.commit()
         if cancelled_executions:
             from app.services.board_team_execution import (

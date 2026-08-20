@@ -1059,6 +1059,64 @@ fn active_codex_items_restore_a_turn_missing_from_paginated_storage() {
 }
 
 #[tokio::test]
+async fn running_codex_transcript_uses_live_cache_without_provider_read() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    let mut link = RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.thread_id = Some("thread-1".to_owned());
+    set_runtime_handle_messages(
+        &mut link.runtime_handle,
+        vec![json!({
+            "id": "user-1",
+            "role": "user",
+            "content": "Implement quicksort",
+            "createdAt": 1_780_000_000_000_i64,
+        })],
+    );
+    handler.upsert_local_task(link);
+    start_test_execution(&handler, "task-1");
+    handler.begin_active_codex_transcript("task-1", "turn-live");
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-live",
+        &json!({
+            "method": "item/completed",
+            "params": {
+                "turnId": "turn-live",
+                "item": {
+                    "id": "message-live",
+                    "type": "agentMessage",
+                    "phase": "commentary",
+                    "text": "Writing quicksort"
+                }
+            }
+        }),
+    );
+
+    let transcript = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "taskId": "task-1",
+                "workspacePath": "/tmp/project"
+            }
+        }))
+        .await
+        .expect("running transcript should use the live cache");
+
+    assert_eq!(transcript["running"], true);
+    assert_eq!(transcript["messages"].as_array().unwrap().len(), 2);
+    assert_eq!(transcript["messages"][0]["content"], "Implement quicksort");
+    assert_eq!(
+        transcript["messages"][1]["blocks"][0]["content"],
+        "Writing quicksort"
+    );
+}
+
+#[tokio::test]
 async fn fork_resolves_the_requested_turn_even_when_the_source_is_running() {
     for (case, persisted_running, active_in_memory) in
         [("persisted", true, false), ("active", false, true)]
