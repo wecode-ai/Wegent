@@ -309,6 +309,14 @@
       "batchMovePartial": "Batch move completed: {{success}} succeeded, {{failed}} failed. Failed documents remain selected and highlighted for retry"
     },
     "document": {
+      "retrievalProfile": {
+        "fallbackReasons": {
+          "retriever_unavailable": "The configured retrieval default profile is unavailable, so automatic defaults will be used.",
+          "embedding_model_unavailable": "The configured retrieval default profile is unavailable, so automatic defaults will be used.",
+          "profile_incomplete": "The configured retrieval default profile is incomplete, so automatic defaults will be used.",
+          "unavailable": "The retrieval default profile is unavailable, so automatic defaults will be used."
+        }
+      },
       "title": "Documents",
       "upload": "Add sources",
       "edit": "Edit Document",

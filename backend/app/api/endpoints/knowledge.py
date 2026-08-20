@@ -51,6 +51,7 @@ from app.schemas.knowledge import (
     KnowledgeBaseCreate,
     KnowledgeBaseListResponse,
     KnowledgeBaseResponse,
+    KnowledgeBaseRetrievalProfileResponse,
     KnowledgeBaseTypeUpdate,
     KnowledgeBaseUpdate,
     KnowledgeDocumentCreate,
@@ -79,6 +80,7 @@ from app.services.knowledge.orchestrator import (
     MAX_KNOWLEDGE_LIST_LIMIT,
     knowledge_orchestrator,
 )
+from app.services.knowledge.retrieval_profile import get_profile
 from shared.telemetry.decorators import (
     add_span_event,
     trace_async,
@@ -308,6 +310,24 @@ def get_knowledge_config():
     """
     return {
         "chunk_storage_enabled": settings.CHUNK_STORAGE_ENABLED,
+    }
+
+
+@router.get(
+    "/code-wiki-retrieval-profile",
+    response_model=KnowledgeBaseRetrievalProfileResponse,
+)
+def get_knowledge_base_retrieval_profile(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+) -> KnowledgeBaseRetrievalProfileResponse:
+    """Return safe public resource references for new knowledge base forms."""
+    del current_user
+    retrieval_config, version, health = get_profile(db)
+    return {
+        "version": version,
+        "retrieval_config": retrieval_config,
+        "health": health,
     }
 
 
