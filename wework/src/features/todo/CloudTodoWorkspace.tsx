@@ -62,6 +62,7 @@ import { cn } from '@/lib/utils'
 import { track } from '@/telemetry/client'
 import { runtimeConversationKey } from '@/features/workbench/runtimeConversationCache'
 import { isRuntimeTaskExecutionRunning } from '@/features/workbench/runtimeTaskLifecycle/projection'
+import type { RuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
 import { hydrateRuntimeTaskAddress } from '@/features/workbench/workbenchRuntimeHelpers'
 import { AITableView } from '@/features/todo/AITableView'
 import type {
@@ -371,6 +372,7 @@ interface CloudTodoWorkspaceProps {
   user: UserProfile
   localProjects: ProjectWithTasks[]
   runtimeWork?: RuntimeWorkListResponse | null
+  runtimeTaskLifecycle?: RuntimeTaskLifecycleStoreSnapshot
   services: WorkbenchServices
   embedded?: boolean
   activeProjectRef?: RuntimeProjectSpaceRef | null
@@ -866,6 +868,7 @@ export function CloudTodoWorkspace({
   user,
   localProjects,
   runtimeWork,
+  runtimeTaskLifecycle,
   services,
   embedded = false,
   activeProjectRef,
@@ -953,7 +956,10 @@ export function CloudTodoWorkspace({
   // Which project's items are currently in `items`. Anything else rendered on
   // the board would be stale, so the board shows the skeleton instead.
   const [itemsProjectKey, setItemsProjectKey] = useState<string | null>(null)
-  const myWork = useMemo(() => runtimeMyWorkItems(runtimeWork), [runtimeWork])
+  const myWork = useMemo(
+    () => runtimeMyWorkItems(runtimeWork, runtimeTaskLifecycle),
+    [runtimeTaskLifecycle, runtimeWork]
+  )
   const [rootView, setRootView] = useState<RootView>('projects')
   const [projectView, setProjectView] = useState<ProjectView>('board')
   const [selectedItem, setSelectedItem] = useState<LocatedLoopItem | null>(null)
