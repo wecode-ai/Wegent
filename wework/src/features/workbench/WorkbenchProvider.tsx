@@ -254,6 +254,15 @@ export function WorkbenchProvider({
   const trackingTitleSignaturesRef = useRef(new Map<string, string>())
   const runtimeTaskSettleSyncGenerationRef = useRef(new Map<string, number>())
   const runtimeTaskSettleSyncGenerationCounterRef = useRef(0)
+  const runtimeTaskSettleSyncActiveRef = useRef(true)
+  useEffect(() => {
+    const settleSyncGenerations = runtimeTaskSettleSyncGenerationRef.current
+    runtimeTaskSettleSyncActiveRef.current = true
+    return () => {
+      runtimeTaskSettleSyncActiveRef.current = false
+      settleSyncGenerations.clear()
+    }
+  }, [])
   const [state, dispatch] = useReducer(workbenchReducer, initialWorkbenchState)
   // The cloud connection context falls back to a synthetic "backend" user when
   // no real cloud provider is mounted; never let that placeholder override the
@@ -1779,6 +1788,7 @@ export function WorkbenchProvider({
   })
   const syncRuntimeTaskUntilExecutorSettles = useStableEvent(
     async (address: RuntimeTaskAddress) => {
+      if (!runtimeTaskSettleSyncActiveRef.current) return
       const key = runtimeConversationKey(address)
       const generation = ++runtimeTaskSettleSyncGenerationCounterRef.current
       runtimeTaskSettleSyncGenerationRef.current.set(key, generation)
@@ -1786,8 +1796,9 @@ export function WorkbenchProvider({
       try {
         for (const delayMs of RUNTIME_TASK_SETTLE_SYNC_DELAYS_MS) {
           if (delayMs > 0) {
-            await new Promise(resolve => window.setTimeout(resolve, delayMs))
+            await new Promise(resolve => globalThis.setTimeout(resolve, delayMs))
           }
+          if (!runtimeTaskSettleSyncActiveRef.current) return
           if (runtimeTaskSettleSyncGenerationRef.current.get(key) !== generation) return
 
           const expectedLifecycle = lifecycleStore.getTask(address)
