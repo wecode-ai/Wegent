@@ -95,6 +95,7 @@ const EMBEDDED_BROWSER_USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS 
 AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15";
 const EMBEDDED_BROWSER_DATA_STORE_ID: [u8; 16] = *b"wework-browser01";
 const EMBEDDED_BROWSER_DATA_DIRECTORY: &str = "embedded-browser-data";
+const EMBEDDED_BROWSER_DEVTOOLS_ENABLED: bool = false;
 const NS_URL_ERROR_CANCELLED: i64 = -999;
 const EMBEDDED_BROWSER_DIAGNOSTICS_SCRIPT: &str = include_str!("embedded_browser_diagnostics.js");
 const EMBEDDED_BROWSER_ACTION_SCRIPT: &str = include_str!("embedded_browser_action.js");
@@ -1099,10 +1100,6 @@ fn bootstrap_is_stable_at_build(post_build_navigation: bool) -> bool {
     !post_build_navigation
 }
 
-fn embedded_browser_devtools_enabled(release_build: bool, debug_assertions: bool) -> bool {
-    !release_build && debug_assertions
-}
-
 fn entry_readiness(
     state: &EmbeddedBrowserState,
     label: &str,
@@ -1976,10 +1973,7 @@ pub async fn embedded_browser_open(
         .data_directory(data_directory)
         .data_store_identifier(EMBEDDED_BROWSER_DATA_STORE_ID)
         .initialization_script(EMBEDDED_BROWSER_DIAGNOSTICS_SCRIPT)
-        .devtools(embedded_browser_devtools_enabled(
-            cfg!(wework_release_build),
-            cfg!(debug_assertions),
-        ))
+        .devtools(EMBEDDED_BROWSER_DEVTOOLS_ENABLED)
         .accept_first_mouse(true)
         .on_navigation({
             let state = state.inner().clone();

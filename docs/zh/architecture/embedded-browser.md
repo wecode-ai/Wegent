@@ -4,7 +4,7 @@ sidebar_position: 20
 
 # 内置浏览器导航与多标签
 
-范围：Agent/测试通过 bridge 首次打开页面，右侧多个浏览器标签的路由、加载真值和关闭，以及内置浏览器 Web Inspector 的构建边界。
+范围：Agent/测试通过 bridge 首次打开页面，右侧多个浏览器标签的路由、加载真值和关闭，以及原生子 WebView 的 Web Inspector 隔离边界。
 
 ```mermaid
 flowchart LR
@@ -15,13 +15,11 @@ flowchart LR
     PENDING --> MAIN[DesktopWorkbenchMain]
     MAIN --> PANEL[WorkspaceBrowserPanel]
     PANEL -->|创建宿主| WEBVIEW[原生 WebView]
-    PROFILE[Cargo PROFILE] --> BUILD[build.rs 发布构建标记]
-    BUILD --> WEBVIEW
     PANEL -->|同步设备 viewport bounds| WEBVIEW
     WEBVIEW -->|Linux: GtkFixed 固定子视图尺寸| LINUX_HOST[absolute GTK host]
     WEBVIEW --> ENTRY
-    WEBVIEW -->|仅 debug 构建| INSPECTOR[右键 Web Inspector]
-    WEBVIEW -->|release 构建| NOINSPECTOR[不暴露 Inspect Element]
+    WEBVIEW --> NOINSPECTOR[所有构建均不暴露 Web Inspector]
+    MAIN -->|Developer Commands| MAIN_INSPECTOR[主 WebView Inspector]
     WEBVIEW -->|macOS: about:blank Finished| READY[宿主 Ready]
     WEBVIEW -->|其他平台: builder 原子绑定初始 URL| READY
     READY --> BRIDGE
@@ -60,11 +58,7 @@ sequenceDiagram
     else builder 原子绑定初始 URL
         W-->>S: build 完成且无后置导航
     end
-    alt debug 构建
-        W->>W: 启用右键 Web Inspector
-    else release 构建
-        W->>W: 禁用右键 Web Inspector
-    end
+    W->>W: 禁用 Web Inspector，F12 不得改变原生子视图布局
     S->>S: Opening -> Ready
     R->>R: 结束一次性 bridge 宿主请求
     B->>W: navigate(URL)
@@ -105,10 +99,10 @@ sequenceDiagram
 | Linux 失败回调、子视图定位与尺寸分配          | `wework/src-tauri/src/embedded_browser/linux_host.rs`                     |
 | 标签创建、选择和关闭                          | `wework/src/components/layout/DesktopWorkbenchMain.tsx`                   |
 | `about:blank` 宿主创建与 UI 状态              | `wework/src/components/layout/workspace-panels/WorkspaceBrowserPanel.tsx` |
-| Cargo 发布构建标记                            | `wework/src-tauri/build.rs`                                               |
-| Web Inspector 的 debug/release 构建边界       | `wework/src-tauri/src/embedded_browser.rs`                                |
+| 子 WebView 的 Web Inspector 隔离边界          | `wework/src-tauri/src/embedded_browser.rs`                                |
+| 主 WebView 的显式诊断入口                     | `wework/src-tauri/src/lib.rs`、`wework/src/lib/developerCommandMenu.ts`   |
 | 多标签真实桌面回归                            | `wework/e2e/desktop/scenarios/embedded-browser-multi-tabs.scenario.mjs`   |
 
-不变量：base label 只负责入口路由；每个标签拥有独立 logical label 和 WebView；bridge 请求只在首次宿主创建期间有效，React 用 ensure-host 创建宿主且复用时禁止导航；macOS 的 `build()` 只代表对象创建，后置 bootstrap `about:blank` 的 `Finished` 才能把宿主从 `Opening` 变为 `Ready`，其他平台由 builder 原子绑定初始 URL，无后置导航竞争；bridge 是首次目标 URL 的唯一后置导航者；原生 `on_navigation` 接受导航即递增 `navigation_generation` 并进入加载态，成功 `Finished` 或匹配当前 generation 的非取消导航失败都必须结束加载；平台回调必须保留原生导航标识到 generation 的映射，过期失败即使 URL 与当前导航相同也不得停止当前加载或写入错误；过期页面或失败后合成的 `Finished` 不得覆盖当前导航及失败真值；加载时替换现有标签图标而不增加信息位；设备工具栏的 viewport bounds 必须到达原生子 WebView，Linux 的 `GtkFixed` 子视图不得扩展到宿主宽度；目标 URL 只有当前导航的 `Finished → loaded_url` 才能完成 `open`，失败则返回导航错误；React 必须隐藏失败后的原生空白页并在同一内容位显示错误提示，恢复操作复用现有刷新入口；关闭只能销毁 expected native label；内置浏览器只在 debug 构建暴露右键 Web Inspector，release 构建标记优先于 `debug_assertions`，即使发布配置重新启用断言或编译了主 WebView 的诊断能力也不得让子 WebView 可检查。
+不变量：base label 只负责入口路由；每个标签拥有独立 logical label 和 WebView；bridge 请求只在首次宿主创建期间有效，React 用 ensure-host 创建宿主且复用时禁止导航；macOS 的 `build()` 只代表对象创建，后置 bootstrap `about:blank` 的 `Finished` 才能把宿主从 `Opening` 变为 `Ready`，其他平台由 builder 原子绑定初始 URL，无后置导航竞争；bridge 是首次目标 URL 的唯一后置导航者；原生 `on_navigation` 接受导航即递增 `navigation_generation` 并进入加载态，成功 `Finished` 或匹配当前 generation 的非取消导航失败都必须结束加载；平台回调必须保留原生导航标识到 generation 的映射，过期失败即使 URL 与当前导航相同也不得停止当前加载或写入错误；过期页面或失败后合成的 `Finished` 不得覆盖当前导航及失败真值；加载时替换现有标签图标而不增加信息位；设备工具栏的 viewport bounds 必须到达原生子 WebView，Linux 的 `GtkFixed` 子视图不得扩展到宿主宽度；目标 URL 只有当前导航的 `Finished → loaded_url` 才能完成 `open`，失败则返回导航错误；React 必须隐藏失败后的原生空白页并在同一内容位显示错误提示，恢复操作复用现有刷新入口；关闭只能销毁 expected native label；内置浏览器子 WebView 在所有构建中都必须禁用 Web Inspector，避免 macOS 原生 Inspector 停靠后重置子视图尺寸并覆盖工作台；主 WebView 的诊断只能通过 Developer Commands 显式打开。
 
 详细能力与验证说明见 [内置浏览器开发指南](../wework/developer-guide/wework-embedded-browser.md)。
