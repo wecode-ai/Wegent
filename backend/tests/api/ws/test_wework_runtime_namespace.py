@@ -77,6 +77,62 @@ async def test_runtime_event_forwards_im_chunk_to_channel_callbacks(monkeypatch)
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("event_type", "event_data", "expected_type"),
+    [
+        (
+            "response.reasoning_summary_text.delta",
+            {"delta": "Inspecting the workspace"},
+            "thinking",
+        ),
+        (
+            "response.block.created",
+            {
+                "block": {
+                    "id": "tool-1",
+                    "type": "tool",
+                    "tool_name": "Read",
+                    "status": "pending",
+                }
+            },
+            "block_created",
+        ),
+    ],
+)
+async def test_runtime_event_forwards_im_progress_events_to_channel_callbacks(
+    monkeypatch,
+    event_type,
+    event_data,
+    expected_type,
+):
+    namespace = DeviceNamespace()
+    forward = AsyncMock()
+    monkeypatch.setattr(
+        local_task_responses, "forward_event_to_channel_callbacks", forward
+    )
+
+    result = await _relay_runtime_event(
+        namespace,
+        monkeypatch,
+        {
+            "event_type": event_type,
+            "taskId": "runtime-375023196",
+            "subtaskId": "runtime-375023196",
+            "data": event_data,
+            "source": _im_source(),
+        },
+    )
+
+    assert result == {"success": True}
+    event = forward.await_args.kwargs["event"]
+    assert event.type == expected_type
+    if expected_type == "thinking":
+        assert event.content == "Inspecting the workspace"
+    else:
+        assert event.data["block"]["tool_name"] == "Read"
+
+
+@pytest.mark.asyncio
 async def test_runtime_event_completes_im_channel_callback_on_terminal_event(
     monkeypatch,
 ):

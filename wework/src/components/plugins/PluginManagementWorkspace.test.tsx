@@ -1,4 +1,5 @@
 import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { invoke, isTauri } from '@tauri-apps/api/core'
 import {
@@ -6,14 +7,20 @@ import {
   pluginMarketplaceCacheKey,
   setPluginMarketplaceCache,
 } from '@/features/plugins/pluginMarketplaceCache'
+import { navigateTo } from '@/lib/navigation'
 import '@/i18n'
 import { PluginManagementWorkspace } from './PluginManagementWorkspace'
 import type { InstalledPluginItem } from './PluginManagementRows'
+import type { PluginMarketplaceItem } from '@/types/api'
 
 vi.mock('@tauri-apps/api/core', () => ({
   convertFileSrc: vi.fn((path: string) => `asset://localhost/${path.replace(/^\/+/, '')}`),
   invoke: vi.fn(),
   isTauri: vi.fn(() => false),
+}))
+
+vi.mock('@/lib/navigation', () => ({
+  navigateTo: vi.fn(),
 }))
 
 function cachedInstalledPlugin(): InstalledPluginItem {
@@ -74,6 +81,7 @@ describe('PluginManagementWorkspace cache', () => {
     clearPluginMarketplaceCache()
     vi.mocked(invoke).mockReset()
     vi.mocked(isTauri).mockReturnValue(false)
+    vi.mocked(navigateTo).mockReset()
     window.localStorage.clear()
   })
 
@@ -108,5 +116,64 @@ describe('PluginManagementWorkspace cache', () => {
     expect(screen.getByTestId('plugin-management-installed-list')).toBeInTheDocument()
 
     await waitFor(() => expect(fetch).toHaveBeenCalled())
+  })
+
+  test('opens marketplace plugin detail instead of a separate management detail page', async () => {
+    const key = pluginMarketplaceCacheKey('/api', 'cloud-token')
+    const installed = cachedInstalledPlugin()
+    installed.id = 267250
+    installed.name = '快速建站'
+    installed.raw.metadata = {
+      name: 'wegent-sites',
+      namespace: 'default',
+      labels: { id: 267250 },
+    }
+    installed.raw.spec.pluginId = 267250
+    installed.raw.spec.source.pluginKey = 'wegent-sites'
+    installed.raw.spec.displayName = '快速建站'
+    const marketplaceItem = {
+      id: 267250,
+      remotePluginId: 'wegent-sites',
+      name: 'wegent-sites',
+      displayName: '快速建站',
+      description: '',
+      featured: false,
+      installed: true,
+      installedPluginId: 267250,
+      enabled: true,
+      sourceType: 'marketplace' as const,
+      visibility: 'workspace' as const,
+      ownerUserId: 1,
+      components: installed.raw.spec.components,
+      manifest: {},
+      latestReleaseId: 6,
+    } satisfies PluginMarketplaceItem
+    setPluginMarketplaceCache({
+      cacheKey: key,
+      marketplaceItems: [marketplaceItem],
+      installedPlugins: [installed],
+      marketplaces: [],
+      selectedMarketplaceKey: '',
+      deviceId: 'device-1',
+      canPublish: false,
+      canSharePersonalPlugins: true,
+      fetchedAt: Date.now(),
+    })
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        () =>
+          new Promise(() => {
+            // Keep background refresh pending so the first paint is cache-only.
+          })
+      )
+    )
+
+    render(<PluginManagementWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    await userEvent.click(screen.getByRole('button', { name: '查看 快速建站 详情' }))
+    expect(navigateTo).toHaveBeenCalledWith('/plugins?plugin=wegent-sites&marketplace=wegent')
+    expect(screen.queryByTestId('plugin-detail-toggle-267250')).not.toBeInTheDocument()
   })
 })
