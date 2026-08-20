@@ -7252,6 +7252,7 @@ describe('WorkbenchProvider runtime tasks', () => {
             role: 'assistant',
             content: 'done answer',
             status: 'done',
+            completedAt: 1_787_252_400_000,
           },
         ],
       })),
@@ -12605,7 +12606,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(updateTaskTrackingStatus.mock.calls.at(-1)?.[1]).toBe('succeeded')
   })
 
-  test('polls the cloud executor until idle before sending queued runtime messages', async () => {
+  test('polls the cloud executor until idle when the cached snapshot predates the active turn', async () => {
     let streamHandlers: ChatStreamHandlers = {}
     const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
       if (hasRuntimeStreamHandler(handlers)) streamHandlers = handlers
@@ -12675,11 +12676,14 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
     let executorSettling = false
     let settleSnapshotReads = 0
-    const listRuntimeWork = vi.fn().mockResolvedValue(runningRuntimeWork)
+    const firstSettlementRead = deferred<RuntimeWorkListResponse>()
+    const listRuntimeWork = vi.fn().mockResolvedValue(idleRuntimeWork)
     const listCloudRuntimeWork = vi.fn().mockImplementation(() => {
-      if (!executorSettling) return Promise.resolve(runningRuntimeWork)
+      if (!executorSettling) return Promise.resolve(idleRuntimeWork)
       settleSnapshotReads += 1
-      return Promise.resolve(settleSnapshotReads === 1 ? runningRuntimeWork : idleRuntimeWork)
+      return settleSnapshotReads === 1
+        ? firstSettlementRead.promise
+        : Promise.resolve(idleRuntimeWork)
     })
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork,
@@ -12742,6 +12746,12 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() =>
       expect(listCloudRuntimeWork.mock.calls.length).toBeGreaterThan(cloudListCallsBeforeSettlement)
     )
+    expect(sendRuntimeMessage).not.toHaveBeenCalled()
+
+    await act(async () => {
+      firstSettlementRead.resolve(runningRuntimeWork)
+      await firstSettlementRead.promise
+    })
     expect(sendRuntimeMessage).not.toHaveBeenCalled()
 
     await waitFor(() => expect(sendRuntimeMessage).toHaveBeenCalledTimes(1))
@@ -13170,6 +13180,32 @@ describe('WorkbenchProvider runtime tasks', () => {
       taskId: 'runtime-a',
     })
     const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 7, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  deviceId: 'device-1',
+                  available: true,
+                  workspacePath: '/workspace/project-alpha',
+                  tasks: [
+                    {
+                      taskId: 'runtime-a',
+                      workspacePath: '/workspace/project-alpha',
+                      title: 'Runtime A',
+                      runtime: 'codex',
+                      running: false,
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          totalTasks: 1,
+        })
+      ),
       getRuntimeTranscript: vi.fn().mockResolvedValue({
         taskId: 'runtime-a',
         workspacePath: '/workspace/project-alpha',
@@ -13460,6 +13496,32 @@ describe('WorkbenchProvider runtime tasks', () => {
     const queuedSend = deferred<{ accepted: boolean; taskId: string }>()
     const sendRuntimeMessage = vi.fn().mockReturnValue(queuedSend.promise)
     const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 7, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  deviceId: 'device-1',
+                  available: true,
+                  workspacePath: '/workspace/project-alpha',
+                  tasks: [
+                    {
+                      taskId: 'runtime-a',
+                      workspacePath: '/workspace/project-alpha',
+                      title: 'Runtime A',
+                      runtime: 'claude_code',
+                      running: false,
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          totalTasks: 1,
+        })
+      ),
       getRuntimeTranscript: vi.fn().mockResolvedValue({
         taskId: 'runtime-a',
         workspacePath: '/workspace/project-alpha',

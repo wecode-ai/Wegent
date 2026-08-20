@@ -154,6 +154,7 @@ export class RuntimeTaskLifecycleStore {
     ) {
       const currentTurnId = this.getTask(address)?.turn.id
       if (currentTurnId && terminalTurn?.id === currentTurnId) {
+        this.executorSettled(address)
         this.turnSettled(address, currentTurnId, terminalTurnOutcome(terminalTurn.status))
       }
       return

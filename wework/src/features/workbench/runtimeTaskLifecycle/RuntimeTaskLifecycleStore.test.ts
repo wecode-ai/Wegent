@@ -259,6 +259,9 @@ describe('RuntimeTaskLifecycleStore', () => {
     store.turnSettled(address, null, 'succeeded')
     expect(store.getTask(address)?.turn.phase).toBe('idle')
     expect(store.getTask(address)?.turn.outcome).toBe('succeeded')
+    expect(store.getTask(address)?.derived.isRunning).toBe(true)
+
+    store.syncRuntimeWork(runtimeWork(task({ running: false })))
     expect(store.getTask(address)?.derived.isRunning).toBe(false)
   })
 
@@ -290,6 +293,22 @@ describe('RuntimeTaskLifecycleStore', () => {
 
     expect(accepted).toBe(true)
     expect(store.getTask(address)?.execution.running).toBe(false)
+  })
+
+  test('does not settle execution from a stale idle snapshot cached before the turn', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.syncRuntimeWork(runtimeWork(task({ running: false })))
+    store.sendRequested(address)
+    store.sendAccepted(address)
+    store.turnStarted(address, 'turn-1')
+
+    store.turnSettled(address, 'turn-1', 'succeeded')
+
+    expect(store.getTask(address)?.turn.phase).toBe('idle')
+    expect(store.getTask(address)?.execution.phase).toBe('running')
+
+    store.syncRuntimeTask(address, task({ running: false }))
+    expect(store.getTask(address)?.execution.phase).toBe('idle')
   })
 
   test('keeps a confirmed-active executor snapshot running after a terminal event', () => {
@@ -431,6 +450,7 @@ describe('RuntimeTaskLifecycleStore', () => {
     store.sendAccepted(address)
     store.turnStarted(address, 'turn-1')
     store.turnSettled(address, 'turn-1', 'succeeded')
+    store.executorSettled(address)
     store.syncTranscript(address, transcript({ running: true }))
 
     const snapshot = store.getTask(address)
@@ -447,6 +467,7 @@ describe('RuntimeTaskLifecycleStore', () => {
     store.sendAccepted(address)
     store.turnStarted(address, 'turn-1')
     store.turnSettled(address, 'turn-1', 'succeeded')
+    store.executorSettled(address)
     store.syncRuntimeTranscriptSnapshot(address, {
       running: true,
       turns: [],
@@ -642,8 +663,11 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(store.getTask(address)?.turn.phase).toBe('idle')
     store.turnSettled(address, 'provider-active-turn', 'succeeded')
 
-    expect(store.getTask(address)?.execution.phase).toBe('idle')
+    expect(store.getTask(address)?.execution.phase).toBe('running')
     expect(store.getTask(address)?.turn.phase).toBe('idle')
+
+    store.executorSettled(address)
+    expect(store.getTask(address)?.execution.phase).toBe('idle')
   })
 
   test('does not let a stale idle transcript override a live streaming turn', () => {
@@ -713,7 +737,7 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(runningSnapshot?.derived.shouldShowSidebarRunning).toBe(true)
 
     store.turnSettled(address, 'correction-turn')
-    expect(store.getTask(address)?.execution.phase).toBe('idle')
+    expect(store.getTask(address)?.execution.phase).toBe('running')
     expect(store.getTask(address)?.turn.phase).toBe('idle')
   })
 
