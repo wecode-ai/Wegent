@@ -2082,6 +2082,29 @@ export interface InstalledPluginComponents {
   monitors: PluginPathComponent[]
   bins: PluginPathComponent[]
   settings?: Record<string, unknown> | null
+  workbench?: WorkbenchPluginComponent | null
+}
+
+export interface WorkbenchFrontendModule {
+  entry: string
+  export: string
+  sha256: string
+}
+
+export interface WorkbenchDesktopSidecar {
+  command: string
+  args: string[]
+  sha256: string
+  capabilities: string[]
+}
+
+export interface WorkbenchPluginComponent {
+  apiVersion: '1'
+  required: boolean
+  pinnedToClientVersion: boolean
+  clientVersion?: string | null
+  frontend?: WorkbenchFrontendModule | null
+  desktop?: WorkbenchDesktopSidecar | null
 }
 
 export interface PluginLocalAuthDefinition {

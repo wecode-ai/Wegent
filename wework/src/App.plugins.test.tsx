@@ -1817,6 +1817,42 @@ describe('App plugins route', () => {
     expect(screen.queryByPlaceholderText('供应商 Token')).not.toBeInTheDocument()
   })
 
+  test('opens Smart apps beside Sites and Mini Programs in Applications', async () => {
+    window.history.pushState({}, '', '/sites')
+
+    renderApp()
+    await updateAppPreferences({ experimentalFeaturesEnabled: true })
+
+    await userEvent.click(await screen.findByTestId('applications-tab-smart-app'))
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe('/sites')
+      expect(window.location.search).toBe('?app_type=smart_app')
+    })
+    expect(screen.getByTestId('applications-tab-web')).toHaveTextContent('站点')
+    expect(screen.getByTestId('applications-tab-miniapp')).toHaveTextContent('小程序')
+    expect(screen.getByTestId('applications-tab-smart-app')).toHaveTextContent('智能应用')
+    expect(screen.getByTestId('smart-apps-marketplace-page')).toBeInTheDocument()
+    expect(screen.getByTestId('smart-apps-section-marketplace')).toHaveAttribute(
+      'aria-current',
+      'page'
+    )
+  })
+
+  test('hides Smart apps and exits its Applications view while experiments are disabled', async () => {
+    window.history.pushState({}, '', '/sites?app_type=smart_app')
+
+    renderApp()
+
+    expect(await screen.findByTestId('sites-workspace')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(window.location.pathname).toBe('/sites')
+      expect(window.location.search).toBe('')
+    })
+    expect(screen.queryByTestId('applications-tab-smart-app')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('smart-apps-marketplace-page')).not.toBeInTheDocument()
+  })
+
   test('renders plugin management on direct /plugins/manage visit', async () => {
     window.history.pushState({}, '', '/plugins/manage')
 
