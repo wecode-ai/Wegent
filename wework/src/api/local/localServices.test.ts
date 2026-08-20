@@ -3263,6 +3263,14 @@ describe('createLocalAppServices', () => {
               modelType: 'runtime',
               options: { reasoning: 'high' },
             },
+            quickPhrases: [
+              {
+                id: 'project-review',
+                title: 'Review project constraints',
+                content: 'Read the project constraints first.',
+                mode: 'plan',
+              },
+            ],
           },
           tasks: [
             {
@@ -3321,6 +3329,14 @@ describe('createLocalAppServices', () => {
                 modelType: 'runtime',
                 options: { reasoning: 'high' },
               },
+              quickPhrases: [
+                {
+                  id: 'project-review',
+                  title: 'Review project constraints',
+                  content: 'Read the project constraints first.',
+                  mode: 'plan',
+                },
+              ],
             },
           },
           deviceWorkspaces: [

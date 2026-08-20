@@ -103,6 +103,7 @@ interface ProjectChatComposerProps {
   onListLocalSkills?: () => Promise<LocalDeviceSkill[]>
   onListLocalApps?: () => Promise<LocalDeviceApp[]>
   projectWork: ProjectWorkControls
+  projectPhrases?: QuickPhrase[]
   showProjectWorkBar?: boolean
   showExecutionTools?: boolean
   isStreaming?: boolean
@@ -180,6 +181,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       onListLocalSkills,
       onListLocalApps,
       projectWork,
+      projectPhrases = [],
       showProjectWorkBar = true,
       showExecutionTools = true,
       isStreaming = false,
@@ -543,6 +545,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
                 : undefined
             }
             onQuickPhraseSelect={handleQuickPhraseSelect}
+            projectPhrases={projectPhrases}
             onSubmit={options => onSubmit(composerRef.current?.getValue() ?? value, options)}
             leadingContext={toolbarLeadingContext}
             onListLocalApps={onListLocalApps}

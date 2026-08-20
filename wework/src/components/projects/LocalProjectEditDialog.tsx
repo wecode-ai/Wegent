@@ -1,4 +1,14 @@
-import { Brain, Folder, FolderPlus, LayoutDashboard, Loader2, Plug, Search, X } from 'lucide-react'
+import {
+  Brain,
+  Folder,
+  FolderPlus,
+  LayoutDashboard,
+  Loader2,
+  MessageSquareText,
+  Plug,
+  Search,
+  X,
+} from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { LocalCodexPluginApi } from '@/api/local/codexPlugins'
@@ -26,10 +36,12 @@ import type {
   PluginMarketplaceItem,
   RuntimeProjectAiSettings,
   RuntimeProjectPluginRef,
+  RuntimeProjectQuickPhrase,
   RuntimeProjectSpaceRef,
   RuntimeProjectWork,
   UnifiedModel,
 } from '@/types/api'
+import { QuickPhrasesEditor } from '../settings/QuickPhrasesEditor'
 import {
   marketplacePluginLockLabel,
   resolveMarketplacePluginLock,
@@ -131,7 +143,7 @@ function LocalProjectEditDialogContent({
   const [name, setName] = useState(projectWork.project.name)
   const [roots, setRoots] = useState(initialRoots)
   const [submitting, setSubmitting] = useState(false)
-  const [activeTab, setActiveTab] = useState<'basic' | 'ai' | 'plugins'>('basic')
+  const [activeTab, setActiveTab] = useState<'basic' | 'ai' | 'quick-phrases' | 'plugins'>('basic')
   const [showFolderPicker, setShowFolderPicker] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [projectSpaceOptions, setProjectSpaceOptions] = useState<ProjectSpaceOption[]>([])
@@ -145,6 +157,9 @@ function LocalProjectEditDialogContent({
   const [modelSelection, setModelSelection] = useState(initialAiSettings?.modelSelection ?? null)
   const [projectPlugins, setProjectPlugins] = useState<RuntimeProjectPluginRef[]>(
     initialAiSettings?.plugins ?? []
+  )
+  const [quickPhrases, setQuickPhrases] = useState<RuntimeProjectQuickPhrase[]>(
+    initialAiSettings?.quickPhrases ?? []
   )
   const [pluginItems, setPluginItems] = useState<PluginMarketplaceItem[]>([])
   const [pluginSearch, setPluginSearch] = useState('')
@@ -323,6 +338,7 @@ function LocalProjectEditDialogContent({
           instructions: instructions.trim(),
           modelSelection,
           ...(projectPlugins.length > 0 ? { plugins: projectPlugins } : {}),
+          ...(quickPhrases.length > 0 ? { quickPhrases } : {}),
         },
       })
       onClose()
@@ -386,6 +402,20 @@ function LocalProjectEditDialogContent({
             }`}
           >
             {t('workbench.project_settings_ai_tab', 'AI 设置')}
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'quick-phrases'}
+            data-testid="local-project-settings-quick-phrases-tab"
+            onClick={() => setActiveTab('quick-phrases')}
+            className={`border-b-2 px-3 py-2 text-sm font-medium ${
+              activeTab === 'quick-phrases'
+                ? 'border-text-primary text-text-primary'
+                : 'border-transparent text-text-secondary hover:text-text-primary'
+            }`}
+          >
+            {t('workbench.project_settings_quick_phrases_tab', '快捷短语')}
           </button>
           <button
             type="button"
@@ -642,6 +672,29 @@ function LocalProjectEditDialogContent({
                     '新对话跟随全局默认模型；全局设置变化后自动生效。'
                   )}
             </p>
+          </div>
+        ) : activeTab === 'quick-phrases' ? (
+          <div data-testid="local-project-settings-quick-phrases-panel">
+            <div className="mb-4 mt-5 flex items-start gap-3 rounded-xl bg-muted/60 px-3 py-2.5">
+              <MessageSquareText className="mt-0.5 h-4 w-4 shrink-0 text-text-secondary" />
+              <div>
+                <p className="text-sm font-medium">
+                  {t('workbench.project_quick_phrases_title', '项目快捷短语')}
+                </p>
+                <p className="mt-0.5 text-sm text-text-secondary">
+                  {t(
+                    'workbench.project_quick_phrases_description',
+                    '仅在这个项目的输入框中显示，并排在设备全局快捷短语之前。'
+                  )}
+                </p>
+              </div>
+            </div>
+            <QuickPhrasesEditor
+              phrases={quickPhrases}
+              disabled={submitting}
+              testIdPrefix="local-project-"
+              onChange={next => setQuickPhrases(next)}
+            />
           </div>
         ) : (
           <div data-testid="local-project-settings-plugins-panel">

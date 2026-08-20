@@ -281,6 +281,8 @@ const PROJECT_AI_MODEL_ID = 'wework-deepseek-v4-pro'
 const PROJECT_AI_MODEL_LABEL = 'wework-deepseek-v4-pro'
 const PROJECT_AI_MODEL_VALUE = `runtime:${PROJECT_AI_MODEL_ID}`
 const PROJECT_AI_UPSTREAM_MODEL_ID = 'deepseek-v4-pro'
+const PROJECT_QUICK_PHRASE_TITLE = 'Project constraint review'
+const PROJECT_QUICK_PHRASE_CONTENT = 'Review the project constraints before implementation.'
 
 async function openProjectAiSettings(control, projectId) {
   await control.command('hover', `[data-testid="project-row-${projectId}"]`)
@@ -374,8 +376,8 @@ async function sendProjectAiCheckpointPrompt(
   { createsConversation = false } = {}
 ) {
   const activeTaskIdBefore = createsConversation
-    ? JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).pane
-        ?.currentRuntimeTask?.taskId ?? null
+    ? (JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).pane
+        ?.currentRuntimeTask?.taskId ?? null)
     : null
   const assistantCountBefore = createsConversation
     ? 0
@@ -389,8 +391,7 @@ async function sendProjectAiCheckpointPrompt(
       const activeTaskId = snapshot.pane?.currentRuntimeTask?.taskId
       const assistantCount = snapshot.pane?.messageSummary?.byRole?.assistant ?? 0
       return (
-        (!createsConversation ||
-          (Boolean(activeTaskId) && activeTaskId !== activeTaskIdBefore)) &&
+        (!createsConversation || (Boolean(activeTaskId) && activeTaskId !== activeTaskIdBefore)) &&
         assistantCount > assistantCountBefore &&
         snapshot.pane?.messageSummary?.activeAssistantMessage === null &&
         snapshot.pane?.messageSummary?.lastMessage?.role === 'assistant'
@@ -470,6 +471,19 @@ async function verifyProjectAiSettings({
     'The project reasoning selection did not update'
   )
   await captureVerificationScreenshot(control, 'project-ai-settings-02-configured.png')
+  await control.command('click', '[data-testid="local-project-settings-quick-phrases-tab"]')
+  await control.command('click', '[data-testid="local-project-add-quick-phrase-button"]')
+  await control.command('fill', '[data-testid="local-project-quick-phrase-title-input"]', {
+    value: PROJECT_QUICK_PHRASE_TITLE,
+  })
+  await control.command('fill', '[data-testid="local-project-quick-phrase-content-input"]', {
+    value: PROJECT_QUICK_PHRASE_CONTENT,
+  })
+  await control.command('click', '[data-testid="local-project-quick-phrase-save-button"]')
+  await control.command('waitFor', '[data-testid="local-project-settings-quick-phrases-panel"]', {
+    text: PROJECT_QUICK_PHRASE_TITLE,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await saveProjectAiSettings(control)
 
   setPhase('project-ai-settings-persisted')
@@ -489,6 +503,11 @@ async function verifyProjectAiSettings({
     'low',
     'The project reasoning effort was not restored after saving'
   )
+  await control.command('click', '[data-testid="local-project-settings-quick-phrases-tab"]')
+  await control.command('waitFor', '[data-testid="local-project-settings-quick-phrases-panel"]', {
+    text: PROJECT_QUICK_PHRASE_TITLE,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await captureVerificationScreenshot(control, 'project-ai-settings-03-persisted.png')
 
   setPhase('project-plugin-install')
@@ -530,13 +549,30 @@ async function verifyProjectAiSettings({
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await waitForE2EModelLabel(control, [PROJECT_AI_MODEL_LABEL])
+  await control.command('click', '[data-testid="quick-phrase-button"]')
+  await control.command('waitFor', '[data-testid="quick-phrase-menu"]', {
+    text: PROJECT_QUICK_PHRASE_TITLE,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const quickPhraseSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  const projectQuickPhraseTestId = quickPhraseSnapshot.testIds.find(testId =>
+    testId.startsWith('project-quick-phrase-option-')
+  )
+  assert.ok(projectQuickPhraseTestId, 'The project quick phrase did not appear in the composer')
+  await captureVerificationScreenshot(control, 'project-ai-settings-06-project-quick-phrase.png')
+  await control.command('click', `[data-testid="${projectQuickPhraseTestId}"]`)
+  await waitForControlValue(
+    control,
+    composerSelector,
+    PROJECT_QUICK_PHRASE_CONTENT,
+    'Selecting the project quick phrase did not update the composer'
+  )
+  await control.command('fill', composerSelector, { value: '' })
   const composerPluginItemTestId = await waitForProjectComposerPlugin(control)
   await captureVerificationScreenshot(control, 'project-ai-settings-06-new-conversation.png')
-  await control.command(
-    'clickWhenEnabled',
-    `[data-testid="${composerPluginItemTestId}"]`,
-    { timeoutMs: WORKBENCH_READY_TIMEOUT_MS }
-  )
+  await control.command('clickWhenEnabled', `[data-testid="${composerPluginItemTestId}"]`, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
   await control.command('waitFor', '[data-testid="composer-plugin-picker"]', {
     visible: false,
     stableMs: 100,

@@ -302,6 +302,49 @@ describe('LocalProjectEditDialog', () => {
     )
   })
 
+  test('creates and persists a project quick phrase', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <LocalProjectEditDialog
+        {...folderPickerProps}
+        open
+        projectWork={projectWork}
+        onClose={vi.fn()}
+        onSave={onSave}
+        onDelete={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('local-project-settings-quick-phrases-tab'))
+    await userEvent.click(screen.getByTestId('local-project-add-quick-phrase-button'))
+    await userEvent.type(
+      screen.getByTestId('local-project-quick-phrase-title-input'),
+      '检查项目约束'
+    )
+    await userEvent.type(
+      screen.getByTestId('local-project-quick-phrase-content-input'),
+      '先阅读项目约束并列出验证步骤'
+    )
+    await userEvent.click(screen.getByTestId('local-project-quick-phrase-mode-plan'))
+    await userEvent.click(screen.getByTestId('local-project-quick-phrase-save-button'))
+    await userEvent.click(screen.getByTestId('save-local-project-button'))
+
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        aiSettings: expect.objectContaining({
+          quickPhrases: [
+            expect.objectContaining({
+              title: '检查项目约束',
+              content: '先阅读项目约束并列出验证步骤',
+              mode: 'plan',
+            }),
+          ],
+        }),
+      })
+    )
+  })
+
   test('respects marketplace policy when installing a plugin for a project', async () => {
     const pluginApi = {
       readState: vi.fn().mockResolvedValue({

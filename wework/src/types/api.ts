@@ -502,6 +502,14 @@ export interface RuntimeProjectAiSettings {
   instructions?: string
   modelSelection?: ModelSelectionConfig | null
   plugins?: RuntimeProjectPluginRef[]
+  quickPhrases?: RuntimeProjectQuickPhrase[]
+}
+
+export interface RuntimeProjectQuickPhrase {
+  id: string
+  title: string
+  content: string
+  mode: 'normal' | 'plan' | 'goal'
 }
 
 export interface RuntimeProjectPluginRef {

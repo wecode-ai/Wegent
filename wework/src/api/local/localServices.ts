@@ -34,6 +34,7 @@ import type {
   RuntimeLocalProjectUpsertRequest,
   RuntimeLocalProjectUpsertResponse,
   RuntimeProjectSpaceRef,
+  RuntimeProjectQuickPhrase,
   RuntimeGoalClearRequest,
   RuntimeGoalClearResponse,
   RuntimeGoalGetRequest,
@@ -2112,12 +2113,35 @@ function adaptRuntimeWorkListResponse(
           })
           .filter((plugin): plugin is NonNullable<typeof plugin> => plugin !== null)
       : []
+    const rawProjectQuickPhrases =
+      rawProjectAiSettings.quickPhrases ?? rawProjectAiSettings.quick_phrases
+    const projectQuickPhrases = Array.isArray(rawProjectQuickPhrases)
+      ? rawProjectQuickPhrases
+          .map((phrase): RuntimeProjectQuickPhrase | null => {
+            const value = recordValue(phrase)
+            const id = stringValue(value.id)
+            const title = stringValue(value.title)
+            const content = stringValue(value.content)
+            const mode = stringValue(value.mode)
+            return id &&
+              title &&
+              content &&
+              (mode === 'normal' || mode === 'plan' || mode === 'goal')
+              ? { id, title, content, mode }
+              : null
+          })
+          .filter((phrase): phrase is NonNullable<typeof phrase> => phrase !== null)
+      : []
     const aiSettings =
-      projectInstructions !== undefined || projectModelSelection || projectPlugins.length > 0
+      projectInstructions !== undefined ||
+      projectModelSelection ||
+      projectPlugins.length > 0 ||
+      projectQuickPhrases.length > 0
         ? {
             ...(projectInstructions !== undefined ? { instructions: projectInstructions } : {}),
             modelSelection: projectModelSelection,
             ...(projectPlugins.length > 0 ? { plugins: projectPlugins } : {}),
+            ...(projectQuickPhrases.length > 0 ? { quickPhrases: projectQuickPhrases } : {}),
           }
         : null
     const projectWork: RuntimeWorkListResponse['projects'][number] = {
