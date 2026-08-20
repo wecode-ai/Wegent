@@ -111,6 +111,7 @@ import { AiChatModal } from './AiChatModal'
 import {
   shouldDeferWorkItemMoveUntilTaskCreated,
   shouldPrepareWorkItemTask,
+  shouldRevealWorkItemWorkflowActions,
   workItemTaskInput,
   workflowStageTaskInput,
 } from './workItemTaskInput'
@@ -2240,6 +2241,15 @@ export function CloudTodoWorkspace({
           autoSubmit: column.status === 'in_progress',
           backgroundAfterSend: column.status === 'in_progress',
         })
+      } else if (
+        nativeGroupBy === 'status' &&
+        column.status === 'pending' &&
+        shouldRevealWorkItemWorkflowActions(item, column.status) &&
+        locatedUpdated.can_view_detail !== false
+      ) {
+        setBackgroundTaskItemId(null)
+        setSelectedTaskBinding(null)
+        setSelectedItem(locatedUpdated)
       }
       track('board_item_moved', {
         group_by: nativeGroupBy,

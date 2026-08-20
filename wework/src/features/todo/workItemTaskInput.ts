@@ -54,3 +54,17 @@ export function shouldDeferWorkItemMoveUntilTaskCreated(
     targetStatus === 'pending' && shouldPrepareWorkItemTask(item, targetStatus, taskBindingCount)
   )
 }
+
+export function shouldRevealWorkItemWorkflowActions(
+  item: Pick<CloudLoopItem, 'status' | 'workflow'>,
+  targetStatus: TaskEntryStatus
+): boolean {
+  return (
+    item.status === 'inbox' &&
+    targetStatus === 'pending' &&
+    !isSelfManagedWorkItem(item) &&
+    Boolean(
+      item.workflow?.nodes.some(stage => !stage.automation_rule_id && stage.status === 'ready')
+    )
+  )
+}
