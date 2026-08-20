@@ -359,6 +359,26 @@ describe('BufferedChatInput', () => {
     expect(onChange).toHaveBeenLastCalledWith('draft')
   })
 
+  test('cancels a blur frame queued during composition before scheduling the debounce', () => {
+    vi.useFakeTimers()
+    const onChange = vi.fn()
+    render(<BufferedChatInput value="" onChange={onChange} onSubmit={vi.fn()} disabled={false} />)
+
+    const input = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+    fireEvent.compositionStart(input)
+    act(() => {
+      input.value = 'draft'
+    })
+    fireEvent.blur(input)
+    fireEvent.compositionEnd(input)
+
+    act(() => vi.advanceTimersByTime(299))
+    expect(onChange).not.toHaveBeenCalled()
+
+    act(() => vi.advanceTimersByTime(1))
+    expect(onChange).toHaveBeenLastCalledWith('draft')
+  })
+
   test('preserves caller composition callbacks', () => {
     const onCompositionStart = vi.fn()
     const onCompositionEnd = vi.fn()

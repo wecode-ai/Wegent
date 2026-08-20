@@ -206,9 +206,10 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   }, [cancelPendingFlush, cancelPendingFlushFrame, onParentCompositionStart])
   const handleCompositionEnd = useCallback(() => {
     isComposingRef.current = false
+    cancelPendingFlushFrame()
     scheduleDraftFlush(draftRef.current, 'composition-end-debounce')
     onParentCompositionEnd?.()
-  }, [onParentCompositionEnd, scheduleDraftFlush])
+  }, [cancelPendingFlushFrame, onParentCompositionEnd, scheduleDraftFlush])
 
   const handleSubmit = useCallback(
     (valueOverride?: string, options?: ChatSubmitOptions) => {
