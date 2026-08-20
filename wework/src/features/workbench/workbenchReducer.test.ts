@@ -3,6 +3,69 @@ import { initialWorkbenchState, workbenchReducer } from './workbenchReducer'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 
 describe('workbenchReducer', () => {
+  test('applies a local project mutation response before the next list refresh', () => {
+    const state = {
+      ...initialWorkbenchState,
+      runtimeWork: {
+        projects: [
+          {
+            project: {
+              id: 17,
+              key: 'local-project:demo',
+              name: 'Demo',
+              source: 'local_project',
+              roots: [{ kind: 'local', path: '/old' }],
+              aiSettings: {
+                instructions: 'Old instructions',
+                plugins: [],
+              },
+            },
+            deviceWorkspaces: [],
+            totalTasks: 0,
+          },
+        ],
+        chats: [],
+        totalTasks: 0,
+      },
+    }
+
+    const next = workbenchReducer(state, {
+      type: 'runtime_local_project_updated',
+      projectKey: 'local-project:demo',
+      name: 'Renamed demo',
+      roots: ['/new'],
+      defaultProjectSpace: null,
+      aiSettings: {
+        instructions: 'Project instructions',
+        plugins: [
+          {
+            id: 'project-plugin@personal',
+            pluginName: 'project-plugin',
+            marketplaceId: 'personal',
+            displayName: 'Project plugin',
+          },
+        ],
+      },
+    })
+
+    expect(next.runtimeWork?.projects[0]?.project).toMatchObject({
+      name: 'Renamed demo',
+      roots: [{ kind: 'local', path: '/new' }],
+      defaultProjectSpace: null,
+      aiSettings: {
+        instructions: 'Project instructions',
+        plugins: [
+          {
+            id: 'project-plugin@personal',
+            pluginName: 'project-plugin',
+            marketplaceId: 'personal',
+            displayName: 'Project plugin',
+          },
+        ],
+      },
+    })
+  })
+
   test('updates the workbench user when the active identity changes', () => {
     const state = workbenchReducer(
       { ...initialWorkbenchState, user: { id: 1, user_name: 'alice', email: 'a@b.c' } },

@@ -21,6 +21,7 @@ import type {
   GitRepoInfo,
   ProjectWithTasks,
   RuntimeProjectAppearanceRequest,
+  RuntimeProjectAiSettings,
   RuntimeProjectSpaceRef,
   RuntimeProjectPinRequest,
   RuntimeProjectReorderRequest,
@@ -205,6 +206,7 @@ export function useWorkbenchProjectActions({
       name: string
       roots: string[]
       defaultProjectSpace: RuntimeProjectSpaceRef | null
+      aiSettings: RuntimeProjectAiSettings | null
     }) => {
       const response = await executorClient.runtime.upsertLocalRuntimeProject({
         ...data,
@@ -216,6 +218,14 @@ export function useWorkbenchProjectActions({
         throw new Error(message)
       }
       response.roots.forEach(clearRemoteProjectSyncRemoval)
+      dispatch({
+        type: 'runtime_local_project_updated',
+        projectKey: response.projectKey,
+        name: response.name,
+        roots: response.roots,
+        defaultProjectSpace: response.defaultProjectSpace ?? null,
+        aiSettings: response.aiSettings ?? null,
+      })
       await refreshWorkLists()
     },
     [clearRemoteProjectSyncRemoval, dispatch, executorClient, refreshWorkLists]

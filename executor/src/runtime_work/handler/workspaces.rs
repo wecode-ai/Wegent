@@ -56,9 +56,18 @@ impl RuntimeWorkRpcHandler {
             .get("defaultProjectSpace")
             .or_else(|| payload.get("default_project_space"))
             .cloned();
-        let project =
-            upsert_codex_global_local_project(&project_key, &name, &roots, default_project_space)
-                .map_err(|error| AppIpcError::new("codex_global_state_error", error))?;
+        let ai_settings = payload
+            .get("aiSettings")
+            .or_else(|| payload.get("ai_settings"))
+            .cloned();
+        let project = upsert_codex_global_local_project(
+            &project_key,
+            &name,
+            &roots,
+            default_project_space,
+            ai_settings,
+        )
+        .map_err(|error| AppIpcError::new("codex_global_state_error", error))?;
         Ok(json!({
             "success": true,
             "accepted": true,
@@ -67,6 +76,7 @@ impl RuntimeWorkRpcHandler {
             "name": project.name,
             "roots": project.roots,
             "defaultProjectSpace": project.default_project_space,
+            "aiSettings": project.ai_settings,
             "runtime": "codex",
         }))
     }

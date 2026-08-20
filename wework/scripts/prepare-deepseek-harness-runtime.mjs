@@ -6,6 +6,10 @@ import { constants as zlibConstants, createGzip } from 'node:zlib'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawn } from 'node:child_process'
+import {
+  macosSigningFingerprint,
+  signPreparedMacOsBinaries,
+} from './lib/deepseek-harness-signing.mjs'
 
 import { wrapWindowsScriptCommand } from './child-process-command.mjs'
 
@@ -78,6 +82,8 @@ const sourceFingerprint = createHash('sha256')
   .update('\0')
   .update(process.version)
   .update('\0')
+  .update(macosSigningFingerprint(process.platform, process.env.APPLE_SIGNING_IDENTITY))
+  .update('\0')
   .update(sourceContents.map(content => content.toString('base64')).join('\0'))
   .digest('hex')
 const nodeName = process.platform === 'win32' ? 'node.exe' : 'node'
@@ -107,7 +113,6 @@ try {
   await mkdir(nodeDirectory, { recursive: true })
   const managedNode = path.join(nodeDirectory, nodeName)
   await cp(process.execPath, managedNode)
-  await prepareManagedNode(managedNode)
 
   const packageJson = JSON.parse(sourceContents[0].toString('utf8'))
   const runtimeMetadata = `${JSON.stringify(
@@ -121,6 +126,8 @@ try {
   )}\n`
   await writeFile(path.join(staging, 'runtime.json'), runtimeMetadata)
   await writeFile(path.join(staging, '.resource-placeholder'), '')
+  await signPreparedMacOsBinaries(staging)
+  await prepareManagedNode(managedNode)
 
   await run('tar', ['-cf', temporaryTar, '-C', staging, '.'], root, {
     COPYFILE_DISABLE: '1',
