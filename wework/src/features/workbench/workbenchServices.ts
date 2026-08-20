@@ -165,6 +165,7 @@ export interface WorkbenchServices {
       option: LocalHarnessModelOption | null
     ) => Promise<LocalHarnessModelLaunchConfig | null>
     unregisterProxy: (token: string) => Promise<void>
+    unregisterContext: (token: string) => Promise<void>
   }
   workspaceSessionApi?: WorkspaceSessionApi
   chatStream: ReturnType<typeof createChatStream>

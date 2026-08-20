@@ -1162,6 +1162,7 @@ describe('DesktopWorkbenchLayout', () => {
         localHarnessModelApi: {
           resolveLaunch: resolveLocalHarnessLaunchMock,
           unregisterProxy: unregisterHarnessProxyMock,
+          unregisterContext: vi.fn(),
         },
         ...(props.runtimeWorkApi ? { runtimeWorkApi: props.runtimeWorkApi } : {}),
       },

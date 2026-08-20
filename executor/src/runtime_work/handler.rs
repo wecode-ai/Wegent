@@ -40,7 +40,7 @@ use crate::{
     logging::log_executor_event,
     protocol::ExecutionRequest,
     runner::ExecutionOutcome,
-    server::{executor_loopback_base_url, local_model_proxy},
+    server::{executor_loopback_base_url, harness_context, local_model_proxy},
 };
 
 const WORKTREE_RECONCILIATION_RETRY_INTERVAL: Duration = Duration::from_secs(5);
@@ -792,6 +792,8 @@ impl RuntimeWorkRpcHandler {
             "runtime.codex.stream_debug.set" => self.set_codex_stream_debug(payload).await,
             "runtime.harness_proxy.register" => self.register_harness_proxy(payload).await,
             "runtime.harness_proxy.unregister" => self.unregister_harness_proxy(payload).await,
+            "runtime.harness_context.register" => self.register_harness_context(payload).await,
+            "runtime.harness_context.unregister" => self.unregister_harness_context(payload).await,
             "runtime.connectors.configure" => self.connectors.configure(payload).await,
             "runtime.connectors.clear" => self.connectors.clear(payload).await,
             "runtime.connectors.status" => self.connectors.status().await,

@@ -182,6 +182,37 @@ impl RuntimeWorkRpcHandler {
         }
     }
 
+    pub(super) async fn register_harness_context(
+        &self,
+        payload: Value,
+    ) -> Result<Value, AppIpcError> {
+        let request = harness_context::parse_registration_payload(payload)
+            .map_err(|error| AppIpcError::new("invalid_request", error))?;
+        let loopback = executor_loopback_base_url().ok_or_else(|| {
+            AppIpcError::new(
+                "runtime_unavailable",
+                "Executor HTTP server is not available",
+            )
+        })?;
+        let token =
+            harness_context::register_harness_context(&request.scope, request.user, request.model);
+        Ok(json!({
+            "token": token,
+            "baseUrl": format!("{loopback}/v1/harness-context/{token}")
+        }))
+    }
+
+    pub(super) async fn unregister_harness_context(
+        &self,
+        payload: Value,
+    ) -> Result<Value, AppIpcError> {
+        let token = string_field(&payload, "token")
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| AppIpcError::new("invalid_request", "token is required"))?;
+        harness_context::unregister_harness_context(&token);
+        Ok(json!({"unregistered": true}))
+    }
+
     pub(super) async fn get_runtime_capacity(&self) -> Result<Value, AppIpcError> {
         let scheduler = self
             .turn_scheduler
