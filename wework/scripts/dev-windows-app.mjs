@@ -609,7 +609,24 @@ async function main() {
   log('Preparing DWS sidecar...')
   process.env.WEWORK_DWS_TARGET = target
   await run('pnpm', ['run', 'prepare:dws'], { cwd: WEWORK_DIR })
-  await run('pnpm', ['run', 'prepare:deepseek-harness'], { cwd: WEWORK_DIR })
+  if (!process.env.WEWORK_HARNESS_RUNTIME_ROOT && !process.env.WEWORK_DEEPSEEK_HARNESS_ROOT) {
+    await run('pnpm', ['run', 'prepare:harness-runtime', '--', '--materialize'], {
+      cwd: WEWORK_DIR,
+    })
+    process.env.WEWORK_HARNESS_RUNTIME_ROOT = join(
+      WEWORK_DIR,
+      'node_modules',
+      '.cache',
+      'harness-runtime-dev'
+    )
+  } else {
+    await run('pnpm', ['run', 'prepare:harness-runtime'], { cwd: WEWORK_DIR })
+  }
+  log(
+    `Using Harness runtime root: ${
+      process.env.WEWORK_HARNESS_RUNTIME_ROOT || process.env.WEWORK_DEEPSEEK_HARNESS_ROOT
+    }`
+  )
 
   if (useDevReload) {
     process.env.WEGENT_EXECUTOR_TARGET_DIR = executorTargetDir

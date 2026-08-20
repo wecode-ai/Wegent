@@ -5,6 +5,7 @@ import {
   clearHarnessAppLaunch,
   failHarnessAppLaunch,
   harnessAppInstallationIdFromPath,
+  updateHarnessAppLaunchPhase,
   useHarnessAppLaunchState,
 } from './harnessAppLaunchState'
 
@@ -18,7 +19,14 @@ describe('harnessAppLaunchState', () => {
       installationId: 'app-1',
       title: 'Example app',
       status: 'starting',
+      phase: 'preparingRuntime',
       error: null,
+    })
+
+    act(() => updateHarnessAppLaunchPhase('app-1', 'loadingApp'))
+    expect(result.current).toMatchObject({
+      status: 'starting',
+      phase: 'loadingApp',
     })
 
     act(() => failHarnessAppLaunch('app-1', 'Startup failed'))
@@ -35,5 +43,17 @@ describe('harnessAppLaunchState', () => {
   test('extracts installation IDs from Smart app routes', () => {
     expect(harnessAppInstallationIdFromPath('/app/harness-app%20one')).toBe('app one')
     expect(harnessAppInstallationIdFromPath('/app/wegent')).toBeNull()
+  })
+
+  test('can begin directly from the loading phase when reopening a running app', () => {
+    const { result } = renderHook(() => useHarnessAppLaunchState('app-2'))
+
+    act(() => beginHarnessAppLaunch('app-2', 'Example app', vi.fn(), 'loadingApp'))
+
+    expect(result.current).toMatchObject({
+      status: 'starting',
+      phase: 'loadingApp',
+    })
+    act(() => clearHarnessAppLaunch('app-2'))
   })
 })
