@@ -303,6 +303,8 @@ describe('EnvironmentInfoPopover', () => {
     expect(
       screen.getByTestId('change-request-button').querySelector('[aria-hidden="true"]')
     ).toHaveClass('text-green-500')
+    expect(screen.getByTestId('change-request-pull-request-icon')).toBeInTheDocument()
+    expect(screen.queryByTestId('change-request-merged-icon')).not.toBeInTheDocument()
   })
 
   test('shows merge conflicts on the pull request icon without adding a second row', () => {
@@ -386,6 +388,48 @@ describe('EnvironmentInfoPopover', () => {
     expect(button).toHaveAccessibleName(/合并队列中/)
     expect(button).not.toHaveAccessibleName(/检查通过/)
     expect(button.querySelector('[aria-hidden="true"]')).not.toHaveClass('text-green-500')
+  })
+
+  test('shows a purple icon for a merged pull request', () => {
+    const popoverContainer = document.createElement('div')
+    document.body.appendChild(popoverContainer)
+    portalContainers.push(popoverContainer)
+
+    render(
+      <EnvironmentInfoPopover
+        info={{
+          additions: '+0',
+          deletions: '-0',
+          executionTarget: 'local',
+          branchName: 'feature/merged-change-request',
+          changeRequest: {
+            provider: 'github',
+            state: 'found',
+            changeRequest: {
+              provider: 'github',
+              number: 2780,
+              url: 'https://github.com/wecode-ai/Wegent/pull/2780',
+              title: 'feat(wework): merged change request',
+              state: 'merged',
+              draft: false,
+              checks: 'success',
+              mergeability: 'unknown',
+              mergeQueue: 'not_queued',
+            },
+          },
+        }}
+        popoverContainer={popoverContainer}
+        open
+        onOpenChange={vi.fn()}
+      />
+    )
+
+    const icon = screen.getByTestId('change-request-button').querySelector('[aria-hidden="true"]')
+    expect(screen.getByTestId('change-request-state')).toHaveTextContent('已合并')
+    expect(icon).toHaveClass('text-violet-500')
+    expect(icon).not.toHaveClass('text-green-500')
+    expect(screen.getByTestId('change-request-merged-icon')).toBeInTheDocument()
+    expect(screen.queryByTestId('change-request-pull-request-icon')).not.toBeInTheDocument()
   })
 
   test('opens Git hosting settings from a GitLab CLI recovery hint', async () => {
