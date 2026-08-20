@@ -2112,7 +2112,7 @@ fn required_mcp_startup_failure(message: &Value) -> Option<String> {
         .get("status")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    if !matches!(status, "failed" | "error" | "cancelled") {
+    if !matches!(status, "failed" | "error") {
         return None;
     }
     let reason = params
@@ -2504,7 +2504,9 @@ fn observed_active_turn_id(
                 .and_then(|item| item.get("type"))
                 .and_then(Value::as_str)
                 == Some("userMessage"));
-    if !starts_root_turn {
+    let confirms_provisional_turn = active_turn_id.is_some()
+        && matches!(method, Some("thread/goal/updated" | "thread/goal/cleared"));
+    if !starts_root_turn && !confirms_provisional_turn {
         return None;
     }
     root_turn_notification_id(message, state)

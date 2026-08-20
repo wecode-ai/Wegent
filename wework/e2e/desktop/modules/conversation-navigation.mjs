@@ -69,12 +69,20 @@ import {
 
 import { captureVerificationScreenshot, waitForWorkbenchDebugState } from './workspace-flows.mjs'
 
+async function waitForActiveTaskIdle(control) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    const pauseButtonCount = Number(
+      await control.command('getElementCount', '[data-testid="pause-response-button"]')
+    )
+    if (pauseButtonCount === 0) return
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error('The active task did not become idle before sending the next prompt')
+}
+
 async function sendPrompt(control, selector, prompt) {
-  await waitForSnapshot(
-    control,
-    snapshot => !snapshot.testIds.includes('pause-response-button'),
-    'The active task did not become idle before sending the next prompt'
-  )
+  await waitForActiveTaskIdle(control)
   await control.command('fill', selector, { value: prompt })
   await control.command('press', selector, { key: 'Enter' })
 }
@@ -86,11 +94,7 @@ async function sendPromptWithButton(
   timeoutMs = MODEL_PROTOCOL_MATRIX_TIMEOUT_MS,
   { confirmCloudModelCatalogSync = false } = {}
 ) {
-  await waitForSnapshot(
-    control,
-    snapshot => !snapshot.testIds.includes('pause-response-button'),
-    'The active task did not become idle before sending the next prompt'
-  )
+  await waitForActiveTaskIdle(control)
   await control.command('fill', selector, { value: prompt })
   await control.command('waitFor', selector, {
     text: prompt,

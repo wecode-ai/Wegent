@@ -35,8 +35,10 @@ sequenceDiagram
     H->>B: 仅投递到线程 B
     H->>H: 同时投递到全局流
     Note over A: 线程 A 队列不受影响
+    C->>H: 线程 A thread/goal/updated
+    H->>A: 用首个可信协议 turnId 校正 provisional turn/start 返回值
     C->>H: 线程 A item/started(userMessage)
-    H->>A: 用协议 turnId 校正 turn/start 返回值
+    H->>A: 确认同一活跃 turn
     C->>H: 线程 A turn/completed
     H->>A: 投递完成通知
     A->>A: 生成唯一终态
@@ -57,6 +59,7 @@ sequenceDiagram
 - 带 `threadId` 的通知只能进入匹配线程的 turn 流；全局流仍接收全部通知。
 - 无 `threadId` 的进程退出通知必须到达所有活跃线程。
 - 线程订阅必须在可能启动该线程 turn 的请求之前建立。
-- 根用户消息的 `item/started` 所携带的协议 `turnId` 必须校正 `turn/start` 返回的过期 turn ID，后续同一 turn 的 Goal 与完成通知不得被误判为 stale。
+- `turn/start` 返回的 turn ID 在首个可信协议事件确认前只是 provisional；`turn/started`、根用户消息的 `item/started`，以及 provisional turn 期间先到达的 `thread/goal/updated` 或 `thread/goal/cleared` 必须用其协议 `turnId` 校正活跃 turn。
+- Goal 状态通知即使先于根用户消息到达，也必须进入同一 turn 状态机；同一 turn 后续通知不得被误判为 stale。
 - 助手消息等非根用户消息不得替换当前活跃 turn。
 - 全局后台路由掉队不得把无关活跃 turn 标记为失败。

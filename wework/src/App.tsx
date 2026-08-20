@@ -31,6 +31,11 @@ import { stripAppBasePath } from '@/config/runtime'
 import { AppearanceProvider } from '@/features/appearance'
 import { ChromeTitlebar } from '@/components/topnav/ChromeTitlebar'
 import { AppIframe } from '@/components/topnav/AppIframe'
+import { HarnessAppLaunchSurface } from '@/features/harness-apps/HarnessAppLaunchSurface'
+import {
+  harnessAppInstallationIdFromPath,
+  useHarnessAppLaunchState,
+} from '@/features/harness-apps/harnessAppLaunchState'
 import { useChromeTabs } from '@/components/topnav/useChromeTabs'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { AppUpdateProvider } from '@/features/app-update/AppUpdateProvider'
@@ -209,7 +214,7 @@ interface WorkspaceTabSurfaceProps {
   user: User
 }
 
-function WorkspaceTabSurface({
+export function WorkspaceTabSurface({
   active,
   cloudWebUrl,
   lifecycleStore,
@@ -228,7 +233,10 @@ function WorkspaceTabSurface({
   const iframe = workspaceTabIframe(tab, cloudWebUrl)
   const auxiliaryPage = workspaceTabAuxiliaryPage(tabPath, tabSearch)
   const auxiliaryActive = Boolean(auxiliaryPage)
-  const nativeWorkbenchActive = !iframe && !auxiliaryActive
+  const harnessAppInstallationId = harnessAppInstallationIdFromPath(tabPath)
+  const harnessAppLaunch = useHarnessAppLaunchState(harnessAppInstallationId)
+  const harnessAppLaunchActive = Boolean(harnessAppLaunch)
+  const nativeWorkbenchActive = !iframe && !auxiliaryActive && !harnessAppLaunchActive
   const [surfaceHistory, setSurfaceHistory] = useState(() => ({
     iframe,
     hasMountedProvider: !iframe,
@@ -259,14 +267,20 @@ function WorkspaceTabSurface({
   // Task-scoped browser routing is owned by workbench effects and must remain
   // available while another workspace tab is active.
   const keepTaskRuntimeActive = tab.kind === 'task' && renderWorkbench
+  // App WebViews own in-memory page state that is lost when React Activity
+  // disconnects their effects. Keep the current iframe route connected while
+  // inactive; AppIframe hides the native WebView through its active prop.
+  const keepIframeActive = Boolean(iframe)
   return (
     <WorkspaceTabPortalOwner ownerId={tab.id}>
-      <Activity mode={active || keepTaskRuntimeActive ? 'visible' : 'hidden'}>
+      <Activity mode={active || keepTaskRuntimeActive || keepIframeActive ? 'visible' : 'hidden'}>
         <div
           className={cn(
             'min-h-0 min-w-0 overflow-hidden',
             active ? 'relative h-full' : 'absolute inset-0',
-            !active && keepTaskRuntimeActive && 'pointer-events-none invisible'
+            !active &&
+              (keepTaskRuntimeActive || keepIframeActive) &&
+              'pointer-events-none invisible'
           )}
           data-testid={`workspace-tab-content-${tab.id}`}
           data-workspace-tab-content={tab.id}
@@ -302,6 +316,7 @@ function WorkspaceTabSurface({
                   {auxiliaryPage}
                 </div>
               ) : null}
+              {harnessAppLaunch ? <HarnessAppLaunchSurface launch={harnessAppLaunch} /> : null}
             </WorkbenchProvider>
           ) : null}
           {renderedIframe ? (
