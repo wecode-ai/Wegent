@@ -3399,22 +3399,30 @@ describe('ScrollableMessageArea', () => {
         disconnect() {}
       }
     )
+    const firstUserMessage = {
+      id: 'a-growth-user',
+      role: 'user' as const,
+      content: '开始会话 A',
+      status: 'done' as const,
+      createdAt: '2026-05-29T00:00:00.000Z',
+    }
     const messageA = {
       id: 'a-growth',
       role: 'assistant' as const,
       content: '会话 A',
       status: 'done' as const,
-      createdAt: '2026-05-29T00:00:00.000Z',
+      createdAt: '2026-05-29T00:00:01.000Z',
     }
     const messageB = {
       id: 'b-growth',
       role: 'assistant' as const,
       content: '会话 B',
       status: 'done' as const,
-      createdAt: '2026-05-29T00:00:00.000Z',
+      createdAt: '2026-05-29T00:00:02.000Z',
     }
+    const messagesA = [firstUserMessage, messageA]
     const { rerender } = render(
-      <ScrollableMessageArea conversationKey="conversation-growth-a" messages={[messageA]} />
+      <ScrollableMessageArea conversationKey="conversation-growth-a" messages={messagesA} />
     )
 
     const scroller = screen.getByTestId('chat-message-scroll-area')
@@ -3450,9 +3458,7 @@ describe('ScrollableMessageArea', () => {
       configurable: true,
     })
     scroller.scrollTop = 0
-    rerender(
-      <ScrollableMessageArea conversationKey="conversation-growth-a" messages={[messageA]} />
-    )
+    rerender(<ScrollableMessageArea conversationKey="conversation-growth-a" messages={messagesA} />)
 
     act(() => {
       vi.runOnlyPendingTimers()
@@ -3474,6 +3480,35 @@ describe('ScrollableMessageArea', () => {
 
     expect(scroller.scrollTo).toHaveBeenLastCalledWith({
       top: 260,
+      behavior: 'auto',
+    })
+
+    rerender(
+      <ScrollableMessageArea
+        conversationKey="conversation-growth-a"
+        messages={[
+          ...messagesA,
+          {
+            id: 'a-growth-user-follow-up',
+            role: 'user',
+            content: '继续处理',
+            status: 'done',
+            createdAt: '2026-05-29T00:00:03.000Z',
+          },
+        ]}
+      />
+    )
+    Object.defineProperty(scroller, 'scrollHeight', {
+      value: 1400,
+      configurable: true,
+    })
+    act(() => {
+      resizeCallbacks.forEach(callback => callback([], {} as ResizeObserver))
+      vi.runOnlyPendingTimers()
+    })
+
+    expect(scroller.scrollTo).toHaveBeenLastCalledWith({
+      top: 1400,
       behavior: 'auto',
     })
   })

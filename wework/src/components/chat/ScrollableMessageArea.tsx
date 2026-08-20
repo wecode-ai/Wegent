@@ -775,6 +775,7 @@ function ScrollableMessagePaneContent({
     }
 
     if (shouldForceBottom) {
+      restoredScrollSnapshotRef.current = null
       pendingAssistantResponseStartRef.current = false
       setScrollToBottom('auto', { saveSnapshot: false })
       if (preserveLatestUserTurnRef.current) {
