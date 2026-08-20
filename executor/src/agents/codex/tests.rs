@@ -1836,6 +1836,27 @@ fn started_user_item_corrects_a_mismatched_turn_start_response() {
 }
 
 #[test]
+fn goal_update_corrects_a_provisional_turn_before_the_user_item_starts() {
+    let state = CodexRunState::default();
+    let notification = json!({
+        "method": "thread/goal/updated",
+        "params": {
+            "threadId": "thread-1",
+            "turnId": "turn-2",
+            "goal": {
+                "status": "complete"
+            }
+        }
+    });
+
+    assert_eq!(
+        observed_active_turn_id(Some("turn-1"), &notification, &state),
+        Some("turn-2".to_owned())
+    );
+    assert_eq!(observed_active_turn_id(None, &notification, &state), None);
+}
+
+#[test]
 fn codex_run_state_uses_commentary_channel_delta_as_fallback_final_content() {
     let mut state = CodexRunState::default();
 

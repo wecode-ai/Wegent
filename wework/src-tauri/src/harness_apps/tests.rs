@@ -173,7 +173,6 @@ fn node_version_check_reports_v8_initialization_failures() {
     assert!(error.contains("failed to initialize V8"));
     assert!(error.contains("Failed to reserve virtual memory for CodeRange"));
 }
-
 #[test]
 fn runtime_descriptor_requires_https_and_integrity_metadata() {
     let directory = tempdir().unwrap();
