@@ -54,6 +54,7 @@ import type {
   DeviceInfo,
   InstalledPlugin,
   ProjectWithTasks,
+  RuntimeSidebarMutationResponse,
   RuntimeTaskAddress,
   RuntimeTaskCreateResponse,
   RuntimeGoal,
@@ -2135,7 +2136,7 @@ describe('WorkbenchProvider runtime tasks', () => {
   })
 
   test('keeps a project task globally pinned while executor refresh is stale', async () => {
-    const pinRequest = deferred<void>()
+    const pinRequest = deferred<RuntimeSidebarMutationResponse>()
     const runtimeWork = createRuntimeWork({
       projects: [
         {
@@ -2188,7 +2189,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('automation-task-options')).toHaveTextContent('runtime-a')
 
     await act(async () => {
-      pinRequest.resolve()
+      pinRequest.resolve({ accepted: true, deviceId: 'state-device' })
       await pinRequest.promise
     })
     await waitFor(() => expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(2))
@@ -2197,7 +2198,7 @@ describe('WorkbenchProvider runtime tasks', () => {
   })
 
   test('rolls back a project task pin when executor persistence fails', async () => {
-    const pinRequest = deferred<void>()
+    const pinRequest = deferred<RuntimeSidebarMutationResponse>()
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi.fn().mockResolvedValue(
         createRuntimeWork({
@@ -2260,9 +2261,69 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('automation-task-options')).toHaveTextContent('none')
   })
 
+  test('rolls back a project task pin when executor rejects the mutation', async () => {
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: {
+                key: 'local:/workspace/project-alpha',
+                name: 'Wegent',
+                stateDeviceId: 'state-device',
+              },
+              deviceWorkspaces: [
+                {
+                  deviceId: 'device-1',
+                  workspacePath: '/workspace/project-alpha',
+                  available: true,
+                  tasks: [
+                    {
+                      taskId: 'runtime-a',
+                      threadId: 'thread-a',
+                      workspacePath: '/workspace/project-alpha',
+                      title: 'Pinned automation target',
+                      runtime: 'codex',
+                      pinned: false,
+                    },
+                  ],
+                },
+              ],
+              totalTasks: 1,
+            },
+          ],
+          chats: [],
+          totalTasks: 1,
+        })
+      ),
+      setRuntimeTaskPinned: vi.fn().mockResolvedValue({
+        accepted: false,
+        deviceId: 'state-device',
+        error: 'pin rejected',
+      }),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<RuntimeTaskPinProbe />, services)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-task-pin-state')).toHaveTextContent('unpinned')
+    )
+    await userEvent.click(screen.getByTestId('runtime-task-pin-button'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-task-pin-error')).toHaveTextContent('failed')
+    )
+    expect(screen.getByTestId('runtime-task-pin-state')).toHaveTextContent('unpinned')
+    expect(screen.getByTestId('automation-task-options')).toHaveTextContent('none')
+    expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(1)
+  })
+
   test('serializes pin mutations for the same runtime task', async () => {
-    const firstPinRequest = deferred<void>()
-    const secondPinRequest = deferred<void>()
+    const firstPinRequest = deferred<RuntimeSidebarMutationResponse>()
+    const secondPinRequest = deferred<RuntimeSidebarMutationResponse>()
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi.fn().mockResolvedValue(
         createRuntimeWork({
@@ -2325,7 +2386,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
 
     await act(async () => {
-      secondPinRequest.resolve()
+      secondPinRequest.resolve({ accepted: true, deviceId: 'state-device' })
       await secondPinRequest.promise
     })
     await waitFor(() => expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(2))

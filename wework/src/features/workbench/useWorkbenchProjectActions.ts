@@ -515,7 +515,10 @@ export function useWorkbenchProjectActions({
         .then(async () => {
           const requestId = updateLocalRuntimeTaskPinned(data)
           try {
-            await executorClient.runtime.setRuntimeTaskPinned(data)
+            const response = await executorClient.runtime.setRuntimeTaskPinned(data)
+            if (!response.accepted) {
+              throw new Error(response.error || 'Failed to update runtime task pin')
+            }
           } catch (error) {
             rollbackLocalRuntimeTaskPinned(data, requestId)
             throw error
