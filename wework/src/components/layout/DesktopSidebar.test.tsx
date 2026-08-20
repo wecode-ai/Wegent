@@ -2253,6 +2253,91 @@ describe('DesktopSidebar', () => {
     await act(async () => resolvePinRequest?.())
   })
 
+  test('keeps a chat task pinned while a stale work list follows a successful pin request', async () => {
+    const onSetRuntimeTaskPinned = vi.fn().mockResolvedValue(undefined)
+    const chatPath = '/Users/alice/Documents/Codex/2026-07-12/stale-pin-refresh'
+    const runtimeWorkWithPinned = (pinned: boolean) => ({
+      projects: [],
+      chats: [
+        {
+          deviceId: 'local-device',
+          available: true,
+          workspacePath: chatPath,
+          workspaceKind: 'chat' as const,
+          tasks: [
+            {
+              taskId: 'stale-pin-chat',
+              threadId: 'stale-pin-thread',
+              workspacePath: chatPath,
+              workspaceKind: 'chat' as const,
+              title: 'Stale pin refresh task',
+              runtime: 'codex' as const,
+              pinned,
+            },
+          ],
+        },
+      ],
+      totalTasks: 1,
+    })
+    const lifecycleStore = new RuntimeTaskLifecycleStore('desktop-sidebar-stale-pin-test')
+    const initialProps = createSidebarProps({
+      runtimeWork: runtimeWorkWithPinned(false),
+      onSetRuntimeTaskPinned,
+    })
+    lifecycleStore.syncRuntimeWork(initialProps.runtimeWork)
+    const view = render(
+      <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+        <DesktopSidebar {...initialProps} />
+      </RuntimeTaskLifecycleProvider>
+    )
+
+    await userEvent.click(screen.getByTestId('runtime-local-task-mark-stale-pin-chat'))
+    await waitFor(() => {
+      expect(screen.getByTestId('sidebar-pinned-section')).toContainElement(
+        screen.getByTestId('runtime-local-task-row-stale-pin-chat')
+      )
+    })
+
+    const staleProps = createSidebarProps({
+      runtimeWork: runtimeWorkWithPinned(false),
+      onSetRuntimeTaskPinned,
+    })
+    act(() => lifecycleStore.syncRuntimeWork(staleProps.runtimeWork))
+    view.rerender(
+      <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+        <DesktopSidebar {...staleProps} />
+      </RuntimeTaskLifecycleProvider>
+    )
+
+    expect(screen.getByTestId('sidebar-pinned-section')).toContainElement(
+      screen.getByTestId('runtime-local-task-row-stale-pin-chat')
+    )
+
+    const confirmedProps = createSidebarProps({
+      runtimeWork: runtimeWorkWithPinned(true),
+      onSetRuntimeTaskPinned,
+    })
+    act(() => lifecycleStore.syncRuntimeWork(confirmedProps.runtimeWork))
+    view.rerender(
+      <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+        <DesktopSidebar {...confirmedProps} />
+      </RuntimeTaskLifecycleProvider>
+    )
+
+    expect(screen.getByTestId('sidebar-pinned-section')).toContainElement(
+      screen.getByTestId('runtime-local-task-row-stale-pin-chat')
+    )
+
+    await userEvent.click(screen.getByTestId('runtime-local-task-mark-stale-pin-chat'))
+
+    expect(screen.queryByTestId('sidebar-pinned-section')).not.toBeInTheDocument()
+    expect(onSetRuntimeTaskPinned).toHaveBeenLastCalledWith({
+      deviceId: 'local-device',
+      threadId: 'stale-pin-thread',
+      pinned: false,
+    })
+  })
+
   test('returns a chat task to the task section when pinning fails', async () => {
     const onSetRuntimeTaskPinned = vi.fn().mockRejectedValue(new Error('pin failed'))
     const chatPath = '/Users/alice/Documents/Codex/2026-07-12/pin-failure'
