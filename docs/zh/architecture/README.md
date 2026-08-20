@@ -21,7 +21,7 @@ sidebar_position: 1
 | 文本模型视觉委托                     | [model-vision-delegation.md](model-vision-delegation.md)                     | 显式模型引用、catalog 能力、sidecar 配置、图片替换、失败隔离          |
 | Wework 宿主插件运行时                | [workbench-plugin-runtime.md](workbench-plugin-runtime.md)                   | profile 装配、服务与 UI slot、动态模块、sidecar、卸载与恢复           |
 | 智能应用（DeepSeek Harness Runtime） | [deepseek-harness-apps.md](deepseek-harness-apps.md)                         | 应用类型导航、安装包校验、版本绑定、模型代理、独立实例、标签页与回收  |
-| IM 私聊续聊本地 Runtime              | [im-runtime-streaming.md](im-runtime-streaming.md)                           | callback key、`runtime:event` 信封、中继与 IM 转发、终态、失败隔离    |
+| IM 私聊续聊本地 Runtime              | [im-runtime-streaming.md](im-runtime-streaming.md)                           | callback key、`runtime:event` 信封、紧凑进度投影、终态、失败隔离      |
 | Codex 通知流隔离                     | [codex-notification-routing.md](codex-notification-routing.md)               | 共享 app-server、线程路由、突发隔离、进程退出、终态投影               |
 
 详细产品说明继续放在原开发指南；本目录只保存可评审的架构真值。
