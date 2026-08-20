@@ -716,8 +716,19 @@ impl RuntimeWorkRpcHandler {
             let active_turn_local_task_id = turn_local_task_id.clone();
             let active_turn_execution_id = execution_id;
             let active_turn_subtask_id = request.subtask_id.to_string();
+            let active_turn_client_user_message_id = request
+                .extra
+                .get("client_user_message_id")
+                .or_else(|| request.extra.get("clientUserMessageId"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned);
+            let pending_turn_presentation =
+                Arc::new(Mutex::new(active_turn_client_user_message_id));
             let active_turn_request = request.clone();
             let callback_hook_turn = Arc::clone(&hook_turn);
+            let callback_turn_presentation = Arc::clone(&pending_turn_presentation);
             let active_turn_started: CodexActiveTurnCallback =
                 Box::new(move |thread_id, turn_id| {
                     active_turn_handler.start_queue_run(&active_turn_local_task_id);
@@ -740,10 +751,15 @@ impl RuntimeWorkRpcHandler {
                         &thread_id,
                         &turn_id,
                     );
+                    let client_user_message_id = callback_turn_presentation
+                        .lock()
+                        .expect("turn presentation lock should not be poisoned")
+                        .clone();
                     active_turn_handler.record_runtime_turn_id(
                         &active_turn_local_task_id,
                         &active_turn_subtask_id,
                         &turn_id,
+                        client_user_message_id.as_deref(),
                     );
                     let mut event_request = active_turn_request.clone();
                     event_request.subtask_id = turn_id.clone();
@@ -763,7 +779,11 @@ impl RuntimeWorkRpcHandler {
                 });
             let finished_turn_handler = handler.clone();
             let finished_turn_local_task_id = turn_local_task_id.clone();
+            let finished_turn_presentation = Arc::clone(&pending_turn_presentation);
             let active_turn_finished: CodexActiveTurnFinishedCallback = Box::new(move || {
+                *finished_turn_presentation
+                    .lock()
+                    .expect("turn presentation lock should not be poisoned") = None;
                 finished_turn_handler
                     .clear_active_codex_turn(&finished_turn_local_task_id, execution_id);
             });

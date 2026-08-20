@@ -129,6 +129,38 @@ pub(crate) fn append_runtime_handle_user_message_presentation(
     }
 }
 
+pub(crate) fn bind_runtime_handle_user_message_presentation_to_turn(
+    runtime_handle: &mut Value,
+    client_user_message_id: &str,
+    turn_id: &str,
+) {
+    let client_user_message_id = client_user_message_id.trim();
+    let turn_id = turn_id.trim();
+    if client_user_message_id.is_empty() || turn_id.is_empty() {
+        return;
+    }
+    let Some(presentations) = runtime_handle
+        .get_mut("userMessagePresentations")
+        .and_then(Value::as_array_mut)
+    else {
+        return;
+    };
+    let Some(presentation) = presentations
+        .iter_mut()
+        .find(|presentation| {
+            presentation
+                .get("clientUserMessageId")
+                .or_else(|| presentation.get("client_user_message_id"))
+                .and_then(Value::as_str)
+                == Some(client_user_message_id)
+        })
+        .and_then(Value::as_object_mut)
+    else {
+        return;
+    };
+    presentation.insert("turnId".to_owned(), Value::String(turn_id.to_owned()));
+}
+
 fn runtime_handle_messages_mut(runtime_handle: &mut Value) -> &mut Vec<Value> {
     runtime_handle_array_mut(runtime_handle, "messages")
 }

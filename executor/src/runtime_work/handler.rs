@@ -89,7 +89,8 @@ use super::{
     },
     runtime_handle_messages::{
         append_completed_transcript_messages, append_runtime_handle_message,
-        append_runtime_handle_user_message_presentation, cached_messages,
+        append_runtime_handle_user_message_presentation,
+        bind_runtime_handle_user_message_presentation_to_turn, cached_messages,
         clear_completed_transcript_messages, clear_runtime_handle_messages,
         completed_transcript_messages, set_runtime_handle_messages, user_message_presentations,
     },

@@ -53,6 +53,17 @@ const PROJECT = {
   updated_at: '2026-08-11T00:00:00',
 }
 
+const PROJECT_MEMBERS = [
+  {
+    id: PROJECT.created_by_user_id,
+    user_id: PROJECT.created_by_user_id,
+    user_name: 'wework-desktop-e2e-cloud-user',
+    email: 'desktop-e2e@wework.local',
+    role: 'Owner',
+    capability_description: '',
+  },
+]
+
 const AGENT = {
   id: AGENT_ID,
   projectId: PROJECT_ID,
@@ -66,6 +77,7 @@ const AGENT = {
   executionMode: 'auto',
   visibility: 'creator_admin',
   localProjectId: null,
+  maxConcurrentExecutions: 1,
   createdByUserId: 9001,
   createdByUserName: 'E2E Owner',
   status: 'active',
@@ -1543,6 +1555,20 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           updated_at: '2026-08-18T08:40:00Z',
         }
         json(response, 200, uiProject)
+        return true
+      }
+      if (
+        request.method === 'GET' &&
+        url.pathname === `/api/v1/cloud-projects/${PROJECT_ID}/board-snapshot`
+      ) {
+        const items = [createdBoardItem, createdChildItem].filter(Boolean)
+        const itemIds = new Set(items.map(item => item.id))
+        json(response, 200, {
+          items,
+          task_bindings: workflowTaskBindings.filter(binding => itemIds.has(binding.loop_item_id)),
+          members: PROJECT_MEMBERS,
+          agents: archivedAgentPayload?.status === 'archived' ? [] : [AGENT],
+        })
         return true
       }
       if (

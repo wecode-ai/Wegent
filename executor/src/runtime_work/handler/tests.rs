@@ -1285,6 +1285,129 @@ async fn running_codex_transcript_uses_live_cache_without_provider_read() {
 }
 
 #[tokio::test]
+async fn running_codex_transcript_binds_same_second_presentations_to_provider_turns() {
+    const PROVIDER_SECOND: i64 = 1_780_000_000;
+    const PRESENTATION_MS: i64 = PROVIDER_SECOND * 1_000 + 900;
+
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    let mut link = RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.thread_id = Some("thread-1".to_owned());
+    for (index, content) in [
+        "First instruction",
+        "Second instruction",
+        "Third instruction",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        append_runtime_handle_user_message_presentation(
+            &mut link.runtime_handle,
+            json!({
+                "clientUserMessageId": format!("client-user-{}", index + 1),
+                "content": content,
+                "createdAt": PRESENTATION_MS,
+                "ensureVisible": true,
+                "references": [],
+            }),
+        );
+    }
+    handler.upsert_local_task(link);
+    start_test_execution(&handler, "task-1");
+
+    for index in 0..3 {
+        let turn_id = format!("turn-{}", index + 1);
+        let client_user_message_id = format!("client-user-{}", index + 1);
+        handler.record_runtime_turn_id(
+            "task-1",
+            &format!("subtask-{}", index + 1),
+            &turn_id,
+            Some(&client_user_message_id),
+        );
+        if index < 2 {
+            handler.persist_completed_codex_turn_from_notification(
+                "task-1",
+                &json!({
+                    "method": "turn/completed",
+                    "params": {
+                        "threadId": "thread-1",
+                        "turn": {
+                            "id": turn_id,
+                            "status": "completed",
+                            "startedAt": PROVIDER_SECOND,
+                            "completedAt": PROVIDER_SECOND + 1,
+                            "items": [{
+                                "id": format!("assistant-{}", index + 1),
+                                "type": "agentMessage",
+                                "phase": "final_answer",
+                                "text": format!("Response {}", index + 1),
+                            }],
+                        }
+                    }
+                }),
+            );
+        } else {
+            handler.begin_active_codex_transcript("task-1", "thread-1", &turn_id);
+            handler.record_active_codex_transcript_item(
+                "task-1",
+                &turn_id,
+                &json!({
+                    "method": "item/completed",
+                    "params": {
+                        "turnId": turn_id,
+                        "item": {
+                            "id": "assistant-3",
+                            "type": "agentMessage",
+                            "phase": "commentary",
+                            "createdAt": PROVIDER_SECOND,
+                            "text": "Response 3",
+                        }
+                    }
+                }),
+            );
+        }
+    }
+
+    let transcript = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "taskId": "task-1",
+                "workspacePath": "/tmp/project"
+            }
+        }))
+        .await
+        .expect("running transcript should use turn-bound presentations");
+
+    assert_eq!(transcript["running"], true);
+    let messages = transcript["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 6);
+    let turns = transcript["turns"].as_array().unwrap();
+    assert_eq!(turns.len(), 3);
+    for index in 0..3 {
+        let turn_id = format!("turn-{}", index + 1);
+        assert_eq!(messages[index * 2]["role"], "user");
+        assert_eq!(
+            messages[index * 2]["clientUserMessageId"],
+            format!("client-user-{}", index + 1)
+        );
+        assert_eq!(messages[index * 2]["turnId"], turn_id);
+        assert_eq!(messages[index * 2 + 1]["role"], "assistant");
+        assert_eq!(messages[index * 2 + 1]["turnId"], turn_id);
+        assert_eq!(turns[index]["id"], turn_id);
+        assert_eq!(turns[index]["items"].as_array().unwrap().len(), 2);
+        assert_eq!(turns[index]["items"][0]["type"], "user_message");
+        assert_eq!(
+            turns[index]["items"][1]["type"],
+            if index < 2 { "assistant_text" } else { "block" }
+        );
+    }
+}
+
+#[tokio::test]
 async fn completed_codex_turn_is_cached_before_automatic_continuation_finishes() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
     let mut link = RuntimeTaskLink::new_pending(
@@ -2075,14 +2198,22 @@ fn runtime_turn_ids_are_persisted_by_subtask() {
     let index_path = temp_runtime_work_index_path("runtime-turn-id");
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
     handler.store = RuntimeWorkStore::new(index_path.clone());
-    handler.upsert_local_task(RuntimeTaskLink::new_pending(
+    let mut link = RuntimeTaskLink::new_pending(
         "task-1".to_owned(),
         "/tmp/project".to_owned(),
         "Task".to_owned(),
-    ));
+    );
+    append_runtime_handle_user_message_presentation(
+        &mut link.runtime_handle,
+        json!({
+            "clientUserMessageId": "client-user-1",
+            "content": "Implement quicksort",
+        }),
+    );
+    handler.upsert_local_task(link);
 
     let codex_turn_id = "019f933f-bf0d-72e3-b366-a6539ab00bcf";
-    handler.record_runtime_turn_id("task-1", "subtask-1", codex_turn_id);
+    handler.record_runtime_turn_id("task-1", "subtask-1", codex_turn_id, Some("client-user-1"));
 
     let link = handler
         .local_task_link("task-1")
@@ -2093,6 +2224,10 @@ fn runtime_turn_ids_are_persisted_by_subtask() {
     );
     assert_eq!(
         tasks::resolve_codex_turn_id(&link, "subtask-1").as_deref(),
+        Some(codex_turn_id)
+    );
+    assert_eq!(
+        link.runtime_handle["userMessagePresentations"][0]["turnId"].as_str(),
         Some(codex_turn_id)
     );
     assert_eq!(

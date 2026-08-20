@@ -608,21 +608,27 @@ impl RuntimeWorkRpcHandler {
         local_task_id: &str,
         subtask_id: &str,
         turn_id: &str,
+        client_user_message_id: Option<&str>,
     ) {
         self.store.update_task(local_task_id, |link| {
-            let Some(runtime_handle) = link.runtime_handle.as_object_mut() else {
-                link.runtime_handle = json!({
-                    "lastTurnId": turn_id,
-                    "turnIdsBySubtask": {subtask_id: turn_id},
-                });
-                return;
-            };
-            runtime_handle.insert("lastTurnId".to_owned(), Value::String(turn_id.to_owned()));
-            let mappings = runtime_handle
-                .entry("turnIdsBySubtask")
-                .or_insert_with(|| json!({}));
-            if let Some(mappings) = mappings.as_object_mut() {
-                mappings.insert(subtask_id.to_owned(), Value::String(turn_id.to_owned()));
+            if !link.runtime_handle.is_object() {
+                link.runtime_handle = json!({});
+            }
+            if let Some(runtime_handle) = link.runtime_handle.as_object_mut() {
+                runtime_handle.insert("lastTurnId".to_owned(), Value::String(turn_id.to_owned()));
+                let mappings = runtime_handle
+                    .entry("turnIdsBySubtask")
+                    .or_insert_with(|| json!({}));
+                if let Some(mappings) = mappings.as_object_mut() {
+                    mappings.insert(subtask_id.to_owned(), Value::String(turn_id.to_owned()));
+                }
+            }
+            if let Some(client_user_message_id) = client_user_message_id {
+                bind_runtime_handle_user_message_presentation_to_turn(
+                    &mut link.runtime_handle,
+                    client_user_message_id,
+                    turn_id,
+                );
             }
         });
     }
