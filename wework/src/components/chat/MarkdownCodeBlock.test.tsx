@@ -45,4 +45,37 @@ describe('MarkdownCodeBlock', () => {
       expect(token).toHaveStyle({ display: 'inline' })
     })
   })
+
+  test('renders streaming code without syntax highlighting', () => {
+    const { rerender } = render(
+      <MarkdownCodeBlock lang="sql" isStreaming>
+        SELECT 1
+      </MarkdownCodeBlock>
+    )
+
+    const scrollContainer = screen.getByTestId('markdown-code-scroll-container')
+    expect(scrollContainer).toHaveAttribute('data-syntax-highlighted', 'false')
+    expect(scrollContainer.querySelector('.token')).not.toBeInTheDocument()
+
+    rerender(<MarkdownCodeBlock lang="sql">SELECT 1</MarkdownCodeBlock>)
+
+    expect(scrollContainer).toHaveAttribute('data-syntax-highlighted', 'true')
+    expect(scrollContainer.querySelector('.token')).toBeInTheDocument()
+  })
+
+  test('keeps long completed code as stable plain text', () => {
+    const code = Array.from(
+      { length: 110 },
+      (_, index) => `SELECT ${index + 1} AS value_${index + 1};`
+    ).join('\n')
+
+    render(<MarkdownCodeBlock lang="sql">{code}</MarkdownCodeBlock>)
+
+    const scrollContainer = screen.getByTestId('markdown-code-scroll-container')
+    expect(scrollContainer).toHaveAttribute('data-syntax-highlighted', 'false')
+    expect(scrollContainer.querySelector('.token')).not.toBeInTheDocument()
+    const plainCode = scrollContainer.querySelector('code')
+    expect(plainCode).toHaveTextContent('SELECT 110 AS value_110;')
+    expect(plainCode?.parentElement).toHaveStyle({ color: '#abb2bf' })
+  })
 })

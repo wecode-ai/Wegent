@@ -11,6 +11,23 @@ const TOOL_COMPLETION = '本地分支落后于 main，CI 跑的提交是 719f996
 const LEGACY_CONVERSATION_PROMPT = 'WEWORK_DESKTOP_E2E_LEGACY_CONVERSATION_INITIAL'
 const LEGACY_CONVERSATION_COMPLETION = 'WEWORK_DESKTOP_E2E_LEGACY_CONVERSATION_COMPLETE'
 const LEGACY_TRANSCRIPT_ITEM_ID = 'wework-desktop-e2e-legacy-assistant-text'
+const LONG_CODE_PROMPT = 'WEWORK_DESKTOP_E2E_LONG_CODE_TERMINAL_BURST'
+const LONG_CODE_MARKER = 'WEWORK_DESKTOP_E2E_LONG_CODE_LINE_110'
+const LONG_CODE_COMPLETION = [
+  'The completed response contains one long SQL block.',
+  '',
+  '```sql',
+  ...Array.from(
+    { length: 110 },
+    (_, index) =>
+      `SELECT ${index + 1} AS value_${index + 1}${index === 109 ? `, '${LONG_CODE_MARKER}' AS marker` : ''};`
+  ),
+  '```',
+].join('\n')
+const LONG_CODE_REASONING = Array.from(
+  { length: 180 },
+  (_, index) => `Completed reasoning line ${index + 1} for the terminal rendering burst.`
+).join('\n')
 const VISUALIZATION_PROMPT = 'WEWORK_DESKTOP_E2E_ABSOLUTE_VISUALIZATION'
 const VISUALIZATION_TITLE = 'Absolute visualization E2E'
 const VISUALIZATION_MARKER = 'WEWORK_DESKTOP_E2E_VISUALIZATION_VISIBLE'
@@ -46,6 +63,7 @@ const USER_MESSAGE_E2E_ID = 'streaming-text-latest-user-message'
 const USER_MESSAGE_SELECTOR_MARKED = `${ACTIVE_WORKBENCH_SELECTOR} [data-e2e-anchor-id="${USER_MESSAGE_E2E_ID}"]`
 const PROCESSING_SUMMARY_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="processing-summary-header"]`
 const PROCESS_TEXT_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="process-text-block"]`
+const LONG_CODE_SCROLL_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="markdown-code-scroll-container"]`
 const VIEWPORT_ANCHOR_TEXT = `${VIEWPORT_MARKER}: this paragraph must remain fixed after the user scrolls upward.`
 const VIEWPORT_ANCHOR_E2E_ID = 'streaming-text-viewport-anchor'
 const VIEWPORT_ANCHOR_SCOPE_SELECTOR = `${PROCESS_TEXT_SELECTOR} [data-scroll-anchor]`
@@ -656,6 +674,32 @@ export function createDesktopScenario({
     releaseToolFinalCompletion = resolve
   })
 
+  const verifyLongCodeTerminalBurst = async control => {
+    await control.command('click', '[data-testid="new-chat-button"]')
+    await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+    await control.command('fill', COMPOSER_SELECTOR, { value: LONG_CODE_PROMPT })
+    await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
+    await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
+      text: LONG_CODE_MARKER,
+      stableMs: 750,
+      timeoutMs: uiTimeoutMs,
+    })
+    assert.equal(
+      await control.command('getAttribute', LONG_CODE_SCROLL_SELECTOR, {
+        value: 'data-syntax-highlighted',
+      }),
+      'false',
+      'The long completed code block enabled expensive syntax highlighting'
+    )
+    assert.equal(
+      Number(await control.command('getElementCount', `${LONG_CODE_SCROLL_SELECTOR} .token`)),
+      0,
+      'The long completed code block rendered syntax token nodes'
+    )
+    await waitForBottom(control, 'The terminal-burst long-code conversation', uiTimeoutMs)
+    await capture(control, 'streaming-text-00-long-code-terminal-burst.png')
+  }
+
   const verifyStoppedTurnOrder = async control => {
     await control.command('click', '[data-testid="new-chat-button"]')
     await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
@@ -729,6 +773,18 @@ export function createDesktopScenario({
       const responseId = `wework-streaming-text-${Date.now()}`
       const latestInput = latestModelInputText(body)
       const followUpNumber = orderFollowUpNumber(body)
+      if (latestInput.includes(LONG_CODE_PROMPT)) {
+        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.end(
+          sse([
+            responseCreated(responseId),
+            ...reasoningEvents('wework-long-code-reasoning', LONG_CODE_REASONING),
+            assistantMessage(LONG_CODE_COMPLETION),
+            responseCompleted(responseId),
+          ])
+        )
+        return true
+      }
       if (followUpNumber !== null) {
         response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
         response.end(
@@ -929,6 +985,11 @@ export function createDesktopScenario({
         active = false
         return
       }
+      if (process.env.WEWORK_E2E_LONG_CODE_ONLY === 'true') {
+        await verifyLongCodeTerminalBurst(control)
+        active = false
+        return
+      }
       const visualizationDirectory = join(workspacePath, 'visualizations')
       const visualizationPath = join(visualizationDirectory, 'absolute-reference.html')
       await mkdir(visualizationDirectory, { recursive: true })
@@ -972,6 +1033,8 @@ export function createDesktopScenario({
         active = false
         return
       }
+
+      await verifyLongCodeTerminalBurst(control)
 
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
