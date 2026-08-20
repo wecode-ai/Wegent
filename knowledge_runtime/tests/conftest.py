@@ -12,9 +12,7 @@ from sqlalchemy.orm import Session
 
 from knowledge_runtime.services.config_resolver import ConfigResolver
 from shared.models.db import Kind, User
-from tests._capability_reference_support import (
-    capability_reference_database,
-)
+from shared.testing import capability_reference_database
 
 # ---------------------------------------------------------------------------
 # Fixtures for admin/other tests

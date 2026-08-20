@@ -17,7 +17,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from knowledge_runtime.models.knowledge_document import KnowledgeDocument
-from shared.db.capability_reference import resolve_referenced_model_kind
+from shared.db.capability_reference import resolve_model_kind
 from shared.models import (
     RuntimeEmbeddingModelConfig,
     RuntimeRetrievalConfig,
@@ -388,31 +388,7 @@ class ConfigResolver:
         model_namespace: str,
     ) -> Kind | None:
         """Resolve a Model Kind from its caller-visible reference."""
-        if model_namespace == "default":
-            model = (
-                db.query(Kind)
-                .filter(
-                    Kind.kind == "Model",
-                    Kind.name == model_name,
-                    Kind.namespace == model_namespace,
-                    Kind.is_active.is_(True),
-                )
-                .filter((Kind.user_id == user_id) | (Kind.user_id == 0))
-                .order_by(Kind.user_id.desc())
-                .first()
-            )
-        else:
-            model = (
-                db.query(Kind)
-                .filter(
-                    Kind.kind == "Model",
-                    Kind.name == model_name,
-                    Kind.namespace == model_namespace,
-                    Kind.is_active.is_(True),
-                )
-                .first()
-            )
-        return model or resolve_referenced_model_kind(
+        return resolve_model_kind(
             db,
             name=model_name,
             namespace=model_namespace,

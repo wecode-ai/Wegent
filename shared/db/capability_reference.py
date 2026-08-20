@@ -25,6 +25,37 @@ _resource_members = table(
 )
 
 
+def resolve_model_kind(
+    db: Session,
+    *,
+    name: str,
+    namespace: str,
+    user_id: int,
+) -> Kind | None:
+    """Resolve a direct Model first, then its caller-visible reference."""
+    direct_query = db.query(Kind).filter(
+        Kind.kind == "Model",
+        Kind.name == name,
+        Kind.namespace == namespace,
+        Kind.is_active.is_(True),
+    )
+    if namespace == "default":
+        direct_query = direct_query.filter(
+            (Kind.user_id == user_id) | (Kind.user_id == 0)
+        ).order_by(Kind.user_id.desc())
+    else:
+        # Group resources are owned by their namespace rather than the caller.
+        # Use the oldest record to keep legacy duplicate names deterministic.
+        direct_query = direct_query.order_by(Kind.id.asc())
+    direct = direct_query.first()
+    return direct or resolve_referenced_model_kind(
+        db,
+        name=name,
+        namespace=namespace,
+        user_id=user_id,
+    )
+
+
 def resolve_referenced_model_kind(
     db: Session,
     *,

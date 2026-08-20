@@ -23,7 +23,12 @@ from app.services.model_aggregation_service import (
 from app.services.user_runtime_config import user_runtime_config_service
 
 
-def _referenced_model(user: User, model_id: str) -> Kind:
+def _referenced_model(
+    user: User,
+    model_id: str,
+    *,
+    model_type: str = "llm",
+) -> Kind:
     return Kind(
         user_id=user.id + 1,
         kind="Model",
@@ -36,7 +41,10 @@ def _referenced_model(user: User, model_id: str) -> Kind:
                 "name": "shared-embedding",
                 "namespace": "default",
             },
-            "spec": {"modelConfig": {"env": {"model": "openai", "model_id": model_id}}},
+            "spec": {
+                "modelType": model_type,
+                "modelConfig": {"env": {"model": "openai", "model_id": model_id}},
+            },
         },
         is_active=True,
     )
@@ -78,6 +86,72 @@ class TestModelAggregationService:
         assert len(shared_models) == 1
         assert shared_models[0]["modelId"] == "smallest-id-model"
         assert shared_models[0]["listingId"] == smallest_id_model.id
+
+    def test_same_name_references_filter_the_smallest_kind_id_winner(
+        self, test_db: Session, test_user: User, monkeypatch
+    ):
+        """Category filters must not replace the runtime-selected Model."""
+        smallest_id_model = _referenced_model(test_user, "smallest-id-llm")
+        larger_id_model = _referenced_model(
+            test_user,
+            "larger-id-embedding",
+            model_type="embedding",
+        )
+        test_db.add_all([smallest_id_model, larger_id_model])
+        test_db.commit()
+
+        monkeypatch.setattr(
+            "app.services.model_aggregation_service.kind_service.list_resources",
+            lambda user_id, kind, namespace: [],
+        )
+        monkeypatch.setattr(
+            "app.services.model_aggregation_service.list_referenced_capabilities",
+            lambda db, kind, user_id, namespace: [
+                larger_id_model,
+                smallest_id_model,
+            ],
+        )
+
+        models = model_aggregation_service.list_available_models(
+            db=test_db,
+            current_user=test_user,
+            scope="personal",
+            model_category_type="embedding",
+        )
+
+        assert all(model["name"] != "shared-embedding" for model in models)
+
+    def test_same_name_reference_cannot_replace_filtered_direct_model(
+        self, test_db: Session, test_user: User, monkeypatch
+    ):
+        """Display filters must not replace the direct-first runtime winner."""
+        direct_model = _referenced_model(test_user, "direct-llm")
+        direct_model.user_id = test_user.id
+        referenced_model = _referenced_model(
+            test_user,
+            "referenced-embedding",
+            model_type="embedding",
+        )
+        test_db.add_all([direct_model, referenced_model])
+        test_db.commit()
+
+        monkeypatch.setattr(
+            "app.services.model_aggregation_service.kind_service.list_resources",
+            lambda user_id, kind, namespace: [direct_model],
+        )
+        monkeypatch.setattr(
+            "app.services.model_aggregation_service.list_referenced_capabilities",
+            lambda db, kind, user_id, namespace: [referenced_model],
+        )
+
+        models = model_aggregation_service.list_available_models(
+            db=test_db,
+            current_user=test_user,
+            scope="personal",
+            model_category_type="embedding",
+        )
+
+        assert all(model["name"] != "shared-embedding" for model in models)
 
     def test_wework_does_not_synthesize_runtime_codex_model_when_user_auth_enabled(
         self, test_db: Session, test_user: User, monkeypatch

@@ -11,11 +11,12 @@ import pytest
 from sqlalchemy import Table
 from sqlalchemy.orm import Session
 
-from shared.db.capability_reference import resolve_referenced_model_kind
-from shared.models.db import Kind
-from shared.tests._capability_reference_support import (
-    capability_reference_database,
+from shared.db.capability_reference import (
+    resolve_model_kind,
+    resolve_referenced_model_kind,
 )
+from shared.models.db import Kind
+from shared.testing import capability_reference_database
 
 
 @dataclass(frozen=True)
@@ -123,6 +124,41 @@ def test_group_model_reference_resolves_source(
     assert resolved is not None
     assert resolved.id == model_reference.source.id
     assert resolved.namespace == "default"
+
+
+def test_direct_group_model_takes_priority_over_reference(
+    model_reference: ModelReferenceScenario,
+) -> None:
+    direct = Kind(
+        id=102,
+        user_id=99,
+        kind="Model",
+        name="shared-embedding",
+        namespace="search-team",
+        json={"spec": {"protocol": "direct"}},
+        is_active=True,
+    )
+    larger_id_direct = Kind(
+        id=103,
+        user_id=100,
+        kind="Model",
+        name="shared-embedding",
+        namespace="search-team",
+        json={"spec": {"protocol": "larger-direct"}},
+        is_active=True,
+    )
+    model_reference.db.add_all([larger_id_direct, direct])
+    model_reference.db.commit()
+
+    resolved = resolve_model_kind(
+        model_reference.db,
+        name="shared-embedding",
+        namespace="search-team",
+        user_id=99,
+    )
+
+    assert resolved is not None
+    assert resolved.id == direct.id
 
 
 def test_group_model_reference_prefers_smallest_source_id(

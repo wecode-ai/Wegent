@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Knowledge Runtime database setup for capability-reference tests."""
+"""Database setup for capability-reference contract tests."""
 
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
@@ -24,7 +24,7 @@ from shared.models.db import Kind
 
 @dataclass(frozen=True)
 class CapabilityReferenceDatabase:
-    """Tables and session used by Knowledge Runtime tests."""
+    """Tables and session used by capability-reference tests."""
 
     session: Session
     namespace: Table
