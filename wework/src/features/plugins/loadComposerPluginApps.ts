@@ -25,6 +25,31 @@ export interface LoadComposerPluginAppsOptions {
    * package logos when installed rows still carry unresolved relative assets.
    */
   marketplaceItems?: PluginMarketplaceItem[]
+  /**
+   * Project-scoped installs stay disabled in the global Codex config. Treat the
+   * selected plugin keys as enabled while building this composer's inventory.
+   */
+  visiblePluginKeys?: ReadonlySet<string>
+}
+
+function applyScopedPluginVisibility(
+  plugins: InstalledPlugin[],
+  visiblePluginKeys: ReadonlySet<string> | undefined
+): InstalledPlugin[] {
+  if (!visiblePluginKeys?.size) return plugins
+  return plugins.map(plugin => {
+    const key =
+      plugin.spec.source.pluginKey ||
+      (typeof plugin.metadata.name === 'string' ? plugin.metadata.name : '')
+    if (!key || !visiblePluginKeys.has(key) || plugin.spec.enabled) return plugin
+    return {
+      ...plugin,
+      spec: {
+        ...plugin.spec,
+        enabled: true,
+      },
+    }
+  })
 }
 
 async function enrichLocalPluginsWithDetails(
@@ -95,7 +120,10 @@ export async function loadComposerPluginApps(
     localItems = await enrichLocalPluginsWithDetails(localItems, readLocalInstalledPluginDetail)
   }
 
-  const installedPlugins = mergeInstalledPlugins(cloudItems, localItems, '')
+  const installedPlugins = applyScopedPluginVisibility(
+    mergeInstalledPlugins(cloudItems, localItems, ''),
+    options.visiblePluginKeys
+  )
   const marketplaceItems = options.marketplaceItems ?? []
 
   try {

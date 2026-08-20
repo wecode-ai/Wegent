@@ -50,6 +50,7 @@ sequenceDiagram
         W->>H: Inject a short-lived ContextGrant
     end
     H->>P: Connect to the persistent MCP Endpoint during Thread startup
+    Note over H,P: Configuration reloads may emit cancelled → starting → ready; cancelled is not a permanent connection failure
     Note over W,G: The Executor started by Wework is the sole lifecycle owner of the Provider and MCP Endpoint
     Note over H,P: Codex is only an MCP Client and no longer creates a stdio MCP child process
     P->>G: Validate connection credentials and the optional ContextGrant
@@ -115,7 +116,7 @@ Invariants:
 - Local and cloud Providers expose the same `get_workflow_stage_context` semantics and return the scope-checked input snapshot frozen when the TaskBinding starts; reads never rebuild drifting predecessor data.
 - `create_delivery` chat selection is resolved server-side from the current Issue timeline and supports all messages, the latest N messages, or explicit message IDs; model-supplied message content is never trusted as the result of a selection.
 - Delivery-asset download verifies that the asset belongs to a Delivery visible under the current Issue. Upload and discard operate only on a still-draft Delivery created by the current session. `finalize_delivery` reuses the immutable snapshot boundary and binds the Delivery to the unique workflow node of its source TaskBinding.
-- Before the first model turn, Runtime validates persistent Endpoint readiness, fixed capability configuration, and ContextGrant. It must not call `mcpServerStatus/list` or another inventory API that can actively start, restart, or enumerate MCP servers. Runtime only observes connection status emitted by Codex app-server. A capability connection failure terminates the current execution while the conversation UI preserves both the user message and failed assistant response.
+- Before the first model turn, Runtime validates persistent Endpoint readiness, fixed capability configuration, and ContextGrant. It must not call `mcpServerStatus/list` or another inventory API that can actively start, restart, or enumerate MCP servers. Runtime only observes connection status emitted by Codex app-server. An explicit `failed` or `error` capability status terminates the current execution while the conversation UI preserves both the user message and failed assistant response. An error-free `cancelled` emitted during configuration reload is transitional, so Runtime continues waiting for a subsequent `starting` / `ready` or terminal status and never discards model output that already completed.
 - A bound Issue conversation that reads the current description or attachments follows one deterministic path: `get_current_context` → `get_board_item` → `list_item_attachments` → `read_item_attachment`. It must not use MCP resource listing, a browser, Shell, `curl`, or direct `wegent://` parsing to infer capability availability.
 - Local, remote, and Backend MCP implementations share the same tool schema and contract tests. Providers choose data location without changing tool semantics.
 - After migration, the per-task `ensure_space_mcp_server` service-injection path is removed; two primary paths must not remain.

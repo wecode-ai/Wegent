@@ -9,6 +9,7 @@ import {
   projectTaskAddresses,
   readLastProjectId,
   removeRuntimeTasks,
+  resolveComposerProjectPluginNames,
   truncateRuntimeTaskTitle,
   updateRuntimeWorkTaskTitle,
   writeLastProjectId,
@@ -142,6 +143,109 @@ describe('workbenchRuntimeHelpers', () => {
       workspacePath: '/workspace/worktrees/login',
       runtimeHandle: { threadId: 'development-thread' },
     })
+  })
+
+  test('uses project plugins for a new conversation draft without captured task plugins', () => {
+    const runtimeWork: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: {
+            id: 7,
+            key: 'local:/workspace/project',
+            name: 'Project',
+            source: 'local_project',
+            aiSettings: {
+              plugins: [
+                {
+                  id: 'quality-gate@team-market',
+                  pluginName: 'quality-gate',
+                  marketplaceId: 'team-market',
+                  displayName: 'Quality Gate',
+                },
+              ],
+            },
+          },
+          deviceWorkspaces: [
+            {
+              deviceId: 'local-device',
+              available: true,
+              mapped: true,
+              workspacePath: '/workspace/project',
+              tasks: [
+                {
+                  taskId: 'draft-task',
+                  workspacePath: '/workspace/project',
+                  title: 'New conversation',
+                  runtime: 'codex',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    }
+
+    expect(
+      resolveComposerProjectPluginNames(runtimeWork, 7, {
+        deviceId: 'local-device',
+        taskId: 'draft-task',
+        workspacePath: '/workspace/project',
+      })
+    ).toEqual(['quality-gate'])
+  })
+
+  test('keeps an existing task pinned to its captured project plugins', () => {
+    const runtimeWork: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: {
+            id: 7,
+            key: 'local:/workspace/project',
+            name: 'Project',
+            source: 'local_project',
+            aiSettings: {
+              plugins: [
+                {
+                  id: 'current-plugin@team-market',
+                  pluginName: 'current-plugin',
+                  marketplaceId: 'team-market',
+                  displayName: 'Current Plugin',
+                },
+              ],
+            },
+          },
+          deviceWorkspaces: [
+            {
+              deviceId: 'local-device',
+              available: true,
+              mapped: true,
+              workspacePath: '/workspace/project',
+              tasks: [
+                {
+                  taskId: 'existing-task',
+                  workspacePath: '/workspace/project',
+                  title: 'Existing conversation',
+                  runtime: 'codex',
+                  projectPluginIds: ['captured-plugin@personal'],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    }
+
+    expect(
+      resolveComposerProjectPluginNames(runtimeWork, 7, {
+        deviceId: 'local-device',
+        taskId: 'existing-task',
+        workspacePath: '/workspace/project',
+      })
+    ).toEqual(['captured-plugin'])
   })
 
   test('hydrates inherited worktree details through the remote host identity', () => {

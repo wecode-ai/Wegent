@@ -97,6 +97,7 @@ const EMBEDDED_BROWSER_USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS 
 AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15";
 const EMBEDDED_BROWSER_DATA_STORE_ID: [u8; 16] = *b"wework-browser01";
 const EMBEDDED_BROWSER_DATA_DIRECTORY: &str = "embedded-browser-data";
+const NS_URL_ERROR_CANCELLED: i64 = -999;
 const EMBEDDED_BROWSER_DIAGNOSTICS_SCRIPT: &str = include_str!("embedded_browser_diagnostics.js");
 const EMBEDDED_BROWSER_ACTION_SCRIPT: &str = include_str!("embedded_browser_action.js");
 const EMBEDDED_BROWSER_INSPECT_SCRIPT: &str = include_str!("embedded_browser_inspect.js");
@@ -131,6 +132,9 @@ struct EmbeddedBrowserEntry {
     title: Option<String>,
     url: Option<String>,
     loaded_url: Option<String>,
+    navigation_generation: u64,
+    is_loading: bool,
+    navigation_error: Option<EmbeddedBrowserNavigationError>,
     opened_at_unix_ms: u128,
     bootstrap_finished: bool,
     host_ready: bool,
@@ -172,6 +176,13 @@ enum EmbeddedBrowserOpenAction {
     Ready,
     WaitForReady,
     RequestOpen,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NavigationFinishedOutcome {
+    Applied,
+    IgnoredStale,
+    IgnoredFailed,
 }
 
 impl EmbeddedBrowserEntry {
@@ -217,7 +228,17 @@ pub struct EmbeddedBrowserPageState {
     native_label: String,
     title: Option<String>,
     url: Option<String>,
+    is_loading: bool,
+    navigation_error: Option<EmbeddedBrowserNavigationError>,
     invalid_tls_certificate: Option<EmbeddedBrowserInvalidTlsCertificate>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct EmbeddedBrowserNavigationError {
+    code: i64,
+    message: String,
+    url: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -299,6 +320,8 @@ struct EmbeddedBrowserPageStateChangePayload {
     native_label: String,
     title: Option<String>,
     url: Option<String>,
+    is_loading: bool,
+    navigation_error: Option<EmbeddedBrowserNavigationError>,
     invalid_tls_certificate: Option<EmbeddedBrowserInvalidTlsCertificate>,
 }
 
@@ -660,16 +683,24 @@ fn wait_for_browser_navigation(
 ) -> Result<(), String> {
     let started = std::time::Instant::now();
     loop {
-        let loaded_url = state
-            .webviews
-            .lock()
-            .map_err(|_| "Embedded browser state lock poisoned".to_string())?
-            .get(label)
-            .ok_or_else(|| "Embedded browser is not open".to_string())?
-            .loaded_url
-            .clone();
+        let (loaded_url, navigation_error) = {
+            let webviews = state
+                .webviews
+                .lock()
+                .map_err(|_| "Embedded browser state lock poisoned".to_string())?;
+            let entry = webviews
+                .get(label)
+                .ok_or_else(|| "Embedded browser is not open".to_string())?;
+            (entry.loaded_url.clone(), entry.navigation_error.clone())
+        };
         if loaded_url.is_some() {
             return Ok(());
+        }
+        if let Some(error) = navigation_error {
+            return Err(format!(
+                "Failed to load embedded browser page: {}",
+                error.message
+            ));
         }
         if started.elapsed() >= Duration::from_millis(timeout_ms) {
             return Err("Timed out waiting for embedded browser navigation".to_string());
@@ -927,6 +958,113 @@ fn set_entry_url_for_native_label(
     .map(|_| ())
 }
 
+fn apply_navigation_requested(entry: &mut EmbeddedBrowserEntry, requested_url: String) -> u64 {
+    entry.navigation_generation = entry.navigation_generation.saturating_add(1);
+    entry.is_loading = true;
+    entry.navigation_error = None;
+    entry.url = Some(requested_url);
+    entry.navigation_generation
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub(crate) fn current_navigation_generation(
+    app: &tauri::AppHandle,
+    native_label: &str,
+) -> Option<u64> {
+    let state = app.state::<EmbeddedBrowserState>();
+    state.webviews.lock().ok().and_then(|webviews| {
+        webviews
+            .values()
+            .find(|entry| entry.native_label == native_label)
+            .map(|entry| entry.navigation_generation)
+    })
+}
+
+fn apply_navigation_failure(
+    entry: &mut EmbeddedBrowserEntry,
+    navigation_generation: u64,
+    code: i64,
+    message: String,
+) -> bool {
+    if code == NS_URL_ERROR_CANCELLED {
+        return false;
+    }
+    if navigation_generation != entry.navigation_generation {
+        return false;
+    }
+    entry.is_loading = false;
+    entry.bootstrap_finished = true;
+    if entry.host_ready {
+        if let EmbeddedBrowserPhase::Hidden(webview) = &entry.phase {
+            entry.phase = EmbeddedBrowserPhase::Ready(webview.clone());
+        }
+    }
+    entry.navigation_error = Some(EmbeddedBrowserNavigationError {
+        code,
+        message,
+        url: entry.url.clone(),
+    });
+    true
+}
+
+fn apply_navigation_finished(
+    entry: &mut EmbeddedBrowserEntry,
+    finished_url: &str,
+    loaded_url: String,
+) -> NavigationFinishedOutcome {
+    if entry.url.as_deref() != Some(finished_url)
+        && entry.url.as_deref() != Some(loaded_url.as_str())
+    {
+        return NavigationFinishedOutcome::IgnoredStale;
+    }
+    if entry
+        .navigation_error
+        .as_ref()
+        .is_some_and(|error| error.url == entry.url)
+    {
+        return NavigationFinishedOutcome::IgnoredFailed;
+    }
+    entry.url = Some(loaded_url.clone());
+    entry.loaded_url = Some(loaded_url);
+    entry.is_loading = false;
+    entry.navigation_error = None;
+    NavigationFinishedOutcome::Applied
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub(crate) fn handle_navigation_failure(
+    app: &tauri::AppHandle,
+    native_label: &str,
+    navigation_generation: u64,
+    failing_url: Option<String>,
+    code: i64,
+    message: String,
+) {
+    let state = app.state::<EmbeddedBrowserState>();
+    let owner = current_logical_owner_or(&state, native_label, BROWSER_WEBVIEW_LABEL);
+    let mut applied = false;
+    let updated = update_entry_for_native_label(&state, native_label, |entry| {
+        applied = apply_navigation_failure(entry, navigation_generation, code, message.clone());
+    })
+    .unwrap_or(false);
+    if !updated || !applied {
+        return;
+    }
+    emit_page_state_change(app, &state, owner.clone(), native_label.to_string());
+    log_embedded_browser_diagnostic(
+        &state,
+        &owner,
+        "navigation_failed",
+        json!({
+            "nativeLabel": native_label,
+            "navigationGeneration": navigation_generation,
+            "failingUrl": failing_url,
+            "code": code,
+            "error": message,
+        }),
+    );
+}
+
 fn mark_entry_ready_for_native_label(
     state: &EmbeddedBrowserState,
     native_label: &str,
@@ -1029,6 +1167,8 @@ fn page_state_for_label(
         native_label: entry.native_label,
         title: entry.title,
         url: entry.url,
+        is_loading: entry.is_loading,
+        navigation_error: entry.navigation_error,
     })
 }
 
@@ -1038,7 +1178,7 @@ fn emit_page_state_change(
     label: String,
     native_label: String,
 ) {
-    let (title, url) = state
+    let (title, url, is_loading, navigation_error) = state
         .webviews
         .lock()
         .ok()
@@ -1046,9 +1186,16 @@ fn emit_page_state_change(
             webviews
                 .get(&label)
                 .filter(|entry| entry.native_label == native_label)
-                .map(|entry| (entry.title.clone(), entry.url.clone()))
+                .map(|entry| {
+                    (
+                        entry.title.clone(),
+                        entry.url.clone(),
+                        entry.is_loading,
+                        entry.navigation_error.clone(),
+                    )
+                })
         })
-        .unwrap_or((None, None));
+        .unwrap_or((None, None, false, None));
     #[cfg(target_os = "macos")]
     let invalid_tls_certificate =
         crate::embedded_browser_tls::invalid_tls_certificate(&native_label);
@@ -1061,6 +1208,8 @@ fn emit_page_state_change(
             native_label,
             title,
             url,
+            is_loading,
+            navigation_error,
             invalid_tls_certificate,
         },
     );
@@ -1193,6 +1342,7 @@ fn navigate_label(state: &EmbeddedBrowserState, label: &str, url: String) -> Res
     update_entry_for_native_label(state, &entry.native_label, |entry| {
         entry.url = Some(url.clone());
         entry.loaded_url = None;
+        entry.navigation_error = None;
     })?;
     if let Err(error) = entry.ready_webview()?.navigate(display_url) {
         let message = format!("Failed to navigate embedded browser: {error}");
@@ -1835,6 +1985,8 @@ pub async fn embedded_browser_open(
             } else {
                 entry.url
             },
+            is_loading: entry.is_loading,
+            navigation_error: entry.navigation_error,
         });
     }
 
@@ -1865,6 +2017,9 @@ pub async fn embedded_browser_open(
         title: initial_title.clone(),
         url: Some(url.clone()),
         loaded_url: None,
+        navigation_generation: 0,
+        is_loading: false,
+        navigation_error: None,
         opened_at_unix_ms: current_unix_millis(),
         // macOS attaches the destination with a post-build navigate(), so its
         // initial about:blank load must finish before bridge navigation. Other
@@ -2018,6 +2173,16 @@ pub async fn embedded_browser_open(
                         }
                     }
                 }
+                let _ =
+                    update_entry_for_native_label(&state, &native_label_for_navigation, |entry| {
+                        apply_navigation_requested(entry, requested_url.clone());
+                    });
+                emit_page_state_change(
+                    &app_for_navigation,
+                    &state,
+                    owner,
+                    native_label_for_navigation.clone(),
+                );
                 true
             }
         })
@@ -2063,29 +2228,37 @@ pub async fn embedded_browser_open(
                     &native_label_for_load,
                     &current_url,
                 );
-                let loaded_url = webview_url.clone().or(Some(current_url.clone()));
-                if let Some(loaded_url) =
-                    loaded_url.and_then(|url| loaded_browser_url(&load_state_handle, &url))
+                let finished_url = webview_url.clone().or(Some(current_url.clone()));
+                let loaded_url = finished_url
+                    .as_deref()
+                    .and_then(|url| loaded_browser_url(&load_state_handle, url));
+                let mut outcome = None;
+                let mut record_context = None;
+                if let (Some(finished_url), Some(loaded_url)) =
+                    (finished_url.as_deref(), loaded_url.clone())
                 {
-                    let recordable = is_history_recordable_url(&loaded_url);
-                    let mut document_title = None;
-                    let mut visit_generation = 0;
                     let _ = update_entry_for_native_label(
                         &load_state_handle,
                         &native_label_for_load,
                         |entry| {
-                            document_title = entry.title.clone();
-                            visit_generation = entry.visit_generation;
-                            entry.pending_history_url = None;
-                            entry.url = Some(loaded_url.clone());
-                            entry.loaded_url = Some(loaded_url.clone());
+                            let result = apply_navigation_finished(entry, finished_url, loaded_url);
+                            outcome = Some(result);
+                            if result == NavigationFinishedOutcome::Applied {
+                                entry.pending_history_url = None;
+                                record_context =
+                                    Some((entry.title.clone(), entry.visit_generation));
+                            }
                         },
                     );
-                    if recordable {
+                }
+                if let (Some(loaded_url), Some((document_title, visit_generation))) =
+                    (loaded_url.as_deref(), record_context)
+                {
+                    if is_history_recordable_url(loaded_url) {
                         let history_id = history_record_visit(
                             &app_for_load,
                             &load_state_handle,
-                            &loaded_url,
+                            loaded_url,
                             document_title,
                             visit_generation,
                         );
@@ -2097,6 +2270,9 @@ pub async fn embedded_browser_open(
                             );
                         }
                     }
+                }
+                if bootstrap_finished || matches!(outcome, Some(NavigationFinishedOutcome::Applied))
+                {
                     emit_page_state_change(
                         &app_for_load,
                         &load_state_handle,
@@ -2104,11 +2280,24 @@ pub async fn embedded_browser_open(
                         native_label_for_load.clone(),
                     );
                 }
-                log_embedded_browser_page_diagnostics(
-                    load_state_handle.clone(),
-                    owner,
-                    "page_load_finished",
-                );
+                if matches!(outcome, Some(NavigationFinishedOutcome::Applied)) {
+                    log_embedded_browser_page_diagnostics(
+                        load_state_handle.clone(),
+                        owner,
+                        "page_load_finished",
+                    );
+                } else if let Some(outcome) = outcome {
+                    log_embedded_browser_diagnostic(
+                        &load_state_handle,
+                        &owner,
+                        "page_load_finished_ignored",
+                        json!({
+                            "finishedUrl": finished_url,
+                            "loadedUrl": loaded_url,
+                            "outcome": format!("{outcome:?}"),
+                        }),
+                    );
+                }
             }
         })
         .on_document_title_changed(move |_webview, title| {
@@ -2264,6 +2453,31 @@ pub async fn embedded_browser_open(
         return Err(error);
     }
 
+    #[cfg(target_os = "linux")]
+    if let Err(error) =
+        linux_host::register_navigation_failure_handler(&webview, app.clone(), native_label.clone())
+    {
+        log_embedded_browser_diagnostic(
+            &state,
+            &label,
+            "open_navigation_failure_handler_failed",
+            json!({
+                "nativeLabel": &native_label,
+                "error": &error,
+            }),
+        );
+        if let Ok(mut webviews) = state.webviews.lock() {
+            remove_logical_entry_if_native_matches(
+                &mut webviews,
+                &label,
+                &native_label,
+                |current| current.native_label.as_str(),
+            );
+        }
+        let _ = webview.close();
+        return Err(error);
+    }
+
     log_embedded_browser_diagnostic(
         &state,
         &label,
@@ -2275,7 +2489,7 @@ pub async fn embedded_browser_open(
 
     #[cfg(target_os = "macos")]
     {
-        let tls_result = crate::embedded_browser_tls::register_invalid_tls_handler(
+        let tls_result = crate::embedded_browser_tls::register_navigation_delegate_extensions(
             &webview,
             app.clone(),
             native_label.clone(),
@@ -2295,7 +2509,7 @@ pub async fn embedded_browser_open(
                     |current| current.native_label.as_str(),
                 );
             }
-            crate::embedded_browser_tls::unregister_invalid_tls_handler(&webview);
+            crate::embedded_browser_tls::unregister_navigation_delegate_extensions(&webview);
             let _ = webview.close();
             return Err(error);
         }
@@ -2329,7 +2543,7 @@ pub async fn embedded_browser_open(
             );
         }
         #[cfg(target_os = "macos")]
-        crate::embedded_browser_tls::unregister_invalid_tls_handler(&webview);
+        crate::embedded_browser_tls::unregister_navigation_delegate_extensions(&webview);
         let _ = webview.close();
         return Err(error);
     }
@@ -2366,7 +2580,7 @@ pub async fn embedded_browser_open(
             );
         }
         #[cfg(target_os = "macos")]
-        crate::embedded_browser_tls::unregister_invalid_tls_handler(&webview);
+        crate::embedded_browser_tls::unregister_navigation_delegate_extensions(&webview);
         let _ = webview.close();
         return Err(error);
     }
@@ -2390,6 +2604,8 @@ pub async fn embedded_browser_open(
         native_label,
         title: initial_title,
         url: Some(url),
+        is_loading: false,
+        navigation_error: None,
     })
 }
 
@@ -2752,7 +2968,7 @@ fn close_embedded_browser_entry(
     if let Some(entry) = entry {
         let webview = entry.available_webview()?;
         #[cfg(target_os = "macos")]
-        crate::embedded_browser_tls::unregister_invalid_tls_handler(&webview);
+        crate::embedded_browser_tls::unregister_navigation_delegate_extensions(&webview);
         webview
             .close()
             .map_err(|error| format!("Failed to close embedded browser: {error}"))?;

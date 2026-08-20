@@ -40,7 +40,7 @@ use crate::{
     logging::log_executor_event,
     protocol::ExecutionRequest,
     runner::ExecutionOutcome,
-    server::{executor_loopback_base_url, local_model_proxy},
+    server::{executor_loopback_base_url, harness_context, local_model_proxy},
 };
 
 const WORKTREE_RECONCILIATION_RETRY_INTERVAL: Duration = Duration::from_secs(5);
@@ -442,7 +442,6 @@ pub struct RuntimeWorkRpcHandler {
     turn_scheduler: Arc<Mutex<RuntimeTurnScheduler>>,
     turn_queue_operation: Arc<AsyncMutex<()>>,
     turn_queue_path: Arc<PathBuf>,
-    interrupted_worktree_turns: Arc<AsyncMutex<Option<VecDeque<SpawnTurnRequest>>>>,
     preparing_worktree_turns: Arc<Mutex<HashMap<String, PreparingWorktreeTurn>>>,
     active_turn_cancellations: Arc<Mutex<HashMap<String, ActiveTurnCancellation>>>,
     active_codex_turns: Arc<Mutex<HashMap<String, ActiveCodexTurn>>>,
@@ -483,6 +482,8 @@ struct WorktreeReconciliationState {
 struct ActiveTurnCancellation {
     execution_id: u64,
     stop_requested: bool,
+    stop_acknowledged: bool,
+    managed_worktree_path: Option<PathBuf>,
     cancel: oneshot::Sender<()>,
     stopped: oneshot::Receiver<()>,
 }
@@ -590,17 +591,17 @@ impl RuntimeWorkRpcHandler {
         let store = RuntimeWorkStore::from_env();
         let worktrees = WorktreeManager::from_env(&device_id);
         let turn_queue_path = turns::runtime_turn_queue_path();
-        let restored_turns =
+        let mut queued_turns =
             turns::read_runtime_turn_queue(&turn_queue_path).unwrap_or_else(|error| {
                 log_executor_event("runtime turn queue restore failed", &[("error", error)]);
                 VecDeque::new()
             });
-        let (queued_turns, interrupted_worktree_turns) =
-            turns::partition_restored_turns(&worktrees, restored_turns);
-        if !interrupted_worktree_turns.is_empty() {
+        let removed_worktree_turn_count =
+            turns::remove_worktree_turns_after_restart(&worktrees, &mut queued_turns);
+        if removed_worktree_turn_count > 0 {
             log_executor_event(
-                "persisted worktree turns quarantined after executor restart",
-                &[("count", interrupted_worktree_turns.len().to_string())],
+                "persisted worktree turns removed after executor restart",
+                &[("count", removed_worktree_turn_count.to_string())],
             );
         }
         let handler = Self {
@@ -620,7 +621,6 @@ impl RuntimeWorkRpcHandler {
             ))),
             turn_queue_operation: Arc::new(AsyncMutex::new(())),
             turn_queue_path: Arc::new(turn_queue_path),
-            interrupted_worktree_turns: Arc::new(AsyncMutex::new(Some(interrupted_worktree_turns))),
             preparing_worktree_turns: Arc::new(Mutex::new(HashMap::new())),
             active_turn_cancellations: Arc::new(Mutex::new(HashMap::new())),
             active_codex_turns: Arc::new(Mutex::new(HashMap::new())),
@@ -792,6 +792,8 @@ impl RuntimeWorkRpcHandler {
             "runtime.codex.stream_debug.set" => self.set_codex_stream_debug(payload).await,
             "runtime.harness_proxy.register" => self.register_harness_proxy(payload).await,
             "runtime.harness_proxy.unregister" => self.unregister_harness_proxy(payload).await,
+            "runtime.harness_context.register" => self.register_harness_context(payload).await,
+            "runtime.harness_context.unregister" => self.unregister_harness_context(payload).await,
             "runtime.connectors.configure" => self.connectors.configure(payload).await,
             "runtime.connectors.clear" => self.connectors.clear(payload).await,
             "runtime.connectors.status" => self.connectors.status().await,
