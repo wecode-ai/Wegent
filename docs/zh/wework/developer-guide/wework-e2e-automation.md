@@ -128,9 +128,11 @@ checkpoint。跳过上游时，每个 checkpoint 会自行建立最小前置 fix
 完整流程才创建的任务或 UI 状态。PR CI 会根据改动的功能路径组合最小 segment
 矩阵；共享桌面基础设施、merge queue、定时任务和 `ci:all` 仍运行完整桌面套件。
 完整 Core 和 Cloud 套件各固定使用 5 个 GitHub Actions matrix job；每个 job
-通过隔离的 Xvfb、端口、应用数据和 Executor Home 同时运行 2 个 checkpoint。
-分片按 CI 实测耗时平衡，新增或明显变慢的 checkpoint 必须重新校准分片，不能靠
-增加 runner、删覆盖或重跑失败用例来缩短关键路径。CI 会先构建一次 Core Tauri
+串行运行其 checkpoint，避免多个真实 Tauri、WebView 和 Executor 栈在同一
+GitHub runner 上争用 CPU 和内存，导致正常异步状态越过统一的 10 秒门槛。
+跨 runner 的 10 个 matrix job 仍提供套件级并行。分片按 CI 实测耗时平衡，
+新增或明显变慢的 checkpoint 必须重新校准分片，不能靠增加 runner、删覆盖或
+重跑失败用例来缩短关键路径。CI 会先构建一次 Core Tauri
 应用、Executor 和 Codex artifact，其中 `--build-only` 会在同一 runner 内并行
 编译相互独立的 Tauri 应用和 Executor；各 Core/Cloud 分片下载并复用该 artifact，
 不再重复执行 Vite、Tauri 和 Executor 构建。Rust 构建同时复用由 `main`

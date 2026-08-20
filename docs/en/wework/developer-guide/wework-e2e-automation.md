@@ -130,11 +130,13 @@ its own minimal fixtures instead of depending on tasks or UI state created only
 by the complete flow. PR CI builds the smallest segment matrix for the changed
 feature paths. Shared desktop infrastructure, merge queue, scheduled runs, and
 `ci:all` still run the complete desktop suites. The complete Core and Cloud
-suites each use five fixed GitHub Actions matrix jobs. Every job runs two
-checkpoints concurrently with isolated Xvfb displays, ports, application data,
-and Executor Homes. Shards are balanced from observed CI durations; a new or
-materially slower checkpoint requires rebalancing instead of adding runners,
-removing coverage, or rerunning failures. CI first builds one Core Tauri
+suites each use five fixed GitHub Actions matrix jobs. Every job runs its
+checkpoints serially so multiple real Tauri, WebView, and Executor stacks do not
+contend for CPU and memory on the same GitHub runner and push normal asynchronous
+state beyond the shared 10-second step timeout. The ten matrix jobs still provide
+suite-level parallelism across runners. Shards are balanced from observed CI
+durations; a new or materially slower checkpoint requires rebalancing instead of
+adding runners, removing coverage, or rerunning failures. CI first builds one Core Tauri
 application, Executor, and Codex artifact. In `--build-only` mode, the
 independent Tauri and Executor builds run concurrently on the same runner. Every
 Core and Cloud shard downloads and reuses that artifact instead of rebuilding
