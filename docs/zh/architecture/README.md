@@ -13,6 +13,7 @@ sidebar_position: 1
 | 内置浏览器导航与多标签               | [embedded-browser.md](embedded-browser.md)                                   | bridge 路由、pending open、WebView 生命周期、导航完成、多标签 E2E     |
 | Issue、任务与工作流编排              | [issue-task-workflow.md](issue-task-workflow.md)                             | Issue 聚合、任务绑定、工作空间继承、DAG 就绪判断、状态聚合            |
 | Issue Runtime 状态、交付与界面投影   | [issue-runtime-delivery-projection.md](issue-runtime-delivery-projection.md) | Runtime 终态写入、阶段聚合、Delivery 履约、事件失效、Issue 详情一致性 |
+| 看板 Issue 未读投影                 | [board-item-unread-projection.md](board-item-unread-projection.md)             | 内容修订、按用户已读游标、动态更新、实时失效、看板未读标识            |
 | 工作流阶段交付与依赖上下文           | [workflow-stage-deliverables.md](workflow-stage-deliverables.md)             | 结构化交付要求、人工与自动阶段门禁、代码证据、后继上下文快照          |
 | 工作流阶段执行路由                   | [workflow-stage-execution-routing.md](workflow-stage-execution-routing.md)   | 人工启动、云端派发、本地/云端设备路由、统一阶段执行契约               |
 | 项目空间 Agent 能力                  | [project-space-agent-capability.md](project-space-agent-capability.md)       | 本地 Gateway、ContextGrant、Codex Plugin、离线 Provider、MCP 生命周期 |

@@ -137,7 +137,7 @@ export function AiChatModal({
           }
         : {}),
       additionalContext: {
-        ...projectSpaceChatRuntimeContext(project),
+        ...projectSpaceChatRuntimeContext(project, task),
         ...(task
           ? {
               issueEnvironment: {

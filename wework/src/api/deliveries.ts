@@ -107,6 +107,8 @@ export interface CloudLoopItem {
   created_by_user_name?: string | null
   can_view_detail?: boolean
   can_edit?: boolean
+  content_revision?: number
+  is_unread?: boolean
   assignee_user_id: number | null
   assignee_name?: string | null
   assignee_agent_id?: string | null
@@ -732,6 +734,9 @@ export function createDeliveryApi(client: HttpClient) {
     },
     getLoopItem(itemId: string): Promise<CloudLoopItem> {
       return client.get(`/v1/loop-items/${encodeURIComponent(itemId)}`)
+    },
+    markLoopItemRead(itemId: string): Promise<CloudLoopItem> {
+      return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/read`)
     },
     findLoopItemForTask(task: RuntimeTaskAddress): Promise<CloudLoopItem> {
       const query = new URLSearchParams({ device_id: task.deviceId, task_id: task.taskId })

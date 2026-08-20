@@ -1216,3 +1216,69 @@ def test_project_member_can_discover_shared_todo_and_delivery(
     )
     assert member_collaborators.status_code == 200
     assert [row["user_id"] for row in member_collaborators.json()] == [member.id]
+
+
+def test_loop_item_unread_follows_content_revision_and_read_cursor(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+    delivery_project: CloudProject,
+) -> None:
+    created = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Unread projection"},
+    )
+    assert created.status_code == 201
+    item = created.json()
+    assert item["content_revision"] == 1
+    assert item["is_unread"] is False
+
+    member = User(
+        user_name="unread-member",
+        password_hash=get_password_hash("member-password"),
+        email="unread-member@example.com",
+        is_active=True,
+    )
+    test_db.add(member)
+    test_db.flush()
+    test_db.add(
+        ResourceMember.create(
+            resource_type=ResourceType.CLOUD_PROJECT.value,
+            resource_id=delivery_project.id,
+            entity_id=str(member.id),
+            status=MemberStatus.APPROVED.value,
+        )
+    )
+    test_db.commit()
+    member_token = create_access_token(data={"sub": member.user_name})
+
+    member_item = test_client.get(
+        f"/api/v1/loop-items/{item['id']}", headers=_auth(member_token)
+    )
+    assert member_item.status_code == 200
+    assert member_item.json()["is_unread"] is True
+
+    version_before_read = member_item.json()["version"]
+    marked = test_client.post(
+        f"/api/v1/loop-items/{item['id']}/read", headers=_auth(member_token)
+    )
+    assert marked.status_code == 200
+    assert marked.json()["is_unread"] is False
+    assert marked.json()["version"] == version_before_read
+
+    updated = test_client.patch(
+        f"/api/v1/loop-items/{item['id']}",
+        headers=_auth(test_token),
+        json={"version": item["version"], "title": "Unread projection updated"},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["content_revision"] == 2
+    assert updated.json()["is_unread"] is False
+
+    refreshed_member_item = test_client.get(
+        f"/api/v1/loop-items/{item['id']}", headers=_auth(member_token)
+    )
+    assert refreshed_member_item.status_code == 200
+    assert refreshed_member_item.json()["content_revision"] == 2
+    assert refreshed_member_item.json()["is_unread"] is True

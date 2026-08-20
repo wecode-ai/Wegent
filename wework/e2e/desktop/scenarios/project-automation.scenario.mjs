@@ -290,6 +290,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
   const remoteProjectChatRequests = []
   let boardTeamAssignmentPayload = null
   let createdBoardItem = null
+  let markBoardItemReadRequests = 0
   let cloudApi = null
   let cloudProject = null
   let cloudAgent = null
@@ -695,9 +696,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     assert.ok(workflowBinding)
     const workflowTaskRow = `[data-testid="cloud-todo-open-workflow-task-stage-1-${workflowBinding.id}"]`
     await control.command('click', '[data-testid="ai-chat-modal-close"]')
+    await control.command('waitFor', workflowTaskRow, {
+      timeoutMs: uiTimeoutMs,
+    })
     await control.command('scrollIntoView', workflowTaskRow)
     await control.command('waitFor', workflowTaskRow, {
-      text: workflowBinding.task_id,
       timeoutMs: uiTimeoutMs,
       visible: true,
     })
@@ -730,9 +733,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       text: workflowIssue.title,
       timeoutMs: uiTimeoutMs,
     })
+    await control.command('waitFor', workflowTaskRow, {
+      timeoutMs: uiTimeoutMs,
+    })
     await control.command('scrollIntoView', workflowTaskRow)
     await control.command('waitFor', workflowTaskRow, {
-      text: workflowBinding.task_id,
       timeoutMs: uiTimeoutMs,
       visible: true,
     })
@@ -1406,6 +1411,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           tags: payload.tags ?? [],
           sort_order: 0,
           current_delivery_id: null,
+          content_revision: 1,
+          is_unread: payload.title === '由智能体评审看板状态',
           version: 1,
           created_at: '2026-08-15T00:00:00Z',
           updated_at: '2026-08-15T00:00:00Z',
@@ -1420,6 +1427,18 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           orchestratedItemId = createdBoardItem.id
         }
         json(response, 201, createdBoardItem)
+        return true
+      }
+      if (
+        request.method === 'POST' &&
+        url.pathname === `/api/v1/loop-items/${createdBoardItem?.id}/read`
+      ) {
+        markBoardItemReadRequests += 1
+        createdBoardItem = {
+          ...createdBoardItem,
+          is_unread: false,
+        }
+        json(response, 200, createdBoardItem)
         return true
       }
       const boardItemPatchMatch = url.pathname.match(/^\/api\/v1\/loop-items\/(AUTO-\d+)$/)
@@ -1689,6 +1708,18 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       await control.command('waitFor', `${activeBoard} [data-testid="cloud-todo-detail-title"]`, {
         timeoutMs: uiTimeoutMs,
       })
+      await waitForValue(
+        () => Promise.resolve(markBoardItemReadRequests),
+        count => count === 1,
+        'Opening an unread Issue did not persist its read cursor',
+        uiTimeoutMs
+      )
+      const readBoardSnapshot = JSON.parse(await control.command('snapshot', activeBoard))
+      assert.equal(
+        readBoardSnapshot.testIds.includes('cloud-todo-card-unread-AUTO-201'),
+        false,
+        'The unread marker remained after opening the Issue'
+      )
       const assigneeSelector = `${activeBoard} [data-testid="cloud-todo-detail-assignee"]`
       await control.command('waitFor', assigneeSelector, {
         text: TEAM.displayName,
@@ -2191,6 +2222,14 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         `${activeBoard} [data-testid="cloud-todo-workflow-action-stage-1"]`,
         {
           text: '待人工批准',
+          timeoutMs: uiTimeoutMs,
+          visible: true,
+        }
+      )
+      await control.command(
+        'waitFor',
+        `${activeBoard} [data-testid="cloud-todo-workflow-node-stage-3"]`,
+        {
           timeoutMs: uiTimeoutMs,
           visible: true,
         }

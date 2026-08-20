@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { CloudProject } from '@/api/deliveries'
+import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import {
   dingtalkAITableRuntimeContext,
   parseDingTalkAITableLink,
@@ -82,6 +82,36 @@ describe('dingtalkAITableRuntimeContext', () => {
         provider_config: {},
       } as CloudProject)
     ).toBeUndefined()
+  })
+
+  it('binds the current record and requires a full native DWS read', () => {
+    const context = dingtalkAITableRuntimeContext(
+      {
+        id: 'space-1',
+        name: 'DingTalk tasks',
+        project_key: 'DING',
+        task_provider: 'dingtalk_aitable',
+        provider_config: {
+          base_id: 'base-1',
+          table_id: 'table-1',
+        },
+      } as CloudProject,
+      {
+        id: 'aitable:DING:record-1',
+        source_record_id: 'record-1',
+        title: '新模型接入',
+        description: '',
+        source_cells: { title: '新模型接入', owner: '刘亚飞' },
+      } as CloudLoopItem
+    )
+
+    const value = context?.dingtalkAITableProject.value ?? ''
+    expect(value).toContain('"record_id": "record-1"')
+    expect(value).toContain('"cached_cells"')
+    expect(value).toContain('call wework_space get_current_context first')
+    expect(value).toContain('bundled_dws_fallback')
+    expect(value).toContain('Never invoke a bare dws command')
+    expect(value).not.toContain('$DWS_BINARY_PATH')
   })
 })
 

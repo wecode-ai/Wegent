@@ -23,6 +23,7 @@ flowchart LR
     ENDPOINT --> GATEWAY[Wework Local Project-space Gateway]
     GATEWAY -->|本地项目| LOCAL[Local ProjectSpace Provider]
     GATEWAY -->|云项目且在线| REMOTE[Backend ProjectSpace Provider]
+    SESSION -->|钉钉 Provider 上下文<br/>base_id + table_id + record_id| DWS[原生 DWS<br/>记录字段 + 主文档]
     REMOTE --> BACKEND[Wegent Backend]
     GATEWAY --> DELIVERY[Delivery 生命周期<br/>创建 / 上传 / 下载 / 提交 / 丢弃]
     DELIVERY -->|source TaskBinding| ISSUE_STAGE[当前 Issue workflow node]
@@ -54,11 +55,17 @@ sequenceDiagram
     Note over H,P: Codex 仅作为 MCP Client，不再创建 stdio MCP 子进程
     P->>G: 校验连接凭证与可选 ContextGrant
     G-->>P: 返回未绑定或已绑定的 capability scope
-    H->>P: get_current_context / read_item_attachment
-    P->>G: 调用统一工具契约
+    alt 钉钉 AI 表格 Issue
+        W->>H: 注入 base_id + table_id + record_id 和强制全量读取规则
+        H->>H: 使用原生 DWS 读取表结构和唯一记录
+        H->>H: get-primary-doc-id 后使用 doc read 读取主文档
+    else 其他项目空间 Issue
+        H->>P: get_current_context / read_item_attachment
+        P->>G: 调用统一工具契约
+    end
     alt 本地项目
-        G->>L: 读取本地 Issue、描述或附件
-        L-->>G: 返回本地数据
+        G->>L: 按 item_id 读取 Issue、描述或附件
+        L-->>G: 返回统一数据
     else 云项目且在线
         G->>B: 使用用户身份和 scope 访问 Backend
         B-->>G: 返回云端数据
@@ -92,6 +99,7 @@ sequenceDiagram
 | Codex → project-space capability      | Codex MCP Client；Executor loopback Endpoint                      |
 | Plugin → Codex 使用说明               | Wework 内置 `wework-space` Skill Plugin                           |
 | Gateway → Local Provider              | Executor `task_runtime` 与本地 ProjectSpace provider              |
+| 钉钉 Issue → 原生记录与主文档读取     | Wework Provider 上下文、Codex 提示契约、原生 DWS                  |
 | Gateway → Backend Provider            | Executor authenticated Backend ProjectSpace client                |
 | MCP → Delivery 生命周期               | Executor `task_runtime/mcp.rs`、Delivery API 与本地 ProjectSpace  |
 | Delivery → 当前 workflow node         | ContextGrant Runtime 地址、`LoopItemTaskBinding`、Delivery 服务   |
@@ -116,6 +124,8 @@ sequenceDiagram
 - `create_delivery` 的聊天快照选择由服务端从当前 Issue 时间线解析，支持全部、最近 N 条和指定消息 ID；不得信任模型提交的伪造消息内容作为“选择结果”。
 - Delivery 附件下载必须校验附件属于当前 Issue 下可见的 Delivery；上传和丢弃仅允许操作当前会话创建且仍为 draft 的 Delivery。`finalize_delivery` 必须复用既有不可变快照边界，并将交付绑定到来源 TaskBinding 的唯一 workflow node。
 - Runtime 在首轮前只校验常驻 Endpoint readiness、固定能力配置与 ContextGrant，不得调用 `mcpServerStatus/list` 或其他工具清单接口主动启动、重启或盘点 MCP。Runtime 只被动记录 Codex app-server 的连接状态；能力连接失败必须终止当前执行，并由会话 UI 保留用户消息和失败回复。
-- 已绑定的 Issue 会话读取当前描述或附件时必须走确定路径：`get_current_context` → `get_board_item` → `list_item_attachments` → `read_item_attachment`。不得用 MCP resource listing、浏览器、Shell、`curl` 或直接解析 `wegent://` 判断能力是否存在。
+- 非钉钉的已绑定 Issue 会话读取当前描述或附件时必须走确定路径：`get_current_context` → `get_board_item` → `list_item_attachments` → `read_item_attachment`。不得用 MCP resource listing、浏览器、Shell、`curl` 或直接解析 `wegent://` 判断能力是否存在。
 - 本地、远程和 Backend MCP 使用相同工具 schema 与契约测试；Provider 只决定数据来源，不改变工具语义。
+- 钉钉 AI 表格 Issue 必须把项目绑定的 `base_id + table_id` 和当前 Issue 的稳定 `record_id` 注入 Provider 上下文；这些标识只负责资源定位，授权仍由 DWS 会话承担。Agent 回答任何当前 Issue 内容问题前，必须使用原生 DWS 依次读取表结构、唯一记录的全部字段、`get-primary-doc-id` 和 `doc read`，并合并非空字段与主文档 Markdown。不得因为 Wework 缓存描述为空就断言钉钉内容为空，不得搜索其他表格替代绑定资源，也不得臆造不存在的 `record get` 命令。
+- 钉钉 Provider 上下文是通用 `wework_space` Issue 读取规则的显式原生路由例外。Executor 对这类会话不得向模型暴露会造成双主路径的项目空间记录 CRUD 工具；若误调用，必须返回包含绑定记录标识和固定 DWS 读取顺序的明确重定向。
 - 迁移完成后必须删除 `ensure_space_mcp_server` 的逐任务服务注入路径，不能长期保留双主路径。

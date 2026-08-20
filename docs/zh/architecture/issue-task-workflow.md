@@ -40,6 +40,7 @@ flowchart LR
     ISSUE --> DETAIL_PANEL[右侧悬浮 Issue 详情]
     DETAIL_PANEL --> TASK_COMPOSER[相邻悬浮空白任务会话]
     TASK_COMPOSER -->|首条消息| BINDING
+    EXTERNAL[GitHub / GitLab / 钉钉多维表格记录] -->|Provider 校验| BINDING
     BINDING -->|打开已有任务| SIDEBAR[相邻悬浮任务会话]
     BINDING --> TASK[(Wework Runtime Task)]
     TASK_COMPOSER --> CONTEXT[结构化 Issue 来源<br/>space_id + item_id]
@@ -121,6 +122,10 @@ sequenceDiagram
         A->>B: 拆解并分配具体任务
         Note over A,B: 有阶段时每个任务必须归入阶段；无阶段时可自由拆解
     end
+    opt Issue 来自外部 Provider
+        B->>O: 校验 GitHub / GitLab Issue 或钉钉多维表格记录仍存在
+        O-->>B: 以外部记录 ID 持久化 Task Binding
+    end
     opt 阶段配置自动化动作
         O->>E: 创建 queued execution
         E->>R: 进入现有容量队列
@@ -156,6 +161,7 @@ sequenceDiagram
 | 用户管理 / AI 调度 → 具体任务         | 标准 Wework Composer、AI manager、`LoopItemTaskBinding`                   |
 | 看板 → 悬浮 Issue 详情 → 相邻任务会话 | `CloudTodoWorkspace`、`TodoEditor`、`AiChatModal`                         |
 | Runtime Task 绑定 → 阶段状态同步      | `projectSpaceSelection`、`WorkbenchProvider`、ProjectSpace API            |
+| 外部 Issue 校验 → Runtime Task 绑定   | Executor `TaskRuntime`、GitHub/GitLab `IssueProvider`、`AITableProvider`   |
 | 阶段任务状态历史与最近终态聚合        | Wework `issueWorkflow`、`IssueWorkflowDag`、Issue workflow snapshot       |
 | 节点交付物 → 人工验收与推进           | Delivery API、workflow decision service、`IssueWorkflowDag`               |
 | Issue 看板入口 → 手动任务或编排       | `CloudTodoWorkspace`、`workItemTaskInput`、Issue workflow snapshot        |
@@ -185,6 +191,7 @@ sequenceDiagram
 - Issue 从“收集箱”拖到“待开始”时，任务入口必须读取该 Issue 的编排快照。仅“无阶段 + 手动推进”属于自己管理任务，需暂缓移动并打开新建任务 Composer；预置流程必须直接写入“待开始”并启动全部 ready 的自动化阶段，AI 推进必须启动快照绑定的调度员。两者都不得打开新建任务 Composer，也不得为绕过弹窗而创建空白 Runtime Task；重复进入不得为同一阶段或 AI 调度员创建重复运行。
 - 预置流程中的人工阶段由用户显式开始。Issue 详情必须在缩放流程图之外展示所有 ready 人工阶段的主操作，明确标注“人工执行”并提供“开始处理”；流程图只承担结构与进度展示，不能把唯一入口藏在会缩放的节点内部。点击“开始处理”只打开绑定该阶段的任务 Composer，首条消息发送前仍不得创建空白 Runtime Task。
 - 人工阶段首条消息发送时，必须先用客户端预分配的稳定 Runtime 地址持久化 `LoopItemTaskBinding`，绑定成功后才允许向执行器提交创建请求；绑定失败时执行器不得收到任务。若执行器拒绝创建，必须补偿解除该预绑定。Runtime Task 云上下文必须返回绑定的 `workflow_node_id`，绑定完成必须触发已知 Runtime 生命周期重放；不得把人工任务写成 `LoopItemExecution` 的 queued 状态，也不得在 Runtime 尚未确认 running 时由 UI 伪造“排队中”或“进行中”。
+- GitHub、GitLab 和钉钉多维表格记录都属于外部 Issue：绑定前必须由对应 Provider 校验记录存在，绑定存储只保存稳定外部记录 ID，不得要求外部记录先复制为本地 `LoopItem`，也不得跳过 Provider 校验。
 - `LoopItemTaskBinding` 写入成功后，Issue 详情必须再次从持久化绑定刷新任务集合，再显示任务数量、任务行和阶段状态；Runtime 地址的乐观打开事件不得充当绑定成功信号，也不得让绑定成功后的面板继续显示“尚未关联任务”。
 - 人工阶段状态机是 `blocked → ready → running → awaiting_approval → completed`。`awaiting_approval` 只阻止进入后续阶段，不得阻止当前阶段继续创建人工任务以修正结果或补交交付物；驳回进入 `changes_requested`，并允许继续原任务或创建新任务。强制推进进入 `forced_completed`。`queued` 仅用于已经创建真实自动化执行且等待 Runtime 容量的自动阶段，不得用于未执行的人工阶段。
 - 节点可声明零个或多个带稳定 ID 和值类型的必要交付物。任务 Composer 和 Issue 详情必须明示这些要求及履约方法；提交的 Delivery 必须通过来源 TaskBinding 归属到唯一 `workflow_node_id`，并逐项绑定 `requirement_id`。未满足必要交付物时不得批准，但允许具有权限的用户填写原因后强制推进；完整生命周期见 [工作流阶段交付与依赖上下文](workflow-stage-deliverables.md)。

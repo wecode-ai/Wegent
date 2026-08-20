@@ -1402,10 +1402,14 @@ function createScrollSnapshot(
   return {
     distanceFromBottomPx,
     pinnedToBottom: distanceFromBottomPx <= SCROLLED_TO_BOTTOM_THRESHOLD,
+    scrollTopPx: resolvedScrollTop,
   }
 }
 
 function getRestoredScrollTop(scroller: HTMLElement, snapshot: ConversationScrollSnapshot): number {
+  if (!snapshot.pinnedToBottom && Number.isFinite(snapshot.scrollTopPx)) {
+    return Math.max(0, snapshot.scrollTopPx ?? 0)
+  }
   const storedDistance = Number.isFinite(snapshot.distanceFromBottomPx)
     ? snapshot.distanceFromBottomPx
     : 0

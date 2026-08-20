@@ -40,6 +40,7 @@ flowchart LR
     ISSUE --> DETAIL_PANEL[Floating Issue detail]
     DETAIL_PANEL --> TASK_COMPOSER[Adjacent floating blank task conversation]
     TASK_COMPOSER -->|first message| BINDING
+    EXTERNAL[GitHub / GitLab / DingTalk AI Table record] -->|provider validation| BINDING
     BINDING -->|open existing task| SIDEBAR[Adjacent floating task conversation]
     BINDING --> TASK[(Wework Runtime Task)]
     TASK_COMPOSER --> CONTEXT[Structured Issue origin<br/>space_id + item_id]
@@ -121,6 +122,10 @@ sequenceDiagram
         A->>B: Decompose and assign concrete tasks
         Note over A,B: Every task belongs to a stage when stages exist
     end
+    opt Issue comes from an external provider
+        B->>O: Validate the GitHub/GitLab Issue or DingTalk AI Table record still exists
+        O-->>B: Persist the Task Binding with the external record ID
+    end
     opt Stage has an automation action
         O->>E: Create a queued execution
         E->>R: Enter the existing capacity queue
@@ -156,6 +161,7 @@ sequenceDiagram
 | User/AI coordination to concrete tasks                       | Standard Wework Composer, AI manager, `LoopItemTaskBinding`                               |
 | Board to floating Issue detail to adjacent task conversation | `CloudTodoWorkspace`, `TodoEditor`, `AiChatModal`                                         |
 | Runtime Task binding to stage-status synchronization         | `projectSpaceSelection`, `WorkbenchProvider`, and ProjectSpace API                        |
+| External Issue validation to Runtime Task binding            | Executor `TaskRuntime`, GitHub/GitLab `IssueProvider`, and `AITableProvider`               |
 | Stage task status history and latest-terminal aggregation    | Wework `issueWorkflow`, `IssueWorkflowDag`, and the Issue workflow snapshot               |
 | Node deliverables to human review and advancement            | Delivery API, workflow decision service, and `IssueWorkflowDag`                           |
 | Issue board entry to manual task or orchestration            | `CloudTodoWorkspace`, `workItemTaskInput`, and the Issue workflow snapshot                |
@@ -185,6 +191,7 @@ Invariants:
 - When an Issue is dragged from Inbox to Pending, task entry must read that Issue's orchestration snapshot. Only no stages plus manual advancement is self-managed and therefore defers the move to open the new-task Composer. A preset workflow must persist Pending and start every ready automated stage; AI advancement must start the coordinator bound by the snapshot. Neither path may open the new-task Composer or create a blank Runtime Task merely to bypass it, and repeated entry must not create duplicate runs for the same stage or AI coordinator.
 - Human stages in a preset workflow start only through an explicit user action. Issue detail must expose every ready human stage as a primary action outside the zoomable graph, label it as human execution, and provide Start work; the graph is structure and progress, never the only action entry. Start work opens the task Composer bound to that stage, and still creates no blank Runtime Task before the first message.
 - When the first message for a human stage is sent, the client-preallocated stable Runtime address must first be persisted as a `LoopItemTaskBinding`; only a successful binding permits dispatching the create request to the executor. A binding failure must leave the executor untouched, while an executor rejection must compensate by unlinking the prepared binding. Runtime Task cloud context must expose the binding's `workflow_node_id`, and binding completion must replay the known Runtime lifecycle. The UI must not represent the human task as a queued `LoopItemExecution` or invent Queued/In Progress before Runtime confirms running.
+- GitHub, GitLab, and DingTalk AI Table records are all external Issues. The matching provider must validate that the record exists before binding; binding storage keeps only the stable external record ID and must neither require a copied local `LoopItem` nor skip provider validation.
 - After `LoopItemTaskBinding` is persisted, Issue detail must refresh its task collection from persisted bindings before rendering task counts, task rows, or stage state. The optimistic Runtime-address open event is not a binding-success signal and must never leave a successfully bound stage showing No linked tasks.
 - The human-stage state machine is `blocked → ready → running → awaiting_approval → completed`. `awaiting_approval` blocks only successor advancement and must not prevent creating another human task in the current stage to correct results or supply missing deliverables. Rejection enters `changes_requested`, where either the existing task or a new task may continue the work. Force advancement enters `forced_completed`. `queued` is reserved for an existing automated execution waiting for Runtime capacity and must never describe an unstarted human stage.
 - A node may declare zero or more required deliverables with stable IDs and value types. The task Composer and Issue detail must show those requirements and their fulfillment methods. A submitted Delivery must resolve through its source TaskBinding to exactly one `workflow_node_id` and bind every value to a `requirement_id`. Approval is forbidden while required deliverables are missing, while an authorized user may force advancement with a non-empty reason. See [Workflow stage deliverables and dependency context](workflow-stage-deliverables.md) for the complete lifecycle.

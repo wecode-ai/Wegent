@@ -1,4 +1,4 @@
-import type { CloudProject } from '@/api/deliveries'
+import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import type { RuntimeAdditionalContext } from '@/types/api'
 
 export type ExternalProjectTaskProvider = 'github' | 'gitlab'
@@ -87,13 +87,17 @@ export function parseDingTalkAITableLink(value: string): DingTalkAITableLink | n
 }
 
 export function dingtalkAITableRuntimeContext(
-  project: CloudProject
+  project: CloudProject,
+  item?: CloudLoopItem
 ): RuntimeAdditionalContext | undefined {
   if (project.task_provider !== 'dingtalk_aitable') return undefined
   const baseId = project.provider_config.base_id?.trim()
   const tableId = project.provider_config.table_id?.trim()
   if (!baseId || !tableId) return undefined
   const viewId = project.provider_config.view_id?.trim()
+  const recordId =
+    item?.source_record_id?.trim() ||
+    (item?.id.startsWith('aitable:') ? item.id.split(':').at(-1)?.trim() : undefined)
   const binding = {
     default_target: {
       space_id: String(project.id),
@@ -106,6 +110,17 @@ export function dingtalkAITableRuntimeContext(
       ...(viewId ? { view_id: viewId } : {}),
       ...(project.provider_config.board_mapping
         ? { board_mapping: project.provider_config.board_mapping }
+        : {}),
+      ...(recordId && item
+        ? {
+            current_item: {
+              item_id: String(item.id),
+              record_id: recordId,
+              title: item.title,
+              cached_description: item.description ?? '',
+              cached_cells: item.source_cells ?? {},
+            },
+          }
         : {}),
     },
     semantics: {
@@ -126,7 +141,14 @@ export function dingtalkAITableRuntimeContext(
     "If the user explicitly names another Wework project, use wework_space list_spaces to resolve it, then use that project's provider binding.",
     'Only search DingTalk bases when the user explicitly asks to find an arbitrary DingTalk resource outside the bound Wework project.',
     'Inspect the live table schema before referring to fields. Never guess identifiers or field names.',
-    'Do not use wework_space board-item or table CRUD tools for DingTalk AI Table data.',
+    ...(recordId
+      ? [
+          'For questions about the current Issue, call wework_space get_current_context first so the provider can return the live DingTalk record fields and primary document.',
+          `The bound record ID is ${recordId}; never search for the current record by title.`,
+          'Only when the project-space tool explicitly returns a bundled_dws_fallback may you use the exact binary path and commands from that fallback.',
+          'Never invoke a bare dws command or use a user-installed DWS.',
+        ]
+      : []),
     'If the bound resource cannot be accessed, report that error and do not silently switch to another table.',
     'Follow dws confirmation requirements for destructive operations.',
   ]
@@ -144,7 +166,10 @@ export function dingtalkAITableRuntimeContext(
   }
 }
 
-export function projectSpaceChatRuntimeContext(project: CloudProject): RuntimeAdditionalContext {
+export function projectSpaceChatRuntimeContext(
+  project: CloudProject,
+  item?: CloudLoopItem
+): RuntimeAdditionalContext {
   return {
     projectSpaceChat: {
       kind: 'application',
@@ -159,7 +184,7 @@ export function projectSpaceChatRuntimeContext(project: CloudProject): RuntimeAd
         'Only ask the user to clarify when their request is ambiguous within the current project itself.',
       ].join('\n'),
     },
-    ...dingtalkAITableRuntimeContext(project),
+    ...dingtalkAITableRuntimeContext(project, item),
   }
 }
 

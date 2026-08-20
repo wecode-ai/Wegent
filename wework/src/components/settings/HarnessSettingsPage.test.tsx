@@ -8,11 +8,12 @@ import { HarnessSettingsPage } from './HarnessSettingsPage'
 const listLocalHarnessesMock = vi.hoisted(() => vi.fn())
 const updateAppPreferencesMock = vi.hoisted(() => vi.fn())
 const openNativeExecutablePickerMock = vi.hoisted(() => vi.fn())
+let currentAppPreferences = defaultAppPreferences
 
 vi.mock('@/features/app-preferences/useAppPreferencesState', () => ({
   useAppPreferencesState: () => ({
     loaded: true,
-    preferences: defaultAppPreferences,
+    preferences: currentAppPreferences,
   }),
 }))
 
@@ -34,6 +35,7 @@ vi.mock('@/tauri/appPreferences', async importOriginal => {
 
 describe('HarnessSettingsPage', () => {
   beforeEach(() => {
+    currentAppPreferences = defaultAppPreferences
     listLocalHarnessesMock.mockReset()
     updateAppPreferencesMock.mockReset()
     openNativeExecutablePickerMock.mockReset()
@@ -131,6 +133,37 @@ describe('HarnessSettingsPage', () => {
     )
     expect(screen.getByTestId('harness-settings-status')).toHaveTextContent(
       '编码工具设置已自动保存'
+    )
+  })
+
+  test('redetects harnesses with executable paths updated outside the settings form', async () => {
+    const { rerender } = render(<HarnessSettingsPage />)
+
+    await waitFor(() =>
+      expect(listLocalHarnessesMock).toHaveBeenCalledWith({
+        opencode: null,
+        claude_code: null,
+        kimi_code: null,
+      })
+    )
+    listLocalHarnessesMock.mockClear()
+    currentAppPreferences = {
+      ...defaultAppPreferences,
+      localHarnesses: defaultAppPreferences.localHarnesses.map(preference =>
+        preference.id === 'claude_code'
+          ? { ...preference, executablePath: '/opt/claude/bin/claude' }
+          : preference
+      ),
+    }
+
+    rerender(<HarnessSettingsPage />)
+
+    await waitFor(() =>
+      expect(listLocalHarnessesMock).toHaveBeenCalledWith({
+        opencode: null,
+        claude_code: '/opt/claude/bin/claude',
+        kimi_code: null,
+      })
     )
   })
 

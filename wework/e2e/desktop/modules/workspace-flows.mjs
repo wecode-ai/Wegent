@@ -7,12 +7,20 @@ import {
 
 import {
   ACTIVE_COMPOSER_SELECTOR,
+  DEFAULT_MODEL_ID,
+  DEFAULT_MODEL_LABEL,
   DEFAULT_STEP_TIMEOUT_MS,
+  PROVIDER_SWITCH_OFFICIAL_LABEL,
+  PROVIDER_SWITCH_OFFICIAL_OPTION_ID,
   WORKBENCH_READY_TIMEOUT_MS,
   assert,
+  ensureModelOptionVisible,
   join,
+  modelOptionIdCandidates,
+  revealGroupedModelOption,
   resultDir,
   runChecked,
+  visibleModelOptionId,
   withTimeout,
   writeFile,
 } from './shared.mjs'
@@ -426,6 +434,21 @@ async function verifyWorkspaceIssueCreation(control) {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  assert.equal(
+    await control.command('getAttribute', '[data-testid="workspace-issue-description"]', {
+      value: 'contenteditable',
+    }),
+    'true',
+    'Expanded Issue description must use the rich Markdown editor'
+  )
+  const descriptionRegionClass =
+    (await control.command('getAttribute', '[data-testid="workspace-issue-description-region"]', {
+      value: 'class',
+    })) ?? ''
+  assert.ok(
+    descriptionRegionClass.includes('flex-1') && descriptionRegionClass.includes('min-h-[360px]'),
+    `Expanded Issue description must fill the remaining editor height: ${descriptionRegionClass}`
+  )
   const expandedPanelClass =
     (await control.command('getAttribute', '[data-testid="workspace-issue-composer-panel"]', {
       value: 'class',
@@ -521,6 +544,39 @@ async function verifyWorkspaceIssueCreation(control) {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )
+  const taskComposerSelector = `${boardContentSelector} [data-testid="work-item-new-task-chat-panel"]`
+  const modelSelectorButton = `${taskComposerSelector} [data-testid="model-selector-button"]`
+  const currentModelLabel = await control.command('getText', modelSelectorButton, {
+    visible: true,
+  })
+  const targetModel = currentModelLabel.includes(DEFAULT_MODEL_LABEL)
+    ? {
+        id: PROVIDER_SWITCH_OFFICIAL_OPTION_ID,
+        label: PROVIDER_SWITCH_OFFICIAL_LABEL,
+      }
+    : { id: DEFAULT_MODEL_ID, label: DEFAULT_MODEL_LABEL }
+  await ensureModelOptionVisible(control, targetModel.id, modelSelectorButton)
+  let targetOptionId = await visibleModelOptionId(control, modelOptionIdCandidates(targetModel.id))
+  if (!targetOptionId) {
+    await revealGroupedModelOption(control, modelOptionIdCandidates(targetModel.id))
+    targetOptionId = await visibleModelOptionId(control, modelOptionIdCandidates(targetModel.id))
+  }
+  assert.ok(targetOptionId, `No visible model option matched ${targetModel.id}`)
+  await control.command(
+    'click',
+    `[data-testid="model-selector-submenu"] [data-testid="${targetOptionId}"]`
+  )
+  const switchedModelSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  assert.equal(
+    switchedModelSnapshot.testIds.includes('model-switch-warning-dialog'),
+    false,
+    'A fresh board task composer was treated as an existing conversation while switching models'
+  )
+  await control.command('waitFor', modelSelectorButton, {
+    text: targetModel.label,
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await captureVerificationScreenshot(
     control,
     'workspace-issue-03-new-task-sidebar.png',

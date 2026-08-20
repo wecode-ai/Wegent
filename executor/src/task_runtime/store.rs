@@ -2018,8 +2018,17 @@ impl LocalTaskStore {
             )?),
             _ => None,
         };
+        let local_project_id = transaction
+            .query_row(
+                "SELECT id FROM loop_items
+                 WHERE id = ?1 AND resource_type = 'project' AND deleted_at IS NULL",
+                [project_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
         let metadata = json!({
             "external_item_id": external_item_id,
+            "project_id": project_id,
             "workflow_node_id": input.workflow_node_id,
             "workflow_stage_input": workflow_stage_input,
         });
@@ -2055,7 +2064,7 @@ impl LocalTaskStore {
                        0, ?8, ?9, 1, ?8, ?8)",
             params![
                 id,
-                project_id,
+                local_project_id,
                 item_id,
                 input.device_id,
                 input.task_id,
@@ -2073,7 +2082,7 @@ impl LocalTaskStore {
     pub fn list_task_bindings(&self, item_id: &str) -> Result<Vec<TaskBinding>, TaskRuntimeError> {
         let connection = self.connection()?;
         let mut statement = connection.prepare(
-            "SELECT id, cloud_project_id,
+            "SELECT id, COALESCE(cloud_project_id, json_extract(metadata, '$.project_id')),
                     COALESCE(loop_item_id, json_extract(metadata, '$.external_item_id')),
                     task_user_id, device_id,
                     task_id, task_title, backend_task_id,
@@ -2114,7 +2123,7 @@ impl LocalTaskStore {
         let connection = self.connection()?;
         connection
             .query_row(
-                "SELECT id, cloud_project_id,
+                "SELECT id, COALESCE(cloud_project_id, json_extract(metadata, '$.project_id')),
                         COALESCE(loop_item_id, json_extract(metadata, '$.external_item_id')),
                         task_user_id, device_id,
                         task_id, task_title, backend_task_id,
@@ -2162,7 +2171,7 @@ fn get_active_binding(
 ) -> Result<Option<TaskBinding>, TaskRuntimeError> {
     connection
         .query_row(
-            "SELECT id, cloud_project_id,
+            "SELECT id, COALESCE(cloud_project_id, json_extract(metadata, '$.project_id')),
                     COALESCE(loop_item_id, json_extract(metadata, '$.external_item_id')),
                     task_user_id, device_id,
                     task_id, task_title, backend_task_id,

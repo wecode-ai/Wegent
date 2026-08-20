@@ -774,6 +774,7 @@ describe('ScrollableMessageArea', () => {
     expect(getConversationScrollSnapshot('external-stream-a')).toEqual({
       distanceFromBottomPx: 450,
       pinnedToBottom: false,
+      scrollTopPx: 350,
     })
   })
 
@@ -2063,6 +2064,7 @@ describe('ScrollableMessageArea', () => {
     expect(getConversationScrollSnapshot('navigation-settle')).toEqual({
       distanceFromBottomPx: 1216,
       pinnedToBottom: false,
+      scrollTopPx: 84,
     })
     expect(content).toBeInTheDocument()
     vi.stubGlobal('ResizeObserver', originalResizeObserver)
@@ -2949,6 +2951,51 @@ describe('ScrollableMessageArea', () => {
     })
   })
 
+  test('keeps an unpinned reading position when the restored layout height changes', () => {
+    const messageA = {
+      id: 'height-change-a',
+      role: 'assistant' as const,
+      content: '会话 A 的长内容',
+      status: 'done' as const,
+      createdAt: '2026-05-29T00:00:00.000Z',
+    }
+    const messageB = {
+      id: 'height-change-b',
+      role: 'assistant' as const,
+      content: '会话 B',
+      status: 'done' as const,
+      createdAt: '2026-05-29T00:00:01.000Z',
+    }
+    const { rerender } = render(
+      <ScrollableMessageArea conversationKey="height-change-a" messages={[messageA]} />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    Object.defineProperty(scroller, 'clientHeight', { value: 200, configurable: true })
+    Object.defineProperty(scroller, 'scrollHeight', { value: 1200, configurable: true })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 300,
+      writable: true,
+      configurable: true,
+    })
+    scroller.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      scroller.scrollTop = Number(top)
+    })
+
+    fireEvent.wheel(scroller)
+    fireEvent.scroll(scroller)
+    rerender(<ScrollableMessageArea conversationKey="height-change-b" messages={[messageB]} />)
+    Object.defineProperty(scroller, 'scrollHeight', { value: 1400, configurable: true })
+    ;(scroller.scrollTo as ReturnType<typeof vi.fn>).mockClear()
+    rerender(<ScrollableMessageArea conversationKey="height-change-a" messages={[messageA]} />)
+    flushScheduledTimers()
+
+    expect(scroller.scrollTo).toHaveBeenLastCalledWith({
+      top: 300,
+      behavior: 'auto',
+    })
+  })
+
   test('does not overwrite a saved reading position with a restore-generated scroll event', () => {
     const messageA = {
       id: 'transient-layout-a',
@@ -3077,6 +3124,7 @@ describe('ScrollableMessageArea', () => {
     expect(getConversationScrollSnapshot('streaming-unmount-bottom')).toEqual({
       distanceFromBottomPx: 0,
       pinnedToBottom: true,
+      scrollTopPx: 400,
     })
   })
 
@@ -3207,7 +3255,7 @@ describe('ScrollableMessageArea', () => {
     })
   })
 
-  test('restores reopened conversations by saved distance from bottom', () => {
+  test('restores reopened conversations to the saved reading position', () => {
     const messagesA = [
       {
         id: 'anchor-a-intro',
@@ -3289,12 +3337,12 @@ describe('ScrollableMessageArea', () => {
     })
 
     expect(scroller.scrollTo).toHaveBeenLastCalledWith({
-      top: 500,
+      top: 300,
       behavior: 'auto',
     })
   })
 
-  test('restores long conversations by saved distance from bottom', () => {
+  test('restores long conversations to the saved reading position', () => {
     const messageA = {
       id: 'markdown-anchor-message',
       role: 'assistant' as const,
@@ -3382,7 +3430,7 @@ describe('ScrollableMessageArea', () => {
     })
 
     expect(scroller.scrollTo).toHaveBeenLastCalledWith({
-      top: 500,
+      top: 300,
       behavior: 'auto',
     })
   })
@@ -3448,7 +3496,7 @@ describe('ScrollableMessageArea', () => {
     })
 
     expect(scroller.scrollTo).toHaveBeenLastCalledWith({
-      top: 0,
+      top: 40,
       behavior: 'auto',
     })
 

@@ -44,8 +44,15 @@ export function CloudTodoCardContent({ item, display, agentNames }: CloudTodoCar
 
   return (
     <>
-      <span className="line-clamp-1 pr-5 text-base font-medium leading-5 text-text-primary">
-        {item.title}
+      <span className="flex min-w-0 items-center gap-2 pr-5 text-base font-medium leading-5 text-text-primary">
+        {item.is_unread ? (
+          <span
+            data-testid={`cloud-todo-card-unread-${item.id}`}
+            className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary"
+            aria-hidden="true"
+          />
+        ) : null}
+        <span className="line-clamp-1 min-w-0">{item.title}</span>
       </span>
       {item.description ? (
         <span className="mt-1 line-clamp-2 text-sm leading-[18px] text-text-secondary">

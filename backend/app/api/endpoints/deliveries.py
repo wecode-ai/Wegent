@@ -451,6 +451,21 @@ def get_loop_item(
     return _loop_item_response(db, item, current_user)
 
 
+@router.post("/loop-items/{item_id}/read", response_model=LoopItemResponse)
+def mark_loop_item_read(
+    item_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> LoopItemResponse:
+    if external_loop_item_provider.is_external_item(db, item_id):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "External provider tasks do not support Wegent read state",
+        )
+    item = loop_item_service.mark_read(db, item_id, current_user.id)
+    return _loop_item_response(db, item, current_user)
+
+
 @router.post(
     "/loop-items/{item_id}/workflow-nodes/{workflow_node_id}/decision",
     response_model=LoopItemResponse,
@@ -517,6 +532,12 @@ async def update_loop_item(
 
         await dispatch_board_team_assignment(db, item=item, user=current_user)
         db.refresh(item)
+    publish_loop_item_changed(
+        db,
+        item=item,
+        reason="user_update",
+        actor_user_id=current_user.id,
+    )
     return _loop_item_response(db, item, current_user)
 
 

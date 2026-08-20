@@ -23,6 +23,7 @@ flowchart LR
     ENDPOINT --> GATEWAY[Wework Local Project-space Gateway]
     GATEWAY -->|local project| LOCAL[Local ProjectSpace Provider]
     GATEWAY -->|cloud project while online| REMOTE[Backend ProjectSpace Provider]
+    SESSION -->|DingTalk provider context<br/>base_id + table_id + record_id| DWS[Native DWS<br/>record fields + primary document]
     REMOTE --> BACKEND[Wegent Backend]
     GATEWAY --> DELIVERY[Delivery lifecycle<br/>create / upload / download / finalize / discard]
     DELIVERY -->|source TaskBinding| ISSUE_STAGE[Current Issue workflow node]
@@ -54,11 +55,17 @@ sequenceDiagram
     Note over H,P: Codex is only an MCP Client and no longer creates a stdio MCP child process
     P->>G: Validate connection credentials and the optional ContextGrant
     G-->>P: Return an unbound or bound capability scope
-    H->>P: get_current_context / read_item_attachment
-    P->>G: Invoke the shared tool contract
+    alt DingTalk AI Table Issue
+        W->>H: Inject base_id + table_id + record_id and mandatory full-read rules
+        H->>H: Use native DWS to read the table schema and exact record
+        H->>H: Run get-primary-doc-id, then doc read
+    else Other project-space Issue
+        H->>P: get_current_context / read_item_attachment
+        P->>G: Invoke the shared tool contract
+    end
     alt Local project
-        G->>L: Read the local Issue, description, or attachment
-        L-->>G: Return local data
+        G->>L: Read the Issue, description, or attachment by item_id
+        L-->>G: Return canonical data
     else Cloud project while online
         G->>B: Access Backend with user identity and scope
         B-->>G: Return cloud data
@@ -92,6 +99,7 @@ sequenceDiagram
 | Codex to project-space capability                    | Codex MCP Client; Executor loopback Endpoint                          |
 | Plugin to Codex usage instructions                   | Bundled Wework `wework-space` Skill Plugin                            |
 | Gateway to Local Provider                            | Executor `task_runtime` and local ProjectSpace provider               |
+| DingTalk Issue to native record and primary document | Wework provider context, Codex prompt contract, and native DWS        |
 | Gateway to Backend Provider                          | Executor authenticated Backend ProjectSpace client                    |
 | MCP to Delivery lifecycle                            | Executor `task_runtime/mcp.rs`, Delivery API, and local ProjectSpace  |
 | Delivery to current workflow node                    | ContextGrant Runtime address, `LoopItemTaskBinding`, Delivery service |
@@ -116,6 +124,8 @@ Invariants:
 - `create_delivery` chat selection is resolved server-side from the current Issue timeline and supports all messages, the latest N messages, or explicit message IDs; model-supplied message content is never trusted as the result of a selection.
 - Delivery-asset download verifies that the asset belongs to a Delivery visible under the current Issue. Upload and discard operate only on a still-draft Delivery created by the current session. `finalize_delivery` reuses the immutable snapshot boundary and binds the Delivery to the unique workflow node of its source TaskBinding.
 - Before the first model turn, Runtime validates persistent Endpoint readiness, fixed capability configuration, and ContextGrant. It must not call `mcpServerStatus/list` or another inventory API that can actively start, restart, or enumerate MCP servers. Runtime only observes connection status emitted by Codex app-server. A capability connection failure terminates the current execution while the conversation UI preserves both the user message and failed assistant response.
-- A bound Issue conversation that reads the current description or attachments follows one deterministic path: `get_current_context` → `get_board_item` → `list_item_attachments` → `read_item_attachment`. It must not use MCP resource listing, a browser, Shell, `curl`, or direct `wegent://` parsing to infer capability availability.
+- A non-DingTalk bound Issue conversation that reads the current description or attachments follows one deterministic path: `get_current_context` → `get_board_item` → `list_item_attachments` → `read_item_attachment`. It must not use MCP resource listing, a browser, Shell, `curl`, or direct `wegent://` parsing to infer capability availability.
 - Local, remote, and Backend MCP implementations share the same tool schema and contract tests. Providers choose data location without changing tool semantics.
+- A DingTalk AI Table Issue injects the bound `base_id + table_id` and the current Issue's stable `record_id` into provider context. These identifiers locate the resource while authorization remains owned by the DWS session. Before answering any question about the current Issue, the Agent uses native DWS to read the table schema, every field of the exact record, `get-primary-doc-id`, and `doc read`, then combines non-empty fields with the primary-document Markdown. It never treats an empty cached Wework description as proof that DingTalk content is empty, searches another table as a substitute, or invents a nonexistent `record get` command.
+- DingTalk provider context is an explicit native-routing exception to the generic `wework_space` Issue-read rule. Executor does not expose project-space record CRUD tools that would create a second primary path for these sessions; an accidental call returns an explicit redirect containing the bound record identity and fixed DWS read sequence.
 - After migration, the per-task `ensure_space_mcp_server` service-injection path is removed; two primary paths must not remain.

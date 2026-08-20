@@ -1543,6 +1543,52 @@ export function CloudTodoWorkspace({
   const boardItemsLoading = selectedProject !== null && itemsProjectKey !== selectedProjectKey
   const selectedItemProject = selectedItem ? projectForItem(selectedItem) : undefined
   const selectedItemApi = apiForProject(selectedItemProject)
+  useEffect(() => {
+    if (
+      !selectedItem?.is_unread ||
+      !selectedItemApi ||
+      selectedItemProject?.location !== 'cloud' ||
+      selectedItemProject.task_provider !== 'local'
+    ) {
+      return
+    }
+    let active = true
+    const itemId = selectedItem.id
+    const projectKey = projectSpaceKey(projectSpaceRef(selectedItemProject))
+    void selectedItemApi
+      .markLoopItemRead(itemId)
+      .then(updated => {
+        if (!active) return
+        const locatedUpdated = {
+          ...updated,
+          project_store: selectedItem.project_store,
+        }
+        setSelectedItem(current => (current?.id === itemId ? locatedUpdated : current))
+        setItems(current => current.map(item => (item.id === itemId ? locatedUpdated : item)))
+        setDetailItems(current => current.map(item => (item.id === itemId ? locatedUpdated : item)))
+        setProjectItems(current => ({
+          ...current,
+          [projectKey]: (current[projectKey] ?? []).map(item =>
+            item.id === itemId ? locatedUpdated : item
+          ),
+        }))
+      })
+      .catch(error => {
+        console.warn('[Wework project board] mark Issue read failed', {
+          itemId,
+          error,
+        })
+      })
+    return () => {
+      active = false
+    }
+  }, [
+    selectedItem?.id,
+    selectedItem?.is_unread,
+    selectedItem?.project_store,
+    selectedItemApi,
+    selectedItemProject,
+  ])
   // Source for the detail drawer / creation dialog when the selected todo lives
   // in a project other than the one shown on the board.
   const detailAllItems =

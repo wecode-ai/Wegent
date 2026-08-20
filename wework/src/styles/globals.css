@@ -159,6 +159,22 @@
   padding-inline: 0;
 }
 
+.issue-description-editor,
+.issue-description-editor .bn-container,
+.issue-description-editor .bn-editor {
+  min-height: 100%;
+}
+
+.issue-description-editor .bn-container {
+  display: flex;
+  flex: 1;
+}
+
+.issue-description-editor .bn-editor {
+  flex: 1;
+  padding-block: 0 32px;
+}
+
 /* Notion-like heading hierarchy shared by the detail and create dialogs. */
 .task-description-editor .bn-block-content[data-content-type='heading'] {
   --level: 1.875em;
