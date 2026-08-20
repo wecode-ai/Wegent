@@ -260,6 +260,7 @@ function ScrollableMessagePaneContent({
   const isAtBottomRef = useRef(true)
   const turnNavigationLoadingRef = useRef(false)
   const turnNavigationScrollingRef = useRef(false)
+  const turnNavigationScrollKeyRef = useRef<string | null>(null)
   const previousConversationKeyRef = useRef<string | number | null | undefined>(undefined)
   const previousLastMessageIdRef = useRef<string | null>(null)
   const pendingAssistantResponseStartRef = useRef(false)
@@ -381,10 +382,18 @@ function ScrollableMessagePaneContent({
     (messageId: string | null) => {
       const scrolling = messageId !== null
       const wasScrolling = turnNavigationScrollingRef.current
+      const navigationScrollKey = turnNavigationScrollKeyRef.current
       turnNavigationScrollingRef.current = scrolling
+      turnNavigationScrollKeyRef.current = scrolling ? currentScrollKey : null
       setTurnNavigationTargetMessageId(messageId)
       const element = activeScrollRefRef.current.current
-      if (wasScrolling && !scrolling && element && currentScrollKey !== null) {
+      if (
+        wasScrolling &&
+        !scrolling &&
+        element &&
+        navigationScrollKey !== null &&
+        navigationScrollKey === currentScrollKey
+      ) {
         const snapshot = createScrollSnapshot(element)
         setConversationScrollSnapshot(currentScrollKey, snapshot)
         followingBottomKeyRef.current = null
@@ -392,14 +401,6 @@ function ScrollableMessagePaneContent({
         isAtBottomRef.current = snapshot.pinnedToBottom
         userScrollPausedAutoFollowRef.current = !snapshot.pinnedToBottom
       }
-      console.warn('[Wework] Message turn navigation scroll ownership', {
-        scrolling,
-        messageId,
-        conversationKey: currentScrollKey,
-        scrollTop: element?.scrollTop ?? null,
-        scrollHeight: element?.scrollHeight ?? null,
-        clientHeight: element?.clientHeight ?? null,
-      })
       if (scrolling) {
         clearScheduledScrolls()
         preserveLatestUserTurnRef.current = false
@@ -706,6 +707,10 @@ function ScrollableMessagePaneContent({
       lastMessageChanged &&
       lastMessage?.role === 'assistant' &&
       !userScrollPausedAutoFollowRef.current
+    if (conversationChanged) {
+      turnNavigationScrollingRef.current = false
+      turnNavigationScrollKeyRef.current = null
+    }
     const autoScrollIsSuspended = autoScrollSuspended || isTurnNavigationAutoScrollSuspended()
     if (conversationChanged) {
       pendingAssistantResponseStartRef.current = false
