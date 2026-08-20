@@ -315,7 +315,11 @@ export class RuntimeTaskLifecycleStore {
     const eventChanged = machine.dispatch(canonicalEvent)
     let changed = eventChanged
     const next = machine.getSnapshot()
-    if (canonicalEvent.type === 'turn_settled' && previous.task?.running === true) {
+    if (
+      canonicalEvent.type === 'turn_settled' &&
+      previous.task?.running === true &&
+      import.meta.env.VITE_WEWORK_RUNTIME_DEBUG === '1'
+    ) {
       console.info('[Wework] Runtime turn settled before executor became idle', {
         deviceId: canonicalAddress.deviceId,
         taskId: canonicalAddress.taskId,
@@ -548,6 +552,18 @@ export function runtimeTaskLifecycleTransitionChanged(
     expected.goalStatus !== current.goalStatus ||
     expected.continuable !== current.continuable
   )
+}
+
+export function consumeRuntimeTaskLifecycleBlock(
+  blockedSnapshots: Map<string, RuntimeTaskLifecycleSnapshot | null>,
+  key: string,
+  current: RuntimeTaskLifecycleSnapshot | null
+): boolean {
+  if (!blockedSnapshots.has(key)) return true
+  const blocked = blockedSnapshots.get(key) ?? null
+  if (!runtimeTaskLifecycleTransitionChanged(blocked, current)) return false
+  blockedSnapshots.delete(key)
+  return true
 }
 
 function isTerminalTurnStatus(status: string | null | undefined): boolean {

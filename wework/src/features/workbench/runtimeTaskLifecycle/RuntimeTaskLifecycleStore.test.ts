@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { RuntimeTaskAddress, RuntimeTaskSummary, RuntimeWorkListResponse } from '@/types/api'
 import type { RuntimePaneTranscript } from '@/types/workbench'
 import {
+  consumeRuntimeTaskLifecycleBlock,
   createRuntimeTaskLifecycleOwnershipView,
   runtimeTaskLifecycleTransitionChanged,
   RuntimeTaskLifecycleStore,
@@ -70,6 +71,28 @@ describe('RuntimeTaskLifecycleStore', () => {
 
     store.turnStarted(address, 'turn-1')
     expect(runtimeTaskLifecycleTransitionChanged(first, store.getTask(address))).toBe(true)
+
+    const beforeContinuableChange = store.getTask(address)
+    store.syncRuntimeWork(runtimeWork(task({ running: true, continuable: false })))
+    expect(
+      runtimeTaskLifecycleTransitionChanged(beforeContinuableChange, store.getTask(address))
+    ).toBe(true)
+  })
+
+  test('consumes a queued lifecycle block only after a stable transition', () => {
+    const store = new RuntimeTaskLifecycleStore('queued-block-transition-test')
+    store.syncRuntimeWork(runtimeWork(task({ running: true })))
+    const blocked = store.getTask(address)
+    const blocks = new Map([['message-1', blocked]])
+
+    expect(consumeRuntimeTaskLifecycleBlock(blocks, 'message-1', store.getTask(address))).toBe(
+      false
+    )
+    expect(blocks.has('message-1')).toBe(true)
+
+    store.turnStarted(address, 'turn-1')
+    expect(consumeRuntimeTaskLifecycleBlock(blocks, 'message-1', store.getTask(address))).toBe(true)
+    expect(blocks.has('message-1')).toBe(false)
   })
 
   beforeEach(() => localStorage.clear())

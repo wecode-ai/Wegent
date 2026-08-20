@@ -23,7 +23,7 @@ import {
   subscribeRuntimeConversation,
 } from '@/features/workbench/runtimeConversationCache'
 import {
-  runtimeTaskLifecycleTransitionChanged,
+  consumeRuntimeTaskLifecycleBlock,
   type RuntimeTaskLifecycleSnapshot,
   useRuntimeTaskLifecycle,
   useRuntimeTaskLifecycleStore,
@@ -385,18 +385,15 @@ export function TemporaryChatPanel({
     if (queuedMessages.some(message => message.status === 'sending')) return
     const queuedMessage = queuedMessages.find(message => message.status === 'queued')
     if (!queuedMessage) return
-    const hasBlockedSnapshot = queuedMessageBusyBlocksRef.current.has(queuedMessage.id)
-    const blockedSnapshot = queuedMessageBusyBlocksRef.current.get(queuedMessage.id)
     if (
-      hasBlockedSnapshot &&
-      !runtimeTaskLifecycleTransitionChanged(
-        blockedSnapshot ?? null,
+      !consumeRuntimeTaskLifecycleBlock(
+        queuedMessageBusyBlocksRef.current,
+        queuedMessage.id,
         lifecycleStore.getTask(address)
       )
     ) {
       return
     }
-    queuedMessageBusyBlocksRef.current.delete(queuedMessage.id)
     void sendQueuedMessage(queuedMessage)
   }, [address, busy, lifecycleStore, queuedMessages, sendQueuedMessage])
 

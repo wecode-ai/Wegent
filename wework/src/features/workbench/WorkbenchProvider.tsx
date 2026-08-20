@@ -252,6 +252,7 @@ export function WorkbenchProvider({
   const [trackingBindingRevision, setTrackingBindingRevision] = useState(0)
   const trackingTitleSignaturesRef = useRef(new Map<string, string>())
   const runtimeTaskSettleSyncGenerationRef = useRef(new Map<string, number>())
+  const runtimeTaskSettleSyncGenerationCounterRef = useRef(0)
   const [state, dispatch] = useReducer(workbenchReducer, initialWorkbenchState)
   // The cloud connection context falls back to a synthetic "backend" user when
   // no real cloud provider is mounted; never let that placeholder override the
@@ -1777,7 +1778,7 @@ export function WorkbenchProvider({
   const syncRuntimeTaskUntilExecutorSettles = useStableEvent(
     async (address: RuntimeTaskAddress) => {
       const key = runtimeConversationKey(address)
-      const generation = (runtimeTaskSettleSyncGenerationRef.current.get(key) ?? 0) + 1
+      const generation = ++runtimeTaskSettleSyncGenerationCounterRef.current
       runtimeTaskSettleSyncGenerationRef.current.set(key, generation)
 
       try {

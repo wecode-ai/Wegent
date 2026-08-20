@@ -12555,8 +12555,13 @@ describe('WorkbenchProvider runtime tasks', () => {
       staleIdleRefresh.resolve(idleRuntimeWork)
       await staleIdleRefresh.promise
     })
-    expect(screen.getByTestId('top-level-runtime-stream-lifecycle')).toHaveTextContent(
-      'running:idle'
+    await waitFor(() =>
+      expect(listRuntimeWork.mock.settledResults.length).toBe(listRuntimeWork.mock.calls.length)
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('top-level-runtime-stream-lifecycle')).toHaveTextContent(
+        'running:idle'
+      )
     )
   })
 

@@ -304,7 +304,10 @@ describe('runtimeConversationTurns', () => {
       items: [{ id: 'client-user-2' }],
     })
     expect(turns[1].items[0]).toMatchObject({ type: 'user_message' })
-    expect(turns[1].items[0]).not.toHaveProperty('message.turnId')
+    const optimisticItem = turns[1].items[0]
+    expect(
+      optimisticItem.type === 'user_message' ? optimisticItem.message.turnId : null
+    ).toBeUndefined()
   })
 
   test('corrects a provisional turn id by exact client user message id', () => {
