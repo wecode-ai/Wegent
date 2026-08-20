@@ -77,7 +77,7 @@ pub struct EmbeddedBrowserHistoryEntry {
 2. 标题与导航绑定：`on_navigation` 时在 webview 条目上标记 `pending_history_url` 并清空旧标题；`on_document_title_changed` 若发生在导航进行中（标题通常先于 Finished 触发）则不回填历史，新标题由 Finished 时的记录直接携带；仅当无进行中导航（加载完成后 JS 改标题）才按当前 URL 回填最近一条无标题记录。
 3. favicon：不入库；前端渲染时按 `${origin}/favicon.ico` 直接加载 `<img>`，`onError` 回退默认 Globe 图标。相比 Codex 的 dataURL 存储更轻，代价是图标可能 404 或随站点变化。
 
-**清除竞态**：`EmbeddedBrowserState.history_generation`（原子计数器）。清除浏览数据时先递增 generation 再清空存储；每次导航开始把当前 generation 记到 webview 条目，加载完成记录历史时在 store 锁内校验 generation 未变才写入——清除开始后完成加载的旧页面不会复活已清除的记录。
+**清除竞态**：`EmbeddedBrowserState.history_generation`（原子计数器）。清除浏览数据时，先完成生命周期锁与 webview 就绪检查（检查不过直接报错、历史不受影响），然后递增 generation 再清空存储；每次导航开始把当前 generation 记到 webview 条目，加载完成记录历史时在 store 锁内校验 generation 未变才写入——清除开始后完成加载的旧页面不会复活已清除的记录。删除/清空若内存已改但落盘失败，会把 store 标记为未加载，下次访问从完好的文件恢复。
 
 **持久化**：JSON 文件 `app_data_dir()/browser-history.json`（沿用 `opener_store.rs` 的 app_data_dir 模式，不引入 SQLite）。内存中 `VecDeque`，容量上限 **5000 条**，超出按 FIFO 淘汰；每次变更后写临时文件再 rename 原子落盘，首次访问时懒加载。
 

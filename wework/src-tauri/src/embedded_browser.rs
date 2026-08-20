@@ -2828,7 +2828,12 @@ pub fn embedded_browser_history_remove(
 ) -> Result<u32, String> {
     with_history_store(&app, &state, |store, path| {
         let removed = store.remove(&ids);
-        store.persist(path)?;
+        if let Err(error) = store.persist(path) {
+            // Keep the in-memory store consistent with the intact file so the
+            // next access reloads the pre-remove entries.
+            store.mark_unloaded();
+            return Err(error);
+        }
         Ok(removed as u32)
     })
 }

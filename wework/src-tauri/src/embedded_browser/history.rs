@@ -98,6 +98,13 @@ impl EmbeddedBrowserHistoryStore {
         self.entries.clear();
     }
 
+    // Marks the store as not loaded so the next access re-reads the persisted
+    // file; used to recover when clearing in memory succeeded but persisting
+    // the empty state failed.
+    pub fn mark_unloaded(&mut self) {
+        self.loaded = false;
+    }
+
     pub fn load(&mut self, path: &PathBuf) -> Result<(), String> {
         if self.loaded {
             return Ok(());

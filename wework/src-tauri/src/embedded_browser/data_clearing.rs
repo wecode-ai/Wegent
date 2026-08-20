@@ -84,18 +84,6 @@ pub async fn clear_embedded_browser_data(
     requested_kinds: Option<Vec<EmbeddedBrowserDataKind>>,
 ) -> Result<usize, String> {
     let data_kinds = DataKindSet::from_requested(requested_kinds);
-    if data_kinds.history {
-        // Bump the history generation first so page loads that started before
-        // this clear cannot re-record their visit afterwards.
-        state
-            .inner()
-            .history_generation
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        super::with_history_store(&app, state.inner(), |store, path| {
-            store.clear();
-            store.persist(path)
-        })?;
-    }
     let _lifecycle = state.lifecycle.lock().await;
     let webviews = {
         let webviews = state
@@ -113,6 +101,27 @@ pub async fn clear_embedded_browser_data(
             .map(EmbeddedBrowserEntry::ready_webview)
             .collect::<Result<Vec<_>, _>>()?
     };
+
+    // Only touch history after the readiness checks above have passed, so a
+    // failed clear never deletes history the UI reports as untouched. The
+    // generation bump still precedes the store wipe, blocking in-flight page
+    // loads from re-recording their visits afterwards.
+    if data_kinds.history {
+        state
+            .inner()
+            .history_generation
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        super::with_history_store(&app, state.inner(), |store, path| {
+            store.clear();
+            if let Err(error) = store.persist(path) {
+                // Keep the in-memory store consistent with the intact file so
+                // the next access reloads the pre-clear entries.
+                store.mark_unloaded();
+                return Err(error);
+            }
+            Ok(())
+        })?;
+    }
 
     if !webviews.is_empty() {
         for webview in &webviews {
