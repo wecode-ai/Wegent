@@ -527,14 +527,18 @@ fn read_package_version(path: &Path) -> Result<Version, String> {
 
 fn read_node_version(node: &Path) -> Result<Version, String> {
     let output = Command::new(node)
-        .arg("--version")
+        .args(["-p", "process.versions.node"])
         .output()
-        .map_err(|error| format!("Failed to inspect the managed Node runtime: {error}"))?;
+        .map_err(|error| format!("Failed to start the managed Node runtime: {error}"))?;
     if !output.status.success() {
-        return Err("Managed Node runtime did not report its version".to_string());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "Managed Node runtime failed to initialize V8: {}",
+            stderr.trim()
+        ));
     }
     let raw = String::from_utf8_lossy(&output.stdout);
-    Version::parse(raw.trim().trim_start_matches('v'))
+    Version::parse(raw.trim())
         .map_err(|error| format!("Managed Node runtime version is invalid: {error}"))
 }
 
