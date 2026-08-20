@@ -73,6 +73,8 @@ struct PersistedRuntimeTask {
     ephemeral: bool,
     runtime_project_key: Option<String>,
     runtime_workspace_roots: Vec<String>,
+    project_instructions: String,
+    project_plugin_ids: Vec<String>,
 }
 
 #[derive(Default, Deserialize)]
@@ -95,6 +97,8 @@ struct PersistedRuntimeTaskInput {
     ephemeral: bool,
     runtime_project_key: Option<String>,
     runtime_workspace_roots: Vec<String>,
+    project_instructions: String,
+    project_plugin_ids: Vec<String>,
 }
 
 impl From<PersistedRuntimeTaskInput> for PersistedRuntimeTask {
@@ -120,6 +124,8 @@ impl From<PersistedRuntimeTaskInput> for PersistedRuntimeTask {
             ephemeral: input.ephemeral,
             runtime_project_key: input.runtime_project_key,
             runtime_workspace_roots: input.runtime_workspace_roots,
+            project_instructions: input.project_instructions,
+            project_plugin_ids: input.project_plugin_ids,
         }
     }
 }
@@ -143,6 +149,8 @@ impl PersistedRuntimeTask {
             ephemeral: link.ephemeral,
             runtime_project_key: link.runtime_project_key.clone(),
             runtime_workspace_roots: link.runtime_workspace_roots.clone(),
+            project_instructions: link.project_instructions.clone(),
+            project_plugin_ids: link.project_plugin_ids.clone(),
         }
     }
 
@@ -173,6 +181,8 @@ impl PersistedRuntimeTask {
             ephemeral: self.ephemeral,
             runtime_project_key: self.runtime_project_key,
             runtime_workspace_roots: self.runtime_workspace_roots,
+            project_instructions: self.project_instructions,
+            project_plugin_ids: self.project_plugin_ids,
             list_order: None,
             sidebar_order: None,
             group_workspace_path: None,
@@ -790,6 +800,34 @@ mod tests {
         assert!(!restored.running);
         assert_eq!(restored.thread_status, "notLoaded");
         assert_eq!(restored.turn_status, None);
+    }
+
+    #[test]
+    fn persisted_project_context_restores_with_task_metadata() {
+        let directory = tempfile::tempdir().expect("temporary directory should be created");
+        let index_path = directory.path().join("index.json");
+        let store = RuntimeWorkStore::new(index_path.clone());
+        let mut task = RuntimeTaskLink::new_pending(
+            "project-context-task".to_owned(),
+            "/tmp/project-context".to_owned(),
+            "Project context".to_owned(),
+        );
+        task.project_instructions = "Follow the project instructions".to_owned();
+        task.project_plugin_ids = vec!["plugin-a".to_owned(), "plugin-b".to_owned()];
+
+        store.upsert_task(task);
+
+        let restored = RuntimeWorkStore::new(index_path)
+            .get_task("project-context-task")
+            .expect("project context task should be restored");
+        assert_eq!(
+            restored.project_instructions,
+            "Follow the project instructions"
+        );
+        assert_eq!(
+            restored.project_plugin_ids,
+            vec!["plugin-a".to_owned(), "plugin-b".to_owned()]
+        );
     }
 
     #[test]
