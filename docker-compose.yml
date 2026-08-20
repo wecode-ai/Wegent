@@ -241,6 +241,7 @@ services:
       - "${EXECUTOR_MANAGER_PORT:-8001}:8001"
     environment:
       - TZ=${TZ:-Asia/Shanghai}
+      - WEGENT_LOG_FILE_PATH=/app/logs/info.log
       - TASK_API_DOMAIN=${TASK_API_DOMAIN:-http://backend:8000}
       - EXECUTOR_MANAGER_EXTERNAL_URL=${EXECUTOR_MANAGER_EXTERNAL_URL:-http://executor_manager:8001}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
@@ -280,6 +281,7 @@ services:
       # - OTEL_TRACES_SAMPLER_ARG=1.0
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - ./logs/executor_manager:/app/logs
     depends_on:
       - backend
       - redis
