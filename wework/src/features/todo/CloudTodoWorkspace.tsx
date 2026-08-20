@@ -743,7 +743,10 @@ function ProjectDialog({
                 }
               />
               <span className="mt-1.5 block text-xs font-normal text-text-muted">
-                支持 HTTPS、SSH 或 owner/repository 格式；自托管地址会自动识别。
+                支持 HTTPS、SSH 或 owner/repository
+                格式。自托管实例请粘贴完整地址（含端口）；若实例部署在子路径下（如
+                /gitlab/），请使用 API
+                地址形式：https://host/gitlab/api/v4/projects/group%2Fproject。
               </span>
             </label>
             <label className="block text-sm font-medium text-text-primary">

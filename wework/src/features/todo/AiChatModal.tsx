@@ -11,6 +11,7 @@ import {
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
+import { stripWorkflowEndpointNodes } from '@/api/issueWorkflow'
 import { WorkbenchHarnessSelector } from '@/components/layout/WorkbenchHarnessSelector'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
@@ -163,7 +164,7 @@ export function AiChatModal({
                             task.workflow.stage_mode ??
                             (task.workflow.nodes.length ? 'dag' : 'none'),
                           currentStageId: workflowNodeId ?? null,
-                          stages: task.workflow.nodes.map(node => ({
+                          stages: stripWorkflowEndpointNodes(task.workflow.nodes).map(node => ({
                             id: node.id,
                             name: node.name,
                             prompt: node.prompt ?? '',

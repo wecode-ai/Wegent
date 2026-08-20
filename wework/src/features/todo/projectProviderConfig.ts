@@ -3,6 +3,11 @@ import type { RuntimeAdditionalContext } from '@/types/api'
 
 export type ExternalProjectTaskProvider = 'github' | 'gitlab'
 
+const API_BASE_SUFFIX: Record<ExternalProjectTaskProvider, string> = {
+  github: '/api/v3',
+  gitlab: '/api/v4',
+}
+
 export function repositoryProviderConfig(
   address: string,
   provider: ExternalProjectTaskProvider
@@ -14,29 +19,58 @@ export function repositoryProviderConfig(
   const value = address.trim()
   if (!value) throw new Error('请输入仓库地址')
 
-  const shorthand = value.match(/^([^/\s]+)\/([^/\s]+)$/)
-  if (shorthand) {
-    return { repository: `${shorthand[1]}/${shorthand[2].replace(/\.git$/, '')}` }
-  }
-
   const ssh = value.match(/^git@([^:]+):(.+)$/)
-  let domain: string
-  let pathname: string
+  let parsed: URL
   if (ssh) {
-    domain = ssh[1].toLowerCase()
-    pathname = ssh[2]
+    parsed = new URL(`https://${ssh[1]}/${ssh[2].replace(/^\/+/, '')}`)
   } else {
-    let parsed: URL
+    const shorthand = value.match(/^([^/\s]+)\/([^/\s]+)$/)
+    if (shorthand) {
+      return { repository: `${shorthand[1]}/${shorthand[2].replace(/\.git$/, '')}` }
+    }
     try {
       parsed = new URL(value)
     } catch {
       throw new Error('请输入完整仓库地址，或使用 owner/repository 格式')
     }
-    domain = parsed.hostname.toLowerCase()
-    pathname = parsed.pathname
   }
 
-  const repositoryPath = pathname.replace(/^\/+|\/+$/g, '')
+  const domain = parsed.hostname.toLowerCase()
+  const defaultDomain = provider === 'github' ? 'github.com' : 'gitlab.com'
+
+  // An explicit API URL is the only unambiguous address for self-hosted
+  // instances, especially GitLab behind a relative URL root. It is recognized
+  // by an API root followed by the provider collection, never guessed from the
+  // web path: https://host/gitlab/api/v4/projects/group%2Fproject
+  const apiRootMatch = parsed.pathname.match(/\/api\/v[34](\/|$)/)
+  if (apiRootMatch) {
+    const apiSegment = apiRootMatch[0].replace(/\/$/, '')
+    const apiRootStart = apiRootMatch.index ?? 0
+    const apiRepositoryPath = parsed.pathname
+      .slice(apiRootStart + apiSegment.length)
+      .replace(/^\/+/, '')
+    const collectionPrefix = provider === 'github' ? 'repos/' : 'projects/'
+    if (apiRepositoryPath.startsWith(collectionPrefix)) {
+      const repository = decodeURIComponent(apiRepositoryPath.slice(collectionPrefix.length))
+        .replace(/\.git$/, '')
+        .replace(/^\/+|\/+$/g, '')
+      const segments = repository.split('/').filter(Boolean)
+      if (segments.length < 2 || (provider === 'github' && segments.length !== 2)) {
+        throw new Error(
+          provider === 'github'
+            ? 'GitHub 仓库地址应包含 owner/repository'
+            : 'GitLab 仓库地址应包含 group/project'
+        )
+      }
+      const webRoot = `${parsed.origin}${parsed.pathname.slice(0, apiRootStart)}`
+      if (domain === defaultDomain && webRoot === parsed.origin) {
+        return { repository }
+      }
+      return { repository, domain, api_base: `${webRoot}${apiSegment}` }
+    }
+  }
+
+  const repositoryPath = parsed.pathname.replace(/^\/+|\/+$/g, '')
   const repositoryWithoutPage =
     provider === 'gitlab' ? (repositoryPath.split('/-/')[0] ?? repositoryPath) : repositoryPath
   const repository = repositoryWithoutPage.replace(/\.git$/, '')
@@ -49,12 +83,11 @@ export function repositoryProviderConfig(
     )
   }
 
-  const defaultDomain = provider === 'github' ? 'github.com' : 'gitlab.com'
   if (domain === defaultDomain) return { repository }
   return {
     repository,
     domain,
-    api_base: provider === 'github' ? `https://${domain}/api/v3` : `https://${domain}/api/v4`,
+    api_base: `${parsed.origin}${API_BASE_SUFFIX[provider]}`,
   }
 }
 
@@ -165,7 +198,19 @@ export function projectSpaceChatRuntimeContext(project: CloudProject): RuntimeAd
 
 export function repositoryAddress(project: CloudProject): string {
   const repository = project.provider_config.repository ?? ''
+  if (!repository) return ''
   const defaultDomain = project.task_provider === 'github' ? 'github.com' : 'gitlab.com'
   const domain = project.provider_config.domain ?? defaultDomain
-  return repository ? `https://${domain}/${repository}` : ''
+  const apiBase = project.provider_config.api_base?.trim()
+  if (!apiBase) return `https://${domain}/${repository}`
+  const webRoot = apiBase.replace(/\/api\/v[34]$/, '')
+  const webRootPath = new URL(webRoot).pathname.replace(/^\/|\/$/g, '')
+  if (webRootPath) {
+    // A relative URL root cannot be reconstructed from the web URL alone, so
+    // show the canonical API form that round-trips through repositoryProviderConfig.
+    const collection = project.task_provider === 'github' ? 'repos' : 'projects'
+    const apiVersion = project.task_provider === 'github' ? 'v3' : 'v4'
+    return `${webRoot}/api/${apiVersion}/${collection}/${repository.replace(/\//g, '%2F')}`
+  }
+  return `${webRoot}/${repository}`
 }

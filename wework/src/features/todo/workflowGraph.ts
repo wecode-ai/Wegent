@@ -21,8 +21,8 @@ export function layoutWorkflowGraph<NodeData extends Record<string, unknown>>(
     marginx: 28,
     marginy: 28,
   })
-  // Allow heterogeneous node types (start/end endpoint circles vs stage and
-  // wait cards) to carry their own dimensions; fall back to the shared size.
+  // Allow heterogeneous node types (stage and wait cards) to carry their own
+  // dimensions; fall back to the shared size.
   nodes.forEach(node => {
     const width = Number(node.data?.nodeWidth ?? nodeWidth)
     const height = Number(node.data?.nodeHeight ?? nodeHeight)

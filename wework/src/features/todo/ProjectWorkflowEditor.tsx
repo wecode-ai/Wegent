@@ -38,6 +38,7 @@ import type {
   WorkflowWorkspacePolicy,
 } from '@/api/deliveries'
 import type { ExternalEventType } from '@/api/externalEvents'
+import { stripWorkflowEndpointNodes } from '@/api/issueWorkflow'
 import type { ProjectAutomationRule } from '@/api/projectAutomations'
 import type { ProjectChatAgent } from '@/api/projectChatAgents'
 import { PopupMenu } from '@/components/common/MenuSelect'
@@ -93,9 +94,6 @@ interface DeliverableDialogState {
 
 const STAGE_NODE_WIDTH = 220
 const STAGE_NODE_HEIGHT = 116
-const ENDPOINT_NODE_SIZE = 72
-const START_NODE_ID = 'start'
-const END_NODE_ID = 'end'
 const DEFAULT_DEPENDENCY_CONTEXT: WorkflowContextSource[] = ['final_result', 'deliveries']
 
 function nextNodeId(nodes: WorkflowNodeDefinition[], prefix: 'stage' | 'wait'): string {
@@ -203,7 +201,12 @@ function createWaitNode(
     prompt: '',
     wait_config: {
       rules: [
-        { id: 'rule-1', event_type: '', mode: 'trigger', action: 'complete', rerun_prompt: '' },
+        {
+          id: 'rule-1',
+          event_type: '',
+          action: 'complete',
+          rerun_prompt: '',
+        },
       ],
     },
     depends_on: dependsOn,
@@ -213,59 +216,6 @@ function createWaitNode(
     workspace_policy: 'none',
     automation_rule_id: null,
   }
-}
-
-function createStartNode(name: string): WorkflowNodeDefinition {
-  return {
-    id: START_NODE_ID,
-    name,
-    node_type: 'start',
-    prompt: '',
-    depends_on: [],
-    dependency_context: {},
-    required: false,
-    required_deliverables: [],
-    workspace_policy: 'none',
-    automation_rule_id: null,
-  }
-}
-
-function createEndNode(name: string, dependsOn: string[]): WorkflowNodeDefinition {
-  return {
-    id: END_NODE_ID,
-    name,
-    node_type: 'end',
-    prompt: '',
-    depends_on: dependsOn,
-    dependency_context: Object.fromEntries(
-      dependsOn.map(dependencyId => [dependencyId, [...DEFAULT_DEPENDENCY_CONTEXT]])
-    ),
-    required: true,
-    required_deliverables: [],
-    workspace_policy: 'none',
-    automation_rule_id: null,
-  }
-}
-
-/** Guarantee the DAG is bounded by the structural start and end nodes. */
-function ensureEndpointNodes(
-  value: ProjectWorkflowDefinition,
-  startName: string,
-  endName: string
-): ProjectWorkflowDefinition {
-  if (value.stage_mode !== 'dag') return value
-  const nodes = [...value.nodes]
-  let changed = false
-  if (!nodes.some(node => node.node_type === 'start')) {
-    nodes.unshift(createStartNode(startName))
-    changed = true
-  }
-  if (!nodes.some(node => node.node_type === 'end')) {
-    const last = nodes[nodes.length - 1]
-    nodes.push(createEndNode(endName, last ? [last.id] : []))
-    changed = true
-  }
-  return changed ? { ...value, nodes } : value
 }
 
 function InsertNodeButton({
@@ -372,7 +322,6 @@ const StageNodeCard = memo(function StageNodeCard({ data, selected }: NodeProps<
 
 const WaitNodeCard = memo(function WaitNodeCard({ data, selected }: NodeProps<EditorFlowNode>) {
   const { t } = useTranslation('common')
-  const modes = Array.from(new Set((data.node.wait_config?.rules ?? []).map(rule => rule.mode)))
   const waitingEvents = Array.from(
     new Set(
       (data.node.wait_config?.rules ?? []).map(rule => rule.event_type.trim()).filter(Boolean)
@@ -413,19 +362,6 @@ const WaitNodeCard = memo(function WaitNodeCard({ data, selected }: NodeProps<Ed
           <p className="mt-0.5 truncate text-xs text-text-muted">{data.actionLabel}</p>
         </div>
       </div>
-      <div className="mt-2 flex flex-wrap gap-1">
-        {modes.map(mode => (
-          <span
-            key={mode}
-            data-testid={`project-workflow-wait-mode-${data.node.id}-${mode}`}
-            className="flex h-5 items-center rounded-full border border-border px-1.5 text-xs uppercase tracking-wide text-text-muted"
-          >
-            {mode === 'trigger'
-              ? t('todo.workflow_wait_mode_trigger', 'trigger')
-              : t('todo.workflow_wait_mode_debounce', 'debounce')}
-          </span>
-        ))}
-      </div>
       <p className="mt-1 line-clamp-1 text-xs text-text-secondary">
         {waitingEvents.length
           ? t('todo.workflow_wait_event_types', '等待：{{types}}', {
@@ -453,69 +389,9 @@ const WaitNodeCard = memo(function WaitNodeCard({ data, selected }: NodeProps<Ed
   )
 })
 
-const EndpointNodeCard = memo(function EndpointNodeCard({
-  data,
-  selected,
-}: NodeProps<EditorFlowNode>) {
-  const isStart = data.node.node_type === 'start'
-  const { t } = useTranslation('common')
-  return (
-    <article
-      data-testid={`project-workflow-${data.node.node_type}-${data.node.id}`}
-      className={cn(
-        'relative flex h-[72px] w-[72px] items-center justify-center rounded-full border-2 shadow-sm transition',
-        isStart ? 'border-text-muted bg-muted/40' : 'border-border bg-background',
-        selected && 'border-blue-500 ring-2 ring-blue-500/15'
-      )}
-    >
-      {!isStart ? (
-        <Handle
-          type="target"
-          position={Position.Left}
-          className={cn(
-            '!h-3 !w-3 !border-2 !border-background !bg-text-muted',
-            selected && '!opacity-0'
-          )}
-        />
-      ) : null}
-      {selected && data.canInsertBefore ? (
-        <InsertNodeButton
-          side="left"
-          testId={`project-workflow-insert-before-${data.node.id}`}
-          label={t('todo.workflow_insert_stage_before', '在此阶段前插入阶段')}
-          onClick={data.onInsertBefore}
-        />
-      ) : null}
-      <span className="max-w-full truncate px-1 text-center text-xs font-medium text-text-secondary">
-        {data.node.name}
-      </span>
-      {isStart ? (
-        <Handle
-          type="source"
-          position={Position.Right}
-          className={cn(
-            '!h-3 !w-3 !border-2 !border-background !bg-text-muted',
-            selected && '!opacity-0'
-          )}
-        />
-      ) : null}
-      {selected && data.canInsertAfter ? (
-        <InsertNodeButton
-          side="right"
-          testId={`project-workflow-insert-after-${data.node.id}`}
-          label={t('todo.workflow_insert_stage_after', '在此阶段后插入阶段')}
-          onClick={data.onInsertAfter}
-        />
-      ) : null}
-    </article>
-  )
-})
-
 const nodeTypes = {
   stage: StageNodeCard,
   wait: WaitNodeCard,
-  start: EndpointNodeCard,
-  end: EndpointNodeCard,
 }
 
 const WorkflowEdge = memo(function WorkflowEdge({
@@ -776,7 +652,7 @@ function StageInspector({
         {(node.required_deliverables ?? []).length ? (
           <div
             data-testid={`project-workflow-deliverable-list-${node.id}`}
-            className="mt-2 max-h-60 divide-y divide-border overflow-y-auto overscroll-contain rounded-lg border border-border"
+            className="mt-2 max-h-60 min-w-0 divide-y divide-border overflow-y-auto overscroll-contain rounded-lg border border-border"
           >
             {(node.required_deliverables ?? []).map(requirement => (
               <button
@@ -792,11 +668,11 @@ function StageInspector({
                 }
                 className="flex min-h-12 w-full min-w-0 items-center gap-3 px-3 py-2 text-left transition hover:bg-muted focus-visible:bg-muted focus-visible:outline-none"
               >
-                <span className="min-w-0 flex-1">
+                <span className="min-w-0 flex-1 overflow-hidden">
                   <span className="block truncate text-sm font-medium text-text-primary">
                     {requirement.name}
                   </span>
-                  <span className="mt-0.5 block truncate text-xs text-text-muted">
+                  <span className="mt-0.5 block whitespace-normal text-xs text-text-muted [overflow-wrap:anywhere]">
                     {requirement.description ||
                       t('todo.workflow_deliverable_no_description', '暂无验收说明')}
                   </span>
@@ -1011,6 +887,19 @@ function WaitNodeInspector({
     }
     return labels
   }, [catalogGroups, t])
+  const referenceHints = useMemo(() => {
+    const hints = new Map<string, ExternalEventType>()
+    for (const group of catalogGroups) {
+      for (const category of group.categories) {
+        for (const type of category.types) {
+          if (type.opaque_ref_format && !hints.has(group.provider)) {
+            hints.set(group.provider, type)
+          }
+        }
+      }
+    }
+    return hints
+  }, [catalogGroups])
   const updateRule = (ruleId: string, patch: Partial<WaitEventRule>) => {
     onUpdate({
       wait_config: {
@@ -1024,7 +913,13 @@ function WaitNodeInspector({
       wait_config: {
         rules: [
           ...rules,
-          { id, event_type: '', mode: 'trigger', action: 'complete', rerun_prompt: '' },
+          {
+            id,
+            provider: null,
+            event_type: '',
+            action: 'complete',
+            rerun_prompt: '',
+          },
         ],
       },
     })
@@ -1151,7 +1046,10 @@ function WaitNodeInspector({
                                     type="button"
                                     data-testid={`project-workflow-wait-rule-event-${node.id}-${rule.id}-option-${type.provider}-${type.event_type}`}
                                     onClick={() => {
-                                      updateRule(rule.id, { event_type: type.event_type })
+                                      updateRule(rule.id, {
+                                        event_type: type.event_type,
+                                        provider: type.provider,
+                                      })
                                       close()
                                     }}
                                     className="flex h-8 w-full items-center gap-2 rounded-lg pl-5 pr-2 text-left text-sm leading-[18px] text-text-primary hover:bg-muted"
@@ -1194,46 +1092,38 @@ function WaitNodeInspector({
                   )}
                 </div>
               </label>
-              <div className="mt-3 grid grid-cols-2 gap-3">
-                <label className="block text-xs font-medium text-text-secondary">
-                  {t('todo.workflow_wait_rule_mode', '语义模式')}
-                  <select
-                    value={rule.mode}
-                    data-testid={`project-workflow-wait-rule-mode-${node.id}-${rule.id}`}
-                    onChange={event =>
-                      updateRule(rule.id, { mode: event.target.value as WaitEventRule['mode'] })
+              {rule.provider && referenceHints.has(rule.provider) ? (
+                <p className="mt-1.5 text-xs leading-4 text-text-muted">
+                  {t(
+                    'todo.workflow_wait_rule_reference_hint',
+                    '上游阶段将自动要求交付 {{kind}} 引用，系统据此登记等待事件（opaque_ref 形如 {{format}}）',
+                    {
+                      kind: referenceHints.get(rule.provider)?.reference_name ?? rule.provider,
+                      format: referenceHints.get(rule.provider)?.opaque_ref_format ?? '',
                     }
-                    className="mt-1.5 h-9 w-full rounded-lg border border-border bg-background px-2 text-sm"
-                  >
-                    <option value="trigger">
-                      {t('todo.workflow_wait_mode_trigger', 'trigger（一条即触发）')}
-                    </option>
-                    <option value="debounce">
-                      {t('todo.workflow_wait_mode_debounce', 'debounce（运行时聚合）')}
-                    </option>
-                  </select>
-                </label>
-                <label className="block text-xs font-medium text-text-secondary">
-                  {t('todo.workflow_wait_rule_action', '动作')}
-                  <select
-                    value={rule.action}
-                    data-testid={`project-workflow-wait-rule-action-${node.id}-${rule.id}`}
-                    onChange={event =>
-                      updateRule(rule.id, {
-                        action: event.target.value as WaitEventRule['action'],
-                      })
-                    }
-                    className="mt-1.5 h-9 w-full rounded-lg border border-border bg-background px-2 text-sm"
-                  >
-                    <option value="complete">
-                      {t('todo.workflow_wait_rule_action_complete', '完成并放行后继')}
-                    </option>
-                    <option value="rerun">
-                      {t('todo.workflow_wait_rule_action_rerun', '重跑当前任务')}
-                    </option>
-                  </select>
-                </label>
-              </div>
+                  )}
+                </p>
+              ) : null}
+              <label className="mt-3 block text-xs font-medium text-text-secondary">
+                {t('todo.workflow_wait_rule_action', '动作')}
+                <select
+                  value={rule.action}
+                  data-testid={`project-workflow-wait-rule-action-${node.id}-${rule.id}`}
+                  onChange={event =>
+                    updateRule(rule.id, {
+                      action: event.target.value as WaitEventRule['action'],
+                    })
+                  }
+                  className="mt-1.5 h-9 w-full rounded-lg border border-border bg-background px-2 text-sm"
+                >
+                  <option value="complete">
+                    {t('todo.workflow_wait_rule_action_complete', '完成并放行后继')}
+                  </option>
+                  <option value="rerun">
+                    {t('todo.workflow_wait_rule_action_rerun', '重跑当前任务')}
+                  </option>
+                </select>
+              </label>
               {rule.action === 'rerun' ? (
                 <label className="mt-3 block text-xs font-medium text-text-secondary">
                   {t('todo.workflow_wait_rule_rerun_prompt', '重跑提示词')}
@@ -1254,39 +1144,8 @@ function WaitNodeInspector({
         </div>
       </div>
       <p className="mt-4 text-xs text-text-muted">
-        {t(
-          'todo.workflow_wait_hint',
-          '外部事件由登记工具绑定后到达；trigger 第一条即触发，debounce 在上一轮运行期间聚合。'
-        )}
+        {t('todo.workflow_wait_hint', '外部事件由登记工具绑定后到达。')}
       </p>
-    </div>
-  )
-}
-
-function EndpointInspector({ node }: { node: WorkflowNodeDefinition }) {
-  const { t } = useTranslation('common')
-  const isStart = node.node_type === 'start'
-  return (
-    <div data-testid={`project-workflow-inspector-${node.id}`}>
-      <h5 className="text-sm font-semibold text-text-primary">
-        {isStart
-          ? t('todo.workflow_start_settings', '开始节点')
-          : t('todo.workflow_end_settings', '结束节点')}
-      </h5>
-      <p className="mt-3 text-xs text-text-muted">
-        {isStart
-          ? t(
-              'todo.workflow_start_hint',
-              '流程入口，任务进入后自动开始；不可删除，也不能有前置阶段。'
-            )
-          : t(
-              'todo.workflow_end_hint',
-              '流程终点，任务到达即自动停止、彻底完成；不可删除，节点只能插在它之前。'
-            )}
-      </p>
-      <div className="mt-4 rounded-lg bg-muted px-3 py-2 text-sm text-text-secondary">
-        {node.name}
-      </div>
     </div>
   )
 }
@@ -1304,12 +1163,10 @@ export function ProjectWorkflowEditor({
   onRequestConfigureAiCoordinator,
 }: ProjectWorkflowEditorProps) {
   const { t } = useTranslation('common')
-  const startName = t('todo.workflow_start_node', '开始')
-  const endName = t('todo.workflow_end_node', '结束')
-  const normalized = useMemo(
-    () => ensureEndpointNodes(value, startName, endName),
-    [endName, startName, value]
-  )
+  const normalized = useMemo(() => {
+    const nodes = stripWorkflowEndpointNodes(value.nodes)
+    return nodes === value.nodes ? value : { ...value, nodes }
+  }, [value])
   useEffect(() => {
     if (normalized !== value) onChange(normalized)
   }, [normalized, onChange, value])
@@ -1351,11 +1208,6 @@ export function ProjectWorkflowEditor({
   const nodesValid =
     normalized.nodes.length > 0 &&
     normalized.nodes.every(node => node.name.trim() && node.depends_on.every(Boolean)) &&
-    normalized.nodes.some(node => node.node_type === 'start') &&
-    normalized.nodes.some(node => node.node_type === 'end') &&
-    normalized.nodes.every(node =>
-      node.node_type === 'end' ? node.depends_on.length > 0 : true
-    ) &&
     normalized.nodes
       .filter(node => node.node_type === 'wait')
       .every(
@@ -1381,12 +1233,10 @@ export function ProjectWorkflowEditor({
     },
     [updateDefinition, value.nodes]
   )
-  const appendNodeBeforeEnd = useCallback(
+  const appendNode = useCallback(
     (newNode: WorkflowNodeDefinition) => {
       const nodes = value.nodes
-      const endIndex = nodes.findIndex(node => node.node_type === 'end')
-      const anchorIndex = endIndex >= 0 ? endIndex : nodes.length
-      const previous = nodes[anchorIndex - 1]
+      const previous = nodes[nodes.length - 1]
       const inserted: WorkflowNodeDefinition = {
         ...newNode,
         depends_on: previous ? [previous.id] : [],
@@ -1394,11 +1244,7 @@ export function ProjectWorkflowEditor({
       }
       updateDefinition({
         stage_mode: 'dag',
-        nodes: [...nodes.slice(0, anchorIndex), inserted, ...nodes.slice(anchorIndex)].map(node =>
-          node.node_type === 'end' && previous
-            ? rewireDependency(node, previous.id, inserted.id)
-            : node
-        ),
+        nodes: [...nodes, inserted],
       })
       setSelectedNodeId(inserted.id)
     },
@@ -1407,7 +1253,7 @@ export function ProjectWorkflowEditor({
   const addNode = () => {
     const id = nextNodeId(value.nodes, 'stage')
     const stageNumber = Number(id.replace('stage-', ''))
-    appendNodeBeforeEnd(
+    appendNode(
       createStageNode(
         id,
         t('todo.workflow_new_stage_numbered', '新阶段 {{number}}', {
@@ -1421,7 +1267,7 @@ export function ProjectWorkflowEditor({
   const addWaitNode = () => {
     const id = nextNodeId(value.nodes, 'wait')
     const waitNumber = Number(id.replace('wait-', ''))
-    appendNodeBeforeEnd(
+    appendNode(
       createWaitNode(
         id,
         t('todo.workflow_new_wait_numbered', '新等待 {{number}}', {
@@ -1437,8 +1283,6 @@ export function ProjectWorkflowEditor({
       const selectedIndex = value.nodes.findIndex(node => node.id === selectedId)
       if (selectedIndex < 0) return
       const selected = value.nodes[selectedIndex]
-      if (direction === 'before' && selected.node_type === 'start') return
-      if (direction === 'after' && selected.node_type === 'end') return
       const id = nextNodeId(value.nodes, 'stage')
       const stageNumber = Number(id.replace('stage-', ''))
       const name = t('todo.workflow_new_stage_numbered', '新阶段 {{number}}', {
@@ -1514,7 +1358,7 @@ export function ProjectWorkflowEditor({
   const removeNode = useCallback(
     (id: string) => {
       const target = value.nodes.find(node => node.id === id)
-      if (!target || target.node_type === 'start' || target.node_type === 'end') return
+      if (!target) return
       const remainingNodes = spliceOutNode(value.nodes, id)
       updateDefinition({
         nodes: remainingNodes,
@@ -1562,7 +1406,6 @@ export function ProjectWorkflowEditor({
     )
     const nodes: EditorFlowNode[] = normalized.nodes.map((node, index) => {
       const automationRule = stageRules.find(rule => rule.id === node.automation_rule_id)
-      const isEndpoint = node.node_type === 'start' || node.node_type === 'end'
       return {
         id: node.id,
         type: node.node_type ?? 'stage',
@@ -1571,20 +1414,18 @@ export function ProjectWorkflowEditor({
         data: {
           node,
           index,
-          nodeWidth: isEndpoint ? ENDPOINT_NODE_SIZE : STAGE_NODE_WIDTH,
-          nodeHeight: isEndpoint ? ENDPOINT_NODE_SIZE : STAGE_NODE_HEIGHT,
+          nodeWidth: STAGE_NODE_WIDTH,
+          nodeHeight: STAGE_NODE_HEIGHT,
           actionLabel: automationRule
             ? t('todo.workflow_stage_robot_named', '机器人：{{name}}', {
                 name: automationRule.agentName || automationRule.name,
               })
             : node.node_type === 'wait'
               ? t('todo.workflow_wait_node_action', '等待外部事件')
-              : node.node_type === 'start' || node.node_type === 'end'
-                ? t('todo.workflow_endpoint_action', '流程节点')
-                : t('todo.workflow_stage_human_execution', '人工执行'),
+              : t('todo.workflow_stage_human_execution', '人工执行'),
           dependencyCount: node.depends_on.length,
-          canInsertBefore: node.node_type !== 'start',
-          canInsertAfter: node.node_type !== 'end',
+          canInsertBefore: true,
+          canInsertAfter: true,
           onInsertBefore: () => insertNode(node.id, 'before'),
           onInsertAfter: () => insertNode(node.id, 'after'),
         },
@@ -1616,7 +1457,6 @@ export function ProjectWorkflowEditor({
       const sourceNode = value.nodes.find(node => node.id === source)
       const targetNode = value.nodes.find(node => node.id === target)
       if (!sourceNode || !targetNode) return
-      if (sourceNode.node_type === 'end' || targetNode.node_type === 'start') return
       const dependencies = new Map(value.nodes.map(node => [node.id, node.depends_on]))
       if (wouldCreateWorkflowCycle(source, target, dependencies)) return
       if (targetNode.depends_on.includes(source)) return
@@ -1635,29 +1475,12 @@ export function ProjectWorkflowEditor({
 
   const handleDelete = useCallback(
     ({ nodes, edges }: { nodes: Node[]; edges: Edge[] }) => {
-      const structuralIds = new Set([START_NODE_ID, END_NODE_ID])
       const removedNodeIds = new Set(
         nodes
-          .filter(node => !structuralIds.has(node.id))
-          .filter(node => {
-            const target = value.nodes.find(candidate => candidate.id === node.id)
-            return target && target.node_type !== 'start' && target.node_type !== 'end'
-          })
+          .filter(node => value.nodes.some(candidate => candidate.id === node.id))
           .map(node => node.id)
       )
-      const removedEdges = new Set(
-        edges
-          .filter(edge => {
-            const sourceStructural = structuralIds.has(edge.source)
-            const targetStructural = structuralIds.has(edge.target)
-            const sourceRemoved = removedNodeIds.has(edge.source)
-            const targetRemoved = removedNodeIds.has(edge.target)
-            // Edges touching a structural node only disappear when their other
-            // endpoint was actually removed; structural edges stay in the graph.
-            return !(sourceStructural || targetStructural) || sourceRemoved || targetRemoved
-          })
-          .map(edge => `${edge.source}-${edge.target}`)
-      )
+      const removedEdges = new Set(edges.map(edge => `${edge.source}-${edge.target}`))
       let nextNodes = value.nodes
       for (const removedId of removedNodeIds) {
         nextNodes = spliceOutNode(nextNodes, removedId)
@@ -1964,8 +1787,6 @@ export function ProjectWorkflowEditor({
                     onRemove={() => removeNode(selectedNode.id)}
                     externalEventCatalog={externalEventCatalog}
                   />
-                ) : selectedNode.node_type === 'start' || selectedNode.node_type === 'end' ? (
-                  <EndpointInspector node={selectedNode} />
                 ) : (
                   <StageInspector
                     node={selectedNode}

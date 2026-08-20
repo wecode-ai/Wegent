@@ -343,8 +343,7 @@ export interface CloudTaskContext {
 
 export type WorkflowWorkspacePolicy = 'none' | 'composer' | 'inherit'
 export type WorkflowContextSource = 'final_result' | 'deliveries' | 'activity'
-export type WorkflowNodeType = 'stage' | 'wait' | 'start' | 'end'
-export type WaitEventMode = 'trigger' | 'debounce'
+export type WorkflowNodeType = 'stage' | 'wait'
 export type WaitEventAction = 'rerun' | 'complete'
 export type WorkflowNodeStatus =
   | 'blocked'
@@ -363,8 +362,9 @@ export type IssueStageMode = 'none' | 'dag'
 
 export interface WaitEventRule {
   id: string
+  /** Provider that emits the event; empty matches any provider (custom rules). */
+  provider?: string | null
   event_type: string
-  mode: WaitEventMode
   action: WaitEventAction
   rerun_prompt?: string
 }
@@ -413,6 +413,7 @@ export interface WorkflowNodeInstance extends WorkflowNodeDefinition {
   execution_id?: number | null
   automation_run_id?: string | null
   wait_round?: number
+  repair_status?: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | null
 }
 
 export interface IssueWorkflowInstance {

@@ -871,6 +871,10 @@ export function CloudProjectManageView({
                 {providerSaved ? '已保存' : '保存'}
               </button>
             </div>
+            <p className="mt-2 text-xs text-text-muted">
+              自托管实例请使用完整地址（含端口）；子路径部署（如 /gitlab/）请使用 API 地址形式：
+              https://host/gitlab/api/v4/projects/group%2Fproject。
+            </p>
             {!project.provider_config.credential_configured && (
               <p className="mt-2 text-xs text-text-muted">需要配置令牌</p>
             )}
