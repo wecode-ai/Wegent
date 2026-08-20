@@ -7,7 +7,7 @@ import { ComposerLinkChip } from './ComposerLinkChip'
 import 'streamdown/styles.css'
 import {
   classifyMarkdownLink,
-  getAuthenticatedImageFetchUrl,
+  getAuthenticatedAttachmentId,
   isAuthenticatedAttachmentImageSrc,
   isHtmlFilePath,
   resolveDirectMarkdownImageSrc,
@@ -23,6 +23,7 @@ import { openExternalUrl } from '@/lib/external-links'
 import { getRecognizedLink } from '@/lib/link-preview'
 import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
 import { isTauriRuntime } from '@/lib/runtime-environment'
+import { fetchAttachmentBlob } from '@/api/attachments'
 import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
 import type { TurnFileChangesSummary } from '@/types/api'
 
@@ -616,16 +617,11 @@ function AssistantMarkdownImage({ src, alt }: { src?: string; alt?: string }) {
 
     async function loadAuthenticatedImage() {
       try {
-        const token = localStorage.getItem('auth_token')
-        const response = await fetch(getAuthenticatedImageFetchUrl(rawSrc), {
-          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-        })
-
-        if (!response.ok) {
-          throw new Error(`Failed to load markdown image: ${response.status}`)
+        const attachmentId = getAuthenticatedAttachmentId(rawSrc)
+        if (attachmentId === null) {
+          throw new Error('Failed to resolve markdown attachment')
         }
-
-        const blob = await response.blob()
+        const blob = await fetchAttachmentBlob(attachmentId)
         if (!blob.type.startsWith('image/')) {
           throw new Error(`Markdown image response is not an image: ${blob.type || 'unknown'}`)
         }

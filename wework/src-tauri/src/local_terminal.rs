@@ -2,7 +2,7 @@ use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -498,7 +498,11 @@ fn preferred_home_directory(
         .or(fallback_home)
 }
 
-fn read_command_version_once(path: &Path, args: &[&str]) -> Option<String> {
+fn read_command_version_once_with_timeout(
+    path: &Path,
+    args: &[&str],
+    timeout: Duration,
+) -> Option<String> {
     let mut command = Command::new(path);
     command
         .args(args)
@@ -511,21 +515,41 @@ fn read_command_version_once(path: &Path, args: &[&str]) -> Option<String> {
         command.creation_flags(0x0800_0000);
     }
     let mut child = command.spawn().ok()?;
-    let deadline = Instant::now() + HARNESS_VERSION_TIMEOUT;
+    let stdout = child.stdout.take()?;
+    let (version_sender, version_receiver) = mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
+        let mut line = String::new();
+        while reader
+            .read_line(&mut line)
+            .ok()
+            .filter(|read| *read > 0)
+            .is_some()
+        {
+            let version = line.trim();
+            if !version.is_empty() {
+                let _ = version_sender.send(version.to_string());
+                return;
+            }
+            line.clear();
+        }
+    });
+
+    let deadline = Instant::now() + timeout;
     loop {
+        if let Ok(version) = version_receiver.try_recv() {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Some(version);
+        }
         match child.try_wait() {
             Ok(Some(status)) => {
                 if !status.success() {
                     return None;
                 }
-                let mut version = String::new();
-                child.stdout.take()?.read_to_string(&mut version).ok()?;
-                return version
-                    .lines()
-                    .next()
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(ToOwned::to_owned);
+                return version_receiver
+                    .recv_timeout(Duration::from_millis(100))
+                    .ok();
             }
             Ok(None) if Instant::now() < deadline => {
                 std::thread::sleep(Duration::from_millis(20));
@@ -533,11 +557,17 @@ fn read_command_version_once(path: &Path, args: &[&str]) -> Option<String> {
             Ok(None) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return None;
+                return version_receiver
+                    .recv_timeout(Duration::from_millis(100))
+                    .ok();
             }
             Err(_) => return None,
         }
     }
+}
+
+fn read_command_version_once(path: &Path, args: &[&str]) -> Option<String> {
+    read_command_version_once_with_timeout(path, args, HARNESS_VERSION_TIMEOUT)
 }
 
 fn read_command_version(path: &Path, args: &[&str]) -> Option<String> {
@@ -1713,6 +1743,38 @@ mod tests {
             read_command_version(&executable, &["--version"]),
             Some("0.35.0".to_string())
         );
+
+        fs::remove_dir_all(test_root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reads_harness_version_before_process_exit() {
+        let test_root = std::env::temp_dir().join(format!(
+            "wework-harness-version-output-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&test_root).unwrap();
+        let executable = test_root.join("harness");
+        fs::write(&executable, "#!/bin/sh\nprintf '0.35.0\\n'\nexec sleep 5\n").unwrap();
+        let mut permissions = fs::metadata(&executable).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&executable, permissions).unwrap();
+
+        let started_at = Instant::now();
+        assert_eq!(
+            read_command_version_once_with_timeout(
+                &executable,
+                &["--version"],
+                Duration::from_secs(1)
+            ),
+            Some("0.35.0".to_string())
+        );
+        assert!(started_at.elapsed() < Duration::from_secs(1));
 
         fs::remove_dir_all(test_root).unwrap();
     }

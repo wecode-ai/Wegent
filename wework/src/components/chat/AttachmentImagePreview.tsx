@@ -12,7 +12,7 @@ import {
   X,
 } from 'lucide-react'
 import type { Attachment } from '@/types/api'
-import { getAttachmentImageUrl } from '@/lib/attachments'
+import { fetchAttachmentBlob } from '@/api/attachments'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import {
   localPathFromMarkdownImageSrc,
@@ -90,16 +90,7 @@ async function loadAttachmentImageUrl(
     return { url: resolvedLocalPreviewUrl, objectUrl: null }
   }
 
-  const token = localStorage.getItem('auth_token')
-  const response = await fetch(getAttachmentImageUrl(attachment.id), {
-    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-  })
-
-  if (!response.ok) {
-    throw new Error(`Failed to load attachment preview: ${response.status}`)
-  }
-
-  const blob = await response.blob()
+  const blob = await fetchAttachmentBlob(attachment.id)
   if (!blob.type.startsWith('image/')) {
     throw new Error(`Attachment preview is not an image: ${blob.type || 'unknown'}`)
   }

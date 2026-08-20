@@ -137,3 +137,8 @@ export function uploadAttachment(
 export function deleteAttachment(attachmentId: number): Promise<void> {
   return createAttachmentApi().deleteAttachment(attachmentId)
 }
+
+export function fetchAttachmentBlob(attachmentId: number): Promise<Blob> {
+  const client = createHttpClient({ baseUrl: getRuntimeConfig().apiBaseUrl })
+  return client.getBlob(`/attachments/${attachmentId}/download`)
+}
