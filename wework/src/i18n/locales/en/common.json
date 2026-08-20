@@ -1198,6 +1198,8 @@
     "browser_invalid_url": "Enter a valid http or https URL",
     "browser_open_failed": "Unable to open the in-app browser",
     "browser_control_failed": "Browser action failed",
+    "browser_navigation_failed_title": "Page couldn't be opened",
+    "browser_navigation_failed_desc": "Check the address or network connection, then reload.",
     "browser_invalid_tls_title": "This connection has an invalid certificate",
     "browser_invalid_tls_desc": "Wework continued to {{host}}, but the connection may be impersonated or intercepted. Do not enter sensitive information.",
     "browser_agent_ready": "AI browser control is ready",
