@@ -9,7 +9,7 @@ This is a directly importable Wework plugin package. Its layout matches
 
 - `.codex-plugin/plugin.json`: 插件名称、版本、说明和组件入口。
 - `skills/<slug>/SKILL.md`: 可选 Skill；每个 Skill 必须包含 YAML frontmatter。
-- `.mcp.json`: 可选 MCP 配置；使用 `mcpServers` 对象。
+- `.mcp.json`: 可选 MCP 配置；推荐直接使用 MCP server map，同时兼容 `mcp_servers` 和 `mcpServers` 包装。
 - `mcp/`, `scripts/`, `assets/`: 可选运行文件和资源。
 
 打包时请压缩本目录中的内容，确保 `.codex-plugin/plugin.json` 位于 ZIP 根目录，

@@ -66,6 +66,11 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
             if (payload) subscription.handlers.onProjectTaskAssigned?.(payload)
             continue
           }
+          if (event.event === 'executor.event_lagged') {
+            const payload = runtimeEventLaggedPayload(event.payload)
+            if (payload) subscription.handlers.onRuntimeEventLagged?.(payload)
+            continue
+          }
           if (event.event === 'executor.runtime_replaced') {
             const payload = runtimeTransportReplacedPayload(event.payload)
             if (payload) {
@@ -197,9 +202,18 @@ function hasLocalExecutorResponseHandlers(handlers: ChatStreamHandlers): boolean
     handlers.onRuntimeSupervisorUpdated ||
     handlers.onRuntimePlanUpdated ||
     handlers.onGuidanceApplied ||
+    handlers.onRuntimeEventLagged ||
     handlers.onRuntimeTransportReplaced ||
     handlers.onProjectTaskAssigned
   )
+}
+
+function runtimeEventLaggedPayload(value: unknown): { skipped: number } | null {
+  const payload = asRecord(value)
+  const skipped = payload.skipped
+  return typeof skipped === 'number' && Number.isFinite(skipped) && skipped >= 0
+    ? { skipped }
+    : null
 }
 
 function projectTaskAssignedPayload(

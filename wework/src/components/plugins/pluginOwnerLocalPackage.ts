@@ -1,4 +1,17 @@
+import type { PluginMarketplaceItem } from '@/types/api'
 import type { InstalledPluginItem } from './PluginManagementRows'
+
+/**
+ * Local created packages belong to the current user. Recipient/catalog cloud
+ * listings must not inherit owner actions just because a name matches.
+ */
+export function marketplaceItemOwnsLocalCreatedPackage(
+  item: Pick<PluginMarketplaceItem, 'accessRole' | 'latestReleaseId'>
+): boolean {
+  if (item.accessRole === 'owner') return true
+  if (item.accessRole === 'recipient' || item.accessRole === 'catalog') return false
+  return item.latestReleaseId == null
+}
 
 /** Local plugins that can be edited / packaged for publish. */
 export function isPackableCreatedPlugin(plugin: InstalledPluginItem): boolean {

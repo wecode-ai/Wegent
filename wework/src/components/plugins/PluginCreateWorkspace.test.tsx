@@ -87,7 +87,7 @@ describe('PluginCreateWorkspace', () => {
     window.history.replaceState({}, '', '/plugins/create')
   })
 
-  test('reuses the empty task launcher layout with a dismissible Plugin Creator chip', async () => {
+  test('reuses the empty task launcher layout with an inline Plugin Creator context', async () => {
     const workbench = createWorkbench()
     vi.mocked(useWorkbench).mockReturnValue(workbench.value)
 
@@ -103,7 +103,9 @@ describe('PluginCreateWorkspace', () => {
 
     const creatorContext = screen.getByTestId('plugin-creator-context')
     expect(creatorContext).toHaveTextContent('Plugin Creator')
-    expect(creatorContext).toHaveClass('text-focus')
+    expect(creatorContext).toHaveClass('plugin-creator-context', 'px-0.5', 'font-medium')
+    expect(creatorContext).not.toHaveClass('rounded-md', 'border', 'bg-focus/10')
+    expect(creatorContext.querySelector('svg')).toHaveClass('h-4', 'w-4')
     expect(screen.getByTestId('composer-input-leading-context')).toContainElement(creatorContext)
     expect(screen.getByTestId('composer-toolbar')).not.toContainElement(creatorContext)
     expect(screen.getByTestId('plugin-create-submit-button')).toBeDisabled()

@@ -254,3 +254,65 @@ test('a pending cloud link clears the previous release identity', () => {
     cloudReleaseId: null,
   })
 })
+
+test('clears stale OpenAI remote catalog installs that live membership dropped', () => {
+  const githubItem: PluginMarketplaceItem = {
+    id: 'github@openai-curated-remote',
+    remotePluginId: 'plugin_connector_1p_github',
+    name: 'github',
+    displayName: 'GitHub',
+    description: 'Connect GitHub',
+    visibility: 'public',
+    featured: false,
+    installed: true,
+    installedPluginId: 'github@openai-curated-remote',
+    installedLocally: true,
+    enabled: true,
+    sourceType: 'marketplace',
+    sourceProvider: 'codex',
+    sourceLabel: 'OpenAI 官方',
+    components,
+    manifest: { marketplaceId: 'openai-curated-remote' },
+    ownerUserId: 0,
+    latestReleaseId: null,
+  }
+  const gmailInstalled: InstalledPlugin = {
+    apiVersion: 'agent.wecode.io/v1',
+    kind: 'InstalledPlugin',
+    metadata: {
+      name: 'gmail',
+      namespace: 'openai-curated-remote',
+      labels: { id: 'gmail@openai-curated-remote' },
+    },
+    spec: {
+      source: {
+        type: 'marketplace',
+        providerKey: 'openai-curated-remote',
+        pluginKey: 'gmail',
+        marketplace: 'openai-curated-remote',
+      },
+      origin: 'market',
+      sourceProvider: 'codex',
+      installState: 'installed',
+      enabled: true,
+      displayName: 'Gmail',
+      description: 'Connect Gmail',
+      componentStates: {},
+      components,
+      interface: null,
+      packageRef: null,
+      sourcePayload: { marketplaceName: 'openai-curated-remote' },
+    },
+    status: { state: 'enabled' },
+  }
+
+  expect(applyInstalledPluginsToMarketplaceItems([githubItem], [gmailInstalled])).toEqual([
+    expect.objectContaining({
+      id: 'github@openai-curated-remote',
+      installed: false,
+      installedLocally: false,
+      installedPluginId: null,
+      enabled: false,
+    }),
+  ])
+})

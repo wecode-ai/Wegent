@@ -17,7 +17,7 @@ const preview: HarnessAppPreview = {
   manifest: {
     name: 'dsh-ops-text-classifier',
     displayName: 'DSH 运营文本分类工作台',
-    version: '0.1.0-rc.7',
+    version: '0.1.0-rc.8',
     type: 'deepseek-harness-plugin-bundle',
     description: '对运营文本进行分类',
     entry: {
@@ -26,7 +26,7 @@ const preview: HarnessAppPreview = {
       webUrl: 'http://127.0.0.1:3080/',
     },
     requirements: {
-      dsh: '0.1.0-rc.7',
+      dsh: '0.1.0-rc.8',
       node: '>=22',
     },
   },
@@ -67,7 +67,7 @@ describe('HarnessAppInstallDialog', () => {
     )
 
     expect(screen.getByText('DSH 运营文本分类工作台')).toBeInTheDocument()
-    expect(screen.getByText('0.1.0-rc.7')).toBeInTheDocument()
+    expect(screen.getByText('0.1.0-rc.8')).toBeInTheDocument()
     expect(screen.getByText('>=22')).toBeInTheDocument()
     expect(screen.getByTestId('harness-app-install-backdrop')).toBeInTheDocument()
     expect(screen.getByTestId('harness-app-install-close')).toBeInTheDocument()

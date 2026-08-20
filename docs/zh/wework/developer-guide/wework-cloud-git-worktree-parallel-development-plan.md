@@ -9,13 +9,9 @@ sidebar_position: 20
 - 制定日期：2026-08-17
 - 状态：核心代码、真实 Tauri 云端闭环和 Remote Docker 容器生命周期验收完成；仅托管生产持久卷与实例重建待目标环境验收
 - 目标：让 Wework 的本地设备、托管云设备和 Remote Docker 设备共用同一套托管 Git Worktree 能力
-- 开发方式：一个主 Agent 负责目标、架构真值、公共契约和集成；多个子 Agent 在互斥写入范围内并行实现
+- 开发方式：一个主 Agent 负责目标、公共契约和集成；多个子 Agent 在互斥写入范围内并行实现
 
-本文记录实施计划、并行分工和验收状态，不替代架构真值。对应架构真值已经建立：
-
-- `docs/zh/architecture/git-worktree-execution.md`
-- `docs/en/architecture/git-worktree-execution.md`
-- 两个架构目录的索引行
+本文记录实施计划、并行分工和验收状态。
 
 ## 2. 目标模式
 
@@ -139,7 +135,7 @@ Wework
 
 ```mermaid
 flowchart TD
-  A0["A0 架构真值和公共契约"]
+  A0["A0 公共契约"]
   A1["A1 Wework 类型和可用性模型"]
   A2["A2 Executor capability + preflight"]
   A3["A3 Backend 能力透传和云存储确认"]
@@ -183,7 +179,7 @@ flowchart TD
 职责：
 
 - 创建并维护目标状态。
-- 先完成架构真值和公共协议决策。
+- 先完成公共协议决策。
 - 管理任务依赖、Agent 写入范围和合并顺序。
 - 处理跨模块公共类型、协议命名和冲突。
 - 审查所有子 Agent 变更。
@@ -192,10 +188,6 @@ flowchart TD
 
 主 Agent 独占写入范围：
 
-- `docs/zh/architecture/git-worktree-execution.md`
-- `docs/en/architecture/git-worktree-execution.md`
-- `docs/zh/architecture/README.md`
-- `docs/en/architecture/README.md`
 - 跨模块共享协议和最终集成文件
 - 任何需要同时修改 Wework、Backend 和 Executor 语义的决策
 
@@ -571,7 +563,7 @@ Backend 不自动重试有副作用的 Runtime RPC。超时表示结果未知，
 ## 9. 写入冲突规则
 
 1. 一个文件在同一 Wave 只能归一个 Agent。
-2. 公共类型、协议和架构真值只能由主 Agent 修改。
+2. 公共类型和协议只能由主 Agent 修改。
 3. 子 Agent 不得顺手修改其他工作流的文件。
 4. 如果实现需要修改不在写入范围内的文件，子 Agent只报告所需改动，由主 Agent处理。
 5. 子 Agent完成后必须列出修改文件、测试命令、已知限制和未完成依赖。
@@ -707,7 +699,7 @@ cloud-worktree-device-restart
 
 只有同时满足以下条件，目标才能标记为完成：
 
-- 中英文架构真值和索引已更新。
+- 跨模块公共契约已确认。
 - 本地、云端和 Remote Docker 共用相同 Worktree 数据面。
 - Wework 不再以设备类型硬编码 Worktree 能力。
 - 旧 Executor、离线设备和非 Git 工作区有明确不可用原因。
@@ -723,12 +715,9 @@ cloud-worktree-device-restart
 ```text
 目标：完成 Wework 云端 Git Worktree 支持。
 
-先读取仓库与 wework/AGENTS.md，再读取：
-- docs/zh/architecture/git-worktree-execution.md
-- docs/en/architecture/git-worktree-execution.md
-- 本开发计划
+先读取仓库与 wework/AGENTS.md，再读取本开发计划。
 
-主 Agent负责目标状态、公共契约、架构真值、Agent 写入范围、合并和最终验证。
+主 Agent负责目标状态、公共契约、Agent 写入范围、合并和最终验证。
 按 Wave 启动子 Agent；每个 Agent 必须有互斥写入范围、明确依赖和验收标准。
 不得让两个 Agent 同时修改同一文件。
 不得由 Backend 执行 Git。
@@ -743,7 +732,7 @@ cloud-worktree-device-restart
 
 | Wave | 结果                                                                                        |
 | ---- | ------------------------------------------------------------------------------------------- |
-| A0   | 中英文架构真值、索引、协议边界和必要不变量已冻结                                            |
+| A0   | 跨模块协议边界和必要不变量已冻结                                                            |
 | A1   | Wework 已补齐 Local、Cloud、Remote 和 `device_path` 类型及统一 Worktree availability        |
 | A2   | Executor 已实现版本化 capability、preflight、延迟创建、身份校验、快照、恢复、清理和重启对账 |
 | A3   | Backend 已实现逻辑设备路由、所有权校验、结构化 RPC 错误和 `runtime_features` 投影           |

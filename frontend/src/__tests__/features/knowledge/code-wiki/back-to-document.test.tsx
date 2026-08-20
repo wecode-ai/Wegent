@@ -130,6 +130,20 @@ describe('returning to the document', () => {
     expect(screen.getByTestId('code-wiki-chat-pane')).not.toHaveClass('hidden')
   })
 
+  it('shows the conversation after sending from a page picked while chat was empty', async () => {
+    await renderReader()
+
+    // Picking a page records an explicit request to read. That request must not
+    // survive the first message: once the empty state unmounts, the conversation
+    // is the primary view rather than an overlay hidden behind the document.
+    fireEvent.click(screen.getByTestId('wiki-nav-page-other'))
+    fireEvent.click(screen.getByTestId('fake-send'))
+
+    await waitFor(() => expect(screen.getByTestId('messages')).toBeInTheDocument())
+    expect(screen.getByTestId('code-wiki-chat-pane')).not.toHaveClass('hidden')
+    expect(screen.queryByTestId('code-wiki-back-to-chat')).not.toBeInTheDocument()
+  })
+
   it('offers a way back once the conversation replaces the page', async () => {
     await renderReader()
 

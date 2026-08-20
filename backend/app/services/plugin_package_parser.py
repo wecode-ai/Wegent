@@ -749,7 +749,7 @@ class PluginPackageParser:
     ) -> list[PluginMCPComponent]:
         raw = manifest.get("mcpServers")
         if isinstance(raw, dict):
-            data = {"mcpServers": raw}
+            data = raw
         elif isinstance(raw, str) and raw.strip():
             data = self._read_optional_json(
                 archive, self._join_root_path(root, raw.strip())
@@ -758,7 +758,7 @@ class PluginPackageParser:
             data = self._read_optional_json(archive, f"{root}.mcp.json")
         if not data:
             return []
-        servers = data.get("mcpServers") if isinstance(data, dict) else None
+        servers = self._mcp_server_map(data)
         if not isinstance(servers, dict):
             return []
         return [
@@ -768,6 +768,14 @@ class PluginPackageParser:
             )
             for name, server in sorted(servers.items())
         ]
+
+    @staticmethod
+    def _mcp_server_map(data: Dict[str, Any]) -> Dict[str, Any] | None:
+        for wrapper in ("mcp_servers", "mcpServers"):
+            if wrapper in data:
+                servers = data[wrapper]
+                return servers if isinstance(servers, dict) else None
+        return data
 
     def _parse_connectors(
         self, manifest: Dict[str, Any]

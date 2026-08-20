@@ -55,6 +55,7 @@ describe('ContinueInImDialog', () => {
         loading={false}
         submitting={false}
         sessions={[createSession(1, 'Alice'), createSession(2, 'Bob')]}
+        autoSubmitSingle
         onClose={vi.fn()}
         onSubmit={onSubmit}
       />
@@ -68,10 +69,57 @@ describe('ContinueInImDialog', () => {
       'aria-pressed',
       'false'
     )
+    expect(onSubmit).not.toHaveBeenCalled()
 
     await userEvent.click(screen.getByTestId('continue-im-submit-button'))
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(['session-1']))
+  })
+
+  test('auto-submits the only private IM session once after loading', async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined)
+    const { rerender } = render(
+      <ContinueInImDialog
+        open
+        loading
+        submitting={false}
+        sessions={[createSession(1, 'Alice')]}
+        autoSubmitSingle
+        onClose={vi.fn()}
+        onSubmit={onSubmit}
+      />
+    )
+
+    expect(onSubmit).not.toHaveBeenCalled()
+
+    rerender(
+      <ContinueInImDialog
+        open
+        loading={false}
+        submitting={false}
+        sessions={[createSession(1, 'Alice')]}
+        autoSubmitSingle
+        onClose={vi.fn()}
+        onSubmit={onSubmit}
+      />
+    )
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(['session-1']))
+    expect(localStorage.getItem('wework.continueInIm.lastSessionKeys')).toBe('["session-1"]')
+
+    rerender(
+      <ContinueInImDialog
+        open
+        loading={false}
+        submitting={false}
+        sessions={[createSession(1, 'Alice')]}
+        autoSubmitSingle
+        onClose={vi.fn()}
+        onSubmit={onSubmit}
+      />
+    )
+
+    expect(onSubmit).toHaveBeenCalledTimes(1)
   })
 
   test('submits selected session keys', async () => {

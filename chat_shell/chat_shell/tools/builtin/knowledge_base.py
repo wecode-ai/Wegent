@@ -17,6 +17,7 @@ from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field, PrivateAttr
 
+from shared.models import SearchHints
 from shared.models.knowledge import KnowledgeBaseScope, KnowledgeBaseToolAccessMode
 
 from ...compression.config import get_model_context_config
@@ -88,6 +89,13 @@ class KnowledgeBaseInput(BaseModel):
     query: str = Field(
         description="Search query to find relevant information in the knowledge base"
     )
+    search_hints: SearchHints | None = Field(
+        default=None,
+        description=(
+            "Optional semantic rewrite, exact keywords, and phrases. Use only when "
+            "the selected knowledge base metadata says the hint can improve ranking."
+        ),
+    )
     max_results: int = Field(
         default=20,
         description="Maximum number of results to return. Increased from 5 to 20 for better RAG coverage.",
@@ -107,6 +115,13 @@ class ScopedKnowledgeBaseInput(BaseModel):
 
     query: str = Field(
         description="Search query to find relevant information in the scoped knowledge base"
+    )
+    search_hints: SearchHints | None = Field(
+        default=None,
+        description=(
+            "Optional semantic rewrite, exact keywords, and phrases for retrieval "
+            "planning."
+        ),
     )
     max_results: int = Field(
         default=20,
@@ -566,6 +581,7 @@ class KnowledgeBaseTool(BaseTool):
         self,
         query: str,
         max_results: int = 20,
+        search_hints: SearchHints | None = None,
         run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
         """Synchronous run - not implemented, use async version."""
@@ -598,6 +614,7 @@ class KnowledgeBaseTool(BaseTool):
         document_ids: Optional[list[int]] = None,
         document_names: Optional[list[str]] = None,
         run_manager: CallbackManagerForToolRun | None = None,
+        search_hints: SearchHints | None = None,
     ) -> str:
         """Execute knowledge base search with optional per-call scoped filters."""
         try:
@@ -613,6 +630,7 @@ class KnowledgeBaseTool(BaseTool):
             query,
             max_results,
             run_manager,
+            search_hints=search_hints,
             document_ids=effective_document_ids,
             document_names=effective_document_names,
         )
@@ -622,6 +640,7 @@ class KnowledgeBaseTool(BaseTool):
         query: str,
         max_results: int = 20,
         run_manager: CallbackManagerForToolRun | None = None,
+        search_hints: SearchHints | None = None,
         document_ids: Optional[list[int]] = None,
         document_names: Optional[list[str]] = None,
     ) -> str:
@@ -743,6 +762,7 @@ class KnowledgeBaseTool(BaseTool):
             route_mode, raw_result = await self._retrieve_with_strategy_from_all_kbs(
                 query=query,
                 max_results=max_results,
+                search_hints=search_hints,
                 route_mode=preferred_route_mode,
                 document_ids=effective_document_ids,
                 document_names=effective_document_names,
@@ -1220,6 +1240,7 @@ class KnowledgeBaseTool(BaseTool):
         query: str,
         max_results: int,
         route_mode: str = "auto",
+        search_hints: SearchHints | None = None,
         document_ids: Optional[list[int]] = None,
         document_names: Optional[list[str]] = None,
     ) -> tuple[str, Dict[str, Any]]:
@@ -1229,6 +1250,7 @@ class KnowledgeBaseTool(BaseTool):
                 query=query,
                 max_results=max_results,
                 route_mode=route_mode,
+                search_hints=search_hints,
                 document_ids=document_ids,
                 document_names=document_names,
             )
@@ -1245,6 +1267,7 @@ class KnowledgeBaseTool(BaseTool):
                 query=query,
                 max_results=max_results,
                 route_mode=route_mode,
+                search_hints=search_hints,
                 document_ids=document_ids,
                 document_names=document_names,
             )
@@ -1255,6 +1278,7 @@ class KnowledgeBaseTool(BaseTool):
                         query=query,
                         max_results=max_results,
                         route_mode=route_mode,
+                        search_hints=search_hints,
                         document_ids=document_ids,
                         document_names=document_names,
                     )
@@ -1312,6 +1336,7 @@ class KnowledgeBaseTool(BaseTool):
                     scope=retrieval_scope,
                     user_name=self.user_name,
                     route_mode=route_mode,
+                    search_hints=search_hints,
                     user_id=self.user_id,
                     context_window=self._get_effective_context_window(),
                     used_context_tokens=self._get_used_context_tokens(),
@@ -1358,6 +1383,7 @@ class KnowledgeBaseTool(BaseTool):
                     query=query,
                     max_results=max_results,
                     route_mode=route_mode,
+                    search_hints=search_hints,
                     document_ids=document_ids,
                     document_names=document_names,
                 )
@@ -1408,6 +1434,7 @@ class KnowledgeBaseTool(BaseTool):
         query: str,
         max_results: int,
         route_mode: str,
+        search_hints: SearchHints | None = None,
         document_ids: Optional[list[int]] = None,
         document_names: Optional[list[str]] = None,
     ) -> Dict[str, Any]:
@@ -1463,6 +1490,7 @@ class KnowledgeBaseTool(BaseTool):
                 scope=retrieval_scope,
                 user_name=self.user_name,
                 route_mode=route_mode,
+                search_hints=search_hints,
                 user_id=self.user_id,
                 context_window=self._get_effective_context_window(),
                 used_context_tokens=self._get_used_context_tokens(),
@@ -1527,6 +1555,7 @@ class KnowledgeBaseTool(BaseTool):
         query: str,
         max_results: int,
         route_mode: str = "auto",
+        search_hints: SearchHints | None = None,
         document_ids: Optional[list[int]] = None,
         document_names: Optional[list[str]] = None,
     ) -> Dict[str, Any]:
@@ -1547,6 +1576,9 @@ class KnowledgeBaseTool(BaseTool):
             "knowledge_base_ids": self.knowledge_base_ids,
             "max_results": max_results,
             "route_mode": route_mode,
+            "search_hints": (
+                search_hints.model_dump(exclude_none=True) if search_hints else None
+            ),
             "runtime_context": self._build_runtime_context(),
         }
         if self.external_knowledge_refs:

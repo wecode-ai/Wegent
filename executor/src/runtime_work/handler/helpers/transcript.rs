@@ -440,12 +440,17 @@ fn user_message_presentation(payload: &Value) -> Option<Value> {
         .or_else(|| payload.get("content"))
         .and_then(Value::as_str)
         .map(str::trim)
-        .filter(|value| !value.is_empty())?;
+        .unwrap_or_default();
+    let attachments = normalized_attachments(payload.get("attachments"));
+    if content.is_empty() && attachments.is_empty() {
+        return None;
+    }
     let references = local_presentation_reference_descriptors(content);
     let source = payload.get("source").filter(|value| value.is_object()).cloned();
     let presentation = json!({
         "clientUserMessageId": client_user_message_id,
         "content": content,
+        "attachments": attachments,
         "createdAt": timestamp_ms_field(payload, "createdAt").unwrap_or_else(now_ms),
         "ensureVisible": true,
         "references": references,
@@ -565,7 +570,12 @@ fn attach_user_message_presentations_for_page(
                     ) =>
             {
                 let content = string_field(&presentation, "content").unwrap_or_default();
-                if content.trim().is_empty() {
+                let attachments = presentation
+                    .get("attachments")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                if content.trim().is_empty() && attachments.is_empty() {
                     continue;
                 }
                 let created_at =
@@ -600,6 +610,9 @@ fn attach_user_message_presentations_for_page(
                     "createdAt": created_at,
                     "source": presentation.get("source").cloned(),
                 });
+                if !attachments.is_empty() {
+                    synthetic["attachments"] = Value::Array(attachments);
+                }
                 if let Some(turn_id) = turn_id {
                     synthetic["turnId"] = Value::String(turn_id.clone());
                     synthetic["subtaskId"] = Value::String(turn_id);
@@ -611,12 +624,25 @@ fn attach_user_message_presentations_for_page(
         };
         let message = &mut messages[message_index];
         let content = string_field(message, "content").unwrap_or_default();
+        let presentation_content = string_field(&presentation, "content").unwrap_or_default();
+        let attachments = presentation
+            .get("attachments")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
         let references = presentation
             .get("references")
             .and_then(Value::as_array)
             .map(|references| presentation_reference_ranges(references, &content))
             .unwrap_or_default();
         if let Some(message) = message.as_object_mut() {
+            if !attachments.is_empty() {
+                message.insert(
+                    "content".to_owned(),
+                    Value::String(presentation_content),
+                );
+                message.insert("attachments".to_owned(), Value::Array(attachments));
+            }
             if !references.is_empty() {
                 message.insert(
                     "presentationReferences".to_owned(),
@@ -779,7 +805,11 @@ fn cached_user_message(
         .get("message")
         .and_then(Value::as_str)
         .or_else(|| payload.get("content").and_then(Value::as_str))
-        .filter(|content| !content.trim().is_empty())?;
+        .unwrap_or_default();
+    let attachments = normalized_attachments(payload.get("attachments"));
+    if content.trim().is_empty() && attachments.is_empty() {
+        return None;
+    }
 
     let mut message = Map::new();
     message.insert(
@@ -816,7 +846,6 @@ fn cached_user_message(
     {
         message.insert("source".to_owned(), source);
     }
-    let attachments = normalized_attachments(payload.get("attachments"));
     if !attachments.is_empty() {
         message.insert("attachments".to_owned(), Value::Array(attachments));
     }

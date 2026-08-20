@@ -12,8 +12,8 @@ import {
   X,
 } from 'lucide-react'
 import type { Attachment } from '@/types/api'
-import { getAttachmentImageUrl } from '@/lib/attachments'
 import { isTauriRuntime } from '@/lib/runtime-environment'
+import { useAttachmentDownload } from './AttachmentDownloadContext'
 import {
   localPathFromMarkdownImageSrc,
   resolveDirectMarkdownImageSrc,
@@ -54,7 +54,8 @@ function attachmentPreviewIdentity(attachment: Attachment): string {
 }
 
 async function loadAttachmentImageUrl(
-  attachment: Attachment
+  attachment: Attachment,
+  fetchAttachmentBlob: (attachmentId: number) => Promise<Blob>
 ): Promise<{ url: string; objectUrl: string | null }> {
   const localPreviewUrl = attachment.local_preview_url ?? attachment.local_path
   if (localPreviewUrl) {
@@ -90,16 +91,7 @@ async function loadAttachmentImageUrl(
     return { url: resolvedLocalPreviewUrl, objectUrl: null }
   }
 
-  const token = localStorage.getItem('auth_token')
-  const response = await fetch(getAttachmentImageUrl(attachment.id), {
-    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-  })
-
-  if (!response.ok) {
-    throw new Error(`Failed to load attachment preview: ${response.status}`)
-  }
-
-  const blob = await response.blob()
+  const blob = await fetchAttachmentBlob(attachment.id)
   if (!blob.type.startsWith('image/')) {
     throw new Error(`Attachment preview is not an image: ${blob.type || 'unknown'}`)
   }
@@ -180,6 +172,7 @@ export function AttachmentImagePreview({
   galleryIndex = 0,
   hideOnError = false,
 }: AttachmentImagePreviewProps) {
+  const fetchAttachmentBlob = useAttachmentDownload()
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [hasError, setHasError] = useState(false)
   const [isLightboxOpen, setIsLightboxOpen] = useState(false)
@@ -253,7 +246,7 @@ export function AttachmentImagePreview({
       setZoom(1)
 
       try {
-        const loaded = await loadAttachmentImageUrl(targetAttachment)
+        const loaded = await loadAttachmentImageUrl(targetAttachment, fetchAttachmentBlob)
         objectUrl = loaded.objectUrl
         if (isMounted) {
           setPreviewUrl(loaded.url)
@@ -276,7 +269,7 @@ export function AttachmentImagePreview({
         URL.revokeObjectURL(objectUrl)
       }
     }
-  }, [previewIdentity, shouldLoadPreview])
+  }, [fetchAttachmentBlob, previewIdentity, shouldLoadPreview])
 
   useEffect(() => {
     if (!isLightboxOpen || disableLightbox) return
@@ -305,7 +298,7 @@ export function AttachmentImagePreview({
       setLightboxUrl(null)
 
       try {
-        const loaded = await loadAttachmentImageUrl(selectedAttachment)
+        const loaded = await loadAttachmentImageUrl(selectedAttachment, fetchAttachmentBlob)
         objectUrl = loaded.objectUrl
         if (isMounted) {
           setLightboxUrl(loaded.url)
@@ -330,7 +323,15 @@ export function AttachmentImagePreview({
         URL.revokeObjectURL(objectUrl)
       }
     }
-  }, [disableLightbox, gallery, isLightboxOpen, lightboxIndex, previewIdentity, previewUrl])
+  }, [
+    disableLightbox,
+    fetchAttachmentBlob,
+    gallery,
+    isLightboxOpen,
+    lightboxIndex,
+    previewIdentity,
+    previewUrl,
+  ])
 
   useEffect(() => {
     if (!isLightboxOpen || disableLightbox) return

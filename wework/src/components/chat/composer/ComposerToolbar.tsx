@@ -54,6 +54,7 @@ interface ComposerToolbarProps {
   onPause?: () => void
   showWorkspaceMenu?: boolean
   projectWorkMenuContext?: Omit<ComponentProps<typeof PopoutWorkspaceMenu>, 'disabled'>
+  projectPhrases?: QuickPhrase[]
   onQuickPhraseSelect: (phrase: QuickPhrase) => void
   onSubmit: (options?: ComposerSubmitOptions) => void
   sendButtonTestId?: string
@@ -98,6 +99,7 @@ export function ComposerToolbar({
   onPause,
   showWorkspaceMenu,
   projectWorkMenuContext,
+  projectPhrases = [],
   onQuickPhraseSelect,
   onSubmit,
   sendButtonTestId = 'send-message-button',
@@ -152,7 +154,11 @@ export function ComposerToolbar({
         />
         {showExecutionTools ? (
           <>
-            <QuickPhraseMenu disabled={disabled} onSelect={onQuickPhraseSelect} />
+            <QuickPhraseMenu
+              disabled={disabled}
+              projectPhrases={projectPhrases}
+              onSelect={onQuickPhraseSelect}
+            />
             <PluginPickerMenu
               disabled={disabled}
               iconOnly={compact || pluginPickerIconOnly}

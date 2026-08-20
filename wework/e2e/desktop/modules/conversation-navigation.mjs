@@ -59,6 +59,7 @@ import {
   VIEW_IMAGE_COMPLETION_TEXT,
   VIEW_IMAGE_PROMPT,
   VISION_SIDECAR_COMPLETION_TEXT,
+  VISION_SIDECAR_MAIN_REQUEST_SCENARIO,
   VISION_SIDECAR_PROMPT,
   WORKBENCH_READY_TIMEOUT_MS,
   assert,
@@ -69,12 +70,20 @@ import {
 
 import { captureVerificationScreenshot, waitForWorkbenchDebugState } from './workspace-flows.mjs'
 
+async function waitForActiveTaskIdle(control) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    const pauseButtonCount = Number(
+      await control.command('getElementCount', '[data-testid="pause-response-button"]')
+    )
+    if (pauseButtonCount === 0) return
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error('The active task did not become idle before sending the next prompt')
+}
+
 async function sendPrompt(control, selector, prompt) {
-  await waitForSnapshot(
-    control,
-    snapshot => !snapshot.testIds.includes('pause-response-button'),
-    'The active task did not become idle before sending the next prompt'
-  )
+  await waitForActiveTaskIdle(control)
   await control.command('fill', selector, { value: prompt })
   await control.command('press', selector, { key: 'Enter' })
 }
@@ -86,11 +95,7 @@ async function sendPromptWithButton(
   timeoutMs = MODEL_PROTOCOL_MATRIX_TIMEOUT_MS,
   { confirmCloudModelCatalogSync = false } = {}
 ) {
-  await waitForSnapshot(
-    control,
-    snapshot => !snapshot.testIds.includes('pause-response-button'),
-    'The active task did not become idle before sending the next prompt'
-  )
+  await waitForActiveTaskIdle(control)
   await control.command('fill', selector, { value: prompt })
   await control.command('waitFor', selector, {
     text: prompt,
@@ -275,6 +280,11 @@ async function verifyQueuedFollowUpNavigation({
   runningTaskRowTestId,
 }) {
   await control.command('fill', composerSelector, { value: QUEUED_FOLLOW_UP })
+  await control.command('waitFor', composerSelector, {
+    text: QUEUED_FOLLOW_UP,
+    stableMs: 100,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('press', composerSelector, { key: 'Enter' })
   await control.command('waitFor', '[data-testid="conversation-queue-panel"]', {
     text: QUEUED_FOLLOW_UP,
@@ -949,17 +959,20 @@ async function verifyStandaloneViewImageTask({ composerSelector, control, projec
 async function verifyVisionSidecar({ composerSelector, control, modelCase, projectRowSelector }) {
   control.setScenario('vision_sidecar')
   control.visionSidecarRequests = []
+  const mainRequestOffset =
+    control.scenarioRequests.get(VISION_SIDECAR_MAIN_REQUEST_SCENARIO)?.length ?? 0
+
+  await control.command(
+    'clickWhenEnabled',
+    `${projectRowSelector} [data-testid="project-new-conversation-button"]`,
+    { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+  )
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await selectE2EModel(control, modelCase.mainOptionId, modelCase.mainLabel)
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    await control.command(
-      'clickWhenEnabled',
-      `${projectRowSelector} [data-testid="project-new-conversation-button"]`,
-      { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
-    )
-    await control.command('waitFor', composerSelector, {
-      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-    })
-    await selectE2EModel(control, modelCase.mainOptionId, modelCase.mainLabel)
     await control.command('dropFile', composerSelector, {
       filename: 'vision-sidecar.png',
       mimeType: 'image/png',
@@ -975,10 +988,22 @@ async function verifyVisionSidecar({ composerSelector, control, modelCase, proje
         : `${modelCase.source}-vision-sidecar-03-cache-request-ready.png`
     )
     await sendPrompt(control, composerSelector, VISION_SIDECAR_PROMPT)
-    await control.command('waitFor', '[data-testid="message-assistant"]', {
-      text: VISION_SIDECAR_COMPLETION_TEXT,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    })
+    await control.awaitScenarioRequestCount(
+      VISION_SIDECAR_MAIN_REQUEST_SCENARIO,
+      mainRequestOffset + attempt + 1
+    )
+    await waitForSnapshot(
+      control,
+      snapshot =>
+        snapshot.text.includes(VISION_SIDECAR_COMPLETION_TEXT) &&
+        snapshot.testIds.includes('send-message-button') &&
+        !snapshot.testIds.includes('pause-response-button') &&
+        !snapshot.testIds.includes('thinking-indicator') &&
+        !snapshot.testIds.includes('message-assistant-waiting'),
+      `Vision sidecar turn ${attempt + 1} did not complete in the same conversation`,
+      DEFAULT_STEP_TIMEOUT_MS,
+      ACTIVE_WORKBENCH_SELECTOR
+    )
     await captureVerificationScreenshot(
       control,
       attempt === 0

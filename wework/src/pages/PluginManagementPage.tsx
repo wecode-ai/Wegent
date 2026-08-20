@@ -16,6 +16,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { track } from '@/telemetry/client'
+import { prefetchPluginsWorkspace } from '@/components/plugins/workspace/prefetchPluginsWorkspace'
 import { createPluginRouteRuntimeTaskOpener } from './plugin-route-navigation'
 
 export function PluginManagementPage() {
@@ -63,6 +64,7 @@ export function PluginManagementPage() {
 
   useEffect(() => {
     track('plugin_center_opened', { surface: 'management' })
+    prefetchPluginsWorkspace()
   }, [])
 
   const handleSelectProject = (projectId: number) => {

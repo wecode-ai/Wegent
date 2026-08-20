@@ -94,6 +94,9 @@ describe('runtimeModelSelection', () => {
     ).toMatchObject({
       modelName: 'Doubao-Seed-2.0-pro-260215',
       modelType: 'runtime',
+      options: {
+        codexProviderId: 'wecode-openai',
+      },
     })
     expect(
       defaultNewChatModelSelection([officialWithoutAuth, interfaceModel, cloudModel])

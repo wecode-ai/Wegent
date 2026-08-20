@@ -17,6 +17,7 @@ interface ContinueInImDialogProps {
   submitLabel?: string
   allowMultiple?: boolean
   rememberSelection?: boolean
+  autoSubmitSingle?: boolean
   defaultSelectedSessionKeys?: string[]
   onClose: () => void
   onSubmit: (sessionKeys: string[]) => Promise<void>
@@ -32,6 +33,7 @@ export function ContinueInImDialog({
   submitLabel,
   allowMultiple,
   rememberSelection,
+  autoSubmitSingle,
   defaultSelectedSessionKeys,
   onClose,
   onSubmit,
@@ -50,6 +52,7 @@ export function ContinueInImDialog({
       submitLabel={submitLabel}
       allowMultiple={allowMultiple}
       rememberSelection={rememberSelection}
+      autoSubmitSingle={autoSubmitSingle}
       defaultSelectedSessionKeys={defaultSelectedSessionKeys}
       onClose={onClose}
       onSubmit={onSubmit}
@@ -126,6 +129,7 @@ function ContinueInImDialogContent({
   submitLabel,
   allowMultiple = true,
   rememberSelection = true,
+  autoSubmitSingle = false,
   defaultSelectedSessionKeys: providedDefaultSelectedSessionKeys = [],
   onClose,
   onSubmit,
@@ -133,6 +137,7 @@ function ContinueInImDialogContent({
   const { t } = useTranslation('common')
   const dialogRef = useRef<HTMLElement | null>(null)
   const closeButtonRef = useRef<HTMLButtonElement | null>(null)
+  const autoSubmitAttemptedRef = useRef(false)
   const [rememberedSessionKeys] = useState(readRememberedSessionKeys)
   const [manualSelectedSessionKeys, setManualSelectedSessionKeys] = useState<Set<string> | null>(
     null
@@ -170,6 +175,25 @@ function ContinueInImDialogContent({
   useEffect(() => {
     closeButtonRef.current?.focus()
   }, [])
+
+  useEffect(() => {
+    if (
+      !autoSubmitSingle ||
+      loading ||
+      submitting ||
+      sessions.length !== 1 ||
+      autoSubmitAttemptedRef.current
+    ) {
+      return
+    }
+
+    const sessionKey = sessions[0].session_key
+    autoSubmitAttemptedRef.current = true
+    if (rememberSelection) {
+      writeRememberedSessionKeys([sessionKey])
+    }
+    void onSubmit([sessionKey])
+  }, [autoSubmitSingle, loading, onSubmit, rememberSelection, sessions, submitting])
 
   const toggleSession = (sessionKey: string) => {
     setManualSelectedSessionKeys(current => {

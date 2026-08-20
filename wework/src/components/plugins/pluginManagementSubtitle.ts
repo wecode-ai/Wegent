@@ -1,6 +1,20 @@
 import type { PluginMarketplaceItem } from '@/types/api'
 import type { InstalledPluginItem } from './PluginManagementRows'
 
+export function sharedRecipientMetaItems(
+  item: Pick<PluginMarketplaceItem, 'ownerDisplayName' | 'allowCopy'>,
+  t: (key: string, fallback: string) => string
+): string[] {
+  const creator = item.ownerDisplayName?.trim() || t('workbench.plugins_unknown_creator', '未知')
+  return [
+    `${t('workbench.plugins_shared_creator', '创建者')} ${creator}`,
+    t('workbench.plugins_shared_targeted', '定向分享'),
+    item.allowCopy
+      ? t('workbench.plugins_shared_copy_allowed', '可复制')
+      : t('workbench.plugins_shared_use_only', '仅可使用'),
+  ]
+}
+
 function buildShareScopeSubtitle(
   deptCount: number,
   userCount: number,
@@ -25,13 +39,7 @@ export function buildInstalledPluginSubtitle(
   t: (key: string, fallback: string) => string
 ): string {
   if (marketplaceItem?.accessRole === 'recipient') {
-    const creator =
-      marketplaceItem.ownerDisplayName?.trim() || t('workbench.plugins_unknown_creator', '未知')
-    return [
-      `${t('workbench.plugins_shared_creator', '创建者')} ${creator}`,
-      t('workbench.plugins_shared_targeted', '定向分享'),
-      t('workbench.plugins_shared_use_only', '仅可使用'),
-    ].join(' · ')
+    return sharedRecipientMetaItems(marketplaceItem, t).join(' · ')
   }
 
   if (plugin.origin === 'created') {

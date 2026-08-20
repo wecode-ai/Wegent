@@ -1,6 +1,7 @@
 import type { LocalHarnessId } from '@/lib/local-harness'
 import { getDefaultModelOptions } from '@/lib/model-ui'
 import type { ModelOptions, UnifiedModel } from '@/types/api'
+import type { HarnessContextRegistration } from '@/features/harness-apps/harnessContext'
 
 export interface LocalHarnessModelOption {
   key: string
@@ -15,6 +16,7 @@ export interface LocalHarnessModelLaunchConfig {
   env: Record<string, string>
   proxyToken: string
   baseUrl: string
+  context?: HarnessContextRegistration
 }
 
 export interface HarnessProxyRegistration {

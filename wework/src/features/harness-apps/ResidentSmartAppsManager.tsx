@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { harnessAppsApi } from '@/api/local/harnessApps'
 import {
+  harnessAppRoute,
   takeHarnessAppProxyToken,
+  takeHarnessAppContextToken,
   openHarnessAppTab,
   registerHarnessAppTab,
+  storeHarnessAppContextToken,
   storeHarnessAppProxyToken,
   unregisterHarnessAppTab,
 } from '@/features/harness-apps/harnessAppTabs'
@@ -27,6 +30,11 @@ export function ResidentSmartAppsManager({ enabled }: ResidentSmartAppsManagerPr
     () => listLocalHarnessModelOptions('opencode', projectChat.models),
     [projectChat.models]
   )
+  const openResidentAppTab = (installation: Parameters<typeof openHarnessAppTab>[1]) => {
+    const tabs = workspaceTabsRef.current
+    if (tabs.tabs.some(tab => tab.contentRoute === harnessAppRoute(installation.id))) return
+    openHarnessAppTab(tabs, installation)
+  }
 
   useEffect(() => {
     workspaceTabsRef.current = workspaceTabs
@@ -75,6 +83,12 @@ export function ResidentSmartAppsManager({ enabled }: ResidentSmartAppsManagerPr
           if (proxyToken) {
             await services.localHarnessModelApi?.unregisterProxy(proxyToken).catch(() => undefined)
           }
+          const contextToken = await takeHarnessAppContextToken(installation.id)
+          if (contextToken) {
+            await services.localHarnessModelApi
+              ?.unregisterContext(contextToken)
+              .catch(() => undefined)
+          }
         }
       })
       .catch(error => {
@@ -105,7 +119,7 @@ export function ResidentSmartAppsManager({ enabled }: ResidentSmartAppsManagerPr
             try {
               if (cancelled) return
               registerHarnessAppTab(installation)
-              openHarnessAppTab(workspaceTabsRef.current, installation)
+              openResidentAppTab(installation)
               completedIds.current.add(installation.id)
             } catch (error) {
               console.warn(
@@ -125,28 +139,44 @@ export function ResidentSmartAppsManager({ enabled }: ResidentSmartAppsManagerPr
             continue
           }
           let proxyToken: string | null = null
+          let contextToken: string | null = null
           let appStarted = false
           try {
             const launch = await services.localHarnessModelApi?.resolveLaunch('opencode', model)
             if (cancelled) return
             if (!launch) throw new Error('Smart app model proxy is unavailable')
             proxyToken = launch.proxyToken
-            const running = await harnessAppsApi.start(installation.id, launch.baseUrl)
+            contextToken = launch.context?.token ?? null
+            const running = launch.context
+              ? await harnessAppsApi.start(
+                  installation.id,
+                  launch.baseUrl,
+                  launch.context.baseUrl,
+                  launch.context.token
+                )
+              : await harnessAppsApi.start(installation.id, launch.baseUrl)
             appStarted = true
             if (cancelled) throw new Error('Resident Smart app restoration was cancelled')
             registerHarnessAppTab(running)
-            openHarnessAppTab(workspaceTabsRef.current, running)
+            openResidentAppTab(running)
             await storeHarnessAppProxyToken(installation.id, launch.proxyToken)
+            if (contextToken) await storeHarnessAppContextToken(installation.id, contextToken)
             completedIds.current.add(installation.id)
           } catch (error) {
             if (appStarted) {
               await harnessAppsApi.stop(installation.id).catch(() => undefined)
               unregisterHarnessAppTab(installation.id)
               await takeHarnessAppProxyToken(installation.id)
+              await takeHarnessAppContextToken(installation.id)
             }
             if (proxyToken) {
               await services.localHarnessModelApi
                 ?.unregisterProxy(proxyToken)
+                .catch(() => undefined)
+            }
+            if (contextToken) {
+              await services.localHarnessModelApi
+                ?.unregisterContext(contextToken)
                 .catch(() => undefined)
             }
             console.warn(`[Wework] failed to start resident Smart app ${installation.id}`, error)

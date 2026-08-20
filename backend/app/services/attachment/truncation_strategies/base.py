@@ -30,7 +30,7 @@ class SmartTruncationConfig:
     # Maximum total length after truncation
     max_length: int = 500000
 
-    # Excel/CSV settings (used as minimum values)
+    # Dense CSV settings. Names are retained because they are public config fields.
     excel_header_rows: int = 1  # Number of header rows to keep
     excel_sample_rows: int = 10  # Minimum sample rows after header
     excel_tail_rows: int = 5  # Minimum tail rows to keep

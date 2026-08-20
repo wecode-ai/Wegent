@@ -7,7 +7,8 @@ Smart truncation strategies for different file formats.
 
 Instead of simple text cutting, this module provides intelligent truncation
 that preserves document structure and key information:
-- Excel/CSV: Header + uniformly sampled rows (covering entire dataset)
+- Excel: Complete physical rows with their source coordinates
+- CSV: Header + contiguous head/tail rows
 - PDF: First pages + uniformly sampled middle pages + last pages
 - Word: Opening paragraphs + uniformly sampled middle + closing paragraphs
 - PowerPoint: First/last slides + uniformly sampled middle slides
@@ -15,8 +16,7 @@ that preserves document structure and key information:
 
 The truncation is based on max_length (character count), dynamically calculating
 how many structural units (rows/pages/paragraphs/etc.) to keep to fill the
-available space. For tabular data (Excel/CSV), uniform sampling ensures coverage
-across the entire dataset (e.g., data from all 12 months in a yearly report).
+available space without cutting structural units in the middle.
 
 This module re-exports all classes from the truncation_strategies subpackage
 for backward compatibility.

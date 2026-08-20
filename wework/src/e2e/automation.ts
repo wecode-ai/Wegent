@@ -162,6 +162,43 @@ async function getEmbeddedBrowserLocalStorageItem(command: DesktopControlCommand
   )
 }
 
+async function setEmbeddedBrowserWindowValue(command: DesktopControlCommand) {
+  const input = embeddedBrowserStorageInput(command)
+  return evalEmbeddedBrowserWhenReady<string>(
+    command,
+    input.label,
+    `(globalThis[${JSON.stringify(input.key)}] = ${JSON.stringify(input.value)})`
+  )
+}
+
+async function getEmbeddedBrowserWindowValue(command: DesktopControlCommand) {
+  const input = embeddedBrowserStorageInput(command)
+  return evalEmbeddedBrowserWhenReady<string | null>(
+    command,
+    input.label,
+    `globalThis[${JSON.stringify(input.key)}] ?? null`
+  )
+}
+
+async function evalEmbeddedBrowserWhenReady<T>(
+  command: DesktopControlCommand,
+  label: string,
+  expression: string
+): Promise<T> {
+  const timeoutMs = command.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS
+  const startedAt = Date.now()
+  let lastError = 'Embedded browser is not ready'
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      return await evalEmbeddedBrowserJson<T>(expression, label)
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error)
+      await waitForDesktopControlTick()
+    }
+  }
+  throw new Error(`Timed out evaluating embedded browser "${label}": ${lastError}`)
+}
+
 async function captureEmbeddedBrowserWhenReady(command: DesktopControlCommand): Promise<string> {
   const timeoutMs = command.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS
   const startedAt = Date.now()
@@ -1156,6 +1193,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return (await setEmbeddedBrowserLocalStorageItem(command)) ?? ''
     case 'getEmbeddedBrowserLocalStorageItem':
       return (await getEmbeddedBrowserLocalStorageItem(command)) ?? ''
+    case 'setEmbeddedBrowserWindowValue':
+      return (await setEmbeddedBrowserWindowValue(command)) ?? ''
+    case 'getEmbeddedBrowserWindowValue':
+      return (await getEmbeddedBrowserWindowValue(command)) ?? ''
     case 'setLocalProxyUrl': {
       const proxyUrl = command.value?.trim() ?? ''
       const config = saveLocalProxyUrl(proxyUrl)
@@ -1644,6 +1685,21 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return JSON.stringify(await invoke(LOCAL_EXECUTOR_COMMANDS.status))
     case 'getLocalExecutorLog':
       return JSON.stringify(await invoke(LOCAL_EXECUTOR_COMMANDS.readLog))
+    case 'previewPluginImport': {
+      const input = JSON.parse(command.value ?? '{}') as {
+        archivePath?: string
+        marketplacePath?: string
+      }
+      if (!input.archivePath || !input.marketplacePath) {
+        throw new Error('previewPluginImport requires archivePath and marketplacePath')
+      }
+      return JSON.stringify(
+        await invoke('local_executor_preview_plugin_import', {
+          archivePath: input.archivePath,
+          marketplacePath: input.marketplacePath,
+        })
+      )
+    }
     case 'hover':
       return hoverDesktopControlElement(command.selector)
     case 'pointerLeave':

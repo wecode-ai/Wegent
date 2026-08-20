@@ -109,6 +109,7 @@ class RagRuntimeResolver:
         reserved_output_tokens: int = 4096,
         context_buffer_ratio: float = 0.1,
         max_direct_chunks: int = 500,
+        search_hints: SearchHints | None = None,
         knowledge_base_configs: list[QueryKnowledgeBaseRuntimeConfig] | None = None,
     ) -> QueryRuntimeSpec:
         direct_injection_budget = None
@@ -139,6 +140,7 @@ class RagRuntimeResolver:
         return QueryRuntimeSpec(
             knowledge_base_ids=knowledge_base_ids,
             query=query,
+            search_hints=search_hints,
             max_results=max_results,
             route_mode=route_mode,
             scope=scope
