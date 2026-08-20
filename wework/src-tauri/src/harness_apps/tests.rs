@@ -3,6 +3,9 @@ use std::io::Write;
 use tempfile::tempdir;
 use zip::write::SimpleFileOptions;
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 fn manifest(dsh: &str) -> String {
     format!(
         r#"{{
@@ -131,4 +134,42 @@ fn instance_patch_binds_provider_and_model() {
         .path()
         .join("wework-package/packages/ops/sibling/package.json")
         .is_file());
+}
+
+#[cfg(unix)]
+#[test]
+fn node_version_check_initializes_the_runtime() {
+    let directory = tempdir().unwrap();
+    let node = directory.path().join("node");
+    fs::write(
+        &node,
+        "#!/bin/sh\n\
+         test \"$1\" = \"-p\"\n\
+         test \"$2\" = \"process.versions.node\"\n\
+         printf '24.1.0'\n",
+    )
+    .unwrap();
+    fs::set_permissions(&node, fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert_eq!(read_node_version(&node).unwrap(), Version::new(24, 1, 0));
+}
+
+#[cfg(unix)]
+#[test]
+fn node_version_check_reports_v8_initialization_failures() {
+    let directory = tempdir().unwrap();
+    let node = directory.path().join("node");
+    fs::write(
+        &node,
+        "#!/bin/sh\n\
+         echo 'Failed to reserve virtual memory for CodeRange' >&2\n\
+         exit 133\n",
+    )
+    .unwrap();
+    fs::set_permissions(&node, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let error = read_node_version(&node).unwrap_err();
+
+    assert!(error.contains("failed to initialize V8"));
+    assert!(error.contains("Failed to reserve virtual memory for CodeRange"));
 }

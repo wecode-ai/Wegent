@@ -19,6 +19,7 @@ const targetDirectory = path.join(root, 'src-tauri', 'bundled-deepseek-harness')
 const archive = path.join(targetDirectory, 'runtime.tar.gz')
 const metadata = path.join(targetDirectory, 'runtime.json')
 const placeholder = path.join(targetDirectory, '.resource-placeholder')
+const nodeEntitlements = path.join(root, 'scripts', 'deepseek-harness-node.entitlements.plist')
 const cacheDirectory = path.join(root, 'node_modules', '.cache')
 const staging = path.join(cacheDirectory, `wework-deepseek-harness-${process.pid}`)
 const temporaryArchive = path.join(cacheDirectory, `wework-deepseek-harness-${process.pid}.tar.gz`)
@@ -49,12 +50,33 @@ async function resetTargetDirectory() {
   await writeFile(placeholder, '')
 }
 
+async function prepareManagedNode(nodePath) {
+  if (process.platform === 'darwin') {
+    const identity = process.env.APPLE_SIGNING_IDENTITY?.trim() || '-'
+    const args = [
+      '--force',
+      '--options',
+      'runtime',
+      '--entitlements',
+      nodeEntitlements,
+      '--sign',
+      identity,
+    ]
+    if (identity !== '-') args.splice(1, 0, '--timestamp')
+    await run('codesign', [...args, nodePath], root)
+  }
+  await run(nodePath, ['-e', 'process.stdout.write(process.versions.node)'], root)
+}
+
 if (process.argv.includes('--clean')) {
   await resetTargetDirectory()
   process.exit(0)
 }
 
-const sourceContents = await Promise.all(sourceFiles.map(file => readFile(path.join(source, file))))
+const sourceContents = await Promise.all([
+  ...sourceFiles.map(file => readFile(path.join(source, file))),
+  readFile(nodeEntitlements),
+])
 const sourceFingerprint = createHash('sha256')
   .update(archiveFormatVersion)
   .update('\0')
@@ -89,7 +111,8 @@ try {
 
   const nodeDirectory = path.join(staging, 'node', 'bin')
   await mkdir(nodeDirectory, { recursive: true })
-  await cp(process.execPath, path.join(nodeDirectory, nodeName))
+  const managedNode = path.join(nodeDirectory, nodeName)
+  await cp(process.execPath, managedNode)
 
   const packageJson = JSON.parse(sourceContents[0].toString('utf8'))
   const runtimeMetadata = `${JSON.stringify(
@@ -104,6 +127,7 @@ try {
   await writeFile(path.join(staging, 'runtime.json'), runtimeMetadata)
   await writeFile(path.join(staging, '.resource-placeholder'), '')
   await signPreparedMacOsBinaries(staging)
+  await prepareManagedNode(managedNode)
 
   await run('tar', ['-cf', temporaryTar, '-C', staging, '.'], root, {
     COPYFILE_DISABLE: '1',
