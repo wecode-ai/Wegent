@@ -913,6 +913,124 @@ describe('ProjectWorkflowEditor', () => {
     expect(screen.getByTestId('project-workflow-save')).toBeEnabled()
   })
 
+  test('picks adapter event types from a dropdown and supports custom values', () => {
+    const onChange = vi.fn()
+    const catalog = [
+      {
+        provider: 'gitlab',
+        event_type: 'merged',
+        category: 'lifecycle',
+        description: 'The merge request was merged',
+      },
+      {
+        provider: 'gitlab',
+        event_type: 'ci_failed',
+        category: 'ci',
+        description: 'A pipeline for the merge request failed',
+      },
+      {
+        provider: 'gitlab',
+        event_type: 'review_comment',
+        category: 'review',
+        description: 'A new comment was added to the merge request',
+      },
+    ]
+    const workflowWithWait: ProjectWorkflowDefinition = {
+      ...workflow,
+      nodes: [
+        workflow.nodes[0],
+        workflow.nodes[1],
+        workflow.nodes[2],
+        {
+          id: 'wait-1',
+          name: '等待外部事件',
+          node_type: 'wait',
+          depends_on: ['test'],
+          required: true,
+          workspace_policy: 'none',
+          automation_rule_id: null,
+          wait_config: {
+            rules: [
+              {
+                id: 'rule-1',
+                event_type: '',
+                mode: 'trigger',
+                action: 'complete',
+                rerun_prompt: '',
+              },
+            ],
+          },
+        },
+        {
+          ...workflow.nodes[3],
+          depends_on: ['wait-1'],
+        },
+      ],
+    }
+    const { rerender } = render(
+      <ProjectWorkflowEditor
+        value={workflowWithWait}
+        busy={false}
+        onChange={onChange}
+        onSave={vi.fn()}
+        externalEventCatalog={catalog}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('project-workflow-wait-wait-1'))
+    expect(screen.getByTestId('project-workflow-inspector-wait-1')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('project-workflow-wait-rule-event-wait-1-rule-1'))
+    expect(screen.getByText('gitlab')).toBeInTheDocument()
+    expect(screen.getByText('ci_failed')).toBeInTheDocument()
+    fireEvent.click(
+      screen.getByTestId('project-workflow-wait-rule-event-wait-1-rule-1-option-gitlab-ci_failed')
+    )
+    expect(onChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        nodes: expect.arrayContaining([
+          expect.objectContaining({
+            id: 'wait-1',
+            wait_config: {
+              rules: [expect.objectContaining({ id: 'rule-1', event_type: 'ci_failed' })],
+            },
+          }),
+        ]),
+      })
+    )
+
+    const selectedWorkflow = onChange.mock.calls.at(-1)?.[0] as ProjectWorkflowDefinition
+    rerender(
+      <ProjectWorkflowEditor
+        value={selectedWorkflow}
+        busy={false}
+        onChange={onChange}
+        onSave={vi.fn()}
+        externalEventCatalog={catalog}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('project-workflow-wait-rule-event-wait-1-rule-1'))
+    fireEvent.click(
+      screen.getByTestId('project-workflow-wait-rule-event-wait-1-rule-1-option-custom')
+    )
+    fireEvent.change(screen.getByTestId('project-workflow-wait-rule-event-custom-wait-1-rule-1'), {
+      target: { value: 'gitlab.merge' },
+    })
+    expect(onChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        nodes: expect.arrayContaining([
+          expect.objectContaining({
+            id: 'wait-1',
+            wait_config: {
+              rules: [expect.objectContaining({ id: 'rule-1', event_type: 'gitlab.merge' })],
+            },
+          }),
+        ]),
+      })
+    )
+  })
+
   test('presents AI advancement as a concrete dispatcher instead of an automation rule', () => {
     const onRequestConfigureAiCoordinator = vi.fn()
     render(

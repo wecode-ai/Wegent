@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CloudLoopItem, CloudProject, ProjectWorkflowDefinition } from '@/api/deliveries'
+import type { createExternalEventApi, ExternalEventType } from '@/api/externalEvents'
 import type { ProjectAutomationInput, ProjectAutomationRule } from '@/api/projectAutomations'
 import type { ProjectChatAgent } from '@/api/projectChatAgents'
 import type { ProjectWithTasks, RuntimeWorkListResponse } from '@/types/api'
@@ -17,6 +18,7 @@ export function ProjectAutomationView({
   project,
   projectChatAgentApi,
   projectAutomationApi,
+  externalEventApi,
   executionApi,
   deviceApi,
   modelApi,
@@ -32,6 +34,7 @@ export function ProjectAutomationView({
   project: CloudProject
   projectChatAgentApi?: WorkbenchServices['projectChatAgentApi']
   projectAutomationApi?: WorkbenchServices['projectAutomationApi']
+  externalEventApi?: ReturnType<typeof createExternalEventApi>
   executionApi?: ExecutionListApi
   deviceApi?: WorkbenchServices['deviceApi']
   modelApi?: WorkbenchServices['modelApi']
@@ -52,8 +55,25 @@ export function ProjectAutomationView({
   const projectVersionRef = useRef({ projectId: String(project.id), version: project.version })
   const [automationRules, setAutomationRules] = useState<ProjectAutomationRule[]>([])
   const [projectAgents, setProjectAgents] = useState<ProjectChatAgent[]>([])
+  const [externalEventCatalog, setExternalEventCatalog] = useState<ExternalEventType[] | null>(null)
   const [robotCreateRequestKey, setRobotCreateRequestKey] = useState(0)
   const [coordinatorCreateRequestKey, setCoordinatorCreateRequestKey] = useState(0)
+
+  useEffect(() => {
+    let cancelled = false
+    if (!externalEventApi) return
+    void externalEventApi
+      .catalog()
+      .then(types => {
+        if (!cancelled) setExternalEventCatalog(types)
+      })
+      .catch(() => {
+        if (!cancelled) setExternalEventCatalog(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [externalEventApi])
 
   useEffect(() => {
     const projectId = String(project.id)
@@ -174,6 +194,7 @@ export function ProjectAutomationView({
           busy={workflowBusy}
           onChange={setWorkflowDefinition}
           onSave={saveWorkflow}
+          externalEventCatalog={externalEventApi ? externalEventCatalog : null}
           automationRules={automationRules}
           projectAgents={projectAgents}
           onEnsureStageRobotRule={ensureStageRobotRule}

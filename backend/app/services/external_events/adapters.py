@@ -17,6 +17,55 @@ from typing import Any, Mapping
 
 
 @dataclass(frozen=True)
+class ProviderEventType:
+    event_type: str
+    category: str
+    description: str
+
+
+GITLAB_EVENT_MERGED = "merged"
+GITLAB_EVENT_CI_FAILED = "ci_failed"
+GITLAB_EVENT_REVIEW_COMMENT = "review_comment"
+
+GITLAB_EVENT_TYPES = (
+    ProviderEventType(
+        event_type=GITLAB_EVENT_MERGED,
+        category="lifecycle",
+        description="The merge request was merged",
+    ),
+    ProviderEventType(
+        event_type=GITLAB_EVENT_CI_FAILED,
+        category="ci",
+        description="A pipeline for the merge request failed",
+    ),
+    ProviderEventType(
+        event_type=GITLAB_EVENT_REVIEW_COMMENT,
+        category="review",
+        description="A new comment was added to the merge request",
+    ),
+)
+
+PROVIDER_EVENT_TYPES: dict[str, tuple[ProviderEventType, ...]] = {
+    "gitlab": GITLAB_EVENT_TYPES,
+}
+
+
+def provider_event_catalog() -> list[dict[str, str]]:
+    """Return the event types each provider adapter can produce."""
+
+    return [
+        {
+            "provider": provider,
+            "event_type": event_type.event_type,
+            "category": event_type.category,
+            "description": event_type.description,
+        }
+        for provider, event_types in PROVIDER_EVENT_TYPES.items()
+        for event_type in event_types
+    ]
+
+
+@dataclass(frozen=True)
 class NormalizedExternalEvent:
     provider: str
     opaque_ref: str
@@ -62,7 +111,7 @@ def _gitlab(
         return NormalizedExternalEvent(
             provider="gitlab",
             opaque_ref=opaque_ref,
-            event_type="merged",
+            event_type=GITLAB_EVENT_MERGED,
             event_id=str(attributes.get("id") or "") or None,
             summary=f"MR !{attributes.get('iid')} merged",
             source_url=_text(attributes.get("url")) or None,
@@ -79,7 +128,7 @@ def _gitlab(
         return NormalizedExternalEvent(
             provider="gitlab",
             opaque_ref=opaque_ref,
-            event_type="ci_failed",
+            event_type=GITLAB_EVENT_CI_FAILED,
             event_id=str(attributes.get("id") or "") or None,
             summary=f"Pipeline #{attributes.get('id')} failed",
             source_url=_text(project.get("web_url")) or None,
@@ -95,7 +144,7 @@ def _gitlab(
         return NormalizedExternalEvent(
             provider="gitlab",
             opaque_ref=opaque_ref,
-            event_type="review_comment",
+            event_type=GITLAB_EVENT_REVIEW_COMMENT,
             event_id=str(attributes.get("id") or "") or None,
             summary=f"New comment by {_text(author.get('username')) or 'user'}",
             source_url=_text(attributes.get("url")) or None,

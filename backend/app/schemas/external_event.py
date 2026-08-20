@@ -23,3 +23,10 @@ class ExternalReferenceResponse(BaseModel):
     issue_id: str
     workflow_node_id: str
     compensated_event_count: int = 0
+
+
+class ProviderEventTypeView(BaseModel):
+    provider: str
+    event_type: str
+    category: str
+    description: str = ""

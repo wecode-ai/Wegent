@@ -16,6 +16,7 @@ from app.api.endpoints import (
     device_chat_tasks,
     devices,
     dingtalk_docs,
+    external_events,
     external_tasks,
     feedback,
     groups,
@@ -164,6 +165,11 @@ api_router.include_router(
     project_incoming_hooks.public_router,
     prefix="/v1/incoming-hooks",
     tags=["project-incoming-hooks"],
+)
+api_router.include_router(
+    external_events.router,
+    prefix="/v1/external-events",
+    tags=["external-events"],
 )
 api_router.include_router(
     loop_item_executions.router,

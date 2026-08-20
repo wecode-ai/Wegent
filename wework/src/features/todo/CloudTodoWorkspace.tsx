@@ -3090,6 +3090,7 @@ export function CloudTodoWorkspace({
                   api={selectedProjectApi}
                   projectChatAgentApi={selectedProjectAgentApi}
                   projectAutomationApi={selectedProjectServices?.projectAutomationApi}
+                  externalEventApi={selectedProjectServices?.externalEventApi}
                   executionApi={automationExecutionApi}
                   deviceApi={selectedProjectServices?.deviceApi}
                   modelApi={selectedProjectServices?.modelApi}

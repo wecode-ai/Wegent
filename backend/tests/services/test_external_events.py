@@ -242,7 +242,9 @@ def test_trigger_complete_ends_wait_node_and_issue(
     test_user: User,
 ) -> None:
     issue = _issue(test_db, workflow_project, test_user.id)
-    binding = _binding(test_db, project=workflow_project, issue=issue, user_id=test_user.id)
+    binding = _binding(
+        test_db, project=workflow_project, issue=issue, user_id=test_user.id
+    )
     test_db.commit()
 
     external_event_evaluation_service.evaluate_event(
@@ -271,7 +273,9 @@ def test_unmatched_event_type_is_ignored(
     test_user: User,
 ) -> None:
     issue = _issue(test_db, workflow_project, test_user.id)
-    binding = _binding(test_db, project=workflow_project, issue=issue, user_id=test_user.id)
+    binding = _binding(
+        test_db, project=workflow_project, issue=issue, user_id=test_user.id
+    )
     test_db.commit()
     unrelated = NormalizedExternalEvent(
         provider="gitlab",
@@ -374,9 +378,24 @@ def test_buffer_append_dedupe_and_take() -> None:
     buffer = ExternalEventBuffer(url="redis://fake")
     buffer._client = FakeRedis()
 
-    buffer.append("gitlab", "acme/app!7", "merged", {"event_id": "1", "summary": "a", "event_type": "merged"})
-    buffer.append("gitlab", "acme/app!7", "merged", {"event_id": "1", "summary": "a", "event_type": "merged"})
-    buffer.append("gitlab", "acme/app!7", "merged", {"event_id": "2", "summary": "b", "event_type": "merged"})
+    buffer.append(
+        "gitlab",
+        "acme/app!7",
+        "merged",
+        {"event_id": "1", "summary": "a", "event_type": "merged"},
+    )
+    buffer.append(
+        "gitlab",
+        "acme/app!7",
+        "merged",
+        {"event_id": "1", "summary": "a", "event_type": "merged"},
+    )
+    buffer.append(
+        "gitlab",
+        "acme/app!7",
+        "merged",
+        {"event_id": "2", "summary": "b", "event_type": "merged"},
+    )
 
     assert len(buffer.take("gitlab", "acme/app!7", "merged")) == 2
     assert buffer.take("gitlab", "acme/app!7", "merged") == []
@@ -386,10 +405,23 @@ def test_buffer_reference_compensation_and_aggregate() -> None:
     buffer = ExternalEventBuffer(url="redis://fake")
     buffer._client = FakeRedis()
 
-    buffer.append("gitlab", "acme/app!7", "merged", {"event_id": "1", "summary": "merged", "event_type": "merged"})
-    buffer.append("gitlab", "acme/app!7", "ci_failed", {"event_id": "2", "summary": "failed", "event_type": "ci_failed"})
+    buffer.append(
+        "gitlab",
+        "acme/app!7",
+        "merged",
+        {"event_id": "1", "summary": "merged", "event_type": "merged"},
+    )
+    buffer.append(
+        "gitlab",
+        "acme/app!7",
+        "ci_failed",
+        {"event_id": "2", "summary": "failed", "event_type": "ci_failed"},
+    )
     reference_events = buffer.take_for_reference("gitlab", "acme/app!7")
-    assert {event["event_type"] for event in reference_events} == {"merged", "ci_failed"}
+    assert {event["event_type"] for event in reference_events} == {
+        "merged",
+        "ci_failed",
+    }
     assert buffer.take_for_reference("gitlab", "acme/app!7") == []
 
     buffer.push_aggregate(
@@ -399,7 +431,12 @@ def test_buffer_reference_compensation_and_aggregate() -> None:
         opaque_ref="acme/app!7",
         event_type="ci_failed",
     )
-    buffer.append("gitlab", "acme/app!7", "ci_failed", {"event_id": "3", "summary": "again", "event_type": "ci_failed"})
+    buffer.append(
+        "gitlab",
+        "acme/app!7",
+        "ci_failed",
+        {"event_id": "3", "summary": "again", "event_type": "ci_failed"},
+    )
     settled = buffer.take_aggregate(task_id="task-1", node_id="node-1")
     assert len(settled) == 1
     assert settled[0]["event_id"] == "3"
@@ -412,16 +449,23 @@ def test_binding_dedupe_route_and_archive(
     test_user: User,
 ) -> None:
     issue = _issue(test_db, workflow_project, test_user.id)
-    first = _binding(test_db, project=workflow_project, issue=issue, user_id=test_user.id)
-    second = _binding(test_db, project=workflow_project, issue=issue, user_id=test_user.id)
+    first = _binding(
+        test_db, project=workflow_project, issue=issue, user_id=test_user.id
+    )
+    second = _binding(
+        test_db, project=workflow_project, issue=issue, user_id=test_user.id
+    )
     test_db.commit()
 
     assert first.id == second.id
-    assert len(
-        external_event_binding_service.route(
-            test_db, provider="gitlab", opaque_ref="acme/app!7"
+    assert (
+        len(
+            external_event_binding_service.route(
+                test_db, provider="gitlab", opaque_ref="acme/app!7"
+            )
         )
-    ) == 1
+        == 1
+    )
 
     external_event_binding_service.archive(test_db, first)
     test_db.commit()
@@ -558,3 +602,56 @@ def loop_item_execution_for_run(
         priority="medium",
         automation_context={"rule_id": "rule-1", "run_id": run_id},
     )
+
+
+def test_provider_event_catalog_lists_gitlab_event_types() -> None:
+    from app.services.external_events.adapters import provider_event_catalog
+
+    catalog = provider_event_catalog()
+    gitlab = [entry for entry in catalog if entry["provider"] == "gitlab"]
+    assert {entry["event_type"] for entry in gitlab} == {
+        "merged",
+        "ci_failed",
+        "review_comment",
+    }
+    assert all(entry["category"] and entry["description"] for entry in gitlab)
+
+
+def test_provider_event_catalog_covers_adapter_outputs() -> None:
+    from app.services.external_events.adapters import (
+        normalize_external_event,
+        provider_event_catalog,
+    )
+
+    catalog = provider_event_catalog()
+    produced = {
+        entry["event_type"] for entry in catalog if entry["provider"] == "gitlab"
+    }
+    payloads = [
+        {
+            "object_kind": "merge_request",
+            "project": {"path_with_namespace": "acme/app"},
+            "object_attributes": {
+                "id": 1,
+                "iid": 7,
+                "action": "merge",
+                "url": "https://example.test/mr/7",
+            },
+        },
+        {
+            "object_kind": "pipeline",
+            "project": {"path_with_namespace": "acme/app"},
+            "object_attributes": {"id": 2, "status": "failed"},
+        },
+        {
+            "object_kind": "note",
+            "project": {"path_with_namespace": "acme/app"},
+            "object_attributes": {"id": 3, "noteable_type": "MergeRequest"},
+            "merge_request": {"iid": 7},
+            "user": {"username": "tester"},
+        },
+    ]
+    for payload in payloads:
+        event = normalize_external_event(payload, {})
+        assert event is not None
+        assert event.event_type in produced
