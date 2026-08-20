@@ -23,5 +23,6 @@ Before changing a flow below, update its connection graph, sequence diagram, cod
 | Smart apps (DeepSeek Harness runtime)              | [deepseek-harness-apps.md](deepseek-harness-apps.md)                         | Application-type navigation, package validation, version binding, model proxying, instances, tabs, and cleanup |
 | IM private-chat runtime streaming                  | [im-runtime-streaming.md](im-runtime-streaming.md)                           | Callback key, `runtime:event` envelope, relay and IM forwarding, terminal event, failure isolation            |
 | Codex notification isolation                       | [codex-notification-routing.md](codex-notification-routing.md)               | Shared app-server, thread routing, burst isolation, process exit, terminal projection                         |
+| External event subscription and waits              | [external-event-subscription.md](external-event-subscription.md)             | Wait-node state machine, event rules, reference registration, provider ingestion, wait rounds, compensation |
 
 Detailed product prose remains in the existing developer guides. This directory contains only reviewable architecture truth.
