@@ -209,7 +209,7 @@ interface WorkspaceTabSurfaceProps {
   user: User
 }
 
-function WorkspaceTabSurface({
+export function WorkspaceTabSurface({
   active,
   cloudWebUrl,
   lifecycleStore,
@@ -259,14 +259,20 @@ function WorkspaceTabSurface({
   // Task-scoped browser routing is owned by workbench effects and must remain
   // available while another workspace tab is active.
   const keepTaskRuntimeActive = tab.kind === 'task' && renderWorkbench
+  // App WebViews own in-memory page state that is lost when React Activity
+  // disconnects their effects. Keep the current iframe route connected while
+  // inactive; AppIframe hides the native WebView through its active prop.
+  const keepIframeActive = Boolean(iframe)
   return (
     <WorkspaceTabPortalOwner ownerId={tab.id}>
-      <Activity mode={active || keepTaskRuntimeActive ? 'visible' : 'hidden'}>
+      <Activity mode={active || keepTaskRuntimeActive || keepIframeActive ? 'visible' : 'hidden'}>
         <div
           className={cn(
             'min-h-0 min-w-0 overflow-hidden',
             active ? 'relative h-full' : 'absolute inset-0',
-            !active && keepTaskRuntimeActive && 'pointer-events-none invisible'
+            !active &&
+              (keepTaskRuntimeActive || keepIframeActive) &&
+              'pointer-events-none invisible'
           )}
           data-testid={`workspace-tab-content-${tab.id}`}
           data-workspace-tab-content={tab.id}

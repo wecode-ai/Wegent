@@ -236,6 +236,27 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       })
       await captureScreenshot(control, 'harness-apps-07-tab-launch-motion.png', 'body')
       const appSurface = `[data-testid="app-iframe-harness-${INSTALLATION_ID}"]`
+      await control.command('waitFor', appSurface, {
+        timeoutMs: 600_000,
+      })
+      const appTabId = await control.command('getAttribute', appSurface, {
+        value: 'data-workspace-tab-id',
+      })
+      const appWebviewLabel = await control.command('getAttribute', appSurface, {
+        value: 'data-embedded-browser-label',
+      })
+      assert.ok(appTabId, 'Harness app did not expose its workspace tab ID')
+      assert.ok(appWebviewLabel, 'Harness app did not expose its native WebView label')
+      const harnessStateKey = '__weworkHarnessTabState'
+      const harnessStateValue = `preserved-${Date.now()}`
+      await control.command('setEmbeddedBrowserWindowValue', 'body', {
+        value: JSON.stringify({
+          key: harnessStateKey,
+          label: appWebviewLabel,
+          value: harnessStateValue,
+        }),
+        timeoutMs: uiTimeoutMs,
+      })
       const nativeSnapshot = await control.command('captureEmbeddedBrowser', appSurface, {
         target: `[data-testid="workspace-tab-select-${managementTabId}"]`,
         text: APP_ROUTE,
@@ -249,6 +270,26 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         join(resultDir, 'harness-apps-08-native-page.png'),
         Buffer.from(nativeSnapshot.slice('data:image/png;base64,'.length), 'base64')
       )
+      await control.command('click', `[data-testid="workspace-tab-select-${appTabId}"]`)
+      await control.command(
+        'waitFor',
+        `[data-testid="workspace-tab-content-${appTabId}"][aria-hidden="false"]`,
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      assert.equal(
+        await control.command('getEmbeddedBrowserWindowValue', 'body', {
+          value: JSON.stringify({
+            key: harnessStateKey,
+            label: appWebviewLabel,
+          }),
+          timeoutMs: uiTimeoutMs,
+        }),
+        harnessStateValue,
+        'Switching away from and back to a Harness app reset its in-memory page state'
+      )
+      await control.command('click', `[data-testid="workspace-tab-select-${managementTabId}"]`)
 
       await control.command('waitFor', `[data-testid="harness-app-stop-${INSTALLATION_ID}"]`, {
         timeoutMs: uiTimeoutMs,
