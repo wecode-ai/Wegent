@@ -1335,6 +1335,9 @@
 }
 
 .task-detail-workspace-panel .task-detail-comments-list {
+  max-height: min(52vh, 520px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 0;
 }
 

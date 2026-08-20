@@ -457,8 +457,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     const projectSelector = `${activeBoard} [data-testid="cloud-sidebar-project-${projectId}"]`
     await control.command('waitFor', projectSelector, { timeoutMs: uiTimeoutMs })
     await control.command('click', projectSelector)
+    await control.command('click', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
+      visible: true,
+    })
     await control.command('waitFor', `${activeBoard} [data-testid="cloud-todo-add"]`, {
       timeoutMs: uiTimeoutMs,
+      visible: true,
     })
     await control.command('click', `${activeBoard} [data-testid="cloud-todo-add"]`)
     await control.command('waitFor', `${activeBoard} [data-testid="workspace-issue-input"]`, {
@@ -572,11 +576,15 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     assert.equal(unchangedExecution.backendTaskId, teamExecution.backendTaskId)
     await captureScreenshot(control, 'project-automation-board-team-continuation.png')
     await captureScreenshot(control, 'project-automation-board-team-real.png')
-    await control.command('waitFor', '[data-testid="cloud-project-automation-view"]', {
-      timeoutMs: uiTimeoutMs,
-    })
-    await control.command('click', '[data-testid="cloud-project-automation-view"]')
-    await control.command('waitFor', '[data-testid="project-automation-rules"]', {
+    await control.command(
+      'waitFor',
+      `${activeBoard} [data-testid="cloud-project-automation-view"]`,
+      {
+        timeoutMs: uiTimeoutMs,
+      }
+    )
+    await control.command('click', `${activeBoard} [data-testid="cloud-project-automation-view"]`)
+    await control.command('waitFor', `${activeBoard} [data-testid="project-automation-rules"]`, {
       timeoutMs: uiTimeoutMs,
     })
 
@@ -607,10 +615,15 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     assert.equal(persistedWorkflowProject.workflow_definition.stage_mode, 'dag')
     assert.equal(persistedWorkflowProject.workflow_definition.advancement_policy, 'manual')
 
-    await control.command('click', '[data-testid="cloud-project-board-view"]')
-    if ((await control.command('getElementCount', '[data-testid="cloud-todo-detail-close"]')) > 0) {
-      await control.command('click', '[data-testid="cloud-todo-detail-close"]')
+    await control.command('click', `${activeBoard} [data-testid="cloud-project-board-view"]`)
+    const activeDetailClose = `${activeBoard} [data-testid="cloud-todo-detail-close"]`
+    if ((await control.command('getElementCount', activeDetailClose, { visible: true })) > 0) {
+      await control.command('click', activeDetailClose, { visible: true })
     }
+    await control.command('waitFor', `${activeBoard} [data-testid="cloud-todo-add"]`, {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
     await control.command('click', `${activeBoard} [data-testid="cloud-todo-add"]`)
     await control.command('waitFor', `${activeBoard} [data-testid="workspace-issue-input"]`, {
       timeoutMs: uiTimeoutMs,
@@ -649,10 +662,31 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       'click',
       '[data-testid="ai-chat-modal"] [data-testid="project-work-button"]'
     )
-    await control.command('waitFor', '[data-testid="project-options-list"]', {
-      timeoutMs: uiTimeoutMs,
-    })
-    const projectMenuSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+    await control.command(
+      'waitFor',
+      '[data-testid="ai-chat-modal"] [data-testid="project-options-list"]',
+      {
+        timeoutMs: uiTimeoutMs,
+      }
+    )
+    const projectMenuSnapshot = await waitForValue(
+      async () => JSON.parse(await control.command('snapshot', '[data-testid="ai-chat-modal"]')),
+      snapshot => {
+        const selectedId = snapshot.testIds
+          .find(testId => testId.startsWith('project-selected-icon-'))
+          ?.slice('project-selected-icon-'.length)
+        return snapshot.testIds.some(
+          testId =>
+            testId.startsWith('project-option-') &&
+            testId !== `project-option-${selectedId ?? ''}` &&
+            !snapshot.testIds.includes(
+              `project-bind-workspace-${testId.slice('project-option-'.length)}`
+            )
+        )
+      },
+      'Issue task composer requires another runtime project with a ready workspace',
+      uiTimeoutMs
+    )
     const selectedProjectTestId = projectMenuSnapshot.testIds.find(testId =>
       testId.startsWith('project-selected-icon-')
     )
@@ -660,17 +694,53 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     const targetProjectTestId = projectMenuSnapshot.testIds.find(
       testId =>
         testId.startsWith('project-option-') &&
-        testId !== `project-option-${selectedProjectId ?? ''}`
+        testId !== `project-option-${selectedProjectId ?? ''}` &&
+        !projectMenuSnapshot.testIds.includes(
+          `project-bind-workspace-${testId.slice('project-option-'.length)}`
+        )
     )
     assert.ok(
       targetProjectTestId,
       'Issue task composer requires another runtime project for project-switch regression coverage'
     )
-    await control.command('click', `[data-testid="${targetProjectTestId}"]`)
-    await control.command('waitFor', '[data-testid="ai-chat-modal"]', {
-      timeoutMs: uiTimeoutMs,
-      visible: true,
-    })
+    const targetProjectText = await control.command(
+      'getText',
+      `[data-testid="ai-chat-modal"] [data-testid="${targetProjectTestId}"]`,
+      { visible: true }
+    )
+    const selectedTargetProjectName = [
+      'project-automation-primary',
+      'project-automation-secondary',
+    ].find(name => targetProjectText.includes(name))
+    assert.ok(selectedTargetProjectName, 'Unable to resolve the target runtime project name')
+    await control.command(
+      'click',
+      `[data-testid="ai-chat-modal"] [data-testid="${targetProjectTestId}"]`,
+      { visible: true }
+    )
+    const targetWorkspaceSelector =
+      '[data-testid="ai-chat-modal"] [data-testid^="project-workspace-option-"]'
+    if (
+      Number(
+        await control.command('getElementCount', targetWorkspaceSelector, {
+          visible: true,
+        })
+      ) > 0
+    ) {
+      await control.command('clickWhenEnabled', targetWorkspaceSelector, {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+    }
+    await control.command(
+      'waitFor',
+      '[data-testid="ai-chat-modal"] [data-testid="project-work-button"]',
+      {
+        timeoutMs: uiTimeoutMs,
+        text: selectedTargetProjectName,
+        visible: true,
+      }
+    )
     const switchedComposerSnapshot = JSON.parse(await control.command('snapshot', 'body'))
     assert.equal(
       switchedComposerSnapshot.location,
@@ -741,9 +811,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       timeoutMs: uiTimeoutMs,
       visible: true,
     })
-    await control.command('click', '[data-testid="cloud-todo-detail-close"]')
-    await control.command('click', '[data-testid="cloud-project-automation-view"]')
-    await control.command('waitFor', '[data-testid="project-automation-rules"]', {
+    await control.command('click', `${activeBoard} [data-testid="cloud-todo-detail-close"]`, {
+      visible: true,
+    })
+    await control.command('click', `${activeBoard} [data-testid="cloud-project-automation-view"]`, {
+      visible: true,
+    })
+    await control.command('waitFor', `${activeBoard} [data-testid="project-automation-rules"]`, {
       timeoutMs: uiTimeoutMs,
     })
 
@@ -846,9 +920,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     await captureScreenshot(control, 'project-automation-03-real-run.png')
 
     await control.command('click', '[data-testid="cloud-todo-modal-close"]', { visible: true })
-    await control.command('click', '[data-testid="cloud-project-automation-view"]', {
+    await control.command('click', `${activeBoard} [data-testid="cloud-project-automation-view"]`, {
       visible: true,
     })
+    await control.command('scrollIntoView', '[data-testid="cloud-project-chat-agents"]')
     await control.command('waitFor', '[data-testid="cloud-project-chat-agents"]', {
       timeoutMs: uiTimeoutMs,
       visible: true,
@@ -1694,8 +1769,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       const projectSelector = `${activeBoard} [data-testid="cloud-sidebar-project-${PROJECT_ID}"]`
       await control.command('waitFor', projectSelector, { timeoutMs: uiTimeoutMs })
       await control.command('click', projectSelector)
+      await control.command('click', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
+        visible: true,
+      })
       await control.command('waitFor', `${activeBoard} [data-testid="cloud-todo-add"]`, {
         timeoutMs: uiTimeoutMs,
+        visible: true,
       })
       await control.command('click', `${activeBoard} [data-testid="cloud-todo-add"]`)
       await control.command('waitFor', `${activeBoard} [data-testid="workspace-issue-input"]`, {
@@ -2114,6 +2193,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         },
       }
       await control.command('click', `${activeBoard} [data-testid="cloud-project-board-view"]`)
+      await control.command('waitFor', `${activeBoard} [data-testid="cloud-todo-add"]`, {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
       await control.command('click', `${activeBoard} [data-testid="cloud-todo-add"]`)
       await control.command('fill', `${activeBoard} [data-testid="workspace-issue-input"]`, {
         value: '预置流程直接开始',
@@ -2463,15 +2546,22 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       assert.equal(retryRequested, true)
       await captureScreenshot(control, 'project-automation-04-retried-run.png')
       await control.command('click', '[data-testid="cloud-todo-modal-close"]', { visible: true })
-      await control.command('click', '[data-testid="cloud-todo-detail-close"]', { visible: true })
-      await control.command('click', '[data-testid="cloud-project-automation-view"]', {
+      await control.command('click', `${activeBoard} [data-testid="cloud-todo-detail-close"]`, {
         visible: true,
       })
+      await control.command(
+        'click',
+        `${activeBoard} [data-testid="cloud-project-automation-view"]`,
+        {
+          visible: true,
+        }
+      )
       await control.command('scrollIntoView', '[data-testid="cloud-project-chat-agents"]', {
         visible: true,
       })
       await control.command('waitFor', '[data-testid="cloud-project-chat-agents"]', {
         timeoutMs: uiTimeoutMs,
+        visible: true,
       })
 
       await control.command('scrollIntoView', '[data-testid="cloud-project-chat-agent-add"]', {

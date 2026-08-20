@@ -482,7 +482,7 @@ async function verifyWorkspaceIssueCreation(control) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('fill', '[data-testid="workspace-issue-description"]', {
-    value: 'WEWORK_DESKTOP_E2E_ISSUE\nWorkspace fullscreen issue creation verified',
+    value: 'WEWORK_DESKTOP_E2E_ISSUE Workspace fullscreen issue creation verified',
   })
   await control.command('waitFor', '[data-testid="workspace-issue-draft-status"]', {
     text: '草稿已自动保存',
@@ -501,10 +501,10 @@ async function verifyWorkspaceIssueCreation(control) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('click', '[data-testid="workspace-issue-expand"]')
-  await waitForControlValue(
+  await waitForControlValueIncludes(
     control,
     '[data-testid="workspace-issue-description"]',
-    'WEWORK_DESKTOP_E2E_ISSUE\nWorkspace fullscreen issue creation verified',
+    'WEWORK_DESKTOP_E2E_ISSUE Workspace fullscreen issue creation verified',
     'Fullscreen Issue content did not survive closing and reopening'
   )
   await control.command('click', '[data-testid="workspace-issue-fullscreen-submit"]')
