@@ -50,6 +50,8 @@ interface UseWorkbenchProjectActionsOptions {
   executorClient: ExecutorClient
   services: WorkbenchServices
   refreshWorkLists: RefreshWorkLists
+  updateLocalRuntimeTaskPinned: (request: RuntimeTaskPinRequest) => number | null
+  rollbackLocalRuntimeTaskPinned: (request: RuntimeTaskPinRequest, requestId: number | null) => void
   markRuntimeProjectRemoved: (
     projectId: number,
     workspace?: { deviceId: string; workspacePath: string }
@@ -66,6 +68,8 @@ export function useWorkbenchProjectActions({
   executorClient,
   services,
   refreshWorkLists,
+  updateLocalRuntimeTaskPinned,
+  rollbackLocalRuntimeTaskPinned,
   markRuntimeProjectRemoved,
   invalidateRemoteProjectSync,
   clearRemoteProjectSyncRemoval,
@@ -451,10 +455,16 @@ export function useWorkbenchProjectActions({
 
   const setRuntimeTaskPinned = useCallback(
     async (data: RuntimeTaskPinRequest) => {
-      await executorClient.runtime.setRuntimeTaskPinned(data)
+      const requestId = updateLocalRuntimeTaskPinned(data)
+      try {
+        await executorClient.runtime.setRuntimeTaskPinned(data)
+      } catch (error) {
+        rollbackLocalRuntimeTaskPinned(data, requestId)
+        throw error
+      }
       await refreshWorkLists()
     },
-    [executorClient, refreshWorkLists]
+    [executorClient, refreshWorkLists, rollbackLocalRuntimeTaskPinned, updateLocalRuntimeTaskPinned]
   )
 
   const getDeviceHomeDirectory = useCallback(

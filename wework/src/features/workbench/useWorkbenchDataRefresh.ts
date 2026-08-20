@@ -8,6 +8,7 @@ import type {
   RuntimeDeviceWorkspace,
   RuntimeSupervisorState,
   RuntimeTaskAddress,
+  RuntimeTaskPinRequest,
   RuntimeTaskSummary,
   RuntimeWorkListResponse,
   User,
@@ -37,11 +38,13 @@ import type { WorkbenchAction } from './workbenchReducer'
 import { debugRuntimeSidebarState, summarizeRuntimeWorkTaskIds } from './runtimeSidebarDiagnostics'
 import {
   findRuntimeTask,
+  findRuntimeTaskForPinRequest,
   getRememberedStandaloneDeviceId,
   getRuntimeTaskRouteKey,
   removeRuntimeTasks,
   runtimeWorkContainsTask,
   updateRuntimeWorkTask,
+  updateRuntimeWorkTaskPinned,
   updateRuntimeWorkTaskTitle,
 } from './workbenchRuntimeHelpers'
 import type { WorkbenchServices } from './workbenchServices'
@@ -233,6 +236,17 @@ export function useWorkbenchDataRefresh({
   const runtimeTaskTitleOverridesRef = useRef(
     new Map<string, { address: RuntimeTaskAddress; title: string }>()
   )
+  const runtimeTaskPinOverridesRef = useRef(
+    new Map<
+      string,
+      {
+        request: RuntimeTaskPinRequest
+        base: boolean
+        requestId: number
+      }
+    >()
+  )
+  const runtimeTaskPinRequestIdRef = useRef(0)
   const devicesRef = useRef(state.devices)
   const archivedRuntimeTaskAddressesRef = useRef<RuntimeTaskAddress[]>([])
   useEffect(
@@ -251,16 +265,24 @@ export function useWorkbenchDataRefresh({
     setCloudRuntimeState(next)
   }, [])
 
-  const applyRuntimeTaskTitleOverrides = useCallback(
-    (runtimeWork: RuntimeWorkListResponse, confirmExecutorTitles = false) => {
+  const applyRuntimeTaskOverrides = useCallback(
+    (runtimeWork: RuntimeWorkListResponse, confirmExecutorState = false) => {
       let next = runtimeWork
       runtimeTaskTitleOverridesRef.current.forEach((override, key) => {
         const task = findRuntimeTask(runtimeWork, override.address)
-        if (confirmExecutorTitles && task?.title === override.title) {
+        if (confirmExecutorState && task?.title === override.title) {
           runtimeTaskTitleOverridesRef.current.delete(key)
           return
         }
         next = updateRuntimeWorkTaskTitle(next, override.address, override.title) ?? next
+      })
+      runtimeTaskPinOverridesRef.current.forEach((override, key) => {
+        const task = findRuntimeTaskForPinRequest(runtimeWork, override.request)
+        if (confirmExecutorState && task && Boolean(task.pinned) === override.request.pinned) {
+          runtimeTaskPinOverridesRef.current.delete(key)
+          return
+        }
+        next = updateRuntimeWorkTaskPinned(next, override.request) ?? next
       })
       return next
     },
@@ -279,6 +301,7 @@ export function useWorkbenchDataRefresh({
       runtimeWork: initialCachedRemoteRuntimeWork,
     }
     runtimeTaskTitleOverridesRef.current.clear()
+    runtimeTaskPinOverridesRef.current.clear()
     archivedRuntimeTaskAddressesRef.current = []
     // eslint-disable-next-line react-hooks/set-state-in-effect -- Cached runtime work must switch atomically with the authenticated user.
     updateCloudRuntimeState(
@@ -461,14 +484,14 @@ export function useWorkbenchDataRefresh({
           return
         }
 
-        const latestLocalRuntimeWork = applyRuntimeTaskTitleOverrides(
+        const latestLocalRuntimeWork = applyRuntimeTaskOverrides(
           localRuntimeWorkRef.current ?? baseRuntimeWork
         )
         const filteredRuntimeWorkResult =
           runtimeWorkResult?.status === 'fulfilled'
             ? {
                 status: 'fulfilled' as const,
-                value: applyRuntimeTaskTitleOverrides(runtimeWorkResult.value),
+                value: applyRuntimeTaskOverrides(runtimeWorkResult.value),
               }
             : runtimeWorkResult
         if (filteredRuntimeWorkResult?.status === 'fulfilled') {
@@ -546,7 +569,7 @@ export function useWorkbenchDataRefresh({
       }
     },
     [
-      applyRuntimeTaskTitleOverrides,
+      applyRuntimeTaskOverrides,
       dispatch,
       selectVisibleRuntimeWork,
       services.cloudBackgroundApi,
@@ -608,7 +631,7 @@ export function useWorkbenchDataRefresh({
         if (cancelled) return
         const runtimeWork =
           runtimeWorkResult.status === 'fulfilled'
-            ? applyRuntimeTaskTitleOverrides(runtimeWorkResult.value, true)
+            ? applyRuntimeTaskOverrides(runtimeWorkResult.value, true)
             : EMPTY_RUNTIME_WORK
         if (
           runtimeWorkResult.status === 'fulfilled' &&
@@ -649,7 +672,7 @@ export function useWorkbenchDataRefresh({
       window.clearTimeout(slowTimer)
     }
   }, [
-    applyRuntimeTaskTitleOverrides,
+    applyRuntimeTaskOverrides,
     dispatch,
     executorClient,
     refreshCloudBackgroundData,
@@ -676,7 +699,7 @@ export function useWorkbenchDataRefresh({
         { useCacheFallback: false }
       )
       const filteredRuntimeWorkResult = runtimeWorkResult
-        ? applyRuntimeTaskTitleOverrides(runtimeWorkResult, true)
+        ? applyRuntimeTaskOverrides(runtimeWorkResult, true)
         : undefined
       if (filteredRuntimeWorkResult) {
         localRuntimeWorkRef.current = filteredRuntimeWorkResult
@@ -719,7 +742,7 @@ export function useWorkbenchDataRefresh({
       }
     },
     [
-      applyRuntimeTaskTitleOverrides,
+      applyRuntimeTaskOverrides,
       dispatch,
       executorClient,
       refreshCloudBackgroundData,
@@ -836,6 +859,50 @@ export function useWorkbenchDataRefresh({
     )
   }, [])
 
+  const updateLocalRuntimeTaskPinned = useCallback(
+    (request: RuntimeTaskPinRequest): number | null => {
+      const currentRuntimeWork = runtimeWorkRef.current ?? localRuntimeWorkRef.current
+      const task = findRuntimeTaskForPinRequest(currentRuntimeWork, request)
+      if (!task) return null
+
+      const requestId = ++runtimeTaskPinRequestIdRef.current
+      const key = `${request.deviceId}\0${request.threadId}`
+      runtimeTaskPinOverridesRef.current.set(key, {
+        request,
+        base: Boolean(task.pinned),
+        requestId,
+      })
+      localRuntimeWorkRef.current = updateRuntimeWorkTaskPinned(
+        localRuntimeWorkRef.current,
+        request
+      )
+      runtimeWorkRef.current = updateRuntimeWorkTaskPinned(runtimeWorkRef.current, request)
+      dispatch({ type: 'runtime_task_pinned_updated', request })
+      return requestId
+    },
+    [dispatch]
+  )
+
+  const rollbackLocalRuntimeTaskPinned = useCallback(
+    (request: RuntimeTaskPinRequest, requestId: number | null) => {
+      if (requestId === null) return
+
+      const key = `${request.deviceId}\0${request.threadId}`
+      const override = runtimeTaskPinOverridesRef.current.get(key)
+      if (!override || override.requestId !== requestId) return
+
+      runtimeTaskPinOverridesRef.current.delete(key)
+      const rollbackRequest = { ...request, pinned: override.base }
+      localRuntimeWorkRef.current = updateRuntimeWorkTaskPinned(
+        localRuntimeWorkRef.current,
+        rollbackRequest
+      )
+      runtimeWorkRef.current = updateRuntimeWorkTaskPinned(runtimeWorkRef.current, rollbackRequest)
+      dispatch({ type: 'runtime_task_pinned_updated', request: rollbackRequest })
+    },
+    [dispatch]
+  )
+
   const updateLocalRuntimeTaskSupervisor = useCallback(
     (address: RuntimeTaskAddress, supervisor: RuntimeSupervisorState | null) => {
       localRuntimeWorkRef.current = updateRuntimeWorkTask(localRuntimeWorkRef.current, address, {
@@ -852,14 +919,14 @@ export function useWorkbenchDataRefresh({
 
   const refreshRuntimeTask = useCallback(
     async (address: RuntimeTaskAddress) => {
-      const runtimeWork = applyRuntimeTaskTitleOverrides(
+      const runtimeWork = applyRuntimeTaskOverrides(
         await executorClient.runtime.listRuntimeWork(),
         true
       )
       const task = findRuntimeTask(runtimeWork, address)
       return task ? { ...task, optimistic: false } : null
     },
-    [applyRuntimeTaskTitleOverrides, executorClient]
+    [applyRuntimeTaskOverrides, executorClient]
   )
 
   const updateLocalRuntimeTaskSnapshot = useCallback(
@@ -896,6 +963,8 @@ export function useWorkbenchDataRefresh({
     refreshDevices,
     updateLocalRuntimeTaskSupervisor,
     updateLocalRuntimeTaskSnapshot,
+    updateLocalRuntimeTaskPinned,
+    rollbackLocalRuntimeTaskPinned,
     updateLocalRuntimeTaskTitle,
     getRemoteDeviceStartupCommand,
   }

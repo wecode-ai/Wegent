@@ -8,6 +8,7 @@ import type {
   RuntimeProjectAiSettings,
   RuntimeProjectSpaceRef,
   RuntimeTaskAddress,
+  RuntimeTaskPinRequest,
   RuntimeProjectWork,
   RuntimeWorkListResponse,
   Team,
@@ -26,6 +27,7 @@ import {
   mergeRuntimeTaskHandles,
   removeRuntimeTasks,
   updateRuntimeWorkTask,
+  updateRuntimeWorkTaskPinned,
   updateRuntimeWorkTaskTitle,
 } from './workbenchRuntimeHelpers'
 import {
@@ -150,6 +152,10 @@ export type WorkbenchAction =
       type: 'runtime_task_title_updated'
       address: RuntimeTaskAddress
       title: string
+    }
+  | {
+      type: 'runtime_task_pinned_updated'
+      request: RuntimeTaskPinRequest
     }
   | {
       type: 'runtime_task_supervisor_updated'
@@ -1278,6 +1284,11 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
       return {
         ...state,
         runtimeWork: updateRuntimeWorkTaskTitle(state.runtimeWork, action.address, action.title),
+      }
+    case 'runtime_task_pinned_updated':
+      return {
+        ...state,
+        runtimeWork: updateRuntimeWorkTaskPinned(state.runtimeWork, action.request),
       }
     case 'runtime_task_supervisor_updated':
       return {

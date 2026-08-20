@@ -12,6 +12,7 @@ import {
 } from '@/features/cloud-connection/CloudConnectionContext'
 import { LOCAL_PLUGIN_SKILLS_CHANGED_EVENT } from '@/features/plugins/pluginTrial'
 import { publishProjectSpaceTaskBindingChanged } from '@/features/todo/projectSpaceSelection'
+import { buildAutomationTaskOptions } from '@/features/automations/automationDraft'
 import { WorkbenchProvider, type WorkbenchServices } from './WorkbenchProvider'
 import { useWorkbench } from './useWorkbench'
 import { MessageList } from '@/components/chat/MessageList'
@@ -710,6 +711,37 @@ function BootstrapProbe() {
       </button>
       <button type="button" onClick={() => void workbench.refreshWorkLists()}>
         Refresh work lists
+      </button>
+    </div>
+  )
+}
+
+function RuntimeTaskPinProbe() {
+  const workbench = useWorkbench()
+  const [error, setError] = useState('')
+  const task = workbench.state.runtimeWork?.projects[0]?.deviceWorkspaces[0]?.tasks[0]
+  const automationTaskIds = buildAutomationTaskOptions(workbench.state.runtimeWork).map(
+    option => option.address.taskId
+  )
+
+  return (
+    <div>
+      <span data-testid="runtime-task-pin-state">{task?.pinned ? 'pinned' : 'unpinned'}</span>
+      <span data-testid="automation-task-options">{automationTaskIds.join('|') || 'none'}</span>
+      <span data-testid="runtime-task-pin-error">{error}</span>
+      <button
+        type="button"
+        onClick={() =>
+          void workbench
+            .setRuntimeTaskPinned({
+              deviceId: 'state-device',
+              threadId: 'thread-a',
+              pinned: true,
+            })
+            .catch(() => setError('failed'))
+        }
+      >
+        pin runtime task
       </button>
     </div>
   )
@@ -2089,6 +2121,132 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('runtime-total')).toHaveTextContent('0')
     expect(localExecutorMocks.ensureLocalExecutorStarted).toHaveBeenCalled()
     expect(localExecutorMocks.requestLocalExecutor).toHaveBeenCalledWith('runtime.tasks.list', {})
+  })
+
+  test('keeps a project task globally pinned while executor refresh is stale', async () => {
+    const pinRequest = deferred<void>()
+    const runtimeWork = createRuntimeWork({
+      projects: [
+        {
+          project: {
+            key: 'local:/workspace/project-alpha',
+            name: 'Wegent',
+            stateDeviceId: 'state-device',
+          },
+          deviceWorkspaces: [
+            {
+              deviceId: 'device-1',
+              workspacePath: '/workspace/project-alpha',
+              available: true,
+              tasks: [
+                {
+                  taskId: 'runtime-a',
+                  threadId: 'thread-a',
+                  workspacePath: '/workspace/project-alpha',
+                  title: 'Pinned automation target',
+                  runtime: 'codex',
+                  pinned: false,
+                },
+              ],
+            },
+          ],
+          totalTasks: 1,
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(runtimeWork),
+      setRuntimeTaskPinned: vi.fn(() => pinRequest.promise),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<RuntimeTaskPinProbe />, services)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-task-pin-state')).toHaveTextContent('unpinned')
+    )
+    await userEvent.click(screen.getByText('pin runtime task'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-task-pin-state')).toHaveTextContent('pinned')
+    )
+    expect(screen.getByTestId('automation-task-options')).toHaveTextContent('runtime-a')
+
+    await act(async () => {
+      pinRequest.resolve()
+      await pinRequest.promise
+    })
+    await waitFor(() => expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(2))
+    expect(screen.getByTestId('runtime-task-pin-state')).toHaveTextContent('pinned')
+    expect(screen.getByTestId('automation-task-options')).toHaveTextContent('runtime-a')
+  })
+
+  test('rolls back a project task pin when executor persistence fails', async () => {
+    const pinRequest = deferred<void>()
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: {
+                key: 'local:/workspace/project-alpha',
+                name: 'Wegent',
+                stateDeviceId: 'state-device',
+              },
+              deviceWorkspaces: [
+                {
+                  deviceId: 'device-1',
+                  workspacePath: '/workspace/project-alpha',
+                  available: true,
+                  tasks: [
+                    {
+                      taskId: 'runtime-a',
+                      threadId: 'thread-a',
+                      workspacePath: '/workspace/project-alpha',
+                      title: 'Pinned automation target',
+                      runtime: 'codex',
+                      pinned: false,
+                    },
+                  ],
+                },
+              ],
+              totalTasks: 1,
+            },
+          ],
+          chats: [],
+          totalTasks: 1,
+        })
+      ),
+      setRuntimeTaskPinned: vi.fn(() => pinRequest.promise),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<RuntimeTaskPinProbe />, services)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-task-pin-state')).toHaveTextContent('unpinned')
+    )
+    await userEvent.click(screen.getByText('pin runtime task'))
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-task-pin-state')).toHaveTextContent('pinned')
+    )
+
+    await act(async () => {
+      pinRequest.reject(new Error('pin failed'))
+      await Promise.resolve()
+    })
+
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-task-pin-error')).toHaveTextContent('failed')
+    )
+    expect(screen.getByTestId('runtime-task-pin-state')).toHaveTextContent('unpinned')
+    expect(screen.getByTestId('automation-task-options')).toHaveTextContent('none')
   })
 
   test('prevents a retained inactive provider from overwriting shared lifecycle state', async () => {
