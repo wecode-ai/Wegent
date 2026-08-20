@@ -579,31 +579,46 @@ fn harness_initial_terminal_input(
     Some(format!("\u{1b}[200~{prompt}\u{1b}[201~\r"))
 }
 
+fn map_local_harnesses_in_parallel<T, F>(mapper: F) -> Vec<T>
+where
+    T: Send,
+    F: Fn(LocalHarnessDefinition) -> T + Sync,
+{
+    std::thread::scope(|scope| {
+        let mapper = &mapper;
+        let handles = LOCAL_HARNESSES
+            .iter()
+            .copied()
+            .map(|definition| scope.spawn(move || mapper(definition)))
+            .collect::<Vec<_>>();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("local harness detection panicked"))
+            .collect()
+    })
+}
+
 #[tauri::command]
 pub async fn list_local_harnesses(
     executable_overrides: Option<HashMap<String, Option<String>>>,
 ) -> Result<Vec<LocalHarnessDescriptor>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        LOCAL_HARNESSES
-            .iter()
-            .map(|definition| {
-                let executable_override = executable_overrides
-                    .as_ref()
-                    .and_then(|overrides| overrides.get(definition.id))
-                    .and_then(|value| value.as_deref());
-                let executable_path =
-                    resolve_local_harness_executable(*definition, executable_override);
-                let version = executable_path
-                    .as_deref()
-                    .and_then(|path| read_command_version(path, definition.version_args));
-                LocalHarnessDescriptor {
-                    id: definition.id.to_string(),
-                    installed: executable_path.is_some(),
-                    executable_path: executable_path.map(|path| path.display().to_string()),
-                    version,
-                }
-            })
-            .collect()
+        map_local_harnesses_in_parallel(|definition| {
+            let executable_override = executable_overrides
+                .as_ref()
+                .and_then(|overrides| overrides.get(definition.id))
+                .and_then(|value| value.as_deref());
+            let executable_path = resolve_local_harness_executable(definition, executable_override);
+            let version = executable_path
+                .as_deref()
+                .and_then(|path| read_command_version(path, definition.version_args));
+            LocalHarnessDescriptor {
+                id: definition.id.to_string(),
+                installed: executable_path.is_some(),
+                executable_path: executable_path.map(|path| path.display().to_string()),
+                version,
+            }
+        })
     })
     .await
     .map_err(|error| format!("Failed to detect local harnesses: {error}"))
@@ -1700,6 +1715,31 @@ mod tests {
         );
 
         fs::remove_dir_all(test_root).unwrap();
+    }
+
+    #[test]
+    fn detects_local_harnesses_in_parallel_and_preserves_order() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let active = AtomicUsize::new(0);
+        let max_active = AtomicUsize::new(0);
+        let ids = map_local_harnesses_in_parallel(|definition| {
+            let current = active.fetch_add(1, Ordering::SeqCst) + 1;
+            max_active.fetch_max(current, Ordering::SeqCst);
+            std::thread::sleep(Duration::from_millis(50));
+            active.fetch_sub(1, Ordering::SeqCst);
+            definition.id
+        });
+
+        assert_eq!(
+            ids,
+            vec![
+                OPEN_CODE_HARNESS_ID,
+                CLAUDE_CODE_HARNESS_ID,
+                KIMI_CODE_HARNESS_ID
+            ]
+        );
+        assert_eq!(max_active.load(Ordering::SeqCst), LOCAL_HARNESSES.len());
     }
 
     #[test]
