@@ -293,8 +293,8 @@ export function SitesWorkspace({
 
   const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
     const appTypes: ApplicationWorkspaceType[] = [
-      ...applicationTypes.map(item => item.definition.appType),
       ...(smartAppsEnabled ? (['smart_app'] as const) : []),
+      ...applicationTypes.map(item => item.definition.appType),
     ]
     const currentIndex = appTypes.indexOf(activeAppType)
     let nextIndex: number | null = null
@@ -472,6 +472,31 @@ export function SitesWorkspace({
           role="tablist"
           aria-label={t('application_types', '应用类型')}
         >
+          {smartAppsEnabled ? (
+            <button
+              type="button"
+              role="tab"
+              data-app-type="smart_app"
+              data-testid="applications-tab-smart-app"
+              id="applications-tab-smart-app"
+              aria-selected={smartAppsActive}
+              aria-controls="applications-tab-panel"
+              tabIndex={smartAppsActive ? 0 : -1}
+              onClick={() => selectAppType('smart_app')}
+              onKeyDown={handleTabKeyDown}
+              className={[
+                'relative flex h-11 items-center gap-1.5 px-0.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 md:h-8',
+                smartAppsActive ? 'text-text-primary' : 'text-text-muted hover:text-text-secondary',
+              ].join(' ')}
+            >
+              <Boxes className="h-3.5 w-3.5" aria-hidden="true" />
+              {t('smart_apps_tab', '智能应用')}
+              <ExperimentalBadge testId="applications-smart-app-experimental-badge" />
+              {smartAppsActive ? (
+                <span className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-text-primary" />
+              ) : null}
+            </button>
+          ) : null}
           {applicationTypes.map(({ definition }) => {
             const appType = definition.appType
             const selected = activeAppType === appType
@@ -501,31 +526,6 @@ export function SitesWorkspace({
               </button>
             )
           })}
-          {smartAppsEnabled ? (
-            <button
-              type="button"
-              role="tab"
-              data-app-type="smart_app"
-              data-testid="applications-tab-smart-app"
-              id="applications-tab-smart-app"
-              aria-selected={smartAppsActive}
-              aria-controls="applications-tab-panel"
-              tabIndex={smartAppsActive ? 0 : -1}
-              onClick={() => selectAppType('smart_app')}
-              onKeyDown={handleTabKeyDown}
-              className={[
-                'relative flex h-11 items-center gap-1.5 px-0.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 md:h-8',
-                smartAppsActive ? 'text-text-primary' : 'text-text-muted hover:text-text-secondary',
-              ].join(' ')}
-            >
-              <Boxes className="h-3.5 w-3.5" aria-hidden="true" />
-              {t('smart_apps_tab', '智能应用')}
-              <ExperimentalBadge testId="applications-smart-app-experimental-badge" />
-              {smartAppsActive ? (
-                <span className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-text-primary" />
-              ) : null}
-            </button>
-          ) : null}
         </div>
 
         {smartAppsActive ? (

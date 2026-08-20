@@ -85,6 +85,12 @@ export type WorkbenchAction =
       runtimeWork: RuntimeWorkListResponse
     }
   | {
+      type: 'runtime_task_pin_changed'
+      deviceId: string
+      threadId: string
+      pinned: boolean
+    }
+  | {
       type: 'device_status_changed'
       deviceId: string
       status: WorkbenchDeviceStatus
@@ -364,7 +370,11 @@ function mergeRuntimeTasks(
   const merged = currentTasks
     .map(task => {
       const nextTask = nextById.get(task.taskId)
-      if (nextTask) return shouldReplaceRuntimeTaskProjection(task, nextTask) ? nextTask : task
+      if (nextTask) {
+        return shouldReplaceRuntimeTaskProjection(task, nextTask)
+          ? nextTask
+          : mergeRuntimeTaskListState(task, nextTask)
+      }
       if (
         isFreshOptimisticRuntimeTask(task) &&
         !resolvedTaskKeys.has(runtimeTaskKey(deviceId, task))
@@ -381,6 +391,19 @@ function mergeRuntimeTasks(
     }
   })
   return merged
+}
+
+function mergeRuntimeTaskListState(
+  current: RuntimeTaskSummary,
+  next: RuntimeTaskSummary
+): RuntimeTaskSummary {
+  return {
+    ...current,
+    ...(next.threadId ? { threadId: next.threadId } : {}),
+    ...(next.pinned === undefined ? {} : { pinned: next.pinned }),
+    ...(next.pinnedOrder === undefined ? {} : { pinnedOrder: next.pinnedOrder }),
+    ...(next.sidebarOrder === undefined ? {} : { sidebarOrder: next.sidebarOrder }),
+  }
 }
 
 function isOptimisticRuntimeTask(task: RuntimeTaskSummary): boolean {
@@ -1031,6 +1054,36 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
           state.devices,
           runtimeWork
         ),
+      }
+    }
+    case 'runtime_task_pin_changed': {
+      if (!state.runtimeWork) return state
+      const updateWorkspace = (
+        workspace: RuntimeDeviceWorkspace,
+        deviceId = workspace.deviceId
+      ) => {
+        if (deviceId !== action.deviceId) return workspace
+        let changed = false
+        const tasks = workspace.tasks.map(task => {
+          const threadId = task.threadId || (task.runtime === 'codex' ? task.taskId : null)
+          if (threadId !== action.threadId || Boolean(task.pinned) === action.pinned) return task
+          changed = true
+          return { ...task, pinned: action.pinned }
+        })
+        return changed ? { ...workspace, tasks } : workspace
+      }
+      return {
+        ...state,
+        runtimeWork: {
+          ...state.runtimeWork,
+          projects: state.runtimeWork.projects.map(project => ({
+            ...project,
+            deviceWorkspaces: project.deviceWorkspaces.map(workspace =>
+              updateWorkspace(workspace, project.project.stateDeviceId ?? workspace.deviceId)
+            ),
+          })),
+          chats: state.runtimeWork.chats.map(workspace => updateWorkspace(workspace)),
+        },
       }
     }
     case 'device_status_changed': {

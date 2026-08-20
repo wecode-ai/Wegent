@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from chat_shell.tools.builtin import KnowledgeBaseTool, ScopedKnowledgeBaseTool
+from shared.models import SearchHints
 from shared.models.knowledge import KnowledgeBaseScope
 
 
@@ -21,6 +22,22 @@ def test_knowledge_base_input_supports_document_names():
     )
 
     assert payload.document_names == ["release.md"]
+
+
+def test_knowledge_base_input_supports_search_hints() -> None:
+    from chat_shell.tools.builtin.knowledge_base import KnowledgeBaseInput
+
+    payload = KnowledgeBaseInput(
+        query="release checklist",
+        search_hints=SearchHints(
+            semantic_query="deployment release checklist",
+            keywords=["release"],
+            phrases=["release checklist"],
+        ),
+    )
+
+    assert payload.search_hints is not None
+    assert payload.search_hints.keywords == ["release"]
 
 
 @pytest.mark.asyncio
@@ -71,6 +88,29 @@ async def test_http_mode_forwards_document_names_and_ids():
     payload = post.call_args.kwargs["json"]
     assert payload["document_ids"] == [101]
     assert payload["document_names"] == ["release.md"]
+
+
+@pytest.mark.asyncio
+async def test_http_mode_forwards_search_hints() -> None:
+    tool = KnowledgeBaseTool(knowledge_base_ids=[1], user_id=7)
+    mock_response = MagicMock(status_code=200)
+    mock_response.json.return_value = {
+        "mode": "rag_retrieval",
+        "records": [],
+        "total": 0,
+        "total_estimated_tokens": 0,
+    }
+
+    with patch("httpx.AsyncClient") as mock_client:
+        post = AsyncMock(return_value=mock_response)
+        mock_client.return_value.__aenter__.return_value.post = post
+        await tool._retrieve_with_strategy_via_http(
+            "release checklist",
+            8,
+            search_hints=SearchHints(keywords=["release"]),
+        )
+
+    assert post.call_args.kwargs["json"]["search_hints"] == {"keywords": ["release"]}
 
 
 @pytest.mark.asyncio

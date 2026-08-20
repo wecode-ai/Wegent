@@ -4,6 +4,7 @@ import {
   createAutomationApiFromIpc,
   createLocalAppServices,
   createRuntimeWorkApiFromIpc,
+  resetLocalRuntimeChatStreamsForTests,
 } from './localServices'
 import {
   clearLocalModelConfigs,
@@ -40,6 +41,18 @@ describe('createLocalAppServices', () => {
   beforeEach(() => {
     localStorage.clear()
     clearLocalModelConfigs()
+    resetLocalRuntimeChatStreamsForTests()
+  })
+
+  test('reuses the runtime event stream for the same local transport', () => {
+    const request = vi.fn().mockResolvedValue({})
+    const subscribe = vi.fn().mockResolvedValue(vi.fn())
+
+    const firstServices = createLocalAppServices({ request, subscribe })
+    const secondServices = createLocalAppServices({ request, subscribe })
+
+    expect(firstServices.chatStream).toBe(secondServices.chatStream)
+    expect(subscribe).toHaveBeenCalledTimes(1)
   })
 
   test('returns local bootstrap data without backend', async () => {

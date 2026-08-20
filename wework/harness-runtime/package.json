@@ -1,5 +1,5 @@
 {
-  "name": "wework-deepseek-harness-runtime",
+  "name": "wework-harness-runtime",
   "private": true,
   "version": "0.1.0-rc.7",
   "dependencies": {

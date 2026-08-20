@@ -124,6 +124,21 @@ def format_kb_meta_prompt(kb_meta_list: list[dict[str, Any]]) -> str:
             f"Spreadsheets: {spreadsheet_document_count}"
         )
 
+        capabilities = kb_meta.get("retrieval_capabilities") or {}
+        mode = capabilities.get("retrieval_mode")
+        if mode:
+            supported_hints = [
+                name
+                for name in ("semantic_query", "keywords", "phrases")
+                if capabilities.get(name)
+            ]
+            hint_suffix = (
+                f"; Optional Search Hints: {', '.join(supported_hints)}"
+                if supported_hints
+                else ""
+            )
+            kb_lines.append(f"  - Retrieval: {mode}{hint_suffix}")
+
         summary_text = kb_meta.get("summary_text") or ""
         topics = kb_meta.get("topics") or []
 
