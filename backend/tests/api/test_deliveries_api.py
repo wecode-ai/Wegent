@@ -237,7 +237,6 @@ def test_loop_items_support_unbounded_hierarchy_and_reject_cycles(
         root["id"],
         child["id"],
     }
-
     cycle = test_client.patch(
         f"/api/v1/loop-items/{root['id']}",
         headers=headers,
@@ -245,6 +244,43 @@ def test_loop_items_support_unbounded_hierarchy_and_reject_cycles(
     )
     assert cycle.status_code == 422
     assert cycle.json()["detail"] == "TODO hierarchy cannot contain a cycle"
+
+
+def test_board_snapshot_returns_first_screen_dependencies(
+    test_client: TestClient,
+    test_token: str,
+    delivery_project: CloudProject,
+    test_user: User,
+) -> None:
+    headers = _auth(test_token)
+    item = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=headers,
+        json={"title": "Snapshot item"},
+    ).json()
+    binding = test_client.post(
+        f"/api/v1/loop-items/{item['id']}/tasks",
+        headers=headers,
+        json={
+            "deviceId": "local-device",
+            "taskId": "snapshot-runtime-task",
+            "taskTitle": "Snapshot runtime task",
+        },
+    )
+    assert binding.status_code == 201
+
+    response = test_client.get(
+        f"/api/v1/cloud-projects/{delivery_project.id}/board-snapshot",
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    snapshot = response.json()
+    assert [entry["id"] for entry in snapshot["items"]] == [item["id"]]
+    assert snapshot["task_bindings"] == [binding.json()]
+    assert snapshot["members"][0]["user_id"] == test_user.id
+    assert snapshot["members"][0]["role"] == "Owner"
+    assert snapshot["agents"] == []
 
 
 def test_loop_item_reorder_orders_one_lane(

@@ -41,6 +41,7 @@ from app.schemas.cloud_project import (
     CloudProjectUpdate,
 )
 from app.schemas.delivery import LoopItemResponse
+from app.schemas.project_board import ProjectBoardSnapshotResponse
 from app.schemas.project_chat import (
     LoopItemApproval,
     LoopItemAssign,
@@ -53,6 +54,7 @@ from app.services.cloud_projects import cloud_project_service
 from app.services.loop_item_events import publish_loop_item_changed
 from app.services.loop_items import loop_item_service
 from app.services.loop_items.external_provider import external_loop_item_provider
+from app.services.project_board_snapshot import project_board_snapshot_service
 from app.services.project_chat.service import project_chat_service
 
 router = APIRouter()
@@ -127,6 +129,18 @@ def list_project_chat_agents(
     return project_chat_service.list_agents(
         db, user_id=current_user.id, project_id=str(project_id)
     )
+
+
+@router.get(
+    "/{project_id}/board-snapshot",
+    response_model=ProjectBoardSnapshotResponse,
+)
+def get_project_board_snapshot(
+    project_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ProjectBoardSnapshotResponse:
+    return project_board_snapshot_service.get(db, project_id, current_user.id)
 
 
 @router.post(

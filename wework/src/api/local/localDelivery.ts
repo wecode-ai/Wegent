@@ -13,6 +13,7 @@ import {
   type CloudProjectFile,
   type CloudProjectId,
   type CloudProjectMember,
+  type ProjectBoardSnapshot,
   type CloudTaskContext,
   type ProjectTaskAttachment,
   type Delivery,
@@ -820,6 +821,29 @@ export function createLocalDeliveryApi(
         items = items.filter(item => item.assignee_user_id === userId)
       }
       return { items }
+    },
+    async getBoardSnapshot(projectId: CloudProjectId): Promise<ProjectBoardSnapshot> {
+      const records = await request<LocalLoopItemRecord[]>('todos.list', {
+        project_id: projectId,
+      })
+      rememberTasks(projectId, records)
+      const items = records.map(record => localTask(record))
+      const taskBindings = await Promise.all(
+        items.map(item =>
+          request<LocalTaskBindingRecord[]>('todos.bindings', {
+            task_id: item.id,
+          })
+        )
+      )
+      return {
+        items,
+        task_bindings: taskBindings.flat().map(record => ({
+          ...record,
+          id: Number(record.id),
+        })),
+        members: [],
+        agents: [],
+      }
     },
     async listLoopItemExecutions(
       projectId: CloudProjectId,

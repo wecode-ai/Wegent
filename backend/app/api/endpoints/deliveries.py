@@ -62,6 +62,7 @@ from app.services.loop_items.provider_router import (
     loop_item_attachment_provider_router,
     loop_item_provider_router,
 )
+from app.services.project_board_snapshot import project_board_snapshot_service
 from app.services.project_workflow_projection import update_workflow_task_status
 from app.services.workflow_stage_context import workflow_stage_context_resolver
 
@@ -298,21 +299,7 @@ def list_loop_items(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> LoopItemListResponse:
-    project = cloud_project_service.get(db, project_id, current_user.id)
-    if project.task_provider in {"github", "gitlab"}:
-        return LoopItemListResponse(
-            items=[
-                LoopItemResponse.model_validate(item)
-                for item in external_loop_item_provider.list(
-                    db,
-                    project_id,
-                    current_user.id,
-                    assignee_type=assignee_type,
-                    assignee_id=assignee_id,
-                )
-            ]
-        )
-    items = loop_item_service.list(
+    _, items = project_board_snapshot_service.list_item_views(
         db,
         project_id,
         current_user.id,
@@ -320,17 +307,7 @@ def list_loop_items(
         assignee_id=assignee_id,
         execution_state=execution_state,
     )
-    access = cloud_project_service.access(db, project_id, current_user.id)
-    return LoopItemListResponse(
-        items=[
-            LoopItemResponse.model_validate(
-                loop_item_service.response_values(
-                    db, item, current_user.id, access=access
-                )
-            )
-            for item in items
-        ]
-    )
+    return LoopItemListResponse(items=items)
 
 
 @router.post(

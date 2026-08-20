@@ -435,6 +435,23 @@ function services(overrides: Partial<WorkbenchServices> = {}): WorkbenchServices
     },
   } as unknown as WorkbenchServices
   const workbenchServices = { ...baseServices, ...overrides } as WorkbenchServices
+  const deliveryApi = workbenchServices.deliveryApi!
+  deliveryApi.getBoardSnapshot = vi.fn(async projectId => {
+    const [{ items }, members, agents] = await Promise.all([
+      deliveryApi.listLoopItems(projectId),
+      deliveryApi.listCloudProjectMembers(projectId),
+      workbenchServices.projectChatAgentApi?.list(String(projectId)) ?? Promise.resolve([]),
+    ])
+    const bindingResults = await Promise.all(
+      items.map(item => deliveryApi.listTaskBindings(item.id))
+    )
+    return {
+      items,
+      task_bindings: bindingResults.flat(),
+      members,
+      agents,
+    }
+  })
   workbenchServices.projectSpaceDetailServices = {
     local: {
       get deliveryApi() {
@@ -528,6 +545,34 @@ describe('CloudTodoWorkspace', () => {
     expect(workspace).toHaveAttribute('data-embedded', 'true')
     expect(workspace.querySelector('aside')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-collapsed-chrome-controls')).not.toBeInTheDocument()
+  })
+
+  it('loads a cloud board through one snapshot request without split reads', async () => {
+    const workbenchServices = services()
+    const snapshot = vi.fn(async () => ({
+      items: [item],
+      task_bindings: [],
+      members: [],
+      agents: [],
+    }))
+    workbenchServices.deliveryApi!.getBoardSnapshot = snapshot
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    expect(await screen.findByTestId('cloud-todo-card-WEG-1')).toBeInTheDocument()
+
+    expect(snapshot).toHaveBeenCalledOnce()
+    expect(snapshot).toHaveBeenCalledWith(project.id)
+    expect(workbenchServices.deliveryApi!.listLoopItems).not.toHaveBeenCalled()
+    expect(workbenchServices.deliveryApi!.listTaskBindings).not.toHaveBeenCalled()
+    expect(workbenchServices.deliveryApi!.listCloudProjectMembers).not.toHaveBeenCalled()
   })
 
   it('marks an unread Issue as read when its detail opens', async () => {

@@ -406,11 +406,20 @@ function itemMatchesAssigneeGroup(item: CloudLoopItem, groupValue: string): bool
   return String(item.assignee_user_id ?? '') === groupValue
 }
 
-// Signature of a board snapshot (items plus the load error). The poll compares
-// against the last applied snapshot so unchanged fetches do not re-render the
-// workspace (and downstream views such as the automation queue) every 15s.
-function boardSnapshotKey(items: CloudLoopItem[], error: string | null): string {
-  return `${error ?? ''}\u0000${JSON.stringify(items)}`
+// Signature of the complete first-screen snapshot. Live events or fallback
+// polling compare against the last applied value so unchanged reads do not
+// re-render the workspace or downstream views.
+function boardSnapshotKey(
+  projectKey: string,
+  items: CloudLoopItem[],
+  error: string | null,
+  context?: {
+    taskBindings: LoopItemTaskBinding[]
+    members: CloudProjectMember[]
+    agents: ProjectChatAgent[]
+  }
+): string {
+  return `${projectKey}\u0000${error ?? ''}\u0000${JSON.stringify([items, context ?? null])}`
 }
 
 function boardCardIdFromDropId(id: string | number | undefined): string | null {
@@ -998,6 +1007,7 @@ export function CloudTodoWorkspace({
   })
   const [projectHeaderLevel, setProjectHeaderLevel] = useState(0)
   const boardSnapshotSignatureRef = useRef<string | null>(null)
+  const boardLiveSubscriptionActiveRef = useRef(false)
   const resetProjectViewState = useCallback(() => {
     setProjectView('board')
     setBoardParentId(null)
@@ -1324,7 +1334,14 @@ export function CloudTodoWorkspace({
   }, [activeLocalProjectFilter, user.id])
 
   useEffect(() => {
-    if (!selectedProjectId || !selectedProjectKey || !selectedProjectAgentApi) return
+    if (
+      selectedProject?.location !== 'local' ||
+      !selectedProjectId ||
+      !selectedProjectKey ||
+      !selectedProjectAgentApi
+    ) {
+      return
+    }
     let cancelled = false
     void selectedProjectAgentApi
       .list(selectedProjectId)
@@ -1343,7 +1360,7 @@ export function CloudTodoWorkspace({
     return () => {
       cancelled = true
     }
-  }, [selectedProjectAgentApi, selectedProjectId, selectedProjectKey])
+  }, [selectedProject, selectedProjectAgentApi, selectedProjectId, selectedProjectKey])
 
   useEffect(() => {
     if (!selectedProjectId || !selectedProjectLocation) return
@@ -1889,15 +1906,51 @@ export function CloudTodoWorkspace({
           ? services.aitableApi.configureProject(selectedProject)
           : Promise.resolve()
       void prepare
-        .then(() => selectedProjectApi.listLoopItems(selectedProjectId))
+        .then(() =>
+          selectedProject.location === 'cloud'
+            ? selectedProjectApi.getBoardSnapshot(selectedProjectId)
+            : selectedProjectApi.listLoopItems(selectedProjectId).then(response => ({
+                ...response,
+                task_bindings: null,
+                members: null,
+                agents: null,
+              }))
+        )
         .then(response => {
           if (!active) return
           setDingtalkAuthPrompt(false)
-          const signature = boardSnapshotKey(response.items, null)
+          const cloudContext =
+            response.task_bindings && response.members && response.agents
+              ? {
+                  taskBindings: response.task_bindings,
+                  members: response.members,
+                  agents: response.agents,
+                }
+              : undefined
+          const signature = boardSnapshotKey(selectedProjectKey, response.items, null, cloudContext)
           if (boardSnapshotSignatureRef.current === signature) return
           boardSnapshotSignatureRef.current = signature
           const locatedItems = locateItems(response.items, selectedProject.project_store)
           applyBoardItems(selectedProjectKey, locatedItems, null)
+          if (cloudContext) {
+            const bindingsByItem: Record<string, LoopItemTaskBinding[]> = {}
+            for (const binding of cloudContext.taskBindings) {
+              if (!binding.loop_item_id) continue
+              const itemBindings = bindingsByItem[binding.loop_item_id] ?? []
+              itemBindings.push(binding)
+              bindingsByItem[binding.loop_item_id] = itemBindings
+            }
+            setItemTaskBindings(bindingsByItem)
+            setItemTaskBindingsProjectKey(selectedProjectKey)
+            setProjectMembers(current => ({
+              ...current,
+              [selectedProjectKey]: cloudContext.members,
+            }))
+            setProjectAgents(current => ({
+              ...current,
+              [selectedProjectKey]: cloudContext.agents.filter(agent => agent.status === 'active'),
+            }))
+          }
           // Keep the projects-home cache in sync with the board fetch.
           setProjectItems(current => ({ ...current, [selectedProjectKey]: locatedItems }))
           setProjectCounts(current => ({
@@ -1941,15 +1994,23 @@ export function CloudTodoWorkspace({
           if (!active) return
           setDingtalkAuthPrompt(false)
           const message = error instanceof Error ? error.message : '任务加载失败'
-          const signature = boardSnapshotKey([], message)
+          const signature = boardSnapshotKey(selectedProjectKey, [], message)
           if (boardSnapshotSignatureRef.current === signature) return
           boardSnapshotSignatureRef.current = signature
           applyBoardItems(selectedProjectKey, [], message)
+          if (selectedProject.location === 'cloud') {
+            setItemTaskBindings({})
+            setItemTaskBindingsProjectKey(selectedProjectKey)
+            setProjectMembers(current => ({ ...current, [selectedProjectKey]: [] }))
+            setProjectAgents(current => ({ ...current, [selectedProjectKey]: [] }))
+          }
         })
     }
     refreshItems()
     const interval = window.setInterval(() => {
-      if (document.visibilityState === 'visible') refreshItems()
+      if (document.visibilityState === 'visible' && !boardLiveSubscriptionActiveRef.current) {
+        refreshItems()
+      }
     }, 15_000)
     return () => {
       active = false
@@ -1975,6 +2036,7 @@ export function CloudTodoWorkspace({
   )
   useEffect(() => {
     const subscribe = selectedProjectChatClient?.subscribeLoopItemChanges
+    boardLiveSubscriptionActiveRef.current = false
     if (!subscribe || !selectedProjectId) return
     let active = true
     let unsubscribe: (() => void) | undefined
@@ -1988,17 +2050,21 @@ export function CloudTodoWorkspace({
           return
         }
         unsubscribe = release
+        boardLiveSubscriptionActiveRef.current = true
       })
       .catch(error => {
+        boardLiveSubscriptionActiveRef.current = false
         console.warn('[Wework project board] issue-change subscription failed', error)
       })
     return () => {
       active = false
+      boardLiveSubscriptionActiveRef.current = false
       unsubscribe?.()
     }
   }, [selectedProjectChatClient, selectedProjectId])
   useEffect(() => {
     if (
+      selectedProject?.location !== 'local' ||
       !selectedProjectApi ||
       !selectedProjectKey ||
       itemsProjectKey !== selectedProjectKey ||
@@ -2026,9 +2092,16 @@ export function CloudTodoWorkspace({
     return () => {
       active = false
     }
-  }, [items, itemsProjectKey, selectedProjectApi, selectedProjectKey])
+  }, [items, itemsProjectKey, selectedProject, selectedProjectApi, selectedProjectKey])
   useEffect(() => {
-    if (!selectedProjectId || !selectedProjectKey || !selectedProjectApi) return
+    if (
+      selectedProject?.location !== 'local' ||
+      !selectedProjectId ||
+      !selectedProjectKey ||
+      !selectedProjectApi
+    ) {
+      return
+    }
     let active = true
     void selectedProjectApi
       .listCloudProjectMembers(selectedProjectId)
@@ -2044,7 +2117,7 @@ export function CloudTodoWorkspace({
     return () => {
       active = false
     }
-  }, [selectedProjectApi, selectedProjectId, selectedProjectKey])
+  }, [selectedProject, selectedProjectApi, selectedProjectId, selectedProjectKey])
   useEffect(() => {
     if (!focusedItemId) {
       focusedItemRequestRef.current = null

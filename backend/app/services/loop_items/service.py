@@ -1747,6 +1747,32 @@ class LoopItemService:
             .all()
         )
 
+    def list_project_task_bindings(
+        self,
+        db: Session,
+        project_id: int,
+        user_id: int,
+        *,
+        item_ids: list[str],
+    ) -> list[LoopItemTaskBinding]:
+        require_cloud_project_role(db, project_id, user_id)
+        if not item_ids:
+            return []
+        return (
+            db.query(LoopItemTaskBinding)
+            .filter(
+                LoopItemTaskBinding.cloud_project_id == project_id,
+                LoopItemTaskBinding.loop_item_id.in_(item_ids),
+                loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
+            )
+            .order_by(
+                LoopItemTaskBinding.loop_item_id.asc(),
+                LoopItemTaskBinding.linked_at.desc(),
+                LoopItemTaskBinding.id.desc(),
+            )
+            .all()
+        )
+
     def unbind_task(
         self,
         db: Session,

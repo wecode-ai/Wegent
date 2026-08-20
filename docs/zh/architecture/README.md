@@ -9,6 +9,7 @@ sidebar_position: 1
 | 逻辑                                 | 架构文件                                                                     | 修改范围                                                              |
 | ------------------------------------ | ---------------------------------------------------------------------------- | --------------------------------------------------------------------- |
 | 看板自动化与 Wegent 执行             | [board-automation.md](board-automation.md)                                   | 指派、执行真值、runtime 激活、续聊、取消、终态投影                    |
+| 看板首屏读取快照                     | [board-read-snapshot.md](board-read-snapshot.md)                             | Issue、任务绑定、成员、机器人、单请求加载与实时失效                   |
 | 自定义 AI 调度员评论续聊             | [automation-manager-continuation.md](automation-manager-continuation.md)     | 评论身份、execution 绑定、runtime 会话续聊、任务状态隔离              |
 | 内置浏览器导航与多标签               | [embedded-browser.md](embedded-browser.md)                                   | bridge 路由、pending open、WebView 生命周期、导航完成、多标签 E2E     |
 | Issue、任务与工作流编排              | [issue-task-workflow.md](issue-task-workflow.md)                             | Issue 聚合、任务绑定、工作空间继承、DAG 就绪判断、状态聚合            |
