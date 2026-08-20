@@ -14,9 +14,9 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from knowledge_runtime.models.knowledge_document import KnowledgeDocument
 from sqlalchemy.orm import Session
 
-from knowledge_runtime.models.knowledge_document import KnowledgeDocument
 from shared.db.capability_reference import resolve_model_kind
 from shared.models import (
     RuntimeEmbeddingModelConfig,
@@ -315,6 +315,9 @@ class ConfigResolver:
 
         embedding_config = spec.get("embeddingConfig", {})
         dimensions = embedding_config.get("dimensions") if embedding_config else None
+        encoding_format = (
+            embedding_config.get("encoding_format") if embedding_config else None
+        )
 
         return RuntimeEmbeddingModelConfig(
             model_name=model_name,
@@ -328,6 +331,7 @@ class ConfigResolver:
                     custom_headers if isinstance(custom_headers, dict) else {}
                 ),
                 "dimensions": dimensions,
+                "encoding_format": encoding_format,
             },
         )
 

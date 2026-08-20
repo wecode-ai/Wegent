@@ -148,6 +148,9 @@ def create_embedding_model_from_crd(
     # This is used by Milvus to create collections with the correct dimension
     embedding_config = spec.get("embeddingConfig", {})
     dimensions = embedding_config.get("dimensions") if embedding_config else None
+    encoding_format = (
+        embedding_config.get("encoding_format") if embedding_config else None
+    )
     additional_input_modalities = normalize_additional_input_modalities(
         embedding_config.get("additional_input_modalities")
         if embedding_config
@@ -179,6 +182,7 @@ def create_embedding_model_from_crd(
                     custom_headers if isinstance(custom_headers, dict) else {}
                 ),
                 "dimensions": dimensions,
+                "encoding_format": encoding_format,
                 "additional_input_modalities": additional_input_modalities,
             },
         )
