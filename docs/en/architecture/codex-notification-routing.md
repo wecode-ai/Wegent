@@ -35,8 +35,10 @@ sequenceDiagram
     H->>B: Deliver only to thread B
     H->>H: Also deliver to global stream
     Note over A: Thread A queue is unaffected
+    C->>H: Thread A thread/goal/updated
+    H->>A: Correct provisional turn/start result with first trusted protocol turnId
     C->>H: Thread A item/started(userMessage)
-    H->>A: Correct stale turn/start result with protocol turnId
+    H->>A: Confirm the same active turn
     C->>H: Thread A turn/completed
     H->>A: Deliver completion
     A->>A: Produce one terminal outcome
@@ -57,6 +59,7 @@ sequenceDiagram
 - Notifications with a `threadId` enter only the matching turn stream; the global stream still receives every notification.
 - Process-exit notifications without a `threadId` reach every active thread.
 - A thread subscription exists before any request that may start its turn.
-- A root user message's `item/started` protocol `turnId` corrects a stale ID returned by `turn/start`, so later Goal and completion notifications from that turn are not discarded as stale.
+- A turn ID returned by `turn/start` is provisional until the first trusted protocol event confirms it; `turn/started`, a root user message's `item/started`, and an earlier `thread/goal/updated` or `thread/goal/cleared` during that provisional turn correct the active turn with their protocol `turnId`.
+- Goal state notifications enter the same turn state machine even when they precede the root user message, and later notifications from that turn are not discarded as stale.
 - Assistant and other non-root-user item notifications cannot replace the active turn.
 - Lag in the global background router must not fail unrelated active turns.
