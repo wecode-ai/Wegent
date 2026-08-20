@@ -20,6 +20,9 @@ pub(crate) fn execution_request(payload: &Value) -> Option<ExecutionRequest> {
 }
 
 pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, payload: &Value) {
+    if let Some(title) = string_field(payload, "title") {
+        set_runtime_task_title(request, &title);
+    }
     if !request.extra.contains_key("cloudProjectId")
         && !request.extra.contains_key("cloud_project_id")
     {
@@ -133,6 +136,28 @@ pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, pay
     if let Some(turn_id) = id_field(payload, "turn_id") {
         request.subtask_id = turn_id;
     }
+}
+
+pub(crate) fn set_runtime_task_title(request: &mut ExecutionRequest, title: &str) {
+    let title = title.trim();
+    if title.is_empty() {
+        return;
+    }
+    request.extra.insert(
+        "runtimeTaskTitle".to_owned(),
+        Value::String(title.to_owned()),
+    );
+}
+
+pub(crate) fn runtime_task_title(request: &ExecutionRequest) -> Option<String> {
+    request
+        .extra
+        .get("runtimeTaskTitle")
+        .or_else(|| request.extra.get("runtime_task_title"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+        .map(str::to_owned)
 }
 
 fn runtime_generated_user_message(payload: &Value) -> Option<Value> {
@@ -773,6 +798,18 @@ mod tests {
         apply_runtime_payload_metadata(&mut request, &json!({"cloudProjectId": 9001}));
 
         assert_eq!(cloud_project_id(&request), Some(json!(9001)));
+    }
+
+    #[test]
+    fn copies_runtime_task_title_from_runtime_payload() {
+        let mut request = ExecutionRequest::default();
+
+        apply_runtime_payload_metadata(&mut request, &json!({"title": " Analyze issue "}));
+
+        assert_eq!(
+            runtime_task_title(&request).as_deref(),
+            Some("Analyze issue")
+        );
     }
 
     #[test]

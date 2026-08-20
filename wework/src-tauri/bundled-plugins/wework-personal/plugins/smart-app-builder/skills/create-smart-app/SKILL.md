@@ -40,7 +40,7 @@ the DeepSeek Harness source tree to add the app.
    evidence.
 7. Run the helper's `validate` and `pack` commands. Never package `node_modules`,
    credentials, `.env`, test output, or VCS metadata.
-8. Open Wework **应用 → 智能应用 → 已安装 → 导入安装包**, select the generated
+8. Open Wework **应用 → 智能工作台 → 已安装 → 导入安装包**, select the generated
    ZIP, review its manifest and compatibility result, choose a Wework model, and ask
    the user to confirm the native install action. Refresh the installed list and
    verify the new app appears before reporting completion.

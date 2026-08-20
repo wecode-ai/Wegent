@@ -174,6 +174,7 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
             is_mention=is_in_at_list,
             raw_message=message,
             extra_data=extra_data,
+            proactive_recipient_id=str(sender_staff_id or "").strip() or None,
             images=images,
             files=files,
         )
