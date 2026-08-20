@@ -7,13 +7,24 @@ const SIDECAR_NAME: &str = "wegent-executor";
 const DWS_SIDECAR_NAME: &str = "dws";
 const SIDECAR_ENV: &str = "WEWORK_EXECUTOR_SIDECAR";
 const EXECUTOR_NAMESPACE_ENV: &str = "WEWORK_EXECUTOR_NAMESPACE";
+const RELEASE_BUILD_CFG: &str = "wework_release_build";
+
 fn main() {
+    configure_build_profile();
     println!("cargo:rerun-if-env-changed={EXECUTOR_NAMESPACE_ENV}");
     prepare_local_executor_sidecar();
     prepare_dws_sidecar();
     verify_bundled_codex_binary();
     ensure_codex_resource_glob_exists();
     tauri_build::build()
+}
+
+fn configure_build_profile() {
+    println!("cargo:rustc-check-cfg=cfg({RELEASE_BUILD_CFG})");
+    println!("cargo:rerun-if-env-changed=PROFILE");
+    if env::var("PROFILE").as_deref() == Ok("release") {
+        println!("cargo:rustc-cfg={RELEASE_BUILD_CFG}");
+    }
 }
 
 fn prepare_local_executor_sidecar() {

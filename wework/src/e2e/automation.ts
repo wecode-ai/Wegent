@@ -1094,6 +1094,12 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return invoke<string>('capture_workspace_webview')
     case 'captureEmbeddedBrowser':
       return captureEmbeddedBrowserWhenReady(command)
+    case 'verifyEmbeddedBrowserDetachedInspector':
+      return JSON.stringify(
+        await invoke('embedded_browser_verify_detached_inspector_for_e2e', {
+          label: command.value || undefined,
+        })
+      )
     case 'closeMainWindowToTray':
       return ''
     case 'requestMainWindowClose':

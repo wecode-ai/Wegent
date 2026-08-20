@@ -145,6 +145,17 @@ async function waitForElementGone(control, selector, timeoutMs, message) {
   throw new Error(message)
 }
 
+function assertFramesEqual(before, after) {
+  assert.equal(before.length, 4, 'Inspector verification returned an invalid before frame')
+  assert.equal(after.length, 4, 'Inspector verification returned an invalid after frame')
+  before.forEach((value, index) => {
+    assert.ok(
+      Math.abs(value - after[index]) <= 0.5,
+      `Opening the Inspector changed child WebView frame index ${index}: ${value} -> ${after[index]}`
+    )
+  })
+}
+
 export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
   return {
     async handleHttp(request, response, url) {
@@ -171,6 +182,31 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
         uiTimeoutMs,
         'The browser tab did not load the toolbar fixture'
       )
+
+      if (process.platform === 'darwin') {
+        for (const attempt of [1, 2]) {
+          const inspector = JSON.parse(
+            await control.command('verifyEmbeddedBrowserDetachedInspector', 'body', {
+              value: BROWSER_LABEL,
+              timeoutMs: uiTimeoutMs,
+            })
+          )
+          assert.equal(
+            inspector.visible,
+            true,
+            `The built-in browser Inspector did not open on attempt ${attempt}`
+          )
+          assert.ok(
+            inspector.afterWindowCount > inspector.beforeWindowCount,
+            `The built-in browser Inspector did not create a separate native window on attempt ${attempt}`
+          )
+          assert.ok(
+            !inspector.closedVisible,
+            `The detached Inspector window remained visible after close on attempt ${attempt}`
+          )
+          assertFramesEqual(inspector.beforeFrame, inspector.afterFrame)
+        }
+      }
 
       // --- Find in page ---
       await control.command('click', BROWSER_MORE_BUTTON_SELECTOR)

@@ -27,7 +27,7 @@ const corsHeaders = {
 function usage() {
   console.error(`Usage:
   pnpm --filter wework ai:verify start
-  pnpm --filter wework ai:verify <capture|capture-browser|capture-popout|capture-workspace|snapshot|debug|active-element|click|click-at|click-then-macrotask|context-menu|seed-local-project|terminal-snapshot|reload|close-to-tray|request-close|dismiss-popout|drag|drop-file|drop-paths|fill|get-attribute|hover|metrics|navigate|paste-paths|pointer-move|press|scroll-into-view|select-text|show-popout|system-drag-drop|wait-for|window-focus-snapshot|text|status|stop> --session PATH [options]
+  pnpm --filter wework ai:verify <capture|capture-browser|capture-popout|capture-workspace|snapshot|debug|active-element|click|click-at|click-then-macrotask|context-menu|seed-local-project|terminal-snapshot|reload|close-to-tray|request-close|dismiss-popout|drag|drop-file|drop-paths|fill|get-attribute|hover|metrics|navigate|paste-paths|pointer-move|press|scroll-into-view|select-text|show-popout|system-drag-drop|verify-browser-inspector|wait-for|window-focus-snapshot|text|status|stop> --session PATH [options]
 
 Options:
   --codex-home-initialization true
@@ -431,6 +431,7 @@ async function main() {
     'select-text': 'selectText',
     'show-popout': 'showPopoutWindow',
     'system-drag-drop': 'completeSystemDragDrop',
+    'verify-browser-inspector': 'verifyEmbeddedBrowserDetachedInspector',
     'wait-for': 'waitFor',
     'window-focus-snapshot': 'getWindowFocusSnapshot',
     text: 'getText',
@@ -461,7 +462,8 @@ async function main() {
     command === 'system-drag-drop' ||
     command === 'window-focus-snapshot' ||
     command === 'close-to-tray' ||
-    command === 'request-close'
+    command === 'request-close' ||
+    command === 'verify-browser-inspector'
       ? 'body'
       : null)
   if (!selector) throw new Error('--selector is required')

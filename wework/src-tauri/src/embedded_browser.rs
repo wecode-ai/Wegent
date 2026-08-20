@@ -95,7 +95,6 @@ const EMBEDDED_BROWSER_USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS 
 AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15";
 const EMBEDDED_BROWSER_DATA_STORE_ID: [u8; 16] = *b"wework-browser01";
 const EMBEDDED_BROWSER_DATA_DIRECTORY: &str = "embedded-browser-data";
-const EMBEDDED_BROWSER_DEVTOOLS_ENABLED: bool = false;
 const NS_URL_ERROR_CANCELLED: i64 = -999;
 const EMBEDDED_BROWSER_DIAGNOSTICS_SCRIPT: &str = include_str!("embedded_browser_diagnostics.js");
 const EMBEDDED_BROWSER_ACTION_SCRIPT: &str = include_str!("embedded_browser_action.js");
@@ -1100,6 +1099,10 @@ fn bootstrap_is_stable_at_build(post_build_navigation: bool) -> bool {
     !post_build_navigation
 }
 
+fn embedded_browser_devtools_enabled(release_build: bool, debug_assertions: bool) -> bool {
+    !release_build && debug_assertions
+}
+
 fn entry_readiness(
     state: &EmbeddedBrowserState,
     label: &str,
@@ -1973,7 +1976,10 @@ pub async fn embedded_browser_open(
         .data_directory(data_directory)
         .data_store_identifier(EMBEDDED_BROWSER_DATA_STORE_ID)
         .initialization_script(EMBEDDED_BROWSER_DIAGNOSTICS_SCRIPT)
-        .devtools(EMBEDDED_BROWSER_DEVTOOLS_ENABLED)
+        .devtools(embedded_browser_devtools_enabled(
+            cfg!(wework_release_build),
+            cfg!(debug_assertions),
+        ))
         .accept_first_mouse(true)
         .on_navigation({
             let state = state.inner().clone();
@@ -2289,6 +2295,31 @@ pub async fn embedded_browser_open(
         }
     };
 
+    #[cfg(all(target_os = "macos", debug_assertions, not(wework_release_build)))]
+    if let Err(error) =
+        crate::embedded_browser_devtools::register_detached_inspector(&webview).await
+    {
+        log_embedded_browser_diagnostic(
+            &state,
+            &label,
+            "open_devtools_setup_failed",
+            json!({
+                "nativeLabel": &native_label,
+                "error": &error,
+            }),
+        );
+        if let Ok(mut webviews) = state.webviews.lock() {
+            remove_logical_entry_if_native_matches(
+                &mut webviews,
+                &label,
+                &native_label,
+                |current| current.native_label.as_str(),
+            );
+        }
+        let _ = webview.close();
+        return Err(error);
+    }
+
     if !visible {
         webview
             .hide()
@@ -2553,6 +2584,30 @@ pub async fn embedded_browser_capture_snapshot(
     let label = browser_label(label);
     let webview = get_entry(&state, &label)?.ready_webview()?;
     screenshot::capture_webview_snapshot_base64(webview).await
+}
+
+#[tauri::command]
+pub async fn embedded_browser_verify_detached_inspector_for_e2e(
+    state: tauri::State<'_, EmbeddedBrowserState>,
+    label: Option<String>,
+) -> Result<Value, String> {
+    if std::env::var("VITE_WEWORK_E2E").as_deref() != Ok("true") {
+        return Err(
+            "Detached Inspector verification is only available during desktop E2E".to_string(),
+        );
+    }
+    #[cfg(all(target_os = "macos", debug_assertions, not(wework_release_build)))]
+    {
+        let base_label = browser_label(label);
+        let label = resolve_agent_bridge_label(&state, &base_label, None)?;
+        let webview = get_entry(&state, &label)?.ready_webview()?;
+        return crate::embedded_browser_devtools::verify_detached_inspector_for_e2e(&webview).await;
+    }
+    #[cfg(not(all(target_os = "macos", debug_assertions, not(wework_release_build))))]
+    {
+        let _ = (state, label);
+        Err("Detached Inspector verification requires a macOS debug build".to_string())
+    }
 }
 
 #[cfg(target_os = "macos")]

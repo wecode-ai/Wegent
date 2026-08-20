@@ -5,6 +5,8 @@ mod cloud_authorization_window;
 mod desktop_capture;
 mod diagram_image;
 mod embedded_browser;
+#[cfg(all(target_os = "macos", debug_assertions, not(wework_release_build)))]
+mod embedded_browser_devtools;
 #[cfg(target_os = "macos")]
 mod embedded_browser_tls;
 #[cfg(desktop)]
@@ -5211,6 +5213,7 @@ pub fn run() {
             embedded_browser::embedded_browser_set_agent_control_paused,
             embedded_browser::embedded_browser_set_zoom,
             embedded_browser::embedded_browser_set_bounds,
+            embedded_browser::embedded_browser_verify_detached_inspector_for_e2e,
             harness_apps::delete_harness_app,
             harness_apps::install_harness_app,
             harness_apps::list_harness_apps,
