@@ -1,6 +1,7 @@
-import { Boxes, X } from 'lucide-react'
+import { X } from 'lucide-react'
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import { ChatInput, type ProjectWorkControls } from '@/components/chat/ChatInput'
+import { ComposerSkillIcon } from '@/components/chat/composer/ComposerSkillIcon'
 import { DesktopEmptyTaskLauncher } from '@/components/layout/DesktopEmptyTaskLauncher'
 import { WEWORK_PERSONAL_MARKETPLACE_ID } from '@/features/plugins/builtinPlugins'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
@@ -217,15 +218,15 @@ export function PluginCreateWorkspace({ topBarLeftActions }: PluginCreateWorkspa
             inputLeadingContext={
               <span
                 data-testid="plugin-creator-context"
-                className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-focus/25 bg-focus/10 px-2 text-sm font-normal text-focus"
+                className="plugin-creator-context inline-flex h-6 shrink-0 items-center gap-1 px-0.5 text-sm font-medium"
               >
-                <Boxes className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                <ComposerSkillIcon className="h-4 w-4 shrink-0" />
                 <span>Plugin Creator</span>
                 <button
                   type="button"
                   data-testid="plugin-creator-context-dismiss"
                   aria-label={t('workbench.cancel', '取消')}
-                  className="ml-0.5 flex h-4 w-4 items-center justify-center rounded-sm text-focus/80 transition-colors hover:bg-focus/15 hover:text-focus"
+                  className="ml-0.5 flex h-4 w-4 items-center justify-center rounded-sm text-current opacity-60 transition-[background-color,opacity] hover:bg-focus/10 hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30"
                   onClick={dismissPluginCreator}
                 >
                   <X className="h-3 w-3" aria-hidden="true" />

@@ -4368,7 +4368,10 @@ describe('PluginsWorkspace', () => {
     render(<PluginsWorkspace />)
 
     await userEvent.click(screen.getByTestId('plugins-create-button'))
-    await userEvent.click(screen.getByTestId('plugins-create-plugin-option'))
+    const createPluginOption = screen.getByTestId('plugins-create-plugin-option')
+    expect(createPluginOption.querySelector('.lucide-plug')).toBeInTheDocument()
+    expect(createPluginOption.querySelector('.lucide-at-sign')).not.toBeInTheDocument()
+    await userEvent.click(createPluginOption)
 
     expect(window.location.pathname).toBe('/plugins/create')
     expect(sessionStorage.getItem('wework:pending-plugin-trial')).toBeNull()

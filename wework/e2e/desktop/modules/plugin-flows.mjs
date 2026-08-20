@@ -524,6 +524,10 @@ async function verifyMarketplacePluginLifecycle({
   await control.command('click', '[data-testid="plugin-import-close"]')
 
   await control.command('click', '[data-testid="plugins-create-button"]')
+  await control.command('waitFor', '[data-testid="plugins-create-menu"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'marketplace-plugins-00-create-menu.png')
   await control.command('click', '[data-testid="plugins-create-plugin-option"]')
   await control.command('waitFor', '[data-testid="plugin-create-workspace"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -532,6 +536,7 @@ async function verifyMarketplacePluginLifecycle({
     control,
     snapshot =>
       snapshot.testIds.includes('plugin-create-workspace') &&
+      snapshot.testIds.includes('plugin-creator-context') &&
       snapshot.testIds.includes('project-chat-composer') &&
       snapshot.testIds.includes('composer-toolbar') &&
       snapshot.testIds.includes('attachment-file-input') &&
