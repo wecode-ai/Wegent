@@ -1685,6 +1685,21 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return JSON.stringify(await invoke(LOCAL_EXECUTOR_COMMANDS.status))
     case 'getLocalExecutorLog':
       return JSON.stringify(await invoke(LOCAL_EXECUTOR_COMMANDS.readLog))
+    case 'previewPluginImport': {
+      const input = JSON.parse(command.value ?? '{}') as {
+        archivePath?: string
+        marketplacePath?: string
+      }
+      if (!input.archivePath || !input.marketplacePath) {
+        throw new Error('previewPluginImport requires archivePath and marketplacePath')
+      }
+      return JSON.stringify(
+        await invoke('local_executor_preview_plugin_import', {
+          archivePath: input.archivePath,
+          marketplacePath: input.marketplacePath,
+        })
+      )
+    }
     case 'hover':
       return hoverDesktopControlElement(command.selector)
     case 'pointerLeave':

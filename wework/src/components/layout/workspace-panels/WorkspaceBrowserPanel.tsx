@@ -1874,10 +1874,10 @@ export function WorkspaceBrowserTabPanel({
   const reloadCurrentUrl = useCallback(
     (url: string) => {
       setNavigationError(null)
-      if (!embeddedBrowserAvailable || !nativeBrowserOpenRef.current) {
+      if (!embeddedBrowserAvailable) {
         setCurrentUrl(null)
         window.setTimeout(() => setCurrentUrl(url), 0)
-        setStatus(embeddedBrowserAvailable ? 'loading' : 'ready')
+        setStatus('ready')
         return
       }
 
@@ -1889,6 +1889,8 @@ export function WorkspaceBrowserTabPanel({
         return
       }
 
+      setStatus('loading')
+      setError(null)
       void runBrowserCommand(() => reloadEmbeddedBrowser(label))
     },
     [embeddedBrowserAvailable, label, runBrowserCommand]

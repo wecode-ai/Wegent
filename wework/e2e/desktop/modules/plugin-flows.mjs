@@ -46,6 +46,7 @@ import {
   readFile,
   rm,
   selectE2EModel,
+  writeFile,
 } from './shared.mjs'
 
 import {
@@ -54,6 +55,47 @@ import {
   waitForControlValueIncludes,
   waitForWorkbenchDebugState,
 } from './workspace-flows.mjs'
+
+async function createDirectRemoteMcpPluginZip(root) {
+  const { default: JSZip } = await import('jszip')
+  const archivePath = join(root, 'direct-remote-mcp-plugin.zip')
+  const zip = new JSZip()
+  zip.file(
+    '.codex-plugin/plugin.json',
+    JSON.stringify({
+      name: 'direct-remote-mcp-plugin',
+      version: '1.0.0',
+      description: 'Desktop E2E direct remote MCP plugin',
+      author: { name: 'Wework Desktop E2E' },
+      skills: './skills/',
+      mcpServers: './.mcp.json',
+      interface: {
+        displayName: 'Direct Remote MCP Plugin',
+        shortDescription: 'Exercises direct remote MCP parsing',
+        longDescription: 'Exercises direct remote MCP parsing in the native import preview.',
+        developerName: 'Wework Desktop E2E',
+        category: 'Developer Tools',
+        capabilities: ['MCP'],
+        defaultPrompt: 'Use the remote MCP server.',
+      },
+    })
+  )
+  zip.file(
+    '.mcp.json',
+    JSON.stringify({
+      remote: {
+        url: 'https://mcp.example.com/mcp',
+        http_headers: { Authorization: 'Bearer desktop-e2e-token' },
+      },
+    })
+  )
+  zip.file(
+    'skills/direct-remote/SKILL.md',
+    '---\nname: direct-remote\ndescription: Exercise direct remote MCP parsing.\n---\n'
+  )
+  await writeFile(archivePath, await zip.generateAsync({ type: 'nodebuffer' }))
+  return archivePath
+}
 
 async function verifyCloudWorkPage(control) {
   await control.command('navigate', 'body', { value: '/cloud-work' })
@@ -544,6 +586,15 @@ async function verifyMarketplacePluginLifecycle({
       importSnapshot.text.includes('skills/<slug>/SKILL.md'),
     'The plugin import dialog did not explain the standard Wework plugin package structure'
   )
+  const archivePath = await createDirectRemoteMcpPluginZip(marketplacePath)
+  const preview = JSON.parse(
+    await control.command('previewPluginImport', 'body', {
+      value: JSON.stringify({ archivePath, marketplacePath }),
+    })
+  )
+  assert.equal(preview.valid, true, `Direct remote MCP plugin was rejected: ${preview.issues}`)
+  assert.equal(preview.mcpServerCount, 1)
+  assert.equal(preview.name, 'direct-remote-mcp-plugin')
   await captureVerificationScreenshot(control, 'marketplace-plugins-00-import.png')
   await control.command('click', '[data-testid="plugin-import-close"]')
 
