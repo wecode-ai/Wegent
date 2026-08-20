@@ -162,6 +162,93 @@ async function getEmbeddedBrowserLocalStorageItem(command: DesktopControlCommand
   )
 }
 
+async function setEmbeddedBrowserWindowValue(command: DesktopControlCommand) {
+  const input = embeddedBrowserStorageInput(command)
+  return evalEmbeddedBrowserWhenReady<string>(
+    command,
+    input.label,
+    `(globalThis[${JSON.stringify(input.key)}] = ${JSON.stringify(input.value)})`
+  )
+}
+
+async function getEmbeddedBrowserWindowValue(command: DesktopControlCommand) {
+  const input = embeddedBrowserStorageInput(command)
+  return evalEmbeddedBrowserWhenReady<string | null>(
+    command,
+    input.label,
+    `globalThis[${JSON.stringify(input.key)}] ?? null`
+  )
+}
+
+async function evalEmbeddedBrowserWhenReady<T>(
+  command: DesktopControlCommand,
+  label: string,
+  expression: string
+): Promise<T> {
+  const timeoutMs = command.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS
+  const startedAt = Date.now()
+  let lastError = 'Embedded browser is not ready'
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      return await evalEmbeddedBrowserJson<T>(expression, label)
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error)
+      await waitForDesktopControlTick()
+    }
+  }
+  throw new Error(`Timed out evaluating embedded browser "${label}": ${lastError}`)
+}
+
+async function captureEmbeddedBrowserWhenReady(command: DesktopControlCommand): Promise<string> {
+  const timeoutMs = command.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS
+  const startedAt = Date.now()
+  const configuredLabel = command.value?.trim()
+  let lastError = 'Embedded browser host is not ready'
+  while (Date.now() - startedAt < timeoutMs) {
+    const label =
+      configuredLabel ||
+      document.querySelector<HTMLElement>(command.selector)?.dataset.embeddedBrowserLabel?.trim()
+    if (!label) {
+      await waitForDesktopControlTick()
+      continue
+    }
+    try {
+      const page = await evalEmbeddedBrowserJson<{
+        readyState: string
+        textLength: number
+      }>(
+        `({
+          readyState: document.readyState,
+          textLength: (document.body?.innerText ?? '').trim().length
+        })`,
+        label
+      )
+      if (page.readyState === 'complete' && page.textLength > 0) {
+        if (command.text && !window.location.href.includes(command.text)) {
+          throw new Error(`current route does not include "${command.text}"`)
+        }
+        const snapshot = await invoke<string>('embedded_browser_capture_snapshot', { label })
+        const targetSelector = command.target?.trim()
+        if (targetSelector) {
+          const target = findDesktopControlElements(targetSelector)[0]
+          if (!target) throw new Error(`Unable to find target selector "${targetSelector}"`)
+          if (!desktopControlElementEnabled(target)) {
+            throw new Error(`Target selector "${targetSelector}" is disabled`)
+          }
+          target.click()
+          await waitForDesktopControlTick()
+        }
+        return snapshot
+      }
+      lastError = `page state is ${page.readyState} with ${page.textLength} visible text characters`
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error)
+    }
+    await waitForDesktopControlTick()
+  }
+  throw new Error(`Timed out capturing embedded browser for "${command.selector}": ${lastError}`)
+}
+
 function hasTestId(testId: string): boolean {
   return document.querySelector(`[data-testid="${CSS.escape(testId)}"]`) !== null
 }
@@ -1005,12 +1092,14 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return invoke<string>('capture_popout_webview')
     case 'captureWorkspaceWindow':
       return invoke<string>('capture_workspace_webview')
+    case 'captureEmbeddedBrowser':
+      return captureEmbeddedBrowserWhenReady(command)
     case 'closeMainWindowToTray':
       return ''
     case 'requestMainWindowClose':
       return ''
     case 'reloadMainWindow':
-      return ''
+      return command.value === 'capture' ? captureDesktopControlScreenshot(command.selector) : ''
     case 'getTestIdOrder':
       return desktopControlTestIdOrder(command.selector)
     case 'reorderRuntimeProjectTasks':
@@ -1104,6 +1193,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return (await setEmbeddedBrowserLocalStorageItem(command)) ?? ''
     case 'getEmbeddedBrowserLocalStorageItem':
       return (await getEmbeddedBrowserLocalStorageItem(command)) ?? ''
+    case 'setEmbeddedBrowserWindowValue':
+      return (await setEmbeddedBrowserWindowValue(command)) ?? ''
+    case 'getEmbeddedBrowserWindowValue':
+      return (await getEmbeddedBrowserWindowValue(command)) ?? ''
     case 'setLocalProxyUrl': {
       const proxyUrl = command.value?.trim() ?? ''
       const config = saveLocalProxyUrl(proxyUrl)

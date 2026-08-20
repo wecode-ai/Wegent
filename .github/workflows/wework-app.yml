@@ -252,6 +252,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "24"
+          architecture: ${{ matrix.arch }}
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
 
@@ -433,6 +434,9 @@ jobs:
             "$PWD" \
             "${{ matrix.rust_target }}" \
             "$MACOS_SIGNING_IDENTITY"
+          if [ "${{ needs.prepare-release.outputs.publish_release }}" = "true" ]; then
+            export WEWORK_DEEPSEEK_HARNESS_RUNTIME_BASE_URL="https://github.com/${GH_REPO}/releases/download/${RELEASE_TAG}"
+          fi
 
           config_override="$(mktemp "$PWD/src-tauri/tauri.ci.XXXXXX.json")"
           cleanup() {
@@ -583,8 +587,13 @@ jobs:
           cp "$dmg_source" "$dmg_path"
           cp "$archive_source" "$archive_path"
           cp "$signature_source" "$signature_path"
+          runtime_asset_name="$(node -p "require('./wework/src-tauri/bundled-deepseek-harness/runtime.json').assetName")"
+          runtime_source="wework/node_modules/.cache/deepseek-harness-runtime-assets/$runtime_asset_name"
+          runtime_path="$artifact_dir/$runtime_asset_name"
+          cp "$runtime_source" "$runtime_path"
           shasum -a 256 "$dmg_path"
           shasum -a 256 "$archive_path"
+          shasum -a 256 "$runtime_path"
           {
             echo "### Wework macOS ${{ matrix.arch }} release asset"
             echo ""
@@ -600,6 +609,7 @@ jobs:
             echo "dmg_path=$dmg_path"
             echo "archive_path=$archive_path"
             echo "signature_path=$signature_path"
+            echo "runtime_path=$runtime_path"
           } >> "$GITHUB_OUTPUT"
 
       - name: Create release app token
@@ -624,6 +634,7 @@ jobs:
             "${{ steps.package.outputs.dmg_path }}" \
             "${{ steps.package.outputs.archive_path }}" \
             "${{ steps.package.outputs.signature_path }}" \
+            "${{ steps.package.outputs.runtime_path }}" \
             --clobber
           release_url="$(gh release view "$RELEASE_TAG" --json url --jq .url)"
           {
@@ -640,6 +651,7 @@ jobs:
             ${{ steps.package.outputs.dmg_path }}
             ${{ steps.package.outputs.archive_path }}
             ${{ steps.package.outputs.signature_path }}
+            ${{ steps.package.outputs.runtime_path }}
           if-no-files-found: error
 
       - name: Remove temporary signing keychain
@@ -728,6 +740,9 @@ jobs:
           $ErrorActionPreference = 'Stop'
           if (-not $env:TAURI_SIGNING_PRIVATE_KEY) { throw 'Missing GitHub secret: TAURI_SIGNING_PRIVATE_KEY' }
           if (-not $env:TAURI_UPDATER_PUBKEY) { throw 'Missing GitHub secret: TAURI_UPDATER_PUBKEY' }
+          if ('${{ needs.prepare-release.outputs.publish_release }}' -eq 'true') {
+            $env:WEWORK_DEEPSEEK_HARNESS_RUNTIME_BASE_URL = "https://github.com/$env:GH_REPO/releases/download/${{ needs.prepare-release.outputs.release_tag }}"
+          }
 
           $package = Get-Content package.json -Raw | ConvertFrom-Json
           $package.version = $env:RELEASE_VERSION
@@ -763,10 +778,16 @@ jobs:
           $signaturePath = "$installerPath.sig"
           Copy-Item $installer.FullName $installerPath
           Copy-Item $signature.FullName $signaturePath
+          $runtimeMetadata = Get-Content 'wework/src-tauri/bundled-deepseek-harness/runtime.json' -Raw | ConvertFrom-Json
+          $runtimeSource = Join-Path 'wework/node_modules/.cache/deepseek-harness-runtime-assets' $runtimeMetadata.assetName
+          $runtimePath = Join-Path $artifactDir $runtimeMetadata.assetName
+          Copy-Item $runtimeSource $runtimePath
           Get-FileHash $installerPath -Algorithm SHA256
+          Get-FileHash $runtimePath -Algorithm SHA256
 
           "installer_path=$installerPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "signature_path=$signaturePath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "runtime_path=$runtimePath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       - name: Create release app token
         if: needs.prepare-release.outputs.publish_release == 'true'
@@ -784,7 +805,7 @@ jobs:
           GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
-        run: gh release upload $env:RELEASE_TAG '${{ steps.package.outputs.installer_path }}' '${{ steps.package.outputs.signature_path }}' --clobber
+        run: gh release upload $env:RELEASE_TAG '${{ steps.package.outputs.installer_path }}' '${{ steps.package.outputs.signature_path }}' '${{ steps.package.outputs.runtime_path }}' --clobber
 
       - name: Upload Windows test artifacts
         if: needs.prepare-release.outputs.publish_release != 'true'
@@ -794,6 +815,7 @@ jobs:
           path: |
             ${{ steps.package.outputs.installer_path }}
             ${{ steps.package.outputs.signature_path }}
+            ${{ steps.package.outputs.runtime_path }}
           if-no-files-found: error
 
   publish-updater-manifest:

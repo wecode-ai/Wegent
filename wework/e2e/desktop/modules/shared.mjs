@@ -1154,6 +1154,15 @@ async function reactivateMacApplication(appIdentifier) {
   await runChecked('open', ['-g', '-b', appIdentifier])
 }
 
+function requestMacosApplicationQuit(processId) {
+  commandOutput('osascript', [
+    '-l',
+    'JavaScript',
+    '-e',
+    `ObjC.import("AppKit"); const app = $.NSRunningApplication.runningApplicationWithProcessIdentifier(${processId}); app ? Boolean(app.terminate) : false`,
+  ])
+}
+
 async function triggerModelReloadUntilCloudFailure(control) {
   const failedCloudModelRequest = control.awaitFailedCloudModelRequest()
   for (let attempt = 0; attempt < 10 && control.failedCloudModelRequests === 0; attempt += 1) {
@@ -1773,6 +1782,7 @@ export {
   waitForExecutorReadyEvidence,
   waitForLogPattern,
   reactivateMacApplication,
+  requestMacosApplicationQuit,
   triggerModelReloadUntilCloudFailure,
   sendPromptUntilScenarioRequest,
   visibleModelOptionId,

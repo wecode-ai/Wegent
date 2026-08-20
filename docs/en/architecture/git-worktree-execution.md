@@ -16,7 +16,9 @@ flowchart LR
     EXECUTOR[target Executor<br/>only Git data plane]
     REPO[(base Git workspace)]
     WORKTREE[(managed Worktree)]
-    STATE[(Runtime Task Store<br/>worktrees.json<br/>snapshot refs)]
+    STATE[(Runtime Task Metadata Store<br/>no execution status)]
+    EXECUTION[(persisted turn queue<br/>queued execution intent)]
+    WORKTREE_STATE[(worktrees.json<br/>Worktree lifecycle + execution lease + snapshot refs)]
     VOLUME[(stable Executor Home volume)]
     ATTEST[deployment durability attestation<br/>persistentStorageVerified]
 
@@ -30,10 +32,14 @@ flowchart LR
     EXECUTOR --> REPO
     EXECUTOR --> WORKTREE
     EXECUTOR --> STATE
+    EXECUTOR --> EXECUTION
+    EXECUTOR --> WORKTREE_STATE
     ATTEST -->|explicit startup configuration| EXECUTOR
     VOLUME --> REPO
     VOLUME --> WORKTREE
     VOLUME --> STATE
+    VOLUME --> EXECUTION
+    VOLUME --> WORKTREE_STATE
     VOLUME -->|device-config.json| EXECUTOR
 ```
 
@@ -68,6 +74,37 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
+    participant E as restarted Executor
+    participant T as Runtime Task Metadata Store
+    participant Q as Persisted Turn Queue
+    participant G as worktrees.json
+    participant R as Agent Runtime
+
+    E->>T: load identity, thread, path, title, and archive metadata
+    Note over E,T: Task Store never persists status/running/threadStatus/turnStatus
+    E->>Q: restore queued execution intent
+    E->>G: reconcile Worktree lifecycle
+    alt Worktree was left in preparing
+        G->>G: validate the recorded Worktree identity
+        alt valid Worktree exists
+            G->>G: move preparing to active and preserve recovery diagnostics
+        else missing or invalid Worktree
+            G->>G: move preparing to failed and preserve the validation error
+        end
+        G-->>E: explicit interrupted-preparation evidence
+        E->>T: mark only the linked Runtime Task failed
+    else Worktree retains an uncleared execution lease
+        G->>G: clear the lease and preserve interrupted-execution diagnostics
+        G-->>E: explicit interrupted-execution evidence
+        E->>T: mark only the linked Runtime Task failed
+    else ordinary history or queue-only task
+        E->>E: infer no failure and preserve task activity time
+    end
+    E->>R: resume only supported non-Worktree queued executions
+```
+
+```mermaid
+sequenceDiagram
     participant U as Wework
     participant E as target Executor
     participant R as Agent Runtime
@@ -95,7 +132,7 @@ sequenceDiagram
 | DeviceWorkspace selection, availability, preferences, and UI                     | `wework/src/features/workbench/`, `wework/src/components/chat/composer/`                                                                |
 | Local/Cloud/Remote Runtime routing and task projection                           | `wework/src/api/`, `wework/src/features/workbench/useWorkbenchRuntimeMessaging.ts`, `wework/src/features/workbench/workbenchReducer.ts` |
 | Logical-device authorization, persistent Runtime identity, and socket resolution | `backend/app/services/device/`, `backend/app/api/ws/`                                                                                   |
-| Worktree capability, preflight, Git lifecycle, and state                         | `executor/src/runtime_work/`                                                                                                            |
+| Worktree capability, preflight, Git lifecycle, task metadata, and execution evidence | `executor/src/runtime_work/`                                                                                                        |
 | Cloud persistent volume, stable mount path, and single writer                    | cloud device provider, deployment configuration, `docker/device/`                                                                       |
 | Cross-layer acceptance                                                           | `wework/e2e/desktop/`, `scripts/acceptance/`, Backend and Executor contract tests                                                       |
 
@@ -111,12 +148,12 @@ Essential invariants:
 8. An existing target path is adopted only after proving that it is the expected Git Worktree for the same repository and Worktree ID.
 9. Blocking Git and directory scans never run on the asynchronous RPC worker.
 10. Deletion requires stop acknowledgement from every linked Runtime. Runtime exit or panic sends that acknowledgement through a scope-exit guard. Archive, snapshot, and removal happen in order, every failure preserves diagnosable data, and bulk archive uses bounded concurrency instead of accumulating stop timeouts linearly per stuck task.
-11. Restart reconciliation may recover a manageable Worktree, but never auto-resumes an interrupted agent. Persistent failures are throttled with a fixed retry interval while preserving later retries.
+11. Restart reconciliation may recover a manageable Worktree, but never auto-resumes an interrupted agent. The Runtime Task Store persists durable task metadata, but never persists `status`, `running`, `threadStatus`, or `turnStatus`. Persistent reconciliation failures are throttled with a fixed retry interval while preserving later retries.
 12. One Executor process writes an Executor Home at a time. Cloud and Remote Executor Home, repositories, Worktrees, Runtime Store, and absolute mount path remain durably stable.
 13. Launch-mode and branch preferences are scoped by DeviceWorkspace; execution location is not a launch mode.
 14. Offline, missing route, timeout, disconnect, unsupported, non-Git, path-conflict, and non-durable-storage failures have stable distinct errors. Timeout and disconnect are marked retryable, but mutating RPCs are never automatically retried.
 15. Terminal, IDE, file tree, Git, archive, restore, and settings always use the owning device and the task's final Worktree path. Remote file commands fail closed when Backend cannot authenticate an allowed workspace root; an empty root set never means unrestricted access.
-16. Once restart reconciliation marks an interrupted task failed or cancelled, task-list projection never revives it as active from stale provider thread metadata. Only a provider turn newer than the local completion time can represent a new execution.
+16. Whether a task was executing before restart is determined only by independent durable execution evidence, never by Runtime Task metadata, a Worktree path, non-archive state, provider history, or missing status fields. Before a Runtime actually starts, Executor writes an execution lease with the current process owner to `worktrees.json` and clears it after Runtime termination is acknowledged; startup reconciliation consumes only leases left by another process and must not classify a newly started execution in the current process as interrupted. An unfinished `preparing` record proves only interrupted Worktree preparation, while a persisted queue entry proves only that execution had not started. Without either kind of interruption evidence, restart reconciliation never writes task failure, completion time, or activity time.
 17. Cloud and Remote `runtimeInstanceId` is stored in Executor Home and becomes immutable after Backend first records it. Container or instance replacement must reuse that value. Registration of the same logical device with a new Runtime Instance ID is rejected as a persistent-storage identity mismatch; Backend never overwrites the established value or creates a bypass device record.
 18. Deferred creation persists the source-repository fingerprint captured while planning and compares it with a freshly computed fingerprint after acquiring a slot. Replacing the source directory with another repository fails as `worktree_source_changed`.
 19. A stop timeout has an unknown outcome. It never clears Runtime cancellation control or treats the task as stopped; an archive/delete retry still requires a stop acknowledgement from the same Runtime.

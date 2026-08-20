@@ -63,6 +63,8 @@ Wework 云端 runtime 执行使用和本地模式一致的 app IPC 协议。前�
 
 云端 executor 仍连接 Backend 的 `/local-executor` namespace。executor 内部复用本地 `RuntimeWorkRpcHandler` 执行 `runtime.tasks.create`、`runtime.tasks.send`、`runtime.tasks.list`、`runtime.tasks.transcript` 等方法，并把 Responses API 风格的 app IPC event 通过 `runtime:event` 透传回 `/wework-runtime`。Wework 前端复用本地流式事件 mapper 消费这些事件，因此本地模式和云端模式在 runtime 执行流程上保持一致。
 
+`device.execute_command` 的中继超时必须使用请求中的 `timeout_seconds`，并在前端确认等待上增加固定宽限时间。普通 runtime 请求继续使用默认 75 秒。这样 Git Clone 等长命令不会被外层 IPC 在命令自身超时之前提前判定失败，同时仍受 executor 的 600 秒上限约束。
+
 多实例 Backend 通过 Socket.IO Redis manager 把 RPC 转发到持有 executor 连接的 worker。Redis 中带 `socket_id` 的设备在线记录是转发入口；不能用当前 worker 的进程内连接表预判 executor 已断线，否则会把连接在其他 worker 上的设备误标为离线。
 
 ## 本机 executor 生命周期

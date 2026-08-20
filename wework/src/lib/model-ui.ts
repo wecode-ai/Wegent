@@ -271,7 +271,19 @@ export function isSameModelSelection(
   left: UnifiedModel | null,
   right: UnifiedModel | null
 ): boolean {
-  return Boolean(left && right && left.type === right.type && left.name === right.name)
+  if (!left || !right || left.type !== right.type || left.name !== right.name) {
+    return false
+  }
+  return (
+    modelConfigString(left, 'codexProviderId') === modelConfigString(right, 'codexProviderId') &&
+    (left.namespace ?? '') === (right.namespace ?? '') &&
+    String(left.resourceUserId ?? '') === String(right.resourceUserId ?? '')
+  )
+}
+
+function modelConfigString(model: UnifiedModel, key: string): string {
+  const value = model.config?.[key]
+  return typeof value === 'string' ? value.trim() : ''
 }
 
 function identityTextForModel(model: UnifiedModel): string {

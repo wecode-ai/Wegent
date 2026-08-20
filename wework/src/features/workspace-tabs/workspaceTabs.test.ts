@@ -5,6 +5,7 @@ import {
   moveWorkspaceTab,
   parseWorkspaceLocation,
   workspaceTabRoute,
+  workspaceTabTitle,
 } from './workspaceTabs'
 
 const labels = {
@@ -21,6 +22,10 @@ const labels = {
 }
 
 describe('workspaceTabs', () => {
+  test('uses the Applications title for the Smart apps application type', () => {
+    expect(workspaceTabTitle('auxiliary', '/sites?app_type=smart_app', labels)).toBe('站点')
+  })
+
   test('uses the product name until a concrete project supplies its own title', () => {
     vi.spyOn(crypto, 'randomUUID').mockReturnValue('00000000-0000-4000-8000-000000000001')
 
