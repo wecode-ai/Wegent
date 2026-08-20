@@ -15,7 +15,8 @@ use super::{
     browser_open_action, browser_webview_url, consume_approved_agent_risk,
     directory_entry_modified_unix_seconds, directory_listing_html, download_event_owner,
     file_url_path, format_directory_entry_modified, format_file_size, loaded_browser_url,
-    local_file_browser_title, logical_owner_for_native_label, merge_request_option,
+    is_history_recordable_url, local_file_browser_title, logical_owner_for_native_label,
+    merge_request_option,
     native_webview_label, read_http_request, ready_logical_entry, register_agent_approval,
     register_preview_source, relabel_logical_entry, remove_logical_entry_if_native_matches,
     resolve_agent_bridge_label, resolve_browser_navigation_url, script_browser_action,
@@ -868,4 +869,14 @@ fn relabel_rejects_an_occupied_destination_without_orphaning_the_source() {
     );
     assert_eq!(entries["workspace-browser-source"], "source-native");
     assert_eq!(entries["workspace-browser-target"], "target-native");
+}
+
+#[test]
+fn history_records_web_pages_and_local_files_but_not_internal_pages() {
+    assert!(is_history_recordable_url("https://example.com/docs"));
+    assert!(is_history_recordable_url("http://localhost:3000"));
+    assert!(is_history_recordable_url("file:///Users/me/report.html"));
+    assert!(!is_history_recordable_url("about:blank"));
+    assert!(!is_history_recordable_url("tauri://localhost"));
+    assert!(!is_history_recordable_url("wework://internal/page"));
 }

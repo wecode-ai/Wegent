@@ -1393,6 +1393,12 @@ pub(super) fn with_history_store<T>(
     action(&mut store, &path)
 }
 
+// Record http(s) pages and local files/directories (file:// after preview
+// source mapping); placeholder and custom-protocol pages are excluded.
+fn is_history_recordable_url(url: &str) -> bool {
+    url.starts_with("http://") || url.starts_with("https://") || url.starts_with("file://")
+}
+
 fn history_record_visit(
     app: &tauri::AppHandle,
     state: &EmbeddedBrowserState,
@@ -1884,7 +1890,7 @@ pub async fn embedded_browser_open(
                     &native_label_for_navigation,
                     &label_for_navigation,
                 );
-                if matches!(url.scheme(), "http" | "https") {
+                if matches!(url.scheme(), "http" | "https" | "file") {
                     // Drop the previous document's title so a title-less page does
                     // not inherit it when the visit is recorded at load finish.
                     let _ = update_entry_for_native_label(
@@ -2017,8 +2023,7 @@ pub async fn embedded_browser_open(
                 if let Some(loaded_url) =
                     loaded_url.and_then(|url| loaded_browser_url(&load_state_handle, &url))
                 {
-                    let recordable =
-                        loaded_url.starts_with("http://") || loaded_url.starts_with("https://");
+                    let recordable = is_history_recordable_url(&loaded_url);
                     let mut document_title = None;
                     let _ = update_entry_for_native_label(
                         &load_state_handle,
@@ -2062,7 +2067,7 @@ pub async fn embedded_browser_open(
                 },
             );
             if let Some(url) = visited_url {
-                if url.starts_with("http://") || url.starts_with("https://") {
+                if is_history_recordable_url(&url) {
                     history_backfill_title(&app_for_title, &title_state_handle, &url, &title);
                 }
             }

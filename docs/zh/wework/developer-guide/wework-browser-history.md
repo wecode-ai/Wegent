@@ -73,7 +73,7 @@ pub struct EmbeddedBrowserHistoryEntry {
 
 **写入点**（均在 [embedded_browser.rs](../../../../wework/src-tauri/src/embedded_browser.rs) 已有回调内）：
 
-1. `on_page_load`（`PageLoadEvent::Finished`）：复用现有 `loaded_browser_url` 过滤（排除 `about:blank`、映射本地预览页），最终 URL 为 `http`/`https` 时追加一条记录，`title` 为空。选择加载完成而非 `on_navigation`，避免记录被拒绝或重定向的请求。
+1. `on_page_load`（`PageLoadEvent::Finished`）：复用现有 `loaded_browser_url` 过滤（排除 `about:blank`、映射本地预览页），最终 URL 为 `http`/`https`/`file` 时追加一条记录（本地文件/目录记录的是预览映射后的源 `file://` URL，从历史的条目打开会重新走预览管线）。选择加载完成而非 `on_navigation`，避免记录被拒绝或重定向的请求。
 2. `on_document_title_changed`：按 `native_label` 当前 URL 找到**最近一条**同 URL 记录回填 `title`（避免产生第二条记录）。
 3. favicon：不入库；前端渲染时按 `${origin}/favicon.ico` 直接加载 `<img>`，`onError` 回退默认 Globe 图标。相比 Codex 的 dataURL 存储更轻，代价是图标可能 404 或随站点变化。
 

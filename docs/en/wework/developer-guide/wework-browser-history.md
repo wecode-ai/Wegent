@@ -73,7 +73,7 @@ pub struct EmbeddedBrowserHistoryEntry {
 
 **Write points** (all inside existing callbacks in [embedded_browser.rs](../../../../wework/src-tauri/src/embedded_browser.rs)):
 
-1. `on_page_load` (`PageLoadEvent::Finished`): append an entry (empty `title`) when the final URL — filtered by the existing `loaded_browser_url` (excludes `about:blank`, maps local preview pages) — is `http`/`https`. Recording at load completion instead of `on_navigation` avoids recording rejected or redirected requests.
+1. `on_page_load` (`PageLoadEvent::Finished`): append an entry when the final URL — filtered by the existing `loaded_browser_url` (excludes `about:blank`, maps local preview pages) — is `http`/`https`/`file`. Local files and directories are recorded as their source `file://` URL after preview mapping, so opening them from history re-runs the preview pipeline. Recording at load completion instead of `on_navigation` avoids recording rejected or redirected requests.
 2. `on_document_title_changed`: backfill `title` on the **most recent** entry matching the webview's current URL (no duplicate record).
 3. Favicon: not persisted; the frontend loads `${origin}/favicon.ico` directly in an `<img>` and falls back to a default Globe icon on error. Lighter than Codex's data URL storage, at the cost of possible 404s or icon changes.
 
