@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
+    error::Error as StdError,
+    fmt::Debug,
     future::Future,
     sync::{Arc, Mutex},
     time::Duration,
@@ -35,6 +37,29 @@ fn normalize_socket_url(url: &str) -> String {
         return format!("http://{rest}");
     }
     url.to_owned()
+}
+
+fn format_socket_error<E>(operation: &str, event: Option<&str>, error: &E) -> String
+where
+    E: StdError + Debug,
+{
+    let mut causes = Vec::new();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        causes.push(cause.to_string());
+        source = cause.source();
+    }
+    let event = event
+        .map(|event| format!(" event={event}"))
+        .unwrap_or_default();
+    let causes = if causes.is_empty() {
+        "none".to_owned()
+    } else {
+        causes.join(" -> ")
+    };
+    format!(
+        "socket operation failed operation={operation}{event} error={error} detail={error:?} causes={causes}"
+    )
 }
 
 async fn dispatch_handler<F>(run_in_background: bool, future: F)
@@ -91,8 +116,10 @@ impl LocalBackendTransport for SocketIoTransport {
 
             for (event, handler) in handlers {
                 let run_in_background = event == DEVICE_SYNC_CAPABILITIES_EVENT;
+                let handler_event = event.clone();
                 builder = builder.on(event, move |payload: Payload, socket: Client| {
                     let handler = Arc::clone(&handler);
+                    let handler_event = handler_event.clone();
                     async move {
                         dispatch_handler(run_in_background, async move {
                             let ack_id = payload.ack_id();
@@ -100,7 +127,10 @@ impl LocalBackendTransport for SocketIoTransport {
                             let ack_payload = handler(value).await;
                             if let (Some(ack_id), Some(ack_payload)) = (ack_id, ack_payload) {
                                 if let Err(error) = socket.ack_with_id(ack_id, ack_payload).await {
-                                    eprintln!("local backend socket ACK failed: {error}");
+                                    eprintln!(
+                                        "local backend {}",
+                                        format_socket_error("ack", Some(&handler_event), &error,)
+                                    );
                                 }
                             }
                         })
@@ -110,7 +140,10 @@ impl LocalBackendTransport for SocketIoTransport {
                 });
             }
 
-            let socket = builder.connect().await.map_err(|error| error.to_string())?;
+            let socket = builder
+                .connect()
+                .await
+                .map_err(|error| format_socket_error("connect", None, &error))?;
             tokio::time::timeout(NAMESPACE_CONNECT_TIMEOUT, connect_receiver)
                 .await
                 .map_err(|_| "Socket.IO namespace connection timed out".to_owned())?
@@ -126,7 +159,7 @@ impl LocalBackendTransport for SocketIoTransport {
                 client
                     .disconnect()
                     .await
-                    .map_err(|error| error.to_string())?;
+                    .map_err(|error| format_socket_error("disconnect", None, &error))?;
             }
             Ok(())
         })
@@ -165,7 +198,7 @@ impl LocalBackendTransport for SocketIoTransport {
                     },
                 )
                 .await
-                .map_err(|error| error.to_string())?;
+                .map_err(|error| format_socket_error("call", Some(event), &error))?;
 
             tokio::time::timeout(timeout, receiver)
                 .await
@@ -185,7 +218,7 @@ impl LocalBackendTransport for SocketIoTransport {
             client
                 .emit(event.to_owned(), payload)
                 .await
-                .map_err(|error| error.to_string())
+                .map_err(|error| format_socket_error("emit", Some(event), &error))
         })
     }
 
@@ -218,7 +251,14 @@ mod tests {
 
     use tokio::sync::oneshot;
 
-    use super::{dispatch_handler, normalize_socket_url};
+    use super::{dispatch_handler, format_socket_error, normalize_socket_url};
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("outer transport error")]
+    struct OuterError {
+        #[source]
+        source: std::io::Error,
+    }
 
     #[test]
     fn socket_url_normalizes_websocket_schemes_for_engine_io() {
@@ -242,6 +282,20 @@ mod tests {
             normalize_socket_url("http://localhost:8000"),
             "http://localhost:8000"
         );
+    }
+
+    #[test]
+    fn socket_error_preserves_operation_debug_detail_and_source_chain() {
+        let error = OuterError {
+            source: std::io::Error::new(std::io::ErrorKind::TimedOut, "server did not send a ping"),
+        };
+
+        let message = format_socket_error("emit", Some("device:heartbeat"), &error);
+
+        assert!(message.contains("operation=emit"));
+        assert!(message.contains("event=device:heartbeat"));
+        assert!(message.contains("detail=OuterError"));
+        assert!(message.contains("server did not send a ping"));
     }
 
     #[tokio::test]
