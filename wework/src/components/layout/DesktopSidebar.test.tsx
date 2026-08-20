@@ -135,6 +135,7 @@ function renderSidebar(
   if (appUpdate) {
     const value: AppUpdateContextValue = {
       updateChannel: 'stable',
+      autoUpdateEnabled: true,
       availableUpdate: null,
       installedReleaseNotes: null,
       status: 'idle',
@@ -144,6 +145,7 @@ function renderSidebar(
       checkNow: vi.fn().mockResolvedValue(null),
       installUpdate: vi.fn().mockResolvedValue(undefined),
       dismissInstalledReleaseNotes: vi.fn(),
+      setAutoUpdateEnabled: vi.fn(),
       setUpdateChannel: vi.fn().mockResolvedValue(undefined),
       ...appUpdate,
     }
@@ -214,19 +216,18 @@ describe('DesktopSidebar', () => {
     vi.unstubAllEnvs()
   })
 
-  test('keeps section header actions out of the flex layout while hidden', () => {
+  test('keeps project and task section header actions visible outside the flex layout', () => {
     renderSidebar()
 
-    const actions = screen.getByTestId('projects-section-toggle-actions')
+    const projectActions = screen.getByTestId('projects-section-toggle-actions')
+    const taskActions = screen.getByTestId('runtime-chat-section-toggle-actions')
 
-    expect(actions).toHaveClass(
-      'absolute',
-      'right-2.5',
-      'z-[70]',
-      'pointer-events-none',
-      'opacity-0'
-    )
+    expect(projectActions).toHaveClass('absolute', 'right-1', 'z-[70]')
+    expect(projectActions).not.toHaveClass('pointer-events-none', 'opacity-0')
+    expect(taskActions).toHaveClass('absolute', 'right-1', 'z-[70]')
+    expect(taskActions).not.toHaveClass('pointer-events-none', 'opacity-0')
     expect(screen.getByTestId('projects-create-button')).toBeInTheDocument()
+    expect(screen.getByTestId('runtime-chat-section-new-chat-button')).toBeInTheDocument()
   })
 
   test('shows a discoverable project creation action when the project list is empty', async () => {

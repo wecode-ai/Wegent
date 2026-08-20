@@ -22,7 +22,7 @@ class LocalDeviceCommandDefinition:
 
 
 GIT_BRANCH_DIFF_SHORTSTAT_COMMAND = (
-    'bash -lc \'base=""; '
+    'bash -c \'base=""; '
     "for candidate in "
     '"$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)" '
     "origin/main main origin/master master; do "
@@ -38,7 +38,7 @@ GIT_BRANCH_DIFF_SHORTSTAT_COMMAND = (
 )
 
 GIT_WORKSPACE_DIFF_COMMAND = (
-    "bash -lc "
+    "bash -c "
     "'if git rev-parse --verify --quiet HEAD >/dev/null; then "
     "git diff --binary HEAD --; "
     "else "
@@ -51,7 +51,7 @@ GIT_WORKSPACE_DIFF_COMMAND = (
 )
 
 GIT_BRANCH_DIFF_COMMAND = (
-    "bash -lc "
+    "bash -c "
     '\'base=""; '
     "for candidate in "
     '"$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)" '

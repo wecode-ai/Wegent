@@ -63,12 +63,12 @@ export function HarnessAppInstallDialog({
             </div>
             <div className="min-w-0">
               <h2 id="harness-app-install-title" className="heading-subsection">
-                {t('workbench.harness_apps_install_title', '安装智能应用')}
+                {t('workbench.harness_apps_install_title', '安装智能工作台')}
               </h2>
               <p className="mt-1 text-sm text-text-secondary">
                 {t(
                   'workbench.harness_apps_install_description',
-                  '检查智能应用信息，并选择它运行时使用的 Wework 模型。'
+                  '检查智能工作台信息，并选择它运行时使用的 Wework 模型。'
                 )}
               </p>
             </div>
@@ -143,7 +143,7 @@ export function HarnessAppInstallDialog({
                 <span className="mt-1 block text-xs leading-5 text-text-muted">
                   {t(
                     'workbench.harness_apps_model_hint',
-                    '智能应用启动后通过 Wework 的模型连接发起请求，不同智能应用可以分别绑定。'
+                    '智能工作台启动后通过 Wework 的模型连接发起请求，不同智能工作台可以分别绑定。'
                   )}
                 </span>
                 <span className="relative mt-2 block">
@@ -182,7 +182,7 @@ export function HarnessAppInstallDialog({
                 <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-red-600" />
                 <div>
                   <h3 className="text-sm font-medium text-red-600">
-                    {t('workbench.harness_apps_invalid_title', '无法安装这个智能应用')}
+                    {t('workbench.harness_apps_invalid_title', '无法安装这个智能工作台')}
                   </h3>
                   <p className="mt-1 text-sm leading-5 text-text-secondary">
                     {preview.issues.join('；')}
