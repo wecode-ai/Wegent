@@ -49,6 +49,11 @@ impl AITableProvider {
         })
     }
 
+    #[cfg(test)]
+    pub(crate) fn set_binary(&mut self, binary: PathBuf) {
+        self.dws_binary = binary;
+    }
+
     pub(crate) async fn auth_status(&self) -> Result<Value, TaskRuntimeError> {
         self.run(&["auth", "status"]).await
     }
@@ -75,6 +80,36 @@ impl AITableProvider {
     pub(crate) async fn auth_logout(&self) -> Result<(), TaskRuntimeError> {
         self.run(&["auth", "logout", "--yes"]).await?;
         Ok(())
+    }
+
+    pub(crate) fn fallback_descriptor(
+        &self,
+        project: &LoopItem,
+        task_id: &str,
+    ) -> Result<Value, TaskRuntimeError> {
+        let config = self.config(project)?;
+        let record_id = record_id_from_task_id(task_id)?;
+        let binary = self.dws_binary.display().to_string();
+        let home = self.dws_home.display().to_string();
+        let config_dir = self.dws_config_dir.display().to_string();
+        Ok(json!({
+            "binary_path": binary,
+            "environment": {
+                "HOME": home,
+                "USERPROFILE": home,
+                "DWS_CONFIG_DIR": config_dir,
+                "DWS_DISABLE_KEYCHAIN": "1",
+            },
+            "base_id": config.base_id,
+            "table_id": config.table_id,
+            "record_id": record_id,
+            "commands": [
+                ["aitable", "record", "query", "--base-id", config.base_id, "--table-id", config.table_id, "--record-ids", record_id, "--format", "json"],
+                ["aitable", "base", "get-primary-doc-id", "--base-id", config.base_id, "--table-id", config.table_id, "--record-id", record_id, "--format", "json"],
+                ["doc", "read", "--node", "<dentryUuid>", "--format", "json"],
+            ],
+            "instruction": "Run only this exact bundled binary with the listed process-scoped environment. Do not change the user's environment and do not invoke bare dws."
+        }))
     }
 
     pub(crate) async fn describe(&self, project: &LoopItem) -> Result<Value, TaskRuntimeError> {
@@ -668,11 +703,57 @@ impl AITableProvider {
         project: &LoopItem,
         task_id: &str,
     ) -> Result<LoopItem, TaskRuntimeError> {
-        self.list_board(project)
-            .await?
-            .into_iter()
-            .find(|item| item.id == task_id)
-            .ok_or(TaskRuntimeError::TaskNotFound)
+        let (config, fields) = self.board_config(project).await?;
+        let record_id = record_id_from_task_id(task_id)?;
+        let mut record = self.get_record(project, record_id).await?;
+        self.enrich_user_cells(&fields, std::slice::from_mut(&mut record))
+            .await;
+        let mut item = board_loop_item(project, &config, &record, 1, &HashMap::new());
+        match self.primary_document(&config, record_id).await {
+            Ok(Some(document)) => {
+                item.metadata["primary_document"] = document;
+            }
+            Ok(None) => {
+                item.metadata["primary_document"] = json!({"available": false});
+            }
+            Err(error) => {
+                item.metadata["primary_document"] = json!({
+                    "available": false,
+                    "error": error.to_string(),
+                });
+            }
+        }
+        Ok(item)
+    }
+
+    async fn primary_document(
+        &self,
+        config: &AITableConfig,
+        record_id: &str,
+    ) -> Result<Option<Value>, TaskRuntimeError> {
+        let response = self
+            .run(&[
+                "aitable",
+                "base",
+                "get-primary-doc-id",
+                "--base-id",
+                &config.base_id,
+                "--table-id",
+                &config.table_id,
+                "--record-id",
+                record_id,
+            ])
+            .await?;
+        let Some(node_id) = find_string(&response, &["dentryUuid", "dentry_uuid", "nodeId", "id"])
+        else {
+            return Ok(None);
+        };
+        let document = self.run(&["doc", "read", "--node", &node_id]).await?;
+        Ok(Some(json!({
+            "available": true,
+            "node_id": node_id,
+            "content": document,
+        })))
     }
 
     pub(crate) async fn create_board(
@@ -936,6 +1017,25 @@ fn string_field(value: &Value, keys: &[&str]) -> Option<String> {
     })
 }
 
+fn find_string(value: &Value, keys: &[&str]) -> Option<String> {
+    if let Some(value) = string_field(value, keys) {
+        return Some(value);
+    }
+    match value {
+        Value::Array(items) => items.iter().find_map(|item| find_string(item, keys)),
+        Value::Object(fields) => fields.values().find_map(|value| find_string(value, keys)),
+        _ => None,
+    }
+}
+
+fn record_id_from_task_id(task_id: &str) -> Result<&str, TaskRuntimeError> {
+    task_id
+        .rsplit(':')
+        .next()
+        .filter(|value| !value.is_empty())
+        .ok_or(TaskRuntimeError::TaskNotFound)
+}
+
 fn normalize_field(field: &Value) -> Value {
     let map = field.as_object().cloned().unwrap_or_default();
     let pick = |keys: &[&str]| {
@@ -1030,26 +1130,25 @@ fn stringify_cell(value: Option<&Value>) -> String {
         Some(Value::Array(items)) => items
             .iter()
             .map(|item| match item {
-                Value::Object(map) => map
-                    .get("name")
-                    .or_else(|| map.get("title"))
-                    .or_else(|| map.get("text"))
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_owned(),
+                Value::Object(map) => object_cell_text(map),
                 other => stringify_cell(Some(other)),
             })
             .filter(|part| !part.is_empty())
             .collect::<Vec<_>>()
             .join(", "),
-        Some(Value::Object(map)) => map
-            .get("name")
-            .or_else(|| map.get("title"))
-            .or_else(|| map.get("text"))
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned(),
+        Some(Value::Object(map)) => object_cell_text(map),
     }
+}
+
+fn object_cell_text(map: &Map<String, Value>) -> String {
+    map.get("name")
+        .or_else(|| map.get("title"))
+        .or_else(|| map.get("text"))
+        // DingTalk rich text cells are returned as {"markdown": "..."}.
+        .or_else(|| map.get("markdown"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned()
 }
 
 const STATUS_OPTIONS: &[(&str, &[&str])] = &[
