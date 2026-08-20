@@ -4,8 +4,6 @@ sidebar_position: 38
 
 # 内置浏览器
 
-架构评审以 [内置浏览器导航与多标签](../../architecture/embedded-browser.md) 为准；本文只保留能力、兼容性和验证说明。
-
 Wework 的内置浏览器用于在桌面工作台右侧面板中展示可交互网页，并让本地运行时通过 WKWebView bridge 控制同一个页面。它不是截图预览，也不会新开外部 Chrome 窗口。
 
 ## 架构
