@@ -236,6 +236,7 @@ export function TemporaryChatPanel({
       })
     return () => {
       cancelled = true
+      abortRuntimeConversationHydration(address, hydrationToken)
     }
   }, [address, lifecycleStore, loadRuntimeTranscriptForPane, sendEphemeral])
 

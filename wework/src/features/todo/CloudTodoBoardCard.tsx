@@ -330,7 +330,7 @@ function RuntimeTaskLiveActivity({
   useLayoutEffect(() => {
     const scrollArea = scrollRef.current
     if (scrollArea) scrollArea.scrollTop = scrollArea.scrollHeight
-  }, [activity.thinking, activity.tools.length, lastTool?.status])
+  }, [activity.thinking, activity.tools.length, lastTool?.status, lastTool?.toolInput])
 
   return (
     <div
