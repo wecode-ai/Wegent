@@ -4,6 +4,7 @@ Wegent is an AI-native operating system for defining, organizing, and running ag
 
 ## Repository map
 
+<!-- prettier-ignore -->
 | Area | Technology | Responsibility |
 | --- | --- | --- |
 | `backend/` | FastAPI, SQLAlchemy, MySQL | REST API and business logic |

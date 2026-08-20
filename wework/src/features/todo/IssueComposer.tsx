@@ -27,6 +27,7 @@ import { WorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { ConnectedIssueProjectWork } from './ConnectedIssueProjectWork'
 import { WorkItemComposerGuide } from './WorkItemComposerGuide'
 import { issueDraftFromText } from './issueComposerDraft'
+import { TaskDescriptionEditor } from './TaskDescriptionEditor'
 
 interface IssueComposerProps {
   projects: CloudProject[]
@@ -621,6 +622,7 @@ export function IssueComposer({
             void createIssue(content, title, continueCreating)
             return
           }
+          if (event.defaultPrevented) return
           if ((presentation !== 'popup' && !fullScreen) || event.key !== 'Tab') return
           const focusable = Array.from(
             panelRef.current?.querySelectorAll<HTMLElement>(
@@ -686,14 +688,19 @@ export function IssueComposer({
             <div
               data-testid="workspace-issue-editor-body"
               className="flex min-h-0 w-full flex-1 flex-col px-6 py-4"
-              onDragOver={event => event.preventDefault()}
-              onDrop={event => {
+              onDragOver={event => {
+                if (event.dataTransfer.types.includes('Files')) event.preventDefault()
+              }}
+              onDropCapture={event => {
+                const files = Array.from(event.dataTransfer.files)
+                if (!files.length) return
                 event.preventDefault()
-                stageFiles(Array.from(event.dataTransfer.files))
+                event.stopPropagation()
+                stageFiles(files)
               }}
             >
               <div className="min-h-0 flex-1 overflow-y-auto">
-                <main className="mx-auto w-full max-w-[860px] pb-12 pt-6">
+                <main className="mx-auto flex min-h-full w-full max-w-[860px] flex-col pb-6 pt-6">
                   <input
                     ref={titleInputRef}
                     autoFocus
@@ -878,24 +885,22 @@ export function IssueComposer({
                     </button>
                   </div>
 
-                  <section className="mt-6 border-t border-border pt-5">
-                    <textarea
-                      data-testid="workspace-issue-description"
-                      aria-label={t('todo.issue_description_label', '描述')}
+                  <section
+                    data-testid="workspace-issue-description-region"
+                    className="mt-6 flex min-h-[360px] flex-1 flex-col border-t border-border pt-5"
+                  >
+                    <TaskDescriptionEditor
                       value={content}
+                      onChange={updateDescription}
+                      onPasteFiles={stageFiles}
                       disabled={busy}
-                      onChange={event => updateDescription(event.target.value)}
-                      onPaste={event => {
-                        const files = Array.from(event.clipboardData.files)
-                        if (!files.length) return
-                        event.preventDefault()
-                        stageFiles(files)
-                      }}
+                      testId="workspace-issue-description"
+                      ariaLabel={t('todo.issue_description_label', '描述')}
                       placeholder={t(
                         'todo.issue_description_placeholder',
                         '补充背景、目标、验收标准或其他上下文…'
                       )}
-                      className="min-h-[240px] w-full resize-none border-0 bg-transparent py-1 text-base font-normal leading-6 text-text-primary outline-none placeholder:text-text-muted/55"
+                      className="issue-description-editor min-h-[280px] flex-1"
                     />
                     <AttachmentBadges
                       attachments={stagedAttachments.map(item => item.attachment)}
@@ -903,7 +908,7 @@ export function IssueComposer({
                       errors={new Map()}
                       onRemoveAttachment={removeAttachment}
                     />
-                    <p className="mt-3 text-xs text-text-muted">
+                    <p className="mt-3 shrink-0 text-xs text-text-muted">
                       {t('todo.issue_markdown_hint', '支持 Markdown，可拖拽或粘贴文件')}
                     </p>
                   </section>

@@ -48,6 +48,7 @@ vi.mock('./AiChatModal', () => ({
     onOpenRuntimeTask,
     onAddressChange,
     onTaskCreated,
+    prepareTask,
     workflowNodeId,
   }: {
     task?: { id: string }
@@ -57,6 +58,10 @@ vi.mock('./AiChatModal', () => ({
     onOpenRuntimeTask?: (address: { deviceId: string; taskId: string }) => void
     onAddressChange?: (address: { deviceId: string; taskId: string }) => void
     onTaskCreated?: (address: { deviceId: string; taskId: string }) => void | Promise<void>
+    prepareTask?: (address: {
+      deviceId: string
+      taskId: string
+    }) => void | Promise<void | (() => void | Promise<void>)>
     workflowNodeId?: string
   }) => (
     <div
@@ -71,8 +76,10 @@ vi.mock('./AiChatModal', () => ({
         data-testid="mock-create-runtime-task"
         onClick={() => {
           const address = { deviceId: 'local-device', taskId: 'runtime-created' }
-          onAddressChange?.(address)
-          void onTaskCreated?.(address)
+          void Promise.resolve(prepareTask?.(address)).then(() => {
+            onAddressChange?.(address)
+            return onTaskCreated?.(address)
+          })
         }}
       >
         创建 Runtime 任务
@@ -254,6 +261,7 @@ function services(overrides: Partial<WorkbenchServices> = {}): WorkbenchServices
       archiveCloudProject: vi.fn(async () => undefined),
       archiveLoopItem: vi.fn(async () => undefined),
       getLoopItem: vi.fn(async () => item),
+      markLoopItemRead: vi.fn(async () => ({ ...item, is_unread: false })),
       updateLoopItem: vi.fn(async (_itemId, values) => ({
         ...item,
         ...values,
@@ -319,6 +327,7 @@ function services(overrides: Partial<WorkbenchServices> = {}): WorkbenchServices
       })),
       removeLoopItemCollaborator: vi.fn(async () => undefined),
       bindTask: vi.fn(async () => undefined),
+      unbindTask: vi.fn(async () => undefined),
       listMyWork: vi.fn(async () => ({ items: [] })),
       listCloudProjectMembers: vi.fn(async () => [
         {
@@ -380,6 +389,23 @@ function services(overrides: Partial<WorkbenchServices> = {}): WorkbenchServices
     },
   } as unknown as WorkbenchServices
   const workbenchServices = { ...baseServices, ...overrides } as WorkbenchServices
+  const deliveryApi = workbenchServices.deliveryApi!
+  deliveryApi.getBoardSnapshot = vi.fn(async projectId => {
+    const [{ items }, members, agents] = await Promise.all([
+      deliveryApi.listLoopItems(projectId),
+      deliveryApi.listCloudProjectMembers(projectId),
+      workbenchServices.projectChatAgentApi?.list(String(projectId)) ?? Promise.resolve([]),
+    ])
+    const bindingResults = await Promise.all(
+      items.map(item => deliveryApi.listTaskBindings(item.id))
+    )
+    return {
+      items,
+      task_bindings: bindingResults.flat(),
+      members,
+      agents,
+    }
+  })
   workbenchServices.projectSpaceDetailServices = {
     local: {
       get deliveryApi() {
@@ -475,6 +501,64 @@ describe('CloudTodoWorkspace', () => {
     expect(workspace).toHaveAttribute('data-embedded', 'true')
     expect(workspace.querySelector('aside')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-collapsed-chrome-controls')).not.toBeInTheDocument()
+  })
+
+  it('loads a cloud board through one snapshot request without split reads', async () => {
+    const workbenchServices = services()
+    const snapshot = vi.fn(async () => ({
+      items: [item],
+      task_bindings: [],
+      members: [],
+      agents: [],
+    }))
+    workbenchServices.deliveryApi!.getBoardSnapshot = snapshot
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    expect(await screen.findByTestId('cloud-todo-card-WEG-1')).toBeInTheDocument()
+
+    expect(snapshot).toHaveBeenCalledOnce()
+    expect(snapshot).toHaveBeenCalledWith(project.id)
+    expect(workbenchServices.deliveryApi!.listLoopItems).not.toHaveBeenCalled()
+    expect(workbenchServices.deliveryApi!.listTaskBindings).not.toHaveBeenCalled()
+    expect(workbenchServices.deliveryApi!.listCloudProjectMembers).not.toHaveBeenCalled()
+  })
+
+  it('marks an unread Issue as read when its detail opens', async () => {
+    const workbenchServices = services()
+    const unreadItem = { ...item, is_unread: true, content_revision: 2 }
+    vi.mocked(workbenchServices.deliveryApi!.listLoopItems).mockResolvedValue({
+      items: [unreadItem],
+    })
+    vi.mocked(workbenchServices.deliveryApi!.markLoopItemRead).mockResolvedValue({
+      ...unreadItem,
+      is_unread: false,
+    })
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    expect(await screen.findByTestId('cloud-todo-card-unread-WEG-1')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('cloud-todo-card-WEG-1'))
+
+    await waitFor(() => {
+      expect(workbenchServices.deliveryApi!.markLoopItemRead).toHaveBeenCalledWith('WEG-1')
+    })
+    expect(screen.queryByTestId('cloud-todo-card-unread-WEG-1')).not.toBeInTheDocument()
   })
 
   it('shows only the current runtime task and hides child-task lists and actions', async () => {
@@ -1006,9 +1090,18 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
 
+    expect(screen.getByTestId('cloud-todo-panel-stack')).toHaveAttribute(
+      'data-conversation-open',
+      'false'
+    )
     await userEvent.click(await screen.findByTestId('cloud-todo-open-task-conversation-1'))
 
     expect(screen.getByTestId('cloud-todo-detail')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-panel-stack')).toHaveAttribute(
+      'data-conversation-open',
+      'true'
+    )
+    expect(screen.getByTestId('cloud-todo-panel-stack')).toHaveClass('has-conversation')
     expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute('data-task-id', 'WEG-1')
     expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute(
       'data-runtime-task-id',
@@ -1064,11 +1157,7 @@ describe('CloudTodoWorkspace', () => {
 
     expect(await screen.findByTestId('cloud-todo-detail')).toBeInTheDocument()
     const tasks = await screen.findByTestId('cloud-todo-tasks')
-    expect(screen.getByTestId('cloud-todo-task-list')).toHaveClass(
-      'max-h-[280px]',
-      'overflow-y-auto',
-      'overscroll-contain'
-    )
+    expect(screen.getByTestId('cloud-todo-task-list')).toHaveClass('task-detail-flat-task-list')
     expect(tasks).toHaveTextContent('任务')
     expect(tasks).toHaveTextContent('开发修改')
     expect(tasks).toHaveTextContent('测试修改')
@@ -1105,7 +1194,7 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.queryByTestId('cloud-todo-detail')).not.toBeInTheDocument()
   })
 
-  it('closes the work-item drawer when the user clicks outside it', async () => {
+  it('dismisses the floating panel stack one level at a time from the backdrop', async () => {
     render(
       <CloudTodoWorkspace
         user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
@@ -1121,7 +1210,26 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByTestId('cloud-todo-detail').parentElement).toHaveClass(
       'task-detail-workspace-panel-shell'
     )
-    expect(screen.getByTestId('cloud-todo-detail-dismiss-layer')).toHaveClass('bottom-3')
+    expect(screen.getByTestId('cloud-todo-detail')).toHaveClass('todo-floating-panel-surface')
+    expect(screen.getByTestId('cloud-todo-detail-dismiss-layer')).toHaveClass('todo-panel-backdrop')
+
+    await userEvent.click(await screen.findByTestId('cloud-todo-open-task-conversation-1'))
+    expect(screen.getByTestId('ai-chat-modal')).toBeInTheDocument()
+
+    await userEvent.keyboard('{Escape}')
+
+    expect(screen.queryByTestId('ai-chat-modal')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-detail')).toBeInTheDocument()
+
+    await userEvent.click(await screen.findByTestId('cloud-todo-open-task-conversation-1'))
+    await userEvent.click(screen.getByTestId('cloud-todo-detail-dismiss-layer'))
+
+    expect(screen.queryByTestId('ai-chat-modal')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-detail')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-panel-stack')).toHaveAttribute(
+      'data-conversation-open',
+      'false'
+    )
 
     await userEvent.click(screen.getByTestId('cloud-todo-detail-dismiss-layer'))
 
@@ -1746,13 +1854,8 @@ describe('CloudTodoWorkspace', () => {
         file
       )
     )
-    expect((await screen.findAllByText('brief.txt')).length).toBeGreaterThan(0)
-
-    await userEvent.click(screen.getByTestId('cloud-todo-attachment-download-attachment-1'))
-    expect(workbenchServices.deliveryApi?.downloadLoopItemAttachment).toHaveBeenCalledWith(
-      'attachment-1',
-      'brief.txt'
-    )
+    expect(screen.queryByText('brief.txt')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-attachment-footer')).toHaveTextContent('附件1＋ 上传')
   })
 
   it('collapses and restores the sidebar chrome', async () => {
@@ -2681,7 +2784,27 @@ describe('CloudTodoWorkspace', () => {
       items: [manualIssue],
     }))
     workbenchServices.deliveryApi!.getLoopItem = vi.fn(async () => manualIssue)
-    workbenchServices.deliveryApi!.listTaskBindings = vi.fn(async () => [])
+    let taskBound = false
+    workbenchServices.deliveryApi!.listTaskBindings = vi.fn(async () =>
+      taskBound
+        ? [
+            {
+              id: 41,
+              loop_item_id: manualIssue.id,
+              task_user_id: 1,
+              device_id: 'local-device',
+              task_id: 'runtime-created',
+              task_title: manualIssue.title,
+              backend_task_id: null,
+              workflow_node_id: 'backend',
+              linked_at: '2026-08-19T14:46:27Z',
+            },
+          ]
+        : []
+    )
+    workbenchServices.deliveryApi!.bindTask = vi.fn(async () => {
+      taskBound = true
+    })
 
     render(
       <CloudTodoWorkspace
@@ -2706,6 +2829,12 @@ describe('CloudTodoWorkspace', () => {
         'Implement cloud MCP',
         'backend'
       )
+    )
+    expect(await screen.findByTestId('cloud-todo-open-workflow-task-backend-41')).toHaveTextContent(
+      'Implement cloud MCP'
+    )
+    expect(screen.getByTestId('cloud-todo-open-workflow-task-backend-41')).toHaveTextContent(
+      'local-device · 等待执行'
     )
     expect(workbenchServices.deliveryApi!.updateLoopItem).not.toHaveBeenCalled()
   })

@@ -23,6 +23,7 @@ import {
   removeRuntimeConversationTurn,
   subscribeRuntimeConversation,
 } from '@/features/workbench/runtimeConversationCache'
+import { resolveTemporaryChatActiveModel } from '@/features/workbench/temporaryChatModelContext'
 import {
   useRuntimeTaskLifecycle,
   useRuntimeTaskLifecycleStore,
@@ -131,9 +132,16 @@ export function TemporaryChatPanel({
     deleteAttachment: services.attachmentApi?.deleteAttachment,
     scopeKey: instanceId,
   })
+  const [address, setAddress] = useState<RuntimeTaskAddress | null>(initialAddress)
+  const activeModel = useMemo(
+    () => resolveTemporaryChatActiveModel(projectChat.models, state.runtimeWork, address),
+    [address, projectChat.models, state.runtimeWork]
+  )
   const sideChatProjectChat = useMemo(
     () => ({
       ...projectChat,
+      activeModel,
+      hasConversationContext: Boolean(address),
       attachments: attachmentSelection.attachments,
       uploadingFiles: attachmentSelection.uploadingFiles,
       errors: attachmentSelection.errors,
@@ -143,9 +151,8 @@ export function TemporaryChatPanel({
       removeAttachment: attachmentSelection.removeAttachment,
       resetAttachments: attachmentSelection.resetAttachments,
     }),
-    [attachmentSelection, projectChat]
+    [activeModel, address, attachmentSelection, projectChat]
   )
-  const [address, setAddress] = useState<RuntimeTaskAddress | null>(initialAddress)
   const [messages, setMessages] = useState<WorkbenchMessage[]>(() =>
     initialAddress ? getRuntimeConversationMessages(initialAddress) : []
   )

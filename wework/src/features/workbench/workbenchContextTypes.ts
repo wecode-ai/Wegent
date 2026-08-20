@@ -103,6 +103,9 @@ export interface SendCurrentInputOptions {
     address: RuntimeTaskAddress,
     context?: { previousAddress?: RuntimeTaskAddress }
   ) => void | Promise<void>
+  prepareRuntimeTask?: (
+    address: RuntimeTaskAddress
+  ) => void | (() => void | Promise<void>) | Promise<void | (() => void | Promise<void>)>
   additionalContext?: RuntimeAdditionalContext
   cloudProjectId?: string
 }
@@ -153,6 +156,7 @@ export interface CreateProjectRuntimeTaskOptions {
   deviceId?: string | null
   additionalContext?: RuntimeAdditionalContext
   onError?: (error: string) => void
+  prepareRuntimeTask?: SendCurrentInputOptions['prepareRuntimeTask']
   onRuntimeTaskOptimisticOpen?: SendCurrentInputOptions['onRuntimeTaskOptimisticOpen']
 }
 

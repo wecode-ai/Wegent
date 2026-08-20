@@ -5,6 +5,7 @@
 
 import hashlib
 import json
+import logging
 from datetime import timezone
 from typing import Any
 
@@ -16,9 +17,11 @@ from app.models.cloud_project import LoopItemTaskBinding
 from app.models.delivery import Delivery, LoopItem, loop_datetime_is_unset
 from app.models.project_chat_message import ProjectChatMessage
 from app.services.delivery.service import delivery_service
+from app.services.delivery.storage import DeliveryObjectNotFoundError
 from app.services.workflow_deliverables import delivery_fulfillments
 
 DEFAULT_DEPENDENCY_CONTEXT = ["final_result", "deliveries"]
+logger = logging.getLogger(__name__)
 
 
 def workflow_stage_task_instruction(stage_input: dict[str, Any]) -> str:
@@ -257,26 +260,40 @@ class WorkflowStageContextResolver:
             .order_by(Delivery.delivered_at.asc())
             .all()
         )
-        return [
-            {
-                "id": row.id,
-                "markdown": delivery_service.read_markdown(row),
-                "delivered_at": _iso(row.delivered_at),
-                "fulfillments": delivery_fulfillments(row),
-                "assets": [
-                    {
-                        "id": asset.id,
-                        "display_name": asset.display_name,
-                        "relative_path": asset.relative_path,
-                        "content_type": asset.content_type or None,
-                        "size_bytes": int(asset.size_bytes or 0),
-                        "sha256": asset.sha256,
-                    }
-                    for asset in delivery_service.list_assets(db, row.id)
-                ],
-            }
-            for row in rows
-        ]
+        deliveries = []
+        for row in rows:
+            content_available = True
+            try:
+                markdown = delivery_service.read_markdown(row)
+            except DeliveryObjectNotFoundError:
+                content_available = False
+                markdown = ""
+                logger.warning(
+                    "Workflow dependency delivery content is missing: delivery_id=%s object_key=%s",
+                    row.id,
+                    row.markdown_object_key,
+                )
+            deliveries.append(
+                {
+                    "id": row.id,
+                    "markdown": markdown,
+                    "content_available": content_available,
+                    "delivered_at": _iso(row.delivered_at),
+                    "fulfillments": delivery_fulfillments(row),
+                    "assets": [
+                        {
+                            "id": asset.id,
+                            "display_name": asset.display_name,
+                            "relative_path": asset.relative_path,
+                            "content_type": asset.content_type or None,
+                            "size_bytes": int(asset.size_bytes or 0),
+                            "sha256": asset.sha256,
+                        }
+                        for asset in delivery_service.list_assets(db, row.id)
+                    ],
+                }
+            )
+        return deliveries
 
     @staticmethod
     def _activity(messages: list[ProjectChatMessage]) -> list[dict[str, Any]]:

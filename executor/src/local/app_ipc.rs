@@ -2043,18 +2043,18 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
             None,
         )),
         "git_diff" => Some(command_definition(
-            "bash -lc <git_workspace_diff>",
-            &["bash", "-lc", GIT_WORKSPACE_DIFF_SCRIPT],
+            "bash -c <git_workspace_diff>",
+            &["bash", "-c", GIT_WORKSPACE_DIFF_SCRIPT],
             None,
         )),
         "git_branch_diff" => Some(command_definition(
-            "bash -lc <git_branch_diff>",
-            &["bash", "-lc", GIT_BRANCH_DIFF_SCRIPT],
+            "bash -c <git_branch_diff>",
+            &["bash", "-c", GIT_BRANCH_DIFF_SCRIPT],
             None,
         )),
         "git_branch_diff_shortstat" => Some(command_definition(
-            "bash -lc <git_branch_diff_shortstat>",
-            &["bash", "-lc", GIT_BRANCH_DIFF_SHORTSTAT_SCRIPT],
+            "bash -c <git_branch_diff_shortstat>",
+            &["bash", "-c", GIT_BRANCH_DIFF_SHORTSTAT_SCRIPT],
             None,
         )),
         "git_diff_unstaged" => Some(command_definition(
@@ -2430,4 +2430,20 @@ where
     bytes.push(b'\n');
     writer.write_all(&bytes).await?;
     writer.flush().await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::local_app_command;
+
+    #[test]
+    fn git_diff_commands_do_not_start_a_login_shell() {
+        for command_key in ["git_diff", "git_branch_diff", "git_branch_diff_shortstat"] {
+            let command = local_app_command(command_key).expect("command must be registered");
+
+            assert_eq!(command.argv.first(), Some(&"bash"));
+            assert_eq!(command.argv.get(1), Some(&"-c"));
+            assert!(!command.argv.contains(&"-l"));
+        }
+    }
 }

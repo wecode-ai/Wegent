@@ -815,6 +815,7 @@ export function useWorkbenchRuntimeMessaging({
         | 'initialSupervisor'
         | 'onError'
         | 'onRuntimeTaskOptimisticOpen'
+        | 'prepareRuntimeTask'
         | 'additionalContext'
         | 'runtime'
         | 'runtimeExecutablePath'
@@ -1186,6 +1187,14 @@ export function useWorkbenchRuntimeMessaging({
       const runtimeProject = projectId
         ? (state.projects.find(project => project.id === projectId) ?? state.currentProject)
         : null
+      let rollbackPreparedRuntimeTask: (() => void | Promise<void>) | void
+      try {
+        rollbackPreparedRuntimeTask = await options?.prepareRuntimeTask?.(optimisticAddress)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '任务绑定失败'
+        reportError(message, options)
+        return false
+      }
 
       debugRuntimeCreateFlow('create-optimistic-open', {
         taskId,
@@ -1414,6 +1423,16 @@ export function useWorkbenchRuntimeMessaging({
           error: runtimeLaunchErrorName(error),
         })
         const message = error instanceof Error ? error.message : '发送失败'
+        if (rollbackPreparedRuntimeTask) {
+          try {
+            await rollbackPreparedRuntimeTask()
+          } catch (rollbackError) {
+            console.error('[Wework] Failed to roll back prepared Runtime task context', {
+              address: runtimeAddressLog(optimisticAddress),
+              error: rollbackError,
+            })
+          }
+        }
         lifecycleStore.sendRejected(optimisticAddress)
         if (optimisticWorkspace && optimisticWorkspacePath && !options?.ephemeral) {
           dispatch({
@@ -1817,6 +1836,7 @@ export function useWorkbenchRuntimeMessaging({
         modelSelection: explicitModelSelection,
         additionalContext: options.additionalContext,
         onError: options.onError,
+        prepareRuntimeTask: options.prepareRuntimeTask,
         onRuntimeTaskOptimisticOpen: options.onRuntimeTaskOptimisticOpen,
         openInMainPane: false,
       })

@@ -671,10 +671,14 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     assert git_diff_shortstat_definition.command == "git diff --shortstat"
     assert git_diff_shortstat_definition.post_processor is None
     assert git_diff_definition is not None
+    assert git_diff_definition.command.startswith("bash -c ")
+    assert not git_diff_definition.command.startswith("bash -lc ")
     assert "git diff --binary HEAD --" in git_diff_definition.command
     assert "git ls-files --others --exclude-standard" in git_diff_definition.command
     assert git_diff_definition.post_processor is None
     assert git_branch_diff_definition is not None
+    assert git_branch_diff_definition.command.startswith("bash -c ")
+    assert not git_branch_diff_definition.command.startswith("bash -lc ")
     assert "git merge-base" in git_branch_diff_definition.command
     assert "git diff --binary" in git_branch_diff_definition.command
     assert (
@@ -682,6 +686,8 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     )
     assert git_branch_diff_definition.post_processor is None
     assert git_branch_diff_shortstat_definition is not None
+    assert git_branch_diff_shortstat_definition.command.startswith("bash -c ")
+    assert not git_branch_diff_shortstat_definition.command.startswith("bash -lc ")
     assert "git merge-base" in git_branch_diff_shortstat_definition.command
     assert "git diff --shortstat" in git_branch_diff_shortstat_definition.command
     assert (

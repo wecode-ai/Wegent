@@ -52,6 +52,7 @@ const virtualMeasurementsByConversation = new Map<string, VirtualItem[]>()
 export interface ConversationScrollSnapshot {
   distanceFromBottomPx: number
   pinnedToBottom: boolean
+  scrollTopPx?: number
 }
 
 export interface RuntimeConversationMetadata {

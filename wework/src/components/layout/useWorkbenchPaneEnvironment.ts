@@ -391,12 +391,8 @@ export function useWorkbenchPaneEnvironment({
           workspaceProject: latestWorkspaceProject,
           activeWorkspaceTarget: latestActiveWorkspaceTarget,
         } = environmentContextRef.current
-        const info = force
-          ? await loadEnvironmentInfo(latestWorkspaceProject, latestActiveWorkspaceTarget, {
-              force: true,
-            })
-          : await loadEnvironmentInfo(latestWorkspaceProject, latestActiveWorkspaceTarget)
-        if (environmentInfoRequestSequence.current === requestId) {
+        const applyEnvironmentInfo = (info: EnvironmentInfo, loading: boolean) => {
+          if (environmentInfoRequestSequence.current !== requestId) return
           const actualDevice = findWorkbenchDevice(
             devicesRef.current,
             latestActiveWorkspaceTarget?.deviceId ?? info.deviceId
@@ -411,9 +407,18 @@ export function useWorkbenchPaneEnvironment({
                   ? 'remote'
                   : 'local'
               : info.executionTarget,
-            loading: false,
+            loading,
           })
         }
+        const info = await loadEnvironmentInfo(
+          latestWorkspaceProject,
+          latestActiveWorkspaceTarget,
+          {
+            ...(force ? { force: true } : {}),
+            onPartialInfo: partialInfo => applyEnvironmentInfo(partialInfo, true),
+          }
+        )
+        applyEnvironmentInfo(info, false)
       } catch (error) {
         if (environmentInfoRequestSequence.current === requestId) {
           setEnvironmentInfo(info => ({
