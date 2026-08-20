@@ -15,7 +15,10 @@ import {
   isRuntimeTaskBusyError,
 } from '@/features/workbench/runtimePaneStatus'
 import {
+  abortRuntimeConversationHydration,
   applyRuntimeConversationAction,
+  beginRuntimeConversationHydration,
+  completeRuntimeConversationHydration,
   getRuntimeConversationMessages,
   removeRuntimeConversationTurn,
   subscribeRuntimeConversation,
@@ -196,8 +199,10 @@ export function TemporaryChatPanel({
     if (!address) return
     const syncMessages = () => {
       const nextMessages = getRuntimeConversationMessages(address)
-      setMessages(nextMessages)
-      if (nextMessages.length > 0) setError(null)
+      if (nextMessages.length > 0) {
+        setMessages(nextMessages)
+        setError(null)
+      }
     }
     return subscribeRuntimeConversation(address, syncMessages)
   }, [address])
@@ -206,15 +211,25 @@ export function TemporaryChatPanel({
     if (!address || sendEphemeral) return
     if (createdAddressKeyRef.current === `${address.deviceId}:${address.taskId}`) return
     let cancelled = false
+    const hydrationToken = beginRuntimeConversationHydration(address)
     void loadRuntimeTranscriptForPane(address)
       .then(transcript => {
-        if (cancelled) return
+        if (cancelled) {
+          abortRuntimeConversationHydration(address, hydrationToken)
+          return
+        }
         lifecycleStore.syncTranscript(address, transcript, {
           preserveActiveTurn: lifecycleStore.getTask(address)?.derived.isRunning ?? false,
         })
-        if (transcript.messages.length > 0) setMessages(transcript.messages)
+        const nextMessages = completeRuntimeConversationHydration(
+          address,
+          hydrationToken,
+          transcript.turns
+        )
+        if (nextMessages.length > 0) setMessages(nextMessages)
       })
       .catch(caughtError => {
+        abortRuntimeConversationHydration(address, hydrationToken)
         if (!cancelled && getRuntimeConversationMessages(address).length === 0) {
           setError(caughtError instanceof Error ? caughtError.message : '加载临时聊天失败')
         }
@@ -227,6 +242,7 @@ export function TemporaryChatPanel({
   const loadFullTranscript = useCallback(async () => {
     if (!address || loadingFullTranscript) return
     setLoadingFullTranscript(true)
+    const hydrationToken = beginRuntimeConversationHydration(address)
     try {
       const transcript = await loadRuntimeTranscriptForPane(address, {
         includeFullContent: true,
@@ -235,10 +251,16 @@ export function TemporaryChatPanel({
       lifecycleStore.syncTranscript(address, transcript, {
         preserveActiveTurn: lifecycleStore.getTask(address)?.derived.isRunning ?? false,
       })
-      if (transcript.messages.length > 0) {
-        setMessages(transcript.messages)
+      const nextMessages = completeRuntimeConversationHydration(
+        address,
+        hydrationToken,
+        transcript.turns
+      )
+      if (nextMessages.length > 0) {
+        setMessages(nextMessages)
       }
     } catch (caughtError) {
+      abortRuntimeConversationHydration(address, hydrationToken)
       setError(caughtError instanceof Error ? caughtError.message : '加载完整输出失败')
     } finally {
       setLoadingFullTranscript(false)

@@ -13,6 +13,7 @@ import {
   getConversationScrollSnapshot,
   getConversationVirtualMeasurements,
   getRuntimeConversationCacheStats,
+  getRuntimeConversationLiveActivitySnapshot,
   getRuntimeConversationMetadata,
   getRuntimeConversationMessages,
   getRuntimeConversationQueuedMessages,
@@ -55,6 +56,16 @@ describe('runtimeConversationCache', () => {
     })
 
     expect(getRuntimeConversationMessages(address)).toHaveLength(1)
+  })
+
+  test('does not project an empty live-activity row before thinking or tools arrive', () => {
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_started',
+      taskId: address.taskId,
+      subtaskId: 'turn-1',
+    })
+
+    expect(getRuntimeConversationLiveActivitySnapshot(address)).toBe('')
   })
 
   test('notifies conversation subscribers when the follow-up queue pause changes', () => {

@@ -41,6 +41,9 @@ flowchart LR
     TASK_COMPOSER -->|首条消息| BINDING
     BINDING -->|打开已有任务| SIDEBAR[右侧任务会话]
     BINDING --> TASK[(Wework Runtime Task)]
+    TASK --> CONVERSATION_CACHE[共享 Runtime 会话缓存]
+    BINDING --> BOARD_ACTIVITY[看板卡片单行实时活动]
+    CONVERSATION_CACHE --> BOARD_ACTIVITY
     TASK_COMPOSER --> CONTEXT[结构化 Issue 来源<br/>space_id + item_id]
     SIDEBAR --> CONTEXT
     CONTEXT --> TASK
@@ -78,6 +81,8 @@ sequenceDiagram
     participant B as Task Binding
     participant E as Execution 服务
     participant R as Runtime scheduler
+    participant Q as Runtime 会话缓存
+    participant K as 看板卡片
     participant M as project-space capability
     participant V as Delivery 服务
     participant H as 人工验收服务
@@ -128,6 +133,8 @@ sequenceDiagram
     B->>R: 每轮携带结构化 space_id 与 item_id
     R->>M: 以 ContextGrant 启用稳定 capability
     M-->>R: 返回 Issue 描述、附件与其他当前上下文
+    R-->>Q: 按 device_id:task_id 写入流式 thinking
+    Q-->>K: 绑定任务运行中时滚动投影工具与最新 thinking
     R-->>D: 流式进度、终态与交付附件
     B-->>O: Runtime Task 状态变化
     E-->>O: execution 状态变化
@@ -145,24 +152,25 @@ sequenceDiagram
     O->>I: 聚合全部必要阶段与自由任务状态
 ```
 
-| 边                                   | 代码归属                                                                  |
-| ------------------------------------ | ------------------------------------------------------------------------- |
-| Issue Composer → Issue、草稿与附件   | Wework `IssueComposer`、ProjectSpace API；同一草稿在紧凑与全屏视图间共享  |
-| 阶段 DAG 编辑与前后插入              | Wework `ProjectWorkflowEditor`                                            |
-| 编排显式保存与重新进入回填           | Wework `ProjectAutomationView`、`ProjectWorkflowEditor`、ProjectSpace API |
-| 项目编排定义与 Issue 快照            | Backend workflow schema/service；Wework 自动化页 DAG UI                   |
-| 依赖边 → 后继阶段上下文              | Workflow node dependency context；Composer / automation instruction       |
-| 用户管理 / AI 调度 → 具体任务        | 标准 Wework Composer、AI manager、`LoopItemTaskBinding`                   |
-| Issue 新建任务 / 已有任务 → 右侧会话 | `CloudTodoWorkspace`、`TodoEditor`、`AiChatModal`                         |
-| Runtime Task 绑定 → 阶段状态同步     | `projectSpaceSelection`、`WorkbenchProvider`、ProjectSpace API            |
-| 阶段任务状态历史与最近终态聚合       | Wework `issueWorkflow`、`IssueWorkflowDag`、Issue workflow snapshot       |
-| 节点交付物 → 人工验收与推进          | Delivery API、workflow decision service、`IssueWorkflowDag`               |
-| Issue 看板入口 → 手动任务或编排      | `CloudTodoWorkspace`、`workItemTaskInput`、Issue workflow snapshot        |
-| Issue 会话 → 项目空间当前上下文      | Runtime metadata、ContextGrant、内置 `wework-space` Plugin、Local Gateway |
-| 阶段 → 自动化执行                    | `project_automation_execution.py`、`loop_item_executions/service.py`      |
-| 工作空间与后继任务继承               | Runtime Task summary、Wework project work controls                        |
-| DAG 就绪判断、阶段与 Issue 状态聚合  | Backend workflow service；本地 ProjectSpace 服务；Wework 实时投影         |
-| 执行真值 → Issue 动态                | Project chat stream、Task activity cards、Delivery/attachment projection  |
+| 边                                          | 代码归属                                                                  |
+| ------------------------------------------- | ------------------------------------------------------------------------- |
+| Issue Composer → Issue、草稿与附件          | Wework `IssueComposer`、ProjectSpace API；同一草稿在紧凑与全屏视图间共享  |
+| 阶段 DAG 编辑与前后插入                     | Wework `ProjectWorkflowEditor`                                            |
+| 编排显式保存与重新进入回填                  | Wework `ProjectAutomationView`、`ProjectWorkflowEditor`、ProjectSpace API |
+| 项目编排定义与 Issue 快照                   | Backend workflow schema/service；Wework 自动化页 DAG UI                   |
+| 依赖边 → 后继阶段上下文                     | Workflow node dependency context；Composer / automation instruction       |
+| 用户管理 / AI 调度 → 具体任务               | 标准 Wework Composer、AI manager、`LoopItemTaskBinding`                   |
+| Issue 新建任务 / 已有任务 → 右侧会话        | `CloudTodoWorkspace`、`TodoEditor`、`AiChatModal`                         |
+| Runtime Task 绑定 → 阶段状态同步            | `projectSpaceSelection`、`WorkbenchProvider`、ProjectSpace API            |
+| Runtime Task 绑定 + 会话缓存 → 看板实时活动 | `CloudTodoWorkspace`、`CloudTodoBoardCard`、`runtimeConversationCache`    |
+| 阶段任务状态历史与最近终态聚合              | Wework `issueWorkflow`、`IssueWorkflowDag`、Issue workflow snapshot       |
+| 节点交付物 → 人工验收与推进                 | Delivery API、workflow decision service、`IssueWorkflowDag`               |
+| Issue 看板入口 → 手动任务或编排             | `CloudTodoWorkspace`、`workItemTaskInput`、Issue workflow snapshot        |
+| Issue 会话 → 项目空间当前上下文             | Runtime metadata、ContextGrant、内置 `wework-space` Plugin、Local Gateway |
+| 阶段 → 自动化执行                           | `project_automation_execution.py`、`loop_item_executions/service.py`      |
+| 工作空间与后继任务继承                      | Runtime Task summary、Wework project work controls                        |
+| DAG 就绪判断、阶段与 Issue 状态聚合         | Backend workflow service；本地 ProjectSpace 服务；Wework 实时投影         |
+| 执行真值 → Issue 动态                       | Project chat stream、Task activity cards、Delivery/attachment projection  |
 
 不变量：
 
@@ -187,6 +195,9 @@ sequenceDiagram
 - 节点可声明零个或多个带稳定 ID 和值类型的必要交付物。任务 Composer 和 Issue 详情必须明示这些要求及履约方法；提交的 Delivery 必须通过来源 TaskBinding 归属到唯一 `workflow_node_id`，并逐项绑定 `requirement_id`。未满足必要交付物时不得批准，但允许具有权限的用户填写原因后强制推进；完整生命周期见 [工作流阶段交付与依赖上下文](workflow-stage-deliverables.md)。
 - 绑定 Issue 阶段的 Agent 必须能通过统一 `wework-space` MCP 完成与用户相同的 Delivery 创建、附件上传与下载、读取、提交和草稿丢弃；写操作必须从 ContextGrant 的 Runtime 地址解析来源 TaskBinding，不得接受模型指定的阶段归属。
 - 每个阶段任务的 Runtime 状态必须按稳定的 `device_id:task_id` 写入 `task_statuses`，Issue 详情必须逐条展示，不得只展示阶段汇总状态。
+- 看板卡片只能用 `LoopItemTaskBinding` 的稳定 `device_id:task_id` 订阅共享 Runtime 会话缓存。任务会话侧栏加载 transcript 时必须合并回同一缓存，空缓存通知或空快照不得清除侧栏已经展示的活动。选择绑定时优先采用 Runtime 已报告运行的任务；当 Issue 执行状态已生效但运行列表尚未同步时，仍须订阅当前绑定，并仅在缓存中确有流式 assistant 时展示实时活动。工具调用和 thinking 共用固定一行、统一字号的状态窗口；窗口通过缩进引导线归属于任务行，隐藏滚动条但保留滚动能力，并在更新时跟随最新状态，不能让卡片随历史活动增高。工具执行期间当前工具必须成为最新可见项，不能被旧 thinking 固定遮住；工具结束并产生后续 thinking 后再展示 thinking。任务活动区域必须打开对应绑定任务，不能退化成只打开 Issue；侧栏外部关闭层不得覆盖看板原生滚动条。该内容是瞬态只读投影，不得复制进 `LoopItem`、`LoopItemExecution` 或阶段状态，也不得反向驱动任何状态迁移。
+- 看板状态变更自动启动任务时，会话面板可以在隐藏状态下维持创建与流式订阅，但不得自动打开 Issue 详情或任务侧边栏；只有用户主动点击任务活动区域时才展示对应任务。
+- 从收集箱移动到待开始时，先打开“发送任务”界面让用户确认任务内容，确认前不提交状态变更。用户发送后，会话转入后台继续创建和执行，任务会话侧边栏自动收起。
 - 阶段存在任一运行中任务时状态为 `running`；否则由最近绑定任务的可信终态决定当前阶段结果。后续成功必须覆盖旧失败对阶段汇总状态的影响，但旧任务失败状态仍保留在任务历史中。Issue 详情展示和人工决策校验必须从任务真值重算阶段，不得信任可能滞后的阶段快照。人工阶段成功后只能进入 `awaiting_approval`，不能自动完成。
 - 只有用户批准或带原因强制推进后，后继节点才可解锁；驳回必须保留任务、交付物和历史决定，不得回滚或覆盖审计记录。
 - 节点决定必须记录 action、actor user id、reason 和 timestamp。强制推进必须填写非空原因；普通批准可选备注；驳回必须填写原因。
