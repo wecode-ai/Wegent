@@ -20,14 +20,19 @@ export function KnowledgeBaseRetrievalProfileSection() {
   const [profile, setProfile] = useState<RetrievalConfigDraft>(createDefaultRetrievalProfile)
   const [health, setHealth] = useState<'missing' | 'valid' | 'invalid'>('missing')
   const [fallbackReason, setFallbackReason] = useState<string | null>(null)
+  const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading')
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
-    void adminApis.getKnowledgeBaseRetrievalProfile().then(response => {
-      if (response.retrieval_config) setProfile(response.retrieval_config)
-      setHealth(response.health.status)
-      setFallbackReason(response.health.fallback_reason)
-    })
+    void adminApis
+      .getKnowledgeBaseRetrievalProfile()
+      .then(response => {
+        if (response.retrieval_config) setProfile(response.retrieval_config)
+        setHealth(response.health.status)
+        setFallbackReason(response.health.fallback_reason)
+        setLoadState('ready')
+      })
+      .catch(() => setLoadState('error'))
   }, [])
 
   const save = async () => {
@@ -36,9 +41,12 @@ export function KnowledgeBaseRetrievalProfileSection() {
       const response = await adminApis.updateKnowledgeBaseRetrievalProfile(profile)
       setHealth(response.health.status)
       setFallbackReason(response.health.fallback_reason)
-      toast({ title: t('system_config.code_wiki_profile_saved') })
+      toast({ title: t('system_config.knowledge_base_profile_saved') })
     } catch {
-      toast({ title: t('system_config.code_wiki_profile_save_failed'), variant: 'destructive' })
+      toast({
+        title: t('system_config.knowledge_base_profile_save_failed'),
+        variant: 'destructive',
+      })
     } finally {
       setSaving(false)
     }
@@ -46,15 +54,21 @@ export function KnowledgeBaseRetrievalProfileSection() {
 
   return (
     <CollapsibleSection
-      title={t('system_config.code_wiki_profile_title')}
+      title={t('system_config.knowledge_base_profile_title')}
       defaultOpen={false}
       className="mb-0"
-      triggerTestId="code-wiki-retrieval-profile-toggle"
+      triggerTestId="knowledge-base-retrieval-profile-toggle"
     >
-      <p className="text-sm text-text-muted">{t('system_config.code_wiki_profile_description')}</p>
+      <p className="text-sm text-text-muted">
+        {t('system_config.knowledge_base_profile_description')}
+      </p>
       <RetrievalSettingsSection config={profile} onChange={setProfile} scope="all" publicOnly />
       <p className={health === 'valid' ? 'text-sm text-success' : 'text-sm text-warning'}>
-        {t(`system_config.code_wiki_profile_health_${health}`)}
+        {t(
+          loadState === 'error'
+            ? 'system_config.knowledge_base_profile_load_failed'
+            : `system_config.knowledge_base_profile_health_${health}`
+        )}
         {fallbackReason ? ` ${t(`system_config.retrieval_profile_reason_${fallbackReason}`)}` : ''}
       </p>
       <Button
@@ -62,8 +76,8 @@ export function KnowledgeBaseRetrievalProfileSection() {
         variant="primary"
         className="h-11"
         onClick={save}
-        disabled={saving}
-        data-testid="save-code-wiki-retrieval-profile"
+        disabled={saving || loadState !== 'ready'}
+        data-testid="save-knowledge-base-retrieval-profile"
       >
         {t('common:actions.save')}
       </Button>

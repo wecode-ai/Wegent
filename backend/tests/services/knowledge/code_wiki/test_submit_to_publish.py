@@ -350,7 +350,7 @@ def _conclude(
     )
 
 
-BROKEN_DIAGRAM = "```mermaid\nflowchat TD\n  A --> B\n```"
+BROKEN_DIAGRAM = "```mermaid\nflowchart TD\n  subgraph RPC[RPC]\n    RPC[Request processor]\n  end\n```"
 
 
 def test_a_broken_diagram_is_reported_back_to_the_agent(
@@ -372,7 +372,7 @@ def test_a_broken_diagram_is_reported_back_to_the_agent(
 
     assert response["published"] is False
     assert "index" in response["corrections"]
-    assert "flowchat" in response["corrections"]
+    assert "RPC" in response["corrections"]
     assert generation.ext[PUBLISH_GATE_EXT_KEY]["correctionPending"] is False
 
 

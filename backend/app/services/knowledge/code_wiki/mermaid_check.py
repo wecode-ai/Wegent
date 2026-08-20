@@ -183,8 +183,11 @@ def _flowchart_id_collision(body: Sequence[str]) -> str:
     for line in body:
         if FLOWCHART_SUBGRAPH.match(line):
             continue
-        node_ids = {match.group(1) for match in FLOWCHART_LABELED_NODE.finditer(line)}
-        standalone = FLOWCHART_STANDALONE_NODE.match(line)
+        declaration = _flowchart_declaration_text(line)
+        node_ids = {
+            match.group(1) for match in FLOWCHART_LABELED_NODE.finditer(declaration)
+        }
+        standalone = FLOWCHART_STANDALONE_NODE.match(declaration)
         if standalone:
             node_ids.add(standalone.group(1))
         collision = next(
@@ -196,6 +199,31 @@ def _flowchart_id_collision(body: Sequence[str]) -> str:
                 "make the node its own parent"
             )
     return ""
+
+
+def _flowchart_declaration_text(line: str) -> str:
+    """Remove comments and quoted labels before looking for node declarations."""
+    result: list[str] = []
+    quote: str | None = None
+    index = 0
+    while index < len(line):
+        character = line[index]
+        if quote:
+            if character == "\\":
+                index += 2
+                continue
+            if character == quote:
+                quote = None
+            index += 1
+            continue
+        if line.startswith("%%", index):
+            break
+        if character in {"'", '"'}:
+            quote = character
+        else:
+            result.append(character)
+        index += 1
+    return "".join(result)
 
 
 def _iter_mermaid_blocks(markdown: str) -> Iterator[tuple[int, List[str], bool]]:

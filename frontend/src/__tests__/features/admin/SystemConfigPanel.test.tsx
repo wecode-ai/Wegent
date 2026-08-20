@@ -183,11 +183,11 @@ describe('SystemConfigPanel', () => {
     expect(mockedAdminApis.getQuickAccessConfig).not.toHaveBeenCalled()
   })
 
-  test('keeps the Code Wiki retrieval default profile collapsed initially', async () => {
+  test('keeps the knowledge base retrieval default profile collapsed initially', async () => {
     render(<SystemConfigPanel />)
 
-    expect(await screen.findByTestId('code-wiki-retrieval-profile-toggle')).toBeInTheDocument()
-    expect(screen.queryByTestId('save-code-wiki-retrieval-profile')).not.toBeInTheDocument()
+    expect(await screen.findByTestId('knowledge-base-retrieval-profile-toggle')).toBeInTheDocument()
+    expect(screen.queryByTestId('save-knowledge-base-retrieval-profile')).not.toBeInTheDocument()
   })
 
   test('loads and saves system function launcher form configuration', async () => {

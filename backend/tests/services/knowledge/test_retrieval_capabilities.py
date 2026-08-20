@@ -2,7 +2,7 @@
 
 import pytest
 
-from app.schemas.retrieval_capabilities import (
+from app.services.knowledge.retrieval_capabilities import (
     derive_retrieval_capabilities,
 )
 
@@ -46,9 +46,18 @@ from app.schemas.retrieval_capabilities import (
                 "phrases": False,
             },
         ),
+        (
+            {"retrieval_mode": ["hybrid"]},
+            {
+                "retrieval_mode": None,
+                "semantic_query": False,
+                "keywords": False,
+                "phrases": False,
+            },
+        ),
     ],
 )
 def test_derive_retrieval_capabilities(
-    config: dict[str, str] | None, expected: dict[str, str | bool | None]
+    config: dict[str, object] | None, expected: dict[str, str | bool | None]
 ) -> None:
     assert derive_retrieval_capabilities(config) == expected

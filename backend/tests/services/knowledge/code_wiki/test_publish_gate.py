@@ -108,7 +108,7 @@ def test_growth_is_never_treated_as_removal():
     assert verdict.passed
 
 
-def test_a_broken_diagram_is_rejected_with_the_page_and_error():
+def test_a_broken_diagram_is_rejected_with_the_page_and_error() -> None:
     """Readers never see a version whose declared diagram cannot render."""
     pages = [
         PageSource(path="index", title="Index", content="```mermaid\nflowchat TD\n```")
@@ -145,7 +145,7 @@ def test_a_verdict_with_nothing_wrong_carries_no_diagram_findings():
     assert verdict.diagram_warnings == ()
 
 
-def test_diagrams_can_be_explicitly_advisory_for_a_non_reader_projection():
+def test_diagrams_can_be_explicitly_advisory_for_a_non_reader_projection() -> None:
     pages = [
         PageSource(path="index", title="Index", content="```mermaid\nflowchat TD\n```")
     ]

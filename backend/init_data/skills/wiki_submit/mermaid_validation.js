@@ -83,6 +83,33 @@ function formatMermaidError(error) {
   return message.replace(/\s+/g, ' ').trim().slice(0, 500) || 'Unknown Mermaid parser error'
 }
 
+function flowchartDeclarationText(line) {
+  let result = ''
+  let quote = null
+
+  for (let index = 0; index < line.length; index++) {
+    const character = line[index]
+    if (quote) {
+      if (character === '\\') {
+        index += 1
+      } else if (character === quote) {
+        quote = null
+      }
+      continue
+    }
+    if (line.startsWith('%%', index)) {
+      break
+    }
+    if (character === '"' || character === "'") {
+      quote = character
+      continue
+    }
+    result += character
+  }
+
+  return result
+}
+
 /**
  * Detect the flowchart ID collision Mermaid's parser accepts but its layout rejects.
  * @param {string} body - Mermaid block content
@@ -113,11 +140,12 @@ function findFlowchartSubgraphCollision(body) {
     if (/^\s*subgraph\s+/i.test(line)) {
       continue
     }
+    const declaration = flowchartDeclarationText(line)
     const nodeIds = new Set()
-    for (const match of line.matchAll(/\b([A-Za-z_][A-Za-z0-9_-]*)\s*(?:\[[^\]]*\]|\([^)]*\)|\{[^}]*\})/g)) {
+    for (const match of declaration.matchAll(/\b([A-Za-z_][A-Za-z0-9_-]*)\s*(?:\[[^\]]*\]|\([^)]*\)|\{[^}]*\})/g)) {
       nodeIds.add(match[1])
     }
-    const standalone = line.match(/^\s*([A-Za-z_][A-Za-z0-9_-]*)\s*$/)
+    const standalone = declaration.match(/^\s*([A-Za-z_][A-Za-z0-9_-]*)\s*$/)
     if (standalone) {
       nodeIds.add(standalone[1])
     }

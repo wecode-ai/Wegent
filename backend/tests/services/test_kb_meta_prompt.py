@@ -107,7 +107,7 @@ class TestKbMetaFormatter:
         assert "Searchable Docs: 113" in prompt
         assert "Spreadsheets: 9" in prompt
 
-    def test_format_kb_meta_prompt_omits_empty_search_hints(self):
+    def test_format_kb_meta_prompt_omits_empty_search_hints(self) -> None:
         from app.services.chat.preprocessing.kb_meta import format_kb_meta_prompt
 
         prompt = format_kb_meta_prompt(

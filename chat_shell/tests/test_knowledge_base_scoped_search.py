@@ -91,7 +91,7 @@ async def test_http_mode_forwards_document_names_and_ids():
 
 
 @pytest.mark.asyncio
-async def test_http_mode_forwards_search_hints():
+async def test_http_mode_forwards_search_hints() -> None:
     tool = KnowledgeBaseTool(knowledge_base_ids=[1], user_id=7)
     mock_response = MagicMock(status_code=200)
     mock_response.json.return_value = {

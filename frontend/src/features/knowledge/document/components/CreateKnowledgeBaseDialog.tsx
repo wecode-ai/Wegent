@@ -196,6 +196,7 @@ export function CreateKnowledgeBaseDialog({
       setSource(createEmptySource())
       setSelectedGroupId(defaultGroupId || 'personal')
       setDirectAccessRequirement('read')
+      setRetrievalConfig(createDefaultRetrievalConfig())
       profileAppliedRef.current = false
       retrievalConfigChangedRef.current = false
       setProfileFallbackReason(null)

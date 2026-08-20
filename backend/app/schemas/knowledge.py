@@ -35,7 +35,7 @@ from app.schemas.knowledge_search import KnowledgeSearchRequest
 
 # Import SplitterConfig from rag.py to use unified splitter configuration
 from app.schemas.rag import SplitterConfig
-from app.schemas.retrieval_capabilities import derive_retrieval_capabilities
+from app.services.knowledge.retrieval_capabilities import derive_retrieval_capabilities
 from app.services.knowledge.splitter_config import normalize_splitter_config
 
 logger = logging.getLogger(__name__)

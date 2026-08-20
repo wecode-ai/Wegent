@@ -118,7 +118,7 @@ def test_component_hierarchies_have_substantive_overview_pages(system_prompt: st
     assert "do not invent hierarchy" in normalized_prompt
 
 
-def test_a_single_topic_does_not_become_a_one_page_section(system_prompt: str):
+def test_a_single_topic_does_not_become_a_one_page_section(system_prompt: str) -> None:
     assert "at least two independent child pages" in system_prompt
     assert "one topical page" in system_prompt
     assert "generic suffix" in system_prompt

@@ -117,7 +117,7 @@ class TestPythonTypeToJsonSchema:
         assert schema["items"]["type"] == "object"
         assert schema["items"]["python_type"] is MyModel
 
-    def test_pydantic_model_preserves_python_type_for_fastmcp_schema(self):
+    def test_pydantic_model_preserves_python_type_for_fastmcp_schema(self) -> None:
         """Nested model fields must remain visible in the published MCP schema."""
 
         class SearchHints(BaseModel):
@@ -266,7 +266,7 @@ class TestExtractParametersFromSignature:
                 "items" not in param
             ), f"items must not appear on {param['type']} param"
 
-    def test_pydantic_model_param_preserves_python_type(self):
+    def test_pydantic_model_param_preserves_python_type(self) -> None:
         """FastMCP needs the original annotation to publish nested fields."""
 
         class SearchHints(BaseModel):

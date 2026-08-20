@@ -208,7 +208,7 @@ def _build_wegent_refs(
         return []
 
     from app.models.kind import Kind
-    from app.schemas.retrieval_capabilities import (
+    from app.services.knowledge.retrieval_capabilities import (
         derive_retrieval_capabilities,
     )
 

@@ -52,6 +52,12 @@ jest.mock('@/features/tasks/components/selector', () => ({
   RepositorySelector: () => <div data-testid="repository-selector" />,
 }))
 
+jest.mock('@/components/model-select/ModelRefSelector', () => ({
+  ModelRefSelector: ({ error }: { error?: string }) => (
+    <div data-testid="model-ref-selector">{error}</div>
+  ),
+}))
+
 // The code option is behind a staged rollout. These tests are about what choosing it
 // does, so they turn it on; the test below is about the rollout itself.
 const mockRuntimeConfig = jest.fn(() => ({ enableCodeWiki: true }))
@@ -59,23 +65,13 @@ jest.mock('@/lib/runtime-config', () => ({
   getRuntimeConfigSync: () => mockRuntimeConfig(),
 }))
 
+const mockedGetKnowledgeBaseRetrievalProfile = getKnowledgeBaseRetrievalProfile as jest.Mock
+
 describe('CreateKnowledgeBaseDialog kind selection', () => {
   beforeEach(() => {
     mockRuntimeConfig.mockReturnValue({ enableCodeWiki: true })
-    ;(getKnowledgeBaseRetrievalProfile as jest.Mock).mockReset()
-    ;(getKnowledgeBaseRetrievalProfile as jest.Mock).mockResolvedValue({
-      version: 1,
-      retrieval_config: {
-        retriever_name: 'public-retriever',
-        retriever_namespace: 'default',
-        embedding_config: { model_name: 'public-embedding', model_namespace: 'default' },
-        retrieval_mode: 'hybrid',
-        top_k: 5,
-        score_threshold: 0.5,
-        hybrid_weights: { vector_weight: 0.7, keyword_weight: 0.3 },
-      },
-      health: { status: 'valid', fallback_reason: null },
-    })
+    mockedGetKnowledgeBaseRetrievalProfile.mockReset()
+    mockedGetKnowledgeBaseRetrievalProfile.mockImplementation(() => new Promise(() => undefined))
   })
 
   it('starts on documents, where a name is required', async () => {
@@ -105,7 +101,7 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
   })
 
   it('shows when an unusable profile falls back to automatic defaults', async () => {
-    ;(getKnowledgeBaseRetrievalProfile as jest.Mock).mockResolvedValue({
+    mockedGetKnowledgeBaseRetrievalProfile.mockResolvedValue({
       version: 1,
       retrieval_config: null,
       health: { status: 'invalid', fallback_reason: 'retriever_unavailable' },
@@ -119,7 +115,7 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
   })
 
   it('shows the automatic-default notice when no profile is configured', async () => {
-    ;(getKnowledgeBaseRetrievalProfile as jest.Mock).mockResolvedValue({
+    mockedGetKnowledgeBaseRetrievalProfile.mockResolvedValue({
       version: 0,
       retrieval_config: null,
       health: { status: 'missing', fallback_reason: null },

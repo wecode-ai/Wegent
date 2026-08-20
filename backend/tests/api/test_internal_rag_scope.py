@@ -66,7 +66,7 @@ def test_internal_retrieve_request_rejects_empty_document_ids():
         )
 
 
-def test_internal_retrieve_request_accepts_search_hints():
+def test_internal_retrieve_request_accepts_search_hints() -> None:
     request = InternalRetrieveRequest(
         query="release checklist",
         knowledge_base_id=1,

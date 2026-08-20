@@ -1976,15 +1976,15 @@ def _build_kb_meta_prompt(
         return ""
 
     try:
-        from app.schemas.retrieval_capabilities import (
-            derive_retrieval_capabilities,
-        )
         from app.services.chat.preprocessing.kb_meta import (
             format_kb_meta_prompt,
             format_restricted_kb_meta_prompt,
             select_kb_summary_text,
         )
         from app.services.knowledge import KnowledgeService
+        from app.services.knowledge.retrieval_capabilities import (
+            derive_retrieval_capabilities,
+        )
         from app.services.knowledge.task_knowledge_base_service import (
             task_knowledge_base_service,
         )

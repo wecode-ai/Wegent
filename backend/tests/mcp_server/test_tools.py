@@ -131,7 +131,7 @@ class TestKnowledgeTool:
         assert "wegent_kb_read_document_content" in module.KNOWLEDGE_MCP_TOOLS
 
     @pytest.mark.asyncio
-    async def test_search_knowledge_base_publishes_search_hints_schema(self):
+    async def test_search_knowledge_base_publishes_search_hints_schema(self) -> None:
         """The MCP schema must expose exactly the supported hint fields."""
         module = get_knowledge_module()
         server = FastMCP("schema-check")
@@ -153,7 +153,9 @@ class TestKnowledgeTool:
         }
 
     @pytest.mark.asyncio
-    async def test_search_knowledge_base_rejects_unknown_search_hint_fields(self):
+    async def test_search_knowledge_base_rejects_unknown_search_hint_fields(
+        self,
+    ) -> None:
         """Invalid hints must stop at the MCP boundary before runtime resolution."""
         module = get_knowledge_module()
         token_info = TaskTokenInfo(

@@ -83,13 +83,13 @@ def _normalize_retrieval_capabilities(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         return {}
     mode = value.get("retrieval_mode")
-    if mode not in {"vector", "keyword", "hybrid"}:
+    if not isinstance(mode, str) or mode not in {"vector", "keyword", "hybrid"}:
         return {}
     return {
         "retrieval_mode": mode,
-        "semantic_query": bool(value.get("semantic_query")),
-        "keywords": bool(value.get("keywords")),
-        "phrases": bool(value.get("phrases")),
+        "semantic_query": value.get("semantic_query") is True,
+        "keywords": value.get("keywords") is True,
+        "phrases": value.get("phrases") is True,
     }
 
 

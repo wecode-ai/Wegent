@@ -1,8 +1,10 @@
-"""Safe retrieval capability metadata shared by responses and runtime context."""
+"""Derive safe retrieval capability metadata for runtime consumers."""
 
 from __future__ import annotations
 
 from typing import Any
+
+VALID_RETRIEVAL_MODES = frozenset({"vector", "keyword", "hybrid"})
 
 
 def derive_retrieval_capabilities(
@@ -11,7 +13,7 @@ def derive_retrieval_capabilities(
     """Describe optional query hints that are useful for a retrieval mode."""
     config = retrieval_config if isinstance(retrieval_config, dict) else {}
     mode = config.get("retrieval_mode")
-    if mode not in {"vector", "keyword", "hybrid"}:
+    if not isinstance(mode, str) or mode not in VALID_RETRIEVAL_MODES:
         return {
             "retrieval_mode": None,
             "semantic_query": False,
@@ -21,8 +23,6 @@ def derive_retrieval_capabilities(
 
     return {
         "retrieval_mode": mode,
-        # A vector-only caller's original query is already its dense query. Hybrid
-        # retrieval additionally benefits from an optional semantic rewrite.
         "semantic_query": mode == "hybrid",
         "keywords": mode in {"keyword", "hybrid"},
         "phrases": mode in {"keyword", "hybrid"},

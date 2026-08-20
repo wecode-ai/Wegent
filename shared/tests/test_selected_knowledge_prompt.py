@@ -87,3 +87,24 @@ def test_render_selected_knowledge_prompt_omits_empty_search_hints() -> None:
 
     assert 'retrieval_mode="vector"' in prompt
     assert "search_hints=" not in prompt
+
+
+def test_render_selected_knowledge_prompt_ignores_non_boolean_capabilities() -> None:
+    prompt = render_selected_knowledge_prompt(
+        [
+            SelectedKnowledgeRef(
+                provider="wegent",
+                knowledge_base_id="12",
+                knowledge_base_name="Vector Docs",
+                retrieval_capabilities={
+                    "retrieval_mode": "vector",
+                    "semantic_query": "false",
+                    "keywords": 1,
+                    "phrases": [],
+                },
+            )
+        ]
+    )
+
+    assert 'retrieval_mode="vector"' in prompt
+    assert "search_hints=" not in prompt
