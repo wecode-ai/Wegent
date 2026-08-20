@@ -4,6 +4,7 @@ import {
   Box,
   Boxes,
   Circle,
+  ExternalLink,
   Pin,
   Play,
   Plus,
@@ -195,7 +196,7 @@ export function HarnessAppsPage({ importRequested = false }: HarnessAppsPageProp
       await refresh()
       if (running.webUrl) {
         registerHarnessAppTab(running)
-        clearHarnessAppLaunch(item.id)
+        if (!workspaceTabs) clearHarnessAppLaunch(item.id)
       }
     } catch (startError) {
       let proxyCanBeRevoked = !started
@@ -267,6 +268,22 @@ export function HarnessAppsPage({ importRequested = false }: HarnessAppsPageProp
     } finally {
       setBusy(null)
     }
+  }
+
+  function openRunningApp(item: HarnessAppInstallation) {
+    if (!workspaceTabs || !item.webUrl) return
+    const route = harnessAppRoute(item.id)
+    const tabAlreadyOpen = workspaceTabs.tabs.some(tab => tab.contentRoute === route)
+    if (!tabAlreadyOpen) {
+      beginHarnessAppLaunch(
+        item.id,
+        item.manifest.displayName,
+        () => openRunningApp(item),
+        'loadingApp'
+      )
+    }
+    registerHarnessAppTab(item)
+    openHarnessAppTab(workspaceTabs, item)
   }
 
   async function remove(item: HarnessAppInstallation) {
@@ -480,17 +497,29 @@ export function HarnessAppsPage({ importRequested = false }: HarnessAppsPageProp
                       {t('workbench.smart_apps_resident', '常驻')}
                     </Button>
                     {item.state === 'running' ? (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        data-testid={`harness-app-stop-${item.id}`}
-                        className="h-11 gap-1 rounded-lg px-3 sm:h-9"
-                        disabled={busy === item.id}
-                        onClick={() => void stop(item)}
-                      >
-                        <Square className="h-4 w-4" />
-                        {t('workbench.harness_apps_stop', '停止')}
-                      </Button>
+                      <>
+                        <Button
+                          size="sm"
+                          data-testid={`harness-app-open-${item.id}`}
+                          className="h-11 gap-1 rounded-lg px-3 sm:h-9"
+                          disabled={busy === item.id}
+                          onClick={() => openRunningApp(item)}
+                        >
+                          <ExternalLink className="h-4 w-4" />
+                          {t('workbench.harness_apps_open', '打开')}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          data-testid={`harness-app-stop-${item.id}`}
+                          className="h-11 gap-1 rounded-lg px-3 sm:h-9"
+                          disabled={busy === item.id}
+                          onClick={() => void stop(item)}
+                        >
+                          <Square className="h-4 w-4" />
+                          {t('workbench.harness_apps_stop', '停止')}
+                        </Button>
+                      </>
                     ) : (
                       <Button
                         size="sm"
@@ -500,7 +529,7 @@ export function HarnessAppsPage({ importRequested = false }: HarnessAppsPageProp
                         onClick={() => void start(item)}
                       >
                         <Play className="h-4 w-4" />
-                        {t('workbench.harness_apps_open', '打开')}
+                        {t('workbench.harness_apps_start', '运行')}
                       </Button>
                     )}
                     <Button

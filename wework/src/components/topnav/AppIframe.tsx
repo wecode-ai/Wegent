@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { Loader2 } from 'lucide-react'
 import {
   closeEmbeddedBrowser,
+  evalEmbeddedBrowserJson,
   navigateEmbeddedBrowser,
   openEmbeddedBrowser,
   setEmbeddedBrowserBounds,
@@ -12,8 +13,11 @@ import { isTauriRuntime } from '@/lib/runtime-environment'
 interface AppIframeProps {
   active?: boolean
   appKey: string
+  edgeToEdge?: boolean
+  onReady?: () => void
   src: string
   title: string
+  waitForContent?: boolean
   workspaceTabId?: string
 }
 
@@ -40,13 +44,70 @@ function nativeLabel(appKey: string, workspaceTabId?: string) {
   return `app-${appKey}-${workspaceTabId ?? 'default'}`
 }
 
-export function AppIframe({ active = true, appKey, src, title, workspaceTabId }: AppIframeProps) {
+function scaledBounds(bounds: EmbeddedBrowserBounds, scale: number): EmbeddedBrowserBounds {
+  const width = bounds.width * scale
+  const height = bounds.height * scale
+  return {
+    x: bounds.x + (bounds.width - width) / 2,
+    y: bounds.y + (bounds.height - height) / 2,
+    width,
+    height,
+  }
+}
+
+function bootstrapBounds(bounds: EmbeddedBrowserBounds): EmbeddedBrowserBounds {
+  const size = 16
+  return {
+    x: bounds.x + (bounds.width - size) / 2,
+    y: bounds.y + (bounds.height - size) / 2,
+    width: size,
+    height: size,
+  }
+}
+
+async function waitForEmbeddedBrowserContent(label: string): Promise<void> {
+  const deadline = Date.now() + 30_000
+  while (Date.now() < deadline) {
+    try {
+      const ready = await evalEmbeddedBrowserJson<boolean>(
+        `(() => {
+          const body = document.body
+          if (!body) return false
+          const roots = ['#root', '#__next', '[data-reactroot]']
+          if (roots.some(selector => (body.querySelector(selector)?.childElementCount ?? 0) > 0)) {
+            return true
+          }
+          return (body.innerText || '').trim().length > 0
+        })()`,
+        label
+      )
+      if (ready) return
+    } catch {
+      // The native page is still navigating; retry until its application root mounts.
+    }
+    await new Promise(resolve => window.setTimeout(resolve, 50))
+  }
+  throw new Error('Timed out waiting for app content')
+}
+
+export function AppIframe({
+  active = true,
+  appKey,
+  edgeToEdge = false,
+  onReady,
+  src,
+  title,
+  waitForContent = false,
+  workspaceTabId,
+}: AppIframeProps) {
   const native = isTauriRuntime()
   const hostRef = useRef<HTMLDivElement>(null)
+  const onReadyRef = useRef(onReady)
   const openedRef = useRef(false)
   const openPromiseRef = useRef<Promise<void> | null>(null)
   const loadedSrcRef = useRef<string | null>(null)
   const lifecycleGenerationRef = useRef(0)
+  const revealGenerationRef = useRef(0)
   const activeRef = useRef(active)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
@@ -55,7 +116,40 @@ export function AppIframe({ active = true, appKey, src, title, workspaceTabId }:
 
   useLayoutEffect(() => {
     activeRef.current = active
-  }, [active])
+    onReadyRef.current = onReady
+  }, [active, onReady])
+
+  const revealNativeBrowser = useCallback(() => {
+    onReadyRef.current?.()
+    const generation = revealGenerationRef.current + 1
+    revealGenerationRef.current = generation
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        const bounds = hostRef.current ? elementBounds(hostRef.current) : null
+        if (!bounds || !activeRef.current) return
+        if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+          void setEmbeddedBrowserBounds(bounds, true, label).catch(error => {
+            console.error('Failed to reveal app webview:', error)
+          })
+          return
+        }
+
+        const startedAt = performance.now()
+        const durationMs = 320
+        const animate = (now: number) => {
+          if (revealGenerationRef.current !== generation || !activeRef.current) return
+          const progress = Math.min((now - startedAt) / durationMs, 1)
+          const eased = 1 - Math.pow(1 - progress, 3)
+          const scale = 0.12 + 0.88 * eased
+          void setEmbeddedBrowserBounds(scaledBounds(bounds, scale), true, label).catch(error => {
+            console.error('Failed to animate app webview reveal:', error)
+          })
+          if (progress < 1) window.requestAnimationFrame(animate)
+        }
+        window.requestAnimationFrame(animate)
+      })
+    })
+  }, [label])
 
   const syncNativeBounds = useCallback(
     async (visible = activeRef.current) => {
@@ -91,13 +185,13 @@ export function AppIframe({ active = true, appKey, src, title, workspaceTabId }:
       let disposed = false
       setLoading(true)
       setError(false)
-      void navigateEmbeddedBrowser(src, label)
-        .then(() => {
+      void syncNativeBounds(false)
+        .then(() => navigateEmbeddedBrowser(src, label))
+        .then(async () => {
           loadedSrcRef.current = src
+          if (waitForContent) await waitForEmbeddedBrowserContent(label)
           if (!disposed) setLoading(false)
-          void syncNativeBounds(activeRef.current).catch(error => {
-            console.error('Failed to update app webview after navigation:', error)
-          })
+          if (!disposed) revealNativeBrowser()
         })
         .catch(error => {
           console.error('Failed to navigate app webview:', error)
@@ -120,7 +214,13 @@ export function AppIframe({ active = true, appKey, src, title, workspaceTabId }:
 
     let openPromise = openPromiseRef.current
     if (!openPromise) {
-      const request = openEmbeddedBrowser(src, bounds, label).then(() => {
+      const request = openEmbeddedBrowser(
+        src,
+        waitForContent ? bootstrapBounds(bounds) : bounds,
+        label,
+        waitForContent,
+        true
+      ).then(() => {
         openedRef.current = true
         loadedSrcRef.current = src
       })
@@ -137,16 +237,21 @@ export function AppIframe({ active = true, appKey, src, title, workspaceTabId }:
     }
 
     void openPromise
-      .then(() => {
+      .then(async () => {
+        if (!activeRef.current) {
+          void syncNativeBounds(false).catch(error => {
+            console.error('Failed to keep inactive app webview hidden:', error)
+          })
+        }
+        if (waitForContent) await waitForEmbeddedBrowserContent(label)
         if (!disposed) setLoading(false)
-        void syncNativeBounds(activeRef.current).catch(error => {
-          console.error('Failed to update app webview after opening:', error)
-        })
+        if (!disposed) revealNativeBrowser()
       })
       .catch(error => {
         console.error('Failed to open app webview:', error)
         if (disposed) return
         openedRef.current = false
+        void syncNativeBounds(false)
         setLoading(false)
         setError(true)
       })
@@ -154,7 +259,16 @@ export function AppIframe({ active = true, appKey, src, title, workspaceTabId }:
     return () => {
       disposed = true
     }
-  }, [active, label, native, retryGeneration, src, syncNativeBounds])
+  }, [
+    active,
+    label,
+    native,
+    retryGeneration,
+    revealNativeBrowser,
+    src,
+    syncNativeBounds,
+    waitForContent,
+  ])
 
   useEffect(() => {
     if (!native) return
@@ -203,7 +317,11 @@ export function AppIframe({ active = true, appKey, src, title, workspaceTabId }:
   return (
     <div
       ref={hostRef}
-      className="app-view-surface relative h-full overflow-hidden rounded-xl border border-border/60 bg-background shadow-[0_3px_16px_rgba(0,0,0,0.04)]"
+      className={
+        edgeToEdge
+          ? 'relative h-full overflow-hidden bg-background'
+          : 'app-view-surface relative h-full overflow-hidden rounded-t-xl border-x-0 border-b-0 border-t border-border/60 bg-background'
+      }
       data-testid={`app-iframe-${appKey}`}
       data-embedded-browser-label={label}
       data-workspace-tab-id={workspaceTabId}
@@ -237,7 +355,10 @@ export function AppIframe({ active = true, appKey, src, title, workspaceTabId }:
           src={src}
           title={title}
           className="w-full h-full border-none"
-          onLoad={() => setLoading(false)}
+          onLoad={() => {
+            setLoading(false)
+            onReadyRef.current?.()
+          }}
           onError={() => setError(true)}
           sandbox={APP_IFRAME_SANDBOX}
         />

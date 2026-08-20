@@ -136,6 +136,19 @@ describe('ResidentSmartAppsManager', () => {
     ).toBe('applications')
   })
 
+  test('prefers the active provider-backed tab so resident startup mounts after reload', () => {
+    expect(
+      findResidentSmartAppsHostTabId(
+        [
+          { id: 'task', contentRoute: '/tasks' },
+          { id: 'applications', contentRoute: '/sites?app_type=smart_app&view=installed' },
+          { id: 'smart-app', contentRoute: '/app/harness-resident-app' },
+        ],
+        'applications'
+      )
+    ).toBe('applications')
+  })
+
   test('strips the runtime base path before selecting a resident host tab', () => {
     expect(
       findResidentSmartAppsHostTabId([

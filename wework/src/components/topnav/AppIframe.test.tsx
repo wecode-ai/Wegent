@@ -5,6 +5,7 @@ import { AppIframe } from './AppIframe'
 
 const embeddedBrowserMocks = vi.hoisted(() => ({
   closeEmbeddedBrowser: vi.fn().mockResolvedValue(undefined),
+  evalEmbeddedBrowserJson: vi.fn().mockResolvedValue(true),
   navigateEmbeddedBrowser: vi.fn().mockResolvedValue(undefined),
   openEmbeddedBrowser: vi.fn().mockResolvedValue({
     nativeLabel: 'embedded-browser-native-1',
@@ -24,6 +25,8 @@ describe('AppIframe', () => {
   beforeEach(() => {
     runtimeMocks.isTauriRuntime.mockReturnValue(false)
     embeddedBrowserMocks.closeEmbeddedBrowser.mockClear()
+    embeddedBrowserMocks.evalEmbeddedBrowserJson.mockReset()
+    embeddedBrowserMocks.evalEmbeddedBrowserJson.mockResolvedValue(true)
     embeddedBrowserMocks.navigateEmbeddedBrowser.mockClear()
     embeddedBrowserMocks.openEmbeddedBrowser.mockClear()
     embeddedBrowserMocks.setEmbeddedBrowserBounds.mockClear()
@@ -40,6 +43,12 @@ describe('AppIframe', () => {
   test('shows loading spinner initially', () => {
     render(<AppIframe appKey="wegent" src="http://localhost:3000" title="Wegent" />)
     expect(screen.getByText('Loading Wegent...')).toBeInTheDocument()
+  })
+
+  test('removes workspace insets for edge-to-edge apps', () => {
+    render(<AppIframe appKey="harness" edgeToEdge src="http://localhost:3000" title="Harness" />)
+
+    expect(screen.getByTestId('app-iframe-harness')).not.toHaveClass('app-view-surface')
   })
 
   test('keeps app identity stable when the display title is localized', async () => {
@@ -72,7 +81,9 @@ describe('AppIframe', () => {
       expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledWith(
         'http://localhost:3000',
         { x: 10, y: 20, width: 800, height: 600 },
-        'app-wegent-agent-localized'
+        'app-wegent-agent-localized',
+        false,
+        true
       )
     )
     boundsSpy.mockRestore()
@@ -126,10 +137,48 @@ describe('AppIframe', () => {
       expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledWith(
         'http://localhost:3000',
         { x: 10, y: 20, width: 800, height: 600 },
-        'app-wegent-agent-1'
+        'app-wegent-agent-1',
+        false,
+        true
       )
     )
     expect(container.querySelector('iframe')).toBeNull()
+    boundsSpy.mockRestore()
+  })
+
+  test('mounts content-aware native apps in a visible collapsed webview', async () => {
+    runtimeMocks.isTauriRuntime.mockReturnValue(true)
+    const boundsSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      bottom: 620,
+      height: 600,
+      left: 10,
+      right: 810,
+      top: 20,
+      width: 800,
+      x: 10,
+      y: 20,
+      toJSON: () => ({}),
+    })
+
+    render(
+      <AppIframe
+        appKey="harness-app"
+        src="http://localhost:3000"
+        title="Harness app"
+        waitForContent
+        workspaceTabId="harness-1"
+      />
+    )
+
+    await waitFor(() =>
+      expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledWith(
+        'http://localhost:3000',
+        { x: 402, y: 312, width: 16, height: 16 },
+        'app-harness-app-harness-1',
+        true,
+        true
+      )
+    )
     boundsSpy.mockRestore()
   })
 

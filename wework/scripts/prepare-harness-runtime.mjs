@@ -15,19 +15,21 @@ import { wrapWindowsScriptCommand } from './child-process-command.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const source = path.join(root, 'harness-runtime')
-const targetDirectory = path.join(root, 'src-tauri', 'bundled-deepseek-harness')
+const targetDirectory = path.join(root, 'src-tauri', 'bundled-harness-runtime')
 const metadata = path.join(targetDirectory, 'runtime.json')
 const placeholder = path.join(targetDirectory, '.resource-placeholder')
 const nodeEntitlements = path.join(root, 'scripts', 'deepseek-harness-node.entitlements.plist')
 const cacheDirectory = path.join(root, 'node_modules', '.cache')
-const staging = path.join(cacheDirectory, `wework-deepseek-harness-${process.pid}`)
-const temporaryArchive = path.join(cacheDirectory, `wework-deepseek-harness-${process.pid}.tar.gz`)
+const staging = path.join(cacheDirectory, `wework-harness-runtime-${process.pid}`)
+const temporaryArchive = path.join(cacheDirectory, `wework-harness-runtime-${process.pid}.tar.gz`)
 const temporaryTar = temporaryArchive.slice(0, -3)
 const temporaryMetadata = `${temporaryArchive}.json`
 const sourceFiles = ['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', '.npmrc']
 const pluginDirectory = 'plugins'
 const archiveFormatVersion = 'tar-gzip-fast-v2'
-const assetDirectory = path.join(cacheDirectory, 'deepseek-harness-runtime-assets')
+const assetDirectory = path.join(cacheDirectory, 'harness-runtime-assets')
+const materializedRoot = path.join(cacheDirectory, 'harness-runtime-dev')
+const materializeRequested = process.argv.includes('--materialize')
 
 async function listFiles(directory, relative = '') {
   const entries = await readdir(path.join(directory, relative), { withFileTypes: true })
@@ -65,13 +67,37 @@ async function resetTargetDirectory() {
   await writeFile(placeholder, '')
 }
 
+async function materializeRuntime(assetPath, sourceFingerprint) {
+  const runtimeMetadata = path.join(materializedRoot, 'runtime.json')
+  try {
+    const current = JSON.parse(await readFile(runtimeMetadata, 'utf8'))
+    if (current.sourceFingerprint === sourceFingerprint) {
+      console.log(`Harness runtime root: ${materializedRoot}`)
+      return
+    }
+  } catch {
+    // Materialize or repair the development runtime below.
+  }
+
+  const temporaryRoot = `${materializedRoot}-${process.pid}`
+  await rm(temporaryRoot, { recursive: true, force: true })
+  await mkdir(temporaryRoot, { recursive: true })
+  try {
+    await run('tar', ['-xzf', assetPath, '-C', temporaryRoot], root)
+    await rm(materializedRoot, { recursive: true, force: true })
+    await rename(temporaryRoot, materializedRoot)
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true })
+  }
+  console.log(`Harness runtime root: ${materializedRoot}`)
+}
+
 function runtimePlatform() {
   const platform = { darwin: 'macos', win32: 'windows', linux: 'linux' }[process.platform]
-  if (!platform)
-    throw new Error(`Unsupported DeepSeek Harness runtime platform: ${process.platform}`)
+  if (!platform) throw new Error(`Unsupported Harness runtime platform: ${process.platform}`)
   const architecture = { arm64: 'arm64', x64: 'x64' }[process.arch]
   if (!architecture) {
-    throw new Error(`Unsupported DeepSeek Harness runtime architecture: ${process.arch}`)
+    throw new Error(`Unsupported Harness runtime architecture: ${process.arch}`)
   }
   return `${platform}-${architecture}`
 }
@@ -128,14 +154,13 @@ const sourceFingerprint = createHash('sha256')
       .join('\0')
   )
   .digest('hex')
-const assetName = `deepseek-harness-runtime-${runtimePlatform()}-${sourceFingerprint}.tar.gz`
+const assetName = `harness-runtime-${runtimePlatform()}-${sourceFingerprint}.tar.gz`
 const assetPath = path.join(assetDirectory, assetName)
 const baseUrl =
-  process.env.WEWORK_DEEPSEEK_HARNESS_RUNTIME_BASE_URL?.trim() ||
+  process.env.WEWORK_HARNESS_RUNTIME_BASE_URL?.trim() ||
   'https://github.com/wecode-ai/Wegent/releases/download/wework-updater'
 const downloadUrl =
-  process.env.WEWORK_DEEPSEEK_HARNESS_RUNTIME_URL?.trim() ||
-  `${baseUrl.replace(/\/+$/, '')}/${assetName}`
+  process.env.WEWORK_HARNESS_RUNTIME_URL?.trim() || `${baseUrl.replace(/\/+$/, '')}/${assetName}`
 const nodeName = process.platform === 'win32' ? 'node.exe' : 'node'
 const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 
@@ -146,8 +171,11 @@ try {
     currentMetadata.sourceFingerprint === sourceFingerprint &&
     currentMetadata.downloadUrl === downloadUrl
   ) {
-    console.log('DeepSeek Harness runtime is up to date')
-    console.log(`DeepSeek Harness runtime asset: ${assetPath}`)
+    console.log('Harness runtime is up to date')
+    console.log(`Harness runtime asset: ${assetPath}`)
+    if (materializeRequested) {
+      await materializeRuntime(assetPath, sourceFingerprint)
+    }
     process.exit(0)
   }
 } catch {
@@ -220,7 +248,10 @@ try {
   await rename(temporaryArchive, assetPath)
   await resetTargetDirectory()
   await rename(temporaryMetadata, metadata)
-  console.log(`Prepared DeepSeek Harness runtime asset: ${assetPath}`)
+  console.log(`Prepared Harness runtime asset: ${assetPath}`)
+  if (materializeRequested) {
+    await materializeRuntime(assetPath, sourceFingerprint)
+  }
 } finally {
   await rm(staging, { recursive: true, force: true })
   await rm(temporaryArchive, { force: true })

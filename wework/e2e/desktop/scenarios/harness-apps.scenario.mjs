@@ -31,6 +31,15 @@ async function setExperimentalFeatures(control, enabled, uiTimeoutMs) {
   )
 }
 
+async function waitForElementCount(control, selector, expected, timeoutMs, message) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    if (Number(await control.command('getElementCount', selector)) === expected) return
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(message)
+}
+
 async function createHarnessPackage(resultDir) {
   const packagePath = join(resultDir, 'dsh-e2e-smoke.zip')
   const zip = new JSZip()
@@ -247,18 +256,7 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       })
       assert.ok(appTabId, 'Harness app did not expose its workspace tab ID')
       assert.ok(appWebviewLabel, 'Harness app did not expose its native WebView label')
-      const harnessStateKey = '__weworkHarnessTabState'
-      const harnessStateValue = `preserved-${Date.now()}`
-      await control.command('setEmbeddedBrowserWindowValue', 'body', {
-        value: JSON.stringify({
-          key: harnessStateKey,
-          label: appWebviewLabel,
-          value: harnessStateValue,
-        }),
-        timeoutMs: uiTimeoutMs,
-      })
       const nativeSnapshot = await control.command('captureEmbeddedBrowser', appSurface, {
-        target: `[data-testid="workspace-tab-select-${managementTabId}"]`,
         text: APP_ROUTE,
         timeoutMs: 30_000,
       })
@@ -269,6 +267,24 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       await writeFile(
         join(resultDir, 'harness-apps-08-native-page.png'),
         Buffer.from(nativeSnapshot.slice('data:image/png;base64,'.length), 'base64')
+      )
+      const harnessStateKey = '__weworkHarnessTabState'
+      const harnessStateValue = `preserved-${Date.now()}`
+      await control.command('setEmbeddedBrowserWindowValue', 'body', {
+        value: JSON.stringify({
+          key: harnessStateKey,
+          label: appWebviewLabel,
+          value: harnessStateValue,
+        }),
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', `[data-testid="workspace-tab-select-${managementTabId}"]`)
+      await control.command(
+        'waitFor',
+        `[data-testid="workspace-tab-content-${managementTabId}"][aria-hidden="false"]`,
+        {
+          timeoutMs: uiTimeoutMs,
+        }
       )
       await control.command('click', `[data-testid="workspace-tab-select-${appTabId}"]`)
       await control.command(
@@ -290,11 +306,45 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         'Switching away from and back to a Harness app reset its in-memory page state'
       )
       await control.command('click', `[data-testid="workspace-tab-select-${managementTabId}"]`)
-
+      await control.command(
+        'waitFor',
+        `[data-testid="workspace-tab-content-${managementTabId}"][aria-hidden="false"]`,
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
       await control.command('waitFor', `[data-testid="harness-app-stop-${INSTALLATION_ID}"]`, {
         timeoutMs: uiTimeoutMs,
       })
       await captureScreenshot(control, 'harness-apps-09-running.png', 'body')
+      await control.command('click', `[data-testid="workspace-tab-close-${appTabId}"]`)
+      await waitForElementCount(
+        control,
+        `[data-testid="app-iframe-harness-${INSTALLATION_ID}"]`,
+        0,
+        uiTimeoutMs,
+        'Closing a running Harness app tab left its app surface mounted'
+      )
+      await control.command('click', `[data-testid="harness-app-open-${INSTALLATION_ID}"]`)
+      await control.command('waitFor', `[data-testid="harness-app-animation-loading-app"]`, {
+        timeoutMs: uiTimeoutMs,
+      })
+      await captureScreenshot(control, 'harness-apps-09a-reopening.png', 'body')
+      await control.command('waitFor', appSurface, {
+        timeoutMs: 30_000,
+      })
+      const reopenedAppTabId = await control.command('getAttribute', appSurface, {
+        value: 'data-workspace-tab-id',
+      })
+      assert.ok(reopenedAppTabId, 'Reopened Harness app did not expose its workspace tab ID')
+      await control.command('click', `[data-testid="workspace-tab-select-${managementTabId}"]`)
+      await control.command(
+        'waitFor',
+        `[data-testid="workspace-tab-content-${managementTabId}"][aria-hidden="false"]`,
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
       await control.command('click', `[data-testid="harness-app-stop-${INSTALLATION_ID}"]`)
       await control.command('waitFor', `[data-testid="harness-app-start-${INSTALLATION_ID}"]`, {
         timeoutMs: 30_000,
