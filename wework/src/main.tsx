@@ -57,7 +57,7 @@ function renderStartupFailure(error: unknown): void {
       <section className="max-w-md space-y-4 rounded-lg border border-border bg-card p-6">
         <h1 className="heading-section">Wework 启动失败</h1>
         <p className="text-chat text-muted-foreground">
-          智能应用运行时初始化失败。请重试；如果问题持续，请打开调试面板查看日志。
+          智能工作台运行时初始化失败。请重试；如果问题持续，请打开调试面板查看日志。
         </p>
         <button
           className="rounded-md bg-primary px-3 py-2 text-primary-foreground"

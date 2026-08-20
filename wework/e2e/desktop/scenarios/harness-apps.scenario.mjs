@@ -133,7 +133,7 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       })
       await control.command('click', '[data-testid="workspace-tab-add"]')
       await control.command('waitFor', '[data-testid="workspace-tab-add-smart-app"]', {
-        text: '智能应用',
+        text: '智能工作台',
         timeoutMs: uiTimeoutMs,
       })
       await captureScreenshot(control, 'harness-apps-02-top-tab-entry.png', 'body')
@@ -163,7 +163,7 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       )
       await control.command('click', '[data-testid="smart-apps-marketplace-create"]')
       await control.command('waitFor', '[data-testid="chat-message-input"]', {
-        text: '智能应用开发助手',
+        text: '智能工作台开发助手',
         timeoutMs: uiTimeoutMs,
       })
       await captureScreenshot(control, 'harness-apps-03a-builder-chat.png', 'body')
