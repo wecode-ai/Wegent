@@ -73,40 +73,25 @@ def independent_session_database(tmp_path):
         engine.dispose()
 
 
-def test_project_automation_activity_push_releases_database_before_network(
-    monkeypatch,
-):
+def test_project_automation_activity_push_commits_before_network(monkeypatch):
     events: list[object] = []
     run = MagicMock()
     row = MagicMock()
-
-    class FakeSession:
-        def __enter__(self):
-            events.append("session_open")
-            return self
-
-        def __exit__(self, *_args):
-            events.append("session_closed")
-
-        def get(self, model, run_id):
-            assert model is ProjectAutomationRun
-            assert run_id == "run-1"
-            return run
-
-    monkeypatch.setattr(
-        project_automation_execution_module,
-        "SessionLocal",
-        FakeSession,
-    )
+    db = MagicMock()
+    db.flush.side_effect = lambda: events.append("flush")
+    db.commit.side_effect = lambda: events.append("commit")
     monkeypatch.setattr(
         project_automation_execution_module.ProjectAutomationExecution,
         "_activity",
-        staticmethod(lambda _db, _run: row),
+        staticmethod(lambda _db, _run: events.append("read") or row),
     )
     monkeypatch.setattr(
         project_automation_execution_module.project_chat_service,
         "to_view",
-        lambda _row: MagicMock(model_dump=lambda **_kwargs: {"id": "message-1"}),
+        lambda _row: MagicMock(
+            model_dump=lambda **_kwargs: events.append("serialize")
+            or {"id": "message-1"}
+        ),
     )
     monkeypatch.setattr(
         project_automation_execution_module,
@@ -114,11 +99,13 @@ def test_project_automation_activity_push_releases_database_before_network(
         lambda payload: events.append(("push", payload)),
     )
 
-    project_automation_execution._push_activity("run-1")
+    project_automation_execution._commit_and_push_activity(db, run)
 
     assert events == [
-        "session_open",
-        "session_closed",
+        "flush",
+        "read",
+        "serialize",
+        "commit",
         ("push", {"id": "message-1"}),
     ]
 

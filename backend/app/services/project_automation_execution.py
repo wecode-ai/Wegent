@@ -14,7 +14,6 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.db.session import SessionLocal
 from app.models.delivery import (
     CloudProject,
     LoopItem,
@@ -293,8 +292,7 @@ class ProjectAutomationExecution:
         run.status = "queued"
         run.version += 1
         self._bind_activity_to_execution(db, run=run, execution=execution)
-        db.commit()
-        self._push_activity(str(run.id))
+        self._commit_and_push_activity(db, run)
         logger.info(
             "[ProjectAutomation] Queued custom manager run=%s execution=%s device=%s",
             run.id,
@@ -766,8 +764,7 @@ class ProjectAutomationExecution:
             changed = True
         if not changed:
             return False
-        db.commit()
-        self._push_activity(str(run.id))
+        self._commit_and_push_activity(db, run)
         return True
 
     def finalize_manager_result(
@@ -877,9 +874,11 @@ class ProjectAutomationExecution:
             run_changed = True
         if projection_already_completed:
             if run_changed:
-                db.commit()
-                if push_activity:
-                    self._push_activity(str(run.id))
+                self._commit_and_push_activity(
+                    db,
+                    run,
+                    push_activity=push_activity,
+                )
             return run_changed
         if activity is not None:
             activity.status = expected_activity_status
@@ -902,9 +901,7 @@ class ProjectAutomationExecution:
                     else {}
                 ),
             }
-        db.commit()
-        if push_activity:
-            self._push_activity(str(run.id))
+        self._commit_and_push_activity(db, run, push_activity=push_activity)
         return True
 
     @staticmethod
@@ -941,16 +938,26 @@ class ProjectAutomationExecution:
         row.metadata_json = activity_metadata
 
     @staticmethod
-    def _push_activity(run_id: str) -> None:
-        payload: dict | None = None
-        with SessionLocal() as read_db:
-            run = read_db.get(ProjectAutomationRun, run_id)
-            if run is not None:
-                row = ProjectAutomationExecution._activity(read_db, run)
-                if row is not None:
-                    payload = project_chat_service.to_view(row).model_dump(
-                        by_alias=True
-                    )
+    def _activity_payload(db: Session, run: ProjectAutomationRun) -> dict | None:
+        db.flush()
+        row = ProjectAutomationExecution._activity(db, run)
+        if row is None:
+            return None
+        return project_chat_service.to_view(row).model_dump(by_alias=True)
+
+    def _commit_and_push_activity(
+        self,
+        db: Session,
+        run: ProjectAutomationRun,
+        *,
+        push_activity: bool = True,
+    ) -> None:
+        payload = self._activity_payload(db, run) if push_activity else None
+        db.commit()
+        self._push_activity(payload)
+
+    @staticmethod
+    def _push_activity(payload: dict | None) -> None:
         if payload is not None:
             push_project_chat_message(payload)
 
@@ -972,8 +979,7 @@ class ProjectAutomationExecution:
             status_value="failed",
             content=error or "AI 托管任务派发失败。",
         )
-        db.commit()
-        self._push_activity(str(run.id))
+        self._commit_and_push_activity(db, run)
 
     @staticmethod
     def finish_activity(
