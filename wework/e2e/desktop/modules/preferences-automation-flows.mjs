@@ -805,11 +805,7 @@ function applicationInstallRequestCount(control, pathname) {
 function resolvedDraftInputLength(snapshot) {
   const composerLength = snapshot.workbench?.composer?.currentInputLength
   const paneLength = snapshot.pane?.inputLength
-  if (
-    composerLength === 0 &&
-    typeof paneLength === 'number' &&
-    paneLength > 0
-  ) {
+  if (composerLength === 0 && typeof paneLength === 'number' && paneLength > 0) {
     return paneLength
   }
   return composerLength ?? paneLength ?? null
@@ -832,7 +828,9 @@ async function assertFreshApplicationDraft(control, { before, canonical, visible
   while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
     const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
     lastSnapshot = snapshot
-    actual = normalizeComposerText(await control.command('getText', ACTIVE_COMPOSER_SELECTOR))
+    actual = normalizeComposerText(
+      await control.command('getText', ACTIVE_COMPOSER_SELECTOR, { visible: true })
+    )
     if (
       actual === visible &&
       resolvedDraftInputLength(snapshot) === canonical.length &&
@@ -845,7 +843,7 @@ async function assertFreshApplicationDraft(control, { before, canonical, visible
     }
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
-  throw new Error(`${message}: ${JSON.stringify(lastSnapshot)}`)
+  throw new Error(`${message}: ${JSON.stringify({ actual, snapshot: lastSnapshot })}`)
 }
 
 async function assertPluginComposerChip(control, pluginName) {
