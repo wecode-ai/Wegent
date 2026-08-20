@@ -2226,6 +2226,11 @@ last_updated = "2026-07-30T00:00:00Z"`
         )
         await captureVerificationScreenshot(control, '02-send-mode-menu-open.png')
         await control.command('press', 'body', { key: 'Escape' })
+        await waitForSnapshot(
+          control,
+          snapshot => !snapshot.testIds.includes('send-mode-menu-button-menu'),
+          'The send mode menu did not close before continuing'
+        )
         await control.command('fill', composerSelector, { value: '' })
         if (!GUIDANCE_BACKGROUND_ONLY) {
           await verifyQueuedFollowUpNavigation({

@@ -44,6 +44,7 @@ import {
   publishComposerApps,
   replaceComposerApps,
 } from '@/components/chat/composer/composerAppsSnapshot'
+import { AttachmentDownloadProvider } from '@/components/chat/AttachmentDownloadProvider'
 import { isSystemApplicationConnectorSlug } from '@/features/plugins/builtinPlugins'
 import { overlayMarketplaceLogosOnComposerApps } from '@/features/plugins/composerPluginMetadata'
 import { loadComposerPluginApps } from '@/features/plugins/loadComposerPluginApps'
@@ -1265,6 +1266,14 @@ export function WorkbenchProvider({
           throw new Error(response.error || 'Failed to register local project')
         }
         response.roots.forEach(clearRemoteProjectSyncRemoval)
+        writeLastProjectId(
+          user.id,
+          runtimeProjectUiId({
+            key: response.projectKey,
+            stateDeviceId: response.deviceId,
+            name: response.name,
+          })
+        )
         await refreshWorkLists()
         dispatch({
           type: 'runtime_workspace_opened',
@@ -2801,9 +2810,15 @@ export function WorkbenchProvider({
 
   return (
     <RuntimeTaskLifecycleProvider store={sharedLifecycleStore} writerStore={lifecycleStore}>
-      <WorkbenchContext.Provider value={value}>
-        <WorkbenchPaneContext.Provider value={paneValue}>{children}</WorkbenchPaneContext.Provider>
-      </WorkbenchContext.Provider>
+      <AttachmentDownloadProvider
+        fetchAttachmentBlob={resolvedServices.attachmentApi?.fetchAttachmentBlob}
+      >
+        <WorkbenchContext.Provider value={value}>
+          <WorkbenchPaneContext.Provider value={paneValue}>
+            {children}
+          </WorkbenchPaneContext.Provider>
+        </WorkbenchContext.Provider>
+      </AttachmentDownloadProvider>
     </RuntimeTaskLifecycleProvider>
   )
 }

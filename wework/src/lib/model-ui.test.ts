@@ -15,6 +15,22 @@ import {
 import type { UnifiedModel } from '@/types/api'
 
 describe('model-ui', () => {
+  test('treats same-name Codex models from different providers as different selections', () => {
+    const official: UnifiedModel = {
+      name: 'gpt-5.6-luna',
+      type: 'runtime',
+      config: { codexProviderId: 'openai' },
+    }
+    const provider: UnifiedModel = {
+      name: 'gpt-5.6-luna',
+      type: 'runtime',
+      config: { codexProviderId: 'wework-e2e' },
+    }
+
+    expect(isSameModelSelection(official, provider)).toBe(false)
+    expect(isSameModelSelection(provider, { ...provider })).toBe(true)
+  })
+
   test('groups models by identity instead of compatible provider protocol', () => {
     const deepseekModel: UnifiedModel = {
       name: 'ali-deepseek-v4-flash(公网)',

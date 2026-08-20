@@ -16,7 +16,9 @@ flowchart LR
     EXECUTOR[目标 Executor<br/>唯一 Git 数据面]
     REPO[(主 Git 工作区)]
     WORKTREE[(托管 Worktree)]
-    STATE[(Runtime Task Store<br/>worktrees.json<br/>snapshot refs)]
+    STATE[(Runtime Task Metadata Store<br/>无执行状态)]
+    EXECUTION[(持久化 turn queue<br/>排队执行意图)]
+    WORKTREE_STATE[(worktrees.json<br/>Worktree 生命周期 + execution lease + snapshot refs)]
     VOLUME[(稳定 Executor Home 持久卷)]
     ATTEST[部署持久化证明<br/>persistentStorageVerified]
 
@@ -30,10 +32,14 @@ flowchart LR
     EXECUTOR --> REPO
     EXECUTOR --> WORKTREE
     EXECUTOR --> STATE
+    EXECUTOR --> EXECUTION
+    EXECUTOR --> WORKTREE_STATE
     ATTEST -->|显式启动配置| EXECUTOR
     VOLUME --> REPO
     VOLUME --> WORKTREE
     VOLUME --> STATE
+    VOLUME --> EXECUTION
+    VOLUME --> WORKTREE_STATE
     VOLUME -->|device-config.json| EXECUTOR
 ```
 
@@ -68,6 +74,37 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
+    participant E as 重启后的 Executor
+    participant T as Runtime Task Metadata Store
+    participant Q as Persisted Turn Queue
+    participant G as worktrees.json
+    participant R as Agent Runtime
+
+    E->>T: 读取身份、线程、路径、标题和归档元数据
+    Note over E,T: Task Store 不持久化 status/running/threadStatus/turnStatus
+    E->>Q: 恢复排队执行意图
+    E->>G: 对账 Worktree 生命周期
+    alt Worktree 上次停在 preparing
+        G->>G: 校验记录中的 Worktree 身份
+        alt 合法 Worktree 已存在
+            G->>G: preparing 转为 active，并保留恢复诊断
+        else Worktree 缺失或身份无效
+            G->>G: preparing 转为 failed，并保留校验错误
+        end
+        G-->>E: 明确的中断准备证据
+        E->>T: 仅将关联的 Runtime Task 标记为失败
+    else Worktree 保留未清理的 execution lease
+        G->>G: 清除 lease，保留“执行被中断”诊断
+        G-->>E: 明确的中断执行证据
+        E->>T: 仅将关联的 Runtime Task 标记为失败
+    else 普通历史任务或仅排队任务
+        E->>E: 不推导失败、不改任务活动时间
+    end
+    E->>R: 仅恢复允许续跑的普通排队执行
+```
+
+```mermaid
+sequenceDiagram
     participant U as Wework
     participant E as 目标 Executor
     participant R as Agent Runtime
@@ -95,7 +132,7 @@ sequenceDiagram
 | DeviceWorkspace 选择、可用性、偏好和 UI            | `wework/src/features/workbench/`、`wework/src/components/chat/composer/`                                                                |
 | Local/Cloud/Remote Runtime 路由和任务投影          | `wework/src/api/`、`wework/src/features/workbench/useWorkbenchRuntimeMessaging.ts`、`wework/src/features/workbench/workbenchReducer.ts` |
 | 逻辑设备鉴权、持久 Runtime 身份和 Socket 解析      | `backend/app/services/device/`、`backend/app/api/ws/`                                                                                   |
-| Worktree capability、preflight、Git 生命周期和状态 | `executor/src/runtime_work/`                                                                                                            |
+| Worktree capability、preflight、Git 生命周期、任务元数据和执行证据 | `executor/src/runtime_work/`                                                                                               |
 | 云设备持久卷、固定挂载路径和单写实例               | 云设备 Provider、部署配置、`docker/device/`                                                                                             |
 | 跨层验收                                           | `wework/e2e/desktop/`、`scripts/acceptance/`、Backend 和 Executor 契约测试                                                              |
 
@@ -111,12 +148,12 @@ sequenceDiagram
 8. 已存在目标路径只有在验证为同一源仓库、同一 Worktree ID 的合法 Git Worktree 后才能幂等接管。
 9. 阻塞 Git 和目录扫描不得运行在异步 RPC 主线程。
 10. 删除前必须获得所有关联 Runtime 的停止确认；Runtime 退出或 panic 都必须由作用域退出守卫发送停止确认。归档、快照和删除按顺序执行，任一步失败都保留可诊断数据；批量归档必须有界并发，不能按故障任务数线性累积停止超时。
-11. Executor 重启对账可以恢复 Worktree 的可管理状态，但不得自动续跑中断的 Agent；持续失败的对账必须按固定间隔限流，同时保留后续重试能力。
+11. Executor 重启对账可以恢复 Worktree 的可管理状态，但不得自动续跑中断的 Agent；Runtime Task Store 持久化耐久任务元数据，但不持久化 `status`、`running`、`threadStatus` 或 `turnStatus`。持续失败的对账必须按固定间隔限流，同时保留后续重试能力。
 12. 一个 Executor Home 同一时刻只能有一个写入 Executor；Cloud 和 Remote 的 Executor Home、主仓库、Worktree、Runtime Store 和绝对挂载路径必须稳定持久化。
 13. 启动模式和分支偏好按 DeviceWorkspace 隔离；运行位置不是启动模式。
 14. 离线、路由缺失、超时、断开、不支持、非 Git、路径冲突和存储不持久使用稳定可区分错误；超时和断开必须标记为可重试，但有副作用的 RPC 不自动重试。
 15. Terminal、IDE、文件树、Git、归档、恢复和设置始终使用任务所属设备及最终 Worktree 路径。远端文件命令缺少 Backend 认证出的工作区根时必须关闭访问，不能把空根集合解释为无限制。
-16. 重启对账已将中断任务标记为失败或取消后，任务列表不得因过期的 Provider 线程元数据把它重新投影为运行中；只有本地完成时间之后出现的新 Provider Turn 才能表示一次新的执行。
+16. 重启前是否正在执行只能由独立的持久执行证据判断，不能从 Runtime Task 元数据、Worktree 路径、非归档状态、Provider 历史线程或缺失状态字段推导。Runtime 真正启动前，Executor 必须在 `worktrees.json` 写入带当前进程 owner 的 execution lease，并在 Runtime 终止确认时清除；启动对账只消费其他进程遗留的 lease，不能把当前进程刚开始的执行误判为中断。未完成的 `preparing` 记录只能证明 Worktree 准备被中断，持久队列只能证明尚未运行。没有这两类中断证据时，重启对账不得写任务失败、完成时间或活动时间。
 17. Cloud 和 Remote 的 `runtimeInstanceId` 保存在 Executor Home，并在 Backend 首次登记后固定；容器或实例替换必须复用该值。相同逻辑设备携带新的 Runtime Instance ID 时必须拒绝注册并报告持久存储身份不匹配，不能覆盖既有值或创建旁路设备记录。
 18. 延迟创建必须持久化计划阶段的源仓库 fingerprint，并在获得 slot 后与创建前重新计算的 fingerprint 比较；源目录被替换为另一个仓库时必须以 `worktree_source_changed` 失败。
 19. 停止超时是未知结果，不得清除 Runtime 取消控制或把任务当作已停止；重试归档/删除前仍必须获得同一 Runtime 的停止 ACK。
