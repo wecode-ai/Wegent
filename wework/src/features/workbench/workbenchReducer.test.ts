@@ -1756,6 +1756,120 @@ describe('workbenchReducer', () => {
     })
   })
 
+  test('keeps omitted sidebar metadata and applies explicit removals', () => {
+    const state = workbenchReducer(initialWorkbenchState, {
+      type: 'runtime_work_refreshed',
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, name: 'Repo' },
+            deviceWorkspaces: [
+              {
+                deviceId: 'device-1',
+                workspacePath: '/workspace/repo',
+                available: true,
+                tasks: [
+                  {
+                    taskId: 'completed-task',
+                    workspacePath: '/workspace/repo',
+                    title: 'Completed task',
+                    runtime: 'codex',
+                    running: false,
+                    status: 'done',
+                    completedAt: 200,
+                    updatedAt: 200,
+                    pinned: true,
+                    pinnedOrder: 0,
+                    sidebarOrder: 3,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 1,
+      },
+    })
+
+    const omitted = workbenchReducer(state, {
+      type: 'runtime_work_refreshed',
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, name: 'Repo' },
+            deviceWorkspaces: [
+              {
+                deviceId: 'device-1',
+                workspacePath: '/workspace/repo',
+                available: true,
+                tasks: [
+                  {
+                    taskId: 'completed-task',
+                    workspacePath: '/workspace/repo',
+                    title: 'Completed task',
+                    runtime: 'codex',
+                    running: false,
+                    status: 'active',
+                    updatedAt: 100,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 1,
+      },
+    })
+
+    expect(omitted.runtimeWork?.projects[0].deviceWorkspaces[0].tasks[0]).toMatchObject({
+      pinned: true,
+      pinnedOrder: 0,
+      sidebarOrder: 3,
+    })
+
+    const removed = workbenchReducer(omitted, {
+      type: 'runtime_work_refreshed',
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, name: 'Repo' },
+            deviceWorkspaces: [
+              {
+                deviceId: 'device-1',
+                workspacePath: '/workspace/repo',
+                available: true,
+                tasks: [
+                  {
+                    taskId: 'completed-task',
+                    workspacePath: '/workspace/repo',
+                    title: 'Completed task',
+                    runtime: 'codex',
+                    running: false,
+                    status: 'active',
+                    updatedAt: 100,
+                    pinned: false,
+                    pinnedOrder: null,
+                    sidebarOrder: null,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 1,
+      },
+    })
+
+    expect(removed.runtimeWork?.projects[0].deviceWorkspaces[0].tasks[0]).toMatchObject({
+      pinned: false,
+      pinnedOrder: null,
+      sidebarOrder: null,
+    })
+  })
+
   test('keeps chat and project workspace task ordering separate when paths overlap', () => {
     const state = workbenchReducer(initialWorkbenchState, {
       type: 'lists_refreshed',

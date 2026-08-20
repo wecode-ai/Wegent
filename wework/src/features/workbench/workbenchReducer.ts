@@ -394,9 +394,9 @@ function mergeRuntimeTaskListState(
   return {
     ...current,
     ...(next.threadId ? { threadId: next.threadId } : {}),
-    pinned: next.pinned,
-    pinnedOrder: next.pinnedOrder,
-    sidebarOrder: next.sidebarOrder,
+    ...(next.pinned === undefined ? {} : { pinned: next.pinned }),
+    ...(next.pinnedOrder === undefined ? {} : { pinnedOrder: next.pinnedOrder }),
+    ...(next.sidebarOrder === undefined ? {} : { sidebarOrder: next.sidebarOrder }),
   }
 }
 
