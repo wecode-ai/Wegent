@@ -15,7 +15,7 @@ import { updateWorkbenchDebugSnapshot, DEBUG_SNAPSHOT_DEBOUNCE_MS } from '@/lib/
 import { navigateTo, parseRuntimeTaskRoute } from '@/lib/navigation'
 import { localSkillReference } from '@/lib/local-skill-reference'
 import { runtimeContextUsageMetrics } from '@/lib/runtime-context-usage'
-import { normalizeRuntimeWorkspacePath } from '@/lib/runtime-project'
+import { normalizeRuntimeWorkspacePath, runtimeProjectUiId } from '@/lib/runtime-project'
 import { resolveLocalWorkbenchDeviceId } from '@/lib/workbench-device'
 import {
   findActiveRuntimeProjectId,
@@ -1243,6 +1243,14 @@ export function WorkbenchProvider({
           throw new Error(response.error || 'Failed to register local project')
         }
         response.roots.forEach(clearRemoteProjectSyncRemoval)
+        writeLastProjectId(
+          user.id,
+          runtimeProjectUiId({
+            key: response.projectKey,
+            stateDeviceId: response.deviceId,
+            name: response.name,
+          })
+        )
         await refreshWorkLists()
         dispatch({
           type: 'runtime_workspace_opened',

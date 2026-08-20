@@ -6834,6 +6834,13 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() =>
       expect(screen.getByTestId('current-project-name')).toHaveTextContent('Product')
     )
+    expect(readLastProjectId(1)).toBe(
+      runtimeProjectUiId({
+        key: 'multi-project',
+        stateDeviceId: 'device-1',
+        name: 'Product',
+      })
+    )
   })
 
   test('creates a conversation workspace when sending without a selected project', async () => {
