@@ -321,7 +321,7 @@ impl RuntimeWorkRpcHandler {
                         "cancelled",
                         Some(message),
                     );
-                    handler.finish_local_task(&local_task_id, execution_id, None, "cancelled");
+                    handler.settle_cancelled_local_task_execution(&local_task_id, execution_id);
                     handler.emit_claude_runtime_event(
                         &local_task_id,
                         &request,

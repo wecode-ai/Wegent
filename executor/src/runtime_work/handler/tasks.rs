@@ -661,15 +661,10 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let gate = self.task_send_gate(&local_task_id);
         let _guard = gate.lock().await;
-        self.send_message_with_active_turn_check(payload, true)
-            .await
+        self.send_message_after_local_checks(payload).await
     }
 
-    async fn send_message_with_active_turn_check(
-        &self,
-        payload: Value,
-        verify_no_active_turn: bool,
-    ) -> Result<Value, AppIpcError> {
+    async fn send_message_after_local_checks(&self, payload: Value) -> Result<Value, AppIpcError> {
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let existing_link = self.local_task_link(&local_task_id);
@@ -830,19 +825,6 @@ impl RuntimeWorkRpcHandler {
         };
         let link_for_send = existing_link.as_ref().or(recovered_link.as_ref());
         let ephemeral = request.ephemeral || link_for_send.is_some_and(|link| link.ephemeral);
-        if verify_no_active_turn && !ephemeral {
-            let thread = self
-                .read_codex_recent_turns(&thread_id)
-                .await
-                .map_err(|error| AppIpcError::new("codex_error", error))?;
-            if codex_thread_has_in_progress_turn(&thread) {
-                return Ok(json!({
-                    "success": false,
-                    "error": "runtime task is already running",
-                    "code": "bad_request",
-                }));
-            }
-        }
 
         let mut fields = task_fields(&request.task_id, &request.subtask_id);
         fields.push(("local_task_id", local_task_id.clone()));
@@ -942,8 +924,7 @@ impl RuntimeWorkRpcHandler {
                 }
             }
         }
-        self.send_message_with_active_turn_check(payload, false)
-            .await
+        self.send_message_after_local_checks(payload).await
     }
 
     async fn interrupt_provider_active_turn(&self, thread_id: &str) -> bool {
