@@ -2638,20 +2638,47 @@ last_updated = "2026-07-30T00:00:00Z"`
       )
       try {
         const sidebarScrollerSelector = '[data-testid="sidebar-worklists-scroll"]'
-        await waitForOverflowMetrics(
+        const overflowMetrics = await waitForOverflowMetrics(
           control,
           sidebarScrollerSelector,
           'The constrained sidebar task list did not overflow'
         )
-        await control.command('scrollToRatioAsUser', sidebarScrollerSelector, { value: '1' })
-        const sidebarBeforeRefresh = await getSingleElementMetrics(
-          control,
-          sidebarScrollerSelector,
-          'The manually scrolled sidebar before the runtime refresh'
-        )
+        const maxScrollTop = overflowMetrics.scrollHeight - overflowMetrics.clientHeight
+        assert.ok(maxScrollTop > 8, 'The constrained sidebar did not have a non-edge scroll range')
+        let sidebarBeforeRefresh
+        for (const scrollRatio of [0.2, 0.8, 0.5]) {
+          await control.command('scrollToRatioAsUser', sidebarScrollerSelector, {
+            value: String(scrollRatio),
+          })
+          const candidateSidebarMetrics = await getSingleElementMetrics(
+            control,
+            sidebarScrollerSelector,
+            'The manually scrolled sidebar before the runtime refresh'
+          )
+          const candidateActiveTaskRow = await getSingleElementMetrics(
+            control,
+            `[data-testid="${requestInputTaskRowTestId}"]`,
+            'The active task row after manually scrolling the sidebar'
+          )
+          const activeTaskHidden =
+            candidateActiveTaskRow.bottom < candidateSidebarMetrics.top - 2 ||
+            candidateActiveTaskRow.top > candidateSidebarMetrics.bottom + 2
+          if (
+            candidateSidebarMetrics.scrollTop > 2 &&
+            distanceFromBottom(candidateSidebarMetrics) > 2 &&
+            activeTaskHidden
+          ) {
+            assert.ok(
+              Math.abs(candidateSidebarMetrics.scrollTop - maxScrollTop * scrollRatio) <= 2,
+              `The sidebar task list did not reach the requested ${scrollRatio} scroll ratio`
+            )
+            sidebarBeforeRefresh = candidateSidebarMetrics
+            break
+          }
+        }
         assert.ok(
-          sidebarBeforeRefresh.scrollTop > 0,
-          'The sidebar task list did not move away from the active task'
+          sidebarBeforeRefresh,
+          'The sidebar task list did not expose a non-edge position with the active task hidden'
         )
 
         await control.command('click', '[data-testid="request-user-input-option-direction-1"]')
