@@ -345,7 +345,7 @@ async function verifySideChatAttachmentIsolation({
     text: SIDE_CHAT_COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('waitFor', `${sideChatSelector} [data-testid="message-image-attachment"]`, {
+  await control.command('waitFor', `${sideChatSelector} [data-testid="message-image-preview"]`, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   const sideAfterSend = JSON.parse(await control.command('snapshot', sideChatSelector))
