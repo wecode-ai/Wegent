@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useRef } from 'react'
 import type { Dispatch } from 'react'
 import {
   checkoutProjectBranch,
@@ -126,6 +126,8 @@ export function useWorkbenchProjectActions({
   clearRemoteProjectSyncRemoval,
   enqueueRemoteProjectStateMutation,
 }: UseWorkbenchProjectActionsOptions) {
+  const runtimeTaskPinMutationQueuesRef = useRef(new Map<string, Promise<void>>())
+
   const createProject = useCallback(
     async (data: CreateProjectRequest, options: ProjectMutationOptions = {}) => {
       const project = await services.projectApi.createProject(data)
@@ -505,15 +507,28 @@ export function useWorkbenchProjectActions({
   )
 
   const setRuntimeTaskPinned = useCallback(
-    async (data: RuntimeTaskPinRequest) => {
-      const requestId = updateLocalRuntimeTaskPinned(data)
-      try {
-        await executorClient.runtime.setRuntimeTaskPinned(data)
-      } catch (error) {
-        rollbackLocalRuntimeTaskPinned(data, requestId)
-        throw error
-      }
-      await refreshWorkLists()
+    (data: RuntimeTaskPinRequest) => {
+      const key = `${data.deviceId}\0${data.threadId}`
+      const previousMutation = runtimeTaskPinMutationQueuesRef.current.get(key) ?? Promise.resolve()
+      const mutation = previousMutation
+        .catch(() => undefined)
+        .then(async () => {
+          const requestId = updateLocalRuntimeTaskPinned(data)
+          try {
+            await executorClient.runtime.setRuntimeTaskPinned(data)
+          } catch (error) {
+            rollbackLocalRuntimeTaskPinned(data, requestId)
+            throw error
+          }
+          await refreshWorkLists()
+        })
+      const queuedMutation = mutation.finally(() => {
+        if (runtimeTaskPinMutationQueuesRef.current.get(key) === queuedMutation) {
+          runtimeTaskPinMutationQueuesRef.current.delete(key)
+        }
+      })
+      runtimeTaskPinMutationQueuesRef.current.set(key, queuedMutation)
+      return queuedMutation
     },
     [executorClient, refreshWorkLists, rollbackLocalRuntimeTaskPinned, updateLocalRuntimeTaskPinned]
   )

@@ -80,12 +80,11 @@ describe('workbench project chat hooks', () => {
 
   test('ignores an older model reload that settles after the latest request', async () => {
     const initialModel: UnifiedModel = { name: 'initial-model', type: 'runtime' }
-    const staleModel: UnifiedModel = { name: 'stale-model', type: 'runtime' }
     const recoveredModel: UnifiedModel = { name: 'recovered-model', type: 'runtime' }
-    let resolveStaleReload: ((value: { data: UnifiedModel[] }) => void) | undefined
+    let rejectStaleReload: ((reason: Error) => void) | undefined
     let resolveRecoveredReload: ((value: { data: UnifiedModel[] }) => void) | undefined
-    const staleReload = new Promise<{ data: UnifiedModel[] }>(resolve => {
-      resolveStaleReload = resolve
+    const staleReload = new Promise<{ data: UnifiedModel[] }>((_resolve, reject) => {
+      rejectStaleReload = reject
     })
     const recoveredReload = new Promise<{ data: UnifiedModel[] }>(resolve => {
       resolveRecoveredReload = resolve
@@ -107,16 +106,18 @@ describe('workbench project chat hooks', () => {
     await waitFor(() => expect(api.listModels).toHaveBeenCalledTimes(3))
 
     await act(async () => {
+      rejectStaleReload?.(new Error('stale reload failed'))
+      await staleReload.catch(() => undefined)
+    })
+    expect(result.current.models).toEqual([initialModel])
+    expect(result.current.isLoading).toBe(true)
+    expect(result.current.error).toBeNull()
+
+    await act(async () => {
       resolveRecoveredReload?.({ data: [recoveredModel] })
       await recoveredReload
     })
     await waitFor(() => expect(result.current.models).toEqual([recoveredModel]))
-
-    await act(async () => {
-      resolveStaleReload?.({ data: [staleModel] })
-      await staleReload
-    })
-    expect(result.current.models).toEqual([recoveredModel])
     expect(result.current.isLoading).toBe(false)
     expect(result.current.error).toBeNull()
   })
