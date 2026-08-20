@@ -595,8 +595,9 @@ fn read_node_version(node: &Path) -> Result<Version, String> {
 }
 
 fn resolve_dsh_runtime(app: &tauri::AppHandle) -> Result<DshRuntime, String> {
+    let node = crate::execution_environments::ensure_node_runtime(app)?;
     if let Ok(runtime_root) = std::env::var("WEWORK_HARNESS_RUNTIME_ROOT") {
-        return resolve_managed_dsh_runtime(PathBuf::from(runtime_root));
+        return resolve_managed_dsh_runtime(PathBuf::from(runtime_root), node);
     }
     if let Ok(source_root) = std::env::var("WEWORK_DEEPSEEK_HARNESS_ROOT") {
         let root = fs::canonicalize(source_root).map_err(|error| {
@@ -610,7 +611,6 @@ fn resolve_dsh_runtime(app: &tauri::AppHandle) -> Result<DshRuntime, String> {
                 tsx.display()
             ));
         }
-        let node = PathBuf::from("node");
         return Ok(DshRuntime {
             version: read_package_version(&root.join("package.json"))?,
             node_version: read_node_version(&node)?,
@@ -621,7 +621,7 @@ fn resolve_dsh_runtime(app: &tauri::AppHandle) -> Result<DshRuntime, String> {
         });
     }
     let descriptor_root = bundled_runtime_descriptor_root(app)?;
-    download_and_extract_dsh_runtime(app, &descriptor_root)
+    download_and_extract_dsh_runtime(app, &descriptor_root, node)
 }
 
 fn bundled_runtime_descriptor_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -775,12 +775,13 @@ fn download_runtime_archive(
 fn download_and_extract_dsh_runtime(
     app: &tauri::AppHandle,
     resource_root: &Path,
+    node: PathBuf,
 ) -> Result<DshRuntime, String> {
     let metadata = read_runtime_descriptor(resource_root)?;
     let fingerprint = metadata.source_fingerprint.trim();
     let runtime_parent = root(app)?.join("runtime");
     let extracted = runtime_parent.join(fingerprint);
-    if let Ok(runtime) = resolve_managed_dsh_runtime(extracted.clone()) {
+    if let Ok(runtime) = resolve_managed_dsh_runtime(extracted.clone(), node.clone()) {
         return Ok(runtime);
     }
     let archive_path = download_runtime_archive(app, &metadata)?;
@@ -805,7 +806,7 @@ fn download_and_extract_dsh_runtime(
         if staged_metadata.source_fingerprint != fingerprint {
             return Err("Managed Harness runtime archive fingerprint does not match".to_string());
         }
-        resolve_managed_dsh_runtime(staging.clone())?;
+        resolve_managed_dsh_runtime(staging.clone(), node.clone())?;
 
         fs::create_dir_all(&runtime_parent).map_err(|error| {
             format!("Failed to create managed Harness runtime directory: {error}")
@@ -813,7 +814,7 @@ fn download_and_extract_dsh_runtime(
         let _ = fs::remove_dir_all(&extracted);
         fs::rename(&staging, &extracted)
             .map_err(|error| format!("Failed to activate managed Harness runtime: {error}"))?;
-        resolve_managed_dsh_runtime(extracted)
+        resolve_managed_dsh_runtime(extracted, node)
     })();
     if extraction.is_err() {
         let _ = fs::remove_dir_all(&staging);
@@ -821,15 +822,12 @@ fn download_and_extract_dsh_runtime(
     extraction
 }
 
-fn resolve_managed_dsh_runtime(root: PathBuf) -> Result<DshRuntime, String> {
+fn resolve_managed_dsh_runtime(root: PathBuf, node: PathBuf) -> Result<DshRuntime, String> {
     let package_root = root.join("node_modules/@deepseek-ai/dsh");
     let entry = package_root.join("lib/bin.js");
     if !entry.is_file() {
         return Err("Wework managed DeepSeek Harness runtime is not installed".to_string());
     }
-    let node = root
-        .join("node/bin")
-        .join(if cfg!(windows) { "node.exe" } else { "node" });
     Ok(DshRuntime {
         version: read_package_version(&package_root.join("package.json"))?,
         node_version: read_node_version(&node)?,
@@ -842,7 +840,11 @@ fn resolve_managed_dsh_runtime(root: PathBuf) -> Result<DshRuntime, String> {
 
 fn dsh_command(runtime: &DshRuntime, args: &[String], home: &Path) -> Command {
     let mut command = Command::new(&runtime.node);
-    let managed_node_bin = runtime.root.join("node/bin");
+    let managed_node_bin = runtime
+        .node
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_default();
     let managed_bin = runtime.root.join("node_modules/.bin");
     let path = std::env::var_os("PATH")
         .map(|existing| {

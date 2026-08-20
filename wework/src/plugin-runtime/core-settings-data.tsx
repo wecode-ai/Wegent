@@ -2,6 +2,7 @@ import {
   AppWindow,
   Archive,
   Code2,
+  Cpu,
   FolderGit2,
   GitPullRequest,
   Globe2,
@@ -25,6 +26,7 @@ import { AppshotsSettingsPage } from '@/components/settings/AppshotsSettingsPage
 import { ArchivedConversationsSettingsPage } from '@/components/settings/ArchivedConversationsSettingsPage'
 import { BrowserSettingsPage } from '@/components/settings/BrowserSettingsPage'
 import { ContextSettingsPage } from '@/components/settings/ContextSettingsPage'
+import { ExecutionEnvironmentsSettingsPage } from '@/components/settings/ExecutionEnvironmentsSettingsPage'
 import { GeneralSettingsPage } from '@/components/settings/GeneralSettingsPage'
 import { GitHostingSettingsPage } from '@/components/settings/GitHostingSettingsPage'
 import { HarnessSettingsPage } from '@/components/settings/HarnessSettingsPage'
@@ -178,6 +180,15 @@ export const CORE_WORKBENCH_SETTINGS = [
     label: '代码托管',
     ...coding,
     render: () => <GitHostingSettingsPage />,
+  },
+  {
+    key: 'execution-environments',
+    path: '/settings/execution-environments',
+    icon: Cpu,
+    labelKey: 'settings_nav_execution_environments',
+    label: '执行环境',
+    ...coding,
+    render: () => <ExecutionEnvironmentsSettingsPage />,
   },
   {
     key: 'harnesses',

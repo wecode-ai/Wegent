@@ -622,6 +622,17 @@ async function main() {
   } else {
     await run('pnpm', ['run', 'prepare:harness-runtime'], { cwd: WEWORK_DIR })
   }
+  if (!process.env.WEWORK_NODE_RUNTIME_ROOT) {
+    await run('pnpm', ['run', 'prepare:execution-runtime', '--', '--materialize'], {
+      cwd: WEWORK_DIR,
+    })
+    process.env.WEWORK_NODE_RUNTIME_ROOT = join(
+      WEWORK_DIR,
+      'node_modules',
+      '.cache',
+      'execution-runtime-node-dev'
+    )
+  }
   log(
     `Using Harness runtime root: ${
       process.env.WEWORK_HARNESS_RUNTIME_ROOT || process.env.WEWORK_DEEPSEEK_HARNESS_ROOT
