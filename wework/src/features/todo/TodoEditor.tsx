@@ -80,6 +80,25 @@ function supportsAssignApi(api: DeliveryApi): boolean {
   return typeof (api as { assignLoopItem?: unknown }).assignLoopItem === 'function'
 }
 
+type WorkflowErrorKind = 'timeout' | 'offline' | 'assignee' | 'model' | 'generic'
+
+function workflowErrorKind(error: string): WorkflowErrorKind {
+  const normalized = error.toLowerCase()
+  if (normalized.includes('no model or tool progress')) {
+    return 'timeout'
+  }
+  if (normalized.includes('executor-offline') || normalized.includes('device offline')) {
+    return 'offline'
+  }
+  if (normalized.includes('assignee is not active')) {
+    return 'assignee'
+  }
+  if (normalized.includes('model') && normalized.includes('available')) {
+    return 'model'
+  }
+  return 'generic'
+}
+
 type AttachmentRow = Pick<CloudLoopItemAttachment, 'id' | 'display_name' | 'size_bytes'>
 
 type TodoDraft = {
@@ -850,7 +869,19 @@ export function TodoEditor(props: TodoEditorProps) {
     completed: t('todo.workflow_plan_completed', '已完成'),
     failed: t('todo.workflow_plan_failed', '生成方案失败'),
   }[workflowPlanStatus]
-  const proposedPlanItems = workflowPlan?.items.filter(planItem => !planItem.task_id) ?? []
+  const planItems = workflowPlan?.items ?? []
+  const workflowManager = workflowPlan?.manager_run
+  const rawWorkflowError = workflowManager?.error || workflowPlanError || ''
+  const workflowError =
+    rawWorkflowError || workflowPlanStatus === 'failed'
+      ? {
+          timeout: t('todo.workflow_error_timeout'),
+          offline: t('todo.workflow_error_offline'),
+          assignee: t('todo.workflow_error_assignee'),
+          model: t('todo.workflow_error_model'),
+          generic: t('todo.workflow_error_generic'),
+        }[workflowErrorKind(rawWorkflowError)]
+      : ''
   const itemTags = item?.tags ?? []
   const tagsDirty =
     tags.length !== itemTags.length || tags.some((tag, index) => tag !== itemTags[index])
@@ -1991,35 +2022,103 @@ export function TodoEditor(props: TodoEditorProps) {
                           {workflowPlan.summary}
                         </p>
                       ) : null}
-                      {proposedPlanItems.length > 0 ? (
-                        <div className="mt-2 divide-y divide-border rounded-lg border border-border bg-background">
-                          {proposedPlanItems.map((planItem, index) => (
-                            <div
-                              key={planItem.id}
-                              data-testid={`cloud-todo-workflow-plan-item-${planItem.id}`}
-                              className="flex gap-2 px-3 py-2"
-                            >
-                              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-muted text-xs text-text-muted">
-                                {index + 1}
-                              </span>
-                              <div className="min-w-0 flex-1">
-                                <p className="text-sm font-medium text-text-primary">
-                                  {planItem.title}
-                                </p>
-                                <p className="mt-0.5 line-clamp-2 text-xs text-text-muted">
-                                  {planItem.description}
-                                </p>
-                                <p className="mt-1 text-xs text-text-secondary">
-                                  {planItem.assignee_name || planItem.assignee_id}
-                                  {planItem.rationale ? ` · ${planItem.rationale}` : ''}
-                                </p>
-                              </div>
-                            </div>
-                          ))}
+                      {['planning', 'failed', 'paused'].includes(workflowPlanStatus) ? (
+                        <div
+                          className="mt-2 rounded-lg border border-border bg-background px-3 py-2"
+                          data-testid="cloud-todo-workflow-manager-run"
+                        >
+                          <div className="flex items-center gap-2 text-xs">
+                            <Bot className="h-3.5 w-3.5 text-text-muted" />
+                            <span className="font-medium text-text-primary">
+                              {t('todo.workflow_manager')}
+                            </span>
+                            <span className="text-text-muted">
+                              {workflowManager?.recent_activity ||
+                                (workflowPlanStatus === 'planning'
+                                  ? t('todo.workflow_manager_entering_queue')
+                                  : workflowPlanStatusLabel)}
+                            </span>
+                          </div>
+                          <p className="mt-1 truncate text-xs text-text-muted">
+                            {[workflowManager?.model, workflowManager?.device_id]
+                              .filter(Boolean)
+                              .join(' · ')}
+                          </p>
                         </div>
                       ) : null}
-                      {workflowPlanError ? (
-                        <p className="mt-2 text-xs text-destructive">{workflowPlanError}</p>
+                      {planItems.length > 0 ? (
+                        <div className="mt-2 divide-y divide-border rounded-lg border border-border bg-background">
+                          {planItems.map((planItem, index) => {
+                            const child = childItems.find(
+                              candidate => candidate.id === planItem.task_id
+                            )
+                            const planStatus =
+                              planItem.outcome_verdict === 'passed'
+                                ? t('todo.workflow_outcome_passed')
+                                : planItem.outcome_verdict === 'needs_rework'
+                                  ? t('todo.workflow_outcome_needs_rework')
+                                  : planItem.task_status
+                                    ? (statusOptions.find(
+                                        option => option.id === planItem.task_status
+                                      )?.name ?? planItem.task_status)
+                                    : t('todo.workflow_task_pending_creation')
+                            return (
+                              <div
+                                key={planItem.id}
+                                data-testid={`cloud-todo-workflow-plan-item-${planItem.id}`}
+                                className="flex gap-2 px-3 py-2"
+                              >
+                                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-muted text-xs text-text-muted">
+                                  {index + 1}
+                                </span>
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center gap-2">
+                                    <p className="min-w-0 flex-1 truncate text-sm font-medium text-text-primary">
+                                      {planItem.title}
+                                    </p>
+                                    <span className="shrink-0 text-xs text-text-muted">
+                                      {planStatus}
+                                    </span>
+                                  </div>
+                                  {!planItem.task_id ? (
+                                    <p className="mt-0.5 line-clamp-2 text-xs text-text-muted">
+                                      {planItem.description}
+                                    </p>
+                                  ) : null}
+                                  <p className="mt-1 text-xs text-text-secondary">
+                                    {planItem.assignee_name || planItem.assignee_id}
+                                    {planItem.rationale ? ` · ${planItem.rationale}` : ''}
+                                  </p>
+                                  {planItem.outcome_summary ? (
+                                    <p className="mt-1 line-clamp-2 text-xs text-text-muted">
+                                      {planItem.outcome_summary}
+                                    </p>
+                                  ) : null}
+                                </div>
+                                {child && props.onOpenChildTask ? (
+                                  <button
+                                    type="button"
+                                    data-testid={`cloud-todo-open-plan-task-${child.id}`}
+                                    onClick={() => props.onOpenChildTask?.(child)}
+                                    className="shrink-0 self-start rounded-md px-1.5 py-1 text-xs text-text-secondary hover:bg-muted"
+                                  >
+                                    {t('todo.workflow_open_task')}
+                                  </button>
+                                ) : null}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      ) : null}
+                      {workflowError ? (
+                        <details className="mt-2 text-xs text-destructive">
+                          <summary className={cn(rawWorkflowError && 'cursor-pointer')}>
+                            {workflowError}
+                          </summary>
+                          {rawWorkflowError ? (
+                            <p className="mt-1 break-words text-text-muted">{rawWorkflowError}</p>
+                          ) : null}
+                        </details>
                       ) : null}
                     </section>
                   ) : null}

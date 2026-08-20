@@ -68,11 +68,19 @@ from app.services.loop_items.provider_router import (
     loop_item_attachment_provider_router,
     loop_item_provider_router,
 )
+from app.services.project_automations import project_automation_service
 from app.services.project_workflow_projection import update_workflow_task_status
 from app.services.workflow_stage_context import workflow_stage_context_resolver
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+ACTIVE_MANAGER_RUN_STATUSES = {
+    "pending",
+    "queued",
+    "waiting_device",
+    "running",
+    "cancel_requested",
+}
 
 
 def _loop_item_response(
@@ -151,6 +159,35 @@ async def _dispatch_workflow_manager(
         project=project,
         user_id=user.id,
     )
+
+
+async def _cancel_workflow_manager(
+    db: Session,
+    *,
+    plan: WorkflowPlanView,
+    user: User,
+) -> bool:
+    manager_run = issue_workflow_planning_service.manager_automation_run(
+        db,
+        workflow_run_id=plan.run_id,
+    )
+    if manager_run is None or manager_run.status not in ACTIVE_MANAGER_RUN_STATUSES:
+        return False
+    result = await project_automation_service.cancel_run(
+        db,
+        str(manager_run.cloud_project_id),
+        str(manager_run.id),
+        user.id,
+    )
+    return str(result.get("status") or "") in ACTIVE_MANAGER_RUN_STATUSES
+
+
+def _workflow_manager_is_active(db: Session, plan: WorkflowPlanView) -> bool:
+    manager_run = issue_workflow_planning_service.manager_automation_run(
+        db,
+        workflow_run_id=plan.run_id,
+    )
+    return manager_run is not None and manager_run.status in ACTIVE_MANAGER_RUN_STATUSES
 
 
 @router.get("/cloud-work-items/my-work", response_model=MyWorkListResponse)
@@ -637,12 +674,19 @@ async def approve_loop_item_workflow_plan(
     "/loop-items/{item_id}/workflow-plan/pause",
     response_model=WorkflowPlanView,
 )
-def pause_loop_item_workflow_plan(
+async def pause_loop_item_workflow_plan(
     item_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> WorkflowPlanView:
     try:
+        current = issue_workflow_planning_service.get(
+            db,
+            issue_id=item_id,
+            user_id=current_user.id,
+        )
+        if current is not None:
+            await _cancel_workflow_manager(db, plan=current, user=current_user)
         return issue_workflow_planning_service.pause(
             db,
             issue_id=item_id,
@@ -662,6 +706,13 @@ async def resume_loop_item_workflow_plan(
     current_user: User = Depends(get_current_user),
 ) -> WorkflowPlanView:
     try:
+        current = issue_workflow_planning_service.get(
+            db,
+            issue_id=item_id,
+            user_id=current_user.id,
+        )
+        if current is not None and _workflow_manager_is_active(db, current):
+            raise ValueError("The AI manager is still stopping")
         plan = issue_workflow_planning_service.resume(
             db,
             issue_id=item_id,
@@ -690,6 +741,19 @@ async def replan_loop_item_workflow_plan(
     current_user: User = Depends(get_current_user),
 ) -> WorkflowPlanView:
     try:
+        current = issue_workflow_planning_service.get(
+            db,
+            issue_id=item_id,
+            user_id=current_user.id,
+        )
+        if current is not None:
+            stopping = await _cancel_workflow_manager(
+                db,
+                plan=current,
+                user=current_user,
+            )
+            if stopping:
+                raise ValueError("The AI manager is still stopping")
         plan = issue_workflow_planning_service.replan(
             db,
             issue_id=item_id,

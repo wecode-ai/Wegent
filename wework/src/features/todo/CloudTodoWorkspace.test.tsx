@@ -1696,6 +1696,8 @@ describe('CloudTodoWorkspace', () => {
           rationale: '适合开发任务',
           task_id: child.id,
           task_status: child.status,
+          outcome_verdict: 'passed' as const,
+          outcome_summary: '实现和测试均已通过',
           status: 'materialized' as const,
         },
       ],
@@ -1730,6 +1732,10 @@ describe('CloudTodoWorkspace', () => {
       '等待统一验收'
     )
     expect(screen.getByTestId('cloud-todo-open-child-task-WEG-2')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-workflow-plan-item-plan-item-1')).toHaveTextContent(
+      '实现和测试均已通过'
+    )
+    expect(screen.getByTestId('cloud-todo-open-plan-task-WEG-2')).toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('cloud-todo-workflow-review'))
 
@@ -1742,6 +1748,7 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.queryByTestId('cloud-todo-workflow-review')).not.toBeInTheDocument()
     expect(screen.getByTestId('cloud-todo-workflow-rerun')).toBeInTheDocument()
     expect(screen.getByTestId('cloud-todo-open-child-task-WEG-2')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-workflow-plan-item-plan-item-1')).toBeInTheDocument()
   })
 
   it('adds an attachment from the TODO edit dialog', async () => {

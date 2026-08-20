@@ -290,6 +290,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
   let boardTeamAssignmentPayload = null
   let createdBoardItem = null
   let createdChildItem = null
+  let workflowPlan = null
   let cloudApi = null
   let cloudProject = null
   let cloudAgent = null
@@ -1296,12 +1297,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
             return true
           }
           if (requestContainsToolOutput(payload, searchCandidatesCallId)) {
-            const tool = selectMcpTool(
-              payload,
-              'wework_space',
-              'get_assignment_candidates',
-              {}
-            )
+            const tool = selectMcpTool(payload, 'wework_space', 'get_assignment_candidates', {})
             writeEvents([
               responseCreated(responseId),
               ...namespacedFunctionCall(
@@ -1327,12 +1323,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
             const tool = selectMcpTool(payload, 'wework_space', 'get_board_item', {})
             writeEvents([
               responseCreated(responseId),
-              ...namespacedFunctionCall(
-                readItemCallId,
-                tool.namespace,
-                tool.name,
-                tool.arguments
-              ),
+              ...namespacedFunctionCall(readItemCallId, tool.namespace, tool.name, tool.arguments),
               responseCompleted(responseId),
             ])
             return true
@@ -1380,6 +1371,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       const taskBindingsMatch = url.pathname.match(/^\/api\/v1\/loop-items\/(AUTO-\d+)\/tasks$/)
       if (request.method === 'GET' && taskBindingsMatch) {
         json(response, 200, taskBindingsMatch[1] === orchestratedItemId ? workflowTaskBindings : [])
+        return true
+      }
+      const workflowPlanMatch = url.pathname.match(
+        /^\/api\/v1\/loop-items\/(AUTO-\d+)\/workflow-plan$/
+      )
+      if (request.method === 'GET' && workflowPlanMatch) {
+        json(response, 200, workflowPlan?.issue_id === workflowPlanMatch[1] ? workflowPlan : null)
         return true
       }
       if (
@@ -2333,6 +2331,148 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         }
       )
       await captureScreenshot(control, 'project-automation-00-workflow-task-statuses.png')
+
+      const aiManagedItemId = `AUTO-${nextBoardItemSequence++}`
+      const aiManagedChildId = `AUTO-${nextBoardItemSequence++}`
+      createdBoardItem = {
+        ...createdBoardItem,
+        id: aiManagedItemId,
+        sequence_number: Number(aiManagedItemId.split('-')[1]),
+        parent_id: null,
+        title: 'AI 管家持续编排',
+        status: 'pending',
+        workflow: {
+          version: 1,
+          definition_version: 1,
+          stage_mode: 'none',
+          advancement_policy: 'ai',
+          approval_policy: 'required',
+          orchestration_status: 'planning',
+          active_run_id: 'workflow-run-e2e',
+          active_plan_version: 1,
+          current_stage_id: null,
+          nodes: [],
+        },
+      }
+      createdChildItem = null
+      workflowPlan = {
+        run_id: 'workflow-run-e2e',
+        issue_id: aiManagedItemId,
+        stage_id: '__issue__',
+        plan_version: 1,
+        approval_policy: 'required',
+        status: 'planning',
+        summary: '',
+        items: [],
+        manager_run: {
+          id: 'manager-run-e2e',
+          status: 'running',
+          model: MODEL_NAME,
+          execution_environment: 'cloud',
+          device_id: CLOUD_DEVICE_ID,
+          recent_activity: '正在读取 Issue 并生成编排方案',
+          error: null,
+          updated_at: '2026-08-20T10:00:00Z',
+        },
+      }
+      let readyCount = control.readyCount
+      await control.command('reloadMainWindow', 'body')
+      await withTimeout(
+        control.awaitReadyAfter(readyCount),
+        uiTimeoutMs * 3,
+        'The project board did not reconnect for AI manager projection verification'
+      )
+      await control.command('click', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
+        visible: true,
+      })
+      await control.command(
+        'click',
+        `${activeBoard} [data-testid="cloud-todo-card-${aiManagedItemId}"]`,
+        { visible: true }
+      )
+      await control.command(
+        'waitFor',
+        `${activeBoard} [data-testid="cloud-todo-workflow-manager-run"]`,
+        {
+          text: '正在读取 Issue 并生成编排方案',
+          timeoutMs: uiTimeoutMs,
+          visible: true,
+        }
+      )
+
+      createdChildItem = {
+        ...createdBoardItem,
+        id: aiManagedChildId,
+        sequence_number: Number(aiManagedChildId.split('-')[1]),
+        parent_id: aiManagedItemId,
+        title: '实现 AI 编排可观测性',
+        status: 'in_review',
+        workflow: null,
+      }
+      createdBoardItem = {
+        ...createdBoardItem,
+        workflow: {
+          ...createdBoardItem.workflow,
+          orchestration_status: 'awaiting_review',
+        },
+      }
+      workflowPlan = {
+        ...workflowPlan,
+        status: 'awaiting_review',
+        summary: '实现并验证 AI 编排可观测性',
+        items: [
+          {
+            id: 'workflow-plan-item-e2e',
+            client_key: 'implement',
+            stage_id: '__issue__',
+            title: createdChildItem.title,
+            description: '显示子任务状态与结果',
+            assignee_type: 'agent',
+            assignee_id: AGENT_ID,
+            assignee_name: AGENT.name,
+            rationale: '开发能力匹配',
+            task_id: aiManagedChildId,
+            task_status: 'in_review',
+            outcome_verdict: 'passed',
+            outcome_summary: '实现和自动化测试均已通过',
+            status: 'materialized',
+          },
+        ],
+      }
+      readyCount = control.readyCount
+      await control.command('reloadMainWindow', 'body')
+      await withTimeout(
+        control.awaitReadyAfter(readyCount),
+        uiTimeoutMs * 3,
+        'The project board did not reconnect for workflow history verification'
+      )
+      await control.command('click', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
+        visible: true,
+      })
+      await control.command(
+        'click',
+        `${activeBoard} [data-testid="cloud-todo-card-${aiManagedItemId}"]`,
+        { visible: true }
+      )
+      await control.command(
+        'waitFor',
+        `${activeBoard} [data-testid="cloud-todo-workflow-plan-item-workflow-plan-item-e2e"]`,
+        {
+          text: '实现和自动化测试均已通过',
+          timeoutMs: uiTimeoutMs,
+          visible: true,
+        }
+      )
+      await control.command(
+        'waitFor',
+        `${activeBoard} [data-testid="cloud-todo-open-plan-task-${aiManagedChildId}"]`,
+        {
+          text: '查看任务',
+          timeoutMs: uiTimeoutMs,
+          visible: true,
+        }
+      )
+      await captureScreenshot(control, 'project-automation-00-ai-workflow-history.png')
       await control.command(
         'waitFor',
         `${activeBoard} [data-testid="cloud-project-automation-view"]`,

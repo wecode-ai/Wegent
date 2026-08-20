@@ -453,7 +453,20 @@ export interface WorkflowPlanItem {
   rationale: string
   task_id?: string | null
   task_status?: CloudLoopItem['status'] | null
+  outcome_verdict?: 'passed' | 'needs_rework' | null
+  outcome_summary?: string
   status: 'proposed' | 'materialized' | 'superseded'
+}
+
+export interface WorkflowManagerRun {
+  id: string
+  status: string
+  model?: string | null
+  execution_environment?: string | null
+  device_id?: string | null
+  recent_activity: string
+  error?: string | null
+  updated_at: string
 }
 
 export interface WorkflowPlan {
@@ -465,6 +478,7 @@ export interface WorkflowPlan {
   status: WorkflowPlanStatus
   summary: string
   items: WorkflowPlanItem[]
+  manager_run?: WorkflowManagerRun | null
 }
 
 export interface CloudProjectFile {

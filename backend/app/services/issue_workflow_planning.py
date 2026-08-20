@@ -12,6 +12,8 @@ from sqlalchemy.orm import Session
 from app.models.delivery import (
     CloudProject,
     LoopItem,
+    ProjectAutomationRule,
+    ProjectAutomationRun,
     ProjectChatAgent,
     ProjectWorkflowPlanItem,
     ProjectWorkflowRun,
@@ -23,6 +25,7 @@ from app.schemas.base_role import BaseRole
 from app.schemas.delivery import LoopItemCreate
 from app.schemas.issue_workflow import (
     ISSUE_WORKFLOW_SCOPE_ID,
+    WorkflowManagerRunView,
     WorkflowPlanItemCreate,
     WorkflowPlanItemView,
     WorkflowPlanSubmit,
@@ -424,6 +427,46 @@ class IssueWorkflowPlanningService:
         workflow = self._workflow(issue)
         run = self._active_run(db, issue, workflow)
         return self._view(db, issue, run) if run is not None else None
+
+    def manager_automation_run(
+        self,
+        db: Session,
+        *,
+        workflow_run_id: str,
+    ) -> ProjectAutomationRun | None:
+        run = db.get(ProjectWorkflowRun, workflow_run_id)
+        if run is None:
+            return None
+        metadata = run.metadata_json if isinstance(run.metadata_json, dict) else {}
+        automation_run_id = str(metadata.get("project_automation_run_id") or "")
+        if automation_run_id:
+            automation_run = db.get(ProjectAutomationRun, automation_run_id)
+            if automation_run is not None:
+                return automation_run
+        candidates = (
+            db.query(ProjectAutomationRun)
+            .filter(
+                ProjectAutomationRun.cloud_project_id == run.cloud_project_id,
+                ProjectAutomationRun.task_id == run.parent_id,
+                loop_datetime_is_unset(ProjectAutomationRun.deleted_at),
+            )
+            .order_by(ProjectAutomationRun.created_at.desc())
+            .all()
+        )
+        for candidate in candidates:
+            candidate_metadata = (
+                candidate.metadata_json
+                if isinstance(candidate.metadata_json, dict)
+                else {}
+            )
+            event = candidate_metadata.get("event")
+            payload = event.get("payload") if isinstance(event, dict) else None
+            if (
+                isinstance(payload, dict)
+                and str(payload.get("workflow_run_id") or "") == workflow_run_id
+            ):
+                return candidate
+        return None
 
     def pause(
         self,
@@ -960,9 +1003,9 @@ class IssueWorkflowPlanningService:
             item for item in self._items(db, run.id) if item.status != "superseded"
         ]
         task_ids = [item.loop_item_id for item in items if item.loop_item_id]
-        task_statuses = (
+        tasks = (
             {
-                task.id: task.status
+                task.id: task
                 for task in db.query(LoopItem)
                 .filter(
                     LoopItem.id.in_(task_ids),
@@ -973,6 +1016,8 @@ class IssueWorkflowPlanningService:
             if task_ids
             else {}
         )
+        manager_run = self.manager_automation_run(db, workflow_run_id=run.id)
+        manager_view = self._manager_view(db, manager_run)
         return WorkflowPlanView(
             run_id=run.id,
             issue_id=issue.id,
@@ -986,11 +1031,69 @@ class IssueWorkflowPlanningService:
                     id=item.id,
                     **self._item_metadata(item),
                     task_id=item.loop_item_id or None,
-                    task_status=task_statuses.get(item.loop_item_id),
+                    task_status=(
+                        tasks[item.loop_item_id].status
+                        if item.loop_item_id in tasks
+                        else None
+                    ),
+                    **self._outcome_view(tasks.get(item.loop_item_id)),
                     status=item.status,
                 )
                 for item in items
             ],
+            manager_run=manager_view,
+        )
+
+    @staticmethod
+    def _outcome_view(task: LoopItem | None) -> dict[str, str | None]:
+        metadata = (
+            task.metadata_json if task and isinstance(task.metadata_json, dict) else {}
+        )
+        outcome = metadata.get("workflow_outcome")
+        if not isinstance(outcome, dict):
+            return {"outcome_verdict": None, "outcome_summary": ""}
+        verdict = str(outcome.get("verdict") or "")
+        return {
+            "outcome_verdict": (
+                verdict if verdict in {"passed", "needs_rework"} else None
+            ),
+            "outcome_summary": str(outcome.get("summary") or ""),
+        }
+
+    @staticmethod
+    def _manager_view(
+        db: Session,
+        run: ProjectAutomationRun | None,
+    ) -> WorkflowManagerRunView | None:
+        if run is None:
+            return None
+        rule = db.get(ProjectAutomationRule, run.parent_id)
+        metadata = (
+            rule.metadata_json if rule and isinstance(rule.metadata_json, dict) else {}
+        )
+        model = metadata.get("model")
+        environment = metadata.get("execution_environment")
+        device_id = run.device_id or metadata.get("execution_device_id")
+        recent_activity = ""
+        if run.status == "failed":
+            recent_activity = "AI 管家执行失败"
+        elif run.status in {"pending", "queued", "waiting_device"}:
+            recent_activity = "等待执行器领取"
+        elif run.status == "running":
+            recent_activity = "正在读取 Issue 并生成编排方案"
+        elif run.status in {"completed", "succeeded"}:
+            recent_activity = "方案生成完成"
+        elif run.status in {"cancelled", "canceled"}:
+            recent_activity = "执行已停止"
+        return WorkflowManagerRunView(
+            id=run.id,
+            status=run.status,
+            model=str(model) if model else None,
+            execution_environment=str(environment) if environment else None,
+            device_id=str(device_id) if device_id else None,
+            recent_activity=recent_activity,
+            error=run.description if run.status == "failed" else None,
+            updated_at=run.updated_at,
         )
 
 

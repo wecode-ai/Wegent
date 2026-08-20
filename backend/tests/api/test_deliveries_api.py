@@ -14,6 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from app.api.endpoints import deliveries as deliveries_endpoint
 from app.core.security import create_access_token, get_password_hash
 from app.models.cloud_project import CloudProject
 from app.models.delivery import LoopItem, ProjectAutomationRule, ProjectAutomationRun
@@ -23,6 +24,7 @@ from app.models.task import TaskResource
 from app.models.user import User
 from app.services.delivery import delivery_service
 from app.services.delivery.storage import DeliveryStorageUnavailableError
+from app.services.issue_workflow_planning import issue_workflow_planning_service
 from app.services.project_automations import project_automation_execution
 
 
@@ -667,6 +669,82 @@ def test_moving_orchestrated_issue_to_pending_starts_its_workflow(
     run = test_db.query(ProjectAutomationRun).one()
     assert run.task_id == created["id"]
     dispatch.assert_awaited_once()
+
+
+def test_pausing_planning_cancels_active_ai_manager(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+    test_user: User,
+    delivery_project: CloudProject,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    issue = LoopItem(
+        id=f"I{uuid.uuid4().hex[:10]}",
+        cloud_project_id=delivery_project.id,
+        title="Pause planning",
+        status="pending",
+        created_by_user_id=test_user.id,
+        metadata_json={
+            "workflow": {
+                "version": 1,
+                "definition_version": 1,
+                "stage_mode": "none",
+                "advancement_policy": "ai",
+                "approval_policy": "required",
+                "ai_automation_rule_id": "rule-1",
+                "orchestration_status": "idle",
+                "nodes": [],
+            }
+        },
+    )
+    test_db.add(issue)
+    test_db.flush()
+    workflow_run = issue_workflow_planning_service.ensure_run(
+        test_db,
+        issue=issue,
+        user_id=test_user.id,
+    )
+    manager_run = ProjectAutomationRun(
+        id=f"A{uuid.uuid4().hex[:10]}",
+        cloud_project_id=delivery_project.id,
+        parent_id="rule-1",
+        task_id=issue.id,
+        title="AI manager",
+        status="running",
+        created_by_user_id=test_user.id,
+        metadata_json={"event": {"payload": {"workflow_run_id": workflow_run.id}}},
+    )
+    test_db.add(manager_run)
+    test_db.commit()
+    cancel_run = AsyncMock(return_value={"id": manager_run.id, "status": "cancelled"})
+    monkeypatch.setattr(
+        deliveries_endpoint.project_automation_service,
+        "cancel_run",
+        cancel_run,
+    )
+
+    response = test_client.post(
+        f"/api/v1/loop-items/{issue.id}/workflow-plan/pause",
+        headers=_auth(test_token),
+        json={},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "paused"
+    cancel_run.assert_awaited_once_with(
+        test_db,
+        str(delivery_project.id),
+        manager_run.id,
+        test_user.id,
+    )
+    resume_response = test_client.post(
+        f"/api/v1/loop-items/{issue.id}/workflow-plan/resume",
+        headers=_auth(test_token),
+        json={},
+    )
+    assert resume_response.status_code == 409
+    assert resume_response.json()["detail"] == "The AI manager is still stopping"
 
 
 def test_workflow_task_binding_requires_a_ready_non_automated_stage(

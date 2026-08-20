@@ -301,7 +301,20 @@ class WorkflowPlanItemView(WorkflowPlanItemCreate):
     id: str
     task_id: str | None = None
     task_status: WorkflowTaskStatus | None = None
+    outcome_verdict: Literal["passed", "needs_rework"] | None = None
+    outcome_summary: str = ""
     status: Literal["proposed", "materialized", "superseded"]
+
+
+class WorkflowManagerRunView(BaseModel):
+    id: str
+    status: str
+    model: str | None = None
+    execution_environment: str | None = None
+    device_id: str | None = None
+    recent_activity: str = ""
+    error: str | None = None
+    updated_at: datetime
 
 
 class WorkflowPlanView(BaseModel):
@@ -313,6 +326,7 @@ class WorkflowPlanView(BaseModel):
     status: WorkflowOrchestrationStatus
     summary: str
     items: list[WorkflowPlanItemView]
+    manager_run: WorkflowManagerRunView | None = None
 
 
 class WorkflowTaskOutcomeSubmit(BaseModel):

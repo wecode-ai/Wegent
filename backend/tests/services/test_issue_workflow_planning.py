@@ -10,6 +10,8 @@ from sqlalchemy.orm import Session
 from app.models.delivery import (
     CloudProject,
     LoopItem,
+    ProjectAutomationRule,
+    ProjectAutomationRun,
     ProjectChatAgent,
     ProjectWorkflowPlanItem,
     ProjectWorkflowRun,
@@ -186,6 +188,57 @@ def test_required_plan_materializes_once_after_approval(
     assert execution.automation_run_id == "automation-run-1"
 
 
+def test_plan_view_projects_manager_runtime(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    project = _project(test_db, test_user)
+    issue = _issue(test_db, project, test_user)
+    workflow_run = issue_workflow_planning_service.ensure_run(
+        test_db,
+        issue=issue,
+        user_id=test_user.id,
+    )
+    rule = ProjectAutomationRule(
+        id="rule-1",
+        cloud_project_id=project.id,
+        title="AI manager",
+        status="enabled",
+        created_by_user_id=test_user.id,
+        metadata_json={
+            "model": "deepseek-test",
+            "execution_environment": "cloud",
+            "execution_device_id": "cloud-device-1",
+        },
+    )
+    automation_run = ProjectAutomationRun(
+        id=f"A{uuid.uuid4().hex[:10]}",
+        cloud_project_id=project.id,
+        parent_id=rule.id,
+        task_id=issue.id,
+        title="AI manager run",
+        status="running",
+        created_by_user_id=test_user.id,
+        device_id="cloud-device-1",
+        metadata_json={"event": {"payload": {"workflow_run_id": workflow_run.id}}},
+    )
+    test_db.add_all([rule, automation_run])
+    test_db.commit()
+
+    view = issue_workflow_planning_service.get(
+        test_db,
+        issue_id=issue.id,
+        user_id=test_user.id,
+    )
+
+    assert view is not None
+    assert view.manager_run is not None
+    assert view.manager_run.id == automation_run.id
+    assert view.manager_run.model == "deepseek-test"
+    assert view.manager_run.device_id == "cloud-device-1"
+    assert view.manager_run.recent_activity == "正在读取 Issue 并生成编排方案"
+
+
 def test_replan_keeps_materialized_history_and_increments_version(
     test_db: Session,
     test_user: User,
@@ -304,6 +357,8 @@ def test_child_outcome_projects_to_one_parent_review(
     )
 
     assert review.status == "awaiting_review"
+    assert review.items[0].outcome_verdict == "passed"
+    assert review.items[0].outcome_summary == "Implementation and tests passed."
     assert test_db.get(LoopItem, child_id).status == "in_review"
     assert test_db.get(LoopItem, issue.id).status == "in_review"
 

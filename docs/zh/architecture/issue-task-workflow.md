@@ -125,12 +125,20 @@ sequenceDiagram
         U->>B: 发送首条消息后创建具体任务，可选归入 ready 阶段
     else AI 调度
         O->>A: 提供 Issue、提示词、阶段定义、边级上下文契约与当前执行真值
+        A-->>D: 持续投影排队、模型连接、能力初始化与最近活动
+        D-->>U: 在 AI 编排卡片展示进度与运行详情入口
+        opt 用户在规划中暂停
+            U->>P: 暂停当前编排版本
+            P->>A: 请求取消对应 AI 管家执行
+            A-->>P: 确认执行终止
+        end
         A->>P: submit_workflow_plan 提交版本化结构方案
         alt 执行前需要人工确认
             P-->>U: 展示任务、执行者、依赖与理由
             U->>P: 确认 / 驳回并要求重规划
         end
         P->>B: 幂等创建、分配并启动具体子任务
+        B-->>D: 按方案项持续投影负责人、状态、最近结果和执行入口
         Note over A,B: AI 管家只编排不执行；有阶段时每个任务必须归入阶段
     end
     opt 阶段配置自动化动作
@@ -164,8 +172,9 @@ sequenceDiagram
 | 阶段 DAG 编辑与前后插入              | Wework `ProjectWorkflowEditor`                                            |
 | 编排显式保存与重新进入回填           | Wework `ProjectAutomationView`、`ProjectWorkflowEditor`、ProjectSpace API |
 | 项目编排定义与 Issue 快照            | Backend workflow schema/service；Wework 自动化页 DAG UI                   |
-| AI 方案提交、版本与审批门            | Backend workflow planning service、ProjectSpace MCP、Issue 详情            |
-| 方案项 → 子任务物化与启动            | Backend workflow planning service、`loop_items/service.py`、现有激活器     |
+| AI 方案提交、版本与审批门            | Backend workflow planning service、ProjectSpace MCP、Issue 详情           |
+| AI 管家运行状态、取消与详情入口      | Project automation run、Issue 动态、Wework AI 编排卡片                    |
+| 方案项 → 子任务物化与启动            | Backend workflow planning service、`loop_items/service.py`、现有激活器    |
 | 依赖边 → 后继阶段上下文              | Workflow node dependency context；Composer / automation instruction       |
 | 用户管理 / AI 调度 → 具体任务        | 标准 Wework Composer、AI manager、`LoopItemTaskBinding`                   |
 | Issue 新建任务 / 已有任务 → 右侧会话 | `CloudTodoWorkspace`、`TodoEditor`、`AiChatModal`                         |
@@ -196,12 +205,14 @@ sequenceDiagram
 - 编排编辑是本地草稿，只有用户触发清晰可见的“保存编排”主操作后才写入项目；保存成功必须使用服务端返回的定义与项目版本更新页面真值，离开后重新进入必须从项目持久化定义完整回填。
 - AI 调度必须通过创建、指派和启动具体任务推进 Issue。有阶段时每个 AI 创建的任务必须归入一个阶段，并遵守该阶段依赖；无阶段时 AI 可根据 Issue 和提示词自由拆解。
 - AI 管家是看板控制面，不是业务任务执行者。它只能读取当前 Issue 与候选执行者、提交结构化方案、响应重规划请求；不得把原 Issue 直接分派给自己，也不得代替子机器人执行开发、测试或交付。
+- Issue 创建即是 AI 动态分配的主触发点；后续进入待开始仅补偿尚未启动的快照，不得创建第二个 AI 管家运行。Issue 详情必须明确显示该触发语义。
+- AI 编排卡片是规划与执行的连续投影。规划中必须显示 AI 管家运行状态、执行环境、最近活动和运行详情入口；不得仅显示无限期旋转状态。用户可见进度只包含可验证事件，不展示模型隐含推理。
 - 每次 AI 编排必须产生稳定 `run_id` 和单调递增的方案版本。重新规划只把上一版本标记为 superseded 并保留历史，不得删除已完成子任务或覆盖审计记录。
 - `submit_workflow_plan` 是 AI 编排的唯一提交入口。每个方案项必须包含稳定 client key、标题、说明、执行者和可选阶段；服务端必须重新校验执行者仍为项目活跃成员、阶段存在且已 ready，不能信任模型返回的名称或状态。
 - “执行前需要人工确认”为项目编排配置。开启时，提交方案只进入 `awaiting_approval`，不得创建、分派或启动子任务；关闭时可直接物化。人工可以确认、驳回并重规划、暂停或恢复，所有动作必须记录操作者、时间与原因。
 - 方案物化必须以 `run_id + plan_version + client_key` 幂等，并在同一事务内创建父 Issue 的直接子 `LoopItem`、写入方案来源和阶段归属、完成分派。事务提交后才调用现有执行激活器；重复确认、页面刷新、服务重启或事件重放不得创建重复子任务。
 - 同一 Issue 同时最多存在一个活动编排 run。新事件若命中活动 run 必须复用它；显式重新规划创建新版本，显式重新执行才创建新 run。已完成子任务默认不重复执行，失败或中断任务可从未完成项继续。
-- 暂停编排必须停止当前版本中尚未完成的真实执行，并保留已完成、待验收子任务及全部历史。恢复只能为未完成子任务创建下一次执行尝试；旧执行尚未确认停止时不得并发启动新尝试，重复恢复不得创建重复执行。
+- 暂停编排必须同时停止当前方案版本的 AI 管家运行和尚未完成的子任务执行，并保留已完成、待验收子任务及全部历史。恢复只能在旧 AI 管家与子任务执行确认终止后，为规划或未完成任务创建下一次执行尝试；重复恢复不得创建并发 AI 管家或重复子任务执行。
 - Issue 从“收集箱”拖到“待开始”时，任务入口必须读取该 Issue 的编排快照。仅“无阶段 + 手动推进”属于自己管理任务，需暂缓移动并打开新建任务 Composer；预置流程必须直接写入“待开始”并启动全部 ready 的自动化阶段，AI 推进必须启动快照绑定的调度员。两者都不得打开新建任务 Composer，也不得为绕过弹窗而创建空白 Runtime Task；重复进入不得为同一阶段或 AI 调度员创建重复运行。
 - 预置流程中的人工阶段由用户显式开始。Issue 详情必须在缩放流程图之外展示所有 ready 人工阶段的主操作，明确标注“人工执行”并提供“开始处理”；流程图只承担结构与进度展示，不能把唯一入口藏在会缩放的节点内部。点击“开始处理”只打开绑定该阶段的任务 Composer，首条消息发送前仍不得创建空白 Runtime Task。
 - 人工阶段的 Runtime Task 创建后，只先写入 `LoopItemTaskBinding`。Runtime Task 云上下文必须返回该绑定的 `workflow_node_id`，绑定完成必须触发已知 Runtime 生命周期重放；不得把人工任务写成 `LoopItemExecution` 的 queued 状态，也不得在 Runtime 尚未确认 running 时由 UI 伪造“排队中”或“进行中”。
@@ -217,6 +228,8 @@ sequenceDiagram
 - 从 Issue 发起或继续的每一轮 Runtime 对话都必须携带结构化 `space_id` 与 `item_id`，并转换为会话隔离的 ContextGrant。不得按任务动态注入完整 MCP Server 配置，也不得只依赖自然语言提示词或 `cloud://` 文本探测；具体能力生命周期见 [项目空间 Agent 能力](project-space-agent-capability.md)。
 - 一个 Issue 可以绑定多个异构任务，一个阶段也可聚合多个具体任务。任务仍可在 Wework 任务列表中找到。
 - Issue 详情只能提供一个“执行任务”区域，并统一投影 AI 拆解产生的直接子任务与当前 Issue 的 Runtime TaskBinding。计数、空态和任务入口必须基于两类真值的并集；不得在存在子任务时显示“任务 0”，也不得再叠加一个重复的“子 Issue”区域。
+- 方案项物化后仍必须保留在 AI 编排卡片中，并与子任务一一关联；同一行随生命周期展示待确认、待开始、排队、执行中、待评审、失败或完成、最近结果和执行入口。不得因已有 `task_id` 而从方案视图删除，也不得让用户进入每个子任务才能理解整体进度。
+- 运行时底层错误必须保留在运行详情中；编排卡片只展示可操作的用户错误、恢复动作和简短原因。启动超时、设备离线、模型不可用和执行者失效必须有不同提示。
 - 阶段自动化只决定何时、如何创建或启动具体执行，不是与“任务”并列的实体类型。
 - `inherit` 只从明确的前驱 Runtime Task 读取已确认的 workspace/worktree/branch；没有可继承来源时必须回到标准 Composer 选择，不得猜测目录。
 - queued、待审批或依赖未满足只投影为“待开始”；只有 Runtime 确认 running 才投影为“进行中”。
