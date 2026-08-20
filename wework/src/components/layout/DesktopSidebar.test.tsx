@@ -135,6 +135,7 @@ function renderSidebar(
   if (appUpdate) {
     const value: AppUpdateContextValue = {
       updateChannel: 'stable',
+      autoUpdateEnabled: true,
       availableUpdate: null,
       installedReleaseNotes: null,
       status: 'idle',
@@ -144,6 +145,7 @@ function renderSidebar(
       checkNow: vi.fn().mockResolvedValue(null),
       installUpdate: vi.fn().mockResolvedValue(undefined),
       dismissInstalledReleaseNotes: vi.fn(),
+      setAutoUpdateEnabled: vi.fn(),
       setUpdateChannel: vi.fn().mockResolvedValue(undefined),
       ...appUpdate,
     }
