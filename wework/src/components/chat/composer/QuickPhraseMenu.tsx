@@ -14,6 +14,7 @@ import { useOutsideClick } from './useOutsideClick'
 interface QuickPhraseMenuProps {
   disabled?: boolean
   compact?: boolean
+  projectPhrases?: QuickPhrase[]
   onSelect: (phrase: QuickPhrase) => void
 }
 
@@ -153,9 +154,14 @@ function StashPreview({ phrase }: { phrase: QuickPhrase }) {
   )
 }
 
-export function QuickPhraseMenu({ disabled, compact, onSelect }: QuickPhraseMenuProps) {
+export function QuickPhraseMenu({
+  disabled,
+  compact,
+  projectPhrases = [],
+  onSelect,
+}: QuickPhraseMenuProps) {
   const { t } = useTranslation('common')
-  const phrases = useQuickPhrases()
+  const globalPhrases = useQuickPhrases()
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [selectedIndex, setSelectedIndex] = useState(0)
@@ -168,16 +174,24 @@ export function QuickPhraseMenu({ disabled, compact, onSelect }: QuickPhraseMenu
   const outsideRefs = useMemo(() => [menuRef], [])
   const menuLayout = useAnchoredPortalMenu(open, triggerRef, menuRef)
   useOutsideClick(rootRef, open, closeMenu, outsideRefs)
-  const filtered = useMemo(() => {
+  const filteredGlobalPhrases = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase()
-    if (!normalized) return phrases
-    return phrases.filter(item =>
+    if (!normalized) return globalPhrases
+    return globalPhrases.filter(item =>
       `${item.title}\n${item.content}`.toLocaleLowerCase().includes(normalized)
     )
-  }, [phrases, query])
-  const stashed = filtered.filter(item => item.id.startsWith('stash-'))
-  const regular = filtered.filter(item => !item.id.startsWith('stash-'))
-  const visiblePhrases = [...stashed, ...regular]
+  }, [globalPhrases, query])
+  const filteredProjectPhrases = useMemo(() => {
+    const regularPhrases = projectPhrases.filter(item => !item.id.startsWith('stash-'))
+    const normalized = query.trim().toLocaleLowerCase()
+    if (!normalized) return regularPhrases
+    return regularPhrases.filter(item =>
+      `${item.title}\n${item.content}`.toLocaleLowerCase().includes(normalized)
+    )
+  }, [projectPhrases, query])
+  const stashed = filteredGlobalPhrases.filter(item => item.id.startsWith('stash-'))
+  const globalRegular = filteredGlobalPhrases.filter(item => !item.id.startsWith('stash-'))
+  const visiblePhrases = [...stashed, ...filteredProjectPhrases, ...globalRegular]
 
   useEffect(() => {
     if (!open) return
@@ -321,19 +335,19 @@ export function QuickPhraseMenu({ disabled, compact, onSelect }: QuickPhraseMenu
                 </div>
               </div>
             )}
-            {stashed.length > 0 && regular.length > 0 && (
+            {filteredProjectPhrases.length > 0 && (
               <div className="border-t border-border px-2 pb-1 pt-2 text-xs font-medium text-text-muted">
-                {t('workbench.quick_phrases', '快捷短语')}
+                {t('workbench.project_quick_phrases_title', '项目快捷短语')}
               </div>
             )}
             <div role="listbox" className="max-h-64 overflow-y-auto">
-              {regular.map((phrase, index) => (
+              {filteredProjectPhrases.map((phrase, index) => (
                 <button
-                  key={phrase.id}
+                  key={`project:${phrase.id}`}
                   type="button"
                   role="option"
                   aria-selected={selectedIndex === stashed.length + index}
-                  data-testid={`quick-phrase-option-${phrase.id}`}
+                  data-testid={`project-quick-phrase-option-${phrase.id}`}
                   onPointerEnter={() => setSelectedIndex(stashed.length + index)}
                   onClick={() => choose(phrase)}
                   className={`flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left ${selectedIndex === stashed.length + index ? 'bg-muted' : 'hover:bg-muted'}`}
@@ -356,6 +370,45 @@ export function QuickPhraseMenu({ disabled, compact, onSelect }: QuickPhraseMenu
                   </span>
                 </button>
               ))}
+              {(projectPhrases.length > 0 || stashed.length > 0) && globalRegular.length > 0 && (
+                <div className="border-t border-border px-2 pb-1 pt-2 text-xs font-medium text-text-muted">
+                  {projectPhrases.length > 0
+                    ? t('workbench.global_quick_phrases_title', '全局快捷短语')
+                    : t('workbench.quick_phrases', '快捷短语')}
+                </div>
+              )}
+              {globalRegular.map((phrase, index) => {
+                const optionIndex = stashed.length + filteredProjectPhrases.length + index
+                return (
+                  <button
+                    key={`global:${phrase.id}`}
+                    type="button"
+                    role="option"
+                    aria-selected={selectedIndex === optionIndex}
+                    data-testid={`quick-phrase-option-${phrase.id}`}
+                    onPointerEnter={() => setSelectedIndex(optionIndex)}
+                    onClick={() => choose(phrase)}
+                    className={`flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left ${selectedIndex === optionIndex ? 'bg-muted' : 'hover:bg-muted'}`}
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-normal">{phrase.title}</span>
+                      <span className="block truncate text-xs text-text-muted">
+                        {phrase.content ||
+                          t('workbench.quick_phrase_attachment_count', '{{count}} 个附件', {
+                            count: phrase.attachmentPaths?.length ?? 0,
+                          })}
+                      </span>
+                    </span>
+                    <span className="text-xs text-text-muted">
+                      {phrase.mode === 'normal'
+                        ? t('workbench.quick_phrase_mode_normal', '普通')
+                        : phrase.mode === 'plan'
+                          ? t('workbench.quick_phrase_mode_plan', '计划')
+                          : t('workbench.quick_phrase_mode_goal', '目标模式')}
+                    </span>
+                  </button>
+                )
+              })}
               {visiblePhrases.length === 0 && (
                 <div className="px-2 py-3 text-sm text-text-muted">
                   {t('workbench.quick_phrases_empty', '没有匹配的快捷短语')}

@@ -621,6 +621,40 @@ sequenceDiagram
     Frontend->>User: 14. 显示结果
 ```
 
+### Wework 本地项目设置流
+
+Wework 的本地项目可以保存项目指令、默认模型、项目插件关系和项目快捷短语。
+项目记录保存在 Codex 全局状态中。创建新对话时，前端只把执行相关设置写入任务
+请求，Executor 再把这份快照持久化到 `RuntimeTaskLink` 并注入 Codex；快捷短语
+由 Wework Composer 直接按当前项目读取，不进入任务执行请求。
+
+```mermaid
+sequenceDiagram
+    participant User as 用户
+    participant Wework as Wework
+    participant State as Codex 全局状态
+    participant Executor as Executor
+    participant Codex as Codex
+
+    User->>Wework: 配置项目指令、模型、插件和快捷短语
+    Wework->>State: 保存项目级设置
+    User->>Wework: 打开项目输入框快捷短语
+    Wework->>State: 读取项目快捷短语
+    Wework->>Wework: 项目短语排在全局短语之前
+    User->>Wework: 在项目中创建新对话
+    Wework->>Executor: 发送指令、模型和插件快照
+    Executor->>Executor: 持久化到 RuntimeTaskLink
+    Executor->>Codex: 注入指令、模型和项目插件覆盖
+```
+
+核心不变量：
+
+- 项目指令、默认模型和插件只影响新对话；已有对话继续使用创建时的快照。
+- 项目快捷短语是 Composer 预设，不进入 Executor。当前项目的短语排在设备全局短语之前，设备暂存区仍保持全局。
+- 项目插件表示项目安装关系。插件包可以复用全局缓存，但保持全局禁用时仍可在所属项目任务中启用。
+- Codex 的有效插件集合是“全局启用插件”和“当前任务的项目插件”的并集。
+- 项目不拥有独立插件市场；安装来源仍是全局市场及其权限策略。
+
 ### 通信协议
 
 | 通信类型 | 协议 | 用途 |

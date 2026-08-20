@@ -152,6 +152,7 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
     subscribeRuntimeTaskNotifications: onSubscribeRuntimeTaskNotifications,
     unsubscribeRuntimeTaskNotifications: onUnsubscribeRuntimeTaskNotifications,
     runtimeTaskReminders,
+    projectChat,
     services,
     refreshWorkLists,
     workspaceTabId,
@@ -883,6 +884,7 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
       onListDeviceDirectories={onListDeviceDirectories}
       onCreateDeviceDirectory={onCreateDeviceDirectory}
       projectSpaceApis={availableProjectSpaceApis}
+      models={projectChat.models}
       onOpenSettings={options => openSettings(options, '/')}
       onLogout={onLogout}
     />
