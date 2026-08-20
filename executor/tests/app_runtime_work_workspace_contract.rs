@@ -364,13 +364,31 @@ async fn runtime_local_project_rpc_persists_multiple_roots() {
                 "runtime": "codex",
                 "projectKey": "product",
                 "name": "Product",
+                "roots": [first_root, second_root]
+            }
+        }))
+        .await
+        .expect("updating a project without AI settings should succeed");
+    let state = read_json_file(&codex_home.join(".codex-global-state.json"));
+    assert_eq!(
+        state["local-projects"]["product"]["aiSettings"],
+        response["aiSettings"]
+    );
+
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.projects.upsert_local",
+            "payload": {
+                "runtime": "codex",
+                "projectKey": "product",
+                "name": "Product",
                 "roots": [first_root, second_root],
                 "defaultProjectSpace": null,
                 "aiSettings": null
             }
         }))
         .await
-        .expect("clearing the default project space should succeed");
+        .expect("clearing the default project space and AI settings should succeed");
     let state = read_json_file(&codex_home.join(".codex-global-state.json"));
     assert!(state["local-projects"]["product"]
         .get("defaultProjectSpace")

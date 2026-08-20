@@ -203,6 +203,7 @@ classify_wework_path() {
       wework/src/features/plugins/* | \
       wework/src/pages/Plugin*)
       select_target "plugins:plugin-lifecycle"
+      select_target "core:project-ai-settings"
       return
       ;;
     wework/src/components/sites/* | \
@@ -442,6 +443,7 @@ classify_wework_path() {
       wework/src/features/local-runtime/* | \
       wework/src/stream/*)
       select_target "core:core-task-flow"
+      select_target "core:project-ai-settings"
       select_target "core:model-routing"
       return
       ;;
