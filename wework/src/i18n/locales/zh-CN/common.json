@@ -1575,6 +1575,8 @@
     "harness_apps_preview_failed": "无法读取智能应用安装包。",
     "harness_apps_install_failed": "安装智能应用失败。",
     "harness_apps_start_failed": "启动智能应用失败。",
+    "harness_apps_starting": "正在启动智能应用…",
+    "harness_apps_retry": "重试",
     "harness_apps_stop_failed": "停止智能应用失败。",
     "harness_apps_delete_failed": "卸载智能应用失败。",
     "plugins_create": "创建",

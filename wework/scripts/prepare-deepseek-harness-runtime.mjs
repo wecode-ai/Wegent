@@ -1,4 +1,4 @@
-import { access, cp, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { access, cp, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { createReadStream, createWriteStream } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { pipeline } from 'node:stream/promises'
@@ -16,7 +16,6 @@ import { wrapWindowsScriptCommand } from './child-process-command.mjs'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const source = path.join(root, 'harness-runtime')
 const targetDirectory = path.join(root, 'src-tauri', 'bundled-deepseek-harness')
-const archive = path.join(targetDirectory, 'runtime.tar.gz')
 const metadata = path.join(targetDirectory, 'runtime.json')
 const placeholder = path.join(targetDirectory, '.resource-placeholder')
 const nodeEntitlements = path.join(root, 'scripts', 'deepseek-harness-node.entitlements.plist')
@@ -27,6 +26,7 @@ const temporaryTar = temporaryArchive.slice(0, -3)
 const temporaryMetadata = `${temporaryArchive}.json`
 const sourceFiles = ['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', '.npmrc']
 const archiveFormatVersion = 'tar-gzip-fast-v2'
+const assetDirectory = path.join(cacheDirectory, 'deepseek-harness-runtime-assets')
 
 function run(command, args, cwd, environment = {}) {
   return new Promise((resolve, reject) => {
@@ -48,6 +48,23 @@ async function resetTargetDirectory() {
   await rm(targetDirectory, { recursive: true, force: true })
   await mkdir(targetDirectory, { recursive: true })
   await writeFile(placeholder, '')
+}
+
+function runtimePlatform() {
+  const platform = { darwin: 'macos', win32: 'windows', linux: 'linux' }[process.platform]
+  if (!platform)
+    throw new Error(`Unsupported DeepSeek Harness runtime platform: ${process.platform}`)
+  const architecture = { arm64: 'arm64', x64: 'x64' }[process.arch]
+  if (!architecture) {
+    throw new Error(`Unsupported DeepSeek Harness runtime architecture: ${process.arch}`)
+  }
+  return `${platform}-${architecture}`
+}
+
+async function sha256(pathname) {
+  const hash = createHash('sha256')
+  await pipeline(createReadStream(pathname), hash)
+  return hash.digest('hex')
 }
 
 async function prepareManagedNode(nodePath) {
@@ -86,14 +103,26 @@ const sourceFingerprint = createHash('sha256')
   .update('\0')
   .update(sourceContents.map(content => content.toString('base64')).join('\0'))
   .digest('hex')
+const assetName = `deepseek-harness-runtime-${runtimePlatform()}-${sourceFingerprint}.tar.gz`
+const assetPath = path.join(assetDirectory, assetName)
+const baseUrl =
+  process.env.WEWORK_DEEPSEEK_HARNESS_RUNTIME_BASE_URL?.trim() ||
+  'https://github.com/wecode-ai/Wegent/releases/download/wework-updater'
+const downloadUrl =
+  process.env.WEWORK_DEEPSEEK_HARNESS_RUNTIME_URL?.trim() ||
+  `${baseUrl.replace(/\/+$/, '')}/${assetName}`
 const nodeName = process.platform === 'win32' ? 'node.exe' : 'node'
 const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 
 try {
   const currentMetadata = JSON.parse(await readFile(metadata, 'utf8'))
-  await access(archive)
-  if (currentMetadata.sourceFingerprint === sourceFingerprint) {
+  await access(assetPath)
+  if (
+    currentMetadata.sourceFingerprint === sourceFingerprint &&
+    currentMetadata.downloadUrl === downloadUrl
+  ) {
     console.log('DeepSeek Harness runtime is up to date')
+    console.log(`DeepSeek Harness runtime asset: ${assetPath}`)
     process.exit(0)
   }
 } catch {
@@ -137,11 +166,29 @@ try {
     createGzip({ level: zlibConstants.Z_BEST_SPEED }),
     createWriteStream(temporaryArchive)
   )
-  await writeFile(temporaryMetadata, runtimeMetadata)
+  const archiveSha256 = await sha256(temporaryArchive)
+  const archiveBytes = (await stat(temporaryArchive)).size
+  const descriptor = `${JSON.stringify(
+    {
+      dshVersion: packageJson.dependencies['@deepseek-ai/dsh'],
+      nodeVersion: process.version,
+      sourceFingerprint,
+      archiveSha256,
+      archiveBytes,
+      downloadUrl,
+      assetName,
+    },
+    null,
+    2
+  )}\n`
+  await writeFile(temporaryMetadata, descriptor)
 
+  await mkdir(assetDirectory, { recursive: true })
+  await rm(assetPath, { force: true })
+  await rename(temporaryArchive, assetPath)
   await resetTargetDirectory()
-  await rename(temporaryArchive, archive)
   await rename(temporaryMetadata, metadata)
+  console.log(`Prepared DeepSeek Harness runtime asset: ${assetPath}`)
 } finally {
   await rm(staging, { recursive: true, force: true })
   await rm(temporaryArchive, { force: true })

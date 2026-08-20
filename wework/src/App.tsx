@@ -31,6 +31,11 @@ import { stripAppBasePath } from '@/config/runtime'
 import { AppearanceProvider } from '@/features/appearance'
 import { ChromeTitlebar } from '@/components/topnav/ChromeTitlebar'
 import { AppIframe } from '@/components/topnav/AppIframe'
+import { HarnessAppLaunchSurface } from '@/features/harness-apps/HarnessAppLaunchSurface'
+import {
+  harnessAppInstallationIdFromPath,
+  useHarnessAppLaunchState,
+} from '@/features/harness-apps/harnessAppLaunchState'
 import { useChromeTabs } from '@/components/topnav/useChromeTabs'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { AppUpdateProvider } from '@/features/app-update/AppUpdateProvider'
@@ -228,7 +233,10 @@ function WorkspaceTabSurface({
   const iframe = workspaceTabIframe(tab, cloudWebUrl)
   const auxiliaryPage = workspaceTabAuxiliaryPage(tabPath, tabSearch)
   const auxiliaryActive = Boolean(auxiliaryPage)
-  const nativeWorkbenchActive = !iframe && !auxiliaryActive
+  const harnessAppInstallationId = harnessAppInstallationIdFromPath(tabPath)
+  const harnessAppLaunch = useHarnessAppLaunchState(harnessAppInstallationId)
+  const harnessAppLaunchActive = Boolean(harnessAppLaunch)
+  const nativeWorkbenchActive = !iframe && !auxiliaryActive && !harnessAppLaunchActive
   const [surfaceHistory, setSurfaceHistory] = useState(() => ({
     iframe,
     hasMountedProvider: !iframe,
@@ -302,6 +310,7 @@ function WorkspaceTabSurface({
                   {auxiliaryPage}
                 </div>
               ) : null}
+              {harnessAppLaunch ? <HarnessAppLaunchSurface launch={harnessAppLaunch} /> : null}
             </WorkbenchProvider>
           ) : null}
           {renderedIframe ? (
