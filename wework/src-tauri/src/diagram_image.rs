@@ -68,8 +68,8 @@ pub async fn copy_diagram_png(app: tauri::AppHandle, data_base64: String) -> Res
 pub async fn save_diagram_png(path: String, data_base64: String) -> Result<(), String> {
     let bytes = decode_png(&data_base64)?;
     tauri::async_runtime::spawn_blocking(move || write_png_file(&path, &bytes))
-    .await
-    .map_err(|error| format!("Failed to join diagram PNG save: {error}"))?
+        .await
+        .map_err(|error| format!("Failed to join diagram PNG save: {error}"))?
 }
 
 #[cfg(test)]
@@ -97,8 +97,11 @@ mod tests {
             std::env::temp_dir().join(format!("wework-diagram-image-{}.png", std::process::id()));
         let bytes = [PNG_SIGNATURE, b"content"].concat();
 
-        write_png_file(path.to_str().expect("temporary path should be UTF-8"), &bytes)
-            .expect("PNG should be written");
+        write_png_file(
+            path.to_str().expect("temporary path should be UTF-8"),
+            &bytes,
+        )
+        .expect("PNG should be written");
 
         assert_eq!(std::fs::read(&path).expect("PNG should be readable"), bytes);
         std::fs::remove_file(path).expect("temporary PNG should be removed");

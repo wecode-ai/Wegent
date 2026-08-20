@@ -1,0 +1,23 @@
+{
+  "actor": {
+    "id": "codex",
+    "kind": "ai"
+  },
+  "authority": "ai",
+  "base_revision": "A00000033",
+  "changes": [],
+  "created_at": "2026-08-19T04:59:13Z",
+  "id": "tx-38c9542cf538",
+  "intent": "修复 Wework Space MCP 业务词汇契约测试，使其区分工具表面词汇与合法的 PR/MR 交付字段，并完成全部 Wework E2E 验证",
+  "read_set": [
+    "arch://wegent/contract/workflow-stage-deliverable-contract",
+    "arch://wegent/flow/issue-delivery-mcp-lifecycle",
+    "arch://wegent/flow/issue-runtime-project-space-binding"
+  ],
+  "resolutions": [],
+  "status": "open",
+  "updated_at": "2026-08-19T04:59:53Z",
+  "write_set": [
+    "arch://wegent/flow/issue-delivery-mcp-lifecycle"
+  ]
+}

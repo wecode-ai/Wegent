@@ -255,6 +255,8 @@ export interface RuntimeTaskAddress {
   runtime?: RuntimeName
   threadId?: string | null
   workspacePath?: string | null
+  workspaceKind?: 'workspace' | 'worktree' | 'chat' | string | null
+  worktreeId?: string | null
   runtimeHandle?: Record<string, unknown> | null
 }
 
@@ -668,6 +670,8 @@ export interface RuntimeSendRequest {
   attachmentIds?: number[]
   attachments?: Attachment[]
   source?: RuntimeMessageSource | null
+  cloudProjectId?: string
+  origin?: RuntimeTaskCreateRequest['origin']
   requestUserInputResponse?: RequestUserInputResponse
   request_user_input_response?: RequestUserInputResponse
   additionalContext?: RuntimeAdditionalContext
@@ -2078,6 +2082,29 @@ export interface InstalledPluginComponents {
   monitors: PluginPathComponent[]
   bins: PluginPathComponent[]
   settings?: Record<string, unknown> | null
+  workbench?: WorkbenchPluginComponent | null
+}
+
+export interface WorkbenchFrontendModule {
+  entry: string
+  export: string
+  sha256: string
+}
+
+export interface WorkbenchDesktopSidecar {
+  command: string
+  args: string[]
+  sha256: string
+  capabilities: string[]
+}
+
+export interface WorkbenchPluginComponent {
+  apiVersion: '1'
+  required: boolean
+  pinnedToClientVersion: boolean
+  clientVersion?: string | null
+  frontend?: WorkbenchFrontendModule | null
+  desktop?: WorkbenchDesktopSidecar | null
 }
 
 export interface PluginLocalAuthDefinition {

@@ -342,14 +342,54 @@ const VIEW_TABS: Array<{
 export function CloudMyWorkView({ items, onSelectItem, onApproveItem }: CloudMyWorkViewProps) {
   const { t } = useTranslation('common')
   const [view, setView] = useState<MyWorkView>('group')
+  const [projectFilter, setProjectFilter] = useState('all')
+  const projects = useMemo(
+    () =>
+      Array.from(
+        new Map(items.map(item => [item.project_key, item.project_name] as const)).entries()
+      ).sort(([, left], [, right]) => left.localeCompare(right)),
+    [items]
+  )
+  const activeProjectFilter = projects.some(([key]) => key === projectFilter)
+    ? projectFilter
+    : 'all'
+  const visibleItems = useMemo(
+    () =>
+      activeProjectFilter === 'all'
+        ? items
+        : items.filter(item => item.project_key === activeProjectFilter),
+    [activeProjectFilter, items]
+  )
 
   return (
     <div className="relative min-h-0 flex-1" data-testid="cloud-my-work-view">
       <div className="h-full overflow-y-auto px-8 pb-24 pt-7">
         <div className="mx-auto max-w-[960px]">
-          <h1 className="text-heading-md font-semibold">{t('todo.my_work', '我的工作')}</h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-heading-md font-semibold">{t('todo.my_work', '我的工作')}</h1>
+            <label className="relative ml-auto inline-flex h-8 items-center rounded-lg border border-border bg-background px-3 text-xs text-text-secondary hover:bg-muted">
+              <span className="sr-only">{t('todo.my_work_project_filter', '按项目过滤任务')}</span>
+              <select
+                data-testid="my-work-project-filter"
+                value={activeProjectFilter}
+                onChange={event => setProjectFilter(event.target.value)}
+                className="cursor-pointer appearance-none bg-transparent pr-5 outline-none"
+                aria-label={t('todo.my_work_project_filter', '按项目过滤任务')}
+              >
+                <option value="all">{t('todo.all_projects', '全部项目')}</option>
+                {projects.map(([key, name]) => (
+                  <option key={key} value={key}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+              <span className="pointer-events-none absolute right-2 text-xs text-text-muted">
+                ⌄
+              </span>
+            </label>
+          </div>
           <p className="mt-1 text-sm text-text-muted">
-            {t('todo.my_work_subtitle', '跨项目空间查看需要你处理的任务和本地执行。')}
+            {t('todo.my_work_subtitle', '自动汇总本机上的全部任务，无需关联项目空间。')}
           </p>
           <div className="mt-6">
             {view === 'group' && (
@@ -358,18 +398,20 @@ export function CloudMyWorkView({ items, onSelectItem, onApproveItem }: CloudMyW
                   <GroupSection
                     key={groupKey}
                     groupKey={groupKey}
-                    items={items.filter(GROUP_FILTERS[groupKey])}
+                    items={visibleItems.filter(GROUP_FILTERS[groupKey])}
                     onSelectItem={onSelectItem}
                     onApproveItem={onApproveItem}
                   />
                 ))}
               </div>
             )}
-            {view === 'list' && <ListView items={items} onSelectItem={onSelectItem} />}
+            {view === 'list' && <ListView items={visibleItems} onSelectItem={onSelectItem} />}
             {view === 'calendar' && (
-              <CloudMyWorkCalendar items={items} onSelectItem={onSelectItem} />
+              <CloudMyWorkCalendar items={visibleItems} onSelectItem={onSelectItem} />
             )}
-            {view === 'timeline' && <TimelineView items={items} onSelectItem={onSelectItem} />}
+            {view === 'timeline' && (
+              <TimelineView items={visibleItems} onSelectItem={onSelectItem} />
+            )}
           </div>
           <p className="mt-5 text-xs text-text-muted">
             {t(

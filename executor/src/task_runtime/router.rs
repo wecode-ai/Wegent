@@ -5,11 +5,11 @@
 use super::{
     aitable_provider::AITableProvider, credentials::mask_provider_config,
     issue_provider::IssueProvider, store::task_provider, BinaryInput, ChatAgent, ChatAgentCreate,
-    ChatAgentUpdate, Delivery, DeliveryAsset, DeliveryCreate, DeliveryDetail, IssueComment,
-    LocalComment, LocalCommentCreate, LocalExecution, LocalExecutionClaim, LocalTaskStore,
-    LoopItem, ProjectCreate, ProjectDescriptor, ProjectFile, ProjectUpdate, RuntimeTaskAddress,
-    TaskAttachment, TaskBinding, TaskCreate, TaskProviderKind, TaskReorder, TaskRuntimeError,
-    TaskUpdate,
+    ChatAgentUpdate, Delivery, DeliveryAsset, DeliveryCreate, DeliveryDetail, DeliveryFinalize,
+    IssueComment, LocalComment, LocalCommentCreate, LocalExecution, LocalExecutionClaim,
+    LocalTaskStore, LoopItem, ProjectCreate, ProjectDescriptor, ProjectFile, ProjectUpdate,
+    RuntimeTaskAddress, TaskAttachment, TaskBinding, TaskCreate, TaskProviderKind, TaskReorder,
+    TaskRuntimeError, TaskUpdate,
 };
 
 /// Routes project and task operations to the provider configured on each project.
@@ -937,8 +937,10 @@ impl TaskRuntime {
         &self,
         item_id: &str,
         delivery_id: &str,
+        input: DeliveryFinalize,
     ) -> Result<Delivery, TaskRuntimeError> {
-        self.local_store.finalize_delivery(item_id, delivery_id)
+        self.local_store
+            .finalize_delivery(item_id, delivery_id, input)
     }
 
     pub fn discard_delivery(&self, delivery_id: &str) -> Result<(), TaskRuntimeError> {
@@ -1436,6 +1438,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: Some("GH-7".to_owned()),
                     tags: vec!["bug".to_owned()],
+                    workflow: None,
                 },
             )
             .await
@@ -1538,6 +1541,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: Some("GL-9".to_owned()),
                     tags: vec!["delivery".to_owned()],
+                    workflow: None,
                 },
             )
             .await

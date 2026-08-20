@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   ChatInput,
   type ChatInputHandle,
@@ -6,6 +6,10 @@ import {
   type ChatSubmitOptions,
 } from '@/components/chat/ChatInput'
 import { recordComposerDiagnostic } from '@/components/chat/composer/composerDiagnostics'
+import {
+  WORKBENCH_COMPOSER_FOCUS_EVENT,
+  type WorkbenchComposerFocusDetail,
+} from '@/lib/workbenchComposerFocus'
 
 export interface BufferedChatInputInsertion {
   id: number
@@ -49,6 +53,18 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   const isComposingRef = useRef(false)
   const scopeKeyRef = useRef(scopeKey)
   scopeKeyRef.current = scopeKey
+
+  useLayoutEffect(() => {
+    const focusRequestedComposer = (event: Event) => {
+      const detail = (event as CustomEvent<WorkbenchComposerFocusDetail>).detail
+      if (props.disabled || !scopeKey || detail?.scopeKey !== scopeKey) return
+      composerRef.current?.focus()
+    }
+    window.addEventListener(WORKBENCH_COMPOSER_FOCUS_EVENT, focusRequestedComposer)
+    return () => {
+      window.removeEventListener(WORKBENCH_COMPOSER_FOCUS_EVENT, focusRequestedComposer)
+    }
+  }, [props.disabled, scopeKey])
 
   const setComposerValue = useCallback((nextValue: string, cursor: number) => {
     programmaticUpdateDepthRef.current += 1

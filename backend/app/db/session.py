@@ -5,8 +5,8 @@
 from contextlib import asynccontextmanager, contextmanager
 from typing import AsyncGenerator, Generator, Optional
 
-from sqlalchemy import create_engine
-from sqlalchemy.engine import make_url
+from sqlalchemy import create_engine, event
+from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import Session, sessionmaker
@@ -16,6 +16,21 @@ from app.db.timezone import MYSQL_SESSION_TIMEZONE_OFFSET
 
 # Database connection URL (using sync driver)
 SQLALCHEMY_DATABASE_URL = settings.DATABASE_URL
+
+
+def _configure_sqlite_engine(sqlite_engine: Engine) -> Engine:
+    """Enable SQLite settings required by concurrent API and worker access."""
+
+    @event.listens_for(sqlite_engine, "connect")
+    def set_sqlite_pragmas(dbapi_connection, _connection_record) -> None:
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA busy_timeout=30000")
+        finally:
+            cursor.close()
+
+    return sqlite_engine
 
 
 def _create_engine():
@@ -28,10 +43,12 @@ def _create_engine():
         # SQLite configuration
         # - check_same_thread=False: Required for SQLite to work with multiple threads
         # - SQLite doesn't support connection pooling parameters like pool_size
-        return create_engine(
-            SQLALCHEMY_DATABASE_URL,
-            connect_args={"check_same_thread": False},
-            pool_pre_ping=True,
+        return _configure_sqlite_engine(
+            create_engine(
+                SQLALCHEMY_DATABASE_URL,
+                connect_args={"check_same_thread": False, "timeout": 30},
+                pool_pre_ping=True,
+            )
         )
     else:
         # MySQL configuration
@@ -88,7 +105,13 @@ def _create_async_engine() -> AsyncEngine:
     """Create async database engine."""
     async_url = _get_async_database_url()
     if async_url.startswith("sqlite"):
-        return create_async_engine(async_url, pool_pre_ping=True)
+        async_engine = create_async_engine(
+            async_url,
+            connect_args={"timeout": 30},
+            pool_pre_ping=True,
+        )
+        _configure_sqlite_engine(async_engine.sync_engine)
+        return async_engine
     async_engine = create_async_engine(
         async_url,
         pool_pre_ping=True,

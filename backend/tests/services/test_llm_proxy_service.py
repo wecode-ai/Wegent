@@ -6,11 +6,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException, Request
+from sqlalchemy.orm import Session
 from starlette.datastructures import Headers
 
 from app.models.kind import Kind
 from app.models.user import User
-from app.services.chat.trigger.unified import _build_codex_runtime_model_config
+from app.services.chat.trigger.unified import (
+    _build_codex_runtime_model_config,
+    build_wework_runtime_model_config,
+)
 from app.services.llm_proxy_service import (
     _join_upstream_url,
     proxy_llm_responses,
@@ -361,6 +365,111 @@ def test_build_codex_runtime_model_config_returns_provider_credentials(
     assert config["api_key"] == "sk-test-key"
     assert config["upstream_api_format"] == "openai-responses"
     assert "codex_responses_compat_proxy" not in config
+
+
+@pytest.mark.parametrize(
+    ("model_id", "expected_catalog_model_id"),
+    [
+        ("deepseek-v4-flash", "wework-deepseek-v4-flash"),
+        ("deepseek-v4-pro", "wework-deepseek-v4-pro"),
+    ],
+)
+def test_build_codex_runtime_model_config_infers_deepseek_responses_catalog(
+    test_db: Session,
+    test_user: User,
+    model_id: str,
+    expected_catalog_model_id: str,
+) -> None:
+    model = _model_kind(
+        test_user.id,
+        name=f"{model_id}-profile",
+        model_id=model_id,
+    )
+    test_db.add(model)
+    test_db.commit()
+
+    config = _build_codex_runtime_model_config(
+        model.name,
+        db=test_db,
+        user_id=test_user.id,
+    )
+
+    assert config["codex_catalog_model_id"] == expected_catalog_model_id
+
+
+def test_build_codex_runtime_model_config_does_not_infer_deepseek_chat_catalog(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    model = _model_kind(
+        test_user.id,
+        name="deepseek-chat-profile",
+        model_id="deepseek-v4-pro",
+        protocol="openai",
+    )
+    test_db.add(model)
+    test_db.commit()
+
+    config = _build_codex_runtime_model_config(
+        model.name,
+        db=test_db,
+        user_id=test_user.id,
+    )
+
+    assert "codex_catalog_model_id" not in config
+
+
+def test_build_codex_runtime_model_config_preserves_explicit_catalog(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    model = _model_kind(
+        test_user.id,
+        name="deepseek-explicit-profile",
+        model_id="deepseek-v4-pro",
+    )
+    test_db.add(model)
+    test_db.commit()
+
+    config = _build_codex_runtime_model_config(
+        model.name,
+        {"codex_catalog_model_id": "operator-selected-catalog"},
+        db=test_db,
+        user_id=test_user.id,
+    )
+
+    assert config["codex_catalog_model_id"] == "operator-selected-catalog"
+
+
+def test_build_wework_runtime_model_config_preserves_explicit_cloud_catalog(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.core.config import settings
+
+    model = _model_kind(
+        0,
+        name="deepseek-public-profile",
+        model_id="deepseek-v4-pro",
+    )
+    test_db.add(model)
+    test_db.commit()
+    monkeypatch.setattr(
+        settings,
+        "WEGENT_BACKEND_PUBLIC_URL",
+        "https://wegent.example.com",
+    )
+
+    config = build_wework_runtime_model_config(
+        test_db,
+        model_name=model.name,
+        creator=test_user,
+        model_options={"codex_catalog_model_id": "operator-selected-catalog"},
+    )
+
+    assert config["model_id"] == model.name
+    assert config["codex_catalog_model_id"] == "operator-selected-catalog"
 
 
 async def test_proxy_llm_responses_forwards_chat_completions_to_provider(

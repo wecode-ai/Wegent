@@ -4,6 +4,8 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
+import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
+
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const BROWSER_INPUT_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-url-input"]`
@@ -512,6 +514,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
     },
 
     async verify(control) {
+      await ensureExperimentalFeaturesEnabled(control)
       const fixtureUrl = `${control.url}${FIXTURE_PATH}`
       const redirectUrl = `${control.url}${REDIRECT_PATH}`
       const annotationFixtureUrl = `${control.url}${ANNOTATION_FIXTURE_PATH}`

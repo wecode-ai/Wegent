@@ -21,6 +21,7 @@ use super::*;
 struct ClaudeRuntimeEventSink {
     handler: RuntimeWorkRpcHandler,
     local_task_id: String,
+    execution_id: u64,
     request: ExecutionRequest,
     transcript: Arc<Mutex<ClaudeTurnTranscript>>,
 }
@@ -73,6 +74,16 @@ impl EventSink for ClaudeRuntimeEventSink {
     type SendFuture = Ready<Result<(), String>>;
 
     fn send(&self, event: EventEnvelope) -> Self::SendFuture {
+        let active = self
+            .handler
+            .active_turn_cancellations
+            .lock()
+            .expect("active turn cancellation map lock should not be poisoned");
+        if !active.get(&self.local_task_id).is_some_and(|control| {
+            control.execution_id == self.execution_id && !control.stop_requested
+        }) {
+            return ready(Ok(()));
+        }
         if let Ok(mut transcript) = self.transcript.lock() {
             transcript.record(&event);
         }
@@ -208,6 +219,7 @@ impl RuntimeWorkRpcHandler {
             let sink = ClaudeRuntimeEventSink {
                 handler: handler.clone(),
                 local_task_id: local_task_id.clone(),
+                execution_id,
                 request: request.clone(),
                 transcript: Arc::clone(&transcript),
             };
@@ -254,8 +266,8 @@ impl RuntimeWorkRpcHandler {
                             );
                         }
                     }
-                    handler.finish_local_task(&local_task_id, execution_id, None, "done");
                     let _ = sink.send(builder.response_completed(content)).await;
+                    handler.finish_local_task(&local_task_id, execution_id, None, "done");
                 }
                 ExecutionOutcome::WaitingForUserInput { stop_reason } => {
                     let blocks = transcript
@@ -270,10 +282,10 @@ impl RuntimeWorkRpcHandler {
                         "done",
                         None,
                     );
-                    handler.finish_local_task(&local_task_id, execution_id, None, "done");
                     let _ = sink
                         .send(builder.response_waiting_for_user_input(stop_reason))
                         .await;
+                    handler.finish_local_task(&local_task_id, execution_id, None, "done");
                 }
                 ExecutionOutcome::Failed { message } => {
                     handler.persist_claude_assistant_message(
@@ -284,8 +296,8 @@ impl RuntimeWorkRpcHandler {
                         "failed",
                         Some(message),
                     );
-                    handler.finish_local_task(&local_task_id, execution_id, None, "failed");
                     let _ = sink.send(builder.error(message, "runtime_error")).await;
+                    handler.finish_local_task(&local_task_id, execution_id, None, "failed");
                 }
                 ExecutionOutcome::Cancelled { message } => {
                     handler.persist_claude_assistant_message(
@@ -493,6 +505,25 @@ fn prepare_claude_model_proxy(mut request: ExecutionRequest) -> (ExecutionReques
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::sync::broadcast::error::TryRecvError;
+
+    fn block_created_event(id: &str) -> EventEnvelope {
+        EventEnvelope {
+            event_type: "response.block.created".to_owned(),
+            task_id: "task-1".to_owned(),
+            subtask_id: "turn-1".to_owned(),
+            data: json!({
+                "block": {
+                    "id": id,
+                    "type": "text",
+                },
+            }),
+            message_id: None,
+            executor_name: None,
+            executor_namespace: None,
+            validation_id: None,
+        }
+    }
 
     fn isolated_handler() -> (tempfile::TempDir, RuntimeWorkRpcHandler) {
         let directory = tempfile::tempdir().expect("temporary runtime work directory");
@@ -545,6 +576,63 @@ mod tests {
                 "status": "completed",
                 "output": "done",
             })]
+        );
+    }
+
+    #[tokio::test]
+    async fn claude_event_sink_drops_events_after_cancellation_starts() {
+        let directory = tempfile::tempdir().expect("temporary runtime work directory");
+        let (event_tx, mut event_rx) = tokio::sync::broadcast::channel(4);
+        let mut handler =
+            RuntimeWorkRpcHandler::with_event_sender("device-1", "/bin/false", event_tx);
+        handler.store = RuntimeWorkStore::new(directory.path().join("index.json"));
+        let (cancel_tx, _cancel_rx) = oneshot::channel();
+        let (_stopped_tx, stopped_rx) = oneshot::channel();
+        let execution_id =
+            handler.start_local_task_execution("task-1".to_owned(), cancel_tx, stopped_rx);
+        let transcript = Arc::new(Mutex::new(ClaudeTurnTranscript::default()));
+        let sink = ClaudeRuntimeEventSink {
+            handler: handler.clone(),
+            local_task_id: "task-1".to_owned(),
+            execution_id,
+            request: ExecutionRequest {
+                task_id: "task-1".to_owned(),
+                subtask_id: "turn-1".to_owned(),
+                ..ExecutionRequest::default()
+            },
+            transcript: Arc::clone(&transcript),
+        };
+
+        sink.send(block_created_event("before-cancel"))
+            .await
+            .expect("active event should be accepted");
+        event_rx
+            .recv()
+            .await
+            .expect("active event should be emitted");
+
+        {
+            let mut active = handler
+                .active_turn_cancellations
+                .lock()
+                .expect("active turn cancellation map lock");
+            let control = active.get_mut("task-1").expect("active Claude turn");
+            control.stop_requested = true;
+        }
+        sink.send(block_created_event("after-cancel"))
+            .await
+            .expect("late event should be ignored without failing the runtime");
+
+        assert!(matches!(event_rx.try_recv(), Err(TryRecvError::Empty)));
+        assert_eq!(
+            transcript
+                .lock()
+                .expect("Claude transcript lock")
+                .blocks()
+                .iter()
+                .map(|block| block["id"].as_str())
+                .collect::<Vec<_>>(),
+            vec![Some("before-cancel")]
         );
     }
 

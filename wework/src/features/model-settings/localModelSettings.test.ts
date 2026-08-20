@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   clearLocalModelConfigs,
-  deepSeekCatalogModelIdFor,
   deleteLocalModelConfig,
   findLocalModelConfigByModelName,
   listLocalModelConfigs,
@@ -13,13 +12,6 @@ import {
 } from './localModelSettings'
 
 describe('localModelSettings', () => {
-  test.each([
-    ['deepseek-v4-flash', 'wework-deepseek-v4-flash'],
-    ['deepseek-v4-pro', 'wework-deepseek-v4-pro'],
-  ])('maps %s to its managed Codex catalog entry', (modelId, catalogModelId) => {
-    expect(deepSeekCatalogModelIdFor(modelId)).toBe(catalogModelId)
-  })
-
   test('defaults tool profiles by API format and rejects incompatible combinations', () => {
     const responses = saveLocalModelConfig({
       modelId: 'responses-model',
@@ -157,6 +149,7 @@ describe('localModelSettings', () => {
     })
 
     expect(primary.visionModelConfigId).toBe('vision')
+    expect(primary.codexCatalogModelId).toBe('wework-deepseek-v4-flash')
     expect(deleteLocalModelConfig('vision')).toBe(true)
     expect(listLocalModelConfigs()).toEqual([
       expect.not.objectContaining({ visionModelConfigId: 'vision' }),

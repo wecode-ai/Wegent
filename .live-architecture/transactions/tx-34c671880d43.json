@@ -1,0 +1,82 @@
+{
+  "actor": {
+    "id": "codex",
+    "kind": "ai"
+  },
+  "authority": "ai",
+  "base_revision": "A00000011",
+  "changes": [
+    {
+      "action": "create",
+      "change_id": "chg-dcb46e80f817",
+      "confidence": 1.0,
+      "evidence": [
+        "docs/zh/architecture/issue-task-workflow.md"
+      ],
+      "object": null,
+      "plane": "model",
+      "predicate": null,
+      "reason": "Define inbox-to-pending entry for self-managed, preset, and AI-coordinated Issues, including explicit human-stage actions outside the zoomable graph",
+      "subject": "arch://wegent/flow/issue-workflow-board-entry",
+      "timestamp": "2026-08-18T09:49:21Z"
+    },
+    {
+      "action": "verify",
+      "change_id": "chg-b9f0734fc5fd",
+      "confidence": 1.0,
+      "evidence": [
+        "backend/app/services/issue_workflow_start.py"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Backend starts ready automated stages or the AI coordinator after orchestration entry and avoids duplicate runs",
+      "subject": "arch://wegent/flow/issue-workflow-board-entry",
+      "timestamp": "2026-08-18T09:49:21Z"
+    },
+    {
+      "action": "verify",
+      "change_id": "chg-142cf64c9a0d",
+      "confidence": 1.0,
+      "evidence": [
+        "wework/src/features/todo/CloudTodoWorkspace.tsx"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Board drag bypasses the generic task Composer for non-self-managed Issues and reveals ready human-stage actions",
+      "subject": "arch://wegent/flow/issue-workflow-board-entry",
+      "timestamp": "2026-08-18T09:49:21Z"
+    },
+    {
+      "action": "verify",
+      "change_id": "chg-5afea48badda",
+      "confidence": 1.0,
+      "evidence": [
+        "wework/src/features/todo/IssueWorkflowDag.tsx"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Ready human stages expose a stage-bound Start work action outside the scaled workflow graph",
+      "subject": "arch://wegent/flow/issue-task-conversation-entry",
+      "timestamp": "2026-08-18T09:49:21Z"
+    }
+  ],
+  "created_at": "2026-08-18T09:10:12Z",
+  "id": "tx-34c671880d43",
+  "intent": "When an Issue uses preset workflow or AI dynamic assignment, dragging it from inbox to pending must bypass the manual task composer and enter the configured orchestration path; manual task management keeps the composer.",
+  "merged_revision": "A00000014",
+  "read_set": [
+    "arch://wegent/flow/board-automation",
+    "arch://wegent/flow/issue-creation-composer",
+    "arch://wegent/flow/issue-task-conversation-entry"
+  ],
+  "resolutions": [],
+  "status": "merged",
+  "updated_at": "2026-08-18T09:49:30Z",
+  "write_set": [
+    "arch://wegent/flow/issue-task-conversation-entry",
+    "arch://wegent/flow/issue-workflow-board-entry"
+  ]
+}

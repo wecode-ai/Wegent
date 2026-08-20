@@ -1,0 +1,81 @@
+{
+  "actor": {
+    "id": "codex",
+    "kind": "ai"
+  },
+  "authority": "human",
+  "base_revision": "A00000023",
+  "changes": [
+    {
+      "action": "verify",
+      "change_id": "chg-e3f75807ca12",
+      "confidence": 1.0,
+      "evidence": [
+        "executor/src/task_runtime/mcp.rs"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Local and remote Executor MCP create_delivery resolve or forward server-side chat selections.",
+      "subject": "arch://wegent/contract/issue-delivery-chat-selection",
+      "timestamp": "2026-08-18T15:05:50Z"
+    },
+    {
+      "action": "verify",
+      "change_id": "chg-a9101a683bd6",
+      "confidence": 1.0,
+      "evidence": [
+        "backend/app/services/delivery/service.py"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Backend Delivery service snapshots selected durable project chat messages and rejects missing IDs.",
+      "subject": "arch://wegent/contract/issue-delivery-chat-selection",
+      "timestamp": "2026-08-18T15:05:50Z"
+    },
+    {
+      "action": "verify",
+      "change_id": "chg-cc7b77b11468",
+      "confidence": 1.0,
+      "evidence": [
+        "backend/app/mcp_server/tools/wework_space.py"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Backend wework_space MCP now exposes the complete Delivery lifecycle for authenticated bound Tasks.",
+      "subject": "arch://wegent/flow/issue-delivery-mcp-lifecycle",
+      "timestamp": "2026-08-18T15:05:50Z"
+    },
+    {
+      "action": "create",
+      "change_id": "chg-7a99e60a38a3",
+      "confidence": 1.0,
+      "evidence": [
+        "docs/zh/architecture/project-space-agent-capability.md"
+      ],
+      "object": null,
+      "plane": "model",
+      "predicate": null,
+      "reason": "Delivery chat snapshots are resolved from the current Issue timeline using all, latest N, or explicit message IDs.",
+      "subject": "arch://wegent/contract/issue-delivery-chat-selection",
+      "timestamp": "2026-08-18T15:05:56Z"
+    }
+  ],
+  "created_at": "2026-08-18T14:59:24Z",
+  "id": "tx-delivery-chat-selection",
+  "intent": "Add server-resolved chat timeline selection to Delivery MCP creation for all, latest N, and explicit message IDs.",
+  "merged_revision": "A00000024",
+  "read_set": [
+    "arch://wegent/contract/issue-delivery-scope",
+    "arch://wegent/flow/issue-delivery-mcp-lifecycle"
+  ],
+  "resolutions": [],
+  "status": "merged",
+  "updated_at": "2026-08-18T15:06:00Z",
+  "write_set": [
+    "arch://wegent/contract/issue-delivery-chat-selection",
+    "arch://wegent/flow/issue-delivery-mcp-lifecycle"
+  ]
+}

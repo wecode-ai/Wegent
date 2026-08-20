@@ -892,7 +892,7 @@ describe('RuntimeTaskLifecycleStore', () => {
     )
 
     expect(restoredStore.getTask(address)?.derived.shouldShowUnread).toBe(true)
-    expect(localStorage.getItem('wework.runtimeTaskLifecycle.test.running')).toBe('[]')
+    expect(localStorage.getItem('wework.runtimeTaskLifecycle.test.running.v2')).toBe('[]')
   })
 
   test('marks background non-Goal completion unread and clears it when opened', () => {
@@ -967,7 +967,7 @@ describe('RuntimeTaskLifecycleStore', () => {
     const setItem = vi
       .spyOn(Storage.prototype, 'setItem')
       .mockImplementation(function (key, value) {
-        if (key === 'wework.runtimeTaskLifecycle.test.unread') {
+        if (key === 'wework.runtimeTaskLifecycle.test.unread.v2') {
           throw new Error('storage unavailable')
         }
         return originalSetItem.call(this, key, value)
@@ -991,9 +991,29 @@ describe('RuntimeTaskLifecycleStore', () => {
     store.goalStatusReceived(address, 'paused')
 
     expect(
-      setItem.mock.calls.filter(([key]) => key === 'wework.runtimeTaskLifecycle.test.unread')
+      setItem.mock.calls.filter(([key]) => key === 'wework.runtimeTaskLifecycle.test.unread.v2')
     ).toHaveLength(1)
     setItem.mockRestore()
+  })
+
+  test('ignores unread and running state persisted by the broken v1 schema', () => {
+    const key = getRuntimeTaskLifecycleKey(address)
+    localStorage.setItem('wework.runtimeTaskLifecycle.test.unread', JSON.stringify([key]))
+    localStorage.setItem('wework.runtimeTaskLifecycle.test.running', JSON.stringify([key]))
+
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.syncRuntimeWork(
+      runtimeWork(
+        task({
+          running: false,
+          status: 'done',
+          completedAt: 1_786_692_066_192,
+        })
+      )
+    )
+
+    expect(store.getTask(address)?.derived.shouldShowUnread).toBe(false)
+    expect(store.getSnapshot().runningTaskKeys).toEqual(new Set())
   })
 
   test('gates every lifecycle mutation through one provider ownership boundary', () => {

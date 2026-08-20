@@ -8,9 +8,14 @@ import { LocalProjectEditDialog } from './LocalProjectEditDialog'
 const pickerMocks = vi.hoisted(() => ({
   open: vi.fn(),
 }))
+const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
 
 vi.mock('@/lib/native-directory-picker', () => ({
   openNativeProjectDirectoryPickers: pickerMocks.open,
+}))
+
+vi.mock('@/features/experimental-features/useExperimentalFeaturesEnabled', () => ({
+  useExperimentalFeaturesEnabled: () => experimentalFeatures.enabled,
 }))
 
 const projectWork = {
@@ -35,6 +40,24 @@ const folderPickerProps = {
 }
 
 describe('LocalProjectEditDialog', () => {
+  test('hides the default project space while experimental features are disabled', () => {
+    experimentalFeatures.enabled = false
+    render(
+      <LocalProjectEditDialog
+        {...folderPickerProps}
+        open
+        projectWork={projectWork}
+        projectSpaceApis={[{} as ProjectSpaceApi]}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+        onDelete={vi.fn()}
+      />
+    )
+
+    expect(screen.queryByTestId('local-project-auto-join-space-select')).not.toBeInTheDocument()
+    experimentalFeatures.enabled = true
+  })
+
   test('edits the name, primary folder, and source folder list', async () => {
     pickerMocks.open.mockResolvedValue(['/repo/docs'])
     const onSave = vi.fn().mockResolvedValue(undefined)

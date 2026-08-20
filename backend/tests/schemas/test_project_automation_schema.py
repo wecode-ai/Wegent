@@ -97,6 +97,23 @@ def test_partial_update_does_not_require_assignment_configuration() -> None:
     assert update.assignment_mode is None
 
 
+def test_workflow_trigger_accepts_a_robot_profile_without_schedule_fields() -> None:
+    value = ProjectAutomationCreate.model_validate(
+        {
+            "name": "Workflow · Development robot",
+            "prompt": "Use the workflow stage prompt.",
+            "triggerType": "workflow",
+            "eventType": None,
+            "cronExpression": None,
+            "assignmentMode": "manual",
+            "agentId": "agent-1",
+        }
+    )
+
+    assert value.trigger_type == "workflow"
+    assert value.cron_expression is None
+
+
 def test_partial_update_requires_mode_when_changing_manager_configuration() -> None:
     with pytest.raises(ValidationError, match="assignment_mode is required"):
         ProjectAutomationUpdate.model_validate(

@@ -215,6 +215,27 @@ describe('plugin trial state', () => {
     expect(consumePluginTrialInput()).toBe('[$Sites](plugin://sites@openai-bundled) ')
   })
 
+  test('queues a prompted plugin reference in a fresh chat', () => {
+    expect(
+      queuePluginReferenceTrial({
+        pluginName: 'smart-app-builder',
+        marketplaceName: 'wework-personal',
+        displayName: '智能应用开发助手',
+        prompt: '帮我创建一个智能应用',
+        openInNewChat: true,
+      })
+    ).toBe(true)
+
+    expect(consumePluginTrial()).toEqual(
+      expect.objectContaining({
+        input:
+          '[$智能应用开发助手](plugin://smart-app-builder@wework-personal) 帮我创建一个智能应用',
+        pluginName: '智能应用开发助手',
+        openInNewChat: true,
+      })
+    )
+  })
+
   test('queues plugin templates for the trial composer', () => {
     expect(
       queuePluginTrial(pluginWithSkill('/tmp/plugin/skills/report/SKILL.md'), {

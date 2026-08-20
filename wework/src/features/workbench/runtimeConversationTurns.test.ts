@@ -1523,6 +1523,44 @@ describe('runtimeConversationTurns', () => {
     })
   })
 
+  test('binds a pre-turn runtime failure to the pending optimistic user turn', () => {
+    let turns = reduceRuntimeConversationTurns([], {
+      type: 'user_added',
+      message: userMessage('client-message-1', 'Read the current Issue'),
+    })
+
+    turns = reduceRuntimeConversationTurns(turns, {
+      type: 'assistant_error',
+      subtaskId: 'runtime-turn-1',
+      error: 'Project-space capability unavailable',
+      errorType: 'response.failed',
+    })
+
+    expect(turns).toHaveLength(1)
+    expect(turns[0]).toMatchObject({
+      id: 'runtime-turn-1',
+      clientUserMessageId: 'client-message-1',
+      status: 'failed',
+      error: 'Project-space capability unavailable',
+      errorType: 'response.failed',
+    })
+    expect(turns[0].items[0]).toMatchObject({
+      type: 'user_message',
+      message: {
+        id: 'client-message-1',
+        subtaskId: 'runtime-turn-1',
+        turnId: 'runtime-turn-1',
+      },
+    })
+    const messages = projectRuntimeConversationTurns(turns)
+    expect(messages).toHaveLength(2)
+    expect(messages[1]).toMatchObject({
+      role: 'assistant',
+      status: 'failed',
+      error: 'Project-space capability unavailable',
+    })
+  })
+
   test('projects guidance boundaries from ordered turn items', () => {
     const guidance = {
       ...userMessage('client-guidance-1', 'Use the second approach'),

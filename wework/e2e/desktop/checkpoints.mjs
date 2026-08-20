@@ -21,6 +21,7 @@ export const DESKTOP_CHECKPOINTS = [
   'cloud-worktree-device-restart',
   'context-compaction',
   'runtime-task-queue',
+  'codex-notification-isolation',
   'split-workbench',
   'window-lifecycle',
   'goal-lifecycle',
@@ -34,8 +35,10 @@ export const DESKTOP_CHECKPOINTS = [
   'claude-runtime',
   'local-file-preview',
   'local-harness',
+  'harness-apps',
   'browser-multi-tabs',
   'embedded-browser',
+  'browser-toolbar-actions',
 ]
 
 export const PLUGIN_SEGMENTS = [

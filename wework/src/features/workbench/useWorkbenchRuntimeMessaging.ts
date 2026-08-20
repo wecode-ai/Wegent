@@ -695,14 +695,17 @@ export function useWorkbenchRuntimeMessaging({
       projectOverride?: ProjectWithTasks | null,
       includeSelectedSkills = !isOptionsLocked,
       selectedSkillsOverride?: SkillRef[],
-      deviceOverride?: string | null
+      deviceOverride?: string | null,
+      deviceWorkspaceIdOverride?: number | null
     ): { payload: ChatSendPayload; activeDeviceId?: string } | null => {
       if (!state.defaultTeam) return null
       const activeProject = projectOverride === undefined ? state.currentProject : projectOverride
       const selectedProjectWorkspace = findProjectDeviceWorkspace(
         state.runtimeWork,
         activeProject?.id,
-        state.selectedDeviceWorkspaceId
+        deviceWorkspaceIdOverride === undefined
+          ? state.selectedDeviceWorkspaceId
+          : deviceWorkspaceIdOverride
       )
       const selectedProjectDeviceId = worktreeWorkspaceDeviceId(selectedProjectWorkspace)
       const activeDeviceId =
@@ -822,6 +825,7 @@ export function useWorkbenchRuntimeMessaging({
         deliveryId?: string
         cloudProjectId?: string
         origin?: RuntimeTaskCreateRequest['origin']
+        deviceWorkspaceId?: number | null
         ephemeral?: boolean
         openInMainPane?: boolean
         refreshWorkListsOnResolve?: boolean
@@ -873,7 +877,9 @@ export function useWorkbenchRuntimeMessaging({
       const selectedProjectWorkspace = findProjectDeviceWorkspace(
         state.runtimeWork,
         projectId,
-        state.selectedDeviceWorkspaceId
+        options?.deviceWorkspaceId === undefined
+          ? state.selectedDeviceWorkspaceId
+          : options.deviceWorkspaceId
       )
       const selectedProjectDeviceId = worktreeWorkspaceDeviceId(selectedProjectWorkspace)
       const selectedRuntimeProject = projectId
@@ -1753,7 +1759,8 @@ export function useWorkbenchRuntimeMessaging({
         options.project,
         undefined,
         undefined,
-        options.deviceId
+        options.deviceId,
+        options.deviceWorkspaceId
       )
       if (!prepared) {
         reportSendBlocked(
@@ -1802,6 +1809,7 @@ export function useWorkbenchRuntimeMessaging({
         deliveryId: options.deliveryId,
         cloudProjectId: options.cloudProjectId,
         origin: options.origin,
+        deviceWorkspaceId: options.deviceWorkspaceId,
         modelSelection: explicitModelSelection,
         additionalContext: options.additionalContext,
         onError: options.onError,

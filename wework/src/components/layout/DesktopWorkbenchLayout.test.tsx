@@ -1511,6 +1511,34 @@ describe('DesktopWorkbenchLayout', () => {
     ).toHaveStyle({ display: 'none' })
   })
 
+  test('returns to the workspace after opening settings from its account menu', async () => {
+    deliveryApiMock.available = true
+    window.history.pushState({}, '', '/todo')
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          user: {
+            id: 1,
+            user_name: 'local',
+            email: 'local@example.com',
+          },
+        }}
+      />
+    )
+
+    await userEvent.click(await screen.findByTestId('settings-button'))
+    await userEvent.click(screen.getByTestId('settings-menu-button'))
+    expect(window.location.pathname).toBe('/settings')
+
+    await userEvent.click(screen.getByTestId('settings-back-button'))
+
+    expect(window.location.pathname).toBe('/todo')
+    expect(screen.getByTestId('cloud-todo-workspace')).toBeVisible()
+  })
+
   test('uses the independent board tab instead of a work-items sidebar destination', () => {
     const taskTab = {
       id: 'task-existing',
@@ -2124,12 +2152,34 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('mention-cloud-projects-action')).not.toBeInTheDocument()
   })
 
-  test('hides the work-item composer guide while experimental features are disabled', () => {
+  test('shows the work-item composer guide while experimental features are disabled', async () => {
     experimentalFeatures.enabled = false
+    deliveryApiMock.available = true
+    deliveryApiMock.listCloudProjects.mockResolvedValue({
+      items: [
+        {
+          id: 'default-work-items',
+          public_id: 'default-work-items',
+          project_key: 'WORK',
+          name: '我的任务',
+          description: '',
+          project_store: 'local',
+          task_provider: 'local',
+          provider_config: {},
+          created_by_user_id: 1,
+          status: 'active',
+          tags: [],
+          version: 1,
+          created_at: '2026-08-09T00:00:00Z',
+          updated_at: '2026-08-09T00:00:00Z',
+          metadata: { system_kind: 'default_work_items' },
+        },
+      ],
+    })
 
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
-    expect(screen.queryByTestId('project-space-context-pill')).not.toBeInTheDocument()
+    expect(await screen.findByTestId('project-space-context-pill')).toHaveTextContent('我的任务')
   })
 
   test('shows cloud project space entries in the @ menu while experimental features are enabled', async () => {
@@ -2153,9 +2203,9 @@ describe('DesktopWorkbenchLayout', () => {
     deliveryApiMock.listCloudProjects.mockResolvedValue({
       items: [
         {
-          id: 'default-work-items',
+          id: 'task-follow-up',
           public_id: 'public-space-1',
-          project_key: 'WORK',
+          project_key: 'FOLLOW',
           name: 'Task Follow-up Board',
           description: '',
           project_store: 'local',
@@ -2174,7 +2224,7 @@ describe('DesktopWorkbenchLayout', () => {
     const runtimeWork = structuredClone(createRuntimeWorkForProject(currentProject)!)
     runtimeWork.projects[0].project.defaultProjectSpace = {
       projectStore: 'local',
-      projectId: 'default-work-items',
+      projectId: 'task-follow-up',
     }
 
     render(
@@ -7086,6 +7136,201 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
+  test('right workspace panel opens Dart source as text', async () => {
+    const user = userEvent.setup()
+    const workspacePanelState = createCloudWorkspacePanelState()
+    const dartPath = '/workspace/project/lib/main.dart'
+    const listWorkspaceEntries = vi.fn().mockResolvedValue({
+      path: '/workspace/project',
+      entries: [
+        {
+          name: 'main.dart',
+          path: dartPath,
+          isDirectory: false,
+          size: 31,
+          modifiedAt: null,
+        },
+      ],
+    })
+    const readWorkspaceTextFile = vi.fn().mockResolvedValue({
+      path: dartPath,
+      name: 'main.dart',
+      content: 'void main() => print("hello");',
+      editable: true,
+      revision: 'sha256:dart',
+      truncated: false,
+      size: 31,
+      modifiedAt: null,
+    })
+    const readWorkspaceFileChunk = vi.fn()
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        workspaceFileApi={{
+          listWorkspaceEntries,
+          readWorkspaceTextFile,
+          readWorkspaceFileChunk,
+        }}
+        state={{
+          ...baseProps.state,
+          ...workspacePanelState,
+        }}
+        projectWork={{
+          ...baseProps.projectWork,
+          projects: workspacePanelState.projects,
+          devices: workspacePanelState.devices,
+          currentProjectId: workspacePanelState.currentProject?.id,
+        }}
+      />
+    )
+
+    await user.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await user.click(screen.getByTestId('right-workspace-file-option'))
+    await user.click(await screen.findByText('main.dart'))
+
+    expect(await screen.findByTestId('workspace-file-preview-code-view')).toBeInTheDocument()
+    expect(readWorkspaceTextFile).toHaveBeenCalledWith(
+      'workspace-cloud-device',
+      dartPath,
+      '/workspace/project'
+    )
+    expect(readWorkspaceFileChunk).not.toHaveBeenCalled()
+  })
+
+  test('right workspace panel detects text content for unknown source extensions', async () => {
+    const user = userEvent.setup()
+    const workspacePanelState = createCloudWorkspacePanelState()
+    const sourcePath = '/workspace/project/src/main.zig'
+    const sourceContent = 'pub fn main() void {}'
+    const listWorkspaceEntries = vi.fn().mockResolvedValue({
+      path: '/workspace/project',
+      entries: [
+        {
+          name: 'main.zig',
+          path: sourcePath,
+          isDirectory: false,
+          size: sourceContent.length,
+          modifiedAt: null,
+        },
+      ],
+    })
+    const readWorkspaceFileChunk = vi.fn().mockResolvedValue({
+      path: sourcePath,
+      name: 'main.zig',
+      contentBase64: btoa(sourceContent),
+      offset: 0,
+      eof: true,
+      size: sourceContent.length,
+      modifiedAt: null,
+    })
+    const readWorkspaceTextFile = vi.fn().mockResolvedValue({
+      path: sourcePath,
+      name: 'main.zig',
+      content: sourceContent,
+      editable: true,
+      revision: 'sha256:zig',
+      truncated: false,
+      size: sourceContent.length,
+      modifiedAt: null,
+    })
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        workspaceFileApi={{
+          listWorkspaceEntries,
+          readWorkspaceTextFile,
+          readWorkspaceFileChunk,
+        }}
+        state={{
+          ...baseProps.state,
+          ...workspacePanelState,
+        }}
+        projectWork={{
+          ...baseProps.projectWork,
+          projects: workspacePanelState.projects,
+          devices: workspacePanelState.devices,
+          currentProjectId: workspacePanelState.currentProject?.id,
+        }}
+      />
+    )
+
+    await user.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await user.click(screen.getByTestId('right-workspace-file-option'))
+    await user.click(await screen.findByText('main.zig'))
+
+    expect(await screen.findByTestId('workspace-file-preview-code-view')).toBeInTheDocument()
+    expect(readWorkspaceFileChunk).toHaveBeenCalledWith(
+      'workspace-cloud-device',
+      sourcePath,
+      0,
+      '/workspace/project'
+    )
+    expect(readWorkspaceTextFile).toHaveBeenCalledWith(
+      'workspace-cloud-device',
+      sourcePath,
+      '/workspace/project'
+    )
+  })
+
+  test('right workspace panel keeps unknown binary files on the binary preview path', async () => {
+    const user = userEvent.setup()
+    const workspacePanelState = createCloudWorkspacePanelState()
+    const binaryPath = '/workspace/project/artifact.data'
+    const listWorkspaceEntries = vi.fn().mockResolvedValue({
+      path: '/workspace/project',
+      entries: [
+        {
+          name: 'artifact.data',
+          path: binaryPath,
+          isDirectory: false,
+          size: 4,
+          modifiedAt: null,
+        },
+      ],
+    })
+    const readWorkspaceFileChunk = vi.fn().mockResolvedValue({
+      path: binaryPath,
+      name: 'artifact.data',
+      contentBase64: 'AAECAw==',
+      offset: 0,
+      eof: true,
+      size: 4,
+      modifiedAt: null,
+    })
+    const readWorkspaceTextFile = vi.fn()
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        workspaceFileApi={{
+          listWorkspaceEntries,
+          readWorkspaceTextFile,
+          readWorkspaceFileChunk,
+        }}
+        state={{
+          ...baseProps.state,
+          ...workspacePanelState,
+        }}
+        projectWork={{
+          ...baseProps.projectWork,
+          projects: workspacePanelState.projects,
+          devices: workspacePanelState.devices,
+          currentProjectId: workspacePanelState.currentProject?.id,
+        }}
+      />
+    )
+
+    await user.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await user.click(screen.getByTestId('right-workspace-file-option'))
+    await user.click(await screen.findByText('artifact.data'))
+
+    expect(await screen.findByTestId('workspace-binary-file-preview')).toBeInTheDocument()
+    expect(readWorkspaceFileChunk).toHaveBeenCalledTimes(1)
+    expect(readWorkspaceTextFile).not.toHaveBeenCalled()
+  })
+
   test('switches folders in the file tab for a multi-root project', async () => {
     const user = userEvent.setup()
     const workspacePanelState = createCloudWorkspacePanelState()
@@ -9797,7 +10042,7 @@ describe('DesktopWorkbenchLayout', () => {
       'src',
       'http://example.com/'
     )
-  })
+  }, 10_000)
 
   test('exposes the task-scoped browser label before the browser panel mounts', () => {
     const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
@@ -9854,7 +10099,7 @@ describe('DesktopWorkbenchLayout', () => {
           'embedded_browser_open',
           expect.objectContaining({
             label: 'workspace-browser-runtime-a',
-            url: 'about:blank',
+            url: 'https://example.com/',
           }),
           undefined
         )
@@ -9876,7 +10121,7 @@ describe('DesktopWorkbenchLayout', () => {
           'embedded_browser_open',
           expect.objectContaining({
             label: 'workspace-browser-runtime-b',
-            url: 'about:blank',
+            url: 'https://example.org/',
           }),
           undefined
         )

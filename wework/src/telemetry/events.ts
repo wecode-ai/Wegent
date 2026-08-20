@@ -181,6 +181,8 @@ export interface AnalyticsEventMap {
       | 'publish'
       | 'delete'
       | 'open'
+      | 'preview'
+      | 'download'
       | 'move'
       | 'update'
       | 'edit'
@@ -479,6 +481,8 @@ export const ANALYTICS_EVENT_VALUE_CONSTRAINTS: {
       'publish',
       'delete',
       'open',
+      'preview',
+      'download',
       'move',
       'update',
       'edit',

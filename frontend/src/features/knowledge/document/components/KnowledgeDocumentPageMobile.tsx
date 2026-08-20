@@ -16,6 +16,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { ArrowLeft } from 'lucide-react'
+import { toast } from 'sonner'
 import { Spinner } from '@/components/ui/spinner'
 import { useTranslation } from '@/hooks/useTranslation'
 import { buildKbUrl, findKbByVirtualPath } from '@/utils/knowledgeUrl'
@@ -264,20 +265,20 @@ export function KnowledgeDocumentPageMobile({
         const kbType = data.kb_type || createKbType
 
         if (kbType === 'code_wiki') {
-          const wiki = await createCodeWiki({ namespace, data })
+          await createCodeWiki({ namespace, data })
 
           setShowCreateDialog(false)
           if (createScope === 'organization') {
-            await tree.refreshOrg()
+            void tree.refreshOrg()
           } else if (createGroupName) {
-            await tree.refreshGroup(createGroupName)
+            void tree.refreshGroup(createGroupName)
           } else {
-            await tree.refreshPersonal()
+            void tree.refreshPersonal()
           }
           setCreateGroupName(undefined)
           setCreateScope('personal')
           setCreateKbType('notebook')
-          router.push(buildKbUrl(namespace, wiki.name, false))
+          toast.success(t('codeWiki.create.created'))
           return
         }
 
@@ -322,7 +323,7 @@ export function KnowledgeDocumentPageMobile({
         setIsCreating(false)
       }
     },
-    [createScope, createGroupName, createKbType, router, tree]
+    [createScope, createGroupName, createKbType, t, tree]
   )
 
   // Handle open group settings

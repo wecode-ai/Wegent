@@ -4,6 +4,10 @@ import { createConversationWorkspace } from '@/features/workbench/workbenchRunti
 import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
 import { runtimeTaskReconciliationSnapshot } from '@/features/workbench/runtimeTaskLifecycle/projection'
 import type { RuntimeTaskCreateRequest } from '@/types/api'
+import {
+  findRuntimeTaskWorkspace,
+  getRuntimeTaskWorkspacePath,
+} from '@/features/workbench/workbenchRuntimeHelpers'
 
 const LOCAL_QUEUE_POLL_MS = 3000
 const LOCAL_QUEUE_DEVICE_CACHE_MS = 30_000
@@ -206,15 +210,44 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
           ? payloadLocalProjectId
           : null
       let boundWorkspacePath: string | null = null
+      const workspaceSourceTask = recordValue(runtimePayload.workspaceSourceTask)
+      const sourceTaskAddress =
+        workspaceSourceTask &&
+        nonEmptyString(workspaceSourceTask.deviceId) &&
+        nonEmptyString(workspaceSourceTask.taskId)
+          ? {
+              deviceId: nonEmptyString(workspaceSourceTask.deviceId)!,
+              taskId: nonEmptyString(workspaceSourceTask.taskId)!,
+            }
+          : null
+      const runtimeWork =
+        boundLocalProjectId != null || sourceTaskAddress
+          ? await services.runtimeWorkApi?.listRuntimeWork()
+          : null
+      if (sourceTaskAddress) {
+        if (sourceTaskAddress.deviceId !== deviceId) {
+          throw new Error('Inherited workflow workspace belongs to another device')
+        }
+        const sourceWorkspace = findRuntimeTaskWorkspace(runtimeWork, sourceTaskAddress)
+        const sourceTask = sourceWorkspace?.tasks.find(
+          candidate => candidate.taskId === sourceTaskAddress.taskId
+        )
+        boundWorkspacePath =
+          sourceWorkspace && sourceTask
+            ? getRuntimeTaskWorkspacePath(sourceWorkspace, sourceTask)
+            : null
+        if (!boundWorkspacePath) {
+          throw new Error('Inherited workflow workspace is unavailable')
+        }
+      }
       if (boundLocalProjectId != null) {
-        const runtimeWork = await services.runtimeWorkApi?.listRuntimeWork()
         const projectWork = runtimeWork?.projects.find(
           item => item.project.id === boundLocalProjectId
         )
         const workspace = projectWork?.deviceWorkspaces.find(
           candidate => candidate.deviceId === deviceId && candidate.available
         )
-        boundWorkspacePath =
+        boundWorkspacePath ??=
           workspace?.workspacePath ?? projectWork?.project.roots?.[0]?.path ?? null
       }
       if (boundLocalProjectId != null && !boundWorkspacePath) {

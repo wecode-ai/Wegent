@@ -122,6 +122,11 @@ export type WorkbenchAction =
       project: ProjectWithTasks | null
     }
   | {
+      type: 'runtime_task_address_reconciled'
+      previousAddress: RuntimeTaskAddress
+      address: RuntimeTaskAddress
+    }
+  | {
       type: 'runtime_task_optimistic_upserted'
       project: ProjectWithTasks | null
       workspace: RuntimeDeviceWorkspace
@@ -666,6 +671,7 @@ function reconcileCurrentRuntimeTaskAddress(
     )
     return {
       ...currentRuntimeTask,
+      workspacePath: hydratedCurrentDeviceTask.workspacePath,
       ...(hydratedCurrentDeviceTask.threadId
         ? { threadId: hydratedCurrentDeviceTask.threadId }
         : {}),
@@ -1198,6 +1204,28 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
         currentProject: action.project,
         currentRuntimeTask: action.address,
       }
+    case 'runtime_task_address_reconciled': {
+      const currentRuntimeTask = state.currentRuntimeTask
+      if (
+        !currentRuntimeTask ||
+        currentRuntimeTask.deviceId !== action.previousAddress.deviceId ||
+        currentRuntimeTask.taskId !== action.previousAddress.taskId
+      ) {
+        return state
+      }
+      const runtimeHandle = mergeRuntimeTaskHandles(
+        currentRuntimeTask.runtimeHandle,
+        action.address.runtimeHandle
+      )
+      return {
+        ...state,
+        currentRuntimeTask: {
+          ...currentRuntimeTask,
+          ...action.address,
+          ...(runtimeHandle ? { runtimeHandle } : {}),
+        },
+      }
+    }
     case 'runtime_task_optimistic_upserted':
       return {
         ...state,

@@ -263,8 +263,8 @@ const LOCAL_VISION_SIDECAR_CASE = {
 const CLOUD_VISION_SIDECAR_CASE = {
   source: 'cloud',
   mainOptionId: 'desktop-e2e-cloud-vision-main',
-  mainLabel: 'Desktop E2E Cloud Vision Main',
-  mainModelId: 'desktop-e2e-cloud-vision-main-upstream',
+  mainLabel: 'Desktop E2E DeepSeek Flash Vision Main',
+  mainModelId: 'deepseek-v4-flash',
   sidecarModelId: 'desktop-e2e-cloud-vision-sidecar-upstream',
 }
 const CLOUD_MULTIMODAL_VISION_CASE = {
@@ -1250,6 +1250,7 @@ async function ensureModelOptionVisible(
       await control
         .command('hover', modelSelectorButton, {
           timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+          visible: true,
         })
         .catch(() => undefined)
       menu = JSON.parse(await control.command('snapshot', 'body'))
@@ -1257,6 +1258,7 @@ async function ensureModelOptionVisible(
         await control.command('clickWhenEnabled', modelSelectorButton, {
           stableMs: 100,
           timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+          visible: true,
         })
       }
     }
@@ -1289,7 +1291,24 @@ async function confirmLocalProjectName(control, name) {
 }
 
 async function createSingleRootLocalProject(control, workspacePath, name) {
-  await control.command('click', '[data-testid="projects-create-button"]')
+  const sidebarSnapshot = await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes('projects-empty-create-button') ||
+      snapshot.testIds.includes('runtime-project-sortable-list'),
+    'The project section did not settle into an empty or populated state'
+  )
+  const createButtonSelector = sidebarSnapshot.testIds.includes('projects-empty-create-button')
+    ? '[data-testid="projects-empty-create-button"]'
+    : '[data-testid="projects-create-button"]'
+  if (createButtonSelector.includes('projects-empty-create-button')) {
+    assert.match(
+      await control.command('getText', createButtonSelector),
+      /New project|新建项目/,
+      'The empty project section did not expose a localized creation action'
+    )
+  }
+  await control.command('click', createButtonSelector)
   await control.command('click', '[data-testid="project-create-local-option"]')
   await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -1317,8 +1336,11 @@ async function selectE2EModel(
   const modelSelectorButton = `${composerSelector} [data-testid="model-selector-button"]`.trim()
   await control.command('waitFor', modelSelectorButton, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    visible: true,
   })
-  const selectedModelLabel = await control.command('getText', modelSelectorButton)
+  const selectedModelLabel = await control.command('getText', modelSelectorButton, {
+    visible: true,
+  })
   if (labels.some(label => selectedModelLabel.includes(label))) return
 
   await ensureModelOptionVisible(control, modelIds, modelSelectorButton)
@@ -1330,6 +1352,7 @@ async function selectE2EModel(
       await control.command('clickWhenEnabled', modelSelectorButton, {
         stableMs: 100,
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        visible: true,
       })
     }
     await revealGroupedModelOption(control, targetOptionIds)
@@ -1367,7 +1390,9 @@ async function waitForE2EModelLabel(
 ) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
-    const selectedModelLabel = await control.command('getText', modelSelectorButton)
+    const selectedModelLabel = await control.command('getText', modelSelectorButton, {
+      visible: true,
+    })
     if (labels.some(label => selectedModelLabel.includes(label))) return
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }

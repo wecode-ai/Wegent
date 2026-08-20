@@ -2963,6 +2963,9 @@ fn remove_marketplace_plugin_entry(manifest_path: &Path, plugin_name: &str) -> R
             manifest_path.display()
         )
     })?;
+    if manifest.get("name").and_then(Value::as_str) == Some("personal") {
+        manifest["name"] = Value::String(WEWORK_PERSONAL_MARKETPLACE_ID.to_string());
+    }
     let plugins = manifest
         .get_mut("plugins")
         .and_then(Value::as_array_mut)
