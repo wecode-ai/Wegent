@@ -919,8 +919,15 @@ export function useWorkbenchDataRefresh({
 
   const refreshRuntimeTask = useCallback(
     async (address: RuntimeTaskAddress) => {
+      const device = devicesRef.current.find(item => item.device_id === address.deviceId)
+      const listCloudRuntimeWork =
+        device && (isCloudDevice(device) || isRemoteDevice(device))
+          ? cloudBackgroundApiRef.current?.listRuntimeWork
+          : undefined
       const runtimeWork = applyRuntimeTaskOverrides(
-        await executorClient.runtime.listRuntimeWork(),
+        listCloudRuntimeWork
+          ? await listCloudRuntimeWork()
+          : await executorClient.runtime.listRuntimeWork(),
         true
       )
       const task = findRuntimeTask(runtimeWork, address)

@@ -12605,7 +12605,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(updateTaskTrackingStatus.mock.calls.at(-1)?.[1]).toBe('succeeded')
   })
 
-  test('polls the executor until idle before sending queued runtime messages', async () => {
+  test('polls the cloud executor until idle before sending queued runtime messages', async () => {
     let streamHandlers: ChatStreamHandlers = {}
     const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
       if (hasRuntimeStreamHandler(handlers)) streamHandlers = handlers
@@ -12675,7 +12675,8 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
     let executorSettling = false
     let settleSnapshotReads = 0
-    const listRuntimeWork = vi.fn().mockImplementation(() => {
+    const listRuntimeWork = vi.fn().mockResolvedValue(runningRuntimeWork)
+    const listCloudRuntimeWork = vi.fn().mockImplementation(() => {
       if (!executorSettling) return Promise.resolve(runningRuntimeWork)
       settleSnapshotReads += 1
       return Promise.resolve(settleSnapshotReads === 1 ? runningRuntimeWork : idleRuntimeWork)
@@ -12692,6 +12693,9 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
     const services = createWorkbenchServices({
       runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      cloudBackgroundApi: {
+        listRuntimeWork: listCloudRuntimeWork,
+      },
       chatStream: {
         subscribe,
       } as unknown as WorkbenchServices['chatStream'],
@@ -12724,7 +12728,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(sendRuntimeMessage).not.toHaveBeenCalled()
     expect(screen.getByTestId('queued-messages')).toHaveTextContent('queued:继续修')
 
-    const listCallsBeforeSettlement = listRuntimeWork.mock.calls.length
+    const cloudListCallsBeforeSettlement = listCloudRuntimeWork.mock.calls.length
     executorSettling = true
     await act(async () => {
       streamHandlers.onChatDone?.({
@@ -12736,7 +12740,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
 
     await waitFor(() =>
-      expect(listRuntimeWork.mock.calls.length).toBeGreaterThan(listCallsBeforeSettlement)
+      expect(listCloudRuntimeWork.mock.calls.length).toBeGreaterThan(cloudListCallsBeforeSettlement)
     )
     expect(sendRuntimeMessage).not.toHaveBeenCalled()
 
