@@ -157,11 +157,10 @@ async function selectExecutionMode(control, mode, ref = null) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('click', `[data-e2e-anchor-id="${anchor}"]`)
-  assert.match(
-    await control.command('getText', '[data-testid="project-worktree-branch-button"]'),
-    new RegExp(ref.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
-    'The selected Worktree starting ref was not retained by the composer'
-  )
+  await control.command('waitFor', '[data-testid="project-worktree-branch-button"]', {
+    text: ref,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
 }
 
 async function launchTask(
