@@ -62,3 +62,11 @@ export function takeHarnessAppProxyToken(installationId: string): Promise<string
 export function storeHarnessAppProxyToken(installationId: string, token: string): Promise<void> {
   return invoke<void>('store_harness_app_proxy_token', { installationId, token })
 }
+
+export function takeHarnessAppContextToken(installationId: string): Promise<string | null> {
+  return invoke<string | null>('take_harness_app_context_token', { installationId })
+}
+
+export function storeHarnessAppContextToken(installationId: string, token: string): Promise<void> {
+  return invoke<void>('store_harness_app_context_token', { installationId, token })
+}

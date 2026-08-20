@@ -4,6 +4,11 @@ import {
   type HarnessProxyRegistration,
   type LocalHarnessModelOption,
 } from '@/features/local-harness/localHarnessModels'
+import {
+  buildHarnessModelContext,
+  buildHarnessUserContext,
+  type HarnessContextRegistration,
+} from '@/features/harness-apps/harnessContext'
 import { createExecutorClientFromApis } from '@/api/executorAccess'
 import i18n from '@/i18n'
 import type {
@@ -157,7 +162,7 @@ import {
 import { createLocalProjectChatClient } from './localProjectChatClient'
 import { createLocalAITableApi } from '@/api/aitable'
 import { createDwsApi } from '@/api/dws'
-import { LOCAL_USER, saveLocalUserPreferences } from './localSession'
+import { getLocalUser, LOCAL_USER, saveLocalUserPreferences } from './localSession'
 import type { KeybindingOverride } from '@/lib/keybindings'
 import type { LocalHarnessId } from '@/lib/local-harness'
 import {
@@ -3474,10 +3479,33 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
             upstream: harnessProxyUpstream(harnessId, option, deps.cloudModelGateway),
           }
         )
-        return harnessLaunchThroughMessagesProxy(harnessId, option, registration)
+        const launch = harnessLaunchThroughMessagesProxy(harnessId, option, registration)
+        if (harnessId !== 'opencode') return launch
+        try {
+          const context = await request<HarnessContextRegistration>(
+            'runtime.harness_context.register',
+            {
+              scope: 'harness:' + harnessId + ':' + crypto.randomUUID(),
+              user: buildHarnessUserContext(
+                deps.user ?? getLocalUser(),
+                deps.cloudModelGateway ? 'cloud' : 'local'
+              ),
+              model: buildHarnessModelContext(option),
+            }
+          )
+          return { ...launch, context }
+        } catch (error) {
+          await request('runtime.harness_proxy.unregister', { token: registration.token }).catch(
+            () => undefined
+          )
+          throw error
+        }
       },
       async unregisterProxy(token: string) {
         await request('runtime.harness_proxy.unregister', { token })
+      },
+      async unregisterContext(token: string) {
+        await request('runtime.harness_context.unregister', { token })
       },
     },
     localProjectChatClient,

@@ -719,13 +719,33 @@ impl RuntimeWorkRpcHandler {
     pub(super) fn start_local_task_execution(
         &self,
         local_task_id: String,
+        workspace_path: Option<&str>,
         cancel: oneshot::Sender<()>,
         stopped: oneshot::Receiver<()>,
-    ) -> u64 {
+    ) -> Result<u64, AppIpcError> {
         let execution_id = self.next_execution_id.fetch_add(1, Ordering::Relaxed);
+        let workspace_path = self
+            .store
+            .get_task(&local_task_id)
+            .map(|task| PathBuf::from(task.workspace_path))
+            .or_else(|| workspace_path.map(PathBuf::from));
+        let managed_worktree_path =
+            workspace_path.filter(|path| self.worktrees.is_managed_path(path));
+        if let Some(workspace_path) = managed_worktree_path.as_deref() {
+            self.worktrees
+                .begin_execution(workspace_path, &local_task_id, execution_id)
+                .map_err(|error| {
+                    AppIpcError::new(
+                        "worktree_execution_state_failed",
+                        format!("Failed to persist Worktree execution evidence: {error}"),
+                    )
+                })?;
+        }
         let control = ActiveTurnCancellation {
             execution_id,
             stop_requested: false,
+            stop_acknowledged: false,
+            managed_worktree_path,
             cancel,
             stopped,
         };
@@ -741,7 +761,7 @@ impl RuntimeWorkRpcHandler {
             apply_local_execution_state(link, true, None);
             link.completed_at = None;
         });
-        execution_id
+        Ok(execution_id)
     }
 
     pub(super) fn finish_local_task_execution(
@@ -753,15 +773,60 @@ impl RuntimeWorkRpcHandler {
             .active_turn_cancellations
             .lock()
             .expect("active turn cancellation map lock should not be poisoned");
-        if active
-            .get(local_task_id)
-            .is_some_and(|control| control.execution_id == execution_id && !control.stop_requested)
-        {
-            active.remove(local_task_id);
-            true
-        } else {
-            false
+        let Some(control) = active.get(local_task_id) else {
+            return false;
+        };
+        if control.execution_id != execution_id || control.stop_requested {
+            return false;
         }
+        if !self.clear_worktree_execution_lease(local_task_id, control) {
+            return false;
+        }
+        active.remove(local_task_id);
+        true
+    }
+
+    fn clear_worktree_execution_lease(
+        &self,
+        local_task_id: &str,
+        control: &ActiveTurnCancellation,
+    ) -> bool {
+        let Some(workspace_path) = control.managed_worktree_path.as_deref() else {
+            return true;
+        };
+        match self
+            .worktrees
+            .finish_execution(workspace_path, local_task_id, control.execution_id)
+        {
+            Ok(cleared) => cleared,
+            Err(error) => {
+                log_executor_event(
+                    "worktree execution evidence cleanup failed",
+                    &[
+                        ("local_task_id", local_task_id.to_owned()),
+                        ("error", error),
+                    ],
+                );
+                false
+            }
+        }
+    }
+
+    pub(super) fn fail_local_task_execution_start(&self, local_task_id: &str, error: &AppIpcError) {
+        self.store
+            .update_task(local_task_id, |link| apply_local_task_failure(link, error));
+        log_executor_event(
+            "runtime work turn start failed",
+            &[
+                ("local_task_id", local_task_id.to_owned()),
+                ("error", error.message.clone()),
+            ],
+        );
+        let handler = self.clone();
+        let local_task_id = local_task_id.to_owned();
+        tokio::spawn(async move {
+            handler.finish_scheduled_turn(&local_task_id).await;
+        });
     }
 
     pub(super) fn record_active_codex_turn(
@@ -880,13 +945,18 @@ impl RuntimeWorkRpcHandler {
             control.stop_requested = true;
             let _ = cancel.send(());
         }
-        let stopped = match control.stopped.try_recv() {
-            Ok(()) => true,
-            Err(oneshot::error::TryRecvError::Closed | oneshot::error::TryRecvError::Empty) => {
-                false
+        if !control.stop_acknowledged {
+            control.stop_acknowledged = match control.stopped.try_recv() {
+                Ok(()) => true,
+                Err(oneshot::error::TryRecvError::Closed | oneshot::error::TryRecvError::Empty) => {
+                    false
+                }
+            };
+        }
+        if control.stop_acknowledged {
+            if !self.clear_worktree_execution_lease(local_task_id, control) {
+                return ActiveTurnStopState::Pending;
             }
-        };
-        if stopped {
             active.remove(local_task_id);
             ActiveTurnStopState::Stopped
         } else {

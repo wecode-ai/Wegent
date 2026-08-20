@@ -1497,6 +1497,7 @@ async fn run_codex_app_server_turn_on_shared_client(
             }
         }
         let wait_for_goal_continuation = state.goal_is_active();
+        let expected_client_user_message_id = request_client_user_message_id(request);
 
         let mut turn_fields = codex_turn_fields(request, &thread_id);
         client.mark_thread_active(&thread_id).await;
@@ -1554,6 +1555,7 @@ async fn run_codex_app_server_turn_on_shared_client(
             startup_deadline,
             SharedTurnNotificationOptions {
                 active_turn_id,
+                expected_client_user_message_id,
                 notifications,
                 cancellation,
                 request_user_input_answers,
@@ -1874,6 +1876,7 @@ fn codex_outcome_name(outcome: &ExecutionOutcome) -> &'static str {
 
 struct SharedTurnNotificationOptions {
     active_turn_id: Option<String>,
+    expected_client_user_message_id: Option<String>,
     notifications: Option<CodexNotificationSender>,
     cancellation: Option<oneshot::Receiver<()>>,
     request_user_input_answers: Option<CodexRequestUserInputReceiver>,
@@ -1985,9 +1988,13 @@ async fn read_shared_turn_notifications(
         }
 
         let notification_turn_id = root_turn_notification_id(&message, state);
-        if let Some(turn_id) =
-            observed_active_turn_id(options.active_turn_id.as_deref(), &message, state)
-        {
+        let active_turn_update = observed_active_turn_id(
+            options.active_turn_id.as_deref(),
+            options.expected_client_user_message_id.as_deref(),
+            &message,
+            state,
+        );
+        if let Some((turn_id, source)) = active_turn_update {
             if let Some(previous_turn_id) = options.active_turn_id.as_deref() {
                 log_executor_event(
                     "codex shared active turn corrected",
@@ -1995,7 +2002,7 @@ async fn read_shared_turn_notifications(
                         ("thread_id", thread_id.to_owned()),
                         ("previous_turn_id", previous_turn_id.to_owned()),
                         ("turn_id", turn_id.clone()),
-                        ("source", "protocol_start_notification".to_owned()),
+                        ("source", source.to_owned()),
                     ],
                 );
             }
@@ -2112,7 +2119,7 @@ fn required_mcp_startup_failure(message: &Value) -> Option<String> {
         .get("status")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    if !matches!(status, "failed" | "error" | "cancelled") {
+    if !matches!(status, "failed" | "error") {
         return None;
     }
     let reason = params
@@ -2493,24 +2500,39 @@ async fn notification_belongs_to_thread(
 
 fn observed_active_turn_id(
     active_turn_id: Option<&str>,
+    expected_client_user_message_id: Option<&str>,
     message: &Value,
     state: &CodexRunState,
-) -> Option<String> {
+) -> Option<(String, &'static str)> {
     let method = message.get("method").and_then(Value::as_str);
-    let starts_root_turn = method == Some("turn/started")
-        || (method == Some("item/started")
-            && message_params(message)
-                .get("item")
-                .and_then(|item| item.get("type"))
-                .and_then(Value::as_str)
-                == Some("userMessage"));
-    let confirms_provisional_turn = active_turn_id.is_some()
-        && matches!(method, Some("thread/goal/updated" | "thread/goal/cleared"));
-    if !starts_root_turn && !confirms_provisional_turn {
-        return None;
-    }
+    let source = match method {
+        Some("turn/started") => "turn_started_notification",
+        Some("item/started") => {
+            let item = message_params(message).get("item")?;
+            if string_value(item, "type").as_deref() != Some("userMessage") {
+                return None;
+            }
+            let client_user_message_id = string_value(item, "clientId")
+                .or_else(|| string_value(item, "clientUserMessageId"))
+                .or_else(|| string_value(item, "client_user_message_id"));
+            if let (Some(expected), Some(observed)) = (
+                expected_client_user_message_id,
+                client_user_message_id.as_deref(),
+            ) {
+                if observed != expected {
+                    return None;
+                }
+            }
+            "root_user_message_notification"
+        }
+        Some("thread/goal/updated" | "thread/goal/cleared") if active_turn_id.is_some() => {
+            "goal_status_notification"
+        }
+        _ => return None,
+    };
     root_turn_notification_id(message, state)
         .filter(|turn_id| active_turn_id != Some(turn_id.as_str()))
+        .map(|turn_id| (turn_id, source))
 }
 
 fn turn_start_response_id(response: &Value) -> Option<String> {
@@ -4725,17 +4747,10 @@ fn turn_start_params(
     let mut params = serde_json::Map::new();
     params.insert("threadId".to_owned(), Value::String(thread_id.to_owned()));
     params.insert("input".to_owned(), Value::Array(input));
-    if let Some(client_user_message_id) = request
-        .extra
-        .get("client_user_message_id")
-        .or_else(|| request.extra.get("clientUserMessageId"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
+    if let Some(client_user_message_id) = request_client_user_message_id(request) {
         params.insert(
             "clientUserMessageId".to_owned(),
-            Value::String(client_user_message_id.to_owned()),
+            Value::String(client_user_message_id),
         );
     }
     params.insert(
@@ -4767,6 +4782,17 @@ fn turn_start_params(
         params.insert("outputSchema".to_owned(), output_schema);
     }
     Value::Object(params)
+}
+
+fn request_client_user_message_id(request: &ExecutionRequest) -> Option<String> {
+    request
+        .extra
+        .get("client_user_message_id")
+        .or_else(|| request.extra.get("clientUserMessageId"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
 }
 
 fn codex_output_schema(request: &ExecutionRequest) -> Option<Value> {

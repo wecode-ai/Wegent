@@ -63,6 +63,8 @@ Wework cloud runtime execution uses the same app IPC protocol as local mode. The
 
 Cloud executors still connect to Backend through the `/local-executor` namespace. Inside the executor, the same local `RuntimeWorkRpcHandler` handles `runtime.tasks.create`, `runtime.tasks.send`, `runtime.tasks.list`, `runtime.tasks.transcript`, and related methods. Responses API-style app IPC events are relayed back through `runtime:event` to `/wework-runtime`. The Wework frontend reuses the local streaming event mapper, so local and cloud runtime execution share the same runtime flow.
 
+The relay timeout for `device.execute_command` must use the request's `timeout_seconds`, with a fixed acknowledgement grace period in the frontend. Ordinary runtime requests keep the default 75-second timeout. This prevents long commands such as Git Clone from being rejected by the outer IPC before their own timeout while preserving the executor's 600-second upper bound.
+
 In a multi-instance Backend deployment, the Socket.IO Redis manager forwards RPCs to the worker that owns the executor connection. The Redis device-online record containing the `socket_id` is the routing source. The current worker's in-process connection table must not be used to declare the executor disconnected, because the connection may belong to another worker.
 
 ## Local Executor Lifecycle

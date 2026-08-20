@@ -50,6 +50,7 @@ sequenceDiagram
         W->>H: 注入短期 ContextGrant
     end
     H->>P: Thread 启动时连接常驻 MCP Endpoint
+    Note over H,P: 配置重载可能产生 cancelled → starting → ready；cancelled 不是永久连接失败
     Note over W,G: Wework 启动的 Executor 是 Provider 与 MCP Endpoint 的唯一生命周期所有者
     Note over H,P: Codex 仅作为 MCP Client，不再创建 stdio MCP 子进程
     P->>G: 校验连接凭证与可选 ContextGrant
@@ -115,7 +116,7 @@ sequenceDiagram
 - 本地与云端 Provider 必须提供同语义的 `get_workflow_stage_context`，返回 TaskBinding 启动时固化且经过 scope 校验的输入快照；不得在每次读取时重新拼接可漂移的前序数据。
 - `create_delivery` 的聊天快照选择由服务端从当前 Issue 时间线解析，支持全部、最近 N 条和指定消息 ID；不得信任模型提交的伪造消息内容作为“选择结果”。
 - Delivery 附件下载必须校验附件属于当前 Issue 下可见的 Delivery；上传和丢弃仅允许操作当前会话创建且仍为 draft 的 Delivery。`finalize_delivery` 必须复用既有不可变快照边界，并将交付绑定到来源 TaskBinding 的唯一 workflow node。
-- Runtime 在首轮前只校验常驻 Endpoint readiness、固定能力配置与 ContextGrant，不得调用 `mcpServerStatus/list` 或其他工具清单接口主动启动、重启或盘点 MCP。Runtime 只被动记录 Codex app-server 的连接状态；能力连接失败必须终止当前执行，并由会话 UI 保留用户消息和失败回复。
+- Runtime 在首轮前只校验常驻 Endpoint readiness、固定能力配置与 ContextGrant，不得调用 `mcpServerStatus/list` 或其他工具清单接口主动启动、重启或盘点 MCP。Runtime 只被动记录 Codex app-server 的连接状态；带明确失败语义的 `failed` 或 `error` 必须终止当前执行，并由会话 UI 保留用户消息和失败回复；配置重载产生的无错误 `cancelled` 是过渡态，Runtime 必须继续等待后续 `starting` / `ready` 或终态，不能丢弃已经完成的模型输出。
 - 已绑定的 Issue 会话读取当前描述或附件时必须走确定路径：`get_current_context` → `get_board_item` → `list_item_attachments` → `read_item_attachment`。不得用 MCP resource listing、浏览器、Shell、`curl` 或直接解析 `wegent://` 判断能力是否存在。
 - 本地、远程和 Backend MCP 使用相同工具 schema 与契约测试；Provider 只决定数据来源，不改变工具语义。
 - 迁移完成后必须删除 `ensure_space_mcp_server` 的逐任务服务注入路径，不能长期保留双主路径。

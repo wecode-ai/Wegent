@@ -114,18 +114,20 @@ node e2e/utils/mock-connector-upstream-server.mjs
 主桌面流程的短对话布局回归会保存 `short-conversation-00-ready.png`、`short-conversation-01-prompt-filled.png`、`short-conversation-02-completed-top-aligned.png` 和 `short-conversation-layout-metrics.json`。最后一个截图和 metrics 均在切走并重新打开对话后生成；门禁要求首条消息距离消息视口顶部不超过 `160px`。本地排查该回归时可直接运行 `node wework/e2e/desktop/task-flow.e2e.mjs --short-conversation-only`，但该检查同时属于常规 `e2e:desktop` 主流程，不是独立 CI 入口。
 
 主桌面 runner 也支持按有序 checkpoint 分段执行。当前 checkpoint 依次为
-`remote-device-onboarding`、`workspace-tabs`、`priority-filter`、`telemetry-consent`、
-`automation-lifecycle`、`project-automation`、`project-assignment-notification`、
+`remote-device-onboarding`、`workspace-tabs`、`cloud-project-creation`、
+`priority-filter`、`telemetry-consent`、`automation-lifecycle`、
+`project-automation`、`project-assignment-notification`、
 `offline-local-project-space`、`plugin-auto-update`、`project-ai-settings`、
 `model-routing`、`permission-modes`、`core-task-flow`、`task-attachments`、
 `cloud-git-worktree`、`cloud-worktree-capability`、`cloud-worktree-create`、
-`cloud-worktree-queued-cancel`、`cloud-worktree-tools`、`cloud-worktree-archive-restore`、
-`cloud-worktree-device-restart`、`context-compaction`、`runtime-task-queue`、
-`codex-notification-isolation`、`split-workbench`、`window-lifecycle`、`goal-lifecycle`、
+`cloud-worktree-queued-cancel`、`cloud-worktree-tools`、
+`cloud-worktree-archive-restore`、`cloud-worktree-device-restart`、
+`context-compaction`、`runtime-task-queue`、`codex-notification-isolation`、
+`split-workbench`、`window-lifecycle`、`goal-lifecycle`、
 `supervisor-lifecycle`、`resilience`、`conversation-state`、`temporary-chat`、
 `workspace-attachments`、`rendering-extensions`、`change-request-status`、
-`claude-runtime`、`local-file-preview`、`local-harness`、`browser-multi-tabs`、
-`embedded-browser` 和 `browser-toolbar-actions`。
+`claude-runtime`、`local-file-preview`、`local-harness`、`harness-apps`、
+`browser-multi-tabs`、`embedded-browser` 和 `browser-toolbar-actions`。
 `--segment <checkpoint>` 在公共启动和项目初始化后只运行指定 checkpoint；
 `--from-segment <checkpoint>` 从指定 checkpoint 开始并继续执行所有后续
 checkpoint。跳过上游时，每个 checkpoint 会自行建立最小前置 fixture，不依赖只有

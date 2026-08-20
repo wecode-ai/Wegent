@@ -173,3 +173,58 @@ fn node_version_check_reports_v8_initialization_failures() {
     assert!(error.contains("failed to initialize V8"));
     assert!(error.contains("Failed to reserve virtual memory for CodeRange"));
 }
+#[test]
+fn runtime_descriptor_requires_https_and_integrity_metadata() {
+    let directory = tempdir().unwrap();
+    fs::write(
+        directory.path().join(BUNDLED_RUNTIME_METADATA),
+        serde_json::to_vec(&serde_json::json!({
+            "sourceFingerprint": "a".repeat(64),
+            "archiveSha256": "b".repeat(64),
+            "archiveBytes": 1024,
+            "downloadUrl": "https://downloads.example/runtime.tar.gz"
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let descriptor = read_runtime_descriptor(directory.path()).unwrap();
+
+    assert_eq!(descriptor.archive_bytes, 1024);
+    assert_eq!(descriptor.archive_sha256, "b".repeat(64));
+}
+
+#[test]
+fn runtime_descriptor_rejects_insecure_downloads() {
+    let directory = tempdir().unwrap();
+    fs::write(
+        directory.path().join(BUNDLED_RUNTIME_METADATA),
+        serde_json::to_vec(&serde_json::json!({
+            "sourceFingerprint": "a".repeat(64),
+            "archiveSha256": "b".repeat(64),
+            "archiveBytes": 1024,
+            "downloadUrl": "http://downloads.example/runtime.tar.gz"
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    assert!(read_runtime_descriptor(directory.path())
+        .unwrap_err()
+        .contains("must use HTTPS"));
+}
+
+#[test]
+fn runtime_archive_hash_reports_bytes_and_checksum() {
+    let directory = tempdir().unwrap();
+    let archive = directory.path().join("runtime.tar.gz");
+    fs::write(&archive, b"runtime").unwrap();
+
+    let (checksum, bytes) = file_sha256(&archive).unwrap();
+
+    assert_eq!(bytes, 7);
+    assert_eq!(
+        checksum,
+        "d92c6a81b2ff50096bcda80885427d1f59a25b5f483f7055523504925d16ab23"
+    );
+}

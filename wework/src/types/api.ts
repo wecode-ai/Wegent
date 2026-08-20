@@ -1536,6 +1536,22 @@ export interface DeviceCommandResponse {
   stderr_truncated?: boolean
 }
 
+export interface CloneGitRepositoryInput {
+  url: string
+  branch?: string
+  targetPath: string
+}
+
+export interface GitCloneProjectOperation extends CloneGitRepositoryInput {
+  id: string
+  deviceId: string
+  name: string
+  status: 'cloning' | 'opening' | 'failed'
+  failureStage?: 'clone' | 'open'
+  failureReason?: 'executor-offline' | 'clone-failed' | 'open-failed'
+  error?: string
+}
+
 export interface TaskContextData {
   id: number
   context_type: 'attachment' | 'knowledge_base'

@@ -1757,15 +1757,15 @@ fn turn_started_sets_or_replaces_the_active_turn() {
     });
 
     assert_eq!(
-        observed_active_turn_id(None, &notification, &state),
-        Some("turn-2".to_owned())
+        observed_active_turn_id(None, None, &notification, &state),
+        Some(("turn-2".to_owned(), "turn_started_notification"))
     );
     assert_eq!(
-        observed_active_turn_id(Some("turn-1"), &notification, &state),
-        Some("turn-2".to_owned())
+        observed_active_turn_id(Some("turn-1"), None, &notification, &state),
+        Some(("turn-2".to_owned(), "turn_started_notification"))
     );
     assert_eq!(
-        observed_active_turn_id(Some("turn-2"), &notification, &state),
+        observed_active_turn_id(Some("turn-2"), None, &notification, &state),
         None
     );
 }
@@ -1808,7 +1808,7 @@ fn assistant_item_notification_cannot_replace_the_active_turn() {
     });
 
     assert_eq!(
-        observed_active_turn_id(Some("turn-1"), &notification, &state),
+        observed_active_turn_id(Some("turn-1"), None, &notification, &state),
         None
     );
 }
@@ -1820,7 +1820,43 @@ fn started_user_item_corrects_a_mismatched_turn_start_response() {
         "method": "item/started",
         "params": {
             "threadId": "thread-1",
-            "turnId": "turn-2",
+            "turnId": "turn-user",
+            "item": {
+                "id": "message-1",
+                "clientId": "runtime-local-pane-1",
+                "type": "userMessage"
+            }
+        }
+    });
+
+    assert_eq!(
+        observed_active_turn_id(
+            Some("turn-compaction"),
+            Some("runtime-local-pane-1"),
+            &notification,
+            &state
+        ),
+        Some(("turn-user".to_owned(), "root_user_message_notification"))
+    );
+    assert_eq!(
+        observed_active_turn_id(
+            Some("turn-compaction"),
+            Some("different-message"),
+            &notification,
+            &state
+        ),
+        None
+    );
+}
+
+#[test]
+fn unidentified_root_user_item_preserves_protocol_turn_correction() {
+    let state = CodexRunState::default();
+    let notification = json!({
+        "method": "item/started",
+        "params": {
+            "threadId": "thread-1",
+            "turnId": "turn-user",
             "item": {
                 "id": "message-1",
                 "type": "userMessage",
@@ -1830,8 +1866,13 @@ fn started_user_item_corrects_a_mismatched_turn_start_response() {
     });
 
     assert_eq!(
-        observed_active_turn_id(Some("turn-1"), &notification, &state),
-        Some("turn-2".to_owned())
+        observed_active_turn_id(
+            Some("turn-compaction"),
+            Some("runtime-local-pane-1"),
+            &notification,
+            &state
+        ),
+        Some(("turn-user".to_owned(), "root_user_message_notification"))
     );
 }
 
@@ -1850,10 +1891,13 @@ fn goal_update_corrects_a_provisional_turn_before_the_user_item_starts() {
     });
 
     assert_eq!(
-        observed_active_turn_id(Some("turn-1"), &notification, &state),
-        Some("turn-2".to_owned())
+        observed_active_turn_id(Some("turn-1"), None, &notification, &state),
+        Some(("turn-2".to_owned(), "goal_status_notification"))
     );
-    assert_eq!(observed_active_turn_id(None, &notification, &state), None);
+    assert_eq!(
+        observed_active_turn_id(None, None, &notification, &state),
+        None
+    );
 }
 
 #[test]
@@ -3176,6 +3220,14 @@ fn required_project_space_startup_failure_terminates_the_turn() {
         "params": {
             "name": "wework_space",
             "status": "ready"
+        }
+    }))
+    .is_none());
+    assert!(required_mcp_startup_failure(&json!({
+        "method": "mcpServer/startupStatus/updated",
+        "params": {
+            "name": "wework_space",
+            "status": "cancelled"
         }
     }))
     .is_none());

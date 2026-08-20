@@ -44,6 +44,7 @@ import {
   publishComposerApps,
   replaceComposerApps,
 } from '@/components/chat/composer/composerAppsSnapshot'
+import { AttachmentDownloadProvider } from '@/components/chat/AttachmentDownloadProvider'
 import { isSystemApplicationConnectorSlug } from '@/features/plugins/builtinPlugins'
 import { overlayMarketplaceLogosOnComposerApps } from '@/features/plugins/composerPluginMetadata'
 import { loadComposerPluginApps } from '@/features/plugins/loadComposerPluginApps'
@@ -1265,6 +1266,14 @@ export function WorkbenchProvider({
           throw new Error(response.error || 'Failed to register local project')
         }
         response.roots.forEach(clearRemoteProjectSyncRemoval)
+        writeLastProjectId(
+          user.id,
+          runtimeProjectUiId({
+            key: response.projectKey,
+            stateDeviceId: response.deviceId,
+            name: response.name,
+          })
+        )
         await refreshWorkLists()
         dispatch({
           type: 'runtime_workspace_opened',
@@ -1975,6 +1984,7 @@ export function WorkbenchProvider({
   const stableGetProjectWorkspaceRoot = useStableEvent(projectActions.getProjectWorkspaceRoot)
   const stableListDeviceDirectories = useStableEvent(projectActions.listDeviceDirectories)
   const stableCreateDeviceDirectory = useStableEvent(projectActions.createDeviceDirectory)
+  const stableCloneGitRepository = useStableEvent(projectActions.cloneGitRepository)
   const stableLoadEnvironmentInfo = useStableEvent(projectActions.loadEnvironmentInfo)
   const stableLoadEnvironmentDiff = useStableEvent(projectActions.loadEnvironmentDiff)
   const stableCommitEnvironmentChanges = useStableEvent(projectActions.commitEnvironmentChanges)
@@ -2597,6 +2607,7 @@ export function WorkbenchProvider({
     getProjectWorkspaceRoot: projectActions.getProjectWorkspaceRoot,
     listDeviceDirectories: projectActions.listDeviceDirectories,
     createDeviceDirectory: projectActions.createDeviceDirectory,
+    cloneGitRepository: projectActions.cloneGitRepository,
     loadEnvironmentInfo: projectActions.loadEnvironmentInfo,
     loadEnvironmentDiff: projectActions.loadEnvironmentDiff,
     commitEnvironmentChanges: projectActions.commitEnvironmentChanges,
@@ -2686,6 +2697,7 @@ export function WorkbenchProvider({
       getProjectWorkspaceRoot: stableGetProjectWorkspaceRoot,
       listDeviceDirectories: stableListDeviceDirectories,
       createDeviceDirectory: stableCreateDeviceDirectory,
+      cloneGitRepository: stableCloneGitRepository,
       loadEnvironmentInfo: stableLoadEnvironmentInfo,
       loadEnvironmentDiff: stableLoadEnvironmentDiff,
       commitEnvironmentChanges: stableCommitEnvironmentChanges,
@@ -2727,6 +2739,7 @@ export function WorkbenchProvider({
       stableCompactRuntimePaneTask,
       stableClearRuntimeGoal,
       stableCheckoutEnvironmentBranch,
+      stableCloneGitRepository,
       stableCommitAndPushEnvironmentChanges,
       stableCommitEnvironmentChanges,
       stableCreateDeviceDirectory,
@@ -2801,9 +2814,15 @@ export function WorkbenchProvider({
 
   return (
     <RuntimeTaskLifecycleProvider store={sharedLifecycleStore} writerStore={lifecycleStore}>
-      <WorkbenchContext.Provider value={value}>
-        <WorkbenchPaneContext.Provider value={paneValue}>{children}</WorkbenchPaneContext.Provider>
-      </WorkbenchContext.Provider>
+      <AttachmentDownloadProvider
+        fetchAttachmentBlob={resolvedServices.attachmentApi?.fetchAttachmentBlob}
+      >
+        <WorkbenchContext.Provider value={value}>
+          <WorkbenchPaneContext.Provider value={paneValue}>
+            {children}
+          </WorkbenchPaneContext.Provider>
+        </WorkbenchContext.Provider>
+      </AttachmentDownloadProvider>
     </RuntimeTaskLifecycleProvider>
   )
 }

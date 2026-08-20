@@ -60,4 +60,42 @@ describe('runtimeContextUsage', () => {
       findModelForSelection(models, { modelName: 'shared-model', modelType: 'user' })?.config
     ).toEqual({ model_context_window: 1_000_000 })
   })
+
+  test('uses persisted provider identity when runtime models share a name', () => {
+    const models = [
+      model(
+        { codexProviderId: 'openai' },
+        { name: 'gpt-5.6-luna', type: 'runtime', provider: 'local' }
+      ),
+      model(
+        { codexProviderId: 'wework-e2e' },
+        { name: 'gpt-5.6-luna', type: 'runtime', provider: 'local' }
+      ),
+    ]
+
+    expect(
+      findModelForSelection(models, {
+        modelName: 'gpt-5.6-luna',
+        modelType: 'runtime',
+        options: { codexProviderId: 'wework-e2e', collaborationMode: 'plan' },
+      })?.config
+    ).toEqual({ codexProviderId: 'wework-e2e' })
+  })
+
+  test('does not fall back to another provider when persisted identity is unavailable', () => {
+    const models = [
+      model(
+        { codexProviderId: 'openai' },
+        { name: 'gpt-5.6-luna', type: 'runtime', provider: 'local' }
+      ),
+    ]
+
+    expect(
+      findModelForSelection(models, {
+        modelName: 'gpt-5.6-luna',
+        modelType: 'runtime',
+        options: { codexProviderId: 'wework-e2e' },
+      })
+    ).toBeNull()
+  })
 })

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader, Read, Write},
     process::{Command, Stdio},
 };
 
@@ -56,7 +56,7 @@ fn accepted_context_grant_remains_valid_for_the_mcp_session() {
         )
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::null())
         .spawn()
         .unwrap();
     let mut stdin = child.stdin.take().unwrap();
@@ -101,7 +101,7 @@ fn space_mcp_runs_over_stdio_without_listening_on_a_port() {
         .env("WEGENT_EXECUTOR_HOME", executor_home.path())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::null())
         .spawn()
         .unwrap();
 
@@ -192,7 +192,7 @@ fn list_spaces_remains_available_locally_without_backend_connection() {
         .env_remove("WEWORK_SPACE_AUTH_TOKEN")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::null())
         .spawn()
         .unwrap();
     writeln!(
@@ -241,6 +241,7 @@ async fn list_spaces_merges_cloud_and_local_projects_for_the_signed_in_user() {
         .env_remove("WEWORK_SPACE_AUTH_TOKEN")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
+        .stderr(Stdio::null())
         .spawn()
         .unwrap();
     writeln!(
@@ -248,7 +249,7 @@ async fn list_spaces_merges_cloud_and_local_projects_for_the_signed_in_user() {
         r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"create_space","arguments":{{"name":"Local project"}}}}}}"#
     )
     .unwrap();
-    assert!(local_child.wait().unwrap().success());
+    assert!(local_child.wait_with_output().unwrap().status.success());
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_wegent-executor"))
         .arg("space-mcp-server")
@@ -258,6 +259,7 @@ async fn list_spaces_merges_cloud_and_local_projects_for_the_signed_in_user() {
         .env_remove("WEWORK_SPACE_CONTEXT_GRANT")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
+        .stderr(Stdio::null())
         .spawn()
         .unwrap();
     writeln!(
@@ -397,10 +399,16 @@ async fn space_mcp_routes_board_operations_through_backend() {
         .env("WEWORK_SPACE_AUTH_TOKEN", "backend-token")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::null())
         .spawn()
         .unwrap();
     let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = child.stdout.take().unwrap();
+    let stdout_reader = std::thread::spawn(move || {
+        let mut output = Vec::new();
+        stdout.read_to_end(&mut output).unwrap();
+        output
+    });
     writeln!(
         stdin,
         r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"list_spaces","arguments":{{}}}}}}"#
@@ -477,13 +485,9 @@ async fn space_mcp_routes_board_operations_through_backend() {
     .unwrap();
     drop(stdin);
 
-    let output = child.wait_with_output().unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let responses = String::from_utf8(output.stdout)
+    let status = child.wait().unwrap();
+    assert!(status.success(), "space-mcp-server exited with {status}");
+    let responses = String::from_utf8(stdout_reader.join().unwrap())
         .unwrap()
         .lines()
         .map(|line| serde_json::from_str::<Value>(line).unwrap())
