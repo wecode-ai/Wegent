@@ -100,6 +100,10 @@
   margin: 0 var(--app-view-inline-inset) var(--app-view-block-end-inset);
 }
 
+.plugin-creator-context {
+  color: color-mix(in srgb, rgb(var(--color-focus)) 80%, rgb(var(--color-text-primary)) 20%);
+}
+
 .workspace-tab-strip-scrollbar {
   scrollbar-width: none;
 }
