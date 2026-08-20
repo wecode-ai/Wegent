@@ -385,10 +385,14 @@ const catalogReconciliationTrackers = new WeakMap<
   LocalExecutorRequest,
   CatalogReconciliationTracker
 >()
-const runtimeChatStreams = new WeakMap<
+let runtimeChatStreams = new WeakMap<
   LocalExecutorSubscribe,
   WeakMap<LocalExecutorRequest, ReturnType<typeof createRuntimeChatStream>>
 >()
+
+export function resetLocalRuntimeChatStreamsForTests(): void {
+  runtimeChatStreams = new WeakMap()
+}
 
 function getRuntimeChatStream(
   subscribe: LocalExecutorSubscribe,

@@ -4,6 +4,7 @@ import {
   createAutomationApiFromIpc,
   createLocalAppServices,
   createRuntimeWorkApiFromIpc,
+  resetLocalRuntimeChatStreamsForTests,
 } from './localServices'
 import {
   clearLocalModelConfigs,
@@ -40,6 +41,7 @@ describe('createLocalAppServices', () => {
   beforeEach(() => {
     localStorage.clear()
     clearLocalModelConfigs()
+    resetLocalRuntimeChatStreamsForTests()
   })
 
   test('reuses the runtime event stream for the same local transport', () => {
