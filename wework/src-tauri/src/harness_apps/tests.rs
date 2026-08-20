@@ -46,7 +46,7 @@ fn archive_supports_one_wrapper_directory() {
     let directory = tempdir().unwrap();
     let archive = directory.path().join("plugin.zip");
     let extracted = directory.path().join("extracted");
-    write_archive(&archive, &manifest("0.1.0-rc.7"));
+    write_archive(&archive, &manifest("0.1.0-rc.8"));
 
     let (inspected, hash) = inspect_archive(&archive, Some(&extracted)).unwrap();
 
@@ -60,17 +60,17 @@ fn archive_supports_one_wrapper_directory() {
 
 #[test]
 fn bare_dsh_version_is_an_exact_requirement() {
-    let requirement = dsh_version_requirement("0.1.0-rc.7").unwrap();
+    let requirement = dsh_version_requirement("0.1.0-rc.8").unwrap();
 
-    assert!(requirement.matches(&Version::parse("0.1.0-rc.7").unwrap()));
-    assert!(!requirement.matches(&Version::parse("0.1.0-rc.8").unwrap()));
+    assert!(requirement.matches(&Version::parse("0.1.0-rc.8").unwrap()));
+    assert!(!requirement.matches(&Version::parse("0.1.0-rc.9").unwrap()));
 }
 
 #[test]
 fn installation_registry_defaults_resident_for_existing_records() {
     let installation: HarnessAppInstallation = serde_json::from_value(serde_json::json!({
         "id": "test-capability",
-        "manifest": serde_json::from_str::<Value>(&manifest("0.1.0-rc.7")).unwrap(),
+        "manifest": serde_json::from_str::<Value>(&manifest("0.1.0-rc.8")).unwrap(),
         "packagePath": "/tmp/test-capability",
         "sha256": "hash",
         "modelKey": "model",
@@ -86,7 +86,7 @@ fn installation_registry_defaults_resident_for_existing_records() {
 
 #[test]
 fn manifest_rejects_install_package_escape() {
-    let mut parsed: HarnessAppManifest = serde_json::from_str(&manifest("0.1.0-rc.7")).unwrap();
+    let mut parsed: HarnessAppManifest = serde_json::from_str(&manifest("0.1.0-rc.8")).unwrap();
     parsed.entry.install_package = "../outside".to_string();
 
     assert!(validate_manifest(&parsed)
@@ -110,7 +110,7 @@ fn instance_patch_binds_provider_and_model() {
     fs::write(sibling.join("package.json"), "{}\n").unwrap();
     let installation = HarnessAppInstallation {
         id: "test-capability".to_string(),
-        manifest: serde_json::from_str(&manifest("0.1.0-rc.7")).unwrap(),
+        manifest: serde_json::from_str(&manifest("0.1.0-rc.8")).unwrap(),
         package_path: package.display().to_string(),
         sha256: "hash".to_string(),
         model_key: Some("model".to_string()),

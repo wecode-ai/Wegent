@@ -61,7 +61,7 @@ async function createHarnessPackage(resultDir) {
           webUrl: 'http://127.0.0.1:3080/',
         },
         requirements: {
-          dsh: '0.1.0-rc.7',
+          dsh: '0.1.0-rc.8',
           node: '>=22',
         },
         defaultModel: {
@@ -326,13 +326,10 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         'Closing a running Harness app tab left its app surface mounted'
       )
       await control.command('click', `[data-testid="harness-app-open-${INSTALLATION_ID}"]`)
-      await control.command('waitFor', `[data-testid="harness-app-animation-loading-app"]`, {
-        timeoutMs: uiTimeoutMs,
-      })
-      await captureScreenshot(control, 'harness-apps-09a-reopening.png', 'body')
       await control.command('waitFor', appSurface, {
         timeoutMs: 30_000,
       })
+      await captureScreenshot(control, 'harness-apps-09a-reopened.png', 'body')
       const reopenedAppTabId = await control.command('getAttribute', appSurface, {
         value: 'data-workspace-tab-id',
       })
