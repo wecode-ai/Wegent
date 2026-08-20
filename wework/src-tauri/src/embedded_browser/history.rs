@@ -29,7 +29,7 @@ pub struct EmbeddedBrowserHistoryStore {
 }
 
 impl EmbeddedBrowserHistoryStore {
-    pub fn record_visit(&mut self, url: &str, visit_time_ms: i64, title: Option<String>) {
+    pub fn record_visit(&mut self, url: &str, visit_time_ms: i64, title: Option<String>) -> String {
         let id = format!(
             "history-{}-{}",
             visit_time_ms,
@@ -37,7 +37,7 @@ impl EmbeddedBrowserHistoryStore {
         );
         let title = title.filter(|value| !value.is_empty());
         self.entries.push_back(EmbeddedBrowserHistoryEntry {
-            id,
+            id: id.clone(),
             url: url.to_string(),
             title,
             visit_time_ms,
@@ -45,17 +45,17 @@ impl EmbeddedBrowserHistoryStore {
         while self.entries.len() > MAX_HISTORY_ENTRIES {
             self.entries.pop_front();
         }
+        id
     }
 
-    pub fn backfill_title(&mut self, url: &str, title: &str) {
+    pub fn backfill_title(&mut self, id: &str, title: &str) {
         if title.is_empty() {
             return;
         }
         if let Some(entry) = self
             .entries
             .iter_mut()
-            .rev()
-            .find(|entry| entry.url == url && entry.title.is_none())
+            .find(|entry| entry.id == id && entry.title.is_none())
         {
             entry.title = Some(title.to_string());
         }
@@ -151,8 +151,8 @@ pub fn history_file_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 mod tests {
     use super::*;
 
-    fn visit(store: &mut EmbeddedBrowserHistoryStore, url: &str, visit_time_ms: i64) {
-        store.record_visit(url, visit_time_ms, None);
+    fn visit(store: &mut EmbeddedBrowserHistoryStore, url: &str, visit_time_ms: i64) -> String {
+        store.record_visit(url, visit_time_ms, None)
     }
 
     #[test]
@@ -168,8 +168,8 @@ mod tests {
     #[test]
     fn titled_entries_are_not_backfilled_again() {
         let mut store = EmbeddedBrowserHistoryStore::default();
-        store.record_visit("https://a.example", 1000, Some("Example".to_string()));
-        store.backfill_title("https://a.example", "Other");
+        let id = store.record_visit("https://a.example", 1000, Some("Example".to_string()));
+        store.backfill_title(&id, "Other");
         assert_eq!(
             store.search("", None, 0, 100)[0].title.as_deref(),
             Some("Example")
@@ -187,29 +187,35 @@ mod tests {
     }
 
     #[test]
-    fn backfills_title_on_latest_untitled_entry() {
+    fn backfills_title_by_entry_id_only() {
         let mut store = EmbeddedBrowserHistoryStore::default();
-        visit(&mut store, "https://a.example", 1000);
-        visit(&mut store, "https://a.example", 2000);
-        store.backfill_title("https://a.example", "Example A");
+        let first_id = visit(&mut store, "https://a.example", 1000);
+        let second_id = visit(&mut store, "https://a.example", 2000);
+        // Two visits of the same URL: a backfill must hit only its own entry.
+        store.backfill_title(&first_id, "Example A");
         let results = store.search("", None, 0, 100);
-        assert_eq!(results[0].title.as_deref(), Some("Example A"));
-        assert_eq!(results[1].title, None);
+        assert_eq!(results[0].title, None);
+        assert_eq!(results[0].id, second_id);
+        assert_eq!(results[1].title.as_deref(), Some("Example A"));
+        assert_eq!(results[1].id, first_id);
+        store.backfill_title(&second_id, "Example B");
+        let results = store.search("", None, 0, 100);
+        assert_eq!(results[0].title.as_deref(), Some("Example B"));
     }
 
     #[test]
     fn ignores_empty_title_backfill() {
         let mut store = EmbeddedBrowserHistoryStore::default();
-        visit(&mut store, "https://a.example", 1000);
-        store.backfill_title("https://a.example", "");
+        let id = visit(&mut store, "https://a.example", 1000);
+        store.backfill_title(&id, "");
         assert_eq!(store.search("", None, 0, 100)[0].title, None);
     }
 
     #[test]
     fn search_matches_url_and_title_case_insensitively() {
         let mut store = EmbeddedBrowserHistoryStore::default();
-        visit(&mut store, "https://Docs.Example/rust", 1000);
-        store.backfill_title("https://Docs.Example/rust", "Rust Book");
+        let id = visit(&mut store, "https://Docs.Example/rust", 1000);
+        store.backfill_title(&id, "Rust Book");
         visit(&mut store, "https://other.example", 2000);
         assert_eq!(store.search("docs.example", None, 0, 100).len(), 1);
         assert_eq!(store.search("RUST", None, 0, 100).len(), 1);
@@ -295,9 +301,9 @@ mod tests {
         let path = directory.join("browser-history.json");
         let _ = fs::remove_dir_all(&directory);
         let mut store = EmbeddedBrowserHistoryStore::default();
-        visit(&mut store, "https://a.example", 2000);
+        let first_id = visit(&mut store, "https://a.example", 2000);
         visit(&mut store, "https://b.example", 1000);
-        store.backfill_title("https://a.example", "Example A");
+        store.backfill_title(&first_id, "Example A");
         store.persist(&path).unwrap();
         let mut restored = EmbeddedBrowserHistoryStore::default();
         restored.load(&path).unwrap();

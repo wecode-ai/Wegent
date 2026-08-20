@@ -142,6 +142,9 @@ struct EmbeddedBrowserEntry {
     /// History generation stamped when the in-flight navigation started; the
     /// visit is only recorded while no browsing-data clear has intervened.
     visit_generation: u64,
+    /// Id of the history entry recorded for the currently loaded page; late
+    /// title changes are backfilled against this id.
+    last_history_id: Option<String>,
 }
 
 #[derive(Clone)]
@@ -1411,36 +1414,41 @@ fn history_record_visit(
     url: &str,
     title: Option<String>,
     expected_generation: u64,
-) {
+) -> Option<String> {
     let now = current_unix_millis() as i64;
     let result = with_history_store(app, state, |store, path| {
         // Skip visits whose navigation started before an intervening
         // browsing-data clear, so cleared history cannot reappear. The check
         // runs under the store lock, which serializes it against the clear.
         if state.history_generation.load(Ordering::Relaxed) != expected_generation {
-            return Ok(());
+            return Ok(None);
         }
-        store.record_visit(url, now, title);
-        store.persist(path)
+        let id = store.record_visit(url, now, title);
+        store.persist(path)?;
+        Ok(Some(id))
     });
-    if let Err(error) = result {
-        log_embedded_browser_diagnostic(
-            state,
-            BROWSER_WEBVIEW_LABEL,
-            "history_record_failed",
-            json!({ "url": url, "error": error }),
-        );
+    match result {
+        Ok(id) => id,
+        Err(error) => {
+            log_embedded_browser_diagnostic(
+                state,
+                BROWSER_WEBVIEW_LABEL,
+                "history_record_failed",
+                json!({ "url": url, "error": error }),
+            );
+            None
+        }
     }
 }
 
 fn history_backfill_title(
     app: &tauri::AppHandle,
     state: &EmbeddedBrowserState,
-    url: &str,
+    entry_id: &str,
     title: &str,
 ) {
     let result = with_history_store(app, state, |store, path| {
-        store.backfill_title(url, title);
+        store.backfill_title(entry_id, title);
         store.persist(path)
     });
     if let Err(error) = result {
@@ -1448,7 +1456,7 @@ fn history_backfill_title(
             state,
             BROWSER_WEBVIEW_LABEL,
             "history_title_backfill_failed",
-            json!({ "url": url, "error": error }),
+            json!({ "entryId": entry_id, "error": error }),
         );
     }
 }
@@ -1867,6 +1875,7 @@ pub async fn embedded_browser_open(
         phase: EmbeddedBrowserPhase::Opening,
         pending_history_url: None,
         visit_generation: 0,
+        last_history_id: None,
     };
     state
         .webviews
@@ -2064,13 +2073,20 @@ pub async fn embedded_browser_open(
                         },
                     );
                     if recordable {
-                        history_record_visit(
+                        let history_id = history_record_visit(
                             &app_for_load,
                             &load_state_handle,
                             &loaded_url,
                             document_title,
                             visit_generation,
                         );
+                        if let Some(history_id) = history_id {
+                            let _ = update_entry_for_native_label(
+                                &load_state_handle,
+                                &native_label_for_load,
+                                |entry| entry.last_history_id = Some(history_id),
+                            );
+                        }
                     }
                     emit_page_state_change(
                         &app_for_load,
@@ -2087,26 +2103,23 @@ pub async fn embedded_browser_open(
             }
         })
         .on_document_title_changed(move |_webview, title| {
-            let mut visited_url = None;
-            let mut navigation_in_flight = false;
+            let mut history_entry_id = None;
             let _ = update_entry_for_native_label(
                 &title_state_handle,
                 &native_label_for_title,
                 |entry| {
-                    navigation_in_flight = entry.pending_history_url.is_some();
-                    if !navigation_in_flight {
-                        visited_url = entry.url.clone();
+                    if entry.pending_history_url.is_none() {
+                        history_entry_id = entry.last_history_id.clone();
                     }
                     entry.title = Some(title.clone());
                 },
             );
-            // While a navigation is in flight the entry URL still points at the
-            // previous page; the new title is carried into the visit recorded
-            // at load finish instead of being backfilled here.
-            if let Some(url) = visited_url {
-                if is_history_recordable_url(&url) {
-                    history_backfill_title(&app_for_title, &title_state_handle, &url, &title);
-                }
+            // While a navigation is in flight the visit has not been recorded
+            // yet; the new title is carried into the visit at load finish
+            // instead of being backfilled. Otherwise backfill by the recorded
+            // entry id so same-URL tabs never touch each other's entries.
+            if let Some(entry_id) = history_entry_id {
+                history_backfill_title(&app_for_title, &title_state_handle, &entry_id, &title);
             }
         })
         .on_new_window(move |url, _features| {

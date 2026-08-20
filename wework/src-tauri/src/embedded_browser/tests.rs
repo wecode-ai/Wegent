@@ -294,6 +294,7 @@ fn closed_agent_tab_routes_fail_without_retargeting() {
                 phase: super::EmbeddedBrowserPhase::Opening,
                 pending_history_url: None,
                 visit_generation: 0,
+                last_history_id: None,
             },
         );
     }
