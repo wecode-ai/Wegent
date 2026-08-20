@@ -2112,7 +2112,7 @@ fn required_mcp_startup_failure(message: &Value) -> Option<String> {
         .get("status")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    if !matches!(status, "failed" | "error" | "cancelled") {
+    if !matches!(status, "failed" | "error") {
         return None;
     }
     let reason = params
