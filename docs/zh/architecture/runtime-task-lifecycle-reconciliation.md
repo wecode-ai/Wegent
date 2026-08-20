@@ -20,7 +20,10 @@ flowchart LR
     STREAM --> SIGNAL[掉队或 Transport 替换]
     SIGNAL --> LIST[runtime.tasks.list]
     LIST --> STORE
-    TRANSCRIPT[runtime.tasks.transcript] -. 用户打开会话或消息同步 .-> UI
+    CLIENT[已认证的 Wework 云端请求] --> API[Runtime transcript endpoint]
+    API --> OWNER[归属用户的在线本地 Executor]
+    OWNER --> TRANSCRIPT[runtime.tasks.transcript]
+    TRANSCRIPT -. 用户打开会话或消息同步 .-> UI
 ```
 
 ## 时序图
@@ -61,8 +64,8 @@ sequenceDiagram
 
 - 正常生命周期只消费事件流，不得按时间周期读取 task list 或 transcript。
 - 同一底层本地 Executor transport 必须复用同一个 Runtime 事件流；用户偏好或等值身份对象刷新不得重建原生监听，否则会累计监听器并在订阅切换窗口丢失终态事件。
-- 终态事件按 `deviceId + taskId` 直接收敛共享 lifecycle store；常驻协调器不得依赖 pane 是否挂载，也不得用事件到达后立即读取的 task list 覆盖该终态，因为 Executor 与 provider 的列表投影可能尚未完成同一轮收尾。
+- 终态事件按 `deviceId + taskId` 定位任务，并按 `turnId` 将 `turn.outcome` 独立写入共享 lifecycle store；常驻协调器不得依赖 pane 是否挂载，也不得用事件到达后立即读取或稍后到达的过期 task list 覆盖该 turn outcome，因为 Executor 与 provider 的列表投影可能尚未完成同一轮收尾。
 - 明确表示本地投影可能过期的 `executor.event_lagged` 和 runtime transport replacement 同样触发对账。
 - 并发异常信号必须共享同一个在途对账请求；在途期间的新信号最多合并成一次串行尾随对账，不得形成并发请求突发或定时重试循环。
-- 任务终态由 Executor 持久化状态字段投影，不得从 transcript、turn items 或 rollout JSONL 推导。
-- Transcript 读取只服务于用户查看会话或明确的消息同步，不承担生命周期心跳职责。
+- 持久化 `task.status` 由 Executor 状态字段投影，`turn.outcome` 由终态事件独立投影；即使 task snapshot 仍为 `active`，也不得擦除已收敛的 turn outcome。两者都不得从 transcript、turn items 或 rollout JSONL 推导。
+- Transcript 读取只服务于用户查看会话或明确的消息同步，不承担生命周期心跳职责。云端读取必须经过已认证的 Runtime transcript endpoint 完成设备归属校验，并委派给该用户归属的在线本地 Executor；不得直接读取或跨 Executor 读取。

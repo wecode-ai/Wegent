@@ -432,10 +432,21 @@ async function assertComposerDocked(control, scrollerMetrics, description) {
 
 async function waitForToolDuration(control, minimumSeconds, timeoutMs) {
   const selector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="tool-block-duration"]`
+  const deadline = Date.now() + timeoutMs
   await control.command('waitFor', selector, { timeoutMs })
-  await new Promise(resolve => setTimeout(resolve, minimumSeconds * 1_000 + 250))
-  const text = await control.command('getText', selector)
-  const duration = toolDurationSeconds(text)
+  await new Promise(resolve =>
+    setTimeout(resolve, Math.min(minimumSeconds * 1_000, Math.max(0, deadline - Date.now())))
+  )
+  let text = ''
+  let duration = 0
+  while (Date.now() <= deadline) {
+    text = await control.command('getText', selector)
+    duration = toolDurationSeconds(text)
+    if (duration >= minimumSeconds) return duration
+    const remainingMs = deadline - Date.now()
+    if (remainingMs <= 0) break
+    await new Promise(resolve => setTimeout(resolve, Math.min(500, remainingMs)))
+  }
   assert.ok(
     duration >= minimumSeconds,
     `The running tool duration did not reach ${minimumSeconds}s; latest row: ${text}`
