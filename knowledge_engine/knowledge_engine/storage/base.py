@@ -26,6 +26,32 @@ RETRIEVAL_TEXT_METADATA_KEY = "retrieval_text"
 DISPLAY_TEXT_METADATA_KEY = "display_text"
 
 
+def resolve_retrieval_text(
+    metadata: Dict[str, Any] | None,
+    *,
+    fallback: str,
+) -> str:
+    """Resolve embedding text from metadata with a plain-text fallback."""
+    if metadata:
+        retrieval_text = metadata.get(RETRIEVAL_TEXT_METADATA_KEY)
+        if isinstance(retrieval_text, str) and retrieval_text.strip():
+            return retrieval_text
+    return fallback
+
+
+def resolve_display_text(
+    metadata: Dict[str, Any] | None,
+    *,
+    fallback: str,
+) -> str:
+    """Resolve display text from metadata with a plain-text fallback."""
+    if metadata:
+        display_text = metadata.get(DISPLAY_TEXT_METADATA_KEY)
+        if isinstance(display_text, str) and display_text.strip():
+            return display_text
+    return fallback
+
+
 class BaseStorageBackend(ABC):
     """Abstract base class for storage backends."""
 
@@ -98,10 +124,10 @@ class BaseStorageBackend(ABC):
 
     def get_node_embedding_text(self, node: BaseNode) -> str:
         """Return the text that should be embedded for a node."""
-        retrieval_text = node.metadata.get(RETRIEVAL_TEXT_METADATA_KEY)
-        if isinstance(retrieval_text, str) and retrieval_text.strip():
-            return retrieval_text
-        return node.text or ""
+        return resolve_retrieval_text(
+            node.metadata,
+            fallback=node.text or "",
+        )
 
     def get_node_display_text(self, node: BaseNode) -> str:
         """Return the text that should be shown to users and query callers."""
@@ -117,11 +143,7 @@ class BaseStorageBackend(ABC):
         fallback: str,
     ) -> str:
         """Resolve display text from metadata, falling back to stored text."""
-        if metadata:
-            display_text = metadata.get(DISPLAY_TEXT_METADATA_KEY)
-            if isinstance(display_text, str) and display_text.strip():
-                return display_text
-        return fallback
+        return resolve_display_text(metadata, fallback=fallback)
 
     def prepare_nodes_for_embedding(self, nodes: List[BaseNode]) -> List[BaseNode]:
         """Clone nodes with retrieval text while preserving display metadata."""

@@ -409,6 +409,44 @@ class TestDirectInjectionUsesOriginalDocuments:
     """Tests to verify direct_injection uses original documents instead of chunks."""
 
     @pytest.mark.asyncio
+    async def test_auto_direct_injection_ignores_search_hints(self) -> None:
+        """Hints shape ranking only when routing falls through to RAG retrieval."""
+        from app.services.rag.retrieval_service import RetrievalService
+        from shared.models import SearchHints
+
+        service = RetrievalService()
+        service._try_direct_injection = AsyncMock(
+            return_value={
+                "mode": "direct_injection",
+                "records": [],
+                "total": 0,
+                "total_estimated_tokens": 10,
+            }
+        )
+        service._do_rag_retrieval = AsyncMock()
+
+        with patch.object(
+            RetrievalService,
+            "_estimate_total_tokens_for_knowledge_bases",
+            return_value=10,
+        ):
+            result = await service.retrieve_with_routing(
+                query="release checklist",
+                search_hints=SearchHints(
+                    semantic_query="release readiness",
+                    keywords=["release"],
+                ),
+                knowledge_base_ids=[123],
+                db=MagicMock(),
+                context_window=10000,
+                route_mode="auto",
+            )
+
+        assert result["mode"] == "direct_injection"
+        service._try_direct_injection.assert_awaited_once()
+        service._do_rag_retrieval.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_direct_injection_calls_get_original_documents(self):
         """Direct injection mode should call get_original_documents, not get_all_chunks."""
         from app.services.rag.retrieval_service import RetrievalService

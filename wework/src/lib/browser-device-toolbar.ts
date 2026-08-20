@@ -72,6 +72,7 @@ export const BROWSER_DEVICE_MAX_DIMENSION = 4096
 
 // Page-zoom options offered by the device toolbar zoom select, as in Codex.
 export const BROWSER_DEVICE_ZOOM_OPTIONS = [50, 75, 100, 125, 150, 200] as const
+export type BrowserDeviceResizeEdge = 'left' | 'right' | 'bottom' | 'bottom-left' | 'bottom-right'
 
 export interface BrowserDeviceToolbarState {
   isEnabled: boolean
@@ -123,6 +124,8 @@ export function deviceZoomOptions(currentZoomPercent: number): number[] {
 export interface DeviceViewportPlacement {
   /** Bounds the native webview should occupy (real layout viewport). */
   webviewBounds: EmbeddedBrowserBounds
+  /** Auto-fit scale used to translate pointer movement into device dimensions. */
+  fitScale: number
   /** Combined scale (auto-fit x page zoom) applied through the webview zoom. */
   scale: number
   /** Visually occupied rect inside the host, used for handles and backdrop. */
@@ -135,6 +138,25 @@ export function resolveDeviceFitScale(
   height: number
 ): number {
   return Math.min(1, host.width / width, host.height / height)
+}
+
+export function resizeDeviceDimensions(
+  edge: BrowserDeviceResizeEdge,
+  startWidth: number,
+  startHeight: number,
+  pointerDeltaX: number,
+  pointerDeltaY: number,
+  fitScale: number
+): { width: number; height: number } {
+  const scale = fitScale || 1
+  const deltaX = pointerDeltaX / scale
+  const deltaY = pointerDeltaY / scale
+  let width = startWidth
+  let height = startHeight
+  if (edge.includes('right')) width += deltaX
+  if (edge.includes('left')) width -= deltaX
+  if (edge.includes('bottom')) height += deltaY
+  return { width, height }
 }
 
 export function computeDeviceViewportPlacement(
@@ -166,6 +188,7 @@ export function computeDeviceViewportPlacement(
       width: visualWidth,
       height: visualHeight,
     },
+    fitScale,
     scale,
     visualRect: {
       x: Math.round(visualX),

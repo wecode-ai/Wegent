@@ -4,8 +4,6 @@ sidebar_position: 32
 
 # 云项目协作架构
 
-看板自动化与 Wegent 执行的架构评审以 [独立架构文件](../../architecture/board-automation.md) 为准；本文保留云项目领域、API 和交付说明。
-
 > UI 与交互实现以 `/Users/hongyu9/Downloads/wework-delivery-v4-TODO.pen` 为当前 V4 设计源，不根据本文重新推导页面布局。
 
 ## 目标

@@ -908,6 +908,47 @@ async fn codex_shared_app_server_isolates_active_turns_from_cross_thread_bursts(
     }
 }
 
+async fn codex_shared_app_server_corrects_compaction_turn_from_matching_user_message() {
+    let _lock = env_lock().await;
+    let fake_codex = write_fake_codex_compaction_turn_correction();
+    let client = CodexAppServerClient::new(fake_codex.display().to_string());
+    let mut request = ExecutionRequest {
+        prompt: json!("implement feature"),
+        bot: json!([{"shell_type": "ClaudeCode"}]),
+        model_config: json!({
+            "model": "openai",
+            "model_id": "gpt-5",
+            "protocol": "openai-responses"
+        }),
+        ..ExecutionRequest::default()
+    };
+    request.extra.insert(
+        "client_user_message_id".to_owned(),
+        Value::String("runtime-local-pane-1".to_owned()),
+    );
+
+    let turn = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        client.run_turn_with_cancel(
+            request,
+            CodexAppServerTurnOptions {
+                resume_thread_id: Some("thread-1".to_owned()),
+                ..CodexAppServerTurnOptions::default()
+            },
+        ),
+    )
+    .await
+    .expect("the real user turn should settle after context compaction")
+    .expect("the corrected turn should complete");
+
+    assert_eq!(
+        turn.outcome,
+        ExecutionOutcome::Completed {
+            content: "corrected".to_owned()
+        }
+    );
+}
+
 async fn codex_app_server_engine_reports_nested_turn_error_details() {
     let _lock = env_lock().await;
     let fake_codex = write_fake_codex_nested_turn_error();
@@ -1370,6 +1411,53 @@ while IFS= read -r line; do
           printf '{"method":"turn/completed","params":{"threadId":"thread-%s","turn":{"id":"turn-thread-%s","status":"completed"}}}\n' "$active" "$active"
         done
       fi
+      ;;
+  esac
+done
+"#,
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&path, permissions).unwrap();
+    }
+    path
+}
+
+fn write_fake_codex_compaction_turn_correction() -> PathBuf {
+    let path = std::env::temp_dir().join(format!(
+        "fake-codex-compaction-turn-correction-{}-{}",
+        std::process::id(),
+        unique_suffix()
+    ));
+    fs::write(
+        &path,
+        r#"#!/bin/sh
+while IFS= read -r line; do
+  request_id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '{"id":%s,"result":{"protocolVersion":1}}\n' "$request_id"
+      ;;
+    *'"method":"initialized"'*)
+      ;;
+    *'"method":"thread/unsubscribe"'*)
+      printf '{"id":%s,"result":{}}\n' "$request_id"
+      ;;
+    *'"method":"thread/resume"'*)
+      printf '{"id":%s,"result":{"thread":{"id":"thread-1"}}}\n' "$request_id"
+      ;;
+    *'"method":"thread/goal/get"'*)
+      printf '{"id":%s,"result":{"goal":{"status":"active"}}}\n' "$request_id"
+      ;;
+    *'"method":"turn/start"'*)
+      printf '{"id":%s,"result":{"turn":{"id":"turn-compaction","status":"inProgress"}}}\n' "$request_id"
+      printf '%s\n' '{"method":"thread/goal/updated","params":{"threadId":"thread-1","turnId":"turn-user","goal":{"status":"complete"}}}'
+      printf '%s\n' '{"method":"item/started","params":{"threadId":"thread-1","turnId":"turn-user","item":{"id":"user-1","clientId":"runtime-local-pane-1","type":"userMessage"}}}'
+      printf '%s\n' '{"method":"item/completed","params":{"threadId":"thread-1","turnId":"turn-user","item":{"id":"message-1","type":"agentMessage","phase":"final_answer","text":"corrected"}}}'
+      printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-user","status":"completed"}}}'
       ;;
   esac
 done

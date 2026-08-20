@@ -5,6 +5,8 @@ export interface WorkbenchComposerFocusDetail {
   scopeKey: string
 }
 
+let pendingWorkbenchComposerFocusScopeKey: string | null = null
+
 export function focusComposerAtEnd(element: HTMLElement | null | undefined) {
   if (!element) return
   element.focus()
@@ -29,6 +31,7 @@ export function requestNewChatComposerFocus() {
 }
 
 export function requestWorkbenchComposerFocus(scopeKey: string) {
+  pendingWorkbenchComposerFocusScopeKey = scopeKey
   window.requestAnimationFrame(() => {
     window.dispatchEvent(
       new CustomEvent<WorkbenchComposerFocusDetail>(WORKBENCH_COMPOSER_FOCUS_EVENT, {
@@ -36,4 +39,10 @@ export function requestWorkbenchComposerFocus(scopeKey: string) {
       })
     )
   })
+}
+
+export function consumeWorkbenchComposerFocusRequest(scopeKey: string) {
+  if (pendingWorkbenchComposerFocusScopeKey !== scopeKey) return false
+  pendingWorkbenchComposerFocusScopeKey = null
+  return true
 }

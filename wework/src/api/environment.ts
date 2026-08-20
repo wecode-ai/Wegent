@@ -42,6 +42,7 @@ export type EnvironmentDiffMode = 'branch' | 'unstaged' | 'staged' | 'commit'
 
 export interface EnvironmentInfoLoadOptions {
   force?: boolean
+  onPartialInfo?: (info: EnvironmentInfo) => void
 }
 
 const ENVIRONMENT_DIFF_COMMANDS: Record<EnvironmentDiffMode, string> = {
@@ -57,6 +58,10 @@ type EnvironmentInfoCacheEntry = {
   expiresAt: number
   promise: Promise<EnvironmentInfo>
   settled: boolean
+  partialState: {
+    info?: EnvironmentInfo
+    listeners: Set<(info: EnvironmentInfo) => void>
+  }
 }
 
 const environmentInfoCaches = new WeakMap<
@@ -706,7 +711,8 @@ async function commandContext(
 async function loadProjectEnvironmentUncached(
   api: DeviceCommandApi,
   project: ProjectWithTasks | null,
-  target?: EnvironmentWorkspaceTarget | null
+  target?: EnvironmentWorkspaceTarget | null,
+  onPartialInfo?: (info: EnvironmentInfo) => void
 ): Promise<EnvironmentInfo> {
   if (!project && !target) {
     return EMPTY_ENVIRONMENT_INFO
@@ -744,16 +750,41 @@ async function loadProjectEnvironmentUncached(
   }
 
   try {
-    const [branchName, shortStat, porcelain] = await Promise.all([
-      runGitCommand(api, deviceId, 'git_branch', path),
-      loadBranchDiffShortStat(api, deviceId, path),
-      runGitCommand(api, deviceId, 'git_status_porcelain', path).catch(() => ''),
+    const branchNamePromise = runGitCommand(api, deviceId, 'git_branch', path)
+    const shortStatPromise = loadBranchDiffShortStat(api, deviceId, path)
+    const porcelainPromise = runGitCommand(api, deviceId, 'git_status_porcelain', path).catch(
+      () => ''
+    )
+    const remoteUrlPromise = runGitCommand(api, deviceId, 'git_remote_url', path).catch(() => '')
+    const changeRequestEnabledPromise = getAppPreferences().then(
+      preferences => preferences.changeRequestStatusEnabled
+    )
+    const changeRequestPromise = Promise.all([
+      branchNamePromise,
+      remoteUrlPromise,
+      changeRequestEnabledPromise,
+    ]).then(async ([branchName, remoteUrl, changeRequestStatusEnabled]) => {
+      const changeRequest = changeRequestStatusEnabled
+        ? await loadChangeRequest(api, deviceId, path, remoteUrl, branchName)
+        : undefined
+      onPartialInfo?.({
+        ...environmentWorkspaceInfo,
+        additions: '',
+        deletions: '',
+        isGitRepository: true,
+        branchName,
+        createPullRequestUrl: buildPullRequestUrl(remoteUrl, branchName),
+        ...(changeRequest ? { changeRequest } : {}),
+      })
+      return changeRequest
+    })
+    const [branchName, shortStat, porcelain, remoteUrl, changeRequest] = await Promise.all([
+      branchNamePromise,
+      shortStatPromise,
+      porcelainPromise,
+      remoteUrlPromise,
+      changeRequestPromise,
     ])
-    const remoteUrl = await runGitCommand(api, deviceId, 'git_remote_url', path).catch(() => '')
-    const changeRequestStatusEnabled = (await getAppPreferences()).changeRequestStatusEnabled
-    const changeRequest = changeRequestStatusEnabled
-      ? await loadChangeRequest(api, deviceId, path, remoteUrl, branchName)
-      : undefined
     const diff = parseGitShortStat(shortStat)
 
     // Count pending files from porcelain (untracked, staged, modified).
@@ -810,7 +841,7 @@ export async function loadProjectEnvironment(
 
   const cacheKey = environmentInfoCacheKey(project, target)
   if (!cacheKey) {
-    return loadProjectEnvironmentUncached(api, project, target)
+    return loadProjectEnvironmentUncached(api, project, target, options.onPartialInfo)
   }
 
   const now = Date.now()
@@ -819,14 +850,33 @@ export async function loadProjectEnvironment(
   // Forced polling must still share an in-flight load. Replacing a slow request
   // on every poll prevents any result from settling the environment loading state.
   if (cached && (!cached.settled || (!options.force && cached.expiresAt > now))) {
-    return cloneEnvironmentInfo(await cached.promise)
+    if (options.onPartialInfo) {
+      cached.partialState.listeners.add(options.onPartialInfo)
+      if (cached.partialState.info) {
+        options.onPartialInfo(cloneEnvironmentInfo(cached.partialState.info))
+      }
+    }
+    try {
+      return cloneEnvironmentInfo(await cached.promise)
+    } finally {
+      if (options.onPartialInfo) {
+        cached.partialState.listeners.delete(options.onPartialInfo)
+      }
+    }
   }
 
-  const promise = loadProjectEnvironmentUncached(api, project, target)
+  const partialState: EnvironmentInfoCacheEntry['partialState'] = {
+    listeners: new Set(options.onPartialInfo ? [options.onPartialInfo] : []),
+  }
+  const promise = loadProjectEnvironmentUncached(api, project, target, partialInfo => {
+    partialState.info = cloneEnvironmentInfo(partialInfo)
+    partialState.listeners.forEach(listener => listener(cloneEnvironmentInfo(partialInfo)))
+  })
   const entry: EnvironmentInfoCacheEntry = {
     expiresAt: now + ENVIRONMENT_INFO_CACHE_TTL_MS,
     promise,
     settled: false,
+    partialState,
   }
   environmentInfoCache.set(cacheKey, entry)
   void promise.then(
@@ -843,6 +893,10 @@ export async function loadProjectEnvironment(
   } catch (error) {
     environmentInfoCache.delete(cacheKey)
     throw error
+  } finally {
+    if (options.onPartialInfo) {
+      entry.partialState.listeners.delete(options.onPartialInfo)
+    }
   }
 }
 

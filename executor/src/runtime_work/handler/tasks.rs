@@ -287,6 +287,7 @@ impl RuntimeWorkRpcHandler {
                         project_name,
                         &request.runtime_workspace_roots,
                         None,
+                        None,
                     )
                     .map_err(|error| AppIpcError::new("codex_global_state_error", error))?;
                 }
@@ -429,6 +430,8 @@ impl RuntimeWorkRpcHandler {
         link.ephemeral = request.ephemeral || bool_field(&payload, "ephemeral").unwrap_or(false);
         link.runtime_project_key = request.runtime_project_key.clone();
         link.runtime_workspace_roots = request.runtime_workspace_roots.clone();
+        link.project_instructions = request.system_prompt.clone();
+        link.project_plugin_ids = project_plugin_ids(&request);
         set_runtime_handle_model_selection(&mut link.runtime_handle, &payload);
         if let Some(executable_path) = request
             .extra
@@ -731,6 +734,23 @@ impl RuntimeWorkRpcHandler {
                 .as_ref()
                 .map(|link| link.runtime_workspace_roots.clone())
                 .unwrap_or_default();
+        }
+        if request.system_prompt.trim().is_empty() {
+            request.system_prompt = existing_link
+                .as_ref()
+                .map(|link| link.project_instructions.clone())
+                .unwrap_or_default();
+        }
+        if project_plugin_ids(&request).is_empty() {
+            if let Some(plugin_ids) = existing_link
+                .as_ref()
+                .map(|link| link.project_plugin_ids.clone())
+                .filter(|plugin_ids| !plugin_ids.is_empty())
+            {
+                request
+                    .extra
+                    .insert("project_plugin_ids".to_owned(), json!(plugin_ids));
+            }
         }
         if !workspace_path.is_empty() {
             request.project_workspace_path = Some(workspace_path.clone());
@@ -1560,6 +1580,13 @@ impl RuntimeWorkRpcHandler {
             if !request.runtime_workspace_roots.is_empty() {
                 link.runtime_workspace_roots = request.runtime_workspace_roots.clone();
             }
+            if !request.system_prompt.trim().is_empty() {
+                link.project_instructions = request.system_prompt.clone();
+            }
+            let plugin_ids = project_plugin_ids(request);
+            if !plugin_ids.is_empty() {
+                link.project_plugin_ids = plugin_ids;
+            }
             link.updated_at = now_ms();
             set_runtime_handle_model_selection(&mut link.runtime_handle, payload);
         });
@@ -1576,6 +1603,8 @@ impl RuntimeWorkRpcHandler {
         link.ephemeral = request.ephemeral;
         link.runtime_project_key = request.runtime_project_key.clone();
         link.runtime_workspace_roots = request.runtime_workspace_roots.clone();
+        link.project_instructions = request.system_prompt.clone();
+        link.project_plugin_ids = project_plugin_ids(request);
         set_runtime_handle_model_selection(&mut link.runtime_handle, payload);
         if let Some(presentation) = presentation {
             append_runtime_handle_user_message_presentation(&mut link.runtime_handle, presentation);
@@ -1601,7 +1630,24 @@ pub(super) fn forked_task_link(
     link.parent = Some(parent);
     link.runtime_project_key = source.runtime_project_key.clone();
     link.runtime_workspace_roots = source.runtime_workspace_roots.clone();
+    link.project_instructions = source.project_instructions.clone();
+    link.project_plugin_ids = source.project_plugin_ids.clone();
     link
+}
+
+fn project_plugin_ids(request: &ExecutionRequest) -> Vec<String> {
+    request
+        .extra
+        .get("project_plugin_ids")
+        .or_else(|| request.extra.get("projectPluginIds"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .collect()
 }
 
 fn apply_runtime_task_start_failure(link: &mut RuntimeTaskLink, error: &AppIpcError) {

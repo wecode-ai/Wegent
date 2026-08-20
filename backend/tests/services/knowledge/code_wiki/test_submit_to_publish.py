@@ -350,7 +350,7 @@ def _conclude(
     )
 
 
-BROKEN_DIAGRAM = "```mermaid\nflowchat TD\n  A --> B\n```"
+BROKEN_DIAGRAM = "```mermaid\nflowchart TD\n  subgraph RPC[RPC]\n    RPC[Request processor]\n  end\n```"
 
 
 def test_a_broken_diagram_is_reported_back_to_the_agent(
@@ -359,12 +359,7 @@ def test_a_broken_diagram_is_reported_back_to_the_agent(
     test_user: User,
     no_side_effects: FakeEffects,
 ):
-    """The version publishes and the agent is still told to fix the diagram.
-
-    Both halves matter. Diagrams never hold a version back, so this arrives on a run
-    that succeeded -- and that is precisely why it has to arrive: the run is about to
-    end, and the agent is the only party that can rewrite the page.
-    """
+    """The version stays private and the writer receives the exact correction."""
     generation = _generation(test_db, test_user, knowledge_base.id)
     _seed_page(test_db, generation, "index")
     (
@@ -375,10 +370,10 @@ def test_a_broken_diagram_is_reported_back_to_the_agent(
 
     response = _conclude(test_db, generation, status="COMPLETED", head_commit=HEAD)
 
-    assert response["published"] is True
+    assert response["published"] is False
     assert "index" in response["corrections"]
-    assert "flowchat" in response["corrections"]
-    assert generation.ext[PUBLISH_GATE_EXT_KEY]["correctionPending"] is True
+    assert "RPC" in response["corrections"]
+    assert generation.ext[PUBLISH_GATE_EXT_KEY]["correctionPending"] is False
 
 
 def test_a_successful_diagram_correction_closes_the_writer_window(
@@ -394,7 +389,8 @@ def test_a_successful_diagram_correction_closes_the_writer_window(
         .filter(WikiContent.generation_id == generation.id)
         .update({WikiContent.content: BROKEN_DIAGRAM})
     )
-    _conclude(test_db, generation, status="COMPLETED", head_commit=HEAD)
+    refused = _conclude(test_db, generation, status="COMPLETED", head_commit=HEAD)
+    assert refused["published"] is False
 
     response = _conclude(
         test_db,

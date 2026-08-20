@@ -8,6 +8,13 @@ import '@blocknote/core/style.css'
 import '@blocknote/react/style.css'
 import '@blocknote/mantine/style.css'
 import { useOptionalAppearance } from '@/features/appearance'
+import { cn } from '@/lib/utils'
+import {
+  detectInitialImeCodeBlockDuplicate,
+  detectInitialImeDuplicate,
+  inlineContentText,
+  type ImeCompositionSnapshot,
+} from './imeComposition'
 import { normalizeTaskDescription } from './taskDescription'
 
 interface TaskDescriptionEditorProps {
@@ -15,6 +22,11 @@ interface TaskDescriptionEditorProps {
   onChange: (markdown: string) => void
   onPasteFiles?: (files: File[]) => void
   readAttachment?: (attachmentId: string) => Promise<Blob>
+  testId?: string
+  ariaLabel?: string
+  placeholder?: string
+  disabled?: boolean
+  className?: string
 }
 
 const DEFAULT_LINK_SCHEMES = /^(https?|ftps?|mailto|tel|callto|sms|cid|xmpp):/i
@@ -46,11 +58,20 @@ export function TaskDescriptionEditor({
   onChange,
   onPasteFiles,
   readAttachment,
+  testId = 'cloud-todo-detail-description',
+  ariaLabel = '任务描述',
+  placeholder = '添加任务描述，输入 / 使用 Markdown…',
+  disabled = false,
+  className,
 }: TaskDescriptionEditorProps) {
   const appearance = useOptionalAppearance()
   const onChangeRef = useRef(onChange)
   const onPasteFilesRef = useRef(onPasteFiles)
   const readAttachmentRef = useRef(readAttachment)
+  const composingRef = useRef(false)
+  const pendingCompositionChangeRef = useRef(false)
+  const compositionSnapshotRef = useRef<ImeCompositionSnapshot | null>(null)
+  const repairingImeRef = useRef(false)
   // Tracks the markdown value the editor state is currently mirrored from, so
   // external value updates replace content only when they are real changes.
   const lastEmittedMarkdownRef = useRef<string | null>(null)
@@ -66,17 +87,18 @@ export function TaskDescriptionEditor({
   }, [onChange, onPasteFiles, readAttachment])
 
   const editor = useCreateBlockNote({
+    tabBehavior: 'prefer-indent',
     dictionary: {
       ...zh,
       placeholders: {
         ...zh.placeholders,
-        default: '添加任务描述，输入 / 使用 Markdown…',
+        default: placeholder,
       },
     },
     domAttributes: {
       editor: {
-        'data-testid': 'cloud-todo-detail-description',
-        'aria-label': '任务描述',
+        'data-testid': testId,
+        'aria-label': ariaLabel,
       },
     },
     links: {
@@ -108,13 +130,22 @@ export function TaskDescriptionEditor({
     lastEmittedMarkdownRef.current = next
   }, [editor, value])
 
-  const handleEditorChange = useCallback(() => {
+  const emitEditorChange = useCallback(() => {
     const markdown = editor.blocksToMarkdownLossy()
     if (applyingExternalRef.current) return
     if (markdown === lastEmittedMarkdownRef.current) return
     lastEmittedMarkdownRef.current = markdown
     onChangeRef.current(markdown)
   }, [editor])
+
+  const handleEditorChange = useCallback(() => {
+    if (composingRef.current || repairingImeRef.current) {
+      pendingCompositionChangeRef.current = true
+      return
+    }
+    pendingCompositionChangeRef.current = false
+    emitEditorChange()
+  }, [emitEditorChange])
 
   // File pastes are routed to the shared attachment flow before ProseMirror
   // sees them, keeping image/file blocks out of the markdown description.
@@ -125,6 +156,67 @@ export function TaskDescriptionEditor({
     event.stopPropagation()
     onPasteFilesRef.current(files)
   }, [])
+
+  const handleCompositionStartCapture = useCallback(() => {
+    composingRef.current = true
+    pendingCompositionChangeRef.current = false
+    const cursor = editor.getTextCursorPosition()
+    compositionSnapshotRef.current =
+      inlineContentText(cursor.block.content) === ''
+        ? {
+            blockId: cursor.block.id,
+            nextBlockId: cursor.nextBlock?.id,
+            parentBlockId: cursor.parentBlock?.id,
+          }
+        : null
+  }, [editor])
+
+  const handleCompositionEndCapture = useCallback(
+    (event: React.CompositionEvent<HTMLDivElement>) => {
+      const snapshot = compositionSnapshotRef.current
+      const committedText = event.data
+      compositionSnapshotRef.current = null
+      composingRef.current = false
+
+      // WebKit may split the first composition in an empty nested block into
+      // two sibling blocks: the original pinyin buffer and a new committed
+      // Chinese block. Wait for its native DOM transaction, then reconcile
+      // only that exact shape in one undoable editor transaction.
+      window.setTimeout(() => {
+        if (snapshot) {
+          const originalBlock = editor.getBlock(snapshot.blockId)
+          const nextBlock = editor.getNextBlock(snapshot.blockId)
+          const repair =
+            detectInitialImeDuplicate(
+              snapshot,
+              originalBlock,
+              nextBlock,
+              nextBlock ? editor.getParentBlock(nextBlock.id)?.id : undefined,
+              committedText
+            ) ??
+            detectInitialImeCodeBlockDuplicate(snapshot, originalBlock, nextBlock, committedText)
+          if (repair) {
+            repairingImeRef.current = true
+            try {
+              editor.transact(() => {
+                editor.updateBlock(repair.targetBlockId, { content: repair.content })
+                if (repair.duplicateBlockId) {
+                  editor.removeBlocks([repair.duplicateBlockId])
+                }
+                editor.setTextCursorPosition(repair.targetBlockId, 'end')
+              })
+            } finally {
+              repairingImeRef.current = false
+            }
+          }
+        }
+
+        pendingCompositionChangeRef.current = false
+        emitEditorChange()
+      }, 0)
+    },
+    [editor, emitEditorChange]
+  )
 
   const [preview, setPreview] = useState<AttachmentPreviewState | null>(null)
   const [previewSrc, setPreviewSrc] = useState<string | null>(null)
@@ -261,14 +353,17 @@ export function TaskDescriptionEditor({
 
   return (
     <div
-      className="task-description-editor"
+      className={cn('task-description-editor', className)}
       onMouseOver={handleMouseOver}
       onMouseOut={handleMouseOut}
       onPasteCapture={handlePasteCapture}
+      onCompositionStartCapture={handleCompositionStartCapture}
+      onCompositionEndCapture={handleCompositionEndCapture}
     >
       <BlockNoteView
         editor={editor}
         onChange={handleEditorChange}
+        editable={!disabled}
         theme={appearance?.resolvedMode === 'dark' ? 'dark' : 'light'}
       />
       {preview ? (

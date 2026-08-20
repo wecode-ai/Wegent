@@ -316,6 +316,7 @@ describe('SitesWorkspace', () => {
   })
 
   test('shows experimental Smart apps beside Sites and Mini Programs', async () => {
+    window.history.replaceState({}, '', '/sites?app_type=web')
     const api = createApi()
 
     render(
@@ -331,6 +332,11 @@ describe('SitesWorkspace', () => {
     expect(screen.getByTestId('applications-tab-web')).toHaveTextContent('站点')
     expect(screen.getByTestId('applications-tab-miniapp')).toHaveTextContent('小程序')
     expect(screen.getByTestId('applications-tab-smart-app')).toHaveTextContent('智能应用')
+    expect(screen.getAllByRole('tab').map(tab => tab.textContent)).toEqual([
+      '智能应用实验性',
+      '站点',
+      '小程序',
+    ])
 
     await userEvent.click(screen.getByTestId('applications-tab-smart-app'))
 
@@ -342,6 +348,28 @@ describe('SitesWorkspace', () => {
     expect(screen.queryByTestId('sites-search-input')).not.toBeInTheDocument()
     expect(screen.queryByTestId('sites-create-button')).not.toBeInTheDocument()
     expect(window.location.search).toBe('?app_type=smart_app')
+  })
+
+  test('selects Smart apps for the default Applications path without changing the path', async () => {
+    const api = createApi()
+
+    render(
+      <SitesWorkspace
+        api={api}
+        onCreate={vi.fn()}
+        smartAppsEnabled
+        smartAppsContent={<div data-testid="smart-apps-content">智能应用市场</div>}
+      />
+    )
+
+    expect(await screen.findByTestId('smart-apps-content')).toBeInTheDocument()
+    expect(screen.getByTestId('applications-tab-smart-app')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    expect(window.location.pathname).toBe('/sites')
+    expect(window.location.search).toBe('')
+    expect(api.listSites).not.toHaveBeenCalled()
   })
 
   test('opens a requested Smart apps view without loading the Sites collection', async () => {

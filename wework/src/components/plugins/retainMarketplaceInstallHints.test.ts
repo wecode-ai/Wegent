@@ -122,6 +122,45 @@ describe('retainMarketplaceInstallHints', () => {
     expect(retainMarketplaceInstallHints(previous, next)).toEqual(next)
   })
 
+  test('keeps a previous device gap when the next catalog omits device rows', () => {
+    const pending = {
+      deviceId: 'current-device',
+      desiredReleaseId: 1001,
+      actualReleaseId: null,
+      state: 'pending' as const,
+      errorCode: null,
+      errorMessage: null,
+      attemptCount: 1,
+      lastSyncAt: null,
+      updatedAt: '2026-07-25T12:00:00',
+    }
+    const previous = [
+      item({
+        id: 101,
+        installed: false,
+        installedPluginId: 101,
+        currentDeviceInstallation: pending,
+      }),
+    ]
+    const next = [
+      item({
+        id: 101,
+        installed: true,
+        installedPluginId: 101,
+        currentDeviceInstallation: null,
+      }),
+    ]
+
+    expect(retainMarketplaceInstallHints(previous, next)).toEqual([
+      expect.objectContaining({
+        id: 101,
+        installed: true,
+        installedPluginId: 101,
+        currentDeviceInstallation: pending,
+      }),
+    ])
+  })
+
   test('retains the matching installed row with an optimistic marketplace hint', () => {
     const previousItem = item({
       installed: true,
@@ -182,5 +221,54 @@ describe('retainMarketplaceInstallHints', () => {
 
     expect(retained.items).toEqual([nextItem])
     expect(retained.installed).toEqual([])
+  })
+
+  test('does not revive an uninstalled OpenAI remote plugin when live membership listed that marketplace', () => {
+    const previousGithub = item({
+      installed: true,
+      installedLocally: true,
+      installedPluginId: 'github@openai-curated-remote',
+      enabled: true,
+    })
+    const previousGmail = item({
+      id: 'gmail@openai-curated-remote',
+      name: 'gmail',
+      displayName: 'Gmail',
+      installed: true,
+      installedLocally: true,
+      installedPluginId: 'gmail@openai-curated-remote',
+      enabled: true,
+    })
+    const gmailPlugin = installedItem()
+    gmailPlugin.id = 'gmail@openai-curated-remote'
+    gmailPlugin.name = 'Gmail'
+    gmailPlugin.raw = {
+      ...gmailPlugin.raw,
+      metadata: {
+        name: 'gmail',
+        namespace: 'openai-curated-remote',
+        labels: { id: 'gmail@openai-curated-remote' },
+      },
+      spec: {
+        ...gmailPlugin.raw.spec,
+        source: {
+          ...gmailPlugin.raw.spec.source,
+          pluginKey: 'gmail',
+          catalogItemId: 'gmail@openai-curated-remote',
+        },
+        displayName: 'Gmail',
+      },
+    }
+
+    const retained = retainMarketplaceInstalledState({
+      previousItems: [previousGithub, previousGmail],
+      nextItems: [item(), previousGmail],
+      previousInstalled: [installedItem(), gmailPlugin],
+      nextInstalled: [gmailPlugin],
+      previousStateMatchesScope: true,
+    })
+
+    expect(retained.items.find(entry => entry.id === previousGithub.id)?.installed).toBe(false)
+    expect(retained.installed.map(plugin => plugin.id)).toEqual(['gmail@openai-curated-remote'])
   })
 })

@@ -4,8 +4,6 @@ sidebar_position: 19
 
 # Project Execution State-of-Truth Refactoring
 
-Use [project execution state and Runtime capacity](../../architecture/project-execution-state.md) as the architecture review source of truth. This guide retains the detailed state matrix, migration background, and acceptance coverage.
-
 > Implementation status: the state-of-truth path and concurrency extension are complete; full Backend, Wework, and Executor regression, MySQL migration rollback/upgrade, and real Tauri desktop acceptance have passed.
 >
 > Hard constraint: no new database tables. This change only extends the existing MySQL/SQLite `loop_item_executions` tables and continues using existing LoopItem, chat-message, and Automation Run storage.

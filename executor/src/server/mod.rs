@@ -18,6 +18,7 @@ use std::{
 pub(crate) mod codex_model_catalog;
 mod codex_responses_proxy_transform;
 mod config;
+pub(crate) mod harness_context;
 pub(crate) mod local_model_proxy;
 
 use axum::{
@@ -142,6 +143,12 @@ where
         .route(
             local_model_proxy::HARNESS_MESSAGES_ROUTE,
             local_model_proxy::harness_messages_route(),
+        )
+        .route(harness_context::USER_ROUTE, harness_context::user_route())
+        .route(harness_context::MODEL_ROUTE, harness_context::model_route())
+        .route(
+            harness_context::STATUS_ROUTE,
+            harness_context::status_route(),
         )
         .route("/v1/attachments/sync", post(sync_attachments))
         .route("/v1/skills/sync", post(sync_skills))

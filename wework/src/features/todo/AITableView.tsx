@@ -99,7 +99,8 @@ function cellText(value: unknown): string {
       .map(item => {
         if (typeof item === 'object' && item !== null) {
           const record = item as Record<string, unknown>
-          return String(record.name ?? record.title ?? record.text ?? '')
+          // DingTalk rich text cells are returned as { markdown: "..." }.
+          return String(record.name ?? record.title ?? record.text ?? record.markdown ?? '')
         }
         return String(item)
       })
@@ -108,7 +109,7 @@ function cellText(value: unknown): string {
   }
   if (typeof value === 'object') {
     const record = value as Record<string, unknown>
-    return String(record.name ?? record.title ?? record.text ?? '')
+    return String(record.name ?? record.title ?? record.text ?? record.markdown ?? '')
   }
   return String(value)
 }

@@ -103,6 +103,7 @@ interface CompactChatComposerProps {
   isModelSelectionReady?: boolean
   isStreaming?: boolean
   onPause?: () => void
+  projectPhrases?: QuickPhrase[]
 }
 
 export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactChatComposerProps>(
@@ -153,6 +154,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
       isModelSelectionReady = true,
       isStreaming = false,
       onPause,
+      projectPhrases = [],
     },
     ref
   ) {
@@ -361,7 +363,12 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
           >
             <Plus className="h-6 w-6" />
           </button>
-          <QuickPhraseMenu compact disabled={disabled} onSelect={handleQuickPhraseSelect} />
+          <QuickPhraseMenu
+            compact
+            disabled={disabled}
+            projectPhrases={projectPhrases}
+            onSelect={handleQuickPhraseSelect}
+          />
           <div
             data-testid="compact-input-pill"
             className={[

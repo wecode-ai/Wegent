@@ -186,8 +186,26 @@ function selectionForModel(model: UnifiedModel): ModelSelectionConfig {
   return {
     modelName: model.name,
     modelType: model.type,
-    options: getDefaultModelOptions(model),
+    options: {
+      ...getDefaultModelOptions(model),
+      ...modelSelectionIdentityOptions(model),
+    },
   }
+}
+
+export function modelSelectionIdentityOptions(model: UnifiedModel): ModelOptions {
+  const options: ModelOptions = {}
+  const codexProviderId = getRawStringConfigValue(model.config, 'codexProviderId')
+  if (codexProviderId) {
+    options.codexProviderId = codexProviderId
+  }
+  if (model.namespace) {
+    options[CLOUD_MODEL_NAMESPACE_OPTION] = model.namespace
+  }
+  if (typeof model.resourceUserId === 'number') {
+    options[CLOUD_MODEL_RESOURCE_USER_ID_OPTION] = String(model.resourceUserId)
+  }
+  return options
 }
 
 function isCodexCompatibleModel(model: UnifiedModel): boolean {

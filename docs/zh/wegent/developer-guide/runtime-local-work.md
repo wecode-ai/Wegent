@@ -93,6 +93,8 @@ POST /api/runtime-work/transcript
 
 Backend 将 `deviceId + localTaskId` 转发给对应设备的 `runtime.tasks.transcript`。原生 Codex 任务通过 Codex session path 或 session 文件发现定位；非 Codex/导入类任务可以使用 `workspacePath` 作为本地索引查找提示，或者通过本机 LocalTask 索引按 `localTaskId` 定位。executor 读取原生运行时 transcript，并返回标准化消息。
 
+云端和远程设备通过两段 Socket.IO ACK 返回 runtime RPC 结果：executor → Backend，以及 Backend → Wework。executor 对超过 512 KiB 的第一段 ACK 使用 `gzip+base64+json` envelope 压缩，Backend 解压并完成设备 ID 投影等服务处理；如果浏览器侧结果仍超过 512 KiB，Backend 会用同一 envelope 再压缩第二段 ACK，Wework 在交给调用方前解压。本地 App IPC 始终返回原始 JSON。每段压缩 envelope 都必须保留在 Socket.IO 1 MB 限制以内，无法满足时返回小型 `runtime_rpc_response_too_large` 错误，不能发送超限数据导致设备连接和心跳一起断开。executor 的耗时能力同步回调在独立任务中运行，避免阻塞 Socket.IO 收包循环和连接保活。
+
 ### Codex 会话读取路径与性能
 
 Wework 的 Codex 本机会话只使用一条主读取路径，避免列表、打开、刷新各自实现一套 transcript 逻辑：
@@ -135,6 +137,8 @@ Wework 对同一个 `deviceId + taskId` 只维护一份共享的 runtime task li
 - task address 只使用 `deviceId + taskId`；workspace 路径、tab id 和隐藏布局实例不能形成第二个生命周期身份。
 
 因此任务完成后的唯一数据流是：executor/Backend task snapshot 或终止 stream 事件进入共享 lifecycle store，投影收敛到 idle，所有 UI 消费者在同一次 store 更新后移除 running 状态。
+
+Wework 不得为了检测终止事件是否丢失而周期读取运行中任务的 transcript。正常生命周期只消费 stream；常驻协调器按终态事件携带的 `deviceId + taskId` 直接收敛共享 lifecycle store，因此不依赖任务 pane 是否挂载，也不会被事件到达后立即读取、但仍处于同一轮收尾竞态中的 task list 重新标记为 running。`executor.event_lagged`、runtime transport replacement 等明确表示本地投影可能过期的信号才触发一次 `runtime.tasks.list` 对账。并发异常信号共享同一个在途请求，在途期间的新信号最多合并成一次串行尾随对账。对账直接使用 executor 已持久化的 `running`、`status`、`completedAt`、`threadStatus` 和 `turnStatus`，不能通过 transcript、turn items 或 rollout JSONL 推导任务是否结束。
 
 每一次继续 LocalTask 的请求都必须携带当前模型选择。Wework 的模型选择器是本轮发送的事实来源：用户本轮选择哪个模型，`runtime.tasks.send` 就传哪个 `modelId`、`modelType` 和模型选项。executor 不从上一次请求恢复模型，也不缓存模型选择；如果请求没有完整 `executionRequest` 且没有 `modelId`，executor 必须返回 `bad_request`，而不是回退到默认模型。本地 IPC 和远程 WebSocket 都只负责传输同一份 canonical 模型选择；本地设备调用远程模型、远程设备调用远程模型，都进入 executor backend 的同一套执行逻辑。新建任务和继续任务都必须复用同一套模型选择路径。
 

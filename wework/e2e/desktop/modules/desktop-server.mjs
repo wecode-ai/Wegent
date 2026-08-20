@@ -217,6 +217,7 @@ import {
   VIEW_IMAGE_PROMPT,
   VISION_SIDECAR_COMPLETION_TEXT,
   VISION_SIDECAR_DESCRIPTION,
+  VISION_SIDECAR_MAIN_REQUEST_SCENARIO,
   VISION_SIDECAR_PROMPT,
   MULTIMODAL_VISION_COMPLETION_TEXT,
   MULTIMODAL_VISION_PROMPT,
@@ -1571,6 +1572,7 @@ class DesktopE2EServer {
           'The original image leaked to the text-only primary model'
         )
         this.visionSidecarRequests.push({ kind: 'main', body })
+        this.recordScenarioRequest(VISION_SIDECAR_MAIN_REQUEST_SCENARIO, modelRequest)
         const responseId = `vision-sidecar-main-${this.modelRequests.length}`
         this.writeSse(response, [
           responseCreated(responseId),

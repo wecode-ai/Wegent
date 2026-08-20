@@ -5,18 +5,13 @@ import {
   resolvePluginLogo,
 } from '@/components/plugins/plugin-assets'
 import { getComposerApps } from './composerAppsSnapshot'
+import { COMPOSER_SKILL_ICON_PATHS } from './composerSkillIconPaths'
 
 const LOCAL_MENTION_REFERENCE_PATTERN =
   /\[\$([^\]]+)]\(((?:skill:\/\/[^)]+SKILL\.md)|(?:\/[^)\n]*SKILL\.md)|(?:app:\/\/[^)]+)|(?:plugin:\/\/[^)]+)|(?:file:\/\/[^)]+)|(?:folder:\/\/[^)]+)|(?:cloud:\/\/[^)]+)|(?:wework-conversation:\/\/[^)]+))\)/g
 const COMPOSER_REFERENCE_PATTERN = /^\[\$[^\]]+]\(([^)\n]+)\)$/
 const composerMentionIcons = new Map<string, { url: string; contrastPad: boolean }>()
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg'
-const COMPOSER_MENTION_ICON_PATHS = [
-  'M16.5 9.4 7.55 4.24',
-  'M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z',
-  'M3.29 7 12 12l8.71-5',
-  'M12 22V12',
-]
 const COMPOSER_CONVERSATION_ICON_PATHS = [
   'M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z',
 ]
@@ -333,7 +328,7 @@ function createComposerMentionIcon(): SVGSVGElement {
   icon.setAttribute('stroke-width', '2')
   icon.setAttribute('stroke-linecap', 'round')
   icon.setAttribute('stroke-linejoin', 'round')
-  COMPOSER_MENTION_ICON_PATHS.forEach(pathData => {
+  COMPOSER_SKILL_ICON_PATHS.forEach(pathData => {
     const path = document.createElementNS(SVG_NAMESPACE, 'path')
     path.setAttribute('d', pathData)
     icon.append(path)

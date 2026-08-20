@@ -14,10 +14,9 @@ is that the thing being checked is a complete, inspectable, retained snapshot ra
 than a knowledge base already half-rewritten: a rejected version stays in the store
 with its verdict attached, and the published one is still whatever it was.
 
-**The gate is advisory for content-volume changes.** Two structural rules still
-refuse a version: it must hold at least one page, and every section that holds child
-pages must have a substantive page of its own. Everything else is measured, recorded
-on the version and shown in the run history, and published.
+**The gate is advisory for content-volume changes.** It refuses a version with no
+pages, a missing section overview, or a definite Mermaid error. Everything else is
+measured, recorded on the version and shown in the run history, and published.
 
 It did refuse large losses, and the reasoning was sound in the abstract: an agent that
 writes four pages and reports success produces a version holding four, and the
@@ -90,9 +89,9 @@ class PublishPolicy:
     # A published wiki always has at least an overview page. A version with none is
     # not an empty repository, it is a run that produced nothing.
     min_pages: int = 1
-    # Mermaid problems are reported, never blocking: a diagram that will not render is
-    # a local display fault, and holding a whole version for one is a poor trade.
-    block_on_mermaid: bool = False
+    # These are definite structural errors. The writer can correct the named page and
+    # conclude the same generation again, so readers should never receive one.
+    block_on_mermaid: bool = True
 
 
 DEFAULT_POLICY = PublishPolicy()
@@ -148,10 +147,9 @@ def evaluate_publish_gate(
         policy: Limits to apply.
 
     Returns:
-        The verdict. Producing fewer than the minimum number of pages and missing
-        section overview pages are blocking. Content-volume warnings are advisory;
-        Mermaid warnings are advisory unless the policy explicitly makes them
-        blocking.
+        The verdict. Producing fewer than the minimum number of pages, missing section
+        overview pages, and definite Mermaid errors are blocking. Content-volume
+        warnings remain advisory.
     """
     policy = policy or DEFAULT_POLICY
     structure_warnings = _structure_warnings(pages)

@@ -13,6 +13,7 @@ import {
   findFirstLocalNeedingLogin,
   findLocalConnectorsForMessage,
   installedPluginMatchesName,
+  listMentionedPluginReferences,
   listMentionedPluginNames,
   messageNeedsConnectorPreflight,
   messageRequiresConnectorAuth,
@@ -20,6 +21,7 @@ import {
   toLocalConnectorAuthTarget,
   type LocalConnectorRequirement,
 } from '@/features/plugins/localConnectorAuthGate'
+import { isOpenAiOfficialMarketplaceId } from '@/features/plugins/marketplaceIdentity'
 import { peekWarmedLocalConnectorAuthPlugins } from '@/features/plugins/prefetchLocalConnectorAuth'
 import type { InstalledPlugin } from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
@@ -105,6 +107,13 @@ async function targetNeedsLogin(target: LocalConnectorAuthTarget): Promise<boole
   }
 }
 
+function hasOnlyOpenAiOfficialPluginMentions(input: string): boolean {
+  const mentions = listMentionedPluginReferences(input)
+  return (
+    mentions.length > 0 && mentions.every(ref => isOpenAiOfficialMarketplaceId(ref.marketplaceName))
+  )
+}
+
 export function useLocalConnectorAuthGate(options: {
   messages: WorkbenchMessage[]
   onResumeSend: (input: string) => Promise<void> | void
@@ -154,6 +163,7 @@ export function useLocalConnectorAuthGate(options: {
       try {
         const mentioned = listMentionedPluginNames(input)
         const hint = resolveLocalConnectorAuthHint(input)
+        if (!hint && hasOnlyOpenAiOfficialPluginMentions(input)) return 'send'
         const pluginNames = [...mentioned, ...(hint?.pluginKey ? [hint.pluginKey] : [])]
         const cached = pluginsRef.current
         const cachedCoversMentions =

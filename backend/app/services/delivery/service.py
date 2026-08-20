@@ -40,6 +40,7 @@ from app.services.delivery.storage import (
 )
 from app.services.loop_item_events import publish_loop_item_changed
 from app.services.loop_item_status_history import write_status_change
+from app.services.loop_item_unread import advance_content_revision
 
 MAX_MARKDOWN_BYTES = 2 * 1024 * 1024
 MAX_CHAT_BYTES = 10 * 1024 * 1024
@@ -350,6 +351,9 @@ class DeliveryService:
                     source_binding.workflow_node_id,
                 )
                 item.current_delivery_id = delivery.id
+                item.metadata_json = advance_content_revision(
+                    item.metadata_json, actor_user_id=user_id
+                )
                 item.version += 1
                 db.commit()
                 db.refresh(delivery)
@@ -380,6 +384,9 @@ class DeliveryService:
             item.status = "completed"
             item.current_delivery_id = delivery.id
             item.completed_at = now
+            item.metadata_json = advance_content_revision(
+                item.metadata_json, actor_user_id=user_id
+            )
             item.version += 1
             db.commit()
             db.refresh(delivery)

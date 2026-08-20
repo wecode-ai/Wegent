@@ -1,0 +1,1066 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Wework 看板详情页重设计 Demo</title>
+<style>
+  /* ============ 设计变量（对齐 wework/DESIGN.md 的 Codex 中性体系） ============ */
+  :root {
+    --bg-app: #ffffff;
+    --bg-subtle: #f7f7f7;        /* 浅灰分区块 */
+    --bg-quiet: #f9f9f9;         /* DAG 画布底 */
+    --bg-hover: rgba(0,0,0,.05);
+    --bg-active: rgba(0,0,0,.08);
+    --text-1: #1a1c1f;
+    --text-2: rgba(26,28,31,.7);
+    --text-3: rgba(26,28,31,.5);
+    --border: rgba(0,0,0,.08);
+    --border-light: rgba(0,0,0,.05);
+    --accent: #339cff;           /* 蓝：仅 focus/链接/选中 */
+    --accent-soft: #e5f3ff;
+    --success: #00a240;
+    --warning: #e8860c;
+    --danger: #d92d20;
+    --radius-s: 8px;
+    --radius-m: 12px;
+    --radius-panel: 16px;
+    --shadow-sm: 0 1px 2px -1px rgba(0,0,0,.08);
+    --shadow-lg: 0 4px 8px -2px rgba(0,0,0,.10);
+    --shadow-float: 0 8px 16px -4px rgba(0,0,0,.12), 0 0 0 .5px rgba(0,0,0,.06);
+    --font: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", sans-serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: var(--font);
+    background: var(--bg-subtle);
+    color: var(--text-1);
+    font-size: 14px;
+    overflow: hidden;
+  }
+  button { font-family: var(--font); }
+
+  /* ============ 背景：示意看板（仅作上下文，非本次重点） ============ */
+  .fake-board { display: flex; gap: 16px; padding: 56px 24px; height: 100vh; filter: saturate(.6); }
+  .fake-col {
+    width: 264px; flex-shrink: 0;
+    background: #f0f0f0; border-radius: var(--radius-m);
+    padding: 12px;
+  }
+  .fake-col-title { font-size: 13px; color: var(--text-2); padding: 2px 4px 10px; }
+  .fake-card { background: #fff; border-radius: 10px; padding: 12px; box-shadow: var(--shadow-sm); font-size: 13px; color: var(--text-2); }
+  .fake-card + .fake-card { margin-top: 8px; }
+
+  /* ============ 遮罩 ============ */
+  .backdrop {
+    position: fixed; inset: 0;
+    background: rgba(24,24,24,.16);
+    z-index: 10;
+  }
+
+  /* ============ 详情浮层面板 ============ */
+  .panel {
+    position: fixed;
+    top: 12px; right: 12px; bottom: 12px;
+    width: 460px;
+    max-width: calc(100vw - 24px);
+    background: var(--bg-app);
+    border-radius: var(--radius-panel);
+    box-shadow: var(--shadow-float);
+    z-index: 11;
+    display: flex; flex-direction: column;
+    overflow: hidden;
+    transition: width .22s cubic-bezier(.4,0,.2,1);
+  }
+  .panel.fullscreen { width: min(860px, calc(100vw - 24px)); }
+  .panel.hidden { display: none; }
+
+  /* ---- 头部：面包屑 + 操作，全部弱化为图标/小字，唯一强动作是「保存」 ---- */
+  .panel-head {
+    display: flex; align-items: center; gap: 4px;
+    padding: 12px 16px 8px;
+    min-height: 46px;
+  }
+  .crumb {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 13px; color: var(--text-3);
+    min-width: 0; white-space: nowrap;
+  }
+  .crumb .id { color: var(--text-2); font-weight: 500; }
+  .icon-btn {
+    border: none; background: none; cursor: pointer;
+    width: 28px; height: 28px; border-radius: var(--radius-s); flex-shrink: 0;
+    color: var(--text-3); font-size: 14px;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .icon-btn:hover { background: var(--bg-hover); color: var(--text-1); }
+  .head-spacer { flex: 1; }
+  .btn-save {
+    border: none; cursor: pointer;
+    background: var(--text-1); color: #fff;
+    height: 28px; padding: 0 14px;
+    border-radius: 999px;
+    font-size: 13px;
+  }
+  .btn-save:hover { opacity: .8; }
+
+  .panel-body {
+    flex: 1; overflow-y: auto;
+    padding: 0 20px 20px;
+  }
+
+  /* ---- 属性 pills：负责人 / 截止 ---- */
+  .meta-pills { display: flex; gap: 8px; margin: 6px 0 14px; flex-wrap: wrap; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 28px; padding: 0 12px;
+    background: var(--bg-subtle);
+    border-radius: 999px;
+    font-size: 13px; color: var(--text-2);
+    cursor: pointer; border: none;
+  }
+  .pill:hover { background: var(--bg-active); color: var(--text-1); }
+  .pill .mini-avatar {
+    width: 16px; height: 16px; border-radius: 50%;
+    background: #e2e2e4; color: #5a5d62;
+    font-size: 9px; display: inline-flex; align-items: center; justify-content: center;
+  }
+  .pill .chev { font-size: 9px; color: var(--text-3); }
+
+  /* ---- 标题 ---- */
+  .title {
+    font-size: 20px; font-weight: 500; line-height: 1.4;
+    padding: 2px 0 12px;
+    outline: none;
+  }
+  .title:focus { box-shadow: 0 1px 0 var(--accent); }
+
+  /* ---- 附件 chips ---- */
+  .attach-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+  .attach-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--bg-subtle);
+    border-radius: var(--radius-s);
+    padding: 6px 8px 6px 10px;
+    font-size: 12px; color: var(--text-2);
+  }
+  .attach-chip .chip-act {
+    border: none; background: none; cursor: pointer;
+    color: var(--text-3); font-size: 11px; padding: 1px 4px; border-radius: 4px;
+  }
+  .attach-chip .chip-act:hover { background: var(--bg-hover); color: var(--text-1); }
+
+  /* ---- 通用分区：靠间距和 12px 小标题分层，无分割线 ---- */
+  .section { margin-top: 20px; }
+  .section-head {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 10px;
+  }
+  .section-title { font-size: 13px; font-weight: 500; color: var(--text-1); }
+  .count-badge {
+    font-size: 11px; color: var(--text-3);
+    background: var(--bg-subtle);
+    border-radius: 999px; padding: 1px 8px;
+  }
+  .section-head .spacer { flex: 1; }
+  .btn-ghost-sm {
+    border: none; background: none; cursor: pointer;
+    color: var(--text-2); font-size: 12px;
+    height: 24px; padding: 0 10px; border-radius: 999px;
+  }
+  .btn-ghost-sm:hover { background: var(--bg-hover); color: var(--text-1); }
+
+  /* ---- 描述（折叠态） ---- */
+  .desc-collapsed {
+    background: var(--bg-subtle);
+    border-radius: var(--radius-m);
+    padding: 12px 14px;
+  }
+  .desc-preview {
+    color: var(--text-3); font-size: 13px; line-height: 1.6;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .desc-toggle {
+    border: none; background: none; cursor: pointer;
+    color: var(--text-2); font-size: 12px; padding: 6px 0 0;
+  }
+  .desc-toggle:hover { color: var(--text-1); }
+  .desc-full { display: none; color: var(--text-2); font-size: 13px; line-height: 1.7; }
+  .desc-full p { margin: 6px 0; }
+  .desc-hint { font-size: 11px; color: var(--text-3); margin-top: 6px; }
+  .desc-collapsed.open .desc-preview { display: none; }
+  .desc-collapsed.open .desc-full { display: block; }
+
+  /* ---- 选中阶段面板（DAG 下方）：阶段操作 + 该阶段任务 ---- */
+  .stage-panel {
+    margin-top: 10px;
+    background: var(--bg-subtle);
+    border-radius: var(--radius-m);
+    padding: 12px 14px;
+  }
+  .stage-panel-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .stage-name { font-size: 13px; font-weight: 500; }
+  .stage-status {
+    font-size: 11px; padding: 1px 8px; border-radius: 999px;
+    display: inline-flex; align-items: center; gap: 5px;
+  }
+  .st-running { background: var(--accent-soft); color: #1a7fd4; }
+  .st-approval { background: #fdf1e3; color: var(--warning); }
+  .st-done { background: rgba(0,162,64,.08); color: var(--success); }
+  .st-blocked { background: rgba(0,0,0,.05); color: var(--text-3); }
+  .stage-panel .robot-tag {
+    font-size: 11px; color: var(--text-3);
+    display: inline-flex; align-items: center; gap: 4px;
+  }
+  .stage-panel .task-row:hover { background: rgba(255,255,255,.75); }
+  .stage-empty { padding: 8px 2px; font-size: 12.5px; color: var(--text-3); }
+  .add-stage-task {
+    width: 100%; margin-top: 6px;
+    border: 1px dashed var(--border); background: none; cursor: pointer;
+    color: var(--text-3); font-size: 12.5px;
+    height: 32px; border-radius: var(--radius-s);
+  }
+  .add-stage-task:hover { color: var(--text-2); border-color: rgba(0,0,0,.2); }
+  .stage-btns { display: flex; flex-wrap: wrap; gap: 6px; }
+  .btn-secondary {
+    border: none; cursor: pointer;
+    background: rgba(0,0,0,.05);
+    height: 28px; padding: 0 12px;
+    border-radius: var(--radius-s);
+    font-size: 12.5px; color: var(--text-1);
+  }
+  .btn-secondary:hover { background: rgba(0,0,0,.1); }
+  .btn-approve { background: rgba(0,162,64,.08); color: var(--success); }
+  .btn-approve:hover { background: rgba(0,162,64,.14); }
+  .btn-reject { background: rgba(217,45,32,.07); color: var(--danger); }
+  .btn-reject:hover { background: rgba(217,45,32,.12); }
+
+  .deliverables { margin-top: 10px; }
+  .deliverables-title { font-size: 12px; color: var(--text-3); margin-bottom: 6px; }
+  .deliv-item {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 12.5px; color: var(--text-2);
+    padding: 3px 0; cursor: pointer;
+  }
+  .deliv-item input { accent-color: var(--text-1); }
+  .deliv-item.done { color: var(--text-3); text-decoration: line-through; }
+
+  .reject-box { display: none; margin-top: 10px; }
+  .reject-box.show { display: block; }
+  .reject-box textarea {
+    width: 100%; min-height: 60px; resize: vertical;
+    border: 1px solid var(--border); border-radius: var(--radius-s);
+    padding: 8px 10px; font-family: var(--font); font-size: 12.5px;
+    outline: none;
+  }
+  .reject-box textarea:focus { border-color: rgba(51,156,255,.7); }
+  .reject-box .reject-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 6px; }
+
+  /* ---- DAG 画布：保留现有可拖拽缩放的节点图 ---- */
+  .dag-wrap {
+    position: relative;
+    height: 300px;
+    background: var(--bg-quiet);
+    border-radius: var(--radius-m);
+    overflow: hidden;
+    cursor: grab;
+    user-select: none;
+  }
+  .dag-wrap.dragging { cursor: grabbing; }
+  .dag-dots {
+    position: absolute; inset: 0;
+    background-image: radial-gradient(circle, rgba(0,0,0,.12) 1px, transparent 1px);
+    background-size: 20px 20px;
+    pointer-events: none;
+  }
+  .dag-canvas {
+    position: absolute;
+    top: 0; left: 0;
+    transform-origin: 0 0;
+    width: 1240px; height: 300px;
+  }
+  .dag-edges { position: absolute; top: 0; left: 0; overflow: visible; }
+  .dag-edge { stroke: rgba(0,0,0,.25); stroke-width: 1.5; fill: none; }
+  .dag-edge.done { stroke: rgba(0,162,64,.5); }
+
+  .dag-node {
+    position: absolute;
+    width: 208px; height: 112px;
+    background: #fff;
+    border-radius: var(--radius-m);
+    box-shadow: var(--shadow-sm), 0 0 0 .5px rgba(0,0,0,.05);
+    padding: 12px 14px;
+    display: flex; flex-direction: column;
+    cursor: default;
+  }
+  .dag-node.current { box-shadow: 0 0 0 1.5px var(--accent), var(--shadow-sm); }
+  .dag-node .node-name { font-size: 13px; font-weight: 500; margin-bottom: 4px; }
+  .dag-node .node-meta { font-size: 11px; color: var(--text-3); display: flex; align-items: center; gap: 5px; }
+  .dag-node .node-foot { margin-top: auto; display: flex; align-items: center; gap: 6px; }
+  .node-badge {
+    font-size: 10.5px; padding: 1px 7px; border-radius: 999px;
+    display: inline-flex; align-items: center; gap: 4px;
+  }
+  .nb-done { background: rgba(0,162,64,.08); color: var(--success); }
+  .nb-running { background: var(--accent-soft); color: #1a7fd4; }
+  .nb-approval { background: #fdf1e3; color: var(--warning); }
+  .nb-blocked { background: rgba(0,0,0,.05); color: var(--text-3); }
+  .node-tasks { margin-left: auto; font-size: 10.5px; color: var(--text-3); }
+  .pulse { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #1a7fd4; animation: p 1.4s infinite; }
+  @keyframes p { 50% { opacity: .3; } }
+
+  /* ReactFlow 风格缩放控件 */
+  .dag-controls {
+    position: absolute; left: 10px; bottom: 10px;
+    display: flex; flex-direction: column;
+    background: #fff; border-radius: var(--radius-s);
+    box-shadow: var(--shadow-sm), 0 0 0 .5px rgba(0,0,0,.06);
+    overflow: hidden;
+  }
+  .dag-controls button {
+    border: none; background: none; cursor: pointer;
+    width: 26px; height: 26px;
+    color: var(--text-2); font-size: 13px;
+  }
+  .dag-controls button:hover { background: var(--bg-hover); }
+  .dag-controls button + button { border-top: 1px solid var(--border-light); }
+
+  /* ---- 任务行 ---- */
+  .task-list { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; }
+  .task-row {
+    display: flex; align-items: center; gap: 10px;
+    min-height: 40px;
+    padding: 6px 12px;
+    border-radius: var(--radius-s);
+    cursor: pointer;
+    border: 1px solid transparent;
+  }
+  .task-row:hover { background: var(--bg-subtle); }
+  .task-row.active {
+    background: var(--accent-soft);
+    border-color: rgba(51,156,255,.35);
+  }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .task-info { min-width: 0; }
+  .task-name { font-size: 13px; font-weight: 500; }
+  .task-sub { color: var(--text-3); font-size: 12px; margin-top: 1px; }
+  .task-row .chev-r { margin-left: auto; color: var(--text-3); font-size: 15px; }
+
+  /* ---- 子 Issue / 交付 行 ---- */
+  .sub-row {
+    display: flex; align-items: center; gap: 10px;
+    min-height: 36px; padding: 4px 12px;
+    border-radius: var(--radius-s);
+    cursor: pointer; font-size: 13px;
+  }
+  .sub-row:hover { background: var(--bg-subtle); }
+  .sub-row .col-label { margin-left: auto; font-size: 12px; color: var(--text-3); }
+  .sub-row.done .task-name { color: var(--text-3); text-decoration: line-through; font-weight: 400; }
+
+  /* ---- 更多属性 ---- */
+  .props-toggle {
+    width: 100%;
+    display: flex; align-items: center; justify-content: space-between;
+    border: none; background: none; cursor: pointer;
+    padding: 9px 2px;
+    color: var(--text-2); font-size: 13px;
+  }
+  .props-toggle:hover { color: var(--text-1); }
+  .props-grid { display: none; }
+  .props-grid.open { display: block; }
+  .prop-row {
+    display: flex; align-items: center; gap: 10px;
+    min-height: 36px; padding: 4px 0;
+    font-size: 13px;
+  }
+  .prop-key { width: 76px; flex-shrink: 0; color: var(--text-3); font-size: 12.5px; }
+  .prop-val { display: flex; align-items: center; gap: 7px; color: var(--text-1); flex-wrap: wrap; }
+  .prop-val.muted { color: var(--text-3); }
+  .prop-link { color: var(--accent); cursor: pointer; font-size: 12.5px; }
+  .tag-chip {
+    font-size: 11.5px; padding: 2px 9px;
+    background: var(--bg-subtle); border-radius: 999px; color: var(--text-2);
+    display: inline-flex; align-items: center; gap: 4px;
+  }
+  .tag-chip .x { cursor: pointer; color: var(--text-3); }
+  .tag-chip .x:hover { color: var(--danger); }
+  .tag-add {
+    border: 1px dashed var(--border); background: none; cursor: pointer;
+    font-size: 11.5px; padding: 2px 9px; border-radius: 999px; color: var(--text-3);
+  }
+  .tag-add:hover { color: var(--text-2); border-color: rgba(0,0,0,.2); }
+  .avatar-stack { display: flex; }
+  .avatar-stack .mini-avatar {
+    width: 20px; height: 20px; font-size: 10px;
+    border: 1.5px solid #fff; margin-left: -6px;
+    border-radius: 50%; background: #e2e2e4; color: #5a5d62;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .avatar-stack .mini-avatar:first-child { margin-left: 0; }
+  .add-member {
+    width: 20px; height: 20px; border-radius: 50%;
+    border: 1px dashed var(--border); background: none; cursor: pointer;
+    color: var(--text-3); font-size: 11px; margin-left: 4px;
+  }
+  .add-member:hover { color: var(--text-1); border-color: rgba(0,0,0,.25); }
+
+  /* ---- 状态历史 popover ---- */
+  .popover-anchor { position: relative; }
+  .popover {
+    display: none;
+    position: absolute; top: calc(100% + 4px); left: 0;
+    width: 240px;
+    background: rgba(255,255,255,.96);
+    backdrop-filter: blur(8px);
+    border-radius: var(--radius-m);
+    box-shadow: var(--shadow-lg), 0 0 0 .5px rgba(0,0,0,.08);
+    padding: 4px;
+    z-index: 30;
+  }
+  .popover.show { display: block; }
+  .pop-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 10px; border-radius: var(--radius-s);
+    font-size: 12.5px; color: var(--text-2);
+  }
+  .pop-row .time { margin-left: auto; font-size: 11px; color: var(--text-3); }
+
+  /* ---- 动态 ---- */
+  .activity { display: flex; flex-direction: column; gap: 2px; }
+  .act-row { display: flex; gap: 10px; padding: 8px 0; }
+  .act-row .mini-avatar {
+    width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
+    background: #e2e2e4; color: #5a5d62; font-size: 10px;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .act-body { flex: 1; min-width: 0; }
+  .act-meta { font-size: 11.5px; color: var(--text-3); margin-bottom: 2px; }
+  .act-text {
+    font-size: 13px; line-height: 1.6; color: var(--text-2);
+    background: var(--bg-subtle); border-radius: 10px; padding: 8px 12px;
+  }
+  .act-sys { font-size: 12px; color: var(--text-3); padding: 4px 0 4px 32px; }
+
+  /* ---- 底部附件栏 ---- */
+  .panel-foot { padding: 10px 16px 14px; }
+  .attach-bar {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--bg-subtle);
+    border-radius: 10px;
+    padding: 9px 13px;
+    color: var(--text-3); font-size: 13px;
+    cursor: pointer;
+  }
+  .attach-bar:hover { color: var(--text-2); }
+  .attach-bar .upload { margin-left: auto; color: var(--text-2); }
+  .attach-bar .upload:hover { color: var(--text-1); }
+
+  /* ---- 关闭后的重新打开按钮 ---- */
+  .reopen {
+    position: fixed; right: 24px; bottom: 24px; z-index: 12;
+    display: none;
+    border: none; cursor: pointer;
+    background: var(--text-1); color: #fff;
+    padding: 9px 18px; border-radius: 999px; font-size: 13px;
+    box-shadow: var(--shadow-lg);
+  }
+  .reopen.show { display: block; }
+
+  /* ---- 演示切换：有阶段 / 无阶段 ---- */
+  .demo-switch {
+    position: fixed; left: 20px; bottom: 20px; z-index: 40;
+    display: flex; align-items: center; gap: 2px;
+    background: #fff; border-radius: 999px;
+    box-shadow: var(--shadow-lg), 0 0 0 .5px rgba(0,0,0,.08);
+    padding: 3px;
+    font-size: 12px; color: var(--text-3);
+  }
+  .demo-switch span { padding: 0 8px 0 10px; }
+  .demo-switch button {
+    border: none; background: none; cursor: pointer;
+    font-size: 12px; padding: 4px 12px; border-radius: 999px;
+    color: var(--text-2);
+  }
+  .demo-switch button.on { background: var(--text-1); color: #fff; }
+</style>
+</head>
+<body>
+
+<!-- 背景：示意看板，仅提供上下文 -->
+<div class="fake-board">
+  <div class="fake-col">
+    <div class="fake-col-title">● 待开始</div>
+    <div class="fake-card">开始任务</div>
+  </div>
+  <div class="fake-col">
+    <div class="fake-col-title">● 进行中</div>
+    <div class="fake-card">看看图片是啥</div>
+  </div>
+  <div class="fake-col">
+    <div class="fake-col-title">● 待确认</div>
+    <div class="fake-card">看看这个项目是干啥的</div>
+  </div>
+</div>
+
+<div class="backdrop" id="backdrop"></div>
+
+<!-- ============ Issue 详情浮层 ============ -->
+<section class="panel" id="panel">
+
+  <!-- 头部：面包屑 / 复制编号 / 保存（唯一强动作）/ 全屏 / 关闭 -->
+  <header class="panel-head">
+    <span class="crumb">📁 测试新的issues / <span class="id">ISSUES94CBA1-2</span></span>
+    <button class="icon-btn" title="复制任务编号">⧉</button>
+    <span class="head-spacer"></span>
+    <button class="btn-save" id="saveBtn">保存</button>
+    <button class="icon-btn" id="fsBtn" title="全屏显示">⤢</button>
+    <button class="icon-btn" id="closeBtn" title="关闭任务详情">✕</button>
+  </header>
+
+  <div class="panel-body">
+
+    <!-- 负责人 / 截止 -->
+    <div class="meta-pills">
+      <button class="pill"><span class="mini-avatar">A</span>负责人 admin <span class="chev">▾</span></button>
+      <button class="pill">◷ 截止 未设置 <span class="chev">▾</span></button>
+    </div>
+
+    <!-- 标题 -->
+    <div class="title" id="titleEl" contenteditable>看看图片是啥</div>
+
+    <!-- 附件 chips -->
+    <div class="attach-chips">
+      <span class="attach-chip">🖼 image.png
+        <button class="chip-act" title="下载">⬇</button>
+        <button class="chip-act" title="删除">✕</button>
+      </span>
+      <span class="attach-chip">📄 识别结果.md
+        <button class="chip-act" title="下载">⬇</button>
+        <button class="chip-act" title="删除">✕</button>
+      </span>
+    </div>
+
+    <!-- 描述（默认折叠） -->
+    <div class="desc-collapsed" id="descBox">
+      <div class="desc-preview">附件是一张「测试新的issues」项目空间的自动化设置页面截图，主要内容包括 Issue 编排区域、预置流程、机器人配置…</div>
+      <div class="desc-full">
+        <p>附件是一张「测试新的issues」项目空间的自动化设置页面截图，主要内容包括：</p>
+        <p>· 「Issue 编排」区域，当前选中「预置流程」<br>· 阶段图尚未配置，显示「添加第一个阶段」<br>· 下方是「机器人」配置区域，右侧有「添加机器人」按钮</p>
+        <p>任务目前处于「进行中」，负责人是 admin。</p>
+      </div>
+      <button class="desc-toggle" id="descToggle">展开描述 ▾</button>
+      <div class="desc-hint">支持 Markdown，可拖拽文件到编辑器添加附件</div>
+    </div>
+
+    <!-- ============ 阶段与任务：DAG + 选中阶段面板 ============ -->
+    <div class="section" id="stageSection">
+      <div class="section-head">
+        <span class="section-title">阶段与任务</span>
+        <span class="count-badge">7</span>
+      </div>
+
+      <!-- DAG：可拖拽平移、滚轮/按钮缩放；点击节点切换下方阶段面板 -->
+      <div class="dag-wrap" id="dagWrap" title="拖拽平移，滚轮缩放">
+        <div class="dag-dots"></div>
+        <div class="dag-canvas" id="dagCanvas">
+          <svg class="dag-edges" width="1240" height="300">
+            <defs>
+              <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+                <path d="M0,0 L8,4 L0,8 Z" fill="rgba(0,0,0,.3)"></path>
+              </marker>
+              <marker id="arrowDone" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+                <path d="M0,0 L8,4 L0,8 Z" fill="rgba(0,162,64,.55)"></path>
+              </marker>
+            </defs>
+            <path class="dag-edge done" d="M238,106 C290,106 300,106 342,106" marker-end="url(#arrowDone)"></path>
+            <path class="dag-edge" d="M580,106 C632,106 642,106 684,106" marker-end="url(#arrow)"></path>
+            <path class="dag-edge" d="M922,106 C974,106 984,106 1026,106" marker-end="url(#arrow)"></path>
+          </svg>
+
+          <div class="dag-node" data-stage="req" style="left:30px; top:50px">
+            <div class="node-name">需求确认</div>
+            <div class="node-meta">👤 人工阶段</div>
+            <div class="node-foot">
+              <span class="node-badge nb-done">✓ 已完成</span>
+              <span class="node-tasks">2 个任务</span>
+            </div>
+          </div>
+
+          <div class="dag-node current" data-stage="dev" style="left:372px; top:50px">
+            <div class="node-name">开发实现</div>
+            <div class="node-meta">🤖 机器人阶段</div>
+            <div class="node-foot">
+              <span class="node-badge nb-running"><span class="pulse"></span>运行中</span>
+              <span class="node-tasks">4 个任务</span>
+            </div>
+          </div>
+
+          <div class="dag-node" data-stage="review" style="left:714px; top:50px">
+            <div class="node-name">代码审查</div>
+            <div class="node-meta">👤 人工阶段</div>
+            <div class="node-foot">
+              <span class="node-badge nb-approval">待审批</span>
+              <span class="node-tasks">1 个任务</span>
+            </div>
+          </div>
+
+          <div class="dag-node" data-stage="deploy" style="left:1056px; top:50px">
+            <div class="node-name">部署发布</div>
+            <div class="node-meta">🤖 机器人阶段</div>
+            <div class="node-foot">
+              <span class="node-badge nb-blocked">阻塞</span>
+              <span class="node-tasks">0 个任务</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="dag-controls">
+          <button id="zoomIn" title="放大">＋</button>
+          <button id="zoomOut" title="缩小">－</button>
+          <button id="zoomFit" title="适应视图">⤢</button>
+        </div>
+      </div>
+
+      <!-- 选中阶段面板：阶段操作 + 该阶段的任务列表 -->
+      <div class="stage-panel" id="stagePanel">
+        <div class="stage-panel-head">
+          <span class="stage-name" id="spName"></span>
+          <span id="spStatus"></span>
+          <span class="robot-tag" id="spKind"></span>
+        </div>
+        <div class="stage-btns" id="spActions"></div>
+        <div class="reject-box" id="rejectBox">
+          <textarea placeholder="填写驳回原因…"></textarea>
+          <div class="reject-actions">
+            <button class="btn-ghost-sm" id="rejectCancel">取消</button>
+            <button class="btn-secondary btn-reject">确认驳回</button>
+          </div>
+        </div>
+        <div class="deliverables" id="spDeliverables"></div>
+        <div class="task-list" id="spTasks"></div>
+        <button class="add-stage-task" id="spCreate">＋ 在当前阶段创建任务</button>
+      </div>
+    </div>
+
+    <!-- ============ 无阶段模式：任务直接挂在 Issue 上 ============ -->
+    <div class="section" id="flatSection" style="display:none">
+      <div class="section-head">
+        <span class="section-title">任务</span>
+        <span class="count-badge">3</span>
+        <span class="spacer"></span>
+        <button class="btn-ghost-sm">＋ 新建任务</button>
+      </div>
+      <div class="task-list">
+        <div class="task-row">
+          <span class="status-dot" style="background:#9ba0a6"></span>
+          <div class="task-info">
+            <div class="task-name">测试</div>
+            <div class="task-sub">local-device · 点击展开会话</div>
+          </div>
+          <span class="chev-r">›</span>
+        </div>
+        <div class="task-row active">
+          <span class="status-dot" style="background:#339cff"></span>
+          <div class="task-info">
+            <div class="task-name">测试</div>
+            <div class="task-sub">local-device · 当前会话</div>
+          </div>
+          <span class="chev-r">›</span>
+        </div>
+        <div class="task-row">
+          <span class="status-dot" style="background:#00a240"></span>
+          <div class="task-info">
+            <div class="task-name">测试</div>
+            <div class="task-sub">local-device · 已完成 · 查看对话</div>
+          </div>
+          <span class="chev-r">›</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ 子 Issue ============ -->
+    <div class="section">
+      <div class="section-head">
+        <span class="section-title">子 Issue</span>
+        <span class="count-badge">1/2</span>
+        <span class="spacer"></span>
+        <button class="btn-ghost-sm">＋ 添加</button>
+      </div>
+      <div class="sub-row done">
+        <span class="status-dot" style="background:#00a240"></span>
+        <span class="task-name">确认截图识别口径</span>
+        <span class="col-label">已完成</span>
+      </div>
+      <div class="sub-row">
+        <span class="status-dot" style="background:#339cff"></span>
+        <span class="task-name">补充自动化配置截图</span>
+        <span class="col-label">待开始</span>
+      </div>
+    </div>
+
+    <!-- ============ 更多属性 ============ -->
+    <div class="section">
+      <button class="props-toggle" id="propsToggle">
+        <span>更多属性</span><span id="propsChev">▾</span>
+      </button>
+      <div class="props-grid open" id="propsGrid">
+        <div class="prop-row">
+          <span class="prop-key">状态</span>
+          <span class="prop-val popover-anchor">
+            <span class="status-dot" style="background:#f2a33c"></span>进行中
+            <span class="prop-link" id="historyTrigger">查看状态历史</span>
+            <div class="popover" id="historyPop">
+              <div class="pop-row"><span class="status-dot" style="background:#f2a33c"></span>进行中<span class="time">08-18 14:20</span></div>
+              <div class="pop-row"><span class="status-dot" style="background:#339cff"></span>待开始<span class="time">08-18 11:03</span></div>
+              <div class="pop-row"><span class="status-dot" style="background:#9ba0a6"></span>收集箱<span class="time">08-18 09:41</span></div>
+            </div>
+          </span>
+        </div>
+        <div class="prop-row">
+          <span class="prop-key">优先级</span>
+          <span class="prop-val"><span class="tag-chip">普通 ▾</span></span>
+        </div>
+        <div class="prop-row">
+          <span class="prop-key">标签</span>
+          <span class="prop-val">
+            <span class="tag-chip">自动化 <span class="x">✕</span></span>
+            <span class="tag-chip">截图识别 <span class="x">✕</span></span>
+            <button class="tag-add">＋ 添加标签</button>
+          </span>
+        </div>
+        <div class="prop-row">
+          <span class="prop-key">迭代</span>
+          <span class="prop-val muted">未设置</span>
+        </div>
+        <div class="prop-row">
+          <span class="prop-key">参与者</span>
+          <span class="prop-val">
+            <span class="avatar-stack">
+              <span class="mini-avatar">A</span><span class="mini-avatar">B</span>
+            </span>
+            <button class="add-member" title="添加参与者">＋</button>
+          </span>
+        </div>
+        <div class="prop-row">
+          <span class="prop-key">关联需求</span>
+          <span class="prop-val muted">未设置</span>
+        </div>
+        <div class="prop-row">
+          <span class="prop-key">指派</span>
+          <span class="prop-val"><span class="prop-link">查看指派详情</span></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ 交付 ============ -->
+    <div class="section">
+      <div class="section-head">
+        <span class="section-title">交付</span>
+        <span class="count-badge">1</span>
+      </div>
+      <div class="sub-row">
+        <span>📦</span>
+        <span class="task-name">交付结果 · 2 个附件</span>
+        <span class="col-label">08-18 16:42</span>
+      </div>
+    </div>
+
+    <!-- ============ 动态 ============ -->
+    <div class="section">
+      <div class="section-head">
+        <span class="section-title">动态</span>
+      </div>
+      <div class="activity">
+        <div class="act-row">
+          <span class="mini-avatar">A</span>
+          <div class="act-body">
+            <div class="act-meta">admin · 2 小时前</div>
+            <div class="act-text">图片识别已跑完，结果同步到描述里了。</div>
+          </div>
+        </div>
+        <div class="act-sys">admin 将状态从「待开始」改为「进行中」 · 2 小时前</div>
+        <div class="act-row">
+          <span class="mini-avatar" style="background:#1a1a1a;color:#fff">AI</span>
+          <div class="act-body">
+            <div class="act-meta">AI 助手 · 1 小时前</div>
+            <div class="act-text">检测到附件包含 UI 截图，建议补充预期行为描述。</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 底部附件栏 -->
+  <footer class="panel-foot">
+    <div class="attach-bar">📎 附件 · 2 <span class="upload">＋ 上传</span></div>
+  </footer>
+</section>
+
+<button class="reopen" id="reopenBtn">打开 Issue 详情</button>
+
+<!-- 演示切换：有阶段 / 无阶段 -->
+<div class="demo-switch">
+  <span>演示</span>
+  <button class="on" data-mode="stage">有阶段</button>
+  <button data-mode="flat">无阶段</button>
+</div>
+
+<script>
+  // 面板：关闭 / 重开 / 全屏
+  const panel = document.getElementById('panel');
+  const backdrop = document.getElementById('backdrop');
+  const reopenBtn = document.getElementById('reopenBtn');
+  document.getElementById('closeBtn').onclick = () => {
+    panel.classList.add('hidden');
+    backdrop.style.display = 'none';
+    reopenBtn.classList.add('show');
+  };
+  reopenBtn.onclick = () => {
+    panel.classList.remove('hidden');
+    backdrop.style.display = '';
+    reopenBtn.classList.remove('show');
+  };
+  document.getElementById('fsBtn').onclick = () => panel.classList.toggle('fullscreen');
+
+  // 标题编辑后显示保存按钮（dirty 态演示）
+  const saveBtn = document.getElementById('saveBtn');
+  saveBtn.style.display = 'none';
+  document.getElementById('titleEl').addEventListener('input', () => { saveBtn.style.display = ''; });
+  saveBtn.onclick = () => { saveBtn.style.display = 'none'; };
+
+  // 描述展开/收起
+  const descBox = document.getElementById('descBox');
+  const descToggle = document.getElementById('descToggle');
+  descToggle.onclick = () => {
+    descBox.classList.toggle('open');
+    descToggle.textContent = descBox.classList.contains('open') ? '收起 ▴' : '展开描述 ▾';
+  };
+
+  // 驳回原因框（「驳回」按钮在阶段面板中动态渲染，这里只处理取消）
+  const rejectBox = document.getElementById('rejectBox');
+  document.getElementById('rejectCancel').onclick = () => rejectBox.classList.remove('show');
+
+  // 更多属性折叠
+  const propsGrid = document.getElementById('propsGrid');
+  const propsChev = document.getElementById('propsChev');
+  document.getElementById('propsToggle').onclick = () => {
+    propsGrid.classList.toggle('open');
+    propsChev.textContent = propsGrid.classList.contains('open') ? '▾' : '▸';
+  };
+
+  // 状态历史 popover
+  const historyPop = document.getElementById('historyPop');
+  document.getElementById('historyTrigger').onclick = e => {
+    e.stopPropagation();
+    historyPop.classList.toggle('show');
+  };
+  document.addEventListener('click', () => historyPop.classList.remove('show'));
+
+  // 交付物 checklist 划线态（动态渲染，用事件委托）
+  document.getElementById('spDeliverables').addEventListener('change', e => {
+    const item = e.target.closest('.deliv-item');
+    if (item) item.classList.toggle('done', e.target.checked);
+  });
+
+  // 任务行选中态（阶段面板 + 无阶段列表，行是动态渲染的，用事件委托）
+  document.querySelectorAll('.task-list').forEach(list => {
+    list.addEventListener('click', e => {
+      const row = e.target.closest('.task-row');
+      if (!row) return;
+      list.querySelectorAll('.task-row').forEach(r => r.classList.remove('active'));
+      row.classList.add('active');
+    });
+  });
+
+  /* ============ DAG：拖拽平移 + 缩放（对应现有 IssueWorkflowDag 交互） ============ */
+  const wrap = document.getElementById('dagWrap');
+  const canvas = document.getElementById('dagCanvas');
+  const MIN_Z = 0.35, MAX_Z = 1.5;
+  let tx = 0, ty = 0, z = 1;
+
+  function apply() { canvas.style.transform = `translate(${tx}px, ${ty}px) scale(${z})`; }
+
+  function fitView() {
+    // 与现有实现一致：fitView 聚焦「当前阶段」节点（开发实现，x 372..580, y 50..162）
+    const nodeCX = 372 + 104, nodeCY = 50 + 56;
+    z = Math.max(MIN_Z, Math.min(MAX_Z, 0.9));
+    tx = wrap.clientWidth / 2 - nodeCX * z;
+    ty = wrap.clientHeight / 2 - nodeCY * z;
+    apply();
+  }
+
+  function zoomBy(factor, cx, cy) {
+    const nz = Math.max(MIN_Z, Math.min(MAX_Z, z * factor));
+    if (nz === z) return;
+    // 以指针位置为中心缩放
+    tx = cx - (cx - tx) * (nz / z);
+    ty = cy - (cy - ty) * (nz / z);
+    z = nz;
+    apply();
+  }
+
+  // 拖拽平移（位移小于 5px 视为点击节点，切换选中阶段）
+  let dragging = false, sx = 0, sy = 0, moved = 0, downNode = null;
+  wrap.addEventListener('pointerdown', e => {
+    if (e.target.closest('.dag-controls')) return;
+    dragging = true; moved = 0; downNode = e.target.closest('.dag-node');
+    sx = e.clientX - tx; sy = e.clientY - ty;
+    wrap.classList.add('dragging');
+    wrap.setPointerCapture(e.pointerId);
+  });
+  wrap.addEventListener('pointermove', e => {
+    if (!dragging) return;
+    moved += Math.abs(e.movementX) + Math.abs(e.movementY);
+    tx = e.clientX - sx; ty = e.clientY - sy;
+    apply();
+  });
+  wrap.addEventListener('pointerup', () => {
+    dragging = false; wrap.classList.remove('dragging');
+    if (moved < 5 && downNode) selectStage(downNode.dataset.stage);
+    downNode = null;
+  });
+
+  // 滚轮缩放
+  wrap.addEventListener('wheel', e => {
+    e.preventDefault();
+    const rect = wrap.getBoundingClientRect();
+    zoomBy(e.deltaY < 0 ? 1.1 : 0.9, e.clientX - rect.left, e.clientY - rect.top);
+  }, { passive: false });
+
+  // 控件
+  document.getElementById('zoomIn').onclick = () => zoomBy(1.2, wrap.clientWidth / 2, wrap.clientHeight / 2);
+  document.getElementById('zoomOut').onclick = () => zoomBy(1 / 1.2, wrap.clientWidth / 2, wrap.clientHeight / 2);
+  document.getElementById('zoomFit').onclick = fitView;
+
+  /* ============ 阶段选择：DAG 节点 ↔ 阶段面板联动 ============ */
+  const STAGES = {
+    req: {
+      name: '需求确认', kind: '👤 人工阶段',
+      status: '<span class="stage-status st-done">✓ 已完成</span>',
+      actions: [],
+      deliverables: [{ label: '需求文档', done: true }],
+      tasks: [
+        { dot: '#00a240', name: '梳理截图识别需求', sub: 'local-device · 已完成 · 查看对话' },
+        { dot: '#00a240', name: '确认验收口径', sub: 'local-device · 已完成 · 查看对话' },
+      ],
+      activeIdx: -1,
+      canCreate: false,
+    },
+    dev: {
+      name: '开发实现', kind: '🤖 机器人阶段',
+      status: '<span class="stage-status st-running"><span class="pulse"></span>运行中</span>',
+      actions: ['补充交付物', '重试', '强制推进'],
+      deliverables: [{ label: '设计文档', done: true }, { label: '测试报告', done: false }],
+      tasks: [
+        { dot: '#9ba0a6', name: '测试', sub: 'local-device · 点击展开会话' },
+        { dot: '#339cff', name: '测试', sub: 'local-device · 当前会话' },
+        { dot: '#00a240', name: '测试', sub: 'local-device · 已完成 · 查看对话' },
+      ],
+      activeIdx: 1,
+      canCreate: true,
+    },
+    review: {
+      name: '代码审查', kind: '👤 人工阶段',
+      status: '<span class="stage-status st-approval">待审批</span>',
+      actions: ['approve', 'reject'],
+      deliverables: [],
+      tasks: [
+        { dot: '#339cff', name: '人工审查', sub: 'local-device · 当前会话' },
+      ],
+      activeIdx: 0,
+      canCreate: true,
+    },
+    deploy: {
+      name: '部署发布', kind: '🤖 机器人阶段',
+      status: '<span class="stage-status st-blocked">阻塞</span>',
+      actions: [],
+      deliverables: [],
+      tasks: [],
+      activeIdx: -1,
+      canCreate: false,
+      emptyHint: '该阶段还没有任务，前置阶段完成后才可创建',
+    },
+  };
+
+  const spName = document.getElementById('spName');
+  const spStatus = document.getElementById('spStatus');
+  const spKind = document.getElementById('spKind');
+  const spActions = document.getElementById('spActions');
+  const spDeliverables = document.getElementById('spDeliverables');
+  const spTasks = document.getElementById('spTasks');
+  const spCreate = document.getElementById('spCreate');
+
+  function taskRowHTML(t, active) {
+    return `<div class="task-row${active ? ' active' : ''}">
+      <span class="status-dot" style="background:${t.dot}"></span>
+      <div class="task-info">
+        <div class="task-name">${t.name}</div>
+        <div class="task-sub">${t.sub}</div>
+      </div>
+      <span class="chev-r">›</span>
+    </div>`;
+  }
+
+  function renderStage(key) {
+    const s = STAGES[key];
+    spName.textContent = s.name;
+    spStatus.innerHTML = s.status;
+    spKind.textContent = s.kind;
+    rejectBox.classList.remove('show');
+
+    spActions.innerHTML = '';
+    s.actions.forEach(a => {
+      const b = document.createElement('button');
+      if (a === 'approve') {
+        b.className = 'btn-secondary btn-approve'; b.textContent = '✓ 通过';
+      } else if (a === 'reject') {
+        b.className = 'btn-secondary btn-reject'; b.textContent = '驳回';
+        b.onclick = () => rejectBox.classList.toggle('show');
+      } else {
+        b.className = 'btn-secondary'; b.textContent = a;
+      }
+      spActions.appendChild(b);
+    });
+    spActions.style.display = s.actions.length ? '' : 'none';
+
+    spDeliverables.innerHTML = s.deliverables.length
+      ? '<div class="deliverables-title">所需交付物</div>' + s.deliverables.map(d =>
+          `<label class="deliv-item${d.done ? ' done' : ''}"><input type="checkbox"${d.done ? ' checked' : ''}>${d.label}</label>`).join('')
+      : '';
+    spDeliverables.style.display = s.deliverables.length ? '' : 'none';
+
+    spTasks.innerHTML = s.tasks.length
+      ? s.tasks.map((t, i) => taskRowHTML(t, i === s.activeIdx)).join('')
+      : `<div class="stage-empty">${s.emptyHint || '该阶段还没有任务'}</div>`;
+
+    spCreate.style.display = s.canCreate ? '' : 'none';
+  }
+
+  function selectStage(key) {
+    document.querySelectorAll('.dag-node').forEach(n =>
+      n.classList.toggle('current', n.dataset.stage === key));
+    renderStage(key);
+  }
+
+  renderStage('dev');
+
+  // 演示切换：有阶段 / 无阶段
+  document.querySelectorAll('.demo-switch button').forEach(btn => {
+    btn.onclick = () => {
+      document.querySelectorAll('.demo-switch button').forEach(b => b.classList.remove('on'));
+      btn.classList.add('on');
+      const flat = btn.dataset.mode === 'flat';
+      document.getElementById('stageSection').style.display = flat ? 'none' : '';
+      document.getElementById('flatSection').style.display = flat ? '' : 'none';
+    };
+  });
+  if (location.hash === '#flat') {
+    document.querySelector('.demo-switch [data-mode="flat"]').click();
+  }
+
+  fitView();
+</script>
+</body>
+</html>

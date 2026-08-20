@@ -128,7 +128,7 @@ run_changed_python_syntax_check() {
                 syntax_error=1
             fi
         fi
-    done <<< "$syntax_files"
+    done < <(printf '%s\n' "$syntax_files")
 
     if [ $syntax_error -eq 0 ]; then
         echo -e "   ${GREEN}✅ Syntax Check: PASSED${NC}"
