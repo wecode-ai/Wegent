@@ -93,19 +93,6 @@ const SECOND_FAMILY_MODEL: UnifiedModel = {
   },
 }
 
-const SAME_NAME_PROVIDER_MODEL: UnifiedModel = {
-  ...SAMPLE_MODEL,
-  config: {
-    weworkModelKind: 'codex-provider',
-    codexProviderId: 'wework-e2e',
-    ui: {
-      family: 'codex-provider:wework-e2e',
-      familyLabel: 'Wework Desktop E2E',
-      controls: ['speed'],
-    },
-  },
-}
-
 describe('ModelSelector desktop layout', () => {
   const originalInnerWidth = window.innerWidth
   const originalInnerHeight = window.innerHeight
@@ -227,43 +214,6 @@ describe('ModelSelector desktop layout', () => {
     expect(submenu).toHaveTextContent('Claude')
     expect(screen.getByTestId(`model-option-${SECOND_FAMILY_MODEL.name}`)).toBeInTheDocument()
     expect(screen.getByTestId(`model-option-${SAMPLE_MODEL.name}`)).toBeInTheDocument()
-  })
-
-  test('exposes model family identity when providers share a model name', async () => {
-    createShellElement({ hidden: true })
-    const onSelectModel = vi.fn()
-
-    render(
-      <ModelSelector
-        models={[SAMPLE_MODEL, SAME_NAME_PROVIDER_MODEL]}
-        selectedModel={SAME_NAME_PROVIDER_MODEL}
-        selectedModelOptions={{}}
-        disabled={false}
-        onSelectModel={onSelectModel}
-        onSelectModelOption={vi.fn()}
-      />
-    )
-
-    expect(screen.getByTestId('model-selector-button')).toHaveAttribute(
-      'data-model-family',
-      'codex-provider:wework-e2e'
-    )
-
-    fireEvent.click(screen.getByTestId('model-selector-button'))
-    fireEvent.mouseEnter(await screen.findByTestId('model-control-menu-model'))
-
-    const providerGroup = screen
-      .getByTestId('model-selector-submenu')
-      .querySelector('[data-model-family="codex-provider:wework-e2e"]')
-    expect(providerGroup).not.toBeNull()
-    const providerOption = providerGroup?.querySelector<HTMLButtonElement>(
-      '[data-testid="model-option-gpt-5.5"]'
-    )
-    expect(providerOption).not.toBeNull()
-
-    fireEvent.click(providerOption!)
-
-    expect(onSelectModel).toHaveBeenCalledWith(SAME_NAME_PROVIDER_MODEL)
   })
 
   test('caps the trigger width when maxClosedWidth is provided', () => {

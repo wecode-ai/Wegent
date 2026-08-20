@@ -26,7 +26,6 @@ interface ModelSelectorTriggerProps {
   shortcut?: string | null
   ariaLabel: string
   tooltipLabel: string
-  modelFamily?: string
   buttonClassName?: string
   maxClosedWidth?: number
   onToggle: () => void
@@ -56,7 +55,6 @@ export function ModelSelectorTrigger({
   shortcut,
   ariaLabel,
   tooltipLabel,
-  modelFamily,
   buttonClassName,
   maxClosedWidth = CLOSED_MAX_WIDTH,
   onToggle,
@@ -114,7 +112,6 @@ export function ModelSelectorTrigger({
         ref={buttonRef}
         type="button"
         data-testid="model-selector-button"
-        data-model-family={modelFamily}
         onClick={onToggle}
         onPointerEnter={() => {
           if (!open && tooltipSuppressed) setTooltipSuppressed(false)

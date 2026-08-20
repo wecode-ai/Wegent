@@ -280,7 +280,6 @@ const GIT_SEED_NAME = 'README.md'
 const GIT_SEED_CONTENT = '# Desktop E2E workspace\n'
 const MODEL_API_KEY = 'wework-e2e-test-key'
 const MODEL_PROVIDER_ID = 'wework-e2e'
-const MODEL_PROVIDER_FAMILY = `codex-provider:${MODEL_PROVIDER_ID}`
 const CUSTOM_TOOL_INPUT_DESCRIPTION =
   'Raw string input for the original custom tool. Put only the tool input in this field, preserve every character exactly, and follow the original definition embedded in the function description. Do not add Markdown fences or explanatory text.'
 const DEFAULT_MODEL_ID = 'gpt-5.6-luna'
@@ -1352,18 +1351,7 @@ async function selectE2EModel(
   const selectedModelLabel = await control.command('getText', modelSelectorButton, {
     visible: true,
   })
-  const selectsDefaultProvider = modelOptionIdCandidates(modelIds).includes(
-    `model-option-${DEFAULT_MODEL_ID}`
-  )
-  if (
-    labels.some(label => selectedModelLabel.includes(label)) &&
-    (!selectsDefaultProvider ||
-      (await control.command('getAttribute', modelSelectorButton, {
-        value: 'data-model-family',
-      })) === MODEL_PROVIDER_FAMILY)
-  ) {
-    return
-  }
+  if (labels.some(label => selectedModelLabel.includes(label))) return
 
   await ensureModelOptionVisible(control, modelIds, modelSelectorButton)
   const targetOptionIds = modelOptionIdCandidates(modelIds)
@@ -1381,9 +1369,7 @@ async function selectE2EModel(
     targetOptionId = await visibleModelOptionId(control, targetOptionIds)
   }
   assert.ok(targetOptionId, `No visible model option matched ${modelOptionIdCandidates(modelIds)}`)
-  const targetSelector = selectsDefaultProvider
-    ? `[data-testid="model-selector-submenu"] [data-model-family="${MODEL_PROVIDER_FAMILY}"] [data-testid="${targetOptionId}"]`
-    : `[data-testid="model-selector-submenu"] [data-testid="${targetOptionId}"]`
+  const targetSelector = `[data-testid="model-selector-submenu"] [data-testid="${targetOptionId}"]`
   await control.command('waitFor', targetSelector, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
@@ -1399,15 +1385,6 @@ async function selectE2EModel(
     )
   }
   await waitForE2EModelLabel(control, labels, modelSelectorButton)
-  if (selectsDefaultProvider) {
-    assert.equal(
-      await control.command('getAttribute', modelSelectorButton, {
-        value: 'data-model-family',
-      }),
-      MODEL_PROVIDER_FAMILY,
-      'The E2E model selector did not retain the configured provider'
-    )
-  }
   await control.command('press', 'body', { key: 'Escape' })
   await waitForSnapshot(
     control,

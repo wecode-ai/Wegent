@@ -1043,7 +1043,7 @@ export function ModelSelector({
                   {familyGroups.length <= 1
                     ? renderDesktopModelOptions(desktopModels)
                     : familyGroups.map(group => (
-                        <div key={group.config.id} data-model-family={group.config.id}>
+                        <div key={group.config.id}>
                           <div className="px-2 pb-0.5 pt-2 text-xs font-medium leading-4 text-text-muted first:pt-0.5">
                             {group.config.label}
                           </div>
@@ -1078,7 +1078,6 @@ export function ModelSelector({
             : t('workbench.model_selector')
         }
         tooltipLabel={t('workbench.model_picker_title', '选择模型')}
-        modelFamily={selectedFamily}
         buttonClassName={buttonClassName}
         maxClosedWidth={maxClosedWidth}
         onToggle={() => {
