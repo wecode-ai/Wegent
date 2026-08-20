@@ -3182,6 +3182,14 @@ fn required_project_space_startup_failure_terminates_the_turn() {
     assert!(required_mcp_startup_failure(&json!({
         "method": "mcpServer/startupStatus/updated",
         "params": {
+            "name": "wework_space",
+            "status": "cancelled"
+        }
+    }))
+    .is_none());
+    assert!(required_mcp_startup_failure(&json!({
+        "method": "mcpServer/startupStatus/updated",
+        "params": {
             "name": "another_server",
             "status": "failed"
         }
