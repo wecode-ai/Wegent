@@ -113,4 +113,6 @@ The **Play sound** switch controls whether macOS plays the system screenshot sou
 
 To fully quit Wework, choose quit from the system tray menu. Quitting the app stops local executor processes.
 
+On macOS, you can also choose **Quit Wework** from the application menu after the main window has been closed to the system tray. This fully exits the app instead of being intercepted by the close-to-tray window lifecycle.
+
 If **Continue running in background after closing the main window** is disabled, clicking the window close button quits the app instead of moving it to the tray.

@@ -1,18 +1,22 @@
 import { afterEach, describe, expect, test } from 'vitest'
 import {
+  abortRuntimeConversationHydration,
   appendOptimisticRuntimeConversationGuidance,
   applyRuntimeConversationGoalContinuation,
   applyRuntimeConversationSubagentActivity,
   applyRuntimeConversationAction,
+  beginRuntimeConversationHydration,
   cacheConversationScrollSnapshot,
   cacheConversationVirtualMeasurements,
   cacheRuntimeConversationQueuedMessages,
   cacheRuntimeConversationQueuePaused,
   clearRuntimeConversationCacheForTests,
+  completeRuntimeConversationHydration,
   evictRuntimeConversation,
   getConversationScrollSnapshot,
   getConversationVirtualMeasurements,
   getRuntimeConversationCacheStats,
+  getRuntimeConversationLiveActivitySnapshot,
   getRuntimeConversationMetadata,
   getRuntimeConversationMessages,
   getRuntimeConversationQueuedMessages,
@@ -55,6 +59,41 @@ describe('runtimeConversationCache', () => {
     })
 
     expect(getRuntimeConversationMessages(address)).toHaveLength(1)
+  })
+
+  test('does not project an empty live-activity row before thinking or tools arrive', () => {
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_started',
+      taskId: address.taskId,
+      subtaskId: 'turn-1',
+    })
+
+    expect(getRuntimeConversationLiveActivitySnapshot(address)).toBe('')
+  })
+
+  test('keeps a replacement hydration active when the older request resolves later', () => {
+    const olderToken = beginRuntimeConversationHydration(address)
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_started',
+      taskId: address.taskId,
+      subtaskId: 'turn-1',
+    })
+    abortRuntimeConversationHydration(address, olderToken)
+
+    const replacementToken = beginRuntimeConversationHydration(address)
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_chunk',
+      subtaskId: 'turn-1',
+      content: '',
+      reasoningChunk: 'replacement request activity',
+    })
+
+    abortRuntimeConversationHydration(address, olderToken)
+    completeRuntimeConversationHydration(address, replacementToken, [])
+
+    expect(getRuntimeConversationLiveActivitySnapshot(address)).toContain(
+      'replacement request activity'
+    )
   })
 
   test('notifies conversation subscribers when the follow-up queue pause changes', () => {

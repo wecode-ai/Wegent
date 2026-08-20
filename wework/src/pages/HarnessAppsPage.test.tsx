@@ -1,7 +1,11 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { HarnessAppInstallation } from '@/api/local/harnessApps'
 import type { HarnessAppPreview } from '@/api/local/harnessApps'
+import {
+  clearHarnessAppLaunch,
+  useHarnessAppLaunchState,
+} from '@/features/harness-apps/harnessAppLaunchState'
 import type { UnifiedModel } from '@/types/api'
 import { HarnessAppsPage } from './HarnessAppsPage'
 
@@ -17,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   },
   closeTab: vi.fn(),
   dialogOpen: vi.fn(),
+  listenProgress: vi.fn(),
   navigateTo: vi.fn(),
   openTab: vi.fn(),
   register: vi.fn(),
@@ -26,10 +31,12 @@ const mocks = vi.hoisted(() => ({
   t: vi.fn((_key: string, fallback?: string) => fallback ?? _key),
   unregister: vi.fn(),
   unregisterProxy: vi.fn(),
+  unregisterContext: vi.fn(),
 }))
 
 vi.mock('@/api/local/harnessApps', () => ({
   harnessAppsApi: mocks.api,
+  listenHarnessAppLaunchProgress: mocks.listenProgress,
 }))
 
 vi.mock('@tauri-apps/plugin-dialog', () => ({
@@ -48,11 +55,13 @@ vi.mock('@/features/harness-apps/harnessAppTabs', async importOriginal => {
     storeHarnessAppProxyToken: async (installationId: string, token: string) => {
       mocks.proxyTokens.set(installationId, token)
     },
+    storeHarnessAppContextToken: async () => undefined,
     takeHarnessAppProxyToken: async (installationId: string) => {
       const token = mocks.proxyTokens.get(installationId) ?? null
       mocks.proxyTokens.delete(installationId)
       return token
     },
+    takeHarnessAppContextToken: async () => null,
     unregisterHarnessAppTab: mocks.unregister,
   }
 })
@@ -80,6 +89,7 @@ vi.mock('@/features/workbench/useWorkbench', () => ({
       localHarnessModelApi: {
         resolveLaunch: mocks.resolveLaunch,
         unregisterProxy: mocks.unregisterProxy,
+        unregisterContext: mocks.unregisterContext,
       },
     },
   }),
@@ -117,7 +127,7 @@ const installed: HarnessAppInstallation = {
   manifest: {
     name: 'dsh-ops-text-classifier',
     displayName: 'DSH operations',
-    version: '0.1.0-rc.7',
+    version: '0.1.0-rc.8',
     type: 'deepseek-harness-plugin-bundle',
     description: 'Classify operations text',
     entry: {
@@ -125,7 +135,7 @@ const installed: HarnessAppInstallation = {
       profile: 'ops',
       webUrl: 'http://127.0.0.1:3080/',
     },
-    requirements: { dsh: '0.1.0-rc.7', node: '>=22' },
+    requirements: { dsh: '0.1.0-rc.8', node: '>=22' },
   },
   packagePath: '/tmp/package',
   sha256: 'hash',
@@ -139,7 +149,7 @@ const installed: HarnessAppInstallation = {
 
 const running: HarnessAppInstallation = {
   ...installed,
-  runtimeVersion: '0.1.0-rc.7',
+  runtimeVersion: '0.1.0-rc.8',
   state: 'running',
   webUrl: 'http://127.0.0.1:39000/',
 }
@@ -157,6 +167,7 @@ describe('HarnessAppsPage', () => {
     Object.values(mocks.api).forEach(mock => mock.mockReset())
     mocks.closeTab.mockReset()
     mocks.dialogOpen.mockReset()
+    mocks.listenProgress.mockReset()
     mocks.navigateTo.mockReset()
     mocks.openTab.mockReset()
     mocks.register.mockReset()
@@ -165,9 +176,11 @@ describe('HarnessAppsPage', () => {
     mocks.unregister.mockReset()
     mocks.unregisterProxy.mockReset()
     mocks.proxyTokens.clear()
+    clearHarnessAppLaunch(running.id)
     workspaceTabs.tabs = []
     mocks.api.stop.mockResolvedValue(undefined)
     mocks.dialogOpen.mockResolvedValue('/tmp/dsh-ops-text-classifier.zip')
+    mocks.listenProgress.mockResolvedValue(vi.fn())
     mocks.resolveLaunch.mockResolvedValue({
       modelId: 'wework-selected',
       env: {},
@@ -183,6 +196,26 @@ describe('HarnessAppsPage', () => {
 
     await screen.findByTestId(`harness-app-stop-${running.id}`)
     expect(mocks.register).toHaveBeenCalledWith(running)
+  })
+
+  test('opens a running Smart app without restarting it', async () => {
+    mocks.api.list.mockResolvedValue([running])
+
+    render(<HarnessAppsPage />)
+    fireEvent.click(await screen.findByTestId(`harness-app-open-${running.id}`))
+    const { result } = renderHook(() => useHarnessAppLaunchState(running.id))
+
+    expect(mocks.register).toHaveBeenLastCalledWith(running)
+    expect(mocks.openTab).toHaveBeenCalledWith('auxiliary', {
+      title: running.manifest.displayName,
+      contentRoute: `/app/harness-${running.id}`,
+    })
+    expect(mocks.api.start).not.toHaveBeenCalled()
+    expect(result.current).toMatchObject({
+      title: running.manifest.displayName,
+      phase: 'loadingApp',
+    })
+    expect(screen.getByTestId(`harness-app-stop-${running.id}`)).toBeInTheDocument()
   })
 
   test('opens package selection when the marketplace requests a local import', async () => {
@@ -206,6 +239,10 @@ describe('HarnessAppsPage', () => {
     render(<HarnessAppsPage />)
     fireEvent.click(await screen.findByTestId(`harness-app-start-${installed.id}`))
 
+    expect(mocks.openTab).toHaveBeenCalledWith('auxiliary', {
+      title: installed.manifest.displayName,
+      contentRoute: `/app/harness-${installed.id}`,
+    })
     await waitFor(() => {
       expect(mocks.api.start).toHaveBeenCalledWith(
         installed.id,
@@ -214,10 +251,7 @@ describe('HarnessAppsPage', () => {
     })
     expect(mocks.proxyTokens.get(installed.id)).toBe('proxy-token')
     expect(mocks.register).toHaveBeenCalledWith(running)
-    expect(mocks.openTab).toHaveBeenCalledWith('auxiliary', {
-      title: running.manifest.displayName,
-      contentRoute: `/app/harness-${running.id}`,
-    })
+    expect(mocks.openTab).toHaveBeenCalledTimes(1)
   })
 
   test('changes the model of an installed Smart app', async () => {
@@ -270,7 +304,8 @@ describe('HarnessAppsPage', () => {
     expect(mocks.unregister).toHaveBeenCalledWith(installed.id)
     expect(mocks.unregisterProxy).toHaveBeenCalledWith('proxy-token')
     expect(mocks.proxyTokens.has(installed.id)).toBe(false)
-    expect(mocks.openTab).not.toHaveBeenCalled()
+    expect(mocks.openTab).toHaveBeenCalledTimes(1)
+    expect(mocks.closeTab).not.toHaveBeenCalled()
   })
 
   test('preserves the model proxy when a started app cannot be rolled back', async () => {
@@ -289,10 +324,7 @@ describe('HarnessAppsPage', () => {
     expect(mocks.unregisterProxy).not.toHaveBeenCalled()
     expect(mocks.proxyTokens.get(installed.id)).toBe('proxy-token')
     expect(mocks.register).toHaveBeenCalledWith(running)
-    expect(mocks.openTab).toHaveBeenCalledWith('auxiliary', {
-      title: running.manifest.displayName,
-      contentRoute: `/app/harness-${running.id}`,
-    })
+    expect(mocks.openTab).toHaveBeenCalledTimes(1)
   })
 
   test('clears an old preview when replacement package inspection fails', async () => {

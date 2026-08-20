@@ -47,10 +47,19 @@ export interface EmbeddedBrowserBounds {
 }
 
 export interface EmbeddedBrowserPageState {
+  label?: string
   nativeLabel: string
   title: string | null
   url: string | null
+  isLoading: boolean
+  navigationError?: EmbeddedBrowserNavigationError | null
   invalidTlsCertificate?: EmbeddedBrowserInvalidTlsCertificateEvent | null
+}
+
+export interface EmbeddedBrowserNavigationError {
+  code: number
+  message: string
+  url: string | null
 }
 
 export interface EmbeddedBrowserOpenRequest {
@@ -82,7 +91,7 @@ export interface EmbeddedBrowserCloseRequest {
   nativeLabel: string
 }
 
-export type EmbeddedBrowserDataKind = 'cookies' | 'cache' | 'storage'
+export type EmbeddedBrowserDataKind = 'cookies' | 'cache' | 'storage' | 'history'
 
 export interface EmbeddedBrowserDownloadEvent {
   id: string

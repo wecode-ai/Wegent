@@ -7,6 +7,7 @@ import {
   defaultBrowserDeviceToolbarState,
   deviceZoomOptions,
   matchDevicePresetId,
+  resizeDeviceDimensions,
   resolveDeviceFitScale,
   resolveDevicePreset,
 } from './browser-device-toolbar'
@@ -48,6 +49,7 @@ describe('browser-device-toolbar', () => {
   test('centers the device viewport inside the host without scaling', () => {
     const host = { x: 500, y: 120, width: 1000, height: 1000 }
     const placement = computeDeviceViewportPlacement(host, { width: 375, height: 667 }, 100)
+    expect(placement?.fitScale).toBe(1)
     expect(placement?.scale).toBe(1)
     expect(placement?.webviewBounds).toEqual({ x: 813, y: 287, width: 375, height: 667 })
   })
@@ -62,6 +64,7 @@ describe('browser-device-toolbar', () => {
     expect(placement!.webviewBounds.height).toBe(300)
     expect(placement!.webviewBounds.x).toBe(631)
     expect(placement!.webviewBounds.y).toBe(120)
+    expect(placement!.fitScale).toBeCloseTo(300 / 844)
     expect(Math.abs(placement!.webviewBounds.width / placement!.scale - 390)).toBeLessThanOrEqual(2)
   })
 
@@ -69,6 +72,7 @@ describe('browser-device-toolbar', () => {
     const host = { x: 0, y: 0, width: 1000, height: 1000 }
     const placement = computeDeviceViewportPlacement(host, { width: 390, height: 844 }, 150)
     expect(placement).not.toBeNull()
+    expect(placement!.fitScale).toBe(1)
     expect(placement!.scale).toBeCloseTo(1.5)
     // Page zoom magnifies page content but the webview bounds stay clipped
     // to the fit rect (390 x 844 fits inside the 1000x1000 host at scale 1).
@@ -76,6 +80,19 @@ describe('browser-device-toolbar', () => {
     expect(placement!.webviewBounds.height).toBe(844)
     // CSS viewport = bounds / zoom = 390 / 1.5 = 260 (page is zoomed in).
     expect(Math.abs(placement!.webviewBounds.width / placement!.scale - 260)).toBeLessThanOrEqual(2)
+  })
+
+  test('device resizing uses fit scale instead of the combined page zoom scale', () => {
+    const placement = computeDeviceViewportPlacement(
+      { x: 0, y: 0, width: 1000, height: 1000 },
+      { width: 240, height: 160 },
+      200
+    )
+    expect(placement).toMatchObject({ fitScale: 1, scale: 2 })
+    expect(resizeDeviceDimensions('right', 240, 160, 100, 0, placement!.fitScale)).toEqual({
+      width: 340,
+      height: 160,
+    })
   })
 
   test('returns null for an empty host', () => {

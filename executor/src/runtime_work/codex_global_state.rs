@@ -82,6 +82,7 @@ pub(crate) struct CodexGlobalProject {
     pub active: bool,
     pub appearance: Option<Value>,
     pub default_project_space: Option<Value>,
+    pub ai_settings: Option<Value>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -140,6 +141,10 @@ struct CodexGlobalStateOplogRecord {
     default_project_space: Option<Value>,
     #[serde(rename = "clearDefaultProjectSpace", skip_serializing_if = "is_false")]
     clear_default_project_space: bool,
+    #[serde(rename = "aiSettings", skip_serializing_if = "Option::is_none")]
+    ai_settings: Option<Value>,
+    #[serde(rename = "clearAiSettings", skip_serializing_if = "is_false")]
+    clear_ai_settings: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     label: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -169,6 +174,8 @@ impl Default for CodexGlobalStateOplogRecord {
             appearance: None,
             default_project_space: None,
             clear_default_project_space: false,
+            ai_settings: None,
+            clear_ai_settings: false,
             label: None,
             roots: Vec::new(),
             remote_projects: Vec::new(),
@@ -480,6 +487,7 @@ pub(crate) fn upsert_codex_global_local_project(
     name: &str,
     roots: &[String],
     default_project_space: Option<Value>,
+    ai_settings: Option<Value>,
 ) -> Result<CodexGlobalProject, String> {
     let project_key = clean_text(project_key).ok_or_else(|| "projectKey is required".to_owned())?;
     let name = clean_text(name).ok_or_else(|| "name is required".to_owned())?;
@@ -494,6 +502,7 @@ pub(crate) fn upsert_codex_global_local_project(
         return Err("roots must contain at least one workspace path".to_owned());
     }
     let clear_default_project_space = default_project_space.as_ref().is_some_and(Value::is_null);
+    let clear_ai_settings = ai_settings.as_ref().is_some_and(Value::is_null);
     append_codex_global_state_op_record(&CodexGlobalStateOplogRecord {
         kind: OPLOG_KIND_UPSERT_LOCAL_PROJECT.to_owned(),
         workspace_path: roots[0].clone(),
@@ -502,6 +511,8 @@ pub(crate) fn upsert_codex_global_local_project(
         roots: roots.clone(),
         default_project_space: default_project_space.filter(|value| !value.is_null()),
         clear_default_project_space,
+        ai_settings: ai_settings.filter(|value| !value.is_null()),
+        clear_ai_settings,
         updated_at: now_ms(),
         ..Default::default()
     })?;
@@ -845,6 +856,11 @@ fn apply_codex_global_state_ops(
                             project_key,
                             default_project_space,
                         );
+                    }
+                    if op.clear_ai_settings {
+                        set_local_project_ai_settings_payload(payload, project_key, Value::Null);
+                    } else if let Some(ai_settings) = op.ai_settings.clone() {
+                        set_local_project_ai_settings_payload(payload, project_key, ai_settings);
                     }
                 }
             }
@@ -1263,6 +1279,7 @@ fn local_projects_from_payload(payload: &Map<String, Value>) -> Vec<CodexGlobalP
                 .and_then(clean_string)
                 .unwrap_or_else(|| key.clone());
             let default_project_space = project.get("defaultProjectSpace").cloned();
+            let ai_settings = project.get("aiSettings").cloned();
             let roots = writable_roots
                 .and_then(|items| items.get(&key).or_else(|| items.get(project_key)))
                 .and_then(Value::as_array)
@@ -1285,6 +1302,7 @@ fn local_projects_from_payload(payload: &Map<String, Value>) -> Vec<CodexGlobalP
                 active: false,
                 appearance: None,
                 default_project_space,
+                ai_settings,
             }
         })
         .collect()
@@ -1313,6 +1331,7 @@ fn remote_projects_from_payload(payload: &Map<String, Value>) -> Vec<CodexGlobal
                 active: false,
                 appearance: None,
                 default_project_space: None,
+                ai_settings: None,
             }
         })
         .collect()
@@ -1378,6 +1397,7 @@ fn local_project_from_label(workspace_path: &str, label: Option<&str>) -> CodexG
         active: false,
         appearance: None,
         default_project_space: None,
+        ai_settings: None,
     }
 }
 
@@ -1454,6 +1474,26 @@ fn set_local_project_default_space_payload(
         project.remove("defaultProjectSpace");
     } else {
         project.insert("defaultProjectSpace".to_owned(), default_project_space);
+    }
+}
+
+fn set_local_project_ai_settings_payload(
+    payload: &mut Map<String, Value>,
+    project_key: &str,
+    ai_settings: Value,
+) {
+    let Some(project) = payload
+        .get_mut(LOCAL_PROJECTS_KEY)
+        .and_then(Value::as_object_mut)
+        .and_then(|projects| projects.get_mut(project_key))
+        .and_then(Value::as_object_mut)
+    else {
+        return;
+    };
+    if ai_settings.is_null() {
+        project.remove("aiSettings");
+    } else {
+        project.insert("aiSettings".to_owned(), ai_settings);
     }
 }
 

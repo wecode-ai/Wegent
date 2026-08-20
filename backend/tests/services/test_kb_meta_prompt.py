@@ -107,6 +107,27 @@ class TestKbMetaFormatter:
         assert "Searchable Docs: 113" in prompt
         assert "Spreadsheets: 9" in prompt
 
+    def test_format_kb_meta_prompt_omits_empty_search_hints(self) -> None:
+        from app.services.chat.preprocessing.kb_meta import format_kb_meta_prompt
+
+        prompt = format_kb_meta_prompt(
+            [
+                {
+                    "kb_id": 12,
+                    "kb_name": "Vector Docs",
+                    "retrieval_capabilities": {
+                        "retrieval_mode": "vector",
+                        "semantic_query": False,
+                        "keywords": False,
+                        "phrases": False,
+                    },
+                }
+            ]
+        )
+
+        assert "Retrieval: vector" in prompt
+        assert "Optional Search Hints" not in prompt
+
     def test_format_kb_meta_prompt_marks_search_unavailable(self):
         from app.services.chat.preprocessing.kb_meta import format_kb_meta_prompt
 
@@ -223,6 +244,12 @@ class TestKbMetaFormatter:
                 "kb_id": 12,
                 "kb_name": "Product Docs",
                 "search_available": True,
+                "retrieval_capabilities": {
+                    "retrieval_mode": None,
+                    "semantic_query": False,
+                    "keywords": False,
+                    "phrases": False,
+                },
                 "total_document_count": 128,
                 "searchable_document_count": 113,
                 "spreadsheet_document_count": 9,

@@ -1095,7 +1095,7 @@ describe('App plugins route', () => {
       }
       throw new Error(`Unexpected request: ${url}`)
     })
-    window.history.pushState({}, '', '/sites')
+    window.history.pushState({}, '', '/sites?app_type=web')
 
     renderApp()
     await updateAppPreferences({ experimentalFeaturesEnabled: true })

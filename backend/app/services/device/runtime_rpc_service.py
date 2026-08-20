@@ -28,6 +28,8 @@ MAX_RUNTIME_RPC_TIMEOUT_SECONDS = 600
 SOCKET_ACK_GRACE_SECONDS = 5
 RUNTIME_RPC_COMPRESSED_ENCODING = "gzip+base64+json"
 RUNTIME_RPC_ENCODING_KEY = "__runtimeRpcEncoding"
+RUNTIME_RPC_COMPRESSION_THRESHOLD_BYTES = 512 * 1024
+RUNTIME_RPC_MAX_ENCODED_BYTES = 980_000
 LOCAL_EXECUTOR_NAMESPACE = "/local-executor"
 DEVICE_ID_RESPONSE_KEYS = frozenset({"deviceId", "device_id"})
 RETRYABLE_RUNTIME_RPC_CODES = frozenset(
@@ -302,3 +304,44 @@ class RuntimeRpcService:
 
 
 runtime_rpc_service = RuntimeRpcService()
+
+
+def encode_runtime_rpc_response(
+    response: dict[str, Any],
+    *,
+    method: str,
+) -> dict[str, Any]:
+    """Compress a large browser-facing Runtime RPC result for Socket.IO."""
+
+    raw = json.dumps(
+        response,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    if len(raw) <= RUNTIME_RPC_COMPRESSION_THRESHOLD_BYTES:
+        return response
+
+    compressed = gzip.compress(raw)
+    encoded = base64.b64encode(compressed).decode("ascii")
+    envelope: dict[str, Any] = {
+        RUNTIME_RPC_ENCODING_KEY: RUNTIME_RPC_COMPRESSED_ENCODING,
+        "payload": encoded,
+        "rawBytes": len(raw),
+        "compressedBytes": len(compressed),
+    }
+    envelope_bytes = len(json.dumps(envelope, separators=(",", ":")).encode("utf-8"))
+    if envelope_bytes > RUNTIME_RPC_MAX_ENCODED_BYTES:
+        raise RuntimeRpcError(
+            "Runtime RPC response exceeded the Socket.IO payload limit",
+            code="runtime_rpc_response_too_large",
+        )
+
+    logger.info(
+        "[RuntimeRpcService] Runtime RPC response compressed for Wework: "
+        "method=%s raw_bytes=%s compressed_bytes=%s encoded_bytes=%s",
+        method,
+        len(raw),
+        len(compressed),
+        envelope_bytes,
+    )
+    return envelope

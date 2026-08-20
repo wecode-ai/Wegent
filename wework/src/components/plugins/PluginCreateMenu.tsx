@@ -1,4 +1,4 @@
-import { AtSign, ChevronDown, Circle, Plus, Upload } from 'lucide-react'
+import { ChevronDown, Circle, Plug, Plus, Upload } from 'lucide-react'
 import { useEffect, useRef } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
@@ -79,7 +79,7 @@ export function PluginCreateMenu({
               className="flex h-9 w-full items-center gap-2 rounded-lg px-2.5 text-left text-base font-normal text-text-primary transition-colors hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
               onClick={onCreatePlugin}
             >
-              <AtSign className="h-4 w-4 text-text-secondary" />
+              <Plug className="h-4 w-4 text-text-secondary" aria-hidden="true" />
               {t('workbench.plugins_create_plugin', '创建插件')}
             </button>
           )}

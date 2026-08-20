@@ -14,18 +14,18 @@ use super::{
     bridge_request_authorized, browser_file_url_from_path, browser_host_is_ready,
     browser_open_action, browser_webview_url, consume_approved_agent_risk,
     directory_entry_modified_unix_seconds, directory_listing_html, download_event_owner,
-    file_url_path, format_directory_entry_modified, format_file_size, loaded_browser_url,
-    local_file_browser_title, logical_owner_for_native_label, merge_request_option,
-    native_webview_label, read_http_request, ready_logical_entry, register_agent_approval,
-    register_preview_source, relabel_logical_entry, remove_logical_entry_if_native_matches,
-    resolve_agent_bridge_label, resolve_browser_navigation_url, script_browser_action,
-    script_resolve_inspect_target, script_semantic_inspect, should_block_local_file_preview,
-    should_record_loaded_url, should_replay_browser_open_request,
-    update_logical_entry_if_native_matches, wait_for_browser_ready_with_observer,
-    wait_for_main_thread_barrier, DirectoryEntry, EmbeddedBrowserBridgeRequest,
-    EmbeddedBrowserDownloadPayload, EmbeddedBrowserOpenAction, EmbeddedBrowserPageState,
-    EmbeddedBrowserReadiness, EmbeddedBrowserState, EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV,
-    EMBEDDED_BROWSER_NOT_READY_ERROR,
+    file_url_path, format_directory_entry_modified, format_file_size, is_history_recordable_url,
+    loaded_browser_url, local_file_browser_title, logical_owner_for_native_label,
+    merge_request_option, native_webview_label, read_http_request, ready_logical_entry,
+    register_agent_approval, register_preview_source, relabel_logical_entry,
+    remove_logical_entry_if_native_matches, resolve_agent_bridge_label,
+    resolve_browser_navigation_url, script_browser_action, script_resolve_inspect_target,
+    script_semantic_inspect, should_block_local_file_preview, should_record_loaded_url,
+    should_replay_browser_open_request, update_logical_entry_if_native_matches,
+    wait_for_browser_ready_with_observer, wait_for_main_thread_barrier, DirectoryEntry,
+    EmbeddedBrowserBridgeRequest, EmbeddedBrowserDownloadPayload, EmbeddedBrowserOpenAction,
+    EmbeddedBrowserPageState, EmbeddedBrowserReadiness, EmbeddedBrowserState,
+    EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV, EMBEDDED_BROWSER_NOT_READY_ERROR,
 };
 use encoding_rs::GB18030;
 use serde_json::{json, Value};
@@ -288,10 +288,16 @@ fn closed_agent_tab_routes_fail_without_retargeting() {
                 title: None,
                 url: None,
                 loaded_url: None,
+                navigation_generation: 0,
+                is_loading: false,
+                navigation_error: None,
                 opened_at_unix_ms: 0,
                 bootstrap_finished: false,
                 host_ready: false,
                 phase: super::EmbeddedBrowserPhase::Opening,
+                pending_history_url: None,
+                visit_generation: 0,
+                last_history_id: None,
             },
         );
     }
@@ -501,11 +507,241 @@ fn page_state_serializes_native_identity() {
         native_label: "workspace-browser-native-41".to_string(),
         title: Some("Example".to_string()),
         url: Some("https://example.com/".to_string()),
+        is_loading: true,
+        navigation_error: None,
     };
 
     let serialized = serde_json::to_value(state).unwrap();
 
     assert_eq!(serialized["nativeLabel"], "workspace-browser-native-41");
+    assert_eq!(serialized["isLoading"], true);
+}
+
+#[test]
+fn navigation_failure_ends_loading_and_records_the_requested_url() {
+    let mut entry = super::EmbeddedBrowserEntry {
+        native_label: "native-1".to_string(),
+        title: None,
+        url: Some("http://localhost:3000/".to_string()),
+        loaded_url: None,
+        navigation_generation: 1,
+        is_loading: true,
+        navigation_error: None,
+        opened_at_unix_ms: 0,
+        bootstrap_finished: true,
+        host_ready: true,
+        phase: super::EmbeddedBrowserPhase::Opening,
+        pending_history_url: None,
+        visit_generation: 0,
+        last_history_id: None,
+    };
+
+    assert!(super::apply_navigation_failure(
+        &mut entry,
+        1,
+        -1004,
+        "Could not connect to the server.".to_string()
+    ));
+    assert!(!entry.is_loading);
+    assert!(entry.bootstrap_finished);
+    assert_eq!(
+        entry.navigation_error,
+        Some(super::EmbeddedBrowserNavigationError {
+            code: -1004,
+            message: "Could not connect to the server.".to_string(),
+            url: Some("http://localhost:3000/".to_string()),
+        })
+    );
+}
+
+#[test]
+fn cancelled_navigation_does_not_replace_the_next_loading_state() {
+    let mut entry = super::EmbeddedBrowserEntry {
+        native_label: "native-1".to_string(),
+        title: None,
+        url: Some("https://example.com/next".to_string()),
+        loaded_url: None,
+        navigation_generation: 1,
+        is_loading: true,
+        navigation_error: None,
+        opened_at_unix_ms: 0,
+        bootstrap_finished: true,
+        host_ready: true,
+        phase: super::EmbeddedBrowserPhase::Opening,
+        pending_history_url: None,
+        visit_generation: 0,
+        last_history_id: None,
+    };
+
+    assert!(!super::apply_navigation_failure(
+        &mut entry,
+        1,
+        -999,
+        "cancelled".to_string()
+    ));
+    assert!(entry.is_loading);
+    assert_eq!(entry.navigation_error, None);
+}
+
+#[test]
+fn delayed_failure_from_previous_same_url_navigation_is_ignored() {
+    let repeated_url = "https://example.com/repeated".to_string();
+    let mut entry = super::EmbeddedBrowserEntry {
+        native_label: "native-1".to_string(),
+        title: None,
+        url: None,
+        loaded_url: None,
+        navigation_generation: 0,
+        is_loading: false,
+        navigation_error: None,
+        opened_at_unix_ms: 0,
+        bootstrap_finished: true,
+        host_ready: true,
+        phase: super::EmbeddedBrowserPhase::Opening,
+        pending_history_url: None,
+        visit_generation: 0,
+        last_history_id: None,
+    };
+
+    let previous_generation = super::apply_navigation_requested(&mut entry, repeated_url.clone());
+    let current_generation = super::apply_navigation_requested(&mut entry, repeated_url.clone());
+
+    assert!(!super::apply_navigation_failure(
+        &mut entry,
+        previous_generation,
+        -1004,
+        "Previous request failed late.".to_string()
+    ));
+    assert_eq!(entry.navigation_generation, current_generation);
+    assert_eq!(entry.url, Some(repeated_url));
+    assert!(entry.is_loading);
+    assert_eq!(entry.navigation_error, None);
+}
+
+#[test]
+fn stale_finished_navigation_does_not_replace_the_current_failure() {
+    let mut entry = super::EmbeddedBrowserEntry {
+        native_label: "native-1".to_string(),
+        title: None,
+        url: Some("http://localhost:3000/failing".to_string()),
+        loaded_url: Some("https://example.com/previous".to_string()),
+        navigation_generation: 1,
+        is_loading: false,
+        navigation_error: Some(super::EmbeddedBrowserNavigationError {
+            code: -1004,
+            message: "Could not connect to the server.".to_string(),
+            url: Some("http://localhost:3000/failing".to_string()),
+        }),
+        opened_at_unix_ms: 0,
+        bootstrap_finished: true,
+        host_ready: true,
+        phase: super::EmbeddedBrowserPhase::Opening,
+        pending_history_url: None,
+        visit_generation: 0,
+        last_history_id: None,
+    };
+
+    assert_eq!(
+        super::apply_navigation_finished(
+            &mut entry,
+            "https://example.com/previous",
+            "https://example.com/previous".to_string()
+        ),
+        super::NavigationFinishedOutcome::IgnoredStale
+    );
+    assert_eq!(entry.url.as_deref(), Some("http://localhost:3000/failing"));
+    assert!(entry.navigation_error.is_some());
+}
+
+#[test]
+fn synthetic_finished_navigation_does_not_clear_the_current_failure() {
+    let failed_url = "http://localhost:3000/failing".to_string();
+    let mut entry = super::EmbeddedBrowserEntry {
+        native_label: "native-1".to_string(),
+        title: None,
+        url: Some(failed_url.clone()),
+        loaded_url: None,
+        navigation_generation: 1,
+        is_loading: false,
+        navigation_error: Some(super::EmbeddedBrowserNavigationError {
+            code: -1004,
+            message: "Could not connect to the server.".to_string(),
+            url: Some(failed_url.clone()),
+        }),
+        opened_at_unix_ms: 0,
+        bootstrap_finished: true,
+        host_ready: true,
+        phase: super::EmbeddedBrowserPhase::Opening,
+        pending_history_url: None,
+        visit_generation: 0,
+        last_history_id: None,
+    };
+
+    assert_eq!(
+        super::apply_navigation_finished(&mut entry, &failed_url, failed_url.clone()),
+        super::NavigationFinishedOutcome::IgnoredFailed
+    );
+    assert!(entry.navigation_error.is_some());
+    assert_eq!(entry.loaded_url, None);
+}
+
+#[test]
+fn current_finished_navigation_completes_loading() {
+    let current_url = "https://example.com/current".to_string();
+    let mut entry = super::EmbeddedBrowserEntry {
+        native_label: "native-1".to_string(),
+        title: None,
+        url: Some(current_url.clone()),
+        loaded_url: None,
+        navigation_generation: 1,
+        is_loading: true,
+        navigation_error: None,
+        opened_at_unix_ms: 0,
+        bootstrap_finished: true,
+        host_ready: true,
+        phase: super::EmbeddedBrowserPhase::Opening,
+        pending_history_url: None,
+        visit_generation: 0,
+        last_history_id: None,
+    };
+
+    assert_eq!(
+        super::apply_navigation_finished(&mut entry, &current_url, current_url.clone()),
+        super::NavigationFinishedOutcome::Applied
+    );
+    assert!(!entry.is_loading);
+    assert_eq!(entry.loaded_url, Some(current_url));
+    assert_eq!(entry.navigation_error, None);
+}
+
+#[test]
+fn mapped_preview_finished_navigation_completes_the_requested_url() {
+    let display_url = "file:///tmp/wework-embedded-browser/text-1.html".to_string();
+    let requested_url = "file:///workspace/readme.md".to_string();
+    let mut entry = super::EmbeddedBrowserEntry {
+        native_label: "native-1".to_string(),
+        title: None,
+        url: Some(display_url.clone()),
+        loaded_url: None,
+        navigation_generation: 1,
+        is_loading: true,
+        navigation_error: None,
+        opened_at_unix_ms: 0,
+        bootstrap_finished: true,
+        host_ready: true,
+        phase: super::EmbeddedBrowserPhase::Opening,
+        pending_history_url: None,
+        visit_generation: 0,
+        last_history_id: None,
+    };
+
+    assert_eq!(
+        super::apply_navigation_finished(&mut entry, &display_url, requested_url.clone()),
+        super::NavigationFinishedOutcome::Applied
+    );
+    assert!(!entry.is_loading);
+    assert_eq!(entry.url, Some(requested_url.clone()));
+    assert_eq!(entry.loaded_url, Some(requested_url));
 }
 
 #[test]
@@ -868,4 +1104,14 @@ fn relabel_rejects_an_occupied_destination_without_orphaning_the_source() {
     );
     assert_eq!(entries["workspace-browser-source"], "source-native");
     assert_eq!(entries["workspace-browser-target"], "target-native");
+}
+
+#[test]
+fn history_records_web_pages_and_local_files_but_not_internal_pages() {
+    assert!(is_history_recordable_url("https://example.com/docs"));
+    assert!(is_history_recordable_url("http://localhost:3000"));
+    assert!(is_history_recordable_url("file:///Users/me/report.html"));
+    assert!(!is_history_recordable_url("about:blank"));
+    assert!(!is_history_recordable_url("tauri://localhost"));
+    assert!(!is_history_recordable_url("wework://internal/page"));
 }

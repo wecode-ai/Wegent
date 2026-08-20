@@ -384,6 +384,7 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
                     "task_id": 1001,
                     "subtask_id": 2001,
                     "prompt": "first turn",
+                    "system_prompt": "Run focused project tests.",
                     "project_workspace_path": "/tmp/project",
                     "bot": [{"shell_type": "ClaudeCode"}],
                     "model_config": {
@@ -488,6 +489,10 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
     assert_eq!(resume["params"]["threadId"], "thread-1");
     assert_eq!(resume["params"]["cwd"], "/tmp/project");
     assert_eq!(resume["params"]["model"], "gpt-4.1");
+    assert!(resume["params"]["developerInstructions"]
+        .as_str()
+        .expect("developer instructions should be present")
+        .contains("Run focused project tests."));
     assert_eq!(
         resume["params"]["config"]["model_reasoning_effort"],
         "xhigh"

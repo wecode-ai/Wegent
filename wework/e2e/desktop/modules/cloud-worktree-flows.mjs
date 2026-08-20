@@ -157,11 +157,10 @@ async function selectExecutionMode(control, mode, ref = null) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('click', `[data-e2e-anchor-id="${anchor}"]`)
-  assert.match(
-    await control.command('getText', '[data-testid="project-worktree-branch-button"]'),
-    new RegExp(ref.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
-    'The selected Worktree starting ref was not retained by the composer'
-  )
+  await control.command('waitFor', '[data-testid="project-worktree-branch-button"]', {
+    text: ref,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
 }
 
 async function launchTask(
@@ -796,17 +795,17 @@ async function verifyDeviceRestart(context) {
       WORKBENCH_READY_TIMEOUT_MS,
       'The reconciled task did not become failed and stopped'
     )
-    const runtimeIndex = await readJson(runtimeWorkPath('index.json'))
-    assert.match(
-      runtimeIndex.tasks?.[task.taskId]?.runtime_handle?.lastError ?? '',
-      /runtime was not resumed/i,
-      'Reconcile did not persist the no-auto-resume diagnostic'
-    )
     const worktrees = await readJson(runtimeWorkPath('worktrees.json'))
+    const worktreeRecord = worktrees.records?.[task.workspacePath]
     assert.equal(
-      worktrees.records?.[task.workspacePath]?.state,
+      worktreeRecord?.state,
       'active',
       'Reconcile did not keep the valid Worktree manageable'
+    )
+    assert.match(
+      worktreeRecord?.lastError ?? '',
+      /runtime was not resumed/i,
+      'Reconcile did not persist the no-auto-resume diagnostic on the Worktree'
     )
     assert.equal(
       await pathExists(task.workspacePath),

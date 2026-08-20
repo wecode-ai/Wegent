@@ -250,6 +250,7 @@ const VISION_SIDECAR_PROMPT =
   'WEWORK_DESKTOP_E2E_VISION_SIDECAR: describe the attached verification image.'
 const VISION_SIDECAR_DESCRIPTION = 'The verification image is a solid red square.'
 const VISION_SIDECAR_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_VISION_SIDECAR_COMPLETE'
+const VISION_SIDECAR_MAIN_REQUEST_SCENARIO = 'vision_sidecar_main'
 const MULTIMODAL_VISION_PROMPT =
   'WEWORK_DESKTOP_E2E_MULTIMODAL_VISION: inspect the attached verification image.'
 const MULTIMODAL_VISION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_MULTIMODAL_VISION_COMPLETE'
@@ -1154,6 +1155,15 @@ async function reactivateMacApplication(appIdentifier) {
   await runChecked('open', ['-g', '-b', appIdentifier])
 }
 
+function requestMacosApplicationQuit(processId) {
+  commandOutput('osascript', [
+    '-l',
+    'JavaScript',
+    '-e',
+    `ObjC.import("AppKit"); const app = $.NSRunningApplication.runningApplicationWithProcessIdentifier(${processId}); app ? Boolean(app.terminate) : false`,
+  ])
+}
+
 async function triggerModelReloadUntilCloudFailure(control) {
   const failedCloudModelRequest = control.awaitFailedCloudModelRequest()
   for (let attempt = 0; attempt < 10 && control.failedCloudModelRequests === 0; attempt += 1) {
@@ -1568,6 +1578,7 @@ export {
   VISION_SIDECAR_PROMPT,
   VISION_SIDECAR_DESCRIPTION,
   VISION_SIDECAR_COMPLETION_TEXT,
+  VISION_SIDECAR_MAIN_REQUEST_SCENARIO,
   MULTIMODAL_VISION_PROMPT,
   MULTIMODAL_VISION_COMPLETION_TEXT,
   LOCAL_VISION_SIDECAR_CASE,
@@ -1773,6 +1784,7 @@ export {
   waitForExecutorReadyEvidence,
   waitForLogPattern,
   reactivateMacApplication,
+  requestMacosApplicationQuit,
   triggerModelReloadUntilCloudFailure,
   sendPromptUntilScenarioRequest,
   visibleModelOptionId,

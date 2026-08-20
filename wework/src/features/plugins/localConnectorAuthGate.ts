@@ -16,6 +16,11 @@ export interface LocalConnectorRequirement {
   displayName: string
 }
 
+export interface MentionedPluginReference {
+  pluginName: string
+  marketplaceName: string
+}
+
 function normalized(value: unknown): string {
   return typeof value === 'string' ? value.trim().toLowerCase() : ''
 }
@@ -111,6 +116,26 @@ export function listMentionedPluginNames(text: string | null | undefined): strin
     if (parsed?.pluginName) names.add(parsed.pluginName)
   }
   return Array.from(names)
+}
+
+export function listMentionedPluginReferences(
+  text: string | null | undefined
+): MentionedPluginReference[] {
+  if (!text) return []
+  const seen = new Set<string>()
+  const refs: MentionedPluginReference[] = []
+  for (const uri of text.match(PLUGIN_URI_PATTERN) ?? []) {
+    const parsed = parsePluginUri(uri)
+    if (!parsed?.pluginName || !parsed.marketplaceName) continue
+    const pluginName = parsed.pluginName.trim()
+    const marketplaceName = parsed.marketplaceName.trim()
+    if (!pluginName || !marketplaceName) continue
+    const key = `${pluginName.toLowerCase()}@@${marketplaceName.toLowerCase()}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    refs.push({ pluginName, marketplaceName })
+  }
+  return refs
 }
 
 export function installedPluginMatchesName(plugin: InstalledPlugin, pluginName: string): boolean {

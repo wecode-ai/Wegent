@@ -54,11 +54,11 @@ function issueGuidance(
     ),
     mcp_manifest_invalid: t(
       'workbench.plugins_import_issue_mcp',
-      '.mcp.json 必须是合法 JSON，并包含 mcpServers 对象。'
+      '.mcp.json 必须是合法的 MCP server map，或包含 mcp_servers / mcpServers 对象。'
     ),
     mcp_path_invalid: t(
       'workbench.plugins_import_issue_mcp',
-      '.mcp.json 必须是合法 JSON，并包含 mcpServers 对象。'
+      '.mcp.json 必须是合法的 MCP server map，或包含 mcp_servers / mcpServers 对象。'
     ),
     skill_manifest_invalid: t(
       'workbench.plugins_import_issue_skill_manifest',
