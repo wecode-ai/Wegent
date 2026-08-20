@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -677,6 +678,7 @@ export function TodoEditor(props: TodoEditorProps) {
   const editItemId = item?.id ?? null
   const editProjectId = item?.cloud_project_id ?? null
   const createProjectId = createProps?.project.id ?? null
+  const loadedEditItemIdRef = useRef(editItemId)
   const visibleAttachments = useMemo(() => {
     const merged = new Map<string, AttachmentRow>()
     markdownAttachmentRows(description).forEach(attachment => merged.set(attachment.id, attachment))
@@ -694,40 +696,45 @@ export function TodoEditor(props: TodoEditorProps) {
     node.scrollTop = 0
   }, [editItemId, isCreate])
 
+  useLayoutEffect(() => {
+    if (loadedEditItemIdRef.current === editItemId) return
+    loadedEditItemIdRef.current = editItemId
+    setDeliveries([])
+    setSelectedDelivery(null)
+    setTasks([])
+    setAttachments([])
+    setCollaborators([])
+  }, [editItemId])
+
   // Edit mode loads everything tied to the item id.
   useEffect(() => {
     if (editItemId == null || editProjectId == null) return
-    void Promise.allSettled([
-      api.listDeliveries(editItemId),
-      api.listTaskBindings(editItemId),
-      api.listLoopItemAttachments(editItemId),
-      api.listLoopItemCollaborators(editItemId),
-      api.listCloudProjectMembers(editProjectId),
+    let active = true
+    const applyResult = <T,>(request: Promise<T>, apply: (value: T) => void) => {
+      void request.then(
+        value => {
+          if (active) apply(value)
+        },
+        () => undefined
+      )
+    }
+
+    applyResult(api.listDeliveries(editItemId), response => setDeliveries(response.items))
+    applyResult(api.listTaskBindings(editItemId), setTasks)
+    applyResult(api.listLoopItemAttachments(editItemId), setAttachments)
+    applyResult(api.listLoopItemCollaborators(editItemId), setCollaborators)
+    applyResult(api.listCloudProjectMembers(editProjectId), setProjectMembers)
+    applyResult(
       props.projectChatAgentApi?.list(String(editProjectId)) ?? Promise.resolve([]),
-      props.teamApi?.listTeams() ?? Promise.resolve([]),
-    ]).then(
-      ([
-        deliveryResult,
-        taskResult,
-        attachmentResult,
-        collaboratorResult,
-        memberResult,
-        agentResult,
-        teamResult,
-      ]) => {
-        if (deliveryResult.status === 'fulfilled') setDeliveries(deliveryResult.value.items)
-        if (taskResult.status === 'fulfilled') setTasks(taskResult.value)
-        if (attachmentResult.status === 'fulfilled') setAttachments(attachmentResult.value)
-        if (collaboratorResult.status === 'fulfilled') setCollaborators(collaboratorResult.value)
-        if (memberResult.status === 'fulfilled') setProjectMembers(memberResult.value)
-        if (agentResult.status === 'fulfilled') {
-          setProjectAgents(agentResult.value.filter(agent => agent.status === 'active'))
-        }
-        if (teamResult.status === 'fulfilled') {
-          setWegentTeams(teamResult.value.filter(team => team.is_active !== false))
-        }
-      }
+      agents => setProjectAgents(agents.filter(agent => agent.status === 'active'))
     )
+    applyResult(props.teamApi?.listTeams() ?? Promise.resolve([]), teams =>
+      setWegentTeams(teams.filter(team => team.is_active !== false))
+    )
+
+    return () => {
+      active = false
+    }
   }, [
     api,
     editItemId,
