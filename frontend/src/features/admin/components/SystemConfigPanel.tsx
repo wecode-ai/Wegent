@@ -53,6 +53,7 @@ import {
 } from '@/components/ui/select'
 import { formatFileSize, uploadAttachment } from '@/apis/attachments'
 import { MarketplaceTagsConfigSection } from './MarketplaceTagsConfigSection'
+import { KnowledgeBaseRetrievalProfileSection } from './KnowledgeBaseRetrievalProfileSection'
 
 // Common form data type for both slogans and tips
 type ItemFormData = {
@@ -150,7 +151,6 @@ const SystemConfigPanel: React.FC = () => {
   const [saving, setSaving] = useState(false)
   const [slogans, setSlogans] = useState<ChatSloganItem[]>([])
   const [tips, setTips] = useState<ChatTipItem[]>([])
-  const [version, setVersion] = useState(0)
   const [quickLaunchFunctionsVersion, setQuickLaunchFunctionsVersion] = useState(0)
   const [publicTeams, setPublicTeams] = useState<AdminPublicTeam[]>([])
   const [quickLaunchFunctions, setQuickLaunchFunctions] = useState<QuickLaunchFunctionConfig[]>([])
@@ -201,7 +201,6 @@ const SystemConfigPanel: React.FC = () => {
       ])
       setSlogans(response.slogans)
       setTips(response.tips)
-      setVersion(response.version)
       setQuickLaunchFunctionsVersion(quickLaunchFunctionsResponse.version)
       setQuickLaunchFunctions(quickLaunchFunctionsResponse.functions)
       setPublicTeams(publicTeamsResponse.items)
@@ -244,9 +243,6 @@ const SystemConfigPanel: React.FC = () => {
         adminApis.updateQuickLaunchFunctionsConfig({ functions: normalizedQuickLaunchFunctions }),
       ] as const)
 
-      if (sloganResult.status === 'fulfilled') {
-        setVersion(sloganResult.value.version)
-      }
       if (quickLaunchFunctionsResult.status === 'fulfilled') {
         setQuickLaunchFunctionsVersion(quickLaunchFunctionsResult.value.version)
         setQuickLaunchFunctions(quickLaunchFunctionsResult.value.functions)
@@ -1319,10 +1315,7 @@ const SystemConfigPanel: React.FC = () => {
         </Dialog>
       )}
 
-      {/* Version Info */}
-      <div className="text-xs text-text-muted text-right">
-        {t('system_config.version')}: {version}
-      </div>
+      <KnowledgeBaseRetrievalProfileSection />
 
       {/* Slogan Dialogs */}
       {renderEditDialog(

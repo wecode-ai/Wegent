@@ -72,6 +72,7 @@ interface KnowledgeBaseFormProps {
   showRetrievalSection: boolean
   retrievalConfig: RetrievalConfigDraft
   onRetrievalConfigChange: (config: RetrievalConfigDraft) => void
+  onRetrievalConfigUserChange?: () => void
   retrievalScope?: KnowledgeResourceScope
   retrievalGroupName?: string
   retrievalReadOnly?: boolean
@@ -175,6 +176,7 @@ export function KnowledgeBaseForm({
   showRetrievalSection,
   retrievalConfig,
   onRetrievalConfigChange,
+  onRetrievalConfigUserChange,
   retrievalScope,
   retrievalGroupName,
   retrievalReadOnly,
@@ -297,6 +299,7 @@ export function KnowledgeBaseForm({
               <RetrievalSettingsSection
                 config={retrievalConfig}
                 onChange={onRetrievalConfigChange}
+                onUserChange={onRetrievalConfigUserChange}
                 scope={retrievalScope}
                 groupName={retrievalGroupName}
                 readOnly={retrievalReadOnly}
