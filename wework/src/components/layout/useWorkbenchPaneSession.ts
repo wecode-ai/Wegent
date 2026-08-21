@@ -340,6 +340,7 @@ export function useWorkbenchPaneSession({
   const queuedMessageBusyBlockSnapshotsRef = useRef(
     new Map<string, RuntimeTaskLifecycleSnapshot | null>()
   )
+  const resumePausedQueueOnTurnStartRef = useRef<string | null>(null)
   const pendingMessageActionsRef = useRef<RuntimePaneMessageAction[]>([])
   const rebuildingTranscriptRef = useRef(false)
   const rebuildingTranscriptIdentityRef = useRef<string | null>(null)
@@ -466,6 +467,7 @@ export function useWorkbenchPaneSession({
   }, [currentRuntimeTask])
 
   useEffect(() => {
+    resumePausedQueueOnTurnStartRef.current = null
     setQueuedMessagesState(
       queuedMessageScopeKey ? getRuntimeConversationQueuedMessagesByKey(queuedMessageScopeKey) : []
     )
@@ -473,6 +475,17 @@ export function useWorkbenchPaneSession({
       queuedMessageScopeKey ? getRuntimeConversationQueuePausedByKey(queuedMessageScopeKey) : false
     )
   }, [queuedMessageScopeKey])
+
+  useEffect(() => {
+    if (
+      resumePausedQueueOnTurnStartRef.current !== queuedMessageScopeKey ||
+      !paneStatus.isResponseActive
+    ) {
+      return
+    }
+    resumePausedQueueOnTurnStartRef.current = null
+    setQueuedMessagesPaused(false)
+  }, [paneStatus.isResponseActive, queuedMessageScopeKey, setQueuedMessagesPaused])
 
   useEffect(() => {
     if (currentRuntimeTaskLoadTarget) {
@@ -2287,8 +2300,22 @@ export function useWorkbenchPaneSession({
     async (inputOverride?: string, options?: RuntimePaneSendOptions) => {
       const interruptedGuidance = queuedMessages.find(isInterruptedGuidance)
       if (!interruptedGuidance) {
-        await send(inputOverride, options)
-        setQueuedMessagesPaused(false)
+        const queuedMessage = queuedMessages.find(message => message.status === 'queued')
+        const turnIdBeforeSend = currentRuntimeTask
+          ? lifecycleStore.getTask(currentRuntimeTask)?.turn.id
+          : null
+        const sent = await send(inputOverride, options)
+        if (!sent) return
+        if (!queuedMessage) {
+          setQueuedMessagesPaused(false)
+          return
+        }
+        const lifecycle = currentRuntimeTask ? lifecycleStore.getTask(currentRuntimeTask) : null
+        if (lifecycle?.turn.active && lifecycle.turn.id !== turnIdBeforeSend) {
+          setQueuedMessagesPaused(false)
+          return
+        }
+        resumePausedQueueOnTurnStartRef.current = queuedMessageScopeKey
         return
       }
 
@@ -2301,7 +2328,16 @@ export function useWorkbenchPaneSession({
       setQueuedMessagesPaused(false)
       await sendQueuedMessage(combinedMessage)
     },
-    [input, queuedMessages, send, sendQueuedMessage, setQueuedMessagesPaused]
+    [
+      currentRuntimeTask,
+      input,
+      lifecycleStore,
+      queuedMessageScopeKey,
+      queuedMessages,
+      send,
+      sendQueuedMessage,
+      setQueuedMessagesPaused,
+    ]
   )
 
   const clearQueuedMessages = useCallback(() => {
