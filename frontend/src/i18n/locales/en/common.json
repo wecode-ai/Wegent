@@ -1244,6 +1244,7 @@
     "vision_sidecar_disabled": "No sidecar",
     "vision_sidecar_loading": "Loading available models...",
     "vision_sidecar_empty": "No protocol-compatible cloud model currently declares image understanding support.",
+    "vision_sidecar_unavailable": "{{modelName}} (not selectable now, keeping the existing setting)",
     "model_id": "Model ID",
     "select_model_id": "Select Model ID",
     "custom_model_id_placeholder": "Enter custom model ID",

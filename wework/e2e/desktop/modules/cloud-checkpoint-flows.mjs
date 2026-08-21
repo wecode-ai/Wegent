@@ -298,6 +298,7 @@ async function verifyCloudCheckpoint({
   cloudEnvironment,
   control,
   desktopScenario,
+  executorLogPath,
   restartDesktopApp,
   setPhase,
   workspacePath,
@@ -369,7 +370,7 @@ async function verifyCloudCheckpoint({
     control,
     workspacePath
   )
-  const executorLogPath = cloudEnvironment.remoteExecutorLogPath
+  const remoteExecutorLogPath = cloudEnvironment.remoteExecutorLogPath
 
   switch (checkpoint) {
     case 'cloud-git-worktree':
@@ -424,9 +425,17 @@ async function verifyCloudCheckpoint({
       return
     case 'goal-lifecycle':
       setPhase('cloud-goal-busy-handoff')
-      await verifyBusyTurnGoalHandoff({ composerSelector, control, executorLogPath })
+      await verifyBusyTurnGoalHandoff({
+        composerSelector,
+        control,
+        executorLogPath: remoteExecutorLogPath,
+      })
       setPhase('cloud-goal-idle-unread')
-      await verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, executorLogPath })
+      await verifyActiveGoalIdleUnreadLifecycle({
+        composerSelector,
+        control,
+        executorLogPath: remoteExecutorLogPath,
+      })
       setPhase('cloud-goal-restart-recovery')
       await verifyCloudGoalRestartRecoveryLifecycle({
         composerSelector,

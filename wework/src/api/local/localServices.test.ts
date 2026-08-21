@@ -2821,6 +2821,88 @@ describe('createLocalAppServices', () => {
     )
   })
 
+  test('drives a non-Responses cloud vision sidecar through the same gateway route', async () => {
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+      cloudModelGateway: {
+        baseUrl: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy',
+        apiKey: 'cloud-login-token',
+      },
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      teamId: 0,
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      taskId: 'task-anthropic-sidecar',
+      runtime: 'codex',
+      message: 'describe the image',
+      title: 'Text-only primary with Anthropic sidecar',
+      modelId: 'text-only-primary',
+      modelType: 'public',
+      modelOptions: {
+        weworkCloudModelNamespace: 'default',
+        weworkCloudModelResourceUserId: '0',
+        weworkCloudVisionSidecar:
+          '{"modelName":"kimi-k2.5-vision","modelType":"public","namespace":"default","resourceUserId":0,"apiFormat":"anthropic-messages"}',
+      },
+    })
+
+    const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
+    expect(payload.executionRequest.model_config.vision_sidecar).toEqual({
+      enabled: true,
+      request_url: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy/responses',
+      api_format: 'anthropic-messages',
+      api_key: 'cloud-login-token',
+      model_id: 'kimi-k2.5-vision',
+      default_headers: {
+        'X-Wegent-Model-Type': 'public',
+        'X-Wegent-Model-Namespace': 'default',
+        'X-Wegent-Model-User-Id': '0',
+        'X-Wegent-Upstream-Header-wecode-executor': 'codex',
+        'X-Wegent-Upstream-Header-wecode-source': 'wegent-local',
+      },
+      max_descriptions_per_turn: 8,
+      timeout_ms: 45000,
+    })
+  })
+
+  test('rejects a cloud vision sidecar reference that is not a supported protocol', async () => {
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+      cloudModelGateway: {
+        baseUrl: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy',
+        apiKey: 'cloud-login-token',
+      },
+    })
+
+    await expect(
+      services.runtimeWorkApi?.createRuntimeTask({
+        teamId: 0,
+        deviceId: 'local-device',
+        workspacePath: '/Users/me/project',
+        taskId: 'task-bad-sidecar',
+        runtime: 'codex',
+        message: 'describe the image',
+        title: 'Bad sidecar',
+        modelId: 'text-only-primary',
+        modelType: 'public',
+        modelOptions: {
+          weworkCloudModelNamespace: 'default',
+          weworkCloudModelResourceUserId: '0',
+          weworkCloudVisionSidecar:
+            '{"modelName":"vision","modelType":"public","namespace":"default","resourceUserId":0,"apiFormat":"gemini-generate-content"}',
+        },
+      })
+    ).rejects.toThrow('Cloud vision sidecar reference is invalid')
+  })
+
   test('does not configure cloud vision delegation without an explicit reference', async () => {
     const request = vi.fn().mockResolvedValue({ accepted: true })
     const services = createLocalAppServices({
