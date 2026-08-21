@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -239,3 +240,40 @@ def test_minio_macos_build_inherits_the_complete_tauri_resource_list() -> None:
     assert "bundled-execution-runtimes/node.json" in script
     assert "bundled-harness-runtime/runtime.json" in script
     assert 'bash "$SCRIPT_DIR/release-mac-app.sh"' not in script
+
+
+def test_internal_updater_key_exports_private_key_content(tmp_path: Path) -> None:
+    key_path = tmp_path / "updater.key"
+    key_path.write_text("private-key-content\n", encoding="utf-8")
+    key_path.with_suffix(".key.pub").write_text(
+        "public-key-content\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            """
+source "$1"
+wework_configure_internal_updater_key "$2" "$3"
+printf '%s\\n%s\\n%s\\n' \
+  "$TAURI_SIGNING_PRIVATE_KEY" \
+  "$TAURI_SIGNING_PRIVATE_KEY_PATH" \
+  "$TAURI_UPDATER_PUBKEY"
+""",
+            "bash",
+            str(SCRIPT_DIR / "lib/wework-updater-signing.sh"),
+            str(SCRIPT_DIR.parent.parent),
+            str(key_path),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.stdout.splitlines() == [
+        "private-key-content",
+        str(key_path),
+        "public-key-content",
+    ]
