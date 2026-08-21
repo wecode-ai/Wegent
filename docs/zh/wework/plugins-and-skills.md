@@ -26,7 +26,7 @@ Skill 为 AI 提供特定任务的操作说明和资源；插件可以组合 Ski
 
 在 **我的创建** 点击 **创建智能工作台**，会打开新对话并引用随 Wework 安装的“智能工作台开发助手”插件；该插件负责检查 DSH 开发环境、检索并组合 DSH 插件、在 Wework 内置浏览器中验证本地 profile，以及校验和打包 ZIP。已有安装包时，点击 **导入工作台** 选择 ZIP，Wework 校验后直接导入本机并显示在创建列表中；校验失败时不会写入本地工作台目录。列表中的 **发布** 用于补充市场信息并选择分享的成员或部门。市场下载的工作台仍会通过 Wework 原生预览界面确认版本依赖和绑定模型。
 
-当前 Wework 捆绑 DeepSeek Harness Runtime `0.1.0-rc.8`。智能工作台安装包的 `plugin-manifest.json` 必须声明兼容该版本的 `requirements.dsh`；需要精确绑定当前 Runtime 时，使用 `"dsh": "0.1.0-rc.8"`。
+当前 Wework 管理 DeepSeek Harness Runtime `0.1.0-rc.7` 和 `0.1.0-rc.8`。智能工作台安装包的 `plugin-manifest.json` 必须通过 `requirements.dsh` 声明兼容版本；裸版本（例如 `"dsh": "0.1.0-rc.7"`）表示精确绑定，也可以使用 SemVer 范围。启动时 Wework 会选择范围内最高的受支持版本，并只下载和缓存该版本的 Runtime；不同版本的依赖树彼此隔离。
 
 Wework 分别管理 DeepSeek Harness Runtime 和共享 Node.js Runtime，并在启动智能工作台时禁止 Harness 把页面交给系统默认浏览器。工作台页面只会加载到 Wework 内置的原生 WebView 中。常驻工作台会等待已绑定的模型恢复完成后再自动启动，避免 Wework 重载期间因模型列表尚未就绪而漏掉恢复。
 

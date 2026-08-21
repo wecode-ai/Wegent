@@ -150,6 +150,8 @@ workflow 只能通过 GitHub Actions 手动触发，不会响应 tag push。启�
 - `beta-*` 指向 Beta 和正式版中 SemVer 更高的版本，因此选择 Beta 的用户也会收到更新的正式版。
 - 新版本只有在 SemVer 高于当前渠道版本时才覆盖滚动 manifest，历史发布或较低版本不会让用户降级。
 
+DeepSeek Harness 和 Node.js Runtime 也发布在固定的 `wework-updater` Release，但不属于具体 Wework 应用版本的 assets。Harness 按 DSH 版本和平台生成独立的不可变资产；Node.js 按 Node 版本和平台生成资产。准备脚本使用依赖锁文件、Node ABI、签名身份和打包格式计算 Runtime 指纹：已存在的指纹会复用已发布的资产，只有依赖或这些构建输入变化时才发布新的 Runtime。CI 先上传归档再上传描述符，禁止覆盖或补齐只有一半的资产对，避免旧客户端保存的校验和失效。
+
 用户可以在 Wework 的“设置 → 关于”中打开“接收 Beta 版本更新”。默认关闭时客户端使用 `stable` target；打开后使用 `beta` target。切换后立即检查更新，并把选择保存在本机。
 
 updater manifest 中的 `notes` 会作为该版本的更新日志随安装流程保存。新版本第一次启动后，Wework 不会自动弹出更新日志，而是在桌面侧边栏底部、账户区域上方显示固定提示。用户点击提示后可以查看 Markdown 格式的更新内容；关闭详情不会移除提示，只有点击提示卡上的关闭按钮才会清除，并且清除状态在应用重载后保持。保存的版本号必须与当前运行版本一致，否则客户端会丢弃这份过期记录。
