@@ -17,16 +17,11 @@ import {
   type HarnessAppPreview,
 } from '@/api/local/harnessApps'
 import { SmartAppsSectionNav } from '@/components/smart-apps/SmartAppsSectionNav'
-import {
-  listLocalHarnessModelOptions,
-  type LocalHarnessModelOption,
-} from '@/features/local-harness/localHarnessModels'
+import { listLocalHarnessModelOptions } from '@/features/local-harness/localHarnessModels'
 import {
   harnessAppRoute,
   openHarnessAppTab,
   registerHarnessAppTab,
-  storeHarnessAppProxyToken,
-  storeHarnessAppContextToken,
   takeHarnessAppContextToken,
   takeHarnessAppProxyToken,
   unregisterHarnessAppTab,
@@ -34,12 +29,11 @@ import {
 import {
   beginHarnessAppLaunch,
   clearHarnessAppLaunch,
-  failHarnessAppLaunch,
 } from '@/features/harness-apps/harnessAppLaunchState'
 import { HarnessAppInstallDialog } from '@/features/harness-apps/HarnessAppInstallDialog'
 import { Button } from '@/components/ui/button'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
-import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
+import { useWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getErrorMessage } from '@/lib/error-message'
 import { navigateTo } from '@/lib/navigation'
@@ -51,7 +45,7 @@ interface HarnessAppsPageProps {
 export function HarnessAppsPage({ importRequested = false }: HarnessAppsPageProps) {
   const { t } = useTranslation('common')
   const { projectChat, services } = useWorkbench()
-  const workspaceTabs = useOptionalWorkspaceTabs()
+  const workspaceTabs = useWorkspaceTabs()
   const modelOptions = useMemo(
     () => listLocalHarnessModelOptions('opencode', projectChat.models),
     [projectChat.models]
@@ -67,7 +61,6 @@ export function HarnessAppsPage({ importRequested = false }: HarnessAppsPageProp
   const refresh = async () => setItems(await harnessAppsApi.list())
 
   function closeAppTabs(installationId: string) {
-    if (!workspaceTabs) return
     const route = harnessAppRoute(installationId)
     const mountedTabIds = Array.from(
       document.querySelectorAll<HTMLElement>(
@@ -161,95 +154,17 @@ export function HarnessAppsPage({ importRequested = false }: HarnessAppsPageProp
     }
   }
 
-  function selectedModel(item: HarnessAppInstallation): LocalHarnessModelOption | null {
-    return modelOptions.find(option => option.key === item.modelKey) ?? null
-  }
-
-  async function start(item: HarnessAppInstallation) {
-    const model = selectedModel(item)
-    if (!model) {
+  function start(item: HarnessAppInstallation) {
+    if (!hasSelectedModel(item)) {
       setError(t('workbench.harness_apps_model_missing'))
       return
     }
-    beginHarnessAppLaunch(item.id, item.manifest.displayName, () => void start(item))
-    if (workspaceTabs) openHarnessAppTab(workspaceTabs, item)
-    setBusy(item.id)
     setError(null)
-    let proxyToken: string | null = null
-    let contextToken: string | null = null
-    let started = false
-    try {
-      const launch = await services.localHarnessModelApi?.resolveLaunch('opencode', model)
-      if (!launch) throw new Error(t('workbench.harness_apps_model_proxy_unavailable'))
-      proxyToken = launch.proxyToken
-      contextToken = launch.context?.token ?? null
-      const running = launch.context
-        ? await harnessAppsApi.start(
-            item.id,
-            launch.baseUrl,
-            launch.context.baseUrl,
-            launch.context.token
-          )
-        : await harnessAppsApi.start(item.id, launch.baseUrl)
-      started = true
-      await storeHarnessAppProxyToken(item.id, launch.proxyToken)
-      if (contextToken) await storeHarnessAppContextToken(item.id, contextToken)
-      await refresh()
-      if (running.webUrl) {
-        registerHarnessAppTab(running)
-        if (!workspaceTabs) clearHarnessAppLaunch(item.id)
-      }
-    } catch (startError) {
-      let proxyCanBeRevoked = !started
-      if (started) {
-        try {
-          await harnessAppsApi.stop(item.id)
-          proxyCanBeRevoked = true
-        } catch (rollbackError) {
-          console.warn('[Wework] failed to roll back started Harness app', rollbackError)
-          try {
-            const installations = await harnessAppsApi.list()
-            const running = installations.find(installation => installation.id === item.id)
-            if (running?.state === 'running' && running.webUrl) {
-              registerHarnessAppTab(running)
-              clearHarnessAppLaunch(item.id)
-            }
-            setItems(installations)
-          } catch (recoveryError) {
-            console.warn('[Wework] failed to recover running Harness app', recoveryError)
-          }
-        }
-        if (proxyCanBeRevoked) {
-          unregisterHarnessAppTab(item.id)
-          await takeHarnessAppProxyToken(item.id)
-          await takeHarnessAppContextToken(item.id)
-          try {
-            await refresh()
-          } catch (refreshError) {
-            console.warn('[Wework] failed to refresh Harness apps after rollback', refreshError)
-          }
-        }
-      }
-      if (proxyToken && proxyCanBeRevoked) {
-        try {
-          await services.localHarnessModelApi?.unregisterProxy(proxyToken)
-        } catch (proxyError) {
-          console.warn('[Wework] failed to unregister Harness model proxy', proxyError)
-        }
-      }
-      const message = getErrorMessage(startError, t('workbench.harness_apps_start_failed'))
-      failHarnessAppLaunch(item.id, message)
-      setError(message)
-      if (contextToken && proxyCanBeRevoked) {
-        try {
-          await services.localHarnessModelApi?.unregisterContext(contextToken)
-        } catch (contextError) {
-          console.warn('[Wework] failed to unregister Harness context', contextError)
-        }
-      }
-    } finally {
-      setBusy(null)
-    }
+    openHarnessAppTab(workspaceTabs, item)
+  }
+
+  function hasSelectedModel(item: HarnessAppInstallation) {
+    return modelOptions.some(option => option.key === item.modelKey)
   }
 
   async function stop(item: HarnessAppInstallation) {
@@ -452,7 +367,7 @@ export function HarnessAppsPage({ importRequested = false }: HarnessAppsPageProp
                               {option.label}
                             </option>
                           ))}
-                          {!selectedModel(item) ? (
+                          {!hasSelectedModel(item) ? (
                             <option value={item.modelKey ?? ''}>
                               {t('workbench.harness_apps_model_unavailable')}
                             </option>
