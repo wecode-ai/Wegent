@@ -57,6 +57,44 @@ import {
 
 import { captureVerificationScreenshot } from './workspace-flows.mjs'
 
+async function openBrowserForModelSwitchWarning(control) {
+  const browserInputSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-url-input"]`
+  let snapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
+  if (!snapshot.testIds.includes('workspace-browser-url-input')) {
+    if (!snapshot.testIds.includes('right-workspace-browser-option')) {
+      await control.command('click', '[data-testid="toggle-right-workspace-panel-button"]')
+      snapshot = await waitForSnapshot(
+        control,
+        value =>
+          value.testIds.includes('right-workspace-browser-option') ||
+          value.testIds.includes('right-workspace-new-tab-button'),
+        'The right workspace did not expose a browser launcher',
+        DEFAULT_STEP_TIMEOUT_MS,
+        ACTIVE_WORKBENCH_SELECTOR
+      )
+    }
+    if (!snapshot.testIds.includes('right-workspace-browser-option')) {
+      await control.command('click', '[data-testid="right-workspace-new-tab-button"]')
+      await control.command('waitFor', '[data-testid="right-workspace-browser-option"]', {
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+    }
+    await control.command('click', '[data-testid="right-workspace-browser-option"]')
+  }
+  await control.command('waitFor', browserInputSelector, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('fill', browserInputSelector, {
+    value: new URL(control.url).origin,
+  })
+  await control.command('submit', browserInputSelector)
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-native-view"]`,
+    { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+  )
+}
+
 async function waitForProcessExit(processId, message) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
@@ -84,6 +122,7 @@ async function verifyCrossProviderSwitchRetry(control, composerSelector) {
     'The failed Luna turn was unexpectedly sent more than once'
   )
 
+  await openBrowserForModelSwitchWarning(control)
   await control.command('scrollIntoView', ACTIVE_SWITCH_MODEL_RETRY_SELECTOR)
   await control.command('clickWhenEnabled', ACTIVE_SWITCH_MODEL_RETRY_SELECTOR, {
     stableMs: COMPOSER_READY_STABILITY_MS,
@@ -102,9 +141,19 @@ async function verifyCrossProviderSwitchRetry(control, composerSelector) {
   await control.command('waitFor', '[data-testid="model-switch-warning-dialog"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await captureVerificationScreenshot(control, 'model-switch-browser-dialog-open.png')
   await control.command('clickWhenEnabled', '[data-testid="model-switch-warning-confirm-button"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      !snapshot.testIds.includes('model-switch-warning-dialog') &&
+      snapshot.testIds.includes('workspace-browser-native-view'),
+    'The model switch dialog did not restore the embedded browser',
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+  await captureVerificationScreenshot(control, 'model-switch-browser-dialog-closed.png')
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: PROVIDER_SWITCH_COMPLETION,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
