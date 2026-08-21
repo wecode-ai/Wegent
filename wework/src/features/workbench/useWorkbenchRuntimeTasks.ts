@@ -24,8 +24,6 @@ import type {
 import {
   createRuntimeTaskStreamHandlers,
   runtimeAddressDebug,
-  runtimeMessagesToWorkbenchMessages,
-  runtimeTranscriptTurnsToConversationTurns,
   runtimeTranscriptDebug,
   type RuntimeTaskStreamHandlers,
 } from './runtimePaneMessages'
@@ -48,6 +46,7 @@ import type {
 } from './workbenchContextTypes'
 import { evictRuntimeConversation } from './runtimeConversationCache'
 import type { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
+import { projectRuntimePaneTranscript } from './runtimeTaskLifecycle/projection'
 
 interface UseWorkbenchRuntimeTasksOptions {
   user: User
@@ -155,24 +154,7 @@ export function useWorkbenchRuntimeTasks({
             throw new Error('Runtime transcript response is missing canonical turns')
           }
 
-          return {
-            messages: runtimeMessagesToWorkbenchMessages(
-              Array.isArray(transcript.messages) ? transcript.messages : []
-            ),
-            turns: runtimeTranscriptTurnsToConversationTurns(transcript.turns),
-            running: typeof transcript.running === 'boolean' ? transcript.running : undefined,
-            contextUsage: transcript.contextUsage ?? null,
-            turnNavigation: Array.isArray(transcript.turnNavigation)
-              ? transcript.turnNavigation
-              : [],
-            fullContent: transcript.fullContent === true,
-            rangeStart: typeof transcript.rangeStart === 'number' ? transcript.rangeStart : null,
-            rangeEnd: typeof transcript.rangeEnd === 'number' ? transcript.rangeEnd : null,
-            hasMoreBefore: Boolean(transcript.hasMoreBefore),
-            beforeCursor: transcript.beforeCursor ?? null,
-            hasMoreAfter: Boolean(transcript.hasMoreAfter),
-            afterCursor: transcript.afterCursor ?? null,
-          }
+          return projectRuntimePaneTranscript(transcript)
         })
         .finally(() => {
           if (runtimeTranscriptRequests.get(transcriptKey) === request) {

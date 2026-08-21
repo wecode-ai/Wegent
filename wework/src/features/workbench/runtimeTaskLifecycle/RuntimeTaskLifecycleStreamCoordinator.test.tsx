@@ -224,6 +224,39 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
     })
   })
 
+  test('settles stale running state from a refreshed terminal transcript after event lag', async () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    const address = runtimeTaskAddress()
+    store.syncRuntimeWork(runtimeWork(true))
+    store.turnStarted(address, 'turn-1')
+    let streamHandlers: ChatStreamHandlers = {}
+    const services = {
+      chatStream: {
+        subscribe: vi.fn((handlers: ChatStreamHandlers) => {
+          streamHandlers = handlers
+          return vi.fn()
+        }),
+      },
+      executorClient: {
+        runtime: {
+          listRuntimeWork: vi.fn().mockResolvedValue(runtimeWork(true)),
+          getRuntimeTranscript: vi.fn().mockResolvedValue(runtimeTranscript(false)),
+        },
+      },
+    } as unknown as WorkbenchServices
+
+    render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
+    await act(async () => {
+      streamHandlers.onRuntimeEventLagged?.({ skipped: 1 })
+    })
+
+    await waitFor(() => {
+      expect(store.getTask(address)?.execution.phase).toBe('idle')
+    })
+    expect(store.getTask(address)?.turn.phase).toBe('idle')
+    expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(false)
+  })
+
   test('recovers both the current task and every running task after event lag', async () => {
     const store = new RuntimeTaskLifecycleStore('test')
     const currentAddress = runtimeTaskAddress()
