@@ -35,10 +35,12 @@ pnpm --filter wework test scripts/prepare-codex-binary.test.mjs
 pnpm --filter wework run prepare:codex --all
 ```
 
-Then confirm the prepared host binary with `codex --version`. Use
-`pnpm --filter wework ai:verify start` to validate at least Codex App Server
-initialization, local task creation, one completed real turn, and plugin list
-loading in an isolated real Tauri application.
+Then read the current macOS target's `binaryPath` from
+`wework/codex-binaries.lock.json` and run `--version` on that exact binary under
+`wework/src-tauri/binaries/codex/<target>/`; do not use a `codex` found on
+`PATH`. Use `pnpm --filter wework ai:verify start` to validate at least Codex
+App Server initialization, local task creation, one completed real turn, and
+plugin list loading in an isolated real Tauri application.
 
 Local builds prepare the Codex binary for the current target automatically:
 

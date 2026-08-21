@@ -32,7 +32,9 @@ pnpm --filter wework test scripts/prepare-codex-binary.test.mjs
 pnpm --filter wework run prepare:codex --all
 ```
 
-然后使用 `codex --version` 确认本机准备出的版本，并通过
+然后根据 `wework/codex-binaries.lock.json` 中当前 macOS 目标的 `binaryPath`，
+对 `wework/src-tauri/binaries/codex/<target>/` 下准备出的准确二进制运行
+`--version`；不要使用 `PATH` 中的 `codex`。再通过
 `pnpm --filter wework ai:verify start` 在隔离的真实 Tauri 应用中至少验证
 Codex App Server 初始化、创建本地任务、完成一次真实 turn，以及插件列表加载。
 
