@@ -17,6 +17,7 @@ import type {
 } from '@/types/workbench'
 import type { VirtualItem } from '@tanstack/react-virtual'
 import {
+  appendAcceptedRuntimeConversationUser,
   appendRuntimeConversationGuidance,
   mergeRuntimeConversationTurns,
   projectRuntimeConversationTurns,
@@ -160,6 +161,26 @@ export function getRuntimeConversationMessages(address: RuntimeTaskAddress): Wor
   return projectRuntimeConversationTurns(touchEntry(turnsByConversation, key) ?? [])
 }
 
+export function getRuntimeConversationTurnIds(address: RuntimeTaskAddress): ReadonlySet<string> {
+  const key = runtimeConversationKey(address)
+  return new Set(
+    (touchEntry(turnsByConversation, key) ?? []).flatMap(turn => (turn.id ? [turn.id] : []))
+  )
+}
+
+export function runtimeConversationMessageHasStartedTurn(
+  address: RuntimeTaskAddress,
+  messageId: string
+): boolean {
+  const key = runtimeConversationKey(address)
+  return (touchEntry(turnsByConversation, key) ?? []).some(
+    turn =>
+      turn.id !== null &&
+      (turn.clientUserMessageId === messageId ||
+        turn.items.some(item => item.type === 'user_message' && item.id === messageId))
+  )
+}
+
 export function getRuntimeConversationLiveActivitySnapshot(address: RuntimeTaskAddress): string {
   return runtimeLiveActivitySnapshot(
     getLatestRuntimeLiveActivity(getRuntimeConversationMessages(address))
@@ -284,6 +305,17 @@ export function applyRuntimeConversationAction(
   return projectRuntimeConversationTurns(nextTurns)
 }
 
+export function appendAcceptedRuntimeConversationMessage(
+  address: RuntimeTaskAddress,
+  message: WorkbenchMessage,
+  activeTurnId: string | null,
+  turnIdsBeforeSend: ReadonlySet<string>
+): WorkbenchMessage[] {
+  return updateRuntimeConversationTurns(address, turns =>
+    appendAcceptedRuntimeConversationUser(turns, message, activeTurnId, turnIdsBeforeSend)
+  )
+}
+
 export function updateRuntimeConversationBlocks(
   address: RuntimeTaskAddress,
   update: (block: ProcessingBlock) => ProcessingBlock
@@ -377,14 +409,19 @@ export function cacheRuntimeConversationQueuedMessagesByKey(
   cacheBoundedEntry(queuedMessagesByConversation, key, messages)
 }
 
-export function settleRuntimeConversationAcceptedMessage(address: RuntimeTaskAddress): void {
+export function settleRuntimeConversationAcceptedMessage(
+  address: RuntimeTaskAddress,
+  messageId?: string
+): void {
   const key = runtimeConversationKey(address)
   const queuedMessages = queuedMessagesByConversation.get(key)
   if (!queuedMessages) return
 
-  const nextQueuedMessages = queuedMessages.filter(
-    message => message.status !== 'sending' || message.deliveryMode !== 'message'
-  )
+  const nextQueuedMessages = queuedMessages.filter(message => {
+    if (message.status !== 'sending' || message.deliveryMode !== 'message') return true
+    if (messageId) return message.id !== messageId
+    return message.awaitingTurnStart !== true
+  })
   if (nextQueuedMessages.length === queuedMessages.length) return
 
   cacheRuntimeConversationQueuedMessagesByKey(key, nextQueuedMessages)

@@ -6919,7 +6919,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(within(sideChat).queryByTitle('draft attachment')).not.toBeInTheDocument()
   }, 15_000)
 
-  test('temporary chat converts a stale busy rejection into a queued follow-up', async () => {
+  test('temporary chat keeps a stale busy rejection queued without blind retries', async () => {
     const address: RuntimeTaskAddress = {
       deviceId: 'workspace-cloud-device',
       taskId: 'runtime-side-chat-stale-busy',
@@ -6929,15 +6929,9 @@ describe('DesktopWorkbenchLayout', () => {
       options?.onRuntimeTaskOptimisticOpen?.(address)
       return address
     })
-    const retryResult = createDeferred<boolean>()
-    let sendAttempt = 0
     sendRuntimePaneMessageMock.mockImplementation(async (_request, options) => {
-      sendAttempt += 1
-      if (sendAttempt === 1) {
-        options?.onError?.('runtime task is already running')
-        return false
-      }
-      return retryResult.promise
+      options?.onError?.('runtime task is already running')
+      return false
     })
     renderWorkspacePanelLayout()
 
@@ -6958,23 +6952,55 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.type(sideChatInput, 'follow-up during stale state')
     await userEvent.click(within(sideChat).getByTestId('send-message-button'))
 
-    await waitFor(() => expect(sendRuntimePaneMessageMock).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(sendRuntimePaneMessageMock).toHaveBeenCalledTimes(1))
     expect(within(sideChat).getByTestId('conversation-queue-panel')).toHaveTextContent(
       'follow-up during stale state'
     )
     expect(within(sideChat).queryByTestId('chat-input-error')).not.toBeInTheDocument()
 
-    await act(async () => {
-      retryResult.resolve(true)
-      await retryResult.promise
-    })
-    await waitFor(() =>
-      expect(within(sideChat).queryByTestId('conversation-queue-panel')).not.toBeInTheDocument()
-    )
-    expect(within(sideChat).getAllByTestId('user-message-content').at(-1)).toHaveTextContent(
-      'follow-up during stale state'
-    )
+    expect(sendRuntimePaneMessageMock).toHaveBeenCalledTimes(1)
   }, 20_000)
+
+  test('temporary chat marks a rejected queued send as failed', async () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'workspace-cloud-device',
+      taskId: 'runtime-side-chat-rejected-queue',
+      workspacePath: '/workspace/project',
+    }
+    createTemporaryRuntimeTaskMock.mockImplementation(async (_input, options) => {
+      options?.onRuntimeTaskOptimisticOpen?.(address)
+      return address
+    })
+    sendRuntimePaneMessageMock.mockRejectedValueOnce(new Error('network unavailable'))
+    renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
+
+    const sideChat = await screen.findByTestId('right-workspace-chat-panel')
+    const sideChatInput = within(sideChat).getByTestId('chat-message-input')
+    await userEvent.type(sideChatInput, 'first message')
+    await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+    await waitFor(() => expect(subscribeRuntimeTaskStreamMock).toHaveBeenCalled())
+
+    await userEvent.type(sideChatInput, 'queued follow-up')
+    await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+    expect(within(sideChat).getByTestId('conversation-queue-panel')).toHaveTextContent(
+      'queued follow-up'
+    )
+
+    const streamHandlers = subscribeRuntimeTaskStreamMock.mock.calls.at(-1)?.[1] as
+      | { onAssistantStart?: () => void }
+      | undefined
+    act(() => streamHandlers?.onAssistantStart?.())
+
+    await waitFor(() =>
+      expect(within(sideChat).getByTestId('conversation-queue-panel')).toHaveTextContent(
+        'network unavailable'
+      )
+    )
+    expect(sendRuntimePaneMessageMock).toHaveBeenCalledTimes(1)
+  }, 15_000)
 
   test('temporary chat rolls back its optimistic address when runtime creation fails', async () => {
     const createResult = createDeferred<RuntimeTaskAddress | false>()
