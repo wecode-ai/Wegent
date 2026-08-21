@@ -371,7 +371,7 @@ describe('uploadFile', () => {
 
     await waitForCondition(() => MockXMLHttpRequest.instances.some(xhr => xhr.sent))
     const request = MockXMLHttpRequest.instances[0]
-    expect(request.requestUrl).toContain('fileplatform.api.weibo.com')
+    expect(request.requestUrl).toContain('up-cn1.video.weibocdn.com')
 
     request.complete({
       fid: '12345',

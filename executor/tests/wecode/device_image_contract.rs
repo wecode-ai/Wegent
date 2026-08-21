@@ -8,6 +8,13 @@ use std::fs;
 fn internal_device_image_pipeline_keeps_policy_in_wecode() {
     let gitlab_pipeline = fs::read_to_string("../.gitlab-ci.yml").unwrap();
     assert!(gitlab_pipeline.contains("bash wecode/docker/device/build-and-publish.sh"));
+    assert!(gitlab_pipeline.contains("bash wecode/docker/executor/build-and-export-image-tag.sh"));
+    assert!(gitlab_pipeline.contains("dotenv: executor-image.env"));
+    assert!(gitlab_pipeline.contains("job: wegent-executor"));
+    assert!(gitlab_pipeline.contains("artifacts: true"));
+    assert!(gitlab_pipeline.contains(
+        "DEVICE_IMAGE_VERSION=\"${EXECUTOR_IMAGE_TAG:?missing wegent-executor image tag}\""
+    ));
     assert!(gitlab_pipeline.contains("resource_group: wegent-device-image"));
     assert!(gitlab_pipeline.contains("docker/device/**/*"));
     assert!(gitlab_pipeline.contains("wecode/docker/device/**/*"));
@@ -66,10 +73,57 @@ fn internal_device_image_pipeline_keeps_policy_in_wecode() {
     assert!(publish_script.contains("--entrypoint /app/executor"));
     assert!(publish_script.contains("org.opencontainers.image.version"));
     assert!(publish_script.contains("org.opencontainers.image.revision"));
+    assert!(publish_script.contains("APP_VERSION=${EXECUTOR_VERSION}"));
+    assert!(publish_script
+        .contains("DEVICE_IMAGE_VERSION=\"${DEVICE_IMAGE_VERSION:-$EXECUTOR_VERSION}\""));
+    assert!(publish_script.contains("test \"$actual_version\" = \"$EXECUTOR_VERSION\""));
+    assert!(publish_script.contains("test \"$published_executor_version\" = \"$EXECUTOR_VERSION\""));
+    assert!(publish_script.contains("${MASTER_BRANCH:-main}"));
+    assert!(publish_script.contains("executor_version_push_image"));
+    assert!(publish_script.contains("executor_version_runtime_image"));
+}
+
+#[cfg(unix)]
+#[test]
+fn executor_ci_build_exports_tomas_image_tag() {
+    use std::{os::unix::fs::PermissionsExt, process::Command};
+
+    let temp = tempfile::tempdir().unwrap();
+    let fake_build_image = temp.path().join("build_image");
+    fs::write(
+        &fake_build_image,
+        "#!/usr/bin/env bash\n\
+         echo 'last_image:ci/wegent-executor:1.0.236'\n\
+         echo 'image: ci/wegent-executor:1.0.237-feature-device-tag'\n",
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(&fake_build_image).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&fake_build_image, permissions).unwrap();
+
+    let current_path = std::env::var("PATH").unwrap();
+    let export_script = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../wecode/docker/executor/build-and-export-image-tag.sh");
+    let output = Command::new("bash")
+        .arg(export_script)
+        .env("PATH", format!("{}:{current_path}", temp.path().display()))
+        .current_dir(temp.path())
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "tag export failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(temp.path().join("executor-image.env")).unwrap(),
+        "EXECUTOR_IMAGE_TAG=1.0.237-feature-device-tag\n"
+    );
 }
 
 #[test]
-fn internal_default_image_tag_matches_executor_version() {
+fn internal_default_image_tag_falls_back_to_executor_version() {
     let cargo_manifest = fs::read_to_string("Cargo.toml").unwrap();
     let version = cargo_manifest
         .lines()
@@ -78,5 +132,9 @@ fn internal_default_image_tag_matches_executor_version() {
     let internal_config =
         fs::read_to_string("../backend/wecode/config/remote_device_config.py").unwrap();
 
-    assert!(internal_config.contains(&format!("wegent-device:{version}")));
+    assert!(internal_config.contains(&format!(
+        "REMOTE_DEVICE_IMAGE_FALLBACK_VERSION = \"{version}\""
+    )));
+    assert!(internal_config.contains("_resolve_executor_version_from_cargo_toml()"));
+    assert!(internal_config.contains("@model_validator(mode=\"after\")"));
 }

@@ -125,26 +125,38 @@ wegent-executor:
     SERVICE: wegent-executor
     DOCKERFILE_PATH: wecode/docker/executor
   script:
-    - build_image
+    - bash wecode/docker/executor/build-and-export-image-tag.sh
+  artifacts:
+    reports:
+      dotenv: executor-image.env
   rules:
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "develop"'
       when: never
     - if: '$CI_COMMIT_BRANCH == "main"'
       changes:
+        - docker/device/**/*
         - executor/**/*
+        - wecode/docker/device/**/*
         - wecode/docker/executor/**/*
         - shared/**/*
+        - .gitlab-ci.yml
     - changes:
+      - docker/device/**/*
       - executor/**/*
+      - wecode/docker/device/**/*
       - wecode/docker/executor/**/*
       - shared/**/*
+      - .gitlab-ci.yml
 
 wegent-device:
   stage: package
   retry: 1
   resource_group: wegent-device-image
+  needs:
+    - job: wegent-executor
+      artifacts: true
   script:
-    - bash wecode/docker/device/build-and-publish.sh
+    - DEVICE_IMAGE_VERSION="${EXECUTOR_IMAGE_TAG:?missing wegent-executor image tag}" bash wecode/docker/device/build-and-publish.sh
   rules:
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "develop"'
       when: never
