@@ -277,3 +277,46 @@ printf '%s\\n%s\\n%s\\n' \
         str(key_path),
         "public-key-content",
     ]
+
+
+def test_macos_hook_build_removes_stale_architecture(tmp_path: Path) -> None:
+    plugin_dir = tmp_path / "src-tauri/hook-plugins/codex-code-statistics"
+    bundle_bin_dir = tmp_path / "src-tauri/bundled-hooks/codex-code-statistics/bin"
+    plugin_dir.mkdir(parents=True)
+    (bundle_bin_dir / "macos-aarch64").mkdir(parents=True)
+    (bundle_bin_dir / "macos-x86_64").mkdir(parents=True)
+    (bundle_bin_dir / "macos-aarch64/stale").touch()
+    (bundle_bin_dir / "macos-x86_64/stale").touch()
+    build_script = plugin_dir / "build-target.sh"
+    build_script.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+case "$1" in
+  aarch64-apple-darwin) platform=macos-aarch64 ;;
+  x86_64-apple-darwin) platform=macos-x86_64 ;;
+esac
+destination="$(cd "$(dirname "$0")/../.." && pwd)/bundled-hooks/codex-code-statistics/bin/$platform"
+mkdir -p "$destination"
+touch "$destination/codex-code-statistics"
+""",
+        encoding="utf-8",
+    )
+    build_script.chmod(0o755)
+
+    subprocess.run(
+        [
+            "bash",
+            "-c",
+            """
+source "$1"
+wework_build_code_statistics_hook "$2" aarch64-apple-darwin
+""",
+            "bash",
+            str(SCRIPT_DIR / "lib/codex-code-statistics.sh"),
+            str(tmp_path),
+        ],
+        check=True,
+    )
+
+    assert (bundle_bin_dir / "macos-aarch64/codex-code-statistics").is_file()
+    assert not (bundle_bin_dir / "macos-x86_64").exists()
