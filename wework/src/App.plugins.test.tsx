@@ -1831,7 +1831,7 @@ describe('App plugins route', () => {
     })
     expect(screen.getByTestId('applications-tab-web')).toHaveTextContent('站点')
     expect(screen.getByTestId('applications-tab-miniapp')).toHaveTextContent('小程序')
-    expect(screen.getByTestId('applications-tab-smart-app')).toHaveTextContent('智能应用')
+    expect(screen.getByTestId('applications-tab-smart-app')).toHaveTextContent('智能工作台')
     expect(screen.getByTestId('smart-apps-marketplace-page')).toBeInTheDocument()
     expect(screen.getByTestId('smart-apps-section-marketplace')).toHaveAttribute(
       'aria-current',

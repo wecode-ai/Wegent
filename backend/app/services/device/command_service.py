@@ -55,7 +55,10 @@ REMOTE_READ_ONLY_COMMAND_KEYS = frozenset(
         "git_github_cli_status",
         "git_gitlab_cli_status",
         "git_github_pull_requests",
+        "git_github_pull_requests_batch",
+        "git_github_pull_request_merge_queue_batch",
         "git_gitlab_merge_requests",
+        "git_gitlab_merge_requests_batch",
         "git_generate_commit_message",
         "turn_file_changes_review",
     }

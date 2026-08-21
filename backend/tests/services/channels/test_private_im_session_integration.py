@@ -35,6 +35,7 @@ class FakeChannelHandler(BaseChannelHandler[dict[str, Any], BaseCallbackInfo]):
             is_mention=raw_data.get("is_mention", False),
             raw_message=raw_data,
             extra_data=raw_data.get("extra_data", {}),
+            proactive_recipient_id=raw_data.get("proactive_recipient_id"),
             images=raw_data.get("images", []),
             files=raw_data.get("files", []),
         )
@@ -97,6 +98,7 @@ def _message(
     *,
     conversation_type: str = "private",
     conversation_id: str = "conv-private",
+    proactive_recipient_id: str | None = None,
     extra_data: dict[str, Any] | None = None,
     images: list[dict[str, str]] | None = None,
     files: list[dict[str, Any]] | None = None,
@@ -107,6 +109,7 @@ def _message(
         "conversation_id": conversation_id,
         "sender_id": "staff-a",
         "sender_name": "Alice",
+        "proactive_recipient_id": proactive_recipient_id,
         "extra_data": extra_data or {},
         "images": images or [],
         "files": files or [],
@@ -196,13 +199,16 @@ async def test_private_bind_creates_session_and_replies_bound(
 ) -> None:
     handler = FakeChannelHandler(test_user)
 
-    handled = await handler.handle_message(_message("/bind"))
+    handled = await handler.handle_message(
+        _message("/bind", proactive_recipient_id="staff-delivery-a")
+    )
 
     test_db.expire_all()
     session = await _private_session(test_db, test_user)
     assert handled is True
     assert session is not None
     assert session.sender_id == "staff-a"
+    assert session.proactive_recipient_id == "staff-delivery-a"
     assert session.display_name == "Alice"
     assert any("已绑定" in reply for reply in handler.replies)
 

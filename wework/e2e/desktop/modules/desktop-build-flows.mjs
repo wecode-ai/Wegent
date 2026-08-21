@@ -573,7 +573,11 @@ async function buildDesktopApp(
                 identifier: 'desktop-e2e-window',
                 description: 'Allows the desktop E2E runner to manage test window visibility',
                 windows: ['main'],
-                permissions: ['core:window:allow-show', 'core:window:allow-unminimize'],
+                permissions: [
+                  'core:window:allow-set-size',
+                  'core:window:allow-show',
+                  'core:window:allow-unminimize',
+                ],
               },
             ],
           },

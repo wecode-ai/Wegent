@@ -10,6 +10,8 @@ import {
   useSyncExternalStore,
 } from 'react'
 import type { CloudLoopItem } from '@/api/deliveries'
+import type { TaskChangeRequestSnapshot, TaskChangeRequestTarget } from '@/api/changeRequests'
+import { ChangeRequestStatusIcon } from '@/components/common/ChangeRequestStatusIcon'
 import { AssistantThinkingIndicator } from '@/components/chat/AssistantThinkingIndicator'
 import {
   getToolActivityFilePaths,
@@ -30,6 +32,12 @@ import {
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { RuntimeTaskAddress } from '@/types/api'
+import type { ChangeRequestMonitor } from '@/features/workbench/changeRequestMonitor'
+import { useTaskChangeRequest } from '@/features/workbench/changeRequestMonitor'
+import {
+  autoRepairStatus,
+  stoppedTaskNeedsAttention,
+} from '@/features/workbench/changeRequestStatus'
 import { isLoopItemExecutionActive } from './cloudMyWorkModel'
 import { priorityBadgeClasses } from './todoShared'
 
@@ -154,6 +162,7 @@ export interface CloudTodoBoardTaskBinding {
   task_id: string
   task_title: string | null
   running: boolean
+  changeRequestTarget?: TaskChangeRequestTarget | null
 }
 
 interface CloudTodoBoardCardProps {
@@ -166,6 +175,11 @@ interface CloudTodoBoardCardProps {
   agentNames?: Record<string, string>
   dragDisabled?: boolean
   archiveDisabled?: boolean
+  changeRequestMonitor?: ChangeRequestMonitor | null
+  onContinueChangeRequestRepair?: (
+    binding: CloudTodoBoardTaskBinding,
+    snapshot: TaskChangeRequestSnapshot
+  ) => Promise<void>
 }
 
 export function CloudTodoBoardCard({
@@ -178,12 +192,25 @@ export function CloudTodoBoardCard({
   agentNames,
   dragDisabled = false,
   archiveDisabled = false,
+  changeRequestMonitor = null,
+  onContinueChangeRequestRepair,
 }: CloudTodoBoardCardProps) {
   const { t } = useTranslation('common')
   const [menuOpen, setMenuOpen] = useState(false)
   const hasActiveTask = isLoopItemExecutionActive(item)
   const runningTaskBinding = taskBindings.find(binding => binding.running)
-  const currentTaskBinding = runningTaskBinding ?? (hasActiveTask ? taskBindings[0] : undefined)
+  const currentTaskBinding = runningTaskBinding ?? taskBindings[0]
+  const changeRequestSnapshot = useTaskChangeRequest(
+    changeRequestMonitor,
+    currentTaskBinding?.changeRequestTarget ?? null
+  )
+  const showCurrentTask = Boolean(
+    currentTaskBinding &&
+    (currentTaskBinding.running ||
+      hasActiveTask ||
+      stoppedTaskNeedsAttention(changeRequestSnapshot?.changeRequest ?? null))
+  )
+  const [repairingChangeRequest, setRepairingChangeRequest] = useState(false)
   const currentTaskAddress = useMemo<RuntimeTaskAddress | null>(
     () =>
       currentTaskBinding && (currentTaskBinding.running || hasActiveTask)
@@ -272,7 +299,7 @@ export function CloudTodoBoardCard({
         <CloudTodoCardContent item={item} display={display} agentNames={agentNames} />
       </button>
 
-      {currentTaskBinding ? (
+      {currentTaskBinding && showCurrentTask ? (
         <div
           role={onOpenActivity ? 'button' : undefined}
           tabIndex={onOpenActivity ? 0 : undefined}
@@ -298,10 +325,36 @@ export function CloudTodoBoardCard({
           )}
         >
           <div className="flex min-w-0 items-center gap-2 text-xs text-text-secondary">
-            <ListTodo className="h-3.5 w-3.5" />
-            <span className="shrink-0 text-text-muted">
-              {t('todo.current_running_task', '正在执行')}
-            </span>
+            {changeRequestSnapshot?.changeRequest ? (
+              <ChangeRequestStatusIcon
+                snapshot={changeRequestSnapshot}
+                testId={`cloud-todo-card-change-request-${item.id}-${currentTaskBinding.id}`}
+                repairing={repairingChangeRequest}
+                onContinueRepair={
+                  autoRepairStatus(changeRequestSnapshot.changeRequest) &&
+                  onContinueChangeRequestRepair
+                    ? async () => {
+                        setRepairingChangeRequest(true)
+                        try {
+                          await onContinueChangeRequestRepair(
+                            currentTaskBinding,
+                            changeRequestSnapshot
+                          )
+                        } finally {
+                          setRepairingChangeRequest(false)
+                        }
+                      }
+                    : undefined
+                }
+              />
+            ) : (
+              <ListTodo className="h-3.5 w-3.5" />
+            )}
+            {currentTaskBinding.running || hasActiveTask ? (
+              <span className="shrink-0 text-text-muted">
+                {t('todo.current_running_task', '正在执行')}
+              </span>
+            ) : null}
             <span
               data-testid={`cloud-todo-card-task-${item.id}-${currentTaskBinding.id}`}
               className="min-w-0 truncate"

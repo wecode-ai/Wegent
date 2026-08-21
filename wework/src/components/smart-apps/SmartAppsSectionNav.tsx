@@ -31,7 +31,7 @@ export function SmartAppsSectionNav({ active }: SmartAppsSectionNavProps) {
   return (
     <nav
       data-testid="smart-apps-section-nav"
-      aria-label={t('workbench.smart_apps_sections', '智能应用导航')}
+      aria-label={t('workbench.smart_apps_sections', '智能工作台导航')}
       className="flex gap-5 border-b border-border/40"
     >
       {sections.map(section => {
