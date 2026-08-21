@@ -2864,6 +2864,7 @@ class LoopItemExecutionService:
             )
         db.commit()
         db.refresh(row)
+        self.push_linked_activity_after_commit(db, execution=row)
         return row
 
     def resolve_task_context(
