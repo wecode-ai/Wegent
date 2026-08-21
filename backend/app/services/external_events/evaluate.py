@@ -24,6 +24,7 @@ from app.schemas.runtime_work import RuntimeSendRequest, RuntimeTaskAddress
 from app.services.external_events.adapters import (
     NormalizedExternalEvent,
     event_type_policy,
+    external_event_dict,
 )
 from app.services.external_events.binding import (
     ExternalEventBindingService,
@@ -84,18 +85,20 @@ class ExternalEventEvaluationService:
         issue, node = self._issue_and_node(db, binding)
         if issue is None or node is None or node.status != "waiting":
             return
+        first = external_event_buffer.peek_aggregate(
+            task_id=binding.loop_item_id,
+            node_id=self._node_id(binding),
+        )
+        if first is None:
+            return
+        rule = self._matching_rule(node, first[0], first[1])
+        if rule is None or rule.action not in {"rerun", "continue"}:
+            return
         events = external_event_buffer.take_aggregate(
             task_id=binding.loop_item_id,
             node_id=self._node_id(binding),
         )
         if not events:
-            return
-        rule = self._matching_rule(
-            node,
-            str(events[0].get("provider") or ""),
-            str(events[0].get("event_type") or ""),
-        )
-        if rule is None or rule.action not in {"rerun", "continue"}:
             return
         group, rest = self._split_event_groups(events)
         policy = event_type_policy(
@@ -103,13 +106,13 @@ class ExternalEventEvaluationService:
             str(group[0].get("event_type") or ""),
         )
         if policy is not None and policy.merge_while_running:
-            self._park_events(db, binding=binding, events=rest)
+            self._park_events(binding=binding, events=rest)
             self._start_repair_round(
                 db, binding=binding, node=node, rule=rule, events=group
             )
             return
         fired, *remainder = group
-        self._park_events(db, binding=binding, events=[*remainder, *rest])
+        self._park_events(binding=binding, events=[*remainder, *rest])
         self._start_repair_round(
             db, binding=binding, node=node, rule=rule, events=[fired]
         )
@@ -141,7 +144,7 @@ class ExternalEventEvaluationService:
         if self._has_active_execution(db, binding):
             # A repair round started while the window was open; park the
             # window events so they settle together when that round ends.
-            self._park_events(db, binding=binding, events=events)
+            self._park_events(binding=binding, events=events)
             return
         self._start_repair_round(
             db, binding=binding, node=node, rule=rule, events=events
@@ -235,7 +238,7 @@ class ExternalEventEvaluationService:
         if rule is None or rule.action not in {"rerun", "continue"}:
             return
         if self._has_active_execution(db, binding):
-            self._park_event(db, binding=binding, event=event)
+            self._park_event(binding=binding, event=event)
             return
         policy = event_type_policy(event.provider, event.event_type)
         if policy is not None and policy.window_seconds:
@@ -256,12 +259,12 @@ class ExternalEventEvaluationService:
             binding.opaque_ref,
             event.event_type,
         )
-        events = merge_events([*pending, *buffered, self._event_dict(event)])
+        events = merge_events([*pending, *buffered, external_event_dict(event)])
         if not events:
             return
         group, rest = self._split_event_groups(events)
         if policy is not None and policy.merge_while_running:
-            self._park_events(db, binding=binding, events=rest)
+            self._park_events(binding=binding, events=rest)
             self._start_repair_round(
                 db, binding=binding, node=node, rule=rule, events=group
             )
@@ -270,7 +273,7 @@ class ExternalEventEvaluationService:
         # the first type now and park everything else so the following settles
         # fire them serially without merging events into one round.
         fired, *remainder = group
-        self._park_events(db, binding=binding, events=[*remainder, *rest])
+        self._park_events(binding=binding, events=[*remainder, *rest])
         self._start_repair_round(
             db, binding=binding, node=node, rule=rule, events=[fired]
         )
@@ -354,7 +357,10 @@ class ExternalEventEvaluationService:
                 target[0].local_task_id,
             )
             self._record_continue_error(
-                db, issue=issue, node=node, error="Device is not reachable"
+                db,
+                issue=issue,
+                node=node,
+                error="Device is not reachable",
             )
             return False
         self._bump_round(db, issue=issue, node=node)
@@ -465,14 +471,14 @@ class ExternalEventEvaluationService:
             task_id=task_id,
             node_id=node_id,
             event_type=event.event_type,
-            event=self._event_dict(event),
+            event=external_event_dict(event),
         ):
             return
         snapshot = external_event_buffer.open_window(
             task_id=task_id,
             node_id=node_id,
             event_type=event.event_type,
-            event=self._event_dict(event),
+            event=external_event_dict(event),
             window_seconds=window_seconds,
         )
         if snapshot is None:
@@ -490,16 +496,14 @@ class ExternalEventEvaluationService:
 
     def _park_event(
         self,
-        db: Session,
         *,
         binding: ExternalEventBinding,
         event: NormalizedExternalEvent,
     ) -> None:
-        self._park_events(db, binding=binding, events=[self._event_dict(event)])
+        self._park_events(binding=binding, events=[external_event_dict(event)])
 
     def _park_events(
         self,
-        db: Session,
         *,
         binding: ExternalEventBinding,
         events: list[dict[str, Any]],
@@ -537,6 +541,7 @@ class ExternalEventEvaluationService:
 
         run_id = self._metadata(binding).get("automation_run_id")
         if not run_id:
+            self._park_events(binding=binding, events=events)
             return
         run = db.get(ProjectAutomationRun, run_id)
         if run is None or run.task_id != binding.loop_item_id:
@@ -546,9 +551,11 @@ class ExternalEventEvaluationService:
                 run_id,
                 binding.loop_item_id,
             )
+            self._park_events(binding=binding, events=events)
             return
         item = db.get(LoopItem, binding.loop_item_id)
         if item is None:
+            self._park_events(binding=binding, events=events)
             return
         issue_id = self._metadata(binding).get("issue_item_id")
         issue = db.get(LoopItem, issue_id) if issue_id else item
@@ -560,46 +567,64 @@ class ExternalEventEvaluationService:
                 binding.id,
                 node.id,
             )
+            self._park_events(binding=binding, events=events)
             return
-        self._bump_round(db, issue=issue, node=node)
         instruction = self._repair_instruction(rule, events)
         # A repair round is its own run scoped to the wait node, exactly like
         # a stage rerun owns a fresh run. The stage that reached the gate
         # stays completed and is never re-activated by the round.
-        rerun_run = self._rerun_run(
-            db,
-            run=run,
-            item=item,
-            issue=issue,
-            node=node,
-            instruction=instruction,
-            agent=agent,
-        )
-        binding_metadata = dict(self._metadata(binding))
-        binding_metadata["automation_run_id"] = str(rerun_run.id)
-        binding.metadata_json = binding_metadata
-        execution = loop_item_execution_service.create_for_assignment(
-            db,
-            loop_item_id=item.id,
-            cloud_project_id=str(item.cloud_project_id),
-            agent=agent,
-            assigner_user_id=int(
-                run.created_by_user_id or agent.created_by_user_id or 0
-            ),
-            environment=str(self._agent_env(agent)),
-            execution_device_id=self._agent_device(agent),
-            priority=item.priority,
-            automation_context={
-                "rule_id": str(run.parent_id or ""),
-                "run_id": str(rerun_run.id),
-                "trigger": "external_event",
-            },
-        )
-        db.flush()
-        if execution.team_id:
-            from app.services.board_team_execution import schedule_board_robot_execution
+        try:
+            # The rerun setup is one unit: bumping the round, creating the
+            # wait-node run, rebinding metadata, and enqueueing the execution
+            # either all persist or all roll back. The webhook request commits
+            # the outer transaction afterwards, so a partial repair round must
+            # never leak into it.
+            with db.begin_nested():
+                self._bump_round(db, issue=issue, node=node)
+                rerun_run = self._rerun_run(
+                    db,
+                    run=run,
+                    item=item,
+                    issue=issue,
+                    node=node,
+                    instruction=instruction,
+                    agent=agent,
+                )
+                binding_metadata = dict(self._metadata(binding))
+                binding_metadata["automation_run_id"] = str(rerun_run.id)
+                binding.metadata_json = binding_metadata
+                execution = loop_item_execution_service.create_for_assignment(
+                    db,
+                    loop_item_id=item.id,
+                    cloud_project_id=str(item.cloud_project_id),
+                    agent=agent,
+                    assigner_user_id=int(
+                        run.created_by_user_id or agent.created_by_user_id or 0
+                    ),
+                    environment=str(self._agent_env(agent)),
+                    execution_device_id=self._agent_device(agent),
+                    priority=item.priority,
+                    automation_context={
+                        "rule_id": str(run.parent_id or ""),
+                        "run_id": str(rerun_run.id),
+                        "trigger": "external_event",
+                    },
+                )
+                db.flush()
+                if execution.team_id:
+                    from app.services.board_team_execution import (
+                        schedule_board_robot_execution,
+                    )
 
-            schedule_board_robot_execution(db, execution)
+                    schedule_board_robot_execution(db, execution)
+        except Exception:
+            logger.exception(
+                "External event rerun setup failed binding=%s task=%s",
+                binding.id,
+                item.id,
+            )
+            self._park_events(binding=binding, events=events)
+            raise
         logger.info(
             "[ExternalEvent] Rerun queued binding=%s task=%s execution=%s round=%s",
             binding.id,
@@ -841,19 +866,6 @@ class ExternalEventEvaluationService:
             )
             target.append(event)
         return group, rest
-
-    @staticmethod
-    def _event_dict(event: NormalizedExternalEvent) -> dict[str, Any]:
-        return {
-            "provider": event.provider,
-            "opaque_ref": event.opaque_ref,
-            "event_type": event.event_type,
-            "event_id": event.event_id,
-            "summary": event.summary,
-            "source_url": event.source_url,
-            "occurred_at": event.occurred_at.isoformat() if event.occurred_at else None,
-            "detail": event.detail,
-        }
 
     @staticmethod
     def _event_from_dict(value: dict[str, Any]) -> NormalizedExternalEvent | None:
