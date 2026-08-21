@@ -25,9 +25,7 @@ const detectedTarget =
         'linux-arm64': 'aarch64-unknown-linux-gnu',
         'win32-x64': 'x86_64-pc-windows-msvc',
       }[`${platform}-${arch}`]
-const target =
-  process.env.WEWORK_DWS_TARGET?.trim() ||
-  detectedTarget
+const target = process.env.WEWORK_DWS_TARGET?.trim() || detectedTarget
 
 if (!target) {
   throw new Error(

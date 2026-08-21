@@ -20,6 +20,7 @@ import {
   MessageSquarePlus,
   Pause,
   Pin,
+  Plug,
   Plus,
   RotateCw,
   Search,
@@ -45,6 +46,7 @@ import type {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { ActionMenu } from '@/components/common/ActionMenu'
+import { ChangeRequestStatusIcon } from '@/components/common/ChangeRequestStatusIcon'
 import { TextInputDialog } from '@/components/common/TextInputDialog'
 import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
 import { LocalProjectEditDialog } from '@/components/projects/LocalProjectEditDialog'
@@ -56,6 +58,15 @@ import type { WeworkInstalledReleaseNotes } from '@/features/app-update/app-rele
 import { SHOW_PLUGINS_NAVIGATION } from '@/features/plugins/visibility'
 import { getRuntimeTaskReminderItemKey } from '@/features/workbench/runtimeTaskReminders'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
+import {
+  getChangeRequestMonitor,
+  runtimeTaskChangeRequestTarget,
+  useTaskChangeRequest,
+} from '@/features/workbench/changeRequestMonitor'
+import {
+  autoRepairStatus,
+  buildChangeRequestRepairPrompt,
+} from '@/features/workbench/changeRequestStatus'
 import { runtimeTaskBoardOrigin } from '@/features/workbench/runtimeTaskOrigin'
 import {
   getRuntimeConversationQueuePaused,
@@ -298,15 +309,65 @@ interface DesktopSidebarProps {
   onLogout: () => void
 }
 
-interface RuntimeTaskPinOverride {
-  base: boolean
-  value: boolean
+interface RuntimeTaskPinMutation {
+  createdRevision: number
   requestId: number
-  source: RuntimeWorkListResponse | null | undefined
+  status: 'pending' | 'succeeded'
+  value: boolean
+}
+
+interface RuntimeTaskPinOverride {
+  mutations: RuntimeTaskPinMutation[]
 }
 
 function getRuntimeTaskPinOverrideKey(deviceId: string, threadId: string) {
   return `${deviceId}\0${threadId}`
+}
+
+function getRuntimeTaskPinnedValue(
+  persistedPinned: boolean,
+  override: RuntimeTaskPinOverride | undefined
+) {
+  return override?.mutations[override.mutations.length - 1]?.value ?? persistedPinned
+}
+
+function reconcileRuntimeTaskPinOverride(
+  override: RuntimeTaskPinOverride,
+  persistedPinned: boolean,
+  revision: number
+) {
+  let acknowledgedMutationIndex = -1
+  for (const [index, mutation] of override.mutations.entries()) {
+    if (mutation.status !== 'succeeded') break
+    if (mutation.createdRevision < revision && mutation.value === persistedPinned) {
+      acknowledgedMutationIndex = index
+    }
+  }
+  if (acknowledgedMutationIndex < 0) return override
+
+  const mutations = override.mutations.slice(acknowledgedMutationIndex + 1)
+  return mutations.length > 0 ? { mutations } : null
+}
+
+function reconcileRuntimeTaskPinOverrides(
+  overrides: Map<string, RuntimeTaskPinOverride>,
+  persistedPinStates: Map<string, boolean>,
+  revision: number
+) {
+  let next = overrides
+  for (const [key, override] of overrides) {
+    const persistedPinned = persistedPinStates.get(key)
+    if (persistedPinned === undefined) continue
+    const reconciled = reconcileRuntimeTaskPinOverride(override, persistedPinned, revision)
+    if (reconciled === override) continue
+    if (next === overrides) next = new Map(overrides)
+    if (reconciled) {
+      next.set(key, reconciled)
+    } else {
+      next.delete(key)
+    }
+  }
+  return next
 }
 
 type OpenSettingsOptions = DesktopSidebarAccountSettingsOptions
@@ -1403,6 +1464,7 @@ function RuntimeTaskRow({
   const [renameOpen, setRenameOpen] = useState(false)
   const [forceStarting, setForceStarting] = useState(false)
   const [queueReordering, setQueueReordering] = useState(false)
+  const [repairingChangeRequest, setRepairingChangeRequest] = useState(false)
   const workbench = useContext(WorkbenchContext)
   const [taskMenuPosition, setTaskMenuPosition] = useState<ProjectCreateMenuPosition | null>(null)
   const archiveDelayRef = useRef<number | null>(null)
@@ -1433,6 +1495,16 @@ function RuntimeTaskRow({
   const archiveDisabled =
     !workspace.available || !onArchiveRuntimeTask || archiving || archivePending
   const taskAddress = getRuntimeTaskAddress(workspace, task)
+  const changeRequestTarget = useMemo(
+    () => runtimeTaskChangeRequestTarget(workspace, task),
+    [task, workspace]
+  )
+  const changeRequestMonitor = useMemo(
+    () =>
+      workbench?.services?.deviceApi ? getChangeRequestMonitor(workbench.services.deviceApi) : null,
+    [workbench]
+  )
+  const changeRequestSnapshot = useTaskChangeRequest(changeRequestMonitor, changeRequestTarget)
   const taskLifecycle = useRuntimeTaskLifecycle(taskAddress)
   const queuePaused = useRuntimeTaskQueuePaused(taskAddress)
   const queued = isRuntimeTaskQueued(task)
@@ -1575,6 +1647,20 @@ function RuntimeTaskRow({
       workbench.setWorkbenchError(t('workbench.runtime_task_queue_reorder_failed'))
     } finally {
       setQueueReordering(false)
+    }
+  }
+  const continueChangeRequestRepair = async () => {
+    const changeRequest = changeRequestSnapshot?.changeRequest
+    if (!workbench || !changeRequest || !autoRepairStatus(changeRequest)) return
+    setRepairingChangeRequest(true)
+    try {
+      await workbench.sendRuntimePaneMessage({
+        address: taskAddress,
+        message: buildChangeRequestRepairPrompt(changeRequest, task.title),
+        source: { source: 'manual' },
+      })
+    } finally {
+      setRepairingChangeRequest(false)
     }
   }
   const notificationActionLabel = notificationsSubscribed
@@ -1744,6 +1830,17 @@ function RuntimeTaskRow({
               <span>{splitGroup.displayNumber}</span>
             </span>
           ) : null}
+          <ChangeRequestStatusIcon
+            snapshot={changeRequestSnapshot}
+            testId={`runtime-local-task-change-request-${task.taskId}`}
+            repairing={repairingChangeRequest}
+            onContinueRepair={
+              changeRequestSnapshot?.changeRequest &&
+              autoRepairStatus(changeRequestSnapshot.changeRequest)
+                ? continueChangeRequestRepair
+                : undefined
+            }
+          />
           <span
             data-testid={`runtime-local-task-trailing-${task.taskId}`}
             className={cn(
@@ -3067,10 +3164,13 @@ export function DesktopSidebar({
   const [expandedProjectIds, setExpandedProjectIds] = useState<Set<number>>(() =>
     readStoredNumberSet(expandedProjectIdsStorageKey)
   )
-  const [chatTaskPinOverrides, setChatTaskPinOverrides] = useState<
+  const [runtimeTaskPinOverrides, setRuntimeTaskPinOverrides] = useState<
     Map<string, RuntimeTaskPinOverride>
   >(() => new Map())
-  const chatTaskPinRequestIdRef = useRef(0)
+  const runtimeTaskPinRequestIdRef = useRef(0)
+  const runtimeTaskPinRequestChainsRef = useRef(new Map<string, Promise<void>>())
+  const runtimeTaskPinSnapshotRevisionRef = useRef(0)
+  const runtimeTaskPersistedPinStatesRef = useRef(new Map<string, boolean>())
   const [sidebarScrolled, setSidebarScrolled] = useState(false)
   const {
     scrollContainerRef: sidebarWorklistsScrollRef,
@@ -3090,10 +3190,67 @@ export function DesktopSidebar({
       ),
     [devices, runtimeWork, standaloneDeviceId, standaloneWorkspacePath]
   )
-  const sidebarRuntimeProjects = useMemo(() => {
+  const sidebarRuntimeProjectSource = useMemo(() => {
     const items = runtimeWork?.projects ?? []
     return standaloneProjectWork ? [standaloneProjectWork, ...items] : items
   }, [runtimeWork?.projects, standaloneProjectWork])
+  const runtimeTaskPersistedPinStates = useMemo(() => {
+    const states = new Map<string, boolean>()
+    for (const projectWork of sidebarRuntimeProjectSource) {
+      for (const workspace of projectWork.deviceWorkspaces) {
+        for (const task of workspace.tasks) {
+          const threadId = getRuntimeTaskThreadId(task)
+          if (!threadId) continue
+          states.set(
+            getRuntimeTaskPinOverrideKey(
+              projectWork.project.stateDeviceId ?? workspace.deviceId,
+              threadId
+            ),
+            Boolean(task.pinned)
+          )
+        }
+      }
+    }
+    for (const workspace of runtimeWork?.chats ?? []) {
+      for (const task of workspace.tasks) {
+        const threadId = getRuntimeTaskThreadId(task)
+        if (!threadId) continue
+        states.set(getRuntimeTaskPinOverrideKey(workspace.deviceId, threadId), Boolean(task.pinned))
+      }
+    }
+    return states
+  }, [runtimeWork?.chats, sidebarRuntimeProjectSource])
+  useEffect(() => {
+    const revision = ++runtimeTaskPinSnapshotRevisionRef.current
+    runtimeTaskPersistedPinStatesRef.current = runtimeTaskPersistedPinStates
+    setRuntimeTaskPinOverrides(current =>
+      reconcileRuntimeTaskPinOverrides(current, runtimeTaskPersistedPinStates, revision)
+    )
+  }, [runtimeTaskPersistedPinStates])
+  const sidebarRuntimeProjects = useMemo(
+    () =>
+      sidebarRuntimeProjectSource.map(projectWork => ({
+        ...projectWork,
+        deviceWorkspaces: projectWork.deviceWorkspaces.map(workspace => ({
+          ...workspace,
+          tasks: workspace.tasks.map(task => {
+            const threadId = getRuntimeTaskThreadId(task)
+            const persistedPinned = Boolean(task.pinned)
+            const override = threadId
+              ? runtimeTaskPinOverrides.get(
+                  getRuntimeTaskPinOverrideKey(
+                    projectWork.project.stateDeviceId ?? workspace.deviceId,
+                    threadId
+                  )
+                )
+              : undefined
+            const pinned = getRuntimeTaskPinnedValue(persistedPinned, override)
+            return pinned === persistedPinned ? task : { ...task, pinned }
+          }),
+        })),
+      })),
+    [runtimeTaskPinOverrides, sidebarRuntimeProjectSource]
+  )
   const sidebarProjects = useMemo(() => {
     if (runtimeWork || standaloneProjectWork) {
       return sidebarRuntimeProjects.map(runtimeProjectToProject)
@@ -3162,17 +3319,14 @@ export function DesktopSidebar({
         const threadId = getRuntimeTaskThreadId(item.task)
         const persistedPinned = Boolean(item.task.pinned)
         const override = threadId
-          ? chatTaskPinOverrides.get(
+          ? runtimeTaskPinOverrides.get(
               getRuntimeTaskPinOverrideKey(item.workspace.deviceId, threadId)
             )
           : undefined
-        const pinned =
-          override && override.source === runtimeWork && override.base === persistedPinned
-            ? override.value
-            : persistedPinned
+        const pinned = getRuntimeTaskPinnedValue(persistedPinned, override)
         return pinned === persistedPinned ? item : { ...item, task: { ...item.task, pinned } }
       }),
-    [chatTaskItems, chatTaskPinOverrides, runtimeWork]
+    [chatTaskItems, runtimeTaskPinOverrides]
   )
   const regularChatTaskItems = useMemo(
     () => chatTaskItemsWithPinState.filter(({ task }) => !task.pinned),
@@ -3344,35 +3498,96 @@ export function DesktopSidebar({
     if (!isArchivingPriority) setPriorityForceArchiveItems(null)
   }
 
-  const setChatTaskPinned = async (data: RuntimeTaskPinRequest) => {
+  const setRuntimeTaskPinnedOptimistically = async (data: RuntimeTaskPinRequest) => {
     if (!onSetRuntimeTaskPinned) return
-    const chatTask = chatTaskItems.find(
-      ({ workspace, task }) =>
-        workspace.deviceId === data.deviceId && getRuntimeTaskThreadId(task) === data.threadId
-    )
-    if (!chatTask) {
+    const projectTask = sidebarRuntimeProjectSource
+      .flatMap(projectWork =>
+        getRuntimeSidebarTaskItems(projectWork.deviceWorkspaces).map(item => ({
+          ...item,
+          stateDeviceId: projectWork.project.stateDeviceId ?? item.workspace.deviceId,
+        }))
+      )
+      .find(
+        ({ stateDeviceId, task }) =>
+          stateDeviceId === data.deviceId && getRuntimeTaskThreadId(task) === data.threadId
+      )
+    const runtimeTask =
+      projectTask ??
+      chatTaskItems.find(
+        ({ workspace, task }) =>
+          workspace.deviceId === data.deviceId && getRuntimeTaskThreadId(task) === data.threadId
+      )
+    if (!runtimeTask) {
       await onSetRuntimeTaskPinned(data)
       return
     }
 
     const key = getRuntimeTaskPinOverrideKey(data.deviceId, data.threadId)
-    const requestId = ++chatTaskPinRequestIdRef.current
-    const base = Boolean(chatTask.task.pinned)
-    setChatTaskPinOverrides(current => {
+    const requestId = ++runtimeTaskPinRequestIdRef.current
+    setRuntimeTaskPinOverrides(current => {
       const next = new Map(current)
-      next.set(key, { base, value: data.pinned, requestId, source: runtimeWork })
+      const existing = current.get(key)
+      next.set(key, {
+        mutations: [
+          ...(existing?.mutations ?? []),
+          {
+            createdRevision: runtimeTaskPinSnapshotRevisionRef.current,
+            requestId,
+            status: 'pending',
+            value: data.pinned,
+          },
+        ],
+      })
       return next
     })
+    const previousRequest = runtimeTaskPinRequestChainsRef.current.get(key) ?? Promise.resolve()
+    const request = previousRequest.catch(() => undefined).then(() => onSetRuntimeTaskPinned(data))
+    runtimeTaskPinRequestChainsRef.current.set(key, request)
     try {
-      await onSetRuntimeTaskPinned(data)
-    } catch (error) {
-      setChatTaskPinOverrides(current => {
-        if (current.get(key)?.requestId !== requestId) return current
+      await request
+      setRuntimeTaskPinOverrides(current => {
+        const override = current.get(key)
+        if (!override) return current
+        const mutations = override.mutations.map(mutation =>
+          mutation.requestId === requestId
+            ? { ...mutation, status: 'succeeded' as const }
+            : mutation
+        )
+        const persistedPinned = runtimeTaskPersistedPinStatesRef.current.get(key)
+        const reconciled =
+          persistedPinned === undefined
+            ? { mutations }
+            : reconcileRuntimeTaskPinOverride(
+                { mutations },
+                persistedPinned,
+                runtimeTaskPinSnapshotRevisionRef.current
+              )
         const next = new Map(current)
-        next.delete(key)
+        if (reconciled) {
+          next.set(key, reconciled)
+        } else {
+          next.delete(key)
+        }
+        return next
+      })
+    } catch (error) {
+      setRuntimeTaskPinOverrides(current => {
+        const override = current.get(key)
+        if (!override?.mutations.some(mutation => mutation.requestId === requestId)) return current
+        const next = new Map(current)
+        const mutations = override.mutations.filter(mutation => mutation.requestId !== requestId)
+        if (mutations.length > 0) {
+          next.set(key, { mutations })
+        } else {
+          next.delete(key)
+        }
         return next
       })
       throw error
+    } finally {
+      if (runtimeTaskPinRequestChainsRef.current.get(key) === request) {
+        runtimeTaskPinRequestChainsRef.current.delete(key)
+      }
     }
   }
   const projectSectionArchiveItems = useMemo(() => {
@@ -3541,6 +3756,27 @@ export function DesktopSidebar({
     void runArchiveSectionConversations(forceArchiveSectionMode, { force: true })
   }
   const displayedExpandedProjectIds = visibleExpandedProjectIds
+  const currentRuntimeTaskKey = currentRuntimeTask
+    ? getRuntimeNotificationKey(currentRuntimeTask)
+    : null
+  const currentRuntimeTaskPinned = useMemo(
+    () =>
+      Boolean(
+        currentRuntimeTask &&
+        pinnedTaskItems.some(({ workspace, task }) =>
+          isRuntimeTaskSelected(currentRuntimeTask, workspace, task)
+        )
+      ),
+    [currentRuntimeTask, pinnedTaskItems]
+  )
+  const currentRuntimeTaskRowVisible = Boolean(
+    currentRuntimeTaskKey &&
+    (currentRuntimeTaskPinned ||
+      (selectedRuntimeProjectId !== null &&
+        displayedProjectsExpanded &&
+        displayedExpandedProjectIds.has(selectedRuntimeProjectId)) ||
+      (selectedRuntimeChatVisible && displayedChatsExpanded))
+  )
   const autoExpandedProjectKeyRef = useRef<string | null>(null)
 
   const handleToggleProject = (projectId: number) => {
@@ -3649,19 +3885,14 @@ export function DesktopSidebar({
   }, [priorityFilterShortcut, togglePriorityFilter])
 
   useEffect(() => {
-    if (!currentRuntimeTask) return
+    if (!currentRuntimeTaskKey || !currentRuntimeTaskRowVisible) return
 
     const taskRow = document.querySelector(
-      `[data-testid="runtime-local-task-row-${currentRuntimeTask.taskId}"]`
+      `[data-testid="runtime-local-task-row-${currentRuntimeTask?.taskId}"]`
     )
 
     taskRow?.scrollIntoView({ block: 'nearest' })
-  }, [
-    currentRuntimeTask,
-    displayedChatsExpanded,
-    displayedExpandedProjectIds,
-    displayedProjectsExpanded,
-  ])
+  }, [currentRuntimeTask?.taskId, currentRuntimeTaskKey, currentRuntimeTaskRowVisible])
 
   return (
     <aside
@@ -3810,11 +4041,17 @@ export function DesktopSidebar({
               />
               {SHOW_PLUGINS_NAVIGATION && (
                 <DesktopSidebarNavItem
-                  icon={Sparkles}
+                  icon={Plug}
                   label={t('workbench.plugins', '插件')}
                   testId="plugins-button"
                   selected={activeItem === 'plugins'}
                   onClick={onOpenPlugins}
+                  onPointerEnter={() => {
+                    if (!isTauriRuntime()) return
+                    void import('@/components/plugins/workspace/prefetchPluginsWorkspace').then(
+                      module => module.prefetchPluginsWorkspace()
+                    )
+                  }}
                 />
               )}
               {experimentalFeaturesEnabled && (
@@ -3890,11 +4127,7 @@ export function DesktopSidebar({
                     onRenameRuntimeTask={onRenameRuntimeTask}
                     onArchiveRuntimeTask={onArchiveRuntimeTask}
                     onSetRuntimeTaskPinned={
-                      onSetRuntimeTaskPinned
-                        ? item.isStandaloneChat
-                          ? setChatTaskPinned
-                          : onSetRuntimeTaskPinned
-                        : undefined
+                      onSetRuntimeTaskPinned ? setRuntimeTaskPinnedOptimistically : undefined
                     }
                     onToggleRuntimeTaskNotification={onToggleRuntimeTaskNotification}
                   />
@@ -3979,9 +4212,9 @@ export function DesktopSidebar({
                             onOpenRuntimeTask={onOpenRuntimeTask}
                             onMarkRuntimeTaskRead={onMarkRuntimeTaskRead}
                             onSetRuntimeTaskPinned={
-                              projectWork || !onSetRuntimeTaskPinned
-                                ? onSetRuntimeTaskPinned
-                                : setChatTaskPinned
+                              onSetRuntimeTaskPinned
+                                ? setRuntimeTaskPinnedOptimistically
+                                : undefined
                             }
                             onRenameRuntimeTask={onRenameRuntimeTask}
                             onArchiveRuntimeTask={onArchiveRuntimeTask}
@@ -4045,7 +4278,11 @@ export function DesktopSidebar({
                             onSetRuntimeProjectPinned={onSetRuntimeProjectPinned}
                             onSetRuntimeProjectAppearance={onSetRuntimeProjectAppearance}
                             onReorderRuntimeProjectTasks={onReorderRuntimeProjectTasks}
-                            onSetRuntimeTaskPinned={onSetRuntimeTaskPinned}
+                            onSetRuntimeTaskPinned={
+                              onSetRuntimeTaskPinned
+                                ? setRuntimeTaskPinnedOptimistically
+                                : undefined
+                            }
                             onRenameProject={openProjectEditor}
                             onOpenRuntimeTask={onOpenRuntimeTask}
                             onMarkRuntimeTaskRead={onMarkRuntimeTaskRead}
@@ -4315,7 +4552,11 @@ export function DesktopSidebar({
                               onSetRuntimeProjectPinned={onSetRuntimeProjectPinned}
                               onSetRuntimeProjectAppearance={onSetRuntimeProjectAppearance}
                               onReorderRuntimeProjectTasks={onReorderRuntimeProjectTasks}
-                              onSetRuntimeTaskPinned={onSetRuntimeTaskPinned}
+                              onSetRuntimeTaskPinned={
+                                onSetRuntimeTaskPinned
+                                  ? setRuntimeTaskPinnedOptimistically
+                                  : undefined
+                              }
                               onRenameProject={openProjectEditor}
                               onOpenRuntimeTask={onOpenRuntimeTask}
                               onMarkRuntimeTaskRead={onMarkRuntimeTaskRead}
@@ -4456,7 +4697,9 @@ export function DesktopSidebar({
                               onRenameRuntimeTask={onRenameRuntimeTask}
                               onArchiveRuntimeTask={onArchiveRuntimeTask}
                               onSetRuntimeTaskPinned={
-                                onSetRuntimeTaskPinned ? setChatTaskPinned : undefined
+                                onSetRuntimeTaskPinned
+                                  ? setRuntimeTaskPinnedOptimistically
+                                  : undefined
                               }
                               onToggleRuntimeTaskNotification={onToggleRuntimeTaskNotification}
                             />

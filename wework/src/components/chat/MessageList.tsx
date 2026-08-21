@@ -85,6 +85,7 @@ import {
   cacheConversationVirtualMeasurements,
   getConversationVirtualMeasurements,
 } from '@/features/workbench/runtimeConversationCache'
+import { getRuntimeMessageActiveThinking } from '@/features/workbench/runtimeThinking'
 
 interface MessageListProps {
   messages: WorkbenchMessage[]
@@ -1947,24 +1948,6 @@ function getDisplayProcessingBlocks(
     })
 }
 
-function getLatestActiveThinkingContent(blocks: ProcessingBlock[] | undefined): string {
-  if (!blocks?.length) return ''
-
-  for (let index = blocks.length - 1; index >= 0; index -= 1) {
-    const block = blocks[index]
-    if (
-      block?.type === 'thinking' &&
-      block.status !== 'done' &&
-      block.status !== 'error' &&
-      block.content.trim()
-    ) {
-      return block.content
-    }
-  }
-
-  return ''
-}
-
 function getWebSearchToolBlocks(blocks: ProcessingBlock[]) {
   return blocks.filter(
     (block): block is Extract<ProcessingBlock, { type: 'tool' }> =>
@@ -2042,9 +2025,7 @@ function AssistantMessage({
   const hasBlocks = displayBlocks.length > 0
   const hasVisibleContent = Boolean(visibleContent.trim())
   const isStreaming = !isCancelled && message.status === 'streaming'
-  const activeThinkingContent = isStreaming
-    ? (message.streamingThinkingContent ?? getLatestActiveThinkingContent(message.blocks))
-    : ''
+  const activeThinkingContent = isStreaming ? getRuntimeMessageActiveThinking(message) : ''
   const hasRunningBlocks = hasRunningProcessingBlocks(displayBlocks)
   const isAssistantRunning = isStreaming || hasRunningBlocks
   const canShowFinalArtifacts = !isAssistantRunning

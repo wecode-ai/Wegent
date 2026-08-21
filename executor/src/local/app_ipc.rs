@@ -2043,18 +2043,18 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
             None,
         )),
         "git_diff" => Some(command_definition(
-            "bash -lc <git_workspace_diff>",
-            &["bash", "-lc", GIT_WORKSPACE_DIFF_SCRIPT],
+            "bash -c <git_workspace_diff>",
+            &["bash", "-c", GIT_WORKSPACE_DIFF_SCRIPT],
             None,
         )),
         "git_branch_diff" => Some(command_definition(
-            "bash -lc <git_branch_diff>",
-            &["bash", "-lc", GIT_BRANCH_DIFF_SCRIPT],
+            "bash -c <git_branch_diff>",
+            &["bash", "-c", GIT_BRANCH_DIFF_SCRIPT],
             None,
         )),
         "git_branch_diff_shortstat" => Some(command_definition(
-            "bash -lc <git_branch_diff_shortstat>",
-            &["bash", "-lc", GIT_BRANCH_DIFF_SHORTSTAT_SCRIPT],
+            "bash -c <git_branch_diff_shortstat>",
+            &["bash", "-c", GIT_BRANCH_DIFF_SHORTSTAT_SCRIPT],
             None,
         )),
         "git_diff_unstaged" => Some(command_definition(
@@ -2108,6 +2108,22 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
             ],
             Some(PostProcessor::Json),
         )),
+        "git_github_pull_requests_batch" => Some(command_definition(
+            "gh api --method GET repos/{owner}/{repo}/pulls?state=all&per_page=100",
+            &[
+                "gh",
+                "api",
+                "--method",
+                "GET",
+                "repos/{owner}/{repo}/pulls?state=all&per_page=100",
+                "--jq",
+                concat!(
+                    "[.[] | {number, html_url, title, state, draft, ",
+                    "head: {ref: .head.ref}, updated_at, merged_at}]"
+                ),
+            ],
+            Some(PostProcessor::Json),
+        )),
         "git_github_pull_request_merge_queue" => Some(command_definition(
             "gh api graphql <pull-request-merge-queue-query>",
             &[
@@ -2117,6 +2133,11 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
                 "-f",
                 "query=query($url:URI!){resource(url:$url){... on PullRequest{mergeQueueEntry{id}}}}",
             ],
+            Some(PostProcessor::Json),
+        )),
+        "git_github_pull_request_merge_queue_batch" => Some(command_definition(
+            "gh api graphql",
+            &["gh", "api", "graphql"],
             Some(PostProcessor::Json),
         )),
         "git_gitlab_merge_requests" => Some(command_definition(
@@ -2135,6 +2156,24 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
                 "--output",
                 "json",
                 "--source-branch",
+            ],
+            Some(PostProcessor::Json),
+        )),
+        "git_gitlab_merge_requests_batch" => Some(command_definition(
+            "glab mr list --all",
+            &[
+                "glab",
+                "mr",
+                "list",
+                "--all",
+                "--per-page",
+                "100",
+                "--order",
+                "updated_at",
+                "--sort",
+                "desc",
+                "--output",
+                "json",
             ],
             Some(PostProcessor::Json),
         )),
@@ -2430,4 +2469,20 @@ where
     bytes.push(b'\n');
     writer.write_all(&bytes).await?;
     writer.flush().await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::local_app_command;
+
+    #[test]
+    fn git_diff_commands_do_not_start_a_login_shell() {
+        for command_key in ["git_diff", "git_branch_diff", "git_branch_diff_shortstat"] {
+            let command = local_app_command(command_key).expect("command must be registered");
+
+            assert_eq!(command.argv.first(), Some(&"bash"));
+            assert_eq!(command.argv.get(1), Some(&"-c"));
+            assert!(!command.argv.contains(&"-l"));
+        }
+    }
 }

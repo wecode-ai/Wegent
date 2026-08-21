@@ -73,6 +73,7 @@ export function useRuntimeTaskContinueInIm(currentRuntimeTask: RuntimeTaskAddres
       loading,
       submitting,
       sessions,
+      autoSubmitSingle: true,
       onClose: closeDialog,
       onSubmit: submit,
     },

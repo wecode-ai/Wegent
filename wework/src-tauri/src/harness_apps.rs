@@ -3,7 +3,7 @@ use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -12,7 +12,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tar::Archive;
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
@@ -21,8 +21,9 @@ use std::os::windows::process::CommandExt;
 
 const DIRECTORY: &str = "harness-apps";
 const REGISTRY: &str = "installations.json";
-const BUNDLED_RUNTIME_DIRECTORY: &str = "bundled-deepseek-harness";
+const BUNDLED_RUNTIME_DIRECTORY: &str = "bundled-harness-runtime";
 const BUNDLED_RUNTIME_METADATA: &str = "runtime.json";
+const HARNESS_APP_LAUNCH_PROGRESS_EVENT: &str = "harness-app-launch-progress";
 const MAX_RUNTIME_ARCHIVE_BYTES: u64 = 200 * 1024 * 1024;
 const MAX_ARCHIVE_BYTES: u64 = 50 * 1024 * 1024;
 const MAX_EXTRACTED_BYTES: u64 = 250 * 1024 * 1024;
@@ -33,7 +34,13 @@ const MAX_ENTRIES: usize = 8_000;
 pub struct HarnessAppEntry {
     install_package: String,
     profile: String,
-    web_url: String,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+pub struct HarnessAppPackage {
+    name: String,
+    role: String,
+    path: String,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -51,6 +58,8 @@ pub struct HarnessAppManifest {
     #[serde(rename = "type")]
     package_type: String,
     description: String,
+    #[serde(default)]
+    packages: Vec<HarnessAppPackage>,
     entry: HarnessAppEntry,
     requirements: HarnessAppRequirements,
     #[serde(default)]
@@ -83,12 +92,20 @@ pub struct HarnessAppPreview {
     issues: Vec<String>,
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HarnessAppLaunchProgress {
+    installation_id: String,
+    phase: &'static str,
+}
+
 pub struct HarnessAppRuntimeState {
     children: Mutex<HashMap<String, Child>>,
     proxy_tokens: Mutex<HashMap<String, String>>,
     context_tokens: Mutex<HashMap<String, String>>,
     registry: Mutex<()>,
     runtime: Arc<Mutex<()>>,
+    start_locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 impl Default for HarnessAppRuntimeState {
@@ -99,6 +116,7 @@ impl Default for HarnessAppRuntimeState {
             context_tokens: Mutex::new(HashMap::new()),
             registry: Mutex::new(()),
             runtime: Arc::new(Mutex::new(())),
+            start_locks: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -275,6 +293,43 @@ fn validate_manifest(manifest: &HarnessAppManifest) -> Result<(), String> {
     }
     if !safe_relative(Path::new(&manifest.entry.install_package)) {
         return Err("Harness app installPackage must stay inside the package".to_string());
+    }
+    if !manifest.packages.is_empty() {
+        let mut names = HashSet::new();
+        let mut paths = HashSet::new();
+        let mut profile_bundle_paths = Vec::new();
+        for package in &manifest.packages {
+            if package.name.trim().is_empty()
+                || package.role.trim().is_empty()
+                || package.path.trim().is_empty()
+            {
+                return Err("Harness app package declaration is incomplete".to_string());
+            }
+            if !safe_relative(Path::new(&package.path)) {
+                return Err("Harness app package path must stay inside the package".to_string());
+            }
+            if !names.insert(package.name.as_str()) {
+                return Err(format!(
+                    "Harness app package name is duplicated: {}",
+                    package.name
+                ));
+            }
+            if !paths.insert(package.path.as_str()) {
+                return Err(format!(
+                    "Harness app package path is duplicated: {}",
+                    package.path
+                ));
+            }
+            if package.role == "profile-bundle" {
+                profile_bundle_paths.push(package.path.as_str());
+            }
+        }
+        if profile_bundle_paths.as_slice() != [manifest.entry.install_package.as_str()] {
+            return Err(
+                "Harness app must declare its installPackage as the only profile-bundle"
+                    .to_string(),
+            );
+        }
     }
     Ok(())
 }
@@ -585,8 +640,9 @@ fn read_node_version(node: &Path) -> Result<Version, String> {
 }
 
 fn resolve_dsh_runtime(app: &tauri::AppHandle) -> Result<DshRuntime, String> {
-    if let Ok(runtime_root) = std::env::var("WEWORK_DEEPSEEK_HARNESS_RUNTIME_ROOT") {
-        return resolve_managed_dsh_runtime(PathBuf::from(runtime_root));
+    let node = crate::execution_environments::ensure_node_runtime(app)?;
+    if let Ok(runtime_root) = std::env::var("WEWORK_HARNESS_RUNTIME_ROOT") {
+        return resolve_managed_dsh_runtime(PathBuf::from(runtime_root), node);
     }
     if let Ok(source_root) = std::env::var("WEWORK_DEEPSEEK_HARNESS_ROOT") {
         let root = fs::canonicalize(source_root).map_err(|error| {
@@ -600,7 +656,6 @@ fn resolve_dsh_runtime(app: &tauri::AppHandle) -> Result<DshRuntime, String> {
                 tsx.display()
             ));
         }
-        let node = PathBuf::from("node");
         return Ok(DshRuntime {
             version: read_package_version(&root.join("package.json"))?,
             node_version: read_node_version(&node)?,
@@ -611,7 +666,7 @@ fn resolve_dsh_runtime(app: &tauri::AppHandle) -> Result<DshRuntime, String> {
         });
     }
     let descriptor_root = bundled_runtime_descriptor_root(app)?;
-    download_and_extract_dsh_runtime(app, &descriptor_root)
+    download_and_extract_dsh_runtime(app, &descriptor_root, node)
 }
 
 fn bundled_runtime_descriptor_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -765,12 +820,13 @@ fn download_runtime_archive(
 fn download_and_extract_dsh_runtime(
     app: &tauri::AppHandle,
     resource_root: &Path,
+    node: PathBuf,
 ) -> Result<DshRuntime, String> {
     let metadata = read_runtime_descriptor(resource_root)?;
     let fingerprint = metadata.source_fingerprint.trim();
     let runtime_parent = root(app)?.join("runtime");
     let extracted = runtime_parent.join(fingerprint);
-    if let Ok(runtime) = resolve_managed_dsh_runtime(extracted.clone()) {
+    if let Ok(runtime) = resolve_managed_dsh_runtime(extracted.clone(), node.clone()) {
         return Ok(runtime);
     }
     let archive_path = download_runtime_archive(app, &metadata)?;
@@ -795,7 +851,7 @@ fn download_and_extract_dsh_runtime(
         if staged_metadata.source_fingerprint != fingerprint {
             return Err("Managed Harness runtime archive fingerprint does not match".to_string());
         }
-        resolve_managed_dsh_runtime(staging.clone())?;
+        resolve_managed_dsh_runtime(staging.clone(), node.clone())?;
 
         fs::create_dir_all(&runtime_parent).map_err(|error| {
             format!("Failed to create managed Harness runtime directory: {error}")
@@ -803,7 +859,7 @@ fn download_and_extract_dsh_runtime(
         let _ = fs::remove_dir_all(&extracted);
         fs::rename(&staging, &extracted)
             .map_err(|error| format!("Failed to activate managed Harness runtime: {error}"))?;
-        resolve_managed_dsh_runtime(extracted)
+        resolve_managed_dsh_runtime(extracted, node)
     })();
     if extraction.is_err() {
         let _ = fs::remove_dir_all(&staging);
@@ -811,15 +867,12 @@ fn download_and_extract_dsh_runtime(
     extraction
 }
 
-fn resolve_managed_dsh_runtime(root: PathBuf) -> Result<DshRuntime, String> {
+fn resolve_managed_dsh_runtime(root: PathBuf, node: PathBuf) -> Result<DshRuntime, String> {
     let package_root = root.join("node_modules/@deepseek-ai/dsh");
     let entry = package_root.join("lib/bin.js");
     if !entry.is_file() {
         return Err("Wework managed DeepSeek Harness runtime is not installed".to_string());
     }
-    let node = root
-        .join("node/bin")
-        .join(if cfg!(windows) { "node.exe" } else { "node" });
     Ok(DshRuntime {
         version: read_package_version(&package_root.join("package.json"))?,
         node_version: read_node_version(&node)?,
@@ -832,7 +885,11 @@ fn resolve_managed_dsh_runtime(root: PathBuf) -> Result<DshRuntime, String> {
 
 fn dsh_command(runtime: &DshRuntime, args: &[String], home: &Path) -> Command {
     let mut command = Command::new(&runtime.node);
-    let managed_node_bin = runtime.root.join("node/bin");
+    let managed_node_bin = runtime
+        .node
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_default();
     let managed_bin = runtime.root.join("node_modules/.bin");
     let path = std::env::var_os("PATH")
         .map(|existing| {
@@ -933,16 +990,149 @@ fn copy_directory(source: &Path, destination: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn npm_archive_name(path: &Path) -> Result<String, String> {
+    let file = fs::File::open(path)
+        .map_err(|error| format!("Failed to open Harness npm package: {error}"))?;
+    let mut archive = Archive::new(GzDecoder::new(file));
+    for entry in archive
+        .entries()
+        .map_err(|error| format!("Harness npm package is invalid: {error}"))?
+    {
+        let mut entry =
+            entry.map_err(|error| format!("Failed to inspect Harness npm package: {error}"))?;
+        if entry
+            .path()
+            .map_err(|error| format!("Harness npm package path is invalid: {error}"))?
+            == Path::new("package/package.json")
+        {
+            let mut content = String::new();
+            entry
+                .read_to_string(&mut content)
+                .map_err(|error| format!("Failed to read Harness npm package metadata: {error}"))?;
+            let package: Value = serde_json::from_str(&content)
+                .map_err(|error| format!("Harness npm package metadata is invalid: {error}"))?;
+            return package["name"]
+                .as_str()
+                .map(str::to_string)
+                .ok_or_else(|| "Harness npm package has no name".to_string());
+        }
+    }
+    Err("Harness npm package has no package.json".to_string())
+}
+
+fn extract_npm_archive(archive_path: &Path, destination: &Path) -> Result<(), String> {
+    fs::create_dir_all(destination)
+        .map_err(|error| format!("Failed to create Harness npm package directory: {error}"))?;
+    let file = fs::File::open(archive_path)
+        .map_err(|error| format!("Failed to open Harness npm package: {error}"))?;
+    let mut archive = Archive::new(GzDecoder::new(file));
+    let mut written = 0_u64;
+    for (index, entry) in archive
+        .entries()
+        .map_err(|error| format!("Harness npm package is invalid: {error}"))?
+        .enumerate()
+    {
+        if index >= MAX_ENTRIES {
+            return Err("Harness npm package contains too many entries".to_string());
+        }
+        let mut entry =
+            entry.map_err(|error| format!("Failed to inspect Harness npm package: {error}"))?;
+        let path = entry
+            .path()
+            .map_err(|error| format!("Harness npm package path is invalid: {error}"))?;
+        let relative = path
+            .strip_prefix("package")
+            .map_err(|_| "Harness npm package root is invalid".to_string())?;
+        if relative.as_os_str().is_empty() {
+            continue;
+        }
+        if !safe_relative(relative) {
+            return Err("Harness npm package contains an unsafe path".to_string());
+        }
+        let kind = entry.header().entry_type();
+        if !(kind.is_file() || kind.is_dir()) {
+            return Err("Harness npm package contains an unsupported entry type".to_string());
+        }
+        let output = destination.join(relative);
+        if kind.is_dir() {
+            fs::create_dir_all(&output)
+                .map_err(|error| format!("Failed to create Harness npm directory: {error}"))?;
+        } else {
+            if let Some(parent) = output.parent() {
+                fs::create_dir_all(parent).map_err(|error| {
+                    format!("Failed to create Harness npm package parent: {error}")
+                })?;
+            }
+            let mut file = fs::File::create(&output)
+                .map_err(|error| format!("Failed to create Harness npm package file: {error}"))?;
+            let remaining = MAX_EXTRACTED_BYTES.saturating_sub(written);
+            let copied = std::io::copy(&mut entry.by_ref().take(remaining + 1), &mut file)
+                .map_err(|error| format!("Failed to extract Harness npm package file: {error}"))?;
+            if copied > remaining {
+                return Err("Harness npm package expands beyond 250 MB".to_string());
+            }
+            written += copied;
+        }
+    }
+    Ok(())
+}
+
+fn materialize_manifest_packages(
+    manifest: &HarnessAppManifest,
+    package_root: &Path,
+) -> Result<Vec<PathBuf>, String> {
+    let install_package = package_root.join(&manifest.entry.install_package);
+    if install_package.is_dir() {
+        return Ok(vec![install_package]);
+    }
+    let mut archives = HashMap::new();
+    for entry in fs::read_dir(package_root)
+        .map_err(|error| format!("Failed to inspect Harness release package: {error}"))?
+    {
+        let entry =
+            entry.map_err(|error| format!("Failed to inspect Harness release entry: {error}"))?;
+        let path = entry.path();
+        if path.extension().is_some_and(|extension| extension == "tgz") {
+            let name = npm_archive_name(&path)?;
+            if archives.insert(name.clone(), path).is_some() {
+                return Err(format!("Harness npm package is duplicated: {name}"));
+            }
+        }
+    }
+    if manifest.packages.is_empty() {
+        return Err(format!(
+            "Harness app installPackage is missing: {}",
+            manifest.entry.install_package
+        ));
+    }
+    let mut packages = manifest.packages.iter().collect::<Vec<_>>();
+    packages.sort_by_key(|package| package.role == "profile-bundle");
+    let mut paths = Vec::with_capacity(packages.len());
+    for package in packages {
+        let archive = archives
+            .get(&package.name)
+            .ok_or_else(|| format!("Harness npm package is missing: {}", package.name))?;
+        let destination = package_root.join(&package.path);
+        extract_npm_archive(archive, &destination)?;
+        paths.push(destination);
+    }
+    if !install_package.is_dir() {
+        return Err("Harness app profile bundle was not materialized".to_string());
+    }
+    Ok(paths)
+}
+
 fn prepare_instance_bundle(
     installation: &HarnessAppInstallation,
     home: &Path,
     use_wework_model: bool,
-) -> Result<PathBuf, String> {
+) -> Result<Vec<PathBuf>, String> {
     let source = Path::new(&installation.package_path);
     let destination = home.join("wework-package");
     let _ = fs::remove_dir_all(home.join("wework-bundle"));
     let _ = fs::remove_dir_all(&destination);
     copy_directory(source, &destination)?;
+    let packages = materialize_manifest_packages(&installation.manifest, &destination)?;
     let install_package = destination.join(&installation.manifest.entry.install_package);
     if use_wework_model {
         let patch_path = install_package.join("cordis.patch.yml");
@@ -972,16 +1162,24 @@ fn prepare_instance_bundle(
             })
             .collect::<Vec<_>>()
             .join("\n");
-        if !replaced_provider || !replaced_model {
+        if replaced_provider != replaced_model {
             return Err(
-                "Harness app bundle does not expose provider/model fields for Wework binding"
+                "Harness app bundle exposes an incomplete provider/model pair for Wework binding"
                     .to_string(),
             );
         }
-        fs::write(&patch_path, format!("{patched}\n"))
+        let model_patch = if replaced_provider {
+            format!("{patched}\n")
+        } else {
+            format!(
+                "{patched}\n\n- id: agent-default-model\n  config:\n    provider: \
+                 wework-local\n    model: wework-selected\n"
+            )
+        };
+        fs::write(&patch_path, model_patch)
             .map_err(|error| format!("Failed to write instance model patch: {error}"))?;
     }
-    Ok(install_package)
+    Ok(packages)
 }
 
 fn write_wework_model_settings(home: &Path, base_url: &str) -> Result<(), String> {
@@ -1036,14 +1234,28 @@ fn install_harness_plugin(
     package: &Path,
     label: &str,
 ) -> Result<(), String> {
-    let args = vec![
+    install_harness_plugins(runtime, home, profile, &[package.to_path_buf()], label)
+}
+
+fn install_harness_plugins(
+    runtime: &DshRuntime,
+    home: &Path,
+    profile: &str,
+    packages: &[PathBuf],
+    label: &str,
+) -> Result<(), String> {
+    let mut args = vec![
         "plugin".to_string(),
         "--profile".to_string(),
         profile.to_string(),
         "add".to_string(),
         "--ignore-scripts".to_string(),
-        format!("file:{}", package.display()),
     ];
+    args.extend(
+        packages
+            .iter()
+            .map(|package| format!("file:{}", package.display())),
+    );
     let output = dsh_command(runtime, &args, home)
         .output()
         .map_err(|error| format!("Failed to install {label}: {error}"))?;
@@ -1073,6 +1285,18 @@ pub async fn start_harness_app(
     context_base_url: Option<String>,
     context_token: Option<String>,
 ) -> Result<HarnessAppInstallation, String> {
+    let start_lock = {
+        let mut start_locks = state
+            .start_locks
+            .lock()
+            .map_err(|_| "Harness app start lock failed")?;
+        Arc::clone(
+            start_locks
+                .entry(installation_id.clone())
+                .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(()))),
+        )
+    };
+    let _start_guard = start_lock.lock().await;
     {
         let mut children = state
             .children
@@ -1092,6 +1316,16 @@ pub async fn start_harness_app(
             children.remove(&installation_id);
         }
     }
+    let emit_progress = |phase| {
+        let _ = app.emit(
+            HARNESS_APP_LAUNCH_PROGRESS_EVENT,
+            HarnessAppLaunchProgress {
+                installation_id: installation_id.clone(),
+                phase,
+            },
+        );
+    };
+    emit_progress("preparingRuntime");
     let runtime_app = app.clone();
     let runtime_lock = Arc::clone(&state.runtime);
     let runtime = tauri::async_runtime::spawn_blocking(move || {
@@ -1128,6 +1362,7 @@ pub async fn start_harness_app(
             installation.manifest.requirements.node, runtime.node_version
         ));
     }
+    emit_progress("loadingApp");
     let home = root(&app)?.join("instances").join(&installation.id);
     fs::create_dir_all(&home)
         .map_err(|error| format!("Failed to create Harness app home: {error}"))?;
@@ -1136,13 +1371,14 @@ pub async fn start_harness_app(
         .is_some_and(|value| !value.trim().is_empty());
     let context = match (context_base_url, context_token) {
         (Some(base_url), Some(token))
-            if !base_url.trim().is_empty() && !token.trim().is_empty() => {
-                Some((base_url.trim().to_string(), token.trim().to_string()))
-            }
+            if !base_url.trim().is_empty() && !token.trim().is_empty() =>
+        {
+            Some((base_url.trim().to_string(), token.trim().to_string()))
+        }
         (None, None) => None,
         _ => return Err("Smart app context registration is incomplete".to_string()),
     };
-    let install_package = prepare_instance_bundle(&installation, &home, use_wework_model)?;
+    let install_packages = prepare_instance_bundle(&installation, &home, use_wework_model)?;
     prepare_web_profile(&home, &installation.manifest.entry.profile)?;
     if let Some(base_url) = model_base_url.as_deref() {
         write_wework_model_settings(&home, base_url)?;
@@ -1163,13 +1399,14 @@ pub async fn start_harness_app(
             "Wework model context plugin",
         )?;
     }
-    install_harness_plugin(
+    install_harness_plugins(
         &runtime,
         &home,
         &installation.manifest.entry.profile,
-        &install_package,
-        "Harness app bundle",
+        &install_packages,
+        "Harness app packages",
     )?;
+    emit_progress("startingApp");
     let port = free_port()?;
     let args = vec![
         "--profile".to_string(),

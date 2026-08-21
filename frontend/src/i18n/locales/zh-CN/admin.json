@@ -407,6 +407,17 @@
     "marketplace_tag_sort": "排序值",
     "marketplace_tag_enabled": "启用",
     "marketplace_tag_disabled": "停用",
+    "knowledge_base_profile_title": "知识库检索默认 Profile",
+    "knowledge_base_profile_description": "所有新建知识库的初始配置，只能引用公共资源。",
+    "knowledge_base_profile_health_missing": "尚未配置 Profile，新建知识库将使用自动默认值。",
+    "knowledge_base_profile_health_valid": "Profile 引用的公共资源可用。",
+    "knowledge_base_profile_health_invalid": "Profile 无法应用，新建知识库将使用自动默认值。",
+    "knowledge_base_profile_load_failed": "无法加载当前 Profile，请刷新后再保存修改。",
+    "knowledge_base_profile_saved": "知识库检索默认 Profile 已保存",
+    "knowledge_base_profile_save_failed": "保存知识库检索默认 Profile 失败",
+    "retrieval_profile_reason_retriever_unavailable": "配置的公共检索器不可用。",
+    "retrieval_profile_reason_embedding_model_unavailable": "配置的公共嵌入模型不可用。",
+    "retrieval_profile_reason_profile_incomplete": "配置的 Profile 不完整。",
     "version": "版本",
     "success": {
       "updated": "配置更新成功"

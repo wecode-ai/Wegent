@@ -502,10 +502,17 @@ export function useWorkbenchProjectActions({
 
   const setRuntimeTaskPinned = useCallback(
     async (data: RuntimeTaskPinRequest) => {
-      await executorClient.runtime.setRuntimeTaskPinned(data)
-      await refreshWorkLists()
+      dispatch({ type: 'runtime_task_pin_changed', ...data })
+      try {
+        await executorClient.runtime.setRuntimeTaskPinned(data)
+        await refreshWorkLists()
+        dispatch({ type: 'runtime_task_pin_changed', ...data })
+      } catch (error) {
+        dispatch({ type: 'runtime_task_pin_changed', ...data, pinned: !data.pinned })
+        throw error
+      }
     },
-    [executorClient, refreshWorkLists]
+    [dispatch, executorClient, refreshWorkLists]
   )
 
   const getDeviceHomeDirectory = useCallback(

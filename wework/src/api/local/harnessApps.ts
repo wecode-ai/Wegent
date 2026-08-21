@@ -1,4 +1,14 @@
 import { invoke } from '@tauri-apps/api/core'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+
+export const HARNESS_APP_LAUNCH_PROGRESS_EVENT = 'harness-app-launch-progress'
+
+export type HarnessAppLaunchPhase = 'preparingRuntime' | 'loadingApp' | 'startingApp'
+
+export interface HarnessAppLaunchProgress {
+  installationId: string
+  phase: HarnessAppLaunchPhase
+}
 
 export interface HarnessAppManifest {
   name: string
@@ -9,7 +19,6 @@ export interface HarnessAppManifest {
   entry: {
     installPackage: string
     profile: string
-    webUrl: string
   }
   requirements: {
     dsh: string
@@ -78,4 +87,12 @@ export const harnessAppsApi = {
   delete(installationId: string, deleteData = false) {
     return invoke<void>('delete_harness_app', { installationId, deleteData })
   },
+}
+
+export function listenHarnessAppLaunchProgress(
+  callback: (progress: HarnessAppLaunchProgress) => void
+): Promise<UnlistenFn> {
+  return listen<HarnessAppLaunchProgress>(HARNESS_APP_LAUNCH_PROGRESS_EVENT, event => {
+    callback(event.payload)
+  })
 }

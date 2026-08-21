@@ -2,10 +2,17 @@ import { useEffect } from 'react'
 import { render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { WorkspaceTabSurface } from './App'
+import {
+  beginHarnessAppLaunch,
+  clearHarnessAppLaunch,
+} from '@/features/harness-apps/harnessAppLaunchState'
 import { getWorkbenchPluginRuntime } from '@/plugin-runtime/bootstrap'
 
 const appIframeMocks = vi.hoisted(() => ({
   cleanup: vi.fn(),
+}))
+const portalOwnershipMocks = vi.hoisted(() => ({
+  setActiveOwner: vi.fn(),
 }))
 
 vi.mock('@/components/topnav/AppIframe', () => ({
@@ -19,9 +26,14 @@ vi.mock('@/components/topnav/TitlebarActionsPortal', () => ({
   WorkspaceTabPortalOwner: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }))
 
+vi.mock('@/components/topnav/workspaceTabPortalOwnership', () => ({
+  setActiveWorkspaceTabPortalOwner: portalOwnershipMocks.setActiveOwner,
+}))
+
 describe('WorkspaceTabSurface', () => {
   afterEach(() => {
     appIframeMocks.cleanup.mockClear()
+    portalOwnershipMocks.setActiveOwner.mockClear()
   })
 
   test('keeps an inactive iframe app connected so its page state survives tab switches', () => {
@@ -66,6 +78,85 @@ describe('WorkspaceTabSurface', () => {
 
     unmount()
     expect(appIframeMocks.cleanup).toHaveBeenCalledTimes(1)
+    dispose()
+  })
+
+  test('re-syncs titlebar portal ownership when a retained workspace becomes active again', () => {
+    const dispose = getWorkbenchPluginRuntime().apps.register({
+      key: 'harness-titlebar',
+      mode: 'iframe',
+      url: 'http://localhost:3000',
+      hidden: true,
+      labelKey: 'harness-titlebar.label',
+      label: 'Titlebar Harness',
+      descriptionKey: 'harness-titlebar.description',
+      description: 'Titlebar Harness',
+    })
+    const props = {
+      cloudWebUrl: null,
+      lifecycleStore: {} as never,
+      services: {} as never,
+      tab: {
+        id: 'smart-app-tab-1',
+        kind: 'auxiliary' as const,
+        title: 'Titlebar Harness',
+        contentRoute: '/app/harness-titlebar',
+      },
+      user: {
+        id: 1,
+        user_name: 'tester',
+        email: 'tester@example.com',
+      },
+    }
+
+    const { rerender, unmount } = render(<WorkspaceTabSurface {...props} active={false} />)
+    expect(portalOwnershipMocks.setActiveOwner).not.toHaveBeenCalled()
+
+    rerender(<WorkspaceTabSurface {...props} active />)
+
+    expect(portalOwnershipMocks.setActiveOwner).toHaveBeenLastCalledWith('smart-app-tab-1')
+    unmount()
+    dispose()
+  })
+
+  test('renders the launch surface when a running Harness app opens directly as an iframe', () => {
+    const installationId = 'running-app'
+    const dispose = getWorkbenchPluginRuntime().apps.register({
+      key: `harness-${installationId}`,
+      mode: 'iframe',
+      url: 'http://localhost:3000',
+      hidden: true,
+      labelKey: 'running-app.label',
+      label: 'Running app',
+      descriptionKey: 'running-app.description',
+      description: 'Running app',
+    })
+    beginHarnessAppLaunch(installationId, 'Running app', vi.fn(), 'loadingApp')
+
+    const { unmount } = render(
+      <WorkspaceTabSurface
+        active
+        cloudWebUrl={null}
+        lifecycleStore={{} as never}
+        services={{} as never}
+        tab={{
+          id: 'running-app-tab',
+          kind: 'auxiliary',
+          title: 'Running app',
+          contentRoute: `/app/harness-${installationId}`,
+        }}
+        user={{
+          id: 1,
+          user_name: 'tester',
+          email: 'tester@example.com',
+        }}
+      />
+    )
+
+    expect(screen.getByTestId(`harness-app-launch-${installationId}`)).toBeInTheDocument()
+
+    unmount()
+    clearHarnessAppLaunch(installationId)
     dispose()
   })
 })

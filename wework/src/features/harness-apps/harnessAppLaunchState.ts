@@ -1,9 +1,11 @@
 import { useSyncExternalStore } from 'react'
+import type { HarnessAppLaunchPhase } from '@/api/local/harnessApps'
 
 export interface HarnessAppLaunchState {
   installationId: string
   title: string
   status: 'starting' | 'failed'
+  phase: HarnessAppLaunchPhase
   error: string | null
   retry: () => void
 }
@@ -20,15 +22,27 @@ function emit(): void {
 export function beginHarnessAppLaunch(
   installationId: string,
   title: string,
-  retry: () => void
+  retry: () => void,
+  phase: HarnessAppLaunchPhase = 'preparingRuntime'
 ): void {
   states.set(installationId, {
     installationId,
     title,
     status: 'starting',
+    phase,
     error: null,
     retry,
   })
+  emit()
+}
+
+export function updateHarnessAppLaunchPhase(
+  installationId: string,
+  phase: HarnessAppLaunchPhase
+): void {
+  const current = states.get(installationId)
+  if (!current || current.status !== 'starting' || current.phase === phase) return
+  states.set(installationId, { ...current, phase })
   emit()
 }
 

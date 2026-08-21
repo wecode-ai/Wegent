@@ -14,18 +14,18 @@ use super::{
     bridge_request_authorized, browser_file_url_from_path, browser_host_is_ready,
     browser_open_action, browser_webview_url, consume_approved_agent_risk,
     directory_entry_modified_unix_seconds, directory_listing_html, download_event_owner,
-    file_url_path, format_directory_entry_modified, format_file_size, loaded_browser_url,
-    local_file_browser_title, logical_owner_for_native_label, merge_request_option,
-    native_webview_label, read_http_request, ready_logical_entry, register_agent_approval,
-    register_preview_source, relabel_logical_entry, remove_logical_entry_if_native_matches,
-    resolve_agent_bridge_label, resolve_browser_navigation_url, script_browser_action,
-    script_resolve_inspect_target, script_semantic_inspect, should_block_local_file_preview,
-    should_record_loaded_url, should_replay_browser_open_request,
-    update_logical_entry_if_native_matches, wait_for_browser_ready_with_observer,
-    wait_for_main_thread_barrier, DirectoryEntry, EmbeddedBrowserBridgeRequest,
-    EmbeddedBrowserDownloadPayload, EmbeddedBrowserOpenAction, EmbeddedBrowserPageState,
-    EmbeddedBrowserReadiness, EmbeddedBrowserState, EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV,
-    EMBEDDED_BROWSER_NOT_READY_ERROR,
+    file_url_path, format_directory_entry_modified, format_file_size, is_history_recordable_url,
+    loaded_browser_url, local_file_browser_title, logical_owner_for_native_label,
+    merge_request_option, native_webview_label, read_http_request, ready_logical_entry,
+    register_agent_approval, register_preview_source, relabel_logical_entry,
+    remove_logical_entry_if_native_matches, resolve_agent_bridge_label,
+    resolve_browser_navigation_url, script_browser_action, script_resolve_inspect_target,
+    script_semantic_inspect, should_block_local_file_preview, should_record_loaded_url,
+    should_replay_browser_open_request, update_logical_entry_if_native_matches,
+    wait_for_browser_ready_with_observer, wait_for_main_thread_barrier, DirectoryEntry,
+    EmbeddedBrowserBridgeRequest, EmbeddedBrowserDownloadPayload, EmbeddedBrowserOpenAction,
+    EmbeddedBrowserPageState, EmbeddedBrowserReadiness, EmbeddedBrowserState,
+    EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV, EMBEDDED_BROWSER_NOT_READY_ERROR,
 };
 use encoding_rs::GB18030;
 use serde_json::{json, Value};
@@ -295,6 +295,9 @@ fn closed_agent_tab_routes_fail_without_retargeting() {
                 bootstrap_finished: false,
                 host_ready: false,
                 phase: super::EmbeddedBrowserPhase::Opening,
+                pending_history_url: None,
+                visit_generation: 0,
+                last_history_id: None,
             },
         );
     }
@@ -528,6 +531,9 @@ fn navigation_failure_ends_loading_and_records_the_requested_url() {
         bootstrap_finished: true,
         host_ready: true,
         phase: super::EmbeddedBrowserPhase::Opening,
+        pending_history_url: None,
+        visit_generation: 0,
+        last_history_id: None,
     };
 
     assert!(super::apply_navigation_failure(
@@ -562,6 +568,9 @@ fn cancelled_navigation_does_not_replace_the_next_loading_state() {
         bootstrap_finished: true,
         host_ready: true,
         phase: super::EmbeddedBrowserPhase::Opening,
+        pending_history_url: None,
+        visit_generation: 0,
+        last_history_id: None,
     };
 
     assert!(!super::apply_navigation_failure(
@@ -589,6 +598,9 @@ fn delayed_failure_from_previous_same_url_navigation_is_ignored() {
         bootstrap_finished: true,
         host_ready: true,
         phase: super::EmbeddedBrowserPhase::Opening,
+        pending_history_url: None,
+        visit_generation: 0,
+        last_history_id: None,
     };
 
     let previous_generation = super::apply_navigation_requested(&mut entry, repeated_url.clone());
@@ -624,6 +636,9 @@ fn stale_finished_navigation_does_not_replace_the_current_failure() {
         bootstrap_finished: true,
         host_ready: true,
         phase: super::EmbeddedBrowserPhase::Opening,
+        pending_history_url: None,
+        visit_generation: 0,
+        last_history_id: None,
     };
 
     assert_eq!(
@@ -657,6 +672,9 @@ fn synthetic_finished_navigation_does_not_clear_the_current_failure() {
         bootstrap_finished: true,
         host_ready: true,
         phase: super::EmbeddedBrowserPhase::Opening,
+        pending_history_url: None,
+        visit_generation: 0,
+        last_history_id: None,
     };
 
     assert_eq!(
@@ -682,6 +700,9 @@ fn current_finished_navigation_completes_loading() {
         bootstrap_finished: true,
         host_ready: true,
         phase: super::EmbeddedBrowserPhase::Opening,
+        pending_history_url: None,
+        visit_generation: 0,
+        last_history_id: None,
     };
 
     assert_eq!(
@@ -709,6 +730,9 @@ fn mapped_preview_finished_navigation_completes_the_requested_url() {
         bootstrap_finished: true,
         host_ready: true,
         phase: super::EmbeddedBrowserPhase::Opening,
+        pending_history_url: None,
+        visit_generation: 0,
+        last_history_id: None,
     };
 
     assert_eq!(
@@ -1080,4 +1104,14 @@ fn relabel_rejects_an_occupied_destination_without_orphaning_the_source() {
     );
     assert_eq!(entries["workspace-browser-source"], "source-native");
     assert_eq!(entries["workspace-browser-target"], "target-native");
+}
+
+#[test]
+fn history_records_web_pages_and_local_files_but_not_internal_pages() {
+    assert!(is_history_recordable_url("https://example.com/docs"));
+    assert!(is_history_recordable_url("http://localhost:3000"));
+    assert!(is_history_recordable_url("file:///Users/me/report.html"));
+    assert!(!is_history_recordable_url("about:blank"));
+    assert!(!is_history_recordable_url("tauri://localhost"));
+    assert!(!is_history_recordable_url("wework://internal/page"));
 }

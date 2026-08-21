@@ -2832,6 +2832,9 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchCo
     launch_config
         .config_overrides
         .extend(task_identity_config_overrides(request));
+    if let Some(cargo_target_override) = super::cargo_cache::codex_config_override(request) {
+        launch_config.config_overrides.push(cargo_target_override);
+    }
     launch_config
         .config_overrides
         .extend(codex_runtime_default_config_overrides());

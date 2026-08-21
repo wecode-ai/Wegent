@@ -75,6 +75,7 @@ fn infers_board_fields_from_dingtalk_schema() {
         json!({"id": "fld-status", "name": "天河状态", "type": "text"}),
         json!({"id": "fld-owner", "name": "负责人", "type": "user"}),
         json!({"id": "fld-due", "name": "计划结束日期", "type": "date"}),
+        json!({"id": "fld-desc", "name": "描述", "type": "richText"}),
     ];
     let mut mapping = Map::new();
 
@@ -84,6 +85,17 @@ fn infers_board_fields_from_dingtalk_schema() {
     assert_eq!(mapping["status_field_id"], json!("fld-status"));
     assert_eq!(mapping["assignee_field_id"], json!("fld-owner"));
     assert_eq!(mapping["due_field_id"], json!("fld-due"));
+    assert_eq!(mapping["description_field_id"], json!("fld-desc"));
+}
+
+#[test]
+fn reads_rich_text_description_from_dingtalk_records() {
+    let record =
+        json!({"cells": {"fld-desc": {"markdown": "seedance2.0 mini\n千问3.8Max\nwan3.0"}}});
+    assert_eq!(
+        cell_text(&record, Some("fld-desc")),
+        "seedance2.0 mini\n千问3.8Max\nwan3.0"
+    );
 }
 
 #[test]

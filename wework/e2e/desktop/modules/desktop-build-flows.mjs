@@ -414,16 +414,39 @@ async function bundleMacCodex(contentsPath, codexBinary) {
   return bundledCodexBinary
 }
 
-async function bundleMacDeepSeekHarness(contentsPath) {
+async function bundleMacHarnessRuntime(contentsPath) {
   if (SELECTED_DESKTOP_SEGMENT !== 'harness-apps') return null
 
-  const source = join(weworkDir, 'src-tauri', 'bundled-deepseek-harness')
-  const bundledRuntime = join(contentsPath, 'Resources', 'bundled-deepseek-harness')
+  const source = join(weworkDir, 'src-tauri', 'bundled-harness-runtime')
+  const bundledRuntime = join(contentsPath, 'Resources', 'bundled-harness-runtime')
   await mkdir(dirname(bundledRuntime), { recursive: true })
   await rm(bundledRuntime, { recursive: true, force: true })
   await symlink(source, bundledRuntime, 'dir')
-  console.log(`Bundled E2E DeepSeek Harness: ${bundledRuntime}`)
+  console.log(`Bundled E2E Harness runtime: ${bundledRuntime}`)
   return bundledRuntime
+}
+
+async function prepareHarnessRuntimeRoot() {
+  const metadataPath = join(weworkDir, 'src-tauri', 'bundled-harness-runtime', 'runtime.json')
+  const metadata = JSON.parse(await readFile(metadataPath, 'utf8'))
+  const archivePath = join(
+    weworkDir,
+    'node_modules',
+    '.cache',
+    'harness-runtime-assets',
+    metadata.assetName
+  )
+  const runtimeRoot = join(resultDir, 'harness-runtime')
+  await rm(runtimeRoot, { recursive: true, force: true })
+  await mkdir(runtimeRoot, { recursive: true })
+  await runChecked('tar', ['-xzf', archivePath, '-C', runtimeRoot], { cwd: weworkDir })
+  const node = join(runtimeRoot, 'node', 'bin', process.platform === 'win32' ? 'node.exe' : 'node')
+  assert.equal(
+    await isExecutable(node),
+    true,
+    `The desktop E2E Harness runtime did not contain an executable Node at ${node}`
+  )
+  return runtimeRoot
 }
 
 async function wrapMacDesktopApp(binaryPath, binaryName, appIdentifier, codexBinary) {
@@ -459,7 +482,7 @@ async function wrapMacDesktopApp(binaryPath, binaryName, appIdentifier, codexBin
     'utf8'
   )
   const bundledCodexBinary = await bundleMacCodex(contentsPath, codexBinary)
-  await bundleMacDeepSeekHarness(contentsPath)
+  await bundleMacHarnessRuntime(contentsPath)
   commandOutput(MACOS_LAUNCH_SERVICES_REGISTER, ['-f', appBundlePath])
   return {
     binaryPath: bundledBinaryPath,
@@ -477,7 +500,7 @@ async function buildDesktopApp(
   codexBinary
 ) {
   if (SELECTED_DESKTOP_SEGMENT === 'harness-apps') {
-    await runChecked('pnpm', ['run', 'prepare:deepseek-harness'], { cwd: weworkDir })
+    await runChecked('pnpm', ['run', 'prepare:harness-runtime'], { cwd: weworkDir })
   }
 
   const configured = process.env.WEWORK_E2E_APP_BIN
@@ -550,7 +573,11 @@ async function buildDesktopApp(
                 identifier: 'desktop-e2e-window',
                 description: 'Allows the desktop E2E runner to manage test window visibility',
                 windows: ['main'],
-                permissions: ['core:window:allow-show', 'core:window:allow-unminimize'],
+                permissions: [
+                  'core:window:allow-set-size',
+                  'core:window:allow-show',
+                  'core:window:allow-unminimize',
+                ],
               },
             ],
           },
@@ -1426,7 +1453,8 @@ export {
   macCodexBundleLayout,
   findCodexPackageRoot,
   bundleMacCodex,
-  bundleMacDeepSeekHarness,
+  bundleMacHarnessRuntime,
+  prepareHarnessRuntimeRoot,
   wrapMacDesktopApp,
   buildDesktopApp,
   verifyConnectedModelsOnLocalExecution,

@@ -19,10 +19,12 @@ export function reduceRuntimeTaskLifecycle(
         terminalStatus && (!hasIdentifiedActiveTurn || completionAdvanced)
       const transitionMismatch =
         snapshotRunning !== null && expectedRunning !== null && snapshotRunning !== expectedRunning
+      const snapshotConfirmsAutonomousTurn =
+        isRuntimeTaskConfirmedActive(event.task) && state.turnOutcome === null
       if (
         transitionMismatch &&
         !queuedStatus &&
-        !isRuntimeTaskConfirmedActive(event.task) &&
+        !snapshotConfirmsAutonomousTurn &&
         !snapshotConfirmsSettlement
       ) {
         return state
@@ -68,13 +70,15 @@ export function reduceRuntimeTaskLifecycle(
       }
 
     case 'send_accepted':
-      return {
-        ...state,
-        executionPhase: 'running',
-        turnPhase: state.turnPhase === 'streaming' ? 'streaming' : 'awaiting',
-        turnOutcome: null,
-        expectedExecutorRunning: true,
-      }
+      return state.expectedExecutorRunning === true
+        ? {
+            ...state,
+            executionPhase: 'running',
+            turnPhase: state.turnPhase === 'streaming' ? 'streaming' : 'awaiting',
+            turnOutcome: null,
+            expectedExecutorRunning: true,
+          }
+        : state
 
     case 'send_rejected': {
       const executorAlreadyConfirmed =

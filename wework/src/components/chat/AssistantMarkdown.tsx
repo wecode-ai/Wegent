@@ -180,7 +180,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
         <strong className="font-semibold">{children}</strong>
       ),
       code: (props: MarkdownCodeProps) => (
-        <MarkdownCode {...props} compact={variant === 'process'} />
+        <MarkdownCode {...props} compact={variant === 'process'} isStreaming={isStreaming} />
       ),
       inlineCode: ({ children }: { children?: ReactNode }) => (
         <MarkdownInlineCode compact={variant === 'process'}>{children}</MarkdownInlineCode>
@@ -225,7 +225,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
         <AssistantMarkdownImage src={src} alt={alt} />
       ),
     }),
-    [headingClasses, openFile, variant]
+    [headingClasses, isStreaming, openFile, variant]
   )
 
   return (
@@ -337,9 +337,17 @@ function estimateMarkdownChunkHeight(content: string): number {
 type MarkdownCodeProps = {
   node?: HastElement
   compact?: boolean
+  isStreaming?: boolean
 } & HTMLAttributes<HTMLElement>
 
-function MarkdownCode({ className, children, node, compact = false, ...props }: MarkdownCodeProps) {
+function MarkdownCode({
+  className,
+  children,
+  node,
+  compact = false,
+  isStreaming = false,
+  ...props
+}: MarkdownCodeProps) {
   const match = /language-(\w*)/.exec(className || '')
   const text = reactNodeToText(children)
   const isBlock =
@@ -353,7 +361,7 @@ function MarkdownCode({ className, children, node, compact = false, ...props }: 
       return <MarkdownDiagramPreview code={text.trimEnd()} language={lang} />
     }
     return (
-      <MarkdownCodeBlock lang={lang} compact={compact}>
+      <MarkdownCodeBlock lang={lang} compact={compact} isStreaming={isStreaming}>
         {text || children}
       </MarkdownCodeBlock>
     )

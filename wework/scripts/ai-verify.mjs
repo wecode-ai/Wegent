@@ -16,8 +16,10 @@ import { buildAiVerifyEnvironment } from './ai-verify-environment.mjs'
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..')
 const defaultTimeoutMs = 30_000
-const startupTimeoutMs = 60_000
+const startupTimeoutMs = 120_000
 const commandResultGraceMs = 5_000
+const failedStartCleanupGraceMs = 1_000
+const cleanupSessionPollMs = 50
 const corsHeaders = {
   'access-control-allow-headers': 'authorization, content-type',
   'access-control-allow-methods': 'GET, POST, OPTIONS',
@@ -27,7 +29,7 @@ const corsHeaders = {
 function usage() {
   console.error(`Usage:
   pnpm --filter wework ai:verify start
-  pnpm --filter wework ai:verify <capture|capture-browser|capture-popout|capture-workspace|snapshot|debug|active-element|click|click-at|click-then-macrotask|context-menu|seed-local-project|terminal-snapshot|reload|close-to-tray|request-close|dismiss-popout|drag|drop-file|drop-paths|fill|get-attribute|hover|metrics|navigate|paste-paths|pointer-move|press|scroll-into-view|select-text|show-popout|system-drag-drop|wait-for|window-focus-snapshot|text|status|stop> --session PATH [options]
+  pnpm --filter wework ai:verify <capture|capture-browser|capture-popout|capture-workspace|snapshot|debug|active-element|click|click-at|click-then-macrotask|context-menu|seed-local-project|preview-plugin-import|terminal-snapshot|reload|close-to-tray|request-close|dismiss-popout|drag|drop-file|drop-paths|fill|get-attribute|hover|metrics|navigate|paste-paths|pointer-move|press|scroll-into-view|select-text|show-popout|system-drag-drop|wait-for|window-focus-snapshot|text|status|stop> --session PATH [options]
 
 Options:
   --codex-home-initialization true
@@ -43,7 +45,8 @@ Options:
   --text TEXT               Expected text for wait-for
   --visible true            Require a visible element for wait-for
   --stable MS               Require the wait-for condition to remain stable
-  --timeout MS              Command timeout (default: ${defaultTimeoutMs})`)
+  --timeout MS              Startup timeout for start (default: ${startupTimeoutMs});
+                            command timeout otherwise (default: ${defaultTimeoutMs})`)
 }
 
 function parseArgs(argv) {
@@ -134,11 +137,83 @@ async function stopOwnedSessionProcesses(session) {
 }
 
 function signalProcessGroup(processGroupId, signal) {
+  if (!Number.isInteger(processGroupId)) return Promise.resolve()
   return new Promise(resolvePromise => {
     execFile('/bin/kill', [`-${signal}`, `-${processGroupId}`], () => {
       // The process group may already have exited.
       resolvePromise()
     })
+  })
+}
+
+async function removeSessionAuthLink(session) {
+  if (!session?.directory) return
+  await rm(join(session.directory, 'executor-home', 'codex', 'auth.json'), { force: true })
+}
+
+export async function readSessionForCleanup(sessionPath, timeoutMs = failedStartCleanupGraceMs) {
+  const deadline = Date.now() + timeoutMs
+  let session
+  while (Date.now() <= deadline) {
+    try {
+      session = JSON.parse(await readFile(sessionPath, 'utf8'))
+      if (Number.isInteger(session.launcherPid)) break
+    } catch {
+      // The controller may still be replacing the session file.
+    }
+    const remainingMs = deadline - Date.now()
+    if (remainingMs <= 0) break
+    await new Promise(resolvePromise =>
+      setTimeout(resolvePromise, Math.min(cleanupSessionPollMs, remainingMs))
+    )
+  }
+  return { directory: dirname(sessionPath), ...(session ?? {}) }
+}
+
+async function cleanupFailedStart(sessionPath, controllerPid) {
+  await signalProcessGroup(controllerPid, 'TERM')
+  const session = await readSessionForCleanup(sessionPath)
+  await stopOwnedSessionProcesses(session)
+  await signalProcessGroup(controllerPid, 'KILL')
+  await removeSessionAuthLink(session)
+}
+
+export function appExitMessage(appExit) {
+  if (appExit?.error) return `Wework failed to start: ${appExit.error}`
+  if (appExit?.signal !== null && appExit?.signal !== undefined) {
+    return `Wework exited with signal ${appExit.signal}`
+  }
+  return `Wework exited with code ${appExit?.code ?? 'unknown'}`
+}
+
+export function startupFailureMessage(status, timeoutMs) {
+  if (status?.appExited) {
+    return `${appExitMessage({
+      code: status.appExitCode,
+      signal: status.appExitSignal,
+      error: status.appExitError,
+    })} before its WebView connected to AI verification`
+  }
+  const phase = status?.pid
+    ? 'the Tauri launcher was still waiting for its WebView'
+    : 'the Tauri launcher had not started'
+  return `Timed out after ${timeoutMs}ms while ${phase}`
+}
+
+export function monitorAppProcess(app, pending, onExit) {
+  const rejectPending = message => {
+    for (const waiter of pending.values()) waiter.reject(new Error(message))
+    pending.clear()
+  }
+  app.once('exit', (code, signal) => {
+    const appExit = { code, signal, error: null }
+    onExit(appExit)
+    rejectPending(appExitMessage(appExit))
+  })
+  app.once('error', error => {
+    const appExit = { code: null, signal: null, error: String(error.message ?? error) }
+    onExit(appExit)
+    rejectPending(appExitMessage(appExit))
   })
 }
 
@@ -149,6 +224,8 @@ async function runServer(sessionPath, token) {
   const pending = new Map()
   let ready = null
   let app = null
+  let appExit = null
+  let shutdownPromise = null
   const server = createServer((request, response) => {
     void (async () => {
       const url = new URL(request.url ?? '/', 'http://127.0.0.1')
@@ -203,12 +280,17 @@ async function runServer(sessionPath, token) {
           ready: Boolean(ready),
           readyInfo: ready,
           pid: app?.pid ?? null,
+          appExited: appExit !== null,
+          appExitCode: appExit?.code ?? null,
+          appExitSignal: appExit?.signal ?? null,
+          appExitError: appExit?.error ?? null,
           queuedCommands: queue.length,
           commandPolls: commandPolls.length,
           pendingCommands: pending.size,
         })
       }
       if (request.method === 'POST' && url.pathname === '/command') {
+        if (appExit) return json(response, 410, { error: appExitMessage(appExit) })
         if (!ready) return json(response, 409, { error: 'Wework WebView is not ready' })
         const command = await readBody(request)
         const id = randomUUID()
@@ -239,7 +321,7 @@ async function runServer(sessionPath, token) {
       }
       if (request.method === 'POST' && url.pathname === '/shutdown') {
         response.once('finish', () => {
-          void stopOwnedSessionProcesses(updated).finally(() => server.close(() => process.exit(0)))
+          void shutdown(0)
         })
         json(response, 200, { ok: true })
         return
@@ -257,6 +339,18 @@ async function runServer(sessionPath, token) {
     controlUrl,
     status: 'starting',
   }
+  const shutdown = exitCode => {
+    if (shutdownPromise) return shutdownPromise
+    shutdownPromise = stopOwnedSessionProcesses({ launcherPid: app?.pid })
+      .then(() => removeSessionAuthLink(session))
+      .finally(() => {
+        server.close(() => process.exit(exitCode))
+        server.closeAllConnections()
+      })
+    return shutdownPromise
+  }
+  process.once('SIGINT', () => void shutdown(130))
+  process.once('SIGTERM', () => void shutdown(143))
   await writeFile(sessionPath, `${JSON.stringify(updated, null, 2)}\n`)
   const log = join(session.directory, 'app.log')
   const executorHome = join(session.directory, 'executor-home')
@@ -286,17 +380,15 @@ async function runServer(sessionPath, token) {
     }),
     stdio: ['ignore', 'pipe', 'pipe'],
   })
-  await writeFile(sessionPath, `${JSON.stringify({ ...updated, launcherPid: app.pid }, null, 2)}\n`)
+  monitorAppProcess(app, pending, exit => {
+    appExit = exit
+  })
   for (const stream of [app.stdout, app.stderr])
     stream?.on(
       'data',
       chunk => void import('node:fs/promises').then(({ appendFile }) => appendFile(log, chunk))
     )
-  app.once('exit', code => {
-    for (const waiter of pending.values())
-      waiter.reject(new Error(`Wework exited with code ${code ?? 'unknown'}`))
-    pending.clear()
-  })
+  await writeFile(sessionPath, `${JSON.stringify({ ...updated, launcherPid: app.pid }, null, 2)}\n`)
 }
 
 async function request(session, token, path, method = 'GET', body) {
@@ -359,39 +451,71 @@ async function main() {
       { detached: true, stdio: 'ignore' }
     )
     child.unref()
-    const startupDeadline = Date.now() + resolveStartupTimeout(options.timeout)
-    while (Date.now() < startupDeadline) {
-      let session
-      try {
-        session = JSON.parse(await readFile(sessionPath, 'utf8'))
-      } catch (error) {
-        if (!(error instanceof SyntaxError)) throw error
-        await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
-        continue
-      }
-      if (session.controlUrl) {
-        try {
-          const status = await request(session, token, '/status')
-          if (status.ready) {
-            console.log(
-              JSON.stringify({ session: sessionPath, controlUrl: session.controlUrl }, null, 2)
-            )
-            return
-          }
-        } catch {
-          // The controller can be briefly unavailable while its process starts.
+    let controllerExit = null
+    let controllerError = null
+    child.once('exit', (code, signal) => {
+      controllerExit = { code, signal }
+    })
+    child.once('error', error => {
+      controllerError = error
+    })
+    const startupTimeout = resolveStartupTimeout(options.timeout)
+    const startupDeadline = Date.now() + startupTimeout
+    let lastStatus = null
+    try {
+      while (Date.now() < startupDeadline) {
+        if (controllerError) {
+          throw new Error(`AI verification controller failed to start: ${controllerError.message}`)
         }
+        if (controllerExit) {
+          throw new Error(
+            `AI verification controller exited with ${
+              controllerExit.signal !== null
+                ? `signal ${controllerExit.signal}`
+                : `code ${controllerExit.code ?? 'unknown'}`
+            } during startup`
+          )
+        }
+        let session
+        try {
+          session = JSON.parse(await readFile(sessionPath, 'utf8'))
+        } catch (error) {
+          if (!(error instanceof SyntaxError)) throw error
+          await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+          continue
+        }
+        if (session.controlUrl) {
+          try {
+            lastStatus = null
+            lastStatus = await request(session, token, '/status')
+            if (lastStatus.ready) {
+              console.log(
+                JSON.stringify({ session: sessionPath, controlUrl: session.controlUrl }, null, 2)
+              )
+              return
+            }
+            if (lastStatus.appExited) {
+              throw new Error(startupFailureMessage(lastStatus, startupTimeout))
+            }
+          } catch (error) {
+            if (lastStatus?.appExited) throw error
+            // The controller can be briefly unavailable while its process starts.
+          }
+        }
+        await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
       }
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+      throw new Error(startupFailureMessage(lastStatus, startupTimeout))
+    } catch (error) {
+      await cleanupFailedStart(sessionPath, child.pid)
+      throw error
     }
-    throw new Error('Timed out waiting for the Wework WebView to connect to AI verification')
   }
   if (!options.session) throw new Error('--session is required')
   const session = JSON.parse(await readFile(options.session, 'utf8'))
   if (command === 'stop') {
     await request(session, session.token, '/shutdown', 'POST')
     await stopOwnedSessionProcesses(session)
-    await rm(join(session.directory, 'executor-home', 'codex', 'auth.json'), { force: true })
+    await removeSessionAuthLink(session)
     return
   }
   if (command === 'status') {
@@ -411,6 +535,7 @@ async function main() {
     'click-then-macrotask': 'clickThenMacrotask',
     'context-menu': 'contextMenu',
     'seed-local-project': 'seedLocalProject',
+    'preview-plugin-import': 'previewPluginImport',
     'terminal-snapshot': 'readLocalTerminalSnapshot',
     reload: 'reloadApp',
     'close-to-tray': 'closeMainWindowToTray',
@@ -451,6 +576,7 @@ async function main() {
     command === 'active-element' ||
     command === 'click-at' ||
     command === 'seed-local-project' ||
+    command === 'preview-plugin-import' ||
     command === 'terminal-snapshot' ||
     command === 'reload' ||
     command === 'navigate' ||

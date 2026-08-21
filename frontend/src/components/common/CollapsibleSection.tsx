@@ -27,6 +27,8 @@ interface CollapsibleSectionProps {
   className?: string
   /** Whether to use primary border color (for emphasis) */
   primary?: boolean
+  /** Optional test id for the section toggle */
+  triggerTestId?: string
 }
 
 export function CollapsibleSection({
@@ -36,6 +38,7 @@ export function CollapsibleSection({
   children,
   className,
   primary = false,
+  triggerTestId,
 }: CollapsibleSectionProps) {
   const [isOpen, setIsOpen] = useState(defaultOpen)
 
@@ -50,6 +53,7 @@ export function CollapsibleSection({
         <CollapsibleTrigger asChild>
           <button
             type="button"
+            data-testid={triggerTestId}
             className={cn(
               'flex w-full items-center justify-between p-4',
               'bg-surface/80 hover:bg-surface transition-colors',

@@ -42,6 +42,7 @@ import {
 import { configuredWorkspacePath, executionDeviceId } from '@/lib/project-workspace'
 import { setActiveKeybindings } from '@/lib/keybindings'
 import type { ProjectWithTasks, RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
+import type { EnvironmentInfo } from '@/types/environment'
 import type { RuntimeSubagentStatus, WorkbenchMessage } from '@/types/workbench'
 import '@/i18n'
 import {
@@ -2064,7 +2065,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
-  test('opens continue-in-im dialog from the active runtime task topbar button', async () => {
+  test('automatically continues to the only private IM session from the topbar', async () => {
     const onListImPrivateSessions = vi.fn().mockResolvedValue({
       total: 1,
       items: [
@@ -2083,6 +2084,7 @@ describe('DesktopWorkbenchLayout', () => {
         },
       ],
     })
+    const onBindRuntimeTaskToImSessions = vi.fn().mockResolvedValue(undefined)
 
     render(
       <DesktopWorkbenchLayout
@@ -2105,14 +2107,25 @@ describe('DesktopWorkbenchLayout', () => {
           },
         ]}
         onListImPrivateSessions={onListImPrivateSessions}
+        onBindRuntimeTaskToImSessions={onBindRuntimeTaskToImSessions}
       />
     )
 
     await userEvent.click(screen.getByTestId('continue-in-im-button'))
 
     expect(onListImPrivateSessions).toHaveBeenCalledTimes(1)
-    expect(await screen.findByRole('dialog')).toBeInTheDocument()
-    expect(await screen.findByTestId('continue-im-session-session-1')).toHaveTextContent('Alice')
+    await waitFor(() =>
+      expect(onBindRuntimeTaskToImSessions).toHaveBeenCalledWith(
+        {
+          deviceId: 'device-1',
+          workspacePath: '/workspace/project-alpha',
+          taskId: 'runtime-1',
+        },
+        ['session-1']
+      )
+    )
+    expect(await screen.findByTestId('transient-notice')).toHaveTextContent('已发送到私聊')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
   test('hides task fork and IM actions while experimental features are disabled', () => {
@@ -2586,6 +2599,7 @@ describe('DesktopWorkbenchLayout', () => {
       .fn()
       .mockReturnValueOnce(firstRequest.promise)
       .mockReturnValueOnce(secondRequest.promise)
+    const onBindRuntimeTaskToImSessions = vi.fn().mockResolvedValue(undefined)
 
     render(
       <DesktopWorkbenchLayout
@@ -2608,6 +2622,7 @@ describe('DesktopWorkbenchLayout', () => {
           },
         ]}
         onListImPrivateSessions={onListImPrivateSessions}
+        onBindRuntimeTaskToImSessions={onBindRuntimeTaskToImSessions}
       />
     )
 
@@ -2634,34 +2649,49 @@ describe('DesktopWorkbenchLayout', () => {
       ],
     })
 
-    expect(await screen.findByTestId('continue-im-session-session-2')).toHaveTextContent(
-      'Fresh session'
-    )
-
-    firstRequest.resolve({
-      total: 1,
-      items: [
+    await waitFor(() =>
+      expect(onBindRuntimeTaskToImSessions).toHaveBeenCalledWith(
         {
-          session_key: 'session-1',
-          channel_type: 'wecom',
-          channel_label: 'WeCom',
-          channel_id: 101,
-          conversation_id: 'conversation-1',
-          sender_id: 'sender-1',
-          display_name: 'Stale session',
-          mode: 'chat',
-          state: 'idle',
-          active_task_id: null,
-          last_seen_at: '2026-06-20T00:00:00.000Z',
+          deviceId: 'device-1',
+          workspacePath: '/workspace/project-alpha',
+          taskId: 'runtime-1',
         },
-      ],
+        ['session-2']
+      )
+    )
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+    await act(async () => {
+      firstRequest.resolve({
+        total: 1,
+        items: [
+          {
+            session_key: 'session-1',
+            channel_type: 'wecom',
+            channel_label: 'WeCom',
+            channel_id: 101,
+            conversation_id: 'conversation-1',
+            sender_id: 'sender-1',
+            display_name: 'Stale session',
+            mode: 'chat',
+            state: 'idle',
+            active_task_id: null,
+            last_seen_at: '2026-06-20T00:00:00.000Z',
+          },
+        ],
+      })
+      await firstRequest.promise
     })
 
-    await waitFor(() => expect(screen.queryByText('Stale session')).not.toBeInTheDocument())
-    expect(screen.getByText('Fresh session')).toBeInTheDocument()
+    expect(onBindRuntimeTaskToImSessions).toHaveBeenCalledTimes(1)
+    expect(onBindRuntimeTaskToImSessions).not.toHaveBeenCalledWith(expect.anything(), ['session-1'])
   })
 
-  test('shows a failure notice when bind handler is missing', async () => {
+  test('keeps the dialog open for manual retry when automatic binding fails', async () => {
+    const onBindRuntimeTaskToImSessions = vi
+      .fn()
+      .mockRejectedValue(new Error('Missing bind handler'))
+
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
@@ -2700,18 +2730,21 @@ describe('DesktopWorkbenchLayout', () => {
             },
           ],
         })}
+        onBindRuntimeTaskToImSessions={onBindRuntimeTaskToImSessions}
       />
     )
 
     await userEvent.click(screen.getByTestId('continue-in-im-button'))
-    expect(await screen.findByTestId('continue-im-session-session-1')).toHaveAttribute(
+    expect(await screen.findByTestId('transient-notice')).toHaveTextContent('继续到私聊失败')
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('continue-im-session-session-1')).toHaveAttribute(
       'aria-pressed',
       'true'
     )
-    await userEvent.click(screen.getByTestId('continue-im-submit-button'))
+    expect(onBindRuntimeTaskToImSessions).toHaveBeenCalledTimes(1)
 
-    expect(await screen.findByTestId('transient-notice')).toHaveTextContent('继续到私聊失败')
-    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('continue-im-submit-button'))
+    await waitFor(() => expect(onBindRuntimeTaskToImSessions).toHaveBeenCalledTimes(2))
   })
 
   test('positions the scroll-to-bottom button above the sticky composer footer', async () => {
@@ -9274,40 +9307,19 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('environment-commit-progress-stop-icon')).toBeInTheDocument()
   })
 
-  test('switches and creates branches from the environment popover', async () => {
+  test('switches branches from the environment popover', async () => {
     mockDesktopWorkbenchMainWidth(1024)
     const onListEnvironmentBranches = vi
       .fn()
       .mockResolvedValue(['main', 'human/chipmunk-20260603-053420', 'human/alpaca-20260603-050330'])
     const onCheckoutEnvironmentBranch = vi.fn().mockResolvedValue(undefined)
-    const onCreateEnvironmentBranch = vi.fn().mockResolvedValue(undefined)
 
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
         onListEnvironmentBranches={onListEnvironmentBranches}
         onCheckoutEnvironmentBranch={onCheckoutEnvironmentBranch}
-        onCreateEnvironmentBranch={onCreateEnvironmentBranch}
-        state={{
-          ...baseProps.state,
-          currentRuntimeTask: activeProjectRuntimeTask,
-          currentProject: {
-            id: 1,
-            name: 'github_wegent',
-            tasks: [],
-            config: {
-              mode: 'workspace',
-              execution: {
-                targetType: 'local',
-                deviceId: 'device-1',
-              },
-              workspace: {
-                source: 'local_path',
-                localPath: '/workspace/github_wegent',
-              },
-            },
-          },
-        }}
+        state={{ ...activeProjectState, currentRuntimeTask: activeProjectRuntimeTask }}
       />
     )
 
@@ -9329,6 +9341,21 @@ describe('DesktopWorkbenchLayout', () => {
         'human/alpaca-20260603-050330',
         activeProjectRuntimeTarget
       )
+    )
+  })
+
+  test('creates branches from the environment popover', async () => {
+    mockDesktopWorkbenchMainWidth(1024)
+    const onListEnvironmentBranches = vi.fn().mockResolvedValue(['main'])
+    const onCreateEnvironmentBranch = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onListEnvironmentBranches={onListEnvironmentBranches}
+        onCreateEnvironmentBranch={onCreateEnvironmentBranch}
+        state={{ ...activeProjectState, currentRuntimeTask: activeProjectRuntimeTask }}
+      />
     )
 
     await userEvent.click(await screen.findByTestId('environment-branch-row'))
@@ -9412,6 +9439,80 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('environment-branch-row')).toHaveTextContent('暂无分支')
     expect(screen.queryByTestId('environment-commit-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('create-pull-request-button')).not.toBeInTheDocument()
+  })
+
+  test('shows a partial branch result before environment loading finishes', async () => {
+    mockDesktopWorkbenchMainWidth(1024)
+    let publishPartialInfo: ((info: EnvironmentInfo) => void) | undefined
+    const onLoadEnvironmentInfo = vi.fn(
+      (
+        _project: unknown,
+        _target: unknown,
+        options?: { onPartialInfo?: (info: EnvironmentInfo) => void }
+      ) => {
+        publishPartialInfo = options?.onPartialInfo
+        return new Promise<EnvironmentInfo>(() => {})
+      }
+    )
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{ ...activeProjectState, currentRuntimeTask: activeProjectRuntimeTask }}
+        onLoadEnvironmentInfo={onLoadEnvironmentInfo}
+      />
+    )
+
+    await waitFor(() => expect(publishPartialInfo).toBeTypeOf('function'))
+    expect(screen.getByTestId('environment-branch-row')).toHaveTextContent('加载中')
+
+    const cachedPullRequest: EnvironmentInfo = {
+      additions: '+0',
+      deletions: '-0',
+      executionTarget: 'local',
+      deviceId: 'device-1',
+      workspacePath: '/workspace/github_wegent',
+      branchName: 'fix/fast-branch-status',
+      changeRequest: {
+        provider: 'github',
+        state: 'found',
+        changeRequest: {
+          provider: 'github',
+          number: 2875,
+          url: 'https://github.com/wecode-ai/Wegent/pull/2875',
+          title: 'Cached pull request',
+          state: 'open',
+          draft: false,
+          checks: 'success',
+          mergeability: 'mergeable',
+          mergeQueue: 'not_queued',
+        },
+      },
+    }
+    act(() => {
+      publishPartialInfo?.(cachedPullRequest)
+    })
+
+    expect(screen.getByTestId('change-request-button')).toHaveAccessibleName(
+      expect.stringContaining('#2875')
+    )
+
+    act(() => {
+      publishPartialInfo?.({
+        additions: '',
+        deletions: '',
+        executionTarget: 'local',
+        deviceId: 'device-1',
+        workspacePath: '/workspace/github_wegent',
+        branchName: 'fix/fast-branch-status',
+      })
+    })
+
+    expect(screen.getByTestId('environment-branch-row')).toHaveTextContent('fix/fast-branch-status')
+    expect(screen.getByTestId('environment-branch-row')).not.toHaveTextContent('加载中')
+    expect(screen.getByTestId('change-request-button')).toHaveAccessibleName(
+      expect.stringContaining('#2875')
+    )
   })
 
   test('closes the branch menu when Escape is pressed', async () => {
@@ -9563,12 +9664,18 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await waitFor(() =>
-      expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(runtimeProject, {
-        deviceId: 'runtime-device',
-        path: '/workspace/worktrees/8/project-alpha',
-        source: 'runtime',
-        taskId: 'runtime-1',
-      })
+      expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(
+        runtimeProject,
+        {
+          deviceId: 'runtime-device',
+          path: '/workspace/worktrees/8/project-alpha',
+          source: 'runtime',
+          taskId: 'runtime-1',
+        },
+        {
+          onPartialInfo: expect.any(Function),
+        }
+      )
     )
     expect(onGetProjectWorkspaceRoot).not.toHaveBeenCalled()
   })
@@ -9662,7 +9769,10 @@ describe('DesktopWorkbenchLayout', () => {
       expect(onLoadEnvironmentInfo).toHaveBeenLastCalledWith(
         runtimeProject,
         expect.objectContaining({ path: '/workspace/worktrees/8/project-alpha' }),
-        { force: true }
+        {
+          force: true,
+          onPartialInfo: expect.any(Function),
+        }
       )
     })
   })
@@ -9777,11 +9887,17 @@ describe('DesktopWorkbenchLayout', () => {
 
     await waitFor(() => {
       expect(onLoadEnvironmentInfo).toHaveBeenCalledTimes(1)
-      expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(workspaceProject, {
-        deviceId: 'device-1',
-        path: '/repo',
-        source: 'project',
-      })
+      expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(
+        workspaceProject,
+        {
+          deviceId: 'device-1',
+          path: '/repo',
+          source: 'project',
+        },
+        {
+          onPartialInfo: expect.any(Function),
+        }
+      )
     })
 
     rerender(
@@ -9863,11 +9979,17 @@ describe('DesktopWorkbenchLayout', () => {
 
     await waitFor(() => {
       expect(onLoadEnvironmentInfo).toHaveBeenCalledTimes(1)
-      expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(workspaceProject, {
-        deviceId: 'device-1',
-        path: '/repo',
-        source: 'project',
-      })
+      expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(
+        workspaceProject,
+        {
+          deviceId: 'device-1',
+          path: '/repo',
+          source: 'project',
+        },
+        {
+          onPartialInfo: expect.any(Function),
+        }
+      )
     })
 
     rerender(
@@ -10396,7 +10518,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     unmount()
     await new Promise(resolve => setTimeout(resolve, 1_100))
-  })
+  }, 10_000)
 
   test('preserves the open file when switching runtime tasks', async () => {
     const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
