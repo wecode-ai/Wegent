@@ -1966,6 +1966,80 @@ describe('runtimeConversationTurns', () => {
     )
   })
 
+  test('does not regress a completed live turn to a stale streaming snapshot', () => {
+    const local: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        items: [
+          {
+            id: 'tool-1',
+            type: 'block',
+            block: {
+              id: 'tool-1',
+              subtaskId: 'turn-1',
+              type: 'tool',
+              toolName: 'exec_command',
+              status: 'done',
+              createdAt: 1,
+              completedAt: 2,
+            },
+          },
+          {
+            id: 'message-1',
+            type: 'assistant_text',
+            content: 'Complete answer',
+            createdAt: '2026-08-21T07:10:38.000Z',
+          },
+        ],
+        status: 'done',
+        completedAt: '2026-08-21T07:10:38.000Z',
+      },
+    ]
+    const snapshot: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        items: [
+          {
+            id: 'tool-1',
+            type: 'block',
+            block: {
+              id: 'tool-1',
+              subtaskId: 'turn-1',
+              type: 'tool',
+              toolName: 'exec_command',
+              status: 'streaming',
+              createdAt: 1,
+            },
+          },
+          {
+            id: 'message-1',
+            type: 'assistant_text',
+            content: 'Complete answer',
+            createdAt: '2026-08-21T07:10:38.000Z',
+          },
+        ],
+        status: 'streaming',
+        streamingThinkingContent: 'Still working',
+      },
+    ]
+
+    const [merged] = mergeRuntimeConversationTurns(local, snapshot)
+
+    expect(merged).toMatchObject({
+      id: 'turn-1',
+      status: 'done',
+      completedAt: '2026-08-21T07:10:38.000Z',
+      streamingThinkingContent: undefined,
+    })
+    expect(merged.items[0]).toMatchObject({
+      type: 'block',
+      block: {
+        status: 'done',
+        completedAt: 2,
+      },
+    })
+  })
+
   test('uses UTF-16 code-unit offsets when replacing streamed text', () => {
     let turns = reduceRuntimeConversationTurns([{ id: 'turn-1', items: [], status: 'streaming' }], {
       type: 'assistant_chunk',

@@ -41,17 +41,17 @@ impl Default for SystemSleepInner {
 
 #[derive(Default)]
 struct RunningTaskState {
-    active_task_ids: HashSet<String>,
+    observed_task_ids: HashSet<String>,
+    event_task_ids: HashSet<String>,
     settled_task_ids: VecDeque<String>,
 }
 
 impl RunningTaskState {
     fn observe(&mut self, task_ids: impl IntoIterator<Item = String>) {
-        self.active_task_ids.extend(
-            task_ids
-                .into_iter()
-                .filter(|task_id| !self.settled_task_ids.contains(task_id)),
-        );
+        self.observed_task_ids = task_ids
+            .into_iter()
+            .filter(|task_id| !self.settled_task_ids.contains(task_id))
+            .collect();
     }
 
     fn start(&mut self, task_id: Option<&str>) {
@@ -65,12 +65,13 @@ impl RunningTaskState {
         {
             self.settled_task_ids.remove(index);
         }
-        self.active_task_ids.insert(task_id.to_owned());
+        self.event_task_ids.insert(task_id.to_owned());
     }
 
     fn settle(&mut self, task_id: Option<&str>) {
         if let Some(task_id) = task_id {
-            self.active_task_ids.remove(task_id);
+            self.observed_task_ids.remove(task_id);
+            self.event_task_ids.remove(task_id);
             if !self
                 .settled_task_ids
                 .iter()
@@ -85,8 +86,13 @@ impl RunningTaskState {
     }
 
     fn clear(&mut self) {
-        self.active_task_ids.clear();
+        self.observed_task_ids.clear();
+        self.event_task_ids.clear();
         self.settled_task_ids.clear();
+    }
+
+    fn has_active_tasks(&self) -> bool {
+        !self.observed_task_ids.is_empty() || !self.event_task_ids.is_empty()
     }
 }
 
@@ -137,7 +143,7 @@ impl SystemSleepState {
 
 impl SystemSleepInner {
     fn reconcile(&mut self) {
-        if !self.enabled || self.tasks.active_task_ids.is_empty() {
+        if !self.enabled || !self.tasks.has_active_tasks() {
             if self.inhibitor.take().is_some() {
                 log::info!("Released system sleep inhibition after local tasks settled");
             }
@@ -366,13 +372,13 @@ mod tests {
         tasks.observe(["task-1".to_owned(), "task-2".to_owned()]);
 
         tasks.settle(Some("task-1"));
-        assert_eq!(tasks.active_task_ids.len(), 1);
+        assert_eq!(tasks.observed_task_ids.len(), 1);
 
         tasks.settle(Some("task-1"));
-        assert_eq!(tasks.active_task_ids.len(), 1);
+        assert_eq!(tasks.observed_task_ids.len(), 1);
 
         tasks.settle(Some("task-2"));
-        assert!(tasks.active_task_ids.is_empty());
+        assert!(!tasks.has_active_tasks());
     }
 
     #[test]
@@ -383,7 +389,7 @@ mod tests {
         tasks.settle(Some("older-task"));
 
         assert_eq!(
-            tasks.active_task_ids,
+            tasks.observed_task_ids,
             HashSet::from(["current-task".to_owned()])
         );
     }
@@ -395,20 +401,44 @@ mod tests {
         tasks.settle(Some("task-1"));
 
         tasks.observe(["task-1".to_owned()]);
-        assert!(tasks.active_task_ids.is_empty());
+        assert!(!tasks.has_active_tasks());
 
         tasks.start(Some("task-1"));
-        assert_eq!(tasks.active_task_ids, HashSet::from(["task-1".to_owned()]));
+        assert_eq!(tasks.event_task_ids, HashSet::from(["task-1".to_owned()]));
     }
 
     #[test]
     fn incomplete_observation_does_not_settle_an_active_task() {
         let mut tasks = RunningTaskState::default();
+        tasks.start(Some("task-1"));
+
+        tasks.observe([]);
+
+        assert_eq!(tasks.event_task_ids, HashSet::from(["task-1".to_owned()]));
+    }
+
+    #[test]
+    fn authoritative_observation_settles_an_externally_tracked_task() {
+        let mut tasks = RunningTaskState::default();
         tasks.observe(["task-1".to_owned()]);
 
         tasks.observe([]);
 
-        assert_eq!(tasks.active_task_ids, HashSet::from(["task-1".to_owned()]));
+        assert!(!tasks.has_active_tasks());
+    }
+
+    #[test]
+    fn externally_tracked_task_can_run_again_after_settling() {
+        let mut tasks = RunningTaskState::default();
+        tasks.observe(["task-1".to_owned()]);
+        tasks.observe([]);
+
+        tasks.observe(["task-1".to_owned()]);
+
+        assert_eq!(
+            tasks.observed_task_ids,
+            HashSet::from(["task-1".to_owned()])
+        );
     }
 
     #[test]

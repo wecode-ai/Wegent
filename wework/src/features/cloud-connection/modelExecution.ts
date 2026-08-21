@@ -23,6 +23,14 @@ export function supportsResponsesApi(model: UnifiedModel): boolean {
   return getCloudModelUpstreamApiFormat(model) === 'openai-responses'
 }
 
+/**
+ * Resolve the upstream wire protocol a cloud model speaks.
+ *
+ * The web frontend mirrors these rules in
+ * `frontend/src/features/settings/utils/vision-sidecar-model.ts` when it offers
+ * vision sidecar candidates. Keep both in sync: a model this function accepts but
+ * the frontend rejects can never be configured as a sidecar.
+ */
 export function getCloudModelUpstreamApiFormat(
   model: UnifiedModel
 ): 'openai-responses' | 'openai-chat-completions' | 'anthropic-messages' | null {
