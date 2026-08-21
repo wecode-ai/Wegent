@@ -100,7 +100,8 @@ pub(crate) const WEWORK_SPACE_DEVELOPER_INSTRUCTIONS: &str = r#"Wework 项目空
 - `wework_space` is a fixed capability connected by the Wework Executor. Do not call MCP resource listing, a browser, Shell, `curl`, or parse `wegent://` URLs to determine whether it is available.
 - For the current bound Issue, call `get_current_context` first. To read its description or attachments, use `get_board_item`, then `list_item_attachments`, then `read_item_attachment`.
 - Use `list_board_items` to list a project's tasks and `search_board_items` for text or structured task searches. Use the matching project-space tool for reads and writes instead of querying local files, executor logs, or backend storage directly.
-- For AI-managed board automation, use `get_board_item` for the current item, `get_assignment_candidates` for eligible members and robots, and `assign_board_item` only after choosing a candidate from that result."#;
+- For AI-managed board automation, act as the board steward, not a task executor. Use `get_board_item` for the current Issue, `get_assignment_candidates` for eligible members and robots, then call `submit_workflow_plan` with independently verifiable child tasks. The platform binds the active planning scope; do not discover, guess, or send `stage_id`. Do not assign the original Issue or execute its work yourself.
+- For a child task created by an AI-managed workflow, complete the assigned work and call `report_workflow_outcome` with `passed` or `needs_rework` plus concise evidence before finishing."#;
 
 const IMAGE_MIME_TYPES: &[&str] = &[
     "image/png",

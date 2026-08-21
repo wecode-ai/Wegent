@@ -5,6 +5,7 @@ const WEWORK_RUNTIME_NAMESPACE = '/wework-runtime'
 const REQUEST_EVENT = 'runtime:request'
 const RUNTIME_EVENT = 'runtime:event'
 const ACK_TIMEOUT_MS = 75_000
+export const RUNTIME_TRANSCRIPT_ACK_TIMEOUT_MS = 15_000
 const RUNTIME_RPC_COMPRESSED_ENCODING = 'gzip+base64+json'
 const COMMAND_ACK_GRACE_MS = 10_000
 const MAX_COMMAND_TIMEOUT_SECONDS = 600
@@ -30,7 +31,12 @@ interface RuntimeIpcAck<T> {
 }
 
 export interface CloudRuntimeIpcClient {
-  request: <T>(method: string, params?: Record<string, unknown>, deviceId?: string) => Promise<T>
+  request: <T>(
+    method: string,
+    params?: Record<string, unknown>,
+    deviceId?: string,
+    timeoutMs?: number
+  ) => Promise<T>
   subscribe: (handler: (event: LocalExecutorEvent) => void) => Promise<() => void>
   dispose: () => void
 }
@@ -53,9 +59,10 @@ export function createCloudRuntimeIpcClient(
     request<T>(
       method: string,
       params: Record<string, unknown> = {},
-      deviceId?: string
+      deviceId?: string,
+      timeoutMs = ACK_TIMEOUT_MS
     ): Promise<T> {
-      return emitRuntimeRequest<T>(client, method, params, deviceId)
+      return emitRuntimeRequest<T>(client, method, params, deviceId, timeoutMs)
     },
     async subscribe(handler: (event: LocalExecutorEvent) => void): Promise<() => void> {
       await client.ensureConnected()
@@ -75,7 +82,8 @@ async function emitRuntimeRequest<T>(
   client: AuthenticatedSocketClient,
   method: string,
   params: Record<string, unknown>,
-  deviceId?: string
+  deviceId?: string,
+  timeoutMs = ACK_TIMEOUT_MS
 ): Promise<T> {
   await client.ensureConnected()
   const requestId = `cloud-runtime-${nextRequestId++}`
@@ -83,11 +91,11 @@ async function emitRuntimeRequest<T>(
   if (!targetDeviceId) {
     throw new Error(`Cloud runtime request ${method} missing deviceId`)
   }
-  const relayTimeoutSeconds = resolveRelayTimeoutSeconds(method, params)
+  const relayTimeoutSeconds = resolveRelayTimeoutSeconds(method, params, timeoutMs)
   const acknowledgementTimeoutMs =
     method === 'device.execute_command'
       ? relayTimeoutSeconds * 1000 + COMMAND_ACK_GRACE_MS
-      : ACK_TIMEOUT_MS
+      : timeoutMs
 
   return new Promise<T>((resolve, reject) => {
     const timeout = window.setTimeout(() => {
@@ -163,9 +171,13 @@ function isCompressedRuntimeIpcResult(
   )
 }
 
-function resolveRelayTimeoutSeconds(method: string, params: Record<string, unknown>): number {
+function resolveRelayTimeoutSeconds(
+  method: string,
+  params: Record<string, unknown>,
+  timeoutMs: number
+): number {
   if (method !== 'device.execute_command') {
-    return Math.ceil(ACK_TIMEOUT_MS / 1000)
+    return Math.ceil(timeoutMs / 1000)
   }
   const requested = params.timeout_seconds
   if (typeof requested !== 'number' || !Number.isFinite(requested) || requested <= 0) {

@@ -89,7 +89,7 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
     expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(false)
   })
 
-  test('settles a matching task directly from a terminal event', async () => {
+  test('settles a matching turn without projecting executor execution as idle', async () => {
     const store = new RuntimeTaskLifecycleStore('test')
     const address = runtimeTaskAddress()
     store.syncRuntimeWork(runtimeWork(true))
@@ -123,11 +123,11 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
 
     expect(listRuntimeWork).not.toHaveBeenCalled()
     expect(store.getTask(address)?.turn.outcome).toBe('succeeded')
-    expect(store.getTask(address)?.execution.phase).toBe('idle')
-    expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(false)
+    expect(store.getTask(address)?.execution.phase).toBe('running')
+    expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(true)
   })
 
-  test('settles a matching cancellation without reconciling task lists', async () => {
+  test('settles a matching cancellation without projecting executor execution as idle', async () => {
     const store = new RuntimeTaskLifecycleStore('test')
     const address = runtimeTaskAddress()
     store.syncRuntimeWork(runtimeWork(true))
@@ -162,7 +162,7 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
 
     expect(listRuntimeWork).not.toHaveBeenCalled()
     expect(store.getTask(address)?.turn.outcome).toBe('cancelled')
-    expect(store.getTask(address)?.derived.isBusy).toBe(false)
+    expect(store.getTask(address)?.derived.isBusy).toBe(true)
   })
 
   test('ignores a terminal event for another task', async () => {

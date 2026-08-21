@@ -643,6 +643,10 @@ impl RuntimeWorkRpcHandler {
                 while let Some(message) = notification_rx.recv().await {
                     mapper_handler
                         .sync_runtime_task_goal_from_notification(&mapper_local_task_id, &message);
+                    mapper_handler.persist_completed_codex_turn_from_notification(
+                        &mapper_local_task_id,
+                        &message,
+                    );
                     let active_turn = mapper_hook_turn
                         .lock()
                         .expect("hook turn context lock should not be poisoned")
@@ -712,8 +716,19 @@ impl RuntimeWorkRpcHandler {
             let active_turn_local_task_id = turn_local_task_id.clone();
             let active_turn_execution_id = execution_id;
             let active_turn_subtask_id = request.subtask_id.to_string();
+            let active_turn_client_user_message_id = request
+                .extra
+                .get("client_user_message_id")
+                .or_else(|| request.extra.get("clientUserMessageId"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned);
+            let pending_turn_presentation =
+                Arc::new(Mutex::new(active_turn_client_user_message_id));
             let active_turn_request = request.clone();
             let callback_hook_turn = Arc::clone(&hook_turn);
+            let callback_turn_presentation = Arc::clone(&pending_turn_presentation);
             let active_turn_started: CodexActiveTurnCallback =
                 Box::new(move |thread_id, turn_id| {
                     active_turn_handler.start_queue_run(&active_turn_local_task_id);
@@ -728,15 +743,23 @@ impl RuntimeWorkRpcHandler {
                     active_turn_handler.record_active_codex_turn(
                         &active_turn_local_task_id,
                         active_turn_execution_id,
-                        thread_id,
+                        thread_id.clone(),
                         turn_id.clone(),
                     );
-                    active_turn_handler
-                        .begin_active_codex_transcript(&active_turn_local_task_id, &turn_id);
+                    active_turn_handler.begin_active_codex_transcript(
+                        &active_turn_local_task_id,
+                        &thread_id,
+                        &turn_id,
+                    );
+                    let client_user_message_id = callback_turn_presentation
+                        .lock()
+                        .expect("turn presentation lock should not be poisoned")
+                        .clone();
                     active_turn_handler.record_runtime_turn_id(
                         &active_turn_local_task_id,
                         &active_turn_subtask_id,
                         &turn_id,
+                        client_user_message_id.as_deref(),
                     );
                     let mut event_request = active_turn_request.clone();
                     event_request.subtask_id = turn_id.clone();
@@ -756,7 +779,11 @@ impl RuntimeWorkRpcHandler {
                 });
             let finished_turn_handler = handler.clone();
             let finished_turn_local_task_id = turn_local_task_id.clone();
+            let finished_turn_presentation = Arc::clone(&pending_turn_presentation);
             let active_turn_finished: CodexActiveTurnFinishedCallback = Box::new(move || {
+                *finished_turn_presentation
+                    .lock()
+                    .expect("turn presentation lock should not be poisoned") = None;
                 finished_turn_handler
                     .clear_active_codex_turn(&finished_turn_local_task_id, execution_id);
             });
@@ -802,7 +829,7 @@ impl RuntimeWorkRpcHandler {
                     }),
                 );
                 let _ = mapper_handle.await;
-                handler.clear_active_codex_transcript(&turn_local_task_id);
+                handler.persist_and_clear_active_codex_transcript(&turn_local_task_id, "cancelled");
                 handler.settle_cancelled_local_task_execution(&turn_local_task_id, execution_id);
                 handler.clear_active_codex_turn(&turn_local_task_id, execution_id);
                 handler.mark_thread_event_routes_idle_for_local_task(&turn_local_task_id);
@@ -811,7 +838,18 @@ impl RuntimeWorkRpcHandler {
             }
 
             let _ = mapper_handle.await;
-            handler.clear_active_codex_transcript(&turn_local_task_id);
+            let transcript_status = match result.as_ref() {
+                Ok(turn) => match turn.outcome {
+                    ExecutionOutcome::Completed { .. }
+                    | ExecutionOutcome::WaitingForUserInput { .. } => "completed",
+                    ExecutionOutcome::Cancelled { .. } => "cancelled",
+                    ExecutionOutcome::Failed { .. } => "failed",
+                    ExecutionOutcome::Running => "inProgress",
+                },
+                Err(_) => "failed",
+            };
+            handler
+                .persist_and_clear_active_codex_transcript(&turn_local_task_id, transcript_status);
             let active_turn = hook_turn
                 .lock()
                 .expect("hook turn context lock should not be poisoned")

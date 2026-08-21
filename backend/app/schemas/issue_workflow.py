@@ -9,6 +9,19 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 WorkflowContextSource = Literal["final_result", "deliveries", "activity"]
+WorkflowOrchestrationStatus = Literal[
+    "idle",
+    "planning",
+    "awaiting_approval",
+    "dispatching",
+    "running",
+    "awaiting_review",
+    "paused",
+    "completed",
+    "failed",
+]
+WorkflowPlanItemAssigneeType = Literal["user", "agent", "team"]
+ISSUE_WORKFLOW_SCOPE_ID = "__issue__"
 DeliverableValueType = Literal[
     "text",
     "file",
@@ -109,6 +122,7 @@ class ProjectWorkflowDefinition(BaseModel):
     stage_mode: Literal["none", "dag"] = "none"
     advancement_policy: Literal["manual", "ai"] = "manual"
     coordinator_prompt: str = Field(default="", max_length=4000)
+    approval_policy: Literal["required", "automatic"] = "required"
     ai_automation_rule_id: str | None = Field(default=None, max_length=64)
     nodes: list[WorkflowNodeDefinition] = Field(default_factory=list, max_length=50)
 
@@ -192,7 +206,12 @@ class IssueWorkflowInstance(BaseModel):
     stage_mode: Literal["none", "dag"] = "none"
     advancement_policy: Literal["manual", "ai"] = "manual"
     coordinator_prompt: str = Field(default="", max_length=4000)
+    approval_policy: Literal["required", "automatic"] = "required"
     ai_automation_rule_id: str | None = Field(default=None, max_length=64)
+    orchestration_status: WorkflowOrchestrationStatus = "idle"
+    active_run_id: str | None = Field(default=None, max_length=64)
+    active_plan_version: int | None = Field(default=None, ge=1)
+    current_stage_id: str | None = Field(default=None, max_length=64)
     nodes: list[WorkflowNodeInstance] = Field(default_factory=list, max_length=50)
 
     @model_validator(mode="after")
@@ -202,6 +221,7 @@ class IssueWorkflowInstance(BaseModel):
             stage_mode=self.stage_mode,
             advancement_policy=self.advancement_policy,
             coordinator_prompt=self.coordinator_prompt,
+            approval_policy=self.approval_policy,
             ai_automation_rule_id=self.ai_automation_rule_id,
             nodes=[
                 WorkflowNodeDefinition(
@@ -231,6 +251,7 @@ def instantiate_workflow(
         stage_mode=definition.stage_mode,
         advancement_policy=definition.advancement_policy,
         coordinator_prompt=definition.coordinator_prompt,
+        approval_policy=definition.approval_policy,
         ai_automation_rule_id=definition.ai_automation_rule_id,
         nodes=[
             WorkflowNodeInstance(
@@ -240,3 +261,77 @@ def instantiate_workflow(
             for node in (definition.nodes if definition.stage_mode == "dag" else [])
         ],
     )
+
+
+class WorkflowPlanItemCreate(BaseModel):
+    client_key: str = Field(
+        min_length=1,
+        max_length=64,
+        pattern=r"^[A-Za-z0-9_-]+$",
+    )
+    stage_id: str = Field(default="", max_length=64)
+    title: str = Field(min_length=1, max_length=255)
+    description: str = Field(default="", max_length=100_000)
+    assignee_type: WorkflowPlanItemAssigneeType
+    assignee_id: str = Field(min_length=1, max_length=128)
+    assignee_name: str = Field(default="", max_length=255)
+    rationale: str = Field(default="", max_length=4000)
+
+
+class WorkflowPlanSubmit(BaseModel):
+    summary: str = Field(default="", max_length=10_000)
+    items: list[WorkflowPlanItemCreate] = Field(min_length=1, max_length=100)
+
+    @model_validator(mode="after")
+    def validate_keys(self) -> "WorkflowPlanSubmit":
+        keys = [item.client_key for item in self.items]
+        if len(keys) != len(set(keys)):
+            raise ValueError("workflow plan item keys must be unique")
+        return self
+
+
+class WorkflowPlanItemView(WorkflowPlanItemCreate):
+    id: str
+    stage_id: str = Field(min_length=1, max_length=64)
+    task_id: str | None = None
+    task_status: str | None = None
+    outcome_verdict: Literal["passed", "needs_rework"] | None = None
+    outcome_summary: str = ""
+    status: Literal["proposed", "materialized", "superseded"]
+
+
+class WorkflowManagerRunView(BaseModel):
+    id: str
+    status: str
+    model: str | None = None
+    execution_environment: str | None = None
+    device_id: str | None = None
+    recent_activity: str = ""
+    error: str | None = None
+    updated_at: datetime
+
+
+class WorkflowPlanView(BaseModel):
+    run_id: str
+    issue_id: str
+    stage_id: str
+    plan_version: int
+    approval_policy: Literal["required", "automatic"]
+    status: WorkflowOrchestrationStatus
+    summary: str
+    items: list[WorkflowPlanItemView]
+    manager_run: WorkflowManagerRunView | None = None
+
+
+class WorkflowTaskOutcomeSubmit(BaseModel):
+    verdict: Literal["passed", "needs_rework"]
+    summary: str = Field(min_length=1, max_length=10_000)
+    findings: list[str] = Field(default_factory=list, max_length=100)
+
+    @model_validator(mode="after")
+    def normalize_text(self) -> "WorkflowTaskOutcomeSubmit":
+        self.summary = self.summary.strip()
+        self.findings = [value.strip() for value in self.findings if value.strip()]
+        if not self.summary:
+            raise ValueError("workflow outcome summary cannot be empty")
+        return self

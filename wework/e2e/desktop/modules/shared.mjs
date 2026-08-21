@@ -1255,15 +1255,23 @@ function hasModelOption(menu, targetOptionIds) {
   return targetOptionIds.some(targetOptionId => menu.testIds.includes(targetOptionId))
 }
 
+async function hasExpectedModelOption(control, menu, targetOptionIds, expectedProviderId) {
+  if (!expectedProviderId) return hasModelOption(menu, targetOptionIds)
+  return Boolean(await visibleModelOptionId(control, targetOptionIds, expectedProviderId))
+}
+
 async function ensureModelOptionVisible(
   control,
   modelIds,
-  modelSelectorButton = '[data-testid="model-selector-button"]'
+  modelSelectorButton = '[data-testid="model-selector-button"]',
+  expectedProviderId = expectedModelProviderId(modelIds)
 ) {
   const targetOptionIds = modelOptionIdCandidates(modelIds)
+  let reloadedLocalModels = false
   for (let attempt = 0; attempt < 8; attempt += 1) {
     let menu = JSON.parse(await control.command('snapshot', 'body'))
-    if (hasModelOption(menu, targetOptionIds)) return menu
+    if (await hasExpectedModelOption(control, menu, targetOptionIds, expectedProviderId))
+      return menu
     if (menu.testIds.includes('model-control-menu-model')) {
       await control
         .command('hover', '[data-testid="model-control-menu-model"]', {
@@ -1288,13 +1296,20 @@ async function ensureModelOptionVisible(
     }
     await new Promise(resolvePromise => setTimeout(resolvePromise, 150))
     menu = JSON.parse(await control.command('snapshot', 'body'))
-    if (hasModelOption(menu, targetOptionIds)) return menu
-    if (await revealGroupedModelOption(control, targetOptionIds)) {
+    if (await hasExpectedModelOption(control, menu, targetOptionIds, expectedProviderId))
+      return menu
+    if (await revealGroupedModelOption(control, targetOptionIds, expectedProviderId)) {
       return JSON.parse(await control.command('snapshot', 'body'))
+    }
+    if (expectedProviderId && !reloadedLocalModels) {
+      await control.command('dispatchLocalModelSettingsChanged', '')
+      reloadedLocalModels = true
     }
   }
 
-  throw new Error(`Model options ${targetOptionIds.join(', ')} did not become visible`)
+  throw new Error(
+    `Model options ${targetOptionIds.join(', ')} did not become visible${expectedProviderId ? ` for provider ${expectedProviderId}` : ''}`
+  )
 }
 
 async function confirmLocalProjectName(control, name) {
@@ -1376,7 +1391,7 @@ async function selectE2EModel(
     return
   }
 
-  await ensureModelOptionVisible(control, modelIds, modelSelectorButton)
+  await ensureModelOptionVisible(control, modelIds, modelSelectorButton, expectedProviderId)
   const targetOptionIds = modelOptionIdCandidates(modelIds)
   let targetOptionId = await visibleModelOptionId(control, targetOptionIds, expectedProviderId)
   if (!targetOptionId) {
