@@ -5,6 +5,8 @@
 use std::{
     collections::HashMap,
     fs,
+    io::Write,
+    process::{Command, Stdio},
     sync::{Mutex, MutexGuard, OnceLock},
 };
 
@@ -125,6 +127,56 @@ async fn execute_command_returns_completed_process_result() {
     assert_eq!(result.stderr, "");
     assert!(result.duration >= 0.0);
     assert!(!result.timed_out);
+}
+
+#[cfg(unix)]
+#[test]
+fn execute_command_child_does_not_inherit_executor_stdin_contract() {
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "execute_command_child_does_not_inherit_executor_stdin",
+            "--nocapture",
+        ])
+        .env("WEGENT_TEST_COMMAND_STDIN_CHILD", "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"app-ipc-protocol-frame\n")
+        .unwrap();
+
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn execute_command_child_does_not_inherit_executor_stdin() {
+    if std::env::var("WEGENT_TEST_COMMAND_STDIN_CHILD").as_deref() != Ok("1") {
+        return;
+    }
+
+    let result = CommandHandler
+        .execute(CommandRequest {
+            command: "cat".to_owned(),
+            timeout_seconds: 5.0,
+            max_output_bytes: 1024,
+            ..CommandRequest::default()
+        })
+        .await;
+
+    assert!(result.success);
+    assert_eq!(result.stdout, Value::String(String::new()));
 }
 
 #[tokio::test]

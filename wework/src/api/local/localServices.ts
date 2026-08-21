@@ -382,10 +382,11 @@ interface CatalogReconciliationTracker {
   key: string
 }
 
-const catalogReconciliationTrackers = new WeakMap<
-  LocalExecutorRequest,
-  CatalogReconciliationTracker
->()
+let catalogReconciliationTracker: CatalogReconciliationTracker = {
+  attemptedAt: 0,
+  inFlight: null,
+  key: '',
+}
 let runtimeChatStreams = new WeakMap<
   LocalExecutorSubscribe,
   WeakMap<LocalExecutorRequest, ReturnType<typeof createRuntimeChatStream>>
@@ -393,6 +394,11 @@ let runtimeChatStreams = new WeakMap<
 
 export function resetLocalRuntimeChatStreamsForTests(): void {
   runtimeChatStreams = new WeakMap()
+  catalogReconciliationTracker = {
+    attemptedAt: 0,
+    inFlight: null,
+    key: '',
+  }
 }
 
 function getRuntimeChatStream(
@@ -414,19 +420,11 @@ function getRuntimeChatStream(
 const CATALOG_IDLE_RESTART_RETRY_DELAY_MS = 100
 const CATALOG_IDLE_RESTART_MAX_ATTEMPTS = 20
 
-function catalogReconciliationTracker(request: LocalExecutorRequest): CatalogReconciliationTracker {
-  const existing = catalogReconciliationTrackers.get(request)
-  if (existing) return existing
-  const tracker = { attemptedAt: 0, inFlight: null, key: '' }
-  catalogReconciliationTrackers.set(request, tracker)
-  return tracker
-}
-
 async function reconcilePendingLocalModelCatalog(
   request: LocalExecutorRequest,
   runtimeInstanceId?: string
 ): Promise<void> {
-  const tracker = catalogReconciliationTracker(request)
+  const tracker = catalogReconciliationTracker
   if (tracker.inFlight) {
     try {
       await tracker.inFlight

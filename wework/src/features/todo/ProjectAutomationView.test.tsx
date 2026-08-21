@@ -42,9 +42,10 @@ vi.mock('./ProjectWorkflowEditor', () => ({
             ...value,
             stage_mode: 'dag',
             nodes: [
+              ...value.nodes,
               {
-                id: 'stage-1',
-                name: '设计',
+                id: `stage-${value.nodes.length + 1}`,
+                name: `设计 ${value.nodes.length + 1}`,
                 prompt: '',
                 depends_on: [],
                 dependency_context: {},
@@ -197,5 +198,58 @@ describe('ProjectAutomationView', () => {
     )
 
     expect(screen.getByTestId('workflow-node-count')).toHaveTextContent('1')
+  })
+
+  test('keeps edits made while a workflow save is in flight', async () => {
+    let resolveUpdate: ((project: CloudProject) => void) | undefined
+    const updateCloudProject = vi.fn(
+      () =>
+        new Promise<CloudProject>(resolve => {
+          resolveUpdate = resolve
+        })
+    )
+    render(
+      <ProjectAutomationView
+        api={
+          {
+            updateCloudProject,
+          } as unknown as NonNullable<WorkbenchServices['deliveryApi']>
+        }
+        project={initialProject}
+        localProjects={[]}
+        canManageAgents
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('mock-add-stage'))
+    fireEvent.click(screen.getByTestId('mock-save-workflow'))
+    await waitFor(() => expect(updateCloudProject).toHaveBeenCalledTimes(1))
+
+    fireEvent.click(screen.getByTestId('mock-add-stage'))
+    expect(screen.getByTestId('workflow-node-count')).toHaveTextContent('2')
+
+    resolveUpdate?.({
+      ...initialProject,
+      version: 2,
+      workflow_definition: {
+        version: 2,
+        stage_mode: 'dag',
+        advancement_policy: 'manual',
+        nodes: [
+          {
+            id: 'stage-1',
+            name: '设计 1',
+            prompt: '',
+            depends_on: [],
+            dependency_context: {},
+            required: true,
+            workspace_policy: 'composer',
+            automation_rule_id: null,
+          },
+        ],
+      },
+    })
+
+    await waitFor(() => expect(screen.getByTestId('workflow-node-count')).toHaveTextContent('2'))
   })
 })

@@ -1356,8 +1356,7 @@ fn write_codex_shell_environment_value(
     let content = fs::read_to_string(&config_path).unwrap_or_default();
     let next_content = set_shell_environment_value_in_config(&content, key, value);
     if next_content != content {
-        fs::write(&config_path, next_content)
-            .map_err(|error| format!("failed to write {}: {error}", config_path.display()))?;
+        write_atomic_file(&config_path, next_content.as_bytes())?;
     }
     read_codex_local_config()
 }
@@ -1375,8 +1374,7 @@ fn restore_codex_shell_environment_config(
     content: &str,
 ) -> Result<(), String> {
     if existed {
-        fs::write(config_path, content)
-            .map_err(|error| format!("failed to restore {}: {error}", config_path.display()))?;
+        write_atomic_file(config_path, content.as_bytes())?;
     } else if config_path.exists() {
         fs::remove_file(config_path)
             .map_err(|error| format!("failed to remove {}: {error}", config_path.display()))?;
@@ -1390,8 +1388,7 @@ fn write_codex_remote_apps_enabled(enabled: bool) -> Result<CodexLocalConfig, St
         .map_err(|error| format!("failed to create {}: {error}", codex_home.display()))?;
     let content = fs::read_to_string(&config_path).unwrap_or_default();
     let next_content = set_remote_apps_enabled_in_config(&content, enabled);
-    fs::write(&config_path, next_content)
-        .map_err(|error| format!("failed to write {}: {error}", config_path.display()))?;
+    write_atomic_file(&config_path, next_content.as_bytes())?;
     read_codex_local_config()
 }
 
@@ -4352,16 +4349,42 @@ fn updated_copy_registry(path: &Path, record: LocalPluginCopyRecord) -> Result<V
 fn write_atomic_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let parent = path
         .parent()
-        .ok_or_else(|| "Plugin copy registry path is invalid".to_string())?;
+        .ok_or_else(|| format!("Atomic write path has no parent: {}", path.display()))?;
     fs::create_dir_all(parent)
         .map_err(|error| format!("Failed to create {}: {error}", parent.display()))?;
-    let temp_path = parent.join(format!(".plugin-copy-registry-{}.tmp", std::process::id()));
-    fs::write(&temp_path, bytes)
-        .map_err(|error| format!("Failed to write plugin copy registry: {error}"))?;
-    if let Err(error) = fs::rename(&temp_path, path) {
-        let _ = fs::remove_file(&temp_path);
-        return Err(format!("Failed to replace plugin copy registry: {error}"));
+    let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(|error| {
+        format!(
+            "Failed to create temporary file for {}: {error}",
+            path.display()
+        )
+    })?;
+    temporary.write_all(bytes).map_err(|error| {
+        format!(
+            "Failed to write temporary file for {}: {error}",
+            path.display()
+        )
+    })?;
+    temporary.as_file().sync_all().map_err(|error| {
+        format!(
+            "Failed to sync temporary file for {}: {error}",
+            path.display()
+        )
+    })?;
+    if let Ok(metadata) = fs::metadata(path) {
+        fs::set_permissions(temporary.path(), metadata.permissions()).map_err(|error| {
+            format!(
+                "Failed to preserve permissions while replacing {}: {error}",
+                path.display()
+            )
+        })?;
     }
+    temporary.persist(path).map_err(|error| {
+        format!(
+            "Failed to atomically replace {}: {}",
+            path.display(),
+            error.error
+        )
+    })?;
     Ok(())
 }
 
@@ -6719,6 +6742,43 @@ BROWSER_USE_AVAILABLE_BACKENDS = "chrome,iab"
 
         assert!(!next.contains("WEGENT_RUNTIME_AUTH_TOKEN"));
         assert!(next.contains("BROWSER_USE_AVAILABLE_BACKENDS = \"chrome,iab\""));
+    }
+
+    #[test]
+    fn atomic_file_replacement_never_exposes_partial_content() {
+        let root = import_test_root("atomic-file-replacement");
+        let path = root.join("config.toml");
+        let first = vec![b'a'; 256 * 1024];
+        let second = vec![b'b'; 256 * 1024];
+        write_atomic_file(&path, &first).unwrap();
+
+        let writer_path = path.clone();
+        let writer_first = first.clone();
+        let writer_second = second.clone();
+        let finished = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let writer_finished = Arc::clone(&finished);
+        let writer = thread::spawn(move || {
+            for index in 0..100 {
+                let content = if index % 2 == 0 {
+                    &writer_second
+                } else {
+                    &writer_first
+                };
+                write_atomic_file(&writer_path, content).unwrap();
+            }
+            writer_finished.store(true, Ordering::Release);
+        });
+
+        while !finished.load(Ordering::Acquire) {
+            let content = fs::read(&path).unwrap();
+            assert!(
+                content == first || content == second,
+                "atomic replacement exposed {} partial bytes",
+                content.len()
+            );
+        }
+        writer.join().unwrap();
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

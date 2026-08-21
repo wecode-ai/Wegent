@@ -3,7 +3,18 @@ import {
   createExecutorClientForWorkbenchServices,
   type WorkbenchServices,
 } from '../workbenchServices'
+import {
+  reconcileRuntimeConversationQueueAfterTransportReplacement,
+  reconcileRuntimeConversationSnapshot,
+  runtimeConversationKey,
+} from '../runtimeConversationCache'
+import {
+  runtimeMessagesToWorkbenchMessages,
+  runtimeTranscriptTurnsToConversationTurns,
+} from '../runtimePaneMessages'
 import type { RuntimeTaskLifecycleStore } from './RuntimeTaskLifecycleStore'
+import type { RuntimeTaskAddress, RuntimeTranscriptResponse } from '@/types/api'
+import type { RuntimePaneTranscript } from '@/types/workbench'
 
 type ReconciliationReason = 'event_lagged' | 'runtime_replaced'
 
@@ -34,8 +45,38 @@ export function RuntimeTaskLifecycleStreamCoordinator({
       while (!disposed && reason) {
         pendingReason = null
         try {
+          const recoveryAddresses = runtimeRecoveryAddresses(store)
           const runtimeWork = await executorClient.runtime.listRuntimeWork()
-          if (!disposed) store.syncRuntimeWork(runtimeWork)
+          if (!disposed) {
+            store.syncRuntimeWork(runtimeWork)
+            for (const address of runtimeRecoveryAddresses(store, recoveryAddresses)) {
+              if (disposed) break
+              try {
+                const transcriptResponse = await executorClient.runtime.getRuntimeTranscript({
+                  ...address,
+                  limit: 50,
+                  refresh: true,
+                })
+                if (disposed) break
+                const transcript = runtimePaneTranscript(transcriptResponse)
+                const turns = runtimeTranscriptTurnsToConversationTurns(
+                  transcriptResponse.turns ?? []
+                )
+                reconcileRuntimeConversationSnapshot(address, turns)
+                if (reason === 'runtime_replaced') {
+                  reconcileRuntimeConversationQueueAfterTransportReplacement(address, turns)
+                }
+                store.syncTranscript(address, transcript)
+              } catch (error) {
+                console.warn('[Wework] Runtime transcript reconciliation failed', {
+                  reason,
+                  deviceId: address.deviceId,
+                  taskId: address.taskId,
+                  error,
+                })
+              }
+            }
+          }
         } catch (error) {
           console.warn('[Wework] Runtime task lifecycle reconciliation failed', {
             reason,
@@ -89,6 +130,39 @@ export function RuntimeTaskLifecycleStreamCoordinator({
   }, [executorClient, services.chatStream, store])
 
   return null
+}
+
+function runtimeRecoveryAddresses(
+  store: RuntimeTaskLifecycleStore,
+  retained: RuntimeTaskAddress[] = []
+): RuntimeTaskAddress[] {
+  const snapshot = store.getSnapshot()
+  const addresses = new Map(retained.map(address => [runtimeConversationKey(address), address]))
+  const current = store.getCurrentTask()
+  if (current) addresses.set(runtimeConversationKey(current.address), current.address)
+  for (const key of snapshot.runningTaskKeys) {
+    const lifecycle = snapshot.tasks.get(key)
+    if (lifecycle) {
+      addresses.set(runtimeConversationKey(lifecycle.address), lifecycle.address)
+    }
+  }
+  return [...addresses.values()]
+}
+
+function runtimePaneTranscript(transcript: RuntimeTranscriptResponse): RuntimePaneTranscript {
+  return {
+    messages: runtimeMessagesToWorkbenchMessages(transcript.messages ?? []),
+    turns: runtimeTranscriptTurnsToConversationTurns(transcript.turns ?? []),
+    contextUsage: transcript.contextUsage ?? null,
+    turnNavigation: transcript.turnNavigation ?? [],
+    fullContent: transcript.fullContent === true,
+    rangeStart: transcript.rangeStart ?? null,
+    rangeEnd: transcript.rangeEnd ?? null,
+    hasMoreBefore: Boolean(transcript.hasMoreBefore),
+    beforeCursor: transcript.beforeCursor ?? null,
+    hasMoreAfter: Boolean(transcript.hasMoreAfter),
+    afterCursor: transcript.afterCursor ?? null,
+  }
 }
 
 function isCancelledTerminalEvent(payload: { error: string; type?: string }): boolean {

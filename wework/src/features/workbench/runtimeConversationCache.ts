@@ -428,6 +428,47 @@ export function settleRuntimeConversationAcceptedMessage(
   notifyRuntimeConversation(key)
 }
 
+export function reconcileRuntimeConversationQueueAfterTransportReplacement(
+  address: RuntimeTaskAddress,
+  snapshotTurns: RuntimeConversationTurn[]
+): void {
+  const key = runtimeConversationKey(address)
+  const queuedMessages = queuedMessagesByConversation.get(key)
+  if (!queuedMessages) return
+
+  const acceptedMessageIds = new Set<string>()
+  for (const turn of snapshotTurns) {
+    if (turn.clientUserMessageId) acceptedMessageIds.add(turn.clientUserMessageId)
+    for (const item of turn.items) {
+      if (item.type === 'user_message' && item.id) acceptedMessageIds.add(item.id)
+    }
+  }
+
+  const nextQueuedMessages = queuedMessages.flatMap(message => {
+    if (acceptedMessageIds.has(message.id)) return []
+    if (message.status !== 'sending') return [message]
+    return [
+      {
+        ...message,
+        status: 'queued' as const,
+        deliveryMode: undefined,
+        awaitingTurnStart: undefined,
+        error: undefined,
+        notice: undefined,
+      },
+    ]
+  })
+  if (
+    nextQueuedMessages.length === queuedMessages.length &&
+    nextQueuedMessages.every((message, index) => message === queuedMessages[index])
+  ) {
+    return
+  }
+
+  cacheRuntimeConversationQueuedMessagesByKey(key, nextQueuedMessages)
+  notifyRuntimeConversation(key)
+}
+
 export function takeAppliedRuntimeConversationGuidance(
   address: RuntimeTaskAddress,
   payload: RuntimeGuidanceAppliedPayload

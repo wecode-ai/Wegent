@@ -59,6 +59,8 @@ Tauri starts the executor sidecar with no arguments and exchanges newline-delimi
 
 The parent-child relationship defines the stdio lifecycle directly: a write failure, stdout EOF, or child exit marks local IPC unavailable. A normal request timeout ends only that request and does not tear down the transport, so system sleep or scheduling delays cannot trigger endpoint reconnection or attach the App to another executor.
 
+Device commands started by the executor must have stdin closed instead of inheriting the process stdin that carries the App JSONL protocol. Otherwise, a child command that reads standard input can steal request bytes and corrupt the next protocol frame. The executor reads App IPC as bytes, splits frames on newlines, and validates UTF-8 per frame; an invalid frame is discarded after logging only its length and error offset and must not terminate the executor or interrupt unrelated running tasks. When Wework detects a changed executor runtime instance, it reloads the affected task list and transcripts. Queued messages confirmed by the transcript are removed, while sends that were still unconfirmed at disconnection return to a retryable queued state.
+
 Backend connectivity is optional, not a required dependency for the local app. When login, model/capability sync, cloud projects, or web control of the local computer are needed, the executor can register as a local device over the Backend Socket.IO channel. The same executor sidecar reuses one command handler and one runtime work handler while serving Wework App over stdio and Backend over Socket.IO. This design does not introduce a local HTTP gateway and does not require Wework App to start Backend itself.
 
 ### Executor Startup Environment and Codex Home Initialization
