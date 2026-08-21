@@ -241,7 +241,7 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         }
       )
       await captureScreenshot(control, 'harness-apps-06-direct-add-menu.png', 'body')
-      await control.command('press', 'Escape')
+      await control.command('press', 'body', { key: 'Escape' })
 
       await control.command('click', `[data-testid="harness-app-start-${INSTALLATION_ID}"]`)
       await control.command('waitFor', `[data-testid="harness-app-launch-${INSTALLATION_ID}"]`, {
