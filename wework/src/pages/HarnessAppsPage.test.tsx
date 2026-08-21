@@ -109,7 +109,7 @@ const workspaceTabs = {
 }
 
 vi.mock('@/features/workspace-tabs/workspaceTabsContextValue', () => ({
-  useOptionalWorkspaceTabs: () => workspaceTabs,
+  useWorkspaceTabs: () => workspaceTabs,
 }))
 
 vi.mock('@/hooks/useTranslation', () => ({
@@ -232,9 +232,8 @@ describe('HarnessAppsPage', () => {
     expect(await screen.findByTestId('harness-app-preview')).toBeInTheDocument()
   })
 
-  test('starts an installed app, stores its proxy token, and opens one app tab', async () => {
+  test('opens an installed app tab and delegates startup to the tab auto launcher', async () => {
     mocks.api.list.mockResolvedValue([installed])
-    mocks.api.start.mockResolvedValue(running)
 
     render(<HarnessAppsPage />)
     fireEvent.click(await screen.findByTestId(`harness-app-start-${installed.id}`))
@@ -243,14 +242,8 @@ describe('HarnessAppsPage', () => {
       title: installed.manifest.displayName,
       contentRoute: `/app/harness-${installed.id}`,
     })
-    await waitFor(() => {
-      expect(mocks.api.start).toHaveBeenCalledWith(
-        installed.id,
-        'http://127.0.0.1:41000/v1/harness-router/proxy-token'
-      )
-    })
-    expect(mocks.proxyTokens.get(installed.id)).toBe('proxy-token')
-    expect(mocks.register).toHaveBeenCalledWith(running)
+    expect(mocks.api.start).not.toHaveBeenCalled()
+    expect(mocks.resolveLaunch).not.toHaveBeenCalled()
     expect(mocks.openTab).toHaveBeenCalledTimes(1)
   })
 
@@ -269,62 +262,6 @@ describe('HarnessAppsPage', () => {
       expect(mocks.api.update).toHaveBeenCalledWith(installed.id, { modelKey: nextModelKey })
     )
     expect(await screen.findByTestId(`harness-app-model-${installed.id}`)).toHaveValue(nextModelKey)
-  })
-
-  test('toggles whether a Smart app stays resident across launches', async () => {
-    const resident = { ...installed, resident: true }
-    mocks.api.list.mockResolvedValueOnce([installed]).mockResolvedValueOnce([resident])
-    mocks.api.update.mockResolvedValue(resident)
-
-    render(<HarnessAppsPage />)
-    const residentButton = await screen.findByTestId(`harness-app-resident-${installed.id}`)
-    expect(residentButton).toHaveAttribute('aria-pressed', 'false')
-    fireEvent.click(residentButton)
-
-    await waitFor(() =>
-      expect(mocks.api.update).toHaveBeenCalledWith(installed.id, { resident: true })
-    )
-    expect(await screen.findByTestId(`harness-app-resident-${installed.id}`)).toHaveAttribute(
-      'aria-pressed',
-      'true'
-    )
-  })
-
-  test('rolls back a started app when the post-start refresh fails', async () => {
-    mocks.api.list
-      .mockResolvedValueOnce([installed])
-      .mockRejectedValueOnce(new Error('refresh failed'))
-      .mockResolvedValueOnce([installed])
-    mocks.api.start.mockResolvedValue(running)
-
-    render(<HarnessAppsPage />)
-    fireEvent.click(await screen.findByTestId(`harness-app-start-${installed.id}`))
-
-    await waitFor(() => expect(mocks.api.stop).toHaveBeenCalledWith(installed.id))
-    expect(mocks.unregister).toHaveBeenCalledWith(installed.id)
-    expect(mocks.unregisterProxy).toHaveBeenCalledWith('proxy-token')
-    expect(mocks.proxyTokens.has(installed.id)).toBe(false)
-    expect(mocks.openTab).toHaveBeenCalledTimes(1)
-    expect(mocks.closeTab).not.toHaveBeenCalled()
-  })
-
-  test('preserves the model proxy when a started app cannot be rolled back', async () => {
-    mocks.api.list
-      .mockResolvedValueOnce([installed])
-      .mockRejectedValueOnce(new Error('refresh failed'))
-      .mockResolvedValueOnce([running])
-    mocks.api.start.mockResolvedValue(running)
-    mocks.api.stop.mockRejectedValue(new Error('stop failed'))
-
-    render(<HarnessAppsPage />)
-    fireEvent.click(await screen.findByTestId(`harness-app-start-${installed.id}`))
-
-    await waitFor(() => expect(mocks.api.stop).toHaveBeenCalledWith(installed.id))
-    expect(mocks.unregister).not.toHaveBeenCalled()
-    expect(mocks.unregisterProxy).not.toHaveBeenCalled()
-    expect(mocks.proxyTokens.get(installed.id)).toBe('proxy-token')
-    expect(mocks.register).toHaveBeenCalledWith(running)
-    expect(mocks.openTab).toHaveBeenCalledTimes(1)
   })
 
   test('clears an old preview when replacement package inspection fails', async () => {

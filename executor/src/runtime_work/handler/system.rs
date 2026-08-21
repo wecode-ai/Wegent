@@ -694,6 +694,7 @@ impl RuntimeWorkRpcHandler {
         payload: Value,
         expected_models: Vec<String>,
     ) -> Result<Value, AppIpcError> {
+        let _restart_guard = self.codex_app_server_restart_gate.lock().await;
         let active_task_count = self
             .active_local_executions
             .lock()
