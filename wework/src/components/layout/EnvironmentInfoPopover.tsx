@@ -59,6 +59,8 @@ interface EnvironmentInfoPopoverProps {
   onListBranches?: () => Promise<string[]>
   onCheckoutBranch?: (branchName: string) => Promise<void>
   onCreateBranch?: (branchName: string) => Promise<void>
+  onGenerateBranchName?: (sourceText: string) => Promise<string>
+  branchNameSource?: string
   onOpenChangesReview?: () => void
   onDeliver?: () => void
   todoLabel?: string
@@ -102,6 +104,8 @@ export function EnvironmentInfoPopover({
   onListBranches,
   onCheckoutBranch,
   onCreateBranch,
+  onGenerateBranchName,
+  branchNameSource,
   onOpenChangesReview,
   onDeliver,
   todoLabel,
@@ -478,6 +482,8 @@ export function EnvironmentInfoPopover({
                       onListBranches={onListBranches}
                       onCheckoutBranch={onCheckoutBranch}
                       onCreateBranch={onCreateBranch}
+                      onGenerateBranchName={onGenerateBranchName}
+                      branchNameSource={branchNameSource}
                     />
                   )}
                   {hasGitInfo && (

@@ -294,8 +294,15 @@ export function friendlyTitleForTask(
   ephemeral?: boolean
 ): RuntimeTaskFriendlyTitleConfig | null {
   if (ephemeral || preferences?.friendlyTaskTitlesEnabled !== true) return null
+  return titleModelForGeneration(preferences, models, executionModel)
+}
 
-  const configuredModel = preferences.friendlyTaskTitleModel
+export function titleModelForGeneration(
+  preferences: Pick<AppPreferences, 'friendlyTaskTitleModel'> | undefined,
+  models: UnifiedModel[],
+  executionModel: Pick<RuntimeSendRequest, 'modelId' | 'modelType' | 'modelOptions'>
+): RuntimeTaskFriendlyTitleConfig | null {
+  const configuredModel = preferences?.friendlyTaskTitleModel
   const configuredModelIsAvailable =
     configuredModel &&
     models.some(
