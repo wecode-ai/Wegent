@@ -3,6 +3,8 @@
 
 """Tests for the external event subscription service."""
 
+import copy
+import threading
 import uuid
 from datetime import datetime, timezone
 
@@ -15,6 +17,7 @@ from app.models.delivery import (
     LoopItem,
     ProjectAutomationRun,
     ProjectChatAgent,
+    ProjectIncomingHook,
     loop_datetime_is_unset,
 )
 from app.models.loop_item_execution import LoopItemExecution
@@ -24,68 +27,9 @@ from app.services.external_events.adapters import NormalizedExternalEvent
 from app.services.external_events.binding import external_event_binding_service
 from app.services.external_events.buffer import ExternalEventBuffer
 from app.services.external_events.evaluate import external_event_evaluation_service
+from app.services.external_events.service import ExternalEventService
 from app.services.loop_items.service import loop_item_service
-
-
-class FakeRedis:
-    """Minimal in-memory Redis stand-in for buffer tests."""
-
-    def __init__(self) -> None:
-        self.store: dict[bytes, bytes] = {}
-
-    def get(self, key: bytes | str) -> bytes | None:
-        return self.store.get(key if isinstance(key, bytes) else key.encode())
-
-    def set(self, key: bytes | str, value: bytes | str, ex: int | None = None) -> bool:
-        self.store[key if isinstance(key, bytes) else key.encode()] = (
-            value if isinstance(value, bytes) else value.encode()
-        )
-        return True
-
-    def delete(self, *keys: bytes | str) -> int:
-        count = 0
-        for key in keys:
-            encoded = key if isinstance(key, bytes) else key.encode()
-            if encoded in self.store:
-                del self.store[encoded]
-                count += 1
-        return count
-
-    def scan_iter(self, pattern: str = "*", count: int = 100):
-        del count
-        prefix = pattern.split("*")[0].encode()
-        return (key for key in self.store if key.startswith(prefix))
-
-    def pipeline(self):
-        return FakePipeline(self)
-
-
-class FakePipeline:
-    def __init__(self, redis: FakeRedis) -> None:
-        self.redis = redis
-        self.commands: list[tuple] = []
-
-    def set(self, key: bytes | str, value: bytes | str, ex: int | None = None):
-        self.commands.append(("set", key, value, ex))
-        return self
-
-    def execute(self) -> list[object]:
-        results = []
-        for command in self.commands:
-            if command[0] == "set":
-                results.append(self.redis.set(command[1], command[2], command[3]))
-        return results
-
-
-@pytest.fixture(autouse=True)
-def fake_event_buffer() -> FakeRedis:
-    fake = FakeRedis()
-    from app.services.external_events.buffer import external_event_buffer
-
-    original = external_event_buffer._client
-    external_event_buffer._client = fake
-    yield fake
-    external_event_buffer._client = original
+from tests.utils.fake_redis import FakeRedis
 
 
 @pytest.fixture
@@ -731,6 +675,45 @@ def test_buffer_window_reopen_merges_prior_events_and_bumps_generation() -> None
     assert [event["event_id"] for event in second["events"]] == ["1", "2"]
 
 
+def test_buffer_append_is_atomic_under_concurrency() -> None:
+    buffer = ExternalEventBuffer(url="redis://fake")
+    fake = FakeRedis()
+    buffer._client = fake
+    writers = 8
+    rounds = 20
+    barrier = threading.Barrier(writers)
+    failures: list[BaseException] = []
+
+    def writer(index: int) -> None:
+        try:
+            barrier.wait()
+            for round_index in range(rounds):
+                buffer.append(
+                    "gitlab",
+                    "acme/app!7",
+                    "merged",
+                    {
+                        "event_id": f"{index}-{round_index}",
+                        "summary": "merged",
+                        "event_type": "merged",
+                    },
+                )
+        except BaseException as exc:  # pragma: no cover - failure surface
+            failures.append(exc)
+
+    threads = [
+        threading.Thread(target=writer, args=(index,)) for index in range(writers)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert not failures
+    events = buffer.take("gitlab", "acme/app!7", "merged")
+    assert len(events) == writers * rounds
+
+
 def test_binding_dedupe_route_and_archive(
     test_db: Session,
     workflow_project: CloudProject,
@@ -762,6 +745,42 @@ def test_binding_dedupe_route_and_archive(
             test_db, provider="gitlab", opaque_ref="acme/app!7"
         )
         == []
+    )
+
+
+def test_route_reports_failed_when_every_evaluation_fails(
+    test_db: Session,
+    workflow_project: CloudProject,
+    test_user: User,
+) -> None:
+    issue = _issue(test_db, workflow_project, test_user.id)
+    _binding(test_db, project=workflow_project, issue=issue, user_id=test_user.id)
+    hook = ProjectIncomingHook(
+        cloud_project_id=str(workflow_project.id),
+        parent_id=str(workflow_project.id),
+        title="hook",
+        description="",
+        status="active",
+        created_by_user_id=test_user.id,
+        metadata_json={},
+    )
+    test_db.add(hook)
+    test_db.commit()
+
+    class ExplodingEvaluation:
+        def evaluate_event(self, db: Session, *, binding, event) -> None:
+            del db, binding, event
+            raise RuntimeError("evaluation exploded")
+
+    service = ExternalEventService(evaluation_service=ExplodingEvaluation())
+
+    assert (
+        service.route(
+            test_db,
+            hook=hook,
+            event=_merged_event(),
+        )
+        == "failed"
     )
 
 
@@ -973,23 +992,23 @@ def test_immediate_policy_fires_one_round_per_event_after_execution_ends(
 
 
 def _set_wait_rules(issue: LoopItem, rules: list[dict]) -> None:
+    metadata = copy.deepcopy(issue.metadata_json or {})
     wait_node = next(
-        node
-        for node in issue.metadata_json["workflow"]["nodes"]
-        if node["id"] == "wait-1"
+        node for node in metadata["workflow"]["nodes"] if node["id"] == "wait-1"
     )
     wait_node["wait_config"] = {"rules": rules}
+    issue.metadata_json = metadata
 
 
 def _set_wait_agent(issue: LoopItem, agent: ProjectChatAgent) -> None:
     """Configure the robot that owns this wait node's rerun rounds."""
 
+    metadata = copy.deepcopy(issue.metadata_json or {})
     wait_node = next(
-        node
-        for node in issue.metadata_json["workflow"]["nodes"]
-        if node["id"] == "wait-1"
+        node for node in metadata["workflow"]["nodes"] if node["id"] == "wait-1"
     )
     wait_node["wait_config"]["agent_id"] = agent.id
+    issue.metadata_json = metadata
 
 
 def _repair_agent_run(

@@ -5,6 +5,7 @@
 
 import secrets
 from datetime import datetime
+from typing import ClassVar
 
 from sqlalchemy import (
     JSON,
@@ -276,7 +277,9 @@ class ExternalEventBinding(LoopNode):
     only uses them as an exact-match routing key.
     """
 
-    __mapper_args__ = {"polymorphic_identity": "external_event_binding"}
+    __mapper_args__: ClassVar[dict[str, object]] = {
+        "polymorphic_identity": "external_event_binding"
+    }
 
 
 class CloudProjectLocalBinding(LoopNode):

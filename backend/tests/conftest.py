@@ -269,6 +269,24 @@ def test_db(test_engine, test_session_factory) -> Generator[Session, None, None]
         connection.close()
 
 
+@pytest.fixture(autouse=True)
+def isolated_external_event_buffer() -> Generator[None, None, None]:
+    """Isolate the shared external event buffer per test.
+
+    The buffer client is a module-level singleton. Swapping it to a fresh
+    in-memory fake keeps buffered events from leaking between tests, including
+    when a test fails before its own cleanup runs.
+    """
+
+    from app.services.external_events.buffer import external_event_buffer
+    from tests.utils.fake_redis import FakeRedis
+
+    original = external_event_buffer._client
+    external_event_buffer._client = FakeRedis()
+    yield
+    external_event_buffer._client = original
+
+
 @pytest.fixture(scope="function")
 async def async_test_db():
     """

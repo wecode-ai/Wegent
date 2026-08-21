@@ -28,6 +28,7 @@ import time
 from typing import Any, Iterable
 
 from redis import Redis
+from redis.exceptions import WatchError
 
 from app.core.config import settings
 
@@ -107,8 +108,42 @@ class ExternalEventBuffer:
         return parsed if isinstance(parsed, (list, dict)) else []
 
     @staticmethod
-    def _encode(events: list[dict[str, Any]]) -> bytes:
+    def _encode(events: list[dict[str, Any]] | dict[str, Any]) -> bytes:
         return json.dumps(events, ensure_ascii=False).encode()
+
+    @staticmethod
+    def _atomic(
+        redis: Redis,
+        keys: list[str],
+        body,
+        *,
+        retries: int = 20,
+    ) -> object:
+        """Apply one read-modify-write transaction, retrying on conflicts.
+
+        ``body(pipe)`` receives a watching pipeline and returns
+        ``(writes, value)`` where ``writes`` is a list of ``(command, args)``
+        tuples queued after ``multi()`` (or ``None`` to skip the write) and
+        ``value`` is the caller-visible outcome. A concurrent writer that
+        touches any watched key aborts the transaction and the body runs
+        again, so buffered events can never be silently overwritten.
+        """
+
+        for _ in range(retries):
+            try:
+                with redis.pipeline() as pipe:
+                    pipe.watch(*keys)
+                    writes, value = body(pipe)
+                    if writes is None:
+                        return value
+                    pipe.multi()
+                    for command, args in writes:
+                        getattr(pipe, command)(*args)
+                    pipe.execute()
+                    return value
+            except WatchError:
+                continue
+        raise RuntimeError("External event buffer transaction retries exhausted")
 
     def append(
         self,
@@ -120,26 +155,35 @@ class ExternalEventBuffer:
         """Append one event under its triple key, deduplicated by event_id."""
 
         key = _triple_key(provider, opaque_ref, event_type)
+        index = _index_key(provider, opaque_ref)
+        event_id = event.get("event_id")
         try:
-            events = self._decode(self._redis().get(key))
-            event_id = event.get("event_id")
-            if event_id and any(
-                existing.get("event_id") == event_id for existing in events
-            ):
-                return
-            events.append(event)
             redis = self._redis()
-            pipeline = redis.pipeline()
-            pipeline.set(key, self._encode(events), ex=TRIPLE_TTL_SECONDS)
-            index = json.loads(redis.get(_index_key(provider, opaque_ref)) or b"[]")
-            if event_type not in index:
-                index.append(event_type)
-                pipeline.set(
-                    _index_key(provider, opaque_ref),
-                    json.dumps(index).encode(),
-                    ex=TRIPLE_TTL_SECONDS,
-                )
-            pipeline.execute()
+
+            def body(pipe) -> tuple[list[tuple[str, tuple]] | None, bool]:
+                events = self._decode(pipe.get(key))
+                if event_id and any(
+                    existing.get("event_id") == event_id for existing in events
+                ):
+                    return None, False
+                index_events = self._decode(pipe.get(index))
+                writes: list[tuple[str, tuple]] = [
+                    ("set", (key, self._encode([*events, event]), TRIPLE_TTL_SECONDS))
+                ]
+                if event_type not in index_events:
+                    writes.append(
+                        (
+                            "set",
+                            (
+                                index,
+                                self._encode([*index_events, event_type]),
+                                TRIPLE_TTL_SECONDS,
+                            ),
+                        )
+                    )
+                return writes, True
+
+            self._atomic(redis, [key, index], body)
         except Exception:
             logger.exception(
                 "External event buffer append failed provider=%s event_type=%s",
@@ -153,13 +197,11 @@ class ExternalEventBuffer:
         opaque_ref: str,
         event_type: str,
     ) -> list[dict[str, Any]]:
-        """Read and delete one triple key (compensation or settle)."""
+        """Read and delete one triple key atomically (compensation or settle)."""
 
         key = _triple_key(provider, opaque_ref, event_type)
         try:
-            events = self._decode(self._redis().get(key))
-            self._redis().delete(key)
-            return events
+            return self._decode(self._redis().getdel(key))
         except Exception:
             logger.exception(
                 "External event buffer take failed provider=%s event_type=%s",
@@ -176,9 +218,8 @@ class ExternalEventBuffer:
         """Take every buffered event for one provider reference (compensation)."""
 
         try:
-            raw = self._redis().get(_index_key(provider, opaque_ref))
+            raw = self._redis().getdel(_index_key(provider, opaque_ref))
             event_types = json.loads(raw) if raw else []
-            self._redis().delete(_index_key(provider, opaque_ref))
         except Exception:
             logger.exception(
                 "External event buffer reference take failed provider=%s", provider
@@ -204,10 +245,27 @@ class ExternalEventBuffer:
         key = _aggregate_key(task_id, node_id)
         triple = [provider, opaque_ref, event_type]
         try:
-            references = self._decode(self._redis().get(key))
-            if triple not in references:
-                references.append(triple)
-                self._redis().set(key, self._encode(references), ex=TRIPLE_TTL_SECONDS)
+            redis = self._redis()
+
+            def body(pipe) -> tuple[list[tuple[str, tuple]] | None, bool]:
+                references = self._decode(pipe.get(key))
+                if triple in references:
+                    return None, False
+                return (
+                    [
+                        (
+                            "set",
+                            (
+                                key,
+                                self._encode([*references, triple]),
+                                TRIPLE_TTL_SECONDS,
+                            ),
+                        )
+                    ],
+                    True,
+                )
+
+            self._atomic(redis, [key], body)
         except Exception:
             logger.exception(
                 "External event buffer aggregate push failed task=%s node=%s",
@@ -220,8 +278,7 @@ class ExternalEventBuffer:
 
         key = _aggregate_key(task_id, node_id)
         try:
-            references = self._decode(self._redis().get(key))
-            self._redis().delete(key)
+            references = self._decode(self._redis().getdel(key))
         except Exception:
             logger.exception(
                 "External event buffer aggregate take failed task=%s node=%s",
@@ -236,6 +293,28 @@ class ExternalEventBuffer:
             provider, opaque_ref, event_type = (str(value) for value in reference)
             events.extend(self.take(provider, opaque_ref, event_type))
         return events
+
+    def peek_aggregate(self, *, task_id: str, node_id: str) -> tuple[str, str] | None:
+        """Return the first parked (provider, event_type) without consuming.
+
+        Lets the caller validate the delivery rule before draining an
+        aggregate, so events are never removed when no rule can consume them.
+        """
+
+        key = _aggregate_key(task_id, node_id)
+        try:
+            references = self._decode(self._redis().get(key))
+        except Exception:
+            logger.exception(
+                "External event buffer aggregate peek failed task=%s node=%s",
+                task_id,
+                node_id,
+            )
+            return None
+        for reference in references:
+            if isinstance(reference, list) and len(reference) == 3:
+                return str(reference[0]), str(reference[2])
+        return None
 
     def append_window(
         self,
@@ -254,20 +333,25 @@ class ExternalEventBuffer:
 
         key = _window_key(task_id, node_id, event_type)
         try:
-            window = self._decode(self._redis().get(key))
-            if not isinstance(window, dict) or not window.get("events"):
-                return False
-            if time.time() >= float(window.get("deadline") or 0):
-                return False
-            events = merge_events([*window["events"], event])
-            self._redis().set(
-                key,
-                self._encode({**window, "events": events}),
-                ex=int(window.get("deadline") or 0)
-                - int(time.time())
-                + WINDOW_TTL_PADDING_SECONDS,
-            )
-            return True
+            redis = self._redis()
+
+            def body(pipe) -> tuple[list[tuple[str, tuple]] | None, bool]:
+                window = self._decode(pipe.get(key))
+                if not isinstance(window, dict) or not window.get("events"):
+                    return None, False
+                if time.time() >= float(window.get("deadline") or 0):
+                    return None, False
+                events = merge_events([*window["events"], event])
+                ttl = (
+                    int(window.get("deadline") or 0)
+                    - int(time.time())
+                    + WINDOW_TTL_PADDING_SECONDS
+                )
+                return [
+                    ("set", (key, self._encode({**window, "events": events}), ttl))
+                ], True
+
+            return bool(self._atomic(redis, [key], body))
         except Exception:
             logger.exception(
                 "External event buffer window append failed task=%s node=%s type=%s",
@@ -297,30 +381,40 @@ class ExternalEventBuffer:
         key = _window_key(task_id, node_id, event_type)
         try:
             redis = self._redis()
-            existing = self._decode(redis.get(key))
-            generation = (
-                int((existing or {}).get("generation") or 0) + 1
-                if isinstance(existing, dict)
-                else 1
-            )
-            prior_events = (
-                existing.get("events")
-                if isinstance(existing, dict)
-                and isinstance(existing.get("events"), list)
-                else []
-            )
-            deadline = time.time() + window_seconds
-            snapshot = {
-                "generation": generation,
-                "deadline": deadline,
-                "events": merge_events([*prior_events, event]),
-            }
-            redis.set(
-                key,
-                self._encode(snapshot),
-                ex=window_seconds + WINDOW_TTL_PADDING_SECONDS,
-            )
-            return snapshot
+
+            def body(pipe) -> tuple[list[tuple[str, tuple]], dict[str, Any]]:
+                existing = self._decode(pipe.get(key))
+                generation = (
+                    int((existing or {}).get("generation") or 0) + 1
+                    if isinstance(existing, dict)
+                    else 1
+                )
+                prior_events = (
+                    existing.get("events")
+                    if isinstance(existing, dict)
+                    and isinstance(existing.get("events"), list)
+                    else []
+                )
+                deadline = time.time() + window_seconds
+                snapshot = {
+                    "generation": generation,
+                    "deadline": deadline,
+                    "events": merge_events([*prior_events, event]),
+                }
+                writes = [
+                    (
+                        "set",
+                        (
+                            key,
+                            self._encode(snapshot),
+                            window_seconds + WINDOW_TTL_PADDING_SECONDS,
+                        ),
+                    )
+                ]
+                return writes, snapshot
+
+            snapshot = self._atomic(redis, [key], body)
+            return snapshot if isinstance(snapshot, dict) else None
         except Exception:
             logger.exception(
                 "External event buffer window open failed task=%s node=%s type=%s",
@@ -347,16 +441,24 @@ class ExternalEventBuffer:
 
         key = _window_key(task_id, node_id, event_type)
         try:
-            window = self._decode(self._redis().get(key))
-            if not isinstance(window, dict):
-                return []
-            if int(window.get("generation") or 0) != generation:
-                return []
-            events = (
-                window.get("events") if isinstance(window.get("events"), list) else []
-            )
-            self._redis().delete(key)
-            return events
+            redis = self._redis()
+
+            def body(
+                pipe,
+            ) -> tuple[list[tuple[str, tuple]] | None, list[dict[str, Any]]]:
+                window = self._decode(pipe.get(key))
+                if not isinstance(window, dict):
+                    return None, []
+                if int(window.get("generation") or 0) != generation:
+                    return None, []
+                events = (
+                    window.get("events")
+                    if isinstance(window.get("events"), list)
+                    else []
+                )
+                return [("delete", (key,))], events
+
+            return self._atomic(redis, [key], body)
         except Exception:
             logger.exception(
                 "External event buffer window take failed task=%s node=%s type=%s",
