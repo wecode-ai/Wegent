@@ -36,6 +36,7 @@ import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-atta
 import { persistAttachmentReferences } from '@/lib/attachments'
 import { focusComposerAtEnd } from '@/lib/workbenchComposerFocus'
 import { createAppliedRuntimeGuidanceMessage } from '@/features/workbench/runtimeGuidanceMessages'
+import { createRuntimeUserMessage } from '@/features/workbench/runtimeUserMessage'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type {
@@ -48,20 +49,16 @@ import type {
 } from '@/types/api'
 import type { RuntimePaneQueuedMessage, WorkbenchMessage } from '@/types/workbench'
 
-function createUserMessage(
-  content: string,
-  attachments: Attachment[],
-  id = `side-user-${Date.now()}`
-): WorkbenchMessage {
-  const createdAt = new Date().toISOString()
-  return {
-    id,
-    role: 'user',
-    content,
-    attachments: attachments.length > 0 ? persistAttachmentReferences(attachments) : undefined,
-    status: 'done',
-    createdAt,
+export interface RuntimeTaskComposerCreateOptions {
+  attachments: Attachment[]
+  executionModel: {
+    modelId?: string
+    modelType?: ModelType | null
+    modelOptions?: ModelOptions
   }
+  optimisticUserMessage: WorkbenchMessage & { role: 'user' }
+  onError: (message: string) => void
+  onRuntimeTaskOptimisticOpen: (address: RuntimeTaskAddress) => void
 }
 
 interface TemporaryChatPanelProps {
@@ -74,16 +71,7 @@ interface TemporaryChatPanelProps {
   initialAddress?: RuntimeTaskAddress | null
   createTask?: (
     message: string,
-    options: {
-      attachments: Attachment[]
-      executionModel: {
-        modelId?: string
-        modelType?: ModelType | null
-        modelOptions?: ModelOptions
-      }
-      onError: (message: string) => void
-      onRuntimeTaskOptimisticOpen: (address: RuntimeTaskAddress) => void
-    }
+    options: RuntimeTaskComposerCreateOptions
   ) => Promise<RuntimeTaskAddress | false>
   onAddressChange?: (address: RuntimeTaskAddress | null) => void
   runtimeContext?: Pick<RuntimeSendRequest, 'cloudProjectId' | 'origin' | 'additionalContext'>
@@ -366,11 +354,9 @@ export function TemporaryChatPanel({
           setMessages(
             appendAcceptedRuntimeConversationMessage(
               address,
-              createUserMessage(
-                queuedMessage.content,
-                queuedMessage.attachments ?? [],
-                queuedMessage.id
-              ),
+              createRuntimeUserMessage(queuedMessage.content, queuedMessage.attachments ?? [], {
+                id: queuedMessage.id,
+              }),
               activeTurnId,
               turnIdsBeforeSend
             )
@@ -527,27 +513,21 @@ export function TemporaryChatPanel({
       let targetAddress: RuntimeTaskAddress | false | null = address
       let optimisticAddress: RuntimeTaskAddress | null = null
       if (!targetAddress) {
-        const optimisticUserMessage = createUserMessage(
-          message,
-          currentAttachments,
-          queuedMessage.id
-        )
+        const optimisticUserMessage = createRuntimeUserMessage(message, currentAttachments, {
+          id: queuedMessage.id,
+        })
         setMessages(current => [...current, optimisticUserMessage])
         const handleOptimisticOpen = (nextAddress: RuntimeTaskAddress) => {
           optimisticAddress = nextAddress
           createdAddressKeyRef.current = `${nextAddress.deviceId}:${nextAddress.taskId}`
-          setMessages(
-            applyRuntimeConversationAction(nextAddress, {
-              type: 'user_added',
-              message: optimisticUserMessage,
-            })
-          )
+          setMessages(getRuntimeConversationMessages(nextAddress))
           updateAddress(nextAddress)
         }
         targetAddress = createTask
           ? await createTask(message, {
               attachments: currentAttachments,
               executionModel: selectedModelFields,
+              optimisticUserMessage,
               onError: handleError,
               onRuntimeTaskOptimisticOpen: handleOptimisticOpen,
             })
@@ -555,6 +535,7 @@ export function TemporaryChatPanel({
               project: currentProject,
               source,
               attachments: currentAttachments,
+              optimisticUserMessage,
               onError: handleError,
               onRuntimeTaskOptimisticOpen: handleOptimisticOpen,
             })
@@ -574,12 +555,7 @@ export function TemporaryChatPanel({
         return false
       }
       if (!address) {
-        setMessages(
-          applyRuntimeConversationAction(targetAddress, {
-            type: 'user_added',
-            message: createUserMessage(message, currentAttachments, queuedMessage.id),
-          })
-        )
+        setMessages(getRuntimeConversationMessages(targetAddress))
         updateAddress(targetAddress)
         sideChatProjectChat.resetAttachments()
         return true
@@ -588,7 +564,9 @@ export function TemporaryChatPanel({
       setMessages(
         applyRuntimeConversationAction(targetAddress, {
           type: 'user_added',
-          message: createUserMessage(message, currentAttachments, queuedMessage.id),
+          message: createRuntimeUserMessage(message, currentAttachments, {
+            id: queuedMessage.id,
+          }),
         })
       )
       let sendError: string | null = null
