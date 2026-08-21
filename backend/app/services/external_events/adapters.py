@@ -93,7 +93,8 @@ NATIVE_PROVIDERS = frozenset(PROVIDER_EVENT_TYPES)
 def provider_kind(provider: str) -> str:
     """Classify a provider string as "native" or "generic"."""
 
-    return "native" if provider.strip() in NATIVE_PROVIDERS else "generic"
+    normalized = str(provider or "").strip().lower()
+    return "native" if normalized in NATIVE_PROVIDERS else "generic"
 
 
 @dataclass(frozen=True)
@@ -155,7 +156,7 @@ PROVIDER_REFERENCE_ADAPTERS: dict[str, ProviderReferenceAdapter] = {
         reference_kind="pull_request",
         reference_name="GitLab MR",
         reference_description=(
-            "交付 GitLab Merge Request 引用（url + number）。交付完成后系统"
+            "交付 GitLab Merge Request 引用(url + number)。交付完成后系统"
             "自动用它登记等待事件，无需手动调用登记工具。"
         ),
         opaque_ref_format="group/project!iid",
@@ -211,6 +212,21 @@ class NormalizedExternalEvent:
     detail: dict[str, Any]
 
 
+def external_event_dict(event: NormalizedExternalEvent) -> dict[str, Any]:
+    """Serialize one normalized event into the buffer and audit shapes."""
+
+    return {
+        "provider": event.provider,
+        "opaque_ref": event.opaque_ref,
+        "event_type": event.event_type,
+        "event_id": event.event_id,
+        "summary": event.summary,
+        "source_url": event.source_url,
+        "occurred_at": event.occurred_at.isoformat() if event.occurred_at else None,
+        "detail": event.detail,
+    }
+
+
 def _mapping(value: object) -> Mapping[str, Any]:
     return value if isinstance(value, dict) else {}
 
@@ -259,6 +275,8 @@ def _gitlab(
         opaque_ref = _gitlab_mr_ref(project, mr)
         if not opaque_ref:
             opaque_ref = _text(project.get("path_with_namespace"))
+        if not opaque_ref:
+            return None
         return NormalizedExternalEvent(
             provider="gitlab",
             opaque_ref=opaque_ref,

@@ -135,6 +135,19 @@ def test_normalize_ignores_unstructured_payloads() -> None:
     assert normalize_external_event({"unknown": True}, {}) is None
 
 
+def test_normalize_drops_pipeline_without_opaque_reference() -> None:
+    assert (
+        normalize_external_event(
+            {
+                "object_kind": "pipeline",
+                "object_attributes": {"status": "failed", "id": 42},
+            },
+            {"x-gitlab-event": "Pipeline Hook"},
+        )
+        is None
+    )
+
+
 def test_parse_incoming_body_json_and_form() -> None:
     payload = {"event_type": "merged", "opaque_ref": "acme/app!7"}
     assert (

@@ -10,7 +10,10 @@ import logging
 from sqlalchemy.orm import Session
 
 from app.models.delivery import ProjectIncomingHook
-from app.services.external_events.adapters import NormalizedExternalEvent
+from app.services.external_events.adapters import (
+    NormalizedExternalEvent,
+    external_event_dict,
+)
 from app.services.external_events.binding import (
     ExternalEventBindingService,
     external_event_binding_service,
@@ -57,7 +60,7 @@ class ExternalEventService:
                 event.provider,
                 event.opaque_ref,
                 event.event_type,
-                self._event_dict(event),
+                external_event_dict(event),
             )
             logger.info(
                 "[ExternalEvent] Buffered unmatched event hook=%s provider=%s "
@@ -68,9 +71,11 @@ class ExternalEventService:
                 event.event_type,
             )
             return "buffered"
+        evaluated = 0
         for binding in bindings:
             try:
                 self.evaluation_service.evaluate_event(db, binding=binding, event=event)
+                evaluated += 1
             except Exception:
                 logger.exception(
                     "[ExternalEvent] Evaluation failed binding=%s provider=%s ref=%s",
@@ -78,20 +83,7 @@ class ExternalEventService:
                     event.provider,
                     event.opaque_ref,
                 )
-        return "created"
-
-    @staticmethod
-    def _event_dict(event: NormalizedExternalEvent) -> dict:
-        return {
-            "provider": event.provider,
-            "opaque_ref": event.opaque_ref,
-            "event_type": event.event_type,
-            "event_id": event.event_id,
-            "summary": event.summary,
-            "source_url": event.source_url,
-            "occurred_at": event.occurred_at.isoformat() if event.occurred_at else None,
-            "detail": event.detail,
-        }
+        return "created" if evaluated else "failed"
 
 
 external_event_service = ExternalEventService()

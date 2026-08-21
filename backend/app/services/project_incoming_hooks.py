@@ -26,7 +26,10 @@ from app.schemas.project_incoming_hook import (
     ProjectIncomingHookUpdate,
 )
 from app.services.cloud_projects.access import require_cloud_project_role
-from app.services.external_events.adapters import normalize_external_event
+from app.services.external_events.adapters import (
+    NormalizedExternalEvent,
+    normalize_external_event,
+)
 from app.services.external_events.service import external_event_service
 
 MAX_BODY_BYTES = 1_048_576
@@ -359,7 +362,7 @@ class ProjectIncomingHookService:
         raw_body: bytes,
         headers: Mapping[str, str],
         *,
-        event: Any | None = None,
+        event: NormalizedExternalEvent | None = None,
     ) -> dict[str, object]:
         metadata: dict[str, object] = {
             "content_type": headers.get("content-type", ""),
@@ -374,7 +377,11 @@ class ProjectIncomingHookService:
             metadata["occurred_at"] = (
                 event.occurred_at.isoformat() if event.occurred_at else None
             )
-            metadata["detail"] = event.detail
+            # The stored raw payload already carries the provider body; the
+            # routing-only detail is kept only as a fallback for oversized
+            # payloads so the row never duplicates the same data.
+            if "payload" not in metadata and event.detail:
+                metadata["detail"] = event.detail
             if event.source_url:
                 metadata["source_url"] = event.source_url
             if event.event_id:
