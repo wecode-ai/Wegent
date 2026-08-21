@@ -1581,6 +1581,7 @@ def test_rest_delivery_finalize_registers_wait_node_reference(
     test_token: str,
     test_db: Session,
     test_user: User,
+    delivery_storage: FakeDeliveryStorage,
 ) -> None:
     """Every finalize entry point registers the wait-node reference binding."""
 
