@@ -403,12 +403,13 @@ def _robot_queue_internal_url() -> str:
     return f"{base}/api"
 
 
-def emit_runtime_cancels(executions: list[LoopItemExecution]) -> None:
+def emit_runtime_cancels(executions: list[LoopItemExecution]) -> set[int]:
     """Stop Runtime tasks and commit cancellation only after its ACK."""
 
     import httpx
 
     backend_url = _robot_queue_internal_url()
+    confirmed_execution_ids: set[int] = set()
     for execution in executions:
         runtime_task_id = execution.runtime_task_id or ""
         runtime_device_id = execution.runtime_device_id or ""
@@ -454,11 +455,13 @@ def emit_runtime_cancels(executions: list[LoopItemExecution]) -> None:
                     execution_id=execution.id,
                     note="Runtime confirmed cancellation",
                 )
+            confirmed_execution_ids.add(execution.id)
         except Exception:
             logger.exception(
                 "[RobotQueue] Runtime cancel emit failed execution=%s",
                 execution.id,
             )
+    return confirmed_execution_ids
 
 
 def publish_run_event(device_id: str, runtime_task_id: str, event_name: str) -> None:
@@ -506,11 +509,27 @@ def publish_run_event(device_id: str, runtime_task_id: str, event_name: str) -> 
 async def _reconcile_stale_executions(db: Session) -> int:
     """Query Runtime for stale attempts without guessing from lease expiry."""
 
+    executions = loop_item_execution_service.stale_for_reconciliation(db)
+    execution_refs = [
+        (
+            execution.id,
+            execution.executor_owner_user_id,
+            execution.runtime_device_id,
+            execution.runtime_task_id,
+        )
+        for execution in executions
+    ]
+    db.rollback()
     reconciled = 0
-    for execution in loop_item_execution_service.stale_for_reconciliation(db):
+    for (
+        execution_id,
+        owner_user_id,
+        runtime_device_id,
+        runtime_task_id,
+    ) in execution_refs:
         result = await _emit_runtime_rpc(
-            user_id=execution.executor_owner_user_id,
-            device_id=execution.runtime_device_id,
+            user_id=owner_user_id,
+            device_id=runtime_device_id,
             method="runtime.tasks.list",
             payload={},
             wait_ack=True,
@@ -526,7 +545,7 @@ async def _reconcile_stale_executions(db: Session) -> int:
                 if (
                     isinstance(task, dict)
                     and str(task.get("taskId") or task.get("task_id") or "")
-                    == execution.runtime_task_id
+                    == runtime_task_id
                 ):
                     task_snapshot = task
                     break
@@ -535,14 +554,15 @@ async def _reconcile_stale_executions(db: Session) -> int:
         if task_snapshot is None:
             loop_item_execution_service.reconcile_runtime_snapshot(
                 db,
-                execution_id=execution.id,
+                execution_id=execution_id,
                 runtime_status="missing",
                 running=False,
             )
+            reconciled += 1
             continue
         loop_item_execution_service.reconcile_runtime_snapshot(
             db,
-            execution_id=execution.id,
+            execution_id=execution_id,
             runtime_status=str(task_snapshot.get("status") or ""),
             running=bool(task_snapshot.get("running")),
             turn_status=str(
@@ -552,6 +572,92 @@ async def _reconcile_stale_executions(db: Session) -> int:
             ),
         )
         reconciled += 1
+    return reconciled
+
+
+async def reconcile_device_executions(*, user_id: int, device_id: str) -> int:
+    """Reconcile active runs after a device reconnects.
+
+    The database session is released before the Runtime RPC so reconnect
+    recovery never holds a SQL transaction across network I/O.
+    """
+
+    from app.db.session import get_db_session
+
+    with get_db_session() as db:
+        executions = loop_item_execution_service.active_for_device_reconciliation(
+            db,
+            owner_user_id=user_id,
+            runtime_device_id=device_id,
+        )
+        execution_refs = [
+            (execution.id, execution.runtime_task_id) for execution in executions
+        ]
+    if not execution_refs:
+        return 0
+
+    result = await _emit_runtime_rpc(
+        user_id=user_id,
+        device_id=device_id,
+        method="runtime.tasks.list",
+        payload={},
+        wait_ack=True,
+    )
+    response = result.get("response")
+    if not result.get("accepted") or not isinstance(response, dict):
+        logger.warning(
+            "[RobotQueue] Device reconnect reconciliation unavailable "
+            "user=%s device=%s executions=%s",
+            user_id,
+            device_id,
+            [execution_id for execution_id, _ in execution_refs],
+        )
+        return 0
+
+    snapshots: dict[str, dict] = {}
+    for workspace in response.get("workspaces", []):
+        if not isinstance(workspace, dict):
+            continue
+        for task in workspace.get("tasks", []):
+            if not isinstance(task, dict):
+                continue
+            runtime_task_id = str(task.get("taskId") or task.get("task_id") or "")
+            if runtime_task_id:
+                snapshots[runtime_task_id] = task
+
+    reconciled = 0
+    with get_db_session() as db:
+        for execution_id, runtime_task_id in execution_refs:
+            execution = db.get(LoopItemExecution, execution_id)
+            if (
+                execution is None
+                or execution.executor_owner_user_id != user_id
+                or execution.runtime_device_id != device_id
+                or execution.runtime_task_id != runtime_task_id
+            ):
+                continue
+            snapshot = snapshots.get(runtime_task_id)
+            loop_item_execution_service.reconcile_runtime_snapshot(
+                db,
+                execution_id=execution_id,
+                runtime_status=(
+                    str(snapshot.get("status") or "") if snapshot else "missing"
+                ),
+                running=bool(snapshot.get("running")) if snapshot else False,
+                turn_status=(
+                    str(snapshot.get("turnStatus") or snapshot.get("turn_status") or "")
+                    if snapshot
+                    else None
+                ),
+            )
+            reconciled += 1
+    logger.info(
+        "[RobotQueue] Reconciled active executions after device reconnect "
+        "user=%s device=%s count=%s",
+        user_id,
+        device_id,
+        reconciled,
+    )
     return reconciled
 
 

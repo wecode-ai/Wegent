@@ -311,6 +311,8 @@ export function useWorkbenchPaneSession({
     ReadonlySet<string>
   >(() => new Set())
   const [transcriptLoading, setTranscriptLoading] = useState(() => Boolean(currentRuntimeTask))
+  const [transcriptError, setTranscriptError] = useState<string | null>(null)
+  const [transcriptReloadVersion, setTranscriptReloadVersion] = useState(0)
   const [transcriptHasMoreBefore, setTranscriptHasMoreBefore] = useState(false)
   const [transcriptBeforeCursor, setTranscriptBeforeCursor] = useState<string | null>(null)
   const [transcriptLoadingMoreBefore, setTranscriptLoadingMoreBefore] = useState(false)
@@ -620,6 +622,7 @@ export function useWorkbenchPaneSession({
   useEffect(() => {
     if (!runtimeTaskLoadTarget) {
       setTranscriptLoading(false)
+      setTranscriptError(null)
       setTranscriptLoadingMoreBefore(false)
       return
     }
@@ -652,6 +655,7 @@ export function useWorkbenchPaneSession({
     })
     dispatchMessages({ type: 'reset', messages: seededMessages })
     setTranscriptLoading(true)
+    setTranscriptError(null)
     setTranscriptHasMoreBefore(false)
     setTranscriptBeforeCursor(null)
     setTranscriptLoadingMoreBefore(false)
@@ -709,6 +713,7 @@ export function useWorkbenchPaneSession({
           setTranscriptBeforeCursor(null)
           setLoadedTranscriptRanges([])
           setTurnNavigation([])
+          setTranscriptError(error instanceof Error ? error.message : String(error))
           console.error('[Wework] Runtime pane transcript load failed', {
             key: loadKey,
             address,
@@ -730,8 +735,14 @@ export function useWorkbenchPaneSession({
         rebuildingTranscriptIdentityRef.current = null
       }
     }
-  }, [dispatchMessages, lifecycleStore, runtimeTaskLoadTarget])
+  }, [dispatchMessages, lifecycleStore, runtimeTaskLoadTarget, transcriptReloadVersion])
   /* eslint-enable react-hooks/set-state-in-effect */
+
+  const reloadRuntimeTranscript = useCallback(() => {
+    loadedRuntimeTranscriptKeyRef.current = null
+    setTranscriptError(null)
+    setTranscriptReloadVersion(version => version + 1)
+  }, [])
 
   useEffect(() => {
     if (!runtimeTaskLoadTarget) return
@@ -2640,6 +2651,8 @@ export function useWorkbenchPaneSession({
     transcriptHasMoreBefore,
     transcriptFullContent,
     transcriptLoading,
+    transcriptError,
+    reloadRuntimeTranscript,
     transcriptLoadingFullContent,
     transcriptLoadingMoreBefore,
     turnNavigation.length,
@@ -2667,6 +2680,8 @@ export function useWorkbenchPaneSession({
     waitingForAssistant: paneStatus.isWaitingForAssistantIndicator,
     answeredRequestUserInputIds,
     transcriptLoading,
+    transcriptError,
+    reloadRuntimeTranscript,
     transcriptHasMoreBefore,
     transcriptLoadingMoreBefore,
     transcriptLoadingFullContent,
