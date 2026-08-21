@@ -4454,12 +4454,12 @@ describe('DesktopSidebar', () => {
     expect(onToggleGlobalImNotification).toHaveBeenCalledTimes(1)
   })
 
-  test('hides global IM notifications while experimental features are disabled', () => {
+  test('shows global IM notifications while experimental features are disabled', () => {
     experimentalFeatures.enabled = false
 
     renderSidebar({ onToggleGlobalImNotification: vi.fn() })
 
-    expect(screen.queryByTestId('sidebar-global-im-notification-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('sidebar-global-im-notification-button')).toBeInTheDocument()
   })
 
   test('anchors the away reminder menu to the full-width account area', async () => {

@@ -651,6 +651,7 @@ class BindRuntimeTaskIMSessionsRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     address: RuntimeTaskAddress
+    task_title: str = Field(..., alias="taskTitle", min_length=1, max_length=255)
     session_keys: list[str] = Field(..., alias="sessionKeys", min_length=1)
     model_selection: Optional[RuntimeModelSelection] = Field(
         default=None,
