@@ -47,12 +47,17 @@ import type { RuntimePaneQueuedMessage, WorkbenchMessage } from '@/types/workben
 const QUEUED_MESSAGE_RETRY_DELAY_MS = 250
 const QUEUED_MESSAGE_MAX_BUSY_RETRIES = 40
 
-function createUserMessage(content: string, id = `side-user-${Date.now()}`): WorkbenchMessage {
+function createUserMessage(
+  content: string,
+  attachments: Attachment[],
+  id = `side-user-${Date.now()}`
+): WorkbenchMessage {
   const createdAt = new Date().toISOString()
   return {
     id,
     role: 'user',
     content,
+    attachments: attachments.length > 0 ? persistAttachmentReferences(attachments) : undefined,
     status: 'done',
     createdAt,
   }
@@ -353,7 +358,11 @@ export function TemporaryChatPanel({
             setMessages(
               applyRuntimeConversationAction(address, {
                 type: 'user_added',
-                message: createUserMessage(queuedMessage.content, queuedMessage.id),
+                message: createUserMessage(
+                  queuedMessage.content,
+                  queuedMessage.attachments ?? [],
+                  queuedMessage.id
+                ),
               })
             )
             setQueuedMessages(messages =>
@@ -478,7 +487,11 @@ export function TemporaryChatPanel({
       let targetAddress: RuntimeTaskAddress | false | null = address
       let optimisticAddress: RuntimeTaskAddress | null = null
       if (!targetAddress) {
-        const optimisticUserMessage = createUserMessage(message, queuedMessage.id)
+        const optimisticUserMessage = createUserMessage(
+          message,
+          currentAttachments,
+          queuedMessage.id
+        )
         setMessages(current => [...current, optimisticUserMessage])
         const handleOptimisticOpen = (nextAddress: RuntimeTaskAddress) => {
           optimisticAddress = nextAddress
@@ -524,7 +537,7 @@ export function TemporaryChatPanel({
         setMessages(
           applyRuntimeConversationAction(targetAddress, {
             type: 'user_added',
-            message: createUserMessage(message, queuedMessage.id),
+            message: createUserMessage(message, currentAttachments, queuedMessage.id),
           })
         )
         updateAddress(targetAddress)
@@ -535,7 +548,7 @@ export function TemporaryChatPanel({
       setMessages(
         applyRuntimeConversationAction(targetAddress, {
           type: 'user_added',
-          message: createUserMessage(message, queuedMessage.id),
+          message: createUserMessage(message, currentAttachments, queuedMessage.id),
         })
       )
       let sendError: string | null = null
