@@ -1193,6 +1193,12 @@ function ProjectSendProbe({
             project,
             deviceWorkspaceId: 23,
             runtime: 'codex',
+            optimisticUserMessage: {
+              id: 'board-user-message-1',
+              role: 'user',
+              content: '修复 CI',
+              status: 'done',
+            },
             prepareRuntimeTask,
           })
         }}
@@ -5275,13 +5281,21 @@ describe('WorkbenchProvider runtime tasks', () => {
     await userEvent.click(screen.getByText('send with explicit project workspace'))
 
     await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
+    const request = runtimeWorkApi.createRuntimeTask.mock.calls[0][0]
     expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledWith(
       expect.objectContaining({
         deviceId: 'device-1',
         workspacePath: '/workspace/project-beta',
         message: '修复 CI',
+        clientUserMessageId: 'board-user-message-1',
       })
     )
+    expect(
+      getRuntimeConversationMessages({
+        deviceId: 'device-1',
+        taskId: request.taskId,
+      }).map(message => `${message.role}:${message.content}`)
+    ).toEqual(['user:修复 CI'])
   })
 
   test('does not dispatch an embedded Runtime task before its context is prepared', async () => {
