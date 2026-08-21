@@ -2667,6 +2667,7 @@ export interface UnifiedModel {
   config?: Record<string, unknown>
   runtime?: ModelRuntime | null
   isActive?: boolean
+  isVisionSidecarReference?: boolean
   compatibilityDisabled?: boolean
   compatibilityDisabledReason?: ModelCompatibilityDisabledReason
 }

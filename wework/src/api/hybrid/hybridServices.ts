@@ -146,20 +146,22 @@ function annotateLocalModels(models: UnifiedModel[]): UnifiedModel[] {
 
 function annotateCloudModels(models: UnifiedModel[]): UnifiedModel[] {
   const compatibleModels = models.filter(supportsCloudExecution)
-  return compatibleModels.map(model => {
-    const config = recordValue(model.config)
-    if (!Object.hasOwn(config, 'visionSidecarModel')) return model
-    const visionSidecarModel = resolveCloudVisionSidecarReference(
-      config.visionSidecarModel,
-      compatibleModels
-    )
-    if (visionSidecarModel) {
-      return { ...model, config: { ...config, visionSidecarModel } }
-    }
-    const sanitizedConfig = { ...config }
-    delete sanitizedConfig.visionSidecarModel
-    return { ...model, config: sanitizedConfig }
-  })
+  return compatibleModels
+    .filter(model => model.isVisionSidecarReference !== true)
+    .map(model => {
+      const config = recordValue(model.config)
+      if (!Object.hasOwn(config, 'visionSidecarModel')) return model
+      const visionSidecarModel = resolveCloudVisionSidecarReference(
+        config.visionSidecarModel,
+        compatibleModels
+      )
+      if (visionSidecarModel) {
+        return { ...model, config: { ...config, visionSidecarModel } }
+      }
+      const sanitizedConfig = { ...config }
+      delete sanitizedConfig.visionSidecarModel
+      return { ...model, config: sanitizedConfig }
+    })
 }
 
 function normalizedModelId(model: UnifiedModel): string {

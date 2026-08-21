@@ -46,6 +46,11 @@ from shared.codex_model_catalog import codex_catalog_model_id_from_config
 
 logger = logging.getLogger(__name__)
 
+VISION_SIDECAR_API_FORMATS = frozenset(
+    {"openai-responses", "openai-chat-completions", "anthropic-messages"}
+)
+VisionSidecarIdentity = tuple[str, str, str, int, str]
+
 
 def _normalize_runtime_family_part(value: Any) -> Optional[str]:
     if not isinstance(value, str):
@@ -66,6 +71,51 @@ def build_model_runtime_family(
         return provider_key
 
     return f"{provider_key}.{protocol_key}"
+
+
+def _vision_sidecar_reference_identity(value: Any) -> Optional[VisionSidecarIdentity]:
+    if not isinstance(value, dict):
+        return None
+    model_name = value.get("modelName")
+    model_type = value.get("modelType")
+    namespace = value.get("namespace")
+    resource_user_id = value.get("resourceUserId")
+    api_format = value.get("apiFormat")
+    if (
+        not isinstance(model_name, str)
+        or not model_name.strip()
+        or model_type not in {"public", "user", "group"}
+        or not isinstance(namespace, str)
+        or not namespace.strip()
+        or isinstance(resource_user_id, bool)
+        or not isinstance(resource_user_id, int)
+        or resource_user_id < 0
+        or api_format not in VISION_SIDECAR_API_FORMATS
+    ):
+        return None
+    return (
+        model_name.strip(),
+        model_type,
+        namespace.strip(),
+        resource_user_id,
+        api_format,
+    )
+
+
+def _vision_sidecar_api_format(config: Dict[str, Any]) -> Optional[str]:
+    protocol = _normalize_runtime_family_part(config.get("protocol"))
+    api_format = _normalize_runtime_family_part(
+        config.get("apiFormat") or config.get("api_format") or config.get("wire_api")
+    )
+    if protocol == "openai-responses" or api_format == "responses":
+        return "openai-responses"
+    if protocol in {"anthropic-messages", "claude"}:
+        return "anthropic-messages"
+    if protocol in {"openai-chat-completions", "openai"} or api_format == (
+        "chat/completions"
+    ):
+        return "openai-chat-completions"
+    return None
 
 
 class ModelType(str, Enum):
@@ -121,6 +171,7 @@ class UnifiedModel:
         created_at: Optional[Any] = None,
         updated_at: Optional[Any] = None,
         is_reference: bool = False,
+        is_vision_sidecar_reference: bool = False,
     ):
         self.name = name
         self.type = model_type
@@ -145,6 +196,7 @@ class UnifiedModel:
         self.created_at = created_at
         self.updated_at = updated_at
         self.is_reference = is_reference
+        self.is_vision_sidecar_reference = is_vision_sidecar_reference
         self.runtime_family = runtime_family or build_model_runtime_family(
             provider, self.config
         )
@@ -194,7 +246,21 @@ class UnifiedModel:
         }
         if self.resource_user_id is not None:
             result["resourceUserId"] = self.resource_user_id
+        if self.is_vision_sidecar_reference:
+            result["isVisionSidecarReference"] = True
         return result
+
+    def vision_sidecar_identity(self) -> Optional[VisionSidecarIdentity]:
+        api_format = _vision_sidecar_api_format(self.config)
+        if api_format is None or self.resource_user_id is None:
+            return None
+        return (
+            self.name,
+            self.type.value,
+            self.namespace,
+            self.resource_user_id,
+            api_format,
+        )
 
     def to_full_dict(self) -> Dict[str, Any]:
         """Convert to full dictionary without exposing sensitive env values."""
@@ -491,6 +557,39 @@ class ModelAggregationService:
             model_sub_group=CODEX_RUNTIME_MODEL_SUB_GROUP,
         )
 
+    @staticmethod
+    def _append_wework_vision_sidecar_references(
+        models: List[UnifiedModel], candidates: List[UnifiedModel]
+    ) -> None:
+        referenced_identities = {
+            identity
+            for model in models
+            if (
+                identity := _vision_sidecar_reference_identity(
+                    model.config.get("visionSidecarModel")
+                )
+            )
+            is not None
+        }
+        existing_identities = {
+            identity
+            for model in models
+            if (identity := model.vision_sidecar_identity()) is not None
+        }
+        for candidate in candidates:
+            identity = candidate.vision_sidecar_identity()
+            if (
+                identity is None
+                or identity not in referenced_identities
+                or identity in existing_identities
+                or not candidate.is_active
+                or (candidate.model_capabilities or {}).get("supportsImage") is not True
+            ):
+                continue
+            candidate.is_vision_sidecar_reference = True
+            models.append(candidate)
+            existing_identities.add(identity)
+
     def list_available_models(
         self,
         db: Session,
@@ -547,6 +646,7 @@ class ModelAggregationService:
             )
 
         result: List[UnifiedModel] = []
+        vision_reference_candidates: List[UnifiedModel] = []
         seen_names: Dict[str, ModelType] = {}  # Track names to handle duplicates
 
         # Determine which namespaces to query based on scope
@@ -631,17 +731,6 @@ class ModelAggregationService:
                 ):
                     continue
 
-                # Filter out models not enabled for wework
-                if (
-                    client_origin == CLIENT_ORIGIN_WEWORK
-                    and not self._is_model_available_in_wework(model_data)
-                ):
-                    continue
-
-                # Deduplicate by name
-                if resource.name in seen_names:
-                    continue
-
                 unified = UnifiedModel(
                     name=resource.name,
                     model_type=resource_type,  # Use determined type (USER or GROUP)
@@ -665,6 +754,16 @@ class ModelAggregationService:
                     updated_at=resource.updated_at,
                     is_reference=resource.id in referenced_ids,
                 )
+                vision_reference_candidates.append(unified)
+                # Exact sidecar identities still need to remain resolvable when
+                # a selectable model with the same name won catalog precedence.
+                if resource.name in seen_names:
+                    continue
+                if (
+                    client_origin == CLIENT_ORIGIN_WEWORK
+                    and not self._is_model_available_in_wework(model_data)
+                ):
+                    continue
                 result.append(unified)
                 seen_names[resource.name] = resource_type
 
@@ -699,12 +798,6 @@ class ModelAggregationService:
             ):
                 continue
 
-            # Filter out public models not enabled for wework
-            if client_origin == CLIENT_ORIGIN_WEWORK and not model_dict.get(
-                "is_wework_available", False
-            ):
-                continue
-
             unified = UnifiedModel(
                 name=model_dict.get("name", ""),
                 model_type=ModelType.PUBLIC,  # Mark as public model
@@ -730,6 +823,11 @@ class ModelAggregationService:
                 created_at=model_dict.get("created_at"),
                 updated_at=model_dict.get("updated_at"),
             )
+            vision_reference_candidates.append(unified)
+            if client_origin == CLIENT_ORIGIN_WEWORK and not model_dict.get(
+                "is_wework_available", False
+            ):
+                continue
 
             # If name already exists as user model, we still add public model
             # The type field will differentiate them
@@ -742,6 +840,11 @@ class ModelAggregationService:
             result.append(unified)
             if model_name not in seen_names:
                 seen_names[model_name] = ModelType.PUBLIC
+
+        if client_origin == CLIENT_ORIGIN_WEWORK:
+            self._append_wework_vision_sidecar_references(
+                result, vision_reference_candidates
+            )
 
         # Sort by name
         result.sort(key=lambda x: x.name)

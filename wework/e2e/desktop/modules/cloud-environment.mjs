@@ -665,7 +665,6 @@ class RealCloudEnvironment {
         protocol: 'openai',
         apiFormat: 'chat/completions',
         modelType: 'llm',
-        isWeworkAvailable: true,
         modelCapabilities: {
           supportsImage: true,
         },
@@ -673,7 +672,7 @@ class RealCloudEnvironment {
     })
 
     const unifiedModels = await fetchJson(
-      `${this.backendUrl}/api/models/unified?include_config=true&scope=all&model_category_type=llm&client_origin=wework`,
+      `${this.backendUrl}/api/models/unified?include_config=true&scope=all&model_category_type=llm&client_origin=frontend`,
       { headers }
     )
     const sidecar = unifiedModels.data?.find(
@@ -716,6 +715,19 @@ class RealCloudEnvironment {
         isWeworkAvailable: true,
       },
     })
+
+    const weworkModels = await fetchJson(
+      `${this.backendUrl}/api/models/unified?include_config=true&scope=all&model_category_type=llm&client_origin=wework`,
+      { headers }
+    )
+    const hiddenSidecar = weworkModels.data?.find(
+      model => model.name === sidecar.name && model.type === sidecar.type
+    )
+    assert.equal(
+      hiddenSidecar?.isVisionSidecarReference,
+      true,
+      'The non-selectable cloud vision sidecar was not returned as a hidden reference'
+    )
 
     await createModel({
       apiVersion: 'agent.wecode.io/v1',

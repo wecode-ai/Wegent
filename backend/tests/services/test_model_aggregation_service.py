@@ -8,6 +8,8 @@ Tests for ModelAggregationService.
 Focuses on testing model compatibility filtering for custom shells.
 """
 
+from typing import Any, Optional
+
 import pytest
 from sqlalchemy.orm import Session
 
@@ -1101,6 +1103,87 @@ class TestModelAggregationService:
         assert "user-wework-model" in names
         assert "public-no-wework" not in names
         assert "user-no-wework" not in names
+
+    def test_wework_includes_hidden_explicit_vision_sidecar_reference(
+        self, test_db: Session, test_user: User, monkeypatch
+    ):
+        """A valid sidecar target stays resolvable without becoming selectable."""
+        reference = {
+            "modelName": "hidden-vision-sidecar",
+            "modelType": "public",
+            "namespace": "default",
+            "resourceUserId": 0,
+            "apiFormat": "openai-chat-completions",
+        }
+
+        def public_model(
+            name: str,
+            *,
+            is_wework_available: bool = False,
+            supports_image: bool = False,
+            vision_sidecar: Optional[dict[str, Any]] = None,
+        ) -> Kind:
+            is_sidecar = name == "hidden-vision-sidecar"
+            spec: dict[str, Any] = {
+                "protocol": "openai" if is_sidecar else "openai-responses",
+                **({"apiFormat": "chat/completions"} if is_sidecar else {}),
+                "modelConfig": {
+                    "env": {"model": "openai", "model_id": name},
+                    **(
+                        {"visionSidecarModel": vision_sidecar} if vision_sidecar else {}
+                    ),
+                },
+                "modelCapabilities": {"supportsImage": supports_image},
+            }
+            if is_wework_available:
+                spec["isWeworkAvailable"] = True
+            return Kind(
+                user_id=0,
+                kind="Model",
+                name=name,
+                namespace="default",
+                json={
+                    "apiVersion": "agent.wecode.io/v1",
+                    "kind": "Model",
+                    "metadata": {"name": name, "namespace": "default"},
+                    "spec": spec,
+                    "status": {"state": "Available"},
+                },
+                is_active=True,
+            )
+
+        primary = public_model(
+            "visible-text-primary",
+            is_wework_available=True,
+            vision_sidecar=reference,
+        )
+        sidecar = public_model("hidden-vision-sidecar", supports_image=True)
+        unrelated = public_model("unreferenced-hidden-vision", supports_image=True)
+        test_db.add_all([primary, sidecar, unrelated])
+        test_db.commit()
+        monkeypatch.setattr(
+            "app.services.model_aggregation_service.kind_service.list_resources",
+            lambda user_id, kind, namespace: [],
+        )
+
+        models = model_aggregation_service.list_available_models(
+            db=test_db,
+            current_user=test_user,
+            scope="all",
+            model_category_type="llm",
+            client_origin="wework",
+            include_config=True,
+        )
+        models_by_name = {model["name"]: model for model in models}
+
+        assert (
+            models_by_name["visible-text-primary"]["config"]["visionSidecarModel"]
+            == reference
+        )
+        assert (
+            models_by_name["hidden-vision-sidecar"]["isVisionSidecarReference"] is True
+        )
+        assert "unreferenced-hidden-vision" not in models_by_name
 
     def test_frontend_lists_models_regardless_of_wework_flag(
         self, test_db: Session, test_user: User, monkeypatch

@@ -688,7 +688,7 @@ describe('createHybridWorkbenchServices', () => {
     expect(response.data[1]).toEqual(responsesModel)
   })
 
-  it('keeps only explicit cloud vision references that resolve to an available image model', async () => {
+  it('resolves hidden cloud vision references without exposing them as primary models', async () => {
     const visionModel = {
       name: 'cloud-vision',
       type: 'public',
@@ -699,6 +699,7 @@ describe('createHybridWorkbenchServices', () => {
       config: { protocol: 'openai-responses' },
       runtime: { family: 'openai.openai-responses' },
       isActive: true,
+      isVisionSidecarReference: true,
     }
     const reference = {
       modelName: visionModel.name,
@@ -737,10 +738,11 @@ describe('createHybridWorkbenchServices', () => {
     await services.modelApi.listModels()
     await vi.waitFor(async () => {
       const refreshed = await services.modelApi.listModels()
-      expect(refreshed.data).toHaveLength(3)
+      expect(refreshed.data).toHaveLength(2)
     })
     const response = await services.modelApi.listModels()
 
+    expect(response.data.map(model => model.name)).not.toContain(visionModel.name)
     expect(
       response.data.find(model => model.name === configuredDeepSeek.name)?.config
     ).toMatchObject({ visionSidecarModel: reference })
