@@ -643,6 +643,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     assert.equal(persistedAiWorkflowProject.workflow_definition.approval_policy, 'automatic')
 
     await control.command('click', '[data-testid="project-workflow-mode-workflow"]')
+    await control.command('waitFor', '[data-testid="project-workflow-empty-add"]', {
+      timeoutMs: uiTimeoutMs,
+    })
     await control.command('click', '[data-testid="project-workflow-empty-add"]')
     await control.command('fill', '[data-testid="project-workflow-stage-name-stage-1"]', {
       value: '真实后端开发阶段',
@@ -2127,6 +2130,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       await control.command(
         'click',
         `${activeWorkflow} [data-testid="project-workflow-mode-workflow"]`
+      )
+      await control.command(
+        'waitFor',
+        `${activeWorkflow} [data-testid="project-workflow-empty-add"]`,
+        { timeoutMs: uiTimeoutMs }
       )
       await control.command('click', `${activeWorkflow} [data-testid="project-workflow-empty-add"]`)
       await control.command(

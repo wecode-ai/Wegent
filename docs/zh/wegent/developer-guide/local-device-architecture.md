@@ -75,6 +75,8 @@ Wework 的本地可用状态以真实 Codex app-server 完成 `initialize` 为�
 
 `running` 由两类实时信号共同确定：executor 当前进程维护的活跃任务集合，以及 Codex thread 中明确标记为 `inProgress` 的 turn。后者覆盖 Goal 自动续轮等场景：本地执行包装可能已经返回，但 provider 仍在运行后续 turn。Codex thread 自身的 `active` 状态、已持久化的任务摘要和 Wework 本地提醒都不能单独推断任务仍在运行。任务列表、transcript、详情面板、系统托盘和阻止休眠逻辑必须消费同一份 executor `running` 值；executor 或 Wework 重启后，如果 `thread/read` 或 `thread/list` 仍返回活跃 turn，界面必须恢复运行态，只有不存在活跃 turn 时才收敛为空闲。
 
+在单个 executor 进程内，发送、引导和取消操作只使用一份本地执行记录作为生命周期权威来源。Codex 的 `threadId` 和 `turnId` 是该执行记录的附属上下文，只在 execution ID 仍匹配时有效，不能存放在独立注册表中继续维持任务运行。执行结束时，executor 会原子删除本地执行及其 Codex turn 上下文，再发送终态响应；与完成事件并发但稍后返回的 `turn/steer` 等 provider 回调必须被忽略，不能把已经结束的任务重新标记为运行中。`thread/read` 或 `thread/list` 返回的活跃 turn 仍可用于任务列表投影和重启恢复，但不能创建第二套进程内执行生命周期。
+
 任务摘要同时透传 Codex 的 `threadStatus`（`notLoaded`、`idle`、`systemError`、`active`）和 `turnStatus`（`inProgress`、`completed`、`interrupted`、`failed`）。`continuable` 单独表示会话未归档、仍可继续发送消息；它不能用于推断当前回合正在运行。Wework 只使用明确的 `running` 和真实回合状态显示运行反馈，不把线程或消息的 `active` 状态转换为 streaming。
 
 线程元数据刷新也不能覆盖已经持久化的任务终态。当 Codex 线程进入 `idle` 时，executor 保留本地 `done`、`cancelled` 或 `failed`；只有真实活跃回合才能把任务重新设置为 `running`。因此，一个正常完成且可继续的会话会同时表现为 `status=done`、`running=false`、`continuable=true`、`threadStatus=idle` 和 `turnStatus=completed`。
