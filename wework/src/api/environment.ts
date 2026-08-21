@@ -18,7 +18,7 @@ import {
   resolveProjectWorkspacePath,
 } from '@/lib/project-workspace'
 
-interface DeviceCommandApi {
+export interface DeviceCommandApi {
   executeCommand(deviceId: string, data: DeviceCommandRequest): Promise<DeviceCommandResponse>
 }
 
@@ -125,7 +125,9 @@ function outputAsString(output: DeviceCommandResponse['stdout']): string {
   throw new Error('Expected text stdout from device command')
 }
 
-function outputAsRecord(output: DeviceCommandResponse['stdout']): Record<string, unknown> | null {
+export function outputAsRecord(
+  output: DeviceCommandResponse['stdout']
+): Record<string, unknown> | null {
   if (typeof output === 'string') {
     try {
       const parsed = JSON.parse(output)
@@ -141,7 +143,7 @@ function outputAsRecord(output: DeviceCommandResponse['stdout']): Record<string,
     : null
 }
 
-function outputAsArray(output: DeviceCommandResponse['stdout']): unknown[] | null {
+export function outputAsArray(output: DeviceCommandResponse['stdout']): unknown[] | null {
   if (typeof output === 'string') {
     try {
       const parsed = JSON.parse(output)
@@ -266,6 +268,9 @@ function normalizeMergeability(
 
 function githubCheckStatuses(record: Record<string, unknown>): string[] {
   const rollup = record.statusCheckRollup
+  if (rollup && typeof rollup === 'object' && !Array.isArray(rollup)) {
+    return [stringValue(rollup as Record<string, unknown>, 'state')].filter(Boolean)
+  }
   if (!Array.isArray(rollup)) return []
   const latestChecks = new Map<
     string,
@@ -276,8 +281,12 @@ function githubCheckStatuses(record: Record<string, unknown>): string[] {
     if (!item || typeof item !== 'object' || Array.isArray(item)) return
     const check = item as Record<string, unknown>
     const name = stringValue(check, 'name', 'context')
-    const workflowName = stringValue(check, 'workflowName')
-    const startedAtValue = stringValue(check, 'startedAt', 'completedAt')
+    const workflow =
+      check.workflow && typeof check.workflow === 'object' && !Array.isArray(check.workflow)
+        ? (check.workflow as Record<string, unknown>)
+        : null
+    const workflowName = stringValue(check, 'workflowName') || (workflow?.name as string) || ''
+    const startedAtValue = stringValue(check, 'startedAt', 'completedAt', 'createdAt')
     const startedAt = Date.parse(startedAtValue)
     const canIdentifyRun = name && Number.isFinite(startedAt)
     const identity = canIdentifyRun ? `${workflowName}\0${name}` : `unidentified\0${index}`
@@ -322,25 +331,40 @@ function githubMergeQueueState(value: unknown): ChangeRequestMergeQueueState {
   return resource.mergeQueueEntry ? 'queued' : 'not_queued'
 }
 
-function parseChangeRequest(provider: ChangeRequestProvider, value: unknown): ChangeRequest | null {
+export function parseChangeRequest(
+  provider: ChangeRequestProvider,
+  value: unknown
+): ChangeRequest | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const record = value as Record<string, unknown>
   const number = numberValue(record, 'number', 'iid')
-  const url = stringValue(record, 'url', 'web_url', 'webUrl')
+  const url = stringValue(record, 'url', 'html_url', 'web_url', 'webUrl')
   if (!number || !url) return null
+  const head =
+    record.head && typeof record.head === 'object' && !Array.isArray(record.head)
+      ? (record.head as Record<string, unknown>)
+      : null
+  const mergedAt = stringValue(record, 'mergedAt', 'merged_at')
+  const state = mergedAt ? 'merged' : normalizeChangeRequestState(stringValue(record, 'state'))
+  const headBranch =
+    stringValue(record, 'headRefName', 'source_branch', 'sourceBranch') ||
+    (head ? stringValue(head, 'ref') : '')
+  const updatedAt = stringValue(record, 'updatedAt', 'updated_at')
 
   return {
     provider,
     number,
     url,
     title: stringValue(record, 'title'),
-    state: normalizeChangeRequestState(stringValue(record, 'state')),
+    state,
     draft: booleanValue(record, 'isDraft', 'draft'),
     checks: normalizeChecksState(
       provider === 'github' ? githubCheckStatuses(record) : gitlabCheckStatuses(record)
     ),
     mergeability: normalizeMergeability(provider, record),
     mergeQueue: 'unknown',
+    ...(headBranch ? { headBranch } : {}),
+    ...(updatedAt ? { updatedAt } : {}),
   }
 }
 
@@ -553,7 +577,7 @@ export function parseGitShortStat(value: string): Pick<EnvironmentInfo, 'additio
   }
 }
 
-function parseGitRemote(remoteUrl: string): GitRemoteParts | null {
+export function parseGitRemote(remoteUrl: string): GitRemoteParts | null {
   const trimmed = remoteUrl.trim().replace(/\.git$/, '')
   if (!trimmed) {
     return null
