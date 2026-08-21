@@ -6,7 +6,6 @@
 
 import asyncio
 import base64
-import binascii
 import struct
 from typing import Any, Optional
 
@@ -111,7 +110,7 @@ class CustomEmbedding(BaseEmbedding):
                 )
             try:
                 raw_embedding = base64.b64decode(response_embedding, validate=True)
-            except binascii.Error as exc:
+            except ValueError as exc:
                 raise EmbeddingResponseFormatError(
                     "Invalid base64 embedding response"
                 ) from exc

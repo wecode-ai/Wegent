@@ -173,6 +173,12 @@ def test_custom_embedding_decodes_base64_float_response(
             id="invalid-base64",
         ),
         pytest.param(
+            "非 ASCII 响应",
+            "base64",
+            "Invalid base64",
+            id="non-ascii-base64",
+        ),
+        pytest.param(
             "not-a-numeric-vector",
             "float",
             "numeric embedding array",
