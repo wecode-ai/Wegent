@@ -54,6 +54,25 @@ fn find_host(container: &gtk::Box) -> Option<gtk::Fixed> {
     })
 }
 
+fn allocate_host_child(host: &gtk::Fixed, child: &gtk::Widget) {
+    let (width, height) = child.size_request();
+    if width < 1 || height < 1 {
+        return;
+    }
+    child.size_allocate(&gtk::Allocation::new(
+        host.child_x(child),
+        host.child_y(child),
+        width,
+        height,
+    ));
+}
+
+fn allocate_host_children(host: &gtk::Fixed) {
+    for child in host.children() {
+        allocate_host_child(host, &child);
+    }
+}
+
 fn create_host(
     container: &gtk::Box,
     embedded_webview: &webkit2gtk::WebView,
@@ -87,6 +106,7 @@ fn create_host(
     host.set_vexpand(true);
     host.set_halign(gtk::Align::Fill);
     host.set_valign(gtk::Align::Fill);
+    host.connect_size_allocate(|host, _allocation| allocate_host_children(host));
     overlay.add_overlay(&host);
 
     container.pack_start(&overlay, true, true, 0);
@@ -138,10 +158,11 @@ fn place_webview(
     let height = size.height.round() as i32;
     embedded_webview.set_size_request(width, height);
     host.move_(&embedded_webview, x, y);
-    // GtkFixed normally allocates a child from its natural size. Apply the
-    // requested allocation explicitly so WebKit reports the device viewport
-    // instead of the host's full width through window.innerWidth.
-    embedded_webview.size_allocate(&gtk::Allocation::new(x, y, width, height));
+    // GtkFixed derives child allocations from their natural size. Reapply the
+    // exact request now; the host's size-allocate handler preserves it across
+    // the GTK layout pass triggered by the request.
+    let embedded_widget = embedded_webview.clone().upcast::<gtk::Widget>();
+    allocate_host_child(&host, &embedded_widget);
     Ok(())
 }
 

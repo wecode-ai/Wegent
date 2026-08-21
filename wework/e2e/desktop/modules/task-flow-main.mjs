@@ -1089,6 +1089,7 @@ async function main() {
         WORKBENCH_READY_TIMEOUT_MS,
         'The restarted Wework application did not reconnect to the desktop controller'
       )
+      return app
     }
     desktopScenario?.setRestartDesktopApp?.(restartDesktopApp)
 
@@ -1232,6 +1233,7 @@ last_updated = "2026-07-30T00:00:00Z"`
           cloudEnvironment,
           control,
           desktopScenario,
+          executorLogPath,
           restartDesktopApp,
           setPhase: value => {
             phase = value
