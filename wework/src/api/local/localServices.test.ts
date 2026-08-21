@@ -459,7 +459,7 @@ describe('createLocalAppServices', () => {
     })
   })
 
-  test('deduplicates catalog reconciliation across local service instances', async () => {
+  test('deduplicates catalog reconciliation across local transport wrappers', async () => {
     const catalogEntry = createDefaultLocalModelCatalogEntry({
       id: 'pending-model',
       displayName: 'Pending model',
@@ -478,10 +478,16 @@ describe('createLocalAppServices', () => {
     const restart = new Promise<{ restarted: boolean }>(resolve => {
       resolveRestart = resolve
     })
-    const request = vi.fn().mockImplementation(async (method: string) => {
+    const transport = vi.fn().mockImplementation(async (method: string) => {
       if (method === 'runtime.codex.app_server.restart') return restart
       return {}
     })
+    const firstRequest = vi.fn((method: string, params?: Record<string, unknown>) =>
+      transport(method, params)
+    )
+    const secondRequest = vi.fn((method: string, params?: Record<string, unknown>) =>
+      transport(method, params)
+    )
     const ensure = vi.fn().mockResolvedValue({
       running: true,
       ready: true,
@@ -489,12 +495,20 @@ describe('createLocalAppServices', () => {
       version: '1.9.0',
       runtimeInstanceId: 'runtime-1',
     })
-    const firstServices = createLocalAppServices({ ensure, request, subscribe: vi.fn() })
-    const secondServices = createLocalAppServices({ ensure, request, subscribe: vi.fn() })
+    const firstServices = createLocalAppServices({
+      ensure,
+      request: firstRequest,
+      subscribe: vi.fn(),
+    })
+    const secondServices = createLocalAppServices({
+      ensure,
+      request: secondRequest,
+      subscribe: vi.fn(),
+    })
 
     const firstDevices = firstServices.deviceApi.listDevices()
     await vi.waitFor(() =>
-      expect(request).toHaveBeenCalledWith('runtime.codex.app_server.restart', { ifIdle: true })
+      expect(transport).toHaveBeenCalledWith('runtime.codex.app_server.restart', { ifIdle: true })
     )
     const secondDevices = secondServices.deviceApi.listDevices()
     let secondResolved = false
@@ -504,10 +518,10 @@ describe('createLocalAppServices', () => {
     await Promise.resolve()
 
     expect(
-      request.mock.calls.filter(([method]) => method === 'runtime.codex.catalog.custom.write')
+      transport.mock.calls.filter(([method]) => method === 'runtime.codex.catalog.custom.write')
     ).toHaveLength(1)
     expect(
-      request.mock.calls.filter(([method]) => method === 'runtime.codex.app_server.restart')
+      transport.mock.calls.filter(([method]) => method === 'runtime.codex.app_server.restart')
     ).toHaveLength(1)
     expect(secondResolved).toBe(false)
 
