@@ -1585,6 +1585,120 @@ def test_rest_delivery_finalize_registers_wait_node_reference(
 ) -> None:
     """Every finalize entry point registers the wait-node reference binding."""
 
+    item, project, delivery_id, headers = _wait_reference_delivery_setup(
+        test_client=test_client,
+        test_token=test_token,
+        test_db=test_db,
+        test_user=test_user,
+    )
+
+    finalized = test_client.post(
+        f"/api/v1/deliveries/{delivery_id}/finalize",
+        headers=headers,
+        json={
+            "fulfillments": [
+                {
+                    "requirement_id": "__wait_ref__wait-1_gitlab",
+                    "kind": "pull_request",
+                    "provider": "gitlab",
+                    "url": "https://gitlab.example/acme/app/-/merge_requests/7",
+                    "number": 7,
+                    "state": "draft",
+                    "head_branch": "feat",
+                    "base_branch": "main",
+                    "head_commit": "0123456789abcdef0123456789abcdef01234567",
+                }
+            ]
+        },
+    )
+    assert finalized.status_code == 200, finalized.json()
+    assert finalized.json()["status"] == "delivered"
+    test_db.refresh(item)
+    assert item.status == "in_progress", item.metadata_json
+    delivery_row = test_db.get(Delivery, delivery_id)
+    assert delivery_row is not None and delivery_row.source_task_binding_id is not None
+    wait_node = next(
+        node
+        for node in item.metadata_json["workflow"]["nodes"]
+        if isinstance(node, dict) and node.get("id") == "wait-1"
+    )
+    assert "registration_error" not in wait_node, wait_node
+
+    binding = (
+        test_db.query(ExternalEventBinding)
+        .filter(ExternalEventBinding.loop_item_id == item.id)
+        .first()
+    )
+    assert binding is not None
+    assert binding.provider == "gitlab"
+    assert binding.opaque_ref == "acme/app!7"
+    assert binding.metadata_json["workflow_node_id"] == "wait-1"
+    assert binding.metadata_json["automation_run_id"] == "run-99"
+
+
+def test_delivery_finalize_survives_reference_binding_failure(
+    test_client: TestClient,
+    test_token: str,
+    test_db: Session,
+    test_user: User,
+    delivery_storage: FakeDeliveryStorage,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A binding failure after commit never deletes the delivered manifest."""
+
+    item, project, delivery_id, headers = _wait_reference_delivery_setup(
+        test_client=test_client,
+        test_token=test_token,
+        test_db=test_db,
+        test_user=test_user,
+    )
+
+    def explode(*_args: object, **_kwargs: object) -> int:
+        raise RuntimeError("reference binding exploded")
+
+    monkeypatch.setattr(
+        "app.services.delivery.service.bind_references_from_delivery",
+        explode,
+    )
+
+    finalized = test_client.post(
+        f"/api/v1/deliveries/{delivery_id}/finalize",
+        headers=headers,
+        json={
+            "fulfillments": [
+                {
+                    "requirement_id": "__wait_ref__wait-1_gitlab",
+                    "kind": "pull_request",
+                    "provider": "gitlab",
+                    "url": "https://gitlab.example/acme/app/-/merge_requests/7",
+                    "number": 7,
+                    "state": "draft",
+                    "head_branch": "feat",
+                    "base_branch": "main",
+                    "head_commit": "0123456789abcdef0123456789abcdef01234567",
+                }
+            ]
+        },
+    )
+
+    assert finalized.status_code == 200, finalized.json()
+    assert finalized.json()["status"] == "delivered"
+    delivery_row = test_db.get(Delivery, delivery_id)
+    assert delivery_row is not None
+    assert delivery_row.status == "delivered"
+    assert delivery_row.manifest_object_key is not None
+    assert delivery_row.manifest_object_key in delivery_storage.objects
+
+
+def _wait_reference_delivery_setup(
+    *,
+    test_client: TestClient,
+    test_token: str,
+    test_db: Session,
+    test_user: User,
+) -> tuple[LoopItem, CloudProject, str, dict[str, str]]:
+    """Create a wait-node issue, bound task, and delivery draft for finalize."""
+
     public_id = str(uuid.uuid4())
     project = CloudProject(
         public_id=public_id,
@@ -1690,47 +1804,14 @@ def test_rest_delivery_finalize_registers_wait_node_reference(
         automation_run_id="run-99",
     )
     test_db.add(execution)
+    run = ProjectAutomationRun(
+        id="run-99",
+        cloud_project_id=str(project.id),
+        task_id=item.id,
+        task_title=item.title,
+        status="pending",
+        created_by_user_id=test_user.id,
+    )
+    test_db.add(run)
     test_db.commit()
-
-    finalized = test_client.post(
-        f"/api/v1/deliveries/{delivery_id}/finalize",
-        headers=headers,
-        json={
-            "fulfillments": [
-                {
-                    "requirement_id": "__wait_ref__wait-1_gitlab",
-                    "kind": "pull_request",
-                    "provider": "gitlab",
-                    "url": "https://gitlab.example/acme/app/-/merge_requests/7",
-                    "number": 7,
-                    "state": "draft",
-                    "head_branch": "feat",
-                    "base_branch": "main",
-                    "head_commit": "0123456789abcdef0123456789abcdef01234567",
-                }
-            ]
-        },
-    )
-    assert finalized.status_code == 200, finalized.json()
-    assert finalized.json()["status"] == "delivered"
-    test_db.refresh(item)
-    assert item.status == "in_progress", item.metadata_json
-    delivery_row = test_db.get(Delivery, delivery_id)
-    assert delivery_row is not None and delivery_row.source_task_binding_id is not None
-    wait_node = next(
-        node
-        for node in item.metadata_json["workflow"]["nodes"]
-        if isinstance(node, dict) and node.get("id") == "wait-1"
-    )
-    assert "registration_error" not in wait_node, wait_node
-
-    binding = (
-        test_db.query(ExternalEventBinding)
-        .filter(ExternalEventBinding.loop_item_id == item.id)
-        .first()
-    )
-    assert binding is not None
-    assert binding.provider == "gitlab"
-    assert binding.opaque_ref == "acme/app!7"
-    assert binding.metadata_json["workflow_node_id"] == "wait-1"
-    assert binding.metadata_json["automation_run_id"] == "run-99"
+    return item, project, delivery_id, headers

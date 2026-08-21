@@ -343,6 +343,7 @@ class DeliveryService:
         }
         manifest_key = f"{self._delivery_prefix_for(db, delivery)}/manifest.json"
         self.storage.put_json(manifest_key, manifest)
+        registration: dict[str, Any] | None = None
         try:
             now = datetime.now(timezone.utc).replace(tzinfo=None)
             delivery.manifest_object_key = manifest_key
@@ -373,14 +374,11 @@ class DeliveryService:
                     reason="delivery_finalized",
                     actor_user_id=user_id,
                 )
-                self._register_reference_bindings(
-                    db,
-                    item=item,
-                    workflow_node=workflow_node,
-                    fulfillments=fulfillments,
-                    source_binding=source_binding,
-                    user_id=user_id,
-                )
+                registration = {
+                    "workflow_node": workflow_node,
+                    "fulfillments": fulfillments,
+                    "source_binding": source_binding,
+                }
                 return delivery
             if item.status != "completed":
                 project = db.get(CloudProject, item.cloud_project_id)
@@ -419,6 +417,22 @@ class DeliveryService:
             db.rollback()
             self.storage.remove_objects([manifest_key])
             raise
+        finally:
+            if registration is not None:
+                try:
+                    self._register_reference_bindings(
+                        db,
+                        item=item,
+                        user_id=user_id,
+                        **registration,
+                    )
+                except Exception:
+                    logger.exception(
+                        "[Delivery] Reference binding failed after finalize "
+                        "delivery=%s item=%s",
+                        delivery.id,
+                        item.id,
+                    )
 
     def _register_reference_bindings(
         self,
