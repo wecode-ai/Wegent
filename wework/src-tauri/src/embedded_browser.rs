@@ -402,10 +402,7 @@ fn apply_webview_bounds(webview: &Webview<Wry>, bounds: NormalizedBounds) -> Res
 fn apply_webview_bounds(webview: &Webview<Wry>, bounds: NormalizedBounds) -> Result<(), String> {
     webview
         .set_bounds(bounds.rect())
-        .map_err(|error| format!("Failed to set embedded browser bounds: {error}"))?;
-    #[cfg(all(target_os = "macos", debug_assertions, not(wework_release_build)))]
-    crate::embedded_browser_devtools::remember_webview_frame(webview)?;
-    Ok(())
+        .map_err(|error| format!("Failed to set embedded browser bounds: {error}"))
 }
 
 fn browser_url(url: &str) -> Result<tauri::Url, String> {

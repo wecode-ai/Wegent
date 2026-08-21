@@ -136,8 +136,10 @@ unsafe fn install_detached_inspector(webview: *mut AnyObject) -> Result<(), Stri
     Ok(())
 }
 
-unsafe fn remember_native_frame(webview: *mut AnyObject) -> Result<(), String> {
-    let inspector = unsafe { native_inspector(webview)? };
+unsafe fn remember_native_frame(
+    inspector: &AnyObject,
+    webview: *mut AnyObject,
+) -> Result<(), String> {
     let delegate: *mut AnyObject = unsafe { msg_send![&*inspector, delegate] };
     let Some(delegate) = (unsafe { delegate.as_ref() }) else {
         return Err("Embedded browser Inspector delegate is unavailable".to_string());
@@ -203,6 +205,7 @@ unsafe fn show_native_inspector(webview: *mut AnyObject) -> Result<(), String> {
     if !supports_show {
         return Err("Embedded browser Inspector cannot be shown".to_string());
     }
+    unsafe { remember_native_frame(&inspector, webview)? };
     let _: () = unsafe { msg_send![&*inspector, show] };
     Ok(())
 }
@@ -267,18 +270,6 @@ pub async fn register_detached_inspector(webview: &Webview<Wry>) -> Result<(), S
         .recv()
         .await
         .ok_or_else(|| "Detached browser Inspector registration was cancelled".to_string())?
-}
-
-pub fn remember_webview_frame(webview: &Webview<Wry>) -> Result<(), String> {
-    webview
-        .with_webview(move |platform_webview| {
-            if let Err(error) =
-                unsafe { remember_native_frame(platform_webview.inner().cast::<AnyObject>()) }
-            {
-                log::warn!("Failed to remember embedded browser frame: {error}");
-            }
-        })
-        .map_err(|error| format!("Failed to remember embedded browser frame: {error}"))
 }
 
 pub async fn verify_detached_inspector_for_e2e(webview: &Webview<Wry>) -> Result<Value, String> {
