@@ -186,6 +186,13 @@ current chat pane. It does not archive or delete the previous task, which must
 remain under its project and be reopenable. The environment popover must list
 and copy every project root, not only the primary root.
 
+The local task inventory in My Work comes from `runtimeWork`, but its running
+and queued groups must read the same `RuntimeTaskLifecycleStore` snapshot as the
+sidebar. The sidebar spinner, composer, and My Work must not independently
+infer lifecycle state from `RuntimeTaskSummary.running`, transcript data, or
+messages; an asynchronous task-list snapshot could otherwise project a task
+that is still running into a completed or action-required group.
+
 These rules apply only to local Codex projects. Remote and cloud tasks retain
 their existing single-workspace selection semantics; local multi-root support
 must not implicitly broaden a remote execution scope.

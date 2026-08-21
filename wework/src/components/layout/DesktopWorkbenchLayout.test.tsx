@@ -42,6 +42,7 @@ import {
 import { configuredWorkspacePath, executionDeviceId } from '@/lib/project-workspace'
 import { setActiveKeybindings } from '@/lib/keybindings'
 import type { ProjectWithTasks, RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
+import type { EnvironmentInfo } from '@/types/environment'
 import type { RuntimeSubagentStatus, WorkbenchMessage } from '@/types/workbench'
 import '@/i18n'
 import {
@@ -9444,6 +9445,80 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('environment-branch-row')).toHaveTextContent('暂无分支')
     expect(screen.queryByTestId('environment-commit-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('create-pull-request-button')).not.toBeInTheDocument()
+  })
+
+  test('shows a partial branch result before environment loading finishes', async () => {
+    mockDesktopWorkbenchMainWidth(1024)
+    let publishPartialInfo: ((info: EnvironmentInfo) => void) | undefined
+    const onLoadEnvironmentInfo = vi.fn(
+      (
+        _project: unknown,
+        _target: unknown,
+        options?: { onPartialInfo?: (info: EnvironmentInfo) => void }
+      ) => {
+        publishPartialInfo = options?.onPartialInfo
+        return new Promise<EnvironmentInfo>(() => {})
+      }
+    )
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{ ...activeProjectState, currentRuntimeTask: activeProjectRuntimeTask }}
+        onLoadEnvironmentInfo={onLoadEnvironmentInfo}
+      />
+    )
+
+    await waitFor(() => expect(publishPartialInfo).toBeTypeOf('function'))
+    expect(screen.getByTestId('environment-branch-row')).toHaveTextContent('加载中')
+
+    const cachedPullRequest: EnvironmentInfo = {
+      additions: '+0',
+      deletions: '-0',
+      executionTarget: 'local',
+      deviceId: 'device-1',
+      workspacePath: '/workspace/github_wegent',
+      branchName: 'fix/fast-branch-status',
+      changeRequest: {
+        provider: 'github',
+        state: 'found',
+        changeRequest: {
+          provider: 'github',
+          number: 2875,
+          url: 'https://github.com/wecode-ai/Wegent/pull/2875',
+          title: 'Cached pull request',
+          state: 'open',
+          draft: false,
+          checks: 'success',
+          mergeability: 'mergeable',
+          mergeQueue: 'not_queued',
+        },
+      },
+    }
+    act(() => {
+      publishPartialInfo?.(cachedPullRequest)
+    })
+
+    expect(screen.getByTestId('change-request-button')).toHaveAccessibleName(
+      expect.stringContaining('#2875')
+    )
+
+    act(() => {
+      publishPartialInfo?.({
+        additions: '',
+        deletions: '',
+        executionTarget: 'local',
+        deviceId: 'device-1',
+        workspacePath: '/workspace/github_wegent',
+        branchName: 'fix/fast-branch-status',
+      })
+    })
+
+    expect(screen.getByTestId('environment-branch-row')).toHaveTextContent('fix/fast-branch-status')
+    expect(screen.getByTestId('environment-branch-row')).not.toHaveTextContent('加载中')
+    expect(screen.getByTestId('change-request-button')).toHaveAccessibleName(
+      expect.stringContaining('#2875')
+    )
   })
 
   test('closes the branch menu when Escape is pressed', async () => {

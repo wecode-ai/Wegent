@@ -252,8 +252,29 @@ export function useWorkbenchPaneSession({
     [inputScopeKey, setInputForScope]
   )
   const [localError, setLocalError] = useState<string | null>(null)
-  const error = projectChat.setComposerError ? (projectChat.composerError ?? null) : localError
-  const setError = projectChat.setComposerError ?? setLocalError
+  const error = projectChat.composerErrorByScope
+    ? (projectChat.composerErrorByScope[inputScopeKey] ?? null)
+    : projectChat.setComposerError
+      ? (projectChat.composerError ?? null)
+      : localError
+  const setErrorForScope = useCallback(
+    (scopeKey: string, nextError: string | null) => {
+      if (projectChat.setComposerErrorForScope) {
+        projectChat.setComposerErrorForScope(scopeKey, nextError)
+        return
+      }
+      if (projectChat.setComposerError) {
+        projectChat.setComposerError(nextError)
+        return
+      }
+      setLocalError(nextError)
+    },
+    [projectChat]
+  )
+  const setError = useCallback(
+    (nextError: string | null) => setErrorForScope(inputScopeKey, nextError),
+    [inputScopeKey, setErrorForScope]
+  )
   const clearError = useCallback(() => setError(null), [setError])
   const setInput = useCallback(
     (value: string) => {
@@ -1775,6 +1796,7 @@ export function useWorkbenchPaneSession({
             runtimeGoalRequest: true,
           })
           let seededGoalAddress: RuntimeTaskAddress | null = null
+          let errorScopeKey = inputScopeKey
           const sent = await sendCurrentInput(submittedInput, {
             clientUserMessageId: optimisticMessage.id,
             initialGoal,
@@ -1791,8 +1813,9 @@ export function useWorkbenchPaneSession({
             ...(Object.prototype.hasOwnProperty.call(options, 'modelSelection')
               ? { modelSelection: options.modelSelection }
               : {}),
-            onError: setError,
+            onError: nextError => setErrorForScope(errorScopeKey, nextError),
             onRuntimeTaskOptimisticOpen: (address, context) => {
+              errorScopeKey = getRuntimeTaskChatScopeKey(address)
               options.onRuntimeTaskCreated?.(address)
               setPendingGoalState(current =>
                 current
@@ -1916,6 +1939,7 @@ export function useWorkbenchPaneSession({
           (hasCodeComments ? i18n.t('workbench.code_comment_fallback') : '')
         if (!currentRuntimeTask) {
           setInput('')
+          let errorScopeKey = inputScopeKey
           const optimisticMessage = createLocalUserMessage(
             visibleSubmittedInput,
             currentAttachments,
@@ -1941,8 +1965,9 @@ export function useWorkbenchPaneSession({
             ...(Object.prototype.hasOwnProperty.call(options, 'modelSelection')
               ? { modelSelection: options.modelSelection }
               : {}),
-            onError: setError,
+            onError: nextError => setErrorForScope(errorScopeKey, nextError),
             onRuntimeTaskOptimisticOpen: (address, context) => {
+              errorScopeKey = getRuntimeTaskChatScopeKey(address)
               options.onRuntimeTaskCreated?.(address)
               if (pendingInitialGoal) {
                 setPendingGoalState(current =>
@@ -2116,6 +2141,7 @@ export function useWorkbenchPaneSession({
         goalDraftActive,
         getRuntimeModelFields,
         input,
+        inputScopeKey,
         interruptAndSendQueuedMessage,
         lifecycleStore,
         loadRuntimeTranscriptForPane,
@@ -2127,6 +2153,7 @@ export function useWorkbenchPaneSession({
         sendCurrentInput,
         sendQueuedMessageAsGuidance,
         sendRuntimeMessage,
+        setErrorForScope,
         setError,
         setInput,
         setQueuedMessages,

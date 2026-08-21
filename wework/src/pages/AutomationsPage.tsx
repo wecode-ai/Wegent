@@ -39,7 +39,7 @@ import { buildRuntimeTaskRoute, navigateTo } from '@/lib/navigation'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 import { cn } from '@/lib/utils'
 import { track } from '@/telemetry/client'
-import type { RuntimeTaskAddress, RuntimeTaskCreateRequest } from '@/types/api'
+import type { RuntimeSendRequest, RuntimeTaskAddress, RuntimeTaskCreateRequest } from '@/types/api'
 import type {
   Automation,
   AutomationMutation,
@@ -339,6 +339,13 @@ export function AutomationsPage() {
             address: draft.continuationAddress,
             message: draft.prompt.trim(),
             ...(initialGoal ? { initialGoal } : {}),
+            ...(draft.modelId
+              ? {
+                  modelId: draft.modelId,
+                  modelType: draft.modelType as RuntimeSendRequest['modelType'],
+                  modelOptions: draft.modelOptions,
+                }
+              : {}),
           }
         : null
     return {

@@ -146,6 +146,11 @@ Claude Code 的 `/compact` 是普通原生命令；Codex 仍使用其 app-server
 只清空当前聊天 pane，不归档或删除原任务；原任务继续显示在项目下，并可重新打开。
 环境弹层必须展示和复制项目的全部根目录，而不是只显示主根。
 
+“我的工作”中的本地任务清单来自 `runtimeWork`，但任务所处的运行中或排队分组必须
+读取同一个 `RuntimeTaskLifecycleStore` 快照。侧栏 spinner、composer 和“我的工作”
+不能各自从 `RuntimeTaskSummary.running`、transcript 或消息状态重新推断生命周期；
+否则异步任务列表快照会把仍在运行的任务错误投影到已完成或待处理分组。
+
 这些规则只改变本地 Codex 项目。远程和云端任务仍遵循其原有的单 workspace 选择
 语义，不能因为本地多目录支持而隐式扩大远程执行范围。
 
