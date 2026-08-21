@@ -21,6 +21,8 @@ interface ModelSelectorTriggerProps {
   disabled: boolean
   isMobile: boolean
   label: string
+  modelName?: string
+  modelProviderId?: string
   leadingIcon?: ReactNode
   highlightedLabel?: string
   shortcut?: string | null
@@ -50,6 +52,8 @@ export function ModelSelectorTrigger({
   disabled,
   isMobile,
   label,
+  modelName,
+  modelProviderId,
   leadingIcon,
   highlightedLabel,
   shortcut,
@@ -112,6 +116,8 @@ export function ModelSelectorTrigger({
         ref={buttonRef}
         type="button"
         data-testid="model-selector-button"
+        data-model-name={modelName}
+        data-model-provider-id={modelProviderId}
         onClick={onToggle}
         onPointerEnter={() => {
           if (!open && tooltipSuppressed) setTooltipSuppressed(false)

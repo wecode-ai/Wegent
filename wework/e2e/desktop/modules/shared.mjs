@@ -1231,6 +1231,22 @@ async function revealGroupedModelOption(control, targetOptionIds) {
   return false
 }
 
+async function revealModelOptionInFamily(control, familyId, targetOptionIds) {
+  const familySelector = `[data-testid="model-family-${familyId}"]`
+  const menu = JSON.parse(await control.command('snapshot', 'body'))
+  if (!menu.testIds.includes(`model-family-${familyId}`)) {
+    return visibleModelOptionId(control, targetOptionIds)
+  }
+  await control.command('waitFor', familySelector, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('hover', familySelector, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 150))
+  return visibleModelOptionId(control, targetOptionIds)
+}
+
 function modelOptionIdCandidates(modelIds) {
   return (Array.isArray(modelIds) ? modelIds : [modelIds]).map(modelId =>
     modelId.startsWith('model-option-') ? modelId : `model-option-${modelId}`
@@ -1343,6 +1359,10 @@ async function selectE2EModel(
   composerSelector = ''
 ) {
   const labels = Array.isArray(modelLabels) ? modelLabels : [modelLabels]
+  const targetOptionIds = modelOptionIdCandidates(modelIds)
+  const expectedProviderId = targetOptionIds.includes(`model-option-${DEFAULT_MODEL_ID}`)
+    ? MODEL_PROVIDER_ID
+    : null
   const modelSelectorButton = `${composerSelector} [data-testid="model-selector-button"]`.trim()
   await control.command('waitFor', modelSelectorButton, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -1351,11 +1371,24 @@ async function selectE2EModel(
   const selectedModelLabel = await control.command('getText', modelSelectorButton, {
     visible: true,
   })
-  if (labels.some(label => selectedModelLabel.includes(label))) return
+  const selectedProviderId = await control.command('getAttribute', modelSelectorButton, {
+    value: 'data-model-provider-id',
+  })
+  if (
+    labels.some(label => selectedModelLabel.includes(label)) &&
+    (!expectedProviderId || selectedProviderId === expectedProviderId)
+  ) {
+    return
+  }
 
   await ensureModelOptionVisible(control, modelIds, modelSelectorButton)
-  const targetOptionIds = modelOptionIdCandidates(modelIds)
-  let targetOptionId = await visibleModelOptionId(control, targetOptionIds)
+  let targetOptionId = expectedProviderId
+    ? await revealModelOptionInFamily(
+        control,
+        `codex-provider:${expectedProviderId}`,
+        targetOptionIds
+      )
+    : await visibleModelOptionId(control, targetOptionIds)
   if (!targetOptionId) {
     const menu = JSON.parse(await control.command('snapshot', 'body'))
     if (!menu.testIds.includes('model-selector-menu')) {
@@ -1365,8 +1398,15 @@ async function selectE2EModel(
         visible: true,
       })
     }
-    await revealGroupedModelOption(control, targetOptionIds)
-    targetOptionId = await visibleModelOptionId(control, targetOptionIds)
+    targetOptionId = expectedProviderId
+      ? await revealModelOptionInFamily(
+          control,
+          `codex-provider:${expectedProviderId}`,
+          targetOptionIds
+        )
+      : await revealGroupedModelOption(control, targetOptionIds).then(() =>
+          visibleModelOptionId(control, targetOptionIds)
+        )
   }
   assert.ok(targetOptionId, `No visible model option matched ${modelOptionIdCandidates(modelIds)}`)
   const targetSelector = `[data-testid="model-selector-submenu"] [data-testid="${targetOptionId}"]`
@@ -1385,6 +1425,15 @@ async function selectE2EModel(
     )
   }
   await waitForE2EModelLabel(control, labels, modelSelectorButton)
+  if (expectedProviderId) {
+    assert.equal(
+      await control.command('getAttribute', modelSelectorButton, {
+        value: 'data-model-provider-id',
+      }),
+      expectedProviderId,
+      `Model selector did not retain provider ${expectedProviderId}`
+    )
+  }
   await control.command('press', 'body', { key: 'Escape' })
   await waitForSnapshot(
     control,

@@ -93,6 +93,16 @@ const SECOND_FAMILY_MODEL: UnifiedModel = {
   },
 }
 
+const PROVIDER_MODEL: UnifiedModel = {
+  ...SAMPLE_MODEL,
+  config: {
+    ...SAMPLE_MODEL.config,
+    codexProviderId: 'wework-e2e',
+    weworkModelKind: 'codex-provider',
+    ui: { family: 'codex-provider:wework-e2e', controls: ['speed'] },
+  },
+}
+
 describe('ModelSelector desktop layout', () => {
   const originalInnerWidth = window.innerWidth
   const originalInnerHeight = window.innerHeight
@@ -142,6 +152,28 @@ describe('ModelSelector desktop layout', () => {
       'top-0',
       'text-sm',
       'font-normal'
+    )
+  })
+
+  test('exposes the selected model identity for deterministic automation', () => {
+    render(
+      <ModelSelector
+        models={[PROVIDER_MODEL]}
+        selectedModel={PROVIDER_MODEL}
+        selectedModelOptions={{}}
+        disabled={false}
+        onSelectModel={vi.fn()}
+        onSelectModelOption={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('model-selector-button')).toHaveAttribute(
+      'data-model-name',
+      PROVIDER_MODEL.name
+    )
+    expect(screen.getByTestId('model-selector-button')).toHaveAttribute(
+      'data-model-provider-id',
+      'wework-e2e'
     )
   })
 

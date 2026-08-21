@@ -364,6 +364,10 @@ export function ModelSelector({
   const buttonLabel = nextTurn
     ? t('workbench.next_turn_model', 'Next · {{model}}', { model: selectedButtonLabel })
     : selectedButtonLabel
+  const selectedModelProviderId =
+    typeof selectedModel?.config?.codexProviderId === 'string'
+      ? selectedModel.config.codexProviderId
+      : undefined
 
   const controlsAboveFamilies = useMemo(() => {
     const controls = selectedModel
@@ -1062,6 +1066,8 @@ export function ModelSelector({
         disabled={disabled}
         isMobile={isMobile}
         label={buttonLabel}
+        modelName={selectedModel?.name}
+        modelProviderId={selectedModelProviderId}
         leadingIcon={
           fastModeState.enabled ? (
             <FastModeIcon

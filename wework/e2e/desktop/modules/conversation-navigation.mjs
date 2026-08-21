@@ -844,7 +844,7 @@ async function reopenCurrentTurnNavigationTask(
   await control.command('waitFor', composerSelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await restartDesktopApp()
+  const restartedApp = await restartDesktopApp()
   await ensureTaskRowVisible(control, `runtime-local-task-row-${taskId}`)
   await control.command('clickWhenEnabled', `[data-testid="runtime-local-task-row-${taskId}"]`, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -857,12 +857,9 @@ async function reopenCurrentTurnNavigationTask(
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )
-  const activeElementTestId = await control.command('getActiveElementTestId', 'body')
-  assert.equal(
-    activeElementTestId,
-    'chat-message-input',
-    'Opening a conversation from the sidebar did not transfer keyboard focus to the composer'
-  )
+  await control.command('waitFor', '[data-testid="chat-message-input"]:focus', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   if (expectedTurnCount > E2E_TRANSCRIPT_PAGE_SIZE) {
     await control.command('waitFor', '[data-testid="load-older-runtime-transcript-button"]', {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -926,6 +923,7 @@ async function reopenCurrentTurnNavigationTask(
     text: `${TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX}_${TURN_NAVIGATION_VIRTUALIZED_BOUNDARY_TURN}`,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  return restartedApp
 }
 
 async function verifyStandaloneViewImageTask({ composerSelector, control, projectRowSelector }) {

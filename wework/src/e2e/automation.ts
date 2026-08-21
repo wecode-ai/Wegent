@@ -797,8 +797,9 @@ function endDesktopControlPointer(): string {
 }
 
 let activeDesktopControlDrag: {
+  endOptions: MouseEventInit & PointerEventInit
   sourceText: string
-  target: HTMLElement
+  targetSelector: string
 } | null = null
 
 async function startDesktopControlDrag(command: DesktopControlCommand): Promise<string> {
@@ -818,8 +819,9 @@ async function startDesktopControlDrag(command: DesktopControlCommand): Promise<
   dispatchDesktopControlPointerEvent(target, 'pointermove', endOptions)
   await waitForDesktopControlTick()
   activeDesktopControlDrag = {
+    endOptions,
     sourceText: element.textContent?.trim() ?? '',
-    target,
+    targetSelector: command.target,
   }
   return activeDesktopControlDrag.sourceText
 }
@@ -827,9 +829,13 @@ async function startDesktopControlDrag(command: DesktopControlCommand): Promise<
 async function endDesktopControlDrag(command: DesktopControlCommand): Promise<string> {
   const activeDrag = activeDesktopControlDrag
   if (!activeDrag) throw new Error('No desktop control drag is active')
-  const target = command.target ? findDesktopControlElements(command.target)[0] : activeDrag.target
-  if (!target) throw new Error(`Unable to find target selector "${command.target}"`)
-  const endOptions = { ...desktopControlEventOptions(target), buttons: 1 }
+  const targetSelector = command.target ?? activeDrag.targetSelector
+  const target = findDesktopControlElements(targetSelector)[0]
+  if (!target) throw new Error(`Unable to find target selector "${targetSelector}"`)
+  const endOptions =
+    targetSelector === activeDrag.targetSelector
+      ? activeDrag.endOptions
+      : { ...desktopControlEventOptions(target), buttons: 1 }
   try {
     dispatchDesktopControlPointerEvent(document, 'pointermove', endOptions)
     dispatchDesktopControlPointerEvent(target, 'pointermove', endOptions)
