@@ -1284,6 +1284,11 @@ describe('CloudTodoWorkspace', () => {
 
     expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute('data-open', 'no')
     expect(screen.queryByTestId('cloud-todo-detail')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('cloud-todo-card-WEG-1'))
+
+    expect(await screen.findByTestId('cloud-todo-detail')).toBeInTheDocument()
+    expect(screen.queryByTestId('ai-chat-modal')).not.toBeInTheDocument()
   })
 
   it('dismisses the unified Issue and conversation panel in one action', async () => {

@@ -4166,6 +4166,8 @@ export function CloudTodoWorkspace({
                                       onClick={() => {
                                         if (item.can_view_detail !== false) {
                                           setBackgroundTaskItemId(null)
+                                          setSelectedTaskBinding(null)
+                                          setTaskComposerRequest(null)
                                           setSelectedItem(item)
                                         }
                                       }}
