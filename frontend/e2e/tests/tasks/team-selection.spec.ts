@@ -415,9 +415,8 @@ test.describe('Team Selection', () => {
         localStorage.setItem('wegent_last_team_id_chat', 'invalid')
       })
 
-      // Reload to apply the invalid localStorage value
-      await page.reload()
-      await page.waitForLoadState('domcontentloaded')
+      // Optimized images may keep the load event pending; this case only needs DOM readiness.
+      await page.reload({ waitUntil: 'domcontentloaded' })
 
       // Page should handle gracefully and select first available team
       const pageLoaded = await page.title()
