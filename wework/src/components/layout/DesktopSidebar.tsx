@@ -68,7 +68,6 @@ import {
   autoRepairStatus,
   buildChangeRequestRepairPrompt,
 } from '@/features/workbench/changeRequestStatus'
-import { runtimeTaskBoardOrigin } from '@/features/workbench/runtimeTaskOrigin'
 import {
   getRuntimeConversationQueuePaused,
   subscribeRuntimeConversation,
@@ -1465,11 +1464,6 @@ function RuntimeTaskRow({
   const repositoryLabel = getRuntimeTaskRepositoryLabel(workspace, task)
   const branchLabel = getRuntimeTaskBranch(task)
   const taskWorkspacePath = task.workspacePath || workspace.workspacePath
-  const boardOrigin = runtimeTaskBoardOrigin(task)
-  const boardOriginLabel =
-    boardOrigin === 'board_comment'
-      ? t('workbench.runtime_task_origin_board_comment', '看板评论')
-      : t('workbench.runtime_task_origin_board_task', '看板任务')
   const hostLabel =
     workspace.remoteHostId ||
     (workspace.workspaceSource === 'remote' ? workspace.deviceName || workspace.deviceId : null)
@@ -1765,13 +1759,6 @@ function RuntimeTaskRow({
                     data-testid={`runtime-local-task-title-shimmer-${task.taskId}`}
                   />
                 ) : null}
-                {boardOrigin ? (
-                  <MessageCircle
-                    data-testid={`runtime-local-task-board-comment-${task.taskId}`}
-                    className="h-3 w-3 shrink-0 text-[rgb(var(--color-sidebar-text-muted))]"
-                    aria-label={boardOriginLabel}
-                  />
-                ) : null}
                 <span data-testid={`runtime-local-task-drag-activator-${task.taskId}`}>
                   {task.title}
                 </span>
@@ -1804,13 +1791,6 @@ function RuntimeTaskRow({
                   aria-hidden="true"
                   className="runtime-task-title-shimmer"
                   data-testid={`runtime-local-task-title-shimmer-${task.taskId}`}
-                />
-              ) : null}
-              {boardOrigin ? (
-                <MessageCircle
-                  data-testid={`runtime-local-task-board-comment-${task.taskId}`}
-                  className="mr-1 inline h-3 w-3 shrink-0 text-[rgb(var(--color-sidebar-text-muted))]"
-                  aria-label={boardOriginLabel}
                 />
               ) : null}
               <span data-testid={`runtime-local-task-drag-activator-${task.taskId}`}>

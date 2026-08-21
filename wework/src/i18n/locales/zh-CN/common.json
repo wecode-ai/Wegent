@@ -113,8 +113,6 @@
     "project_chat_agent_unavailable": "该机器人已不在此项目中",
     "project_chat_agent_start_failed": "机器人任务未能启动",
     "task_activity_title": "动态",
-    "runtime_task_origin_board_comment": "看板动态",
-    "runtime_task_origin_board_task": "看板任务",
     "task_activity_count": "共 {{count}} 条",
     "task_activity_empty": "暂无动态",
     "task_activity_empty_with_ai": "{{name}} 已进入执行队列，将自动处理并提交结果供你验收。",
