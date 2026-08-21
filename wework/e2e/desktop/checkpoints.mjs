@@ -23,6 +23,7 @@ export const DESKTOP_CHECKPOINTS = [
   'cloud-worktree-device-restart',
   'context-compaction',
   'runtime-task-queue',
+  'running-conversation-history',
   'codex-notification-isolation',
   'split-workbench',
   'window-lifecycle',
