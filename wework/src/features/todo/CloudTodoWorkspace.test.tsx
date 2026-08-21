@@ -609,8 +609,10 @@ describe('CloudTodoWorkspace', () => {
     )
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    expect(await screen.findByTestId('cloud-todo-card-tasks-WEG-1')).toHaveTextContent('正在执行')
-    expect(screen.getByTestId('cloud-todo-card-tasks-WEG-1')).toHaveTextContent('验证完整工作流')
+    expect(await screen.findByTestId('cloud-todo-card-tasks-WEG-1')).toHaveTextContent(
+      '验证完整工作流'
+    )
+    expect(screen.getByTestId('cloud-todo-card-tasks-WEG-1')).not.toHaveTextContent('正在执行')
     expect(screen.getByTestId('cloud-todo-card-tasks-WEG-1')).not.toHaveTextContent(
       '分析创建任务交互'
     )
@@ -735,6 +737,58 @@ describe('CloudTodoWorkspace', () => {
     expect(await screen.findByTestId('ai-chat-modal')).toHaveAttribute(
       'data-runtime-task-id',
       'runtime-2'
+    )
+  })
+
+  it('shows the cached final assistant response on an in-review task card', async () => {
+    const reviewItem = { ...item, status: 'in_review' as const }
+    const workbenchServices = services()
+    workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({
+      items: [reviewItem],
+    }))
+    workbenchServices.deliveryApi!.listTaskBindings = vi.fn(async () => [
+      {
+        id: 2,
+        loop_item_id: reviewItem.id,
+        task_user_id: 1,
+        device_id: 'local-device',
+        task_id: 'runtime-review',
+        task_title: '验证最终回复',
+        backend_task_id: null,
+        linked_at: '2026-08-21T00:01:00Z',
+      },
+    ])
+    const address = { deviceId: 'local-device', taskId: 'runtime-review' }
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_started',
+      taskId: address.taskId,
+      subtaskId: 'turn-review',
+    })
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_chunk',
+      subtaskId: 'turn-review',
+      itemId: 'assistant-review',
+      content: '第一行\n第二行\n第三行\n第四行',
+    })
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_done',
+      subtaskId: 'turn-review',
+    })
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    expect(await screen.findByTestId('cloud-todo-card-final-response-WEG-1')).toHaveTextContent(
+      '第一行 第二行 第三行'
+    )
+    expect(screen.getByTestId('cloud-todo-card-final-response-WEG-1')).not.toHaveTextContent(
+      '第四行'
     )
   })
 
@@ -3472,6 +3526,274 @@ describe('CloudTodoWorkspace', () => {
 
     expect(screen.getByTestId('my-work-group-action-runtime-associated')).toBeVisible()
     expect(screen.getByTestId('my-work-group-action-runtime-standalone')).toBeVisible()
+  })
+
+  it('aggregates bound Issues into My Tasks and batch archives completed tasks', async () => {
+    const defaultProject = {
+      ...project,
+      id: 'default-work-items',
+      project_key: 'WORK',
+      name: '我的任务',
+      metadata: { system_kind: 'default_work_items' },
+    }
+    const workbenchServices = services()
+    const stoppedIssue = {
+      ...item,
+      title: 'Stopped task Issue',
+      status: 'in_review' as const,
+    }
+    const completedIssue = {
+      ...item,
+      id: 'WEG-2',
+      sequence_number: 2,
+      title: 'Completed task Issue',
+      status: 'completed' as const,
+      completed_at: '2026-08-21T00:00:00Z',
+    }
+    const archivedIssue = {
+      ...item,
+      id: 'WEG-3',
+      sequence_number: 3,
+      title: 'Archived task Issue',
+      status: 'completed' as const,
+      completed_at: '2026-08-20T00:00:00Z',
+    }
+    const noResponseIssue = {
+      ...item,
+      id: 'WEG-4',
+      sequence_number: 4,
+      title: 'Stopped without final response',
+      status: 'in_review' as const,
+    }
+    vi.mocked(workbenchServices.deliveryApi!.listCloudProjects).mockResolvedValue({
+      items: [defaultProject, project],
+    })
+    vi.mocked(workbenchServices.deliveryApi!.listMyWork).mockResolvedValue({
+      items: [
+        {
+          ...stoppedIssue,
+          project_key: project.project_key,
+          project_name: project.name,
+          has_active_task: false,
+        },
+        {
+          ...completedIssue,
+          project_key: project.project_key,
+          project_name: project.name,
+          has_active_task: false,
+        },
+        {
+          ...archivedIssue,
+          project_key: project.project_key,
+          project_name: project.name,
+          has_active_task: false,
+        },
+        {
+          ...noResponseIssue,
+          project_key: project.project_key,
+          project_name: project.name,
+          has_active_task: false,
+        },
+      ],
+    })
+    workbenchServices.deliveryApi!.getBoardSnapshot = vi.fn(async () => ({
+      items: [],
+      task_bindings: [
+        {
+          id: 1,
+          loop_item_id: stoppedIssue.id,
+          task_user_id: 1,
+          device_id: 'local-device',
+          task_id: 'stopped-task',
+          task_title: 'Stopped task',
+          backend_task_id: null,
+          linked_at: '2026-08-21T00:00:00Z',
+        },
+        {
+          id: 2,
+          loop_item_id: completedIssue.id,
+          task_user_id: 1,
+          device_id: 'local-device',
+          task_id: 'completed-task',
+          task_title: 'Completed task',
+          backend_task_id: null,
+          linked_at: '2026-08-21T00:00:00Z',
+        },
+        {
+          id: 3,
+          loop_item_id: archivedIssue.id,
+          task_user_id: 1,
+          device_id: 'local-device',
+          task_id: 'archived-task',
+          task_title: 'Archived task',
+          backend_task_id: null,
+          linked_at: '2026-08-20T00:00:00Z',
+        },
+        {
+          id: 4,
+          loop_item_id: noResponseIssue.id,
+          task_user_id: 1,
+          device_id: 'local-device',
+          task_id: 'no-response-task',
+          task_title: 'Stopped without final response',
+          backend_task_id: null,
+          linked_at: '2026-08-21T00:00:00Z',
+        },
+      ],
+      members: [],
+      agents: [],
+    }))
+    const getRuntimeTranscript = vi.fn(async request => ({
+      taskId: request.taskId,
+      workspacePath: '/tmp/project-a',
+      runtime: 'codex' as const,
+      running: false,
+      messages: [],
+      turns:
+        request.taskId === 'stopped-task'
+          ? [
+              {
+                id: 'turn-final',
+                items: [
+                  {
+                    id: 'assistant-final',
+                    type: 'assistant_text' as const,
+                    content:
+                      '第一行：已经完成修复\n第二行：测试全部通过\n第三行：可以开始验收\n第四行：不应展示',
+                  },
+                ],
+              },
+            ]
+          : [],
+    }))
+    workbenchServices.runtimeWorkApi = {
+      getRuntimeTranscript,
+    } as WorkbenchServices['runtimeWorkApi']
+    const onOpenRuntimeTask = vi.fn()
+    const onArchiveRuntimeTask = vi.fn(async () => ({ status: 'archived' as const }))
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[
+          { id: 91, name: 'Project A', tasks: [] },
+          { id: 92, name: 'Project B', tasks: [] },
+        ]}
+        runtimeWork={{
+          projects: [
+            {
+              project: { id: 91, key: 'project-a', name: 'Project A' },
+              deviceWorkspaces: [
+                {
+                  deviceId: 'local-device',
+                  workspacePath: '/tmp/project-a',
+                  available: true,
+                  tasks: [
+                    {
+                      taskId: 'stopped-task',
+                      workspacePath: '/tmp/project-a',
+                      title: 'Stopped task',
+                      runtime: 'codex',
+                      running: false,
+                      status: 'cancelled',
+                      turnStatus: 'interrupted',
+                      runtimeHandle: {
+                        cloudProjectId: project.id,
+                        loopItemId: stoppedIssue.id,
+                      },
+                    },
+                    {
+                      taskId: 'completed-task',
+                      workspacePath: '/tmp/project-a',
+                      title: 'Completed task',
+                      runtime: 'codex',
+                      running: false,
+                      completedAt: 1_700_000_000,
+                      runtimeHandle: {
+                        cloudProjectId: project.id,
+                        loopItemId: completedIssue.id,
+                      },
+                    },
+                    {
+                      taskId: 'no-response-task',
+                      workspacePath: '/tmp/project-a',
+                      title: 'Stopped without final response',
+                      runtime: 'codex',
+                      running: false,
+                      status: 'cancelled',
+                      turnStatus: 'interrupted',
+                      runtimeHandle: {
+                        cloudProjectId: project.id,
+                        loopItemId: noResponseIssue.id,
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          chats: [],
+          totalTasks: 3,
+        }}
+        services={workbenchServices}
+        embedded
+        activeProjectRef={{ projectStore: 'backend', projectId: 'default-work-items' }}
+        onOpenRuntimeTask={onOpenRuntimeTask}
+        onArchiveRuntimeTask={onArchiveRuntimeTask}
+      />
+    )
+
+    expect(await screen.findByTestId('cloud-local-project-filter')).toHaveValue('all')
+    expect(await screen.findByTestId('cloud-todo-column-in_review')).toHaveTextContent(
+      'Stopped task Issue'
+    )
+    expect(await screen.findByTestId('cloud-todo-card-tasks-WEG-1')).toHaveTextContent(
+      'Stopped task'
+    )
+    expect(screen.getByTestId('cloud-todo-card-tasks-WEG-1')).not.toHaveTextContent('Task')
+    expect(await screen.findByTestId('cloud-todo-card-final-response-WEG-1')).toHaveTextContent(
+      '第一行：已经完成修复 第二行：测试全部通过 第三行：可以开始验收'
+    )
+    expect(screen.getByTestId('cloud-todo-card-final-response-WEG-1')).not.toHaveTextContent(
+      '第四行：不应展示'
+    )
+    expect(await screen.findByTestId('cloud-todo-card-final-response-WEG-4')).toHaveTextContent(
+      '暂无最终回复'
+    )
+    expect(getRuntimeTranscript).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deviceId: 'local-device',
+        taskId: 'stopped-task',
+        limit: 20,
+      })
+    )
+    expect(screen.getByTestId('cloud-todo-column-completed')).toHaveTextContent(
+      'Completed task Issue'
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('cloud-todo-column-completed')).not.toHaveTextContent(
+        'Archived task Issue'
+      )
+    )
+
+    await userEvent.click(screen.getByText('Stopped task Issue'))
+    expect(screen.getByTestId('cloud-todo-detail')).toHaveTextContent('Stopped task Issue')
+    expect(onOpenRuntimeTask).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByTestId('cloud-my-tasks-archive-completed'))
+    expect(screen.getByText('归档已完成任务？')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('cloud-my-tasks-archive-completed-confirm'))
+
+    await waitFor(() =>
+      expect(onArchiveRuntimeTask).toHaveBeenCalledWith(
+        expect.objectContaining({ deviceId: 'local-device', taskId: 'completed-task' }),
+        undefined
+      )
+    )
+    expect(workbenchServices.deliveryApi!.archiveLoopItem).toHaveBeenCalledWith('WEG-2')
+    expect(screen.getByTestId('cloud-todo-column-completed')).not.toHaveTextContent(
+      'Completed task Issue'
+    )
   })
 
   it('uses pointer dragging for TODO cards without starting a native system drag', async () => {

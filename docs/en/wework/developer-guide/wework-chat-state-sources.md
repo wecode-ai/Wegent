@@ -117,6 +117,16 @@ transport is rebuilt, recovery for a persisted Codex thread must call
 running state; code must not continue inferring them from pre-disconnect
 in-memory events.
 
+The provider transcript reader must not run concurrently with an active Codex
+turn. After a successful idle read of the latest transcript page, the executor
+persists that page's message snapshot scoped to the thread ID. A transcript
+response during execution merges that snapshot with pending user messages,
+settled messages, and active stream messages, deduplicating by message ID.
+This keeps historical assistant replies visible when a new turn starts after a
+WebView or executor rebuild. A thread ID change must clear both the completed
+message cache and transcript snapshot so messages cannot cross thread
+boundaries.
+
 When the first message carries a pending Goal seed, both the send entry point
 and pane initialization must write the seed status into
 `RuntimeTaskLifecycleStore` immediately. An asynchronous `runtime.goal.get`

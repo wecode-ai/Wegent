@@ -89,10 +89,12 @@ use super::{
     },
     runtime_handle_messages::{
         append_completed_transcript_messages, append_runtime_handle_message,
-        append_runtime_handle_user_message_presentation,
+        append_runtime_handle_user_message_presentation, append_unique_transcript_messages,
         bind_runtime_handle_user_message_presentation_to_turn, cached_messages,
         clear_completed_transcript_messages, clear_runtime_handle_messages,
-        completed_transcript_messages, set_runtime_handle_messages, user_message_presentations,
+        clear_transcript_snapshot_messages, completed_transcript_messages,
+        set_runtime_handle_messages, set_transcript_snapshot_messages,
+        transcript_snapshot_messages, user_message_presentations,
     },
     store::{runtime_work_dir, RuntimeWorkStore},
     transcript::{
