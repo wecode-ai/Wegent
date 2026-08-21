@@ -347,6 +347,7 @@ export function CloudTodoBoardCard({
               <ChangeRequestStatusIcon
                 snapshot={changeRequestSnapshot}
                 testId={`cloud-todo-card-change-request-${item.id}-${currentTaskBinding.id}`}
+                popoverAlign="left"
                 repairing={repairingChangeRequest}
                 onContinueRepair={
                   autoRepairStatus(changeRequestSnapshot.changeRequest) &&
