@@ -214,7 +214,9 @@ async function setExperimentalFeaturesEnabled(control, enabled) {
     (await control.command('getAttribute', toggleSelector, { value: 'aria-checked' })) !==
     String(enabled)
   ) {
-    await control.command('click', toggleSelector)
+    await control.command('clickWhenEnabled', toggleSelector, {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
     await waitForAttribute(
       control,
       toggleSelector,
