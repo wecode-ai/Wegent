@@ -1646,6 +1646,15 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
         ),
         post_processor="json",
     ),
+    "git_github_pull_requests_batch": LocalDeviceCommandDefinition(
+        command=(
+            "gh api --method GET "
+            "'repos/{owner}/{repo}/pulls?state=all&per_page=100' "
+            "--jq '[.[] | {number, html_url, title, state, draft, "
+            "head: {ref: .head.ref}, updated_at, merged_at}]'"
+        ),
+        post_processor="json",
+    ),
     "git_github_pull_request_merge_queue": LocalDeviceCommandDefinition(
         command=(
             "gh api graphql "
@@ -1654,10 +1663,21 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
         ),
         post_processor="json",
     ),
+    "git_github_pull_request_merge_queue_batch": LocalDeviceCommandDefinition(
+        command="gh api graphql",
+        post_processor="json",
+    ),
     "git_gitlab_merge_requests": LocalDeviceCommandDefinition(
         command=(
             "glab mr list --all --per-page 20 --order updated_at --sort desc "
             "--output json --source-branch"
+        ),
+        post_processor="json",
+    ),
+    "git_gitlab_merge_requests_batch": LocalDeviceCommandDefinition(
+        command=(
+            "glab mr list --all --per-page 100 --order updated_at --sort desc "
+            "--output json"
         ),
         post_processor="json",
     ),

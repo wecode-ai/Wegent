@@ -30,7 +30,14 @@ RUNTIME_TERMINAL_EVENT_TYPES = {
     ResponsesAPIStreamEvents.RESPONSE_COMPLETED.value: EventType.DONE,
     ResponsesAPIStreamEvents.RESPONSE_FAILED.value: EventType.ERROR,
     ResponsesAPIStreamEvents.RESPONSE_INCOMPLETE.value: EventType.CANCELLED,
+    ResponsesAPIStreamEvents.ERROR.value: EventType.ERROR,
 }
+
+
+def is_runtime_terminal_event_type(event_type: str) -> bool:
+    """Return whether a native Runtime event can settle a task turn."""
+
+    return event_type in RUNTIME_TERMINAL_EVENT_TYPES
 
 
 class LocalTaskResponsesHandler:
@@ -431,6 +438,10 @@ def runtime_terminal_event(
     internal_type = RUNTIME_TERMINAL_EVENT_TYPES.get(event_type)
     if internal_type is None:
         return None
+    if internal_type is EventType.DONE and "value" not in event_data:
+        return None
+    if event_type == ResponsesAPIStreamEvents.ERROR.value:
+        return None
     error = event_data.get("error")
     if internal_type is EventType.DONE:
         return ExecutionEvent(
@@ -438,6 +449,10 @@ def runtime_terminal_event(
             subtask_id=subtask_id,
             result={"value": event_data.get("value") or ""},
         )
+    if not isinstance(error, dict):
+        response = event_data.get("response")
+        if isinstance(response, dict):
+            error = response.get("error")
     return ExecutionEvent(
         type=internal_type.value,
         subtask_id=subtask_id,

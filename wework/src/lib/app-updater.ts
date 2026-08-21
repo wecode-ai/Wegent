@@ -18,9 +18,8 @@ interface PendingUpdate {
   version: string
   currentVersion: string
   body?: string
-  downloadAndInstall: (
-    onProgress: (progress: WeworkUpdateDownloadProgress) => void
-  ) => Promise<void>
+  download: (onProgress?: (progress: WeworkUpdateDownloadProgress) => void) => Promise<void>
+  install: () => Promise<void>
 }
 
 let pendingUpdate: PendingUpdate | null = null
@@ -54,24 +53,64 @@ export async function checkForWeworkUpdate(
       return null
     }
 
+    let downloaded = false
+    let downloadPromise: Promise<void> | null = null
+    let progress: WeworkUpdateDownloadProgress = {
+      downloadedBytes: 0,
+      totalBytes: null,
+    }
+    const progressListeners = new Set<(value: WeworkUpdateDownloadProgress) => void>()
+
+    const notifyProgress = () => {
+      for (const listener of progressListeners) {
+        listener(progress)
+      }
+    }
+
     pendingUpdate = {
       version: update.version,
       currentVersion: update.currentVersion,
       body: update.body,
-      downloadAndInstall: onProgress => {
-        let downloadedBytes = 0
-        let totalBytes: number | null = null
+      download: async onProgress => {
+        if (onProgress) {
+          progressListeners.add(onProgress)
+          onProgress(progress)
+        }
 
-        return update.downloadAndInstall(event => {
-          if (event.event === 'Started') {
-            totalBytes = event.data.contentLength ?? null
-          } else if (event.event === 'Progress') {
-            downloadedBytes += event.data.chunkLength
+        try {
+          if (downloaded) return
+          if (!downloadPromise) {
+            downloadPromise = update
+              .download(event => {
+                if (event.event === 'Started') {
+                  progress = {
+                    downloadedBytes: 0,
+                    totalBytes: event.data.contentLength ?? null,
+                  }
+                } else if (event.event === 'Progress') {
+                  progress = {
+                    ...progress,
+                    downloadedBytes: progress.downloadedBytes + event.data.chunkLength,
+                  }
+                } else {
+                  downloaded = true
+                }
+                notifyProgress()
+              })
+              .catch(error => {
+                downloadPromise = null
+                throw error
+              })
           }
-
-          onProgress({ downloadedBytes, totalBytes })
-        })
+          await downloadPromise
+          downloaded = true
+        } finally {
+          if (onProgress) {
+            progressListeners.delete(onProgress)
+          }
+        }
       },
+      install: () => update.install(),
     }
 
     return {
@@ -85,6 +124,20 @@ export async function checkForWeworkUpdate(
   }
 }
 
+export async function downloadPendingWeworkUpdate(
+  onProgress?: (progress: WeworkUpdateDownloadProgress) => void
+): Promise<void> {
+  if (!pendingUpdate) {
+    throw new Error('No pending Wework update is available.')
+  }
+
+  try {
+    await pendingUpdate.download(onProgress)
+  } catch (error) {
+    throw new Error(errorMessage(error), { cause: error })
+  }
+}
+
 export async function installPendingWeworkUpdate(
   onProgress: (progress: WeworkUpdateDownloadProgress) => void
 ): Promise<void> {
@@ -93,7 +146,8 @@ export async function installPendingWeworkUpdate(
   }
 
   try {
-    await pendingUpdate.downloadAndInstall(onProgress)
+    await pendingUpdate.download(onProgress)
+    await pendingUpdate.install()
     const { relaunch } = await import('@tauri-apps/plugin-process')
     await relaunch()
   } catch (error) {

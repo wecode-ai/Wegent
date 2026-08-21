@@ -877,7 +877,7 @@ export function useWorkbenchDataRefresh({
         request
       )
       runtimeWorkRef.current = updateRuntimeWorkTaskPinned(runtimeWorkRef.current, request)
-      dispatch({ type: 'runtime_task_pinned_updated', request })
+      dispatch({ type: 'runtime_task_pin_changed', ...request })
       return requestId
     },
     [dispatch]
@@ -898,7 +898,7 @@ export function useWorkbenchDataRefresh({
         rollbackRequest
       )
       runtimeWorkRef.current = updateRuntimeWorkTaskPinned(runtimeWorkRef.current, rollbackRequest)
-      dispatch({ type: 'runtime_task_pinned_updated', request: rollbackRequest })
+      dispatch({ type: 'runtime_task_pin_changed', ...rollbackRequest })
     },
     [dispatch]
   )
@@ -919,8 +919,15 @@ export function useWorkbenchDataRefresh({
 
   const refreshRuntimeTask = useCallback(
     async (address: RuntimeTaskAddress) => {
+      const device = devicesRef.current.find(item => item.device_id === address.deviceId)
+      const listCloudRuntimeWork =
+        device && (isCloudDevice(device) || isRemoteDevice(device))
+          ? cloudBackgroundApiRef.current?.listRuntimeWork
+          : undefined
       const runtimeWork = applyRuntimeTaskOverrides(
-        await executorClient.runtime.listRuntimeWork(),
+        listCloudRuntimeWork
+          ? await listCloudRuntimeWork()
+          : await executorClient.runtime.listRuntimeWork(),
         true
       )
       const task = findRuntimeTask(runtimeWork, address)

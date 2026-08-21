@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { RuntimeTaskSummary, RuntimeWorkListResponse } from '@/types/api'
+import { RuntimeTaskLifecycleStore } from '@/features/workbench/runtimeTaskLifecycle'
 import { runtimeMyWorkItems } from './runtimeMyWork'
 
 function task(overrides: Partial<RuntimeTaskSummary> = {}): RuntimeTaskSummary {
@@ -89,5 +90,27 @@ describe('runtimeMyWorkItems', () => {
       ['failed', 'pending', false],
       ['done', 'completed', false],
     ])
+  })
+
+  it('uses the shared lifecycle state that drives the sidebar running indicator', () => {
+    const work = runtimeWork([task({ running: false, status: 'done' })])
+    const address = {
+      deviceId: 'device-1',
+      taskId: 'task-1',
+      runtime: 'codex' as const,
+      workspacePath: '/tmp/project',
+    }
+    const lifecycleStore = new RuntimeTaskLifecycleStore('my-work-test')
+    lifecycleStore.syncRuntimeWork(work)
+    lifecycleStore.executorStarted(address)
+
+    const [item] = runtimeMyWorkItems(work, lifecycleStore.getSnapshot())
+
+    expect(item).toMatchObject({
+      id: 'task-1',
+      status: 'in_progress',
+      has_active_task: true,
+      execution_state: 'running',
+    })
   })
 })

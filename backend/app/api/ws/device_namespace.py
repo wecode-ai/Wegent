@@ -45,6 +45,11 @@ from app.api.ws.events import ServerEvents
 from app.api.ws.local_task_responses import (
     LocalTaskResponsesHandler,
     emit_response_api_event,
+    is_runtime_terminal_event_type,
+    is_terminal_event,
+    local_task_terminal_status,
+    runtime_subtask_id,
+    runtime_terminal_event,
 )
 from app.api.ws.wework_runtime_namespace import (
     PROJECT_CHAT_AGENT_CHUNK_EVENT,
@@ -91,6 +96,7 @@ from app.services.execution.dispatcher import ResponsesAPIEventParser
 from app.services.execution.emitters.status_updating import StatusUpdatingEmitter
 from app.services.execution.emitters.websocket import WebSocketResultEmitter
 from app.services.im.notification_dispatcher import im_notification_dispatcher
+from app.services.loop_item_events import publish_loop_item_changed
 from app.services.loop_item_executions.service import (
     loop_item_execution_service,
 )
@@ -624,6 +630,40 @@ def response_api_payload(*, data: dict[str, Any], device_id: str) -> dict[str, A
     return payload
 
 
+def _execution_item_version(db: Session, execution: object) -> int | None:
+    loop_item_id = getattr(execution, "loop_item_id", None)
+    if not isinstance(loop_item_id, str) or not loop_item_id:
+        return None
+    from app.models.delivery import LoopItem
+
+    item = db.get(LoopItem, loop_item_id)
+    return int(item.version) if item is not None else None
+
+
+def _publish_execution_item_change(
+    db: Session,
+    *,
+    execution: object,
+    previous_version: int | None,
+) -> None:
+    if previous_version is None:
+        return
+    loop_item_id = getattr(execution, "loop_item_id", None)
+    if not isinstance(loop_item_id, str) or not loop_item_id:
+        return
+    from app.models.delivery import LoopItem
+
+    item = db.get(LoopItem, loop_item_id, populate_existing=True)
+    if item is None or item.version == previous_version:
+        return
+    publish_loop_item_changed(
+        db,
+        item=item,
+        reason="runtime_execution_status",
+        actor_user_id=int(getattr(execution, "executor_owner_user_id", 0) or 0),
+    )
+
+
 def _project_chat_runtime_event_sync(
     device_id: str, event: dict[str, Any]
 ) -> dict[str, Any] | None:
@@ -660,13 +700,13 @@ def _project_chat_runtime_event_sync(
         # concurrent complete/fail/cancel cannot leave the run and activity
         # disagreeing with the execution. Streaming events remain ordinary
         # chat projections after the lease write-back.
-        has_execution = (
-            loop_item_execution_service.execution_for_runtime(
-                db,
-                runtime_device_id=device_id,
-                runtime_task_id=runtime_task_id,
-            )
-            is not None
+        execution = loop_item_execution_service.execution_for_runtime(
+            db,
+            runtime_device_id=device_id,
+            runtime_task_id=runtime_task_id,
+        )
+        previous_item_version = (
+            _execution_item_version(db, execution) if execution is not None else None
         )
         matched_execution = loop_item_execution_service.handle_runtime_event(
             db,
@@ -675,7 +715,7 @@ def _project_chat_runtime_event_sync(
             event_name=event_name,
             payload=payload,
         )
-        if has_execution and matched_execution is None:
+        if execution is not None and matched_execution is None:
             logger.info(
                 "[ProjectChat] Runtime event projection rejected by execution truth: "
                 "device_id=%s task_id=%s event=%s",
@@ -684,6 +724,12 @@ def _project_chat_runtime_event_sync(
                 event_name,
             )
             return None
+        if matched_execution is not None:
+            _publish_execution_item_change(
+                db,
+                execution=matched_execution,
+                previous_version=previous_item_version,
+            )
         projected = project_chat_service.project_runtime_event(
             db,
             device_id=device_id,
@@ -708,6 +754,16 @@ def _execution_runtime_event_sync(
 
     try:
         with get_db_session() as db:
+            execution = loop_item_execution_service.execution_for_runtime(
+                db,
+                runtime_device_id=device_id,
+                runtime_task_id=str(task_id),
+            )
+            previous_item_version = (
+                _execution_item_version(db, execution)
+                if execution is not None
+                else None
+            )
             matched = loop_item_execution_service.handle_runtime_event(
                 db,
                 device_id=device_id,
@@ -716,6 +772,11 @@ def _execution_runtime_event_sync(
                 payload=payload,
             )
             if matched is not None:
+                _publish_execution_item_change(
+                    db,
+                    execution=matched,
+                    previous_version=previous_item_version,
+                )
                 from app.tasks.robot_queue_tasks import publish_run_event
 
                 publish_run_event(device_id, str(task_id), event_name)
@@ -1362,6 +1423,15 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 device_id=payload.device_id,
             ),
             "sync global capabilities after device registration",
+        )
+        from app.tasks.robot_queue_tasks import reconcile_device_executions
+
+        self._schedule_background_task(
+            reconcile_device_executions(
+                user_id=int(user_id),
+                device_id=payload.device_id,
+            ),
+            "reconcile active executions after device registration",
         )
 
         logger.info(
@@ -2209,7 +2279,119 @@ class DeviceNamespace(socketio.AsyncNamespace):
             device_id=device_id,
             payload=payload["payload"],
         )
+        await self._notify_runtime_event(
+            user_id=user_id,
+            device_id=device_id,
+            payload=payload["payload"],
+        )
         return {"success": True}
+
+    async def _notify_runtime_event(
+        self,
+        *,
+        user_id: int,
+        device_id: str,
+        payload: dict[str, Any],
+    ) -> None:
+        """Best-effort IM delivery for one terminal native Runtime event."""
+
+        source = payload.get("source")
+        source_name = source.get("source") if isinstance(source, dict) else None
+        if source_name == "im":
+            return
+
+        local_task_id = str(payload.get("taskId") or "").strip()
+        event_type = str(payload.get("event_type") or "").strip()
+        if (
+            not local_task_id
+            or not event_type
+            or not is_runtime_terminal_event_type(event_type)
+        ):
+            return
+
+        event_data = payload.get("data")
+        event_data = event_data if isinstance(event_data, dict) else {}
+        subtask_id = runtime_subtask_id(payload, device_id, local_task_id)
+        event = runtime_terminal_event(
+            event_type=event_type,
+            event_data=event_data,
+            subtask_id=subtask_id,
+        ) or self._local_task_responses.execution_event(
+            event_type=event_type,
+            event_data=event_data,
+            subtask_id=subtask_id,
+            message_id=None,
+        )
+        if event is None or not is_terminal_event(event):
+            return
+
+        status = local_task_terminal_status(event)
+        result = event.result if isinstance(event.result, dict) else {}
+        content = str(result.get("value") or event.error or "")
+        if status == "COMPLETED" and not content.strip():
+            logger.info(
+                "[RuntimeTaskNotification] Skipped empty Runtime reply: "
+                "user_id=%s device_id=%s local_task_id=%s event_type=%s",
+                user_id,
+                device_id,
+                local_task_id,
+                event_type,
+            )
+            return
+
+        title = str(
+            payload.get("taskTitle")
+            or payload.get("task_title")
+            or event_data.get("title")
+            or local_task_id
+        ).strip()
+        try:
+            notification = (
+                await im_notification_dispatcher.send_runtime_task_update_for_user(
+                    user_id=user_id,
+                    address={
+                        "deviceId": device_id,
+                        "localTaskId": local_task_id,
+                    },
+                    title=title or local_task_id,
+                    status=status,
+                    content=content,
+                    source=str(source_name) if source_name else None,
+                )
+            )
+        except Exception:
+            logger.exception(
+                "[RuntimeTaskNotification] Runtime event IM delivery failed: "
+                "user_id=%s device_id=%s local_task_id=%s event_type=%s",
+                user_id,
+                device_id,
+                local_task_id,
+                event_type,
+            )
+            return
+
+        notified = int(notification.get("sent") or 0)
+        results = _summarize_runtime_notification_results(notification)
+        if results and notified <= 0:
+            logger.warning(
+                "[RuntimeTaskNotification] Runtime event was not delivered: "
+                "user_id=%s device_id=%s local_task_id=%s event_type=%s results=%s",
+                user_id,
+                device_id,
+                local_task_id,
+                event_type,
+                results,
+            )
+        else:
+            logger.info(
+                "[RuntimeTaskNotification] Runtime event dispatched: "
+                "user_id=%s device_id=%s local_task_id=%s event_type=%s sent=%s",
+                user_id,
+                device_id,
+                local_task_id,
+                event_type,
+                notified,
+            )
 
     async def _publish_task_completed_event(
         self,

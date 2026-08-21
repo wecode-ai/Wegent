@@ -4,7 +4,11 @@
 
 use std::{
     collections::HashMap,
+    net::TcpListener as StdTcpListener,
+    sync::mpsc,
     sync::{Mutex as StdMutex, OnceLock},
+    thread,
+    time::Duration,
 };
 
 use axum::{
@@ -18,7 +22,10 @@ use axum::{
     Json, Router,
 };
 use serde_json::{json, Value};
-use tokio::{net::TcpListener, sync::Mutex};
+use tokio::{
+    net::TcpListener,
+    sync::{oneshot, Mutex},
+};
 use uuid::Uuid;
 
 use crate::logging::log_executor_event;
@@ -53,7 +60,24 @@ static SPACE_MCP_START_LOCK: Mutex<()> = Mutex::const_new(());
 
 struct RunningSpaceMcpEndpoint {
     endpoint: SpaceMcpEndpoint,
-    server_task: tokio::task::JoinHandle<()>,
+    shutdown_tx: Option<oneshot::Sender<()>>,
+    server_task: Option<thread::JoinHandle<()>>,
+}
+
+impl RunningSpaceMcpEndpoint {
+    fn stop(mut self) {
+        if let Some(shutdown_tx) = self.shutdown_tx.take() {
+            let _ = shutdown_tx.send(());
+        }
+        if let Some(server_task) = self.server_task.take() {
+            if server_task.join().is_err() {
+                log_executor_event(
+                    "project-space MCP endpoint thread panicked",
+                    &[("url", self.endpoint.url)],
+                );
+            }
+        }
+    }
 }
 
 fn running_endpoint() -> &'static StdMutex<Option<RunningSpaceMcpEndpoint>> {
@@ -63,17 +87,25 @@ fn running_endpoint() -> &'static StdMutex<Option<RunningSpaceMcpEndpoint>> {
 
 pub(crate) async fn ensure_space_mcp_http_endpoint() -> Result<SpaceMcpEndpoint, String> {
     if let Some(endpoint) = active_endpoint() {
-        return Ok(endpoint);
+        if endpoint_is_reachable(&endpoint).await {
+            return Ok(endpoint);
+        }
+        discard_endpoint(&endpoint);
     }
     let _guard = SPACE_MCP_START_LOCK.lock().await;
     if let Some(endpoint) = active_endpoint() {
-        return Ok(endpoint);
+        if endpoint_is_reachable(&endpoint).await {
+            return Ok(endpoint);
+        }
+        discard_endpoint(&endpoint);
     }
 
     let runtime = TaskRuntime::from_env().map_err(|error| error.to_string())?;
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .await
+    let listener = StdTcpListener::bind("127.0.0.1:0")
         .map_err(|error| format!("failed to bind project-space MCP endpoint: {error}"))?;
+    listener
+        .set_nonblocking(true)
+        .map_err(|error| format!("failed to configure project-space MCP endpoint: {error}"))?;
     let address = listener
         .local_addr()
         .map_err(|error| format!("failed to read project-space MCP endpoint address: {error}"))?;
@@ -91,21 +123,62 @@ pub(crate) async fn ensure_space_mcp_http_endpoint() -> Result<SpaceMcpEndpoint,
         .route("/mcp", post(handle_mcp).delete(delete_mcp_session))
         .with_state(state);
     let server_endpoint = endpoint.clone();
-    let server_task = tokio::spawn(async move {
-        if let Err(error) = axum::serve(listener, app).await {
-            log_executor_event(
-                "project-space MCP endpoint stopped",
-                &[("url", server_endpoint.url), ("error", error.to_string())],
-            );
+    let (ready_tx, ready_rx) = mpsc::sync_channel(1);
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let server_task = thread::Builder::new()
+        .name("wework-space-mcp-http".to_owned())
+        .spawn(move || {
+            let runtime = match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(runtime) => runtime,
+                Err(error) => {
+                    let _ = ready_tx.send(Err(error.to_string()));
+                    return;
+                }
+            };
+            runtime.block_on(async move {
+                let listener = match TcpListener::from_std(listener) {
+                    Ok(listener) => listener,
+                    Err(error) => {
+                        let _ = ready_tx.send(Err(error.to_string()));
+                        return;
+                    }
+                };
+                let _ = ready_tx.send(Ok(()));
+                if let Err(error) = axum::serve(listener, app)
+                    .with_graceful_shutdown(async {
+                        let _ = shutdown_rx.await;
+                    })
+                    .await
+                {
+                    log_executor_event(
+                        "project-space MCP endpoint stopped",
+                        &[("url", server_endpoint.url), ("error", error.to_string())],
+                    );
+                }
+            });
+        })
+        .map_err(|error| format!("failed to start project-space MCP endpoint: {error}"))?;
+    let running = RunningSpaceMcpEndpoint {
+        endpoint: endpoint.clone(),
+        shutdown_tx: Some(shutdown_tx),
+        server_task: Some(server_task),
+    };
+    let readiness = match ready_rx.recv_timeout(Duration::from_secs(2)) {
+        Ok(result) => {
+            result.map_err(|error| format!("failed to start project-space MCP endpoint: {error}"))
         }
-    });
+        Err(error) => Err(format!("project-space MCP endpoint did not start: {error}")),
+    };
+    if let Err(error) = readiness {
+        running.stop();
+        return Err(error);
+    }
     *running_endpoint()
         .lock()
-        .map_err(|_| "project-space MCP endpoint state is poisoned".to_owned())? =
-        Some(RunningSpaceMcpEndpoint {
-            endpoint: endpoint.clone(),
-            server_task,
-        });
+        .map_err(|_| "project-space MCP endpoint state is poisoned".to_owned())? = Some(running);
     log_executor_event(
         "project-space MCP endpoint ready",
         &[("url", endpoint.url.clone())],
@@ -113,13 +186,49 @@ pub(crate) async fn ensure_space_mcp_http_endpoint() -> Result<SpaceMcpEndpoint,
     Ok(endpoint)
 }
 
+async fn endpoint_is_reachable(endpoint: &SpaceMcpEndpoint) -> bool {
+    let health_url = endpoint.url.trim_end_matches("/mcp").to_owned() + "/health";
+    reqwest::Client::new()
+        .get(health_url)
+        .bearer_auth(&endpoint.token)
+        .timeout(std::time::Duration::from_secs(1))
+        .send()
+        .await
+        .is_ok_and(|response| response.status().is_success())
+}
+
+fn discard_endpoint(endpoint: &SpaceMcpEndpoint) {
+    let discarded = if let Ok(mut running) = running_endpoint().lock() {
+        if running
+            .as_ref()
+            .is_some_and(|value| value.endpoint.url == endpoint.url)
+        {
+            running.take()
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    if let Some(discarded) = discarded {
+        discarded.stop();
+    }
+}
+
 fn active_endpoint() -> Option<SpaceMcpEndpoint> {
     let mut running = running_endpoint().lock().ok()?;
-    if running
-        .as_ref()
-        .is_some_and(|running| running.server_task.is_finished())
-    {
-        *running = None;
+    if running.as_ref().is_some_and(|running| {
+        running
+            .server_task
+            .as_ref()
+            .is_some_and(thread::JoinHandle::is_finished)
+    }) {
+        let finished = running.take();
+        drop(running);
+        if let Some(finished) = finished {
+            finished.stop();
+        }
+        return None;
     }
     running.as_ref().map(|running| running.endpoint.clone())
 }
@@ -280,6 +389,33 @@ mod tests {
 
         assert!(authorized(&headers, "expected"));
         assert!(!authorized(&headers, "other"));
+    }
+
+    #[test]
+    fn endpoint_stop_signals_shutdown_and_joins_the_server_thread() {
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let (stopped_tx, stopped_rx) = mpsc::sync_channel(1);
+        let server_task = thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            runtime.block_on(async {
+                let _ = shutdown_rx.await;
+                stopped_tx.send(()).unwrap();
+            });
+        });
+        RunningSpaceMcpEndpoint {
+            endpoint: SpaceMcpEndpoint {
+                url: "http://127.0.0.1:1/mcp".to_owned(),
+                token: "test".to_owned(),
+            },
+            shutdown_tx: Some(shutdown_tx),
+            server_task: Some(server_task),
+        }
+        .stop();
+
+        stopped_rx.recv_timeout(Duration::from_secs(1)).unwrap();
     }
 
     #[tokio::test]

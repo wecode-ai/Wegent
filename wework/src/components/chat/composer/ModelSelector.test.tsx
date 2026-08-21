@@ -77,6 +77,7 @@ const SAMPLE_MODEL: UnifiedModel = {
   type: 'runtime',
   provider: 'local',
   config: {
+    codexProviderId: 'openai',
     weworkModelKind: 'codex-official',
     ui: { family: 'codex-official', controls: ['speed'] },
   },
@@ -90,16 +91,6 @@ const SECOND_FAMILY_MODEL: UnifiedModel = {
   provider: 'local',
   config: {
     ui: { family: 'claude' },
-  },
-}
-
-const PROVIDER_MODEL: UnifiedModel = {
-  ...SAMPLE_MODEL,
-  config: {
-    ...SAMPLE_MODEL.config,
-    codexProviderId: 'wework-e2e',
-    weworkModelKind: 'codex-provider',
-    ui: { family: 'codex-provider:wework-e2e', controls: ['speed'] },
   },
 }
 
@@ -147,33 +138,15 @@ describe('ModelSelector desktop layout', () => {
     )
 
     expect(screen.getByTestId('model-selector-button')).toHaveClass('text-sm', 'font-normal')
+    expect(screen.getByTestId('model-selector-button')).toHaveAttribute(
+      'data-model-provider-id',
+      'openai'
+    )
     expect(screen.getByTestId('model-selector-width-measure')).toHaveClass(
       'left-0',
       'top-0',
       'text-sm',
       'font-normal'
-    )
-  })
-
-  test('exposes the selected model identity for deterministic automation', () => {
-    render(
-      <ModelSelector
-        models={[PROVIDER_MODEL]}
-        selectedModel={PROVIDER_MODEL}
-        selectedModelOptions={{}}
-        disabled={false}
-        onSelectModel={vi.fn()}
-        onSelectModelOption={vi.fn()}
-      />
-    )
-
-    expect(screen.getByTestId('model-selector-button')).toHaveAttribute(
-      'data-model-name',
-      PROVIDER_MODEL.name
-    )
-    expect(screen.getByTestId('model-selector-button')).toHaveAttribute(
-      'data-model-provider-id',
-      'wework-e2e'
     )
   })
 
@@ -219,7 +192,10 @@ describe('ModelSelector desktop layout', () => {
     fireEvent.click(screen.getByTestId('model-selector-button'))
     fireEvent.mouseEnter(await screen.findByTestId('model-control-menu-model'))
 
-    expect(await screen.findByTestId(`model-option-${SAMPLE_MODEL.name}`)).toBeInTheDocument()
+    expect(await screen.findByTestId(`model-option-${SAMPLE_MODEL.name}`)).toHaveAttribute(
+      'data-model-provider-id',
+      'openai'
+    )
     expect(screen.queryByTestId('model-selector-family-submenu')).not.toBeInTheDocument()
     expect(screen.queryByTestId('model-family-codex-official')).not.toBeInTheDocument()
   })

@@ -126,7 +126,7 @@ export function useWorkbenchProjectActions({
   clearRemoteProjectSyncRemoval,
   enqueueRemoteProjectStateMutation,
 }: UseWorkbenchProjectActionsOptions) {
-  const runtimeTaskPinMutationQueuesRef = useRef(new Map<string, Promise<void>>())
+  const runtimeTaskPinMutationTailsRef = useRef(new Map<string, Promise<void>>())
 
   const createProject = useCallback(
     async (data: CreateProjectRequest, options: ProjectMutationOptions = {}) => {
@@ -507,31 +507,29 @@ export function useWorkbenchProjectActions({
   )
 
   const setRuntimeTaskPinned = useCallback(
-    (data: RuntimeTaskPinRequest) => {
+    async (data: RuntimeTaskPinRequest) => {
       const key = `${data.deviceId}\0${data.threadId}`
-      const previousMutation = runtimeTaskPinMutationQueuesRef.current.get(key) ?? Promise.resolve()
+      const previousMutation = runtimeTaskPinMutationTailsRef.current.get(key) ?? Promise.resolve()
       const mutation = previousMutation
         .catch(() => undefined)
         .then(async () => {
           const requestId = updateLocalRuntimeTaskPinned(data)
           try {
-            const response = await executorClient.runtime.setRuntimeTaskPinned(data)
-            if (!response.accepted) {
-              throw new Error(response.error || 'Failed to update runtime task pin')
-            }
+            await executorClient.runtime.setRuntimeTaskPinned(data)
           } catch (error) {
             rollbackLocalRuntimeTaskPinned(data, requestId)
             throw error
           }
           await refreshWorkLists()
         })
-      const queuedMutation = mutation.finally(() => {
-        if (runtimeTaskPinMutationQueuesRef.current.get(key) === queuedMutation) {
-          runtimeTaskPinMutationQueuesRef.current.delete(key)
+      runtimeTaskPinMutationTailsRef.current.set(key, mutation)
+      try {
+        await mutation
+      } finally {
+        if (runtimeTaskPinMutationTailsRef.current.get(key) === mutation) {
+          runtimeTaskPinMutationTailsRef.current.delete(key)
         }
-      })
-      runtimeTaskPinMutationQueuesRef.current.set(key, queuedMutation)
-      return queuedMutation
+      }
     },
     [executorClient, refreshWorkLists, rollbackLocalRuntimeTaskPinned, updateLocalRuntimeTaskPinned]
   )

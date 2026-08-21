@@ -74,6 +74,11 @@ function isCloudModel(model: UnifiedModel): boolean {
   return model.provider !== 'local'
 }
 
+function codexProviderId(model: UnifiedModel | null): string | undefined {
+  const providerId = model?.config?.codexProviderId
+  return typeof providerId === 'string' ? providerId : undefined
+}
+
 export function ModelSelector({
   models,
   selectedModel,
@@ -364,10 +369,6 @@ export function ModelSelector({
   const buttonLabel = nextTurn
     ? t('workbench.next_turn_model', 'Next · {{model}}', { model: selectedButtonLabel })
     : selectedButtonLabel
-  const selectedModelProviderId =
-    typeof selectedModel?.config?.codexProviderId === 'string'
-      ? selectedModel.config.codexProviderId
-      : undefined
 
   const controlsAboveFamilies = useMemo(() => {
     const controls = selectedModel
@@ -586,6 +587,7 @@ export function ModelSelector({
           key={`${model.type}:${model.name}`}
           type="button"
           data-testid={`model-option-${model.name}`}
+          data-model-provider-id={codexProviderId(model)}
           aria-disabled={modelDisabled}
           title={disabledMessage}
           onClick={() => {
@@ -774,6 +776,7 @@ export function ModelSelector({
                         key={`${model.type}:${model.name}`}
                         type="button"
                         data-testid={`model-option-${model.name}`}
+                        data-model-provider-id={codexProviderId(model)}
                         aria-disabled={modelDisabled}
                         title={disabledMessage}
                         onClick={() => {
@@ -1066,8 +1069,6 @@ export function ModelSelector({
         disabled={disabled}
         isMobile={isMobile}
         label={buttonLabel}
-        modelName={selectedModel?.name}
-        modelProviderId={selectedModelProviderId}
         leadingIcon={
           fastModeState.enabled ? (
             <FastModeIcon
@@ -1084,6 +1085,7 @@ export function ModelSelector({
             : t('workbench.model_selector')
         }
         tooltipLabel={t('workbench.model_picker_title', '选择模型')}
+        modelProviderId={codexProviderId(selectedModel)}
         buttonClassName={buttonClassName}
         maxClosedWidth={maxClosedWidth}
         onToggle={() => {

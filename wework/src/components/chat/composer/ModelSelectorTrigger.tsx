@@ -21,13 +21,12 @@ interface ModelSelectorTriggerProps {
   disabled: boolean
   isMobile: boolean
   label: string
-  modelName?: string
-  modelProviderId?: string
   leadingIcon?: ReactNode
   highlightedLabel?: string
   shortcut?: string | null
   ariaLabel: string
   tooltipLabel: string
+  modelProviderId?: string
   buttonClassName?: string
   maxClosedWidth?: number
   onToggle: () => void
@@ -52,13 +51,12 @@ export function ModelSelectorTrigger({
   disabled,
   isMobile,
   label,
-  modelName,
-  modelProviderId,
   leadingIcon,
   highlightedLabel,
   shortcut,
   ariaLabel,
   tooltipLabel,
+  modelProviderId,
   buttonClassName,
   maxClosedWidth = CLOSED_MAX_WIDTH,
   onToggle,
@@ -116,7 +114,6 @@ export function ModelSelectorTrigger({
         ref={buttonRef}
         type="button"
         data-testid="model-selector-button"
-        data-model-name={modelName}
         data-model-provider-id={modelProviderId}
         onClick={onToggle}
         onPointerEnter={() => {
