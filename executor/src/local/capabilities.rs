@@ -52,15 +52,20 @@ fn remove_toml_keys(item: &mut Item, keys: &BTreeSet<String>) -> bool {
         let Some(table) = item.as_inline_table_mut() else {
             return false;
         };
-        return keys
-            .iter()
-            .fold(false, |changed, key| table.remove(key).is_some() || changed);
+        let mut changed = false;
+        for key in keys {
+            changed |= table.remove(key).is_some();
+        }
+        return changed;
     }
     let Some(table) = item.as_table_mut() else {
         return false;
     };
-    keys.iter()
-        .fold(false, |changed, key| table.remove(key).is_some() || changed)
+    let mut changed = false;
+    for key in keys {
+        changed |= table.remove(key).is_some();
+    }
+    changed
 }
 
 #[derive(Debug, Error)]
