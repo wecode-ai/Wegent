@@ -33,7 +33,6 @@ const RUNTIME_TASK_LIFECYCLE_READ_METHODS = new Set<PropertyKey>([
   'getSnapshot',
   'getCurrentTask',
   'getTask',
-  'getCurrentTask',
   'selectTask',
 ])
 
@@ -74,10 +73,6 @@ export class RuntimeTaskLifecycleStore {
     if (!address) return null
     const canonicalAddress = this.canonicalizeAddress(address)
     return this.machines.get(getRuntimeTaskLifecycleKey(canonicalAddress))?.getSnapshot() ?? null
-  }
-
-  getCurrentTask(): RuntimeTaskLifecycleSnapshot | null {
-    return this.currentTaskKey ? (this.snapshot.tasks.get(this.currentTaskKey) ?? null) : null
   }
 
   selectTask(
