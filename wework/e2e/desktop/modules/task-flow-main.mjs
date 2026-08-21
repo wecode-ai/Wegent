@@ -936,6 +936,7 @@ async function main() {
     } else {
       executorBinary = await buildExecutor()
     }
+    desktopScenario?.setExecutorBinary?.(executorBinary)
     const desktopAppPromise = prebuiltDesktopApp
       ? Promise.resolve(prebuiltDesktopApp)
       : buildDesktopApp(

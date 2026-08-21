@@ -870,9 +870,15 @@ class DesktopE2EServer {
       rejectDelivery = reject
     })
     const result = new Promise((resolvePromise, reject) => {
-      this.commandResults.set(id, { clientId, resolve: resolvePromise, reject })
+      this.commandResults.set(id, {
+        clientId,
+        resolve: resolvePromise,
+        reject,
+        resolveDelivery,
+        started: false,
+      })
     })
-    this.commandQueue.push({ clientId, command, rejectDelivery, resolveDelivery })
+    this.commandQueue.push({ clientId, command, rejectDelivery })
     this.deliverQueuedControlCommand(clientId)
     try {
       await withTimeout(
@@ -903,13 +909,12 @@ class DesktopE2EServer {
       clearTimeout(waiter.timeout)
       this.controlCommandWaiters.delete(clientId)
     }
-    const [{ command, resolveDelivery }] = this.commandQueue.splice(commandIndex, 1)
+    const [{ command }] = this.commandQueue.splice(commandIndex, 1)
     this.commandHistory.push({
       ...command,
       clientId,
       deliveredAt: new Date().toISOString(),
     })
-    resolveDelivery()
     json(targetResponse, 200, command)
     return true
   }
@@ -1514,6 +1519,27 @@ class DesktopE2EServer {
         response.writeHead(204)
         response.end()
       }, 50)
+      return true
+    }
+
+    if (request.method === 'POST' && url.pathname === '/started') {
+      const started = await readRequestBody(request)
+      const pending = this.commandResults.get(started.id)
+      if (!pending) {
+        json(response, 404, { error: `Unknown command ${started.id}` })
+        return true
+      }
+      if (started.clientId !== pending.clientId) {
+        json(response, 409, {
+          error: `Command ${started.id} belongs to a different desktop control client`,
+        })
+        return true
+      }
+      if (!pending.started) {
+        pending.started = true
+        pending.resolveDelivery()
+      }
+      json(response, 200, { ok: true })
       return true
     }
 
