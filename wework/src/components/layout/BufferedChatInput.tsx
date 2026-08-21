@@ -110,13 +110,13 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   )
 
   const scheduleDraftFlush = useCallback(
-    (nextDraft: string) => {
+    (nextDraft: string, reason = 'debounce') => {
       cancelPendingFlush()
       pendingChangeRef.current = onChange
       flushTimeoutRef.current = window.setTimeout(() => {
         flushTimeoutRef.current = null
         recordComposerDiagnostic('draft-flush', {
-          reason: 'debounce',
+          reason,
           draftLength: nextDraft.length,
         })
         onChange(nextDraft)
@@ -206,9 +206,10 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   }, [cancelPendingFlush, cancelPendingFlushFrame, onParentCompositionStart])
   const handleCompositionEnd = useCallback(() => {
     isComposingRef.current = false
-    flushDraftNextFrame('composition-end')
+    cancelPendingFlushFrame()
+    scheduleDraftFlush(draftRef.current, 'composition-end-debounce')
     onParentCompositionEnd?.()
-  }, [flushDraftNextFrame, onParentCompositionEnd])
+  }, [cancelPendingFlushFrame, onParentCompositionEnd, scheduleDraftFlush])
 
   const handleSubmit = useCallback(
     (valueOverride?: string, options?: ChatSubmitOptions) => {

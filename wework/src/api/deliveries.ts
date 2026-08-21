@@ -321,6 +321,11 @@ export interface CloudProject {
     auto_retry_on_failure: boolean
     max_retry_count: number
   }
+  pull_request_automation?: {
+    enabled: boolean
+    statuses: PullRequestAutoRepairStatus[]
+    prompt: string
+  }
   workflow_definition?: ProjectWorkflowDefinition
   created_by_user_id: number
   current_user_id?: number
@@ -337,6 +342,13 @@ export interface CloudProject {
     [key: string]: unknown
   }
 }
+
+export type PullRequestAutoRepairStatus =
+  | 'checks_failed'
+  | 'merge_conflict'
+  | 'merge_queue_failed'
+  | 'merge_queue_timed_out'
+  | 'merge_queue_conflicting'
 
 export interface CloudTaskContext {
   id: string
@@ -714,6 +726,7 @@ export function createDeliveryApi(client: HttpClient) {
         visibility?: 'private' | 'public'
         card_display?: CloudProject['card_display']
         board_config?: CloudProject['board_config']
+        pull_request_automation?: CloudProject['pull_request_automation']
         workflow_definition?: CloudProject['workflow_definition']
         provider_config?: {
           repository?: string
