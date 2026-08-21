@@ -3266,27 +3266,28 @@ mod tests {
         let captured_for_server = captured.clone();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
-        let app = axum::Router::new().route(
-            "/api/v1/cloud-projects/{project_id}/external-references",
-            axum::routing::post(
-                move |axum::extract::State(state): axum::extract::State<
-                    std::sync::Arc<std::sync::Mutex<Option<serde_json::Value>>>,
-                >,
-                      axum::Json(body): axum::Json<serde_json::Value>| async move {
-                    *state.lock().unwrap() = Some(body);
-                    axum::Json(serde_json::json!({
-                        "binding_id": "binding-1",
-                        "provider": "gitlab",
-                        "opaque_ref": "owner/repo!8",
-                        "task_id": "issue-7",
-                        "issue_id": "issue-7",
-                        "workflow_node_id": "wait-1",
-                        "compensated_event_count": 0,
-                    }))
-                },
-            ),
-        )
-        .with_state(captured_for_server);
+        let app = axum::Router::new()
+            .route(
+                "/api/v1/cloud-projects/{project_id}/external-references",
+                axum::routing::post(
+                    move |axum::extract::State(state): axum::extract::State<
+                        std::sync::Arc<std::sync::Mutex<Option<serde_json::Value>>>,
+                    >,
+                          axum::Json(body): axum::Json<serde_json::Value>| async move {
+                        *state.lock().unwrap() = Some(body);
+                        axum::Json(serde_json::json!({
+                            "binding_id": "binding-1",
+                            "provider": "gitlab",
+                            "opaque_ref": "owner/repo!8",
+                            "task_id": "issue-7",
+                            "issue_id": "issue-7",
+                            "workflow_node_id": "wait-1",
+                            "compensated_event_count": 0,
+                        }))
+                    },
+                ),
+            )
+            .with_state(captured_for_server);
         tokio::spawn(async move {
             let _ = axum::serve(listener, app).await;
         });
