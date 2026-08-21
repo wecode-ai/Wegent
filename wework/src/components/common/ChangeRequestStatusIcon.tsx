@@ -44,11 +44,15 @@ export function ChangeRequestStatusIcon({
   testId,
   repairing = false,
   onContinueRepair,
+  className,
+  popoverAlign = 'right',
 }: {
   snapshot: TaskChangeRequestSnapshot | null
   testId: string
   repairing?: boolean
   onContinueRepair?: () => Promise<void> | void
+  className?: string
+  popoverAlign?: 'left' | 'right'
 }) {
   const { t } = useTranslation('common')
   const [open, setOpen] = useState(false)
@@ -61,7 +65,10 @@ export function ChangeRequestStatusIcon({
   const prefix = changeRequest.provider === 'gitlab' ? '!' : '#'
 
   return (
-    <span className="relative inline-flex shrink-0" onClick={event => event.stopPropagation()}>
+    <span
+      className={cn('relative inline-flex shrink-0', className)}
+      onClick={event => event.stopPropagation()}
+    >
       <Tooltip label={`${prefix}${changeRequest.number} · ${label}`}>
         <button
           type="button"
@@ -77,7 +84,10 @@ export function ChangeRequestStatusIcon({
       {open ? (
         <span
           data-testid={`${testId}-popover`}
-          className="absolute right-0 top-7 z-50 w-64 rounded-xl border border-border bg-popover p-3 text-left shadow-lg"
+          className={cn(
+            'absolute top-7 z-50 w-64 rounded-xl border border-border bg-popover p-3 text-left shadow-lg',
+            popoverAlign === 'left' ? 'left-0' : 'right-0'
+          )}
         >
           <span className="block truncate text-sm font-medium text-text-primary">
             {prefix}
