@@ -1567,6 +1567,38 @@ def _ran_execution(
     return execution
 
 
+def _continue_robot(
+    test_db: Session,
+    *,
+    project: CloudProject,
+    issue: LoopItem,
+    user_id: int,
+    model: str | None = "dpskv4f",
+) -> ProjectChatAgent:
+    """Configure the wait node's robot with a codex-runtime model."""
+
+    metadata_json: dict[str, object] = {
+        "runtime": "codex",
+        "execution_environment": "local",
+    }
+    if model is not None:
+        metadata_json["model"] = model
+    agent = ProjectChatAgent(
+        cloud_project_id=project.id,
+        loop_item_id=issue.id,
+        title="Continue robot",
+        name="Continue robot",
+        description="",
+        created_by_user_id=user_id,
+        status="active",
+        metadata_json=metadata_json,
+    )
+    test_db.add(agent)
+    test_db.flush()
+    _set_wait_agent(issue, agent)
+    return agent
+
+
 def test_continue_round_sends_prompt_into_current_task(
     test_db: Session,
     workflow_project: CloudProject,
@@ -1575,6 +1607,12 @@ def test_continue_round_sends_prompt_into_current_task(
 ) -> None:
     issue = _issue(test_db, workflow_project, test_user.id)
     _set_wait_rules(issue, [_continue_rule()])
+    _continue_robot(
+        test_db,
+        project=workflow_project,
+        issue=issue,
+        user_id=test_user.id,
+    )
     run = ProjectAutomationRun(
         cloud_project_id=workflow_project.id,
         parent_id="rule-continue",
@@ -1627,6 +1665,8 @@ def test_continue_round_sends_prompt_into_current_task(
     assert request.address.device_id == "device-1"
     assert request.address.local_task_id == "task-1"
     assert request.message == "CI failed, please fix it"
+    assert request.model_selection.model_name == "dpskv4f"
+    assert request.model_selection.model_type == "runtime"
 
     test_db.refresh(issue)
     wait_node = next(
@@ -1649,6 +1689,125 @@ def test_continue_round_sends_prompt_into_current_task(
         .count()
         == 1
     )
+
+
+def test_continue_round_without_robot_records_error(
+    test_db: Session,
+    workflow_project: CloudProject,
+    test_user: User,
+) -> None:
+    issue = _issue(test_db, workflow_project, test_user.id)
+    _set_wait_rules(issue, [_continue_rule()])
+    run = ProjectAutomationRun(
+        cloud_project_id=workflow_project.id,
+        parent_id="rule-continue",
+        loop_item_id=issue.id,
+        task_id=issue.id,
+        task_title=issue.title,
+        assignee_agent_id="",
+        source="manual",
+        status="succeeded",
+        created_by_user_id=test_user.id,
+    )
+    test_db.add(run)
+    test_db.flush()
+    _ran_execution(
+        test_db,
+        issue=issue,
+        project=workflow_project,
+        user_id=test_user.id,
+        run_id=str(run.id),
+    )
+    test_db.commit()
+    binding = _binding(
+        test_db,
+        project=workflow_project,
+        issue=issue,
+        user_id=test_user.id,
+        opaque_ref="acme/app!7",
+    )
+    test_db.commit()
+
+    accepted = external_event_evaluation_service.continue_round(
+        test_db, binding=binding, instruction="CI failed, please fix it"
+    )
+    test_db.commit()
+
+    assert accepted is False
+    test_db.refresh(issue)
+    wait_node = next(
+        node
+        for node in issue.metadata_json["workflow"]["nodes"]
+        if node["id"] == "wait-1"
+    )
+    assert (
+        wait_node.get("continue_error")
+        == "No active robot is configured on the wait node for continue"
+    )
+    assert wait_node.get("wait_round", 0) == 0
+
+
+def test_continue_round_with_robot_without_model_records_error(
+    test_db: Session,
+    workflow_project: CloudProject,
+    test_user: User,
+) -> None:
+    issue = _issue(test_db, workflow_project, test_user.id)
+    _set_wait_rules(issue, [_continue_rule()])
+    _continue_robot(
+        test_db,
+        project=workflow_project,
+        issue=issue,
+        user_id=test_user.id,
+        model=None,
+    )
+    run = ProjectAutomationRun(
+        cloud_project_id=workflow_project.id,
+        parent_id="rule-continue",
+        loop_item_id=issue.id,
+        task_id=issue.id,
+        task_title=issue.title,
+        assignee_agent_id="",
+        source="manual",
+        status="succeeded",
+        created_by_user_id=test_user.id,
+    )
+    test_db.add(run)
+    test_db.flush()
+    _ran_execution(
+        test_db,
+        issue=issue,
+        project=workflow_project,
+        user_id=test_user.id,
+        run_id=str(run.id),
+    )
+    test_db.commit()
+    binding = _binding(
+        test_db,
+        project=workflow_project,
+        issue=issue,
+        user_id=test_user.id,
+        opaque_ref="acme/app!7",
+    )
+    test_db.commit()
+
+    accepted = external_event_evaluation_service.continue_round(
+        test_db, binding=binding, instruction="CI failed, please fix it"
+    )
+    test_db.commit()
+
+    assert accepted is False
+    test_db.refresh(issue)
+    wait_node = next(
+        node
+        for node in issue.metadata_json["workflow"]["nodes"]
+        if node["id"] == "wait-1"
+    )
+    assert (
+        wait_node.get("continue_error")
+        == "The wait node robot has no model configured for continue"
+    )
+    assert wait_node.get("wait_round", 0) == 0
 
 
 def test_continue_rule_event_enqueues_worker_round(
@@ -1738,6 +1897,12 @@ def test_continue_round_records_error_when_device_unreachable(
 ) -> None:
     issue = _issue(test_db, workflow_project, test_user.id)
     _set_wait_rules(issue, [_continue_rule()])
+    _continue_robot(
+        test_db,
+        project=workflow_project,
+        issue=issue,
+        user_id=test_user.id,
+    )
     run = ProjectAutomationRun(
         cloud_project_id=workflow_project.id,
         parent_id="rule-continue",
@@ -1787,5 +1952,5 @@ def test_continue_round_records_error_when_device_unreachable(
         for node in issue.metadata_json["workflow"]["nodes"]
         if node["id"] == "wait-1"
     )
-    assert wait_node.get("continue_error") == "Device is not reachable"
+    assert wait_node.get("continue_error") == "Continue send failed: device offline"
     assert wait_node.get("wait_round", 0) == 0

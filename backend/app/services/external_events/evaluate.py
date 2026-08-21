@@ -20,7 +20,11 @@ from sqlalchemy.orm import Session
 from app.models.delivery import ExternalEventBinding, LoopItem, ProjectAutomationRun
 from app.models.loop_item_execution import LoopItemExecution
 from app.schemas.issue_workflow import WaitEventRule, WorkflowNodeInstance
-from app.schemas.runtime_work import RuntimeSendRequest, RuntimeTaskAddress
+from app.schemas.runtime_work import (
+    RuntimeModelSelection,
+    RuntimeSendRequest,
+    RuntimeTaskAddress,
+)
 from app.services.external_events.adapters import (
     NormalizedExternalEvent,
     event_type_policy,
@@ -334,9 +338,11 @@ class ExternalEventEvaluationService:
         Runs in the worker context where no event loop is active. A continue
         round does not create a new automation run or execution: the executor
         appends the prompt to the runtime task that actually ran most recently
-        for this issue. When the target cannot be resolved or the device is
-        unreachable, the wait node records a visible error and the request is
-        not silently dropped.
+        for this issue. The send is built from the robot configured on the wait
+        node itself (its model is used to synthesize the runtime execution
+        request), so a continue round never inherits a default task-mode bot.
+        When the target or the robot cannot be resolved, the wait node records
+        a visible error and the request is not silently dropped.
         """
 
         issue, node = self._issue_and_node(db, binding)
@@ -348,9 +354,36 @@ class ExternalEventEvaluationService:
                 db, issue=issue, node=node, error="No runnable task for continue"
             )
             return False
+        agent = self._wait_node_agent(
+            db,
+            cloud_project_id=str(binding.cloud_project_id),
+            node=node,
+        )
+        if agent is None:
+            self._record_continue_error(
+                db,
+                issue=issue,
+                node=node,
+                error="No active robot is configured on the wait node for continue",
+            )
+            return False
+        model_selection = _continue_model_selection(agent)
+        if model_selection is None:
+            self._record_continue_error(
+                db,
+                issue=issue,
+                node=node,
+                error="The wait node robot has no model configured for continue",
+            )
+            return False
         try:
-            self._send_continue_message(db, target=target, message=instruction)
-        except Exception:
+            self._send_continue_message(
+                db,
+                target=target,
+                message=instruction,
+                model_selection=model_selection,
+            )
+        except Exception as exc:
             logger.exception(
                 "[ExternalEvent] Continue send failed binding=%s task=%s",
                 binding.id,
@@ -360,7 +393,7 @@ class ExternalEventEvaluationService:
                 db,
                 issue=issue,
                 node=node,
-                error="Device is not reachable",
+                error=f"Continue send failed: {exc}"[:500],
             )
             return False
         self._bump_round(db, issue=issue, node=node)
@@ -400,13 +433,18 @@ class ExternalEventEvaluationService:
         *,
         target: tuple[RuntimeTaskAddress, int],
         message: str,
+        model_selection: RuntimeModelSelection,
     ) -> None:
         """Dispatch one prompt into the target runtime task conversation."""
 
         from app.services import runtime_work_service
 
         address, user_id = target
-        request = RuntimeSendRequest(address=address, message=message)
+        request = RuntimeSendRequest(
+            address=address,
+            message=message,
+            model_selection=model_selection,
+        )
         asyncio.run(
             runtime_work_service.send_runtime_message(
                 db=db,
@@ -559,7 +597,11 @@ class ExternalEventEvaluationService:
             return
         issue_id = self._metadata(binding).get("issue_item_id")
         issue = db.get(LoopItem, issue_id) if issue_id else item
-        agent = self._wait_node_agent(db, run=run, node=node)
+        agent = self._wait_node_agent(
+            db,
+            cloud_project_id=str(run.cloud_project_id),
+            node=node,
+        )
         if agent is None:
             logger.warning(
                 "External event rerun skipped: wait node has no active robot "
@@ -694,14 +736,15 @@ class ExternalEventEvaluationService:
     def _wait_node_agent(
         db: Session,
         *,
-        run: ProjectAutomationRun,
+        cloud_project_id: str,
         node: WorkflowNodeInstance,
     ):
         """Resolve the robot that owns wait-node repair rounds.
 
-        Rerun rounds run on the robot configured on the wait node itself. The
-        upstream stage that registered the binding is irrelevant: a rerun is
-        scoped to the wait gate, not to whichever robot happened to reach it.
+        Rerun and continue rounds both run on the robot configured on the wait
+        node itself. The upstream stage that registered the binding is
+        irrelevant: a repair round is scoped to the wait gate, not to whichever
+        robot happened to reach it.
         """
 
         from app.models.delivery import ProjectChatAgent
@@ -711,7 +754,7 @@ class ExternalEventEvaluationService:
         if (
             agent is None
             or agent.status != "active"
-            or str(agent.cloud_project_id) != str(run.cloud_project_id)
+            or str(agent.cloud_project_id) != cloud_project_id
         ):
             return None
         return agent
@@ -890,6 +933,28 @@ class ExternalEventEvaluationService:
             occurred_at=None,
             detail=value.get("detail") if isinstance(value.get("detail"), dict) else {},
         )
+
+
+def _continue_model_selection(agent: Any) -> RuntimeModelSelection | None:
+    """Carry the wait-node robot's model into a runtime continue send.
+
+    Codex-runtime robots use the "runtime" model type so the executor request
+    is synthesized from the robot's model CRD instead of the default task-mode
+    team, which may have no model of its own.
+    """
+
+    from app.services.project_chat.service import bot_config
+
+    config = bot_config(agent)
+    model = config.get("model")
+    if not isinstance(model, str) or not model.strip():
+        return None
+    runtime = str(config.get("runtime") or "codex")
+    model_type = "runtime" if runtime == "codex" else None
+    return RuntimeModelSelection(
+        model_name=model.strip(),
+        model_type=model_type,
+    )
 
 
 external_event_evaluation_service = ExternalEventEvaluationService()
