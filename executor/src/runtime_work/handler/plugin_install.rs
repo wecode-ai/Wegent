@@ -363,17 +363,17 @@ fn files_equal(left: &Path, right: &Path) -> Result<bool, String> {
     {
         return Ok(false);
     }
-    let mut left_reader = BufReader::new(left_file);
-    let mut right_reader = BufReader::new(right_file);
+    readers_equal(left_file, right_file)
+}
+
+fn readers_equal(left: impl Read, right: impl Read) -> Result<bool, String> {
+    let mut left_reader = BufReader::new(left);
+    let mut right_reader = BufReader::new(right);
     let mut left_buffer = [0_u8; 16 * 1024];
     let mut right_buffer = [0_u8; 16 * 1024];
     loop {
-        let left_read = left_reader
-            .read(&mut left_buffer)
-            .map_err(|error| format!("failed to read plugin source file: {error}"))?;
-        let right_read = right_reader
-            .read(&mut right_buffer)
-            .map_err(|error| format!("failed to read plugin cache file: {error}"))?;
+        let left_read = fill_read_buffer(&mut left_reader, &mut left_buffer, "source")?;
+        let right_read = fill_read_buffer(&mut right_reader, &mut right_buffer, "cache")?;
         if left_read != right_read || left_buffer[..left_read] != right_buffer[..right_read] {
             return Ok(false);
         }
@@ -383,9 +383,57 @@ fn files_equal(left: &Path, right: &Path) -> Result<bool, String> {
     }
 }
 
+fn fill_read_buffer(
+    reader: &mut impl Read,
+    buffer: &mut [u8],
+    file_kind: &str,
+) -> Result<usize, String> {
+    let mut filled = 0;
+    while filled < buffer.len() {
+        match reader.read(&mut buffer[filled..]) {
+            Ok(0) => break,
+            Ok(count) => filled += count,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => {
+                return Err(format!("failed to read plugin {file_kind} file: {error}"));
+            }
+        }
+    }
+    Ok(filled)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct ChunkedReader {
+        bytes: Vec<u8>,
+        offset: usize,
+        chunk_size: usize,
+    }
+
+    impl Read for ChunkedReader {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            if self.offset == self.bytes.len() {
+                return Ok(0);
+            }
+            let count = self
+                .chunk_size
+                .min(buffer.len())
+                .min(self.bytes.len() - self.offset);
+            buffer[..count].copy_from_slice(&self.bytes[self.offset..self.offset + count]);
+            self.offset += count;
+            Ok(count)
+        }
+    }
+
+    fn chunked_reader(content: &str, chunk_size: usize) -> ChunkedReader {
+        ChunkedReader {
+            bytes: content.as_bytes().to_vec(),
+            offset: 0,
+            chunk_size,
+        }
+    }
 
     fn write_plugin_fixture(root: &Path, content: &str) {
         fs::create_dir_all(root.join(".codex-plugin")).unwrap();
@@ -410,6 +458,20 @@ mod tests {
         assert!(source_files_match_cache(&source, &cache).unwrap());
         fs::write(cache.join("skills/example/SKILL.md"), "stale").unwrap();
         assert!(!source_files_match_cache(&source, &cache).unwrap());
+    }
+
+    #[test]
+    fn reader_comparison_accumulates_short_reads_before_comparing() {
+        assert!(readers_equal(
+            chunked_reader("identical content", 1),
+            chunked_reader("identical content", 7),
+        )
+        .unwrap());
+        assert!(!readers_equal(
+            chunked_reader("identical content", 1),
+            chunked_reader("identical contenx", 7),
+        )
+        .unwrap());
     }
 
     #[test]
