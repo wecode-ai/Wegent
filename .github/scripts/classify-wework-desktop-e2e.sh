@@ -25,6 +25,7 @@ core_segments=(
   local-file-preview
   local-harness
   embedded-browser
+  browser-toolbar-actions
 )
 plugin_segments=(
   plugin-lifecycle
@@ -77,7 +78,7 @@ cloud_shards=(
 core_shards=(
   rendering-extensions,resilience,runtime-task-queue
   project-ai-settings,model-routing,window-lifecycle
-  core-task-flow,embedded-browser,automation-lifecycle,priority-filter,temporary-chat
+  core-task-flow,embedded-browser,browser-toolbar-actions,automation-lifecycle,priority-filter,temporary-chat
   claude-runtime,workspace-attachments,local-harness,supervisor-lifecycle,codex-notification-isolation,local-file-preview
   conversation-state,goal-lifecycle,workspace-tabs,project-automation,permission-modes
 )
@@ -162,6 +163,7 @@ validate_cloud_shards
 
 declare -A selected=()
 desktop_runner_changed=false
+macos_inspector_e2e=false
 
 select_target() {
   selected["$1"]=true
@@ -178,6 +180,7 @@ select_all_desktop_suites() {
   select_target "core:all"
   select_target "plugins:all"
   select_target "cloud:all"
+  macos_inspector_e2e=true
 }
 
 classify_wework_path() {
@@ -376,8 +379,11 @@ classify_wework_path() {
       wework/src/components/layout/workspace-panels/WorkspaceBrowserPanel* | \
       wework/src/components/layout/workspace-panels/BrowserDeviceToolbar* | \
       wework/src/components/layout/workspace-panels/browser-find/* | \
-      wework/e2e/desktop/scenarios/embedded-browser-agent.scenario.mjs)
+      wework/e2e/desktop/scenarios/embedded-browser-agent.scenario.mjs | \
+      wework/e2e/desktop/scenarios/embedded-browser-toolbar-actions.scenario.mjs)
       select_target "core:embedded-browser"
+      select_target "core:browser-toolbar-actions"
+      macos_inspector_e2e=true
       return
       ;;
 
@@ -636,4 +642,5 @@ output_file="${GITHUB_OUTPUT:-/dev/stdout}"
   printf 'wework_desktop_cloud_e2e_matrix=%s\n' "$cloud_matrix_json"
   printf 'wework_desktop_other_e2e=%s\n' "$run_other"
   printf 'wework_desktop_other_e2e_matrix=%s\n' "$other_matrix_json"
+  printf 'wework_desktop_macos_inspector_e2e=%s\n' "$macos_inspector_e2e"
 } >> "$output_file"

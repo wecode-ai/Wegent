@@ -1148,6 +1148,7 @@
     "environment_change_request_unavailable_gitlab": "Install GitLab CLI (glab) to query merge request status",
     "environment_change_request_unauthenticated_gitlab": "Sign in with GitLab CLI (glab auth login) to query status",
     "environment_change_request_error_gitlab": "GitLab merge request status is temporarily unavailable",
+    "change_request_status_draft": "Draft",
     "change_request_status_open": "Awaiting action",
     "change_request_status_checks_pending": "Checks pending",
     "change_request_status_checks_passed": "Checks passed, awaiting merge",

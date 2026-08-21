@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   closeTab: vi.fn(),
   list: vi.fn(),
   listModels: vi.fn(),
+  modelSelectionReady: true,
   openTab: vi.fn(),
   register: vi.fn(),
   resolveLaunch: vi.fn(),
@@ -78,7 +79,10 @@ vi.mock('@/features/workbench/useWorkbench', () => {
   }
   return {
     useWorkbench: () => ({
-      projectChat: { models: mocks.projectModels },
+      projectChat: {
+        models: mocks.projectModels,
+        isModelSelectionReady: mocks.modelSelectionReady,
+      },
       services,
     }),
   }
@@ -104,7 +108,6 @@ const installation: HarnessAppInstallation = {
     entry: {
       installPackage: 'packages/resident',
       profile: 'resident',
-      webUrl: 'http://127.0.0.1:3080/',
     },
     requirements: { dsh: '0.1.0-rc.8', node: '>=22' },
   },
@@ -121,12 +124,14 @@ const installation: HarnessAppInstallation = {
 describe('ResidentSmartAppsManager', () => {
   beforeEach(() => {
     Object.entries(mocks).forEach(([key, mock]) => {
-      if (!['projectModels', 'proxyTokens', 'workspaceTabs'].includes(key)) mock.mockReset()
+      if (!['modelSelectionReady', 'projectModels', 'proxyTokens', 'workspaceTabs'].includes(key))
+        mock.mockReset()
     })
     mocks.proxyTokens.clear()
     mocks.projectModels.length = 0
     mocks.projectModels.push(model)
     mocks.workspaceTabs.length = 0
+    mocks.modelSelectionReady = true
     mocks.unregisterContext.mockResolvedValue(undefined)
     mocks.list.mockResolvedValue([installation])
     mocks.listModels.mockResolvedValue({ data: [model] })
@@ -270,6 +275,60 @@ describe('ResidentSmartAppsManager', () => {
     await waitFor(() => expect(mocks.register).toHaveBeenCalledOnce())
     expect(mocks.stop).not.toHaveBeenCalled()
     expect(mocks.unregisterProxy).not.toHaveBeenCalled()
+  })
+
+  test('waits for model selection readiness before starting resident Smart apps', async () => {
+    mocks.modelSelectionReady = false
+    const { rerender } = render(<ResidentSmartAppsManager enabled />)
+
+    expect(mocks.list).not.toHaveBeenCalled()
+
+    mocks.modelSelectionReady = true
+    rerender(<ResidentSmartAppsManager enabled />)
+
+    await waitFor(() =>
+      expect(mocks.start).toHaveBeenCalledWith(
+        installation.id,
+        'http://127.0.0.1:41000/v1/harness-router/proxy-token'
+      )
+    )
+  })
+
+  test('retries resident restoration after readiness changes during launch resolution', async () => {
+    let resolvePendingLaunch!: (launch: { proxyToken: string; baseUrl: string }) => void
+    mocks.resolveLaunch
+      .mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            resolvePendingLaunch = resolve
+          })
+      )
+      .mockResolvedValue({
+        proxyToken: 'retry-proxy-token',
+        baseUrl: 'http://127.0.0.1:41000/v1/harness-router/retry-proxy-token',
+      })
+    const { rerender } = render(<ResidentSmartAppsManager enabled />)
+
+    await waitFor(() => expect(mocks.resolveLaunch).toHaveBeenCalledOnce())
+
+    mocks.modelSelectionReady = false
+    rerender(<ResidentSmartAppsManager enabled />)
+    mocks.modelSelectionReady = true
+    rerender(<ResidentSmartAppsManager enabled />)
+
+    resolvePendingLaunch({
+      proxyToken: 'cancelled-proxy-token',
+      baseUrl: 'http://127.0.0.1:41000/v1/harness-router/cancelled-proxy-token',
+    })
+
+    await waitFor(() =>
+      expect(mocks.start).toHaveBeenCalledWith(
+        installation.id,
+        'http://127.0.0.1:41000/v1/harness-router/retry-proxy-token'
+      )
+    )
+    expect(mocks.resolveLaunch).toHaveBeenCalledTimes(2)
+    expect(mocks.unregisterProxy).toHaveBeenCalledWith('cancelled-proxy-token')
   })
 
   test('does not steal focus when the resident app tab is already open', async () => {

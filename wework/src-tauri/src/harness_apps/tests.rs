@@ -87,6 +87,14 @@ fn bare_dsh_version_is_an_exact_requirement() {
 }
 
 #[test]
+fn harness_app_start_disables_the_runtime_browser_handoff() {
+    assert_eq!(
+        harness_app_start_args("dashboard", 43123),
+        ["--profile", "dashboard", "--no-open", "--port", "43123"]
+    );
+}
+
+#[test]
 fn installation_registry_defaults_resident_for_existing_records() {
     let installation: HarnessAppInstallation = serde_json::from_value(serde_json::json!({
         "id": "test-capability",

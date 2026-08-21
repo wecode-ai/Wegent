@@ -577,7 +577,7 @@ async function verifyBackgroundTaskWindowLifecycle({
     `${JSON.stringify({ before: cacheBeforeArchive, after: cacheAfterArchive }, null, 2)}\n`,
     'utf8'
   )
-  await reopenCurrentTurnNavigationTask(
+  const activeApp = await reopenCurrentTurnNavigationTask(
     control,
     composerSelector,
     restartDesktopApp,
@@ -587,7 +587,7 @@ async function verifyBackgroundTaskWindowLifecycle({
   await verifyTurnNavigationTracksVisibleTurnMessages(control)
   if (process.platform === 'darwin') {
     setPhase('quit-after-close-to-tray')
-    const appProcessId = app.pid
+    const appProcessId = activeApp.pid
     const tauriLogPath = join(resultDir, `wework-tauri-${appProcessId}.log`)
     const tauriLogLengthBeforeClose = (await readFile(tauriLogPath, 'utf8').catch(() => '')).length
     await control.command('closeMainWindowToTray', 'body')

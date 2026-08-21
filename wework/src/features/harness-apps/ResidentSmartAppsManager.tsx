@@ -23,7 +23,7 @@ export function ResidentSmartAppsManager({ enabled }: ResidentSmartAppsManagerPr
   const workspaceTabs = useWorkspaceTabs()
   const workspaceTabsRef = useRef(workspaceTabs)
   const completedIds = useRef(new Set<string>())
-  const launchingIds = useRef(new Set<string>())
+  const launchingTasks = useRef(new Map<string, Promise<void>>())
   const residentRetryAttempt = useRef(0)
   const [residentRetryTick, setResidentRetryTick] = useState(0)
   const disabledCleanupStarted = useRef(false)
@@ -58,7 +58,6 @@ export function ResidentSmartAppsManager({ enabled }: ResidentSmartAppsManagerPr
     const cleanupGeneration = disabledCleanupGeneration.current + 1
     disabledCleanupGeneration.current = cleanupGeneration
     completedIds.current.clear()
-    launchingIds.current.clear()
     workspaceTabsRef.current.tabs
       .filter(
         tab =>
@@ -104,7 +103,7 @@ export function ResidentSmartAppsManager({ enabled }: ResidentSmartAppsManagerPr
   }, [enabled, services.localHarnessModelApi])
 
   useEffect(() => {
-    if (!enabled || !services.localHarnessModelApi) return
+    if (!enabled || !services.localHarnessModelApi || !projectChat.isModelSelectionReady) return
     const optionsByKey = new Map(modelOptionsRef.current.map(option => [option.key, option]))
     let cancelled = false
     let retryTimer: number | null = null
@@ -144,84 +143,88 @@ export function ResidentSmartAppsManager({ enabled }: ResidentSmartAppsManagerPr
         }
         for (const installation of residentInstallations) {
           if (cancelled) return
-          if (
-            completedIds.current.has(installation.id) ||
-            launchingIds.current.has(installation.id)
-          )
-            continue
+          if (completedIds.current.has(installation.id)) continue
+          const existingTask = launchingTasks.current.get(installation.id)
+          if (existingTask) {
+            await existingTask
+            if (cancelled) return
+            if (completedIds.current.has(installation.id)) continue
+          }
           const model = installation.modelKey
             ? (optionsByKey.get(installation.modelKey) ?? null)
             : null
-          launchingIds.current.add(installation.id)
-          if (installation.state === 'running' && installation.webUrl) {
+          const launchTask = (async () => {
+            if (installation.state === 'running' && installation.webUrl) {
+              try {
+                if (cancelled) return
+                registerHarnessAppTab(installation)
+                openResidentAppTab(installation)
+                completedIds.current.add(installation.id)
+              } catch (error) {
+                console.warn(
+                  `[Wework] failed to restore resident Smart app ${installation.id}`,
+                  error
+                )
+                scheduleRetry()
+              }
+              return
+            }
+            if (!model) {
+              console.warn(
+                `[Wework] resident Smart app ${installation.id} cannot start because its model is unavailable`
+              )
+              scheduleRetry()
+              return
+            }
+            let proxyToken: string | null = null
+            let contextToken: string | null = null
+            let appStarted = false
             try {
-              if (cancelled) return
-              registerHarnessAppTab(installation)
-              openResidentAppTab(installation)
+              const launch = await services.localHarnessModelApi?.resolveLaunch('opencode', model)
+              if (!launch) throw new Error('Smart app model proxy is unavailable')
+              proxyToken = launch.proxyToken
+              contextToken = launch.context?.token ?? null
+              if (cancelled) throw new Error('Resident Smart app restoration was cancelled')
+              const running = launch.context
+                ? await harnessAppsApi.start(
+                    installation.id,
+                    launch.baseUrl,
+                    launch.context.baseUrl,
+                    launch.context.token
+                  )
+                : await harnessAppsApi.start(installation.id, launch.baseUrl)
+              appStarted = true
+              if (cancelled) throw new Error('Resident Smart app restoration was cancelled')
+              registerHarnessAppTab(running)
+              openResidentAppTab(running)
+              await storeHarnessAppProxyToken(installation.id, launch.proxyToken)
+              if (contextToken) await storeHarnessAppContextToken(installation.id, contextToken)
               completedIds.current.add(installation.id)
             } catch (error) {
-              console.warn(
-                `[Wework] failed to restore resident Smart app ${installation.id}`,
-                error
-              )
-            } finally {
-              launchingIds.current.delete(installation.id)
+              if (appStarted) {
+                await harnessAppsApi.stop(installation.id).catch(() => undefined)
+                unregisterHarnessAppTab(installation.id)
+                await takeHarnessAppProxyToken(installation.id)
+                await takeHarnessAppContextToken(installation.id)
+              }
+              if (proxyToken) {
+                await services.localHarnessModelApi
+                  ?.unregisterProxy(proxyToken)
+                  .catch(() => undefined)
+              }
+              if (contextToken) {
+                await services.localHarnessModelApi
+                  ?.unregisterContext(contextToken)
+                  .catch(() => undefined)
+              }
+              console.warn(`[Wework] failed to start resident Smart app ${installation.id}`, error)
+              scheduleRetry()
             }
-            continue
-          }
-          if (!model) {
-            launchingIds.current.delete(installation.id)
-            console.warn(
-              `[Wework] resident Smart app ${installation.id} cannot start because its model is unavailable`
-            )
-            scheduleRetry()
-            continue
-          }
-          let proxyToken: string | null = null
-          let contextToken: string | null = null
-          let appStarted = false
-          try {
-            const launch = await services.localHarnessModelApi?.resolveLaunch('opencode', model)
-            if (cancelled) return
-            if (!launch) throw new Error('Smart app model proxy is unavailable')
-            proxyToken = launch.proxyToken
-            contextToken = launch.context?.token ?? null
-            const running = launch.context
-              ? await harnessAppsApi.start(
-                  installation.id,
-                  launch.baseUrl,
-                  launch.context.baseUrl,
-                  launch.context.token
-                )
-              : await harnessAppsApi.start(installation.id, launch.baseUrl)
-            appStarted = true
-            if (cancelled) throw new Error('Resident Smart app restoration was cancelled')
-            registerHarnessAppTab(running)
-            openResidentAppTab(running)
-            await storeHarnessAppProxyToken(installation.id, launch.proxyToken)
-            if (contextToken) await storeHarnessAppContextToken(installation.id, contextToken)
-            completedIds.current.add(installation.id)
-          } catch (error) {
-            if (appStarted) {
-              await harnessAppsApi.stop(installation.id).catch(() => undefined)
-              unregisterHarnessAppTab(installation.id)
-              await takeHarnessAppProxyToken(installation.id)
-              await takeHarnessAppContextToken(installation.id)
-            }
-            if (proxyToken) {
-              await services.localHarnessModelApi
-                ?.unregisterProxy(proxyToken)
-                .catch(() => undefined)
-            }
-            if (contextToken) {
-              await services.localHarnessModelApi
-                ?.unregisterContext(contextToken)
-                .catch(() => undefined)
-            }
-            console.warn(`[Wework] failed to start resident Smart app ${installation.id}`, error)
-            scheduleRetry()
-          } finally {
-            launchingIds.current.delete(installation.id)
+          })()
+          launchingTasks.current.set(installation.id, launchTask)
+          await launchTask
+          if (launchingTasks.current.get(installation.id) === launchTask) {
+            launchingTasks.current.delete(installation.id)
           }
         }
         if (!retryScheduled) residentRetryAttempt.current = 0
@@ -236,7 +239,13 @@ export function ResidentSmartAppsManager({ enabled }: ResidentSmartAppsManagerPr
       cancelled = true
       if (retryTimer !== null) window.clearTimeout(retryTimer)
     }
-  }, [enabled, residentRetryTick, services.localHarnessModelApi, services.modelApi])
+  }, [
+    enabled,
+    projectChat.isModelSelectionReady,
+    residentRetryTick,
+    services.localHarnessModelApi,
+    services.modelApi,
+  ])
 
   return null
 }
