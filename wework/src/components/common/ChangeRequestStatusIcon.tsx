@@ -10,7 +10,6 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import type { TaskChangeRequestSnapshot } from '@/api/changeRequests'
 import { Tooltip } from '@/components/ui/tooltip'
 import {
   changeRequestVisualStatus,
@@ -26,6 +25,11 @@ interface ChangeRequestStatusGlyphConfig {
   badgeIcon?: LucideIcon
   badgeClassName?: string
   badgeIconClassName?: string
+}
+
+interface ChangeRequestStatusSnapshot {
+  changeRequest: ChangeRequest | null
+  stale?: boolean
 }
 
 const statusGlyphs: Record<ChangeRequestVisualStatus, ChangeRequestStatusGlyphConfig> = {
@@ -145,13 +149,17 @@ export function ChangeRequestStatusIcon({
   onContinueRepair,
   className,
   popoverAlign = 'right',
+  glyphSize = 'compact',
+  mainIconTestId,
 }: {
-  snapshot: TaskChangeRequestSnapshot | null
+  snapshot: ChangeRequestStatusSnapshot | null
   testId: string
   repairing?: boolean
   onContinueRepair?: () => Promise<void> | void
   className?: string
   popoverAlign?: 'left' | 'right'
+  glyphSize?: 'compact' | 'environment'
+  mainIconTestId?: string
 }) {
   const { t } = useTranslation('common')
   const [open, setOpen] = useState(false)
@@ -201,7 +209,11 @@ export function ChangeRequestStatusIcon({
           onClick={() => setOpen(current => !current)}
           className="flex h-6 w-6 items-center justify-center rounded-md hover:bg-muted"
         >
-          <ChangeRequestStatusGlyph changeRequest={changeRequest} />
+          <ChangeRequestStatusGlyph
+            changeRequest={changeRequest}
+            size={glyphSize}
+            mainIconTestId={mainIconTestId}
+          />
         </button>
       </Tooltip>
       {open ? (
