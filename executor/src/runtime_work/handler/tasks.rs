@@ -1435,7 +1435,7 @@ impl RuntimeWorkRpcHandler {
         let thread_id = link.as_ref().and_then(runtime_session_id_from_link);
         let is_codex = link
             .as_ref()
-            .is_none_or(|link| link.runtime.eq_ignore_ascii_case("codex"));
+            .map_or(true, |link| link.runtime.eq_ignore_ascii_case("codex"));
         let had_active_local_execution = self.is_active_local_task(&local_task_id);
         self.resolve_pending_request_user_input_for_stop(&local_task_id);
         if self.remove_queued_turn(&local_task_id).await? {
