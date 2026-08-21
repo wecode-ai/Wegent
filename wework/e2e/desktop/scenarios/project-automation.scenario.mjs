@@ -500,10 +500,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     await control.command('waitFor', `${activeBoard} [data-testid="workspace-issue-input"]`, {
       timeoutMs: uiTimeoutMs,
     })
-    assert.equal(
-      await control.command('getActiveElementTestId', 'body'),
-      'workspace-issue-input',
-      'Opening the board task composer did not focus its editor'
+    await waitForValue(
+      () => control.command('getActiveElementTestId', 'body'),
+      testId => testId === 'workspace-issue-input',
+      'Opening the board task composer did not focus its editor',
+      uiTimeoutMs
     )
     assert.equal(
       await control.command(
