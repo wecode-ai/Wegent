@@ -987,7 +987,7 @@ function WaitNodeInspector({
                 onChange={event =>
                   onUpdate({
                     wait_config: {
-                      ...node.wait_config,
+                      rules: node.wait_config?.rules ?? [],
                       agent_id: event.target.value || null,
                     },
                   })
