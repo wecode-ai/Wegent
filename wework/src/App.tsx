@@ -611,23 +611,36 @@ function AppShell() {
   const fixedWorkspaceTabs = useMemo(
     () =>
       isMainWindow && appPreferences?.loaded
-        ? appPreferences.preferences.fixedWorkspaceTabs.map(preference => {
-            if (preference.kind === 'smart_app') {
-              return createWorkspaceTab('auxiliary', workspaceTabLabels, {
+        ? appPreferences.preferences.fixedWorkspaceTabs
+            .filter(
+              preference =>
+                preference.kind !== 'smart_app' ||
+                appPreferences.preferences.experimentalFeaturesEnabled
+            )
+            .map(preference => {
+              if (preference.kind === 'smart_app') {
+                return createWorkspaceTab('auxiliary', workspaceTabLabels, {
+                  id: preference.id,
+                  title: preference.title ?? t('workbench.smart_apps_title', '智能工作台'),
+                  contentRoute: harnessAppRoute(preference.installationId ?? ''),
+                  fixed: true,
+                })
+              }
+              return createWorkspaceTab(preference.kind, workspaceTabLabels, {
                 id: preference.id,
-                title: preference.title ?? t('workbench.smart_apps_title', '智能工作台'),
-                contentRoute: harnessAppRoute(preference.installationId ?? ''),
                 fixed: true,
               })
-            }
-            return createWorkspaceTab(preference.kind, workspaceTabLabels, {
-              id: preference.id,
-              fixed: true,
             })
-          })
         : [],
     [appPreferences, isMainWindow, t, workspaceTabLabels]
   )
+  const startupWorkspaceTabId = useMemo(() => {
+    if (!isMainWindow || !appPreferences?.loaded) return undefined
+    const preferredId = appPreferences.preferences.startupWorkspaceTabId
+    return fixedWorkspaceTabs.some(tab => tab.id === preferredId)
+      ? preferredId
+      : fixedWorkspaceTabs[0]?.id
+  }, [appPreferences, fixedWorkspaceTabs, isMainWindow])
   const [workbenchStartupReady, setWorkbenchStartupReady] = useState(false)
   const [workbenchStartupRevealTimedOut, setWorkbenchStartupRevealTimedOut] = useState(false)
   const updateImNotificationPresence = useMemo(() => {
@@ -832,11 +845,7 @@ function AppShell() {
       storageScope={workspaceTabStorageScope}
       labels={workspaceTabLabels}
       fixedTabs={fixedWorkspaceTabs}
-      startupTabId={
-        isMainWindow && appPreferences?.loaded
-          ? appPreferences.preferences.startupWorkspaceTabId
-          : undefined
-      }
+      startupTabId={startupWorkspaceTabId}
       restoreSessionTabs={!isMainWindow}
     >
       <div

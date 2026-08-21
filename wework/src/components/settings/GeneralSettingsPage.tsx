@@ -476,7 +476,7 @@ export function GeneralSettingsPage() {
                     <div
                       key={tab.id}
                       data-testid={`general-fixed-tab-${tab.id}`}
-                      className="flex h-9 items-center gap-1 rounded-lg border border-border bg-background px-2"
+                      className="flex min-h-11 items-center gap-1 rounded-lg border border-border bg-background px-2 md:h-9 md:min-h-0"
                     >
                       <button
                         type="button"
@@ -484,7 +484,7 @@ export function GeneralSettingsPage() {
                         disabled={loading || saving}
                         aria-pressed={startupWorkspaceTabId === tab.id}
                         onClick={() => void saveFixedWorkspaceTabs(fixedWorkspaceTabs, tab.id)}
-                        className="flex h-6 w-6 items-center justify-center rounded hover:bg-muted"
+                        className="flex h-11 w-11 items-center justify-center rounded hover:bg-muted md:h-6 md:w-6"
                         title={t(
                           'workbench.general_settings_startup_workspace_tab',
                           '设为启动标签页'
@@ -508,7 +508,7 @@ export function GeneralSettingsPage() {
                             moveFixedTab(fixedWorkspaceTabs, index, index - 1)
                           )
                         }}
-                        className="flex h-6 w-6 items-center justify-center rounded hover:bg-muted disabled:opacity-30"
+                        className="flex h-11 w-11 items-center justify-center rounded hover:bg-muted disabled:opacity-30 md:h-6 md:w-6"
                         aria-label={t('workbench.move_up', '上移')}
                       >
                         <ArrowUp className="h-3.5 w-3.5" />
@@ -522,7 +522,7 @@ export function GeneralSettingsPage() {
                             moveFixedTab(fixedWorkspaceTabs, index, index + 1)
                           )
                         }}
-                        className="flex h-6 w-6 items-center justify-center rounded hover:bg-muted disabled:opacity-30"
+                        className="flex h-11 w-11 items-center justify-center rounded hover:bg-muted disabled:opacity-30 md:h-6 md:w-6"
                         aria-label={t('workbench.move_down', '下移')}
                       >
                         <ArrowDown className="h-3.5 w-3.5" />
@@ -536,7 +536,7 @@ export function GeneralSettingsPage() {
                             fixedWorkspaceTabs.filter(item => item.id !== tab.id)
                           )
                         }
-                        className="flex h-6 w-6 items-center justify-center rounded hover:bg-muted disabled:opacity-30"
+                        className="flex h-11 w-11 items-center justify-center rounded hover:bg-muted disabled:opacity-30 md:h-6 md:w-6"
                         aria-label={t('workbench.remove', '移除')}
                       >
                         <X className="h-3.5 w-3.5" />
@@ -567,7 +567,7 @@ export function GeneralSettingsPage() {
                       void saveFixedWorkspaceTabs([...fixedWorkspaceTabs, nextTab])
                     }
                   }}
-                  className="h-9 w-full rounded-lg border border-dashed border-border bg-background px-2 text-sm text-text-secondary"
+                  className="h-11 w-full rounded-lg border border-dashed border-border bg-background px-2 text-sm text-text-secondary md:h-9"
                 >
                   <option value="">
                     {t('workbench.general_settings_add_fixed_workspace_tab', '+ 添加固定标签页')}

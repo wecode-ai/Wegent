@@ -15,11 +15,13 @@ import {
 } from '@/features/harness-apps/harnessAppTabs'
 import { listLocalHarnessModelOptions } from '@/features/local-harness/localHarnessModels'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
+import { useTranslation } from '@/hooks/useTranslation'
 import { getErrorMessage } from '@/lib/error-message'
 
 const launchingIds = new Set<string>()
 
 export function HarnessAppAutoLauncher({ installationId }: { installationId: string }) {
+  const { t } = useTranslation('common')
   const { projectChat, services } = useWorkbench()
   const [attempt, setAttempt] = useState(0)
   const modelOptions = useMemo(
@@ -47,7 +49,10 @@ export function HarnessAppAutoLauncher({ installationId }: { installationId: str
         const model = modelOptions.find(option => option.key === installation.modelKey)
         if (!model) {
           beginHarnessAppLaunch(installationId, installation.manifest.displayName, retry)
-          failHarnessAppLaunch(installationId, '智能工作台配置的模型不可用')
+          failHarnessAppLaunch(
+            installationId,
+            t('workbench.smart_apps_model_unavailable', '智能工作台配置的模型不可用')
+          )
           return
         }
 
@@ -58,7 +63,11 @@ export function HarnessAppAutoLauncher({ installationId }: { installationId: str
         let started = false
         try {
           const launch = await services.localHarnessModelApi?.resolveLaunch('opencode', model)
-          if (!launch) throw new Error('智能工作台模型代理不可用')
+          if (!launch) {
+            throw new Error(
+              t('workbench.smart_apps_model_proxy_unavailable', '智能工作台模型代理不可用')
+            )
+          }
           proxyToken = launch.proxyToken
           contextToken = launch.context?.token ?? null
           const running = launch.context
@@ -70,7 +79,9 @@ export function HarnessAppAutoLauncher({ installationId }: { installationId: str
               )
             : await harnessAppsApi.start(installationId, launch.baseUrl)
           started = true
-          if (!running.webUrl) throw new Error('智能工作台没有返回可用地址')
+          if (!running.webUrl) {
+            throw new Error(t('workbench.smart_apps_missing_web_url', '智能工作台没有返回可用地址'))
+          }
           await storeHarnessAppProxyToken(installationId, launch.proxyToken)
           if (contextToken) await storeHarnessAppContextToken(installationId, contextToken)
           registerHarnessAppTab(running)
@@ -90,7 +101,10 @@ export function HarnessAppAutoLauncher({ installationId }: { installationId: str
               .catch(() => undefined)
           }
           if (!cancelled) {
-            failHarnessAppLaunch(installationId, getErrorMessage(error, '智能工作台启动失败'))
+            failHarnessAppLaunch(
+              installationId,
+              getErrorMessage(error, t('workbench.smart_apps_launch_failed', '智能工作台启动失败'))
+            )
           }
         } finally {
           launchingIds.delete(installationId)
@@ -98,15 +112,22 @@ export function HarnessAppAutoLauncher({ installationId }: { installationId: str
       })
       .catch(error => {
         if (!cancelled) {
-          beginHarnessAppLaunch(installationId, '智能工作台', retry)
-          failHarnessAppLaunch(installationId, getErrorMessage(error, '智能工作台加载失败'))
+          beginHarnessAppLaunch(
+            installationId,
+            t('workbench.smart_apps_title', '智能工作台'),
+            retry
+          )
+          failHarnessAppLaunch(
+            installationId,
+            getErrorMessage(error, t('workbench.smart_apps_load_failed', '智能工作台加载失败'))
+          )
         }
       })
 
     return () => {
       cancelled = true
     }
-  }, [attempt, installationId, modelOptions, services.localHarnessModelApi])
+  }, [attempt, installationId, modelOptions, services.localHarnessModelApi, t])
 
   return null
 }

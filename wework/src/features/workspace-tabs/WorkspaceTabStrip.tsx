@@ -416,7 +416,7 @@ export function WorkspaceTabStrip({
                     }
                     openNewTab(kind)
                   }}
-                  className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-text-primary hover:bg-black/[0.04]"
+                  className="flex h-11 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-text-primary hover:bg-black/[0.04] md:h-8"
                 >
                   {kind === 'agent' && !agentAvailable ? (
                     <CloudOff aria-hidden="true" className="h-4 w-4 text-text-muted" />
@@ -435,7 +435,7 @@ export function WorkspaceTabStrip({
                       role="menuitem"
                       data-testid={`workspace-tab-add-smart-app-${installation.id}`}
                       onClick={() => openInstalledSmartApp(installation)}
-                      className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-text-primary hover:bg-black/[0.04]"
+                      className="flex h-11 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-text-primary hover:bg-black/[0.04] md:h-8"
                     >
                       <Boxes aria-hidden="true" className="h-4 w-4 shrink-0 text-text-secondary" />
                       <span className="truncate">{installation.manifest.displayName}</span>
@@ -446,7 +446,7 @@ export function WorkspaceTabStrip({
                     role="menuitem"
                     data-testid="workspace-tab-add-smart-app"
                     onClick={openSmartApps}
-                    className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-text-primary hover:bg-black/[0.04]"
+                    className="flex h-11 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-text-primary hover:bg-black/[0.04] md:h-8"
                   >
                     <Boxes aria-hidden="true" className="h-4 w-4 text-text-secondary" />
                     {t('workbench.smart_apps_manage', '管理智能工作台')}

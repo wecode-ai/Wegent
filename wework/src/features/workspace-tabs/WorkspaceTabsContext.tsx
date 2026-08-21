@@ -294,9 +294,16 @@ export function WorkspaceTabsProvider({
 
   useEffect(() => {
     if (startupTabApplied.current || (!startupTabKind && !startupTabId)) return
-    startupTabApplied.current = true
     const location = parseWorkspaceLocation(pathname, search)
     if (pathname !== '/' || location.tabId || location.contentRoute !== '/') return
+    if (
+      startupTabId &&
+      fixedTabs.some(tab => tab.id === startupTabId) &&
+      !state.tabs.some(tab => tab.id === startupTabId)
+    ) {
+      return
+    }
+    startupTabApplied.current = true
     const existingStartupTab =
       state.tabs.find(tab => tab.id === startupTabId) ??
       state.tabs.find(tab => tab.kind === startupTabKind)
@@ -310,7 +317,16 @@ export function WorkspaceTabsProvider({
       )
     )
     navigateTo(workspaceTabRoute(startupTab))
-  }, [labels, pathname, search, startupTabId, startupTabKind, state.activeTabId, state.tabs])
+  }, [
+    fixedTabs,
+    labels,
+    pathname,
+    search,
+    startupTabId,
+    startupTabKind,
+    state.activeTabId,
+    state.tabs,
+  ])
 
   useEffect(() => {
     if (!restoreSessionTabs) return

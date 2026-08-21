@@ -51,9 +51,13 @@ function TabsState() {
 
 function RoutingHarness({
   startupTabKind,
+  startupTabId,
+  fixedTabs,
   restoreSessionTabs,
 }: {
   startupTabKind?: 'task' | 'board' | 'agent'
+  startupTabId?: string
+  fixedTabs?: Parameters<typeof WorkspaceTabsProvider>[0]['fixedTabs']
   restoreSessionTabs?: boolean
 } = {}) {
   const [location, setLocation] = useState(() => ({
@@ -77,6 +81,8 @@ function RoutingHarness({
       search={location.search}
       storageScope="context-test"
       labels={labels}
+      fixedTabs={fixedTabs}
+      startupTabId={startupTabId}
       startupTabKind={startupTabKind}
       restoreSessionTabs={restoreSessionTabs}
     >
@@ -144,6 +150,51 @@ describe('WorkspaceTabsProvider routing', () => {
     expect(screen.getByTestId('tab-count')).toHaveTextContent('2')
     expect(screen.getByTestId('active-tab-kind')).toHaveTextContent('board')
     expect(screen.getByTestId('active-tab-route')).toHaveTextContent('/todo')
+  })
+
+  test('synchronizes a missing fixed startup tab before selecting it', () => {
+    localStorage.setItem(
+      'wework.workspaceTabs.v3:context-test',
+      JSON.stringify({
+        activeTabId: 'task-1',
+        tabs: [
+          {
+            id: 'task-1',
+            kind: 'task',
+            title: '任务',
+            contentRoute: '/',
+          },
+        ],
+      })
+    )
+
+    render(
+      <RoutingHarness
+        restoreSessionTabs
+        startupTabId="fixed-board"
+        fixedTabs={[
+          {
+            id: 'fixed-task',
+            kind: 'task',
+            title: '任务',
+            contentRoute: '/',
+            fixed: true,
+          },
+          {
+            id: 'fixed-board',
+            kind: 'board',
+            title: '项目空间',
+            contentRoute: '/todo',
+            fixed: true,
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('active-tab-id')).toHaveTextContent('fixed-board')
+    expect(screen.getByTestId('active-tab-kind')).toHaveTextContent('board')
+    expect(window.location.pathname).toBe('/todo')
+    expect(window.location.search).toContain('workspaceTab=fixed-board')
   })
 
   test('renames the persisted default board tab without changing named project tabs', () => {
