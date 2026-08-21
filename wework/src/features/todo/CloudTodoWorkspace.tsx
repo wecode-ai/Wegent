@@ -428,14 +428,6 @@ interface AvailableProjectSpaceApi {
   location: ProjectSpaceLocation
 }
 
-function uniqueLocatedItems(items: LocatedLoopItem[]): LocatedLoopItem[] {
-  const unique = new Map<string, LocatedLoopItem>()
-  for (const item of items) {
-    unique.set(`${item.project_store ?? 'backend'}:${item.id}`, item)
-  }
-  return [...unique.values()]
-}
-
 function runtimeWorkItemReference(
   task: RuntimeTaskSummary
 ): { projectId: string; itemId: string } | null {
@@ -1889,21 +1881,7 @@ export function CloudTodoWorkspace({
     ? (projectForItem(createTodoParent) ?? null)
     : selectedProject
   const createTodoApi = apiForProject(createTodoProject)
-  const boardItems =
-    !isMyTasksBoard || !selectedProjectKey || itemTaskBindingsProjectKey !== selectedProjectKey
-      ? items
-      : items.filter(item => {
-          const bindings = itemTaskBindings[item.id] ?? []
-          if (bindings.length === 0) return true
-          return bindings.some(binding =>
-            runtimeTaskKeys.has(
-              runtimeConversationKey({
-                deviceId: binding.device_id,
-                taskId: binding.task_id,
-              })
-            )
-          )
-        })
+  const boardItems = items
   const boardParent = boardItems.find(item => item.id === boardParentId) ?? null
   const boardLayerCount = boardItems.filter(item => item.parent_id === boardParentId).length
   const boardBreadcrumb: CloudLoopItem[] = []
@@ -2266,32 +2244,27 @@ export function CloudTodoWorkspace({
           : Promise.resolve()
       const readBoard = async (): Promise<BoardReadResult> => {
         await prepare
-        const selectedResponse =
-          selectedProject.location === 'cloud'
+        const selectedResponse: BoardReadResult =
+          selectedProject.location === 'cloud' || isMyTasksBoard
             ? await selectedProjectApi.getBoardSnapshot(selectedProjectId)
             : await selectedProjectApi.listLoopItems(selectedProjectId)
         const selectedItems = locateItems(selectedResponse.items, selectedProject.project_store)
         if (!isMyTasksBoard) return { ...selectedResponse, items: selectedItems }
-
-        const myWorkResults = await Promise.allSettled(
-          availableProjectSpaceApis.map(async ({ api, location }) => ({
-            location,
-            items: (await api.listMyWork()).items,
-          }))
-        )
-        const aggregatedItems = myWorkResults.flatMap(result => {
-          if (result.status === 'rejected') {
-            console.warn('[Wework my tasks] project-space aggregation failed', result.reason)
-            return []
-          }
-          return locateItems(
-            result.value.items,
-            result.value.location === 'local' ? 'local' : 'backend'
+        const activeBindings = (selectedResponse.task_bindings ?? []).filter(binding =>
+          runtimeTaskKeys.has(
+            runtimeConversationKey({
+              deviceId: binding.device_id,
+              taskId: binding.task_id,
+            })
           )
-        })
+        )
+        const activeItemIds = new Set(
+          activeBindings.flatMap(binding => (binding.loop_item_id ? [binding.loop_item_id] : []))
+        )
         return {
           ...selectedResponse,
-          items: uniqueLocatedItems([...selectedItems, ...aggregatedItems]),
+          items: selectedItems.filter(item => activeItemIds.has(item.id)),
+          task_bindings: activeBindings,
         }
       }
       void readBoard()
@@ -2397,7 +2370,6 @@ export function CloudTodoWorkspace({
     }
   }, [
     applyBoardItems,
-    availableProjectSpaceApis,
     boardRefreshNonce,
     isMyTasksBoard,
     selectedProject,
@@ -2405,6 +2377,7 @@ export function CloudTodoWorkspace({
     selectedProjectId,
     selectedProjectKey,
     locateItems,
+    runtimeTaskKeys,
     services.aitableApi,
     services.dwsApi,
   ])
