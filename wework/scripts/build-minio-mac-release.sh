@@ -9,6 +9,14 @@ PROJECT_TAURI_TARGET_DIR="$WEWORK_DIR/src-tauri/target"
 
 # shellcheck source=lib/wework-updater-signing.sh
 source "$SCRIPT_DIR/lib/wework-updater-signing.sh"
+# shellcheck source=lib/wework-branding.sh
+source "$SCRIPT_DIR/lib/wework-branding.sh"
+# shellcheck source=lib/wework-macos-sidecar.sh
+source "$SCRIPT_DIR/lib/wework-macos-sidecar.sh"
+# shellcheck source=lib/wework-macos-signing.sh
+source "$SCRIPT_DIR/lib/wework-macos-signing.sh"
+# shellcheck source=lib/codex-code-statistics.sh
+source "$SCRIPT_DIR/lib/codex-code-statistics.sh"
 
 EXPLICIT_VITE_API_BASE_URL="${VITE_API_BASE_URL+x}"
 EXPLICIT_VITE_API_BASE_URL_VALUE="${VITE_API_BASE_URL:-}"
@@ -270,38 +278,208 @@ generate_channel_manifests() {
   done
 }
 
-promote_release_artifacts() {
-  local build_output_dir="$1"
-  local archive_path
-  local dmg_path
+write_latest_manifest() {
+  local archive_name="$1"
+  local signature_path="$2"
+  local platform
 
-  archive_path="$(find "$build_output_dir" -maxdepth 1 -type f \
-    -name "WeWork_${VERSION}_*.app.tar.gz" -print | sort | tail -1)"
-  dmg_path="$(find "$build_output_dir" -maxdepth 1 -type f \
-    -name "WeWork_${VERSION}_*.dmg" -print | sort | tail -1)"
+  platform="$(updater_platforms_for_target)"
+  VERSION="$VERSION" \
+  RELEASE_NOTES="$RELEASE_NOTES" \
+  DOWNLOAD_URL="$UPDATE_BASE_URL/$archive_name" \
+  SIGNATURE_PATH="$signature_path" \
+  PLATFORM="$platform" \
+  MANIFEST_PATH="$OUTPUT_DIR/latest.json" \
+    uv run --project "$PROJECT_DIR/backend" python - <<'PY'
+import json
+import os
+from datetime import datetime, timezone
+from pathlib import Path
 
-  if [ -z "$archive_path" ] || [ ! -s "$archive_path" ]; then
-    echo "This build did not produce an updater archive for version $VERSION." >&2
+data = {
+    "version": os.environ["VERSION"],
+    "notes": os.environ["RELEASE_NOTES"],
+    "pub_date": datetime.now(timezone.utc)
+    .replace(microsecond=0)
+    .isoformat()
+    .replace("+00:00", "Z"),
+    "platforms": {
+        os.environ["PLATFORM"]: {
+            "signature": Path(os.environ["SIGNATURE_PATH"])
+            .read_text(encoding="utf-8")
+            .strip(),
+            "url": os.environ["DOWNLOAD_URL"],
+        }
+    },
+}
+Path(os.environ["MANIFEST_PATH"]).write_text(
+    json.dumps(data, ensure_ascii=False, indent=2) + "\n",
+    encoding="utf-8",
+)
+PY
+}
+
+sign_and_notarize_dmg() {
+  local dmg_path="$1"
+  local notary_result="$BUILD_CONFIG_DIR/notary-result.json"
+  local notary_status
+  local submission_id
+
+  if [ -n "${MACOS_KEYCHAIN_PATH:-}" ]; then
+    codesign --force --timestamp --keychain "$MACOS_KEYCHAIN_PATH" \
+      --sign "$MACOS_APP_SIGN_IDENTITY" "$dmg_path"
+  else
+    codesign --force --timestamp --sign "$MACOS_APP_SIGN_IDENTITY" "$dmg_path"
+  fi
+  codesign --verify --strict --verbose=2 "$dmg_path"
+
+  xcrun notarytool submit "$dmg_path" \
+    --apple-id "$APPLE_BUILD_ID" \
+    --team-id "$APPLE_BUILD_TEAM_ID" \
+    --password "$APPLE_BUILD_PASSWORD" \
+    --wait \
+    --output-format json > "$notary_result"
+
+  IFS=$'\t' read -r notary_status submission_id < <(
+    NOTARY_RESULT="$notary_result" uv run --project "$PROJECT_DIR/backend" python - <<'PY'
+import json
+import os
+from pathlib import Path
+
+result = json.loads(Path(os.environ["NOTARY_RESULT"]).read_text())
+print(result["status"], result.get("id", ""), sep="\t")
+PY
+  )
+  if [ "$notary_status" != "Accepted" ]; then
+    if [ -n "$submission_id" ]; then
+      xcrun notarytool log "$submission_id" \
+        --apple-id "$APPLE_BUILD_ID" \
+        --team-id "$APPLE_BUILD_TEAM_ID" \
+        --password "$APPLE_BUILD_PASSWORD" || true
+    fi
+    echo "Apple notarization did not accept the MinIO DMG." >&2
     exit 1
   fi
-  if [ ! -s "$archive_path.sig" ]; then
-    echo "This build did not produce an updater signature: $archive_path.sig" >&2
+  xcrun stapler staple "$dmg_path"
+  xcrun stapler validate "$dmg_path"
+}
+
+verify_runtime_descriptors_in_app() {
+  local app_path="$1"
+  local resource_root="$app_path/Contents/Resources"
+  local descriptor
+
+  for descriptor in \
+    bundled-execution-runtimes/node.json \
+    bundled-harness-runtime/runtime.json; do
+    if [ ! -s "$resource_root/$descriptor" ]; then
+      echo "MinIO app bundle is missing runtime descriptor: $descriptor" >&2
+      exit 1
+    fi
+  done
+}
+
+build_release_artifacts() {
+  local archive_path
+  local archive_name
+  local app_path
+  local bundle_root
+  local config_override="$BUILD_CONFIG_DIR/tauri.minio.json"
+  local dmg_path
+  local dmg_name
+  local insecure_transport="false"
+  local release_config="$BUILD_CONFIG_DIR/tauri.release.json"
+
+  if [[ "$UPDATE_BASE_URL" == http://* ]]; then
+    insecure_transport="true"
+  fi
+  BASE_CONFIG="$WEWORK_DIR/src-tauri/tauri.conf.json" \
+  CONFIG_OVERRIDE="$release_config" \
+  VERSION="$VERSION" \
+  UPDATER_ENDPOINT="$UPDATE_MANIFEST_BASE_URL/{{target}}-{{arch}}.json" \
+  UPDATER_PUBKEY="$TAURI_UPDATER_PUBKEY" \
+  SIGNING_IDENTITY="$MACOS_APP_SIGN_IDENTITY" \
+  ENABLE_INSECURE_TRANSPORT="$insecure_transport" \
+    node "$SCRIPT_DIR/generate-release-config.mjs"
+
+  wework_prepare_brand_config \
+    "$WEWORK_DIR" \
+    "$BRAND_CONFIG" \
+    "1" \
+    "$config_override" \
+    "$release_config"
+  if [ -f "$config_override.namespace" ]; then
+    WEWORK_EXECUTOR_NAMESPACE="$(<"$config_override.namespace")"
+    export WEWORK_EXECUTOR_NAMESPACE
+    rm -f "$config_override.namespace"
+  fi
+
+  wework_build_macos_executor_sidecar \
+    "$PROJECT_DIR" \
+    "$WEWORK_DIR" \
+    "$MACOS_BUILD_TARGET" \
+    release
+  wework_build_code_statistics_hook "$WEWORK_DIR" "$MACOS_BUILD_TARGET"
+  wework_sign_code_statistics_hook \
+    "$WEWORK_DIR" \
+    "$MACOS_BUILD_TARGET" \
+    "$MACOS_APP_SIGN_IDENTITY"
+
+  (
+    cd "$WEWORK_DIR"
+    WEWORK_CODEX_MATERIALIZE=1 \
+      WEWORK_CODEX_TARGET="$MACOS_BUILD_TARGET" \
+      pnpm run prepare:codex
+    WEWORK_DWS_TARGET="$MACOS_BUILD_TARGET" pnpm run prepare:dws
+  )
+  wework_sign_prepared_codex_macos_binaries \
+    "$WEWORK_DIR" \
+    "$MACOS_BUILD_TARGET" \
+    "$MACOS_APP_SIGN_IDENTITY"
+
+  (
+    cd "$WEWORK_DIR"
+    CARGO_TARGET_DIR="$PROJECT_TAURI_TARGET_DIR" \
+    WEWORK_HARNESS_RUNTIME_BASE_URL="$UPDATE_BASE_URL" \
+    WEWORK_EXECUTION_RUNTIME_BASE_URL="$UPDATE_BASE_URL" \
+    VITE_WEWORK_RELEASE_CHANNEL="$CHANNEL" \
+    APPLE_SIGNING_IDENTITY="$MACOS_APP_SIGN_IDENTITY" \
+      pnpm exec tauri build \
+        --target "$MACOS_BUILD_TARGET" \
+        --bundles app,dmg \
+        --features release-devtools \
+        --config "$config_override"
+  )
+
+  bundle_root="$PROJECT_TAURI_TARGET_DIR/$MACOS_BUILD_TARGET/release/bundle"
+  app_path="$(find "$bundle_root/macos" -maxdepth 1 -type d -name '*.app' -print | sort | tail -1)"
+  archive_path="$(find "$bundle_root/macos" -maxdepth 1 -type f -name '*.app.tar.gz' -print | sort | tail -1)"
+  dmg_path="$(find "$bundle_root/dmg" -maxdepth 1 -type f -name '*.dmg' -print | sort | tail -1)"
+  if [ -z "$app_path" ] || [ ! -d "$app_path" ]; then
+    echo "MinIO build did not produce a macOS app bundle." >&2
+    exit 1
+  fi
+  verify_runtime_descriptors_in_app "$app_path"
+  wework_verify_macos_app_executor_sidecar "$bundle_root"
+  wework_verify_code_statistics_hook "$bundle_root" "$MACOS_BUILD_TARGET"
+  if [ -z "$archive_path" ] || [ ! -s "$archive_path" ] || [ ! -s "$archive_path.sig" ]; then
+    echo "MinIO build did not produce a signed updater archive." >&2
     exit 1
   fi
   if [ -z "$dmg_path" ] || [ ! -s "$dmg_path" ]; then
-    echo "This build did not produce a DMG for version $VERSION." >&2
+    echo "MinIO build did not produce a DMG." >&2
     exit 1
   fi
-  if [ ! -s "$build_output_dir/latest.json" ]; then
-    echo "This build did not produce latest.json." >&2
-    exit 1
-  fi
+  sign_and_notarize_dmg "$dmg_path"
 
-  find "$OUTPUT_DIR" -maxdepth 1 -type f \
-    -name "WeWork_${VERSION}_*" -delete
-  find "$build_output_dir" -maxdepth 1 -type f ! -name latest.json \
-    -exec cp -f {} "$OUTPUT_DIR/" \;
-  cp -f "$build_output_dir/latest.json" "$OUTPUT_DIR/latest.json"
+  archive_name="WeWork_${VERSION}_$(updater_platforms_for_target).app.tar.gz"
+  dmg_name="WeWork_${VERSION}_$(updater_platforms_for_target).dmg"
+  find "$OUTPUT_DIR" -maxdepth 1 -type f -name "WeWork_${VERSION}_*" -delete
+  cp -f "$archive_path" "$OUTPUT_DIR/$archive_name"
+  cp -f "$archive_path.sig" "$OUTPUT_DIR/$archive_name.sig"
+  cp -f "$dmg_path" "$OUTPUT_DIR/$dmg_name"
+  printf '%s\n' "$RELEASE_NOTES" > "$OUTPUT_DIR/${archive_name%.app.tar.gz}.md"
+  write_latest_manifest "$archive_name" "$OUTPUT_DIR/$archive_name.sig"
 }
 
 runtime_platform_for_target() {
@@ -459,9 +637,9 @@ wework_configure_internal_updater_key "$PROJECT_DIR" "$UPDATER_KEY_PATH"
 export APPLE_SIGNING_IDENTITY="$MACOS_APP_SIGN_IDENTITY"
 mkdir -p "$OUTPUT_DIR"
 OUTPUT_DIR="$(cd "$OUTPUT_DIR" && pwd)"
-BUILD_OUTPUT_DIR="$(mktemp -d "$OUTPUT_DIR/.build-${VERSION}.XXXXXX")"
+BUILD_CONFIG_DIR="$(mktemp -d "$OUTPUT_DIR/.config-${VERSION}.XXXXXX")"
 cleanup_build_output() {
-  rm -rf "$BUILD_OUTPUT_DIR"
+  rm -rf "$BUILD_CONFIG_DIR"
 }
 trap cleanup_build_output EXIT
 
@@ -479,29 +657,8 @@ echo "  VITE_WEGENT_SOCKET_URL=${VITE_WEGENT_SOCKET_URL:-<backend URL>}"
 echo "  VITE_WEWORK_FEEDBACK_URL=$VITE_WEWORK_FEEDBACK_URL"
 echo "  UPLOAD=$UPLOAD"
 
-RELEASE_ARGS=(
-  --target local
-  --version "$VERSION"
-  --notes "$RELEASE_NOTES"
-  --local-base-url "$UPDATE_BASE_URL"
-  --updater-endpoint "$UPDATE_MANIFEST_BASE_URL/{{target}}-{{arch}}.json"
-  --local-dist-dir "$BUILD_OUTPUT_DIR"
-  --macos-build-target "$MACOS_BUILD_TARGET"
-)
-if [ -n "$BRAND_CONFIG" ]; then
-  RELEASE_ARGS+=(--brand-config "$BRAND_CONFIG")
-fi
-
-if ! CARGO_TARGET_DIR="$PROJECT_TAURI_TARGET_DIR" \
-  WEWORK_HARNESS_RUNTIME_BASE_URL="$UPDATE_BASE_URL" \
-  WEWORK_EXECUTION_RUNTIME_BASE_URL="$UPDATE_BASE_URL" \
-  VITE_WEWORK_RELEASE_CHANNEL="$CHANNEL" \
-  bash "$SCRIPT_DIR/release-mac-app.sh" "${RELEASE_ARGS[@]}"; then
-  echo "macOS release build failed; refusing to upload existing artifacts." >&2
-  exit 1
-fi
-
-promote_release_artifacts "$BUILD_OUTPUT_DIR"
+runtime_platform_for_target >/dev/null
+build_release_artifacts
 node "$SCRIPT_DIR/collect-release-runtime-assets.mjs" \
   "$OUTPUT_DIR" \
   "$UPDATE_BASE_URL" \
