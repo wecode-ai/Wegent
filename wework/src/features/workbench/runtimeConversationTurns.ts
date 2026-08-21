@@ -325,26 +325,31 @@ function earliestRuntimeMessageIndex(
 function orderRuntimeConversationTurns(
   turns: RuntimeConversationTurn[]
 ): RuntimeConversationTurn[] {
-  const indexedTurns = turns.map((turn, index) => ({
-    turn,
-    index,
-    timestamp: runtimeConversationTurnTimestamp(turn),
-  }))
+  const pendingOptimisticTurns = turns.filter(turn => turn.id === null)
+  const indexedTurns = turns
+    .filter(turn => turn.id !== null)
+    .map((turn, index) => ({
+      turn,
+      index,
+      timestamp: runtimeConversationTurnTimestamp(turn),
+    }))
+  let orderedTurns: RuntimeConversationTurn[]
   if (indexedTurns.every(({ turn }) => turn.runtimeMessageIndex !== undefined)) {
-    return indexedTurns
+    orderedTurns = indexedTurns
       .sort(
         (left, right) =>
           left.turn.runtimeMessageIndex! - right.turn.runtimeMessageIndex! ||
           left.index - right.index
       )
       .map(({ turn }) => turn)
-  }
-  if (indexedTurns.every(({ timestamp }) => timestamp !== undefined)) {
-    return indexedTurns
+  } else if (indexedTurns.every(({ timestamp }) => timestamp !== undefined)) {
+    orderedTurns = indexedTurns
       .sort((left, right) => left.timestamp! - right.timestamp! || left.index - right.index)
       .map(({ turn }) => turn)
+  } else {
+    orderedTurns = indexedTurns.map(({ turn }) => turn)
   }
-  return turns
+  return [...orderedTurns, ...pendingOptimisticTurns]
 }
 
 function runtimeConversationTurnTimestamp(turn: RuntimeConversationTurn): number | undefined {

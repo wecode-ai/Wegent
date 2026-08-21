@@ -1334,6 +1334,47 @@ describe('runtimeConversationTurns', () => {
     ])
   })
 
+  test('keeps an unmatched optimistic user turn after the recovered snapshot', () => {
+    const local: RuntimeConversationTurn[] = [
+      {
+        id: null,
+        clientUserMessageId: 'client-user-continue',
+        items: [
+          {
+            id: 'client-user-continue',
+            type: 'user_message',
+            message: {
+              ...userMessage('client-user-continue', '继续'),
+              createdAt: '2026-07-30T00:00:01.000Z',
+              status: 'sending',
+            },
+          },
+        ],
+        status: 'pending',
+      },
+    ]
+    const snapshot: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-history',
+        items: [
+          {
+            id: 'assistant-history',
+            type: 'assistant_text',
+            content: '已恢复的 AI 输出',
+            createdAt: '2026-07-30T00:00:02.000Z',
+          },
+        ],
+        status: 'done',
+      },
+    ]
+
+    expect(
+      projectRuntimeConversationTurns(mergeRuntimeConversationTurns(local, snapshot)).map(
+        message => message.content
+      )
+    ).toEqual(['已恢复的 AI 输出', '继续'])
+  })
+
   test('keeps an older stopped local turn before a newer snapshot turn', () => {
     const local: RuntimeConversationTurn[] = [
       {
