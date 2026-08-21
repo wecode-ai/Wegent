@@ -130,6 +130,40 @@ async fn app_ipc_routes_codex_app_server_request() {
 }
 
 #[tokio::test]
+async fn app_ipc_routes_local_first_plugin_install_as_runtime_rpc() {
+    let server = AppIpcServer::new().with_runtime_work_handler(LocalPluginInstallRuntimeHandler);
+
+    let response = server
+        .handle_line(
+            &json!({
+                "type": "request",
+                "id": "req-local-plugin",
+                "method": "runtime.codex.plugin.install_local_first",
+                "params": {
+                    "marketplacePath": "/tmp/wework-personal/.agents/plugins/marketplace.json",
+                    "pluginName": "example-plugin"
+                }
+            })
+            .to_string(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response,
+        json!({
+            "type": "response",
+            "id": "req-local-plugin",
+            "ok": true,
+            "result": {
+                "pluginKey": "example-plugin@wework-personal",
+                "localCommitted": true
+            }
+        })
+    );
+}
+
+#[tokio::test]
 async fn app_ipc_manages_local_projects_and_nested_todos() {
     let _lock = env_lock().await;
     let executor_home = tempfile::tempdir().unwrap();
@@ -1616,6 +1650,32 @@ impl RuntimeWorkHandler for CodexRuntimeHandler {
                 })
             );
             Ok(json!({"marketplaces": []}))
+        })
+    }
+}
+
+struct LocalPluginInstallRuntimeHandler;
+
+impl RuntimeWorkHandler for LocalPluginInstallRuntimeHandler {
+    fn handle_runtime_rpc<'a>(
+        &'a self,
+        data: Value,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
+        Box::pin(async move {
+            assert_eq!(
+                data,
+                json!({
+                    "method": "runtime.codex.plugin.install_local_first",
+                    "payload": {
+                        "marketplacePath": "/tmp/wework-personal/.agents/plugins/marketplace.json",
+                        "pluginName": "example-plugin"
+                    }
+                })
+            );
+            Ok(json!({
+                "pluginKey": "example-plugin@wework-personal",
+                "localCommitted": true
+            }))
         })
     }
 }

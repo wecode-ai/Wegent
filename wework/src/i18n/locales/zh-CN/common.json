@@ -1697,6 +1697,8 @@
     "plugins_import_confirm": "导入并安装",
     "plugins_import_overwrite": "覆盖并重新安装",
     "plugins_import_success": "插件已导入并安装。",
+    "plugins_import_success_auth_deferred": "插件已导入并安装。如需连接器授权，可稍后在插件详情中登录。",
+    "plugins_import_view_plugin": "查看插件",
     "plugins_import_components": "{{skills}} 个 Skill · {{mcps}} 个 MCP",
     "plugins_import_existing": "个人市场中已有 {{name}}（{{version}}）。继续后将覆盖并重新安装。",
     "plugins_import_risk_title": "此插件包含可执行能力",

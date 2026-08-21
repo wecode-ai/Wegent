@@ -1029,6 +1029,10 @@ class BlockingNetworkProxy {
     }
   }
 
+  block() {
+    this.released = false
+  }
+
   async stop() {
     this.release()
     for (const socket of this.sockets) socket.destroy()

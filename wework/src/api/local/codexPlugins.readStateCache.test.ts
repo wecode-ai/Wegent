@@ -258,14 +258,16 @@ describe('local codex plugin readState cache', () => {
     })
     mocks.requestLocalExecutor.mockImplementation(
       async (method: string, params: { method?: string }) => {
-        if (method !== 'codex.app_server_request') {
-          throw new Error(`Unexpected executor method ${method}`)
+        if (method === 'runtime.codex.plugin.install_local_first') {
+          throw new Error('install rejected')
         }
-        if (params.method === 'plugin/list' || params.method === 'plugin/installed') {
+        if (method === 'codex.app_server_request' && params.method === 'plugin/list') {
           return { marketplaces: [personalMarketplace] }
         }
-        if (params.method === 'plugin/install') throw new Error('install rejected')
-        throw new Error(`Unexpected app-server method ${params.method}`)
+        if (method === 'codex.app_server_request' && params.method === 'plugin/installed') {
+          return { marketplaces: [personalMarketplace] }
+        }
+        throw new Error(`Unexpected executor method ${method}`)
       }
     )
     const api = createLocalCodexPluginApi()
@@ -277,17 +279,71 @@ describe('local codex plugin readState cache', () => {
       marketplacePath: '/tmp/wework-personal',
       rollbackId: 'rollback-1',
     })
-    expect(mocks.requestLocalExecutor).toHaveBeenCalledWith('codex.app_server_request', {
-      method: 'plugin/install',
-      params: {
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledWith(
+      'runtime.codex.plugin.install_local_first',
+      {
         marketplacePath: '/tmp/wework-personal/.agents/plugins/marketplace.json',
-        remoteMarketplaceName: null,
         pluginName: 'example-plugin',
-      },
-    })
+      }
+    )
   })
 
-  test('keeps the rollback backup until personal-marketplace installation is verified', async () => {
+  test('does not roll back when local commit may still complete after a timeout', async () => {
+    const preview = {
+      valid: true,
+      archivePath: '/tmp/example-plugin.zip',
+      sha256: 'd'.repeat(64),
+      name: 'example-plugin',
+      displayName: 'Example Plugin',
+      version: '1.0.0',
+      description: 'Example plugin',
+      skillCount: 1,
+      mcpServerCount: 0,
+      executableCapabilities: [],
+      existing: false,
+      existingVersion: null,
+      issues: [],
+    }
+    mocks.invoke.mockImplementation(async (command: string) => {
+      if (command === 'local_executor_read_plugin_cloud_links') return []
+      if (command === 'local_executor_import_plugin_package') {
+        return {
+          pluginName: 'example-plugin',
+          displayName: 'Example Plugin',
+          version: '1.0.0',
+          marketplacePath: '/tmp/wework-personal',
+          pluginPath: '/tmp/wework-personal/plugins/example-plugin',
+          rollbackId: 'rollback-timeout',
+        }
+      }
+      throw new Error(`Unexpected invoke ${command}`)
+    })
+    mocks.requestLocalExecutor.mockImplementation(
+      async (method: string, params: { method?: string }) => {
+        if (method === 'runtime.codex.plugin.install_local_first') {
+          throw new Error('local_plugin_commit_timeout: still committing')
+        }
+        if (method === 'codex.app_server_request' && params.method === 'plugin/list') {
+          return { marketplaces: [personalMarketplace] }
+        }
+        if (method === 'codex.app_server_request' && params.method === 'plugin/installed') {
+          return { marketplaces: [personalMarketplace] }
+        }
+        throw new Error(`Unexpected executor method ${method}`)
+      }
+    )
+
+    const api = createLocalCodexPluginApi()
+    await expect(api.importPluginPackage(preview, false)).rejects.toThrow(
+      'local_plugin_commit_timeout'
+    )
+    expect(mocks.invoke).not.toHaveBeenCalledWith(
+      'local_executor_rollback_plugin_import',
+      expect.anything()
+    )
+  })
+
+  test('finalizes the import as soon as its local installation is committed', async () => {
     const preview = {
       valid: true,
       archivePath: '/tmp/example-plugin.zip',
@@ -317,34 +373,45 @@ describe('local codex plugin readState cache', () => {
       }
       if (command === 'local_executor_rollback_plugin_import') return null
       if (command === 'local_executor_finalize_plugin_import') {
-        throw new Error('backup finalized before verification')
+        return null
       }
       throw new Error(`Unexpected invoke ${command}`)
     })
     mocks.requestLocalExecutor.mockImplementation(
       async (method: string, params: { method?: string }) => {
-        if (method !== 'codex.app_server_request') {
-          throw new Error(`Unexpected executor method ${method}`)
+        if (method === 'runtime.codex.plugin.install_local_first') {
+          return {
+            pluginKey: 'example-plugin@wework-personal',
+            localCommitted: true,
+            authenticationPending: true,
+          }
         }
-        if (params.method === 'plugin/list' || params.method === 'plugin/installed') {
+        if (method === 'codex.app_server_request' && params.method === 'plugin/list') {
           return { marketplaces: [personalMarketplace] }
         }
-        if (params.method === 'plugin/install') return {}
-        throw new Error(`Unexpected app-server method ${params.method}`)
+        if (method === 'codex.app_server_request' && params.method === 'plugin/installed') {
+          return { marketplaces: [personalMarketplace] }
+        }
+        throw new Error(`Unexpected executor method ${method}`)
       }
     )
     const api = createLocalCodexPluginApi()
 
-    await expect(api.importPluginPackage(preview, false)).rejects.toThrow(
-      'Plugin package installed but was not returned by App Server'
-    )
-    expect(mocks.invoke).toHaveBeenCalledWith('local_executor_rollback_plugin_import', {
+    await expect(api.importPluginPackage(preview, false)).resolves.toEqual({
+      pluginName: 'example-plugin',
+      displayName: 'Example Plugin',
+      version: '1.0.0',
+    })
+    expect(mocks.invoke).toHaveBeenCalledWith('local_executor_finalize_plugin_import', {
       marketplacePath: '/tmp/wework-personal',
       rollbackId: 'rollback-verify',
     })
-    expect(mocks.invoke).not.toHaveBeenCalledWith(
-      'local_executor_finalize_plugin_import',
-      expect.anything()
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledWith(
+      'runtime.codex.plugin.install_local_first',
+      {
+        marketplacePath: '/tmp/wework-personal/.agents/plugins/marketplace.json',
+        pluginName: 'example-plugin',
+      }
     )
   })
 

@@ -27,7 +27,11 @@ const validPreview: LocalPluginImportPreview = {
 function pluginApi(overrides: Partial<LocalCodexPluginApi> = {}): LocalCodexPluginApi {
   return {
     previewPluginImport: vi.fn().mockResolvedValue(validPreview),
-    importPluginPackage: vi.fn().mockResolvedValue({}),
+    importPluginPackage: vi.fn().mockResolvedValue({
+      pluginName: 'example-plugin',
+      displayName: 'Example Plugin',
+      version: '1.0.0',
+    }),
     savePluginExample: vi.fn().mockResolvedValue('/tmp/wework-plugin-example.zip'),
     ...overrides,
   } as LocalCodexPluginApi
@@ -91,7 +95,12 @@ describe('PluginImportDialog', () => {
 
   test('requires trust confirmation before importing executable plugin capabilities', async () => {
     vi.mocked(open).mockResolvedValue('/tmp/example-plugin.zip')
-    const importPluginPackage = vi.fn().mockResolvedValue({})
+    const imported = {
+      pluginName: 'example-plugin',
+      displayName: 'Example Plugin',
+      version: '1.0.0',
+    }
+    const importPluginPackage = vi.fn().mockResolvedValue(imported)
     const onImported = vi.fn()
     const api = pluginApi({ importPluginPackage })
     render(<PluginImportDialog pluginApi={api} onCancel={vi.fn()} onImported={onImported} />)
@@ -104,7 +113,7 @@ describe('PluginImportDialog', () => {
     await userEvent.click(confirm)
 
     await waitFor(() => expect(importPluginPackage).toHaveBeenCalledWith(validPreview, false))
-    expect(onImported).toHaveBeenCalledOnce()
+    expect(onImported).toHaveBeenCalledWith(imported)
   })
 
   test('does not expose raw installation errors in the localized dialog', async () => {

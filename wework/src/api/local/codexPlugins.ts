@@ -121,6 +121,17 @@ interface LocalPluginPackageImportResult {
   rollbackId: string
 }
 
+export interface LocalPluginImportCompletion {
+  pluginName: string
+  displayName: string
+  version: string
+}
+
+interface LocalPluginInstallCommitResult {
+  pluginKey: string
+  localCommitted: boolean
+}
+
 export interface LocalPluginCloudLink {
   localPluginName: string
   cloudPluginId: number
@@ -168,7 +179,7 @@ export interface LocalCodexPluginApi {
   importPluginPackage(
     preview: LocalPluginImportPreview,
     overwrite: boolean
-  ): Promise<InstalledPlugin>
+  ): Promise<LocalPluginImportCompletion>
   savePluginExample(destinationPath: string): Promise<string>
   deletePersonalPlugin(pluginName: string, marketplacePath?: string): Promise<void>
   readState(params?: {
@@ -2862,20 +2873,15 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       )
       clearLocalCodexPluginsReadStateCache()
       try {
-        await codexAppServerRequest('plugin/install', {
-          marketplacePath: codexMarketplaceManifestSource(marketplacePath),
-          remoteMarketplaceName: null,
-          pluginName: imported.pluginName,
-        })
-        const nextState = await readState({
-          marketplaceId: WEWORK_PERSONAL_MARKETPLACE_ID,
-          refresh: true,
-        })
-        const installed = nextState.installedPlugins.find(plugin =>
-          installedPluginMatchesImportedPersonalPlugin(plugin, imported.pluginName)
+        const commit = await requestLocalExecutor<LocalPluginInstallCommitResult>(
+          'runtime.codex.plugin.install_local_first',
+          {
+            marketplacePath: codexMarketplaceManifestSource(marketplacePath),
+            pluginName: imported.pluginName,
+          }
         )
-        if (!installed) {
-          throw new Error('Plugin package installed but was not returned by App Server')
+        if (!commit.localCommitted) {
+          throw new Error('Plugin package did not reach its local installation commit')
         }
         await invoke('local_executor_finalize_plugin_import', {
           marketplacePath,
@@ -2883,19 +2889,24 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         }).catch(error => {
           console.warn('[Wework] failed to clear plugin import backup', error)
         })
-        return installed
+        return {
+          pluginName: imported.pluginName,
+          displayName: imported.displayName,
+          version: imported.version,
+        }
       } catch (error) {
-        await invoke('local_executor_rollback_plugin_import', {
-          marketplacePath,
-          rollbackId: imported.rollbackId,
-        }).catch(() => undefined)
+        const message = error instanceof Error ? error.message : String(error)
+        const commitMayStillBeRunning =
+          /local_plugin_commit_timeout/i.test(message) ||
+          /runtime\.codex\.plugin\.install_local_first timed out/i.test(message)
+        if (!commitMayStillBeRunning) {
+          await invoke('local_executor_rollback_plugin_import', {
+            marketplacePath,
+            rollbackId: imported.rollbackId,
+          }).catch(() => undefined)
+        }
         clearLocalCodexPluginsReadStateCache()
-        throw new Error(
-          `Plugin package installation failed: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-          { cause: error }
-        )
+        throw new Error(`Plugin package installation failed: ${message}`, { cause: error })
       }
     },
     savePluginExample(destinationPath) {
