@@ -77,7 +77,7 @@ describe('SmartAppsMarketplacePage', () => {
 
     fireEvent.click(screen.getByTestId('smart-apps-marketplace-create'))
 
-    expect(await screen.findByText('智能应用开发助手安装失败，请重试。')).toBeInTheDocument()
+    expect(await screen.findByText('智能工作台开发助手安装失败，请重试。')).toBeInTheDocument()
     expect(queuePluginReferenceTrial).not.toHaveBeenCalled()
     expect(navigateTo).not.toHaveBeenCalled()
   })

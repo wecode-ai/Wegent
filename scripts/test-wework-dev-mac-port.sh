@@ -89,11 +89,14 @@ assert_contains() {
 requested_port="$(find_free_port_pair)"
 expected_port="$((requested_port + 1))"
 ready_file="$(mktemp -t wework-port-listener.XXXXXX)"
+port_lock_root="$(mktemp -d -t wework-port-locks.XXXXXX)"
 rm -f "$ready_file"
 listener_pid=""
 
 cleanup() {
   rm -f "$ready_file"
+  find "$port_lock_root" -type f -name pid -delete 2>/dev/null || true
+  find "$port_lock_root" -depth -type d -exec rmdir {} \; 2>/dev/null || true
   if [ -n "$listener_pid" ] && kill -0 "$listener_pid" 2>/dev/null; then
     kill "$listener_pid"
     wait "$listener_pid" 2>/dev/null || true
@@ -109,6 +112,7 @@ output="$(
   WEGENT_DISABLE_SHARED_CARGO_TARGET=1 \
     WEWORK_DRY_RUN=1 \
     WEWORK_PORT="$requested_port" \
+    WEWORK_PORT_LOCK_ROOT="$port_lock_root" \
     VITE_WEGENT_BACKEND_URL="https://backend.example.com/api" \
     VITE_WEGENT_SOCKET_URL="wss://socket.example.com" \
     bash "$DEV_SCRIPT"
@@ -119,5 +123,25 @@ assert_contains "$output" "\"devUrl\": \"http://localhost:$expected_port\"" "Tau
 assert_contains "$output" "pnpm exec vite --host 0.0.0.0 --port $expected_port --strictPort" "beforeDevCommand"
 assert_contains "$output" "VITE_WEGENT_BACKEND_URL=https://backend.example.com/api" "backend URL"
 assert_contains "$output" "VITE_WEGENT_SOCKET_URL=wss://socket.example.com" "socket URL"
+
+kill "$listener_pid"
+wait "$listener_pid" 2>/dev/null || true
+listener_pid=""
+mkdir "$port_lock_root/$requested_port"
+echo "$$" >"$port_lock_root/$requested_port/pid"
+locked_output="$(
+  WEGENT_DISABLE_SHARED_CARGO_TARGET=1 \
+    WEWORK_DRY_RUN=1 \
+    WEWORK_PORT="$requested_port" \
+    WEWORK_PORT_LOCK_ROOT="$port_lock_root" \
+    VITE_WEGENT_BACKEND_URL="https://backend.example.com/api" \
+    VITE_WEGENT_SOCKET_URL="wss://socket.example.com" \
+    bash "$DEV_SCRIPT"
+)"
+assert_contains "$locked_output" "WEWORK_PORT=$expected_port" "locked-port dry-run output"
+if [ -d "$port_lock_root/$expected_port" ]; then
+  echo "Expected selected port lock to be released after dry run." >&2
+  exit 1
+fi
 
 echo "WeWork macOS dev port selection regression test passed"

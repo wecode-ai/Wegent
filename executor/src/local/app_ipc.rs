@@ -2108,6 +2108,22 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
             ],
             Some(PostProcessor::Json),
         )),
+        "git_github_pull_requests_batch" => Some(command_definition(
+            "gh api --method GET repos/{owner}/{repo}/pulls?state=all&per_page=100",
+            &[
+                "gh",
+                "api",
+                "--method",
+                "GET",
+                "repos/{owner}/{repo}/pulls?state=all&per_page=100",
+                "--jq",
+                concat!(
+                    "[.[] | {number, html_url, title, state, draft, ",
+                    "head: {ref: .head.ref}, updated_at, merged_at}]"
+                ),
+            ],
+            Some(PostProcessor::Json),
+        )),
         "git_github_pull_request_merge_queue" => Some(command_definition(
             "gh api graphql <pull-request-merge-queue-query>",
             &[
@@ -2117,6 +2133,11 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
                 "-f",
                 "query=query($url:URI!){resource(url:$url){... on PullRequest{mergeQueueEntry{id}}}}",
             ],
+            Some(PostProcessor::Json),
+        )),
+        "git_github_pull_request_merge_queue_batch" => Some(command_definition(
+            "gh api graphql",
+            &["gh", "api", "graphql"],
             Some(PostProcessor::Json),
         )),
         "git_gitlab_merge_requests" => Some(command_definition(
@@ -2135,6 +2156,24 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
                 "--output",
                 "json",
                 "--source-branch",
+            ],
+            Some(PostProcessor::Json),
+        )),
+        "git_gitlab_merge_requests_batch" => Some(command_definition(
+            "glab mr list --all",
+            &[
+                "glab",
+                "mr",
+                "list",
+                "--all",
+                "--per-page",
+                "100",
+                "--order",
+                "updated_at",
+                "--sort",
+                "desc",
+                "--output",
+                "json",
             ],
             Some(PostProcessor::Json),
         )),

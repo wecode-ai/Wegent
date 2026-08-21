@@ -3477,7 +3477,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       <ArrowLeftRight />
     </button>
   ) : undefined
-  const canContinueInIm = experimentalFeaturesEnabled && Boolean(currentRuntimeTask)
+  const canContinueInIm = Boolean(currentRuntimeTask)
   const continueInImButton = canContinueInIm ? (
     <button
       type="button"

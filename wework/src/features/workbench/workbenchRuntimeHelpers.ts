@@ -12,6 +12,7 @@ import type {
   RuntimeDeviceWorkspace,
   RuntimeTaskAddress,
   RuntimeTaskCreateRequest,
+  RuntimeTaskPinRequest,
   RuntimeWorkListResponse,
   User,
 } from '@/types/api'
@@ -228,6 +229,98 @@ export function updateRuntimeWorkTask(
       deviceWorkspaces: project.deviceWorkspaces.map(updateWorkspace),
     })),
     chats: runtimeWork.chats.map(updateWorkspace),
+  }
+}
+
+export function getRuntimeTaskThreadId(task: RuntimeTaskSummary): string | null {
+  const explicitThreadId = task.threadId?.trim()
+  if (explicitThreadId) return explicitThreadId
+
+  const runtimeHandleThreadId = [task.runtimeHandle?.threadId, task.runtimeHandle?.thread_id].find(
+    value => typeof value === 'string' && value.trim()
+  )
+  if (typeof runtimeHandleThreadId === 'string') return runtimeHandleThreadId.trim()
+
+  const taskId = task.taskId.trim()
+  return task.runtime === 'codex' && !task.optimistic && taskId ? taskId : null
+}
+
+function runtimeWorkspaceMatchesTaskPinRequest(
+  workspace: RuntimeDeviceWorkspace,
+  request: RuntimeTaskPinRequest,
+  stateDeviceId?: string | null
+): boolean {
+  return [stateDeviceId, workspace.deviceId, workspace.remoteHostId].some(
+    deviceId => deviceId === request.deviceId
+  )
+}
+
+export function findRuntimeTaskForPinRequest(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  request: RuntimeTaskPinRequest
+): RuntimeTaskSummary | null {
+  if (!runtimeWork) return null
+
+  for (const projectWork of runtimeWork.projects) {
+    for (const workspace of projectWork.deviceWorkspaces) {
+      if (
+        !runtimeWorkspaceMatchesTaskPinRequest(
+          workspace,
+          request,
+          projectWork.project.stateDeviceId
+        )
+      ) {
+        continue
+      }
+      const task = workspace.tasks.find(item => getRuntimeTaskThreadId(item) === request.threadId)
+      if (task) return task
+    }
+  }
+
+  for (const workspace of runtimeWork.chats) {
+    if (!runtimeWorkspaceMatchesTaskPinRequest(workspace, request)) continue
+    const task = workspace.tasks.find(item => getRuntimeTaskThreadId(item) === request.threadId)
+    if (task) return task
+  }
+
+  return null
+}
+
+export function updateRuntimeWorkTaskPinned(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  request: RuntimeTaskPinRequest
+): RuntimeWorkListResponse | null {
+  if (!runtimeWork) return null
+
+  const updateWorkspace = (
+    workspace: RuntimeDeviceWorkspace,
+    stateDeviceId?: string | null
+  ): RuntimeDeviceWorkspace => {
+    if (!runtimeWorkspaceMatchesTaskPinRequest(workspace, request, stateDeviceId)) {
+      return workspace
+    }
+
+    const tasks = workspace.tasks.map(task => {
+      if (getRuntimeTaskThreadId(task) !== request.threadId) return task
+      return normalizeRuntimeTaskSummary({
+        ...task,
+        pinned: request.pinned,
+        ...(!request.pinned ? { pinnedOrder: undefined } : {}),
+      })
+    })
+    if (tasks.every((task, index) => task === workspace.tasks[index])) return workspace
+    return { ...workspace, tasks }
+  }
+
+  return {
+    ...runtimeWork,
+    projects: runtimeWork.projects.map(projectWork => ({
+      ...projectWork,
+      deviceWorkspaces: projectWork.deviceWorkspaces.map(workspace =>
+        updateWorkspace(workspace, projectWork.project.stateDeviceId)
+      ),
+    })),
+    chats: runtimeWork.chats.map(workspace => updateWorkspace(workspace)),
   }
 }
 

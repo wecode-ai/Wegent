@@ -191,6 +191,7 @@ export interface WorkbenchContextValue {
     isModelSelectionReady: boolean
     input: string
     composerError?: string | null
+    composerErrorByScope?: Readonly<Record<string, string>>
     trialTemplates: PluginPathComponent[]
     trialPluginName?: string
     trialPluginApp?: LocalDeviceApp
@@ -214,6 +215,7 @@ export interface WorkbenchContextValue {
     setInput: (value: string) => void
     setInputForScope: (scopeKey: string, value: string) => void
     setComposerError?: (error: string | null) => void
+    setComposerErrorForScope?: (scopeKey: string, error: string | null) => void
     setSelectedSkills: (skills: SkillRef[]) => void
     toggleSkill: (skill: SkillRef) => void
     handleFileSelect: (files: File | File[]) => Promise<void>

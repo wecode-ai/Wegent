@@ -70,13 +70,15 @@ export function reduceRuntimeTaskLifecycle(
       }
 
     case 'send_accepted':
-      return {
-        ...state,
-        executionPhase: 'running',
-        turnPhase: state.turnPhase === 'streaming' ? 'streaming' : 'awaiting',
-        turnOutcome: null,
-        expectedExecutorRunning: true,
-      }
+      return state.expectedExecutorRunning === true
+        ? {
+            ...state,
+            executionPhase: 'running',
+            turnPhase: state.turnPhase === 'streaming' ? 'streaming' : 'awaiting',
+            turnOutcome: null,
+            expectedExecutorRunning: true,
+          }
+        : state
 
     case 'send_rejected': {
       const executorAlreadyConfirmed =
@@ -147,12 +149,10 @@ export function reduceRuntimeTaskLifecycle(
       }
       return {
         ...state,
-        executionPhase: state.goalStatus === 'active' ? state.executionPhase : 'idle',
         turnPhase: 'idle',
         turnOutcome: event.outcome ?? state.turnOutcome,
         activeTurnId: null,
-        expectedExecutorRunning:
-          state.goalStatus === 'active' ? state.expectedExecutorRunning : false,
+        expectedExecutorRunning: null,
       }
     }
 

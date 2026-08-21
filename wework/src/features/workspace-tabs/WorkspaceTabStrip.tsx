@@ -385,7 +385,7 @@ export function WorkspaceTabStrip({
                   className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-text-primary hover:bg-black/[0.04]"
                 >
                   <Boxes aria-hidden="true" className="h-4 w-4 text-text-secondary" />
-                  {t('workbench.smart_apps_title', '智能应用')}
+                  {t('workbench.smart_apps_title', '智能工作台')}
                   <ExperimentalBadge
                     testId="workspace-tab-add-smart-app-experimental-badge"
                     className="ml-auto"

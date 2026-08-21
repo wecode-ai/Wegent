@@ -103,7 +103,7 @@ describe('HarnessAppInstallDialog', () => {
       />
     )
 
-    expect(screen.getByText('无法安装这个智能应用')).toBeInTheDocument()
+    expect(screen.getByText('无法安装这个智能工作台')).toBeInTheDocument()
     expect(screen.getByText('plugin-manifest.json 缺失')).toBeInTheDocument()
     expect(screen.queryByTestId('harness-app-install-confirm')).not.toBeInTheDocument()
   })
