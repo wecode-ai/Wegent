@@ -2021,6 +2021,13 @@ describe('DesktopSidebar', () => {
                 workspaceKind: 'chat',
                 title: 'hi',
                 runtime: 'codex',
+                runtimeHandle: {
+                  origin: {
+                    type: 'board_comment',
+                    cloudProjectId: 'project-1',
+                    loopItemId: 'item-1',
+                  },
+                },
               },
             ],
           },
@@ -2052,6 +2059,7 @@ describe('DesktopSidebar', () => {
     )
     expect(screen.queryByTestId(`runtime-workspace-row-${chatPath}`)).not.toBeInTheDocument()
     expect(screen.getByTestId('runtime-local-task-row-chat-1')).toHaveTextContent('hi')
+    expect(screen.queryByTestId('runtime-local-task-board-comment-chat-1')).not.toBeInTheDocument()
     expect(screen.queryByTestId('runtime-local-task-device-marker-chat-1')).not.toBeInTheDocument()
     expect(screen.queryByTestId('runtime-local-task-device-icon-chat-1')).not.toBeInTheDocument()
     expect(screen.queryByTestId('runtime-workspace-row-/tmp/spike')).not.toBeInTheDocument()
@@ -2068,6 +2076,13 @@ describe('DesktopSidebar', () => {
       deviceId: 'local-device',
       workspacePath: chatPath,
       taskId: 'chat-1',
+      runtimeHandle: {
+        origin: {
+          type: 'board_comment',
+          cloudProjectId: 'project-1',
+          loopItemId: 'item-1',
+        },
+      },
     })
   })
 
