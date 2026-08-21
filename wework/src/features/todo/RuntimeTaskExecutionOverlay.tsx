@@ -1,6 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Bot, Check, ExternalLink, Hash, LoaderCircle, Monitor, Square, X } from 'lucide-react'
+import {
+  AlertCircle,
+  Bot,
+  Check,
+  ExternalLink,
+  Hash,
+  LoaderCircle,
+  Monitor,
+  RotateCcw,
+  Square,
+  X,
+} from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
@@ -191,25 +202,51 @@ export function RuntimeTaskExecutionOverlay({
         </header>
 
         <div className="min-h-0 flex-1" data-testid="runtime-execution-detail-body">
-          <ScrollableMessageArea
-            messages={session.messages}
-            loading={session.transcriptLoading}
-            isWaitingForAssistant={session.waitingForAssistant}
-            hasMoreBefore={session.transcriptHasMoreBefore}
-            loadingMoreBefore={session.transcriptLoadingMoreBefore}
-            turnNavigation={session.turnNavigation}
-            loadedTranscriptRanges={session.loadedTranscriptRanges}
-            onLoadMoreBefore={session.loadMoreTranscriptBefore}
-            onLoadFullTranscript={session.loadFullTranscript}
-            loadingFullTranscript={session.transcriptLoadingFullContent}
-            onLoadTurnNavigationItem={session.loadTranscriptTurnNavigationItem}
-            onLoadTranscriptGap={session.loadTranscriptGap}
-            conversationKey={`${address.deviceId}:${address.taskId}`}
-            devices={state.devices}
-            messageListClassName={DESKTOP_MESSAGE_LIST_CLASS}
-            className="h-full"
-            scrollTestId="runtime-execution-detail-scroll"
-          />
+          {session.transcriptError && session.messages.length === 0 ? (
+            <div
+              className="flex h-full flex-col items-center justify-center gap-3 px-8 text-center"
+              data-testid="runtime-execution-detail-transcript-error"
+            >
+              <AlertCircle className="h-5 w-5 text-text-muted" />
+              <div>
+                <p className="text-sm font-medium text-text-primary">
+                  {t('workbench.task_activity_transcript_unavailable')}
+                </p>
+                <p className="mt-1 text-xs text-text-muted">
+                  {t('workbench.task_activity_transcript_execution_continues')}
+                </p>
+              </div>
+              <button
+                type="button"
+                data-testid="runtime-execution-detail-transcript-retry"
+                onClick={session.reloadRuntimeTranscript}
+                className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-muted px-3 text-sm font-medium text-text-primary hover:bg-muted/80"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                {t('workbench.retry')}
+              </button>
+            </div>
+          ) : (
+            <ScrollableMessageArea
+              messages={session.messages}
+              loading={session.transcriptLoading}
+              isWaitingForAssistant={session.waitingForAssistant}
+              hasMoreBefore={session.transcriptHasMoreBefore}
+              loadingMoreBefore={session.transcriptLoadingMoreBefore}
+              turnNavigation={session.turnNavigation}
+              loadedTranscriptRanges={session.loadedTranscriptRanges}
+              onLoadMoreBefore={session.loadMoreTranscriptBefore}
+              onLoadFullTranscript={session.loadFullTranscript}
+              loadingFullTranscript={session.transcriptLoadingFullContent}
+              onLoadTurnNavigationItem={session.loadTranscriptTurnNavigationItem}
+              onLoadTranscriptGap={session.loadTranscriptGap}
+              conversationKey={`${address.deviceId}:${address.taskId}`}
+              devices={state.devices}
+              messageListClassName={DESKTOP_MESSAGE_LIST_CLASS}
+              className="h-full"
+              scrollTestId="runtime-execution-detail-scroll"
+            />
+          )}
         </div>
 
         <footer className="flex flex-none items-center gap-3 border-t border-border/50 px-6 py-3">
