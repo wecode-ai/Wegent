@@ -15,14 +15,13 @@ import {
 import {
   assistantMessage,
   createSse,
+  mcpToolRequestEvents,
   namespacedFunctionCall,
   requestContainsToolOutput,
   responseCompleted,
   responseCreated,
   selectMcpTool,
-  selectToolSearch,
   streamingTextEvents,
-  toolSearchResponseEvents,
 } from '../modules/response-protocol.mjs'
 
 const PROJECT_ID = '700000000000000001'
@@ -1457,6 +1456,22 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           const candidatesCallId = 'project-automation-read-candidates'
           const searchSubmitCallId = 'project-automation-search-submit-plan'
           const submitCallId = 'project-automation-submit-workflow-plan'
+          const directManagerToolPrefix = 'wegent-wework-space_'
+          const requestManagerTool = ({ toolName, argumentsValue, searchCallId, toolCallId }) => {
+            const selection = mcpToolRequestEvents(payload, {
+              toolName,
+              argumentsValue,
+              directToolName: `${directManagerToolPrefix}${toolName}`,
+              searchCallId,
+              toolCallId,
+            })
+            writeEvents([
+              responseCreated(responseId),
+              ...selection.events,
+              responseCompleted(responseId),
+            ])
+            return selection.mode
+          }
           if (requestContainsToolOutput(payload, submitCallId)) {
             writeEvents([
               responseCreated(responseId),
@@ -1478,12 +1493,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
             return true
           }
           if (requestContainsToolOutput(payload, candidatesCallId)) {
-            const search = selectToolSearch(payload, 'submit_workflow_plan')
-            writeEvents([
-              responseCreated(responseId),
-              ...toolSearchResponseEvents(searchSubmitCallId, search),
-              responseCompleted(responseId),
-            ])
+            const mode = requestManagerTool({
+              toolName: 'submit_workflow_plan',
+              argumentsValue: { plan },
+              searchCallId: searchSubmitCallId,
+              toolCallId: submitCallId,
+            })
+            if (mode === 'direct') managerToolCalls += 1
             return true
           }
           if (requestContainsToolOutput(payload, searchCandidatesCallId)) {
@@ -1501,12 +1517,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
             return true
           }
           if (requestContainsToolOutput(payload, readItemCallId)) {
-            const search = selectToolSearch(payload, 'get_assignment_candidates')
-            writeEvents([
-              responseCreated(responseId),
-              ...toolSearchResponseEvents(searchCandidatesCallId, search),
-              responseCompleted(responseId),
-            ])
+            requestManagerTool({
+              toolName: 'get_assignment_candidates',
+              argumentsValue: {},
+              searchCallId: searchCandidatesCallId,
+              toolCallId: candidatesCallId,
+            })
             return true
           }
           if (requestContainsToolOutput(payload, searchItemCallId)) {
@@ -1518,12 +1534,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
             ])
             return true
           }
-          const search = selectToolSearch(payload, 'get_board_item')
-          writeEvents([
-            responseCreated(responseId),
-            ...toolSearchResponseEvents(searchItemCallId, search),
-            responseCompleted(responseId),
-          ])
+          requestManagerTool({
+            toolName: 'get_board_item',
+            argumentsValue: {},
+            searchCallId: searchItemCallId,
+            toolCallId: readItemCallId,
+          })
           return true
         }
         writeEvents([

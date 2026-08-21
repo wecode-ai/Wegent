@@ -482,6 +482,41 @@ function selectConvertedTool(request, toolName, argumentsValue) {
   return { name, arguments: argumentsValue }
 }
 
+function selectMcpToolRequest(request, toolName, argumentsValue, directToolName) {
+  const tools = Array.isArray(request.tools) ? request.tools : []
+  const names = tools.map(tool => tool?.name ?? tool?.function?.name).filter(Boolean)
+  const advertisesToolSearch = tools.some(
+    tool =>
+      tool?.type === 'tool_search' ||
+      (tool?.type === 'function' &&
+        ['tool_search', 'search_deferred_tools'].includes(tool?.name ?? tool?.function?.name))
+  )
+  if (!advertisesToolSearch && directToolName && names.includes(directToolName)) {
+    return {
+      mode: 'direct',
+      ...selectTool(request, directToolName, argumentsValue),
+    }
+  }
+  return {
+    mode: 'search',
+    ...selectToolSearch(request, toolName),
+  }
+}
+
+function mcpToolRequestEvents(
+  request,
+  { toolName, argumentsValue, directToolName, searchCallId, toolCallId }
+) {
+  const selection = selectMcpToolRequest(request, toolName, argumentsValue, directToolName)
+  return {
+    mode: selection.mode,
+    events:
+      selection.mode === 'direct'
+        ? functionCall(toolCallId, selection.name, selection.arguments)
+        : toolSearchResponseEvents(searchCallId, selection),
+  }
+}
+
 function selectToolSearch(request, query) {
   const tools = Array.isArray(request.tools) ? request.tools : []
   const toolNames = tools.map(tool => tool?.name ?? tool?.function?.name).filter(Boolean)
@@ -658,6 +693,8 @@ export {
   selectOfficialPluginMcpTool,
   selectMcpTool,
   selectConvertedTool,
+  selectMcpToolRequest,
+  mcpToolRequestEvents,
   selectToolSearch,
   toolSearchResponseEvents,
   requestToolSearchResults,
