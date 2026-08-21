@@ -248,16 +248,11 @@ def test_extensions_have_a_bounded_serialized_size(test_db, test_user, monkeypat
     assert error.value.status_code == 422
 
 
-def test_release_and_submission_tables_reference_smart_apps(test_db):
+def test_release_and_submission_tables_have_no_foreign_keys(test_db):
     inspector = inspect(test_db.get_bind())
 
     for table in ("smart_app_releases", "smart_app_submissions"):
-        foreign_keys = inspector.get_foreign_keys(table)
-        assert any(
-            foreign_key["constrained_columns"] == ["smart_app_id"]
-            and foreign_key["referred_table"] == "smart_apps"
-            for foreign_key in foreign_keys
-        )
+        assert inspector.get_foreign_keys(table) == []
 
 
 def test_department_grant_allows_member_download(test_db, test_user, monkeypatch):

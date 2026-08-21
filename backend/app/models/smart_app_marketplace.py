@@ -10,7 +10,6 @@ from sqlalchemy import (
     JSON,
     Column,
     DateTime,
-    ForeignKey,
     Index,
     String,
     UniqueConstraint,
@@ -214,13 +213,10 @@ class SmartAppRelease(Base):
     )
     smart_app_id = Column(
         big_integer_id_type(),
-        ForeignKey(
-            "smart_apps.id", name="fk_smart_app_releases_app", ondelete="RESTRICT"
-        ),
         nullable=False,
         default=0,
         server_default="0",
-        comment="Owning Smart app ID",
+        comment="Owning Smart app ID; logical reference without database foreign key",
     )
     version = Column(
         String(50),
@@ -333,13 +329,10 @@ class SmartAppSubmission(Base):
     )
     smart_app_id = Column(
         big_integer_id_type(),
-        ForeignKey(
-            "smart_apps.id", name="fk_smart_app_submissions_app", ondelete="RESTRICT"
-        ),
         nullable=False,
         default=0,
         server_default="0",
-        comment="Target Smart app ID",
+        comment="Target Smart app ID; logical reference without database foreign key",
     )
     owner_user_id = Column(
         big_integer_id_type(),

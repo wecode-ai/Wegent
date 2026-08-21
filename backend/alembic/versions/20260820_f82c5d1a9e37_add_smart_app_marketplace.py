@@ -197,14 +197,9 @@ def upgrade() -> None:
         sa.Column(
             "smart_app_id",
             _bigint(),
-            sa.ForeignKey(
-                "smart_apps.id",
-                name="fk_smart_app_releases_app",
-                ondelete="RESTRICT",
-            ),
             nullable=False,
             server_default="0",
-            comment="Owning Smart app ID",
+            comment="Owning Smart app ID; logical reference without database foreign key",
         ),
         sa.Column(
             "version",
@@ -314,14 +309,9 @@ def upgrade() -> None:
         sa.Column(
             "smart_app_id",
             _bigint(),
-            sa.ForeignKey(
-                "smart_apps.id",
-                name="fk_smart_app_submissions_app",
-                ondelete="RESTRICT",
-            ),
             nullable=False,
             server_default="0",
-            comment="Target Smart app ID",
+            comment="Target Smart app ID; logical reference without database foreign key",
         ),
         sa.Column(
             "owner_user_id",
