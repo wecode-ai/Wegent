@@ -91,15 +91,11 @@
 
 @keyframes task-conversation-workspace-panel-enter {
   from {
-    width: 0;
-    min-width: 0;
     opacity: 0;
     transform: translateX(24px);
   }
 
   to {
-    width: 480px;
-    min-width: 480px;
     opacity: 1;
     transform: translateX(0);
   }
@@ -126,15 +122,11 @@
 
   @keyframes task-conversation-workspace-panel-enter {
     from {
-      width: 0;
-      min-width: 0;
       opacity: 0;
       transform: translateX(24px);
     }
 
     to {
-      width: 420px;
-      min-width: 420px;
       opacity: 1;
       transform: translateX(0);
     }
