@@ -1244,6 +1244,7 @@
     "vision_sidecar_disabled": "不使用 sidecar",
     "vision_sidecar_loading": "正在加载可用模型...",
     "vision_sidecar_empty": "暂无声明支持图片理解且协议兼容的云端模型。",
+    "vision_sidecar_unavailable": "{{modelName}}（当前不可选，保留原有配置）",
     "model_id": "模型 ID",
     "select_model_id": "选择模型 ID",
     "custom_model_id_placeholder": "输入自定义模型 ID",

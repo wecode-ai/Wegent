@@ -169,6 +169,7 @@ Page-state polling owns the browser's actual URL, while the address field owns t
 
 ## WebView Compatibility
 
+- Built-in-browser child WebViews enable Web Inspector only in debug builds; an explicit build cfg disables it in release builds. On macOS debug builds, Wework saves the child-WebView frame before the Inspector frontend first appears, detaches the Inspector, and restores the frame exactly. F12 therefore opens only a separate window and cannot dock, resize the browser, or cover the workbench. The main-WebView Inspector remains available only through Developer Commands.
 - Browser WebViews use a fixed isolated data-store identifier and app data directory. They must not share Wework's main-interface sign-in storage, and the browser settings clear action only targets this store.
 - Wegent Agent application tabs in Tauri also use native child WebViews instead of cross-origin iframes. All application tabs share the same fixed data-store identifier, so the complete website storage for an origin, including every `localStorage` key, cookies, and IndexedDB, remains available after closing and reopening a tab or restarting the application. A tab label identifies only the WebView lifecycle; it does not partition storage. On macOS 14 and later, `data_store_identifier` selects the persistent `WKWebsiteDataStore`, while `data_directory` primarily serves other platforms. Do not mirror or restore page storage key by key in the Wework main interface.
 - Browser WebViews use a Safari-compatible User-Agent so websites do not treat a WebKit User-Agent without a browser product identifier as an unsupported client.
@@ -208,10 +209,13 @@ cargo check --manifest-path wework/src-tauri/Cargo.toml
 cargo test --manifest-path executor/Cargo.toml browser_mcp
 cargo test --manifest-path wework/src-tauri/Cargo.toml embedded_browser
 pnpm --filter wework e2e:desktop:embedded-browser
+pnpm --filter wework e2e:desktop -- --segment browser-toolbar-actions
 ```
 
 `e2e:desktop:embedded-browser` must create task A, switch to task B, and then use task A's specific label for the first bridge `open`, `waitFor`, and `inspect`. It verifies that the inactive task completes background navigation before the tool timeout without taking over task B's browser, and that the same page state is visible after switching back to task A. A test that covers only a second open, an active-task open, or a manually exposed browser panel does not exercise the first-open and inactive-task routing races.
 
 When the browser change touches Tauri commands, native WebView behavior, IPC, or the Agent action path, also start an isolated real Tauri session with `pnpm --filter wework ai:verify start` and record evidence for opening a page, inspect, actions, and screenshot. If the full E2E is too slow locally, document why it was not run and make sure CI runs `e2e:desktop:embedded-browser`.
+
+macOS Inspector changes must also run the `browser-toolbar-actions` checkpoint. It serves a local HTTP simulation page, opens and closes the Inspector twice, and verifies that a separate native window appears, becomes invisible after close, and leaves the child-WebView frame unchanged.
 
 When the Executor Codex launch configuration changes, also run the matching Codex launch config unit tests to verify that the browser MCP server is injected correctly.

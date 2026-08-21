@@ -26,6 +26,7 @@ import { desktopControlExtension } from '@extensions/desktop-control'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
 import { parseDesktopControlKey } from './desktop-control-keyboard'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
+import { getComposerDiagnosticsSnapshot } from '@/components/chat/composer/composerDiagnostics'
 import {
   getRuntimeConversationCacheStats,
   getRuntimeConversationMessages,
@@ -785,8 +786,9 @@ function endDesktopControlPointer(): string {
 }
 
 let activeDesktopControlDrag: {
+  endOptions: MouseEventInit & PointerEventInit
   sourceText: string
-  target: HTMLElement
+  targetSelector: string
 } | null = null
 
 async function startDesktopControlDrag(command: DesktopControlCommand): Promise<string> {
@@ -806,8 +808,9 @@ async function startDesktopControlDrag(command: DesktopControlCommand): Promise<
   dispatchDesktopControlPointerEvent(target, 'pointermove', endOptions)
   await waitForDesktopControlTick()
   activeDesktopControlDrag = {
+    endOptions,
     sourceText: element.textContent?.trim() ?? '',
-    target,
+    targetSelector: command.target,
   }
   return activeDesktopControlDrag.sourceText
 }
@@ -815,9 +818,13 @@ async function startDesktopControlDrag(command: DesktopControlCommand): Promise<
 async function endDesktopControlDrag(command: DesktopControlCommand): Promise<string> {
   const activeDrag = activeDesktopControlDrag
   if (!activeDrag) throw new Error('No desktop control drag is active')
-  const target = command.target ? findDesktopControlElements(command.target)[0] : activeDrag.target
-  if (!target) throw new Error(`Unable to find target selector "${command.target}"`)
-  const endOptions = { ...desktopControlEventOptions(target), buttons: 1 }
+  const targetSelector = command.target ?? activeDrag.targetSelector
+  const target = findDesktopControlElements(targetSelector)[0]
+  if (!target) throw new Error(`Unable to find target selector "${targetSelector}"`)
+  const endOptions =
+    targetSelector === activeDrag.targetSelector
+      ? activeDrag.endOptions
+      : { ...desktopControlEventOptions(target), buttons: 1 }
   try {
     dispatchDesktopControlPointerEvent(document, 'pointermove', endOptions)
     dispatchDesktopControlPointerEvent(target, 'pointermove', endOptions)
@@ -1082,6 +1089,12 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return invoke<string>('capture_workspace_webview')
     case 'captureEmbeddedBrowser':
       return captureEmbeddedBrowserWhenReady(command)
+    case 'verifyEmbeddedBrowserDetachedInspector':
+      return JSON.stringify(
+        await invoke('embedded_browser_verify_detached_inspector_for_e2e', {
+          label: command.value || undefined,
+        })
+      )
     case 'closeMainWindowToTray':
       return ''
     case 'requestMainWindowClose':
@@ -1687,6 +1700,30 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'getWorkbenchDebugSnapshot':
       return JSON.stringify(getWorkbenchDebugSnapshot())
+    case 'getComposerDiagnosticsSnapshot':
+      return JSON.stringify(getComposerDiagnosticsSnapshot())
+    case 'getComposerFocusSnapshot': {
+      const activeElement = document.activeElement
+      const inputs = findDesktopControlElements('[data-testid="chat-message-input"]').map(input => {
+        const rect = input.getBoundingClientRect()
+        return {
+          active: input === activeElement,
+          contentEditable: input.getAttribute('contenteditable'),
+          height: Math.round(rect.height),
+          width: Math.round(rect.width),
+          visible: desktopControlElementVisible(input),
+        }
+      })
+      return JSON.stringify({
+        activeElement: activeElement
+          ? {
+              tagName: activeElement.tagName.toLowerCase(),
+              testId: activeElement.getAttribute('data-testid'),
+            }
+          : null,
+        inputs,
+      })
+    }
     case 'getActiveElementTestId':
       return document.activeElement?.getAttribute('data-testid') ?? ''
     case 'getLocalExecutorStatus':
