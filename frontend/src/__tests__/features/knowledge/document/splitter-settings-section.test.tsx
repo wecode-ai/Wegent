@@ -136,13 +136,15 @@ describe('SplitterSettingsSection', () => {
     render(<SplitterSettingsSection config={{}} onChange={jest.fn()} />)
 
     expect(screen.getByText('Suitable for most documents.')).toBeInTheDocument()
-    expect(
-      screen.getByRole('button', { name: 'Choose how to organize searchable chunks.' })
-    ).toBeInTheDocument()
-    expect(
-      screen.getByRole('button', { name: 'Selects a parser for each file type.' })
-    ).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Improves Markdown sections.' })).toBeInTheDocument()
+    expect(screen.getByTestId('splitter-help-splitter-type')).toHaveAccessibleName(
+      'Choose how to organize searchable chunks.'
+    )
+    expect(screen.getByTestId('splitter-help-file-aware')).toHaveAccessibleName(
+      'Selects a parser for each file type.'
+    )
+    expect(screen.getByTestId('splitter-help-title-enhancement')).toHaveAccessibleName(
+      'Improves Markdown sections.'
+    )
   })
 
   it('maps legacy smart config to the new display model', () => {

@@ -57,6 +57,7 @@ function SettingLabel({
               type="button"
               className="inline-flex h-11 w-11 items-center justify-center text-text-muted hover:text-text-primary"
               aria-label={help}
+              data-testid={`splitter-help-${htmlFor}`}
             >
               <Info className="h-4 w-4" />
             </button>
