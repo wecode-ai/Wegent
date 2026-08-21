@@ -1208,21 +1208,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       visible: true,
     })
     await control.command('click', managerExecutionShortcut, { visible: true })
-    await control.command(
-      'waitFor',
-      `${activeBoard} [data-testid="runtime-execution-detail-overlay"]`,
-      {
-        timeoutMs: uiTimeoutMs,
-        visible: true,
-      }
-    )
-    await control.command(
-      'click',
-      `${activeBoard} [data-testid="runtime-execution-detail-close"]`,
-      {
-        visible: true,
-      }
-    )
+    await control.command('waitFor', '[data-testid="runtime-execution-detail-overlay"]', {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('click', '[data-testid="runtime-execution-detail-close"]', {
+      visible: true,
+    })
     const customManagerCard = `${activeBoard} [data-executor-type="automation_manager"][data-manager-type="custom"]`
     await control.command('waitFor', customManagerCard, {
       text: '自定义 AI 调度员',

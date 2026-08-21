@@ -977,10 +977,12 @@ export function TodoEditor(props: TodoEditorProps) {
     if (!item || workflowPlanBusy) return
     const method = workflowPlanMethod(api, action)
     if (!method) return
+    workflowPlanRequestIdRef.current += 1
     setWorkflowPlanBusy(true)
     setWorkflowPlanErrorState({ itemId: item.id, error: null })
     try {
-      setWorkflowPlanState({ itemId: item.id, plan: await method(item.id) })
+      const plan = await method(item.id)
+      setWorkflowPlanState({ itemId: item.id, plan })
       await props.onWorkflowPlanChanged?.()
       editProps?.onUpdated(await api.getLoopItem(item.id))
     } catch (error) {
@@ -2240,7 +2242,10 @@ export function TodoEditor(props: TodoEditorProps) {
                       ) : null}
                       {workflowError ? (
                         <details className="mt-2 text-xs text-destructive">
-                          <summary className={cn(rawWorkflowError && 'cursor-pointer')}>
+                          <summary
+                            className={cn(rawWorkflowError && 'cursor-pointer')}
+                            data-testid="cloud-todo-workflow-error-summary"
+                          >
                             {workflowError}
                           </summary>
                           {rawWorkflowError ? (
