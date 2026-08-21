@@ -811,6 +811,7 @@ export function useWorkbenchRuntimeMessaging({
       options?: Pick<
         SendCurrentInputOptions,
         | 'clientUserMessageId'
+        | 'optimisticUserMessage'
         | 'initialGoal'
         | 'initialSupervisor'
         | 'onError'
@@ -869,9 +870,10 @@ export function useWorkbenchRuntimeMessaging({
           : null
       const taskSeed = createRuntimeTaskId(runtime)
       const taskId = createRuntimeTaskIdFromSeed(taskSeed)
+      const clientUserMessageId = options?.optimisticUserMessage?.id ?? options?.clientUserMessageId
       logRuntimeTaskLaunchTiming('prepared-send-entered', launchStartedAt, {
         taskId,
-        clientUserMessageId: options?.clientUserMessageId ?? null,
+        clientUserMessageId: clientUserMessageId ?? null,
         projectId,
         runtime,
       })
@@ -944,7 +946,7 @@ export function useWorkbenchRuntimeMessaging({
           try {
             logRuntimeTaskLaunchTiming('standalone-workspace-started', launchStartedAt, {
               taskId,
-              clientUserMessageId: options?.clientUserMessageId ?? null,
+              clientUserMessageId: clientUserMessageId ?? null,
               deviceId: activeDeviceId,
             })
             workspacePath = await createConversationWorkspace(
@@ -955,13 +957,13 @@ export function useWorkbenchRuntimeMessaging({
             )
             logRuntimeTaskLaunchTiming('standalone-workspace-resolved', launchStartedAt, {
               taskId,
-              clientUserMessageId: options?.clientUserMessageId ?? null,
+              clientUserMessageId: clientUserMessageId ?? null,
               deviceId: activeDeviceId,
             })
           } catch (error) {
             logRuntimeTaskLaunchTiming('standalone-workspace-failed', launchStartedAt, {
               taskId,
-              clientUserMessageId: options?.clientUserMessageId ?? null,
+              clientUserMessageId: clientUserMessageId ?? null,
               deviceId: activeDeviceId,
               error: runtimeLaunchErrorName(error),
             })
@@ -1100,9 +1102,7 @@ export function useWorkbenchRuntimeMessaging({
           ? { runtimePermissionMode: options.runtimePermissionMode }
           : {}),
         message: payload.message,
-        ...(options?.clientUserMessageId
-          ? { clientUserMessageId: options.clientUserMessageId }
-          : {}),
+        ...(clientUserMessageId ? { clientUserMessageId } : {}),
         title: buildRuntimeTaskTitle(displayMessage, payload.title),
         modelId: executionModel.modelId,
         modelType: executionModel.modelType ?? null,
@@ -1165,6 +1165,15 @@ export function useWorkbenchRuntimeMessaging({
         workspacePath: requestedWorktree ? undefined : sourceWorkspacePath,
         ...(createRuntimeHandle ? { runtimeHandle: createRuntimeHandle } : {}),
       }
+      const seedOptimisticUserMessage = (address: RuntimeTaskAddress) => {
+        if (!options?.optimisticUserMessage) {
+          return
+        }
+        applyRuntimeConversationAction(address, {
+          type: 'user_added',
+          message: options.optimisticUserMessage,
+        })
+      }
       modelSelection.setSelectionForScope?.(
         getRuntimeTaskChatScopeKey(optimisticAddress),
         selectedModel,
@@ -1212,7 +1221,7 @@ export function useWorkbenchRuntimeMessaging({
       }
       logRuntimeTaskLaunchTiming('runtime-create-started', launchStartedAt, {
         taskId,
-        clientUserMessageId: options?.clientUserMessageId ?? null,
+        clientUserMessageId: clientUserMessageId ?? null,
         deviceId: optimisticAddress.deviceId,
       })
       // Start the primary request before optimistic navigation mounts task readers.
@@ -1238,22 +1247,23 @@ export function useWorkbenchRuntimeMessaging({
       void createResponsePromise.catch(() => undefined)
       logRuntimeTaskLaunchTiming('optimistic-open-started', launchStartedAt, {
         taskId,
-        clientUserMessageId: options?.clientUserMessageId ?? null,
+        clientUserMessageId: clientUserMessageId ?? null,
         deviceId: optimisticAddress.deviceId,
       })
+      seedOptimisticUserMessage(optimisticAddress)
       await options?.onRuntimeTaskOptimisticOpen?.(optimisticAddress)
       if (options?.openInMainPane !== false) {
         runtimeTasks.openRuntimeTaskView(optimisticAddress, runtimeProject, { navigate: true })
       }
       logRuntimeTaskLaunchTiming('optimistic-open-dispatched', launchStartedAt, {
         taskId,
-        clientUserMessageId: options?.clientUserMessageId ?? null,
+        clientUserMessageId: clientUserMessageId ?? null,
         deviceId: optimisticAddress.deviceId,
         openedInMainPane: options?.openInMainPane !== false,
       })
       logRuntimeTaskLaunchPaintTiming(launchStartedAt, {
         taskId,
-        clientUserMessageId: options?.clientUserMessageId ?? null,
+        clientUserMessageId: clientUserMessageId ?? null,
         deviceId: optimisticAddress.deviceId,
       })
       if (optimisticWorkspace && optimisticWorkspacePath && !options?.ephemeral) {
@@ -1279,7 +1289,7 @@ export function useWorkbenchRuntimeMessaging({
         const response = await createResponsePromise
         logRuntimeTaskLaunchTiming('runtime-create-resolved', launchStartedAt, {
           taskId,
-          clientUserMessageId: options?.clientUserMessageId ?? null,
+          clientUserMessageId: clientUserMessageId ?? null,
           deviceId: response.deviceId || optimisticAddress.deviceId,
           accepted: response.accepted,
         })
@@ -1361,7 +1371,8 @@ export function useWorkbenchRuntimeMessaging({
             previousAddress: runtimeAddressLog(optimisticAddress),
             finalAddress: runtimeAddressLog(address),
           })
-          options?.onRuntimeTaskOptimisticOpen?.(address, {
+          seedOptimisticUserMessage(address)
+          await options?.onRuntimeTaskOptimisticOpen?.(address, {
             previousAddress: optimisticAddress,
           })
         }
@@ -1418,7 +1429,7 @@ export function useWorkbenchRuntimeMessaging({
       } catch (error) {
         logRuntimeTaskLaunchTiming('runtime-create-failed', launchStartedAt, {
           taskId,
-          clientUserMessageId: options?.clientUserMessageId ?? null,
+          clientUserMessageId: clientUserMessageId ?? null,
           deviceId: optimisticAddress.deviceId,
           error: runtimeLaunchErrorName(error),
         })
@@ -1488,7 +1499,8 @@ export function useWorkbenchRuntimeMessaging({
     async (inputOverride?: string, options?: SendCurrentInputOptions) => {
       const launchStartedAt = runtimeLaunchNowMs()
       logRuntimeTaskLaunchTiming('send-current-entered', launchStartedAt, {
-        clientUserMessageId: options?.clientUserMessageId ?? null,
+        clientUserMessageId:
+          options?.optimisticUserMessage?.id ?? options?.clientUserMessageId ?? null,
         forceNewTask: options?.forceNewTask === true,
         hasCurrentRuntimeTask: Boolean(state.currentRuntimeTask),
       })
@@ -1622,6 +1634,7 @@ export function useWorkbenchRuntimeMessaging({
           onError: options?.onError,
           onRuntimeTaskOptimisticOpen: options?.onRuntimeTaskOptimisticOpen,
           clientUserMessageId: options?.clientUserMessageId,
+          optimisticUserMessage: options?.optimisticUserMessage,
           additionalContext: options?.additionalContext,
           cloudProjectId: options?.cloudProjectId,
           ...(options?.runtime ? { runtime: options.runtime } : {}),
@@ -1734,6 +1747,7 @@ export function useWorkbenchRuntimeMessaging({
       }
 
       return sendPreparedRuntimeMessage(message, prepared.payload, prepared.activeDeviceId, {
+        optimisticUserMessage: options?.optimisticUserMessage,
         onError: options?.onError,
         onRuntimeTaskOptimisticOpen: options?.onRuntimeTaskOptimisticOpen,
         ephemeral: true,
@@ -1826,6 +1840,7 @@ export function useWorkbenchRuntimeMessaging({
         : options.modelSelection
       return sendPreparedRuntimeMessage(message, payload, prepared.activeDeviceId, {
         ...(options.runtime ? { runtime: options.runtime } : {}),
+        optimisticUserMessage: options.optimisticUserMessage,
         initialGoal: options.initialGoal,
         initialSupervisor: options.initialSupervisor,
         collaborationMode: options.collaborationMode,

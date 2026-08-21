@@ -43,6 +43,7 @@ interface MockChatPanelProps {
         modelType?: ModelType | null
         modelOptions?: ModelOptions
       }
+      optimisticUserMessage: import('@/types/workbench').WorkbenchMessage & { role: 'user' }
       onError: (message: string) => void
       onRuntimeTaskOptimisticOpen: (address: RuntimeTaskAddress) => void
     }
@@ -79,6 +80,12 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
                 modelId: 'backend-codex',
                 modelType: 'user',
                 modelOptions: { reasoningEffort: 'high' },
+              },
+              optimisticUserMessage: {
+                id: 'queued-side-chat-1',
+                role: 'user',
+                content: '管理当前项目',
+                status: 'done',
               },
               onError: vi.fn(),
               onRuntimeTaskOptimisticOpen: address => onAddressChange?.(address),
@@ -250,6 +257,10 @@ describe('ProjectSpaceChatSidebar', () => {
       expect.objectContaining({
         project: expect.objectContaining({ id: 91 }),
         runtime: 'codex',
+        optimisticUserMessage: expect.objectContaining({
+          id: 'queued-side-chat-1',
+          role: 'user',
+        }),
         executionModel: {
           modelId: 'backend-codex',
           modelType: 'user',
