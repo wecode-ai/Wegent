@@ -790,9 +790,8 @@ async fn handle_for_token(
         }
         return Ok(response);
     }
-    if !content_type
-        .as_deref()
-        .is_some_and(|value| value.to_ascii_lowercase().contains("text/event-stream"))
+    if upstream.api_format != "openai-responses"
+        && !is_event_stream_content_type(content_type.as_deref())
     {
         let response_body = upstream_response.bytes().await.map_err(|error| HttpError {
             status: StatusCode::BAD_GATEWAY,
@@ -1732,6 +1731,10 @@ fn detect_upstream_error_code(response_body: &[u8]) -> Option<String> {
     .into_iter()
     .find(|code| text.contains(code))
     .map(str::to_owned)
+}
+
+fn is_event_stream_content_type(content_type: Option<&str>) -> bool {
+    content_type.is_some_and(|value| value.to_ascii_lowercase().contains("text/event-stream"))
 }
 
 fn rate_limit_retry_delay(headers: &reqwest::header::HeaderMap, retry_count: u32) -> Duration {
@@ -4977,7 +4980,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn wraps_native_responses_non_sse_response() {
+    async fn streams_native_responses_without_interpreting_content_type() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("upstream listener");
@@ -4988,22 +4991,15 @@ mod tests {
                 Router::new().route(
                     "/responses",
                     post(|| async {
-                        Json(json!({
-                            "id": "resp_non_sse",
-                            "object": "response",
-                            "status": "completed",
-                            "output": [{
-                                "type": "message",
-                                "role": "assistant",
-                                "content": [{"type": "output_text", "text": "hi"}]
-                            }],
-                            "usage": {
-                                "input_tokens": 1,
-                                "output_tokens": 1,
-                                "input_tokens_details": {},
-                                "output_tokens_details": {}
-                            }
-                        }))
+                        (
+                            [(header::CONTENT_TYPE, HeaderValue::from_static("application/json"))],
+                            concat!(
+                                "event: response.created\n",
+                                "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_mislabeled\",\"status\":\"in_progress\",\"output\":[]}}\n\n",
+                                "event: response.completed\n",
+                                "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_mislabeled\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}]}}\n\n"
+                            ),
+                        )
                     }),
                 ),
             )
@@ -5011,7 +5007,7 @@ mod tests {
             .expect("upstream server");
         });
         let token = register(
-            "native-non-sse-test",
+            "native-mislabeled-sse-test",
             LocalModelProxyUpstream {
                 base_url: format!("http://{address}"),
                 request_url: Some(format!("http://{address}/responses")),
@@ -5038,19 +5034,18 @@ mod tests {
             Bytes::from_static(br#"{"model":"m","input":"hi","stream":true}"#),
         )
         .await
-        .expect("native non-SSE JSON should be wrapped");
+        .expect("native Responses stream should pass through");
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
             response.headers().get(header::CONTENT_TYPE),
-            Some(&HeaderValue::from_static("text/event-stream"))
+            Some(&HeaderValue::from_static("application/json"))
         );
         let body = to_bytes(response.into_body(), usize::MAX)
             .await
-            .expect("wrapped response body");
+            .expect("normalized response body");
         let body = String::from_utf8_lossy(&body);
-        assert!(body.contains("event: response.completed"));
-        assert!(body.contains("resp_non_sse"));
-        assert!(body.contains("input_tokens_details"), "{body}");
+        assert!(body.contains("event: response.completed"), "{body}");
+        assert!(body.contains("resp_mislabeled"), "{body}");
 
         unregister(&token);
         server.abort();

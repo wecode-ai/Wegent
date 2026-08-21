@@ -338,18 +338,30 @@ struct CodexModelProviderInfo {
 }
 
 fn current_codex_model_provider_from_config(config_response: &Value) -> CodexModelProviderInfo {
+    let configured_provider = crate::agents::configured_inference_model_provider();
+    current_codex_model_provider(config_response, &configured_provider)
+}
+
+fn current_codex_model_provider(
+    config_response: &Value,
+    configured_provider: &str,
+) -> CodexModelProviderInfo {
     let config = config_response
         .get("config")
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default();
-    let current_provider = string_from_map(&config, "modelProvider")
+    let runtime_provider = string_from_map(&config, "modelProvider")
         .or_else(|| string_from_map(&config, "model_provider"))
         .filter(|provider| {
             provider != crate::server::codex_model_catalog::PROVIDER_ID
                 && provider != "wework-catalog"
-        })
-        .unwrap_or_else(crate::agents::configured_inference_model_provider);
+        });
+    let current_provider = if configured_provider != CODEX_OFFICIAL_PROVIDER_ID {
+        configured_provider.to_owned()
+    } else {
+        runtime_provider.unwrap_or_else(|| configured_provider.to_owned())
+    };
     let display_name = config
         .get("model_providers")
         .or_else(|| config.get("modelProviders"))
@@ -441,6 +453,7 @@ pub struct RuntimeWorkRpcHandler {
     codex_app_server: CodexAppServerClient,
     claude_process_engine: AgentProcessEngine,
     codex_runtime_proxy_config: Arc<AsyncMutex<CodexRuntimeProxyConfig>>,
+    codex_app_server_restart_gate: Arc<AsyncMutex<()>>,
     event_tx: Option<broadcast::Sender<Value>>,
     next_execution_id: Arc<AtomicU64>,
     task_send_gates: Arc<Mutex<HashMap<String, Weak<AsyncMutex<()>>>>>,
@@ -618,6 +631,7 @@ impl RuntimeWorkRpcHandler {
             codex_runtime_proxy_config: Arc::new(AsyncMutex::new(
                 CodexRuntimeProxyConfig::default(),
             )),
+            codex_app_server_restart_gate: Arc::new(AsyncMutex::new(())),
             event_tx: None,
             next_execution_id: Arc::new(AtomicU64::new(1)),
             task_send_gates: Arc::new(Mutex::new(HashMap::new())),
