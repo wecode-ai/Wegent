@@ -2711,6 +2711,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         uiTimeoutMs * 3,
         'The project board did not reconnect for AI manager projection verification'
       )
+      await control.command('waitFor', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
       await control.command('click', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
         visible: true,
       })
