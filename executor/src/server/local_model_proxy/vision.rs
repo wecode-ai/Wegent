@@ -856,78 +856,169 @@ mod tests {
         );
     }
 
+    type CapturedVisionRequests =
+        std::sync::Arc<tokio::sync::Mutex<Vec<(String, axum::http::HeaderMap, Value)>>>;
+
     #[tokio::test]
-    async fn replaces_image_with_live_sidecar_description() {
-        use axum::{extract::State, routing::post, Json, Router};
+    async fn describes_images_over_every_supported_sidecar_protocol() {
+        use axum::{extract::State, http::HeaderMap, routing::post, Json, Router};
         use std::sync::Arc;
         use tokio::{net::TcpListener, sync::Mutex};
 
-        async fn describe(
-            State(captured): State<Arc<Mutex<Option<Value>>>>,
+        async fn responses(
+            State(captured): State<CapturedVisionRequests>,
+            headers: HeaderMap,
             Json(body): Json<Value>,
         ) -> Json<Value> {
-            *captured.lock().await = Some(body);
+            captured
+                .lock()
+                .await
+                .push(("/responses".to_owned(), headers, body));
             Json(json!({
-                "output": [{
-                    "content": [{
-                        "type": "output_text",
-                        "text": "A terminal shows TypeError at UserPanel.tsx:84."
-                    }]
-                }]
+                "output": [{"content": [{"type": "output_text", "text": "A Responses description."}]}]
             }))
         }
 
-        let captured = Arc::new(Mutex::new(None));
+        async fn chat_completions(
+            State(captured): State<CapturedVisionRequests>,
+            headers: HeaderMap,
+            Json(body): Json<Value>,
+        ) -> Json<Value> {
+            captured
+                .lock()
+                .await
+                .push(("/chat/completions".to_owned(), headers, body));
+            Json(json!({
+                "choices": [{"message": {"content": "A Chat Completions description."}}]
+            }))
+        }
+
+        async fn messages(
+            State(captured): State<CapturedVisionRequests>,
+            headers: HeaderMap,
+            Json(body): Json<Value>,
+        ) -> Json<Value> {
+            captured
+                .lock()
+                .await
+                .push(("/v1/messages".to_owned(), headers, body));
+            Json(json!({
+                "content": [{"type": "text", "text": "An Anthropic Messages description."}]
+            }))
+        }
+
+        let captured: CapturedVisionRequests = Arc::new(Mutex::new(Vec::new()));
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("sidecar listener");
         let address = listener.local_addr().expect("sidecar address");
         let app = Router::new()
-            .route("/responses", post(describe))
+            .route("/responses", post(responses))
+            .route("/chat/completions", post(chat_completions))
+            .route("/v1/messages", post(messages))
             .with_state(captured.clone());
         tokio::spawn(async move {
             axum::serve(listener, app)
                 .await
                 .expect("sidecar server should run");
         });
-        let mut sidecar = test_sidecar(format!("http://{address}/responses"));
-        sidecar.model_id = "vision-model".to_owned();
         let body = serde_json::to_vec(&json!({
-            "model": "deepseek-v4-flash",
+            "model": "weibo-glm-5.2",
             "input": [{
                 "type": "message",
                 "role": "user",
                 "content": [
-                    {"type": "input_text", "text": "Fix this screenshot"},
+                    {"type": "input_text", "text": "What does this screenshot show?"},
                     {"type": "input_image", "image_url": "data:image/png;base64,YQ=="}
                 ]
             }]
         }))
         .expect("request body");
 
-        let rewritten = replace_images_with_descriptions(Some(&sidecar), None, &body)
-            .await
-            .expect("vision rewrite");
-        let rewritten: Value = serde_json::from_slice(&rewritten).expect("rewritten request");
+        for (api_format, path, expected_description) in [
+            ("openai-responses", "/responses", "A Responses description."),
+            (
+                "openai-chat-completions",
+                "/chat/completions",
+                "A Chat Completions description.",
+            ),
+            (
+                "anthropic-messages",
+                "/v1/messages",
+                "An Anthropic Messages description.",
+            ),
+        ] {
+            let mut sidecar = test_sidecar(format!("http://{address}{path}"));
+            sidecar.api_format = api_format.to_owned();
+            sidecar.model_id = "vision-model".to_owned();
 
-        assert_eq!(
-            rewritten.pointer("/input/0/content/1/type"),
-            Some(&Value::String("input_text".to_owned()))
-        );
-        assert!(rewritten
-            .pointer("/input/0/content/1/text")
-            .and_then(Value::as_str)
-            .is_some_and(|text| text.contains("UserPanel.tsx:84")));
-        let sidecar_request = captured
-            .lock()
-            .await
-            .clone()
-            .expect("captured sidecar request");
-        assert_eq!(sidecar_request["model"], "vision-model");
-        assert_eq!(
-            sidecar_request.pointer("/input/0/content/1/type"),
-            Some(&Value::String("input_image".to_owned()))
-        );
+            let rewritten = replace_images_with_descriptions(Some(&sidecar), None, &body)
+                .await
+                .expect("vision rewrite");
+            let rewritten: Value = serde_json::from_slice(&rewritten).expect("rewritten request");
+
+            assert_eq!(
+                rewritten.pointer("/input/0/content/1/type"),
+                Some(&json!("input_text")),
+                "{api_format} should replace the image with text"
+            );
+            let replacement = rewritten
+                .pointer("/input/0/content/1/text")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            assert!(
+                replacement.contains(expected_description),
+                "{api_format} description should be inlined, got: {replacement}"
+            );
+
+            let (captured_path, headers, request) = captured
+                .lock()
+                .await
+                .pop()
+                .expect("captured sidecar request");
+            assert_eq!(captured_path, path);
+            assert_eq!(request["model"], "vision-model");
+            assert_eq!(request["stream"], false);
+            assert_eq!(
+                headers
+                    .get(reqwest::header::AUTHORIZATION)
+                    .and_then(|value| value.to_str().ok()),
+                Some(format!("Bearer {}", sidecar.api_key).as_str())
+            );
+            match api_format {
+                "openai-responses" => assert_eq!(
+                    request.pointer("/input/0/content/1/image_url"),
+                    Some(&json!("data:image/png;base64,YQ=="))
+                ),
+                "openai-chat-completions" => assert_eq!(
+                    request.pointer("/messages/0/content/1/image_url/url"),
+                    Some(&json!("data:image/png;base64,YQ=="))
+                ),
+                _ => {
+                    assert_eq!(
+                        request.pointer("/messages/0/content/0/source"),
+                        Some(&json!({
+                            "type": "base64",
+                            "media_type": "image/png",
+                            "data": "YQ=="
+                        }))
+                    );
+                    assert_eq!(request.get("max_tokens"), Some(&json!(2_000)));
+                    assert_eq!(
+                        headers
+                            .get("x-api-key")
+                            .and_then(|value| value.to_str().ok()),
+                        Some(sidecar.api_key.as_str())
+                    );
+                    assert_eq!(
+                        headers
+                            .get("anthropic-version")
+                            .and_then(|value| value.to_str().ok()),
+                        Some("2023-06-01")
+                    );
+                }
+            }
+        }
     }
 
     #[tokio::test]

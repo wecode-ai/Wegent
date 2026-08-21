@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { WORKBENCH_AUTOMATIONS_CHANGED_EVENT } from '@/features/workbench/workbenchCloudDataEvents'
+import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
 import { createHybridWorkbenchServices } from './hybridServices'
 
 const mocks = vi.hoisted(() => {
@@ -688,65 +689,61 @@ describe('createHybridWorkbenchServices', () => {
     expect(response.data[1]).toEqual(responsesModel)
   })
 
-  it('keeps only explicit cloud vision references that resolve to an available image model', async () => {
-    const visionModel = {
-      name: 'cloud-vision',
-      type: 'public',
-      displayName: 'Cloud Vision',
-      namespace: 'default',
-      resourceUserId: 0,
-      modelCapabilities: { supportsImage: true },
-      config: { protocol: 'openai-responses' },
-      runtime: { family: 'openai.openai-responses' },
-      isActive: true,
-    }
+  it('keeps well-formed cloud vision references without a client-side catalog lookup', async () => {
     const reference = {
-      modelName: visionModel.name,
-      modelType: visionModel.type,
-      namespace: visionModel.namespace,
-      resourceUserId: visionModel.resourceUserId,
-      apiFormat: 'openai-responses',
-    }
-    const configuredDeepSeek = {
-      name: 'deepseek-v4-pro-responses',
-      type: 'public',
-      displayName: 'DeepSeek V4 Pro',
-      modelId: 'deepseek-v4-pro',
+      modelName: 'wecode-claude-weibo-kimi-k2.5',
+      modelType: 'public',
       namespace: 'default',
       resourceUserId: 0,
-      modelCapabilities: { supportsImage: false },
-      config: { protocol: 'openai-responses', visionSidecarModel: reference },
-      runtime: { family: 'openai.openai-responses' },
+      apiFormat: 'anthropic-messages',
+    }
+    // The sidecar target declares no capabilities and is absent from the Wework
+    // catalog; the backend gateway resolves and authorizes it at send time.
+    const configuredPrimary = {
+      name: 'wecode-claude-weibo-glm-5.2',
+      type: 'public',
+      displayName: 'GLM 5.2',
+      modelId: 'weibo-glm-5.2',
+      namespace: 'default',
+      resourceUserId: 0,
+      config: { visionSidecarModel: reference },
+      runtime: { family: 'claude' },
       isActive: true,
     }
-    const staleDeepSeek = {
-      ...configuredDeepSeek,
-      name: 'deepseek-v4-flash-responses',
-      modelId: 'deepseek-v4-flash',
-      config: {
-        protocol: 'openai-responses',
-        visionSidecarModel: { ...reference, modelName: 'deleted-vision-model' },
-      },
+    const malformedPrimary = {
+      ...configuredPrimary,
+      name: 'wecode-claude-weibo-glm-5.1',
+      modelId: 'weibo-glm-5.1',
+      config: { visionSidecarModel: { ...reference, apiFormat: 'gemini-generate-content' } },
     }
     mocks.localListModels.mockResolvedValue({ data: [] })
     mocks.cloudListModels.mockResolvedValue({
-      data: [configuredDeepSeek, staleDeepSeek, visionModel],
+      data: [configuredPrimary, malformedPrimary],
     })
     const services = createServices()
 
     await services.modelApi.listModels()
     await vi.waitFor(async () => {
       const refreshed = await services.modelApi.listModels()
-      expect(refreshed.data).toHaveLength(3)
+      expect(refreshed.data).toHaveLength(2)
     })
     const response = await services.modelApi.listModels()
 
     expect(
-      response.data.find(model => model.name === configuredDeepSeek.name)?.config
+      response.data.find(model => model.name === configuredPrimary.name)?.config
     ).toMatchObject({ visionSidecarModel: reference })
     expect(
-      response.data.find(model => model.name === staleDeepSeek.name)?.config
-    ).not.toHaveProperty('visionSidecarModel')
+      selectedModelExecutionFields(
+        response.data.find(model => model.name === configuredPrimary.name)!,
+        {}
+      ).modelOptions?.weworkCloudVisionSidecar
+    ).toBe(JSON.stringify(reference))
+    expect(
+      selectedModelExecutionFields(
+        response.data.find(model => model.name === malformedPrimary.name)!,
+        {}
+      ).modelOptions
+    ).not.toHaveProperty('weworkCloudVisionSidecar')
   })
 
   it('does not wait for an unresponsive cloud model request', async () => {

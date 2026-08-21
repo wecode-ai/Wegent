@@ -30,25 +30,28 @@ def _model_kind(
     model_id: str = "gpt-4-turbo",
     api_key: str = "sk-test-key",
     base_url: str = "https://api.example.com/v1",
-    protocol: str = "openai-responses",
+    protocol: str | None = "openai-responses",
     api_format: str | None = None,
+    env_model: str | None = None,
     default_headers: dict[str, str] | None = None,
 ) -> Kind:
-    model_config: dict[str, object] = {
-        "env": {
-            "model_id": model_id,
-            "base_url": base_url,
-            "api_key": api_key,
-        }
+    env: dict[str, object] = {
+        "model_id": model_id,
+        "base_url": base_url,
+        "api_key": api_key,
     }
+    if env_model is not None:
+        env["model"] = env_model
+    model_config: dict[str, object] = {"env": env}
     if default_headers is not None:
         model_config["DEFAULT_HEADERS"] = default_headers
 
     spec: dict[str, object] = {
         "provider": "openai",
         "modelConfig": model_config,
-        "protocol": protocol,
     }
+    if protocol is not None:
+        spec["protocol"] = protocol
     if api_format is not None:
         spec["apiFormat"] = api_format
 
@@ -744,6 +747,67 @@ async def test_proxy_llm_responses_does_not_duplicate_anthropic_version_path(
     assert response.status_code == 200
     sent_request = client_mock.send.call_args[0][0]
     assert str(sent_request.url) == "https://api.anthropic.com/v1/messages"
+
+
+async def test_proxy_llm_responses_infers_anthropic_endpoint_from_env_model(
+    test_db, test_user: User
+):
+    """Vision sidecars reference models that only declare env.model.
+
+    Most Model CRDs carry no spec.protocol, so the gateway must infer the upstream
+    endpoint from env.model. Without this, an anthropic-messages sidecar request is
+    rejected as an ambiguous protocol configuration.
+    """
+    model = _model_kind(
+        test_user.id,
+        name="wecode-claude-weibo-kimi-k2.5",
+        protocol=None,
+        env_model="claude",
+        api_key="sk-anthropic-key",
+        base_url="https://new-api-copilot.example.com",
+    )
+    test_db.add(model)
+    test_db.commit()
+
+    request_mock = MagicMock(spec=Request)
+    request_mock.body = AsyncMock(
+        return_value=(
+            b'{"model":"wecode-claude-weibo-kimi-k2.5","max_tokens":2000,'
+            b'"messages":[{"role":"user","content":[]}]}'
+        )
+    )
+    request_mock.headers = Headers(
+        {
+            "content-type": "application/json",
+            "x-wegent-model-type": "user",
+            "x-wegent-model-namespace": "default",
+            "x-wegent-model-user-id": str(test_user.id),
+        }
+    )
+
+    upstream_response_mock = MagicMock()
+    upstream_response_mock.status_code = 200
+    upstream_response_mock.headers = {"content-type": "application/json"}
+
+    async def fake_aiter_raw():
+        yield b'{"content":[{"type":"text","text":"a screenshot"}]}'
+
+    upstream_response_mock.aiter_raw = fake_aiter_raw
+    client_mock = AsyncMock()
+    client_mock.send = AsyncMock(return_value=upstream_response_mock)
+    client_mock.aclose = AsyncMock()
+
+    with patch(
+        "app.services.llm_proxy_service.httpx.AsyncClient",
+        return_value=client_mock,
+    ):
+        response = await proxy_llm_responses(request_mock, test_db, test_user)
+
+    assert response.status_code == 200
+    sent_request = client_mock.send.call_args[0][0]
+    assert str(sent_request.url) == "https://new-api-copilot.example.com/v1/messages"
+    assert sent_request.headers["x-api-key"] == "sk-anthropic-key"
+    assert sent_request.headers["anthropic-version"] == "2023-06-01"
 
 
 async def test_proxy_llm_responses_forwards_responses_to_provider(
