@@ -635,12 +635,18 @@ impl RuntimeWorkRpcHandler {
             let (notification_tx, mut notification_rx) = mpsc::unbounded_channel::<Value>();
             let mapper_handler = handler.clone();
             let mapper_local_task_id = turn_local_task_id.clone();
+            let mapper_execution_id = execution_id;
             let mapper_request = request.clone();
             let hook_turn = Arc::new(Mutex::new(None::<ActiveCodexTurn>));
             let mapper_hook_turn = Arc::clone(&hook_turn);
             let mapper_handle = tokio::spawn(async move {
                 let mut event_mapper = CodexNotificationEventMapper::default();
                 while let Some(message) = notification_rx.recv().await {
+                    if !mapper_handler
+                        .is_current_local_task_execution(&mapper_local_task_id, mapper_execution_id)
+                    {
+                        continue;
+                    }
                     mapper_handler
                         .sync_runtime_task_goal_from_notification(&mapper_local_task_id, &message);
                     mapper_handler.persist_completed_codex_turn_from_notification(
@@ -731,6 +737,12 @@ impl RuntimeWorkRpcHandler {
             let callback_turn_presentation = Arc::clone(&pending_turn_presentation);
             let active_turn_started: CodexActiveTurnCallback =
                 Box::new(move |thread_id, turn_id| {
+                    if !active_turn_handler.is_current_local_task_execution(
+                        &active_turn_local_task_id,
+                        active_turn_execution_id,
+                    ) {
+                        return;
+                    }
                     active_turn_handler.start_queue_run(&active_turn_local_task_id);
                     *callback_hook_turn
                         .lock()
@@ -808,6 +820,20 @@ impl RuntimeWorkRpcHandler {
                 )
                 .await;
 
+            let _ = mapper_handle.await;
+            if !handler.is_current_local_task_execution(&turn_local_task_id, execution_id) {
+                log_executor_event(
+                    "runtime work stale execution result ignored",
+                    &[
+                        ("local_task_id", turn_local_task_id.clone()),
+                        ("execution_id", execution_id.to_string()),
+                    ],
+                );
+                handler.clear_active_codex_turn(&turn_local_task_id, execution_id);
+                handler.clear_active_request_user_input(&turn_local_task_id, execution_id);
+                return;
+            }
+
             if matches!(result.as_ref(), Err(error) if error == CODEX_APP_SERVER_TURN_CANCELLED) {
                 let mut event_request = request.clone();
                 if let Some(active_turn) = hook_turn
@@ -817,27 +843,27 @@ impl RuntimeWorkRpcHandler {
                 {
                     event_request.subtask_id = active_turn.turn_id.clone();
                 }
-                emit_response_event(
-                    &handler.event_tx,
-                    &handler.device_id,
-                    "response.incomplete",
-                    &turn_local_task_id,
-                    &event_request,
-                    json!({
-                        "type": "cancelled",
-                        "error": {"message": "cancelled"},
-                    }),
-                );
-                let _ = mapper_handle.await;
                 handler.persist_and_clear_active_codex_transcript(&turn_local_task_id, "cancelled");
-                handler.settle_cancelled_local_task_execution(&turn_local_task_id, execution_id);
+                if handler.settle_cancelled_local_task_execution(&turn_local_task_id, execution_id)
+                {
+                    emit_response_event(
+                        &handler.event_tx,
+                        &handler.device_id,
+                        "response.incomplete",
+                        &turn_local_task_id,
+                        &event_request,
+                        json!({
+                            "type": "cancelled",
+                            "error": {"message": "cancelled"},
+                        }),
+                    );
+                }
                 handler.clear_active_codex_turn(&turn_local_task_id, execution_id);
                 handler.mark_thread_event_routes_idle_for_local_task(&turn_local_task_id);
                 handler.clear_active_request_user_input(&turn_local_task_id, execution_id);
                 return;
             }
 
-            let _ = mapper_handle.await;
             let transcript_status = match result.as_ref() {
                 Ok(turn) => match turn.outcome {
                     ExecutionOutcome::Completed { .. }
@@ -1066,9 +1092,25 @@ impl RuntimeWorkRpcHandler {
                     ExecutionOutcome::WaitingForUserInput { .. } => "done",
                     ExecutionOutcome::Cancelled { .. } => "cancelled",
                     ExecutionOutcome::Failed { .. } => "failed",
-                    ExecutionOutcome::Running => "running",
+                    ExecutionOutcome::Running => return,
                 };
                 let thread_id = turn.thread_id.clone();
+                if !self.finish_local_task(
+                    local_task_id,
+                    execution_id,
+                    Some(thread_id.clone()),
+                    status,
+                ) {
+                    log_executor_event(
+                        "runtime work terminal result ignored for stale execution",
+                        &[
+                            ("local_task_id", local_task_id.to_owned()),
+                            ("execution_id", execution_id.to_string()),
+                            ("status", status.to_owned()),
+                        ],
+                    );
+                    return;
+                }
                 if turn.goal_status_observed {
                     self.sync_runtime_task_goal_status(local_task_id, turn.goal_status.clone());
                 }
@@ -1077,12 +1119,6 @@ impl RuntimeWorkRpcHandler {
                     local_task_id.to_owned(),
                     event_request.clone(),
                     false,
-                );
-                self.finish_local_task(
-                    local_task_id,
-                    execution_id,
-                    Some(thread_id.clone()),
-                    status,
                 );
                 self.mark_thread_event_route_idle(&thread_id);
                 self.register_codex_thread_workspace_root(&thread_id, &event_request);
@@ -1147,8 +1183,17 @@ impl RuntimeWorkRpcHandler {
                 }
             }
             Err(error) => {
+                if !self.finish_local_task(local_task_id, execution_id, None, "failed") {
+                    log_executor_event(
+                        "runtime work failed result ignored for stale execution",
+                        &[
+                            ("local_task_id", local_task_id.to_owned()),
+                            ("execution_id", execution_id.to_string()),
+                        ],
+                    );
+                    return;
+                }
                 self.mark_thread_event_routes_idle_for_local_task(local_task_id);
-                self.finish_local_task(local_task_id, execution_id, None, "failed");
                 self.persist_failed_assistant_message(local_task_id, &event_request, &error);
                 let mut fields = task_fields(&event_request.task_id, &event_request.subtask_id);
                 fields.push(("local_task_id", local_task_id.to_owned()));

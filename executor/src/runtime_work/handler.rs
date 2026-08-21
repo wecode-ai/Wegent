@@ -84,8 +84,9 @@ use super::{
     notification_mapping::{codex_stream_debug_enabled, set_codex_stream_debug_enabled},
     response::{
         archived_conversations_response, codex_thread_has_in_progress_turn,
-        codex_thread_in_progress_turn_id, runtime_status_is_running, search_result_item,
-        workspace_response, RuntimeTaskLink, RuntimeWorkspaceLink, SearchResultMatch,
+        codex_thread_in_progress_turn_id, codex_thread_terminal_task_status,
+        runtime_status_is_running, search_result_item, workspace_response, RuntimeTaskLink,
+        RuntimeWorkspaceLink, SearchResultMatch,
     },
     runtime_handle_messages::{
         append_completed_transcript_messages, append_runtime_handle_message,
@@ -120,6 +121,7 @@ const PENDING_THREAD_EVENT_ROUTE_PREFIX: &str = "pending:";
 const ACTIVE_CODEX_TURN_WAIT_ATTEMPTS: usize = 20;
 const ACTIVE_CODEX_TURN_WAIT_MS: u64 = 50;
 const CODEX_TRANSCRIPT_PAGE_SIZE: usize = 40;
+const PROVIDER_STATE_RECONCILIATION_TIMEOUT: Duration = Duration::from_millis(500);
 const PROVIDER_TURN_INTERRUPT_WAIT_ATTEMPTS: usize = 100;
 const CONTEXT_COMPACTION_WAIT_ATTEMPTS: usize = 600;
 const CONTEXT_COMPACTION_WAIT_MS: u64 = 200;
