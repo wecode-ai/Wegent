@@ -10,7 +10,7 @@ from __future__ import annotations
 class EmbeddingResponseFormatError(ValueError):
     """Raised when a provider response violates the configured wire format."""
 
-    retryable = False
+    retryable: bool = False
 
 
 class EmbeddingDimensionMismatchError(RuntimeError):

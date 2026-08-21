@@ -101,7 +101,33 @@ class CustomEmbedding(BaseEmbedding):
             timeout=30,
         )
         response.raise_for_status()
-        response_embedding: object = response.json()["data"][0]["embedding"]
+
+        return self._parse_embedding_response(response)
+
+    def _parse_embedding_response(self, response: requests.Response) -> list[float]:
+        try:
+            response_payload: object = response.json()
+        except ValueError as exc:
+            raise EmbeddingResponseFormatError(
+                "Embedding provider returned an invalid response envelope"
+            ) from exc
+
+        if not isinstance(response_payload, dict):
+            raise EmbeddingResponseFormatError(
+                "Embedding provider returned an invalid response envelope"
+            )
+        response_data = response_payload.get("data")
+        if (
+            not isinstance(response_data, list)
+            or not response_data
+            or not isinstance(response_data[0], dict)
+            or "embedding" not in response_data[0]
+        ):
+            raise EmbeddingResponseFormatError(
+                "Embedding provider returned an invalid response envelope"
+            )
+        response_embedding: object = response_data[0]["embedding"]
+
         if self._encoding_format == "base64":
             if not isinstance(response_embedding, str):
                 raise EmbeddingResponseFormatError(

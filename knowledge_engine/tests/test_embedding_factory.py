@@ -218,6 +218,36 @@ def test_custom_embedding_rejects_invalid_provider_response_without_retry(
     assert post.call_count == 1
 
 
+@pytest.mark.parametrize(
+    "response_payload",
+    [
+        pytest.param(ValueError("invalid JSON"), id="invalid-json"),
+        pytest.param({}, id="missing-data"),
+        pytest.param({"data": []}, id="empty-data"),
+        pytest.param({"data": "invalid"}, id="invalid-data-type"),
+        pytest.param({"data": [{}]}, id="missing-embedding"),
+    ],
+)
+def test_custom_embedding_rejects_invalid_response_envelope_without_retry(
+    mocker: MockerFixture,
+    response_payload: object,
+) -> None:
+    post = mocker.patch("knowledge_engine.embedding.custom.requests.post")
+    if isinstance(response_payload, Exception):
+        post.return_value.json.side_effect = response_payload
+    else:
+        post.return_value.json.return_value = response_payload
+    embedding = CustomEmbedding(
+        api_url="https://api.example.com/v1/embeddings",
+        model="custom-embedding-model",
+    )
+
+    with pytest.raises(EmbeddingResponseFormatError, match="response envelope"):
+        embedding.get_text_embedding("release plan")
+
+    assert post.call_count == 1
+
+
 def test_custom_embedding_rejects_unexpected_response_dimensions(
     mocker: MockerFixture,
 ) -> None:
