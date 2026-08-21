@@ -13775,7 +13775,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
-  test('waits for a manual resumed turn to settle before draining the preserved queue', async () => {
+  test('drains the preserved queue when a manual turn settles before React commits', async () => {
     let streamHandlers: ChatStreamHandlers = {}
     const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
       if (hasRuntimeStreamHandler(handlers)) streamHandlers = handlers
@@ -13924,13 +13924,6 @@ describe('WorkbenchProvider runtime tasks', () => {
         shellType: 'Chat',
         deviceId: 'device-1',
       })
-    })
-    expect(sendRuntimeMessage).toHaveBeenCalledTimes(1)
-    await waitFor(() =>
-      expect(screen.getByTestId('queued-messages-paused')).toHaveTextContent('running')
-    )
-
-    await act(async () => {
       streamHandlers.onChatDone?.({
         taskId: 'runtime-a',
         subtaskId: 'manual-turn',
@@ -13939,6 +13932,9 @@ describe('WorkbenchProvider runtime tasks', () => {
       })
     })
 
+    await waitFor(() =>
+      expect(screen.getByTestId('queued-messages-paused')).toHaveTextContent('running')
+    )
     await waitFor(() => expect(sendRuntimeMessage).toHaveBeenCalledTimes(2))
     expect(sendRuntimeMessage.mock.calls[1][0]).toEqual(
       expect.objectContaining({
