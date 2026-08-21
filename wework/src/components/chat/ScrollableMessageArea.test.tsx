@@ -1270,6 +1270,44 @@ describe('ScrollableMessageArea', () => {
     expect(visiblePreviews[0]).toHaveTextContent('继续')
   })
 
+  test('shows only the hovered preview when user messages share an id', () => {
+    render(
+      <ScrollableMessageArea
+        messages={[
+          {
+            id: 'reused-user-id',
+            role: 'user',
+            content: '第一条重复 ID 需求',
+            status: 'done',
+            createdAt: '2026-08-21T00:00:00.000Z',
+            runtimeMessageIndex: 0,
+          },
+          {
+            id: 'reused-user-id',
+            role: 'user',
+            content: '第二条重复 ID 需求',
+            status: 'done',
+            createdAt: '2026-08-21T00:00:01.000Z',
+            runtimeMessageIndex: 2,
+          },
+        ]}
+      />
+    )
+
+    flushScheduledTimers()
+
+    const markers = screen.getAllByTestId('message-turn-navigation-marker')
+    expect(markers).toHaveLength(2)
+
+    fireEvent.focus(markers[1])
+
+    const visiblePreviews = screen
+      .getAllByTestId('message-turn-navigation-preview')
+      .filter(preview => preview.classList.contains('opacity-100'))
+    expect(visiblePreviews).toHaveLength(1)
+    expect(visiblePreviews[0]).toHaveTextContent('第二条重复 ID 需求')
+  })
+
   test('keeps message navigation available while its portal target is unavailable', () => {
     render(
       <ScrollableMessageArea
