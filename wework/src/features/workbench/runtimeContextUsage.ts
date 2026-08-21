@@ -63,12 +63,29 @@ export function findModelForSelection(
     return null
   }
 
+  const candidates = models.filter(
+    model =>
+      model.name === selection.modelName &&
+      (!selection.modelType || model.type === selection.modelType)
+  )
+  const options = selection.options ?? {}
+  const codexProviderId = options.codexProviderId
+  const modelNamespace = options.weworkCloudModelNamespace
+  const resourceUserId = options.weworkCloudModelResourceUserId
+  const hasIdentity = Boolean(codexProviderId || modelNamespace || resourceUserId)
+  if (!hasIdentity) {
+    return candidates[0] ?? null
+  }
+
   return (
-    models.find(
-      model =>
-        model.name === selection.modelName &&
-        (!selection.modelType || model.type === selection.modelType)
-    ) ?? null
+    candidates.find(model => {
+      const configuredProviderId = stringConfigValue(model.config, 'codexProviderId')
+      return (
+        (!codexProviderId || configuredProviderId === codexProviderId) &&
+        (!modelNamespace || model.namespace === modelNamespace) &&
+        (!resourceUserId || String(model.resourceUserId ?? '') === resourceUserId)
+      )
+    }) ?? null
   )
 }
 
@@ -103,6 +120,13 @@ function recordValue(value: unknown): Record<string, unknown> {
 
 function stringValue(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value : null
+}
+
+function stringConfigValue(
+  config: Record<string, unknown> | null | undefined,
+  key: string
+): string | null {
+  return stringValue(config?.[key])
 }
 
 function modelTypeValue(value: unknown): ModelType | null {

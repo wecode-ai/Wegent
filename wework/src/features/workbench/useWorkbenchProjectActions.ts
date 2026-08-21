@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useRef } from 'react'
 import type { Dispatch } from 'react'
 import {
   checkoutProjectBranch,
@@ -16,11 +16,13 @@ import type { ExecutorClient } from '@/api/executorAccess'
 import type {
   CreateGitWorkspaceProjectRequest,
   CreateProjectRequest,
+  CloneGitRepositoryInput,
   DeleteDeviceWorkspaceRequest,
   DeviceWorkspacePrepareRequest,
   GitRepoInfo,
   ProjectWithTasks,
   RuntimeProjectAppearanceRequest,
+  RuntimeProjectAiSettings,
   RuntimeProjectSpaceRef,
   RuntimeProjectPinRequest,
   RuntimeProjectReorderRequest,
@@ -30,6 +32,8 @@ import type {
 } from '@/types/api'
 import type { WorkspaceTarget } from '@/types/workspace-files'
 import type { WorkbenchState } from '@/types/workbench'
+import { getParentPath } from '@/components/projects/device-folder-path'
+import { hasEmbeddedHttpGitCredentials } from '@/lib/git-url'
 import type { ProjectMutationOptions, RefreshWorkLists } from './workbenchContextTypes'
 import type { WorkbenchAction } from './workbenchReducer'
 import { findProjectMetadataDeviceWorkspace, writeLastProjectId } from './workbenchRuntimeHelpers'
@@ -49,6 +53,8 @@ interface UseWorkbenchProjectActionsOptions {
   executorClient: ExecutorClient
   services: WorkbenchServices
   refreshWorkLists: RefreshWorkLists
+  updateLocalRuntimeTaskPinned: (request: RuntimeTaskPinRequest) => number | null
+  rollbackLocalRuntimeTaskPinned: (request: RuntimeTaskPinRequest, requestId: number | null) => void
   markRuntimeProjectRemoved: (
     projectId: number,
     workspace?: { deviceId: string; workspacePath: string }
@@ -58,6 +64,54 @@ interface UseWorkbenchProjectActionsOptions {
   enqueueRemoteProjectStateMutation: <T>(mutation: () => Promise<T>) => Promise<T>
 }
 
+export function normalizeGitRepositoryUrl(value: string): string {
+  return value
+    .trim()
+    .replace(/\/+$/, '')
+    .replace(/\.git$/i, '')
+}
+
+export async function isMatchingGitCheckout(
+  executeCommand: ExecutorClient['commands']['executeCommand'],
+  deviceId: string,
+  targetPath: string,
+  url: string,
+  branch?: string
+): Promise<boolean> {
+  try {
+    const remoteResponse = await executeCommand(deviceId, {
+      command_key: 'git_remote_url',
+      cwd: targetPath,
+      timeout_seconds: 10,
+      max_output_bytes: 16 * 1024,
+    })
+    if (
+      !remoteResponse.success ||
+      remoteResponse.exit_code !== 0 ||
+      typeof remoteResponse.stdout !== 'string' ||
+      normalizeGitRepositoryUrl(remoteResponse.stdout) !== normalizeGitRepositoryUrl(url)
+    ) {
+      return false
+    }
+    if (!branch) return true
+
+    const branchResponse = await executeCommand(deviceId, {
+      command_key: 'git_branch',
+      cwd: targetPath,
+      timeout_seconds: 10,
+      max_output_bytes: 16 * 1024,
+    })
+    return (
+      branchResponse.success &&
+      branchResponse.exit_code === 0 &&
+      typeof branchResponse.stdout === 'string' &&
+      branchResponse.stdout.trim() === branch
+    )
+  } catch {
+    return false
+  }
+}
+
 export function useWorkbenchProjectActions({
   user,
   state,
@@ -65,11 +119,15 @@ export function useWorkbenchProjectActions({
   executorClient,
   services,
   refreshWorkLists,
+  updateLocalRuntimeTaskPinned,
+  rollbackLocalRuntimeTaskPinned,
   markRuntimeProjectRemoved,
   invalidateRemoteProjectSync,
   clearRemoteProjectSyncRemoval,
   enqueueRemoteProjectStateMutation,
 }: UseWorkbenchProjectActionsOptions) {
+  const runtimeTaskPinMutationTailsRef = useRef(new Map<string, Promise<void>>())
+
   const createProject = useCallback(
     async (data: CreateProjectRequest, options: ProjectMutationOptions = {}) => {
       const project = await services.projectApi.createProject(data)
@@ -205,6 +263,7 @@ export function useWorkbenchProjectActions({
       name: string
       roots: string[]
       defaultProjectSpace: RuntimeProjectSpaceRef | null
+      aiSettings: RuntimeProjectAiSettings | null
     }) => {
       const response = await executorClient.runtime.upsertLocalRuntimeProject({
         ...data,
@@ -216,6 +275,14 @@ export function useWorkbenchProjectActions({
         throw new Error(message)
       }
       response.roots.forEach(clearRemoteProjectSyncRemoval)
+      dispatch({
+        type: 'runtime_local_project_updated',
+        projectKey: response.projectKey,
+        name: response.name,
+        roots: response.roots,
+        defaultProjectSpace: response.defaultProjectSpace ?? null,
+        aiSettings: response.aiSettings ?? null,
+      })
       await refreshWorkLists()
     },
     [clearRemoteProjectSyncRemoval, dispatch, executorClient, refreshWorkLists]
@@ -441,10 +508,30 @@ export function useWorkbenchProjectActions({
 
   const setRuntimeTaskPinned = useCallback(
     async (data: RuntimeTaskPinRequest) => {
-      await executorClient.runtime.setRuntimeTaskPinned(data)
-      await refreshWorkLists()
+      const key = `${data.deviceId}\0${data.threadId}`
+      const previousMutation = runtimeTaskPinMutationTailsRef.current.get(key) ?? Promise.resolve()
+      const mutation = previousMutation
+        .catch(() => undefined)
+        .then(async () => {
+          const requestId = updateLocalRuntimeTaskPinned(data)
+          try {
+            await executorClient.runtime.setRuntimeTaskPinned(data)
+          } catch (error) {
+            rollbackLocalRuntimeTaskPinned(data, requestId)
+            throw error
+          }
+          await refreshWorkLists()
+        })
+      runtimeTaskPinMutationTailsRef.current.set(key, mutation)
+      try {
+        await mutation
+      } finally {
+        if (runtimeTaskPinMutationTailsRef.current.get(key) === mutation) {
+          runtimeTaskPinMutationTailsRef.current.delete(key)
+        }
+      }
     },
-    [executorClient, refreshWorkLists]
+    [executorClient, refreshWorkLists, rollbackLocalRuntimeTaskPinned, updateLocalRuntimeTaskPinned]
   )
 
   const getDeviceHomeDirectory = useCallback(
@@ -464,6 +551,55 @@ export function useWorkbenchProjectActions({
 
   const createDeviceDirectory = useCallback(
     (deviceId: string, path: string) => executorClient.commands.createDirectory(deviceId, path),
+    [executorClient]
+  )
+
+  const cloneGitRepository = useCallback(
+    async (deviceId: string, input: CloneGitRepositoryInput) => {
+      const url = input.url.trim()
+      const targetPath = input.targetPath.trim()
+      const branch = input.branch?.trim()
+      if (!url) throw new Error('Git repository URL is required')
+      if (hasEmbeddedHttpGitCredentials(url)) {
+        throw new Error('Git repository URL must not include embedded HTTP credentials')
+      }
+      if (!targetPath) throw new Error('Git target path is required')
+
+      await executorClient.commands.createDirectory(deviceId, getParentPath(targetPath))
+      const matchesExistingCheckout = () =>
+        isMatchingGitCheckout(
+          executorClient.commands.executeCommand,
+          deviceId,
+          targetPath,
+          url,
+          branch
+        )
+      if (await matchesExistingCheckout()) return
+
+      try {
+        const response = await executorClient.commands.executeCommand(deviceId, {
+          command_key: 'git_clone',
+          args: [...(branch ? ['--branch', branch, '--single-branch'] : []), url, targetPath],
+          env: {
+            GIT_TERMINAL_PROMPT: '0',
+            GCM_INTERACTIVE: 'Never',
+          },
+          timeout_seconds: 300,
+          max_output_bytes: 1024 * 1024 * 5,
+        })
+        if (!response.success || response.exit_code !== 0) {
+          if (await matchesExistingCheckout()) return
+          throw new Error(
+            response.error ||
+              (typeof response.stderr === 'string' ? response.stderr : '') ||
+              'Failed to clone Git repository'
+          )
+        }
+      } catch (error) {
+        if (await matchesExistingCheckout()) return
+        throw error
+      }
+    },
     [executorClient]
   )
 
@@ -616,6 +752,7 @@ export function useWorkbenchProjectActions({
     getProjectWorkspaceRoot,
     listDeviceDirectories,
     createDeviceDirectory,
+    cloneGitRepository,
     loadEnvironmentInfo,
     loadEnvironmentDiff,
     commitEnvironmentChanges,

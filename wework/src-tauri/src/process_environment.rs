@@ -35,6 +35,14 @@ pub fn normalized_current_path() -> String {
     normalized_process_path(env::var("PATH").ok().as_deref().unwrap_or_default())
 }
 
+pub fn prepend_path(current_path: &str, directory: PathBuf) -> String {
+    let mut paths = vec![directory];
+    append_path_entries(&mut paths, current_path);
+    env::join_paths(paths)
+        .map(|value| value.to_string_lossy().to_string())
+        .unwrap_or_else(|_| current_path.to_owned())
+}
+
 pub fn sanitized_current_environment() -> Vec<(OsString, OsString)> {
     sanitized_environment(env::vars_os())
 }
@@ -119,6 +127,20 @@ mod tests {
                     OsString::from("APP_BASH_FUNC_SETTING"),
                     OsString::from("preserved"),
                 ),
+            ]
+        );
+    }
+
+    #[test]
+    fn prepend_path_places_managed_runtime_first_without_duplicates() {
+        let path = prepend_path("/usr/bin:/bin", PathBuf::from("/managed/node/bin"));
+
+        assert_eq!(
+            env::split_paths(&path).collect::<Vec<_>>(),
+            vec![
+                PathBuf::from("/managed/node/bin"),
+                PathBuf::from("/usr/bin"),
+                PathBuf::from("/bin"),
             ]
         );
     }

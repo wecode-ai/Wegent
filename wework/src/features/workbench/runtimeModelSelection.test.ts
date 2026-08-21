@@ -94,6 +94,9 @@ describe('runtimeModelSelection', () => {
     ).toMatchObject({
       modelName: 'Doubao-Seed-2.0-pro-260215',
       modelType: 'runtime',
+      options: {
+        codexProviderId: 'wecode-openai',
+      },
     })
     expect(
       defaultNewChatModelSelection([officialWithoutAuth, interfaceModel, cloudModel])
@@ -166,7 +169,7 @@ describe('runtimeModelSelection', () => {
     })
   })
 
-  test('passes a configured cloud vision sidecar as a hidden execution option', () => {
+  test('normalizes and passes a configured cloud vision sidecar as a hidden option', () => {
     const cloudModel: UnifiedModel = {
       name: 'primary-cloud-model',
       type: 'user',
@@ -176,9 +179,9 @@ describe('runtimeModelSelection', () => {
       runtime: { family: 'openai.openai-responses' },
       config: {
         visionSidecarModel: {
-          modelName: 'cloud-vision',
+          modelName: '  cloud-vision  ',
           modelType: 'user',
-          namespace: 'default',
+          namespace: '  default  ',
           resourceUserId: 42,
           apiFormat: 'openai-responses',
         },
@@ -197,6 +200,64 @@ describe('runtimeModelSelection', () => {
           '{"modelName":"cloud-vision","modelType":"user","namespace":"default","resourceUserId":42,"apiFormat":"openai-responses"}',
       },
     })
+  })
+
+  test.each([
+    ['deepseek-v4-flash', 'wework-deepseek-v4-flash'],
+    ['deepseek-v4-pro', 'wework-deepseek-v4-pro'],
+  ])('selects the %s catalog for a cloud DeepSeek Responses model', (modelId, catalogId) => {
+    const cloudModel: UnifiedModel = {
+      name: `${modelId}-responses`,
+      type: 'public',
+      modelId,
+      namespace: 'default',
+      resourceUserId: 0,
+      provider: 'cloud',
+      config: { protocol: 'openai-responses' },
+    }
+
+    expect(selectedModelExecutionFields(cloudModel, {}).modelOptions).toEqual(
+      expect.objectContaining({
+        weworkCloudModelCodexCatalogModelId: catalogId,
+      })
+    )
+  })
+
+  test('keeps an unconfigured DeepSeek Responses model text-only', () => {
+    const cloudModel: UnifiedModel = {
+      name: 'deepseek-v4-pro-responses',
+      type: 'public',
+      modelId: 'deepseek-v4-pro',
+      namespace: 'default',
+      resourceUserId: 0,
+      provider: 'cloud',
+      config: { protocol: 'openai-responses' },
+    }
+
+    expect(selectedModelExecutionFields(cloudModel, {}).modelOptions).toEqual(
+      expect.not.objectContaining({
+        weworkCloudVisionSidecar: expect.anything(),
+      })
+    )
+  })
+
+  test.each([
+    ['deepseek-v4-pro', 'openai-chat-completions'],
+    ['different-upstream-model', 'openai-responses'],
+  ])('does not infer a DeepSeek catalog from model=%s with protocol=%s', (modelId, protocol) => {
+    const cloudModel: UnifiedModel = {
+      name: 'deepseek-v4-pro',
+      type: 'public',
+      modelId,
+      namespace: 'default',
+      resourceUserId: 0,
+      provider: 'cloud',
+      config: { protocol },
+    }
+
+    expect(selectedModelExecutionFields(cloudModel, {}).modelOptions).not.toHaveProperty(
+      'weworkCloudModelCodexCatalogModelId'
+    )
   })
 
   test('enables native Responses tools for supported GPT cloud models', () => {

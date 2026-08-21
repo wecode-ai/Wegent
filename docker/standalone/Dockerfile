@@ -113,6 +113,7 @@ RUN dnf install -y \
 # Install Claude marketplace skills and npm packages for document generation
 RUN claude plugin marketplace add anthropics/skills \
     && npm install -g pptxgenjs playwright sharp react react-dom react-icons docx pdf-lib \
+        mermaid@11.15.0 jsdom@29.1.1 \
     && npx playwright install chromium \
     && npm cache clean --force
 

@@ -26,6 +26,9 @@ describe('WorktreeCreationStatus', () => {
 
   test('only matches the optimistic worktree submission phase', () => {
     expect(isWorktreeCreationPending(creatingWorktree, 'submitting')).toBe(true)
+    expect(isWorktreeCreationPending(null, 'submitting', 'worktree')).toBe(true)
+    expect(isWorktreeCreationPending(null, 'submitting')).toBe(false)
+    expect(isWorktreeCreationPending(null, 'awaiting_assistant', 'worktree')).toBe(false)
     expect(isWorktreeCreationPending(creatingWorktree, 'awaiting_assistant')).toBe(false)
     expect(
       isWorktreeCreationPending(

@@ -1,3 +1,5 @@
+import { basename } from 'node:path'
+
 import { verifyShortConversationLayout } from './conversation-layout.mjs'
 
 import {
@@ -10,6 +12,8 @@ import {
   verifyModelProtocolMatrix,
   verifyRetryFailureRestoration,
 } from './desktop-build-flows.mjs'
+
+import { WORKTREE_CHECKPOINTS, verifyCloudWorktreeCheckpoint } from './cloud-worktree-flows.mjs'
 
 import {
   verifyActiveGoalIdleUnreadLifecycle,
@@ -50,6 +54,7 @@ import {
   join,
   mkdir,
   resultDir,
+  runChecked,
   selectE2EModel,
   writeFile,
 } from './shared.mjs'
@@ -65,12 +70,15 @@ import { verifyWorkspaceTabIsolation, waitForControlValue } from './workspace-fl
 
 const CLOUD_CHECKPOINTS = [
   'workspace-tabs',
+  'cloud-project-creation',
   'priority-filter',
   'telemetry-consent',
   'automation-lifecycle',
   'plugin-auto-update',
   'model-routing',
   'core-task-flow',
+  'cloud-git-worktree',
+  ...WORKTREE_CHECKPOINTS,
   'window-lifecycle',
   'goal-lifecycle',
   'supervisor-lifecycle',
@@ -108,6 +116,7 @@ async function createCloudProjectFixture(control, workspacePath) {
   await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
     value: CLOUD_DEVICE_ID,
   })
+  await control.command('click', '[data-testid="remote-project-source-existing"]')
   await waitForControlValue(
     control,
     '[data-testid="device-folder-path-input"]',
@@ -155,6 +164,73 @@ async function createCloudProjectFixture(control, workspacePath) {
     projectId,
     projectRowSelector,
   }
+}
+
+async function verifyCloudProjectCreationSources(control, workspacePath) {
+  const homePath = join(resultDir, 'cloud-executor-home')
+
+  const createProjectAndSnapshotMenus = async sourceTestId => {
+    const previousMenus = new Set(
+      JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
+        testId.startsWith('project-menu-')
+      )
+    )
+    await control.command('click', '[data-testid="projects-create-button"]')
+    await control.command('click', '[data-testid="project-create-remote-option"]')
+    await control.command('waitFor', '[data-testid="standalone-remote-device-select"]')
+    await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
+      value: CLOUD_DEVICE_ID,
+    })
+    await control.command('click', `[data-testid="${sourceTestId}"]`)
+    return previousMenus
+  }
+
+  const blankMenus = await createProjectAndSnapshotMenus('remote-project-source-blank')
+  await waitForControlValue(
+    control,
+    '[data-testid="device-folder-path-input"]',
+    homePath,
+    'The blank cloud project picker did not load the remote executor home'
+  )
+  await control.command('fill', '[data-testid="device-folder-name-input"]', {
+    value: 'cloud-blank-project',
+  })
+  await control.command('clickWhenEnabled', '[data-testid="confirm-device-folder-picker-button"]')
+  await waitForCloudProject(
+    control,
+    blankMenus,
+    'Creating a blank cloud project did not add it to the sidebar'
+  )
+
+  await runChecked('git', ['rev-parse', '--is-inside-work-tree'], { cwd: workspacePath })
+  const gitMenus = await createProjectAndSnapshotMenus('remote-project-source-git')
+  await waitForControlValue(
+    control,
+    '[data-testid="remote-project-git-parent-input"]',
+    homePath,
+    'The Git cloud project form did not load the remote executor home'
+  )
+  await control.command('click', '[data-testid="remote-project-git-parent-browse"]')
+  await control.command('waitFor', '[data-testid="device-folder-directory-list"]')
+  await control.command('clickWhenEnabled', '[data-testid="confirm-device-folder-picker-button"]')
+  await waitForControlValue(
+    control,
+    '[data-testid="remote-project-git-parent-input"]',
+    homePath,
+    'The Git cloud project folder picker did not retain the selected parent directory'
+  )
+  await control.command('fill', '[data-testid="remote-project-git-url-input"]', {
+    value: workspacePath,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="remote-project-git-submit"]')
+  await waitForCloudProject(
+    control,
+    gitMenus,
+    'Cloning a Git cloud project did not add it to the sidebar'
+  )
+  await runChecked('git', ['rev-parse', '--is-inside-work-tree'], {
+    cwd: join(homePath, basename(workspacePath)),
+  })
 }
 
 async function waitForCloudProject(control, previousProjectMenus, message) {
@@ -283,6 +359,12 @@ async function verifyCloudCheckpoint({
     return
   }
 
+  if (checkpoint === 'cloud-project-creation') {
+    setPhase('cloud-project-creation-sources')
+    await verifyCloudProjectCreationSources(control, workspacePath)
+    return
+  }
+
   const { composerSelector, projectRowSelector } = await createCloudProjectFixture(
     control,
     workspacePath
@@ -290,6 +372,23 @@ async function verifyCloudCheckpoint({
   const executorLogPath = cloudEnvironment.remoteExecutorLogPath
 
   switch (checkpoint) {
+    case 'cloud-git-worktree':
+    case 'cloud-worktree-capability':
+    case 'cloud-worktree-create':
+    case 'cloud-worktree-queued-cancel':
+    case 'cloud-worktree-tools':
+    case 'cloud-worktree-archive-restore':
+    case 'cloud-worktree-device-restart':
+      await verifyCloudWorktreeCheckpoint({
+        checkpoint,
+        cloudEnvironment,
+        composerSelector,
+        control,
+        projectRowSelector,
+        setPhase,
+        workspacePath,
+      })
+      return
     case 'priority-filter':
       setPhase('cloud-priority-filter')
       await verifyPriorityFilter({ composerSelector, control })

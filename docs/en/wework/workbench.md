@@ -8,7 +8,7 @@ sidebar_position: 5
 
 The Wework desktop app uses top-level tabs for tasks, project spaces, agents, and other product pages. Sidebar links navigate within the active tab. A new tab is created only when you select the top-bar **+** or another explicit new-tab action from a tab menu.
 
-The first main window starts with three default tabs: Task, Project spaces, and Agent. Every tab is an independent work instance. Two Task tabs retain separate conversations and unsent drafts, two Project-space tabs retain separate projects and routes, and two Agent tabs retain separate page state. Switching tabs does not synchronize content from another tab.
+When experimental features are enabled, the first main window shows three default tabs: Task, Workspaces, and Agent. When experimental features are off, the Workspaces tab is hidden. Every tab is an independent work instance. Two Task tabs retain separate conversations and unsent drafts, two Workspace tabs retain separate projects and routes, and two Agent tabs retain separate page state. Switching tabs does not synchronize content from another tab.
 
 When many tabs are open, the tab list scrolls horizontally while the **+** and the rightmost feedback button remain visible. A tab can also be moved to a separate window from its context menu. After the move succeeds, the source window removes the tab and the destination window contains only the moved tab and its state; it does not create the three default tabs again. If destination-window creation fails, the source tab remains unchanged.
 
@@ -53,9 +53,23 @@ For plain-text requests, the first line becomes the title and the complete body 
 
 The issue details' **Execution history** section lists linked Wework runtime tasks. Selecting a record opens the issue context and task conversation side by side in the unified workspace; select **Open full task** only when the complete execution interface is needed. Board and Task tabs retain their own routes and interface state.
 
+Board cards continue to represent issues; Wework does not create separate PR or MR cards. When a linked task has a PR or MR, its task icon in the execution history is replaced by the change-request status icon. The project sidebar on the Task page reuses the same state and interaction. Running tasks are always shown. A stopped task remains visible only while its PR or MR is open; it is hidden after the request is merged or closed, or when no request was created.
+
+Status lookup runs through the Executor on the device that owns the task. A local task uses the locally authenticated `gh` or `glab` CLI and does not require separate REST task authentication for the board. Wework batches branch lookups by repository and stores results in a local cache instead of querying once per task. Visible pages refresh periodically and check again when the app regains focus.
+
+When checks fail, a merge conflict exists, or Merge Queue enters an abnormal state, the status menu provides **Continue with AI repair**. This action continues the original runtime-task conversation with the failure context instead of creating another task. Closed PRs and MRs do not expose the repair action.
+
 ## Use the project sidebar
 
 Select a project name to expand or collapse its runtime tasks. Collapsed projects use a closed-folder icon; expanding a project changes the icon to an open folder so its state is easy to recognize.
+
+New tasks appear immediately at the top of their project's task list. Tasks with a saved drag order continue to follow that manual order; after a new task receives its persisted order, it remains stable within the same project ordering.
+
+## Use IM notifications
+
+IM notifications are generally available and do not require **Experimental features**. Use the message-bubble entry in the sidebar account area to configure away-from-computer reminders. After opening a runtime task, select **Continue in private chat** in the title bar to bind that task to an available IM private chat.
+
+After binding succeeds, Wework's switch confirmation uses the current task title instead of an internal `runtime-xxx` task identifier. Later task replies continue to be delivered to the selected private chat.
 
 ## Split tasks by dragging
 

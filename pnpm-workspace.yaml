@@ -45,3 +45,7 @@ minimumReleaseAgeExclude:
   - '@file-viewer/renderer-geo@2.1.26'
   - '@file-viewer/renderer-mindmap@2.1.26'
   - '@file-viewer/renderer-typst@2.1.26'
+  - '@deepseek-ai/dsh-client-ui-slots@0.1.0-rc.8'
+  - '@deepseek-ai/dsh-invariants@0.1.0-rc.8'
+patchedDependencies:
+  '@file-viewer/renderer-drawing@2.1.26': patches/@file-viewer__renderer-drawing@2.1.26.patch

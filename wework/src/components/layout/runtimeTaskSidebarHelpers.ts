@@ -35,8 +35,8 @@ function compareRuntimeTasks(
   if (useSidebarOrder && leftOrder != null && rightOrder != null && leftOrder !== rightOrder) {
     return leftOrder - rightOrder
   }
-  if (useSidebarOrder && leftOrder != null && rightOrder == null) return -1
-  if (useSidebarOrder && leftOrder == null && rightOrder != null) return 1
+  if (useSidebarOrder && leftOrder != null && rightOrder == null) return 1
+  if (useSidebarOrder && leftOrder == null && rightOrder != null) return -1
   return getRuntimeTaskSortTime(right) - getRuntimeTaskSortTime(left)
 }
 

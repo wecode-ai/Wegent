@@ -11,6 +11,7 @@ from typing import Any, BinaryIO, Optional
 
 from minio import Minio
 from minio.commonconfig import CopySource
+from minio.error import S3Error
 from urllib3 import PoolManager, Timeout
 
 from app.core.config import settings
@@ -18,6 +19,10 @@ from app.core.config import settings
 
 class DeliveryStorageUnavailableError(RuntimeError):
     """Raised when the delivery object store cannot serve a request."""
+
+
+class DeliveryObjectNotFoundError(RuntimeError):
+    """Raised when a persisted delivery references a missing object."""
 
 
 class DeliveryStorage:
@@ -91,7 +96,18 @@ class DeliveryStorage:
         )
 
     def get_bytes(self, object_key: str, max_bytes: int | None = None) -> bytes:
-        response = self.client.get_object(self.bucket, object_key)
+        response = None
+        for attempt in range(2):
+            try:
+                response = self.client.get_object(self.bucket, object_key)
+                break
+            except S3Error as exc:
+                if exc.code != "NoSuchKey":
+                    raise
+                if attempt == 1:
+                    raise DeliveryObjectNotFoundError(object_key) from exc
+        if response is None:
+            raise DeliveryObjectNotFoundError(object_key)
         try:
             data = response.read(max_bytes + 1 if max_bytes is not None else None)
             if max_bytes is not None and len(data) > max_bytes:

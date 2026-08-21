@@ -23,6 +23,9 @@ from app.schemas.installed_plugin import (
     PluginPathComponent,
     PluginSkillComponent,
     PluginUploadInfo,
+    WorkbenchDesktopSidecar,
+    WorkbenchFrontendModule,
+    WorkbenchPluginComponent,
 )
 
 MAX_PLUGIN_PACKAGE_SIZE_BYTES = 50 * 1024 * 1024
@@ -39,6 +42,7 @@ INTERFACE_ASSET_MEDIA_TYPES = {
 
 CLAUDE_PLUGIN_MANIFEST_PATH = ".claude-plugin/plugin.json"
 CODEX_PLUGIN_MANIFEST_PATH = ".codex-plugin/plugin.json"
+WEWORK_PLUGIN_MANIFEST_PATH = ".wework-plugin/plugin.json"
 PLUGIN_MANIFEST_PATHS = (
     CODEX_PLUGIN_MANIFEST_PATH,
     CLAUDE_PLUGIN_MANIFEST_PATH,
@@ -83,7 +87,16 @@ class PluginPackageParser:
                 self._validate_archive_paths(archive)
                 root, manifest_relative_path = self._detect_plugin_root(archive)
                 manifest = self._read_json(archive, f"{root}{manifest_relative_path}")
-                components = self._parse_components(archive, root, manifest)
+                workbench_manifest = self._read_optional_json(
+                    archive,
+                    f"{root}{WEWORK_PLUGIN_MANIFEST_PATH}",
+                )
+                components = self._parse_components(
+                    archive,
+                    root,
+                    manifest,
+                    workbench_manifest,
+                )
                 interface = self._inline_interface_assets(
                     archive,
                     root,
@@ -364,7 +377,11 @@ class PluginPackageParser:
         ).encode("utf-8")
 
     def _parse_components(
-        self, archive: zipfile.ZipFile, root: str, manifest: Dict[str, Any]
+        self,
+        archive: zipfile.ZipFile,
+        root: str,
+        manifest: Dict[str, Any],
+        workbench_manifest: Dict[str, Any] | None = None,
     ) -> InstalledPluginComponents:
         names = [name for name in archive.namelist() if not name.endswith("/")]
         return InstalledPluginComponents(
@@ -378,7 +395,171 @@ class PluginPackageParser:
             monitors=self._parse_json_file_components(root, names, "monitors"),
             bins=self._parse_bin_files(root, names),
             settings=self._read_optional_json(archive, f"{root}settings.json"),
+            workbench=self._parse_workbench_component(
+                archive,
+                root,
+                workbench_manifest,
+            ),
         )
+
+    def _parse_workbench_component(
+        self,
+        archive: zipfile.ZipFile,
+        root: str,
+        manifest: Dict[str, Any] | None,
+    ) -> WorkbenchPluginComponent | None:
+        if manifest is None:
+            return None
+        if str(manifest.get("apiVersion") or "1") != "1":
+            raise HTTPException(
+                status_code=400,
+                detail='.wework-plugin/plugin.json apiVersion must be "1"',
+            )
+        frontend = self._parse_workbench_frontend(
+            archive, root, manifest.get("frontend")
+        )
+        desktop = self._parse_workbench_desktop(archive, root, manifest.get("desktop"))
+        if frontend is None and desktop is None:
+            raise HTTPException(
+                status_code=400,
+                detail=".wework-plugin/plugin.json must declare frontend or desktop",
+            )
+        required = bool(manifest.get("required", False))
+        pinned_to_client_version = bool(manifest.get("pinnedToClientVersion", False))
+        client_version = self._optional_string(manifest.get("clientVersion"))
+        if required and not pinned_to_client_version:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    ".wework-plugin/plugin.json required plugins must set "
+                    "pinnedToClientVersion"
+                ),
+            )
+        if pinned_to_client_version and client_version is None:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    ".wework-plugin/plugin.json pinned plugins must declare "
+                    "clientVersion"
+                ),
+            )
+        return WorkbenchPluginComponent(
+            apiVersion="1",
+            required=required,
+            pinnedToClientVersion=pinned_to_client_version,
+            clientVersion=client_version,
+            frontend=frontend,
+            desktop=desktop,
+        )
+
+    def _parse_workbench_frontend(
+        self,
+        archive: zipfile.ZipFile,
+        root: str,
+        value: Any,
+    ) -> WorkbenchFrontendModule | None:
+        if value is None:
+            return None
+        if not isinstance(value, dict):
+            raise HTTPException(
+                status_code=400,
+                detail=".wework-plugin/plugin.json frontend must be an object",
+            )
+        entry = self._workbench_package_path(value.get("entry"), "frontend.entry")
+        self._require_archive_file(archive, root, entry, "frontend.entry")
+        return WorkbenchFrontendModule(
+            entry=entry,
+            export=str(value.get("export") or "default").strip() or "default",
+            sha256=self._workbench_sha256(value.get("sha256"), "frontend.sha256"),
+        )
+
+    def _parse_workbench_desktop(
+        self,
+        archive: zipfile.ZipFile,
+        root: str,
+        value: Any,
+    ) -> WorkbenchDesktopSidecar | None:
+        if value is None:
+            return None
+        if not isinstance(value, dict):
+            raise HTTPException(
+                status_code=400,
+                detail=".wework-plugin/plugin.json desktop must be an object",
+            )
+        command = self._workbench_package_path(value.get("command"), "desktop.command")
+        self._require_archive_file(archive, root, command, "desktop.command")
+        raw_args = value.get("args") or []
+        raw_capabilities = value.get("capabilities") or []
+        if not isinstance(raw_args, list) or not all(
+            isinstance(item, str) for item in raw_args
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=".wework-plugin/plugin.json desktop.args must be a string array",
+            )
+        if not isinstance(raw_capabilities, list) or not all(
+            isinstance(item, str) for item in raw_capabilities
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    ".wework-plugin/plugin.json desktop.capabilities "
+                    "must be a string array"
+                ),
+            )
+        return WorkbenchDesktopSidecar(
+            command=command,
+            args=raw_args,
+            sha256=self._workbench_sha256(value.get("sha256"), "desktop.sha256"),
+            capabilities=[item.strip() for item in raw_capabilities if item.strip()],
+        )
+
+    @staticmethod
+    def _workbench_package_path(value: Any, field: str) -> str:
+        path = str(value or "").strip()
+        normalized = PurePosixPath(path)
+        if (
+            not path
+            or normalized.is_absolute()
+            or ".." in normalized.parts
+            or path.endswith("/")
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f".wework-plugin/plugin.json {field} "
+                    "must be a package-relative file"
+                ),
+            )
+        return normalized.as_posix().removeprefix("./")
+
+    @staticmethod
+    def _workbench_sha256(value: Any, field: str) -> str:
+        digest = str(value or "").strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f".wework-plugin/plugin.json {field} "
+                    "must be a SHA-256 hex digest"
+                ),
+            )
+        return digest
+
+    @staticmethod
+    def _require_archive_file(
+        archive: zipfile.ZipFile,
+        root: str,
+        relative_path: str,
+        field: str,
+    ) -> None:
+        if f"{root}{relative_path}" not in archive.namelist():
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f".wework-plugin/plugin.json {field} " "points to a missing file"
+                ),
+            )
 
     def _display_name(self, manifest: Dict[str, Any], fallback: str) -> str:
         direct = str(manifest.get("displayName") or "").strip()
@@ -568,7 +749,7 @@ class PluginPackageParser:
     ) -> list[PluginMCPComponent]:
         raw = manifest.get("mcpServers")
         if isinstance(raw, dict):
-            data = {"mcpServers": raw}
+            data = raw
         elif isinstance(raw, str) and raw.strip():
             data = self._read_optional_json(
                 archive, self._join_root_path(root, raw.strip())
@@ -577,7 +758,7 @@ class PluginPackageParser:
             data = self._read_optional_json(archive, f"{root}.mcp.json")
         if not data:
             return []
-        servers = data.get("mcpServers") if isinstance(data, dict) else None
+        servers = self._mcp_server_map(data)
         if not isinstance(servers, dict):
             return []
         return [
@@ -587,6 +768,14 @@ class PluginPackageParser:
             )
             for name, server in sorted(servers.items())
         ]
+
+    @staticmethod
+    def _mcp_server_map(data: Dict[str, Any]) -> Dict[str, Any] | None:
+        for wrapper in ("mcp_servers", "mcpServers"):
+            if wrapper in data:
+                servers = data[wrapper]
+                return servers if isinstance(servers, dict) else None
+        return data
 
     def _parse_connectors(
         self, manifest: Dict[str, Any]

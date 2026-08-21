@@ -142,7 +142,7 @@ export function reduceRuntimeConversationTurns(
         }
       })
     case 'assistant_error':
-      return updateTurn(turns, action.subtaskId, turn => {
+      return updateFailedTurn(turns, action.subtaskId, turn => {
         return {
           ...turn,
           items: settleRuntimeReconnectingBlocks(turn.items),
@@ -432,6 +432,60 @@ function seedRuntimeConversationTurns(
   return turns
 }
 
+export function appendAcceptedRuntimeConversationUser(
+  turns: RuntimeConversationTurn[],
+  message: WorkbenchMessage,
+  activeTurnId: string | null,
+  turnIdsBeforeSend: ReadonlySet<string>
+): RuntimeConversationTurn[] {
+  if (message.role !== 'user') return appendOptimisticUser(turns, message)
+  if (
+    turns.some(turn =>
+      turn.items.some(item => item.type === 'user_message' && item.id === message.id)
+    )
+  ) {
+    return turns
+  }
+
+  const activeTurnIndex =
+    activeTurnId && !turnIdsBeforeSend.has(activeTurnId)
+      ? turns.findIndex(turn => turn.id === activeTurnId && !hasRuntimeConversationUser(turn))
+      : -1
+  const acceptedTurnIndex =
+    activeTurnIndex >= 0
+      ? activeTurnIndex
+      : turns.findLastIndex(
+          turn =>
+            turn.id !== null && !turnIdsBeforeSend.has(turn.id) && !hasRuntimeConversationUser(turn)
+        )
+  if (acceptedTurnIndex < 0) return appendOptimisticUser(turns, message)
+
+  const acceptedTurn = turns[acceptedTurnIndex]
+  const acceptedTurnId = acceptedTurn.id
+  if (!acceptedTurnId) return appendOptimisticUser(turns, message)
+  return replaceAt(turns, acceptedTurnIndex, {
+    ...acceptedTurn,
+    clientUserMessageId: message.id,
+    items: [
+      {
+        id: message.id,
+        type: 'user_message',
+        message: {
+          ...message,
+          role: 'user',
+          subtaskId: acceptedTurnId,
+          turnId: acceptedTurnId,
+        },
+      },
+      ...acceptedTurn.items,
+    ],
+  })
+}
+
+function hasRuntimeConversationUser(turn: RuntimeConversationTurn): boolean {
+  return turn.items.some(item => item.type === 'user_message')
+}
+
 function appendOptimisticUser(
   turns: RuntimeConversationTurn[],
   message: WorkbenchMessage
@@ -525,6 +579,52 @@ function updateTurn(
   const index = turns.findIndex(turn => turn.id === turnId)
   if (index < 0) return turns
   return replaceAt(turns, index, update(turns[index]))
+}
+
+function updateFailedTurn(
+  turns: RuntimeConversationTurn[],
+  turnId: string | undefined,
+  update: (turn: RuntimeConversationTurn) => RuntimeConversationTurn
+): RuntimeConversationTurn[] {
+  if (!turnId) return turns
+  const existingIndex = turns.findIndex(turn => turn.id === turnId)
+  if (existingIndex >= 0) {
+    return replaceAt(turns, existingIndex, update(turns[existingIndex]))
+  }
+  const optimisticIndex = turns.findLastIndex(
+    turn => turn.id === null && (turn.status === 'pending' || turn.status === 'streaming')
+  )
+  if (optimisticIndex >= 0) {
+    const optimistic = turns[optimisticIndex]
+    return replaceAt(
+      turns,
+      optimisticIndex,
+      update({
+        ...optimistic,
+        id: turnId,
+        items: optimistic.items.map(item =>
+          item.type === 'user_message'
+            ? {
+                ...item,
+                message: {
+                  ...item.message,
+                  subtaskId: turnId,
+                  turnId,
+                },
+              }
+            : item
+        ),
+      })
+    )
+  }
+  return [
+    ...turns,
+    update({
+      id: turnId,
+      items: [],
+      status: 'streaming',
+    }),
+  ]
 }
 
 function upsertAssistantText(

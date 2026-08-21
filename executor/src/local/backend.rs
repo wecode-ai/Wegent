@@ -42,6 +42,7 @@ mod client;
 mod config;
 mod connection_controller;
 mod extension;
+mod runtime_rpc_encoding;
 mod session_events;
 mod socket_transport;
 mod tasks;
@@ -60,6 +61,7 @@ pub use upgrade::{LocalDeviceUpgradeHandler, LocalUpgradeService};
 use cancellation::LocalCancellationRegistry;
 use capability::{default_capability_sync_handler, DefaultCapabilityReporter};
 use extension::default_extension_handler;
+use runtime_rpc_encoding::encode_runtime_rpc_response;
 use session_events::{
     default_session_handler, session_result_payload, session_start_request, value_string, value_u16,
 };
@@ -613,16 +615,14 @@ where
         Arc::new(move |payload| {
             let runtime_work_handler = runtime_work_handler.clone();
             Box::pin(async move {
+                let method = payload
+                    .get("method")
+                    .and_then(Value::as_str)
+                    .unwrap_or("<missing>")
+                    .to_owned();
                 write_executor_log_line(&format_executor_log(
                     "runtime:rpc received",
-                    &[(
-                        "method",
-                        payload
-                            .get("method")
-                            .and_then(Value::as_str)
-                            .unwrap_or("<missing>")
-                            .to_owned(),
-                    )],
+                    &[("method", method.clone())],
                 ));
                 let Some(handler) = runtime_work_handler else {
                     return Some(runtime_error_response(AppIpcError::new(
@@ -655,7 +655,7 @@ where
                         ),
                     ],
                 ));
-                Some(response)
+                Some(encode_runtime_rpc_response(&method, response))
             })
         })
     }
@@ -665,13 +665,47 @@ where
         Arc::new(move |payload| {
             let capability_sync_handler = capability_sync_handler.clone();
             Box::pin(async move {
-                let Some(handler) = capability_sync_handler else {
-                    return Some(json!({
+                let started_at = Instant::now();
+                write_executor_log_line(&format_executor_log(
+                    "device capability sync started",
+                    &[(
+                        "mode",
+                        payload
+                            .get("mode")
+                            .and_then(Value::as_str)
+                            .unwrap_or("merge")
+                            .to_owned(),
+                    )],
+                ));
+                let response = match capability_sync_handler {
+                    Some(handler) => handler.handle_sync_capabilities(payload).await,
+                    None => json!({
                         "success": false,
                         "error": "Capability sync handler is not available",
-                    }));
+                    }),
                 };
-                Some(handler.handle_sync_capabilities(payload).await)
+                write_executor_log_line(&format_executor_log(
+                    "device capability sync finished",
+                    &[
+                        ("elapsed_ms", started_at.elapsed().as_millis().to_string()),
+                        (
+                            "ok",
+                            response
+                                .get("success")
+                                .and_then(Value::as_bool)
+                                .unwrap_or(false)
+                                .to_string(),
+                        ),
+                        (
+                            "error",
+                            response
+                                .get("error")
+                                .map(Value::to_string)
+                                .unwrap_or_default(),
+                        ),
+                    ],
+                ));
+                Some(response)
             })
         })
     }
@@ -847,21 +881,11 @@ where
         {
             Ok(true) => {
                 self.refresh_runtime_capacity().await;
-                match self
-                    .client
-                    .send_heartbeat(self.client.config.heartbeat_timeout)
-                    .await
-                {
-                    Ok(true) => Ok(()),
-                    Ok(false) => {
-                        let _ = self.client.disconnect().await;
-                        Err("initial device heartbeat was rejected by backend".to_owned())
-                    }
-                    Err(error) => {
-                        let _ = self.client.disconnect().await;
-                        Err(error)
-                    }
+                if let Err(error) = self.client.emit_liveness_heartbeat().await {
+                    let _ = self.client.disconnect().await;
+                    return Err(error);
                 }
+                Ok(())
             }
             Ok(false) => {
                 let _ = self.client.disconnect().await;
@@ -886,17 +910,12 @@ where
                 }
             }
             self.refresh_runtime_capacity().await;
-            let failure = match self
-                .client
-                .send_heartbeat(self.client.config.heartbeat_timeout)
-                .await
-            {
-                Ok(true) => {
+            let failure = match self.client.emit_liveness_heartbeat().await {
+                Ok(()) => {
                     consecutive_failures = 0;
                     next_heartbeat_at = Instant::now() + self.client.config.heartbeat_interval;
                     continue;
                 }
-                Ok(false) => "heartbeat was rejected by backend".to_owned(),
                 Err(error) => error,
             };
 
@@ -1024,6 +1043,7 @@ pub fn local_backend_heartbeat_failure_log_line(backend_url: &str, error: &str) 
 }
 
 pub async fn serve_local_app_sidecar(config: DeviceConfig) -> Result<(), String> {
+    crate::task_runtime::mcp_http::ensure_space_mcp_http_endpoint().await?;
     let backend_config = LocalBackendConfig::from_device_config(config.clone());
     let app_ipc_device_id = app_ipc_sidecar_device_id(&backend_config);
     let runtime_instance_id = backend_config.runtime_instance_id.clone();

@@ -88,6 +88,8 @@ Select **Quick phrases** in the lower-left area of the Wework composer to open t
 
 Open **Settings > Quick phrases** to create, edit, delete, and reorder phrases. Each phrase can use Normal, Plan mode, or Goal; selecting it also switches the composer to that mode. Quick phrases are stored on the current device, remain available offline, and are not synchronized to other devices.
 
+Local projects can also maintain project-only phrases under **Project settings > Quick phrases**. In that project's composer, project phrases appear before device-wide phrases and disappear when you switch to another project. Items created through the system drag stash remain device-wide.
+
 ### Use the System Drag Panel
 
 The macOS desktop app enables the system drag panel by default. When you start dragging files, images, web links, or selected text, Wework shows a compact always-on-top panel at the top of the display containing the pointer. Drop the content onto one of these targets:

@@ -359,6 +359,42 @@ describe('ChatInput', () => {
     expect(window.getSelection()?.anchorOffset).toBe(trailingText?.textContent?.length)
   })
 
+  test('uses quick phrases from the current local project', async () => {
+    const scopedRuntimeWork = runtimeWork([{ id: 7, name: 'Wegent' }])
+    scopedRuntimeWork.projects[0].project.source = 'local_project'
+    scopedRuntimeWork.projects[0].project.aiSettings = {
+      quickPhrases: [
+        {
+          id: 'project-review',
+          title: '检查项目约束',
+          content: '先阅读项目约束',
+          mode: 'normal',
+        },
+      ],
+    }
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectWork={projectWorkControls({
+          projects: [{ id: 7, name: 'Wegent', tasks: [] }],
+          currentProjectId: 7,
+          runtimeWork: scopedRuntimeWork,
+        })}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('quick-phrase-button'))
+
+    expect(screen.getByTestId('project-quick-phrase-option-project-review')).toHaveTextContent(
+      '检查项目约束'
+    )
+  })
+
   test('opens plugin picker from its toolbar button without a separate slash action', async () => {
     render(
       <ChatInput
@@ -4228,6 +4264,12 @@ describe('ChatInput', () => {
           isGitProject: true,
           executionMode: 'git_worktree',
           executionModeLocked: false,
+          worktreeAvailability: {
+            available: true,
+            reason: 'available',
+            deviceId: 'device-1',
+            sourcePath: '/workspace/wegent',
+          },
           onExecutionModeChange: vi.fn(),
           branchName: 'main',
           branchLoading: false,

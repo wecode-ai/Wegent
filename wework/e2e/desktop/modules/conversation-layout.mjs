@@ -169,6 +169,11 @@ async function verifyShortConversationLayout({ composerSelector, control }) {
     taskRowsBeforeRace,
     'WEWORK_DESKTOP_E2E_CONCURRENT_MEMORY_1'
   )
+  await assertNewTaskPrecedesExistingTask(
+    control,
+    runningTaskRowTestId,
+    shortConversationTaskRowTestId
+  )
 
   await ensureTaskRowVisible(control, shortConversationTaskRowTestId)
   await control.command('clickWhenEnabled', `[data-testid="${shortConversationTaskRowTestId}"]`, {
@@ -547,12 +552,19 @@ async function waitForProcessingBlock(
 ) {
   const startedAt = Date.now()
   let diagnostics = null
+  let targetReadySince = null
 
   while (Date.now() - startedAt < timeoutMs) {
     await control.command('expandProcessingSummaries', 'body')
     const targetCount = Number(await control.command('getElementCount', selector))
+    if (targetCount > 0) {
+      targetReadySince ??= Date.now()
+    } else {
+      targetReadySince = null
+    }
     diagnostics = {
       targetCount,
+      targetStableMs: targetReadySince === null ? 0 : Date.now() - targetReadySince,
       finalProcessingExpandedCount: Number(
         await control.command(
           'getElementCount',
@@ -584,7 +596,7 @@ async function waitForProcessingBlock(
         await control.command('getElementCount', '[data-testid="processing-live-preview"]')
       ),
     }
-    if (targetCount > 0) return diagnostics
+    if (diagnostics.targetStableMs >= COMPOSER_READY_STABILITY_MS) return diagnostics
     await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
   }
 
@@ -738,6 +750,46 @@ async function waitForNewTaskRow(
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
   throw new Error(`The sidebar did not expose a task row for ${expectedText}`)
+}
+
+async function assertNewTaskPrecedesExistingTask(control, newTaskRowTestId, existingTaskRowTestId) {
+  const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+  const candidateListTestIds = snapshot.testIds.filter(
+    testId =>
+      testId === 'runtime-chat-task-sortable-list' ||
+      testId.startsWith('project-runtime-task-sortable-')
+  )
+
+  for (const listTestId of candidateListTestIds) {
+    const listSelector = `[data-testid="${listTestId}"]`
+    const containsNewTask =
+      Number(
+        await control.command(
+          'getElementCount',
+          `${listSelector} [data-testid="${newTaskRowTestId}"]`
+        )
+      ) === 1
+    const containsExistingTask =
+      Number(
+        await control.command(
+          'getElementCount',
+          `${listSelector} [data-testid="${existingTaskRowTestId}"]`
+        )
+      ) === 1
+    if (!containsNewTask || !containsExistingTask) continue
+
+    const taskOrder = JSON.parse(await control.command('getTestIdOrder', listSelector)).filter(
+      testId => testId === newTaskRowTestId || testId === existingTaskRowTestId
+    )
+    assert.deepEqual(
+      taskOrder,
+      [newTaskRowTestId, existingTaskRowTestId],
+      'A newly created task was displayed below an existing task in the sidebar'
+    )
+    return
+  }
+
+  throw new Error('The new and existing tasks did not share a sidebar task list')
 }
 
 async function createCheckpointTaskFixture(

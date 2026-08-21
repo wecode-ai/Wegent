@@ -56,6 +56,8 @@ interface PluginReferenceTrial {
   marketplaceName: string
   displayName: string
   templates?: PluginPathComponent[]
+  prompt?: string
+  openInNewChat?: boolean
 }
 
 interface PluginTrialOptions {
@@ -348,16 +350,21 @@ export function queuePluginReferenceTrial({
   marketplaceName,
   displayName,
   templates = [],
+  prompt,
+  openInNewChat = false,
 }: PluginReferenceTrial): boolean {
   const normalizedPluginName = pluginName.trim()
   const normalizedMarketplaceName = marketplaceName.trim()
   const normalizedDisplayName = displayName.trim()
   if (!normalizedPluginName || !normalizedMarketplaceName || !normalizedDisplayName) return false
+  const normalizedPrompt = prompt?.trim()
+  const reference = `[$${normalizedDisplayName}](plugin://${normalizedPluginName}@${normalizedMarketplaceName})`
 
   return queuePendingPluginTrial({
-    input: `[$${normalizedDisplayName}](plugin://${normalizedPluginName}@${normalizedMarketplaceName}) `,
+    input: normalizedPrompt ? `${reference} ${normalizedPrompt}` : `${reference} `,
     pluginName: normalizedDisplayName,
     templates,
+    openInNewChat,
   })
 }
 

@@ -715,6 +715,7 @@ function mergeRuntimeProjects(
         ? {
             ...existing.project,
             ...normalizedProject.project,
+            id: existing.project.id,
             key: normalizedProject.project.key,
             sidebarStateKey: existing.project.sidebarStateKey ?? existing.project.key,
             stateDeviceId: existing.project.stateDeviceId,

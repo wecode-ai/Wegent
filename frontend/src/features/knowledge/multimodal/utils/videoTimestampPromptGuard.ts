@@ -62,12 +62,17 @@ export function checkVideoTimestampPrompt(prompt: string): VideoTimestampPromptC
   const hasSegmentInstruction = /(每个|逐个|分段|片段|章节|each|every|segment|chapter)/i.test(
     prompt
   )
-  const hasRangeInstruction = /(开始.{0,12}结束|起始.{0,12}结束|start.{0,16}end|time range)/i.test(
-    prompt
-  )
-  const hasExplicitFormat =
-    /hh\s*:\s*mm\s*:\s*ss.{0,10}hh\s*:\s*mm\s*:\s*ss/i.test(prompt) ||
-    /\[?\d{1,2}:\d{2}:\d{2}\s*[-–—~至]\s*\d{1,2}:\d{2}:\d{2}\]?/.test(prompt)
+  const hasRangeInstruction =
+    /(开始.{0,12}结束|起始.{0,12}结束|start.{0,16}end|time range)/i.test(prompt) ||
+    // Prose-style range requirements, e.g. “章节 1 的开始时间必须为 ... 最终章节的结束时间 ...”
+    /开始时间[\s\S]{0,80}结束时间/.test(prompt)
+  // Accept optional brackets around each endpoint and mixed concrete/template
+  // pairs, e.g. "[HH:MM:SS - HH:MM:SS]" and "([00:00:00] - [HH:MM:SS])".
+  const timeEndpoint = String.raw`(?:\d{1,2}:\d{2}:\d{2}|hh\s*:\s*mm\s*:\s*ss)`
+  const hasExplicitFormat = new RegExp(
+    String.raw`[\[\(]?\s*${timeEndpoint}\s*[\]\)]?\s*[-–—~至]\s*[\[\(]?\s*${timeEndpoint}`,
+    'i'
+  ).test(prompt)
   const hasChapterStructure = prompt
     .split(/\r?\n/)
     .filter(line => /#{1,6}\s+/.test(line))

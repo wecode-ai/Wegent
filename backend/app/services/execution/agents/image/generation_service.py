@@ -110,7 +110,6 @@ class ImageGenerationService:
                     "expires_in_seconds": IMAGE_DOWNLOAD_URL_EXPIRES_SECONDS,
                 }
             )
-
         if not images:
             raise ValueError("No valid images generated")
 

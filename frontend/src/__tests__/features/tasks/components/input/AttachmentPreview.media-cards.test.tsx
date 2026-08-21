@@ -63,19 +63,13 @@ describe('AttachmentPreview sent media cards', () => {
     jest.clearAllMocks()
   })
 
-  it('renders video as a compact thumbnail and opens a player dialog', async () => {
-    render(<AttachmentPreview attachment={attachment({})} />)
+  it('renders video as an icon without resolving a download URL', () => {
+    const { container } = render(<AttachmentPreview attachment={attachment({})} compact />)
 
-    await waitFor(() => expect(screen.getByTestId('sent-video-attachment-1')).toBeInTheDocument())
-    const card = screen.getByTestId('sent-video-attachment-1')
-    expect(card).toHaveClass('h-16', 'w-16')
     expect(screen.getByText('material.mp4')).toBeInTheDocument()
-
-    fireEvent.click(card)
-    expect(screen.getByTestId('sent-video-dialog-1')).toHaveAttribute(
-      'src',
-      'https://backend.example.com/attachments/1'
-    )
+    expect(container.querySelector('.lucide-video')).toBeInTheDocument()
+    expect(container.querySelector('video')).not.toBeInTheDocument()
+    expect(createAttachmentDownloadUrl).not.toHaveBeenCalled()
   })
 
   it('renders audio as a compact playable card', async () => {

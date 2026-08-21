@@ -328,6 +328,217 @@ class TestStreamingServiceReasoning:
         assert completed["response"]["output"][1]["type"] == "message"
 
     @pytest.mark.asyncio
+    async def test_knowledge_mcp_video_sources_are_added_to_completed_response(
+        self, streaming_service
+    ):
+        payload = {
+            "mode": "rag_retrieval",
+            "chunks": [
+                {
+                    "title": "825.video.md",
+                    "score": 0.66,
+                    "knowledge_base_id": 212,
+                    "document_id": 825,
+                    "metadata": {
+                        "doc_ref": "825",
+                        "source_file": "825.video.md",
+                        "video_segment_id": "segment_109_278",
+                        "video_start_sec": 109,
+                        "video_end_sec": 278,
+                        "video_segment_title": "Core features",
+                        "video_segment_description": "Three editing modes",
+                    },
+                },
+                {
+                    "title": "825.video.md",
+                    "score": 0.64,
+                    "knowledge_base_id": 212,
+                    "document_id": 825,
+                    "metadata": {
+                        "doc_ref": "825",
+                        "source_file": "825.video.md",
+                        "video_segment_id": "segment_461_480",
+                        "video_start_sec": 461,
+                        "video_end_sec": 480,
+                        "video_segment_title": "Future roadmap",
+                        "video_segment_description": "Planned improvements",
+                    },
+                },
+                {
+                    "title": "825.video.md",
+                    "knowledge_base_id": 212,
+                    "document_id": 825,
+                    "metadata": {
+                        "doc_ref": "825",
+                        "source_file": "825.video.md",
+                    },
+                },
+            ],
+        }
+
+        async def knowledge_stream():
+            yield StreamingChunk(
+                type="mcp_call_done",
+                data={
+                    "item_id": "mcp_knowledge",
+                    "name": "wegent_kb_search_knowledge_base",
+                    "server_label": "wegent-knowledge",
+                    "status": "completed",
+                    "output": [{"type": "text", "text": json.dumps(payload)}],
+                },
+            )
+            yield StreamingChunk(type="text", content="answer")
+
+        events = []
+        async for event in streaming_service.create_streaming_response(
+            response_id="resp_knowledge",
+            model_string="gpt-4",
+            chat_stream=knowledge_stream(),
+            created_at=1234567890,
+        ):
+            events.append(json.loads(event.replace("data: ", "").strip()))
+
+        completed = next(e for e in events if e["type"] == "response.completed")
+        assert completed["response"]["sources"] == [
+            {
+                "index": 1,
+                "title": "825.video.md",
+                "kb_id": 212,
+                "document_id": 825,
+                "source_type": "wegent_video_segment",
+                "segments": [
+                    {
+                        "id": "segment_109_278",
+                        "start_sec": 109,
+                        "end_sec": 278,
+                        "score": 0.66,
+                        "title": "Core features",
+                        "description": "Three editing modes",
+                    },
+                    {
+                        "id": "segment_461_480",
+                        "start_sec": 461,
+                        "end_sec": 480,
+                        "score": 0.64,
+                        "title": "Future roadmap",
+                        "description": "Planned improvements",
+                    },
+                ],
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_document_content_mcp_video_chapters_are_added_to_completed_response(
+        self, streaming_service
+    ):
+        content = (
+            "# 产品培训示例视频\n\n"
+            "### 章节 1：背景 ([00:00:00 - 00:00:48])\n"
+            "> **本段摘要**：开场介绍。\n\n"
+            "### 章节 2：架构 ([00:00:48 - 00:01:49])\n"
+            "> **本段摘要**：整体架构。\n"
+        )
+        payload = {
+            "document_id": 825,
+            "knowledge_base_id": 212,
+            "name": "产品培训示例视频.mp4",
+            "content": content,
+            "offset": 0,
+            "returned_length": len(content),
+            "total_length": len(content),
+            "has_more": False,
+            "index_status": "success",
+            "source_media_type": "video",
+        }
+
+        async def knowledge_stream():
+            yield StreamingChunk(
+                type="mcp_call_done",
+                data={
+                    "item_id": "mcp_read_doc",
+                    "name": "wegent_kb_get_document_content",
+                    "server_label": "wegent-knowledge",
+                    "status": "completed",
+                    "output": [{"type": "text", "text": json.dumps(payload)}],
+                },
+            )
+            yield StreamingChunk(type="text", content="answer")
+
+        events = []
+        async for event in streaming_service.create_streaming_response(
+            response_id="resp_doc_content",
+            model_string="gpt-4",
+            chat_stream=knowledge_stream(),
+            created_at=1234567890,
+        ):
+            events.append(json.loads(event.replace("data: ", "").strip()))
+
+        completed = next(e for e in events if e["type"] == "response.completed")
+        assert completed["response"]["sources"] == [
+            {
+                "index": 1,
+                "title": "产品培训示例视频.mp4",
+                "kb_id": 212,
+                "document_id": 825,
+                "source_type": "wegent_video_chapters",
+                "segments": [
+                    {
+                        "id": "segment_0_48",
+                        "start_sec": 0,
+                        "end_sec": 48,
+                        "title": "背景",
+                        "description": "开场介绍。",
+                    },
+                    {
+                        "id": "segment_48_109",
+                        "start_sec": 48,
+                        "end_sec": 109,
+                        "title": "架构",
+                        "description": "整体架构。",
+                    },
+                ],
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_knowledge_mcp_ordinary_documents_do_not_add_video_sources(
+        self, streaming_service
+    ):
+        async def knowledge_stream():
+            yield StreamingChunk(
+                type="mcp_call_done",
+                data={
+                    "item_id": "mcp_knowledge",
+                    "name": "wegent_kb_search_knowledge_base",
+                    "server_label": "wegent-knowledge",
+                    "status": "completed",
+                    "output": {
+                        "mode": "rag_retrieval",
+                        "chunks": [
+                            {
+                                "title": "handbook.pdf",
+                                "knowledge_base_id": 212,
+                                "document_id": 99,
+                                "metadata": {"doc_ref": "99"},
+                            }
+                        ],
+                    },
+                },
+            )
+
+        events = []
+        async for event in streaming_service.create_streaming_response(
+            response_id="resp_knowledge",
+            model_string="gpt-4",
+            chat_stream=knowledge_stream(),
+            created_at=1234567890,
+        ):
+            events.append(json.loads(event.replace("data: ", "").strip()))
+
+        completed = next(e for e in events if e["type"] == "response.completed")
+        assert "sources" not in completed["response"]
+
+    @pytest.mark.asyncio
     async def test_shell_call_stream(self, streaming_service):
         async def shell_call_stream():
             yield StreamingChunk(

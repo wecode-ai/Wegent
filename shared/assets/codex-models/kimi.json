@@ -2,6 +2,9 @@
   "models": [
     {
       "slug": "wework-kimi-k3",
+      "upstream_model_ids": ["k3", "kimi-k3"],
+      "upstream_model_id_contains": ["kimi-k3"],
+      "upstream_api_formats": ["openai-chat-completions"],
       "display_name": "Kimi K3",
       "description": "Kimi K3 profile for long-horizon coding, multimodal input, and deep reasoning",
       "apply_patch_tool_type": "freeform",
@@ -30,6 +33,13 @@
     },
     {
       "slug": "wework-kimi-k2-7",
+      "upstream_model_ids": ["kimi-for-coding", "kimi-for-coding-highspeed"],
+      "upstream_model_id_contains": ["kimi-k2.7"],
+      "upstream_api_formats": [
+        "openai-responses",
+        "openai-chat-completions",
+        "anthropic-messages"
+      ],
       "display_name": "Kimi K2.7 Code",
       "description": "Kimi K2.7 Code profile for stable agentic coding",
       "apply_patch_tool_type": "freeform",

@@ -22,14 +22,14 @@ use crate::{
     local::git_commit_message::generate_commit_message,
     local::local_skills::list_local_skills,
     local::workspace_files::{
-        execute_workspace_file_command_with_input, is_workspace_file_command,
+        execute_workspace_file_command_with_input, is_workspace_file_command, WORKSPACE_ROOTS_ENV,
     },
     logging::{format_executor_log, reserve_executor_stdout_for_protocol, write_executor_log_line},
     runtime_work::RuntimeWorkRpcHandler,
     task_runtime::{
-        BinaryInput, ChatAgentCreate, ChatAgentUpdate, DeliveryCreate, LocalCommentCreate,
-        LocalExecutionClaim, ProjectCreate, ProjectDescriptor, ProjectUpdate, RuntimeTaskAddress,
-        TaskCreate, TaskReorder, TaskRuntime, TaskUpdate,
+        BinaryInput, ChatAgentCreate, ChatAgentUpdate, DeliveryCreate, DeliveryFinalize,
+        LocalCommentCreate, LocalExecutionClaim, ProjectCreate, ProjectDescriptor, ProjectUpdate,
+        RuntimeTaskAddress, TaskCreate, TaskReorder, TaskRuntime, TaskUpdate,
     },
     version::get_version,
 };
@@ -776,12 +776,18 @@ impl AppIpcServer {
         }
 
         let args = string_list(params.get("args"))?;
-        let env = string_env(params.get("env"))?;
+        let path = string_field(&params, "path").or_else(|| string_field(&params, "cwd"));
+        let mut env = string_env(params.get("env"))?;
         if is_workspace_file_command(command_key) {
+            if !env.contains_key(WORKSPACE_ROOTS_ENV) {
+                if let Some(path) = path.as_ref() {
+                    env.insert(WORKSPACE_ROOTS_ENV.to_owned(), path.clone());
+                }
+            }
             return serde_json::to_value(
                 execute_workspace_file_command_with_input(
                     command_key,
-                    string_field(&params, "path").or_else(|| string_field(&params, "cwd")),
+                    path,
                     args,
                     env,
                     string_field(&params, "stdin"),
@@ -1584,9 +1590,21 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
         "deliveries.finalize" => {
             let item_id = required_task_string(&params, "item_id")?;
             let delivery_id = required_task_string(&params, "delivery_id")?;
+            let input = params
+                .get("finalize")
+                .cloned()
+                .map(serde_json::from_value::<DeliveryFinalize>)
+                .transpose()
+                .map_err(|error| {
+                    AppIpcError::new(
+                        "invalid_request",
+                        format!("invalid finalize input: {error}"),
+                    )
+                })?
+                .unwrap_or_default();
             serialize_task_value(
                 runtime
-                    .finalize_delivery(item_id, delivery_id)
+                    .finalize_delivery(item_id, delivery_id, input)
                     .map_err(task_runtime_error)?,
             )
         }
@@ -1961,6 +1979,7 @@ pub async fn serve_app_ipc_sidecar(
     device_id: String,
     runtime_instance_id: String,
 ) -> Result<(), String> {
+    crate::task_runtime::mcp_http::ensure_space_mcp_http_endpoint().await?;
     let server = AppIpcServer::new()
         .with_device_id(normalize_device_id(device_id))
         .with_runtime_instance_id(runtime_instance_id)
@@ -2024,18 +2043,18 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
             None,
         )),
         "git_diff" => Some(command_definition(
-            "bash -lc <git_workspace_diff>",
-            &["bash", "-lc", GIT_WORKSPACE_DIFF_SCRIPT],
+            "bash -c <git_workspace_diff>",
+            &["bash", "-c", GIT_WORKSPACE_DIFF_SCRIPT],
             None,
         )),
         "git_branch_diff" => Some(command_definition(
-            "bash -lc <git_branch_diff>",
-            &["bash", "-lc", GIT_BRANCH_DIFF_SCRIPT],
+            "bash -c <git_branch_diff>",
+            &["bash", "-c", GIT_BRANCH_DIFF_SCRIPT],
             None,
         )),
         "git_branch_diff_shortstat" => Some(command_definition(
-            "bash -lc <git_branch_diff_shortstat>",
-            &["bash", "-lc", GIT_BRANCH_DIFF_SHORTSTAT_SCRIPT],
+            "bash -c <git_branch_diff_shortstat>",
+            &["bash", "-c", GIT_BRANCH_DIFF_SHORTSTAT_SCRIPT],
             None,
         )),
         "git_diff_unstaged" => Some(command_definition(
@@ -2089,6 +2108,38 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
             ],
             Some(PostProcessor::Json),
         )),
+        "git_github_pull_requests_batch" => Some(command_definition(
+            "gh api --method GET repos/{owner}/{repo}/pulls?state=all&per_page=100",
+            &[
+                "gh",
+                "api",
+                "--method",
+                "GET",
+                "repos/{owner}/{repo}/pulls?state=all&per_page=100",
+                "--jq",
+                concat!(
+                    "[.[] | {number, html_url, title, state, draft, ",
+                    "head: {ref: .head.ref}, updated_at, merged_at}]"
+                ),
+            ],
+            Some(PostProcessor::Json),
+        )),
+        "git_github_pull_request_merge_queue" => Some(command_definition(
+            "gh api graphql <pull-request-merge-queue-query>",
+            &[
+                "gh",
+                "api",
+                "graphql",
+                "-f",
+                "query=query($url:URI!){resource(url:$url){... on PullRequest{mergeQueueEntry{id}}}}",
+            ],
+            Some(PostProcessor::Json),
+        )),
+        "git_github_pull_request_merge_queue_batch" => Some(command_definition(
+            "gh api graphql",
+            &["gh", "api", "graphql"],
+            Some(PostProcessor::Json),
+        )),
         "git_gitlab_merge_requests" => Some(command_definition(
             "glab mr list --all --source-branch <branch>",
             &[
@@ -2105,6 +2156,24 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
                 "--output",
                 "json",
                 "--source-branch",
+            ],
+            Some(PostProcessor::Json),
+        )),
+        "git_gitlab_merge_requests_batch" => Some(command_definition(
+            "glab mr list --all",
+            &[
+                "glab",
+                "mr",
+                "list",
+                "--all",
+                "--per-page",
+                "100",
+                "--order",
+                "updated_at",
+                "--sort",
+                "desc",
+                "--output",
+                "json",
             ],
             Some(PostProcessor::Json),
         )),
@@ -2400,4 +2469,20 @@ where
     bytes.push(b'\n');
     writer.write_all(&bytes).await?;
     writer.flush().await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::local_app_command;
+
+    #[test]
+    fn git_diff_commands_do_not_start_a_login_shell() {
+        for command_key in ["git_diff", "git_branch_diff", "git_branch_diff_shortstat"] {
+            let command = local_app_command(command_key).expect("command must be registered");
+
+            assert_eq!(command.argv.first(), Some(&"bash"));
+            assert_eq!(command.argv.get(1), Some(&"-c"));
+            assert!(!command.argv.contains(&"-l"));
+        }
+    }
 }

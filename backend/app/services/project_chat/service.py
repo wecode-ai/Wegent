@@ -36,7 +36,9 @@ from app.schemas.project_chat import (
     ProjectChatSubscribe,
 )
 from app.services.cloud_projects.access import require_cloud_project_role
+from app.services.loop_item_events import publish_loop_item_changed
 from app.services.loop_item_status_history import write_status_change
+from app.services.loop_item_unread import advance_content_revision
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +89,7 @@ TASK_AI_STATE_KEY = "ai_state"
 TASK_AI_RUNNING_LEASE_SECONDS = 10 * 60
 EXECUTION_STATE_KEY = "execution_state"
 EXECUTION_UPDATED_AT_KEY = "execution_updated_at"
+PENDING_LOOP_ITEM_CHANGES_KEY = "project_chat_pending_loop_item_changes"
 _EXECUTION_STATE_FROM_AI_STATUS = {
     "running": "running",
     "completed": "completed",
@@ -143,6 +146,24 @@ class ProjectChatWriteResult:
 
 
 class ProjectChatService:
+    @staticmethod
+    def _queue_loop_item_change(db: Session, item: LoopItem) -> None:
+        pending = db.info.setdefault(PENDING_LOOP_ITEM_CHANGES_KEY, set())
+        pending.add(item.id)
+
+    def _commit(self, db: Session) -> None:
+        pending = set(db.info.pop(PENDING_LOOP_ITEM_CHANGES_KEY, set()))
+        db.commit()
+        for item_id in pending:
+            item = db.get(LoopItem, item_id)
+            if item is not None:
+                publish_loop_item_changed(
+                    db,
+                    item=item,
+                    reason="project_chat",
+                    actor_user_id=0,
+                )
+
     """Read and append messages in a project's single shared chat."""
 
     def list_agents(
@@ -217,7 +238,7 @@ class ProjectChatService:
             },
         )
         db.add(row)
-        db.commit()
+        self._commit(db)
         db.refresh(row)
         return self.agent_to_view(row, db=db)
 
@@ -301,7 +322,7 @@ class ProjectChatService:
             row.status = request.status
         row.updated_by_user_id = user_id
         row.version += 1
-        db.commit()
+        self._commit(db)
         db.refresh(row)
         return self.agent_to_view(row, db=db)
 
@@ -345,7 +366,7 @@ class ProjectChatService:
         for row in rows:
             reconciled = self._reconcile_ai_run_projection(db, row=row) or reconciled
         if reconciled:
-            db.commit()
+            self._commit(db)
             for row in rows:
                 db.refresh(row)
         return [self.to_view(row) for row in rows]
@@ -413,7 +434,15 @@ class ProjectChatService:
             status="completed",
         )
         db.add(row)
-        db.commit()
+        if request.task_id:
+            item = db.get(LoopItem, request.task_id)
+            if item is not None:
+                item.metadata_json = advance_content_revision(
+                    item.metadata_json, actor_user_id=user_id
+                )
+                item.version += 1
+                self._queue_loop_item_change(db, item)
+        self._commit(db)
         db.refresh(row)
         return ProjectChatWriteResult(self.to_view(row), created=True)
 
@@ -510,7 +539,7 @@ class ProjectChatService:
                     prompt=request.prompt,
                     user_id=user_id,
                 )
-                db.commit()
+                self._commit(db)
             db.refresh(existing)
             return self.to_view(existing)
         message_id = str(uuid.uuid7()) if hasattr(uuid, "uuid7") else str(uuid.uuid4())
@@ -565,7 +594,7 @@ class ProjectChatService:
                 prompt=request.prompt,
                 user_id=user_id,
             )
-            db.commit()
+            self._commit(db)
         except IntegrityError:
             # A concurrent opener (runtime event upsert vs transport start
             # report) inserted the activity message first. Reuse it instead of
@@ -676,7 +705,7 @@ class ProjectChatService:
         )
         try:
             db.add(row)
-            db.commit()
+            self._commit(db)
         except IntegrityError:
             db.rollback()
             existing = (
@@ -851,7 +880,7 @@ class ProjectChatService:
                 agent=None,
                 status_value="running",
             )
-            db.commit()
+            self._commit(db)
             db.refresh(row)
             return (
                 self.to_view(row).model_copy(
@@ -899,7 +928,7 @@ class ProjectChatService:
             )
         else:
             return None
-        db.commit()
+        self._commit(db)
         db.refresh(row)
         return self.to_view(row), "snapshot"
 
@@ -965,6 +994,13 @@ class ProjectChatService:
             run.status = terminal_status
         elif event_name in {"response.created", "response.in_progress"}:
             run.status = "running"
+        else:
+            return
+        from app.services.project_workflow_projection import (
+            sync_automation_workflow_node,
+        )
+
+        sync_automation_workflow_node(db, run)
 
     @staticmethod
     def _streaming_activity_for_runtime(
@@ -1054,7 +1090,7 @@ class ProjectChatService:
             content=content,
             error=error,
         )
-        db.commit()
+        self._commit(db)
         db.refresh(row)
         return self.to_view(row)
 
@@ -1251,7 +1287,7 @@ class ProjectChatService:
             existing.metadata_json = metadata
             existing.status = "completed"
             existing.message_type = "text"
-        db.commit()
+        self._commit(db)
         db.refresh(existing)
         return self.to_view(existing), "snapshot"
 
@@ -1318,8 +1354,8 @@ class ProjectChatService:
             .first()
         )
 
-    @staticmethod
     def _set_task_ai_state(
+        self,
         db: Session,
         *,
         row: ProjectChatMessage,
@@ -1426,6 +1462,9 @@ class ProjectChatService:
             task_metadata[EXECUTION_STATE_KEY] = execution_state
             task_metadata[EXECUTION_UPDATED_AT_KEY] = now.isoformat()
         task_metadata[TASK_AI_STATE_KEY] = next_state
+        if previous_state.get("status") != status_value:
+            task_metadata = advance_content_revision(task_metadata)
+            self._queue_loop_item_change(db, task)
         task.metadata_json = task_metadata
         task.version += 1
         logger.debug(
@@ -1562,6 +1601,47 @@ class ProjectChatService:
         task.sort_order = 0
         task.version += 1
 
+        ProjectChatService._sync_issue_workflow_from_completed_task(
+            db,
+            task=task,
+        )
+
+    @staticmethod
+    def _sync_issue_workflow_from_completed_task(
+        db: Session,
+        *,
+        task: LoopItem,
+    ) -> None:
+        """Keep a secondary workflow projection from aborting finalization."""
+
+        metadata = task.metadata_json if isinstance(task.metadata_json, dict) else {}
+        plan = metadata.get("workflow_plan")
+        if (
+            not task.parent_id
+            or not isinstance(plan, dict)
+            or not str(plan.get("run_id") or "")
+        ):
+            return
+        # Flush the activity and task truth before opening the projection
+        # savepoint. A failure in these primary writes must still abort the
+        # caller's transaction.
+        db.flush()
+        from app.services.issue_workflow_planning import (
+            issue_workflow_planning_service,
+        )
+
+        try:
+            with db.begin_nested():
+                issue_workflow_planning_service.sync_from_child(
+                    db,
+                    child_id=task.id,
+                )
+        except Exception:
+            logger.exception(
+                "[ProjectChat] Issue workflow projection failed task_id=%s",
+                task.id,
+            )
+
     def fail_agent_response(
         self,
         db: Session,
@@ -1618,7 +1698,7 @@ class ProjectChatService:
             status_value="failed",
             error=request.error,
         )
-        db.commit()
+        self._commit(db)
         db.refresh(row)
         return self.to_view(row)
 

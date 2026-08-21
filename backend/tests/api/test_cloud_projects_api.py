@@ -386,6 +386,37 @@ def test_cloud_project_ai_automation_is_shared_through_project_metadata(
     assert match["ai_automation"]["max_retry_count"] == 3
 
 
+def test_cloud_project_pull_request_automation_is_shared_through_project_metadata(
+    test_client: TestClient, test_token: str
+) -> None:
+    created = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "prfix", "name": "PR auto repair"},
+    ).json()
+    assert created["pull_request_automation"]["enabled"] is False
+    assert "merge_queue_failed" in created["pull_request_automation"]["statuses"]
+
+    updated = test_client.patch(
+        f"/api/v1/cloud-projects/{created['id']}",
+        headers=_auth(test_token),
+        json={
+            "version": created["version"],
+            "pull_request_automation": {
+                "enabled": True,
+                "statuses": ["checks_failed", "merge_queue_timed_out"],
+                "prompt": "Inspect the complete failure logs.",
+            },
+        },
+    )
+    assert updated.status_code == 200
+    assert updated.json()["pull_request_automation"] == {
+        "enabled": True,
+        "statuses": ["checks_failed", "merge_queue_timed_out"],
+        "prompt": "Inspect the complete failure logs.",
+    }
+
+
 def test_cloud_project_generates_key_when_omitted(
     test_client: TestClient, test_token: str
 ) -> None:
@@ -2107,6 +2138,13 @@ def test_cloud_workspace_file_round_trip(
     ]
     assert accessed.status_code == 200
     assert accessed.json()["url"].endswith("/shared/research/notes.md")
+    read_content = test_client.get(
+        f"/api/v1/cloud-projects/files/{file_id}/content",
+        headers=_auth(test_token),
+    )
+    assert read_content.status_code == 200
+    assert read_content.content == b"# Notes"
+    assert read_content.headers["content-type"].startswith("text/markdown")
 
     moved = test_client.patch(
         f"/api/v1/cloud-projects/files/{folder.json()['id']}",
@@ -2151,12 +2189,21 @@ def test_cloud_workspace_lists_immutable_delivery_files(
     item = test_client.post(
         f"/api/v1/cloud-projects/{project['id']}/loop-items",
         headers=_auth(test_token),
-        json={"title": "Publish report"},
+        json={"title": "Release issue"},
+    ).json()
+    root_item = test_db.get(LoopItem, item["id"])
+    assert root_item is not None
+    root_item.parent_id = ""
+    test_db.commit()
+    task = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Publish report", "parent_id": item["id"]},
     ).json()
     delivered_at = datetime(2026, 7, 22, 12, 0, 0)
     delivery = Delivery(
         id="delivery-snapshot",
-        loop_item_id=item["id"],
+        loop_item_id=task["id"],
         created_by_user_id=1,
         status="delivered",
         markdown_object_key="snapshot/markdown.md",
@@ -2191,14 +2238,25 @@ def test_cloud_workspace_lists_immutable_delivery_files(
         {
             "asset_id": asset.id,
             "delivery_id": delivery.id,
-            "loop_item_id": item["id"],
+            "loop_item_id": task["id"],
             "loop_item_title": "Publish report",
             "relative_path": "reports/report.pdf",
             "display_name": "report.pdf",
             "content_type": "application/pdf",
             "size_bytes": 6,
             "delivered_at": "2026-07-22T12:00:00",
+            "loop_item_path": [
+                {"id": item["id"], "title": "Release issue"},
+                {"id": task["id"], "title": "Publish report"},
+            ],
         }
     ]
     assert accessed.status_code == 200
     assert accessed.json()["url"].endswith("/snapshot/files/report.pdf")
+    read_content = test_client.get(
+        f"/api/v1/delivery-assets/{asset.id}/content",
+        headers=_auth(test_token),
+    )
+    assert read_content.status_code == 200
+    assert read_content.content == b"report"
+    assert read_content.headers["content-type"] == "application/pdf"

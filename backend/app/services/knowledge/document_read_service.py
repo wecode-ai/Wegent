@@ -11,8 +11,24 @@ from sqlalchemy.orm import Session
 
 from app.models.knowledge import KnowledgeDocument
 from app.models.subtask_context import ContextType, SubtaskContext
+from app.services.context import context_service
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_source_media_type(
+    attachment: Optional[SubtaskContext],
+) -> Optional[str]:
+    """Determine the media type of a document from its attachment context.
+
+    Returns ``"video"`` for video attachments, ``None`` otherwise.
+    """
+    if attachment is None:
+        return None
+    if context_service.is_video_context(attachment):
+        return "video"
+    return None
+
 
 DOCUMENT_READ_ERROR_NOT_FOUND = "DOCUMENT_NOT_FOUND"
 DOCUMENT_READ_ERROR_ACCESS_DENIED = "DOCUMENT_ACCESS_DENIED"
@@ -93,6 +109,7 @@ class DocumentReadService:
             "returned_length": returned_length,
             "has_more": has_more,
             "kb_id": document.kind_id,
+            "source_media_type": _resolve_source_media_type(attachment),
         }
 
     @staticmethod

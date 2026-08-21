@@ -142,17 +142,8 @@ import os
 
 config = {
     "version": os.environ["VERSION"],
-    # The NSIS installer is patched after Tauri builds it, so the release script
-    # signs the final installer explicitly instead of keeping Tauri's stale
-    # pre-patch updater signature.
     "bundle": {
-        "createUpdaterArtifacts": False,
-        "resources": [
-            "binaries/codex/x86_64-pc-windows-msvc/**/*",
-            "binaries/codex/legal/**/*",
-            "bundled-hooks/**/*",
-            "bundled-plugins",
-        ],
+        "createUpdaterArtifacts": True,
     },
     "plugins": {
         "updater": {
@@ -172,22 +163,6 @@ PY
 find_installer() {
   find "$CARGO_TARGET_DIR/$WINDOWS_BUILD_TARGET/release/bundle/nsis" \
     -maxdepth 1 -type f -name '*.exe' -print | sort | tail -1
-}
-
-sign_updater_installer() {
-  local installer_path="$1"
-  rm -f "$installer_path.sig"
-  (
-    cd "$PROJECT_DIR"
-    pnpm --filter wework exec tauri signer sign \
-      --private-key-path "$UPDATER_KEY_PATH" \
-      --password "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" \
-      "$installer_path"
-  )
-  if [ ! -s "$installer_path.sig" ]; then
-    echo "Updater signature was not generated: $installer_path.sig" >&2
-    exit 1
-  fi
 }
 
 collect_release_artifacts() {
@@ -263,6 +238,7 @@ verify_uploaded_artifacts() {
   local installer_url="$UPDATE_BASE_URL/WeWork_${VERSION}_windows-x64-setup.exe"
   local latest_installer_url="$UPDATE_BASE_URL/WeWork_latest_windows-x64-setup.exe"
   local channel_manifest_url="$UPDATE_BASE_URL/$CHANNEL-windows-x86_64.json"
+  local runtime_asset
 
   if ! curl -fsSI -o /dev/null "$installer_url" || \
     ! curl -fsSI -o /dev/null "$channel_manifest_url"; then
@@ -278,6 +254,16 @@ verify_uploaded_artifacts() {
     fi
     echo "Latest Windows installer: $latest_installer_url"
   fi
+  while IFS= read -r runtime_asset; do
+    if ! curl -fsSI -o /dev/null "$UPDATE_BASE_URL/$runtime_asset"; then
+      echo "Runtime asset is not publicly readable: $UPDATE_BASE_URL/$runtime_asset" >&2
+      exit 1
+    fi
+  done < <(
+    node -e \
+      "const m=require(process.argv[1]); for (const a of m.assets) console.log(a.name)" \
+      "$OUTPUT_DIR/release-runtime-assets.json"
+  )
 }
 
 cleanup() {
@@ -458,7 +444,11 @@ if [ -n "$BRAND_CONFIG" ]; then
   BUILD_ARGS+=(--brand-config "$BRAND_CONFIG")
 fi
 
-WEWORK_SKIP_ENV_FILE=1 bash "$SCRIPT_DIR/build-windows-app.sh" "${BUILD_ARGS[@]}"
+WEWORK_SKIP_ENV_FILE=1 \
+WEWORK_HARNESS_RUNTIME_BASE_URL="$UPDATE_BASE_URL" \
+WEWORK_EXECUTION_RUNTIME_BASE_URL="$UPDATE_BASE_URL" \
+VITE_WEWORK_RELEASE_CHANNEL="$CHANNEL" \
+  bash "$SCRIPT_DIR/build-windows-app.sh" "${BUILD_ARGS[@]}"
 
 installer_script="$CARGO_TARGET_DIR/$WINDOWS_BUILD_TARGET/release/nsis/x64/installer.nsi"
 if [ ! -f "$installer_script" ]; then
@@ -472,8 +462,15 @@ if [ -z "$installer_path" ] || [ ! -f "$installer_path" ]; then
   echo "Windows NSIS installer was not found." >&2
   exit 1
 fi
-sign_updater_installer "$installer_path"
+if [ ! -s "$installer_path.sig" ]; then
+  echo "Tauri updater signature was not generated: $installer_path.sig" >&2
+  exit 1
+fi
 collect_release_artifacts "$installer_path"
+node "$SCRIPT_DIR/collect-release-runtime-assets.mjs" \
+  "$OUTPUT_DIR" \
+  "$UPDATE_BASE_URL" \
+  windows-x64
 generate_channel_manifests
 
 if [ "$UPLOAD" = "true" ]; then

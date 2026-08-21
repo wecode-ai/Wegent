@@ -103,7 +103,9 @@ interface ProjectChatComposerProps {
   onListLocalSkills?: () => Promise<LocalDeviceSkill[]>
   onListLocalApps?: () => Promise<LocalDeviceApp[]>
   projectWork: ProjectWorkControls
+  projectPhrases?: QuickPhrase[]
   showProjectWorkBar?: boolean
+  showExecutionTools?: boolean
   isStreaming?: boolean
   onPause?: () => void
   showWorkspaceMenu?: boolean
@@ -179,7 +181,9 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       onListLocalSkills,
       onListLocalApps,
       projectWork,
+      projectPhrases = [],
       showProjectWorkBar = true,
+      showExecutionTools = true,
       isStreaming = false,
       onPause,
       showWorkspaceMenu,
@@ -330,6 +334,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
             pendingProjectWorkspaceProjectId={projectWork.pendingProjectWorkspaceProjectId}
             executionMode={projectWork.executionMode}
             executionModeLocked={projectWork.executionModeLocked}
+            worktreeAvailability={projectWork.worktreeAvailability}
             isGitProject={projectWork.isGitProject}
             onSelectProject={projectWork.onSelectProject}
             onSelectStandaloneDevice={projectWork.onSelectStandaloneDevice}
@@ -493,6 +498,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
             sendButtonTestId={submitButtonTestId}
             disabled={disabled}
             pluginPickerIconOnly={pluginPickerIconOnly}
+            showExecutionTools={showExecutionTools}
             models={models}
             selectedModel={selectedModel}
             activeModel={activeModel}
@@ -527,6 +533,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
                     currentProjectId: projectWork.currentProjectId,
                     executionMode: projectWork.executionMode,
                     executionModeLocked: projectWork.executionModeLocked,
+                    worktreeAvailability: projectWork.worktreeAvailability,
                     isGitProject: projectWork.isGitProject,
                     projectName: projectWork.currentProject?.name,
                     projects: workspaceMenuProjects,
@@ -538,6 +545,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
                 : undefined
             }
             onQuickPhraseSelect={handleQuickPhraseSelect}
+            projectPhrases={projectPhrases}
             onSubmit={options => onSubmit(composerRef.current?.getValue() ?? value, options)}
             leadingContext={toolbarLeadingContext}
             onListLocalApps={onListLocalApps}

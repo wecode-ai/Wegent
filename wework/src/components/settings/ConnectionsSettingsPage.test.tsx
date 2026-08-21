@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { ConnectionsSettingsPage } from './ConnectionsSettingsPage'
@@ -1185,12 +1185,15 @@ describe('ConnectionsSettingsPage', () => {
         'anthropic-messages'
       )
       expect(screen.getByTestId('local-model-request-path-input')).toHaveValue('/v1/messages')
-      await userEvent.type(
-        screen.getByTestId('local-model-url-input'),
-        'https://api.kimi.com/coding/'
-      )
-      await userEvent.type(screen.getByTestId('local-model-id-input'), 'kimi-for-coding')
-      await userEvent.type(screen.getByTestId('local-model-api-key-input'), 'local-secret')
+      fireEvent.change(screen.getByTestId('local-model-url-input'), {
+        target: { value: 'https://api.kimi.com/coding/' },
+      })
+      fireEvent.change(screen.getByTestId('local-model-id-input'), {
+        target: { value: 'kimi-for-coding' },
+      })
+      fireEvent.change(screen.getByTestId('local-model-api-key-input'), {
+        target: { value: 'local-secret' },
+      })
       await userEvent.click(screen.getByTestId('local-model-test-button'))
 
       expect(await screen.findByTestId('local-model-test-result')).toHaveTextContent('模型连接正常')

@@ -33,6 +33,7 @@ import type {
   UnifiedSkill,
 } from '@/types/api'
 import type { GuidanceWorkbenchMessage, QueuedWorkbenchMessage } from '@/types/workbench'
+import type { ProjectWorktreeAvailability } from '@/lib/worktree-availability'
 import type { CodeCommentContext, WorkspaceFileApi, WorkspaceTarget } from '@/types/workspace-files'
 import type { CloudProject } from '@/api/deliveries'
 import type { ComposerCloudMentionCandidate } from './composer/composerMentionCandidates'
@@ -54,6 +55,7 @@ import {
 import type { PluginTrialRefinementRequest } from '@/features/plugins/usePluginTrialPromptRefinement'
 import type { ComposerTextareaHandle } from './composer/ComposerTextarea'
 import { ComposerPluginIcon } from './composer/ComposerPluginIcon'
+import { runtimeProjectUiId } from '@/lib/runtime-project'
 
 export type ProjectCreateMode = 'scratch' | 'existing' | 'git'
 
@@ -110,6 +112,7 @@ export interface ProjectWorkControls {
   pendingProjectWorkspaceProjectId?: number | null
   executionMode: ProjectExecutionMode
   executionModeLocked?: boolean
+  worktreeAvailability?: ProjectWorktreeAvailability
   isGitProject?: boolean
   onSelectProject: (projectId: number | null) => void
   onSelectStandaloneDevice: (deviceId: string | null) => void
@@ -154,6 +157,7 @@ export interface ChatInputProps {
   projectChat?: ProjectChatControls
   projectWork?: ProjectWorkControls
   showProjectWorkBar?: boolean
+  showExecutionTools?: boolean
   queuedMessages?: QueuedWorkbenchMessage[]
   guidanceMessages?: GuidanceWorkbenchMessage[]
   codeComments?: CodeCommentContext[]
@@ -561,6 +565,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     projectChat,
     projectWork,
     showProjectWorkBar = true,
+    showExecutionTools = true,
     queuedMessages = [],
     guidanceMessages = [],
     codeComments = [],
@@ -673,6 +678,13 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     listLocalSkills: async () => [],
     listLocalApps: async () => [],
   }
+  const currentRuntimeProject = projectWork?.runtimeWork?.projects.find(
+    item => runtimeProjectUiId(item.project) === projectWork.currentProject?.id
+  )?.project
+  const projectQuickPhrases =
+    currentRuntimeProject?.source === 'local_project'
+      ? (currentRuntimeProject.aiSettings?.quickPhrases ?? [])
+      : []
   const applyTrialTemplate = (template: PluginPathComponent) => {
     const applyTemplate = controls.onApplyTrialTemplate ?? controls.applyTrialTemplate
     if (!applyTemplate) return
@@ -952,7 +964,9 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
               onCreateProjectMode: undefined,
             }
           }
+          projectPhrases={projectQuickPhrases}
           showProjectWorkBar={showProjectWorkBar}
+          showExecutionTools={showExecutionTools}
           projectWorkBarMiddleContext={projectWorkBarMiddleContext}
           projectWorkBarTrailingContext={projectWorkBarTrailingContext}
           projectWorkBarEndContext={projectWorkBarEndContext}
@@ -1040,6 +1054,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
         isModelSelectionReady={controls.isModelSelectionReady ?? true}
         isStreaming={isStreaming}
         onPause={onPause}
+        projectPhrases={projectQuickPhrases}
       />
       {queueResumeDialog}
       {modelSwitchWarningDialog}

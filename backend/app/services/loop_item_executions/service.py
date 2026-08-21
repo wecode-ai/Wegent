@@ -34,6 +34,7 @@ from app.models.project_chat_message import ProjectChatMessage, project_chat_mes
 from app.models.user import User
 from app.services.loop_item_executions.profile import (
     WeworkExecutionProfile,
+    WeworkExecutionProfileError,
     validate_wework_execution_target,
 )
 from app.services.project_automation_domain import (
@@ -1284,8 +1285,75 @@ class LoopItemExecutionService:
                 synchronize_session=False,
             )
         )
+        db.flush()
+        if updated:
+            db.expire_all()
+            executions = (
+                db.query(LoopItemExecution)
+                .filter(
+                    LoopItemExecution.id.in_(execution_ids),
+                    LoopItemExecution.status == STATUS_CLAIMED,
+                )
+                .all()
+            )
+            for execution in executions:
+                self._bind_workflow_stage_task(db, execution=execution)
         db.commit()
         return updated
+
+    def _bind_workflow_stage_task(
+        self,
+        db: Session,
+        *,
+        execution: LoopItemExecution,
+    ) -> None:
+        """Create the stage TaskBinding before Runtime delivery."""
+
+        if (
+            execution.executor_type != "project_robot"
+            or not execution.runtime_device_id
+            or not execution.runtime_task_id
+        ):
+            return
+        run, _ = self._automation_run_and_rule(db, execution)
+        metadata = (
+            run.metadata_json
+            if run is not None and isinstance(run.metadata_json, dict)
+            else {}
+        )
+        snapshot = metadata.get("workflow_stage_input")
+        if not isinstance(snapshot, dict):
+            return
+        target = snapshot.get("target_stage")
+        workflow_node_id = (
+            str(target.get("id") or "") if isinstance(target, dict) else ""
+        )
+        if not workflow_node_id:
+            raise WeworkRuntimeConfigurationError(
+                "Workflow stage execution has no target stage"
+            )
+        item = db.get(LoopItem, execution.loop_item_id)
+        if item is None:
+            raise WeworkRuntimeConfigurationError(
+                "Workflow stage execution task is unavailable"
+            )
+        from app.schemas.delivery import LoopItemTaskBind
+        from app.services.loop_items.service import loop_item_service
+
+        loop_item_service.bind_execution_task(
+            db,
+            item_id=item.id,
+            values=LoopItemTaskBind(
+                deviceId=execution.runtime_device_id,
+                taskId=execution.runtime_task_id,
+                taskTitle=item.title or "",
+                backendTaskId=execution.backend_task_id or None,
+                workflowNodeId=workflow_node_id,
+            ),
+            user_id=execution.executor_owner_user_id,
+            stage_snapshot=snapshot,
+            commit=False,
+        )
 
     def request_runtime_start(
         self,
@@ -1584,7 +1652,9 @@ class LoopItemExecutionService:
             existing_streaming,
         )
         try:
-            profile, _ = self._runtime_profile_and_context(db, execution=execution)
+            profile, origin_context = self._runtime_profile_and_context(
+                db, execution=execution
+            )
         except WeworkRuntimeConfigurationError:
             logger.exception(
                 "[LoopItemExecution] Activity open failed: unavailable runtime "
@@ -1659,6 +1729,11 @@ class LoopItemExecutionService:
                 project_id=execution.cloud_project_id,
                 task_id=execution.loop_item_id,
                 execution_id=execution.id,
+                workflow_stage_input=(
+                    origin_context.get("workflow_stage_input")
+                    if isinstance(origin_context.get("workflow_stage_input"), dict)
+                    else None
+                ),
             )
             project_chat_service._set_task_ai_state(
                 db,
@@ -1820,7 +1895,9 @@ class LoopItemExecutionService:
                 {
                     "start_requested_at": EPOCH_TIME,
                     "observed_state": OBSERVED_UNCONFIRMED,
+                    "observed_at": EPOCH_TIME,
                     "sync_state": SYNC_PENDING,
+                    "termination_reason": "",
                 }
             )
         if requeue and not requeue_infra:
@@ -2271,6 +2348,11 @@ class LoopItemExecutionService:
                         run.status = "succeeded"
                         run.completed_at = completed_at
                         run.version += 1
+                        from app.services.project_workflow_projection import (
+                            sync_automation_workflow_node,
+                        )
+
+                        sync_automation_workflow_node(db, run)
                     return activity
                 if (
                     execution.executor_type == "automation_manager"
@@ -2304,6 +2386,11 @@ class LoopItemExecutionService:
                     run.description = description
                     run.completed_at = completed_at
                     run.version += 1
+                    from app.services.project_workflow_projection import (
+                        sync_automation_workflow_node,
+                    )
+
+                    sync_automation_workflow_node(db, run)
         return activity
 
     @staticmethod
@@ -2387,6 +2474,11 @@ class LoopItemExecutionService:
             }:
                 run.status = STATUS_QUEUED
                 run.version += 1
+                from app.services.project_workflow_projection import (
+                    sync_automation_workflow_node,
+                )
+
+                sync_automation_workflow_node(db, run)
         return linked
 
     def _push_activity_after_commit(
@@ -2396,13 +2488,22 @@ class LoopItemExecutionService:
 
         if activity is None:
             return
+        message_id = activity.message_id
         try:
             db.refresh(activity)
-            self._push_activity(activity)
+            from app.services.project_chat.service import project_chat_service
+
+            payload = project_chat_service.to_view(activity).model_dump(by_alias=True)
+            # ``refresh`` starts a read transaction. End it before publishing to
+            # Redis so a slow transport cannot retain a SQL connection or locks.
+            db.commit()
+            self._push_activity(payload)
         except Exception:
+            if db.in_transaction():
+                db.rollback()
             logger.exception(
                 "[LoopItemExecution] Committed activity push failed message=%s",
-                activity.message_id,
+                message_id,
             )
 
     def push_linked_activity_after_commit(
@@ -2502,13 +2603,10 @@ class LoopItemExecutionService:
         return None
 
     @staticmethod
-    def _push_activity(row: ProjectChatMessage) -> None:
+    def _push_activity(payload: dict[str, Any]) -> None:
         from app.services.project_chat.push import push_project_chat_message
-        from app.services.project_chat.service import project_chat_service
 
-        push_project_chat_message(
-            project_chat_service.to_view(row).model_dump(by_alias=True)
-        )
+        push_project_chat_message(payload)
 
     @staticmethod
     def _set_automation_run_status(
@@ -2527,6 +2625,11 @@ class LoopItemExecutionService:
             return
         run.status = status_value
         run.version += 1
+        from app.services.project_workflow_projection import (
+            sync_automation_workflow_node,
+        )
+
+        sync_automation_workflow_node(db, run)
         if commit:
             db.commit()
 
@@ -2633,6 +2736,24 @@ class LoopItemExecutionService:
             data = payload.get("data")
             data = data if isinstance(data, dict) else {}
             error_value = payload.get("error") or data.get("error")
+            if row.status == STATUS_CANCEL_REQUESTED:
+                error_text = (
+                    self._error_text(error_value) if error_value is not None else None
+                )
+                return self._transition_terminal(
+                    db,
+                    execution_id=row.id,
+                    terminal_status=STATUS_CANCELLED,
+                    note=error_text,
+                    content=error_text or "AI execution was cancelled.",
+                    error=error_text,
+                    expected_status=STATUS_CANCEL_REQUESTED,
+                    expected_version=row.version,
+                    observed_state=OBSERVED_CANCELLED,
+                    observed_at=now,
+                    event_seq=event_seq,
+                    termination_reason="runtime_cancelled",
+                )
             if terminal == STATUS_CANCELLED:
                 error_text = (
                     self._error_text(error_value) if error_value is not None else None
@@ -2668,6 +2789,7 @@ class LoopItemExecutionService:
             if row.status == STATUS_CANCEL_REQUESTED
             else STATUS_RUNNING
         )
+        was_running = row.status == STATUS_RUNNING
         started_at = (
             row.started_at if not loop_datetime_value_is_unset(row.started_at) else now
         )
@@ -2705,6 +2827,19 @@ class LoopItemExecutionService:
             db.rollback()
             return None
         self._set_automation_run_status(db, row, "running")
+        task = db.get(LoopItem, row.loop_item_id)
+        task_projection_is_stale = (
+            row.executor_type != "automation_manager"
+            and task is not None
+            and task.status not in {"in_progress", "in_review", "completed"}
+        )
+        if not was_running or task_projection_is_stale:
+            self.open_execution_activity(
+                db,
+                execution=row,
+                commit=False,
+                push=False,
+            )
         db.commit()
         db.refresh(row)
         return row
@@ -2784,8 +2919,11 @@ class LoopItemExecutionService:
                 task=task,
                 cloud_project_id=execution.cloud_project_id,
                 origin_context=origin_context,
+                execution_device_id=execution.execution_device_id or "",
                 materialize_execution_request=materialize_request,
             )
+        except WeworkExecutionProfileError as exc:
+            raise WeworkRuntimeConfigurationError(str(exc)) from exc
         except Exception as exc:
             model_label = profile.model or "the selected runtime default"
             raise WeworkRuntimeConfigurationError(
@@ -2900,6 +3038,7 @@ class LoopItemExecutionService:
             "trigger": run_metadata.get("trigger") or getattr(run, "source", None),
             "scheduled_for": run_metadata.get("scheduled_for"),
             "event": run_metadata.get("event") or {},
+            "workflow_stage_input": run_metadata.get("workflow_stage_input"),
         }
 
     @staticmethod
@@ -3166,6 +3305,29 @@ class LoopItemExecutionService:
             .all()
         )
 
+    def active_for_device_reconciliation(
+        self,
+        db: Session,
+        *,
+        owner_user_id: int,
+        runtime_device_id: str,
+        limit: int = 100,
+    ) -> list[LoopItemExecution]:
+        """Return active attempts to reconcile when their device reconnects."""
+
+        return (
+            db.query(LoopItemExecution)
+            .filter(
+                LoopItemExecution.executor_owner_user_id == owner_user_id,
+                LoopItemExecution.runtime_device_id == runtime_device_id,
+                LoopItemExecution.runtime_task_id != "",
+                LoopItemExecution.status.in_(CAPACITY_STATUSES),
+            )
+            .order_by(LoopItemExecution.id.asc())
+            .limit(limit)
+            .all()
+        )
+
     def reconcile_runtime_snapshot(
         self,
         db: Session,
@@ -3175,13 +3337,50 @@ class LoopItemExecutionService:
         running: bool,
         turn_status: Optional[str] = None,
     ) -> Optional[LoopItemExecution]:
-        """Apply a trusted ``runtime.tasks.list`` observation."""
+        """Apply a trusted snapshot and restore its missing activity projection."""
 
         row = db.get(LoopItemExecution, execution_id)
         if row is None or row.status not in CAPACITY_STATUSES:
             return row
         normalized = runtime_status.lower().strip()
         normalized_turn = (turn_status or "").lower().strip()
+        if normalized == "missing" and row.status == STATUS_CANCEL_REQUESTED:
+            self.open_execution_activity(
+                db,
+                execution=row,
+                commit=False,
+                push=False,
+            )
+            return self.confirm_runtime_cancelled(
+                db,
+                execution_id=row.id,
+                note="Runtime no longer reports the cancelled task",
+            )
+        if (
+            normalized == "missing"
+            and row.status == STATUS_CLAIMED
+            and row.observed_state == OBSERVED_UNCONFIRMED
+            and row.termination_reason == "start_confirmation_timeout"
+            and not loop_datetime_value_is_unset(row.start_requested_at)
+        ):
+            self.open_execution_activity(
+                db,
+                execution=row,
+                commit=False,
+                push=False,
+            )
+            return self.fail(
+                db,
+                execution_id=row.id,
+                error=(
+                    "Runtime confirmed that the task does not exist after "
+                    "start confirmation timed out"
+                ),
+                note="Runtime task was missing after an unconfirmed start",
+                requeue_infra=True,
+                expected_status=STATUS_CLAIMED,
+                expected_version=row.version,
+            )
         if running or normalized in {"running", "in_progress"}:
             now = utcnow()
             next_status = (
@@ -3199,8 +3398,16 @@ class LoopItemExecutionService:
                 row.started_at = now
             row.version += 1
             self._set_automation_run_status(db, row, "running")
+            db.flush()
+            self.open_execution_activity(
+                db,
+                execution=row,
+                commit=False,
+                push=False,
+            )
             db.commit()
             db.refresh(row)
+            self.push_linked_activity_after_commit(db, execution=row)
             return row
         terminal = {
             "completed": STATUS_COMPLETED,
@@ -3222,8 +3429,20 @@ class LoopItemExecutionService:
             normalized
         )
         if terminal == STATUS_COMPLETED:
+            self.open_execution_activity(
+                db,
+                execution=row,
+                commit=False,
+                push=False,
+            )
             return self.complete(db, execution_id=row.id, note="Runtime reconciled")
         if terminal == STATUS_FAILED:
+            self.open_execution_activity(
+                db,
+                execution=row,
+                commit=False,
+                push=False,
+            )
             return self.fail(
                 db,
                 execution_id=row.id,
@@ -3231,6 +3450,12 @@ class LoopItemExecutionService:
                 termination_reason="runtime_reconciled_failed",
             )
         if terminal == STATUS_CANCELLED:
+            self.open_execution_activity(
+                db,
+                execution=row,
+                commit=False,
+                push=False,
+            )
             return self._transition_terminal(
                 db,
                 execution_id=row.id,
@@ -3251,16 +3476,32 @@ class LoopItemExecutionService:
             row.heartbeat_at = now
             row.lease_expires_at = now + timedelta(seconds=DEFAULT_LEASE_SECONDS)
             row.version += 1
+            db.flush()
+            self.open_execution_activity(
+                db,
+                execution=row,
+                commit=False,
+                push=False,
+            )
             db.commit()
             db.refresh(row)
+            self.push_linked_activity_after_commit(db, execution=row)
             return row
         row.sync_state = SYNC_DIVERGED
         row.error_message = (
             f"Runtime returned unrecognized status '{runtime_status or 'missing'}'"
         )[:2000]
         row.version += 1
+        db.flush()
+        self.open_execution_activity(
+            db,
+            execution=row,
+            commit=False,
+            push=False,
+        )
         db.commit()
         db.refresh(row)
+        self.push_linked_activity_after_commit(db, execution=row)
         return row
 
     def stall_scan(

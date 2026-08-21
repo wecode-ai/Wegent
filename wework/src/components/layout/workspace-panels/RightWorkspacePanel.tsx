@@ -4,6 +4,7 @@ import {
   Globe2,
   LayoutDashboard,
   ListChecks,
+  Loader2,
   MessageCircle,
   Plus,
   SquareTerminal,
@@ -114,6 +115,7 @@ export interface RightWorkspaceBrowserState {
   browserSessionId: string
   title: string | null
   faviconUrl: string | null
+  isLoading: boolean
   hasActiveDownload: boolean
   openRequest: EmbeddedBrowserOpenRequest | null
 }
@@ -231,6 +233,10 @@ function RightWorkspaceBrowserPanelSlot({
     (faviconUrl: string | null) => onBrowserStateChange(tab, { faviconUrl }),
     [onBrowserStateChange, tab]
   )
+  const handleLoadingChange = useCallback(
+    (isLoading: boolean) => onBrowserStateChange(tab, { isLoading }),
+    [onBrowserStateChange, tab]
+  )
   const handleTitleChange = useCallback(
     (title: string | null) => onBrowserStateChange(tab, { title }),
     [onBrowserStateChange, tab]
@@ -254,6 +260,7 @@ function RightWorkspaceBrowserPanelSlot({
       onRemoveBrowserCodeComments={onRemoveBrowserCodeComments}
       onDownloadActivityChange={handleDownloadActivityChange}
       onFaviconChange={handleFaviconChange}
+      onLoadingChange={handleLoadingChange}
       onTitleChange={handleTitleChange}
       onNativeLabelChange={handleNativeLabelChange}
     />
@@ -456,6 +463,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
           label={getRightWorkspaceTabLabel(tab, t, browserStates, harnessSessionsById)}
           icon={getRightWorkspaceTabIcon(tab)}
           iconSrc={isRightWorkspaceBrowserTab(tab) ? browserStates[tab]?.faviconUrl : null}
+          loading={isRightWorkspaceBrowserTab(tab) && browserStates[tab]?.isLoading}
           onSelect={getTabSelectHandler(tab)}
           onClose={() => closeTab(tab)}
         />
@@ -659,6 +667,7 @@ function RightWorkspaceTitleTab({
   label,
   icon: Icon,
   iconSrc,
+  loading = false,
   onSelect,
   onClose,
 }: {
@@ -667,6 +676,7 @@ function RightWorkspaceTitleTab({
   label: string
   icon: LucideIcon
   iconSrc?: string | null
+  loading?: boolean
   onSelect: () => void
   onClose: () => void
 }) {
@@ -705,6 +715,7 @@ function RightWorkspaceTitleTab({
         <RightWorkspaceTabIcon
           icon={Icon}
           iconSrc={iconSrc}
+          loading={loading}
           testId={getRightWorkspaceTabTestId(tab)}
         />
         <span className="min-w-0 flex-1 truncate">{label}</span>
@@ -730,14 +741,25 @@ function RightWorkspaceTitleTab({
 function RightWorkspaceTabIcon({
   icon: Icon,
   iconSrc,
+  loading,
   testId,
 }: {
   icon: ComponentType<{ className?: string }>
   iconSrc?: string | null
+  loading: boolean
   testId: string
 }) {
   const [failedIconSrc, setFailedIconSrc] = useState<string | null>(null)
   const imageFailed = Boolean(iconSrc && failedIconSrc === iconSrc)
+
+  if (loading) {
+    return (
+      <Loader2
+        data-testid={`${testId}-loading-icon`}
+        className="h-3.5 w-3.5 shrink-0 animate-spin text-text-secondary"
+      />
+    )
+  }
 
   if (iconSrc && !imageFailed) {
     return (

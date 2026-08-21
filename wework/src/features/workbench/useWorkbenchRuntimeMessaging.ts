@@ -11,10 +11,13 @@ import {
   isDeviceBelowWeWorkVersion,
   isWeWorkCompatibleDevice,
 } from '@/lib/device-capabilities'
-import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
 import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
 import { normalizeRuntimeWorkspacePath, runtimeProjectUiId } from '@/lib/runtime-project'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
+import {
+  probeProjectWorktreeAvailability,
+  worktreeWorkspaceDeviceId,
+} from '@/lib/worktree-availability'
 import { notifyMainRuntimeWorkChanged } from '@/tauri/runtimeWorkSync'
 import type { AppPreferences } from '@/tauri/appPreferences'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
@@ -246,6 +249,30 @@ export function resolveTemporaryChatSource(
     ...(task.threadId ? { threadId: task.threadId } : {}),
     ...(runtimeHandle ? { runtimeHandle } : {}),
   }
+}
+
+export function resolveRuntimeTaskCreateWorkspacePath({
+  sourcePath,
+  responsePath,
+  requestedWorktree,
+}: {
+  sourcePath?: string
+  responsePath?: string
+  requestedWorktree: boolean
+}): string | undefined {
+  const normalizedResponsePath = responsePath?.trim()
+  if (!requestedWorktree) return normalizedResponsePath || sourcePath
+  if (!normalizedResponsePath) {
+    throw new Error('Worktree task creation did not return a planned workspace path')
+  }
+  if (
+    sourcePath &&
+    normalizeRuntimeWorkspacePath(normalizedResponsePath) ===
+      normalizeRuntimeWorkspacePath(sourcePath)
+  ) {
+    throw new Error('Worktree task creation returned the base workspace path')
+  }
+  return normalizedResponsePath
 }
 
 export async function loadTemporaryChatSource(
@@ -668,19 +695,23 @@ export function useWorkbenchRuntimeMessaging({
       projectOverride?: ProjectWithTasks | null,
       includeSelectedSkills = !isOptionsLocked,
       selectedSkillsOverride?: SkillRef[],
-      deviceOverride?: string | null
+      deviceOverride?: string | null,
+      deviceWorkspaceIdOverride?: number | null
     ): { payload: ChatSendPayload; activeDeviceId?: string } | null => {
       if (!state.defaultTeam) return null
       const activeProject = projectOverride === undefined ? state.currentProject : projectOverride
       const selectedProjectWorkspace = findProjectDeviceWorkspace(
         state.runtimeWork,
         activeProject?.id,
-        state.selectedDeviceWorkspaceId
+        deviceWorkspaceIdOverride === undefined
+          ? state.selectedDeviceWorkspaceId
+          : deviceWorkspaceIdOverride
       )
+      const selectedProjectDeviceId = worktreeWorkspaceDeviceId(selectedProjectWorkspace)
       const activeDeviceId =
         deviceOverride ||
         (activeProject && selectedProjectWorkspace
-          ? selectedProjectWorkspace.deviceId
+          ? (selectedProjectDeviceId ?? selectedProjectWorkspace.deviceId)
           : getActiveWorkbenchDeviceId({
               currentProject: activeProject,
               standaloneDeviceId: getPreferredStandaloneDeviceId(
@@ -704,11 +735,7 @@ export function useWorkbenchRuntimeMessaging({
       const selectedModelOptions =
         modelSelection.getSelectedModelOptions?.() ?? modelSelection.selectedModelOptions
 
-      if (
-        activeProject &&
-        projectExecutionMode === 'git_worktree' &&
-        supportsGitWorktreeExecution(activeProject)
-      ) {
+      if (activeProject && projectExecutionMode === 'git_worktree') {
         const branch = projectWorktreeBranch?.trim()
         payload.execution = {
           workspace: {
@@ -788,6 +815,7 @@ export function useWorkbenchRuntimeMessaging({
         | 'initialSupervisor'
         | 'onError'
         | 'onRuntimeTaskOptimisticOpen'
+        | 'prepareRuntimeTask'
         | 'additionalContext'
         | 'runtime'
         | 'runtimeExecutablePath'
@@ -798,6 +826,7 @@ export function useWorkbenchRuntimeMessaging({
         deliveryId?: string
         cloudProjectId?: string
         origin?: RuntimeTaskCreateRequest['origin']
+        deviceWorkspaceId?: number | null
         ephemeral?: boolean
         openInMainPane?: boolean
         refreshWorkListsOnResolve?: boolean
@@ -808,6 +837,7 @@ export function useWorkbenchRuntimeMessaging({
     ): Promise<RuntimeTaskAddress | false> => {
       const launchStartedAt = options?.launchStartedAt ?? runtimeLaunchNowMs()
       const projectId = payload.project_id && payload.project_id > 0 ? payload.project_id : null
+      const requestedWorktree = payload.execution?.workspace?.source === 'git_worktree'
       const hasOverrideSelection = Boolean(
         options && Object.prototype.hasOwnProperty.call(options, 'modelSelection')
       )
@@ -848,8 +878,11 @@ export function useWorkbenchRuntimeMessaging({
       const selectedProjectWorkspace = findProjectDeviceWorkspace(
         state.runtimeWork,
         projectId,
-        state.selectedDeviceWorkspaceId
+        options?.deviceWorkspaceId === undefined
+          ? state.selectedDeviceWorkspaceId
+          : options.deviceWorkspaceId
       )
+      const selectedProjectDeviceId = worktreeWorkspaceDeviceId(selectedProjectWorkspace)
       const selectedRuntimeProject = projectId
         ? state.runtimeWork?.projects.find(item => runtimeProjectUiId(item.project) === projectId)
             ?.project
@@ -890,7 +923,7 @@ export function useWorkbenchRuntimeMessaging({
           reportSendBlocked('请选择任务运行位置', undefined, options)
           return false
         }
-        optimisticDeviceId = selectedProjectWorkspace.deviceId
+        optimisticDeviceId = selectedProjectDeviceId ?? selectedProjectWorkspace.deviceId
         runtimeTaskTarget =
           selectedProjectWorkspace.id != null &&
           selectedProjectWorkspace.workspaceSource !== 'local' &&
@@ -898,11 +931,11 @@ export function useWorkbenchRuntimeMessaging({
             ? {
                 projectId,
                 deviceWorkspaceId: selectedProjectWorkspace.id,
-                deviceId: selectedProjectWorkspace.deviceId,
+                deviceId: optimisticDeviceId,
                 workspacePath: selectedProjectWorkspace.workspacePath,
               }
             : {
-                deviceId: selectedProjectWorkspace.deviceId,
+                deviceId: optimisticDeviceId,
                 workspacePath: selectedProjectWorkspace.workspacePath,
               }
       } else {
@@ -948,6 +981,42 @@ export function useWorkbenchRuntimeMessaging({
         runtimeTaskTarget = {
           deviceId: activeDeviceId,
           workspacePath,
+        }
+      }
+
+      if (requestedWorktree) {
+        const worktreeProject =
+          state.projects.find(project => project.id === projectId) ??
+          (state.currentProject?.id === projectId ? state.currentProject : null)
+        const worktreeDeviceId = worktreeWorkspaceDeviceId(selectedProjectWorkspace)
+        const worktreeDevice = findWorkbenchDevice(state.devices, worktreeDeviceId)
+        const runtimeWorkApi = services.runtimeWorkApi
+        if (!runtimeWorkApi || !worktreeProject) {
+          reportSendBlocked(
+            i18n.t('workbench.worktree_unavailable_preflight_failed'),
+            { worktreeDeviceId, reason: 'runtime_api_unavailable' },
+            options
+          )
+          return false
+        }
+        const availability = await probeProjectWorktreeAvailability({
+          api: runtimeWorkApi,
+          project: worktreeProject,
+          workspace: selectedProjectWorkspace,
+          device: worktreeDevice,
+          ref: projectWorktreeBranch,
+        })
+        if (!availability.available) {
+          reportSendBlocked(
+            i18n.t(`workbench.worktree_unavailable_${availability.reason}`),
+            {
+              worktreeDeviceId,
+              reason: availability.reason,
+              sourcePath: availability.sourcePath,
+            },
+            options
+          )
+          return false
         }
       }
 
@@ -1017,8 +1086,8 @@ export function useWorkbenchRuntimeMessaging({
         executablePath: options?.runtimeExecutablePath,
         targetDevice,
         workspaceSource:
-          selectedProjectWorkspace?.deviceId === optimisticDeviceId
-            ? selectedProjectWorkspace.workspaceSource
+          selectedProjectDeviceId === optimisticDeviceId
+            ? selectedProjectWorkspace?.workspaceSource
             : undefined,
       })
       const createRequest: RuntimeTaskCreateRequest = {
@@ -1061,6 +1130,10 @@ export function useWorkbenchRuntimeMessaging({
               runtimeProjectKey: selectedRuntimeProject.key,
               runtimeProjectName: selectedRuntimeProject.name,
               runtimeWorkspaceRoots,
+              ...(selectedRuntimeProject.aiSettings?.instructions?.trim()
+                ? { projectInstructions: selectedRuntimeProject.aiSettings.instructions.trim() }
+                : {}),
+              projectPlugins: selectedRuntimeProject.aiSettings?.plugins ?? [],
             }
           : {}),
         ...(options?.ephemeral ? { ephemeral: true } : {}),
@@ -1083,12 +1156,13 @@ export function useWorkbenchRuntimeMessaging({
       const createRuntimeHandle = createModelSelection
         ? { modelSelection: createModelSelection }
         : undefined
+      const sourceWorkspacePath =
+        'workspacePath' in runtimeTaskTarget ? runtimeTaskTarget.workspacePath : undefined
       const optimisticAddress: RuntimeTaskAddress = {
         deviceId: optimisticDeviceId,
         taskId,
         runtime,
-        workspacePath:
-          'workspacePath' in runtimeTaskTarget ? runtimeTaskTarget.workspacePath : undefined,
+        workspacePath: requestedWorktree ? undefined : sourceWorkspacePath,
         ...(createRuntimeHandle ? { runtimeHandle: createRuntimeHandle } : {}),
       }
       modelSelection.setSelectionForScope?.(
@@ -1096,9 +1170,9 @@ export function useWorkbenchRuntimeMessaging({
         selectedModel,
         selectedModelOptions
       )
-      const optimisticWorkspacePath =
-        ('workspacePath' in runtimeTaskTarget ? runtimeTaskTarget.workspacePath : undefined) ??
-        selectedProjectWorkspace?.workspacePath
+      const optimisticWorkspacePath = requestedWorktree
+        ? undefined
+        : (sourceWorkspacePath ?? selectedProjectWorkspace?.workspacePath)
       const optimisticWorkspace =
         optimisticWorkspacePath && optimisticDeviceId
           ? buildOptimisticRuntimeWorkspace({
@@ -1107,13 +1181,20 @@ export function useWorkbenchRuntimeMessaging({
               deviceId: optimisticDeviceId,
               workspacePath: optimisticWorkspacePath,
               projectId,
-              workspaceKind:
-                payload.execution?.workspace?.source === 'git_worktree' ? 'worktree' : undefined,
+              workspaceKind: undefined,
             })
           : null
       const runtimeProject = projectId
         ? (state.projects.find(project => project.id === projectId) ?? state.currentProject)
         : null
+      let rollbackPreparedRuntimeTask: (() => void | Promise<void>) | void
+      try {
+        rollbackPreparedRuntimeTask = await options?.prepareRuntimeTask?.(optimisticAddress)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '任务绑定失败'
+        reportError(message, options)
+        return false
+      }
 
       debugRuntimeCreateFlow('create-optimistic-open', {
         taskId,
@@ -1123,7 +1204,9 @@ export function useWorkbenchRuntimeMessaging({
         hasSelectedProjectWorkspace: Boolean(selectedProjectWorkspace),
         optimisticWorkspacePath: optimisticWorkspacePath ?? null,
       })
-      lifecycleStore.sendRequested(optimisticAddress)
+      lifecycleStore.sendRequested(optimisticAddress, {
+        ...(requestedWorktree ? { workspaceCreationKind: 'worktree' } : {}),
+      })
       if (options?.initialGoal) {
         lifecycleStore.goalStatusReceived(optimisticAddress, options.initialGoal.status ?? 'active')
       }
@@ -1183,8 +1266,7 @@ export function useWorkbenchRuntimeMessaging({
             workspacePath: optimisticWorkspacePath,
             title: createRequest.title ?? buildRuntimeTaskTitle(displayMessage, payload.title),
             runtime,
-            workspaceKind:
-              payload.execution?.workspace?.source === 'git_worktree' ? 'worktree' : undefined,
+            workspaceKind: undefined,
             modelSelection: createModelSelection,
           }),
         })
@@ -1208,11 +1290,16 @@ export function useWorkbenchRuntimeMessaging({
           response.runtimeHandle,
           optimisticAddress.runtimeHandle
         )
+        const resolvedCreateWorkspacePath = resolveRuntimeTaskCreateWorkspacePath({
+          sourcePath: sourceWorkspacePath,
+          responsePath: response.workspacePath,
+          requestedWorktree,
+        })
         const address: RuntimeTaskAddress = {
           deviceId: response.deviceId || optimisticAddress.deviceId,
           taskId: response.taskId || optimisticAddress.taskId,
           runtime: response.runtime || optimisticAddress.runtime,
-          workspacePath: response.workspacePath || optimisticAddress.workspacePath,
+          workspacePath: resolvedCreateWorkspacePath,
           ...(runtimeHandle ? { runtimeHandle } : {}),
           ...(response.taskId || optimisticAddress.taskId
             ? { taskId: response.taskId || optimisticAddress.taskId }
@@ -1277,9 +1364,12 @@ export function useWorkbenchRuntimeMessaging({
           options?.onRuntimeTaskOptimisticOpen?.(address, {
             previousAddress: optimisticAddress,
           })
-          if (options?.openInMainPane !== false && optimisticTaskStillSelected) {
-            runtimeTasks.openRuntimeTaskView(address, runtimeProject, { navigate: true })
-          }
+        }
+        if (options?.openInMainPane !== false && optimisticTaskStillSelected) {
+          runtimeTasks.openRuntimeTaskView(address, runtimeProject, {
+            markOpened: !resolvedSameIdentity,
+            navigate: !resolvedSameIdentity,
+          })
         }
         if (response.status === 'queued') {
           lifecycleStore.syncRuntimeTask(address, {
@@ -1311,7 +1401,15 @@ export function useWorkbenchRuntimeMessaging({
           })
         }
         if (options?.refreshWorkListsOnResolve !== false) {
-          await refreshWorkLists()
+          try {
+            await refreshWorkLists()
+          } catch (error) {
+            console.warn('[Wework] Runtime task accepted but work-list refresh failed', {
+              deviceId: address.deviceId,
+              taskId: address.taskId,
+              error,
+            })
+          }
         }
         if (options?.openInMainPane !== false) {
           dispatch({ type: 'blank_chat_committed' })
@@ -1325,6 +1423,16 @@ export function useWorkbenchRuntimeMessaging({
           error: runtimeLaunchErrorName(error),
         })
         const message = error instanceof Error ? error.message : '发送失败'
+        if (rollbackPreparedRuntimeTask) {
+          try {
+            await rollbackPreparedRuntimeTask()
+          } catch (rollbackError) {
+            console.error('[Wework] Failed to roll back prepared Runtime task context', {
+              address: runtimeAddressLog(optimisticAddress),
+              error: rollbackError,
+            })
+          }
+        }
         lifecycleStore.sendRejected(optimisticAddress)
         if (optimisticWorkspace && optimisticWorkspacePath && !options?.ephemeral) {
           dispatch({
@@ -1365,6 +1473,8 @@ export function useWorkbenchRuntimeMessaging({
       runtimeTasks,
       services.attachmentApi,
       services.cloudBackgroundApi,
+      services.runtimeWorkApi,
+      projectWorktreeBranch,
       state.currentProject,
       state.devices,
       state.projects,
@@ -1487,7 +1597,7 @@ export function useWorkbenchRuntimeMessaging({
         }
       } else if (!state.currentProject) {
         const hasOnlineCompatibleDevice = state.devices.some(
-          device => device.status === 'online' && isWeWorkCompatibleDevice(device)
+          device => isWorkbenchDeviceOnline(device) && isWeWorkCompatibleDevice(device)
         )
         if (!hasOnlineCompatibleDevice) {
           reportSendBlocked(
@@ -1672,7 +1782,8 @@ export function useWorkbenchRuntimeMessaging({
         options.project,
         undefined,
         undefined,
-        options.deviceId
+        options.deviceId,
+        options.deviceWorkspaceId
       )
       if (!prepared) {
         reportSendBlocked(
@@ -1721,9 +1832,11 @@ export function useWorkbenchRuntimeMessaging({
         deliveryId: options.deliveryId,
         cloudProjectId: options.cloudProjectId,
         origin: options.origin,
+        deviceWorkspaceId: options.deviceWorkspaceId,
         modelSelection: explicitModelSelection,
         additionalContext: options.additionalContext,
         onError: options.onError,
+        prepareRuntimeTask: options.prepareRuntimeTask,
         onRuntimeTaskOptimisticOpen: options.onRuntimeTaskOptimisticOpen,
         openInMainPane: false,
       })

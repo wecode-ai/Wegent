@@ -148,7 +148,12 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
 
         # Include callback_data if it was attached to the message
         if hasattr(message, "_wegent_callback_data"):
-            extra_data["callback_data"] = message._wegent_callback_data
+            callback_data = message._wegent_callback_data
+            extra_data["callback_data"] = callback_data
+            if isinstance(callback_data, dict):
+                message_id = str(callback_data.get("msgId") or "").strip()
+                if message_id:
+                    extra_data["message_id"] = message_id
 
         # Include pre-downloaded images if they were attached
         images: list[dict[str, str]] = []
@@ -169,6 +174,7 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
             is_mention=is_in_at_list,
             raw_message=message,
             extra_data=extra_data,
+            proactive_recipient_id=str(sender_staff_id or "").strip() or None,
             images=images,
             files=files,
         )

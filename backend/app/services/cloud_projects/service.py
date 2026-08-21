@@ -197,6 +197,8 @@ class CloudProjectService:
             or "card_display" in values.model_fields_set
             or "board_config" in values.model_fields_set
             or "ai_automation" in values.model_fields_set
+            or "pull_request_automation" in values.model_fields_set
+            or "workflow_definition" in values.model_fields_set
             or "visibility" in values.model_fields_set
         ):
             metadata = dict(project.metadata_json or {})
@@ -261,6 +263,22 @@ class CloudProjectService:
             ):
                 metadata["ai_automation"] = values.ai_automation.model_dump()
                 updates.pop("ai_automation", None)
+            if (
+                "pull_request_automation" in values.model_fields_set
+                and values.pull_request_automation is not None
+            ):
+                metadata["pull_request_automation"] = (
+                    values.pull_request_automation.model_dump()
+                )
+                updates.pop("pull_request_automation", None)
+            if (
+                "workflow_definition" in values.model_fields_set
+                and values.workflow_definition is not None
+            ):
+                metadata["workflow_definition"] = (
+                    values.workflow_definition.model_dump()
+                )
+                updates.pop("workflow_definition", None)
             if (
                 "provider_config" in values.model_fields_set
                 and values.provider_config is not None

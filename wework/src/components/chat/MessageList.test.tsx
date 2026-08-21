@@ -4,6 +4,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { Attachment } from '@/types/api'
 import type { ProcessingBlock, WorkbenchMessage } from '@/types/workbench'
 import { MessageList } from './MessageList'
+import { AttachmentDownloadProvider } from './AttachmentDownloadProvider'
 import '@/i18n'
 
 const tauriCoreMock = vi.hoisted(() => ({
@@ -3249,14 +3250,9 @@ describe('MessageList', () => {
   test('renders image attachments in user messages', async () => {
     URL.createObjectURL = vi.fn(() => 'blob:message-image-preview')
     URL.revokeObjectURL = vi.fn()
-    localStorage.setItem('auth_token', 'token-1')
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue({
-        ok: true,
-        blob: vi.fn().mockResolvedValue(new Blob(['image'], { type: 'image/png' })),
-      })
-    )
+    const fetchAttachmentBlob = vi
+      .fn()
+      .mockResolvedValue(new Blob(['image'], { type: 'image/png' }))
 
     const attachment: Attachment = {
       id: 43,
@@ -3269,18 +3265,20 @@ describe('MessageList', () => {
     }
 
     render(
-      <MessageList
-        messages={[
-          {
-            id: '1',
-            role: 'user',
-            content: '分析下这个图片',
-            status: 'done',
-            attachments: [attachment],
-            createdAt: '2026-05-25T15:08:00.000+08:00',
-          },
-        ]}
-      />
+      <AttachmentDownloadProvider fetchAttachmentBlob={fetchAttachmentBlob}>
+        <MessageList
+          messages={[
+            {
+              id: '1',
+              role: 'user',
+              content: '分析下这个图片',
+              status: 'done',
+              attachments: [attachment],
+              createdAt: '2026-05-25T15:08:00.000+08:00',
+            },
+          ]}
+        />
+      </AttachmentDownloadProvider>
     )
 
     expect(await screen.findByTestId('message-image-preview')).toHaveAttribute(
@@ -3288,12 +3286,7 @@ describe('MessageList', () => {
       'blob:message-image-preview'
     )
     expect(screen.getByTestId('message-image-preview')).toHaveAttribute('alt', 'diagram.png')
-    expect(fetch).toHaveBeenCalledWith(
-      expect.stringContaining('/attachments/43/download'),
-      expect.objectContaining({
-        headers: { Authorization: 'Bearer token-1' },
-      })
-    )
+    expect(fetchAttachmentBlob).toHaveBeenCalledWith(43)
   })
 
   test('uses local image attachment previews without fetching after send', async () => {
@@ -3723,27 +3716,24 @@ describe('MessageList', () => {
   test('renders assistant markdown attachment images through authenticated blob previews', async () => {
     URL.createObjectURL = vi.fn(() => 'blob:assistant-markdown-image')
     URL.revokeObjectURL = vi.fn()
-    localStorage.setItem('auth_token', 'token-1')
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue({
-        ok: true,
-        blob: vi.fn().mockResolvedValue(new Blob(['image'], { type: 'image/png' })),
-      })
-    )
+    const fetchAttachmentBlob = vi
+      .fn()
+      .mockResolvedValue(new Blob(['image'], { type: 'image/png' }))
 
     render(
-      <MessageList
-        messages={[
-          {
-            id: 'assistant-image',
-            role: 'assistant',
-            content: '生成结果：\n\n![diagram](/api/attachments/43/download)',
-            status: 'done',
-            createdAt: '2026-05-25T15:08:00.000+08:00',
-          },
-        ]}
-      />
+      <AttachmentDownloadProvider fetchAttachmentBlob={fetchAttachmentBlob}>
+        <MessageList
+          messages={[
+            {
+              id: 'assistant-image',
+              role: 'assistant',
+              content: '生成结果：\n\n![diagram](/api/attachments/43/download)',
+              status: 'done',
+              createdAt: '2026-05-25T15:08:00.000+08:00',
+            },
+          ]}
+        />
+      </AttachmentDownloadProvider>
     )
 
     expect(await screen.findByTestId('assistant-markdown-image')).toHaveAttribute(
@@ -3751,12 +3741,7 @@ describe('MessageList', () => {
       'blob:assistant-markdown-image'
     )
     expect(screen.getByTestId('assistant-markdown-image')).toHaveAttribute('alt', 'diagram')
-    expect(fetch).toHaveBeenCalledWith(
-      '/api/attachments/43/download',
-      expect.objectContaining({
-        headers: { Authorization: 'Bearer token-1' },
-      })
-    )
+    expect(fetchAttachmentBlob).toHaveBeenCalledWith(43)
   })
 
   test('renders assistant markdown local image paths through Tauri asset URLs', () => {

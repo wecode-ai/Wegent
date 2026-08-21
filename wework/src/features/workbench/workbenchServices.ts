@@ -147,6 +147,7 @@ export interface WorkbenchServices {
   attachmentApi?: {
     uploadAttachment: (file: File, onProgress?: (progress: number) => void) => Promise<Attachment>
     deleteAttachment?: (attachmentId: number) => Promise<void>
+    fetchAttachmentBlob?: (attachmentId: number) => Promise<Blob>
     uploadLocalAttachmentToCloud?: (attachment: Attachment) => Promise<Attachment>
   }
   executorClient?: ExecutorClient
@@ -165,6 +166,7 @@ export interface WorkbenchServices {
       option: LocalHarnessModelOption | null
     ) => Promise<LocalHarnessModelLaunchConfig | null>
     unregisterProxy: (token: string) => Promise<void>
+    unregisterContext: (token: string) => Promise<void>
   }
   workspaceSessionApi?: WorkspaceSessionApi
   chatStream: ReturnType<typeof createChatStream>

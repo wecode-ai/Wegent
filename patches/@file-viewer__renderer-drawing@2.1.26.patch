@@ -1,0 +1,88 @@
+diff --git a/dist/diagram.js b/dist/diagram.js
+index 77129a44f6ed8c667ffcc6984cb9c485822bd58a..b3a78eae0 100644
+--- a/dist/diagram.js
++++ b/dist/diagram.js
+@@ -29,23 +29,56 @@ const normalizePlantumlServer = (documentRef, value) => {
+         return normalized;
+     }
+ };
+-const sanitizeSvg = (documentRef, svg, t) => {
+-    const parsed = new DOMParser().parseFromString(svg, 'image/svg+xml');
+-    const parseError = parsed.querySelector('parsererror');
+-    if (parseError) {
+-        throw new Error(parseError.textContent || t('drawing.error.svgParseFailed'));
+-    }
+-    parsed.querySelectorAll('script,iframe,object,embed').forEach(node => node.remove());
+-    parsed.querySelectorAll('*').forEach(node => {
++const hasUnsafeUrl = (value) => {
++    if (/@import/i.test(value)) return true;
++    const matches = value.matchAll(/url\(\s*(['"]?)(.*?)\1\s*\)/gi);
++    return Array.from(matches).some(([, , url]) => !url.trim().startsWith('#'));
++};
++const sanitizeSvgNode = (documentRef, svgNode) => {
++    svgNode.querySelectorAll('script,iframe,object,embed,base,link,meta,form,input,button,textarea,select,option').forEach(node => node.remove());
++    [svgNode, ...svgNode.querySelectorAll('*')].forEach(node => {
+         for (const attribute of Array.from(node.attributes)) {
+             if (/^on/i.test(attribute.name)) {
+                 node.removeAttribute(attribute.name);
++                continue;
++            }
++            const name = attribute.name.toLowerCase();
++            if (['src', 'srcset', 'action', 'formaction', 'poster', 'xml:base'].includes(name)) {
++                node.removeAttribute(attribute.name);
++                continue;
++            }
++            if (['href', 'xlink:href'].includes(name) && !attribute.value.trim().startsWith('#')) {
++                node.removeAttribute(attribute.name);
++                continue;
++            }
++            if (hasUnsafeUrl(attribute.value)) {
++                node.removeAttribute(attribute.name);
+             }
+         }
+     });
+-    const svgNode = parsed.documentElement;
++    svgNode.querySelectorAll('style').forEach(node => {
++        if (hasUnsafeUrl(node.textContent || '')) {
++            node.remove();
++        }
++    });
+     return documentRef.importNode(svgNode, true);
+ };
++const sanitizeXmlSvg = (documentRef, svg, t) => {
++    const parsed = new DOMParser().parseFromString(svg, 'image/svg+xml');
++    const parseError = parsed.querySelector('parsererror');
++    if (parseError) {
++        throw new Error(parseError.textContent || t('drawing.error.svgParseFailed'));
++    }
++    return sanitizeSvgNode(documentRef, parsed.documentElement);
++};
++const sanitizeMermaidSvg = (documentRef, svg, t) => {
++    const parsed = new DOMParser().parseFromString(svg, 'text/html');
++    const svgNode = parsed.querySelector('svg');
++    if (!svgNode) {
++        throw new Error(t('drawing.error.svgParseFailed'));
++    }
++    return sanitizeSvgNode(documentRef, svgNode);
++};
+ const renderMermaidSvg = async (documentRef, text, theme, t) => {
+     const mermaidModule = await import('mermaid');
+     const mermaid = mermaidModule.default;
+@@ -56,7 +89,7 @@ const renderMermaidSvg = async (documentRef, text, theme, t) => {
+         theme: isDarkTheme(documentRef, theme) ? 'dark' : 'default'
+     });
+     const rendered = await mermaid.render(id, text);
+-    return sanitizeSvg(documentRef, rendered.svg, t);
++    return sanitizeMermaidSvg(documentRef, rendered.svg, t);
+ };
+ const appendSvgText = (documentRef, parent, text, x, dy, weight = '500') => {
+     const line = documentRef.createElementNS('http://www.w3.org/2000/svg', 'tspan');
+@@ -138,7 +171,7 @@ const renderPlantumlSvg = async (documentRef, text, options, t) => {
+         if (!response.ok) {
+             throw new Error(t('drawing.error.plantumlRenderFailed', { status: response.status }));
+         }
+-        return sanitizeSvg(documentRef, await response.text(), t);
++        return sanitizeXmlSvg(documentRef, await response.text(), t);
+     }
+     catch (error) {
+         if (error instanceof DOMException && error.name === 'AbortError') {

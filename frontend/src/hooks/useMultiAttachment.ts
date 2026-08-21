@@ -6,7 +6,15 @@
  * Hook for managing multiple file attachments state and upload.
  */
 
-import { useState, useCallback, useEffect, useRef } from 'react'
+import {
+  createElement,
+  useState,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  type ReactNode,
+} from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   uploadFile,
@@ -18,8 +26,13 @@ import {
   isImageExtension,
   isVideoExtension,
 } from '@/apis/attachments'
+import { ApiError } from '@/apis/client'
+import type { WeiboAccountPreviewResponse } from '@/apis/user'
+import { userApis } from '@/apis/user'
+import { useUser } from '@/features/common/UserContext'
 import type { MultiAttachmentUploadState, TruncationInfo } from '@/types/api'
 import { toast } from '@/hooks/use-toast'
+import { WeiboVideoBindingPrompt } from './WeiboVideoBindingPrompt'
 
 interface UseMultiAttachmentReturn {
   /** Current attachment state */
@@ -40,6 +53,8 @@ interface UseMultiAttachmentReturn {
   isUploading: boolean
   /** Truncation info for attachments that were truncated */
   truncatedAttachments: Map<number, TruncationInfo>
+  /** Dialog prompting unbound users to bind Weibo before video upload */
+  weiboBindingPrompt: ReactNode
 }
 
 export type AttachmentTypeLimits = Partial<
@@ -54,6 +69,7 @@ export function useMultiAttachment(options?: {
   storagePurpose?: 'default' | 'video_reference'
 }): UseMultiAttachmentReturn {
   const { t } = useTranslation()
+  const { user, refresh } = useUser()
   const maxAttachments = options?.maxAttachments
   const showTruncationToast = options?.showTruncationToast ?? false
   const maxByType = options?.maxByType
@@ -68,6 +84,10 @@ export function useMultiAttachment(options?: {
     new Map()
   )
   const localPreviewUrlsRef = useRef(new Set<string>())
+  const [pendingVideoFiles, setPendingVideoFiles] = useState<File[] | null>(null)
+  const [previewAccount, setPreviewAccount] = useState<WeiboAccountPreviewResponse | null>(null)
+  const [isPreviewingWeibo, setIsPreviewingWeibo] = useState(false)
+  const [isBindingWeibo, setIsBindingWeibo] = useState(false)
 
   const createLocalPreviewUrl = useCallback((file: File, mediaType: string | null) => {
     if (
@@ -337,9 +357,103 @@ export function useMultiAttachment(options?: {
   const handleFileSelect = useCallback(
     async (files: File | File[]) => {
       const fileList = Array.isArray(files) ? files : [files]
+      const hasChatVideo =
+        storagePurpose === 'default' &&
+        fileList.some(file => isVideoExtension(getFileExtension(file.name)))
+
+      if (hasChatVideo && !user?.weibo_uid) {
+        setPreviewAccount(null)
+        setPendingVideoFiles(fileList)
+        return
+      }
+
       await uploadSelectedFiles(fileList)
     },
-    [uploadSelectedFiles]
+    [storagePurpose, uploadSelectedFiles, user?.weibo_uid]
+  )
+
+  const closeWeiboPrompt = useCallback(() => {
+    if (isPreviewingWeibo || isBindingWeibo) return
+    setPendingVideoFiles(null)
+    setPreviewAccount(null)
+  }, [isPreviewingWeibo, isBindingWeibo])
+
+  const continuePendingVideoUpload = useCallback(async () => {
+    const files = pendingVideoFiles
+    if (!files) return
+    setPendingVideoFiles(null)
+    setPreviewAccount(null)
+    await uploadSelectedFiles(files)
+  }, [pendingVideoFiles, uploadSelectedFiles])
+
+  const showWeiboBindErrorToast = useCallback(
+    (error: unknown) => {
+      const errorCode = error instanceof ApiError ? error.errorCode : undefined
+      const title =
+        errorCode === 'weibo_sub_missing'
+          ? t('settings:weiboBinding.subMissing')
+          : errorCode === 'weibo_uid_changed'
+            ? t('settings:weiboBinding.accountChanged')
+            : t('settings:weiboBinding.bindFailed')
+      toast({ variant: 'destructive', title })
+    },
+    [t]
+  )
+
+  const previewWeiboAccount = useCallback(async () => {
+    setIsPreviewingWeibo(true)
+    try {
+      const preview = await userApis.previewWeiboAccount()
+      setPreviewAccount(preview)
+    } catch (error) {
+      showWeiboBindErrorToast(error)
+    } finally {
+      setIsPreviewingWeibo(false)
+    }
+  }, [showWeiboBindErrorToast])
+
+  const confirmWeiboBindAndUpload = useCallback(async () => {
+    if (!previewAccount) return
+    setIsBindingWeibo(true)
+    try {
+      await userApis.bindWeiboAccount(previewAccount.weibo_uid)
+      await refresh()
+      await continuePendingVideoUpload()
+      toast({ title: t('chat:weiboVideoBinding.bindSuccess') })
+    } catch (error) {
+      if (error instanceof ApiError && error.errorCode === 'weibo_uid_changed') {
+        setPreviewAccount(null)
+      }
+      showWeiboBindErrorToast(error)
+    } finally {
+      setIsBindingWeibo(false)
+    }
+  }, [continuePendingVideoUpload, previewAccount, refresh, showWeiboBindErrorToast, t])
+
+  const weiboBindingPrompt = useMemo(
+    () =>
+      createElement(WeiboVideoBindingPrompt, {
+        open: Boolean(pendingVideoFiles),
+        previewAccount,
+        isPreviewing: isPreviewingWeibo,
+        isBinding: isBindingWeibo,
+        onOpenChange: (open: boolean) => {
+          if (!open) closeWeiboPrompt()
+        },
+        onContinueWithoutBinding: continuePendingVideoUpload,
+        onPreview: previewWeiboAccount,
+        onConfirmBind: confirmWeiboBindAndUpload,
+      }),
+    [
+      closeWeiboPrompt,
+      confirmWeiboBindAndUpload,
+      continuePendingVideoUpload,
+      isBindingWeibo,
+      isPreviewingWeibo,
+      pendingVideoFiles,
+      previewAccount,
+      previewWeiboAccount,
+    ]
   )
 
   const addExistingAttachment = useCallback(
@@ -423,6 +537,8 @@ export function useMultiAttachment(options?: {
       errors: new Map(),
     })
     setTruncatedAttachments(new Map())
+    setPendingVideoFiles(null)
+    setPreviewAccount(null)
   }, [state.attachments, revokeLocalPreviewUrl])
 
   const isUploading = state.uploadingFiles.size > 0
@@ -438,5 +554,6 @@ export function useMultiAttachment(options?: {
     isReadyToSend,
     isUploading,
     truncatedAttachments,
+    weiboBindingPrompt,
   }
 }

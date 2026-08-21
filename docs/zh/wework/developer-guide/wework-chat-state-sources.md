@@ -146,6 +146,11 @@ Claude Code 的 `/compact` 是普通原生命令；Codex 仍使用其 app-server
 只清空当前聊天 pane，不归档或删除原任务；原任务继续显示在项目下，并可重新打开。
 环境弹层必须展示和复制项目的全部根目录，而不是只显示主根。
 
+“我的工作”中的本地任务清单来自 `runtimeWork`，但任务所处的运行中或排队分组必须
+读取同一个 `RuntimeTaskLifecycleStore` 快照。侧栏 spinner、composer 和“我的工作”
+不能各自从 `RuntimeTaskSummary.running`、transcript 或消息状态重新推断生命周期；
+否则异步任务列表快照会把仍在运行的任务错误投影到已完成或待处理分组。
+
 这些规则只改变本地 Codex 项目。远程和云端任务仍遵循其原有的单 workspace 选择
 语义，不能因为本地多目录支持而隐式扩大远程执行范围。
 
@@ -277,6 +282,11 @@ assistant 之前。canonical `turns` 是前端 transcript 的唯一输入，不�
 元数据可以继续使用各自的紧凑字号，但不能让同一段聊天正文因 streaming/完成态切换而
 改变字号并产生跳闪。
 
+最终回答进入 Markdown 渲染器前必须移除没有结构化引用元数据支持的
+`cite…` 内容引用标记，包括流式阶段尚未闭合的尾部标记。Wework
+不能把这些内部协议字符作为普通正文显示；只有在同时接入引用元数据和对应交互组件后，
+才能把它们转换为可见引用。
+
 ## 引导消息顺序
 
 运行中的 Codex LocalTask 支持把队列消息作为原生引导发送。引导是当前 turn 内的用户输入，不是新的 follow-up turn，所以 UI 必须在发送开始时就把本地用户消息插入到当前 assistant 中间：
@@ -300,12 +310,14 @@ assistant 之前。canonical `turns` 是前端 transcript 的唯一输入，不�
 - 每个临时聊天 tab 都有独立的 `chat:<id>` 实例标识，允许在右侧工作区同时打开多个临时聊天。
 - 创建 runtime 线程前，`TemporaryChatPanel` 以实例标识作为 `conversationKey`。线程创建后，pane workspace state 保存该 tab 的 runtime 地址，消息则由 `runtimeConversationCache` 的实时投影恢复。临时线程不支持 `thread/turns/list`，因此切换主会话导致面板卸载、再切回时，不能依赖 transcript 补回内容。
 - 每个临时聊天的附件选择、上传进度和错误状态也按实例隔离，不能复用主聊天 composer 的附件状态；首条消息必须把该实例的附件显式传给 `createTemporaryRuntimeTask`。
+- 每条发送成功或进入乐观展示的 user message 都必须保存对应的持久化附件引用，包含首条消息、普通 follow-up 和队列发送。清空 composer 附件只清理当前输入状态，不能让已经发送的附件从消息列表消失；本地 `blob:` 预览地址必须转换为可恢复的本地路径。
 - 右侧工作区只打开一个临时聊天时，默认使用紧凑的 `420px` 面板宽度；打开其他工作区 tab 后恢复通用分栏默认值，用户手动调整的宽度仍然优先。
 - 首条消息通过 `createTemporaryRuntimeTask` 创建 `ephemeral` runtime task，并携带当前主线程的 `sideSource`。该任务不写入左侧任务列表，也不触发主 pane 导航。
 - 后续消息必须继续使用已加载的临时线程。Codex app-server 路径使用 `direct_thread_id` 直接 `turn/start`，不能走普通 `resume_thread_id` 的 `thread/resume` 路径，否则会因为临时线程没有 rollout 映射而出现 `no rollout found`。
 - 普通 follow-up 必须在等待 `runtime.tasks.sendMessage` 返回前先把 user message 写入会话缓存，使它稳定出现在当前 turn 的“正在思考”指示器之前；发送失败时再按同一 client message id 回滚。
 - `BufferedChatInput` 传入的运行中发送选项必须由 `TemporaryChatPanel` 原样处理。用户选择“引导当前回复”或从队列卡片触发引导时，临时聊天必须调用 `runtime.tasks.guidance`，并以 `clientGuidanceId` 结算对应队列项；不能把引导降级成当前 turn 结束后的普通 follow-up。
 - 临时聊天只复用当前工作区和当前线程上下文；如果没有可用的主线程 source，应阻止发送并提示用户先打开已有对话。
+- 临时聊天默认用于轻量、非变更式探索。边界之前的主线程消息、计划和工具结果只作为参考，不能在临时聊天中继续执行；但用户在边界之后明确要求修改文件、源码、Git、配置或工作区状态时，允许在当前线程既有权限范围内执行，并且修改必须最小化、局限于本次请求。未收到明确变更请求时不得写入，也不得自行申请更宽权限。
 - runtime work 列表刷新后，reducer 必须用同一设备、同一任务的权威 `threadId/runtimeHandle` 水合当前任务地址；不能因为设备仍在线就保留缺少 thread 的 optimistic address，否则右侧临时聊天无法建立 `sideSource`。
 
 维护规则：不要用 fallback 在 UI 里把临时聊天补进左侧任务列表，也不要在 executor 中为临时线程伪造 rollout。临时聊天的主路径是 `ephemeral + sideSource + direct_thread_id`。

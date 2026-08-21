@@ -51,6 +51,7 @@ from shared.models import (
     RemoteListChunksResponse,
     RemotePurgeKnowledgeIndexRequest,
     RetrievalScope,
+    SearchHints,
 )
 
 # Constants for document reading pagination
@@ -148,6 +149,10 @@ class InternalRetrieveRequest(BaseModel):
     """Simplified retrieve request for internal use."""
 
     query: str = Field(..., description="Search query")
+    search_hints: SearchHints | None = Field(
+        default=None,
+        description="Optional retrieval hints for dense rewrite and sparse planning",
+    )
     user_id: Optional[int] = Field(
         default=None,
         ge=0,
@@ -249,6 +254,10 @@ class RetrieveRecord(BaseModel):
         default=None,
         exclude_if=_is_none,
     )
+    source_media_type: Optional[str] = Field(
+        default=None,
+        exclude_if=_is_none,
+    )
 
 
 class InternalRetrieveResponse(BaseModel):
@@ -295,6 +304,7 @@ def _to_retrieve_record(record: dict) -> RetrieveRecord:
         source_id=record.get("source_id"),
         source_uri=record.get("source_uri"),
         source_name=record.get("source_name"),
+        source_media_type=record.get("source_media_type"),
     )
 
 
@@ -536,6 +546,7 @@ async def _execute_scoped_retrieve(
             db=db,
             knowledge_base_ids=kb_ids,
             query=request.query,
+            search_hints=request.search_hints,
             max_results=request.max_results,
             scope=retrieval_scope,
             route_mode=request.route_mode,
@@ -738,6 +749,7 @@ async def internal_retrieve(
                 db=db,
                 knowledge_base_ids=knowledge_base_ids,
                 query=request.query,
+                search_hints=request.search_hints,
                 max_results=request.max_results,
                 scope=(
                     RetrievalScope(document_ids=resolved_document_ids)
@@ -1411,6 +1423,9 @@ class ReadDocResponse(BaseModel):
     kb_id: Optional[int] = Field(
         default=None, description="Knowledge base ID this document belongs to"
     )
+    source_media_type: Optional[str] = Field(
+        default=None, description="Media type of the source attachment (e.g. 'video')"
+    )
 
 
 class ReadDocItemResponse(BaseModel):
@@ -1429,6 +1444,9 @@ class ReadDocItemResponse(BaseModel):
         default=None, description="Knowledge base ID this document belongs to"
     )
     error: Optional[str] = Field(default=None, description="Per-document error")
+    source_media_type: Optional[str] = Field(
+        default=None, description="Media type of the source attachment (e.g. 'video')"
+    )
 
 
 class ReadDocsResponse(BaseModel):
@@ -1504,6 +1522,7 @@ async def read_document(
             returned_length=result.get("returned_length", 0),
             has_more=result.get("has_more", False),
             kb_id=result.get("kb_id"),
+            source_media_type=result.get("source_media_type"),
         )
 
     except HTTPException:
@@ -1565,6 +1584,7 @@ async def read_documents(
                     has_more=result.get("has_more", False),
                     kb_id=result.get("kb_id"),
                     error=result.get("error"),
+                    source_media_type=result.get("source_media_type"),
                 )
                 for result in results
             ],

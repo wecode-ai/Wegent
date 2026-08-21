@@ -145,9 +145,32 @@ def test_manager_prompt_is_minimal_visible_assignment_input():
         "automation_run_id: run-1\n\n"
         "看板任务数据位于 cloud://projects/project-1/todos/task-1，"
         "请通过看板工具自行查看。\n\n"
-        "请读取候选执行者并按调度要求完成分派，不要执行任务。\n\n"
+        "你是看板的 AI 管家，只负责编排，不执行具体任务。"
+        "请读取当前 Issue 和候选执行者，将工作拆成可独立验收的子任务，"
+        "然后调用 submit_workflow_plan 提交结构化方案。"
+        "方案项不需要提供 stage_id，平台会绑定当前活动规划范围；"
+        "不要查询、猜测或伪造阶段标识。"
+        "不要直接修改原 Issue 的负责人。\n\n"
         "Prefer domain ownership."
     )
+
+
+def test_manager_prompt_prefers_run_instruction_override():
+    prompt = ProjectAutomationExecution._managed_prompt(
+        MagicMock(),
+        owner=SimpleNamespace(id=7),
+        project=SimpleNamespace(id="project-1"),
+        rule=SimpleNamespace(description="Default instruction."),
+        run=SimpleNamespace(
+            id="run-1",
+            task_id="task-1",
+            metadata_json={"instruction_override": "Stage-specific instruction."},
+        ),
+        context={"trigger": "workflow"},
+    )
+
+    assert prompt.endswith("Stage-specific instruction.")
+    assert "Default instruction." not in prompt
 
 
 def test_manager_activity_binding_persists_execution_identity(monkeypatch):
@@ -179,3 +202,64 @@ def test_manager_activity_binding_persists_execution_identity(monkeypatch):
         "run_status": "queued",
         "execution_device_id": "device-1",
     }
+
+
+def test_manager_plan_submission_rejects_non_owner_before_writes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ProjectAutomationExecution()
+    run = SimpleNamespace(status="running", created_by_user_id=8)
+    db = MagicMock()
+    db.get.return_value = run
+    find_activity = MagicMock()
+    monkeypatch.setattr(service, "_activity", find_activity)
+
+    with pytest.raises(RuntimeError, match="does not own"):
+        service.record_manager_plan_submission(
+            db,
+            run_id="run-1",
+            user_id=7,
+            workflow_run_id="workflow-run-1",
+            plan_version=1,
+        )
+
+    find_activity.assert_not_called()
+    db.flush.assert_not_called()
+    db.commit.assert_not_called()
+
+
+def test_manager_plan_submission_rejects_stale_workflow_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ProjectAutomationExecution()
+    run = SimpleNamespace(
+        id="run-1",
+        status="running",
+        created_by_user_id=7,
+        task_id="issue-1",
+        metadata_json={
+            "event": {"payload": {"workflow_run_id": "workflow-run-current"}}
+        },
+    )
+    activity = SimpleNamespace(metadata_json={})
+    stale_workflow_run = SimpleNamespace(
+        parent_id="issue-1",
+        metadata_json={},
+    )
+    db = MagicMock()
+    db.get.side_effect = [run, stale_workflow_run]
+    monkeypatch.setattr(service, "_activity", MagicMock(return_value=activity))
+
+    with pytest.raises(RuntimeError, match="no longer active"):
+        service.record_manager_plan_submission(
+            db,
+            run_id="run-1",
+            user_id=7,
+            workflow_run_id="workflow-run-stale",
+            plan_version=2,
+        )
+
+    assert stale_workflow_run.metadata_json == {}
+    assert activity.metadata_json == {}
+    db.flush.assert_not_called()
+    db.commit.assert_not_called()

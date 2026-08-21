@@ -4,8 +4,10 @@
 """Focused contracts for the shared project chat persistence service."""
 
 import uuid
+from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 from fastapi import HTTPException
@@ -1489,6 +1491,104 @@ def test_runtime_completion_advances_assigned_task_to_review(
     assert task.metadata_json["ai_state"]["status"] == "completed"
 
 
+def test_runtime_completion_survives_workflow_projection_database_failure(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = create_project(test_db, test_user)
+    issue = LoopItem(
+        id="CHAT-PROJECTION-PARENT",
+        cloud_project_id=project.id,
+        sequence_number=2,
+        title="Workflow parent",
+        description="",
+        status="in_progress",
+        priority="none",
+        sort_order=0,
+        created_by_user_id=test_user.id,
+        metadata_json={},
+    )
+    task = LoopItem(
+        id="CHAT-PROJECTION-FAILURE",
+        cloud_project_id=project.id,
+        parent_id=issue.id,
+        sequence_number=3,
+        title="Complete despite projection failure",
+        description="",
+        status="in_progress",
+        priority="none",
+        sort_order=0,
+        assignee_agent_id="12",
+        created_by_user_id=test_user.id,
+        metadata_json={"workflow_plan": {"run_id": "workflow-run-1"}},
+    )
+    test_db.add_all([issue, task])
+    test_db.commit()
+    response = project_chat_service.start_agent_response(
+        test_db,
+        user_id=test_user.id,
+        request=ProjectChatAgentStart(
+            projectId=project.id,
+            taskId=task.id,
+            agentId="12",
+            runtimeDeviceId="local-device",
+            runtimeTaskId="runtime-task-projection-failure",
+            prompt="Complete the task",
+        ),
+    )
+
+    projection_calls: list[str] = []
+
+    def fail_projection(db: Session, *, child_id: str) -> None:
+        projection_calls.append(child_id)
+        db.add(
+            ProjectChatMessage(
+                message_id=response.message_id,
+                client_message_id=str(uuid.uuid4()),
+                project_id=project.id,
+                task_id=task.id,
+                sender_type="agent",
+                sender_id="12",
+                sender_name="Code Reviewer",
+                message_type="text",
+                content="Duplicate projection row",
+                metadata_json={},
+                status="completed",
+            )
+        )
+        db.flush()
+
+    monkeypatch.setattr(
+        "app.services.issue_workflow_planning."
+        "issue_workflow_planning_service.sync_from_child",
+        fail_projection,
+    )
+
+    completed = project_chat_service.project_runtime_event(
+        test_db,
+        device_id="local-device",
+        runtime_task_id="runtime-task-projection-failure",
+        event_name="response.completed",
+        payload={"data": {"value": "Ready for review"}},
+    )
+
+    assert completed is not None
+    assert completed[0].status == "completed"
+    assert projection_calls == [task.id]
+    test_db.refresh(task)
+    assert task.status == "in_review"
+    assert task.metadata_json["ai_state"]["status"] == "completed"
+    stored_response = (
+        test_db.query(ProjectChatMessage)
+        .filter(ProjectChatMessage.message_id == response.message_id)
+        .one()
+    )
+    assert stored_response.status == "completed"
+    assert stored_response.content == "Ready for review"
+    assert test_db.query(LoopItem).filter(LoopItem.id == task.id).count() == 1
+
+
 def test_runtime_completion_keeps_project_robot_assignee_guard(
     test_db: Session, test_user: User
 ) -> None:
@@ -1861,6 +1961,93 @@ def test_device_runtime_projection_accepts_local_task_id(
     assert projected["message"]["messageId"] == response.message_id
     assert projected["message"]["status"] == "completed"
     assert projected["message"]["content"] == "Completed through localTaskId"
+
+
+def test_device_runtime_projection_invalidates_only_material_issue_changes(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = create_project(test_db, test_user)
+    task = LoopItem(
+        id="CHAT-RUNTIME-INVALIDATION-1",
+        cloud_project_id=project.id,
+        sequence_number=1,
+        title="Project runtime state",
+        description="",
+        status="pending",
+        assignee_agent_id="12",
+        created_by_user_id=test_user.id,
+    )
+    execution = LoopItemExecution(
+        loop_item_id=task.id,
+        cloud_project_id=project.id,
+        executor_owner_user_id=test_user.id,
+        agent_id="12",
+        execution_environment="local",
+        execution_device_id="local-device",
+        status="claimed",
+        runtime_device_id="local-device",
+        runtime_task_id="runtime-invalidation-1",
+    )
+    test_db.add_all([task, execution])
+    test_db.commit()
+
+    @contextmanager
+    def same_session() -> Iterator[Session]:
+        yield test_db
+
+    published_events: list[tuple[str, str]] = []
+    runtime_events = 0
+
+    def handle_runtime_event(db: Session, **_kwargs: Any) -> LoopItemExecution:
+        nonlocal runtime_events
+        runtime_events += 1
+        if runtime_events == 1:
+            current = db.get(LoopItem, task.id)
+            assert current is not None
+            current.status = "in_progress"
+            current.version += 1
+            db.commit()
+        db.refresh(execution)
+        return execution
+
+    monkeypatch.setattr(
+        "app.api.ws.device_namespace.get_db_session",
+        same_session,
+    )
+    monkeypatch.setattr(
+        "app.api.ws.device_namespace.loop_item_execution_service.handle_runtime_event",
+        handle_runtime_event,
+    )
+    monkeypatch.setattr(
+        "app.api.ws.device_namespace.publish_loop_item_changed",
+        lambda db, *, item, reason, actor_user_id: published_events.append(
+            (item.id, reason)
+        ),
+    )
+    monkeypatch.setattr(
+        "app.tasks.robot_queue_tasks.publish_run_event",
+        lambda *_args: None,
+    )
+
+    for sequence, event_name in enumerate(
+        ("response.created", "response.output_text.delta"),
+        start=1,
+    ):
+        _project_chat_runtime_event_sync(
+            "local-device",
+            {
+                "event": event_name,
+                "payload": {
+                    "taskId": "runtime-invalidation-1",
+                    "eventSeq": sequence,
+                    "data": {"delta": "working"},
+                },
+            },
+        )
+
+    assert published_events == [
+        (task.id, "runtime_execution_status"),
+    ]
 
 
 def test_execution_truth_rejection_blocks_project_chat_projection(

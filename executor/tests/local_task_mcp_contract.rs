@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    io::Write,
+    io::{BufRead, BufReader, Read, Write},
     process::{Command, Stdio},
 };
 
@@ -12,8 +12,86 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde_json::json;
 use serde_json::Value;
+
+fn context_grant(space_id: &str, item_id: Option<&str>) -> String {
+    context_grant_expiring_at(space_id, item_id, 4_102_444_800)
+}
+
+fn context_grant_expiring_at(
+    space_id: &str,
+    item_id: Option<&str>,
+    expires_at_unix: i64,
+) -> String {
+    STANDARD.encode(
+        serde_json::to_vec(&json!({
+            "version": 1,
+            "task_id": "contract-test",
+            "space_id": space_id,
+            "item_id": item_id,
+            "automation_run_id": null,
+            "automation_manager": false,
+            "expires_at_unix": expires_at_unix
+        }))
+        .unwrap(),
+    )
+}
+
+#[test]
+fn accepted_context_grant_remains_valid_for_the_mcp_session() {
+    let executor_home = tempfile::tempdir().unwrap();
+    let expires_at_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64
+        + 1;
+    let mut child = Command::new(env!("CARGO_BIN_EXE_wegent-executor"))
+        .arg("space-mcp-server")
+        .env("WEGENT_EXECUTOR_HOME", executor_home.path())
+        .env(
+            "WEWORK_SPACE_CONTEXT_GRANT",
+            context_grant_expiring_at("space-1", Some("ISSUE-1"), expires_at_unix),
+        )
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    writeln!(
+        stdin,
+        r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{}}}}"#
+    )
+    .unwrap();
+    stdin.flush().unwrap();
+    let mut initialize_response = String::new();
+    stdout.read_line(&mut initialize_response).unwrap();
+    assert!(!initialize_response.is_empty());
+    std::thread::sleep(std::time::Duration::from_secs(2));
+    writeln!(
+        stdin,
+        r#"{{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{{}}}}"#
+    )
+    .unwrap();
+    drop(stdin);
+
+    let mut context_response = String::new();
+    stdout.read_line(&mut context_response).unwrap();
+    let output = child.wait().unwrap();
+    assert!(output.success(), "space-mcp-server exited with {output}");
+    let response = serde_json::from_str::<Value>(&context_response).unwrap();
+    let tools = response
+        .pointer("/result/tools")
+        .and_then(Value::as_array)
+        .unwrap();
+
+    assert!(tools
+        .iter()
+        .any(|tool| tool["name"] == "get_current_context"));
+}
 
 #[test]
 fn space_mcp_runs_over_stdio_without_listening_on_a_port() {
@@ -23,7 +101,7 @@ fn space_mcp_runs_over_stdio_without_listening_on_a_port() {
         .env("WEGENT_EXECUTOR_HOME", executor_home.path())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::null())
         .spawn()
         .unwrap();
 
@@ -110,12 +188,11 @@ fn list_spaces_remains_available_locally_without_backend_connection() {
     let mut child = Command::new(env!("CARGO_BIN_EXE_wegent-executor"))
         .arg("space-mcp-server")
         .env("WEGENT_EXECUTOR_HOME", executor_home.path())
-        .env("WEWORK_SPACE_ID", "841738010351776815")
         .env_remove("WEWORK_SPACE_BACKEND_URL")
         .env_remove("WEWORK_SPACE_AUTH_TOKEN")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::null())
         .spawn()
         .unwrap();
     writeln!(
@@ -164,6 +241,7 @@ async fn list_spaces_merges_cloud_and_local_projects_for_the_signed_in_user() {
         .env_remove("WEWORK_SPACE_AUTH_TOKEN")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
+        .stderr(Stdio::null())
         .spawn()
         .unwrap();
     writeln!(
@@ -171,16 +249,17 @@ async fn list_spaces_merges_cloud_and_local_projects_for_the_signed_in_user() {
         r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"create_space","arguments":{{"name":"Local project"}}}}}}"#
     )
     .unwrap();
-    assert!(local_child.wait().unwrap().success());
+    assert!(local_child.wait_with_output().unwrap().status.success());
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_wegent-executor"))
         .arg("space-mcp-server")
         .env("WEGENT_EXECUTOR_HOME", executor_home.path())
         .env("WEWORK_SPACE_BACKEND_URL", format!("http://{address}"))
         .env("WEWORK_SPACE_AUTH_TOKEN", "backend-token")
-        .env_remove("WEWORK_SPACE_ID")
+        .env_remove("WEWORK_SPACE_CONTEXT_GRANT")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
+        .stderr(Stdio::null())
         .spawn()
         .unwrap();
     writeln!(
@@ -315,15 +394,21 @@ async fn space_mcp_routes_board_operations_through_backend() {
     let mut child = Command::new(env!("CARGO_BIN_EXE_wegent-executor"))
         .arg("space-mcp-server")
         .env("WEGENT_EXECUTOR_HOME", executor_home.path())
-        .env("WEWORK_SPACE_ID", "9001")
+        .env("WEWORK_SPACE_CONTEXT_GRANT", context_grant("9001", None))
         .env("WEWORK_SPACE_BACKEND_URL", format!("http://{address}"))
         .env("WEWORK_SPACE_AUTH_TOKEN", "backend-token")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::null())
         .spawn()
         .unwrap();
     let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = child.stdout.take().unwrap();
+    let stdout_reader = std::thread::spawn(move || {
+        let mut output = Vec::new();
+        stdout.read_to_end(&mut output).unwrap();
+        output
+    });
     writeln!(
         stdin,
         r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"list_spaces","arguments":{{}}}}}}"#
@@ -400,20 +485,20 @@ async fn space_mcp_routes_board_operations_through_backend() {
     .unwrap();
     drop(stdin);
 
-    let output = child.wait_with_output().unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let responses = String::from_utf8(output.stdout)
+    let status = child.wait().unwrap();
+    assert!(status.success(), "space-mcp-server exited with {status}");
+    let responses = String::from_utf8(stdout_reader.join().unwrap())
         .unwrap()
         .lines()
         .map(|line| serde_json::from_str::<Value>(line).unwrap())
         .collect::<Vec<_>>();
     assert_eq!(responses[1].pointer("/result/isError"), Some(&json!(false)));
     assert_eq!(responses[2].pointer("/result/isError"), Some(&json!(false)));
-    assert_eq!(responses[9].pointer("/result/isError"), Some(&json!(false)));
+    assert_eq!(responses[9].pointer("/result/isError"), Some(&json!(true)));
+    assert!(responses[9]
+        .pointer("/result/content/0/text")
+        .and_then(Value::as_str)
+        .is_some_and(|text| text.contains("outside this Agent session")));
     assert_eq!(std::fs::read(attachment_path).unwrap(), b"diagnostic");
     let projects = responses[0]
         .pointer("/result/content/0/text")

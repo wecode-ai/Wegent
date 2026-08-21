@@ -34,7 +34,10 @@ from app.services.device.base_provider import BaseDeviceProvider
 from app.services.device.version_service import executor_version_service
 from wecode.config.nevis_config import nevis_settings
 from wecode.service.cloud_device_git_tokens import build_git_token_envs
-from wecode.service.cloud_device_script import generate_simple_startup_script
+from wecode.service.cloud_device_script import (
+    build_cloud_device_runtime_envs,
+    generate_simple_startup_script,
+)
 from wecode.service.nevis_client import NevisClient, NevisClientError, nevis_client
 from wecode.service.wecode_apikey_client import get_or_create_apikey_async
 
@@ -179,7 +182,10 @@ class CloudDeviceProvider(BaseDeviceProvider):
                 )
 
         # Generate startup script with server-generated device info
-        git_token_envs = build_git_token_envs(git_tokens)
+        sandbox_envs = {
+            **build_git_token_envs(git_tokens),
+            **build_cloud_device_runtime_envs(server_device_id),
+        }
         user_data = generate_simple_startup_script(
             user_name=user_name,
             backend_url=backend_url,
@@ -204,7 +210,7 @@ class CloudDeviceProvider(BaseDeviceProvider):
         )
         result = await self._client.create_sandbox(
             user_data=user_data,
-            envs=git_token_envs,
+            envs=sandbox_envs,
         )
 
         # Extract sandbox ID from response

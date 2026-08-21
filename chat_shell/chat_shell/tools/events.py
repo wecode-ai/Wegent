@@ -468,6 +468,27 @@ def _extract_sources(tool_name: str, tool_output: Any) -> list[dict[str, Any]]:
         elif isinstance(tool_output, str):
             logger.warning("[TOOL_OUTPUT] Failed to parse tool output")
 
+    # Extract video-only sources from kb_head results (whitelist filtered)
+    elif tool_name == "kb_head":
+        parsed = _parse_json_object(tool_output)
+        if parsed is not None:
+            raw_sources = parsed.get("sources", [])
+            if isinstance(raw_sources, list):
+                video_sources = [
+                    s
+                    for s in raw_sources
+                    if isinstance(s, dict)
+                    and s.get("source_type") == "wegent_video_chapters"
+                    and s.get("kb_id") is not None
+                    and s.get("document_id") is not None
+                    and isinstance(s.get("segments"), list)
+                    and s["segments"]
+                ]
+                sources.extend(video_sources)
+                logger.info(
+                    f"[TOOL_OUTPUT] Extracted {len(video_sources)} video sources from kb_head"
+                )
+
     # Extract sources from web_search results
     elif tool_name == "web_search":
         if isinstance(tool_output, str):

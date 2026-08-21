@@ -21,11 +21,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any, List, Optional
 
-from shared.telemetry.decorators import (
-    add_span_event,
-    set_span_attribute,
-    trace_async,
-)
+from shared.telemetry.decorators import add_span_event, set_span_attribute, trace_async
 
 if TYPE_CHECKING:
     from openai import AsyncOpenAI
@@ -42,6 +38,10 @@ from shared.models import (
 )
 from shared.models.responses_api import ResponsesAPIStreamEvents
 from shared.utils.http_client import traced_async_client
+from wecode.service.knowledge.video_citation_sources import (
+    collect_and_log_knowledge_mcp_video_sources,
+    merge_video_sources,
+)
 
 from .attachment_sync import apply_attachment_sync_response, sync_executor_attachments
 from .emitters import (
@@ -195,6 +195,7 @@ class ResponsesAPIEventParser:
     def __init__(self) -> None:
         self._tool_contexts: dict[str, dict[str, Any]] = {}
         self._reasoning_buffers: dict[str, str] = {}
+        self._video_sources: dict[str, dict[tuple[int, int], dict[str, Any]]] = {}
 
     @staticmethod
     def _tool_key(task_id: int, subtask_id: int, tool_use_id: str) -> str:
@@ -212,6 +213,7 @@ class ResponsesAPIEventParser:
         for key in stale_keys:
             self._tool_contexts.pop(key, None)
         self._reasoning_buffers.pop(self._request_key(task_id, subtask_id), None)
+        self._video_sources.pop(self._request_key(task_id, subtask_id), None)
 
     def parse(
         self,
@@ -282,6 +284,18 @@ class ResponsesAPIEventParser:
             response_data = data.get("response", {})
             result = extract_completed_result(response_data)
             request_key = self._request_key(task_id, subtask_id)
+            video_sources = self._video_sources.get(request_key)
+            if video_sources:
+                result["sources"] = merge_video_sources(
+                    result.get("sources"), video_sources
+                )
+                logger.info(
+                    "Attached provider-native video citations to completion: "
+                    "task_id=%d, subtask_id=%d, source_count=%d",
+                    task_id,
+                    subtask_id,
+                    len(video_sources),
+                )
             buffered_reasoning = self._reasoning_buffers.get(request_key)
             if not result.get("reasoning_content") and buffered_reasoning:
                 result["reasoning_content"] = buffered_reasoning
@@ -599,6 +613,16 @@ class ResponsesAPIEventParser:
                 if event_type == ResponsesAPIStreamEvents.MCP_CALL_FAILED.value
                 else data.get("output")
             )
+            if event_type == ResponsesAPIStreamEvents.MCP_CALL_COMPLETED.value:
+                request_key = self._request_key(task_id, subtask_id)
+                video_sources = self._video_sources.setdefault(request_key, {})
+                collect_and_log_knowledge_mcp_video_sources(
+                    video_sources,
+                    tool_output,
+                    logger=logger,
+                    context=f"task_id={task_id},subtask_id={subtask_id}",
+                    server_label=tool_context.get("server_label") or None,
+                )
             return ExecutionEvent(
                 type=EventType.TOOL_RESULT,
                 task_id=task_id,

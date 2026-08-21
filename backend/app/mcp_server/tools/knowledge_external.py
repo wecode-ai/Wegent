@@ -456,6 +456,7 @@ def _get_document_content_sync(
             total_length=result["total_length"],
             has_more=result["has_more"],
             index_status=_document_index_status(access.document),
+            source_media_type=result.get("source_media_type"),
         ).model_dump_json()
     except ExternalDocumentAccessError as exc:
         return _json_error(str(exc), exc.code)

@@ -69,6 +69,13 @@ describe('runtime pane status from task lifecycle machine', () => {
     expect(status.taskExecution.running).toBe(true)
   })
 
+  test('preserves worktree creation intent during optimistic submission', () => {
+    const machine = new RuntimeTaskMachine(runtimeAddress)
+    machine.dispatch({ type: 'send_requested', workspaceCreationKind: 'worktree' })
+
+    expect(statusFor(machine).workspaceCreationKind).toBe('worktree')
+  })
+
   test('shows waiting after executor accepts the send', () => {
     const machine = new RuntimeTaskMachine(runtimeAddress)
     machine.dispatch({ type: 'send_requested' })

@@ -44,6 +44,7 @@ import {
   processIsAlive,
   reactivateMacApplication,
   readFile,
+  requestMacosApplicationQuit,
   resultDir,
   selectE2EModel,
   sendPromptUntilScenarioRequest,
@@ -55,6 +56,15 @@ import {
 } from './shared.mjs'
 
 import { captureVerificationScreenshot } from './workspace-flows.mjs'
+
+async function waitForProcessExit(processId, message) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    if (!processIsAlive(processId)) return
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(message)
+}
 
 async function verifyCrossProviderSwitchRetry(control, composerSelector) {
   control.setScenario('provider_switch_retry')
@@ -495,12 +505,16 @@ async function verifyBackgroundTaskWindowLifecycle({
     })
   }
 
-  await control.command('waitFor', '[data-testid="message-turn-navigation-marker"]', {
+  const firstTurnMarkerSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-turn-navigation-marker"][data-turn-index="0"]`
+  await control.command('waitFor', firstTurnMarkerSelector, {
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('click', '[data-testid="message-turn-navigation-marker"]')
-  await new Promise(resolvePromise => setTimeout(resolvePromise, 2_000))
+  await control.command('click', firstTurnMarkerSelector)
+  await control.command('waitFor', `${firstTurnMarkerSelector}[data-active="true"]`, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   const navigationTopMetrics = await waitForTopMetrics(
     control,
     '[data-testid="desktop-workbench-content"]',
@@ -571,6 +585,28 @@ async function verifyBackgroundTaskWindowLifecycle({
     TURN_NAVIGATION_REGRESSION_TURN_COUNT + 1
   )
   await verifyTurnNavigationTracksVisibleTurnMessages(control)
+  if (process.platform === 'darwin') {
+    setPhase('quit-after-close-to-tray')
+    const appProcessId = app.pid
+    const tauriLogPath = join(resultDir, `wework-tauri-${appProcessId}.log`)
+    const tauriLogLengthBeforeClose = (await readFile(tauriLogPath, 'utf8').catch(() => '')).length
+    await control.command('closeMainWindowToTray', 'body')
+    await waitForLogPattern(tauriLogPath, /windowWillClose:/, {
+      fromOffset: tauriLogLengthBeforeClose,
+    })
+    assert.equal(
+      processIsAlive(appProcessId),
+      true,
+      'Closing the main window to tray terminated Wework before the quit request'
+    )
+
+    requestMacosApplicationQuit(appProcessId)
+    await waitForProcessExit(
+      appProcessId,
+      'Wework remained alive after quitting from macOS while the main window was closed to tray'
+    )
+    await restartDesktopApp()
+  }
   return taskRowTestId
 }
 

@@ -121,7 +121,7 @@ def _python_type_to_json_schema(py_type: Any) -> Dict[str, Any]:
 
     # Pydantic models
     if isinstance(py_type, type) and issubclass(py_type, BaseModel):
-        return {"type": "object"}
+        return {"type": "object", "python_type": py_type}
 
     # Default to string for unknown types
     return {"type": "string"}
@@ -180,6 +180,10 @@ def _extract_parameters_from_signature(
         # Preserve items for array types so LLMs like Gemini can validate the schema.
         if "items" in schema:
             param_def["items"] = schema["items"]
+
+        # Keep Pydantic model annotations so FastMCP publishes nested object fields.
+        if "python_type" in schema:
+            param_def["python_type"] = schema["python_type"]
 
         # Add default if present
         if has_default and param.default is not None:

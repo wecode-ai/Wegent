@@ -239,6 +239,18 @@ class ProjectAutomationRun(LoopNode):
     __mapper_args__ = {"polymorphic_identity": "automation_run"}
 
 
+class ProjectWorkflowRun(LoopNode):
+    """One durable AI planning attempt for an Issue."""
+
+    __mapper_args__ = {"polymorphic_identity": "workflow_run"}
+
+
+class ProjectWorkflowPlanItem(LoopNode):
+    """One proposed concrete child task in a workflow plan version."""
+
+    __mapper_args__ = {"polymorphic_identity": "workflow_plan_item"}
+
+
 class ProjectIncomingHook(LoopNode):
     """An opaque project endpoint that turns external events into loop items."""
 
@@ -261,6 +273,14 @@ class CloudProjectLocalBinding(LoopNode):
 
 class LoopItemTaskBinding(LoopNode):
     __mapper_args__ = {"polymorphic_identity": "execution"}
+
+    @property
+    def workflow_node_id(self) -> str | None:
+        metadata = self.metadata_json
+        if not isinstance(metadata, dict):
+            return None
+        value = metadata.get("workflow_node_id")
+        return value if isinstance(value, str) and value else None
 
     def __init__(self, **kwargs: object) -> None:
         kwargs.setdefault("linked_at", func.now())

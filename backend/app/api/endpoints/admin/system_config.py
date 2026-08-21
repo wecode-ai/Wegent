@@ -20,11 +20,16 @@ from app.schemas.admin import (
     SystemConfigResponse,
     SystemConfigUpdate,
 )
+from app.schemas.knowledge import (
+    KnowledgeBaseRetrievalProfileResponse,
+    KnowledgeBaseRetrievalProfileUpdate,
+)
 from app.schemas.marketplace_tags import MarketplaceTagsResponse, MarketplaceTagsUpdate
 from app.schemas.quick_launch import (
     QuickLaunchFunctionsResponse,
     QuickLaunchFunctionsUpdate,
 )
+from app.services.knowledge.retrieval_profile import get_profile, save_profile
 from app.services.marketplace_tag_service import marketplace_tag_service
 
 router = APIRouter()
@@ -79,6 +84,46 @@ DEFAULT_SLOGAN_TIPS_CONFIG = {
         },
     ],
 }
+
+
+@router.get(
+    "/system-config/code-wiki-retrieval-profile",
+    response_model=KnowledgeBaseRetrievalProfileResponse,
+)
+def get_knowledge_base_retrieval_profile(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+) -> KnowledgeBaseRetrievalProfileResponse:
+    """Return the retrieval profile and its current resource-reference health."""
+    del current_user
+    retrieval_config, version, health = get_profile(db)
+    return KnowledgeBaseRetrievalProfileResponse(
+        version=version,
+        retrieval_config=retrieval_config,
+        health=health,
+    )
+
+
+@router.put(
+    "/system-config/code-wiki-retrieval-profile",
+    response_model=KnowledgeBaseRetrievalProfileResponse,
+)
+def update_knowledge_base_retrieval_profile(
+    profile: KnowledgeBaseRetrievalProfileUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+) -> KnowledgeBaseRetrievalProfileResponse:
+    """Replace the administrator-managed retrieval baseline for new knowledge bases."""
+    retrieval_config, version, health = save_profile(
+        db,
+        retrieval_config=profile.retrieval_config.model_dump(exclude_none=True),
+        updated_by=current_user.id,
+    )
+    return KnowledgeBaseRetrievalProfileResponse(
+        version=version,
+        retrieval_config=retrieval_config,
+        health=health,
+    )
 
 
 @router.get(

@@ -39,8 +39,10 @@ wework_code_statistics_macos_resources() {
 wework_build_code_statistics_hook() {
   local wework_dir="$1"
   local macos_target="$2"
+  local bundle_bin_dir="$wework_dir/src-tauri/bundled-hooks/codex-code-statistics/bin"
   local rust_target
 
+  rm -rf "$bundle_bin_dir/macos-aarch64" "$bundle_bin_dir/macos-x86_64"
   while IFS= read -r rust_target; do
     "$wework_dir/src-tauri/hook-plugins/codex-code-statistics/build-target.sh" \
       "$rust_target"

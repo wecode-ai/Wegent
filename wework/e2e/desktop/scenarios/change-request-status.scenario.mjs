@@ -40,16 +40,26 @@ if [ "$state" = "unavailable" ]; then
   exit 127
 fi
 if [ "$state" = "pending" ]; then
-  checks='[{"status":"IN_PROGRESS","conclusion":""}]'
+  checks_state='PENDING'
   pr_state='OPEN'
 elif [ "$state" = "success" ]; then
-  checks='[{"name":"Test Wework","workflowName":"Tests","startedAt":"2026-08-14T06:19:55Z","status":"COMPLETED","conclusion":"CANCELLED"},{"name":"Test Summary","workflowName":"Tests","startedAt":"2026-08-14T06:20:54Z","status":"COMPLETED","conclusion":"FAILURE"},{"name":"Test Wework","workflowName":"Tests","startedAt":"2026-08-14T06:21:16Z","status":"COMPLETED","conclusion":"SUCCESS"},{"name":"Test Summary","workflowName":"Tests","startedAt":"2026-08-14T06:25:46Z","status":"COMPLETED","conclusion":"SUCCESS"}]'
+  checks_state='SUCCESS'
   pr_state='OPEN'
 else
-  checks='[{"status":"COMPLETED","conclusion":"SUCCESS"}]'
+  checks_state='SUCCESS'
   pr_state='MERGED'
 fi
-printf '[{"number":2631,"url":"https://github.com/wecode-ai/Wegent/pull/2631","title":"feat(wework): show pull request status","state":"%s","isDraft":false,"statusCheckRollup":%s}]\\n' "$pr_state" "$checks"
+case "$*" in
+  *graphql*)
+    printf '{"data":{"repository":{"pr0":{"state":"%s","isDraft":false,"mergedAt":%s,"updatedAt":"2026-08-20T08:00:00Z","mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","statusCheckRollup":{"state":"%s"},"mergeQueueEntry":null,"timelineItems":{"nodes":[]}}}}}\\n' "$pr_state" "$([ "$state" = "merged" ] && printf '"2026-08-20T08:00:00Z"' || printf null)" "$checks_state"
+    ;;
+  *pulls?state=all*)
+    printf '[{"number":2631,"html_url":"https://github.com/wecode-ai/Wegent/pull/2631","title":"feat(wework): show pull request status","state":"%s","draft":false,"head":{"ref":"feature/change-request-status"},"updated_at":"2026-08-20T08:00:00Z","merged_at":%s}]\\n' "$([ "$state" = "merged" ] && printf closed || printf '%s' "$pr_state" | tr '[:upper:]' '[:lower:]')" "$([ "$state" = "merged" ] && printf '"2026-08-20T08:00:00Z"' || printf null)"
+    ;;
+  *)
+    printf '[{"number":2631,"url":"https://github.com/wecode-ai/Wegent/pull/2631","title":"feat(wework): show pull request status","state":"%s","isDraft":false,"statusCheckRollup":{"state":"%s"}}]\\n' "$pr_state" "$checks_state"
+    ;;
+esac
 `
   )
   await chmod(executablePath, 0o755)
@@ -174,10 +184,23 @@ export async function createDesktopScenario({
 
       await control.command('waitFor', CHANGE_REQUEST_BUTTON, {
         text: '#2631',
+        timeoutMs: 4_000,
       })
       await control.command('waitFor', '[data-testid="change-request-checks"]', {
         text: '检查中',
       })
+      await control.command('waitFor', '[data-testid^="runtime-local-task-change-request-"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.match(
+        await control.command(
+          'getAttribute',
+          '[data-testid^="runtime-local-task-change-request-"]',
+          { value: 'aria-label' }
+        ),
+        /#2631.*检查中/,
+        'The runtime task sidebar did not reuse the pull request status'
+      )
       assert.match(
         await control.command('getText', CHANGE_REQUEST_BUTTON),
         /feat\(wework\): show pull request status/

@@ -8,7 +8,14 @@ import type { WorkspaceTarget } from '@/types/workspace-files'
 import { isGitWorkspaceProject } from '@/lib/projectClassification'
 import { normalizeRuntimeWorkspacePath, runtimeProjectUiId } from '@/lib/runtime-project'
 import { isCloudDevice } from '@/lib/device-selection'
+import { isRemoteDevice } from '@/lib/device-capabilities'
 import { findWorkbenchDevice } from '@/lib/workbench-device'
+import {
+  probeProjectWorktreeAvailability,
+  resolveProjectWorktreeAvailability,
+  worktreeWorkspaceDeviceId,
+  type ProjectWorktreeAvailability,
+} from '@/lib/worktree-availability'
 import {
   resolveProjectRuntimeWorkspaceTarget,
   resolveRuntimeWorkspaceContext,
@@ -36,6 +43,20 @@ export interface WorkbenchPaneEnvironment {
   createEnvironmentBranch: (branchName: string) => Promise<void>
 }
 
+export function resolveSelectedWorkspaceProject({
+  currentProject,
+  currentProjectId,
+  projects,
+}: {
+  currentProject: ProjectWithTasks | null | undefined
+  currentProjectId: number | undefined
+  projects: ProjectWithTasks[]
+}): ProjectWithTasks | null {
+  if (currentProjectId == null) return null
+  if (currentProject?.id === currentProjectId) return currentProject
+  return projects.find(project => project.id === currentProjectId) ?? null
+}
+
 export function useWorkbenchPaneEnvironment({
   pane,
   projectWork,
@@ -46,6 +67,7 @@ export function useWorkbenchPaneEnvironment({
   environmentRefreshActive?: boolean
 }): WorkbenchPaneEnvironment {
   const {
+    services,
     state,
     getProjectWorkspaceRoot,
     loadEnvironmentInfo,
@@ -57,6 +79,7 @@ export function useWorkbenchPaneEnvironment({
     checkoutEnvironmentBranch,
     createEnvironmentBranch,
   } = useWorkbenchPaneContext()
+  const runtimeWorkApi = services?.runtimeWorkApi
   const [environmentInfo, setEnvironmentInfo] = useState<EnvironmentInfo>({
     additions: '',
     deletions: '',
@@ -81,11 +104,95 @@ export function useWorkbenchPaneEnvironment({
     [currentRuntimeTask, state.projects, state.runtimeWork]
   )
   const activeConversationProject = currentProject ?? runtimeWorkspaceContext?.project ?? null
-  const selectedWorkspaceProject = projectWork.currentProjectId
-    ? (projectWork.projects.find(project => project.id === projectWork.currentProjectId) ??
-      state.projects.find(project => project.id === projectWork.currentProjectId) ??
-      null)
-    : null
+  const selectedWorkspaceProject = resolveSelectedWorkspaceProject({
+    currentProject: projectWork.currentProject,
+    currentProjectId: projectWork.currentProjectId,
+    projects: [...projectWork.projects, ...state.projects],
+  })
+  const selectedProjectDeviceWorkspace = useMemo(() => {
+    if (!selectedWorkspaceProject) return null
+    const runtimeProject = state.runtimeWork?.projects.find(
+      item => runtimeProjectUiId(item.project) === selectedWorkspaceProject.id
+    )
+    const workspaces = runtimeProject?.deviceWorkspaces ?? []
+    if (projectWork.selectedDeviceWorkspaceId != null) {
+      return (
+        workspaces.find(workspace => workspace.id === projectWork.selectedDeviceWorkspaceId) ?? null
+      )
+    }
+    return workspaces.length === 1 ? workspaces[0] : null
+  }, [projectWork.selectedDeviceWorkspaceId, selectedWorkspaceProject, state.runtimeWork?.projects])
+  const selectedWorktreeDeviceId = worktreeWorkspaceDeviceId(selectedProjectDeviceWorkspace)
+  const selectedWorktreeDevice = findWorkbenchDevice(state.devices, selectedWorktreeDeviceId)
+  const projectedWorktreeAvailability = useMemo(
+    () =>
+      resolveProjectWorktreeAvailability({
+        project: selectedWorkspaceProject,
+        workspace: selectedProjectDeviceWorkspace,
+        device: selectedWorktreeDevice,
+      }),
+    [selectedProjectDeviceWorkspace, selectedWorkspaceProject, selectedWorktreeDevice]
+  )
+  const worktreeProbeKey = [
+    selectedWorkspaceProject?.id ?? '',
+    selectedProjectDeviceWorkspace?.id ?? '',
+    selectedWorktreeDeviceId ?? '',
+    selectedProjectDeviceWorkspace?.workspacePath ?? '',
+    selectedProjectDeviceWorkspace?.repoRootFingerprint ?? '',
+    selectedWorktreeDevice?.status ?? '',
+    selectedWorktreeDevice?.runtime_features?.schemaVersion ?? '',
+    selectedWorktreeDevice?.runtime_features?.worktrees?.version ?? '',
+    selectedWorktreeDevice?.runtime_features?.worktrees?.persistentStorageVerified ?? '',
+    projectWork.worktreeBranch ?? '',
+  ].join(':')
+  const [worktreeProbe, setWorktreeProbe] = useState<{
+    key: string
+    availability: ProjectWorktreeAvailability
+  } | null>(null)
+  const worktreeProbeSequence = useRef(0)
+
+  useEffect(() => {
+    if (
+      currentRuntimeTask ||
+      !selectedWorkspaceProject ||
+      !selectedProjectDeviceWorkspace ||
+      !selectedWorktreeDevice ||
+      !runtimeWorkApi
+    ) {
+      return
+    }
+
+    const sequence = worktreeProbeSequence.current + 1
+    worktreeProbeSequence.current = sequence
+    let cancelled = false
+    void probeProjectWorktreeAvailability({
+      api: runtimeWorkApi,
+      project: selectedWorkspaceProject,
+      workspace: selectedProjectDeviceWorkspace,
+      device: selectedWorktreeDevice,
+      ref: projectWork.worktreeBranch,
+    }).then(availability => {
+      if (!cancelled && worktreeProbeSequence.current === sequence) {
+        setWorktreeProbe({ key: worktreeProbeKey, availability })
+      }
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [
+    currentRuntimeTask,
+    projectWork.worktreeBranch,
+    selectedProjectDeviceWorkspace,
+    selectedWorkspaceProject,
+    selectedWorktreeDevice,
+    runtimeWorkApi,
+    worktreeProbeKey,
+  ])
+  const worktreeAvailability =
+    worktreeProbe?.key === worktreeProbeKey
+      ? worktreeProbe.availability
+      : projectedWorktreeAvailability
   const workspaceProject = useMemo(() => {
     if (currentRuntimeTask) {
       return runtimeWorkspaceContext?.project ?? null
@@ -246,11 +353,29 @@ export function useWorkbenchPaneEnvironment({
     async ({ force, showLoading }: { force: boolean; showLoading: boolean }) => {
       const requestId = environmentInfoRequestSequence.current + 1
       environmentInfoRequestSequence.current = requestId
+      const startedAt = performance.now()
+      const logLoad = (stage: string, details: Record<string, unknown> = {}) => {
+        console.info('[Wework] Environment UI', {
+          requestId,
+          stage,
+          elapsedMs: Math.round(performance.now() - startedAt),
+          workspacePath: activeWorkspaceTarget?.path,
+          deviceId: activeWorkspaceTarget?.deviceId,
+          force,
+          showLoading,
+          ...details,
+        })
+      }
+      logLoad('requested', {
+        workspaceTargetResolving,
+        environmentWorkspaceReady,
+      })
 
       if (workspaceTargetResolving) {
         if (showLoading) {
-          setEnvironmentInfo(info => ({ ...info, loading: true }))
+          setEnvironmentInfo(info => ({ ...info, loading: true, branchLoading: true }))
         }
+        logLoad('waiting_for_workspace_target')
         return
       }
 
@@ -258,8 +383,10 @@ export function useWorkbenchPaneEnvironment({
         setEnvironmentInfo(info => ({
           ...info,
           loading: false,
+          branchLoading: false,
           error: workspaceTargetError ?? 'Workspace is not ready',
         }))
+        logLoad('workspace_not_ready', { error: workspaceTargetError })
         return
       }
 
@@ -267,7 +394,11 @@ export function useWorkbenchPaneEnvironment({
         setEnvironmentInfo(info =>
           info.workspacePath === activeWorkspaceTarget?.path &&
           info.deviceId === activeWorkspaceTarget?.deviceId
-            ? { ...info, loading: true }
+            ? {
+                ...info,
+                loading: true,
+                branchLoading: !info.branchName && info.branchLoading !== false,
+              }
             : {
                 additions: '',
                 deletions: '',
@@ -276,6 +407,7 @@ export function useWorkbenchPaneEnvironment({
                 workspacePath: activeWorkspaceTarget?.path,
                 workspaceRoots,
                 loading: true,
+                branchLoading: true,
               }
         )
       }
@@ -284,32 +416,64 @@ export function useWorkbenchPaneEnvironment({
           workspaceProject: latestWorkspaceProject,
           activeWorkspaceTarget: latestActiveWorkspaceTarget,
         } = environmentContextRef.current
-        const info = force
-          ? await loadEnvironmentInfo(latestWorkspaceProject, latestActiveWorkspaceTarget, {
-              force: true,
+        const applyEnvironmentInfo = (info: EnvironmentInfo, loading: boolean) => {
+          if (environmentInfoRequestSequence.current !== requestId) {
+            logLoad('discarded_stale_result', {
+              activeRequestId: environmentInfoRequestSequence.current,
             })
-          : await loadEnvironmentInfo(latestWorkspaceProject, latestActiveWorkspaceTarget)
-        if (environmentInfoRequestSequence.current === requestId) {
+            return
+          }
           const actualDevice = findWorkbenchDevice(
             devicesRef.current,
             latestActiveWorkspaceTarget?.deviceId ?? info.deviceId
           )
-          setEnvironmentInfo({
-            ...info,
-            workspaceRoots,
-            executionTarget: actualDevice
-              ? isCloudDevice(actualDevice)
-                ? 'cloud'
-                : 'local'
-              : info.executionTarget,
-            loading: false,
+          logLoad(loading ? 'partial_published' : 'completed', {
+            branchName: info.branchName,
+            changeRequestState: info.changeRequest?.state,
+            changeRequestNumber: info.changeRequest?.changeRequest?.number,
+          })
+          setEnvironmentInfo(current => {
+            const preserveCurrentChangeRequest =
+              loading &&
+              !info.changeRequest &&
+              current.workspacePath === info.workspacePath &&
+              current.deviceId === info.deviceId
+            return {
+              ...info,
+              ...(preserveCurrentChangeRequest && current.changeRequest
+                ? { changeRequest: current.changeRequest }
+                : {}),
+              workspaceRoots,
+              executionTarget: actualDevice
+                ? isCloudDevice(actualDevice)
+                  ? 'cloud'
+                  : isRemoteDevice(actualDevice)
+                    ? 'remote'
+                    : 'local'
+                : info.executionTarget,
+              loading,
+              branchLoading: false,
+            }
           })
         }
+        const info = await loadEnvironmentInfo(
+          latestWorkspaceProject,
+          latestActiveWorkspaceTarget,
+          {
+            ...(force ? { force: true } : {}),
+            onPartialInfo: partialInfo => applyEnvironmentInfo(partialInfo, true),
+          }
+        )
+        applyEnvironmentInfo(info, false)
       } catch (error) {
         if (environmentInfoRequestSequence.current === requestId) {
+          logLoad('failed', {
+            error: error instanceof Error ? error.message : String(error),
+          })
           setEnvironmentInfo(info => ({
             ...info,
             loading: false,
+            branchLoading: false,
             error: error instanceof Error ? error.message : 'Failed to load environment info',
           }))
         }
@@ -454,9 +618,10 @@ export function useWorkbenchPaneEnvironment({
     environmentInfo,
     projectWork: {
       ...projectWork,
+      worktreeAvailability,
       isGitProject,
       branchName: environmentInfo.branchName,
-      branchLoading: environmentInfo.loading,
+      branchLoading: environmentInfo.branchLoading ?? environmentInfo.loading,
       onRefreshBranch: undefined,
       onListBranches:
         activeWorkspaceTarget && gitActionsAvailable ? listPaneEnvironmentBranches : undefined,

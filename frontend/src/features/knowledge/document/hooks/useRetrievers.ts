@@ -7,7 +7,8 @@ import { retrieverApis, type UnifiedRetriever } from '@/apis/retrievers'
 
 export function useRetrievers(
   scope?: 'personal' | 'group' | 'organization' | 'all',
-  groupName?: string
+  groupName?: string,
+  publicOnly = false
 ) {
   const [retrievers, setRetrievers] = useState<UnifiedRetriever[]>([])
   const [loading, setLoading] = useState(true)
@@ -20,7 +21,9 @@ export function useRetrievers(
       // For group scope, pass 'group' directly to get group's retrievers + public retrievers
       const apiScope = scope === 'organization' ? 'personal' : scope || 'all'
       const response = await retrieverApis.getUnifiedRetrievers(apiScope, groupName)
-      const data = response.data || []
+      const data = (response.data || []).filter(
+        retriever => !publicOnly || retriever.type === 'public'
+      )
       // Sort by type priority based on scope, then by name
       // - Personal scope: user > public
       // - Group scope: group > public
@@ -41,7 +44,7 @@ export function useRetrievers(
     } finally {
       setLoading(false)
     }
-  }, [scope, groupName])
+  }, [scope, groupName, publicOnly])
 
   useEffect(() => {
     fetchRetrievers()

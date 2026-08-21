@@ -18,6 +18,7 @@ use std::{
 pub(crate) mod codex_model_catalog;
 mod codex_responses_proxy_transform;
 mod config;
+pub(crate) mod harness_context;
 pub(crate) mod local_model_proxy;
 
 use axum::{
@@ -142,6 +143,12 @@ where
         .route(
             local_model_proxy::HARNESS_MESSAGES_ROUTE,
             local_model_proxy::harness_messages_route(),
+        )
+        .route(harness_context::USER_ROUTE, harness_context::user_route())
+        .route(harness_context::MODEL_ROUTE, harness_context::model_route())
+        .route(
+            harness_context::STATUS_ROUTE,
+            harness_context::status_route(),
         )
         .route("/v1/attachments/sync", post(sync_attachments))
         .route("/v1/skills/sync", post(sync_skills))
@@ -1446,9 +1453,11 @@ async fn run_envd_process(request: &ProcessStartRequest) -> ProcessOutput {
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect::<Vec<_>>();
     let process_environment = process_environment::process_env(&requested_environment);
-    let mut command = Command::new(&request.process.cmd);
+    let (program, prefix_args) = crate::process::spawn_program_parts(&request.process.cmd);
+    let mut command = Command::new(program);
     crate::process::hide_windows_console(&mut command);
     command
+        .args(prefix_args)
         .args(&request.process.args)
         .env_clear()
         .envs(process_environment)

@@ -11,8 +11,10 @@ use std::{
 };
 
 use serde_json::{json, Value};
+use tokio::sync::{broadcast, Notify};
 use wegent_executor::{
     config::device::{ConnectionConfig, DeviceConfig, UpdateConfig},
+    local::app_ipc::{AppIpcError, RuntimeWorkHandler},
     local::backend::{
         local_backend_connection_failure_log_line, local_backend_registered_log_line,
         local_backend_starting_log_line, EventHandler, LocalBackendClient, LocalBackendConfig,
@@ -125,9 +127,12 @@ async fn runner_reconnects_after_two_consecutive_heartbeat_failures_to_preserve_
     let transport = ScriptedTransport::with_call_results(vec![
         Ok(json!({"success": true})),
         Ok(json!({"success": true})),
+    ])
+    .with_emit_results(vec![
+        Ok(()),
         Err("heartbeat timeout 1".to_owned()),
         Err("heartbeat timeout 2".to_owned()),
-        Ok(json!({"success": true})),
+        Ok(()),
     ]);
     let mut config = local_backend_config();
     config.heartbeat_interval = Duration::from_millis(80);
@@ -144,21 +149,79 @@ async fn runner_reconnects_after_two_consecutive_heartbeat_failures_to_preserve_
 
     assert!(transport.connects() >= 2);
     assert!(transport.disconnects() >= 1);
-    let heartbeat_calls = transport.calls_for_event("device:heartbeat");
-    assert!(heartbeat_calls.len() >= 3);
-    let retry_gap = heartbeat_calls[2]
+    let heartbeat_emits = transport.emits_for_event("device:heartbeat");
+    assert!(heartbeat_emits.len() >= 3);
+    let retry_gap = heartbeat_emits[2]
         .recorded_at
-        .duration_since(heartbeat_calls[1].recorded_at);
+        .duration_since(heartbeat_emits[1].recorded_at);
     assert!(
         retry_gap < Duration::from_millis(40),
         "expected retry gap to be shorter than the regular heartbeat interval, got {retry_gap:?}"
     );
 }
 
+#[tokio::test]
+async fn large_runtime_rpc_does_not_pause_device_heartbeats() {
+    let transport = ScriptedTransport::default();
+    let mut config = local_backend_config();
+    config.heartbeat_interval = Duration::from_millis(40);
+    config.heartbeat_timeout = Duration::from_millis(20);
+    config.reconnect_delay = Duration::from_millis(1);
+    config.reconnect_delay_max = Duration::from_millis(1);
+    let handler = Arc::new(BlockingTranscriptHandler::default());
+    let (event_tx, event_rx) = broadcast::channel(8);
+    let runner = LocalBackendRunner::new_with_shared_runtime_work_handler(
+        config,
+        transport.clone(),
+        handler.clone(),
+        event_rx,
+    )
+    .without_session_gateway();
+    drop(event_tx);
+
+    let runner_task = tokio::spawn(runner.run_forever());
+    transport.wait_for_connects(1).await;
+    let runtime_handler = transport.handler("runtime:rpc").expect("runtime handler");
+    let rpc_task = tokio::spawn(async move {
+        runtime_handler(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {"localTaskId": "large-1"}
+        }))
+        .await
+        .expect("runtime ACK")
+    });
+    handler.started.notified().await;
+
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            if transport.emits_for_event("device:heartbeat").len() >= 3 {
+                return;
+            }
+            transport.notify.notified().await;
+        }
+    })
+    .await
+    .expect("heartbeats should continue while transcript is loading");
+
+    handler.release.notify_one();
+    let ack = rpc_task.await.unwrap();
+    runner_task.abort();
+    let _ = runner_task.await;
+
+    assert_eq!(ack["__runtimeRpcEncoding"], "gzip+base64+json");
+    assert_eq!(transport.connects(), 1);
+    assert_eq!(transport.disconnects(), 0);
+}
+
 #[derive(Clone, Debug)]
 struct RecordedCall {
     event: String,
     timeout: Duration,
+}
+
+#[derive(Clone, Debug)]
+struct RecordedEmit {
+    event: String,
     recorded_at: Instant,
 }
 
@@ -166,6 +229,8 @@ struct RecordedCall {
 struct ScriptedTransport {
     calls: Arc<Mutex<Vec<RecordedCall>>>,
     call_results: Arc<Mutex<VecDeque<Result<Value, String>>>>,
+    emits: Arc<Mutex<Vec<RecordedEmit>>>,
+    emit_results: Arc<Mutex<VecDeque<Result<(), String>>>>,
     handlers: Arc<Mutex<Vec<(String, EventHandler)>>>,
     connects: Arc<Mutex<usize>>,
     disconnects: Arc<Mutex<usize>>,
@@ -180,6 +245,11 @@ impl ScriptedTransport {
         }
     }
 
+    fn with_emit_results(mut self, results: Vec<Result<(), String>>) -> Self {
+        self.emit_results = Arc::new(Mutex::new(results.into()));
+        self
+    }
+
     fn calls(&self) -> Vec<RecordedCall> {
         self.calls.lock().unwrap().clone()
     }
@@ -192,11 +262,23 @@ impl ScriptedTransport {
         *self.disconnects.lock().unwrap()
     }
 
-    fn calls_for_event(&self, event: &str) -> Vec<RecordedCall> {
-        self.calls()
-            .into_iter()
-            .filter(|call| call.event == event)
+    fn emits_for_event(&self, event: &str) -> Vec<RecordedEmit> {
+        self.emits
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|emit| emit.event == event)
+            .cloned()
             .collect()
+    }
+
+    fn handler(&self, event: &str) -> Option<EventHandler> {
+        self.handlers
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(name, _)| name == event)
+            .map(|(_, handler)| Arc::clone(handler))
     }
 
     async fn wait_for_connects(&self, count: usize) {
@@ -243,7 +325,6 @@ impl LocalBackendTransport for ScriptedTransport {
             self.calls.lock().unwrap().push(RecordedCall {
                 event: event.to_owned(),
                 timeout,
-                recorded_at: Instant::now(),
             });
             self.notify.notify_waiters();
             self.call_results
@@ -256,10 +337,21 @@ impl LocalBackendTransport for ScriptedTransport {
 
     fn emit<'a>(
         &'a self,
-        _event: &'a str,
+        event: &'a str,
         _payload: Value,
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
-        Box::pin(async { Ok(()) })
+        Box::pin(async move {
+            self.emits.lock().unwrap().push(RecordedEmit {
+                event: event.to_owned(),
+                recorded_at: Instant::now(),
+            });
+            self.notify.notify_waiters();
+            self.emit_results
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or(Ok(()))
+        })
     }
 
     fn on(&self, event: &str, handler: EventHandler) {
@@ -267,6 +359,34 @@ impl LocalBackendTransport for ScriptedTransport {
             .lock()
             .unwrap()
             .push((event.to_owned(), handler));
+    }
+}
+
+#[derive(Default)]
+struct BlockingTranscriptHandler {
+    started: Notify,
+    release: Notify,
+}
+
+impl RuntimeWorkHandler for BlockingTranscriptHandler {
+    fn handle_runtime_rpc<'a>(
+        &'a self,
+        data: Value,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
+        Box::pin(async move {
+            if data.get("method").and_then(Value::as_str) == Some("runtime.tasks.transcript") {
+                self.started.notify_one();
+                self.release.notified().await;
+                return Ok(json!({
+                    "success": true,
+                    "messages": [{
+                        "id": "message-1",
+                        "content": "large transcript ".repeat(80_000),
+                    }],
+                }));
+            }
+            Ok(json!({"success": true, "available": true}))
+        })
     }
 }
 

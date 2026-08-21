@@ -130,6 +130,7 @@ class ExternalDocumentContentResponse(BaseModel):
     total_length: int
     has_more: bool
     index_status: Optional[str] = None
+    source_media_type: Optional[str] = None
 
 
 class ExternalDocumentDownloadResponse(BaseModel):

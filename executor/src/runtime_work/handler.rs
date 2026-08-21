@@ -40,8 +40,10 @@ use crate::{
     logging::log_executor_event,
     protocol::ExecutionRequest,
     runner::ExecutionOutcome,
-    server::{executor_loopback_base_url, local_model_proxy},
+    server::{executor_loopback_base_url, harness_context, local_model_proxy},
 };
+
+const WORKTREE_RECONCILIATION_RETRY_INTERVAL: Duration = Duration::from_secs(5);
 
 mod archives;
 mod automation_rpc;
@@ -86,9 +88,11 @@ use super::{
         workspace_response, RuntimeTaskLink, RuntimeWorkspaceLink, SearchResultMatch,
     },
     runtime_handle_messages::{
-        append_runtime_handle_message, append_runtime_handle_user_message_presentation,
-        cached_messages, clear_runtime_handle_messages, set_runtime_handle_messages,
-        user_message_presentations,
+        append_completed_transcript_messages, append_runtime_handle_message,
+        append_runtime_handle_user_message_presentation,
+        bind_runtime_handle_user_message_presentation_to_turn, cached_messages,
+        clear_completed_transcript_messages, clear_runtime_handle_messages,
+        completed_transcript_messages, set_runtime_handle_messages, user_message_presentations,
     },
     store::{runtime_work_dir, RuntimeWorkStore},
     transcript::{
@@ -100,8 +104,9 @@ use super::{
         apply_runtime_payload_metadata, bool_field, cloud_project_id, execution_request, id_field,
         infer_workspace_kind, integer_field, is_codex_context_compaction_item_type, item_id,
         item_type, normalize_device_id, normalize_workspace_path, now_ms, prompt_text,
-        restore_cloud_project_id, restore_origin, runtime_task_id, string_field,
-        timestamp_ms_field, workspace_group_path, workspace_path,
+        restore_cloud_project_id, restore_origin, runtime_task_id, runtime_task_title,
+        set_runtime_task_title, string_field, timestamp_ms_field, workspace_group_path,
+        workspace_path,
     },
     worktrees::{WorktreeManager, WorktreeSettingsPatch},
 };
@@ -131,6 +136,23 @@ const CODEX_OFFICIAL_PROVIDER_NAME: &str = "CodeX";
 const DEFAULT_MAX_CONCURRENT_TASKS: usize = 10;
 const MIN_MAX_CONCURRENT_TASKS: usize = 1;
 const MAX_MAX_CONCURRENT_TASKS: usize = 20;
+
+fn worktree_error_code(error: &str) -> &'static str {
+    [
+        "worktree_source_missing",
+        "worktree_source_not_git",
+        "worktree_source_changed",
+        "worktree_root_unwritable",
+        "worktree_git_common_dir_unwritable",
+        "worktree_ref_not_found",
+        "worktree_target_conflict",
+        "worktree_device_mismatch",
+        "worktree_persistent_storage_unverified",
+    ]
+    .into_iter()
+    .find(|code| error.starts_with(&format!("{code}:")))
+    .unwrap_or("worktree_prepare_failed")
+}
 
 #[derive(Clone, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -212,11 +234,6 @@ impl RuntimeTurnScheduler {
             .queued_turns
             .iter()
             .position(|turn| turn.local_task_id == local_task_id)?;
-        if self.active_tasks >= self.max_concurrent_tasks {
-            let turn = self.queued_turns.remove(position)?;
-            self.queued_turns.push_front(turn);
-            return None;
-        }
         let turn = self.queued_turns.remove(position)?;
         self.active_tasks += 1;
         self.active_task_ids.insert(turn.local_task_id.clone());
@@ -441,6 +458,7 @@ pub struct RuntimeWorkRpcHandler {
     automation_store: AutomationStore,
     store: RuntimeWorkStore,
     worktrees: WorktreeManager,
+    worktree_reconciliation_state: Arc<AsyncMutex<WorktreeReconciliationState>>,
     worktree_cleanup_generation: Arc<AtomicU64>,
     opened_workspace_roots: Arc<Mutex<HashSet<PathBuf>>>,
     hook_service: HookService,
@@ -458,8 +476,17 @@ struct CodexRuntimeProxyConfig {
     proxy_url: Option<String>,
 }
 
+#[derive(Default)]
+struct WorktreeReconciliationState {
+    completed: bool,
+    last_attempt: Option<Instant>,
+}
+
 struct ActiveTurnCancellation {
     execution_id: u64,
+    stop_requested: bool,
+    stop_acknowledged: bool,
+    managed_worktree_path: Option<PathBuf>,
     cancel: oneshot::Sender<()>,
     stopped: oneshot::Receiver<()>,
 }
@@ -484,6 +511,7 @@ struct ActiveCodexTurn {
 
 #[derive(Clone)]
 struct ActiveCodexTranscriptItems {
+    thread_id: String,
     turn_id: String,
     items: Vec<Value>,
 }
@@ -498,6 +526,26 @@ struct RuntimeThreadEventRoute {
 struct ScheduledTurnGuard {
     handler: RuntimeWorkRpcHandler,
     local_task_id: String,
+}
+
+struct StoppedTurnGuard {
+    sender: Option<oneshot::Sender<()>>,
+}
+
+impl StoppedTurnGuard {
+    fn new(sender: oneshot::Sender<()>) -> Self {
+        Self {
+            sender: Some(sender),
+        }
+    }
+}
+
+impl Drop for StoppedTurnGuard {
+    fn drop(&mut self) {
+        if let Some(sender) = self.sender.take() {
+            let _ = sender.send(());
+        }
+    }
 }
 
 impl ScheduledTurnGuard {
@@ -540,17 +588,28 @@ impl RuntimeThreadEventRoute {
 impl RuntimeWorkRpcHandler {
     pub fn new(device_id: impl Into<String>, codex_binary: impl Into<String>) -> Self {
         let codex_binary = codex_binary.into();
+        let device_id = normalize_device_id(device_id.into());
         let (archived_delete_tx, archived_delete_rx) = mpsc::unbounded_channel();
         let codex_app_server = CodexAppServerClient::new(codex_binary);
         let runtime_settings = system::read_runtime_settings();
+        let store = RuntimeWorkStore::from_env();
+        let worktrees = WorktreeManager::from_env(&device_id);
         let turn_queue_path = turns::runtime_turn_queue_path();
-        let queued_turns =
+        let mut queued_turns =
             turns::read_runtime_turn_queue(&turn_queue_path).unwrap_or_else(|error| {
                 log_executor_event("runtime turn queue restore failed", &[("error", error)]);
                 VecDeque::new()
             });
+        let removed_worktree_turn_count =
+            turns::remove_worktree_turns_after_restart(&worktrees, &mut queued_turns);
+        if removed_worktree_turn_count > 0 {
+            log_executor_event(
+                "persisted worktree turns removed after executor restart",
+                &[("count", removed_worktree_turn_count.to_string())],
+            );
+        }
         let handler = Self {
-            device_id: normalize_device_id(device_id.into()),
+            device_id,
             connectors: ConnectorRuntime::new(codex_app_server.clone()),
             codex_app_server,
             claude_process_engine: AgentProcessEngine::new(AgentCommandPlanner::from_env()),
@@ -577,8 +636,11 @@ impl RuntimeWorkRpcHandler {
             notification_router: Arc::new(Mutex::new(None)),
             archived_delete_tx,
             automation_store: AutomationStore::from_env(),
-            store: RuntimeWorkStore::from_env(),
-            worktrees: WorktreeManager::from_env(),
+            store,
+            worktrees,
+            worktree_reconciliation_state: Arc::new(AsyncMutex::new(
+                WorktreeReconciliationState::default(),
+            )),
             worktree_cleanup_generation: Arc::new(AtomicU64::new(0)),
             opened_workspace_roots: Arc::new(Mutex::new(HashSet::new())),
             hook_service: HookService::from_env(),
@@ -600,6 +662,7 @@ impl RuntimeWorkRpcHandler {
         if let Some(sender) = handler.event_tx.clone() {
             handler.hook_service.set_event_sender(sender);
         }
+        handler.spawn_startup_worktree_reconciliation();
         handler.start_automation_scheduler();
         handler
     }
@@ -661,7 +724,13 @@ impl RuntimeWorkRpcHandler {
     }
 
     async fn dispatch(&self, method: &str, payload: Value) -> Result<Value, AppIpcError> {
-        self.resume_persisted_turns().await;
+        if !matches!(
+            method,
+            "runtime.worktrees.capabilities" | "runtime.worktrees.preflight"
+        ) && self.reconcile_worktrees_once().await
+        {
+            self.resume_persisted_turns().await;
+        }
         match method {
             "runtime.tasks.list" => self.list_tasks().await,
             "runtime.tasks.search" => self.search_tasks(payload).await,
@@ -727,6 +796,8 @@ impl RuntimeWorkRpcHandler {
             "runtime.codex.stream_debug.set" => self.set_codex_stream_debug(payload).await,
             "runtime.harness_proxy.register" => self.register_harness_proxy(payload).await,
             "runtime.harness_proxy.unregister" => self.unregister_harness_proxy(payload).await,
+            "runtime.harness_context.register" => self.register_harness_context(payload).await,
+            "runtime.harness_context.unregister" => self.unregister_harness_context(payload).await,
             "runtime.connectors.configure" => self.connectors.configure(payload).await,
             "runtime.connectors.clear" => self.connectors.clear(payload).await,
             "runtime.connectors.status" => self.connectors.status().await,
@@ -764,6 +835,8 @@ impl RuntimeWorkRpcHandler {
                 self.archive_project_conversations(payload).await
             }
             "runtime.archived_conversations.archive_all" => self.archive_all_conversations().await,
+            "runtime.worktrees.capabilities" => self.get_worktree_capabilities().await,
+            "runtime.worktrees.preflight" => self.preflight_worktree(payload).await,
             "runtime.worktrees.settings.get" => self.get_worktree_settings().await,
             "runtime.worktrees.settings.update" => self.update_worktree_settings(payload).await,
             "runtime.worktrees.prepare" => self.prepare_worktree(payload).await,

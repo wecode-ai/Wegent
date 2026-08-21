@@ -121,6 +121,36 @@ docker run -d --platform linux/amd64 \
 
 `WEGENT_BACKEND_URL` 是 Executor 使用的 HTTP API 地址。17888 端口提供带 token 校验的设备会话网关；需要确保根据 `client_origin` 生成的地址能被用户浏览器访问。可以通过 Dockerfile 的构建参数选择公开的软件包和系统镜像源，无需修改 Dockerfile。
 
+### 托管云设备的持久化契约
+
+托管云设备只有在部署平台把持久卷固定挂载到 `/home/wegent/.wecode/wegent-executor` 时才能开放 Git Worktree。该目录同时保存项目工作区、Chats 工作区、托管 Worktree、Runtime Task Store、`worktrees.json`、快照 refs、能力缓存和会话状态；实例重启或替换后必须把同一持久卷重新挂载到同一绝对路径，再启动 Executor。
+
+部署必须把稳定的逻辑设备 ID 写入 `WEGENT_EXECUTOR_HOME_ID`，并保证 `LOCAL_WORKSPACE_ROOT` 位于 `WEGENT_EXECUTOR_HOME` 内。设备镜像启动时会拒绝相对路径、变化的挂载路径、不可写目录、与持久卷中既有设备 ID 不匹配的实例，以及同时写入同一 Executor Home 的第二个 Executor 进程。镜像只能验证路径、身份、写权限和单写锁，无法自行证明底层存储是否真正持久；云设备 Provider 仍需把持久卷附着、重挂载和备份恢复作为部署验收门槛。
+
+如果云平台不能保证这些条件，不得仅凭 Executor capability 开放云端 Worktree。实例重建后丢失持久卷应报告为不可恢复的存储故障，不能创建同名空目录或回退到项目主工作区继续运行。
+
+仓库提供了分阶段验收探针。第一次在旧实例运行 `seed`，由探针创建真实 Git 仓库、Git Worktree 和 Runtime 状态标记；平台替换实例并把同一持久卷挂回同一绝对路径后，在新实例运行 `verify`。`WEGENT_ACCEPTANCE_INSTANCE_ID` 必须使用 Pod UID、虚拟机实例 ID 等平台真实实例标识，第二阶段必须与第一阶段不同：
+
+```bash
+export WEGENT_EXECUTOR_HOME=/home/wegent/.wecode/wegent-executor
+export LOCAL_WORKSPACE_ROOT="$WEGENT_EXECUTOR_HOME/workspace"
+export WEGENT_EXECUTOR_HOME_ID=<stable-logical-device-id>
+export WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED=true
+export WEGENT_ACCEPTANCE_INSTANCE_ID=<old-instance-id>
+export WEGENT_ACCEPTANCE_VOLUME_ID=<pvc-or-pv-uid>
+scripts/acceptance/executor-home-persistence-probe.sh seed
+
+# 替换实例并重新挂载同一持久卷后：
+export WEGENT_ACCEPTANCE_INSTANCE_ID=<replacement-instance-id>
+# WEGENT_ACCEPTANCE_VOLUME_ID 必须仍是同一个平台卷 UID。
+scripts/acceptance/executor-home-persistence-probe.sh verify
+scripts/acceptance/executor-home-persistence-probe.sh cleanup
+```
+
+`seed`、`verify` 和 `cleanup` 都会通过真实 Executor App IPC 调用 `runtime.worktrees.capabilities`，并且只接受 `persistentStorageVerified=true`。Worktree 由 `runtime.worktrees.prepare` 创建，实例替换后由 `runtime.worktrees.list` 对账，最后由 `runtime.worktrees.delete` 清理，不再以手写 `git worktree add` 代替 Executor 生命周期。`verify` 还会检查平台卷 UID、逻辑设备身份、`device-config.json` 中的稳定 `runtime_instance_id`、Executor Home 和 Workspace 的绝对路径、源仓库 HEAD、Git common dir、Worktree `.git` 文件、Worktree 内容以及 Runtime 状态是否跨实例保持。相同实例 ID、不同卷 UID、不同 Runtime Instance ID、错误设备 ID、路径变化或数据丢失都会返回非零退出码，不能作为通过处理。
+
+Backend 会在 Cloud/Remote 设备首次注册时固定 `runtimeInstanceId`。后续同一逻辑设备如果携带新的或空的 Runtime Instance ID，注册会以持久存储身份不匹配失败，不能覆盖旧值或创建旁路设备记录。因此误挂全新空卷时，即使部署仍传入原 `DEVICE_ID`，新卷生成的新 Runtime Instance ID 也不能让设备静默重新上线。Local/App 设备保持原有可更新行为。
+
 ### 添加远程 Docker 设备
 
 远程 Docker 设备适合把一台自管服务器或容器主机接入 Wegent。它和云设备一样通过设备 WebSocket 协议接收任务，并支持终端与 code-server 会话；区别是容器生命周期由用户自己管理，Wegent 不会自动创建、重启或销毁这台 Docker 容器。
@@ -138,6 +168,8 @@ docker run -d \
   -e DEVICE_TYPE=remote \
   -e EXECUTOR_MODE=local \
   -e DEVICE_ID=<generated-device-id> \
+  -e WEGENT_EXECUTOR_HOME_ID=<generated-device-id> \
+  -e WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED=true \
   -e DEVICE_NAME=<generated-device-name> \
   -e WEGENT_BACKEND_URL=https://backend.example.com \
   -e WEGENT_AUTH_TOKEN=<generated-api-key> \
@@ -149,9 +181,18 @@ docker run -d \
 
 生成接口继续兼容可选的 `client_origin`，并依次使用它、请求来源或 Backend 地址生成 `DEVICE_PUBLIC_BASE_URL`。`WEGENT_AUTH_TOKEN` 每次生成命令时都会新建一把 remote device API Key，只出现在生成命令中。
 
-`-v wegent-remote-device-home:/home/wegent/.wecode/wegent-executor` 会把 Docker 命名卷 `wegent-remote-device-home` 挂载到 Executor home。该卷持久化工作区、下载的能力、配置和运行数据，使容器删除并按同名命令重建后仍能复用这些数据。`DEVICE_ID` 和连接 token 来自启动命令的环境变量，不由该卷保存。为避免卷中旧二进制阻碍升级，容器每次启动都会用当前镜像内的 Executor 刷新卷中的 `bin/wegent-executor`，其他数据保持不变。删除容器不会删除命名卷；只有显式执行 `docker volume rm wegent-remote-device-home` 才会清除它。
+`-v wegent-remote-device-home:/home/wegent/.wecode/wegent-executor` 会把 Docker 命名卷 `wegent-remote-device-home` 挂载到 Executor home。该卷持久化工作区、下载的能力、配置和运行数据，使容器删除并按同名命令重建后仍能复用这些数据。`WEGENT_EXECUTOR_HOME_ID` 将该卷固定到逻辑设备；`WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED=true` 表示这条启动命令已经提供并验证稳定卷、固定绝对挂载路径和单写约束，Executor 才会向 Wework 开放 Remote Worktree。不要在临时目录、匿名卷或未完成持久化验收的部署中设置该值。`DEVICE_ID` 和连接 token 来自启动命令的环境变量，不由该卷保存。为避免卷中旧二进制阻碍升级，容器每次启动都会用当前镜像内的 Executor 刷新卷中的 `bin/wegent-executor`，其他数据保持不变。删除容器不会删除命名卷；只有显式执行 `docker volume rm wegent-remote-device-home` 才会清除它。
 
 设备镜像由 Backend 环境变量 `REMOTE_DEVICE_DOCKER_IMAGE` 控制，默认使用 `ghcr.io/wecode-ai/wegent-device:latest`。需要可复现部署时应固定发布版本或 digest。公共发布工作流会发布多架构镜像，并校验镜像架构、OCI 版本、源码 revision 和 Executor 版本。
+
+在开放 Remote Docker Worktree 前，应在安装了 Docker 且 daemon 可用的目标主机执行真实容器验收：
+
+```bash
+WEGENT_REMOTE_DEVICE_ACCEPTANCE_IMAGE=ghcr.io/wecode-ai/wegent-device:<version> \
+  scripts/acceptance/remote-device-worktree-persistence.sh
+```
+
+如需同时验收镜像升级，可再设置 `WEGENT_REMOTE_DEVICE_REBUILD_IMAGE=<new-version-or-digest>`。脚本会使用独立命名卷完成首个容器启动、真实 Executor Runtime Instance 初始化、Worktree capability 持久化证明、真实 Executor Worktree prepare/list/delete RPC、第二写入者拒绝、容器删除、镜像重建、同卷身份与 Runtime Instance 校验、二进制刷新、错误设备身份拒绝、再次恢复验证和清理。没有 Docker CLI、daemon 不可用或任一不变量失败时，脚本都会以非零状态退出，不会跳过。诊断时可设置 `WEGENT_ACCEPTANCE_KEEP_ARTIFACTS=1` 保留容器和卷。
 
 目标主机的内网防火墙需要允许浏览器访问 17888，但不能把该端口开放到公网。17888 只提供带短期会话 token 的 IDE 访问；session gateway 校验 token 后设置 HttpOnly Cookie，并从重定向 URL 中移除 token，不提供匿名 code-server 入口。
 

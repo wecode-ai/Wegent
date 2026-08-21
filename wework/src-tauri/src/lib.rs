@@ -7,8 +7,10 @@ mod diagram_image;
 mod embedded_browser;
 #[cfg(target_os = "macos")]
 mod embedded_browser_tls;
+mod execution_environments;
 #[cfg(desktop)]
 mod feedback;
+mod harness_apps;
 mod inline_visualization;
 mod local_executor;
 mod local_terminal;
@@ -29,11 +31,13 @@ mod system_sleep;
 mod todo_store;
 mod wecode;
 mod workbench_background;
+#[cfg(desktop)]
+mod workbench_plugins;
 
 use std::collections::{HashMap, HashSet};
 #[cfg(desktop)]
 use std::sync::{
-    atomic::{AtomicBool, AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering},
     Mutex,
 };
 use tauri::Manager;
@@ -919,9 +923,60 @@ enum MainWindowOpenAction {
 }
 
 #[cfg(desktop)]
+#[derive(Default)]
+struct MainWindowDestroyExitGuard {
+    state: AtomicU8,
+}
+
+#[cfg(desktop)]
+impl MainWindowDestroyExitGuard {
+    const IDLE: u8 = 0;
+    const DESTROY_REQUESTED: u8 = 1;
+    const PREVENT_NEXT_EXIT: u8 = 2;
+
+    fn begin(&self) {
+        self.state.store(Self::DESTROY_REQUESTED, Ordering::SeqCst);
+    }
+
+    fn cancel(&self) {
+        let _ = self.state.compare_exchange(
+            Self::DESTROY_REQUESTED,
+            Self::IDLE,
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        );
+    }
+
+    fn finish(&self, is_last_window: bool) {
+        let next = if is_last_window {
+            Self::PREVENT_NEXT_EXIT
+        } else {
+            Self::IDLE
+        };
+        let _ = self.state.compare_exchange(
+            Self::DESTROY_REQUESTED,
+            next,
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        );
+    }
+
+    fn take_exit_prevention(&self) -> bool {
+        self.state
+            .compare_exchange(
+                Self::PREVENT_NEXT_EXIT,
+                Self::IDLE,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            )
+            .is_ok()
+    }
+}
+
+#[cfg(desktop)]
 struct MainWindowLifecycleState {
     dock_icon_visible: AtomicBool,
-    destroy_to_tray_in_progress: AtomicBool,
+    destroy_exit_guard: MainWindowDestroyExitGuard,
     pending_open_action: Mutex<Option<MainWindowOpenAction>>,
     frontend_recovery_ready: AtomicBool,
     frontend_probe_in_flight: AtomicBool,
@@ -1050,7 +1105,7 @@ impl Default for MainWindowLifecycleState {
     fn default() -> Self {
         Self {
             dock_icon_visible: AtomicBool::new(true),
-            destroy_to_tray_in_progress: AtomicBool::new(false),
+            destroy_exit_guard: MainWindowDestroyExitGuard::default(),
             pending_open_action: Mutex::new(None),
             frontend_recovery_ready: AtomicBool::new(false),
             frontend_probe_in_flight: AtomicBool::new(false),
@@ -2723,6 +2778,15 @@ fn save_text_file_to_downloads(
         return Err("File content is empty".to_string());
     }
 
+    save_bytes_to_downloads(&app, &filename, content.as_bytes(), "plan.md")
+}
+
+fn save_bytes_to_downloads(
+    app: &tauri::AppHandle,
+    filename: &str,
+    bytes: &[u8],
+    fallback_filename: &str,
+) -> Result<String, String> {
     let downloads_dir = app
         .path()
         .download_dir()
@@ -2730,13 +2794,25 @@ fn save_text_file_to_downloads(
     std::fs::create_dir_all(&downloads_dir)
         .map_err(|error| format!("Failed to create Downloads directory: {error}"))?;
 
-    let filename = sanitized_download_filename(&filename, std::path::Path::new("plan.md"));
+    let filename = sanitized_download_filename(filename, std::path::Path::new(fallback_filename));
     let target_path = unique_download_path(&downloads_dir, &filename);
-    std::fs::write(&target_path, content)
+    std::fs::write(&target_path, bytes)
         .map_err(|error| format!("Failed to save file to Downloads: {error}"))?;
     notify_download_finished(&target_path);
 
     Ok(target_path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn save_binary_file_to_downloads(
+    app: tauri::AppHandle,
+    filename: String,
+    bytes: Vec<u8>,
+) -> Result<String, String> {
+    if bytes.is_empty() {
+        return Err("File content is empty".to_string());
+    }
+    save_bytes_to_downloads(&app, &filename, &bytes, "download")
 }
 
 fn default_executor_home(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
@@ -3063,15 +3139,11 @@ fn recreate_unresponsive_main_window<R: tauri::Runtime>(app: tauri::AppHandle<R>
     let placement = main_window_placement(&window);
     let state = app.state::<MainWindowLifecycleState>();
     state.frontend_recovery_ready.store(false, Ordering::SeqCst);
-    state
-        .destroy_to_tray_in_progress
-        .store(true, Ordering::SeqCst);
+    state.destroy_exit_guard.begin();
 
     log::warn!("Recreating unresponsive main WebView after resume probe timed out");
     if let Err(error) = window.destroy() {
-        state
-            .destroy_to_tray_in_progress
-            .store(false, Ordering::SeqCst);
+        state.destroy_exit_guard.cancel();
         state
             .frontend_probe_in_flight
             .store(false, Ordering::SeqCst);
@@ -3196,13 +3268,9 @@ fn maybe_show_main_window_on_launch(app: &tauri::AppHandle) {
 fn destroy_main_window_to_tray<R: tauri::Runtime>(window: &tauri::Window<R>) {
     let app = window.app_handle();
     let state = app.state::<MainWindowLifecycleState>();
-    state
-        .destroy_to_tray_in_progress
-        .store(true, Ordering::SeqCst);
+    state.destroy_exit_guard.begin();
     if let Err(error) = window.destroy() {
-        state
-            .destroy_to_tray_in_progress
-            .store(false, Ordering::SeqCst);
+        state.destroy_exit_guard.cancel();
         set_dock_icon_visible(app, true);
         log::warn!("Failed to destroy main window for tray background mode: {error}");
         return;
@@ -3267,13 +3335,9 @@ fn close_main_window_to_tray(
         Err(_) => log::warn!("Failed to lock app preferences for close-to-tray acknowledgement"),
     }
     let state = app.state::<MainWindowLifecycleState>();
-    state
-        .destroy_to_tray_in_progress
-        .store(true, Ordering::SeqCst);
+    state.destroy_exit_guard.begin();
     if let Err(error) = window.destroy() {
-        state
-            .destroy_to_tray_in_progress
-            .store(false, Ordering::SeqCst);
+        state.destroy_exit_guard.cancel();
         set_dock_icon_visible(&app, true);
         return Err(format!(
             "Failed to destroy main window for tray background mode: {error}"
@@ -3287,6 +3351,20 @@ fn close_main_window_to_tray(
 #[tauri::command]
 fn close_main_window_to_tray(_app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
+}
+
+#[cfg(desktop)]
+fn handle_main_window_destroyed<R: tauri::Runtime>(
+    window: &tauri::Window<R>,
+    event: &tauri::WindowEvent,
+) {
+    if window.label() != MAIN_WINDOW_LABEL || !matches!(event, tauri::WindowEvent::Destroyed) {
+        return;
+    }
+
+    let app = window.app_handle();
+    let state = app.state::<MainWindowLifecycleState>();
+    state.destroy_exit_guard.finish(app.windows().is_empty());
 }
 
 #[cfg(desktop)]
@@ -4314,7 +4392,7 @@ mod tests {
     #[cfg(desktop)]
     use super::{
         close_native_sentry_guard, sanitize_native_sentry_event, should_probe_frontend_after_focus,
-        AppPreferences, AppPreferencesPatch, PatchField,
+        AppPreferences, AppPreferencesPatch, MainWindowDestroyExitGuard, PatchField,
     };
     use std::collections::HashSet;
     #[cfg(desktop)]
@@ -4387,6 +4465,40 @@ mod tests {
         assert!(!should_probe_frontend_after_focus(Duration::from_secs(59)));
         assert!(should_probe_frontend_after_focus(Duration::from_secs(60)));
         assert!(should_probe_frontend_after_focus(Duration::from_secs(120)));
+    }
+
+    #[cfg(desktop)]
+    #[test]
+    fn prevents_only_the_exit_triggered_by_destroying_the_last_main_window() {
+        let guard = MainWindowDestroyExitGuard::default();
+
+        guard.begin();
+        guard.finish(true);
+
+        assert!(guard.take_exit_prevention());
+        assert!(!guard.take_exit_prevention());
+    }
+
+    #[cfg(desktop)]
+    #[test]
+    fn does_not_leak_exit_prevention_when_other_windows_remain() {
+        let guard = MainWindowDestroyExitGuard::default();
+
+        guard.begin();
+        guard.finish(false);
+
+        assert!(!guard.take_exit_prevention());
+    }
+
+    #[cfg(desktop)]
+    #[test]
+    fn cancels_exit_prevention_when_main_window_destroy_fails() {
+        let guard = MainWindowDestroyExitGuard::default();
+
+        guard.begin();
+        guard.cancel();
+
+        assert!(!guard.take_exit_prevention());
     }
 
     #[cfg(desktop)]
@@ -4933,15 +5045,20 @@ pub fn run() {
     #[cfg(desktop)]
     let builder = builder.manage(NativeTelemetryState::default());
 
+    #[cfg(desktop)]
+    let builder = builder.manage(workbench_plugins::WorkbenchPluginState::default());
+
     let app = builder
         .manage(appshots::AppshotState::default())
         .manage(embedded_browser::EmbeddedBrowserState::default())
+        .manage(execution_environments::ExecutionEnvironmentState::default())
         .manage(AppPreferencesWriteState::default())
         .manage(MainWindowLifecycleState::default())
         .manage(LocalWorkspaceOpenState::default())
         .manage(TrayVisualState::default())
         .manage(local_executor::LocalExecutorState::default())
         .manage(local_terminal::LocalTerminalState::default())
+        .manage(harness_apps::HarnessAppRuntimeState::default())
         .manage(popout_window::PopoutWindowState::default())
         .manage(system_drag::SystemDragState::default())
         .manage(system_lock::SystemLockState::default())
@@ -4949,6 +5066,7 @@ pub fn run() {
         .on_window_event(|window, event| {
             #[cfg(desktop)]
             {
+                handle_main_window_destroyed(window, event);
                 if let tauri::WindowEvent::Focused(focused) = event {
                     handle_main_window_focus_for_frontend_recovery(window, *focused);
                     emit_main_window_focus_changed(window, *focused);
@@ -5047,6 +5165,8 @@ pub fn run() {
             #[cfg(desktop)]
             storage_maintenance::schedule(app.handle().clone());
             #[cfg(desktop)]
+            execution_environments::setup(app.handle());
+            #[cfg(desktop)]
             if env_flag_enabled(WEBVIEW_DEVTOOLS_ENV) {
                 if let Err(error) = open_main_webview_devtools_impl(app.handle()) {
                     log::warn!("Failed to open Web Inspector from {WEBVIEW_DEVTOOLS_ENV}: {error}");
@@ -5084,6 +5204,8 @@ pub fn run() {
             embedded_browser::embedded_browser_eval_json,
             embedded_browser::embedded_browser_go_back,
             embedded_browser::embedded_browser_go_forward,
+            embedded_browser::embedded_browser_history_remove,
+            embedded_browser::embedded_browser_history_search,
             embedded_browser::embedded_browser_navigate,
             embedded_browser::embedded_browser_open,
             embedded_browser::embedded_browser_pending_open_requests,
@@ -5095,7 +5217,22 @@ pub fn run() {
             embedded_browser::embedded_browser_resolve_agent_approval,
             embedded_browser::embedded_browser_resume_download,
             embedded_browser::embedded_browser_set_agent_control_paused,
+            embedded_browser::embedded_browser_set_zoom,
             embedded_browser::embedded_browser_set_bounds,
+            execution_environments::install_execution_environment,
+            execution_environments::list_execution_environments,
+            execution_environments::remove_execution_environment,
+            harness_apps::delete_harness_app,
+            harness_apps::install_harness_app,
+            harness_apps::list_harness_apps,
+            harness_apps::preview_harness_app,
+            harness_apps::start_harness_app,
+            harness_apps::store_harness_app_context_token,
+            harness_apps::store_harness_app_proxy_token,
+            harness_apps::stop_harness_app,
+            harness_apps::take_harness_app_context_token,
+            harness_apps::take_harness_app_proxy_token,
+            harness_apps::update_harness_app,
             local_terminal::archive_local_harness_session,
             local_terminal::attach_local_terminal,
             local_terminal::close_local_terminal,
@@ -5105,6 +5242,18 @@ pub fn run() {
             local_workspace_files::list_local_workspace_entries,
             workbench_background::import_workbench_background,
             workbench_background::remove_workbench_background,
+            #[cfg(desktop)]
+            workbench_plugins::workbench_plugin_authorize_capability,
+            #[cfg(desktop)]
+            workbench_plugins::workbench_plugin_inspect,
+            #[cfg(desktop)]
+            workbench_plugins::workbench_plugin_list,
+            #[cfg(desktop)]
+            workbench_plugins::workbench_plugin_request,
+            #[cfg(desktop)]
+            workbench_plugins::workbench_plugin_start,
+            #[cfg(desktop)]
+            workbench_plugins::workbench_plugin_stop,
             pick_workspace_paths,
             read_clipboard_workspace_paths,
             read_dropped_workspace_paths,
@@ -5135,6 +5284,7 @@ pub fn run() {
             local_executor::local_executor_package_plugin,
             local_executor::local_executor_read_plugin_cloud_links,
             local_executor::local_executor_list_personal_marketplace_plugins,
+            local_executor::local_executor_list_wegent_store_plugins,
             local_executor::local_executor_read_plugin_manifest,
             local_executor::local_executor_read_codex_local_config,
             local_executor::local_executor_read_log,
@@ -5155,6 +5305,7 @@ pub fn run() {
             update_app_preferences,
             download_local_file_to_downloads,
             save_text_file_to_downloads,
+            save_binary_file_to_downloads,
             local_path_exists,
             get_local_path_kind,
             open_local_file,
@@ -5178,7 +5329,9 @@ pub fn run() {
             todo_store::write_todo_workspace_file,
             system_drag::complete_system_drag_drop,
             system_drag::dismiss_system_drag_panel,
+            system_drag::get_system_drag_panel_visibility_for_e2e,
             system_drag::log_system_drag_debug,
+            system_drag::show_system_drag_panel_for_e2e,
             system_drag::take_pending_system_drag_drops,
             #[cfg(desktop)]
             system_lock::get_system_session_locked,
@@ -5236,17 +5389,21 @@ pub fn run() {
             }
             tauri::RunEvent::ExitRequested { api, .. } => {
                 let lifecycle = app_handle.state::<MainWindowLifecycleState>();
-                if lifecycle.destroy_to_tray_in_progress.load(Ordering::SeqCst) {
+                if lifecycle.destroy_exit_guard.take_exit_prevention() {
                     api.prevent_exit();
-                    lifecycle
-                        .destroy_to_tray_in_progress
-                        .store(false, Ordering::SeqCst);
                     return;
                 }
                 shutdown_local_executor_for_app(app_handle, "run_event_exit_requested");
             }
             tauri::RunEvent::Exit => {
                 shutdown_local_executor_for_app(app_handle, "run_event_exit");
+                #[cfg(desktop)]
+                {
+                    let state = app_handle.state::<workbench_plugins::WorkbenchPluginState>();
+                    workbench_plugins::shutdown(state.inner());
+                    let harness_state = app_handle.state::<harness_apps::HarnessAppRuntimeState>();
+                    harness_apps::shutdown(harness_state.inner());
+                }
             }
             _ => {}
         }

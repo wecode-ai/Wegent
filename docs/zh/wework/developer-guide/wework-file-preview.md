@@ -8,7 +8,7 @@ Wework 文件面板使用 Markdown 渲染器预览 Markdown 文档，将其他�
 
 ## 支持范围
 
-预览器启用 office、lite 和 engineering 能力：PDF、Word、Excel、PowerPoint、图片、HTML、Markdown、代码、音频、视频，以及 Mermaid 和 PlantUML 图表。未知格式或渲染失败时，macOS Tauri 应用可使用系统默认应用打开文件。
+预览器启用 office、lite 和 engineering 能力：PDF、Word、Excel、PowerPoint、图片、HTML、Markdown、代码、音频、视频，以及 Mermaid 和 PlantUML 图表。代码和文本预览不得以扩展名白名单作为能力边界：常见扩展名（包括 Dart）直接进入文本读取快速路径；未知扩展名先探测文件内容，只要内容是有效 UTF-8 文本且不包含二进制控制字节，就使用代码预览。已知二进制格式继续直接进入专用渲染器；未知二进制或渲染失败时，macOS Tauri 应用可使用系统默认应用打开文件。
 
 HTML 必须继续使用沙箱预览，不得允许预览内容访问 Wework 主页面的同源状态。
 
@@ -19,6 +19,8 @@ PNG、JPEG、WebP、GIF、BMP、AVIF、TIFF 和 SVG 图片使用 Flyfish Viewer 
 ## 图表预览和导出
 
 `.mermaid`、`.mmd`、`.plantuml` 和 `.puml` 文件使用与对话内代码块相同的图表渲染器。预览必须跟随 Wework 当前明暗主题，并在面板尺寸变化时等比例适配，不能裁掉 SVG 边缘。
+
+Mermaid 可能通过 SVG `foreignObject` 生成包含 `<br>` 的 HTML 标签。渲染器必须启用 Mermaid 严格安全级别，按 HTML 语义解析输出后再导入 SVG；不能先按严格 XML 重解析，否则浏览器序列化后的非自闭合 HTML 标签会触发 XML 标签不匹配。导入前必须移除可执行或可提交内容的元素、根节点及后代元素上的事件处理属性、外部资源属性、不安全 URL 协议和非本地图形引用；仅保留 `#id` 形式的本地 `href` 引用。PlantUML 输出仍按严格 SVG/XML 解析。
 
 图表预览提供复制和保存操作。复制会生成 PNG 并通过桌面原生命令写入系统剪贴板；保存会打开系统保存窗口并将 PNG 写入用户选择的位置。Mermaid 的 HTML 标签在导出阶段转换为纯 SVG 文本，避免 macOS WebView 因 `foreignObject` 将 Canvas 标记为不可导出。
 
@@ -32,7 +34,7 @@ Markdown 预览和源码视图都必须拥有独立的纵向滚动区域。软�
 
 ## 数据传输
 
-本机工作区的目录枚举、文本读取和二进制分块读取由 Wework Tauri 进程直接访问磁盘，不经过 executor IPC。文本最多读取 256 KiB，二进制通过 `read_local_workspace_file_chunk` 以 1 MiB 分块读取。每个请求都携带工作区根目录并在 Rust 侧执行规范化路径校验，拒绝通过符号链接或相对路径逃逸工作区。前端按顺序组装二进制分块为 `File` 后交给查看器。
+本机工作区的目录枚举、文本读取和二进制分块读取由 Wework Tauri 进程直接访问磁盘，不经过 executor IPC。文本最多读取 256 KiB，二进制通过 `read_local_workspace_file_chunk` 以 1 MiB 分块读取。未知扩展名使用首个分块探测内容；如果判定为二进制，首个分块必须直接复用于后续组装，不能重复读取。项目空间中的云文件已经下载为 `Blob`，未知类型只检查前 64 KiB。每个工作区请求都携带工作区根目录并在 Rust 侧执行规范化路径校验，拒绝通过符号链接或相对路径逃逸工作区。前端按顺序组装二进制分块为 `File` 后交给查看器。
 
 通过远端设备打开工作区时仍使用设备侧 workspace API。前端继续校验响应路径、文件名和分块偏移，不能把本机原生命令作为远端读取失败时的回退路径。
 
@@ -50,4 +52,4 @@ Markdown 预览和源码视图都必须拥有独立的纵向滚动区域。软�
 
 ## 验证
 
-修改预览器时至少验证 Markdown 的默认预览、源码切换、长文档滚动和单一标题栏，以及 PDF、DOCX、XLSX、CSV、PPTX、PNG/JPEG/WebP、HTML、Mermaid、PlantUML、切换文件、取消加载、目录树展开、符号链接工作区和工作区边界拒绝行为。图片必须覆盖明暗主题和透明通道，确认预览画布及透明区域不会残留渲染器的浅色背景。图表还必须覆盖明暗主题、完整 SVG 自适应、复制 PNG 和系统保存窗口。还应在任务流式更新期间持续观察已打开的文本预览，确认等价工作区目标重新渲染时不会重复读取或闪烁。
+修改预览器时至少验证 Markdown 的默认预览、源码切换、长文档滚动和单一标题栏，以及 Dart、未知扩展名的 UTF-8 源码、未知扩展名的二进制文件、PDF、DOCX、XLSX、CSV、PPTX、PNG/JPEG/WebP、HTML、Mermaid、PlantUML、切换文件、取消加载、目录树展开、符号链接工作区和工作区边界拒绝行为。未知二进制文件还必须验证探测分块不会重复读取。图片必须覆盖明暗主题和透明通道，确认预览画布及透明区域不会残留渲染器的浅色背景。图表还必须覆盖明暗主题、包含 HTML 换行标签的 Mermaid、危险元素和事件属性清理、完整 SVG 自适应、复制 PNG 和系统保存窗口。还应在任务流式更新期间持续观察已打开的文本预览，确认等价工作区目标重新渲染时不会重复读取或闪烁。

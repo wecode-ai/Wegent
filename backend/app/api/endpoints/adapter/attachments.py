@@ -253,6 +253,22 @@ async def _stream_external_attachment(
     )
 
 
+def _raise_if_weibo_video_download_unsupported(context) -> None:
+    """Reject downloads for legacy Chat videos that only persist a Weibo fid."""
+    type_data = context.type_data if isinstance(context.type_data, dict) else {}
+    if (
+        context_service.is_video_context(context)
+        and type_data.get("storage_backend") == "weibo"
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Video attachments are stored externally and cannot be downloaded "
+                "through this endpoint"
+            ),
+        )
+
+
 def _create_download_token(attachment_id: int, user: User) -> str:
     expires_at = datetime.now(timezone.utc) + timedelta(
         seconds=DOWNLOAD_TOKEN_EXPIRE_SECONDS
@@ -965,6 +981,8 @@ async def download_attachment(
     if external_response is not None:
         return external_response
 
+    _raise_if_weibo_video_download_unsupported(context)
+
     # Generated videos are streamed through the backend so the browser receives
     # attachment headers without the service buffering the complete file.
     if context.type_data and isinstance(context.type_data, dict):
@@ -1059,6 +1077,8 @@ async def executor_download_attachment(
     external_response = await _stream_external_attachment(context)
     if external_response is not None:
         return external_response
+
+    _raise_if_weibo_video_download_unsupported(context)
 
     # Get binary data from the appropriate storage backend
     binary_data = context_service.get_attachment_binary_data(
@@ -1345,6 +1365,8 @@ async def public_download_attachment(
     )
     if external_response is not None:
         return external_response
+
+    _raise_if_weibo_video_download_unsupported(context)
 
     # Get binary data
     binary_data = context_service.get_attachment_binary_data(db=db, context=context)

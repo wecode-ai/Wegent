@@ -1,6 +1,6 @@
 import '@/i18n'
 
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import type { CloudProject } from '@/api/deliveries'
@@ -85,7 +85,7 @@ function services(initialAgents: ProjectChatAgent[] = []) {
 }
 
 function renderSection(mock: ReturnType<typeof services>) {
-  render(
+  return render(
     <ProjectChatAgentsSection
       project={project}
       projectChatAgentApi={mock.projectChatAgentApi}
@@ -99,6 +99,27 @@ function renderSection(mock: ReturnType<typeof services>) {
 }
 
 describe('ProjectChatAgentsSection', () => {
+  it('opens the robot editor when the workflow requests a new robot', async () => {
+    const mock = services()
+    const view = renderSection(mock)
+
+    await screen.findByTestId('cloud-project-chat-agent-add')
+    view.rerender(
+      <ProjectChatAgentsSection
+        project={project}
+        projectChatAgentApi={mock.projectChatAgentApi}
+        deviceApi={mock.deviceApi}
+        modelApi={mock.modelApi}
+        teamApi={mock.teamApi}
+        localProjects={[]}
+        canManage
+        createRequestKey={1}
+      />
+    )
+
+    expect(await screen.findByTestId('cloud-project-chat-agent-editor')).toBeInTheDocument()
+  })
+
   it('binds a Wegent Agent inside the board robot runtime configuration', async () => {
     const mock = services()
     renderSection(mock)
@@ -223,8 +244,9 @@ describe('ProjectChatAgentsSection', () => {
     expect(selectionState('cloud-project-chat-agent-model')).toHaveClass('text-text-muted')
     expect(selectionState('cloud-project-chat-agent-device')).toHaveAttribute(
       'data-selection-state',
-      'unselected'
+      'selected'
     )
+    expect(screen.getByTestId('cloud-project-chat-agent-device')).toHaveTextContent('local-device')
     expect(selectionState('cloud-project-chat-agent-execution-project')).toHaveAttribute(
       'data-selection-state',
       'unselected'
@@ -236,10 +258,7 @@ describe('ProjectChatAgentsSection', () => {
 
     await userEvent.click(screen.getByTestId('cloud-project-chat-agent-save'))
     expect(selectionState('cloud-project-chat-agent-model')).toHaveAttribute('data-invalid', 'true')
-    expect(selectionState('cloud-project-chat-agent-device')).toHaveAttribute(
-      'data-invalid',
-      'true'
-    )
+    expect(selectionState('cloud-project-chat-agent-device')).not.toHaveAttribute('data-invalid')
     expect(mock.create).not.toHaveBeenCalled()
 
     await userEvent.click(screen.getByTestId('cloud-project-chat-agent-model'))
@@ -334,6 +353,55 @@ describe('ProjectChatAgentsSection', () => {
     )
   })
 
+  it('clears a previous save error when the corrected robot saves successfully', async () => {
+    const mock = services([agent({ model: MODEL_NAME })])
+    mock.update.mockRejectedValueOnce(new Error('旧的保存错误'))
+    renderSection(mock)
+
+    await userEvent.click(await screen.findByTestId('cloud-project-chat-agent-agent-1'))
+    await userEvent.click(screen.getByTestId('cloud-project-chat-agent-save'))
+    expect(await screen.findByTestId('cloud-project-chat-agent-error')).toHaveTextContent(
+      '旧的保存错误'
+    )
+
+    await userEvent.type(screen.getByTestId('cloud-project-chat-agent-capability'), '已修正配置')
+    await userEvent.click(screen.getByTestId('cloud-project-chat-agent-save'))
+
+    await waitFor(() => expect(mock.update).toHaveBeenCalledTimes(2))
+    expect(screen.queryByTestId('cloud-project-chat-agent-editor')).not.toBeInTheDocument()
+    expect(screen.queryByText('旧的保存错误')).not.toBeInTheDocument()
+  })
+
+  it('selects a local device when editing a local-project robot with a stale cloud device', async () => {
+    const mock = services([
+      agent({
+        model: MODEL_NAME,
+        executionEnvironment: 'cloud',
+        executionDeviceId: 'stale-cloud-device',
+      }),
+    ])
+    mock.deviceApi.listDevices = vi.fn(async () => [
+      { device_id: 'local-device', device_type: 'local', status: 'online' },
+      { device_id: 'stale-cloud-device', device_type: 'cloud', status: 'online' },
+    ])
+    render(
+      <ProjectChatAgentsSection
+        project={{ ...project, project_store: 'local' }}
+        projectChatAgentApi={mock.projectChatAgentApi}
+        deviceApi={mock.deviceApi}
+        modelApi={mock.modelApi}
+        teamApi={mock.teamApi}
+        localProjects={[]}
+        canManage
+      />
+    )
+
+    await userEvent.click(await screen.findByTestId('cloud-project-chat-agent-agent-1'))
+
+    expect(screen.getByTestId('cloud-project-chat-agent-environment')).toHaveTextContent('我的本地')
+    expect(screen.getByTestId('cloud-project-chat-agent-device')).toHaveTextContent('local-device')
+  })
+
   it('hides local runtime models when the robot runs in the cloud', async () => {
     const mock = services()
     mock.modelApi = {
@@ -370,12 +438,10 @@ describe('ProjectChatAgentsSection', () => {
 
   it('lists only projects with a workspace on the selected cloud device', async () => {
     const mock = services()
-    mock.deviceApi = {
-      listDevices: vi.fn(async () => [
-        { device_id: 'local-device', device_type: 'local', status: 'online' },
-        { device_id: 'cloud-device', device_type: 'cloud', status: 'online' },
-      ]),
-    }
+    mock.deviceApi.listDevices = vi.fn(async () => [
+      { device_id: 'local-device', device_type: 'local', status: 'online' },
+      { device_id: 'cloud-device', device_type: 'cloud', status: 'online' },
+    ])
     const runtimeWork = {
       projects: [
         {
@@ -419,9 +485,10 @@ describe('ProjectChatAgentsSection', () => {
     await userEvent.click(
       await screen.findByTestId('cloud-project-chat-agent-environment-option-cloud')
     )
-    await userEvent.click(screen.getByTestId('cloud-project-chat-agent-device'))
-    await userEvent.click(
-      await screen.findByTestId('cloud-project-chat-agent-device-option-cloud-device')
+    await waitFor(() =>
+      expect(screen.getByTestId('cloud-project-chat-agent-device')).toHaveTextContent(
+        'cloud-device'
+      )
     )
     await userEvent.click(screen.getByTestId('cloud-project-chat-agent-execution-project'))
 
@@ -434,6 +501,62 @@ describe('ProjectChatAgentsSection', () => {
     expect(
       screen.queryByTestId('cloud-project-chat-agent-execution-project-option-7')
     ).not.toBeInTheDocument()
+  })
+
+  it('auto-selects the preferred device when an environment has multiple devices', async () => {
+    const mock = services()
+    mock.deviceApi.listDevices = vi.fn(async () => [
+      {
+        device_id: 'offline-default-device',
+        device_type: 'local',
+        status: 'offline',
+        is_default: true,
+      },
+      { device_id: 'online-device', device_type: 'app', status: 'online' },
+      {
+        device_id: 'online-default-device',
+        device_type: 'local',
+        status: 'online',
+        is_default: true,
+      },
+    ])
+    renderSection(mock)
+
+    await userEvent.click(await screen.findByTestId('cloud-project-chat-agent-add'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('cloud-project-chat-agent-device')).toHaveTextContent(
+        'online-default-device'
+      )
+      expect(
+        screen.getByTestId('cloud-project-chat-agent-device').firstElementChild
+      ).toHaveAttribute('data-selection-state', 'selected')
+    })
+  })
+
+  it('auto-selects a sole device when devices load after the editor opens', async () => {
+    const mock = services()
+    let resolveDevices:
+      | ((devices: Array<{ device_id: string; device_type: string; status: string }>) => void)
+      | undefined
+    mock.deviceApi.listDevices = vi.fn(
+      () =>
+        new Promise(resolve => {
+          resolveDevices = resolve
+        })
+    )
+    renderSection(mock)
+
+    await userEvent.click(await screen.findByTestId('cloud-project-chat-agent-add'))
+    expect(screen.getByTestId('cloud-project-chat-agent-device')).toHaveTextContent('选择执行设备')
+
+    await act(async () => {
+      resolveDevices?.([{ device_id: 'late-local-device', device_type: 'local', status: 'online' }])
+    })
+
+    expect(screen.getByTestId('cloud-project-chat-agent-device')).toHaveTextContent(
+      'late-local-device'
+    )
   })
 
   it('verifies a bound Git workspace before enabling robot concurrency above one', async () => {

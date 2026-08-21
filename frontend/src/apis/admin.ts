@@ -10,6 +10,7 @@ import {
 import { outboundTokenAdminApis } from './outboundTokens'
 import { RetrieverCRD } from './retrievers'
 import type { SkillRefMeta } from '@/types/api'
+import type { KnowledgeBaseRetrievalProfile, RetrievalConfigDraft } from '@/types/knowledge'
 import type { MarketplaceTagsResponse, MarketplaceTagsUpdate } from '@/types/marketplace'
 import type { TeamDisplayConfig } from '@wegent/chat-core'
 
@@ -913,6 +914,18 @@ export const adminApis = {
    */
   async updateQuickAccessConfig(teams: number[]): Promise<{ version: number; teams: number[] }> {
     return apiClient.put('/admin/system-config/quick-access', { teams })
+  },
+
+  async getKnowledgeBaseRetrievalProfile(): Promise<KnowledgeBaseRetrievalProfile> {
+    return apiClient.get('/admin/system-config/code-wiki-retrieval-profile')
+  },
+
+  async updateKnowledgeBaseRetrievalProfile(
+    retrievalConfig: RetrievalConfigDraft
+  ): Promise<KnowledgeBaseRetrievalProfile> {
+    return apiClient.put('/admin/system-config/code-wiki-retrieval-profile', {
+      retrieval_config: retrievalConfig,
+    })
   },
 
   async getMarketplaceTagsConfig(): Promise<MarketplaceTagsResponse> {

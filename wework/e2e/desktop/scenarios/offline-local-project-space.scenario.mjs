@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
 
+import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
+
 const PROJECT_NAME = '离线本地项目空间'
 const TASK_NAME = '离线本地任务'
 const UPDATED_TASK_NAME = '离线本地任务（已更新）'
@@ -27,6 +29,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
     },
 
     async verify(control) {
+      await ensureExperimentalFeaturesEnabled(control)
       await control.command('waitFor', '[data-testid="workspace-tab-add"]', {
         timeoutMs: uiTimeoutMs,
       })
@@ -58,16 +61,32 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       await control.command('waitFor', '[data-testid="cloud-todo-column-inbox"]', {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('click', '[data-testid="cloud-todo-add"]')
-      await control.command('waitFor', '[data-testid="cloud-todo-create-panel"]', {
+      await control.command('click', '[data-testid="cloud-todo-column-empty-add-inbox"]')
+      await control.command('waitFor', '[data-testid="cloud-todo-column-quick-create-inbox"]', {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('fill', '[data-testid="cloud-todo-title"]', {
+      await control.command('fill', '[data-testid="cloud-todo-column-quick-create-input-inbox"]', {
+        value: '需要补充详情的任务',
+      })
+      await control.command('click', '[data-testid="cloud-todo-column-quick-create-full-inbox"]')
+      await control.command('waitFor', '[data-testid="workspace-issue-composer"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('press', 'body', { key: 'Escape' })
+      await control.command('click', '[data-testid="cloud-todo-column-empty-add-inbox"]')
+      await control.command('waitFor', '[data-testid="cloud-todo-column-quick-create-inbox"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('fill', '[data-testid="cloud-todo-column-quick-create-input-inbox"]', {
         value: TASK_NAME,
       })
-      await control.command('clickWhenEnabled', '[data-testid="cloud-todo-create-confirm"]', {
-        timeoutMs: uiTimeoutMs,
-      })
+      await control.command(
+        'clickWhenEnabled',
+        '[data-testid="cloud-todo-column-quick-create-confirm-inbox"]',
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
       await control.command('waitFor', '[data-testid^="cloud-todo-card-"]', {
         text: TASK_NAME,
         timeoutMs: uiTimeoutMs,

@@ -24,3 +24,17 @@ test('uses document typography for every Markdown heading level', () => {
   expect(screen.getByRole('heading', { level: 5 })).toHaveClass('text-base')
   expect(screen.getByRole('heading', { level: 6 })).toHaveClass('text-sm')
 })
+
+test('allows long Markdown links to wrap within narrow message cards', () => {
+  const url =
+    'http://127.0.0.1:58617/v1/codex-router/task-3fd8b50e7d269add73aff1114746a4a9fab19a10b9b97e19/result'
+
+  render(<AssistantMarkdown content={`[${url}](${url})`} />)
+
+  expect(screen.getByTestId('assistant-markdown-link')).toHaveClass('min-w-0', 'max-w-full')
+  expect(screen.getByTestId('assistant-markdown-link-label')).toHaveClass(
+    'min-w-0',
+    'whitespace-normal',
+    '[overflow-wrap:anywhere]'
+  )
+})

@@ -11,6 +11,23 @@ const TOOL_COMPLETION = '本地分支落后于 main，CI 跑的提交是 719f996
 const LEGACY_CONVERSATION_PROMPT = 'WEWORK_DESKTOP_E2E_LEGACY_CONVERSATION_INITIAL'
 const LEGACY_CONVERSATION_COMPLETION = 'WEWORK_DESKTOP_E2E_LEGACY_CONVERSATION_COMPLETE'
 const LEGACY_TRANSCRIPT_ITEM_ID = 'wework-desktop-e2e-legacy-assistant-text'
+const LONG_CODE_PROMPT = 'WEWORK_DESKTOP_E2E_LONG_CODE_TERMINAL_BURST'
+const LONG_CODE_MARKER = 'WEWORK_DESKTOP_E2E_LONG_CODE_LINE_110'
+const LONG_CODE_COMPLETION = [
+  'The completed response contains one long SQL block.',
+  '',
+  '```sql',
+  ...Array.from(
+    { length: 110 },
+    (_, index) =>
+      `SELECT ${index + 1} AS value_${index + 1}${index === 109 ? `, '${LONG_CODE_MARKER}' AS marker` : ''};`
+  ),
+  '```',
+].join('\n')
+const LONG_CODE_REASONING = Array.from(
+  { length: 180 },
+  (_, index) => `Completed reasoning line ${index + 1} for the terminal rendering burst.`
+).join('\n')
 const VISUALIZATION_PROMPT = 'WEWORK_DESKTOP_E2E_ABSOLUTE_VISUALIZATION'
 const VISUALIZATION_TITLE = 'Absolute visualization E2E'
 const VISUALIZATION_MARKER = 'WEWORK_DESKTOP_E2E_VISUALIZATION_VISIBLE'
@@ -19,6 +36,7 @@ const PHASE_FLIP_TEXT = 'WEWORK_DESKTOP_E2E_FALLBACK_FINAL_FROM_PROCESS'
 const TIMER_PROMPT = 'WEWORK_DESKTOP_E2E_RUNNING_TIMER_PERSISTS'
 const TIMER_COMPLETION = 'WEWORK_DESKTOP_E2E_RUNNING_TIMER_COMPLETE'
 const ORDER_STOP_PROMPT = 'WEWORK_DESKTOP_E2E_ORDER_STOPPED_TURN'
+const ORDER_STOP_PARTIAL = 'WEWORK_DESKTOP_E2E_ORDER_STOP_PARTIAL'
 const ORDER_FOLLOW_UP_PREFIX = 'WEWORK_DESKTOP_E2E_ORDER_FOLLOW_UP'
 const ORDER_COMPLETION_PREFIX = 'WEWORK_DESKTOP_E2E_ORDER_COMPLETION'
 const ORDER_FOLLOW_UP_COUNT = 26
@@ -45,6 +63,7 @@ const USER_MESSAGE_E2E_ID = 'streaming-text-latest-user-message'
 const USER_MESSAGE_SELECTOR_MARKED = `${ACTIVE_WORKBENCH_SELECTOR} [data-e2e-anchor-id="${USER_MESSAGE_E2E_ID}"]`
 const PROCESSING_SUMMARY_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="processing-summary-header"]`
 const PROCESS_TEXT_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="process-text-block"]`
+const LONG_CODE_SCROLL_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="markdown-code-scroll-container"]`
 const VIEWPORT_ANCHOR_TEXT = `${VIEWPORT_MARKER}: this paragraph must remain fixed after the user scrolls upward.`
 const VIEWPORT_ANCHOR_E2E_ID = 'streaming-text-viewport-anchor'
 const VIEWPORT_ANCHOR_SCOPE_SELECTOR = `${PROCESS_TEXT_SELECTOR} [data-scroll-anchor]`
@@ -366,9 +385,7 @@ async function waitForRuntimePaneReadyToSend(control, timeoutMs) {
     if (lastStatus?.isBusy === false && lastStatus.canSendQueuedMessage === true) return
     await new Promise(resolve => setTimeout(resolve, 100))
   }
-  throw new Error(
-    `The stopped runtime turn did not settle before follow-up: ${JSON.stringify(lastStatus)}`
-  )
+  throw new Error(`The runtime turn did not settle before follow-up: ${JSON.stringify(lastStatus)}`)
 }
 
 function selectShellTool(body, workspacePath, command = 'pwd', timeoutMs = 1_000) {
@@ -432,17 +449,27 @@ async function assertComposerDocked(control, scrollerMetrics, description) {
 }
 
 async function waitForToolDuration(control, minimumSeconds, timeoutMs) {
-  const startedAt = Date.now()
-  let text = ''
   const selector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="tool-block-duration"]`
+  const deadline = Date.now() + timeoutMs
   await control.command('waitFor', selector, { timeoutMs })
-  while (Date.now() - startedAt < timeoutMs) {
+  await new Promise(resolve =>
+    setTimeout(resolve, Math.min(minimumSeconds * 1_000, Math.max(0, deadline - Date.now())))
+  )
+  let text = ''
+  let duration = 0
+  while (Date.now() <= deadline) {
     text = await control.command('getText', selector)
-    const duration = toolDurationSeconds(text)
+    duration = toolDurationSeconds(text)
     if (duration >= minimumSeconds) return duration
-    await new Promise(resolve => setTimeout(resolve, 100))
+    const remainingMs = deadline - Date.now()
+    if (remainingMs <= 0) break
+    await new Promise(resolve => setTimeout(resolve, Math.min(500, remainingMs)))
   }
-  throw new Error(`The running tool duration did not reach ${minimumSeconds}s; latest row: ${text}`)
+  assert.ok(
+    duration >= minimumSeconds,
+    `The running tool duration did not reach ${minimumSeconds}s; latest row: ${text}`
+  )
+  return duration
 }
 
 async function completedToolDuration(control, timeoutMs) {
@@ -475,6 +502,22 @@ async function waitForBottom(control, description, timeoutMs) {
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   throw new Error(`${description} remained ${distanceFromBottom(metrics)}px from the bottom`)
+}
+
+async function assertScrollPositionRemainsStable(control, initialMetrics, description, timeoutMs) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    const metrics = await getSingleElementMetrics(control, SCROLLER_SELECTOR, description)
+    assert.ok(
+      distanceFromBottom(metrics) > 8,
+      `${description} returned to the bottom after the user scrolled upward`
+    )
+    assert.ok(
+      Math.abs(metrics.scrollTop - initialMetrics.scrollTop) <= 8,
+      `${description} jumped from ${initialMetrics.scrollTop}px to ${metrics.scrollTop}px`
+    )
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
 }
 
 async function waitForRenderedAppend(control, previousContentLength, timeoutMs) {
@@ -639,6 +682,33 @@ export function createDesktopScenario({
     releaseToolFinalCompletion = resolve
   })
 
+  const verifyLongCodeTerminalBurst = async control => {
+    await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
+    await control.command('click', '[data-testid="new-chat-button"]')
+    await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+    await control.command('fill', COMPOSER_SELECTOR, { value: LONG_CODE_PROMPT })
+    await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
+    await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
+      text: LONG_CODE_MARKER,
+      stableMs: 750,
+      timeoutMs: uiTimeoutMs,
+    })
+    assert.equal(
+      await control.command('getAttribute', LONG_CODE_SCROLL_SELECTOR, {
+        value: 'data-syntax-highlighted',
+      }),
+      'false',
+      'The long completed code block enabled expensive syntax highlighting'
+    )
+    assert.equal(
+      Number(await control.command('getElementCount', `${LONG_CODE_SCROLL_SELECTOR} .token`)),
+      0,
+      'The long completed code block rendered syntax token nodes'
+    )
+    await waitForBottom(control, 'The terminal-burst long-code conversation', uiTimeoutMs)
+    await capture(control, 'streaming-text-00-long-code-terminal-burst.png')
+  }
+
   const verifyStoppedTurnOrder = async control => {
     await control.command('click', '[data-testid="new-chat-button"]')
     await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
@@ -656,6 +726,11 @@ export function createDesktopScenario({
       uiTimeoutMs
     )
     await control.command('waitFor', '[data-testid="pause-response-button"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('waitFor', PROCESS_TEXT_SELECTOR, {
+      text: ORDER_STOP_PARTIAL,
+      stableMs: 500,
       timeoutMs: uiTimeoutMs,
     })
     await control.command('click', '[data-testid="pause-response-button"]')
@@ -707,6 +782,18 @@ export function createDesktopScenario({
       const responseId = `wework-streaming-text-${Date.now()}`
       const latestInput = latestModelInputText(body)
       const followUpNumber = orderFollowUpNumber(body)
+      if (latestInput.includes(LONG_CODE_PROMPT)) {
+        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.end(
+          sse([
+            responseCreated(responseId),
+            ...reasoningEvents('wework-long-code-reasoning', LONG_CODE_REASONING),
+            assistantMessage(LONG_CODE_COMPLETION),
+            responseCompleted(responseId),
+          ])
+        )
+        return true
+      }
       if (followUpNumber !== null) {
         response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
         response.end(
@@ -725,7 +812,7 @@ export function createDesktopScenario({
           'Content-Type': 'text/event-stream; charset=utf-8',
         })
         response.flushHeaders()
-        response.write(sse([responseCreated(responseId)]))
+        response.write(sse([responseCreated(responseId), assistantMessage(ORDER_STOP_PARTIAL)]))
         return true
       }
       if (timerStage === 'awaiting-tool-output' && requestContainsToolOutput(body)) {
@@ -907,6 +994,11 @@ export function createDesktopScenario({
         active = false
         return
       }
+      if (process.env.WEWORK_E2E_LONG_CODE_ONLY === 'true') {
+        await verifyLongCodeTerminalBurst(control)
+        active = false
+        return
+      }
       const visualizationDirectory = join(workspacePath, 'visualizations')
       const visualizationPath = join(visualizationDirectory, 'absolute-reference.html')
       await mkdir(visualizationDirectory, { recursive: true })
@@ -950,6 +1042,8 @@ export function createDesktopScenario({
         active = false
         return
       }
+
+      await verifyLongCodeTerminalBurst(control)
 
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
@@ -1234,6 +1328,7 @@ export function createDesktopScenario({
         text: 'WEWORK_DESKTOP_E2E_STREAMING_TEXT_INITIAL_COMPLETE',
         timeoutMs: uiTimeoutMs,
       })
+      await waitForRuntimePaneReadyToSend(control, uiTimeoutMs)
       const taskRowTestId = await waitForNewTaskRow(
         control,
         knownTaskRows,
@@ -1247,6 +1342,7 @@ export function createDesktopScenario({
           text: historyTurn.completion.split('\n')[0],
           timeoutMs: uiTimeoutMs,
         })
+        await waitForRuntimePaneReadyToSend(control, uiTimeoutMs)
       }
       await capture(control, 'streaming-text-11-ready-to-send.png')
       await control.command('pasteFile', COMPOSER_SELECTOR, {
@@ -1604,13 +1700,36 @@ export function createDesktopScenario({
       await control.command(
         'waitFor',
         `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`,
-        { stableMs: 750, timeoutMs: uiTimeoutMs }
+        { timeoutMs: uiTimeoutMs }
       )
       await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
         text: MARKER,
-        stableMs: 750,
         timeoutMs: uiTimeoutMs,
       })
+
+      await control.command('scrollFromBottomAsUser', SCROLLER_SELECTOR, { value: '160' })
+      const completedUserScrollPosition = await getSingleElementMetrics(
+        control,
+        SCROLLER_SELECTOR,
+        'The completed conversation immediately after the user scrolled upward'
+      )
+      assert.ok(
+        distanceFromBottom(completedUserScrollPosition) > 8,
+        'The user scroll did not move the completed conversation away from the bottom'
+      )
+      await assertScrollPositionRemainsStable(
+        control,
+        completedUserScrollPosition,
+        'The completed conversation while delayed bottom-follow work could still run',
+        uiTimeoutMs
+      )
+      await capture(control, 'streaming-text-18-completed-user-scroll-stable.png')
+      await control.command('scrollToBottomAsUser', SCROLLER_SELECTOR)
+      await waitForBottom(
+        control,
+        'The completed conversation after restoring the downstream test precondition',
+        uiTimeoutMs
+      )
       const completedSnapshot = JSON.parse(
         await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
       )
@@ -1631,6 +1750,7 @@ export function createDesktopScenario({
         'The pause button remained after completion'
       )
       await capture(control, 'streaming-text-17-response-completed.png')
+
       await verifyStoppedTurnOrder(control)
       active = false
     },

@@ -1,18 +1,22 @@
 import { afterEach, describe, expect, test } from 'vitest'
 import {
+  abortRuntimeConversationHydration,
   appendOptimisticRuntimeConversationGuidance,
   applyRuntimeConversationGoalContinuation,
   applyRuntimeConversationSubagentActivity,
   applyRuntimeConversationAction,
+  beginRuntimeConversationHydration,
   cacheConversationScrollSnapshot,
   cacheConversationVirtualMeasurements,
   cacheRuntimeConversationQueuedMessages,
   cacheRuntimeConversationQueuePaused,
   clearRuntimeConversationCacheForTests,
+  completeRuntimeConversationHydration,
   evictRuntimeConversation,
   getConversationScrollSnapshot,
   getConversationVirtualMeasurements,
   getRuntimeConversationCacheStats,
+  getRuntimeConversationLiveActivitySnapshot,
   getRuntimeConversationMetadata,
   getRuntimeConversationMessages,
   getRuntimeConversationQueuedMessages,
@@ -22,6 +26,7 @@ import {
   removeOptimisticRuntimeConversationGuidance,
   markRuntimeConversationAssistantStarted,
   runtimeConversationSnapshotSettlesLatestTurn,
+  subscribeRuntimeConversation,
   settleRuntimeConversationAcceptedMessage,
   settleRuntimeConversationGuidance,
   settleRuntimeConversationSubagents,
@@ -56,6 +61,55 @@ describe('runtimeConversationCache', () => {
     expect(getRuntimeConversationMessages(address)).toHaveLength(1)
   })
 
+  test('does not project an empty live-activity row before thinking or tools arrive', () => {
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_started',
+      taskId: address.taskId,
+      subtaskId: 'turn-1',
+    })
+
+    expect(getRuntimeConversationLiveActivitySnapshot(address)).toBe('')
+  })
+
+  test('keeps a replacement hydration active when the older request resolves later', () => {
+    const olderToken = beginRuntimeConversationHydration(address)
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_started',
+      taskId: address.taskId,
+      subtaskId: 'turn-1',
+    })
+    abortRuntimeConversationHydration(address, olderToken)
+
+    const replacementToken = beginRuntimeConversationHydration(address)
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_chunk',
+      subtaskId: 'turn-1',
+      content: '',
+      reasoningChunk: 'replacement request activity',
+    })
+
+    abortRuntimeConversationHydration(address, olderToken)
+    completeRuntimeConversationHydration(address, replacementToken, [])
+
+    expect(getRuntimeConversationLiveActivitySnapshot(address)).toContain(
+      'replacement request activity'
+    )
+  })
+
+  test('notifies conversation subscribers when the follow-up queue pause changes', () => {
+    let notifications = 0
+    const unsubscribe = subscribeRuntimeConversation(address, () => {
+      notifications += 1
+    })
+
+    cacheRuntimeConversationQueuePaused(address, true)
+    cacheRuntimeConversationQueuePaused(address, true)
+    cacheRuntimeConversationQueuePaused(address, false)
+
+    expect(notifications).toBe(2)
+    unsubscribe()
+  })
+
   test('settles an accepted queued message when its runtime turn starts', () => {
     cacheRuntimeConversationQueuedMessages(address, [
       {
@@ -63,6 +117,7 @@ describe('runtimeConversationCache', () => {
         content: 'first queued message',
         status: 'sending',
         deliveryMode: 'message',
+        awaitingTurnStart: true,
         createdAt: '2026-08-09T00:00:00.000Z',
       },
       {
@@ -79,6 +134,28 @@ describe('runtimeConversationCache', () => {
       expect.objectContaining({
         id: 'next-message',
         status: 'queued',
+      }),
+    ])
+  })
+
+  test('keeps an unaccepted queued send when an unrelated runtime turn starts', () => {
+    cacheRuntimeConversationQueuedMessages(address, [
+      {
+        id: 'in-flight-message',
+        content: 'message awaiting executor acceptance',
+        status: 'sending',
+        deliveryMode: 'message',
+        awaitingTurnStart: false,
+        createdAt: '2026-08-09T00:00:00.000Z',
+      },
+    ])
+
+    settleRuntimeConversationAcceptedMessage(address)
+
+    expect(getRuntimeConversationQueuedMessages(address)).toEqual([
+      expect.objectContaining({
+        id: 'in-flight-message',
+        status: 'sending',
       }),
     ])
   })

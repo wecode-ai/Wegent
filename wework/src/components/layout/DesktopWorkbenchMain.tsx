@@ -82,6 +82,7 @@ import { WorkItemComposerGuide } from '@/features/todo/WorkItemComposerGuide'
 import {
   DEFAULT_WORK_ITEM_PROJECT_ID,
   DEFAULT_WORK_ITEM_PROJECT_KEY,
+  isDefaultWorkItemProject,
   type CloudProject,
 } from '@/api/deliveries'
 import {
@@ -407,6 +408,7 @@ function normalizeRightWorkspaceBrowserState(
     browserSessionId: state?.browserSessionId ?? getRightWorkspaceBrowserLabelSuffix(tab),
     title: state?.title ?? null,
     faviconUrl: state?.faviconUrl ?? null,
+    isLoading: state?.isLoading ?? false,
     hasActiveDownload: state?.hasActiveDownload ?? false,
     openRequest: state?.openRequest ?? null,
   }
@@ -1364,6 +1366,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       browserSessionId: getRightWorkspaceBrowserLabelSuffix(tab),
       title: null,
       faviconUrl: null,
+      isLoading: false,
       hasActiveDownload: false,
       openRequest: null,
       ...overrides,
@@ -1658,13 +1661,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       ? {
           deviceId: activeDeviceId,
           path: soleActiveDeviceWorkspacePath,
-          source: 'runtime' as const,
-        }
-      : null) ??
-    (currentRuntimeTask && (currentRuntimeTask.workspacePath || runtimeTaskWorkspacePath)
-      ? {
-          deviceId: currentRuntimeTask.deviceId,
-          path: currentRuntimeTask.workspacePath || runtimeTaskWorkspacePath!,
           source: 'runtime' as const,
         }
       : null)
@@ -2494,7 +2490,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const hasConversation = paneMessages.length > 0 || Boolean(currentRuntimeTask)
   const isCreatingWorktree = isWorktreeCreationPending(
     runtimeTaskSummary,
-    paneSession.status.sendPhase
+    paneSession.status.sendPhase,
+    paneSession.status.workspaceCreationKind
   )
   const hasMainBackground = Boolean(background.imagePath && background.inMain)
   const activeDevice = findWorkbenchDevice(devices, activeDeviceId)
@@ -2527,7 +2524,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     !currentProject &&
     !currentRuntimeTask &&
     !activeDeviceId &&
-    !devices.some(device => device.status === 'online' && isWeWorkCompatibleDevice(device))
+    !devices.some(device => isWorkbenchDeviceOnline(device) && isWeWorkCompatibleDevice(device))
   const composerDisabled =
     activeDeviceUnavailable || activeDeviceVersionUnsupported || noStandaloneCompatibleDevice
   const composerDisabledReason = activeDeviceUnavailable
@@ -2640,9 +2637,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     boundCloudProject ?? pendingCloudProject ?? defaultProject ?? defaultWorkItemPreviewProject
   const availableWorkItemProjects =
     cloudProjects.length > 0
-      ? cloudProjects
+      ? cloudProjects.filter(project => !isDefaultWorkItemProject(project))
       : currentWorkItemGuideProject
-        ? [currentWorkItemGuideProject]
+        ? isDefaultWorkItemProject(currentWorkItemGuideProject)
+          ? []
+          : [currentWorkItemGuideProject]
         : []
   const projectSpaceContext =
     currentProjectSpaceRuntimeTask && boundCloudProject && boundCloudItem ? (
@@ -3478,7 +3477,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       <ArrowLeftRight />
     </button>
   ) : undefined
-  const canContinueInIm = experimentalFeaturesEnabled && Boolean(currentRuntimeTask)
+  const canContinueInIm = Boolean(currentRuntimeTask)
   const continueInImButton = canContinueInIm ? (
     <button
       type="button"
