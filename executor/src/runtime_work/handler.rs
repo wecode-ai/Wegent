@@ -10,7 +10,7 @@ use std::{
     pin::Pin,
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc, Mutex, Weak,
+        Arc, Mutex, OnceLock, Weak,
     },
     time::{Duration, Instant},
 };
@@ -453,7 +453,6 @@ pub struct RuntimeWorkRpcHandler {
     codex_app_server: CodexAppServerClient,
     claude_process_engine: AgentProcessEngine,
     codex_runtime_proxy_config: Arc<AsyncMutex<CodexRuntimeProxyConfig>>,
-    codex_app_server_restart_gate: Arc<AsyncMutex<()>>,
     event_tx: Option<broadcast::Sender<Value>>,
     next_execution_id: Arc<AtomicU64>,
     task_send_gates: Arc<Mutex<HashMap<String, Weak<AsyncMutex<()>>>>>,
@@ -631,7 +630,6 @@ impl RuntimeWorkRpcHandler {
             codex_runtime_proxy_config: Arc::new(AsyncMutex::new(
                 CodexRuntimeProxyConfig::default(),
             )),
-            codex_app_server_restart_gate: Arc::new(AsyncMutex::new(())),
             event_tx: None,
             next_execution_id: Arc::new(AtomicU64::new(1)),
             task_send_gates: Arc::new(Mutex::new(HashMap::new())),
@@ -881,6 +879,11 @@ impl RuntimeWorkRpcHandler {
             )),
         }
     }
+}
+
+fn codex_app_server_restart_gate() -> &'static AsyncMutex<()> {
+    static GATE: OnceLock<AsyncMutex<()>> = OnceLock::new();
+    GATE.get_or_init(|| AsyncMutex::new(()))
 }
 
 include!("handler/helpers.rs");

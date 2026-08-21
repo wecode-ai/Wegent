@@ -3275,12 +3275,11 @@ async fn codex_app_server_restart_rpc_returns_success() {
 }
 
 #[tokio::test]
-async fn codex_app_server_restart_waits_for_an_existing_restart() {
-    let handler = RuntimeWorkRpcHandler::new("device-1", "unused-codex-binary");
-    let restart_guard = handler.codex_app_server_restart_gate.lock().await;
-    let pending_handler = handler.clone();
+async fn codex_app_server_restart_waits_for_process_wide_gate() {
+    let handler = RuntimeWorkRpcHandler::new("device-2", "unused-codex-binary");
+    let restart_guard = codex_app_server_restart_gate().lock().await;
     let pending_restart = tokio::spawn(async move {
-        pending_handler
+        handler
             .restart_codex_app_server_with_expected_models(json!({"ifIdle": true}), Vec::new())
             .await
     });
