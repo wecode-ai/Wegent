@@ -136,7 +136,11 @@ def bind_references_from_delivery(
             adapter = provider_reference_adapter(provider)
             if adapter is None:
                 continue
-            wait_node = _wait_node_for_provider(wait_nodes, provider)
+            wait_node = _wait_node_for_provider(
+                wait_nodes,
+                provider,
+                requirement_id=str(fulfillment.get("requirement_id") or ""),
+            )
             if wait_node is None:
                 continue
             wait_id = str(wait_node.get("id") or "")
@@ -300,12 +304,21 @@ def _fulfillment_providers(
 def _wait_node_for_provider(
     wait_nodes: list[dict[str, Any]],
     provider: str,
+    *,
+    requirement_id: str = "",
 ) -> dict[str, Any] | None:
-    for wait in wait_nodes:
-        for rule in (wait.get("wait_config") or {}).get("rules") or []:
-            if (
-                isinstance(rule, dict)
-                and str(rule.get("provider") or "").strip() == provider
-            ):
+    candidates = [
+        wait
+        for wait in wait_nodes
+        if any(
+            isinstance(rule, dict)
+            and str(rule.get("provider") or "").strip() == provider
+            for rule in (wait.get("wait_config") or {}).get("rules") or []
+        )
+    ]
+    if requirement_id:
+        for wait in candidates:
+            wait_id = str(wait.get("id") or "")
+            if requirement_id == f"{INJECTED_REQUIREMENT_PREFIX}{wait_id}_{provider}":
                 return wait
-    return None
+    return candidates[0] if candidates else None

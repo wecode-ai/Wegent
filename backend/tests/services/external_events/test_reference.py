@@ -15,6 +15,7 @@ from app.models.delivery import (
     CloudProject,
     ExternalEventBinding,
     LoopItem,
+    ProjectAutomationRun,
 )
 from app.models.user import User
 from app.schemas.delivery import DeliveryPullRequestFulfillment
@@ -96,6 +97,15 @@ def _issue(test_db: Session, user: User) -> tuple[CloudProject, LoopItem]:
         metadata_json={"workflow": _workflow_definition()},
     )
     test_db.add(item)
+    run = ProjectAutomationRun(
+        id="run-1",
+        cloud_project_id=str(project.id),
+        task_id=item.id,
+        task_title=item.title,
+        status="pending",
+        created_by_user_id=user.id,
+    )
+    test_db.add(run)
     test_db.commit()
     test_db.refresh(project)
     test_db.refresh(item)
@@ -236,6 +246,64 @@ def test_bind_references_from_delivery_registers_binding(
     assert binding.metadata_json["workflow_node_id"] == "wait-1"
 
 
+def test_binding_prefers_requirement_id_when_multiple_wait_nodes_share_provider(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    project, item = _issue(test_db, test_user)
+    workflow = item.metadata_json["workflow"]
+    workflow["nodes"].append(
+        {
+            "id": "wait-2",
+            "name": "Second wait",
+            "node_type": "wait",
+            "depends_on": ["stage-1"],
+            "required": True,
+            "workspace_policy": "none",
+            "status": "waiting",
+            "wait_config": {
+                "rules": [
+                    {
+                        "id": "rule-ci",
+                        "provider": "gitlab",
+                        "event_type": "ci_failed",
+                        "action": "complete",
+                    },
+                ]
+            },
+        }
+    )
+    item.metadata_json = {"workflow": workflow}
+    test_db.commit()
+
+    count = bind_references_from_delivery(
+        test_db,
+        item=item,
+        workflow=workflow,
+        node=_stage(workflow),
+        fulfillments=[
+            {
+                "requirement_id": f"{INJECTED_REQUIREMENT_PREFIX}wait-2_gitlab",
+                "kind": "pull_request",
+                "provider": "gitlab",
+                "url": "https://gitlab.example/acme/app/-/merge_requests/7",
+                "number": 7,
+            }
+        ],
+        automation_run_id="run-1",
+        user_id=test_user.id,
+    )
+
+    assert count == 1
+    binding = (
+        test_db.query(ExternalEventBinding)
+        .filter(ExternalEventBinding.loop_item_id == item.id)
+        .first()
+    )
+    assert binding is not None
+    assert binding.metadata_json["workflow_node_id"] == "wait-2"
+
+
 def test_bind_ignores_non_reference_fulfillments(
     test_db: Session,
     test_user: User,
@@ -261,6 +329,16 @@ def test_new_reference_supersedes_same_provider_binding(
     test_user: User,
 ) -> None:
     project, item = _issue(test_db, test_user)
+    run_two = ProjectAutomationRun(
+        id="run-2",
+        cloud_project_id=str(project.id),
+        task_id=item.id,
+        task_title=item.title,
+        status="pending",
+        created_by_user_id=test_user.id,
+    )
+    test_db.add(run_two)
+    test_db.commit()
     workflow = item.metadata_json["workflow"]
     stage = _stage(workflow)
 
