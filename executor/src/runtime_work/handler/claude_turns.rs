@@ -76,9 +76,9 @@ impl EventSink for ClaudeRuntimeEventSink {
     fn send(&self, event: EventEnvelope) -> Self::SendFuture {
         let active = self
             .handler
-            .active_turn_cancellations
+            .active_local_executions
             .lock()
-            .expect("active turn cancellation map lock should not be poisoned");
+            .expect("active local execution map lock should not be poisoned");
         if !active.get(&self.local_task_id).is_some_and(|control| {
             control.execution_id == self.execution_id && !control.stop_requested
         }) {
@@ -635,9 +635,9 @@ mod tests {
 
         {
             let mut active = handler
-                .active_turn_cancellations
+                .active_local_executions
                 .lock()
-                .expect("active turn cancellation map lock");
+                .expect("active local execution map lock");
             let control = active.get_mut("task-1").expect("active Claude turn");
             control.stop_requested = true;
         }

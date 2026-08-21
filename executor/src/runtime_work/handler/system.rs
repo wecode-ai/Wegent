@@ -695,10 +695,12 @@ impl RuntimeWorkRpcHandler {
         expected_models: Vec<String>,
     ) -> Result<Value, AppIpcError> {
         let active_task_count = self
-            .active_codex_turns
+            .active_local_executions
             .lock()
-            .expect("active Codex turn registry should not be poisoned")
-            .len();
+            .expect("active local execution map lock should not be poisoned")
+            .values()
+            .filter(|execution| execution.codex_turn.is_some())
+            .count();
         let force = bool_field(&payload, "force").unwrap_or(false);
         let if_idle = bool_field(&payload, "ifIdle").unwrap_or(false);
         if active_task_count > 0 && if_idle && !force {

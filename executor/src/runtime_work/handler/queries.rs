@@ -231,9 +231,19 @@ impl RuntimeWorkRpcHandler {
                 .as_ref()
                 .filter(|link| runtime_has_provider_transcript_reader(&link.runtime))
             {
-                let mut messages = cached_runtime_transcript_messages(link);
-                messages.extend(completed_transcript_messages(link));
-                messages.extend(self.active_codex_transcript_messages(&local_task_id));
+                let mut messages = transcript_snapshot_messages(link);
+                append_unique_transcript_messages(
+                    &mut messages,
+                    cached_runtime_transcript_messages(link),
+                );
+                append_unique_transcript_messages(
+                    &mut messages,
+                    completed_transcript_messages(link),
+                );
+                append_unique_transcript_messages(
+                    &mut messages,
+                    self.active_codex_transcript_messages(&local_task_id),
+                );
                 let presentation_page_messages = messages.clone();
                 attach_user_message_presentations_for_page(
                     &mut messages,
@@ -401,6 +411,24 @@ impl RuntimeWorkRpcHandler {
             remove_superseded_transcript_turns(&mut messages, &link.runtime_handle);
         }
         attach_legacy_thread_preview(&mut messages, &thread, page_before_cursor.is_some());
+        if before_cursor.is_none() && after_cursor.is_none() && !include_full_content {
+            let snapshot_changed = local_link.as_ref().is_some_and(|link| {
+                link.thread_id.as_deref() == Some(thread_id.as_str())
+                    && transcript_snapshot_messages(link) != messages
+            });
+            if snapshot_changed {
+                let snapshot_messages = messages.clone();
+                self.store.update_task(&local_task_id, |link| {
+                    if link.thread_id.as_deref() == Some(thread_id.as_str()) {
+                        set_transcript_snapshot_messages(
+                            &mut link.runtime_handle,
+                            &thread_id,
+                            snapshot_messages,
+                        );
+                    }
+                });
+            }
+        }
         let running = local_execution_running || codex_thread_has_in_progress_turn(&thread);
         let message_count = messages.len();
         log_runtime_transcript_finished(RuntimeTranscriptLog {

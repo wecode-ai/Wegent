@@ -1304,6 +1304,24 @@ async fn running_codex_transcript_uses_live_cache_without_provider_read() {
         "Task".to_owned(),
     );
     link.thread_id = Some("thread-1".to_owned());
+    set_transcript_snapshot_messages(
+        &mut link.runtime_handle,
+        "thread-1",
+        vec![
+            json!({
+                "id": "historical-user",
+                "role": "user",
+                "content": "Explain the approach",
+                "createdAt": 1_779_999_999_000_i64,
+            }),
+            json!({
+                "id": "historical-assistant",
+                "role": "assistant",
+                "content": "Use divide and conquer",
+                "createdAt": 1_779_999_999_500_i64,
+            }),
+        ],
+    );
     set_runtime_handle_messages(
         &mut link.runtime_handle,
         vec![json!({
@@ -1363,14 +1381,19 @@ async fn running_codex_transcript_uses_live_cache_without_provider_read() {
         .expect("running transcript should use the live cache");
 
     assert_eq!(transcript["running"], true);
-    assert_eq!(transcript["messages"].as_array().unwrap().len(), 3);
-    assert_eq!(transcript["messages"][0]["content"], "Implement quicksort");
+    assert_eq!(transcript["messages"].as_array().unwrap().len(), 5);
+    assert_eq!(transcript["messages"][0]["content"], "Explain the approach");
     assert_eq!(
         transcript["messages"][1]["content"],
+        "Use divide and conquer"
+    );
+    assert_eq!(transcript["messages"][2]["content"], "Implement quicksort");
+    assert_eq!(
+        transcript["messages"][3]["content"],
         "Initial implementation complete"
     );
     assert_eq!(
-        transcript["messages"][2]["blocks"][0]["content"],
+        transcript["messages"][4]["blocks"][0]["content"],
         "Writing quicksort"
     );
     let _ = fs::remove_dir_all(root);
@@ -1599,6 +1622,11 @@ fn recording_a_new_provider_thread_clears_completed_transcript_cache() {
         "thread-1",
         vec![json!({"id": "message-1", "role": "assistant"})],
     );
+    set_transcript_snapshot_messages(
+        &mut link.runtime_handle,
+        "thread-1",
+        vec![json!({"id": "snapshot-message-1", "role": "assistant"})],
+    );
     handler.upsert_local_task(link);
 
     handler.record_local_task_thread("task-1", "thread-2");
@@ -1615,6 +1643,14 @@ fn recording_a_new_provider_thread_clears_completed_transcript_cache() {
     assert!(link
         .runtime_handle
         .get("completedTranscriptThreadId")
+        .is_none());
+    assert!(link
+        .runtime_handle
+        .get("transcriptSnapshotMessages")
+        .is_none());
+    assert!(link
+        .runtime_handle
+        .get("transcriptSnapshotThreadId")
         .is_none());
 
     let _ = fs::remove_file(index_path);
@@ -1875,7 +1911,7 @@ fn settled_task_projection_normalizes_every_terminal_outcome() {
 }
 
 #[test]
-fn provider_turn_registers_when_execution_control_settles_first() {
+fn provider_turn_cannot_restore_running_state_after_execution_settles() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
     let execution_id = start_test_execution(&handler, "task-1");
 
@@ -1887,10 +1923,26 @@ fn provider_turn_registers_when_execution_control_settles_first() {
         "turn-1".to_owned(),
     );
 
-    assert!(handler.is_active_local_task("task-1"));
-
-    handler.clear_active_codex_turn("task-1", execution_id);
     assert!(!handler.is_active_local_task("task-1"));
+    assert!(handler.active_codex_turn("task-1").is_none());
+}
+
+#[test]
+fn finishing_execution_removes_its_codex_turn_context() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    let execution_id = start_test_execution(&handler, "task-1");
+    handler.record_active_codex_turn(
+        "task-1",
+        execution_id,
+        "thread-1".to_owned(),
+        "turn-1".to_owned(),
+    );
+
+    assert!(handler.active_codex_turn("task-1").is_some());
+    assert!(handler.finish_local_task_execution("task-1", execution_id));
+
+    assert!(!handler.is_active_local_task("task-1"));
+    assert!(handler.active_codex_turn("task-1").is_none());
 }
 
 #[test]
@@ -3203,18 +3255,13 @@ async fn codex_app_server_restart_rpc_returns_success() {
 #[tokio::test]
 async fn codex_app_server_restart_requires_confirmation_for_active_turns() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    handler
-        .active_codex_turns
-        .lock()
-        .expect("active Codex turn registry should not be poisoned")
-        .insert(
-            "thread-1".to_owned(),
-            ActiveCodexTurn {
-                execution_id: 1,
-                thread_id: "thread-1".to_owned(),
-                turn_id: "turn-1".to_owned(),
-            },
-        );
+    let execution_id = start_test_execution(&handler, "task-1");
+    handler.record_active_codex_turn(
+        "task-1",
+        execution_id,
+        "thread-1".to_owned(),
+        "turn-1".to_owned(),
+    );
 
     let result = handler
         .handle_runtime_rpc(json!({

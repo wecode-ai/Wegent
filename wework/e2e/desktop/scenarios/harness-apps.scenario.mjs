@@ -256,17 +256,17 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       })
       assert.ok(appTabId, 'Harness app did not expose its workspace tab ID')
       assert.ok(appWebviewLabel, 'Harness app did not expose its native WebView label')
-      const nativeSnapshot = await control.command('captureEmbeddedBrowser', appSurface, {
-        text: APP_ROUTE,
-        timeoutMs: 30_000,
-      })
-      assert.ok(
-        nativeSnapshot.startsWith('data:image/png;base64,'),
-        'Harness native WebView did not produce a screenshot'
+      await control.command(
+        'waitFor',
+        `[data-testid="workspace-tab-select-${appTabId}"][aria-selected="true"]`,
+        {
+          timeoutMs: uiTimeoutMs,
+        }
       )
-      await writeFile(
-        join(resultDir, 'harness-apps-08-native-page.png'),
-        Buffer.from(nativeSnapshot.slice('data:image/png;base64,'.length), 'base64')
+      const appWorkspaceSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+      assert.ok(
+        appWorkspaceSnapshot.location.includes(APP_ROUTE),
+        `Harness app workspace route did not open: ${appWorkspaceSnapshot.location}`
       )
       const harnessStateKey = '__weworkHarnessTabState'
       const harnessStateValue = `preserved-${Date.now()}`
@@ -278,10 +278,21 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         }),
         timeoutMs: uiTimeoutMs,
       })
+      const nativeSnapshot = await control.command('captureEmbeddedBrowser', appSurface, {
+        timeoutMs: 30_000,
+      })
+      assert.ok(
+        nativeSnapshot.startsWith('data:image/png;base64,'),
+        'Harness native WebView did not produce a screenshot'
+      )
+      await writeFile(
+        join(resultDir, 'harness-apps-08-native-page.png'),
+        Buffer.from(nativeSnapshot.slice('data:image/png;base64,'.length), 'base64')
+      )
       await control.command('click', `[data-testid="workspace-tab-select-${managementTabId}"]`)
       await control.command(
         'waitFor',
-        `[data-testid="workspace-tab-content-${managementTabId}"][aria-hidden="false"]`,
+        `[data-testid="workspace-tab-select-${managementTabId}"][aria-selected="true"]`,
         {
           timeoutMs: uiTimeoutMs,
         }
@@ -394,12 +405,30 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         Buffer.from(stoppedSnapshot.slice('data:image/png;base64,'.length), 'base64')
       )
       await control.awaitReadyAfter(readyCountBeforeReload)
+      const residentAppSurface = `[data-testid="app-iframe-harness-${INSTALLATION_ID}"]`
+      await control.command('waitFor', residentAppSurface, {
+        timeoutMs: 30_000,
+      })
+      const residentAppTabId = await control.command('getAttribute', residentAppSurface, {
+        value: 'data-workspace-tab-id',
+      })
+      assert.ok(residentAppTabId, 'Resident Smart app did not expose its workspace tab ID')
+      await control.command(
+        'waitFor',
+        `[data-testid="workspace-tab-select-${residentAppTabId}"][aria-selected="true"]`,
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      const residentWorkspaceSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+      assert.ok(
+        residentWorkspaceSnapshot.location.includes(APP_ROUTE),
+        `Resident Smart app workspace route did not reopen: ${residentWorkspaceSnapshot.location}`
+      )
       const residentNativeSnapshot = await control.command(
         'captureEmbeddedBrowser',
-        `[data-testid="app-iframe-harness-${INSTALLATION_ID}"]`,
+        residentAppSurface,
         {
-          target: `[data-testid="workspace-tab-select-${managementTabId}"]`,
-          text: APP_ROUTE,
           timeoutMs: 30_000,
         }
       )
@@ -410,6 +439,14 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       await writeFile(
         join(resultDir, 'harness-apps-11-resident-auto-opened.png'),
         Buffer.from(residentNativeSnapshot.slice('data:image/png;base64,'.length), 'base64')
+      )
+      await control.command('click', `[data-testid="workspace-tab-select-${managementTabId}"]`)
+      await control.command(
+        'waitFor',
+        `[data-testid="workspace-tab-select-${managementTabId}"][aria-selected="true"]`,
+        {
+          timeoutMs: uiTimeoutMs,
+        }
       )
 
       await control.command('waitFor', `[data-testid="harness-app-stop-${INSTALLATION_ID}"]`, {
