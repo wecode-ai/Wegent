@@ -66,7 +66,11 @@ export function RuntimeTaskLifecycleStreamCoordinator({
                 if (reason === 'runtime_replaced') {
                   reconcileRuntimeConversationQueueAfterTransportReplacement(address, turns)
                 }
-                store.syncTranscript(address, transcript)
+                store.syncTranscript(
+                  address,
+                  transcript,
+                  reason === 'event_lagged' ? { preserveActiveTurn: true } : undefined
+                )
               } catch (error) {
                 console.warn('[Wework] Runtime transcript reconciliation failed', {
                   reason,
