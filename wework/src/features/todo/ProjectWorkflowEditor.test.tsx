@@ -599,7 +599,6 @@ describe('ProjectWorkflowEditor', () => {
                 id: 'rule-1',
                 event_type: '',
                 action: 'complete',
-                prompt: '',
               },
             ],
             agent_id: null,
@@ -670,7 +669,14 @@ describe('ProjectWorkflowEditor', () => {
           workspace_policy: 'none',
           automation_rule_id: null,
           wait_config: {
-            rules: [{ id: 'rule-1', event_type: '', action: 'rerun', prompt: '' }],
+            rules: [
+              {
+                id: 'rule-1',
+                event_type: '',
+                action: 'rerun',
+                prompt: 'Fix the failing pipeline',
+              },
+            ],
             agent_id: null,
           },
         },
@@ -824,7 +830,6 @@ describe('ProjectWorkflowEditor', () => {
                     id: 'rule-2',
                     event_type: '',
                     action: 'complete',
-                    prompt: '',
                   },
                 ],
               },
@@ -869,6 +874,80 @@ describe('ProjectWorkflowEditor', () => {
     expect(screen.getByTestId('project-workflow-save')).toBeEnabled()
   })
 
+  test('gates saving until rerun rules carry a non-blank prompt', () => {
+    const onChange = vi.fn()
+    const workflowWithWait: ProjectWorkflowDefinition = {
+      ...workflow,
+      nodes: [
+        workflow.nodes[0],
+        {
+          id: 'wait-1',
+          name: '等待外部事件',
+          node_type: 'wait',
+          depends_on: ['test'],
+          required: true,
+          workspace_policy: 'none',
+          automation_rule_id: null,
+          wait_config: {
+            rules: [
+              {
+                id: 'rule-1',
+                event_type: 'ci_failed',
+                action: 'rerun',
+                prompt: '   ',
+              },
+            ],
+            agent_id: 'robot-1',
+          },
+        },
+        workflow.nodes[1],
+      ],
+    }
+    const renderEditor = (value: ProjectWorkflowDefinition) =>
+      render(
+        <ProjectWorkflowEditor
+          value={value}
+          busy={false}
+          onChange={onChange}
+          onSave={vi.fn()}
+          projectAgents={[robot]}
+        />
+      )
+    const { rerender } = renderEditor(workflowWithWait)
+
+    expect(screen.getByTestId('project-workflow-save')).toBeDisabled()
+
+    rerender(
+      <ProjectWorkflowEditor
+        value={{
+          ...workflowWithWait,
+          nodes: workflowWithWait.nodes.map(node =>
+            node.id === 'wait-1'
+              ? {
+                  ...node,
+                  wait_config: {
+                    ...node.wait_config,
+                    rules: [
+                      {
+                        ...node.wait_config!.rules[0],
+                        prompt: 'Fix the failing pipeline',
+                      },
+                    ],
+                  },
+                }
+              : node
+          ),
+        }}
+        busy={false}
+        onChange={onChange}
+        onSave={vi.fn()}
+        projectAgents={[robot]}
+      />
+    )
+
+    expect(screen.getByTestId('project-workflow-save')).toBeEnabled()
+  })
+
   test('continues the current task with a prompt without requiring a robot', () => {
     const onChange = vi.fn()
     const workflowWithWait: ProjectWorkflowDefinition = {
@@ -891,7 +970,7 @@ describe('ProjectWorkflowEditor', () => {
         workflow.nodes[1],
       ],
     }
-    render(
+    const { rerender } = render(
       <ProjectWorkflowEditor
         value={workflowWithWait}
         busy={false}
@@ -905,7 +984,7 @@ describe('ProjectWorkflowEditor', () => {
     expect(
       screen.getByTestId('project-workflow-wait-rule-rerun-prompt-wait-1-rule-1')
     ).toBeInTheDocument()
-    expect(screen.queryByTestId('project-workflow-wait-robot-wait-1')).not.toBeInTheDocument()
+    expect(screen.getByTestId('project-workflow-wait-robot-wait-1')).toBeInTheDocument()
 
     fireEvent.change(screen.getByTestId('project-workflow-wait-rule-rerun-prompt-wait-1-rule-1'), {
       target: { value: 'Fix the failing pipeline' },
@@ -928,6 +1007,33 @@ describe('ProjectWorkflowEditor', () => {
           }),
         ]),
       })
+    )
+    rerender(
+      <ProjectWorkflowEditor
+        value={{
+          ...workflowWithWait,
+          nodes: workflowWithWait.nodes.map(node =>
+            node.id === 'wait-1'
+              ? {
+                  ...node,
+                  wait_config: {
+                    ...node.wait_config,
+                    rules: [
+                      {
+                        ...node.wait_config!.rules[0],
+                        prompt: 'Fix the failing pipeline',
+                      },
+                    ],
+                  },
+                }
+              : node
+          ),
+        }}
+        busy={false}
+        onChange={onChange}
+        onSave={vi.fn()}
+        projectAgents={[robot]}
+      />
     )
     expect(screen.getByTestId('project-workflow-save')).toBeEnabled()
   })
@@ -981,7 +1087,7 @@ describe('ProjectWorkflowEditor', () => {
     ).not.toBeInTheDocument()
   })
 
-  test('only shows a rerun robot picker when a rerun rule exists', () => {
+  test('always shows the robot picker in a wait node', () => {
     const onChange = vi.fn()
     const completeOnly: ProjectWorkflowDefinition = {
       ...workflow,
@@ -1014,7 +1120,7 @@ describe('ProjectWorkflowEditor', () => {
     )
 
     fireEvent.click(screen.getByTestId('project-workflow-wait-wait-1'))
-    expect(screen.queryByTestId('project-workflow-wait-robot-wait-1')).not.toBeInTheDocument()
+    expect(screen.getByTestId('project-workflow-wait-robot-wait-1')).toBeInTheDocument()
 
     const withRerun: ProjectWorkflowDefinition = {
       ...completeOnly,

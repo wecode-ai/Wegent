@@ -384,14 +384,24 @@ export type WorkflowNodeStatus =
 export type IssueAdvancementPolicy = 'manual' | 'ai'
 export type IssueStageMode = 'none' | 'dag'
 
-export interface WaitEventRule {
+export type WaitEventRule = WaitEventCompleteRule | WaitEventPromptRule
+
+export interface WaitEventCompleteRule {
   id: string
   /** Provider that emits the event; empty matches any provider (custom rules). */
   provider?: string | null
   event_type: string
-  action: WaitEventAction
-  /** Prompt used by prompt-driven actions (rerun / continue). */
-  prompt?: string
+  action: 'complete'
+}
+
+export interface WaitEventPromptRule {
+  id: string
+  /** Provider that emits the event; empty matches any provider (custom rules). */
+  provider?: string | null
+  event_type: string
+  action: 'rerun' | 'continue'
+  /** Repair instruction required by prompt-driven actions. */
+  prompt: string
 }
 
 export interface WaitNodeConfig {
@@ -442,6 +452,8 @@ export interface WorkflowNodeInstance extends WorkflowNodeDefinition {
   automation_run_id?: string | null
   wait_round?: number
   repair_status?: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | null
+  /** Why automatic reference registration failed for this wait node. */
+  registration_error?: string
 }
 
 export interface IssueWorkflowInstance {

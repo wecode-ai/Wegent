@@ -31,6 +31,8 @@ import type {
   IssueStageMode,
   ProjectWorkflowDefinition,
   WaitEventRule,
+  WaitEventCompleteRule,
+  WaitEventPromptRule,
   WorkflowContextSource,
   WorkflowNodeDefinition,
   WorkflowWorkspacePolicy,
@@ -203,7 +205,6 @@ function createWaitNode(
           id: 'rule-1',
           event_type: '',
           action: 'complete',
-          prompt: '',
         },
       ],
       agent_id: null,
@@ -890,12 +891,12 @@ function WaitNodeInspector({
     }
     return options
   }, [catalogGroups, t])
-  const catalogTypesByValue = useMemo(() => {
+  const catalogTypesById = useMemo(() => {
     const byValue = new Map<string, ExternalEventType>()
     for (const group of catalogGroups) {
       for (const category of group.categories) {
         for (const type of category.types) {
-          byValue.set(type.event_type, type)
+          byValue.set(`${type.provider}-${type.event_type}`, type)
         }
       }
     }
@@ -914,11 +915,16 @@ function WaitNodeInspector({
     }
     return hints
   }, [catalogGroups])
-  const updateRule = (ruleId: string, patch: Partial<WaitEventRule>) => {
+  const updateRule = (
+    ruleId: string,
+    patch: Partial<WaitEventCompleteRule> | Partial<WaitEventPromptRule>
+  ) => {
     onUpdate({
       wait_config: {
         ...node.wait_config,
-        rules: rules.map(rule => (rule.id === ruleId ? { ...rule, ...patch } : rule)),
+        rules: rules.map(rule =>
+          rule.id === ruleId ? ({ ...rule, ...patch } as WaitEventRule) : rule
+        ),
       },
     })
   }
@@ -934,7 +940,6 @@ function WaitNodeInspector({
             provider: null,
             event_type: '',
             action: 'complete',
-            prompt: '',
           },
         ],
       },
@@ -976,50 +981,49 @@ function WaitNodeInspector({
           className="mt-1.5 h-9 w-full rounded-lg border border-border bg-background px-2.5 text-sm outline-none focus:border-blue-500"
         />
       </label>
-      {rules.some(rule => rule.action === 'rerun') ? (
-        <div className="mt-5">
-          <label className="block text-xs font-medium text-text-secondary">
-            {t('todo.workflow_stage_robot_label', '执行机器人')}
-            <div className="mt-1.5 flex gap-2">
-              <select
-                value={node.wait_config?.agent_id ?? ''}
-                data-testid={`project-workflow-wait-robot-${node.id}`}
-                onChange={event =>
-                  onUpdate({
-                    wait_config: {
-                      rules: node.wait_config?.rules ?? [],
-                      agent_id: event.target.value || null,
-                    },
-                  })
-                }
-                className="h-9 min-w-0 flex-1 rounded-lg border border-border bg-background px-2 text-sm"
-              >
-                <option value="">
-                  {projectAgents.length
-                    ? t('todo.workflow_stage_select_robot', '选择机器人')
-                    : t('todo.workflow_stage_no_robots', '暂无可用机器人')}
+      <div className="mt-5">
+        <label className="block text-xs font-medium text-text-secondary">
+          {t('todo.workflow_stage_robot_label', '执行机器人')}
+          <div className="mt-1.5 flex gap-2">
+            <select
+              value={node.wait_config?.agent_id ?? ''}
+              data-testid={`project-workflow-wait-robot-${node.id}`}
+              onChange={event =>
+                onUpdate({
+                  wait_config: {
+                    ...node.wait_config,
+                    rules: node.wait_config?.rules ?? [],
+                    agent_id: event.target.value || null,
+                  },
+                })
+              }
+              className="h-9 min-w-0 flex-1 rounded-lg border border-border bg-background px-2 text-sm"
+            >
+              <option value="">
+                {projectAgents.length
+                  ? t('todo.workflow_stage_select_robot', '选择机器人')
+                  : t('todo.workflow_stage_no_robots', '暂无可用机器人')}
+              </option>
+              {projectAgents.map(agent => (
+                <option key={agent.id} value={agent.id}>
+                  {agent.name}
                 </option>
-                {projectAgents.map(agent => (
-                  <option key={agent.id} value={agent.id}>
-                    {agent.name}
-                  </option>
-                ))}
-              </select>
-              {onRequestCreateRobot ? (
-                <button
-                  type="button"
-                  data-testid={`project-workflow-wait-add-robot-${node.id}`}
-                  onClick={onRequestCreateRobot}
-                  aria-label={t('todo.workflow_stage_add_robot', '添加机器人')}
-                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border text-text-secondary hover:bg-muted"
-                >
-                  <Plus className="h-4 w-4" />
-                </button>
-              ) : null}
-            </div>
-          </label>
-        </div>
-      ) : null}
+              ))}
+            </select>
+            {onRequestCreateRobot ? (
+              <button
+                type="button"
+                data-testid={`project-workflow-wait-add-robot-${node.id}`}
+                onClick={onRequestCreateRobot}
+                aria-label={t('todo.workflow_stage_add_robot', '添加机器人')}
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border text-text-secondary hover:bg-muted"
+              >
+                <Plus className="h-4 w-4" />
+              </button>
+            ) : null}
+          </div>
+        </label>
+      </div>
       <div className="mt-5">
         <div className="flex items-center justify-between gap-2">
           <p className="text-xs font-medium text-text-secondary">
@@ -1064,7 +1068,7 @@ function WaitNodeInspector({
                     value={rule.event_type}
                     onChange={value => updateRule(rule.id, { event_type: value })}
                     onPick={option => {
-                      const type = catalogTypesByValue.get(option.value)
+                      const type = option.id ? catalogTypesById.get(option.id) : undefined
                       updateRule(rule.id, {
                         event_type: option.value,
                         provider: type?.provider ?? null,
@@ -1210,7 +1214,10 @@ export function ProjectWorkflowEditor({
         const hasRerun = rules.some(rule => rule.action === 'rerun')
         return (
           rules.length > 0 &&
-          rules.every(rule => rule.event_type.trim()) &&
+          rules.every(
+            rule =>
+              rule.event_type.trim() && (rule.action === 'complete' || Boolean(rule.prompt.trim()))
+          ) &&
           (!hasRerun || Boolean(node.wait_config?.agent_id))
         )
       })

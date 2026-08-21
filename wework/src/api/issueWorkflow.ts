@@ -64,7 +64,12 @@ export function instantiateIssueWorkflow(
   if (stageMode === 'none' && advancementPolicy === 'manual') return null
   const nodes: WorkflowNodeInstance[] = (stageMode === 'dag' ? definitionNodes : []).map(node => ({
     ...node,
-    status: node.depends_on.length === 0 ? 'ready' : 'blocked',
+    status:
+      node.depends_on.length === 0 && node.node_type === 'wait'
+        ? 'waiting'
+        : node.depends_on.length === 0
+          ? 'ready'
+          : 'blocked',
     task_binding_id: null,
     task_ids: [],
     task_statuses: {},
