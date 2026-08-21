@@ -22,7 +22,8 @@ use std::os::windows::process::CommandExt;
 const DIRECTORY: &str = "harness-apps";
 const REGISTRY: &str = "installations.json";
 const BUNDLED_RUNTIME_DIRECTORY: &str = "bundled-harness-runtime";
-const BUNDLED_RUNTIME_METADATA: &str = "runtime.json";
+const BUNDLED_RUNTIME_CATALOG: &str = "runtimes.json";
+const RUNTIME_IDENTITY: &str = "runtime.json";
 const HARNESS_APP_LAUNCH_PROGRESS_EVENT: &str = "harness-app-launch-progress";
 const MAX_RUNTIME_ARCHIVE_BYTES: u64 = 200 * 1024 * 1024;
 const MAX_ARCHIVE_BYTES: u64 = 50 * 1024 * 1024;
@@ -862,6 +863,7 @@ fn free_port() -> Result<u16, String> {
 
 struct DshRuntime {
     root: PathBuf,
+    plugins: PathBuf,
     node: PathBuf,
     entry: PathBuf,
     version: Version,
@@ -871,7 +873,14 @@ struct DshRuntime {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct BundledDshRuntimeCatalog {
+    runtimes: Vec<BundledDshRuntimeMetadata>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct BundledDshRuntimeMetadata {
+    dsh_version: Version,
     source_fingerprint: String,
     archive_sha256: String,
     archive_bytes: u64,
@@ -881,6 +890,7 @@ struct BundledDshRuntimeMetadata {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DshRuntimeIdentityMetadata {
+    dsh_version: Version,
     source_fingerprint: String,
 }
 
@@ -913,10 +923,13 @@ fn read_node_version(node: &Path) -> Result<Version, String> {
         .map_err(|error| format!("Managed Node runtime version is invalid: {error}"))
 }
 
-fn resolve_dsh_runtime(app: &tauri::AppHandle) -> Result<DshRuntime, String> {
+fn resolve_dsh_runtime(
+    app: &tauri::AppHandle,
+    requirement: &VersionReq,
+) -> Result<DshRuntime, String> {
     let node = crate::execution_environments::ensure_node_runtime(app)?;
     if let Ok(runtime_root) = std::env::var("WEWORK_HARNESS_RUNTIME_ROOT") {
-        return resolve_managed_dsh_runtime(PathBuf::from(runtime_root), node);
+        return resolve_materialized_dsh_runtime(PathBuf::from(runtime_root), node, requirement);
     }
     if let Ok(source_root) = std::env::var("WEWORK_DEEPSEEK_HARNESS_ROOT") {
         let root = fs::canonicalize(source_root).map_err(|error| {
@@ -930,17 +943,24 @@ fn resolve_dsh_runtime(app: &tauri::AppHandle) -> Result<DshRuntime, String> {
                 tsx.display()
             ));
         }
+        let version = read_package_version(&root.join("package.json"))?;
+        if !requirement.matches(&version) {
+            return Err(format!(
+                "DeepSeek Harness source runtime {version} does not satisfy {requirement}"
+            ));
+        }
         return Ok(DshRuntime {
-            version: read_package_version(&root.join("package.json"))?,
+            version,
             node_version: read_node_version(&node)?,
             node,
             entry: root.join("apps/cli/src/bin.ts"),
+            plugins: root.join("plugins"),
             root,
             uses_tsx_loader: true,
         });
     }
     let descriptor_root = bundled_runtime_descriptor_root(app)?;
-    download_and_extract_dsh_runtime(app, &descriptor_root, node)
+    download_and_extract_dsh_runtime(app, &descriptor_root, node, requirement)
 }
 
 fn bundled_runtime_descriptor_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -951,12 +971,12 @@ fn bundled_runtime_descriptor_root(app: &tauri::AppHandle) -> Result<PathBuf, St
     #[cfg(debug_assertions)]
     {
         if let Ok(root) = &resource_root {
-            if root.join(BUNDLED_RUNTIME_METADATA).is_file() {
+            if root.join(BUNDLED_RUNTIME_CATALOG).is_file() {
                 return Ok(root.clone());
             }
         }
         let source_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(BUNDLED_RUNTIME_DIRECTORY);
-        if source_root.join(BUNDLED_RUNTIME_METADATA).is_file() {
+        if source_root.join(BUNDLED_RUNTIME_CATALOG).is_file() {
             return Ok(source_root);
         }
     }
@@ -967,28 +987,59 @@ fn valid_sha256(value: &str) -> bool {
     value.len() == 64 && value.chars().all(|character| character.is_ascii_hexdigit())
 }
 
-fn read_runtime_descriptor(resource_root: &Path) -> Result<BundledDshRuntimeMetadata, String> {
-    let metadata_path = resource_root.join(BUNDLED_RUNTIME_METADATA);
-    let metadata: BundledDshRuntimeMetadata =
-        serde_json::from_slice(&fs::read(&metadata_path).map_err(|error| {
-            format!("Failed to read managed Harness runtime descriptor: {error}")
-        })?)
-        .map_err(|error| format!("Managed Harness runtime descriptor is invalid: {error}"))?;
-    if !valid_sha256(metadata.source_fingerprint.trim()) {
-        return Err("Managed Harness runtime fingerprint is invalid".to_string());
+fn read_runtime_catalog(resource_root: &Path) -> Result<BundledDshRuntimeCatalog, String> {
+    let catalog_path = resource_root.join(BUNDLED_RUNTIME_CATALOG);
+    let catalog: BundledDshRuntimeCatalog = serde_json::from_slice(
+        &fs::read(&catalog_path)
+            .map_err(|error| format!("Failed to read managed Harness runtime catalog: {error}"))?,
+    )
+    .map_err(|error| format!("Managed Harness runtime catalog is invalid: {error}"))?;
+    if catalog.runtimes.is_empty() {
+        return Err("Managed Harness runtime catalog is empty".to_string());
     }
-    if !valid_sha256(metadata.archive_sha256.trim()) {
-        return Err("Managed Harness runtime archive checksum is invalid".to_string());
+    let mut versions = HashSet::new();
+    let mut fingerprints = HashSet::new();
+    for metadata in &catalog.runtimes {
+        if !versions.insert(metadata.dsh_version.clone()) {
+            return Err(format!(
+                "Managed Harness runtime version is duplicated: {}",
+                metadata.dsh_version
+            ));
+        }
+        if !valid_sha256(metadata.source_fingerprint.trim()) {
+            return Err("Managed Harness runtime fingerprint is invalid".to_string());
+        }
+        if !fingerprints.insert(metadata.source_fingerprint.as_str()) {
+            return Err("Managed Harness runtime fingerprint is duplicated".to_string());
+        }
+        if !valid_sha256(metadata.archive_sha256.trim()) {
+            return Err("Managed Harness runtime archive checksum is invalid".to_string());
+        }
+        if metadata.archive_bytes == 0 || metadata.archive_bytes > MAX_RUNTIME_ARCHIVE_BYTES {
+            return Err("Managed Harness runtime archive size is invalid".to_string());
+        }
+        let url = reqwest::Url::parse(metadata.download_url.trim())
+            .map_err(|error| format!("Managed Harness runtime download URL is invalid: {error}"))?;
+        if url.scheme() != "https" {
+            return Err("Managed Harness runtime download URL must use HTTPS".to_string());
+        }
     }
-    if metadata.archive_bytes == 0 || metadata.archive_bytes > MAX_RUNTIME_ARCHIVE_BYTES {
-        return Err("Managed Harness runtime archive size is invalid".to_string());
-    }
-    let url = reqwest::Url::parse(metadata.download_url.trim())
-        .map_err(|error| format!("Managed Harness runtime download URL is invalid: {error}"))?;
-    if url.scheme() != "https" {
-        return Err("Managed Harness runtime download URL must use HTTPS".to_string());
-    }
-    Ok(metadata)
+    Ok(catalog)
+}
+
+fn select_runtime_descriptor(
+    catalog: &BundledDshRuntimeCatalog,
+    requirement: &VersionReq,
+) -> Result<BundledDshRuntimeMetadata, String> {
+    catalog
+        .runtimes
+        .iter()
+        .filter(|runtime| requirement.matches(&runtime.dsh_version))
+        .max_by(|left, right| left.dsh_version.cmp(&right.dsh_version))
+        .cloned()
+        .ok_or_else(|| {
+            format!("Wework has no managed DeepSeek Harness runtime matching {requirement}")
+        })
 }
 
 fn file_sha256(path: &Path) -> Result<(String, u64), String> {
@@ -1095,12 +1146,14 @@ fn download_and_extract_dsh_runtime(
     app: &tauri::AppHandle,
     resource_root: &Path,
     node: PathBuf,
+    requirement: &VersionReq,
 ) -> Result<DshRuntime, String> {
-    let metadata = read_runtime_descriptor(resource_root)?;
+    let catalog = read_runtime_catalog(resource_root)?;
+    let metadata = select_runtime_descriptor(&catalog, requirement)?;
     let fingerprint = metadata.source_fingerprint.trim();
     let runtime_parent = root(app)?.join("runtime");
     let extracted = runtime_parent.join(fingerprint);
-    if let Ok(runtime) = resolve_managed_dsh_runtime(extracted.clone(), node.clone()) {
+    if let Ok(runtime) = resolve_managed_dsh_runtime(extracted.clone(), node.clone(), requirement) {
         return Ok(runtime);
     }
     let archive_path = download_runtime_archive(app, &metadata)?;
@@ -1118,14 +1171,17 @@ fn download_and_extract_dsh_runtime(
             .map_err(|error| format!("Failed to extract managed Harness runtime: {error}"))?;
 
         let staged_metadata: DshRuntimeIdentityMetadata =
-            serde_json::from_slice(&fs::read(staging.join(BUNDLED_RUNTIME_METADATA)).map_err(
-                |error| format!("Failed to read extracted Harness runtime metadata: {error}"),
-            )?)
+            serde_json::from_slice(&fs::read(staging.join(RUNTIME_IDENTITY)).map_err(|error| {
+                format!("Failed to read extracted Harness runtime metadata: {error}")
+            })?)
             .map_err(|error| format!("Extracted Harness runtime metadata is invalid: {error}"))?;
         if staged_metadata.source_fingerprint != fingerprint {
             return Err("Managed Harness runtime archive fingerprint does not match".to_string());
         }
-        resolve_managed_dsh_runtime(staging.clone(), node.clone())?;
+        if staged_metadata.dsh_version != metadata.dsh_version {
+            return Err("Managed Harness runtime version does not match".to_string());
+        }
+        resolve_managed_dsh_runtime(staging.clone(), node.clone(), requirement)?;
 
         fs::create_dir_all(&runtime_parent).map_err(|error| {
             format!("Failed to create managed Harness runtime directory: {error}")
@@ -1133,7 +1189,7 @@ fn download_and_extract_dsh_runtime(
         let _ = fs::remove_dir_all(&extracted);
         fs::rename(&staging, &extracted)
             .map_err(|error| format!("Failed to activate managed Harness runtime: {error}"))?;
-        resolve_managed_dsh_runtime(extracted, node)
+        resolve_managed_dsh_runtime(extracted, node, requirement)
     })();
     if extraction.is_err() {
         let _ = fs::remove_dir_all(&staging);
@@ -1141,17 +1197,52 @@ fn download_and_extract_dsh_runtime(
     extraction
 }
 
-fn resolve_managed_dsh_runtime(root: PathBuf, node: PathBuf) -> Result<DshRuntime, String> {
+fn resolve_materialized_dsh_runtime(
+    root: PathBuf,
+    node: PathBuf,
+    requirement: &VersionReq,
+) -> Result<DshRuntime, String> {
+    let mut roots = vec![root.clone()];
+    if let Ok(entries) = fs::read_dir(&root) {
+        roots.extend(entries.filter_map(|entry| {
+            let entry = entry.ok()?;
+            entry.file_type().ok()?.is_dir().then(|| entry.path())
+        }));
+    }
+    let mut matches = roots
+        .into_iter()
+        .filter_map(|runtime_root| {
+            resolve_managed_dsh_runtime(runtime_root, node.clone(), requirement).ok()
+        })
+        .collect::<Vec<_>>();
+    matches.sort_by(|left, right| right.version.cmp(&left.version));
+    matches.into_iter().next().ok_or_else(|| {
+        format!("Wework managed DeepSeek Harness runtime does not satisfy {requirement}")
+    })
+}
+
+fn resolve_managed_dsh_runtime(
+    root: PathBuf,
+    node: PathBuf,
+    requirement: &VersionReq,
+) -> Result<DshRuntime, String> {
     let package_root = root.join("node_modules/@deepseek-ai/dsh");
     let entry = package_root.join("lib/bin.js");
     if !entry.is_file() {
         return Err("Wework managed DeepSeek Harness runtime is not installed".to_string());
     }
+    let version = read_package_version(&package_root.join("package.json"))?;
+    if !requirement.matches(&version) {
+        return Err(format!(
+            "Wework managed DeepSeek Harness runtime {version} does not satisfy {requirement}"
+        ));
+    }
     Ok(DshRuntime {
-        version: read_package_version(&package_root.join("package.json"))?,
+        version,
         node_version: read_node_version(&node)?,
         node,
         entry,
+        plugins: root.join("plugins"),
         root,
         uses_tsx_loader: false,
     })
@@ -1610,13 +1701,25 @@ pub async fn start_harness_app(
         );
     };
     emit_progress("preparingRuntime");
+    let requested_dsh = {
+        let _registry = state
+            .registry
+            .lock()
+            .map_err(|_| "Harness app registry lock failed")?;
+        let installation = read_registry(&app)?
+            .into_iter()
+            .find(|item| item.id == installation_id)
+            .ok_or_else(|| "Harness app installation is missing".to_string())?;
+        dsh_version_requirement(&installation.manifest.requirements.dsh)
+            .map_err(|error| format!("DeepSeek Harness version requirement is invalid: {error}"))?
+    };
     let runtime_app = app.clone();
     let runtime_lock = Arc::clone(&state.runtime);
     let runtime = tauri::async_runtime::spawn_blocking(move || {
         let _runtime = runtime_lock
             .lock()
             .map_err(|_| "Harness app runtime preparation lock failed")?;
-        resolve_dsh_runtime(&runtime_app)
+        resolve_dsh_runtime(&runtime_app, &requested_dsh)
     })
     .await
     .map_err(|error| format!("Failed to join Harness runtime preparation: {error}"))??;
@@ -1672,14 +1775,14 @@ pub async fn start_harness_app(
             &runtime,
             &home,
             &installation.manifest.entry.profile,
-            &runtime.root.join("plugins/wework-user-context"),
+            &runtime.plugins.join("wework-user-context"),
             "Wework user context plugin",
         )?;
         install_harness_plugin(
             &runtime,
             &home,
             &installation.manifest.entry.profile,
-            &runtime.root.join("plugins/wework-model-context"),
+            &runtime.plugins.join("wework-model-context"),
             "Wework model context plugin",
         )?;
     }

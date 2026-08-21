@@ -282,6 +282,8 @@ fn standard_dsh_release_materializes_and_installs_all_declared_packages() {
         state: "installed".to_string(),
         web_url: None,
         error: None,
+        smart_app_id: None,
+        release_id: None,
     };
 
     let packages = prepare_instance_bundle(&installation, directory.path(), true).unwrap();
@@ -316,6 +318,8 @@ fn instance_patch_adds_agent_default_model_when_the_bundle_has_no_model_fields()
         state: "installed".to_string(),
         web_url: None,
         error: None,
+        smart_app_id: None,
+        release_id: None,
     };
 
     let output = prepare_instance_bundle(&installation, directory.path(), true)
@@ -352,6 +356,8 @@ fn instance_patch_rejects_an_incomplete_model_pair() {
         state: "installed".to_string(),
         web_url: None,
         error: None,
+        smart_app_id: None,
+        release_id: None,
     };
 
     let error = prepare_instance_bundle(&installation, directory.path(), true).unwrap_err();
@@ -396,45 +402,168 @@ fn node_version_check_reports_v8_initialization_failures() {
     assert!(error.contains("failed to initialize V8"));
     assert!(error.contains("Failed to reserve virtual memory for CodeRange"));
 }
+fn runtime_descriptor(
+    version: &str,
+    fingerprint: char,
+    checksum: char,
+    download_url: &str,
+) -> Value {
+    serde_json::json!({
+        "dshVersion": version,
+        "sourceFingerprint": fingerprint.to_string().repeat(64),
+        "archiveSha256": checksum.to_string().repeat(64),
+        "archiveBytes": 1024,
+        "downloadUrl": download_url
+    })
+}
+
 #[test]
-fn runtime_descriptor_requires_https_and_integrity_metadata() {
+fn runtime_catalog_requires_https_and_integrity_metadata() {
     let directory = tempdir().unwrap();
     fs::write(
-        directory.path().join(BUNDLED_RUNTIME_METADATA),
+        directory.path().join(BUNDLED_RUNTIME_CATALOG),
         serde_json::to_vec(&serde_json::json!({
-            "sourceFingerprint": "a".repeat(64),
-            "archiveSha256": "b".repeat(64),
-            "archiveBytes": 1024,
-            "downloadUrl": "https://downloads.example/runtime.tar.gz"
+            "runtimes": [
+                runtime_descriptor(
+                    "0.1.0-rc.7",
+                    'a',
+                    'b',
+                    "https://downloads.example/runtime.tar.gz"
+                )
+            ]
         }))
         .unwrap(),
     )
     .unwrap();
 
-    let descriptor = read_runtime_descriptor(directory.path()).unwrap();
+    let catalog = read_runtime_catalog(directory.path()).unwrap();
+    let descriptor = &catalog.runtimes[0];
 
     assert_eq!(descriptor.archive_bytes, 1024);
     assert_eq!(descriptor.archive_sha256, "b".repeat(64));
 }
 
 #[test]
-fn runtime_descriptor_rejects_insecure_downloads() {
+fn runtime_catalog_rejects_insecure_downloads() {
     let directory = tempdir().unwrap();
     fs::write(
-        directory.path().join(BUNDLED_RUNTIME_METADATA),
+        directory.path().join(BUNDLED_RUNTIME_CATALOG),
         serde_json::to_vec(&serde_json::json!({
-            "sourceFingerprint": "a".repeat(64),
-            "archiveSha256": "b".repeat(64),
-            "archiveBytes": 1024,
-            "downloadUrl": "http://downloads.example/runtime.tar.gz"
+            "runtimes": [
+                runtime_descriptor(
+                    "0.1.0-rc.7",
+                    'a',
+                    'b',
+                    "http://downloads.example/runtime.tar.gz"
+                )
+            ]
         }))
         .unwrap(),
     )
     .unwrap();
 
-    assert!(read_runtime_descriptor(directory.path())
+    assert!(read_runtime_catalog(directory.path())
         .unwrap_err()
         .contains("must use HTTPS"));
+}
+
+#[test]
+fn runtime_catalog_selects_the_highest_matching_dsh_version() {
+    let catalog = BundledDshRuntimeCatalog {
+        runtimes: vec![
+            serde_json::from_value(runtime_descriptor(
+                "0.1.0-rc.7",
+                'a',
+                'b',
+                "https://downloads.example/rc7.tar.gz",
+            ))
+            .unwrap(),
+            serde_json::from_value(runtime_descriptor(
+                "0.1.0-rc.8",
+                'c',
+                'd',
+                "https://downloads.example/rc8.tar.gz",
+            ))
+            .unwrap(),
+        ],
+    };
+
+    let exact =
+        select_runtime_descriptor(&catalog, &dsh_version_requirement("0.1.0-rc.7").unwrap())
+            .unwrap();
+    let range = select_runtime_descriptor(
+        &catalog,
+        &VersionReq::parse(">=0.1.0-rc.7, <0.1.0").unwrap(),
+    )
+    .unwrap();
+
+    assert_eq!(exact.dsh_version, Version::parse("0.1.0-rc.7").unwrap());
+    assert_eq!(range.dsh_version, Version::parse("0.1.0-rc.8").unwrap());
+}
+
+#[test]
+fn runtime_catalog_rejects_an_unsupported_dsh_version() {
+    let catalog = BundledDshRuntimeCatalog {
+        runtimes: vec![serde_json::from_value(runtime_descriptor(
+            "0.1.0-rc.8",
+            'a',
+            'b',
+            "https://downloads.example/rc8.tar.gz",
+        ))
+        .unwrap()],
+    };
+
+    let error =
+        select_runtime_descriptor(&catalog, &dsh_version_requirement("0.1.0-rc.7").unwrap())
+            .unwrap_err();
+
+    assert!(error.contains("no managed DeepSeek Harness runtime"));
+}
+
+#[cfg(unix)]
+#[test]
+fn materialized_runtimes_keep_dsh_versions_isolated() {
+    let directory = tempdir().unwrap();
+    let node = directory.path().join("node");
+    fs::write(
+        &node,
+        "#!/bin/sh\n\
+         test \"$1\" = \"-p\"\n\
+         test \"$2\" = \"process.versions.node\"\n\
+         printf '24.1.0'\n",
+    )
+    .unwrap();
+    fs::set_permissions(&node, fs::Permissions::from_mode(0o755)).unwrap();
+    for version in ["0.1.0-rc.7", "0.1.0-rc.8"] {
+        let runtime = directory.path().join(version);
+        let dsh = runtime.join("node_modules/@deepseek-ai/dsh");
+        fs::create_dir_all(dsh.join("lib")).unwrap();
+        fs::create_dir_all(runtime.join("plugins")).unwrap();
+        fs::write(
+            dsh.join("package.json"),
+            serde_json::to_vec(&serde_json::json!({ "version": version })).unwrap(),
+        )
+        .unwrap();
+        fs::write(dsh.join("lib/bin.js"), "").unwrap();
+    }
+
+    let rc7 = resolve_materialized_dsh_runtime(
+        directory.path().to_path_buf(),
+        node.clone(),
+        &dsh_version_requirement("0.1.0-rc.7").unwrap(),
+    )
+    .unwrap();
+    let rc8 = resolve_materialized_dsh_runtime(
+        directory.path().to_path_buf(),
+        node,
+        &dsh_version_requirement("0.1.0-rc.8").unwrap(),
+    )
+    .unwrap();
+
+    assert_eq!(rc7.version, Version::parse("0.1.0-rc.7").unwrap());
+    assert!(rc7.root.ends_with("0.1.0-rc.7"));
+    assert_eq!(rc8.version, Version::parse("0.1.0-rc.8").unwrap());
+    assert!(rc8.root.ends_with("0.1.0-rc.8"));
 }
 
 #[test]

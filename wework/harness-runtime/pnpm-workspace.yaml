@@ -5,6 +5,7 @@ allowBuilds:
   node-pty: true
   protobufjs: true
 minimumReleaseAgeExclude:
+  - '@deepseek-ai/dsh@0.1.0-rc.7'
   - '@deepseek-ai/dsh-agent-default-model@0.1.0-rc.8'
   - '@deepseek-ai/dsh-agent-instructions@0.1.0-rc.8'
   - '@deepseek-ai/dsh-agent-loop@0.1.0-rc.8'
