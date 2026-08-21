@@ -36,7 +36,7 @@ const statusIcons: Record<
   merge_queue_conflicting: { icon: TriangleAlert, className: 'text-red-500' },
   merge_queue_removed: { icon: CircleDot, className: 'text-text-muted' },
   closed: { icon: GitPullRequestClosed, className: 'text-text-muted' },
-  merged: { icon: GitMerge, className: 'text-green-500' },
+  merged: { icon: GitMerge, className: 'text-violet-500' },
 }
 
 export function ChangeRequestStatusIcon({
