@@ -16,7 +16,7 @@ Plugin source
   -> catalog release
   -> account installation intent
   -> device capability synchronization
-  -> local Codex materialization
+  -> local runtime materialization
 ```
 
 The backend is authoritative for catalog and access state. The local executor is
@@ -83,6 +83,13 @@ newer scanned release. `review_required` stages it for review.
 An installation creates or updates an `InstalledPlugin` Kind for the account.
 The backend then synchronizes desired capabilities to registered devices. Each
 device reports its actual release and state independently.
+
+The package download is the only network step in device materialization and
+uses the Wegent Backend-provided object path. Once downloaded, the Executor
+updates its managed package store, Claude/Codex caches, registries, and config
+locally without Codex app-server, GitHub, or OpenAI calls. These local changes
+commit atomically and roll back together on failure. Connector authorization is
+a separate post-materialization flow and keeps its existing policy checks.
 
 Typical device states are `pending`, `downloading`, `installing`, `installed`,
 `failed`, and `uninstalling`. A catalog item is considered installed on a device
