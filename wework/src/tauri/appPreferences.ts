@@ -21,7 +21,8 @@ export function clampContextCompactionThreshold(value: number): number {
 export interface AppPreferences {
   closeToTrayEnabled: boolean
   showMainWindowOnLaunch: boolean
-  defaultWorkspaceTab: DefaultWorkspaceTab
+  fixedWorkspaceTabs: FixedWorkspaceTabPreference[]
+  startupWorkspaceTabId: string
   systemDragEnabled: boolean
   preventSleepWhileTasksRunning: boolean
   closeToTrayHintSeen: boolean
@@ -91,12 +92,20 @@ export function isExpiredQuickPhraseStash(phrase: QuickPhrase, now = Date.now())
 
 export type AppLanguagePreference = 'system' | 'zh-CN' | 'en'
 export type BrowserLinkTarget = 'system' | 'wework'
-export type DefaultWorkspaceTab = 'task' | 'board' | 'agent'
+export type FixedWorkspaceTabKind = 'task' | 'board' | 'agent' | 'smart_app'
+
+export interface FixedWorkspaceTabPreference {
+  id: string
+  kind: FixedWorkspaceTabKind
+  installationId?: string
+  title?: string
+}
 
 export interface AppPreferencesPatch {
   closeToTrayEnabled?: boolean
   showMainWindowOnLaunch?: boolean
-  defaultWorkspaceTab?: DefaultWorkspaceTab
+  fixedWorkspaceTabs?: FixedWorkspaceTabPreference[]
+  startupWorkspaceTabId?: string
   systemDragEnabled?: boolean
   preventSleepWhileTasksRunning?: boolean
   closeToTrayHintSeen?: boolean
@@ -152,7 +161,12 @@ export const defaultQuickPhrases: QuickPhrase[] = [
 export const defaultAppPreferences: AppPreferences = {
   closeToTrayEnabled: true,
   showMainWindowOnLaunch: true,
-  defaultWorkspaceTab: 'task',
+  fixedWorkspaceTabs: [
+    { id: 'fixed-task', kind: 'task' },
+    { id: 'fixed-board', kind: 'board' },
+    { id: 'fixed-agent', kind: 'agent' },
+  ],
+  startupWorkspaceTabId: 'fixed-task',
   systemDragEnabled: true,
   preventSleepWhileTasksRunning: true,
   closeToTrayHintSeen: false,
@@ -188,7 +202,40 @@ export const APP_PREFERENCES_CHANGED_EVENT = 'wework:app-preferences-changed'
 
 const supportedLanguagePreferences = new Set<AppLanguagePreference>(['system', 'zh-CN', 'en'])
 const supportedBrowserLinkTargets = new Set<BrowserLinkTarget>(['system', 'wework'])
-const supportedDefaultWorkspaceTabs = new Set<DefaultWorkspaceTab>(['task', 'board', 'agent'])
+const supportedFixedWorkspaceTabKinds = new Set<FixedWorkspaceTabKind>([
+  'task',
+  'board',
+  'agent',
+  'smart_app',
+])
+
+function normalizeFixedWorkspaceTabs(value: unknown): FixedWorkspaceTabPreference[] {
+  if (!Array.isArray(value)) return []
+  const ids = new Set<string>()
+  return value.flatMap(item => {
+    if (!item || typeof item !== 'object') return []
+    const record = item as Partial<FixedWorkspaceTabPreference>
+    const id = typeof record.id === 'string' ? record.id.trim() : ''
+    const kind =
+      typeof record.kind === 'string' &&
+      supportedFixedWorkspaceTabKinds.has(record.kind as FixedWorkspaceTabKind)
+        ? (record.kind as FixedWorkspaceTabKind)
+        : null
+    const installationId =
+      typeof record.installationId === 'string' ? record.installationId.trim() : ''
+    if (!id || ids.has(id) || !kind || (kind === 'smart_app' && !installationId)) return []
+    ids.add(id)
+    const title = typeof record.title === 'string' ? record.title.trim() : ''
+    return [
+      {
+        id,
+        kind,
+        ...(installationId && { installationId }),
+        ...(title && { title }),
+      },
+    ]
+  })
+}
 
 function canInvokeAppPreferencesCommand() {
   if (typeof window === 'undefined') {
@@ -210,6 +257,15 @@ function mergeAppPreferences(value: unknown): AppPreferences {
   }
 
   const record = value as Partial<AppPreferences>
+  const storedFixedWorkspaceTabs = normalizeFixedWorkspaceTabs(record.fixedWorkspaceTabs)
+  const legacyDefaultWorkspaceTab =
+    typeof (record as Record<string, unknown>).defaultWorkspaceTab === 'string'
+      ? String((record as Record<string, unknown>).defaultWorkspaceTab)
+      : 'task'
+  const fixedWorkspaceTabs =
+    storedFixedWorkspaceTabs.length > 0
+      ? storedFixedWorkspaceTabs
+      : defaultAppPreferences.fixedWorkspaceTabs
   return {
     closeToTrayEnabled:
       typeof record.closeToTrayEnabled === 'boolean'
@@ -219,11 +275,17 @@ function mergeAppPreferences(value: unknown): AppPreferences {
       typeof record.showMainWindowOnLaunch === 'boolean'
         ? record.showMainWindowOnLaunch
         : defaultAppPreferences.showMainWindowOnLaunch,
-    defaultWorkspaceTab:
-      typeof record.defaultWorkspaceTab === 'string' &&
-      supportedDefaultWorkspaceTabs.has(record.defaultWorkspaceTab as DefaultWorkspaceTab)
-        ? (record.defaultWorkspaceTab as DefaultWorkspaceTab)
-        : defaultAppPreferences.defaultWorkspaceTab,
+    fixedWorkspaceTabs,
+    startupWorkspaceTabId: (() => {
+      const requested =
+        typeof record.startupWorkspaceTabId === 'string' ? record.startupWorkspaceTabId.trim() : ''
+      if (fixedWorkspaceTabs.some(tab => tab.id === requested)) return requested
+      return (
+        fixedWorkspaceTabs.find(tab => tab.kind === legacyDefaultWorkspaceTab)?.id ??
+        fixedWorkspaceTabs[0]?.id ??
+        'fixed-task'
+      )
+    })(),
     systemDragEnabled:
       typeof record.systemDragEnabled === 'boolean'
         ? record.systemDragEnabled

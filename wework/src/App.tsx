@@ -86,8 +86,7 @@ import {
   getWeworkDocumentTitle,
 } from '@/lib/wework-dev-instance'
 import { AppshotBridge } from '@/features/appshots/AppshotBridge'
-import { ResidentSmartAppsManager } from '@/features/harness-apps/ResidentSmartAppsManager'
-import { retainResidentSmartAppsHostTabId } from '@/features/harness-apps/residentSmartAppsHost'
+import { HarnessAppAutoLauncher } from '@/features/harness-apps/HarnessAppAutoLauncher'
 import { SystemDragPanel } from '@/features/system-drag/SystemDragPanel'
 import { SystemDragBridge } from '@/features/system-drag/SystemDragBridge'
 import { installMacOSInputArrowKeyGuard } from '@/lib/macosInputArrowKeyGuard'
@@ -98,7 +97,8 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useTranslation } from '@/hooks/useTranslation'
 import { WorkspaceTabsProvider } from '@/features/workspace-tabs/WorkspaceTabsContext'
 import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
-import type { WorkspaceTab } from '@/features/workspace-tabs/workspaceTabs'
+import { createWorkspaceTab, type WorkspaceTab } from '@/features/workspace-tabs/workspaceTabs'
+import { harnessAppRoute } from '@/features/harness-apps/harnessAppTabs'
 import type { User } from '@/types/api'
 import { TelemetryBridge } from '@/telemetry/TelemetryBridge'
 import { track, useTelemetryEnabled } from '@/telemetry/client'
@@ -179,7 +179,6 @@ function telemetryFeatureForPath(path: string) {
 }
 
 interface AppRoutesProps {
-  enableResidentSmartApps?: boolean
   onWorkbenchStartupReadyChange?: (ready: boolean) => void
   onOpenWeworkForAppshot?: () => void
 }
@@ -208,7 +207,6 @@ interface WorkspaceTabSurfaceProps {
   active: boolean
   cloudWebUrl: string | null | undefined
   lifecycleStore: RuntimeTaskLifecycleStore
-  manageResidentSmartApps?: boolean
   smartAppsEnabled?: boolean
   onOpenWeworkForAppshot?: () => void
   onWorkbenchStartupReadyChange?: (ready: boolean) => void
@@ -221,7 +219,6 @@ export function WorkspaceTabSurface({
   active,
   cloudWebUrl,
   lifecycleStore,
-  manageResidentSmartApps = false,
   smartAppsEnabled = false,
   onOpenWeworkForAppshot,
   onWorkbenchStartupReadyChange,
@@ -270,10 +267,6 @@ export function WorkspaceTabSurface({
   // Task-scoped browser routing is owned by workbench effects and must remain
   // available while another workspace tab is active.
   const keepTaskRuntimeActive = tab.kind === 'task' && renderWorkbench
-  // Resident Smart apps may need to wait for the model catalog or local proxy
-  // after reload. Keep their provider-backed manager connected while its tab
-  // is in the background so recovery timers and catalog updates can complete.
-  const keepResidentManagerActive = manageResidentSmartApps && renderProvider
   // App WebViews own in-memory page state that is lost when React Activity
   // disconnects their effects. Keep the current iframe route connected while
   // inactive; AppIframe hides the native WebView through its active prop.
@@ -289,19 +282,13 @@ export function WorkspaceTabSurface({
 
   return (
     <WorkspaceTabPortalOwner ownerId={tab.id}>
-      <Activity
-        mode={
-          active || keepTaskRuntimeActive || keepResidentManagerActive || keepIframeActive
-            ? 'visible'
-            : 'hidden'
-        }
-      >
+      <Activity mode={active || keepTaskRuntimeActive || keepIframeActive ? 'visible' : 'hidden'}>
         <div
           className={cn(
             'min-h-0 min-w-0 overflow-hidden',
             active ? 'relative h-full' : 'absolute inset-0',
             !active &&
-              (keepTaskRuntimeActive || keepResidentManagerActive || keepIframeActive) &&
+              (keepTaskRuntimeActive || keepIframeActive) &&
               'pointer-events-none invisible'
           )}
           data-testid={`workspace-tab-content-${tab.id}`}
@@ -319,8 +306,8 @@ export function WorkspaceTabSurface({
               syncRemoteProjects={active}
               syncRuntimeTaskLifecycle={active}
             >
-              {manageResidentSmartApps ? (
-                <ResidentSmartAppsManager enabled={smartAppsEnabled} />
+              {harnessAppInstallationId && smartAppsEnabled ? (
+                <HarnessAppAutoLauncher installationId={harnessAppInstallationId} />
               ) : null}
               {onOpenWeworkForAppshot && active && !iframe ? (
                 <AppshotBridge onOpenWework={onOpenWeworkForAppshot} />
@@ -373,11 +360,7 @@ export function WorkspaceTabSurface({
   )
 }
 
-function AppRoutes({
-  enableResidentSmartApps = false,
-  onWorkbenchStartupReadyChange,
-  onOpenWeworkForAppshot,
-}: AppRoutesProps = {}) {
+function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: AppRoutesProps = {}) {
   const path = useCurrentPath()
   useWorkbenchRouteRegistry(getWorkbenchPluginRuntime().routes)
   const isPopoutWindow = isPopoutWindowRuntime()
@@ -385,7 +368,6 @@ function AppRoutes({
   const cloudConnection = useCloudConnection()
   const experimentalFeatures = useExperimentalFeaturesState()
   const workspaceTabs = useOptionalWorkspaceTabs()
-  const [residentManagerHostTabId, setResidentManagerHostTabId] = useState<string | undefined>()
   const [mountedTabs, setMountedTabs] = useState(() => ({
     activeTabId: workspaceTabs?.activeTabId ?? null,
     ids: new Set(workspaceTabs ? [workspaceTabs.activeTabId] : []),
@@ -507,19 +489,6 @@ function AppRoutes({
   }
 
   if (!workspaceTabs) return null
-  // Keep one provider-backed owner stable across workspace navigation. Moving the
-  // manager between tabs unmounts it and cancels model-catalog recovery timers.
-  const residentManagerTabId = enableResidentSmartApps
-    ? retainResidentSmartAppsHostTabId(
-        workspaceTabs.tabs,
-        residentManagerHostTabId,
-        workspaceTabs.activeTabId
-      )
-    : undefined
-  if (residentManagerTabId !== residentManagerHostTabId) {
-    setResidentManagerHostTabId(residentManagerTabId)
-  }
-
   return (
     <>
       <RuntimeTaskLifecycleStreamCoordinator services={services} store={lifecycleStore} />
@@ -530,7 +499,6 @@ function AppRoutes({
             key={tab.id}
             active={tab.id === workspaceTabs.activeTabId}
             lifecycleStore={lifecycleStore}
-            manageResidentSmartApps={tab.id === residentManagerTabId}
             smartAppsEnabled={experimentalFeatures.enabled}
             services={services}
             cloudWebUrl={
@@ -640,6 +608,43 @@ function AppShell() {
     }),
     [t]
   )
+  const fixedWorkspaceTabs = useMemo(
+    () =>
+      isMainWindow && appPreferences?.loaded
+        ? appPreferences.preferences.fixedWorkspaceTabs.flatMap(preference => {
+            if (preference.kind === 'smart_app') {
+              if (
+                !appPreferences.preferences.experimentalFeaturesEnabled ||
+                !preference.installationId
+              ) {
+                return []
+              }
+              return [
+                createWorkspaceTab('auxiliary', workspaceTabLabels, {
+                  id: preference.id,
+                  title: preference.title ?? t('workbench.smart_apps_title', '智能工作台'),
+                  contentRoute: harnessAppRoute(preference.installationId),
+                  fixed: true,
+                }),
+              ]
+            }
+            return [
+              createWorkspaceTab(preference.kind, workspaceTabLabels, {
+                id: preference.id,
+                fixed: true,
+              }),
+            ]
+          })
+        : [],
+    [appPreferences, isMainWindow, t, workspaceTabLabels]
+  )
+  const startupWorkspaceTabId = useMemo(() => {
+    if (!isMainWindow || !appPreferences?.loaded) return undefined
+    const preferredId = appPreferences.preferences.startupWorkspaceTabId
+    return fixedWorkspaceTabs.some(tab => tab.id === preferredId)
+      ? preferredId
+      : fixedWorkspaceTabs[0]?.id
+  }, [appPreferences, fixedWorkspaceTabs, isMainWindow])
   const [workbenchStartupReady, setWorkbenchStartupReady] = useState(false)
   const [workbenchStartupRevealTimedOut, setWorkbenchStartupRevealTimedOut] = useState(false)
   const updateImNotificationPresence = useMemo(() => {
@@ -843,11 +848,9 @@ function AppShell() {
       search={search}
       storageScope={workspaceTabStorageScope}
       labels={workspaceTabLabels}
-      startupTabKind={
-        isMainWindow && appPreferences?.loaded
-          ? appPreferences.preferences.defaultWorkspaceTab
-          : undefined
-      }
+      fixedTabs={fixedWorkspaceTabs}
+      startupTabId={startupWorkspaceTabId}
+      restoreSessionTabs={!isMainWindow}
     >
       <div
         data-testid="app-shell"
@@ -887,7 +890,6 @@ function AppShell() {
           )}
         >
           <AppRoutes
-            enableResidentSmartApps={isMainWindow && hasTauriIpc()}
             onWorkbenchStartupReadyChange={setWorkbenchStartupReady}
             onOpenWeworkForAppshot={isTauri ? openWeworkForAppshot : undefined}
           />

@@ -5,7 +5,6 @@ import {
   Boxes,
   Circle,
   ExternalLink,
-  Pin,
   Play,
   RefreshCw,
   Square,
@@ -15,16 +14,11 @@ import {
 import type { SmartAppMarketplaceItem, SmartAppsApi } from '@/api/smartApps'
 import { harnessAppsApi, type HarnessAppInstallation } from '@/api/local/harnessApps'
 import { SmartAppsSectionNav } from '@/components/smart-apps/SmartAppsSectionNav'
-import {
-  listLocalHarnessModelOptions,
-  type LocalHarnessModelOption,
-} from '@/features/local-harness/localHarnessModels'
+import { listLocalHarnessModelOptions } from '@/features/local-harness/localHarnessModels'
 import {
   harnessAppRoute,
   openHarnessAppTab,
   registerHarnessAppTab,
-  storeHarnessAppProxyToken,
-  storeHarnessAppContextToken,
   takeHarnessAppContextToken,
   takeHarnessAppProxyToken,
   unregisterHarnessAppTab,
@@ -32,11 +26,10 @@ import {
 import {
   beginHarnessAppLaunch,
   clearHarnessAppLaunch,
-  failHarnessAppLaunch,
 } from '@/features/harness-apps/harnessAppLaunchState'
 import { Button } from '@/components/ui/button'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
-import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
+import { useWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getErrorMessage } from '@/lib/error-message'
 import { navigateTo } from '@/lib/navigation'
@@ -48,7 +41,7 @@ interface HarnessAppsPageProps {
 export function HarnessAppsPage({ smartAppsApi = null }: HarnessAppsPageProps) {
   const { t } = useTranslation('common')
   const { projectChat, services } = useWorkbench()
-  const workspaceTabs = useOptionalWorkspaceTabs()
+  const workspaceTabs = useWorkspaceTabs()
   const modelOptions = useMemo(
     () => listLocalHarnessModelOptions('opencode', projectChat.models),
     [projectChat.models]
@@ -68,7 +61,6 @@ export function HarnessAppsPage({ smartAppsApi = null }: HarnessAppsPageProps) {
   }
 
   function closeAppTabs(installationId: string) {
-    if (!workspaceTabs) return
     const route = harnessAppRoute(installationId)
     const mountedTabIds = Array.from(
       document.querySelectorAll<HTMLElement>(
@@ -108,95 +100,17 @@ export function HarnessAppsPage({ smartAppsApi = null }: HarnessAppsPageProps) {
     }
   }, [smartAppsApi, t])
 
-  function selectedModel(item: HarnessAppInstallation): LocalHarnessModelOption | null {
-    return modelOptions.find(option => option.key === item.modelKey) ?? null
-  }
-
-  async function start(item: HarnessAppInstallation) {
-    const model = selectedModel(item)
-    if (!model) {
+  function start(item: HarnessAppInstallation) {
+    if (!hasSelectedModel(item)) {
       setError(t('workbench.harness_apps_model_missing'))
       return
     }
-    beginHarnessAppLaunch(item.id, item.manifest.displayName, () => void start(item))
-    if (workspaceTabs) openHarnessAppTab(workspaceTabs, item)
-    setBusy(item.id)
     setError(null)
-    let proxyToken: string | null = null
-    let contextToken: string | null = null
-    let started = false
-    try {
-      const launch = await services.localHarnessModelApi?.resolveLaunch('opencode', model)
-      if (!launch) throw new Error(t('workbench.harness_apps_model_proxy_unavailable'))
-      proxyToken = launch.proxyToken
-      contextToken = launch.context?.token ?? null
-      const running = launch.context
-        ? await harnessAppsApi.start(
-            item.id,
-            launch.baseUrl,
-            launch.context.baseUrl,
-            launch.context.token
-          )
-        : await harnessAppsApi.start(item.id, launch.baseUrl)
-      started = true
-      await storeHarnessAppProxyToken(item.id, launch.proxyToken)
-      if (contextToken) await storeHarnessAppContextToken(item.id, contextToken)
-      await refresh()
-      if (running.webUrl) {
-        registerHarnessAppTab(running)
-        if (!workspaceTabs) clearHarnessAppLaunch(item.id)
-      }
-    } catch (startError) {
-      let proxyCanBeRevoked = !started
-      if (started) {
-        try {
-          await harnessAppsApi.stop(item.id)
-          proxyCanBeRevoked = true
-        } catch (rollbackError) {
-          console.warn('[Wework] failed to roll back started Harness app', rollbackError)
-          try {
-            const installations = await harnessAppsApi.list()
-            const running = installations.find(installation => installation.id === item.id)
-            if (running?.state === 'running' && running.webUrl) {
-              registerHarnessAppTab(running)
-              clearHarnessAppLaunch(item.id)
-            }
-            setItems(installations)
-          } catch (recoveryError) {
-            console.warn('[Wework] failed to recover running Harness app', recoveryError)
-          }
-        }
-        if (proxyCanBeRevoked) {
-          unregisterHarnessAppTab(item.id)
-          await takeHarnessAppProxyToken(item.id)
-          await takeHarnessAppContextToken(item.id)
-          try {
-            await refresh()
-          } catch (refreshError) {
-            console.warn('[Wework] failed to refresh Harness apps after rollback', refreshError)
-          }
-        }
-      }
-      if (proxyToken && proxyCanBeRevoked) {
-        try {
-          await services.localHarnessModelApi?.unregisterProxy(proxyToken)
-        } catch (proxyError) {
-          console.warn('[Wework] failed to unregister Harness model proxy', proxyError)
-        }
-      }
-      const message = getErrorMessage(startError, t('workbench.harness_apps_start_failed'))
-      failHarnessAppLaunch(item.id, message)
-      setError(message)
-      if (contextToken && proxyCanBeRevoked) {
-        try {
-          await services.localHarnessModelApi?.unregisterContext(contextToken)
-        } catch (contextError) {
-          console.warn('[Wework] failed to unregister Harness context', contextError)
-        }
-      }
-    } finally {
-      setBusy(null)
-    }
+    openHarnessAppTab(workspaceTabs, item)
+  }
+
+  function hasSelectedModel(item: HarnessAppInstallation) {
+    return modelOptions.some(option => option.key === item.modelKey)
   }
 
   async function stop(item: HarnessAppInstallation): Promise<boolean> {
@@ -312,19 +226,6 @@ export function HarnessAppsPage({ smartAppsApi = null }: HarnessAppsPageProps) {
     }
   }
 
-  async function toggleResident(item: HarnessAppInstallation) {
-    setBusy(item.id)
-    setError(null)
-    try {
-      await harnessAppsApi.update(item.id, { resident: !item.resident })
-      await refresh()
-    } catch (updateError) {
-      setError(getErrorMessage(updateError, t('workbench.smart_apps_resident_update_failed')))
-    } finally {
-      setBusy(null)
-    }
-  }
-
   function stateLabel(item: HarnessAppInstallation) {
     if (item.state === 'running') return t('workbench.harness_apps_state_running', '运行中')
     if (item.state === 'failed') return t('workbench.harness_apps_state_failed', '启动失败')
@@ -431,7 +332,7 @@ export function HarnessAppsPage({ smartAppsApi = null }: HarnessAppsPageProps) {
                               {option.label}
                             </option>
                           ))}
-                          {!selectedModel(item) ? (
+                          {!hasSelectedModel(item) ? (
                             <option value={item.modelKey ?? ''}>
                               {t('workbench.harness_apps_model_unavailable')}
                             </option>
@@ -475,22 +376,6 @@ export function HarnessAppsPage({ smartAppsApi = null }: HarnessAppsPageProps) {
                         {t('workbench.smart_apps_update', '更新')}
                       </Button>
                     ) : null}
-                    <Button
-                      size="sm"
-                      variant={item.resident ? 'secondary' : 'ghost'}
-                      data-testid={`harness-app-resident-${item.id}`}
-                      aria-pressed={item.resident}
-                      title={t(
-                        'workbench.smart_apps_resident_description',
-                        'Wework 启动时自动打开'
-                      )}
-                      className="h-11 gap-1 rounded-lg px-2.5 sm:h-9"
-                      disabled={busy === item.id}
-                      onClick={() => void toggleResident(item)}
-                    >
-                      <Pin className={item.resident ? 'fill-current' : undefined} />
-                      {t('workbench.smart_apps_resident', '常驻')}
-                    </Button>
                     {item.state === 'running' ? (
                       <>
                         <Button

@@ -3055,8 +3055,7 @@ last_updated = "2026-07-30T00:00:00Z"`
         firstTaskWorkspacePath,
         'The first task did not expose a workspace path for review restoration'
       )
-      const activeWorkspaceTabSelector =
-        '[data-testid^="workspace-tab-select-task-"][aria-selected="true"]'
+      const activeWorkspaceTabSelector = '[data-tab-kind="task"][aria-selected="true"]'
       await control.command('waitFor', activeWorkspaceTabSelector, {
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
@@ -3067,7 +3066,7 @@ last_updated = "2026-07-30T00:00:00Z"`
       )
       const activeWorkspaceTabId = activeWorkspaceTabTestId.replace('workspace-tab-select-', '')
       assert.ok(
-        activeWorkspaceTabId.startsWith('task-'),
+        activeWorkspaceTabId === 'fixed-task' || activeWorkspaceTabId.startsWith('task-'),
         `Expected an active task workspace tab, received ${activeWorkspaceTabTestId}`
       )
       const activeTaskWorkbenchSelector =
