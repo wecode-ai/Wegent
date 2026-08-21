@@ -515,4 +515,29 @@ describe('AiChatModal', () => {
     await userEvent.click(screen.getByTestId('ai-chat-open-runtime-task'))
     expect(onOpenRuntimeTask).toHaveBeenCalledWith(address)
   })
+
+  it('separates returning to the Issue from closing the unified sidebar', async () => {
+    const onBack = vi.fn()
+    const onClose = vi.fn()
+
+    render(
+      <AiChatModal
+        project={project}
+        localProjects={localProjects}
+        task={task}
+        initialAddress={{ deviceId: 'local-device', taskId: 'runtime-1' }}
+        embedded
+        open
+        onBack={onBack}
+        onClose={onClose}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('ai-chat-modal-back'))
+    expect(onBack).toHaveBeenCalledOnce()
+    expect(onClose).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByTestId('ai-chat-modal-close'))
+    expect(onClose).toHaveBeenCalledOnce()
+  })
 })
