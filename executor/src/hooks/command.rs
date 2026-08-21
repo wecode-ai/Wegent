@@ -5,7 +5,7 @@
 use std::{collections::BTreeMap, io, path::Path, process::Stdio, time::Duration};
 
 use serde::Serialize;
-use tokio::{io::AsyncWriteExt, process::Command, time::timeout};
+use tokio::{io::AsyncWriteExt, process::Command, time::sleep};
 
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
@@ -60,13 +60,11 @@ pub async fn execute_command_hook<T: Serialize>(
         return failed_outcome(error.to_string());
     }
 
-    match timeout(
-        Duration::from_secs(timeout_seconds),
-        child.wait_with_output(),
-    )
-    .await
-    {
-        Err(_) => {
+    let output = child.wait_with_output();
+    tokio::pin!(output);
+    tokio::select! {
+        biased;
+        _ = sleep(Duration::from_secs(timeout_seconds)) => {
             #[cfg(unix)]
             if let Some(child_id) = child_id {
                 // The hook owns its process group, so timeout cleanup also reaches grandchildren.
@@ -84,8 +82,10 @@ pub async fn execute_command_hook<T: Serialize>(
                 response: None,
             }
         }
-        Ok(Err(error)) => failed_outcome(error.to_string()),
-        Ok(Ok(output)) => outcome_from_output(output),
+        output = &mut output => match output {
+            Err(error) => failed_outcome(error.to_string()),
+            Ok(output) => outcome_from_output(output),
+        },
     }
 }
 

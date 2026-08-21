@@ -491,7 +491,7 @@ export function SitesWorkspace({
               ].join(' ')}
             >
               <Boxes className="h-3.5 w-3.5" aria-hidden="true" />
-              {t('smart_apps_tab', '智能应用')}
+              {t('smart_apps_tab', '智能工作台')}
               <ExperimentalBadge testId="applications-smart-app-experimental-badge" />
               {smartAppsActive ? (
                 <span className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-text-primary" />

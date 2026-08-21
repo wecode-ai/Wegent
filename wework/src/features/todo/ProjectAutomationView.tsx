@@ -10,6 +10,7 @@ import { ProjectChatAgentsSection } from './ProjectChatAgentsSection'
 import { ProjectQueueView, type ExecutionListApi } from './ProjectQueueView'
 import { ProjectAutomationRulesSection } from './ProjectAutomationRulesSection'
 import { ProjectWorkflowEditor } from './ProjectWorkflowEditor'
+import { PullRequestAutomationSettings } from './PullRequestAutomationSettings'
 
 type DeliveryApi = NonNullable<WorkbenchServices['deliveryApi']>
 
@@ -52,6 +53,8 @@ export function ProjectAutomationView({
   )
   const [workflowBusy, setWorkflowBusy] = useState(false)
   const [workflowError, setWorkflowError] = useState<string | null>(null)
+  const [pullRequestAutomationBusy, setPullRequestAutomationBusy] = useState(false)
+  const [pullRequestAutomationError, setPullRequestAutomationError] = useState<string | null>(null)
   const projectVersionRef = useRef({ projectId: String(project.id), version: project.version })
   const [automationRules, setAutomationRules] = useState<ProjectAutomationRule[]>([])
   const [projectAgents, setProjectAgents] = useState<ProjectChatAgent[]>([])
@@ -164,6 +167,37 @@ export function ProjectAutomationView({
     }
   }
 
+  async function savePullRequestAutomation(
+    value: NonNullable<CloudProject['pull_request_automation']>
+  ) {
+    if (pullRequestAutomationBusy) return
+    setPullRequestAutomationBusy(true)
+    setPullRequestAutomationError(null)
+    try {
+      const projectVersion =
+        projectVersionRef.current.projectId === String(project.id)
+          ? projectVersionRef.current.version
+          : project.version
+      const updated = await api.updateCloudProject(project.id, {
+        pull_request_automation: value,
+        version: projectVersion,
+      })
+      projectVersionRef.current = {
+        projectId: String(project.id),
+        version: updated.version,
+      }
+      onProjectUpdated?.(updated)
+    } catch (cause) {
+      setPullRequestAutomationError(
+        cause instanceof Error
+          ? cause.message
+          : t('workbench.pull_request_automation_save_failed', '保存 PR 自动修复设置失败')
+      )
+    } finally {
+      setPullRequestAutomationBusy(false)
+    }
+  }
+
   return (
     <div
       className="flex min-h-0 flex-1 flex-col overflow-y-auto"
@@ -174,6 +208,28 @@ export function ProjectAutomationView({
           <h2 className="text-heading-md font-semibold">{t('workbench.automation_title')}</h2>
           <p className="mt-1 text-sm text-text-muted">{t('workbench.automation_description')}</p>
         </header>
+        <PullRequestAutomationSettings
+          key={String(project.id)}
+          value={
+            project.pull_request_automation ?? {
+              enabled: false,
+              statuses: [
+                'checks_failed',
+                'merge_conflict',
+                'merge_queue_failed',
+                'merge_queue_timed_out',
+                'merge_queue_conflicting',
+              ],
+              prompt: '',
+            }
+          }
+          canManage={canManageAgents}
+          busy={pullRequestAutomationBusy}
+          onSave={savePullRequestAutomation}
+        />
+        {pullRequestAutomationError ? (
+          <p className="mt-2 text-sm text-red-500">{pullRequestAutomationError}</p>
+        ) : null}
         <ProjectAutomationRulesSection
           projectId={project.id}
           api={project.task_provider === 'local' ? projectAutomationApi : undefined}

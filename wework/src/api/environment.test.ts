@@ -285,6 +285,112 @@ describe('loadProjectEnvironment', () => {
     })
   })
 
+  test('publishes a GitHub pull request before its merge queue lookup finishes', async () => {
+    let resolveMergeQueue: (value: {
+      success: boolean
+      stdout: Record<string, unknown>
+      stderr: string
+    }) => void = () => {}
+    const mergeQueueResult = new Promise<{
+      success: boolean
+      stdout: Record<string, unknown>
+      stderr: string
+    }>(resolve => {
+      resolveMergeQueue = resolve
+    })
+    const executeCommand = vi.fn((_: string, data: { command_key: string }) => {
+      if (data.command_key === 'git_branch') {
+        return Promise.resolve({
+          success: true,
+          stdout: 'fix/fast-pr-status\n',
+          stderr: '',
+        })
+      }
+      if (data.command_key === 'git_remote_url') {
+        return Promise.resolve({
+          success: true,
+          stdout: 'https://github.com/wecode-ai/Wegent.git\n',
+          stderr: '',
+        })
+      }
+      if (data.command_key === 'git_github_pull_requests') {
+        return Promise.resolve({
+          success: true,
+          stdout: [
+            {
+              number: 2875,
+              url: 'https://github.com/wecode-ai/Wegent/pull/2875',
+              title: 'fix(executor): converge cancelled runtime turns',
+              state: 'OPEN',
+              isDraft: false,
+              mergeable: 'MERGEABLE',
+              mergeStateStatus: 'CLEAN',
+              statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'SUCCESS' }],
+            },
+          ],
+          stderr: '',
+        })
+      }
+      if (data.command_key === 'git_github_pull_request_merge_queue') {
+        return mergeQueueResult
+      }
+      return Promise.resolve({
+        success: true,
+        stdout: '',
+        stderr: '',
+      })
+    })
+    const onPartialInfo = vi.fn()
+    const load = loadProjectEnvironment(
+      { executeCommand },
+      null,
+      {
+        deviceId: 'local-device',
+        path: '/workspace/fast-pr-status',
+      },
+      { force: true, onPartialInfo }
+    )
+
+    await vi.waitFor(() => {
+      expect(onPartialInfo).toHaveBeenCalledWith(
+        expect.objectContaining({
+          changeRequest: {
+            provider: 'github',
+            state: 'found',
+            changeRequest: expect.objectContaining({
+              number: 2875,
+              mergeQueue: 'unknown',
+            }),
+          },
+        })
+      )
+    })
+
+    let settled = false
+    void load.then(() => {
+      settled = true
+    })
+    await Promise.resolve()
+    expect(settled).toBe(false)
+
+    resolveMergeQueue({
+      success: true,
+      stdout: { data: { resource: { mergeQueueEntry: null } } },
+      stderr: '',
+    })
+
+    await expect(load).resolves.toMatchObject({
+      changeRequest: {
+        provider: 'github',
+        state: 'found',
+        changeRequest: expect.objectContaining({
+          number: 2875,
+          mergeQueue: 'not_queued',
+        }),
+      },
+    })
+  })
+
   test('keeps a GitHub pull request pending while it is in the merge queue', async () => {
     const executeCommand = vi
       .fn()
@@ -1124,6 +1230,117 @@ describe('loadProjectEnvironment', () => {
     expect(executeCommand).toHaveBeenCalledTimes(10)
   })
 
+  test('publishes stale environment info immediately while revalidating an expired cache', async () => {
+    const initialNow = Date.now()
+    const dateNow = vi.spyOn(Date, 'now').mockReturnValue(initialNow)
+    let pullRequestLookupCount = 0
+    let resolveRefreshedPullRequests: (value: {
+      success: boolean
+      stdout: unknown[]
+      stderr: string
+    }) => void = () => {}
+    const refreshedPullRequests = new Promise<{
+      success: boolean
+      stdout: unknown[]
+      stderr: string
+    }>(resolve => {
+      resolveRefreshedPullRequests = resolve
+    })
+    const executeCommand = vi.fn((_: string, data: { command_key: string }) => {
+      if (data.command_key === 'git_branch') {
+        return Promise.resolve({
+          success: true,
+          stdout: 'fix/cached-pr-status\n',
+          stderr: '',
+        })
+      }
+      if (data.command_key === 'git_remote_url') {
+        return Promise.resolve({
+          success: true,
+          stdout: 'https://github.com/wecode-ai/Wegent.git\n',
+          stderr: '',
+        })
+      }
+      if (data.command_key === 'git_github_pull_requests') {
+        pullRequestLookupCount += 1
+        if (pullRequestLookupCount === 1) {
+          return Promise.resolve({
+            success: true,
+            stdout: [
+              {
+                number: 2875,
+                url: 'https://github.com/wecode-ai/Wegent/pull/2875',
+                title: 'Cached pull request',
+                state: 'CLOSED',
+                isDraft: false,
+                statusCheckRollup: [],
+              },
+            ],
+            stderr: '',
+          })
+        }
+        return refreshedPullRequests
+      }
+      return Promise.resolve({
+        success: true,
+        stdout: '',
+        stderr: '',
+      })
+    })
+    const api = { executeCommand }
+    const target = {
+      deviceId: 'local-device',
+      path: '/workspace/cached-pr-status',
+    }
+
+    const initialInfo = await loadProjectEnvironment(api, null, target)
+    expect(initialInfo.changeRequest?.changeRequest?.number).toBe(2875)
+
+    dateNow.mockReturnValue(initialNow + 2000)
+    const onPartialInfo = vi.fn()
+    const refresh = loadProjectEnvironment(api, null, target, { onPartialInfo })
+
+    expect(onPartialInfo).toHaveBeenCalledWith(
+      expect.objectContaining({
+        branchName: 'fix/cached-pr-status',
+        changeRequest: expect.objectContaining({
+          state: 'found',
+          changeRequest: expect.objectContaining({ number: 2875 }),
+        }),
+      })
+    )
+
+    let settled = false
+    void refresh.then(() => {
+      settled = true
+    })
+    await Promise.resolve()
+    expect(settled).toBe(false)
+
+    resolveRefreshedPullRequests({
+      success: true,
+      stdout: [
+        {
+          number: 2876,
+          url: 'https://github.com/wecode-ai/Wegent/pull/2876',
+          title: 'Refreshed pull request',
+          state: 'CLOSED',
+          isDraft: false,
+          statusCheckRollup: [],
+        },
+      ],
+      stderr: '',
+    })
+
+    await expect(refresh).resolves.toMatchObject({
+      changeRequest: {
+        state: 'found',
+        changeRequest: expect.objectContaining({ number: 2876 }),
+      },
+    })
+    dateNow.mockRestore()
+  })
+
   test('deduplicates a forced refresh while the current environment load is still pending', async () => {
     let resolveBranch: (value: {
       success: boolean
@@ -1311,6 +1528,93 @@ describe('loadProjectEnvironment', () => {
       additions: '+3',
       deletions: '-1',
       changeRequest: expect.objectContaining({ state: 'found' }),
+    })
+  })
+
+  test('publishes the branch before a slow pull request lookup finishes', async () => {
+    let resolvePullRequests: (value: {
+      success: boolean
+      stdout: unknown[]
+      stderr: string
+    }) => void = () => {}
+    const pullRequestsResult = new Promise<{
+      success: boolean
+      stdout: unknown[]
+      stderr: string
+    }>(resolve => {
+      resolvePullRequests = resolve
+    })
+    const executeCommand = vi.fn((_: string, data: { command_key: string }) => {
+      if (data.command_key === 'git_branch') {
+        return Promise.resolve({
+          success: true,
+          stdout: 'fix/fast-branch-status\n',
+          stderr: '',
+        })
+      }
+      if (data.command_key === 'git_remote_url') {
+        return Promise.resolve({
+          success: true,
+          stdout: 'https://github.com/wecode-ai/Wegent.git\n',
+          stderr: '',
+        })
+      }
+      if (data.command_key === 'git_github_pull_requests') {
+        return pullRequestsResult
+      }
+      return Promise.resolve({
+        success: true,
+        stdout: '',
+        stderr: '',
+      })
+    })
+    const onPartialInfo = vi.fn()
+    const load = loadProjectEnvironment(
+      { executeCommand },
+      {
+        id: 1004,
+        name: 'Wegent',
+        config: {
+          mode: 'workspace' as const,
+          execution: {
+            targetType: 'local' as const,
+            deviceId: 'device-123',
+          },
+          workspace: {
+            source: 'local_path' as const,
+            localPath: '/workspace/Wegent',
+          },
+        },
+      },
+      undefined,
+      { onPartialInfo }
+    )
+
+    await vi.waitFor(() => {
+      expect(onPartialInfo).toHaveBeenCalledWith(
+        expect.objectContaining({
+          branchName: 'fix/fast-branch-status',
+        })
+      )
+    })
+    expect(onPartialInfo.mock.calls[0]?.[0]).not.toHaveProperty('changeRequest')
+
+    let settled = false
+    void load.then(() => {
+      settled = true
+    })
+    await Promise.resolve()
+    expect(settled).toBe(false)
+
+    resolvePullRequests({
+      success: true,
+      stdout: [],
+      stderr: '',
+    })
+
+    await expect(load).resolves.toMatchObject({
+      branchName: 'fix/fast-branch-status',
+      changeRequest: expect.objectContaining({ state: 'not_found' }),
     })
   })
 

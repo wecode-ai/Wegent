@@ -1,10 +1,20 @@
 import { describe, expect, it, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import '@/i18n'
-import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
+import type { CloudLoopItem, CloudProject, WorkflowPlan } from '@/api/deliveries'
 import { TodoEditor } from './TodoEditor'
 import { markdownAttachmentRows } from './attachmentMarkdown'
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
 
 describe('markdownAttachmentRows', () => {
   it('recognizes provider-native links through the unified attachment marker', () => {
@@ -366,6 +376,172 @@ describe('TodoEditor external item sync', () => {
         assigneeId: '42',
       })
     })
+  })
+})
+
+describe('TodoEditor workflow plans', () => {
+  const managedItem = {
+    ...baseItem,
+    workflow: {
+      version: 1,
+      definition_version: 1,
+      stage_mode: 'none',
+      advancement_policy: 'ai',
+      approval_policy: 'required',
+      orchestration_status: 'awaiting_approval',
+      active_run_id: 'workflow-run-1',
+      active_plan_version: 1,
+      current_stage_id: null,
+      nodes: [],
+    },
+  } as unknown as CloudLoopItem
+  const awaitingApprovalPlan: WorkflowPlan = {
+    run_id: 'workflow-run-1',
+    issue_id: managedItem.id,
+    stage_id: '__issue__',
+    plan_version: 1,
+    approval_policy: 'required',
+    status: 'awaiting_approval',
+    summary: 'Stale plan',
+    items: [],
+    manager_run: null,
+  }
+
+  it('keeps a mutation result when an older plan request finishes later', async () => {
+    const stalePlanRequest = deferred<WorkflowPlan | null>()
+    const approvedPlan: WorkflowPlan = {
+      ...awaitingApprovalPlan,
+      status: 'running',
+      summary: 'Approved plan',
+    }
+    const workflowApi = {
+      listDeliveries: vi.fn(async () => ({ items: [] })),
+      listTaskBindings: vi.fn(async () => []),
+      listLoopItemAttachments: vi.fn(async () => []),
+      listLoopItemCollaborators: vi.fn(async () => []),
+      listCloudProjectMembers: vi.fn(async () => []),
+      getWorkflowPlan: vi.fn(() => stalePlanRequest.promise),
+      approveWorkflowPlan: vi.fn(async () => approvedPlan),
+      getLoopItem: vi.fn(async () => managedItem),
+    } as never
+
+    render(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        item={managedItem}
+        project={project}
+        allItems={[managedItem]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        api={workflowApi}
+        currentUserId={1}
+      />
+    )
+
+    await vi.waitFor(() => expect(workflowApi.getWorkflowPlan).toHaveBeenCalledTimes(1))
+    await userEvent.click(screen.getByTestId('cloud-todo-workflow-approve'))
+    await vi.waitFor(() =>
+      expect(screen.getByTestId('cloud-todo-workflow-plan')).toHaveTextContent('Approved plan')
+    )
+
+    await act(async () => {
+      stalePlanRequest.resolve(awaitingApprovalPlan)
+      await stalePlanRequest.promise
+    })
+
+    expect(screen.getByTestId('cloud-todo-workflow-plan')).toHaveTextContent('Approved plan')
+    expect(screen.getByTestId('cloud-todo-workflow-plan')).not.toHaveTextContent('Stale plan')
+  })
+
+  it('keeps a mutation error when an older plan request finishes later', async () => {
+    const stalePlanRequest = deferred<WorkflowPlan | null>()
+    const approvalRequest = deferred<WorkflowPlan>()
+    const workflowApi = {
+      listDeliveries: vi.fn(async () => ({ items: [] })),
+      listTaskBindings: vi.fn(async () => []),
+      listLoopItemAttachments: vi.fn(async () => []),
+      listLoopItemCollaborators: vi.fn(async () => []),
+      listCloudProjectMembers: vi.fn(async () => []),
+      getWorkflowPlan: vi.fn(() => stalePlanRequest.promise),
+      approveWorkflowPlan: vi.fn(() => approvalRequest.promise),
+    } as never
+
+    render(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        item={managedItem}
+        project={project}
+        allItems={[managedItem]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        api={workflowApi}
+        currentUserId={1}
+      />
+    )
+
+    await vi.waitFor(() => expect(workflowApi.getWorkflowPlan).toHaveBeenCalledTimes(1))
+    await userEvent.click(screen.getByTestId('cloud-todo-workflow-approve'))
+    await vi.waitFor(() => expect(workflowApi.approveWorkflowPlan).toHaveBeenCalledTimes(1))
+
+    approvalRequest.reject(new Error('Plan approval failed'))
+    await vi.waitFor(() =>
+      expect(
+        screen.getByTestId('cloud-todo-workflow-error-summary').parentElement
+      ).toHaveTextContent('Plan approval failed')
+    )
+
+    await act(async () => {
+      stalePlanRequest.resolve(awaitingApprovalPlan)
+      await stalePlanRequest.promise
+    })
+
+    expect(screen.getByTestId('cloud-todo-workflow-error-summary').parentElement).toHaveTextContent(
+      'Plan approval failed'
+    )
+    expect(screen.getByTestId('cloud-todo-workflow-plan')).not.toHaveTextContent('Stale plan')
+  })
+
+  it('exposes a stable selector for the workflow error summary', async () => {
+    const failedPlan: WorkflowPlan = {
+      ...awaitingApprovalPlan,
+      status: 'failed',
+      summary: '',
+      manager_run: {
+        id: 'manager-run-1',
+        status: 'failed',
+        recent_activity: 'Failed',
+        error: 'no model or tool progress',
+        updated_at: '2026-08-21T00:00:00Z',
+      },
+    }
+    const workflowApi = {
+      listDeliveries: vi.fn(async () => ({ items: [] })),
+      listTaskBindings: vi.fn(async () => []),
+      listLoopItemAttachments: vi.fn(async () => []),
+      listLoopItemCollaborators: vi.fn(async () => []),
+      listCloudProjectMembers: vi.fn(async () => []),
+      getWorkflowPlan: vi.fn(async () => failedPlan),
+    } as never
+
+    render(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        item={managedItem}
+        project={project}
+        allItems={[managedItem]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        api={workflowApi}
+        currentUserId={1}
+      />
+    )
+
+    expect(await screen.findByTestId('cloud-todo-workflow-error-summary')).toHaveTextContent(
+      '启动超时'
+    )
   })
 })
 

@@ -220,8 +220,8 @@ describe('plugin trial state', () => {
       queuePluginReferenceTrial({
         pluginName: 'smart-app-builder',
         marketplaceName: 'wework-personal',
-        displayName: '智能应用开发助手',
-        prompt: '帮我创建一个智能应用',
+        displayName: '智能工作台开发助手',
+        prompt: '帮我创建一个智能工作台',
         openInNewChat: true,
       })
     ).toBe(true)
@@ -229,8 +229,8 @@ describe('plugin trial state', () => {
     expect(consumePluginTrial()).toEqual(
       expect.objectContaining({
         input:
-          '[$智能应用开发助手](plugin://smart-app-builder@wework-personal) 帮我创建一个智能应用',
-        pluginName: '智能应用开发助手',
+          '[$智能工作台开发助手](plugin://smart-app-builder@wework-personal) 帮我创建一个智能工作台',
+        pluginName: '智能工作台开发助手',
         openInNewChat: true,
       })
     )

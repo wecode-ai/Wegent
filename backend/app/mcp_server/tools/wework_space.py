@@ -43,6 +43,7 @@ from app.schemas.delivery import (
     LoopItemResponse,
     LoopItemUpdate,
 )
+from app.schemas.issue_workflow import WorkflowPlanSubmit, WorkflowTaskOutcomeSubmit
 from app.schemas.project_chat import LoopItemAssign
 from app.services.cloud_files import cloud_file_service
 from app.services.cloud_projects.access import require_cloud_project_role
@@ -53,6 +54,8 @@ from app.services.external_events.evaluate import external_event_evaluation_serv
 from app.services.external_events.registration import (
     external_event_registration_service,
 )
+from app.services.issue_workflow_planning import issue_workflow_planning_service
+from app.services.issue_workflow_start import issue_workflow_start_service
 from app.services.loop_items.external_provider import external_loop_item_provider
 from app.services.loop_items.provider_router import (
     loop_item_attachment_provider_router,
@@ -420,6 +423,17 @@ async def create_board_item(
         )
 
         response = LoopItemResponse.model_validate(created.values)
+        planning_run = None
+        if (
+            created.internal_item is not None
+            and response.workflow
+            and response.workflow.advancement_policy == "ai"
+        ):
+            planning_run = issue_workflow_planning_service.ensure_run(
+                db,
+                issue=created.internal_item,
+                user_id=user.id,
+            )
         try:
             await project_automation_processor.process(
                 db,
@@ -429,7 +443,19 @@ async def create_board_item(
                     subject_id=str(created.values["id"]),
                     source=project.task_provider,
                     actor_user_id=user.id,
-                    payload=response.model_dump(mode="json"),
+                    payload={
+                        **response.model_dump(mode="json"),
+                        **(
+                            {
+                                "workflow_run_id": planning_run.id,
+                                "workflow_plan_version": (
+                                    planning_run.metadata_json or {}
+                                ).get("plan_version"),
+                            }
+                            if planning_run is not None
+                            else {}
+                        ),
+                    },
                 ),
                 automation_id=(
                     response.workflow.ai_automation_rule_id
@@ -497,6 +523,122 @@ def get_assignment_candidates(
                 }
                 for robot in robots
             ],
+        }
+
+
+@mcp_tool(server="wework_space")
+async def submit_workflow_plan(
+    token_info: MCPAuthInfo,
+    plan: dict[str, Any],
+    space_id: str = "",
+    item_id: str = "",
+) -> dict[str, Any]:
+    """Submit a child-task plan; the server binds its active planning scope."""
+
+    execution_ids: list[int] = []
+    with SessionLocal() as db:
+        try:
+            project = _project(
+                db, _space_id(db, token_info, space_id), token_info.user_id
+            )
+            resolved_item_id = _item_id(db, token_info, item_id)
+            context = _board_context(db, token_info)
+            run_id = context.get("project_automation_run_id")
+            if (
+                context.get("source") != "project_automation"
+                or not run_id
+                or resolved_item_id != context.get("item_id")
+            ):
+                raise ValueError(
+                    "submit_workflow_plan is only available to the current AI manager"
+                )
+            view = project_automation_execution.submit_manager_workflow_plan(
+                db,
+                run_id=run_id,
+                issue_id=resolved_item_id,
+                user_id=token_info.user_id,
+                values=WorkflowPlanSubmit.model_validate(plan),
+            )
+            if view.approval_policy == "automatic":
+                view = issue_workflow_planning_service.approve(
+                    db,
+                    issue_id=resolved_item_id,
+                    user_id=token_info.user_id,
+                )
+                from app.services.board_team_execution import (
+                    workflow_plan_execution_ids,
+                )
+
+                execution_ids = workflow_plan_execution_ids(db, view)
+            result = {
+                **view.model_dump(mode="json"),
+                "project_id": str(project.id),
+            }
+        except Exception:
+            db.rollback()
+            raise
+    from app.services.board_team_execution import (
+        schedule_board_robot_execution_by_id,
+    )
+
+    for execution_id in execution_ids:
+        try:
+            schedule_board_robot_execution_by_id(execution_id)
+        except Exception:
+            logger.exception(
+                "Workflow plan execution scheduling failed execution_id=%s",
+                execution_id,
+            )
+    return result
+
+
+@mcp_tool(server="wework_space")
+async def report_workflow_outcome(
+    token_info: MCPAuthInfo,
+    verdict: str,
+    summary: str,
+    findings: list[str] | None = None,
+    space_id: str = "",
+    item_id: str = "",
+) -> dict[str, Any]:
+    """Report a planned child task as passed or needing AI replanning."""
+
+    with SessionLocal() as db:
+        project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
+        resolved_item_id = _item_id(db, token_info, item_id)
+        context = _board_context(db, token_info)
+        if context.get("source") not in {
+            "board_team_assignment",
+            "board_team_continuation",
+        } or resolved_item_id != context.get("item_id"):
+            raise ValueError(
+                "report_workflow_outcome is only available to the current "
+                "workflow child task"
+            )
+        values = WorkflowTaskOutcomeSubmit(
+            verdict=verdict,
+            summary=summary,
+            findings=findings or [],
+        )
+        view = issue_workflow_planning_service.report_outcome(
+            db,
+            child_id=resolved_item_id,
+            user_id=token_info.user_id,
+            values=values,
+        )
+        if values.verdict == "needs_rework" and view.status == "planning":
+            parent = db.get(LoopItem, view.issue_id)
+            if parent is None:
+                raise ValueError("Workflow parent Issue is unavailable")
+            await issue_workflow_start_service.start(
+                db,
+                item=parent,
+                project=project,
+                user_id=token_info.user_id,
+            )
+        return {
+            **view.model_dump(mode="json"),
+            "project_id": str(project.id),
         }
 
 
