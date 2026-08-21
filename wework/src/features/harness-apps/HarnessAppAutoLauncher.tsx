@@ -86,6 +86,7 @@ export function HarnessAppAutoLauncher({ installationId }: { installationId: str
           if (contextToken) await storeHarnessAppContextToken(installationId, contextToken)
           registerHarnessAppTab(running)
         } catch (error) {
+          console.warn(`[Wework] failed to auto-launch Smart app ${installationId}`, error)
           if (started) {
             await harnessAppsApi.stop(installationId).catch(() => undefined)
             unregisterHarnessAppTab(installationId)
