@@ -386,6 +386,37 @@ def test_cloud_project_ai_automation_is_shared_through_project_metadata(
     assert match["ai_automation"]["max_retry_count"] == 3
 
 
+def test_cloud_project_pull_request_automation_is_shared_through_project_metadata(
+    test_client: TestClient, test_token: str
+) -> None:
+    created = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "prfix", "name": "PR auto repair"},
+    ).json()
+    assert created["pull_request_automation"]["enabled"] is False
+    assert "merge_queue_failed" in created["pull_request_automation"]["statuses"]
+
+    updated = test_client.patch(
+        f"/api/v1/cloud-projects/{created['id']}",
+        headers=_auth(test_token),
+        json={
+            "version": created["version"],
+            "pull_request_automation": {
+                "enabled": True,
+                "statuses": ["checks_failed", "merge_queue_timed_out"],
+                "prompt": "Inspect the complete failure logs.",
+            },
+        },
+    )
+    assert updated.status_code == 200
+    assert updated.json()["pull_request_automation"] == {
+        "enabled": True,
+        "statuses": ["checks_failed", "merge_queue_timed_out"],
+        "prompt": "Inspect the complete failure logs.",
+    }
+
+
 def test_cloud_project_generates_key_when_omitted(
     test_client: TestClient, test_token: str
 ) -> None:

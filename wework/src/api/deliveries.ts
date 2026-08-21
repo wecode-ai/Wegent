@@ -146,6 +146,15 @@ export interface CloudLoopItem {
       | 'task_started'
       | 'delivery'
       | 'status_removed'
+      | 'workflow_plan_approved'
+      | 'workflow_task_progress'
+      | 'workflow_outcome_passed'
+      | 'workflow_outcome_needs_rework'
+      | 'workflow_review_approved'
+      | 'workflow_stage_advanced'
+      | 'workflow_replanned'
+      | 'workflow_paused'
+      | 'workflow_resumed'
     by_user_id: number | null
     at: string
   }>
@@ -319,6 +328,11 @@ export interface CloudProject {
     auto_retry_on_failure: boolean
     max_retry_count: number
   }
+  pull_request_automation?: {
+    enabled: boolean
+    statuses: PullRequestAutoRepairStatus[]
+    prompt: string
+  }
   workflow_definition?: ProjectWorkflowDefinition
   created_by_user_id: number
   current_user_id?: number
@@ -335,6 +349,13 @@ export interface CloudProject {
     [key: string]: unknown
   }
 }
+
+export type PullRequestAutoRepairStatus =
+  | 'checks_failed'
+  | 'merge_conflict'
+  | 'merge_queue_failed'
+  | 'merge_queue_timed_out'
+  | 'merge_queue_conflicting'
 
 export interface CloudTaskContext {
   id: string
@@ -394,6 +415,7 @@ export interface ProjectWorkflowDefinition {
   stage_mode?: IssueStageMode
   advancement_policy?: IssueAdvancementPolicy
   coordinator_prompt?: string
+  approval_policy?: 'required' | 'automatic'
   ai_automation_rule_id?: string | null
   execution_config?: WorkflowExecutionConfig | null
   nodes: WorkflowNodeDefinition[]
@@ -422,9 +444,74 @@ export interface IssueWorkflowInstance {
   stage_mode?: IssueStageMode
   advancement_policy?: IssueAdvancementPolicy
   coordinator_prompt?: string
+  approval_policy?: 'required' | 'automatic'
   ai_automation_rule_id?: string | null
   execution_config?: WorkflowExecutionConfig | null
+  orchestration_status?:
+    | 'idle'
+    | 'planning'
+    | 'awaiting_approval'
+    | 'dispatching'
+    | 'running'
+    | 'awaiting_review'
+    | 'paused'
+    | 'completed'
+    | 'failed'
+  active_run_id?: string | null
+  active_plan_version?: number | null
+  current_stage_id?: string | null
   nodes: WorkflowNodeInstance[]
+}
+
+export type WorkflowPlanStatus =
+  | 'idle'
+  | 'planning'
+  | 'awaiting_approval'
+  | 'dispatching'
+  | 'running'
+  | 'awaiting_review'
+  | 'paused'
+  | 'completed'
+  | 'failed'
+
+export interface WorkflowPlanItem {
+  id: string
+  client_key: string
+  stage_id: string
+  title: string
+  description: string
+  assignee_type: 'user' | 'agent' | 'team'
+  assignee_id: string
+  assignee_name: string
+  rationale: string
+  task_id?: string | null
+  task_status?: CloudLoopItem['status'] | null
+  outcome_verdict?: 'passed' | 'needs_rework' | null
+  outcome_summary?: string
+  status: 'proposed' | 'materialized' | 'superseded'
+}
+
+export interface WorkflowManagerRun {
+  id: string
+  status: string
+  model?: string | null
+  execution_environment?: string | null
+  device_id?: string | null
+  recent_activity: string
+  error?: string | null
+  updated_at: string
+}
+
+export interface WorkflowPlan {
+  run_id: string
+  issue_id: string
+  stage_id: string
+  plan_version: number
+  approval_policy: 'required' | 'automatic'
+  status: WorkflowPlanStatus
+  summary: string
+  items: WorkflowPlanItem[]
+  manager_run?: WorkflowManagerRun | null
 }
 
 export interface CloudProjectFile {
@@ -657,6 +744,7 @@ export function createDeliveryApi(client: HttpClient) {
         visibility?: 'private' | 'public'
         card_display?: CloudProject['card_display']
         board_config?: CloudProject['board_config']
+        pull_request_automation?: CloudProject['pull_request_automation']
         workflow_definition?: CloudProject['workflow_definition']
         provider_config?: {
           repository?: string
@@ -783,6 +871,24 @@ export function createDeliveryApi(client: HttpClient) {
     },
     getLoopItem(itemId: string): Promise<CloudLoopItem> {
       return client.get(`/v1/loop-items/${encodeURIComponent(itemId)}`)
+    },
+    getWorkflowPlan(itemId: string): Promise<WorkflowPlan | null> {
+      return client.get(`/v1/loop-items/${encodeURIComponent(itemId)}/workflow-plan`)
+    },
+    approveWorkflowPlan(itemId: string): Promise<WorkflowPlan> {
+      return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/workflow-plan/approve`, {})
+    },
+    approveWorkflowReview(itemId: string): Promise<WorkflowPlan> {
+      return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/workflow-plan/review`, {})
+    },
+    pauseWorkflowPlan(itemId: string): Promise<WorkflowPlan> {
+      return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/workflow-plan/pause`, {})
+    },
+    resumeWorkflowPlan(itemId: string): Promise<WorkflowPlan> {
+      return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/workflow-plan/resume`, {})
+    },
+    replanWorkflowPlan(itemId: string): Promise<WorkflowPlan> {
+      return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/workflow-plan/replan`, {})
     },
     markLoopItemRead(itemId: string): Promise<CloudLoopItem> {
       return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/read`)

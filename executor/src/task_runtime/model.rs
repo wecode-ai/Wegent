@@ -63,6 +63,7 @@ pub struct ProjectUpdate {
     pub provider_config: Option<Value>,
     pub board_config: Option<Value>,
     pub card_display: Option<Value>,
+    pub pull_request_automation: Option<Value>,
     pub workflow_definition: Option<Value>,
 }
 

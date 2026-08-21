@@ -11,6 +11,7 @@ from fastapi import (
     Depends,
     File,
     Form,
+    Header,
     HTTPException,
     Query,
     UploadFile,
@@ -50,10 +51,16 @@ from app.schemas.delivery import (
     MyWorkListResponse,
     RuntimeTaskStatusUpdate,
 )
-from app.schemas.issue_workflow import WorkflowNodeDecisionRequest
+from app.schemas.issue_workflow import (
+    WorkflowNodeDecisionRequest,
+    WorkflowPlanSubmit,
+    WorkflowPlanView,
+    WorkflowTaskOutcomeSubmit,
+)
 from app.services.cloud_projects import cloud_project_service
 from app.services.delivery import delivery_service
 from app.services.issue_workflow_decision import issue_workflow_decision_service
+from app.services.issue_workflow_planning import issue_workflow_planning_service
 from app.services.issue_workflow_start import issue_workflow_start_service
 from app.services.loop_item_events import publish_loop_item_changed
 from app.services.loop_items import loop_item_service
@@ -62,12 +69,21 @@ from app.services.loop_items.provider_router import (
     loop_item_attachment_provider_router,
     loop_item_provider_router,
 )
+from app.services.project_automation_execution import project_automation_execution
+from app.services.project_automations import project_automation_service
 from app.services.project_board_snapshot import project_board_snapshot_service
 from app.services.project_workflow_projection import update_workflow_task_status
 from app.services.workflow_stage_context import workflow_stage_context_resolver
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+ACTIVE_MANAGER_RUN_STATUSES = {
+    "pending",
+    "queued",
+    "waiting_device",
+    "running",
+    "cancel_requested",
+}
 
 
 def _loop_item_response(
@@ -86,6 +102,118 @@ def _delivery_response(db: Session, delivery: Delivery) -> DeliveryResponse:
             "fulfillments": delivery_service.fulfillment_values(delivery),
         }
     )
+
+
+def _publish_workflow_plan_changed(
+    db: Session,
+    *,
+    item_id: str,
+    user_id: int,
+    reason: str,
+) -> None:
+    item = db.get(LoopItem, item_id, populate_existing=True)
+    if item is None:
+        return
+    publish_loop_item_changed(
+        db,
+        item=item,
+        reason=reason,
+        actor_user_id=user_id,
+    )
+
+
+def _schedule_workflow_plan_executions(
+    db: Session,
+    plan: WorkflowPlanView,
+) -> None:
+    from app.services.board_team_execution import (
+        schedule_board_robot_execution_by_id,
+        workflow_plan_execution_ids,
+    )
+
+    execution_ids = workflow_plan_execution_ids(db, plan)
+    db.rollback()
+    for execution_id in execution_ids:
+        try:
+            schedule_board_robot_execution_by_id(execution_id)
+        except Exception:
+            logger.exception(
+                "Workflow plan execution scheduling failed execution_id=%s",
+                execution_id,
+            )
+
+
+def _approve_and_dispatch_workflow_plan(
+    db: Session,
+    *,
+    item_id: str,
+    user: User,
+) -> WorkflowPlanView:
+    plan = issue_workflow_planning_service.approve(
+        db,
+        issue_id=item_id,
+        user_id=user.id,
+    )
+    _schedule_workflow_plan_executions(db, plan)
+    refreshed = issue_workflow_planning_service.get(
+        db,
+        issue_id=item_id,
+        user_id=user.id,
+    )
+    if refreshed is None:
+        raise RuntimeError("Approved workflow plan is unavailable")
+    return refreshed
+
+
+async def _dispatch_workflow_manager(
+    db: Session,
+    *,
+    item_id: str,
+    user: User,
+) -> None:
+    item = db.get(LoopItem, item_id)
+    if item is None:
+        raise ValueError("Issue not found")
+    project = cloud_project_service.get(
+        db,
+        int(str(item.cloud_project_id)),
+        user.id,
+    )
+    await issue_workflow_start_service.start(
+        db,
+        item=item,
+        project=project,
+        user_id=user.id,
+    )
+
+
+async def _cancel_workflow_manager(
+    db: Session,
+    *,
+    plan: WorkflowPlanView,
+    user: User,
+) -> bool:
+    manager_run = issue_workflow_planning_service.manager_automation_run(
+        db,
+        workflow_run_id=plan.run_id,
+    )
+    if manager_run is None or manager_run.status not in ACTIVE_MANAGER_RUN_STATUSES:
+        return False
+    result = await project_automation_service.cancel_run(
+        db,
+        str(manager_run.cloud_project_id),
+        str(manager_run.id),
+        user.id,
+    )
+    return str(result.get("status") or "") in ACTIVE_MANAGER_RUN_STATUSES
+
+
+def _workflow_manager_is_active(db: Session, plan: WorkflowPlanView) -> bool:
+    manager_run = issue_workflow_planning_service.manager_automation_run(
+        db,
+        workflow_run_id=plan.run_id,
+    )
+    return manager_run is not None and manager_run.status in ACTIVE_MANAGER_RUN_STATUSES
 
 
 @router.get("/cloud-work-items/my-work", response_model=MyWorkListResponse)
@@ -326,6 +454,17 @@ async def create_loop_item(
     project = cloud_project_service.get(db, project_id, current_user.id)
     created = loop_item_provider_router.create(db, project, current_user, values)
     response = LoopItemResponse.model_validate(created.values)
+    planning_run = None
+    if (
+        created.internal_item is not None
+        and response.workflow
+        and response.workflow.advancement_policy == "ai"
+    ):
+        planning_run = issue_workflow_planning_service.ensure_run(
+            db,
+            issue=created.internal_item,
+            user_id=current_user.id,
+        )
     from app.services.project_automations import (
         ProjectAutomationEvent,
         project_automation_processor,
@@ -340,7 +479,19 @@ async def create_loop_item(
                 subject_id=str(created.values["id"]),
                 source=project.task_provider,
                 actor_user_id=current_user.id,
-                payload=response.model_dump(mode="json"),
+                payload={
+                    **response.model_dump(mode="json"),
+                    **(
+                        {
+                            "workflow_run_id": planning_run.id,
+                            "workflow_plan_version": (
+                                planning_run.metadata_json or {}
+                            ).get("plan_version"),
+                        }
+                        if planning_run is not None
+                        else {}
+                    ),
+                },
             ),
             automation_id=(
                 response.workflow.ai_automation_rule_id
@@ -470,6 +621,272 @@ def decide_loop_item_workflow_node(
     return _loop_item_response(db, item, current_user)
 
 
+@router.get(
+    "/loop-items/{item_id}/workflow-plan",
+    response_model=WorkflowPlanView | None,
+)
+def get_loop_item_workflow_plan(
+    item_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> WorkflowPlanView | None:
+    try:
+        return issue_workflow_planning_service.get(
+            db,
+            issue_id=item_id,
+            user_id=current_user.id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+
+
+@router.post(
+    "/loop-items/{item_id}/workflow-plan",
+    response_model=WorkflowPlanView,
+)
+async def submit_loop_item_workflow_plan(
+    item_id: str,
+    values: WorkflowPlanSubmit,
+    automation_run_id: str = Header(
+        default="",
+        alias="X-Wegent-Automation-Run-ID",
+        include_in_schema=False,
+    ),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_flexible_for_executor),
+) -> WorkflowPlanView:
+    try:
+        plan = (
+            project_automation_execution.submit_manager_workflow_plan(
+                db,
+                run_id=automation_run_id,
+                issue_id=item_id,
+                user_id=current_user.id,
+                values=values,
+            )
+            if automation_run_id
+            else issue_workflow_planning_service.submit(
+                db,
+                issue_id=item_id,
+                user_id=current_user.id,
+                values=values,
+            )
+        )
+        if plan.approval_policy == "automatic":
+            plan = _approve_and_dispatch_workflow_plan(
+                db,
+                item_id=item_id,
+                user=current_user,
+            )
+        _publish_workflow_plan_changed(
+            db,
+            item_id=item_id,
+            user_id=current_user.id,
+            reason="workflow_plan_submitted",
+        )
+        return plan
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+
+
+@router.post(
+    "/loop-items/{item_id}/workflow-plan/approve",
+    response_model=WorkflowPlanView,
+)
+async def approve_loop_item_workflow_plan(
+    item_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> WorkflowPlanView:
+    try:
+        plan = _approve_and_dispatch_workflow_plan(
+            db,
+            item_id=item_id,
+            user=current_user,
+        )
+        _publish_workflow_plan_changed(
+            db,
+            item_id=item_id,
+            user_id=current_user.id,
+            reason="workflow_plan_approved",
+        )
+        return plan
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+
+
+@router.post(
+    "/loop-items/{item_id}/workflow-plan/pause",
+    response_model=WorkflowPlanView,
+)
+async def pause_loop_item_workflow_plan(
+    item_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> WorkflowPlanView:
+    try:
+        current = issue_workflow_planning_service.get(
+            db,
+            issue_id=item_id,
+            user_id=current_user.id,
+        )
+        if current is not None:
+            await _cancel_workflow_manager(db, plan=current, user=current_user)
+        plan = issue_workflow_planning_service.pause(
+            db,
+            issue_id=item_id,
+            user_id=current_user.id,
+        )
+        _publish_workflow_plan_changed(
+            db,
+            item_id=item_id,
+            user_id=current_user.id,
+            reason="workflow_plan_paused",
+        )
+        return plan
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+
+
+@router.post(
+    "/loop-items/{item_id}/workflow-plan/resume",
+    response_model=WorkflowPlanView,
+)
+async def resume_loop_item_workflow_plan(
+    item_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> WorkflowPlanView:
+    try:
+        current = issue_workflow_planning_service.get(
+            db,
+            issue_id=item_id,
+            user_id=current_user.id,
+        )
+        if current is not None and _workflow_manager_is_active(db, current):
+            raise ValueError("The AI manager is still stopping")
+        plan = issue_workflow_planning_service.resume(
+            db,
+            issue_id=item_id,
+            user_id=current_user.id,
+        )
+        if plan.status == "planning":
+            await _dispatch_workflow_manager(db, item_id=item_id, user=current_user)
+        elif plan.status == "running":
+            _schedule_workflow_plan_executions(db, plan)
+        _publish_workflow_plan_changed(
+            db,
+            item_id=item_id,
+            user_id=current_user.id,
+            reason="workflow_plan_resumed",
+        )
+        return plan
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+
+
+@router.post(
+    "/loop-items/{item_id}/workflow-plan/replan",
+    response_model=WorkflowPlanView,
+)
+async def replan_loop_item_workflow_plan(
+    item_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> WorkflowPlanView:
+    try:
+        current = issue_workflow_planning_service.get(
+            db,
+            issue_id=item_id,
+            user_id=current_user.id,
+        )
+        if current is not None:
+            stopping = await _cancel_workflow_manager(
+                db,
+                plan=current,
+                user=current_user,
+            )
+            if stopping:
+                raise ValueError("The AI manager is still stopping")
+        plan = issue_workflow_planning_service.replan(
+            db,
+            issue_id=item_id,
+            user_id=current_user.id,
+        )
+        await _dispatch_workflow_manager(db, item_id=item_id, user=current_user)
+        _publish_workflow_plan_changed(
+            db,
+            item_id=item_id,
+            user_id=current_user.id,
+            reason="workflow_plan_replanned",
+        )
+        return plan
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+
+
+@router.post(
+    "/loop-items/{item_id}/workflow-plan/review",
+    response_model=WorkflowPlanView,
+)
+async def approve_loop_item_workflow_review(
+    item_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> WorkflowPlanView:
+    try:
+        plan = issue_workflow_planning_service.approve_review(
+            db,
+            issue_id=item_id,
+            user_id=current_user.id,
+        )
+        if plan.status == "planning":
+            await _dispatch_workflow_manager(db, item_id=item_id, user=current_user)
+        _publish_workflow_plan_changed(
+            db,
+            item_id=item_id,
+            user_id=current_user.id,
+            reason="workflow_plan_reviewed",
+        )
+        return plan
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+
+
+@router.post(
+    "/loop-items/{item_id}/workflow-outcome",
+    response_model=WorkflowPlanView,
+)
+async def report_loop_item_workflow_outcome(
+    item_id: str,
+    values: WorkflowTaskOutcomeSubmit,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_flexible_for_executor),
+) -> WorkflowPlanView:
+    try:
+        plan = issue_workflow_planning_service.report_outcome(
+            db,
+            child_id=item_id,
+            user_id=current_user.id,
+            values=values,
+        )
+        if values.verdict == "needs_rework" and plan.status == "planning":
+            await _dispatch_workflow_manager(
+                db,
+                item_id=plan.issue_id,
+                user=current_user,
+            )
+        _publish_workflow_plan_changed(
+            db,
+            item_id=plan.issue_id,
+            user_id=current_user.id,
+            reason="workflow_outcome_reported",
+        )
+        return plan
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+
+
 @router.patch("/loop-items/{item_id}", response_model=LoopItemResponse)
 async def update_loop_item(
     item_id: str,
@@ -493,6 +910,11 @@ async def update_loop_item(
     existing = loop_item_service.get(db, item_id, current_user.id)
     previous_status = existing.status
     item = loop_item_service.update(db, item_id, current_user.id, values)
+    issue_workflow_planning_service.sync_from_child(
+        db,
+        child_id=item.id,
+        commit=True,
+    )
     workflow_updated = "workflow" in values.model_fields_set
     if item.status in {"pending", "in_progress"} and (
         previous_status not in {"pending", "in_progress"} or workflow_updated

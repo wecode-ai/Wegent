@@ -7,7 +7,6 @@ use std::{
 use axum::{
     extract::Path,
     http::StatusCode,
-    response::{IntoResponse, Response},
     routing::{get, MethodRouter},
     Json,
 };
@@ -19,6 +18,7 @@ const CONTEXT_TTL: Duration = Duration::from_secs(30 * 60);
 pub(crate) const USER_ROUTE: &str = "/v1/harness-context/{token}/user";
 pub(crate) const MODEL_ROUTE: &str = "/v1/harness-context/{token}/model";
 pub(crate) const STATUS_ROUTE: &str = "/v1/harness-context/{token}/status";
+type ContextError = (StatusCode, Json<Value>);
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -161,26 +161,28 @@ where
     get(handle_status).post(handle_status)
 }
 
-async fn handle_user(Path(token): Path<String>) -> Result<Json<HarnessUserContext>, Response> {
+async fn handle_user(Path(token): Path<String>) -> Result<Json<HarnessUserContext>, ContextError> {
     registered_user_context(&token)
         .map(Json)
         .ok_or_else(|| context_error(StatusCode::UNAUTHORIZED, "context_unavailable"))
 }
 
-async fn handle_model(Path(token): Path<String>) -> Result<Json<HarnessModelContext>, Response> {
+async fn handle_model(
+    Path(token): Path<String>,
+) -> Result<Json<HarnessModelContext>, ContextError> {
     registered_model_context(&token)
         .map(Json)
         .ok_or_else(|| context_error(StatusCode::UNAUTHORIZED, "context_unavailable"))
 }
 
-async fn handle_status(Path(token): Path<String>) -> Result<Json<serde_json::Value>, Response> {
+async fn handle_status(Path(token): Path<String>) -> Result<Json<Value>, ContextError> {
     let context = context_for(&token)
         .ok_or_else(|| context_error(StatusCode::UNAUTHORIZED, "context_unavailable"))?;
     Ok(Json(json!({"status": "active", "scope": context.scope})))
 }
 
-fn context_error(status: StatusCode, code: &'static str) -> Response {
-    (status, Json(json!({"error": code}))).into_response()
+fn context_error(status: StatusCode, code: &'static str) -> ContextError {
+    (status, Json(json!({"error": code})))
 }
 
 #[cfg(test)]

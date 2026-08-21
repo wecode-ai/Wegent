@@ -1,7 +1,10 @@
 import { createBackendWorkbenchServices } from '@/api/backend/backendServices'
 import { invoke } from '@tauri-apps/api/core'
 import { info as writeInfoLog } from '@tauri-apps/plugin-log'
-import { createCloudRuntimeIpcClient } from '@/api/backend/runtimeIpc'
+import {
+  createCloudRuntimeIpcClient,
+  RUNTIME_TRANSCRIPT_ACK_TIMEOUT_MS,
+} from '@/api/backend/runtimeIpc'
 import { createExecutorClientFromApis } from '@/api/executorAccess'
 import {
   createAutomationApiFromIpc,
@@ -467,7 +470,15 @@ export function createHybridWorkbenchServices(
     const cached = cloudRuntimeApis.get(logicalDeviceId)
     if (cached) return cached
     const api = createRuntimeWorkApiFromIpc(
-      (method, params) => cloudRuntimeIpc.request(method, params, logicalDeviceId),
+      (method, params) =>
+        method === 'runtime.tasks.transcript'
+          ? cloudRuntimeIpc.request(
+              method,
+              params,
+              logicalDeviceId,
+              RUNTIME_TRANSCRIPT_ACK_TIMEOUT_MS
+            )
+          : cloudRuntimeIpc.request(method, params, logicalDeviceId),
       async () => logicalDeviceId,
       {
         resolveDeviceId: async data => cloudDeviceIdFromData(data) ?? logicalDeviceId,

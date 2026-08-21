@@ -218,6 +218,12 @@ function localProject(record: LocalLoopItemRecord): CloudProject {
       !Array.isArray(record.metadata.card_display)
         ? (record.metadata.card_display as CloudProject['card_display'])
         : undefined,
+    pull_request_automation:
+      record.metadata.pull_request_automation &&
+      typeof record.metadata.pull_request_automation === 'object' &&
+      !Array.isArray(record.metadata.pull_request_automation)
+        ? (record.metadata.pull_request_automation as CloudProject['pull_request_automation'])
+        : undefined,
     workflow_definition:
       record.metadata.workflow_definition &&
       typeof record.metadata.workflow_definition === 'object' &&
@@ -803,6 +809,7 @@ export function createLocalDeliveryApi(
         tags?: string[]
         board_config?: CloudProject['board_config']
         card_display?: CloudProject['card_display']
+        pull_request_automation?: CloudProject['pull_request_automation']
         workflow_definition?: CloudProject['workflow_definition']
         version: number
       }

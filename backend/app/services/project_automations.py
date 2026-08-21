@@ -577,7 +577,11 @@ class ProjectAutomationService:
                 raise HTTPException(
                     status.HTTP_404_NOT_FOUND, "Automation run not found"
                 )
-            rule = db.get(ProjectAutomationRule, run.parent_id)
+            rule = (
+                db.get(ProjectAutomationRule, run.parent_id)
+                if run.parent_id is not None
+                else None
+            )
             timezone_name = (
                 str(_metadata(rule).get("timezone") or "Asia/Shanghai")
                 if rule is not None
@@ -589,7 +593,11 @@ class ProjectAutomationService:
                 status.HTTP_409_CONFLICT, "Automation run cannot be cancelled"
             )
 
-        rule = db.get(ProjectAutomationRule, run.parent_id)
+        rule = (
+            db.get(ProjectAutomationRule, run.parent_id)
+            if run.parent_id is not None
+            else None
+        )
         timezone_name = (
             str(_metadata(rule).get("timezone") or "Asia/Shanghai")
             if rule is not None
@@ -625,8 +633,18 @@ class ProjectAutomationService:
             if execution.status == "cancel_requested":
                 from app.tasks.robot_queue_tasks import emit_runtime_cancels
 
-                await asyncio.to_thread(emit_runtime_cancels, [execution])
+                execution_id = execution.id
+                db.expunge(execution)
                 db.rollback()
+                confirmed_execution_ids = await asyncio.to_thread(
+                    emit_runtime_cancels,
+                    [execution],
+                )
+                if execution_id not in confirmed_execution_ids:
+                    raise HTTPException(
+                        status.HTTP_502_BAD_GATEWAY,
+                        "Runtime did not confirm cancellation",
+                    )
             db.refresh(run)
             return self._run_view(run, timezone_name)
 

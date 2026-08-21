@@ -879,8 +879,11 @@ async fn call_tool_with_runtime_context(
                 (Err(error), _) | (_, Err(error)) => Err(error),
             }
         }
-        "get_assignment_candidates" | "assign_board_item" => Err(super::TaskRuntimeError::Invalid(
-            "AI-managed assignment requires a backend project space".to_owned(),
+        "get_assignment_candidates"
+        | "submit_workflow_plan"
+        | "report_workflow_outcome"
+        | "assign_board_item" => Err(super::TaskRuntimeError::Invalid(
+            "AI-managed orchestration requires a backend project space".to_owned(),
         )),
         "create_board_item" => {
             let project_id = string_argument(&arguments, "space_id");
@@ -1514,6 +1517,25 @@ async fn call_backend_tool(
             .await?;
             return Ok(normalize_assignment_candidates(members, robots));
         }
+        "submit_workflow_plan" => {
+            let request = client
+                .post(format!(
+                    "{base}/loop-items/{}/workflow-plan",
+                    encode_segment(task_id()?)
+                ))
+                .json(arguments.get("plan").unwrap_or(arguments));
+            with_automation_run_header(request, grant)
+        }
+        "report_workflow_outcome" => client
+            .post(format!(
+                "{base}/loop-items/{}/workflow-outcome",
+                encode_segment(task_id()?)
+            ))
+            .json(&json!({
+                "verdict": arguments.get("verdict").and_then(Value::as_str).unwrap_or_default(),
+                "summary": arguments.get("summary").and_then(Value::as_str).unwrap_or_default(),
+                "findings": arguments.get("findings").cloned().unwrap_or_else(|| json!([])),
+            })),
         "assign_board_item" => {
             let run_id = grant
                 .and_then(|grant| grant.automation_run_id.clone())
@@ -1965,6 +1987,16 @@ async fn call_backend_tool(
     Ok(value)
 }
 
+fn with_automation_run_header(
+    request: reqwest::RequestBuilder,
+    grant: Option<&SpaceContextGrant>,
+) -> reqwest::RequestBuilder {
+    match grant.and_then(|value| value.automation_run_id.as_deref()) {
+        Some(run_id) => request.header("X-Wegent-Automation-Run-ID", run_id),
+        None => request,
+    }
+}
+
 async fn download_backend_object(
     client: &reqwest::Client,
     access: &Value,
@@ -2320,6 +2352,62 @@ fn tools() -> Vec<Value> {
                 "type": "object",
                 "properties": {"space_id": {"type": "string"}},
                 "required": ["space_id"]
+            }),
+        ),
+        tool(
+            "submit_workflow_plan",
+            "Submit the AI manager's structured child-task plan; the platform binds the active planning scope",
+            json!({
+                "type": "object",
+                "properties": {
+                    "space_id": {"type": "string"},
+                    "item_id": {"type": "string"},
+                    "plan": {
+                        "type": "object",
+                        "properties": {
+                            "summary": {"type": "string"},
+                            "items": {
+                                "type": "array",
+                                "minItems": 1,
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "client_key": {"type": "string"},
+                                        "title": {"type": "string"},
+                                        "description": {"type": "string"},
+                                        "assignee_type": {"enum": ["user", "agent", "team"]},
+                                        "assignee_id": {"type": "string"},
+                                        "assignee_name": {"type": "string"},
+                                        "rationale": {"type": "string"}
+                                    },
+                                    "required": [
+                                        "client_key",
+                                        "title",
+                                        "assignee_type",
+                                        "assignee_id"
+                                    ]
+                                }
+                            }
+                        },
+                        "required": ["items"]
+                    }
+                },
+                "required": ["space_id", "item_id", "plan"]
+            }),
+        ),
+        tool(
+            "report_workflow_outcome",
+            "Report the current workflow child task as passed or needing replanning",
+            json!({
+                "type": "object",
+                "properties": {
+                    "space_id": {"type": "string"},
+                    "item_id": {"type": "string"},
+                    "verdict": {"enum": ["passed", "needs_rework"]},
+                    "summary": {"type": "string"},
+                    "findings": {"type": "array", "items": {"type": "string"}}
+                },
+                "required": ["space_id", "item_id", "verdict", "summary"]
             }),
         ),
         tool(
@@ -2716,7 +2804,7 @@ fn is_automation_manager_tool(name: &str) -> bool {
         "get_current_context"
             | "get_board_item"
             | "get_assignment_candidates"
-            | "assign_board_item"
+            | "submit_workflow_plan"
     )
 }
 
@@ -2949,6 +3037,28 @@ mod tests {
         assert_eq!(grant.space_id.as_deref(), Some("cloud-42"));
         assert_eq!(grant.automation_run_id.as_deref(), Some("run-1"));
         assert!(grant.automation_manager);
+    }
+
+    #[test]
+    fn workflow_plan_request_carries_automation_run_header() {
+        let grant = SpaceContextGrant {
+            automation_run_id: Some("run-1".to_owned()),
+            ..SpaceContextGrant::default()
+        };
+        let request = with_automation_run_header(
+            reqwest::Client::new().post("http://backend.test/workflow-plan"),
+            Some(&grant),
+        )
+        .build()
+        .expect("workflow plan request");
+
+        assert_eq!(
+            request
+                .headers()
+                .get("X-Wegent-Automation-Run-ID")
+                .and_then(|value| value.to_str().ok()),
+            Some("run-1")
+        );
     }
 
     #[test]
@@ -3283,6 +3393,8 @@ mod tests {
             "list_spaces",
             "get_board_item",
             "get_assignment_candidates",
+            "submit_workflow_plan",
+            "report_workflow_outcome",
             "assign_board_item",
             "list_item_attachments",
             "read_item_attachment",
@@ -3294,7 +3406,7 @@ mod tests {
     }
 
     #[test]
-    fn automation_manager_has_only_read_and_assign_tools() {
+    fn automation_manager_has_only_read_and_plan_tools() {
         let names = tools()
             .into_iter()
             .filter_map(|tool| tool["name"].as_str().map(ToOwned::to_owned))
@@ -3307,7 +3419,7 @@ mod tests {
                 "get_current_context",
                 "get_board_item",
                 "get_assignment_candidates",
-                "assign_board_item",
+                "submit_workflow_plan",
             ]
         );
         for forbidden in [

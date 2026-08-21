@@ -8,12 +8,14 @@ import io
 import json
 import uuid
 from typing import Any, BinaryIO
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from app.api.endpoints import deliveries as deliveries_endpoint
 from app.core.security import create_access_token, get_password_hash
 from app.models.cloud_project import CloudProject, LoopItemTaskBinding
 from app.models.delivery import (
@@ -26,11 +28,13 @@ from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.task import TaskResource
 from app.models.user import User
+from app.schemas.issue_workflow import WorkflowPlanView
 from app.services.delivery import delivery_service
 from app.services.delivery.storage import (
     DeliveryObjectNotFoundError,
     DeliveryStorageUnavailableError,
 )
+from app.services.issue_workflow_planning import issue_workflow_planning_service
 from app.services.project_automations import project_automation_execution
 
 
@@ -680,6 +684,15 @@ def test_moving_orchestrated_issue_to_pending_starts_its_workflow(
             "version": 1,
             "stage_mode": "dag",
             "advancement_policy": "manual",
+            "execution_config": {
+                "agent_id": "agent-1",
+                "runtime_profile_id": "runtime-1",
+                "model": "model-1",
+                "workspace_binding": {
+                    "type": "backend_project",
+                    "projectId": delivery_project.id,
+                },
+            },
             "nodes": [
                 {
                     "id": "develop",
@@ -714,6 +727,226 @@ def test_moving_orchestrated_issue_to_pending_starts_its_workflow(
     run = test_db.query(ProjectAutomationRun).one()
     assert run.task_id == created["id"]
     dispatch.assert_awaited_once()
+
+
+def test_pausing_planning_cancels_active_ai_manager(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+    test_user: User,
+    delivery_project: CloudProject,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    issue = LoopItem(
+        id=f"I{uuid.uuid4().hex[:10]}",
+        cloud_project_id=delivery_project.id,
+        title="Pause planning",
+        status="pending",
+        created_by_user_id=test_user.id,
+        metadata_json={
+            "workflow": {
+                "version": 1,
+                "definition_version": 1,
+                "stage_mode": "none",
+                "advancement_policy": "ai",
+                "approval_policy": "required",
+                "ai_automation_rule_id": "rule-1",
+                "orchestration_status": "idle",
+                "nodes": [],
+            }
+        },
+    )
+    test_db.add(issue)
+    test_db.flush()
+    workflow_run = issue_workflow_planning_service.ensure_run(
+        test_db,
+        issue=issue,
+        user_id=test_user.id,
+    )
+    manager_run = ProjectAutomationRun(
+        id=f"A{uuid.uuid4().hex[:10]}",
+        cloud_project_id=delivery_project.id,
+        parent_id="rule-1",
+        task_id=issue.id,
+        title="AI manager",
+        status="running",
+        created_by_user_id=test_user.id,
+        metadata_json={"event": {"payload": {"workflow_run_id": workflow_run.id}}},
+    )
+    test_db.add(manager_run)
+    test_db.commit()
+    cancel_run = AsyncMock(return_value={"id": manager_run.id, "status": "cancelled"})
+    monkeypatch.setattr(
+        deliveries_endpoint.project_automation_service,
+        "cancel_run",
+        cancel_run,
+    )
+
+    response = test_client.post(
+        f"/api/v1/loop-items/{issue.id}/workflow-plan/pause",
+        headers=_auth(test_token),
+        json={},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "paused"
+    cancel_run.assert_awaited_once_with(
+        test_db,
+        str(delivery_project.id),
+        manager_run.id,
+        test_user.id,
+    )
+    resume_response = test_client.post(
+        f"/api/v1/loop-items/{issue.id}/workflow-plan/resume",
+        headers=_auth(test_token),
+        json={},
+    )
+    assert resume_response.status_code == 409
+    assert resume_response.json()["detail"] == "The AI manager is still stopping"
+
+
+def test_pausing_planning_does_not_claim_success_without_runtime_confirmation(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+    test_user: User,
+    delivery_project: CloudProject,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    issue = LoopItem(
+        id=f"I{uuid.uuid4().hex[:10]}",
+        cloud_project_id=delivery_project.id,
+        title="Pause planning without Runtime confirmation",
+        status="pending",
+        created_by_user_id=test_user.id,
+        metadata_json={
+            "workflow": {
+                "version": 1,
+                "definition_version": 1,
+                "stage_mode": "none",
+                "advancement_policy": "ai",
+                "approval_policy": "required",
+                "ai_automation_rule_id": "rule-1",
+                "orchestration_status": "idle",
+                "nodes": [],
+            }
+        },
+    )
+    test_db.add(issue)
+    test_db.flush()
+    workflow_run = issue_workflow_planning_service.ensure_run(
+        test_db,
+        issue=issue,
+        user_id=test_user.id,
+    )
+    manager_run = ProjectAutomationRun(
+        id=f"A{uuid.uuid4().hex[:10]}",
+        cloud_project_id=delivery_project.id,
+        parent_id="rule-1",
+        task_id=issue.id,
+        title="AI manager",
+        status="running",
+        created_by_user_id=test_user.id,
+        metadata_json={"event": {"payload": {"workflow_run_id": workflow_run.id}}},
+    )
+    test_db.add(manager_run)
+    test_db.commit()
+    monkeypatch.setattr(
+        deliveries_endpoint.project_automation_service,
+        "cancel_run",
+        AsyncMock(
+            side_effect=HTTPException(
+                status_code=502,
+                detail="Runtime did not confirm cancellation",
+            )
+        ),
+    )
+
+    response = test_client.post(
+        f"/api/v1/loop-items/{issue.id}/workflow-plan/pause",
+        headers=_auth(test_token),
+        json={},
+    )
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == "Runtime did not confirm cancellation"
+    plan = issue_workflow_planning_service.get(
+        test_db,
+        issue_id=issue.id,
+        user_id=test_user.id,
+    )
+    assert plan is not None
+    assert plan.status == "planning"
+
+
+def test_executor_workflow_plan_submission_binds_current_manager_run(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+    test_user: User,
+    delivery_project: CloudProject,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    issue = LoopItem(
+        id=f"I{uuid.uuid4().hex[:10]}",
+        cloud_project_id=delivery_project.id,
+        title="Submit manager plan",
+        status="pending",
+        created_by_user_id=test_user.id,
+    )
+    test_db.add(issue)
+    test_db.commit()
+    plan = WorkflowPlanView(
+        run_id="workflow-run-1",
+        issue_id=issue.id,
+        stage_id="__issue__",
+        plan_version=1,
+        approval_policy="required",
+        status="awaiting_approval",
+        summary="Implement the task.",
+        items=[],
+        manager_run=None,
+    )
+    submit = MagicMock(return_value=plan)
+    monkeypatch.setattr(
+        deliveries_endpoint.project_automation_execution,
+        "submit_manager_workflow_plan",
+        submit,
+    )
+    published_events: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        deliveries_endpoint,
+        "publish_loop_item_changed",
+        lambda db, *, item, reason, actor_user_id: published_events.append(
+            (item.id, reason)
+        ),
+    )
+
+    response = test_client.post(
+        f"/api/v1/loop-items/{issue.id}/workflow-plan",
+        headers={
+            **_auth(test_token),
+            "X-Wegent-Automation-Run-ID": "automation-run-1",
+        },
+        json={
+            "summary": "Implement the task.",
+            "items": [
+                {
+                    "client_key": "implementation",
+                    "title": "Implement",
+                    "description": "Implement the requested behavior.",
+                    "assignee_type": "agent",
+                    "assignee_id": "agent-1",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    submit.assert_called_once()
+    assert submit.call_args.kwargs["run_id"] == "automation-run-1"
+    assert submit.call_args.kwargs["issue_id"] == issue.id
+    assert published_events == [(issue.id, "workflow_plan_submitted")]
 
 
 def test_workflow_task_binding_requires_a_ready_non_automated_stage(

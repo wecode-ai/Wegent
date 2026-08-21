@@ -9,8 +9,10 @@ from app.models.delivery import (
     CloudProject,
     LoopItem,
     ProjectAutomationRun,
+    loop_datetime_is_unset,
 )
 from app.schemas.issue_workflow import IssueWorkflowInstance
+from app.services.issue_workflow_planning import issue_workflow_planning_service
 from app.services.project_automation_domain import ProjectAutomationEvent
 from app.services.project_automations import (
     project_automation_processor,
@@ -56,7 +58,14 @@ class IssueWorkflowStartService:
         user_id: int,
     ) -> int:
         rule_id = workflow.ai_automation_rule_id
-        if not rule_id or self._has_run(db, item, rule_id):
+        if not rule_id:
+            return 0
+        planning_run = issue_workflow_planning_service.ensure_run(
+            db,
+            issue=item,
+            user_id=user_id,
+        )
+        if self._has_run(db, item, rule_id, planning_run.id):
             return 0
         return await project_automation_processor.process(
             db,
@@ -72,6 +81,10 @@ class IssueWorkflowStartService:
                     "description": item.description,
                     "status": item.status,
                     "priority": item.priority,
+                    "workflow_run_id": planning_run.id,
+                    "workflow_plan_version": (planning_run.metadata_json or {}).get(
+                        "plan_version"
+                    ),
                     "tags": list(
                         (item.metadata_json or {}).get("tags", [])
                         if isinstance(item.metadata_json, dict)
@@ -107,17 +120,32 @@ class IssueWorkflowStartService:
         return started
 
     @staticmethod
-    def _has_run(db: Session, item: LoopItem, rule_id: str) -> bool:
-        return (
-            db.query(ProjectAutomationRun.id)
+    def _has_run(
+        db: Session,
+        item: LoopItem,
+        rule_id: str,
+        workflow_run_id: str,
+    ) -> bool:
+        runs = (
+            db.query(ProjectAutomationRun)
             .filter(
                 ProjectAutomationRun.cloud_project_id == item.cloud_project_id,
                 ProjectAutomationRun.parent_id == rule_id,
                 ProjectAutomationRun.task_id == item.id,
+                loop_datetime_is_unset(ProjectAutomationRun.deleted_at),
             )
-            .first()
-            is not None
+            .all()
         )
+        for run in runs:
+            metadata = run.metadata_json if isinstance(run.metadata_json, dict) else {}
+            event = metadata.get("event")
+            payload = event.get("payload") if isinstance(event, dict) else None
+            if (
+                isinstance(payload, dict)
+                and payload.get("workflow_run_id") == workflow_run_id
+            ):
+                return True
+        return False
 
 
 issue_workflow_start_service = IssueWorkflowStartService()

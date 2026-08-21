@@ -13,6 +13,7 @@ from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
+import app.services.project_automation_execution as project_automation_execution_module
 from app.db.base import Base
 from app.models.cloud_project import LoopItemTaskBinding
 from app.models.delivery import (
@@ -21,6 +22,8 @@ from app.models.delivery import (
     ProjectAutomationRule,
     ProjectAutomationRun,
     ProjectChatAgent,
+    ProjectWorkflowPlanItem,
+    ProjectWorkflowRun,
     RuntimeProfile,
     loop_datetime_is_unset,
     loop_datetime_value_is_unset,
@@ -33,6 +36,7 @@ from app.models.user import User
 from app.schemas.project_chat import LoopItemAssign
 from app.schemas.runtime_profile import RuntimeProfileCreate
 from app.services.board_team_execution import dispatch_board_robot_execution
+from app.services.issue_workflow_planning import issue_workflow_planning_service
 from app.services.loop_item_executions.profile import WeworkExecutionProfile
 from app.services.loop_item_executions.service import (
     TaskContext,
@@ -71,6 +75,45 @@ def independent_session_database(tmp_path):
     finally:
         Base.metadata.drop_all(bind=engine)
         engine.dispose()
+
+
+def test_project_automation_activity_push_commits_before_network(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[object] = []
+    run = MagicMock()
+    row = MagicMock()
+    db = MagicMock()
+    db.flush.side_effect = lambda: events.append("flush")
+    db.commit.side_effect = lambda: events.append("commit")
+    monkeypatch.setattr(
+        project_automation_execution_module.ProjectAutomationExecution,
+        "_activity",
+        staticmethod(lambda _db, _run: events.append("read") or row),
+    )
+    monkeypatch.setattr(
+        project_automation_execution_module.project_chat_service,
+        "to_view",
+        lambda _row: MagicMock(
+            model_dump=lambda **_kwargs: events.append("serialize")
+            or {"id": "message-1"}
+        ),
+    )
+    monkeypatch.setattr(
+        project_automation_execution_module,
+        "push_project_chat_message",
+        lambda payload: events.append(("push", payload)),
+    )
+
+    project_automation_execution._commit_and_push_activity(db, run)
+
+    assert events == [
+        "flush",
+        "read",
+        "serialize",
+        "commit",
+        ("push", {"id": "message-1"}),
+    ]
 
 
 def _make_project(db: Session, user: User) -> CloudProject:
@@ -885,6 +928,66 @@ def test_runtime_cancelled_is_terminal_and_never_requeued(
     push_message.assert_called_once()
 
 
+def test_failed_runtime_event_after_cancel_request_is_never_requeued(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    original = _make_execution(
+        test_db,
+        _make_item(test_db, project, test_user),
+        bot,
+        test_user,
+    )
+    claimed = loop_item_execution_service.claim(
+        test_db,
+        agent_id=bot.id,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
+    )
+    assert claimed is not None
+    running = loop_item_execution_service.handle_runtime_event(
+        test_db,
+        device_id=claimed.runtime_device_id,
+        runtime_task_id=claimed.runtime_task_id,
+        event_name="response.created",
+        payload={"eventSeq": 1, "data": {}},
+    )
+    assert running is not None and running.status == "running"
+
+    requested = loop_item_execution_service.cancel(
+        test_db,
+        execution_id=original.id,
+        note="Workflow was paused",
+    )
+    assert requested.status == "cancel_requested"
+
+    cancelled = loop_item_execution_service.handle_runtime_event(
+        test_db,
+        device_id=claimed.runtime_device_id,
+        runtime_task_id=claimed.runtime_task_id,
+        event_name="response.failed",
+        payload={"eventSeq": 2, "error": "cancelled", "data": {}},
+    )
+
+    assert cancelled is not None
+    assert cancelled.id == original.id
+    assert cancelled.status == "cancelled"
+    assert cancelled.retry_attempt == 0
+    executions = (
+        test_db.query(LoopItemExecution)
+        .filter(LoopItemExecution.loop_item_id == original.loop_item_id)
+        .all()
+    )
+    assert [execution.id for execution in executions] == [original.id]
+
+
 def test_delivered_cancel_waits_for_runtime_stop_confirmation(
     test_db: Session, test_user: User
 ) -> None:
@@ -1536,25 +1639,6 @@ def test_stall_scan_requests_cancel_without_faking_terminal_state(
     assert running is not None
     running.started_at = running.started_at - timedelta(minutes=30)
     test_db.commit()
-    test_db.add(
-        ProjectChatMessage(
-            message_id="stall-msg-1",
-            client_message_id="stall-msg-1",
-            project_id=str(project.id),
-            task_id=claimed.loop_item_id,
-            sender_type="agent",
-            sender_id=bot.id,
-            sender_name="Queue Bot",
-            message_type="agent_chunk",
-            content="",
-            agent_id=bot.id,
-            runtime_device_id="cloud-device-1",
-            runtime_task_id=claimed.runtime_task_id,
-            status="streaming",
-        )
-    )
-    test_db.commit()
-
     stalled = loop_item_execution_service.stall_scan(
         test_db, text_timeout_seconds=20 * 60
     )
@@ -1601,23 +1685,16 @@ def test_stall_scan_keeps_runs_with_text_output(
     assert running is not None
     running.started_at = running.started_at - timedelta(minutes=30)
     test_db.commit()
-    test_db.add(
-        ProjectChatMessage(
-            message_id="text-msg-1",
-            client_message_id="text-msg-1",
-            project_id=str(project.id),
-            task_id=claimed.loop_item_id,
-            sender_type="agent",
-            sender_id=bot.id,
-            sender_name="Queue Bot",
-            message_type="agent_chunk",
-            content="real progress text",
-            agent_id=bot.id,
-            runtime_device_id="cloud-device-1",
-            runtime_task_id=claimed.runtime_task_id,
-            status="streaming",
+    activity = (
+        test_db.query(ProjectChatMessage)
+        .filter(
+            ProjectChatMessage.runtime_device_id == "cloud-device-1",
+            ProjectChatMessage.runtime_task_id == claimed.runtime_task_id,
+            loop_datetime_is_unset(ProjectChatMessage.deleted_at),
         )
+        .one()
     )
+    activity.content = "real progress text"
     test_db.commit()
 
     stalled = loop_item_execution_service.stall_scan(
@@ -2016,6 +2093,65 @@ def test_runtime_event_opens_activity_when_start_report_races_ahead(
     message, mode = result
     assert mode == "delta"
     assert message.content == "hello from the executor"
+
+
+def test_runtime_running_event_projects_child_task_and_activity(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    item = _make_item(test_db, project, test_user)
+    execution = _make_execution(test_db, item, bot, test_user)
+    claimed = loop_item_execution_service.claim(
+        test_db,
+        agent_id=bot.id,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
+    )
+    assert claimed is not None
+
+    running = loop_item_execution_service.handle_runtime_event(
+        test_db,
+        device_id=claimed.runtime_device_id,
+        runtime_task_id=claimed.runtime_task_id,
+        event_name="response.created",
+        payload={"eventSeq": 1, "data": {}},
+    )
+
+    assert running is not None
+    assert running.status == "running"
+    test_db.refresh(item)
+    assert item.status == "in_progress"
+    activity = (
+        test_db.query(ProjectChatMessage)
+        .filter(
+            ProjectChatMessage.runtime_device_id == claimed.runtime_device_id,
+            ProjectChatMessage.runtime_task_id == claimed.runtime_task_id,
+            loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+        )
+        .one()
+    )
+    assert activity.status == "streaming"
+    assert activity.metadata_json["run_status"] == "running"
+
+    item.status = "pending"
+    test_db.commit()
+    heartbeat = loop_item_execution_service.handle_runtime_event(
+        test_db,
+        device_id=claimed.runtime_device_id,
+        runtime_task_id=claimed.runtime_task_id,
+        event_name="response.in_progress",
+        payload={"eventSeq": 2, "data": {}},
+    )
+
+    assert heartbeat is not None
+    test_db.refresh(item)
+    assert item.status == "in_progress"
 
 
 def test_requeue_drops_empty_placeholder_activity(
@@ -2981,19 +3117,95 @@ def test_runtime_reconciliation_uses_terminal_turn_status(
         error="Runtime event was lost",
     )
 
-    reconciled = loop_item_execution_service.reconcile_runtime_snapshot(
-        test_db,
-        execution_id=claimed.id,
-        runtime_status="active",
-        running=False,
-        turn_status="completed",
-    )
+    with patch(
+        "app.services.project_chat.push.push_project_chat_message"
+    ) as push_message:
+        reconciled = loop_item_execution_service.reconcile_runtime_snapshot(
+            test_db,
+            execution_id=claimed.id,
+            runtime_status="active",
+            running=False,
+            turn_status="completed",
+        )
 
     assert reconciled is not None
     assert reconciled.status == "completed"
     assert reconciled.observed_state == "succeeded"
     assert reconciled.sync_state == "in_sync"
     assert execution_display_state(reconciled) == "succeeded"
+    activity = (
+        test_db.query(ProjectChatMessage)
+        .filter(
+            ProjectChatMessage.runtime_device_id == claimed.runtime_device_id,
+            ProjectChatMessage.runtime_task_id == claimed.runtime_task_id,
+            loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+        )
+        .one()
+    )
+    assert activity.status == "completed"
+    assert activity.metadata_json["run_status"] == "completed"
+    push_message.assert_called_once()
+
+
+def test_runtime_reconciliation_restores_missing_running_activity(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    execution = _make_execution(
+        test_db, _make_item(test_db, project, test_user), bot, test_user
+    )
+    claimed = loop_item_execution_service.claim_batch_for_device(
+        test_db,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
+    )[0]
+    loop_item_execution_service.request_runtime_start(
+        test_db,
+        execution_id=claimed.id,
+        runtime_device_id=claimed.runtime_device_id,
+        runtime_task_id=claimed.runtime_task_id,
+    )
+    assert (
+        test_db.query(ProjectChatMessage)
+        .filter(
+            ProjectChatMessage.runtime_device_id == claimed.runtime_device_id,
+            ProjectChatMessage.runtime_task_id == claimed.runtime_task_id,
+            loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+        )
+        .count()
+        == 0
+    )
+
+    with patch(
+        "app.services.project_chat.push.push_project_chat_message"
+    ) as push_message:
+        reconciled = loop_item_execution_service.reconcile_runtime_snapshot(
+            test_db,
+            execution_id=claimed.id,
+            runtime_status="running",
+            running=True,
+        )
+
+    assert reconciled is not None
+    assert reconciled.status == "running"
+    activity = (
+        test_db.query(ProjectChatMessage)
+        .filter(
+            ProjectChatMessage.runtime_device_id == claimed.runtime_device_id,
+            ProjectChatMessage.runtime_task_id == claimed.runtime_task_id,
+            loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+        )
+        .one()
+    )
+    assert activity.status == "streaming"
+    assert activity.metadata_json["run_status"] == "running"
+    push_message.assert_called_once()
 
 
 def test_runtime_queued_snapshot_is_accepted_not_running(
@@ -3039,6 +3251,104 @@ def test_runtime_queued_snapshot_is_accepted_not_running(
     assert reconciled.sync_state == "in_sync"
     assert execution_display_state(reconciled) == "waiting_runtime"
     assert loop_datetime_value_is_unset(reconciled.started_at)
+
+
+def test_missing_runtime_task_after_start_timeout_requeues_same_execution(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    execution = _make_execution(
+        test_db, _make_item(test_db, project, test_user), bot, test_user
+    )
+    claimed = loop_item_execution_service.claim_batch_for_device(
+        test_db,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
+    )[0]
+    loop_item_execution_service.request_runtime_start(
+        test_db,
+        execution_id=claimed.id,
+        runtime_device_id=claimed.runtime_device_id,
+        runtime_task_id=claimed.runtime_task_id,
+    )
+    loop_item_execution_service.mark_dispatch_unknown(
+        test_db,
+        execution_id=claimed.id,
+        error="Runtime start confirmation timed out",
+    )
+
+    reconciled = loop_item_execution_service.reconcile_runtime_snapshot(
+        test_db,
+        execution_id=claimed.id,
+        runtime_status="missing",
+        running=False,
+    )
+
+    assert reconciled is not None
+    assert reconciled.id == execution.id
+    assert reconciled.status == "queued"
+    assert reconciled.observed_state == "unconfirmed"
+    assert reconciled.sync_state == "pending"
+    assert reconciled.termination_reason == ""
+    assert loop_datetime_value_is_unset(reconciled.start_requested_at)
+    assert loop_datetime_value_is_unset(reconciled.observed_at)
+    reclaimed = loop_item_execution_service.claim(
+        test_db,
+        agent_id=bot.id,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
+    )
+    assert reclaimed is not None
+    assert reclaimed.id == execution.id
+
+
+def test_missing_runtime_task_before_start_timeout_keeps_start_fence(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    execution = _make_execution(
+        test_db, _make_item(test_db, project, test_user), bot, test_user
+    )
+    claimed = loop_item_execution_service.claim_batch_for_device(
+        test_db,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
+    )[0]
+    loop_item_execution_service.request_runtime_start(
+        test_db,
+        execution_id=claimed.id,
+        runtime_device_id=claimed.runtime_device_id,
+        runtime_task_id=claimed.runtime_task_id,
+    )
+
+    reconciled = loop_item_execution_service.reconcile_runtime_snapshot(
+        test_db,
+        execution_id=claimed.id,
+        runtime_status="missing",
+        running=False,
+    )
+
+    assert reconciled is not None
+    assert reconciled.status == "claimed"
+    assert reconciled.sync_state == "diverged"
+    assert loop_datetime_value_is_unset(reconciled.start_requested_at) is False
 
 
 def test_missing_cancel_requested_runtime_task_releases_capacity(
@@ -3369,11 +3679,10 @@ def test_local_runtime_payload_leaves_model_materialization_to_app(
     assert "api_key" not in str(payload)
     if executor_type == "automation_manager":
         assert f"project_id: {project.id}" in payload["message"]
+        assert "你是看板的 AI 管家，只负责编排，不执行具体任务。" in payload["message"]
+        assert "submit_workflow_plan" in payload["message"]
         assert f"task_id: {item.id}" in payload["message"]
         assert f"automation_run_id: {run.id}" in payload["message"]
-        assert (
-            "请读取候选执行者并按调度要求完成分派，不要执行任务。" in payload["message"]
-        )
         assert "Handle the task" in payload["message"]
 
 
@@ -4209,7 +4518,7 @@ def test_completed_manager_comment_repairs_stale_queued_rule_run(
     assert run.completed_at is not None
 
 
-def test_manager_does_not_treat_default_creator_as_an_mcp_assignment(
+def test_manager_does_not_treat_default_creator_as_a_submitted_plan(
     test_db: Session, test_user: User
 ) -> None:
     project = _make_project(test_db, test_user)
@@ -4265,10 +4574,210 @@ def test_manager_does_not_treat_default_creator_as_an_mcp_assignment(
     )
 
     test_db.refresh(run)
+    test_db.refresh(activity)
     test_db.refresh(item)
     assert item.assignee_user_id == test_user.id
-    assert run.status == "skipped"
+    assert run.status == "failed"
+    assert activity.status == "failed"
     assert activity.metadata_json.get("selected_assignee_id") is None
+
+
+def test_manager_completion_recovers_persisted_workflow_plan_binding(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    item = _make_item(test_db, project, test_user, title="Planned task")
+    rule = ProjectAutomationRule(
+        id=f"rule-{uuid.uuid4().hex[:10]}",
+        cloud_project_id=project.id,
+        title="Managed planning",
+        status="enabled",
+        created_by_user_id=test_user.id,
+        metadata_json={"assignment_mode": "ai_managed", "manager_type": "custom"},
+    )
+    run = ProjectAutomationRun(
+        cloud_project_id=project.id,
+        parent_id=rule.id,
+        task_id=item.id,
+        title="Managed run",
+        description="AI manager finished without submitting a workflow plan.",
+        status="failed",
+        created_by_user_id=test_user.id,
+        metadata_json={},
+    )
+    message_id = str(uuid.uuid4())
+    activity = ProjectChatMessage(
+        message_id=message_id,
+        client_message_id=message_id,
+        project_id=str(project.id),
+        task_id=item.id,
+        sender_type="agent",
+        sender_id=f"automation_manager:{rule.id}",
+        sender_name="自定义 AI 调度员",
+        message_type="agent_status",
+        content="",
+        metadata_json={"automation_run_id": str(run.id), "run_status": "failed"},
+        status="failed",
+    )
+    test_db.add_all([rule, run, activity])
+    test_db.flush()
+    workflow_run = ProjectWorkflowRun(
+        cloud_project_id=project.id,
+        parent_id=item.id,
+        title="Versioned plan",
+        description="Implement and verify.",
+        status="awaiting_approval",
+        source="ai",
+        created_by_user_id=test_user.id,
+        updated_by_user_id=test_user.id,
+        metadata_json={
+            "plan_version": 2,
+        },
+    )
+    test_db.add(workflow_run)
+    test_db.flush()
+    test_db.add(
+        ProjectWorkflowPlanItem(
+            cloud_project_id=project.id,
+            parent_id=workflow_run.id,
+            title="Implement the plan",
+            description="Implement and verify.",
+            status="proposed",
+            created_by_user_id=test_user.id,
+            updated_by_user_id=test_user.id,
+            metadata_json={
+                "client_key": "implement",
+                "stage_id": "__issue__",
+                "title": "Implement the plan",
+                "description": "Implement and verify.",
+                "assignee_type": "user",
+                "assignee_id": str(test_user.id),
+                "assignee_name": test_user.user_name,
+                "rationale": "Owner verification",
+            },
+        )
+    )
+    run.metadata_json = {
+        "activity_message_id": message_id,
+        "event": {"payload": {"workflow_run_id": workflow_run.id}},
+    }
+    item.metadata_json = {
+        **(item.metadata_json or {}),
+        "workflow": {
+            "active_run_id": workflow_run.id,
+            "approval_policy": "required",
+            "orchestration_status": "awaiting_approval",
+        },
+    }
+    test_db.commit()
+
+    before_repair = issue_workflow_planning_service.get(
+        test_db,
+        issue_id=item.id,
+        user_id=test_user.id,
+    )
+
+    test_db.refresh(run)
+    test_db.refresh(activity)
+    test_db.refresh(workflow_run)
+    assert before_repair is not None
+    assert before_repair.manager_run is not None
+    assert before_repair.manager_run.status == "failed"
+    assert run.status == "failed"
+    assert activity.status == "failed"
+    assert activity.metadata_json.get("workflow_plan_run_id") is None
+    assert workflow_run.metadata_json.get("project_automation_run_id") is None
+
+    project_automation_execution.finalize_manager_result(
+        test_db,
+        run_id=run.id,
+        content="Plan submitted.",
+    )
+    plan = issue_workflow_planning_service.get(
+        test_db,
+        issue_id=item.id,
+        user_id=test_user.id,
+    )
+
+    test_db.refresh(run)
+    test_db.refresh(activity)
+    test_db.refresh(workflow_run)
+    assert plan is not None
+    assert plan.manager_run is not None
+    assert plan.manager_run.status == "succeeded"
+    assert run.status == "succeeded"
+    assert activity.status == "completed"
+    assert activity.metadata_json["workflow_plan_run_id"] == workflow_run.id
+    assert activity.metadata_json["workflow_plan_version"] == 2
+    assert workflow_run.metadata_json["project_automation_run_id"] == run.id
+
+
+def test_manager_completion_rejects_empty_trigger_created_workflow_run(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    item = _make_item(test_db, project, test_user, title="Unsubmitted plan")
+    rule = ProjectAutomationRule(
+        id=f"rule-{uuid.uuid4().hex[:10]}",
+        cloud_project_id=project.id,
+        title="Managed planning",
+        status="enabled",
+        created_by_user_id=test_user.id,
+        metadata_json={"assignment_mode": "ai_managed", "manager_type": "custom"},
+    )
+    run = ProjectAutomationRun(
+        cloud_project_id=project.id,
+        parent_id=rule.id,
+        task_id=item.id,
+        title="Managed run",
+        status="running",
+        created_by_user_id=test_user.id,
+        metadata_json={},
+    )
+    activity_id = str(uuid.uuid4())
+    activity = ProjectChatMessage(
+        message_id=activity_id,
+        client_message_id=activity_id,
+        project_id=str(project.id),
+        task_id=item.id,
+        sender_type="agent",
+        sender_id=f"automation_manager:{rule.id}",
+        sender_name="自定义 AI 调度员",
+        message_type="agent_status",
+        content="",
+        metadata_json={"automation_run_id": str(run.id), "run_status": "running"},
+        status="streaming",
+    )
+    workflow_run = ProjectWorkflowRun(
+        cloud_project_id=project.id,
+        parent_id=item.id,
+        title="Empty planning run",
+        status="planning",
+        source="ai",
+        created_by_user_id=test_user.id,
+        updated_by_user_id=test_user.id,
+        metadata_json={"plan_version": 1},
+    )
+    test_db.add_all([rule, run, activity, workflow_run])
+    test_db.flush()
+    run.metadata_json = {
+        "activity_message_id": activity_id,
+        "event": {"payload": {"workflow_run_id": workflow_run.id}},
+    }
+    test_db.commit()
+
+    project_automation_execution.finalize_manager_result(
+        test_db,
+        run_id=str(run.id),
+        content="Prepared a draft but did not submit it.",
+        push_activity=False,
+    )
+
+    test_db.refresh(run)
+    test_db.refresh(activity)
+    assert run.status == "failed"
+    assert run.description == "AI manager finished without submitting a workflow plan."
+    assert activity.status == "failed"
 
 
 @pytest.mark.asyncio
@@ -4333,6 +4842,39 @@ async def test_cancel_stops_selected_robot_before_terminal_wegent_manager_task(
     assert run.status == "cancelled"
     assert view["status"] == "cancelled"
     cancel_manager.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cancel_running_automation_requires_runtime_confirmation(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    """A pause must not report success while the Runtime task is still active."""
+
+    from app.services.project_automations import project_automation_service
+
+    execution, run, _ = _make_running_automation_execution(test_db, test_user)
+    execution_id = execution.id
+
+    with patch(
+        "app.tasks.robot_queue_tasks.emit_runtime_cancels",
+        return_value=set(),
+    ):
+        with pytest.raises(HTTPException) as error:
+            await project_automation_service.cancel_run(
+                test_db,
+                str(execution.cloud_project_id),
+                str(run.id),
+                test_user.id,
+            )
+
+    assert error.value.status_code == 502
+    assert error.value.detail == "Runtime did not confirm cancellation"
+    execution = test_db.get(LoopItemExecution, execution_id)
+    assert execution is not None
+    test_db.refresh(run)
+    assert execution.status == "cancel_requested"
+    assert run.status == "running"
 
 
 def test_cloud_execution_fails_when_selected_model_no_longer_exists(
