@@ -778,8 +778,13 @@
 }
 
 .task-detail-flat-task-row[data-selected='true'] {
-  border-color: rgb(51 156 255 / 35%);
-  background: rgb(229 243 255);
+  border-color: rgb(var(--color-focus) / 35%);
+  background: rgb(var(--color-focus) / 10%);
+}
+
+[data-theme='dark'] .task-detail-flat-task-row[data-selected='true'] {
+  border-color: rgb(var(--color-focus) / 42%);
+  background: rgb(var(--color-focus) / 14%);
 }
 
 .task-detail-workspace-meta-pill:hover {
