@@ -751,6 +751,7 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.search" => self.search_tasks(payload).await,
             "runtime.tasks.transcript" => self.transcript(payload).await,
             "runtime.tasks.create" => self.create_task(payload).await,
+            "runtime.text.generate" => self.generate_text(payload).await,
             "runtime.tasks.fork_at_turn" => self.fork_task_at_turn(payload).await,
             "runtime.tasks.send" => self.send_message(payload).await,
             "runtime.tasks.interrupt_and_send" => self.interrupt_and_send(payload).await,

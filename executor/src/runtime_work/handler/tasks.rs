@@ -5,6 +5,27 @@
 use super::*;
 
 impl RuntimeWorkRpcHandler {
+    pub(super) async fn generate_text(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let mut request = execution_request(&payload)
+            .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
+        request.ephemeral = true;
+        let turn = self
+            .codex_app_server
+            .run_turn_with_cancel(request, CodexAppServerTurnOptions::default())
+            .await
+            .map_err(|error| AppIpcError::new("model_transport_failed", error))?;
+        match turn.outcome {
+            ExecutionOutcome::Completed { content } => Ok(json!({"content": content})),
+            ExecutionOutcome::Failed { message } => {
+                Err(AppIpcError::new("model_request_failed", message))
+            }
+            outcome => Err(AppIpcError::new(
+                "model_request_incomplete",
+                format!("text generation did not complete: {outcome:?}"),
+            )),
+        }
+    }
+
     pub(super) async fn generate_friendly_title(
         &self,
         payload: Value,
