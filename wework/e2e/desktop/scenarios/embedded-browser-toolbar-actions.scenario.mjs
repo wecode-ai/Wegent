@@ -103,6 +103,17 @@ async function evaluateFindState(identity) {
   return result.value
 }
 
+async function waitForFindMatches(identity, expected, timeoutMs, message) {
+  const startedAt = Date.now()
+  let lastState = null
+  while (Date.now() - startedAt < timeoutMs) {
+    lastState = await evaluateFindState(identity)
+    if (lastState?.matches === expected) return lastState
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(`${message}; last state=${JSON.stringify(lastState)}`)
+}
+
 async function evaluatePageNumber(identity, expression, message) {
   const result = await callBridge(identity, {
     action: 'evaluate',
@@ -241,8 +252,12 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
       const nextFindState = await evaluateFindState(bridgeIdentity)
       assert.equal(nextFindState.active, 2, 'Enter did not move to the next find match')
       await control.command('click', FIND_CLOSE_SELECTOR)
-      const clearedFindState = await evaluateFindState(bridgeIdentity)
-      assert.equal(clearedFindState.matches, 0, 'Closing the find bar did not clear highlights')
+      await waitForFindMatches(
+        bridgeIdentity,
+        0,
+        uiTimeoutMs,
+        'Closing the find bar did not clear highlights'
+      )
 
       // --- Device toolbar ---
       await control.command('click', BROWSER_MORE_BUTTON_SELECTOR)
