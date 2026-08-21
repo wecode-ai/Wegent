@@ -5,7 +5,6 @@ import {
   Boxes,
   Circle,
   ExternalLink,
-  Pin,
   Play,
   Plus,
   Square,
@@ -321,19 +320,6 @@ export function HarnessAppsPage({ importRequested = false }: HarnessAppsPageProp
     }
   }
 
-  async function toggleResident(item: HarnessAppInstallation) {
-    setBusy(item.id)
-    setError(null)
-    try {
-      await harnessAppsApi.update(item.id, { resident: !item.resident })
-      await refresh()
-    } catch (updateError) {
-      setError(getErrorMessage(updateError, t('workbench.smart_apps_resident_update_failed')))
-    } finally {
-      setBusy(null)
-    }
-  }
-
   function stateLabel(item: HarnessAppInstallation) {
     if (item.state === 'running') return t('workbench.harness_apps_state_running', '运行中')
     if (item.state === 'failed') return t('workbench.harness_apps_state_failed', '启动失败')
@@ -482,22 +468,6 @@ export function HarnessAppsPage({ importRequested = false }: HarnessAppsPageProp
                     ) : null}
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
-                    <Button
-                      size="sm"
-                      variant={item.resident ? 'secondary' : 'ghost'}
-                      data-testid={`harness-app-resident-${item.id}`}
-                      aria-pressed={item.resident}
-                      title={t(
-                        'workbench.smart_apps_resident_description',
-                        'Wework 启动时自动打开'
-                      )}
-                      className="h-11 gap-1 rounded-lg px-2.5 sm:h-9"
-                      disabled={busy === item.id}
-                      onClick={() => void toggleResident(item)}
-                    >
-                      <Pin className={item.resident ? 'fill-current' : undefined} />
-                      {t('workbench.smart_apps_resident', '常驻')}
-                    </Button>
                     {item.state === 'running' ? (
                       <>
                         <Button

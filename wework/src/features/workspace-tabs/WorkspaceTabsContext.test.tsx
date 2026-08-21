@@ -51,8 +51,10 @@ function TabsState() {
 
 function RoutingHarness({
   startupTabKind,
+  restoreSessionTabs,
 }: {
   startupTabKind?: 'task' | 'board' | 'agent'
+  restoreSessionTabs?: boolean
 } = {}) {
   const [location, setLocation] = useState(() => ({
     pathname: window.location.pathname,
@@ -76,6 +78,7 @@ function RoutingHarness({
       storageScope="context-test"
       labels={labels}
       startupTabKind={startupTabKind}
+      restoreSessionTabs={restoreSessionTabs}
     >
       <TabsState />
     </WorkspaceTabsProvider>
@@ -180,6 +183,30 @@ describe('WorkspaceTabsProvider routing', () => {
     expect(screen.getByTestId('tab-count')).toHaveTextContent('4')
     expect(screen.getByTestId('active-tab-kind')).toHaveTextContent('board')
     expect(window.location.search).toContain('workspaceTab=board-')
+  })
+
+  test('does not restore or persist regular tabs when session restoration is disabled', () => {
+    localStorage.setItem(
+      'wework.workspaceTabs.v3:context-test',
+      JSON.stringify({
+        activeTabId: 'old-tab',
+        tabs: [
+          {
+            id: 'old-tab',
+            kind: 'auxiliary',
+            title: '旧标签',
+            contentRoute: '/plugins',
+            fixed: false,
+          },
+        ],
+      })
+    )
+
+    render(<RoutingHarness restoreSessionTabs={false} />)
+    act(() => screen.getByRole('button', { name: '新建项目空间标签' }).click())
+
+    expect(screen.getByTestId('active-tab-title')).not.toHaveTextContent('旧标签')
+    expect(localStorage.getItem('wework.workspaceTabs.v3:context-test')).toContain('old-tab')
   })
 
   test('selects and updates an existing board tab for a concrete project task', () => {

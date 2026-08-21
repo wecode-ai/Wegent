@@ -19,6 +19,7 @@ sidebar_position: 6
 | [键盘快捷键](./keyboard-shortcuts.md)        | 管理 Wework 桌面版本机快捷键                         |
 | [桌面应用偏好](./desktop-app-preferences.md) | 配置 Wework 桌面版启动、后台运行和托盘行为           |
 | [浏览器设置](./browser-settings.md)          | 配置内置浏览器的链接、隐私和下载行为                 |
+| [工作台标签页](./workspace-tabs.md)          | 配置固定标签页、启动标签页和临时普通标签页           |
 
 ---
 

@@ -271,25 +271,6 @@ describe('HarnessAppsPage', () => {
     expect(await screen.findByTestId(`harness-app-model-${installed.id}`)).toHaveValue(nextModelKey)
   })
 
-  test('toggles whether a Smart app stays resident across launches', async () => {
-    const resident = { ...installed, resident: true }
-    mocks.api.list.mockResolvedValueOnce([installed]).mockResolvedValueOnce([resident])
-    mocks.api.update.mockResolvedValue(resident)
-
-    render(<HarnessAppsPage />)
-    const residentButton = await screen.findByTestId(`harness-app-resident-${installed.id}`)
-    expect(residentButton).toHaveAttribute('aria-pressed', 'false')
-    fireEvent.click(residentButton)
-
-    await waitFor(() =>
-      expect(mocks.api.update).toHaveBeenCalledWith(installed.id, { resident: true })
-    )
-    expect(await screen.findByTestId(`harness-app-resident-${installed.id}`)).toHaveAttribute(
-      'aria-pressed',
-      'true'
-    )
-  })
-
   test('rolls back a started app when the post-start refresh fails', async () => {
     mocks.api.list
       .mockResolvedValueOnce([installed])

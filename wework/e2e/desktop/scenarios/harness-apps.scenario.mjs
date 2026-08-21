@@ -231,13 +231,17 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         initialModelKey,
         'Changing the installed Smart app model did not persist a new selection'
       )
-      const residentButton = `[data-testid="harness-app-resident-${INSTALLATION_ID}"]`
-      await control.command('click', residentButton)
-      await control.command('waitFor', `${residentButton}[aria-pressed="true"]`, {
-        stableMs: 300,
-        timeoutMs: uiTimeoutMs,
-      })
-      await captureScreenshot(control, 'harness-apps-06-model-and-resident.png', 'body')
+      await control.command('click', '[data-testid="workspace-tab-add"]')
+      await control.command(
+        'waitFor',
+        `[data-testid="workspace-tab-add-smart-app-${INSTALLATION_ID}"]`,
+        {
+          stableMs: 300,
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await captureScreenshot(control, 'harness-apps-06-direct-add-menu.png', 'body')
+      await control.command('press', 'Escape')
 
       await control.command('click', `[data-testid="harness-app-start-${INSTALLATION_ID}"]`)
       await control.command('waitFor', `[data-testid="harness-app-launch-${INSTALLATION_ID}"]`, {
@@ -405,72 +409,39 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         Buffer.from(stoppedSnapshot.slice('data:image/png;base64,'.length), 'base64')
       )
       await control.awaitReadyAfter(readyCountBeforeReload)
-      const residentAppSurface = `[data-testid="app-iframe-harness-${INSTALLATION_ID}"]`
-      await control.command('waitFor', residentAppSurface, {
-        timeoutMs: 30_000,
+      await control.command('waitFor', '[data-testid="workspace-tab-add"]', {
+        timeoutMs: uiTimeoutMs,
       })
-      const residentAppTabId = await control.command('getAttribute', residentAppSurface, {
-        value: 'data-workspace-tab-id',
-      })
-      assert.ok(residentAppTabId, 'Resident Smart app did not expose its workspace tab ID')
+      await control.command('click', '[data-testid="workspace-tab-add"]')
       await control.command(
         'waitFor',
-        `[data-testid="workspace-tab-select-${residentAppTabId}"][aria-selected="true"]`,
+        `[data-testid="workspace-tab-add-smart-app-${INSTALLATION_ID}"]`,
         {
+          stableMs: 300,
           timeoutMs: uiTimeoutMs,
         }
       )
-      const residentWorkspaceSnapshot = JSON.parse(await control.command('snapshot', 'body'))
-      assert.ok(
-        residentWorkspaceSnapshot.location.includes(APP_ROUTE),
-        `Resident Smart app workspace route did not reopen: ${residentWorkspaceSnapshot.location}`
-      )
-      const residentNativeSnapshot = await control.command(
-        'captureEmbeddedBrowser',
-        residentAppSurface,
-        {
-          timeoutMs: 30_000,
-        }
-      )
-      assert.ok(
-        residentNativeSnapshot.startsWith('data:image/png;base64,'),
-        'Resident Smart app native WebView did not produce a screenshot'
-      )
-      await writeFile(
-        join(resultDir, 'harness-apps-11-resident-auto-opened.png'),
-        Buffer.from(residentNativeSnapshot.slice('data:image/png;base64,'.length), 'base64')
-      )
-      await control.command('click', `[data-testid="workspace-tab-select-${managementTabId}"]`)
       await control.command(
-        'waitFor',
-        `[data-testid="workspace-tab-select-${managementTabId}"][aria-selected="true"]`,
-        {
-          timeoutMs: uiTimeoutMs,
-        }
+        'click',
+        `[data-testid="workspace-tab-add-smart-app-${INSTALLATION_ID}"]`
       )
-
+      await control.command('waitFor', `[data-testid="harness-app-launch-${INSTALLATION_ID}"]`, {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', `[data-testid="app-iframe-harness-${INSTALLATION_ID}"]`, {
+        timeoutMs: 600_000,
+      })
+      await captureScreenshot(control, 'harness-apps-11-direct-add-opened.png', 'body')
+      await control.command('click', '[data-testid="workspace-tab-add"]')
+      await control.command('click', '[data-testid="workspace-tab-add-smart-app"]')
       await control.command('waitFor', `[data-testid="harness-app-stop-${INSTALLATION_ID}"]`, {
-        timeoutMs: uiTimeoutMs,
-      })
-      assert.equal(
-        await control.command('getValue', modelSelector),
-        selectedModelKey,
-        'The selected Smart app model was not restored after reload'
-      )
-      await control.command('waitFor', `${residentButton}[aria-pressed="true"]`, {
-        timeoutMs: uiTimeoutMs,
-      })
-      await captureScreenshot(control, 'harness-apps-13-settings-restored.png', 'body')
-      await control.command('click', residentButton)
-      await control.command('waitFor', `${residentButton}[aria-pressed="false"]`, {
-        stableMs: 300,
         timeoutMs: uiTimeoutMs,
       })
       await control.command('click', `[data-testid="harness-app-stop-${INSTALLATION_ID}"]`)
       await control.command('waitFor', `[data-testid="harness-app-start-${INSTALLATION_ID}"]`, {
         timeoutMs: 30_000,
       })
-      await captureScreenshot(control, 'harness-apps-14-resident-disabled.png', 'body')
+      await captureScreenshot(control, 'harness-apps-12-direct-add-stopped.png', 'body')
 
       await control.command('click', '[data-testid="smart-apps-section-marketplace"]')
       await control.command(
