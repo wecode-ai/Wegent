@@ -1826,6 +1826,7 @@ async fn call_backend_tool(
                     "opaque_ref": arguments.get("opaque_ref").and_then(Value::as_str).unwrap_or_default(),
                     "item_id": item_id,
                     "automation_run_id": run_id,
+                    "workflow_node_id": arguments.get("workflow_node_id").and_then(Value::as_str).unwrap_or_default(),
                 }))
         }
         "reorder_board_items" => client
@@ -2687,7 +2688,8 @@ fn tools() -> Vec<Value> {
                     "space_id": {"type": "string"},
                     "item_id": {"type": "string"},
                     "provider": {"type": "string", "description": "External provider name such as the code hosting platform that emitted the event"},
-                    "opaque_ref": {"type": "string", "description": "Provider-specific reference such as a merge request id"}
+                    "opaque_ref": {"type": "string", "description": "Provider-specific reference such as a merge request id"},
+                    "workflow_node_id": {"type": "string", "description": "Optional target wait node; omitted registers the first ready wait node"}
                 },
                 "required": ["provider", "opaque_ref"]
             }),
@@ -3352,7 +3354,7 @@ mod tests {
             .as_object()
             .expect("input schema properties");
 
-        for name in ["provider", "opaque_ref", "space_id", "item_id"] {
+        for name in ["provider", "opaque_ref", "space_id", "item_id", "workflow_node_id"] {
             assert!(
                 properties.contains_key(name),
                 "missing input schema property {name}"
