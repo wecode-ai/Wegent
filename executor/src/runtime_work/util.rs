@@ -679,9 +679,12 @@ fn resolved_worktree_root_and_id(path: &str) -> Option<(String, String)> {
         return Some(worktree);
     }
     if let Some((worktree_root, worktree_id)) = path_worktree_root_and_id(path) {
-        if !Path::new(&worktree_root).join(".git").is_dir() {
-            return Some((worktree_root, worktree_id));
+        if let Some(repository_root) = git_common_workspace_root(path) {
+            if path_is_within(&worktree_root, &repository_root) {
+                return None;
+            }
         }
+        return Some((worktree_root, worktree_id));
     }
     if git_common_workspace_root(path).is_some() {
         return None;
@@ -921,6 +924,27 @@ mod tests {
             workspace_task_path(&source_path, &repository_path),
             repository_path
         );
+    }
+
+    #[test]
+    fn nested_repository_inside_a_worktree_is_not_the_outer_worktree() {
+        let directory = tempdir().expect("temporary directory");
+        let common_dir = directory.path().join("repo").join(".git");
+        let outer_worktree = directory.path().join("worktrees").join("runtime-1");
+        let outer_git_dir = common_dir.join("worktrees").join("runtime-1");
+        std::fs::create_dir_all(&outer_git_dir).expect("outer worktree metadata");
+        std::fs::create_dir_all(&outer_worktree).expect("outer worktree");
+        std::fs::write(
+            outer_worktree.join(".git"),
+            format!("gitdir: {}\n", outer_git_dir.display()),
+        )
+        .expect("outer worktree git file");
+        let nested_repository = outer_worktree.join("artifacts").join("workspace");
+        std::fs::create_dir_all(nested_repository.join(".git")).expect("nested repository");
+        let nested_path = nested_repository.display().to_string();
+
+        assert_eq!(infer_workspace_kind(&nested_path), "workspace");
+        assert_eq!(infer_worktree_id(&nested_path), None);
     }
 
     #[test]

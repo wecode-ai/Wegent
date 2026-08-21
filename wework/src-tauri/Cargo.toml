@@ -52,6 +52,7 @@ semver = "1"
 sha2 = "0.10"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 tar = "0.4"
+tempfile = "3"
 # Keep Wry's devtools API available when its debug assertions are disabled below.
 wry = { version = "0.55.1", features = ["devtools"] }
 
@@ -77,9 +78,6 @@ webkit2gtk = { version = "=2.0.2", features = ["v2_38"] }
 webview2-com = "0.38.2"
 windows = "0.61"
 windows-sys = { version = "0.59", features = ["Win32_System_Power", "Win32_System_Threading"] }
-
-[dev-dependencies]
-tempfile = "3"
 
 # Wry prints an expected WKDownload cancellation to stderr whenever Wework takes
 # over a browser download. Keep application debug assertions enabled while

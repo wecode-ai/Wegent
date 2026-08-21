@@ -25,6 +25,22 @@
   pointer-events: auto;
 }
 
+.todo-panel-stack.has-conversation {
+  left: 12px;
+}
+
+.todo-panel-stack.has-conversation .task-detail-workspace-panel-shell {
+  flex: 1 1 460px;
+  min-width: 0;
+  max-width: 460px;
+}
+
+.todo-panel-stack.has-conversation .task-conversation-workspace-panel {
+  flex: 1 1 480px;
+  min-width: 0;
+  max-width: 480px;
+}
+
 @keyframes todo-panel-backdrop-enter {
   from {
     opacity: 0;
@@ -145,9 +161,11 @@
   }
 
   .task-detail-workspace-panel-shell,
-  .task-conversation-workspace-panel {
+  .task-conversation-workspace-panel,
+  .todo-panel-stack.has-conversation .task-conversation-workspace-panel {
     width: 100%;
     min-width: 0;
+    max-width: none;
   }
 
   @keyframes task-conversation-workspace-panel-enter {
