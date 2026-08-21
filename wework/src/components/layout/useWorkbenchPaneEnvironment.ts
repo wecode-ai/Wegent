@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ProjectWorkControls } from '@/components/chat/ChatInput'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
+import {
+  getChangeRequestMonitor,
+  runtimeTaskChangeRequestTarget,
+  useTaskChangeRequest,
+} from '@/features/workbench/changeRequestMonitor'
 import type { ProjectWithTasks } from '@/types/api'
+import type { TaskChangeRequestSnapshot } from '@/api/changeRequests'
 import type { EnvironmentDiffMode } from '@/api/environment'
 import type { EnvironmentInfo } from '@/types/environment'
 import type { WorkspaceTarget } from '@/types/workspace-files'
@@ -18,6 +24,7 @@ import {
 } from '@/lib/worktree-availability'
 import {
   resolveProjectRuntimeWorkspaceTarget,
+  resolveRuntimeTaskSource,
   resolveRuntimeWorkspaceContext,
   resolveWorkspaceTarget,
   workspaceTargetKey,
@@ -55,6 +62,25 @@ export function resolveSelectedWorkspaceProject({
   if (currentProjectId == null) return null
   if (currentProject?.id === currentProjectId) return currentProject
   return projects.find(project => project.id === currentProjectId) ?? null
+}
+
+export function applySharedChangeRequestSnapshot(
+  environmentInfo: EnvironmentInfo,
+  snapshot: TaskChangeRequestSnapshot
+): EnvironmentInfo {
+  if (snapshot.error && !snapshot.changeRequest) return environmentInfo
+  const provider = snapshot.changeRequest?.provider ?? environmentInfo.changeRequest?.provider
+  if (!provider) return environmentInfo
+  return {
+    ...environmentInfo,
+    changeRequest: snapshot.changeRequest
+      ? {
+          provider,
+          state: 'found',
+          changeRequest: snapshot.changeRequest,
+        }
+      : { provider, state: 'not_found' },
+  }
 }
 
 export function useWorkbenchPaneEnvironment({
@@ -102,6 +128,21 @@ export function useWorkbenchPaneEnvironment({
         runtimeWork: state.runtimeWork,
       }),
     [currentRuntimeTask, state.projects, state.runtimeWork]
+  )
+  const currentChangeRequestTarget = useMemo(() => {
+    const source = resolveRuntimeTaskSource({
+      currentRuntimeTask,
+      runtimeWork: state.runtimeWork,
+    })
+    return source ? runtimeTaskChangeRequestTarget(source.workspace, source.task) : null
+  }, [currentRuntimeTask, state.runtimeWork])
+  const changeRequestMonitor = useMemo(
+    () => (services?.deviceApi ? getChangeRequestMonitor(services.deviceApi) : null),
+    [services?.deviceApi]
+  )
+  const sharedChangeRequestSnapshot = useTaskChangeRequest(
+    changeRequestMonitor,
+    currentChangeRequestTarget
   )
   const activeConversationProject = currentProject ?? runtimeWorkspaceContext?.project ?? null
   const selectedWorkspaceProject = resolveSelectedWorkspaceProject({
@@ -610,12 +651,18 @@ export function useWorkbenchPaneEnvironment({
     },
     [createEnvironmentBranch, workspaceTargetError]
   )
+  const sharedEnvironmentInfo = useMemo<EnvironmentInfo>(() => {
+    if (!currentChangeRequestTarget || !sharedChangeRequestSnapshot) {
+      return environmentInfo
+    }
+    return applySharedChangeRequestSnapshot(environmentInfo, sharedChangeRequestSnapshot)
+  }, [currentChangeRequestTarget, environmentInfo, sharedChangeRequestSnapshot])
 
   return {
     workspaceProject,
     workspaceTarget: activeWorkspaceTarget,
     workspaceTargetError,
-    environmentInfo,
+    environmentInfo: sharedEnvironmentInfo,
     projectWork: {
       ...projectWork,
       worktreeAvailability,
