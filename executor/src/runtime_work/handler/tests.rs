@@ -3253,6 +3253,28 @@ async fn codex_app_server_restart_rpc_returns_success() {
 }
 
 #[tokio::test]
+async fn codex_app_server_restart_waits_for_an_existing_restart() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "unused-codex-binary");
+    let restart_guard = handler.codex_app_server_restart_gate.lock().await;
+    let pending_handler = handler.clone();
+    let pending_restart = tokio::spawn(async move {
+        pending_handler
+            .restart_codex_app_server_with_expected_models(json!({"ifIdle": true}), Vec::new())
+            .await
+    });
+
+    tokio::task::yield_now().await;
+    assert!(!pending_restart.is_finished());
+
+    drop(restart_guard);
+    let result = pending_restart
+        .await
+        .expect("restart task should finish")
+        .expect("restart should return success");
+    assert_eq!(result["restarted"], true);
+}
+
+#[tokio::test]
 async fn codex_app_server_restart_requires_confirmation_for_active_turns() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
     let execution_id = start_test_execution(&handler, "task-1");

@@ -84,6 +84,7 @@ interface LocalTaskBindingRecord {
   task_title: string | null
   backend_task_id: number | null
   workflow_node_id?: string | null
+  binding_type: 'system' | 'user'
   linked_at: string
 }
 
@@ -1118,10 +1119,15 @@ export function createLocalDeliveryApi(
     ) {
       return trackProjectTaskOnce(projectId, task, async () => {
         try {
-          const existing = await request<LocalTaskBindingRecord>('runtime_tasks.context', {
-            device_id: task.deviceId,
-            task_id: task.taskId,
-          })
+          const existing = await request<LocalTaskBindingRecord>(
+            String(projectId) === DEFAULT_WORK_ITEM_PROJECT_ID
+              ? 'runtime_tasks.system_context'
+              : 'runtime_tasks.user_context',
+            {
+              device_id: task.deviceId,
+              task_id: task.taskId,
+            }
+          )
           if (existing.loop_item_id) {
             return { item: await api.getLoopItem(existing.loop_item_id) }
           }
@@ -1141,7 +1147,21 @@ export function createLocalDeliveryApi(
       return enqueueTaskTrackingMutation(task, async () => {
         let context: CloudTaskContext
         try {
-          context = await api.findCloudContextForTask(task)
+          const binding = await request<LocalTaskBindingRecord>('runtime_tasks.system_context', {
+            device_id: task.deviceId,
+            task_id: task.taskId,
+          })
+          const projectRecords = await request<LocalLoopItemRecord[]>('projects.list')
+          const projectRecord = projectRecords.find(
+            record => record.id === binding.cloud_project_id
+          )
+          if (!projectRecord) return null
+          context = {
+            ...binding,
+            id: binding.id,
+            project: localProject(projectRecord),
+            loop_item: binding.loop_item_id ? await api.getLoopItem(binding.loop_item_id) : null,
+          }
         } catch {
           return null
         }
@@ -1185,7 +1205,7 @@ export function createLocalDeliveryApi(
       return enqueueTaskTrackingMutation(task, async () => {
         let binding: LocalTaskBindingRecord
         try {
-          binding = await request<LocalTaskBindingRecord>('runtime_tasks.context', {
+          binding = await request<LocalTaskBindingRecord>('runtime_tasks.system_context', {
             device_id: task.deviceId,
             task_id: task.taskId,
           })
@@ -1209,6 +1229,7 @@ export function createLocalDeliveryApi(
       await request('runtime_tasks.unbind', {
         device_id: task.deviceId,
         task_id: task.taskId,
+        item_id: _itemId,
       })
     },
     async findLoopItemForTask(task: RuntimeTaskAddress) {

@@ -5,6 +5,7 @@ export interface WorkspaceTab {
   kind: WorkspaceTabKind
   title: string
   contentRoute: string
+  fixed: boolean
 }
 
 export interface WorkspaceTabLabels {
@@ -81,6 +82,7 @@ export function createWorkspaceTab(
     kind,
     title: overrides.title ?? workspaceTabTitle(kind, contentRoute, labels),
     contentRoute,
+    fixed: overrides.fixed ?? false,
   }
 }
 
@@ -132,6 +134,7 @@ export function moveWorkspaceTab(
   const sourceIndex = tabs.findIndex(tab => tab.id === sourceId)
   const targetIndex = tabs.findIndex(tab => tab.id === targetId)
   if (sourceIndex < 0 || targetIndex < 0 || sourceIndex === targetIndex) return tabs
+  if (tabs[sourceIndex].fixed !== tabs[targetIndex].fixed) return tabs
   const next = [...tabs]
   const [source] = next.splice(sourceIndex, 1)
   next.splice(targetIndex, 0, source)
