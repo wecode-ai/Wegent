@@ -1231,6 +1231,7 @@ last_updated = "2026-07-30T00:00:00Z"`
           app,
           appIdentifier,
           cloudEnvironment,
+          codexHome,
           control,
           desktopScenario,
           executorLogPath,

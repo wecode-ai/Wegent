@@ -14,7 +14,7 @@ use std::{
 use serde_json::{json, Map, Value};
 use thiserror::Error;
 use tokio::sync::Mutex as AsyncMutex;
-use toml_edit::{value, DocumentMut};
+use toml_edit::{value, DocumentMut, Item};
 
 use crate::{config::device::DeviceConfig, protocol::ExecutionRequest};
 
@@ -45,6 +45,22 @@ fn replace_codex_config(path: &Path, content: &str) -> Result<(), CapabilitySync
     }
     temporary.persist(path).map_err(|error| error.error)?;
     Ok(())
+}
+
+fn remove_toml_keys(item: &mut Item, keys: &BTreeSet<String>) -> bool {
+    if item.is_inline_table() {
+        let Some(table) = item.as_inline_table_mut() else {
+            return false;
+        };
+        return keys
+            .iter()
+            .fold(false, |changed, key| table.remove(key).is_some() || changed);
+    }
+    let Some(table) = item.as_table_mut() else {
+        return false;
+    };
+    keys.iter()
+        .fold(false, |changed, key| table.remove(key).is_some() || changed)
 }
 
 #[derive(Debug, Error)]
@@ -78,20 +94,6 @@ pub trait CapabilityPackageProvider {
         &'a self,
         download_path: &'a str,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, CapabilitySyncError>> + Send + 'a>>;
-}
-
-pub trait CapabilityPluginRuntime: Send + Sync {
-    fn install_plugin<'a>(
-        &'a self,
-        spec: &'a PluginSyncSpec,
-        marketplace_path: &'a Path,
-    ) -> Pin<Box<dyn Future<Output = Result<(), CapabilitySyncError>> + Send + 'a>>;
-
-    fn uninstall_plugin<'a>(
-        &'a self,
-        name: &'a str,
-        marketplace: &'a str,
-    ) -> Pin<Box<dyn Future<Output = Result<(), CapabilitySyncError>> + Send + 'a>>;
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -721,6 +723,72 @@ impl GlobalCapabilityStore {
         Ok(())
     }
 
+    fn remove_plugin_runtime_configuration(
+        &self,
+        stale_keys: &BTreeSet<String>,
+        stale_marketplaces: &BTreeSet<String>,
+        desired_marketplaces: &BTreeSet<String>,
+    ) -> Result<(), CapabilitySyncError> {
+        let claude_settings_path = self
+            .plugins_dir
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("settings.json");
+        if claude_settings_path.is_file() {
+            let mut settings = read_json_or_default(&claude_settings_path, || json!({}))?;
+            let mut changed = false;
+            if let Some(enabled_plugins) = settings
+                .get_mut("enabledPlugins")
+                .and_then(Value::as_object_mut)
+            {
+                for key in stale_keys {
+                    changed |= enabled_plugins.remove(key).is_some();
+                }
+            }
+            if let Some(marketplaces) = settings
+                .get_mut("extraKnownMarketplaces")
+                .and_then(Value::as_object_mut)
+            {
+                for marketplace in stale_marketplaces {
+                    if !desired_marketplaces.contains(marketplace) {
+                        changed |= marketplaces.remove(marketplace).is_some();
+                    }
+                }
+            }
+            if changed {
+                write_json(&claude_settings_path, &settings)?;
+            }
+        }
+
+        let codex_config_path = self
+            .codex_plugins_dir
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("config.toml");
+        let content = match fs::read_to_string(&codex_config_path) {
+            Ok(content) => content,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error.into()),
+        };
+        let mut document = content.parse::<DocumentMut>().map_err(|error| {
+            CapabilitySyncError::invalid_payload(format!(
+                "Invalid Codex config {}: {error}",
+                codex_config_path.display()
+            ))
+        })?;
+        let mut changed = false;
+        changed |= remove_toml_keys(&mut document["plugins"], stale_keys);
+        let removable_marketplaces = stale_marketplaces
+            .difference(desired_marketplaces)
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        changed |= remove_toml_keys(&mut document["marketplaces"], &removable_marketplaces);
+        if changed {
+            replace_codex_config(&codex_config_path, &document.to_string())?;
+        }
+        Ok(())
+    }
+
     fn install_marketplace_metadata(
         &self,
         spec: &PluginSyncSpec,
@@ -804,37 +872,6 @@ impl GlobalCapabilityStore {
             }),
         )?;
         write_json(&codex_marketplace_path, &codex_marketplace)
-    }
-
-    fn record_app_server_plugin(
-        &self,
-        spec: &PluginSyncSpec,
-        store_path: &Path,
-        manifest: &mut Value,
-    ) {
-        ensure_object_field(manifest, "plugins").insert(
-            spec.key.clone(),
-            json!({
-                "managed": true,
-                "name": spec.name,
-                "key": spec.key,
-                "installed_plugin_id": spec.installed_plugin_id,
-                "marketplace": spec.marketplace,
-                "enabled": spec.enabled,
-                "version": spec.version,
-                "checksum": spec.checksum,
-                "store_path": store_path.display().to_string(),
-                "install_authority": "codex_app_server",
-                "updated_at": now_rfc3339_like(),
-            }),
-        );
-    }
-
-    fn plugin_marketplace_manifest_path(&self, marketplace: &str) -> PathBuf {
-        self.plugins_dir
-            .join("marketplaces")
-            .join(marketplace)
-            .join(".agents/plugins/marketplace.json")
     }
 
     fn skill_store_path(&self, spec: &SkillSyncSpec) -> PathBuf {
@@ -980,7 +1017,6 @@ where
     auth_token: String,
     store: GlobalCapabilityStore,
     package_provider: P,
-    plugin_runtime: Option<std::sync::Arc<dyn CapabilityPluginRuntime>>,
     sync_lock: AsyncMutex<()>,
 }
 
@@ -1007,17 +1043,8 @@ where
             auth_token: auth_token.into(),
             store,
             package_provider,
-            plugin_runtime: None,
             sync_lock: AsyncMutex::new(()),
         }
-    }
-
-    pub fn with_plugin_runtime<R>(mut self, runtime: R) -> Self
-    where
-        R: CapabilityPluginRuntime + 'static,
-    {
-        self.plugin_runtime = Some(std::sync::Arc::new(runtime));
-        self
     }
 
     pub fn auth_token(&self) -> &str {
@@ -1054,8 +1081,7 @@ where
                 .map(|spec| spec.key.clone())
                 .collect::<BTreeSet<_>>();
             self.remove_stale_managed_skills(&desired_skills, &mut manifest)?;
-            self.remove_stale_managed_plugins(&desired_plugins, &mut manifest)
-                .await?;
+            self.remove_stale_managed_plugins(&desired_plugins, &mut manifest)?;
         }
 
         let mut skill_results = Vec::with_capacity(skill_specs.len());
@@ -1241,32 +1267,8 @@ where
                 }
                 return Err(error);
             }
-            if let Some(runtime) = &self.plugin_runtime {
-                self.store.install_marketplace_metadata(spec, &store_path)?;
-                let marketplace_manifest_path = self
-                    .store
-                    .plugin_marketplace_manifest_path(&spec.marketplace);
-                if let Err(error) = runtime
-                    .install_plugin(spec, &marketplace_manifest_path)
-                    .await
-                {
-                    if let Some(backup) = backup_path.as_ref() {
-                        let _ = remove_existing_path(&store_path);
-                        let _ = copy_dir_recursive(backup, &store_path);
-                    } else {
-                        let _ = remove_existing_path(&store_path);
-                    }
-                    if let Some(backup) = backup_path.as_ref() {
-                        let _ = remove_existing_path(backup);
-                    }
-                    return Err(error);
-                }
-                self.store
-                    .record_app_server_plugin(spec, &store_path, manifest);
-            } else {
-                self.store
-                    .install_plugin_runtime_metadata(spec, &store_path, manifest)?;
-            }
+            self.store
+                .install_plugin_runtime_metadata(spec, &store_path, manifest)?;
             if let Some(backup) = backup_path.as_ref() {
                 let _ = remove_existing_path(backup);
             }
@@ -1278,20 +1280,8 @@ where
             )));
         }
 
-        if let Some(runtime) = &self.plugin_runtime {
-            self.store.install_marketplace_metadata(spec, &store_path)?;
-            let marketplace_manifest_path = self
-                .store
-                .plugin_marketplace_manifest_path(&spec.marketplace);
-            runtime
-                .install_plugin(spec, &marketplace_manifest_path)
-                .await?;
-            self.store
-                .record_app_server_plugin(spec, &store_path, manifest);
-        } else {
-            self.store
-                .install_plugin_runtime_metadata(spec, &store_path, manifest)?;
-        }
+        self.store
+            .install_plugin_runtime_metadata(spec, &store_path, manifest)?;
         Ok(())
     }
 
@@ -1318,7 +1308,7 @@ where
         Ok(())
     }
 
-    async fn remove_stale_managed_plugins(
+    fn remove_stale_managed_plugins(
         &self,
         desired: &BTreeSet<String>,
         manifest: &mut Value,
@@ -1335,21 +1325,32 @@ where
             return Ok(());
         }
 
-        let mut installed = read_installed_plugins(&self.store.plugins_dir)?;
-        let plugins = ensure_object_field(&mut installed, "plugins");
-        for (key, plugin) in stale {
-            if let Some(runtime) = &self.plugin_runtime {
-                let name = value_string(plugin.get("name"))
-                    .or_else(|| key.split_once('@').map(|(name, _)| name.to_owned()))
-                    .unwrap_or_else(|| key.clone());
-                let marketplace = value_string(plugin.get("marketplace"))
+        let stale_keys = stale
+            .iter()
+            .map(|(key, _)| key.clone())
+            .collect::<BTreeSet<_>>();
+        let stale_marketplaces = stale
+            .iter()
+            .map(|(key, plugin)| {
+                value_string(plugin.get("marketplace"))
                     .or_else(|| {
                         key.split_once('@')
                             .map(|(_, marketplace)| marketplace.to_owned())
                     })
-                    .unwrap_or_else(|| DEFAULT_PLUGIN_MARKETPLACE.to_owned());
-                runtime.uninstall_plugin(&name, &marketplace).await?;
-            }
+                    .unwrap_or_else(|| DEFAULT_PLUGIN_MARKETPLACE.to_owned())
+            })
+            .collect::<BTreeSet<_>>();
+        let desired_marketplaces = desired
+            .iter()
+            .filter_map(|key| {
+                key.split_once('@')
+                    .map(|(_, marketplace)| marketplace.to_owned())
+            })
+            .collect::<BTreeSet<_>>();
+
+        let mut installed = read_installed_plugins(&self.store.plugins_dir)?;
+        let plugins = ensure_object_field(&mut installed, "plugins");
+        for (key, plugin) in stale {
             plugins.remove(&key);
             if let Some(runtime) = plugin.get("runtime") {
                 if let Some(path) = value_string(runtime.get("claude_link")) {
@@ -1367,6 +1368,11 @@ where
         write_json(
             &self.store.plugins_dir.join("installed_plugins.json"),
             &installed,
+        )?;
+        self.store.remove_plugin_runtime_configuration(
+            &stale_keys,
+            &stale_marketplaces,
+            &desired_marketplaces,
         )?;
         Ok(())
     }
