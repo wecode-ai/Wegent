@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import {
   DndContext,
   DragOverlay,
@@ -34,7 +42,9 @@ import type {
   CloudProject,
   CloudProjectMember,
   DeliveryFulfillment,
+  PullRequestAutoRepairStatus,
 } from '@/api/deliveries'
+import type { TaskChangeRequestSnapshot } from '@/api/changeRequests'
 import { isDefaultWorkItemProject } from '@/api/deliveries'
 import type { AITableField } from '@/api/aitable'
 import { ApiError } from '@/api/http'
@@ -61,7 +71,22 @@ import { copyTextToClipboard } from '@/lib/clipboard'
 import { cn } from '@/lib/utils'
 import { track } from '@/telemetry/client'
 import { runtimeConversationKey } from '@/features/workbench/runtimeConversationCache'
+import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
+import {
+  getChangeRequestMonitor,
+  runtimeTaskChangeRequestTarget,
+  useTaskChangeRequest,
+  type ChangeRequestMonitor,
+} from '@/features/workbench/changeRequestMonitor'
+import {
+  autoRepairStatus,
+  buildChangeRequestRepairPrompt,
+  changeRequestRepairEventKey,
+  claimChangeRequestAutoRepair,
+  completeChangeRequestAutoRepair,
+} from '@/features/workbench/changeRequestStatus'
 import { isRuntimeTaskExecutionRunning } from '@/features/workbench/runtimeTaskLifecycle/projection'
+import type { RuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
 import { hydrateRuntimeTaskAddress } from '@/features/workbench/workbenchRuntimeHelpers'
 import { AITableView } from '@/features/todo/AITableView'
 import type {
@@ -347,6 +372,47 @@ type BoardReadResult = {
   members?: CloudProjectMember[]
   agents?: ProjectChatAgent[]
 }
+
+function ProjectChangeRequestAutoRepairObserver({
+  itemId,
+  binding,
+  monitor,
+  statuses,
+  onRepair,
+}: {
+  itemId: string
+  binding: CloudTodoBoardTaskBinding
+  monitor: ChangeRequestMonitor
+  statuses: PullRequestAutoRepairStatus[]
+  onRepair: (
+    binding: CloudTodoBoardTaskBinding,
+    snapshot: TaskChangeRequestSnapshot
+  ) => Promise<void>
+}) {
+  const snapshot = useTaskChangeRequest(monitor, binding.changeRequestTarget ?? null)
+
+  useEffect(() => {
+    const changeRequest = snapshot?.changeRequest
+    const status = changeRequest ? autoRepairStatus(changeRequest) : null
+    if (!snapshot || !changeRequest || !status || !statuses.includes(status)) return
+    const eventKey = `${itemId}\0${binding.task_id}\0${changeRequestRepairEventKey(changeRequest)}`
+    if (!claimChangeRequestAutoRepair(eventKey)) return
+    queueMicrotask(() => {
+      void onRepair(binding, snapshot)
+        .then(() => completeChangeRequestAutoRepair(eventKey, true))
+        .catch(error => {
+          completeChangeRequestAutoRepair(eventKey, false)
+          console.error('[Wework change requests] Automatic repair failed', {
+            itemId,
+            taskId: binding.task_id,
+            error,
+          })
+        })
+    })
+  }, [binding, itemId, onRepair, snapshot, statuses])
+
+  return null
+}
 type SelectedTaskBinding = Pick<
   LoopItemTaskBinding,
   'id' | 'device_id' | 'task_id' | 'task_title'
@@ -371,6 +437,7 @@ interface CloudTodoWorkspaceProps {
   user: UserProfile
   localProjects: ProjectWithTasks[]
   runtimeWork?: RuntimeWorkListResponse | null
+  runtimeTaskLifecycle?: RuntimeTaskLifecycleStoreSnapshot
   services: WorkbenchServices
   embedded?: boolean
   activeProjectRef?: RuntimeProjectSpaceRef | null
@@ -866,6 +933,7 @@ export function CloudTodoWorkspace({
   user,
   localProjects,
   runtimeWork,
+  runtimeTaskLifecycle,
   services,
   embedded = false,
   activeProjectRef,
@@ -877,6 +945,11 @@ export function CloudTodoWorkspace({
   onLogout,
 }: CloudTodoWorkspaceProps) {
   const { t } = useTranslation('common')
+  const workbench = useContext(WorkbenchContext)
+  const changeRequestMonitor = useMemo(
+    () => (services.deviceApi ? getChangeRequestMonitor(services.deviceApi) : null),
+    [services.deviceApi]
+  )
   const projectSpaceApis = useMemo(() => {
     if (services.projectSpaceApis) return services.projectSpaceApis
     return {
@@ -953,7 +1026,10 @@ export function CloudTodoWorkspace({
   // Which project's items are currently in `items`. Anything else rendered on
   // the board would be stale, so the board shows the skeleton instead.
   const [itemsProjectKey, setItemsProjectKey] = useState<string | null>(null)
-  const myWork = useMemo(() => runtimeMyWorkItems(runtimeWork), [runtimeWork])
+  const myWork = useMemo(
+    () => runtimeMyWorkItems(runtimeWork, runtimeTaskLifecycle),
+    [runtimeTaskLifecycle, runtimeWork]
+  )
   const [rootView, setRootView] = useState<RootView>('projects')
   const [projectView, setProjectView] = useState<ProjectView>('board')
   const [selectedItem, setSelectedItem] = useState<LocatedLoopItem | null>(null)
@@ -1240,12 +1316,47 @@ export function CloudTodoWorkspace({
     }
     return result
   }, [runtimeWork])
+  const runtimeTaskByAddress = useMemo(() => {
+    const result = new Map<
+      string,
+      {
+        workspace: RuntimeWorkListResponse['projects'][number]['deviceWorkspaces'][number]
+        task: RuntimeWorkListResponse['projects'][number]['deviceWorkspaces'][number]['tasks'][number]
+      }
+    >()
+    const workspaces = [
+      ...(runtimeWork?.projects ?? []).flatMap(projectWork => projectWork.deviceWorkspaces),
+      ...(runtimeWork?.chats ?? []),
+    ]
+    for (const workspace of workspaces) {
+      for (const task of workspace.tasks) {
+        result.set(runtimeConversationKey({ deviceId: workspace.deviceId, taskId: task.taskId }), {
+          workspace,
+          task,
+        })
+      }
+    }
+    return result
+  }, [runtimeWork])
   const boardTaskBindings = useMemo<Record<string, CloudTodoBoardTaskBinding[]>>(
     () =>
       Object.fromEntries(
         Object.entries(itemTaskBindings).map(([itemId, bindings]) => [
           itemId,
           bindings.map(binding => ({
+            ...(() => {
+              const runtimeTask = runtimeTaskByAddress.get(
+                runtimeConversationKey({
+                  deviceId: binding.device_id,
+                  taskId: binding.task_id,
+                })
+              )
+              return {
+                changeRequestTarget: runtimeTask
+                  ? runtimeTaskChangeRequestTarget(runtimeTask.workspace, runtimeTask.task)
+                  : null,
+              }
+            })(),
             id: binding.id,
             device_id: binding.device_id,
             task_id: binding.task_id,
@@ -1260,7 +1371,7 @@ export function CloudTodoWorkspace({
           })),
         ])
       ),
-    [itemTaskBindings, runtimeTaskRunningByAddress]
+    [itemTaskBindings, runtimeTaskByAddress, runtimeTaskRunningByAddress]
   )
   const localProjectIdForItem = useCallback(
     (item: CloudLoopItem): number | null => {
@@ -1277,6 +1388,30 @@ export function CloudTodoWorkspace({
   const selectedProjectKey = selectedProject
     ? projectSpaceKey(projectSpaceRef(selectedProject))
     : null
+  async function continueChangeRequestRepair(
+    binding: CloudTodoBoardTaskBinding,
+    snapshot: TaskChangeRequestSnapshot
+  ): Promise<void> {
+    const changeRequest = snapshot.changeRequest
+    if (!changeRequest || !workbench || !selectedProject) return
+    const address = hydrateRuntimeTaskAddress(runtimeWork, {
+      deviceId: binding.device_id,
+      taskId: binding.task_id,
+    })
+    const accepted = await workbench.sendRuntimePaneMessage({
+      address,
+      message: buildChangeRequestRepairPrompt(
+        changeRequest,
+        binding.task_title || binding.task_id,
+        selectedProject.pull_request_automation?.prompt
+      ),
+      source: { source: 'manual' },
+      cloudProjectId: String(selectedProject.id),
+    })
+    if (!accepted) {
+      throw new Error(t('workbench.change_request_continue_repair_failed', '无法继续任务'))
+    }
+  }
   const projectForItem = (item: Pick<LocatedLoopItem, 'cloud_project_id' | 'project_store'>) => {
     if (item.project_store) {
       return projects.find(project =>
@@ -2638,6 +2773,23 @@ export function CloudTodoWorkspace({
       data-embedded={embedded}
       data-sidebar-collapsed={embedded || sidebarCollapsed}
     >
+      {selectedProjectKey === itemTaskBindingsProjectKey &&
+      selectedProject?.pull_request_automation?.enabled &&
+      changeRequestMonitor
+        ? Object.entries(boardTaskBindings).map(([itemId, bindings]) => {
+            const binding = bindings.find(candidate => candidate.running) ?? bindings[0]
+            return binding?.changeRequestTarget ? (
+              <ProjectChangeRequestAutoRepairObserver
+                key={`${itemId}:${binding.device_id}:${binding.task_id}`}
+                itemId={itemId}
+                binding={binding}
+                monitor={changeRequestMonitor}
+                statuses={selectedProject.pull_request_automation!.statuses}
+                onRepair={continueChangeRequestRepair}
+              />
+            ) : null
+          })
+        : null}
       <div className="flex min-h-0 flex-1 overflow-hidden">
         {!embedded ? (
           <aside
@@ -3703,6 +3855,10 @@ export function CloudTodoWorkspace({
                                       agentNames={agentNameById}
                                       dragDisabled={isAITableProject}
                                       archiveDisabled={selectedProject.task_provider !== 'local'}
+                                      changeRequestMonitor={changeRequestMonitor}
+                                      onContinueChangeRequestRepair={
+                                        workbench ? continueChangeRequestRepair : undefined
+                                      }
                                     />
                                   ))}
                                   {columnItems.length === 0 &&
@@ -3831,6 +3987,18 @@ export function CloudTodoWorkspace({
                 allItems={detailAllItems}
                 showChildren={false}
                 taskRefreshKey={boardRefreshNonce}
+                onWorkflowPlanChanged={() => {
+                  setBoardRefreshNonce(value => value + 1)
+                }}
+                onOpenChildTask={child => {
+                  const locatedChild = {
+                    ...child,
+                    project_store: selectedItem.project_store,
+                  }
+                  setSelectedTaskBinding(null)
+                  setTaskComposerRequest(null)
+                  setSelectedItem(locatedChild)
+                }}
                 onCreateTask={async workflowNodeId => {
                   setSelectedTaskBinding(null)
                   let inheritFromTask: RuntimeTaskAddress | null = null

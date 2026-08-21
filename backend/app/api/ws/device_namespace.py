@@ -96,6 +96,7 @@ from app.services.execution.dispatcher import ResponsesAPIEventParser
 from app.services.execution.emitters.status_updating import StatusUpdatingEmitter
 from app.services.execution.emitters.websocket import WebSocketResultEmitter
 from app.services.im.notification_dispatcher import im_notification_dispatcher
+from app.services.loop_item_events import publish_loop_item_changed
 from app.services.loop_item_executions.service import (
     loop_item_execution_service,
 )
@@ -629,6 +630,40 @@ def response_api_payload(*, data: dict[str, Any], device_id: str) -> dict[str, A
     return payload
 
 
+def _execution_item_version(db: Session, execution: object) -> int | None:
+    loop_item_id = getattr(execution, "loop_item_id", None)
+    if not isinstance(loop_item_id, str) or not loop_item_id:
+        return None
+    from app.models.delivery import LoopItem
+
+    item = db.get(LoopItem, loop_item_id)
+    return int(item.version) if item is not None else None
+
+
+def _publish_execution_item_change(
+    db: Session,
+    *,
+    execution: object,
+    previous_version: int | None,
+) -> None:
+    if previous_version is None:
+        return
+    loop_item_id = getattr(execution, "loop_item_id", None)
+    if not isinstance(loop_item_id, str) or not loop_item_id:
+        return
+    from app.models.delivery import LoopItem
+
+    item = db.get(LoopItem, loop_item_id, populate_existing=True)
+    if item is None or item.version == previous_version:
+        return
+    publish_loop_item_changed(
+        db,
+        item=item,
+        reason="runtime_execution_status",
+        actor_user_id=int(getattr(execution, "executor_owner_user_id", 0) or 0),
+    )
+
+
 def _project_chat_runtime_event_sync(
     device_id: str, event: dict[str, Any]
 ) -> dict[str, Any] | None:
@@ -665,13 +700,13 @@ def _project_chat_runtime_event_sync(
         # concurrent complete/fail/cancel cannot leave the run and activity
         # disagreeing with the execution. Streaming events remain ordinary
         # chat projections after the lease write-back.
-        has_execution = (
-            loop_item_execution_service.execution_for_runtime(
-                db,
-                runtime_device_id=device_id,
-                runtime_task_id=runtime_task_id,
-            )
-            is not None
+        execution = loop_item_execution_service.execution_for_runtime(
+            db,
+            runtime_device_id=device_id,
+            runtime_task_id=runtime_task_id,
+        )
+        previous_item_version = (
+            _execution_item_version(db, execution) if execution is not None else None
         )
         matched_execution = loop_item_execution_service.handle_runtime_event(
             db,
@@ -680,7 +715,7 @@ def _project_chat_runtime_event_sync(
             event_name=event_name,
             payload=payload,
         )
-        if has_execution and matched_execution is None:
+        if execution is not None and matched_execution is None:
             logger.info(
                 "[ProjectChat] Runtime event projection rejected by execution truth: "
                 "device_id=%s task_id=%s event=%s",
@@ -689,6 +724,12 @@ def _project_chat_runtime_event_sync(
                 event_name,
             )
             return None
+        if matched_execution is not None:
+            _publish_execution_item_change(
+                db,
+                execution=matched_execution,
+                previous_version=previous_item_version,
+            )
         projected = project_chat_service.project_runtime_event(
             db,
             device_id=device_id,
@@ -713,6 +754,16 @@ def _execution_runtime_event_sync(
 
     try:
         with get_db_session() as db:
+            execution = loop_item_execution_service.execution_for_runtime(
+                db,
+                runtime_device_id=device_id,
+                runtime_task_id=str(task_id),
+            )
+            previous_item_version = (
+                _execution_item_version(db, execution)
+                if execution is not None
+                else None
+            )
             matched = loop_item_execution_service.handle_runtime_event(
                 db,
                 device_id=device_id,
@@ -721,6 +772,11 @@ def _execution_runtime_event_sync(
                 payload=payload,
             )
             if matched is not None:
+                _publish_execution_item_change(
+                    db,
+                    execution=matched,
+                    previous_version=previous_item_version,
+                )
                 from app.tasks.robot_queue_tasks import publish_run_event
 
                 publish_run_event(device_id, str(task_id), event_name)
@@ -1367,6 +1423,15 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 device_id=payload.device_id,
             ),
             "sync global capabilities after device registration",
+        )
+        from app.tasks.robot_queue_tasks import reconcile_device_executions
+
+        self._schedule_background_task(
+            reconcile_device_executions(
+                user_id=int(user_id),
+                device_id=payload.device_id,
+            ),
+            "reconcile active executions after device registration",
         )
 
         logger.info(

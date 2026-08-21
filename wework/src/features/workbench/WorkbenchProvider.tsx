@@ -167,6 +167,7 @@ export type { WorkbenchServices } from './workbenchServices'
 const LOCAL_SKILLS_CACHE_TTL_MS = 30_000
 const LOCAL_PLUGIN_SKILLS_REFRESH_DEBOUNCE_MS = 250
 const EMPTY_PLUGIN_TRIAL_TEMPLATES: PluginPathComponent[] = []
+const RUNTIME_TASK_SETTLE_SYNC_DELAYS_MS = [0, 250, 500, 1_000, 2_000, 3_000] as const
 
 function findFirstSelectableProject(
   projects: ProjectWithTasks[],
@@ -251,6 +252,17 @@ export function WorkbenchProvider({
   const trackingStatusSignaturesRef = useRef(new Map<string, string>())
   const [trackingBindingRevision, setTrackingBindingRevision] = useState(0)
   const trackingTitleSignaturesRef = useRef(new Map<string, string>())
+  const runtimeTaskSettleSyncGenerationRef = useRef(new Map<string, number>())
+  const runtimeTaskSettleSyncGenerationCounterRef = useRef(0)
+  const runtimeTaskSettleSyncActiveRef = useRef(true)
+  useEffect(() => {
+    const settleSyncGenerations = runtimeTaskSettleSyncGenerationRef.current
+    runtimeTaskSettleSyncActiveRef.current = true
+    return () => {
+      runtimeTaskSettleSyncActiveRef.current = false
+      settleSyncGenerations.clear()
+    }
+  }, [])
   const [state, dispatch] = useReducer(workbenchReducer, initialWorkbenchState)
   // The cloud connection context falls back to a synthetic "backend" user when
   // no real cloud provider is mounted; never let that placeholder override the
@@ -514,20 +526,21 @@ export function WorkbenchProvider({
     },
     [projectChatScopeKey, setDraftInputForScope]
   )
+  const setComposerErrorForScope = useCallback((scopeKey: string, error: string | null) => {
+    setComposerErrorByScope(current => {
+      if (error) {
+        if (current[scopeKey] === error) return current
+        return { ...current, [scopeKey]: error }
+      }
+      if (!current[scopeKey]) return current
+      const next = { ...current }
+      delete next[scopeKey]
+      return next
+    })
+  }, [])
   const setComposerError = useCallback(
-    (error: string | null) => {
-      setComposerErrorByScope(current => {
-        if (error) {
-          if (current[projectChatScopeKey] === error) return current
-          return { ...current, [projectChatScopeKey]: error }
-        }
-        if (!current[projectChatScopeKey]) return current
-        const next = { ...current }
-        delete next[projectChatScopeKey]
-        return next
-      })
-    },
-    [projectChatScopeKey]
+    (error: string | null) => setComposerErrorForScope(projectChatScopeKey, error),
+    [projectChatScopeKey, setComposerErrorForScope]
   )
   const dismissTrialGuideForScope = useCallback(() => {
     if (trialPluginName.trim()) {
@@ -957,6 +970,8 @@ export function WorkbenchProvider({
     refreshDevices,
     updateLocalRuntimeTaskSupervisor,
     updateLocalRuntimeTaskSnapshot,
+    updateLocalRuntimeTaskPinned,
+    rollbackLocalRuntimeTaskPinned,
     updateLocalRuntimeTaskTitle,
     getRemoteDeviceStartupCommand,
   } = useWorkbenchDataRefresh({
@@ -1610,6 +1625,8 @@ export function WorkbenchProvider({
     executorClient,
     services: resolvedServices,
     refreshWorkLists,
+    updateLocalRuntimeTaskPinned,
+    rollbackLocalRuntimeTaskPinned,
     markRuntimeProjectRemoved,
     invalidateRemoteProjectSync,
     clearRemoteProjectSyncRemoval,
@@ -1774,6 +1791,71 @@ export function WorkbenchProvider({
         })
       })
   })
+  const syncRuntimeTaskUntilExecutorSettles = useStableEvent(
+    async (address: RuntimeTaskAddress) => {
+      if (!runtimeTaskSettleSyncActiveRef.current) return
+      const key = runtimeConversationKey(address)
+      const generation = ++runtimeTaskSettleSyncGenerationCounterRef.current
+      runtimeTaskSettleSyncGenerationRef.current.set(key, generation)
+
+      try {
+        for (const delayMs of RUNTIME_TASK_SETTLE_SYNC_DELAYS_MS) {
+          if (delayMs > 0) {
+            await new Promise(resolve => globalThis.setTimeout(resolve, delayMs))
+          }
+          if (!runtimeTaskSettleSyncActiveRef.current) return
+          if (runtimeTaskSettleSyncGenerationRef.current.get(key) !== generation) return
+
+          const expectedLifecycle = lifecycleStore.getTask(address)
+          if (expectedLifecycle?.turn.phase === 'streaming') return
+
+          try {
+            const task = await refreshRuntimeTask(address)
+            if (runtimeTaskSettleSyncGenerationRef.current.get(key) !== generation) return
+            if (!task) {
+              const transcript = await runtimeTasks.loadRuntimeTranscriptForPane(address, {
+                refresh: true,
+              })
+              if (runtimeTaskSettleSyncGenerationRef.current.get(key) !== generation) return
+              lifecycleStore.syncTranscript(address, transcript)
+              if (lifecycleStore.getTask(address)?.execution.phase === 'idle') return
+              continue
+            }
+            const applied = lifecycleStore.syncRuntimeTask(address, task, expectedLifecycle)
+            if (applied) updateLocalRuntimeTaskSnapshot(address, task)
+
+            const currentLifecycle = lifecycleStore.getTask(address)
+            if (
+              currentLifecycle?.execution.phase === 'idle' ||
+              currentLifecycle?.turn.phase === 'streaming'
+            ) {
+              return
+            }
+          } catch (error) {
+            console.warn('[Wework] Runtime task settle snapshot sync failed', {
+              deviceId: address.deviceId,
+              taskId: address.taskId,
+              delayMs,
+              error,
+            })
+          }
+        }
+
+        const lifecycle = lifecycleStore.getTask(address)
+        console.warn('[Wework] Runtime task remained busy after turn settlement polling', {
+          deviceId: address.deviceId,
+          taskId: address.taskId,
+          executionPhase: lifecycle?.execution.phase ?? null,
+          turnPhase: lifecycle?.turn.phase ?? null,
+          executorSnapshotRunning: lifecycle?.task?.running ?? null,
+        })
+      } finally {
+        if (runtimeTaskSettleSyncGenerationRef.current.get(key) === generation) {
+          runtimeTaskSettleSyncGenerationRef.current.delete(key)
+        }
+      }
+    }
+  )
   const syncRuntimeGoalSnapshot = useStableEvent((address: RuntimeTaskAddress) => {
     const expectedGoalStatus = lifecycleStore.getTask(address)?.goalStatus
     if (expectedGoalStatus === null || expectedGoalStatus === undefined) return
@@ -1859,7 +1941,7 @@ export function WorkbenchProvider({
               turnId,
               outcome === 'succeeded' ? 'success' : outcome === 'failed' ? 'failure' : 'cancelled'
             )
-            syncRuntimeTaskSnapshot(address)
+            void syncRuntimeTaskUntilExecutorSettles(address)
             syncRuntimeGoalSnapshot(address)
           },
           onContextUsageUpdated: updateCanonicalRuntimeContextUsage,
@@ -1903,6 +1985,7 @@ export function WorkbenchProvider({
       settleCanonicalRuntimeGuidance,
       syncRuntimeGoalSnapshot,
       syncRuntimeTaskSnapshot,
+      syncRuntimeTaskUntilExecutorSettles,
       syncRuntimeTaskTitle,
       updateCanonicalRuntimeContextUsage,
       updateLocalRuntimeTaskSnapshot,
@@ -2374,6 +2457,7 @@ export function WorkbenchProvider({
       isModelSelectionReady: modelSelection.isSelectionReady,
       input: draftInput,
       composerError,
+      composerErrorByScope,
       trialTemplates,
       trialPluginName,
       trialPluginApp,
@@ -2397,6 +2481,7 @@ export function WorkbenchProvider({
       setInput: setDraftInput,
       setInputForScope: setDraftInputForScope,
       setComposerError,
+      setComposerErrorForScope,
       setSelectedSkills: skillSelection.setSelectedSkills,
       toggleSkill: skillSelection.toggleSkill,
       handleFileSelect: attachmentSelection.handleFileSelect,
@@ -2428,6 +2513,7 @@ export function WorkbenchProvider({
       draftInput,
       draftInputByScope,
       composerError,
+      composerErrorByScope,
       trialTemplates,
       trialPluginName,
       trialPluginApp,
@@ -2452,6 +2538,7 @@ export function WorkbenchProvider({
       setDraftInput,
       setDraftInputForScope,
       setComposerError,
+      setComposerErrorForScope,
       skillSelection.selectedSkills,
       skillSelection.setSelectedSkills,
       skillSelection.skills,
@@ -2470,6 +2557,7 @@ export function WorkbenchProvider({
       isModelSelectionReady: modelSelection.isSelectionReady,
       input: draftInput,
       composerError,
+      composerErrorByScope,
       trialTemplates,
       trialPluginName,
       trialPluginApp,
@@ -2493,6 +2581,7 @@ export function WorkbenchProvider({
       setInput: setDraftInput,
       setInputForScope: setDraftInputForScope,
       setComposerError,
+      setComposerErrorForScope,
       setSelectedSkills: skillSelection.setSelectedSkills,
       toggleSkill: skillSelection.toggleSkill,
       handleFileSelect: attachmentSelection.handleFileSelect,
@@ -2524,6 +2613,7 @@ export function WorkbenchProvider({
       draftInput,
       draftInputByScope,
       composerError,
+      composerErrorByScope,
       trialTemplates,
       trialPluginName,
       trialPluginApp,
@@ -2547,6 +2637,7 @@ export function WorkbenchProvider({
       setDraftInput,
       setDraftInputForScope,
       setComposerError,
+      setComposerErrorForScope,
       skillSelection.selectedSkills,
       skillSelection.setSelectedSkills,
       skillSelection.skills,

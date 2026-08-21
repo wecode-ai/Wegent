@@ -37,6 +37,11 @@ Before changing a Wework flow, identify the affected product area and trace its 
 
 ## Testing
 
+- Before modifying code, locate and understand the tests and E2E coverage for
+  the affected behavior, including its scenarios, fixtures, assertions, and
+  desktop runner or checkpoint integration. Use that understanding to preserve
+  existing coverage and determine the verification required by the change.
+
 Run focused tests before committing:
 
 ```bash

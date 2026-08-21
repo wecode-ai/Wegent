@@ -46,6 +46,7 @@ import type {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { ActionMenu } from '@/components/common/ActionMenu'
+import { ChangeRequestStatusIcon } from '@/components/common/ChangeRequestStatusIcon'
 import { TextInputDialog } from '@/components/common/TextInputDialog'
 import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
 import { LocalProjectEditDialog } from '@/components/projects/LocalProjectEditDialog'
@@ -56,7 +57,17 @@ import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
 import type { WeworkInstalledReleaseNotes } from '@/features/app-update/app-release-notes'
 import { SHOW_PLUGINS_NAVIGATION } from '@/features/plugins/visibility'
 import { getRuntimeTaskReminderItemKey } from '@/features/workbench/runtimeTaskReminders'
+import { getRuntimeTaskThreadId } from '@/features/workbench/workbenchRuntimeHelpers'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
+import {
+  getChangeRequestMonitor,
+  runtimeTaskChangeRequestTarget,
+  useTaskChangeRequest,
+} from '@/features/workbench/changeRequestMonitor'
+import {
+  autoRepairStatus,
+  buildChangeRequestRepairPrompt,
+} from '@/features/workbench/changeRequestStatus'
 import { runtimeTaskBoardOrigin } from '@/features/workbench/runtimeTaskOrigin'
 import {
   getRuntimeConversationQueuePaused,
@@ -995,19 +1006,6 @@ function getRuntimeNotificationKey(address: RuntimeTaskAddress): string {
   return `${address.deviceId}\0${address.taskId}\0${address.workspacePath ?? ''}`
 }
 
-function getRuntimeTaskThreadId(task: RuntimeTaskSummary): string | null {
-  const explicitThreadId = task.threadId?.trim()
-  if (explicitThreadId) return explicitThreadId
-
-  const runtimeHandleThreadId = [task.runtimeHandle?.threadId, task.runtimeHandle?.thread_id].find(
-    value => typeof value === 'string' && value.trim()
-  )
-  if (typeof runtimeHandleThreadId === 'string') return runtimeHandleThreadId.trim()
-
-  const taskId = task.taskId.trim()
-  return task.runtime === 'codex' && !task.optimistic && taskId ? taskId : null
-}
-
 function isRuntimeTaskNotificationSubscribed(
   settings: RuntimeIMNotificationSettingsResponse | null | undefined,
   address: RuntimeTaskAddress
@@ -1454,6 +1452,7 @@ function RuntimeTaskRow({
   const [renameOpen, setRenameOpen] = useState(false)
   const [forceStarting, setForceStarting] = useState(false)
   const [queueReordering, setQueueReordering] = useState(false)
+  const [repairingChangeRequest, setRepairingChangeRequest] = useState(false)
   const workbench = useContext(WorkbenchContext)
   const [taskMenuPosition, setTaskMenuPosition] = useState<ProjectCreateMenuPosition | null>(null)
   const archiveDelayRef = useRef<number | null>(null)
@@ -1484,6 +1483,16 @@ function RuntimeTaskRow({
   const archiveDisabled =
     !workspace.available || !onArchiveRuntimeTask || archiving || archivePending
   const taskAddress = getRuntimeTaskAddress(workspace, task)
+  const changeRequestTarget = useMemo(
+    () => runtimeTaskChangeRequestTarget(workspace, task),
+    [task, workspace]
+  )
+  const changeRequestMonitor = useMemo(
+    () =>
+      workbench?.services?.deviceApi ? getChangeRequestMonitor(workbench.services.deviceApi) : null,
+    [workbench]
+  )
+  const changeRequestSnapshot = useTaskChangeRequest(changeRequestMonitor, changeRequestTarget)
   const taskLifecycle = useRuntimeTaskLifecycle(taskAddress)
   const queuePaused = useRuntimeTaskQueuePaused(taskAddress)
   const queued = isRuntimeTaskQueued(task)
@@ -1626,6 +1635,20 @@ function RuntimeTaskRow({
       workbench.setWorkbenchError(t('workbench.runtime_task_queue_reorder_failed'))
     } finally {
       setQueueReordering(false)
+    }
+  }
+  const continueChangeRequestRepair = async () => {
+    const changeRequest = changeRequestSnapshot?.changeRequest
+    if (!workbench || !changeRequest || !autoRepairStatus(changeRequest)) return
+    setRepairingChangeRequest(true)
+    try {
+      await workbench.sendRuntimePaneMessage({
+        address: taskAddress,
+        message: buildChangeRequestRepairPrompt(changeRequest, task.title),
+        source: { source: 'manual' },
+      })
+    } finally {
+      setRepairingChangeRequest(false)
     }
   }
   const notificationActionLabel = notificationsSubscribed
@@ -1795,6 +1818,17 @@ function RuntimeTaskRow({
               <span>{splitGroup.displayNumber}</span>
             </span>
           ) : null}
+          <ChangeRequestStatusIcon
+            snapshot={changeRequestSnapshot}
+            testId={`runtime-local-task-change-request-${task.taskId}`}
+            repairing={repairingChangeRequest}
+            onContinueRepair={
+              changeRequestSnapshot?.changeRequest &&
+              autoRepairStatus(changeRequestSnapshot.changeRequest)
+                ? continueChangeRequestRepair
+                : undefined
+            }
+          />
           <span
             data-testid={`runtime-local-task-trailing-${task.taskId}`}
             className={cn(

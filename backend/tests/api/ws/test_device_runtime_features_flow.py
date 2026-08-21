@@ -113,6 +113,10 @@ def _patch_namespace(monkeypatch, namespace: DeviceNamespace, session: dict) -> 
         "run_sync_in_executor",
         AsyncMock(return_value=(True, "Runtime Device", None)),
     )
+    monkeypatch.setattr(
+        "app.tasks.robot_queue_tasks.reconcile_device_executions",
+        AsyncMock(return_value=0),
+    )
 
 
 async def _wait_for_registration_followups(namespace: DeviceNamespace) -> None:

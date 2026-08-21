@@ -75,17 +75,15 @@ function renderStartupFailure(error: unknown): void {
 let shouldRenderApp = true
 if (!isSystemDragPanel) {
   try {
+    await installWeworkAutomationBridge()
+  } catch (error) {
+    console.error('[Wework] Failed to install the automation bridge:', error)
+  }
+  try {
     await initializeWorkbenchPluginRuntime()
   } catch (error) {
     renderStartupFailure(error)
     shouldRenderApp = false
-  }
-  if (shouldRenderApp) {
-    try {
-      await installWeworkAutomationBridge()
-    } catch (error) {
-      console.error('[Wework] Failed to install the automation bridge:', error)
-    }
   }
 }
 if (shouldRenderApp) renderApp()
