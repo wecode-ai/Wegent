@@ -296,6 +296,8 @@ pnpm run dev
 
 仓库根目录的 `pnpm-workspace.yaml` 已声明 pnpm 安装所需的依赖构建脚本 allowlist，并关闭非交互环境下的 `node_modules` 重建确认。开发者和 Git hooks 应从仓库根目录运行 `pnpm install`，不要在子目录中单独维护 `approve-builds` 配置。
 
+根目录的开发依赖包含 Prettier，因此仓库级 Markdown 和配置文件可以直接在根目录运行 `pnpm exec prettier --check <files>` 进行格式检查。包内源码仍应使用对应包的格式化命令。
+
 ### 步骤 6: 安装 Executor Manager
 
 [本地开发](/executor_manager/README_zh.md)
