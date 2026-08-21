@@ -4656,6 +4656,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         workspacePath: '/workspace/project-alpha',
         taskId: 'runtime-a',
       }),
+      taskTitle: 'Runtime A',
       sessionKeys: ['session-a'],
       modelSelection: {
         modelName: 'gpt-5.6-luna',

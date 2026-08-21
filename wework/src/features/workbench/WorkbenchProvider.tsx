@@ -1552,10 +1552,13 @@ export function WorkbenchProvider({
       if (!resolvedServices.runtimeWorkApi) {
         return Promise.reject(new Error('Runtime work API is unavailable'))
       }
+      const task = findRuntimeTask(state.runtimeWork, address)
+      const taskTitle = task?.title.trim()
+      if (!taskTitle) {
+        return Promise.reject(new Error('Runtime task title is unavailable'))
+      }
       let taskModelSelection =
-        findRuntimeTask(state.runtimeWork, address)?.modelSelection ??
-        modelSelectionFromRuntimeHandle(address.runtimeHandle) ??
-        null
+        task?.modelSelection ?? modelSelectionFromRuntimeHandle(address.runtimeHandle) ?? null
       const taskModel = findModelForSelection(modelSelection.models, taskModelSelection)
       if (taskModelSelection && taskModel) {
         const executionModel = selectedModelExecutionFields(
@@ -1570,6 +1573,7 @@ export function WorkbenchProvider({
       }
       return resolvedServices.runtimeWorkApi.bindRuntimeTaskImSessions({
         address,
+        taskTitle,
         sessionKeys,
         ...(taskModelSelection ? { modelSelection: taskModelSelection } : {}),
       })

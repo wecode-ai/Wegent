@@ -1735,6 +1735,19 @@ function RuntimeTaskRow({
             (archivePending || archiving) && 'hidden'
           )}
         >
+          <ChangeRequestStatusIcon
+            snapshot={changeRequestSnapshot}
+            testId={`runtime-local-task-change-request-${task.taskId}`}
+            repairing={repairingChangeRequest}
+            onContinueRepair={
+              changeRequestSnapshot?.changeRequest &&
+              autoRepairStatus(changeRequestSnapshot.changeRequest)
+                ? continueChangeRequestRepair
+                : undefined
+            }
+            className={priorityLayout ? 'mr-1' : '-ml-7 mr-1'}
+            popoverAlign="left"
+          />
           {priorityLayout ? (
             <span className="flex min-w-0 flex-1 flex-col justify-center gap-0.5">
               <span
@@ -1818,17 +1831,6 @@ function RuntimeTaskRow({
               <span>{splitGroup.displayNumber}</span>
             </span>
           ) : null}
-          <ChangeRequestStatusIcon
-            snapshot={changeRequestSnapshot}
-            testId={`runtime-local-task-change-request-${task.taskId}`}
-            repairing={repairingChangeRequest}
-            onContinueRepair={
-              changeRequestSnapshot?.changeRequest &&
-              autoRepairStatus(changeRequestSnapshot.changeRequest)
-                ? continueChangeRequestRepair
-                : undefined
-            }
-          />
           <span
             data-testid={`runtime-local-task-trailing-${task.taskId}`}
             className={cn(
@@ -4725,28 +4727,26 @@ export function DesktopSidebar({
             onLogout={onLogout}
             containerRef={settingsMenuRef}
             trailingActions={
-              experimentalFeaturesEnabled ? (
-                <GlobalImNotificationBell
-                  devices={devices}
-                  imNotificationSettings={imNotificationSettings}
-                  menuOpen={imNotificationMenuOpen}
-                  menuContainerRef={settingsMenuRef}
-                  onMenuOpenChange={open => {
-                    setImNotificationMenuOpen(open)
-                  }}
-                  onToggleGlobalImNotification={onToggleGlobalImNotification}
-                  onOpenGlobalImNotificationSettings={onOpenGlobalImNotificationSettings}
-                  onOpenSettings={() => onOpenSettings()}
-                  onAddCloudDevice={() => {
-                    if (onOpenStandaloneFolderProject) {
-                      onOpenStandaloneFolderProject('remote', 'add-device')
-                    } else {
-                      setStandaloneRemoteDialogIntent('add-device')
-                      setStandaloneWorkspaceDialogMode('remote')
-                    }
-                  }}
-                />
-              ) : null
+              <GlobalImNotificationBell
+                devices={devices}
+                imNotificationSettings={imNotificationSettings}
+                menuOpen={imNotificationMenuOpen}
+                menuContainerRef={settingsMenuRef}
+                onMenuOpenChange={open => {
+                  setImNotificationMenuOpen(open)
+                }}
+                onToggleGlobalImNotification={onToggleGlobalImNotification}
+                onOpenGlobalImNotificationSettings={onOpenGlobalImNotificationSettings}
+                onOpenSettings={() => onOpenSettings()}
+                onAddCloudDevice={() => {
+                  if (onOpenStandaloneFolderProject) {
+                    onOpenStandaloneFolderProject('remote', 'add-device')
+                  } else {
+                    setStandaloneRemoteDialogIntent('add-device')
+                    setStandaloneWorkspaceDialogMode('remote')
+                  }
+                }}
+              />
             }
           />
 

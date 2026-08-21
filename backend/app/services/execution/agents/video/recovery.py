@@ -50,9 +50,13 @@ async def recover_video_jobs() -> int:
     Returns:
         Number of recovered video jobs
     """
+    return await asyncio.to_thread(_recover_video_jobs_sync)
+
+
+def _recover_video_jobs_sync() -> int:
+    """Run the blocking recovery workflow outside the event loop."""
     from app.core.distributed_lock import distributed_lock
 
-    # Acquire distributed lock to prevent multiple instances from recovering
     with distributed_lock.acquire_context(
         VIDEO_RECOVERY_LOCK_NAME, VIDEO_RECOVERY_LOCK_EXPIRE_SECONDS
     ) as acquired:
@@ -62,7 +66,7 @@ async def recover_video_jobs() -> int:
             )
             return 0
 
-        return await _do_recover_video_jobs()
+        return _do_recover_video_jobs()
 
 
 async def recover_video_jobs_after_stale_delay() -> int:
@@ -82,7 +86,7 @@ async def recover_video_jobs_after_stale_delay() -> int:
     return await recover_video_jobs()
 
 
-async def _do_recover_video_jobs() -> int:
+def _do_recover_video_jobs() -> int:
     """
     Internal function to perform the actual recovery logic.
 

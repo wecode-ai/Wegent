@@ -4542,15 +4542,11 @@ async def test_bind_runtime_task_to_im_sessions_persists_selected_model(
         "bind_active_runtime_task",
         bind_active_runtime_task,
     )
-    monkeypatch.setattr(
-        runtime_work_service,
-        "_runtime_task_title_for_address",
-        AsyncMock(return_value="Runtime task"),
-    )
+    send_task_switched = AsyncMock(return_value={"sent": 1})
     monkeypatch.setattr(
         runtime_work_service.im_notification_dispatcher,
         "send_task_switched",
-        AsyncMock(return_value={"sent": 1}),
+        send_task_switched,
     )
 
     response = await runtime_work_service.bind_runtime_task_to_im_sessions(
@@ -4563,6 +4559,7 @@ async def test_bind_runtime_task_to_im_sessions_persists_selected_model(
                     "workspacePath": "/repo/Wegent",
                     "taskId": "codex-1",
                 },
+                "taskTitle": "用户可见任务标题",
                 "sessionKeys": ["session-a"],
                 "modelSelection": {
                     "modelName": "selected-gpt",
@@ -4574,6 +4571,11 @@ async def test_bind_runtime_task_to_im_sessions_persists_selected_model(
     )
 
     assert response.bound_session_keys == ["session-a"]
+    send_task_switched.assert_awaited_once_with(
+        test_db,
+        [session],
+        "用户可见任务标题",
+    )
     assert bind_active_runtime_task.await_args.kwargs["runtime_task"] == {
         "deviceId": "device-1",
         "workspacePath": "/repo/Wegent",
