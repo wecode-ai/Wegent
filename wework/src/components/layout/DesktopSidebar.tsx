@@ -1410,6 +1410,7 @@ function RuntimeTaskRow({
   onToggleRuntimeTaskNotification,
   priorityReason,
   priorityLayout = false,
+  changeRequestInIndent = false,
   splitGroup,
 }: {
   workspace: RuntimeDeviceWorkspace
@@ -1436,6 +1437,7 @@ function RuntimeTaskRow({
   ) => Promise<void> | void
   priorityReason?: RuntimeTaskPriorityReason
   priorityLayout?: boolean
+  changeRequestInIndent?: boolean
   splitGroup?: WorkbenchSplitGroupMembership
 }) {
   const { t } = useTranslation('common')
@@ -1739,7 +1741,7 @@ function RuntimeTaskRow({
                 ? continueChangeRequestRepair
                 : undefined
             }
-            className={priorityLayout ? 'mr-1' : '-ml-7 mr-1'}
+            className={changeRequestInIndent && !priorityLayout ? '-ml-7 mr-1' : 'mr-1'}
             popoverAlign="left"
           />
           {priorityLayout ? (
@@ -2874,6 +2876,7 @@ function ProjectItem({
                       unread={unreadTaskKeys.has(getRuntimeTaskReminderItemKey(workspace, task))}
                       marked={task.pinned}
                       indentClassName="pl-9"
+                      changeRequestInIndent
                       imNotificationSettings={imNotificationSettings}
                       showDeviceMarker={showDeviceMarker}
                       onOpenRuntimeTask={onOpenRuntimeTask}
