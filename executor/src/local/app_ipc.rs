@@ -903,10 +903,28 @@ impl AppIpcServer {
 }
 
 fn is_bulk_app_ipc_event(message: &Value) -> bool {
-    matches!(
-        message.get("event").and_then(Value::as_str),
-        Some("response.block.created" | "response.block.updated" | "runtime.plan.updated")
-    )
+    match message.get("event").and_then(Value::as_str) {
+        Some("runtime.plan.updated") => true,
+        Some("response.block.created") => {
+            app_ipc_event_data(message)
+                .and_then(|data| data.get("block"))
+                .and_then(|block| block.get("type"))
+                .and_then(Value::as_str)
+                == Some("file_changes")
+        }
+        Some("response.block.updated") => app_ipc_event_data(message)
+            .and_then(|data| data.get("updates"))
+            .is_some_and(|updates| {
+                updates.get("tool_output_delta").is_some() || updates.get("file_changes").is_some()
+            }),
+        _ => false,
+    }
+}
+
+fn app_ipc_event_data(message: &Value) -> Option<&Value> {
+    message
+        .get("payload")
+        .and_then(|payload| payload.get("data"))
 }
 
 async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Value, AppIpcError> {
@@ -2587,10 +2605,50 @@ mod tests {
         assert!(is_bulk_app_ipc_event(&json!({
             "type": "event",
             "event": "response.block.updated",
+            "payload": {
+                "data": {
+                    "updates": {
+                        "tool_output_delta": "diagnostic output"
+                    }
+                }
+            }
+        })));
+        assert!(is_bulk_app_ipc_event(&json!({
+            "type": "event",
+            "event": "response.block.created",
+            "payload": {
+                "data": {
+                    "block": {
+                        "type": "file_changes"
+                    }
+                }
+            }
         })));
         assert!(is_bulk_app_ipc_event(&json!({
             "type": "event",
             "event": "runtime.plan.updated",
+        })));
+        assert!(!is_bulk_app_ipc_event(&json!({
+            "type": "event",
+            "event": "response.block.created",
+            "payload": {
+                "data": {
+                    "block": {
+                        "type": "text"
+                    }
+                }
+            }
+        })));
+        assert!(!is_bulk_app_ipc_event(&json!({
+            "type": "event",
+            "event": "response.block.updated",
+            "payload": {
+                "data": {
+                    "updates": {
+                        "status": "done"
+                    }
+                }
+            }
         })));
         assert!(!is_bulk_app_ipc_event(&json!({
             "type": "event",

@@ -163,10 +163,11 @@ export function reduceRuntimeConversationTurns(
         const currentItems = isRuntimeReconnectingBlock(action.block)
           ? turn.items
           : settleRuntimeReconnectingBlocks(turn.items)
-        const items = replaceAssistantTextWithBlock(
+        const items = upsertRuntimeBlock(
           currentItems,
           action.replaceAssistantTextItemId,
-          action.block
+          action.block,
+          turn.status
         )
         return {
           ...turn,
@@ -830,6 +831,36 @@ function replaceAssistantTextWithBlock(
     type: 'block',
     block,
   })
+}
+
+function upsertRuntimeBlock(
+  items: RuntimeConversationItem[],
+  assistantTextItemId: string | undefined,
+  block: ProcessingBlock,
+  turnStatus: RuntimeConversationTurn['status']
+): RuntimeConversationItem[] {
+  if (assistantTextItemId) {
+    return replaceAssistantTextWithBlock(items, assistantTextItemId, block)
+  }
+
+  const existingIndex = items.findIndex(item => item.id === block.id)
+  if (existingIndex >= 0) {
+    if (items[existingIndex]?.type === 'assistant_text' && turnStatus === 'done') {
+      return items
+    }
+    return upsertBlocks(items, [block])
+  }
+  if (turnStatus !== 'done') return upsertBlocks(items, [block])
+
+  const terminalTextIndex = items.findLastIndex(item => item.type === 'assistant_text')
+  if (terminalTextIndex < 0) return upsertBlocks(items, [block])
+  const nextItems = [...items]
+  nextItems.splice(terminalTextIndex, 0, {
+    id: block.id,
+    type: 'block',
+    block,
+  })
+  return nextItems
 }
 
 function projectRuntimeConversationTurn(turn: RuntimeConversationTurn): WorkbenchMessage[] {

@@ -682,6 +682,90 @@ describe('runtimeConversationTurns', () => {
     })
   })
 
+  test('ignores a matching process block that arrives after terminal assistant content', () => {
+    const turns = reduceRuntimeConversationTurns(
+      [
+        {
+          id: 'turn-1',
+          items: [
+            {
+              id: 'assistant-item-1',
+              type: 'assistant_text',
+              content: '处理完成。',
+              createdAt: '2026-08-21T00:00:00.000Z',
+            },
+          ],
+          status: 'done',
+        },
+      ],
+      {
+        type: 'block_created',
+        subtaskId: 'turn-1',
+        block: {
+          id: 'assistant-item-1',
+          subtaskId: 'turn-1',
+          type: 'text',
+          content: '处理完成。',
+          status: 'done',
+          createdAt: Date.parse('2026-08-21T00:00:00.000Z'),
+        },
+      }
+    )
+
+    expect(turns[0].items).toEqual([
+      expect.objectContaining({
+        id: 'assistant-item-1',
+        type: 'assistant_text',
+        content: '处理完成。',
+      }),
+    ])
+  })
+
+  test('places a late processing block before terminal assistant content', () => {
+    const turns = reduceRuntimeConversationTurns(
+      [
+        {
+          id: 'turn-1',
+          items: [
+            {
+              id: 'assistant-item-1',
+              type: 'assistant_text',
+              content: '处理完成。',
+              createdAt: '2026-08-21T00:00:01.000Z',
+            },
+          ],
+          status: 'done',
+        },
+      ],
+      {
+        type: 'block_created',
+        subtaskId: 'turn-1',
+        block: {
+          id: 'file-changes-1',
+          subtaskId: 'turn-1',
+          type: 'file_changes',
+          status: 'done',
+          createdAt: Date.parse('2026-08-21T00:00:00.000Z'),
+          fileChanges: {
+            version: 1,
+            status: 'active',
+            artifact_id: 'artifact-1',
+            device_id: 'device-1',
+            workspace_path: '/workspace/project',
+            file_count: 1,
+            additions: 1,
+            deletions: 0,
+            files: [],
+            reverted_at: null,
+            revertible: false,
+          },
+        },
+      }
+    )
+
+    expect(turns[0].items.map(item => item.id)).toEqual(['file-changes-1', 'assistant-item-1'])
+  })
+
   test('keeps a completed final text block before subsequently applied guidance', () => {
     const guidance = {
       ...userMessage('guidance-1', 'Use the new name'),
