@@ -186,6 +186,24 @@ def test_internal_default_image_uses_remote_device_version_env(monkeypatch):
     )
 
 
+def test_internal_default_image_uses_remote_device_version_dotenv(
+    monkeypatch, tmp_path
+):
+    monkeypatch.delenv("REMOTE_DEVICE_DOCKER_IMAGE", raising=False)
+    monkeypatch.delenv("REMOTE_DEVICE_DOCKER_IMAGE_VERSION", raising=False)
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        'REMOTE_DEVICE_DOCKER_IMAGE_VERSION="1.0.237-feature-device-tag"\n',
+        encoding="utf-8",
+    )
+
+    config = RemoteDeviceSettings(_env_file=env_file)
+
+    assert config.REMOTE_DEVICE_DOCKER_IMAGE == (
+        "registry.api.weibo.com/ci/wegent-device:" "1.0.237-feature-device-tag"
+    )
+
+
 def test_internal_default_image_prefers_explicit_image_over_version_env(monkeypatch):
     monkeypatch.setenv(
         "REMOTE_DEVICE_DOCKER_IMAGE", "registry.api.weibo.com/ci/wegent-device:2.0.0"

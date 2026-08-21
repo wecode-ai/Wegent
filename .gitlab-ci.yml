@@ -125,28 +125,38 @@ wegent-executor:
     SERVICE: wegent-executor
     DOCKERFILE_PATH: wecode/docker/executor
   script:
-    - build_image
+    - bash wecode/docker/executor/build-and-export-image-tag.sh
+  artifacts:
+    reports:
+      dotenv: executor-image.env
   rules:
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "develop"'
       when: never
     - if: '$CI_COMMIT_BRANCH == "main"'
       changes:
+        - docker/device/**/*
         - executor/**/*
+        - wecode/docker/device/**/*
         - wecode/docker/executor/**/*
         - shared/**/*
+        - .gitlab-ci.yml
     - changes:
+      - docker/device/**/*
       - executor/**/*
+      - wecode/docker/device/**/*
       - wecode/docker/executor/**/*
       - shared/**/*
+      - .gitlab-ci.yml
 
 wegent-device:
   stage: package
   retry: 1
   resource_group: wegent-device-image
-  variables:
-    DEVICE_IMAGE_VERSION: ""
+  needs:
+    - job: wegent-executor
+      artifacts: true
   script:
-    - bash wecode/docker/device/build-and-publish.sh
+    - DEVICE_IMAGE_VERSION="${EXECUTOR_IMAGE_TAG:?missing wegent-executor image tag}" bash wecode/docker/device/build-and-publish.sh
   rules:
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "develop"'
       when: never
@@ -158,30 +168,6 @@ wegent-device:
         - shared/assets/**/*
         - .gitlab-ci.yml
     - changes:
-      - docker/device/**/*
-      - wecode/docker/device/**/*
-      - executor/**/*
-      - shared/assets/**/*
-      - .gitlab-ci.yml
-
-trigger_update_device:
-  stage: production
-  variables:
-    APP: wegent-device
-    SERVICE: wegent-device
-    IMAGE_NAME: wegent-device
-    UPSTREAM_CI_PROJECT_ID: $CI_PROJECT_ID
-    UPSTREAM_CI_PIPELINE_ID: $CI_PIPELINE_ID
-    UPSTREAM_CI_COMMIT_REF_NAME: $CI_COMMIT_REF_NAME
-    UPSTREAM_CI_COMMIT_SHA: $CI_COMMIT_SHA
-    MASTER_BRANCH: master
-  trigger:
-    project: weibo_rd/cloudnative/aigc_gitops_manifest
-    branch: master
-    strategy: depend
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
-      changes:
         - docker/device/**/*
         - wecode/docker/device/**/*
         - executor/**/*

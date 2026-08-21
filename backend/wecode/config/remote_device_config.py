@@ -7,11 +7,11 @@
 from __future__ import annotations
 
 import logging
-import os
 import tomllib
 from pathlib import Path
+from typing import Self
 
-from pydantic import Field
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
@@ -57,12 +57,8 @@ def _resolve_executor_version_from_cargo_toml() -> str | None:
     return None
 
 
-def _default_remote_device_image() -> str:
-    """Build the default remote-device image reference dynamically."""
-    version = os.getenv("REMOTE_DEVICE_DOCKER_IMAGE_VERSION", "").strip()
-    if not version:
-        version = _resolve_executor_version_from_cargo_toml()
-
+def _default_remote_device_image(version: str) -> str:
+    """Build the default remote-device image reference."""
     if not version:
         logger.warning(
             "[RemoteDeviceConfig] Using fallback remote device version %s",
@@ -76,9 +72,7 @@ def _default_remote_device_image() -> str:
 class RemoteDeviceSettings(BaseSettings):
     """Settings owned by the internal remote device command provider."""
 
-    REMOTE_DEVICE_DOCKER_IMAGE: str = Field(
-        default_factory=_default_remote_device_image
-    )
+    REMOTE_DEVICE_DOCKER_IMAGE: str = ""
     REMOTE_DEVICE_DOCKER_IMAGE_VERSION: str = ""
     REMOTE_DEVICE_EXECUTOR_INSTALL_URL: str = (
         "https://github.com/wecode-ai/Wegent/releases/latest/download/"
@@ -86,6 +80,19 @@ class RemoteDeviceSettings(BaseSettings):
     )
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    @model_validator(mode="after")
+    def resolve_remote_device_image(self) -> Self:
+        """Resolve the image after environment and dotenv fields are loaded."""
+        if self.REMOTE_DEVICE_DOCKER_IMAGE.strip():
+            self.REMOTE_DEVICE_DOCKER_IMAGE = self.REMOTE_DEVICE_DOCKER_IMAGE.strip()
+            return self
+
+        version = self.REMOTE_DEVICE_DOCKER_IMAGE_VERSION.strip()
+        if not version:
+            version = _resolve_executor_version_from_cargo_toml() or ""
+        self.REMOTE_DEVICE_DOCKER_IMAGE = _default_remote_device_image(version)
+        return self
 
 
 remote_device_settings = RemoteDeviceSettings()
