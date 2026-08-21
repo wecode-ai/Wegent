@@ -131,6 +131,7 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
     getRemoteDeviceStartupCommand: onGetRemoteDeviceStartupCommand,
     upgradeDevice: onUpgradeDevice = async () => {},
     createProject: onCreateProject,
+    createLocalRuntimeProject: onCreateLocalRuntimeProject,
     createGitWorkspaceProject: onCreateGitWorkspaceProject,
     prepareDeviceWorkspace: onPrepareDeviceWorkspace,
     deleteDeviceWorkspace: onDeleteDeviceWorkspace,
@@ -1063,6 +1064,11 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
                 localProjects={localTodoProjects}
                 runtimeWork={state.runtimeWork}
                 services={services}
+                onCreateLocalCodeProject={onCreateLocalRuntimeProject}
+                onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
+                onListDeviceDirectories={onListDeviceDirectories}
+                onCreateDeviceDirectory={onCreateDeviceDirectory}
+                onCloneGitRepository={onCloneGitRepository}
                 onOpenRuntimeTask={openProjectSpaceRuntimeTask}
                 onOpenSettings={options => openSettings(options, '/todo')}
                 onLogout={onLogout}

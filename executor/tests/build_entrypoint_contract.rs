@@ -79,6 +79,16 @@ fn executor_build_entrypoints_use_rust_binary_build() {
     assert!(dev_reload.contains("watch(sourceDir, { recursive: true }"));
     assert!(!dev_reload.contains("wegent-executor-dev"));
 
+    let cloud_device = fs::read_to_string("scripts/dev-cloud-device.sh").unwrap();
+    assert!(cloud_device
+        .contains("configure_wegent_cargo_target_dir \"$PROJECT_DIR\" \"executor-dev\""));
+    assert!(cloud_device.contains("--features dev-reload"));
+    assert!(cloud_device.contains("--bin wegent-executor-dev"));
+    assert!(cloud_device.contains("--bin wegent-executor"));
+    assert!(cloud_device.contains("WEGENT_EXECUTOR_SOURCE_DIR=\"$EXECUTOR_DIR\""));
+    assert!(cloud_device.contains("WEGENT_EXECUTOR_PREBUILT=1"));
+    assert!(!cloud_device.contains("WEGENT_EXECUTOR_DEV_RELOAD=0"));
+
     let windows_dev = fs::read_to_string("../wework/scripts/dev-windows-app.mjs").unwrap();
     assert!(windows_dev.contains("Building executor dev-reload binaries"));
     assert!(

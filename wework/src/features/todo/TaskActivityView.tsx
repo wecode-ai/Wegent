@@ -435,22 +435,12 @@ export function TaskActivityView({
     () => agents.find(agent => agent.id === task.assignee_agent_id && agent.status === 'active'),
     [agents, task.assignee_agent_id]
   )
-  const robotBoundProject = useMemo(
-    () =>
-      assignedAgent?.localProjectId
-        ? (localProjects.find(project => project.id === assignedAgent.localProjectId) ?? null)
-        : null,
-    [assignedAgent, localProjects]
-  )
-  // The composer project bar reuses the homepage ProjectWorkBar directly; the
-  // selection drives only the per-comment execution project. The default ('')
-  // follows the robot-bound repository, so picking that repository explicitly
-  // is mapped back to the default and the clear button only appears while an
-  // actual override is selected.
+  // Comment execution workspace is an explicit per-run choice. Robot records
+  // no longer provide an implicit device or workspace fallback.
   const effectiveCommentProject =
     selectedCommentProjectId !== ''
       ? (localProjects.find(project => project.id === selectedCommentProjectId) ?? null)
-      : robotBoundProject
+      : null
   const commentProjectWork = useMemo<ProjectWorkControls>(
     () => ({
       projects: localProjects,
@@ -466,19 +456,14 @@ export function TaskActivityView({
       // The execution-mode control is meaningless for comment runs; hide it.
       isGitProject: false,
       showProjectClearButton: selectedCommentProjectId !== '',
-      onSelectProject: projectId =>
-        setSelectedCommentProjectId(
-          projectId == null || projectId === robotBoundProject?.id ? '' : projectId
-        ),
+      onSelectProject: projectId => setSelectedCommentProjectId(projectId ?? ''),
       onSelectStandaloneDevice: () => setSelectedCommentProjectId(''),
-      onSelectProjectWorkspace: projectId =>
-        setSelectedCommentProjectId(projectId === robotBoundProject?.id ? '' : projectId),
+      onSelectProjectWorkspace: projectId => setSelectedCommentProjectId(projectId),
       onExecutionModeChange: () => {},
     }),
     [
       effectiveCommentProject,
       localProjects,
-      robotBoundProject?.id,
       selectedCommentProjectId,
       state.devices,
       state.runtimeWork,
@@ -726,7 +711,7 @@ export function TaskActivityView({
         project,
         task,
         agent: assignedAgent,
-        executionProject: robotBoundProject,
+        executionProject: null,
         prompt: buildRobotRoleDescription(assignedAgent),
         messages,
         models: availableModels,
@@ -850,7 +835,7 @@ export function TaskActivityView({
           project,
           task,
           agent: assignedAgent,
-          executionProject: robotBoundProject,
+          executionProject: null,
           prompt: text,
           trigger: message,
           messages,
@@ -976,7 +961,7 @@ export function TaskActivityView({
         selectedCommentProjectId !== ''
           ? (localProjects.find(project => project.id === selectedCommentProjectId) ?? null)
           : null
-      const executionProject = userSelectedProject ?? robotBoundProject
+      const executionProject = userSelectedProject
       const activeMentions = assignedAgent
         ? [{ type: 'agent' as const, id: assignedAgent.id, label: assignedAgent.name }]
         : []

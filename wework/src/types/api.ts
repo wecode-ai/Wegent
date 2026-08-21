@@ -170,6 +170,10 @@ export interface ProjectWithTasks {
   tasks?: ProjectTask[]
 }
 
+export interface CreatedRuntimeProject extends ProjectWithTasks {
+  runtimeProjectKey: string
+}
+
 export type ProjectExecutionMode = 'current_workspace' | 'git_worktree'
 
 export interface ProjectListResponse {
@@ -1289,6 +1293,7 @@ export interface RuntimeTaskCancelResponse {
 }
 
 export interface RuntimeTaskCreateRequest {
+  schemaVersion?: 1 | 2
   projectId?: number
   deviceWorkspaceId?: number
   deviceId?: string
@@ -1322,6 +1327,7 @@ export interface RuntimeTaskCreateRequest {
   initialSupervisor?: RuntimeSupervisorCreateInput | null
   ephemeral?: boolean
   sideSource?: RuntimeTaskAddress | null
+  workspaceSourceTask?: RuntimeTaskAddress | null
   deliveryId?: string
   cloudProjectId?: string
   origin?: {

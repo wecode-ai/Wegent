@@ -10,6 +10,8 @@ import {
   type HarnessContextRegistration,
 } from '@/features/harness-apps/harnessContext'
 import { createExecutorClientFromApis } from '@/api/executorAccess'
+import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
+import { buildProjectPluginCatalog } from '@/features/plugins/projectPluginCatalog'
 import i18n from '@/i18n'
 import type {
   ArchivedConversationsListRequest,
@@ -3243,6 +3245,18 @@ function summarizeLocalModelOptions(
 }
 
 export function createLocalAppServices(deps: LocalAppServicesDeps = {}): WorkbenchServices {
+  const localPluginApi = createLocalCodexPluginApi()
+  const projectPluginApi: NonNullable<WorkbenchServices['pluginApi']> = {
+    async listPlugins() {
+      const [appsResult, installedResult] = await Promise.allSettled([
+        localPluginApi.listApps(),
+        localPluginApi.listInstalledPlugins(),
+      ])
+      const apps = appsResult.status === 'fulfilled' ? appsResult.value : []
+      const installed = installedResult.status === 'fulfilled' ? installedResult.value.items : []
+      return buildProjectPluginCatalog(installed, apps)
+    },
+  }
   const ensure = deps.ensure ?? ensureLocalExecutorStarted
   const request = deps.request ?? requestLocalExecutor
   const subscribe = deps.subscribe ?? subscribeLocalExecutorEvents
@@ -3550,9 +3564,11 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
         deviceApi,
         modelApi,
         teamApi,
+        pluginApi: projectPluginApi,
       },
     },
     runtimeWorkApi,
+    pluginApi: projectPluginApi,
     automationApi,
     attachmentApi: createLocalAttachmentApi(),
     executorClient: createExecutorClientFromApis({

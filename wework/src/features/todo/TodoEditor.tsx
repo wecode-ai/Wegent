@@ -43,6 +43,7 @@ import type {
   CloudProjectMember,
   Delivery,
   DeliveryDetail,
+  IssueWorkflowInstance,
 } from '@/api/deliveries'
 import type { ProjectChatClient } from '@/api/backend/projectChatSocket'
 import type { ProjectChatAgent } from '@/api/projectChatAgents'
@@ -576,6 +577,9 @@ export function TodoEditor(props: TodoEditorProps) {
           : ''
   )
   const [tags, setTags] = useState<string[]>(item?.tags ?? draft?.tags ?? [])
+  const [workflowDraft, setWorkflowDraft] = useState<IssueWorkflowInstance | null>(
+    item?.workflow ?? null
+  )
   const [tagDraft, setTagDraft] = useState('')
   // Track the item version the local editable state mirrors. External updates
   // (for example the project AI completing a run) bump the version; sync the
@@ -618,8 +622,22 @@ export function TodoEditor(props: TodoEditorProps) {
       setAssigneeTarget(nextAssigneeTarget)
     }
     if (!sameTask || tagsMatch(tags, previous?.tags ?? [])) setTags(item.tags ?? [])
+    if (!sameTask || workflowDraft === previous?.workflow) {
+      setWorkflowDraft(item.workflow ?? null)
+    }
     syncedItemRef.current = item
-  }, [item, title, description, status, priority, parentId, dueDate, assigneeTarget, tags])
+  }, [
+    item,
+    title,
+    description,
+    status,
+    priority,
+    parentId,
+    dueDate,
+    assigneeTarget,
+    tags,
+    workflowDraft,
+  ])
   // A create draft or initial parent can reference a task that was archived
   // since; a deleted parent is not in the live item list, so fall back to a
   // top-level task instead of sending a parent id the backend rejects.
@@ -686,8 +704,8 @@ export function TodoEditor(props: TodoEditorProps) {
     return Array.from(merged.values())
   }, [attachments, description])
   const displayedWorkflow = useMemo(
-    () => (item?.workflow ? reconcileIssueWorkflowForTaskBindings(item.workflow, tasks) : null),
-    [item?.workflow, tasks]
+    () => (workflowDraft ? reconcileIssueWorkflowForTaskBindings(workflowDraft, tasks) : null),
+    [workflowDraft, tasks]
   )
 
   useEffect(() => {
@@ -796,6 +814,7 @@ export function TodoEditor(props: TodoEditorProps) {
   const itemTags = item?.tags ?? []
   const tagsDirty =
     tags.length !== itemTags.length || tags.some((tag, index) => tag !== itemTags[index])
+  const workflowDirty = JSON.stringify(workflowDraft) !== JSON.stringify(item?.workflow ?? null)
   const dirty = item
     ? title.trim() !== item.title ||
       description !== normalizedItemDescription ||
@@ -811,7 +830,8 @@ export function TodoEditor(props: TodoEditorProps) {
               ? `user:${item.assignee_user_id}`
               : '') ||
       dueDate !== (item.due_at?.slice(0, 10) ?? '') ||
-      tagsDirty
+      tagsDirty ||
+      workflowDirty
     : false
   const hasDraftContent = Boolean(
     title ||
@@ -936,6 +956,7 @@ export function TodoEditor(props: TodoEditorProps) {
         parent_id: parentId || null,
         due_at: dueDate || null,
         tags,
+        ...(workflowDirty ? { workflow: workflowDraft } : {}),
       })
       const currentAssigneeTarget = current.assignee_team_id
         ? `team:${current.assignee_team_id}`

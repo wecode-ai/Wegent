@@ -3,6 +3,7 @@ from pydantic import ValidationError
 
 from app.schemas.issue_workflow import (
     ProjectWorkflowDefinition,
+    WorkflowExecutionConfig,
     instantiate_workflow,
 )
 
@@ -34,6 +35,40 @@ def test_workflow_definition_instantiates_ready_roots() -> None:
 
     assert workflow.definition_version == 3
     assert [node.status for node in workflow.nodes] == ["ready", "blocked"]
+
+
+def test_issue_snapshot_uses_shared_config_unless_node_overrides_it() -> None:
+    shared = WorkflowExecutionConfig(
+        agent_id="shared-agent",
+        runtime_profile_id="shared-runtime",
+        model="shared-model",
+        workspace_binding={"type": "backend_project", "projectId": 1},
+    )
+    node = WorkflowExecutionConfig(
+        agent_id="node-agent",
+        runtime_profile_id="node-runtime",
+        model="node-model",
+        workspace_binding={"type": "backend_project", "projectId": 2},
+    )
+    workflow = instantiate_workflow(
+        ProjectWorkflowDefinition(
+            stage_mode="dag",
+            execution_config=shared,
+            nodes=[
+                {
+                    "id": "build",
+                    "name": "Build",
+                    "depends_on": [],
+                    "automation_rule_id": "rule-1",
+                    "execution_config": node,
+                }
+            ],
+        )
+    )
+
+    assert workflow.execution_config_for(workflow.nodes[0]).agent_id == "shared-agent"
+    workflow.nodes[0].execution_config_override = True
+    assert workflow.execution_config_for(workflow.nodes[0]).agent_id == "node-agent"
 
 
 @pytest.mark.parametrize(

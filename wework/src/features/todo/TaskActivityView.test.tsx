@@ -381,7 +381,7 @@ describe('TaskActivityView', () => {
     )
   })
 
-  it('falls back to the robot bound project when no project is selected', async () => {
+  it('does not infer a project from the robot record', async () => {
     agentsMock.value = [
       {
         id: '12',
@@ -447,16 +447,14 @@ describe('TaskActivityView', () => {
       />
     )
 
-    await waitFor(() =>
-      expect(screen.getByTestId('project-work-button')).toHaveTextContent('运营工作区')
-    )
+    expect(screen.getByTestId('project-work-button')).toHaveTextContent('请选择项目')
     await user.type(screen.getByTestId('cloud-task-activity-composer'), '继续处理')
     await user.click(screen.getByRole('button', { name: '发送消息' }))
     await waitFor(() => expect(client.send).toHaveBeenCalledOnce())
     await waitFor(() =>
       expect(createProjectRuntimeTask).toHaveBeenCalledWith(
         '继续处理',
-        expect.objectContaining({ project: expect.objectContaining({ id: 91 }) })
+        expect.objectContaining({ project: null })
       )
     )
   })
@@ -589,9 +587,7 @@ describe('TaskActivityView', () => {
       />
     )
 
-    await waitFor(() =>
-      expect(screen.getByTestId('project-work-button')).toHaveTextContent('运营工作区')
-    )
+    expect(screen.getByTestId('project-work-button')).toHaveTextContent('请选择项目')
     expect(screen.queryByTestId('clear-project-button')).not.toBeInTheDocument()
 
     await user.click(screen.getByTestId('project-work-button'))
@@ -611,7 +607,7 @@ describe('TaskActivityView', () => {
     )
 
     await user.click(screen.getByTestId('clear-project-button'))
-    expect(screen.getByTestId('project-work-button')).toHaveTextContent('运营工作区')
+    expect(screen.getByTestId('project-work-button')).toHaveTextContent('请选择项目')
   })
 
   it('passes the per-comment model override to the AI run', async () => {

@@ -17,8 +17,20 @@ from typing import Any
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.models.delivery import CloudProject, ProjectChatAgent
+from app.models.delivery import (
+    CloudProject,
+    CloudProjectLocalBinding,
+    ProjectChatAgent,
+    RuntimeProfile,
+    loop_datetime_is_unset,
+)
 from app.models.user import User
+from app.schemas.project_chat import ProjectChatWorkspaceBindingView
+from app.schemas.runtime_work import RuntimeTaskCreateRequest
+from app.services.project_chat.workspace_binding import (
+    adapt_legacy_workspace_binding,
+    read_agent_workspace_binding,
+)
 
 
 class WeworkExecutionProfileError(ValueError):
@@ -107,11 +119,20 @@ class WeworkExecutionProfile:
     local_project_id: int = 0
     max_concurrent_executions: int = 1
     manager_mode: bool = False
+    workspace_policy: str = "project"
+    plugins: tuple[dict[str, str], ...] = ()
+    workspace_binding_override: ProjectChatWorkspaceBindingView | None = None
 
     @classmethod
     def for_project_robot(
         cls,
         agent: ProjectChatAgent,
+        *,
+        db: Session | None = None,
+        runtime_profile: RuntimeProfile | None = None,
+        cloud_project_id: str | None = None,
+        model_override: str = "",
+        workspace_binding_override: dict[str, Any] | None = None,
     ) -> "WeworkExecutionProfile":
         from app.services.project_chat.service import (
             bot_config,
@@ -119,15 +140,64 @@ class WeworkExecutionProfile:
         )
 
         config = bot_config(agent)
+        profile_metadata = (
+            dict(runtime_profile.metadata_json or {}) if runtime_profile else {}
+        )
+        owner_user_id = int(
+            runtime_profile.user_id
+            if runtime_profile is not None
+            else agent.created_by_user_id or 0
+        )
+        local_project_id = int(agent.local_project_id or 0)
+        if db is not None and runtime_profile is not None and cloud_project_id:
+            binding = (
+                db.query(CloudProjectLocalBinding)
+                .filter(
+                    CloudProjectLocalBinding.cloud_project_id == str(cloud_project_id),
+                    CloudProjectLocalBinding.user_id == owner_user_id,
+                    CloudProjectLocalBinding.device_id
+                    == str(runtime_profile.device_id or ""),
+                    CloudProjectLocalBinding.status == "active",
+                    loop_datetime_is_unset(CloudProjectLocalBinding.deleted_at),
+                )
+                .order_by(CloudProjectLocalBinding.updated_at.desc())
+                .first()
+            )
+            local_project_id = int(binding.local_project_id or 0) if binding else 0
         return cls(
-            owner_user_id=int(agent.created_by_user_id or 0),
+            owner_user_id=owner_user_id,
             display_name=str(agent.title or agent.name or "AI"),
             execution_prompt=str(config.get("execution_prompt") or ""),
             instruction="",
-            model=str(config.get("model") or ""),
+            model=str(
+                model_override
+                or profile_metadata.get("model")
+                or config.get("model")
+                or ""
+            ),
             agent_id=agent.id,
-            local_project_id=int(agent.local_project_id or 0),
+            local_project_id=local_project_id,
             max_concurrent_executions=bot_max_concurrent_executions(agent),
+            workspace_policy=str(
+                profile_metadata.get("workspace_policy")
+                or config.get("workspace_policy")
+                or "project"
+            ),
+            plugins=tuple(
+                plugin
+                for plugin in config.get("plugins", [])
+                if isinstance(plugin, dict)
+            ),
+            workspace_binding_override=(
+                ProjectChatWorkspaceBindingView.model_validate(
+                    {
+                        **workspace_binding_override,
+                        "status": "ready",
+                    }
+                )
+                if workspace_binding_override
+                else None
+            ),
         )
 
     @classmethod
@@ -150,6 +220,29 @@ class WeworkExecutionProfile:
             model=model,
             local_project_id=local_project_id,
             manager_mode=True,
+        )
+
+    @classmethod
+    def for_generic_robot(
+        cls,
+        *,
+        runtime_profile: RuntimeProfile,
+        display_name: str,
+        execution_prompt: str,
+        local_project_id: int = 0,
+    ) -> "WeworkExecutionProfile":
+        metadata = dict(runtime_profile.metadata_json or {})
+        model = str(metadata.get("model") or "")
+        if not model:
+            raise ValueError("Runtime profile model is required")
+        return cls(
+            owner_user_id=int(runtime_profile.user_id or 0),
+            display_name=display_name or "AI",
+            execution_prompt=execution_prompt,
+            instruction="",
+            model=model,
+            local_project_id=local_project_id,
+            workspace_policy=str(metadata.get("workspace_policy") or "project"),
         )
 
     def user_input(
@@ -220,6 +313,28 @@ class WeworkExecutionProfile:
             )
 
         task_id = str(getattr(task, "id", ""))
+        if self.workspace_binding_override is not None:
+            workspace_binding = self.workspace_binding_override
+        elif self.agent_id:
+            agent = db.get(ProjectChatAgent, self.agent_id)
+            if agent is None:
+                raise WeworkExecutionProfileError(
+                    f"Project robot '{self.agent_id}' is unavailable"
+                )
+            workspace_binding = read_agent_workspace_binding(db, agent=agent)
+        else:
+            workspace_binding = adapt_legacy_workspace_binding(
+                db,
+                user_id=owner.id,
+                environment=("cloud" if materialize_execution_request else "local"),
+                execution_device_id=execution_device_id,
+                local_project_id=self.local_project_id,
+            )
+        if workspace_binding.status != "ready":
+            raise WeworkExecutionProfileError(
+                "Robot workspace binding is ambiguous; select an exact workspace"
+            )
+        has_bound_workspace = workspace_binding.type != "standalone"
         workflow_stage_input = origin_context.get("workflow_stage_input")
         workspace_policy = ""
         workspace_source_task: dict[str, str] | None = None
@@ -264,7 +379,7 @@ class WeworkExecutionProfile:
                         "Inherited workflow workspace is unavailable on the "
                         "selected execution device"
                     )
-            elif workspace_policy == "composer" and self.local_project_id <= 0:
+            elif workspace_policy == "composer" and not has_bound_workspace:
                 raise WeworkExecutionProfileError(
                     "Workflow stage requires a configured robot code project"
                 )
@@ -279,9 +394,6 @@ class WeworkExecutionProfile:
         )
         title = str(getattr(task, "title", "") or "")
         team_id = int(getattr(team, "id", 0) or 0)
-        team_name = str(getattr(team, "name", "") or "")
-        team_namespace = str(getattr(team, "namespace", "default") or "default")
-        subtask_id = f"{runtime_task_id}-assistant"
         bot_id: int | str = self.agent_id or 0
         origin = {
             "type": "project_automation" if self.manager_mode else "board_task",
@@ -289,6 +401,7 @@ class WeworkExecutionProfile:
             "loopItemId": str(getattr(task, "id", "")),
             **origin_context,
         }
+        origin["workspacePolicy"] = workspace_policy or self.workspace_policy
         if self.manager_mode:
             origin["automationRole"] = "manager"
         bot = [
@@ -298,56 +411,6 @@ class WeworkExecutionProfile:
                 "shell_type": "Codex",
             }
         ]
-        execution_request = {
-            "task_id": runtime_task_id,
-            "subtask_id": subtask_id,
-            "team_id": team_id,
-            "team_name": team_name,
-            "team_namespace": team_namespace,
-            "task_title": title,
-            "subtask_title": f"{title} - Assistant",
-            "user_id": owner.id,
-            "user_name": owner.user_name,
-            "user": {
-                "id": owner.id,
-                "name": owner.user_name,
-                "user_name": owner.user_name,
-                "email": owner.email,
-            },
-            "bot": bot,
-            "bot_name": self.display_name,
-            "bot_namespace": "wework",
-            "prompt": prompt,
-            "model_config": model_config,
-            "standalone_chat_workspace": not has_stage_workspace
-            and self.local_project_id <= 0,
-            "enable_tools": True,
-            "enable_web_search": False,
-            "enable_deep_thinking": False,
-            "skill_names": [],
-            "preload_skills": [],
-            "user_selected_skills": [],
-            "mcp_servers": [],
-            "new_session": True,
-            "ephemeral": False,
-            "is_group_chat": False,
-            "collaboration_model": "single",
-            "mode": "code",
-            "task_mode": "code",
-            "attachments": [],
-            "runtime_permission_profile": ":danger-full-access",
-            # The executor uses this explicit domain origin to decide which
-            # runtime capabilities belong to the request. Only automation
-            # managers receive assignment tools; project robots receive board
-            # context without manager authority.
-            "origin": origin,
-        }
-        if (
-            self.local_project_id > 0 or workspace_source_task
-        ) and self.max_concurrent_executions > 1:
-            execution_request["workspace_source"] = "git_worktree"
-        if workspace_source_task:
-            execution_request["workspace_source_task"] = workspace_source_task
         additional_context: dict[str, dict[str, str]] = {}
         if isinstance(workflow_stage_input, dict):
             additional_context["workflowStageInput"] = {
@@ -366,33 +429,60 @@ class WeworkExecutionProfile:
                 ),
             }
 
-        payload = {
-            "taskId": runtime_task_id,
-            "teamId": team_id,
-            "runtime": "codex",
-            "message": prompt,
-            "title": title,
-            **({"modelId": runtime_model_id} if runtime_model_id else {}),
-            "bot": bot,
-            "cloudProjectId": str(project.id),
-            **(
-                {"local_project_id": self.local_project_id}
-                if self.local_project_id > 0
-                else {}
+        request = RuntimeTaskCreateRequest(
+            schemaVersion=2,
+            taskId=runtime_task_id,
+            teamId=team_id,
+            runtime="codex",
+            message=prompt,
+            title=title,
+            modelId=runtime_model_id or None,
+            modelConfig=model_config or None,
+            bot=bot,
+            cloudProjectId=str(project.id),
+            projectId=(
+                workspace_binding.project_id
+                if workspace_binding.type == "backend_project"
+                else None
             ),
-            "origin": origin,
-            "standaloneChatWorkspace": not has_stage_workspace
-            and self.local_project_id <= 0,
-            "additionalContext": additional_context,
-        }
-        if workspace_source_task:
-            payload["workspaceSourceTask"] = workspace_source_task
-        if (
-            self.local_project_id > 0 or workspace_source_task
-        ) and self.max_concurrent_executions > 1:
-            payload["execution"] = {"workspace": {"source": "git_worktree"}}
+            deviceWorkspaceId=workspace_binding.device_workspace_id,
+            deviceId=execution_device_id or None,
+            runtimeProjectKey=(
+                workspace_binding.runtime_project_key
+                if workspace_binding.type == "device_project"
+                else None
+            ),
+            origin=origin,
+            standaloneChatWorkspace=(
+                not has_stage_workspace and workspace_binding.type == "standalone"
+            ),
+            workspaceSourceTask=workspace_source_task,
+            additionalContext=additional_context,
+            projectPlugins=list(self.plugins),
+            execution=(
+                {"workspace": {"source": "git_worktree"}}
+                if (has_bound_workspace or workspace_source_task)
+                and self.workspace_policy == "git_worktree"
+                else None
+            ),
+        )
         if materialize_execution_request:
-            payload["executionRequest"] = execution_request
+            from app.services.runtime_work_service import (
+                compile_runtime_task_create,
+            )
+
+            return compile_runtime_task_create(
+                db=db,
+                user_id=owner.id,
+                request=request,
+            ).payload
+
+        payload = request.model_dump(by_alias=True, exclude_none=True)
+        if workspace_binding.project_id is not None:
+            # V1 Wework local dispatchers read this exact Backend Project ID.
+            # The V2 request itself uses projectId and never forwards this
+            # compatibility alias to Executor.
+            payload["local_project_id"] = workspace_binding.project_id
         return payload
 
 

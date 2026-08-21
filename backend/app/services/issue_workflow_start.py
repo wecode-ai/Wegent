@@ -93,6 +93,8 @@ class IssueWorkflowStartService:
         for node in workflow.nodes:
             if node.status != "ready" or not node.automation_rule_id:
                 continue
+            if workflow.node_needs_execution_config(node):
+                continue
             await project_automation_service.run_for_workflow_node(
                 db,
                 str(item.cloud_project_id),

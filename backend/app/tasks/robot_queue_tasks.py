@@ -93,6 +93,10 @@ class ExecutorSessionStartError(RobotQueueInfraError):
     """The device accepted the RPC but no codex session started in time."""
 
 
+class ExecutorCreateRejectedError(RuntimeError):
+    """Executor deterministically rejected runtime.tasks.create."""
+
+
 def _infra_reason(exc: BaseException) -> str:
     """Stable machine-readable reason for a transient dispatch failure."""
 
@@ -163,6 +167,22 @@ def _fail_dispatch(
             execution_id=execution.id,
             error=str(exc)[:2000],
             note="runtime_configuration_unavailable",
+            requeue=False,
+        )
+        ROBOT_QUEUE_FAILED_TOTAL.inc()
+        return
+    if isinstance(exc, ExecutorCreateRejectedError):
+        logger.error(
+            "[RobotQueue] Runtime create rejected execution=%s device=%s error=%s",
+            execution.id,
+            execution.execution_device_id,
+            str(exc)[:300],
+        )
+        loop_item_execution_service.fail(
+            db,
+            execution_id=execution.id,
+            error=str(exc)[:2000],
+            note="runtime_create_rejected",
             requeue=False,
         )
         ROBOT_QUEUE_FAILED_TOTAL.inc()
@@ -790,6 +810,8 @@ async def _dispatch_execution(
         device_id=execution.execution_device_id,
         method="runtime.tasks.create",
         payload=payload,
+        wait_ack=True,
+        ack_timeout_seconds=DISPATCH_START_TIMEOUT_SECONDS,
     )
     if not ack.get("emitted"):
         wait_task.cancel()
@@ -798,6 +820,25 @@ async def _dispatch_execution(
                 "Runtime RPC delivery outcome is unknown after Start was fenced"
             )
         raise DeviceEmitRejectedError("Device did not accept the runtime RPC")
+    if "accepted" in ack and not ack.get("accepted"):
+        wait_task.cancel()
+        if ack.get("outcome_unknown"):
+            raise ExecutorSessionStartError(
+                "Runtime create acknowledgement outcome is unknown"
+            )
+        response = ack.get("response")
+        error = (
+            response.get("error") if isinstance(response, dict) else ack.get("error")
+        )
+        error_code = (
+            response.get("errorCode") or response.get("error_code")
+            if isinstance(response, dict)
+            else None
+        )
+        detail = str(error or "Executor rejected runtime task creation")
+        if error_code:
+            detail = f"{error_code}: {detail}"
+        raise ExecutorCreateRejectedError(detail)
     event_name = await wait_task
     if not event_name:
         raise ExecutorSessionStartError(

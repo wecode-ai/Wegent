@@ -59,9 +59,11 @@ from app.schemas.runtime_work import (
     RuntimeProjectWork,
     RuntimeSendRequest,
     RuntimeSendResponse,
+    RuntimeSupervisorCreateInput,
     RuntimeTaskAddress,
     RuntimeTaskArchiveResponse,
     RuntimeTaskCancelResponse,
+    RuntimeTaskCreatePayload,
     RuntimeTaskCreateRequest,
     RuntimeTaskCreateResponse,
     RuntimeTaskForkRequest,
@@ -149,6 +151,14 @@ class RuntimeTaskTarget:
     workspace_path: str
     project: Optional[Project] = None
     workspace_source: str = "local_path"
+
+
+@dataclass(frozen=True)
+class CompiledRuntimeTaskCreate:
+    """Resolved Executor target and wire payload for one create request."""
+
+    target: RuntimeTaskTarget
+    payload: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -636,7 +646,7 @@ async def send_runtime_message(
         payload["source"] = request.source.model_dump()
     if request.request_user_input_response is not None:
         payload["requestUserInputResponse"] = request.request_user_input_response
-    if request.additional_context:
+    if request.additional_context is not None:
         payload["additionalContext"] = request.additional_context
     return await _dispatch_runtime_send(
         db=db,
@@ -669,7 +679,7 @@ async def interrupt_and_send_runtime_message(
         payload["attachments"] = attachments
     if request.source:
         payload["source"] = request.source.model_dump()
-    if request.additional_context:
+    if request.additional_context is not None:
         payload["additionalContext"] = request.additional_context
     return await _dispatch_runtime_send(
         db=db,
@@ -1304,33 +1314,17 @@ async def create_runtime_task(
 ) -> RuntimeTaskCreateResponse:
     """Create a LocalTask on the selected device executor without DB Task rows."""
 
-    target = _resolve_runtime_task_target(db, user_id, request)
-    _ensure_owned_device(db, user_id, target.device_id)
-    execution_request = _build_runtime_execution_request(
+    compiled = compile_runtime_task_create(
         db=db,
         user_id=user_id,
         request=request,
-        target=target,
     )
-    payload = {
-        "runtime": request.runtime,
-        "workspacePath": target.workspace_path,
-        "message": request.message,
-        "title": _runtime_task_title(request),
-        "executionRequest": execution_request.to_dict(),
-    }
-    if request.model_selection:
-        payload["modelSelection"] = request.model_selection.model_dump(
-            by_alias=True,
-        )
-    if request.local_task_id:
-        payload["taskId"] = request.local_task_id
     try:
         result = await runtime_rpc_service.call(
             user_id=user_id,
-            device_id=target.device_id,
+            device_id=compiled.target.device_id,
             method="runtime.tasks.create",
-            payload=payload,
+            payload=compiled.payload,
             timeout_seconds=RUNTIME_CREATE_TIMEOUT_SECONDS,
         )
     except RuntimeRpcError as exc:
@@ -1341,10 +1335,138 @@ async def create_runtime_task(
     return _runtime_create_response(
         result,
         request.runtime,
-        target.device_id,
-        target.workspace_path,
-        target.workspace_source,
+        compiled.target.device_id,
+        compiled.target.workspace_path,
+        compiled.target.workspace_source,
     )
+
+
+def compile_runtime_task_create(
+    *,
+    db: Session,
+    user_id: int,
+    request: RuntimeTaskCreateRequest,
+) -> CompiledRuntimeTaskCreate:
+    """Compile the canonical create request without performing transport."""
+
+    target = _resolve_runtime_task_target(db, user_id, request)
+    _ensure_owned_device(db, user_id, target.device_id)
+    execution_request = _build_runtime_execution_request(
+        db=db,
+        user_id=user_id,
+        request=request,
+        target=target,
+    )
+    return CompiledRuntimeTaskCreate(
+        target=target,
+        payload=_runtime_task_create_payload(
+            db=db,
+            user_id=user_id,
+            request=request,
+            target=target,
+            execution_request=execution_request,
+        ),
+    )
+
+
+def _runtime_task_create_payload(
+    *,
+    db: Session,
+    user_id: int,
+    request: RuntimeTaskCreateRequest,
+    target: RuntimeTaskTarget,
+    execution_request: Any,
+) -> dict[str, Any]:
+    """Compile one validated create request into the Executor wire payload."""
+
+    payload: dict[str, Any] = {
+        "runtime": request.runtime,
+        "message": request.message,
+        "title": _runtime_task_title(request),
+        "executionRequest": _runtime_execution_request_payload(execution_request),
+    }
+    if target.workspace_path:
+        payload["workspacePath"] = target.workspace_path
+    if request.schema_version == 2:
+        payload["schemaVersion"] = 2
+    optional_values = {
+        "taskId": request.local_task_id,
+        "runtimeExecutablePath": request.runtime_executable_path,
+        "runtimePermissionMode": request.runtime_permission_mode,
+        "clientUserMessageId": request.client_user_message_id,
+        "standaloneChatWorkspace": request.standalone_chat_workspace,
+        "runtimeProjectKey": request.runtime_project_key,
+        "runtimeProjectName": request.runtime_project_name,
+        "projectInstructions": request.project_instructions,
+        "friendlyTitle": request.friendly_title,
+        "modelId": request.model_id,
+        "modelType": request.model_type,
+        "modelConfig": request.runtime_model_config,
+        "cloudProjectId": (
+            str(request.cloud_project_id)
+            if request.cloud_project_id is not None
+            else None
+        ),
+        "ephemeral": request.ephemeral,
+        "origin": request.origin,
+    }
+    for key, value in optional_values.items():
+        if value is not None:
+            payload[key] = value
+    if request.runtime_workspace_roots:
+        payload["runtimeWorkspaceRoots"] = request.runtime_workspace_roots
+    if request.project_plugins:
+        payload["projectPlugins"] = request.project_plugins
+    if request.bot:
+        payload["bot"] = request.bot
+    if request.attachments:
+        payload["attachments"] = request.attachments
+    if request.model_selection:
+        payload["modelSelection"] = request.model_selection.model_dump(
+            by_alias=True,
+        )
+    if request.model_options:
+        payload["modelOptions"] = request.model_options
+    if request.execution:
+        payload["execution"] = request.execution
+    if request.initial_goal:
+        payload["initialGoal"] = request.initial_goal.model_dump(
+            by_alias=True,
+            exclude_none=True,
+        )
+    if request.initial_supervisor:
+        payload["initialSupervisor"] = _materialize_initial_supervisor(
+            db=db,
+            user_id=user_id,
+            runtime=request.runtime,
+            supervisor=request.initial_supervisor,
+        )
+    if request.side_source:
+        payload["sideSource"] = request.side_source.model_dump(
+            by_alias=True,
+            exclude_none=True,
+        )
+    if request.workspace_source_task:
+        payload["workspaceSourceTask"] = request.workspace_source_task.model_dump(
+            by_alias=True,
+            exclude_none=True,
+        )
+    if request.additional_context is not None:
+        payload["additionalContext"] = request.additional_context
+    return RuntimeTaskCreatePayload.model_validate(payload).model_dump(
+        by_alias=True,
+        exclude_none=True,
+        exclude_defaults=True,
+    )
+
+
+def _runtime_execution_request_payload(execution_request: Any) -> dict[str, Any]:
+    payload = execution_request.to_dict()
+    if getattr(execution_request, "team_id", None) == 0 and not payload.get(
+        "system_prompt"
+    ):
+        payload.pop("system_prompt", None)
+    return payload
 
 
 async def _register_prepared_runtime_workspace(
@@ -3744,15 +3866,19 @@ def _resolve_runtime_task_target(
             CLIENT_ORIGIN_WEWORK,
         )
         if request.device_workspace_id is not None:
-            return _device_workspace_runtime_target(
+            target = _device_workspace_runtime_target(
                 db=db,
                 user_id=user_id,
                 project=project,
                 device_workspace_id=request.device_workspace_id,
             )
+            return _validate_requested_target_device(target, request)
         target = _project_runtime_target(project, strict=True)
         if target:
-            return _apply_requested_workspace_source(target, request)
+            return _validate_requested_target_device(
+                _apply_requested_workspace_source(target, request),
+                request,
+            )
 
     if request.device_id and request.workspace_path:
         return _apply_requested_workspace_source(
@@ -3765,10 +3891,40 @@ def _resolve_runtime_task_target(
             request,
         )
 
+    if request.device_id and (
+        request.standalone_chat_workspace
+        or request.workspace_source_task
+        or request.runtime_project_key
+    ):
+        requested_workspace = _request_execution_workspace(request)
+        return RuntimeTaskTarget(
+            device_id=request.device_id.strip(),
+            workspace_path="",
+            project=None,
+            workspace_source=(
+                "git_worktree"
+                if requested_workspace.get("source") == "git_worktree"
+                else "local_path"
+            ),
+        )
+
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
         detail="projectId + deviceWorkspaceId or deviceId + workspacePath is required",
     )
+
+
+def _validate_requested_target_device(
+    target: RuntimeTaskTarget,
+    request: RuntimeTaskCreateRequest,
+) -> RuntimeTaskTarget:
+    requested_device_id = (request.device_id or "").strip()
+    if requested_device_id and target.device_id != requested_device_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Workspace binding does not belong to the requested device",
+        )
+    return target
 
 
 def _runtime_task_title(request: RuntimeTaskCreateRequest) -> str:
@@ -3789,6 +3945,14 @@ def _build_runtime_execution_request(
     target: RuntimeTaskTarget,
 ):
     """Build an executor request from CRD config without persisting Task rows."""
+    if request.team_id == 0:
+        return _build_explicit_bot_runtime_execution_request(
+            db=db,
+            user_id=user_id,
+            request=request,
+            target=target,
+        )
+
     from app.services.execution import TaskRequestBuilder
 
     user = _get_user(db, user_id)
@@ -3829,6 +3993,7 @@ def _build_runtime_execution_request(
         web_runtime_guidance=True,
     )
     _apply_runtime_task_target(execution_request, target)
+    _apply_runtime_create_request(execution_request, request)
     _apply_runtime_model_options(db, execution_request, user, payload)
     _apply_runtime_attachments(db, execution_request, user_id, request.attachment_ids)
     from app.schemas.base_role import BaseRole
@@ -3842,6 +4007,111 @@ def _build_runtime_execution_request(
             db, request.cloud_project_id, user_id, BaseRole.Reporter
         )
     return execution_request
+
+
+def _build_explicit_bot_runtime_execution_request(
+    *,
+    db: Session,
+    user_id: int,
+    request: RuntimeTaskCreateRequest,
+    target: RuntimeTaskTarget,
+):
+    """Build the canonical explicit-bot form used by Wework automations."""
+
+    from shared.models.execution import ExecutionRequest
+
+    user = _get_user(db, user_id)
+    task_id = request.local_task_id or str(_runtime_execution_ids()[0])
+    title = _runtime_task_title(request)
+    model_config = dict(request.runtime_model_config or {})
+    execution_request = ExecutionRequest(
+        task_id=task_id,
+        subtask_id=f"{task_id}-assistant",
+        team_id=0,
+        team_name="Wework",
+        team_namespace="default",
+        task_title=title,
+        subtask_title=f"{title} - Assistant",
+        user={
+            "id": user.id,
+            "name": user.user_name,
+            "user_name": user.user_name,
+            "email": user.email,
+        },
+        user_id=user.id,
+        user_name=user.user_name,
+        bot=list(request.bot),
+        bot_name=str(request.bot[0].get("name") or ""),
+        bot_namespace=str(request.bot[0].get("namespace") or "wework"),
+        model_config=model_config,
+        system_prompt=(request.project_instructions or "").strip(),
+        prompt=_message_with_application_context(
+            request.message,
+            request.additional_context,
+        ),
+        enable_tools=True,
+        enable_web_search=False,
+        enable_deep_thinking=False,
+        new_session=True,
+        collaboration_model="single",
+        mode="code",
+        task_mode="code",
+        attachments=list(request.attachments),
+        runtime_permission_profile=":danger-full-access",
+    )
+    _apply_runtime_task_target(execution_request, target)
+    _apply_runtime_create_request(execution_request, request)
+    if request.model_options:
+        _apply_runtime_model_options(
+            db,
+            execution_request,
+            user,
+            _runtime_execution_payload(request),
+        )
+    return execution_request
+
+
+def _apply_runtime_create_request(
+    execution_request: Any,
+    request: RuntimeTaskCreateRequest,
+) -> None:
+    """Apply canonical composer fields that are independent of CRD resolution."""
+
+    if request.local_task_id:
+        execution_request.task_id = request.local_task_id
+        execution_request.subtask_id = f"{request.local_task_id}-assistant"
+    if request.bot:
+        execution_request.bot = request.bot
+        first_bot = request.bot[0] if request.bot else {}
+        execution_request.bot_name = str(first_bot.get("name") or "")
+        execution_request.bot_namespace = str(
+            first_bot.get("namespace") or first_bot.get("bot_namespace") or "wework"
+        )
+    if request.runtime_model_config is not None:
+        execution_request.model_config = dict(request.runtime_model_config)
+    if request.project_instructions is not None:
+        execution_request.system_prompt = request.project_instructions.strip()
+    if request.standalone_chat_workspace is not None:
+        execution_request.standalone_chat_workspace = request.standalone_chat_workspace
+    execution_request.runtime_project_key = request.runtime_project_key
+    execution_request.runtime_project_name = request.runtime_project_name
+    execution_request.runtime_workspace_roots = list(request.runtime_workspace_roots)
+    execution_request.project_plugin_ids = [
+        str(plugin["id"])
+        for plugin in request.project_plugins
+        if plugin.get("id") is not None
+    ]
+    execution_request.runtime_executable_path = request.runtime_executable_path
+    execution_request.claude_permission_mode = request.runtime_permission_mode
+    execution_request.client_user_message_id = request.client_user_message_id
+    execution_request.cloud_project_id = (
+        str(request.cloud_project_id) if request.cloud_project_id is not None else None
+    )
+    execution_request.origin = request.origin
+    if request.attachments:
+        execution_request.attachments = list(request.attachments)
+    if request.ephemeral is not None:
+        execution_request.ephemeral = request.ephemeral
 
 
 def _message_with_application_context(
@@ -3970,8 +4240,9 @@ def _runtime_workspace_spec(
 ) -> dict[str, Any]:
     workspace_spec: dict[str, Any] = {
         "source": target.workspace_source,
-        "path": target.workspace_path,
     }
+    if target.workspace_path:
+        workspace_spec["path"] = target.workspace_path
     requested_workspace = _request_execution_workspace(request)
     if requested_workspace:
         branch = requested_workspace.get("branch")
@@ -3995,38 +4266,57 @@ def _runtime_model_override(
     user_id: int,
     request: RuntimeTaskCreateRequest,
 ) -> tuple[Optional[dict[str, Any]], Optional[str], bool]:
-    if not request.model_id:
+    return _runtime_model_override_values(
+        db=db,
+        user_id=user_id,
+        runtime=request.runtime,
+        model_id=request.model_id,
+        model_type=request.model_type,
+        model_options=request.model_options,
+    )
+
+
+def _runtime_model_override_values(
+    *,
+    db: Session,
+    user_id: int,
+    runtime: str,
+    model_id: Optional[str],
+    model_type: Optional[str],
+    model_options: dict[str, Any],
+) -> tuple[Optional[dict[str, Any]], Optional[str], bool]:
+    """Resolve one model selection without coupling it to a request container."""
+
+    if not model_id:
         return None, None, False
-    if request.runtime == "codex" and request.model_type == RUNTIME_MODEL_TYPE:
+    if runtime == "codex" and model_type == RUNTIME_MODEL_TYPE:
         from app.services.chat.trigger.unified import (
             _build_codex_runtime_model_config,
         )
 
         config = _build_codex_runtime_model_config(
-            request.model_id,
-            dict(request.model_options),
+            model_id,
+            dict(model_options),
             db=db,
             user_id=user_id,
         )
         return config, None, False
-    if request.runtime == "codex" and request.model_type in CLOUD_MODEL_TYPES:
+    if runtime == "codex" and model_type in CLOUD_MODEL_TYPES:
         from app.services.chat.trigger.unified import (
             _build_cloud_gateway_model_config,
         )
 
-        namespace, resource_user_id = _runtime_cloud_model_identity(
-            request.model_options
-        )
+        namespace, resource_user_id = _runtime_cloud_model_identity(model_options)
         config = _build_cloud_gateway_model_config(
             db,
-            model_name=request.model_id,
+            model_name=model_id,
             creator=_get_user(db, user_id),
             upstream_api_format=_string_model_option(
-                request.model_options,
+                model_options,
                 CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION,
             )
             or "openai-responses",
-            model_type=request.model_type,
+            model_type=model_type,
             namespace=namespace,
             resource_user_id=resource_user_id,
         )
@@ -4035,9 +4325,41 @@ def _runtime_model_override(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Cloud model gateway is not configured",
             )
-        _apply_runtime_cloud_model_options(config, request.model_options)
+        _apply_runtime_cloud_model_options(config, model_options)
         return config, None, False
-    return None, request.model_id, True
+    return None, model_id, True
+
+
+def _materialize_initial_supervisor(
+    *,
+    db: Session,
+    user_id: int,
+    runtime: str,
+    supervisor: RuntimeSupervisorCreateInput,
+) -> dict[str, Any]:
+    """Resolve the supervisor model before Executor task creation."""
+
+    payload = supervisor.model_dump(by_alias=True, exclude_none=True)
+    selection = supervisor.model_selection
+    if supervisor.supervisor_model_config is not None:
+        return payload
+    if selection.model_type != RUNTIME_MODEL_TYPE:
+        return payload
+    model_config, _, _ = _runtime_model_override_values(
+        db=db,
+        user_id=user_id,
+        runtime=runtime,
+        model_id=selection.model_name,
+        model_type=selection.model_type,
+        model_options=selection.options,
+    )
+    if model_config is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Runtime supervisor model configuration is unavailable",
+        )
+    payload["modelConfig"] = model_config
+    return payload
 
 
 def _runtime_cloud_model_identity(
@@ -4130,18 +4452,19 @@ def _apply_runtime_task_target(
     execution_request.device_id = target.device_id
     execution_request.execution_target_type = "local"
     execution_request.workspace_source = target.workspace_source
-    execution_request.project_workspace_path = target.workspace_path
+    execution_request.project_workspace_path = target.workspace_path or None
     project_workspace = dict((execution_request.workspace or {}).get("project") or {})
     project_workspace.update(
         {
             "project_id": target.project.id if target.project else None,
             "workspace_source": target.workspace_source,
-            "project_workspace_path": target.workspace_path,
             "execution_target_type": "local",
             "device_id": target.device_id,
-            "local_path": target.workspace_path,
         }
     )
+    if target.workspace_path:
+        project_workspace["project_workspace_path"] = target.workspace_path
+        project_workspace["local_path"] = target.workspace_path
     workspace = dict(execution_request.workspace or {})
     workspace["project"] = project_workspace
     execution_request.workspace = workspace

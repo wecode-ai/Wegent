@@ -23,8 +23,10 @@ from sqlalchemy.orm import Session
 
 from app.models.delivery import (
     CloudProject,
+    CloudProjectLocalBinding,
     LoopItem,
     ProjectChatAgent,
+    RuntimeProfile,
     loop_datetime_is_unset,
     loop_datetime_value_is_unset,
 )
@@ -61,6 +63,7 @@ class TaskContext:
     assignee_user_id: int | None = None
     assignee_agent_id: str | None = None
     assignee_team_id: int | None = None
+    created_by_user_id: int | None = None
 
     def to_context(self) -> dict[str, Any]:
         return asdict(self)
@@ -71,6 +74,7 @@ class WeworkRuntimeConfigurationError(RuntimeError):
 
 
 STATUS_PENDING_APPROVAL = "pending_approval"
+STATUS_WAITING_RUNTIME = "waiting_runtime"
 STATUS_QUEUED = "queued"
 STATUS_CLAIMED = "claimed"
 STATUS_RUNNING = "running"
@@ -81,6 +85,7 @@ STATUS_CANCELLED = "cancelled"
 
 TERMINAL_STATUSES = {STATUS_COMPLETED, STATUS_FAILED, STATUS_CANCELLED}
 ACTIVE_STATUSES = {
+    STATUS_WAITING_RUNTIME,
     STATUS_PENDING_APPROVAL,
     STATUS_QUEUED,
     STATUS_CLAIMED,
@@ -172,6 +177,8 @@ def execution_display_state(execution: LoopItemExecution) -> str:
         return "unknown"
     if execution.status == STATUS_PENDING_APPROVAL:
         return "waiting_approval"
+    if execution.status == STATUS_WAITING_RUNTIME:
+        return "waiting_runtime"
     if execution.status == STATUS_QUEUED:
         return "queued"
     if execution.status == STATUS_CANCEL_REQUESTED:
@@ -415,24 +422,100 @@ class LoopItemExecutionService:
             if automation_context is not None
             else inferred_context
         )
-        mode = str(bot_config(agent).get("execution_mode") or "auto")
         config = bot_config(agent)
+        mode = str(config.get("execution_mode") or "auto")
         runtime = str(config.get("runtime") or "codex")
         team_id = int(config["wegent_team_id"]) if runtime == "wegent" else None
+        runtime_source = str(effective_context.get("runtime_source") or "agent_default")
+        runtime_profile_id = effective_context.get("runtime_profile_id")
+        if runtime_source == "agent_default":
+            runtime_profile_id = config.get("default_runtime_profile_id")
+        runtime_profile = (
+            db.get(RuntimeProfile, str(runtime_profile_id))
+            if runtime_profile_id
+            else None
+        )
+        if runtime_profile is not None and runtime_profile.status != "active":
+            runtime_profile = None
+        task = self.resolve_task_context(
+            db,
+            execution=LoopItemExecution(
+                loop_item_id=loop_item_id,
+                cloud_project_id=cloud_project_id,
+            ),
+            user_id=assigner_user_id,
+        )
+        runtime_subject_user_id = int(
+            effective_context.get("runtime_subject_user_id")
+            or (task.assignee_user_id if task else 0)
+            or (task.created_by_user_id if task else 0)
+            or assigner_user_id
+        )
+        profile_metadata = (
+            dict(runtime_profile.metadata_json or {}) if runtime_profile else {}
+        )
+        configured_model = str(
+            effective_context.get("model")
+            or profile_metadata.get("model")
+            or config.get("model")
+            or ""
+        )
+        owner_user_id = int(
+            runtime_profile.user_id if runtime_profile else runtime_subject_user_id
+        )
+        selected_environment = (
+            "wegent"
+            if runtime == "wegent"
+            else str(
+                profile_metadata.get("execution_environment")
+                or config.get("execution_environment")
+                or environment
+                or "local"
+            )
+        )
+        device_id = (
+            None
+            if runtime == "wegent"
+            else (
+                str(runtime_profile.device_id)
+                if runtime_profile is not None and runtime_profile.device_id
+                else str(config.get("execution_device_id") or execution_device_id or "")
+                or None
+            )
+        )
+        runtime_selection = {
+            "runtime_source": runtime_source,
+            "runtime_profile_id": runtime_profile.id if runtime_profile else None,
+            "runtime_profile_version": (
+                runtime_profile.version if runtime_profile else None
+            ),
+            "workspace_policy": (profile_metadata.get("workspace_policy") or "project"),
+        }
+        workspace_binding_required = "workspace_binding" in effective_context
+        waiting_runtime = runtime != "wegent" and (
+            not device_id
+            or not configured_model
+            or (
+                workspace_binding_required
+                and not isinstance(effective_context.get("workspace_binding"), dict)
+            )
+        )
         return self._enqueue(
             db,
             loop_item_id=loop_item_id,
             cloud_project_id=cloud_project_id,
             executor_type="project_robot",
-            owner_user_id=int(agent.created_by_user_id or 0),
+            owner_user_id=owner_user_id,
             agent_id=agent.id,
             team_id=team_id,
             assigner_user_id=assigner_user_id,
-            environment="wegent" if runtime == "wegent" else environment,
-            execution_device_id=None if runtime == "wegent" else execution_device_id,
+            environment=selected_environment,
+            execution_device_id=device_id,
             priority=priority,
             automation_context=effective_context,
             requires_approval=mode == "manual_approval",
+            runtime_selection=runtime_selection,
+            waiting_runtime=waiting_runtime,
         )
 
     def create_for_team_assignment(
@@ -476,6 +559,8 @@ class LoopItemExecutionService:
         priority: str | None,
         automation_context: dict[str, Any] | None = None,
         requires_approval: bool = False,
+        runtime_selection: dict[str, Any] | None = None,
+        waiting_runtime: bool = False,
     ) -> LoopItemExecution:
         """Queue a custom AI manager on the ordinary Wework transport."""
 
@@ -493,6 +578,61 @@ class LoopItemExecutionService:
             priority=priority,
             automation_context=automation_context,
             requires_approval=requires_approval,
+            runtime_selection={
+                "executor_kind": "automation_manager",
+                **(runtime_selection or {}),
+            },
+            waiting_runtime=waiting_runtime,
+        )
+
+    def enqueue_generic_robot(
+        self,
+        db: Session,
+        *,
+        loop_item_id: str,
+        cloud_project_id: str,
+        runtime_subject_user_id: int,
+        runtime_profile: RuntimeProfile | None,
+        assigner_user_id: int,
+        priority: str | None,
+        automation_context: dict[str, Any],
+    ) -> LoopItemExecution:
+        """Queue a workflow AI role whose Runtime is selected independently."""
+
+        metadata = dict(runtime_profile.metadata_json or {}) if runtime_profile else {}
+        environment = str(metadata.get("execution_environment") or "local")
+        device_id = str(runtime_profile.device_id or "") if runtime_profile else ""
+        waiting_runtime = runtime_profile is None or not (
+            device_id and metadata.get("model")
+        )
+        return self._enqueue(
+            db,
+            loop_item_id=loop_item_id,
+            cloud_project_id=cloud_project_id,
+            executor_type="generic_robot",
+            owner_user_id=(
+                int(runtime_profile.user_id or 0)
+                if runtime_profile
+                else runtime_subject_user_id
+            ),
+            agent_id="",
+            team_id=None,
+            assigner_user_id=assigner_user_id,
+            environment=environment,
+            execution_device_id=device_id or None,
+            priority=priority,
+            automation_context=automation_context,
+            requires_approval=False,
+            runtime_selection={
+                "executor_kind": "generic_robot",
+                "runtime_source": automation_context.get("runtime_source"),
+                "runtime_profile_id": runtime_profile.id if runtime_profile else None,
+                "runtime_profile_version": (
+                    runtime_profile.version if runtime_profile else None
+                ),
+                "workspace_policy": metadata.get("workspace_policy") or "project",
+            },
+            waiting_runtime=waiting_runtime,
         )
 
     def _enqueue(
@@ -511,6 +651,8 @@ class LoopItemExecutionService:
         priority: str | None,
         automation_context: dict[str, Any] | None,
         requires_approval: bool,
+        runtime_selection: dict[str, Any] | None = None,
+        waiting_runtime: bool = False,
     ) -> LoopItemExecution:
         """Persist queue identity; runtime configuration stays canonical."""
 
@@ -520,7 +662,7 @@ class LoopItemExecutionService:
         # A custom manager has no robot entity, so the rule target is
         # its only source of truth and must be validated here as well as when
         # the rule is saved.
-        if executor_type == "automation_manager":
+        if executor_type == "automation_manager" and not waiting_runtime:
             validate_wework_execution_target(
                 db,
                 user_id=owner_user_id,
@@ -565,12 +707,25 @@ class LoopItemExecutionService:
             execution_environment=environment,
             execution_device_id=execution_device_id or "",
             assigner_user_id=assigner_user_id,
-            status=STATUS_PENDING_APPROVAL if requires_approval else STATUS_QUEUED,
+            status=(
+                STATUS_WAITING_RUNTIME
+                if waiting_runtime
+                else STATUS_PENDING_APPROVAL if requires_approval else STATUS_QUEUED
+            ),
             priority_weight=priority_weight(priority),
             queued_at=now,
             max_retries=DEFAULT_MAX_RETRIES,
             approval_status="pending" if requires_approval else "",
-            execution_note="",
+            execution_note=(
+                "Select a device and model before this execution can start"
+                if waiting_runtime
+                else ""
+            ),
+            execution_payload=json.dumps(
+                runtime_selection or {},
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
             attempt_no=(previous.attempt_no + 1 if previous is not None else 1),
             previous_execution_id=(previous.id if previous is not None else 0),
             execution_scope=execution_scope,
@@ -581,7 +736,13 @@ class LoopItemExecutionService:
         db.flush()
         row.runtime_task_id = runtime_task_id_for(row.id)
         self._set_automation_run_status(
-            db, row, "pending" if requires_approval else "queued"
+            db,
+            row,
+            (
+                "waiting_device"
+                if waiting_runtime
+                else "pending" if requires_approval else "queued"
+            ),
         )
         db.flush()
         return row
@@ -612,12 +773,22 @@ class LoopItemExecutionService:
                 status.HTTP_409_CONFLICT, "Run is not waiting for robot approval"
             )
         now = utcnow()
-        row.status = STATUS_QUEUED
-        row.queued_at = now
+        needs_runtime = not row.team_id and (
+            not row.runtime_selection.get("runtime_profile_id")
+            or not row.execution_environment
+            or not row.execution_device_id
+        )
+        row.status = STATUS_WAITING_RUNTIME if needs_runtime else STATUS_QUEUED
+        if not needs_runtime:
+            row.queued_at = now
         row.approval_status = "approved"
         row.approved_by_user_id = user_id
         row.approved_at = now
-        row.execution_note = ""
+        row.execution_note = (
+            "Select a device and model before this execution can start"
+            if needs_runtime
+            else ""
+        )
         # Do not commit here: callers fold this change into one transaction
         # with their own versioned item update, so a stale-version conflict
         # rolls the approval back instead of half-applying it.
@@ -2837,6 +3008,7 @@ class LoopItemExecutionService:
             tags=item.tags,
             assignee_user_id=item.assignee_user_id or None,
             assignee_agent_id=item.assignee_agent_id or None,
+            created_by_user_id=item.created_by_user_id or None,
         )
 
     def build_runtime_payload(
@@ -2882,6 +3054,8 @@ class LoopItemExecutionService:
                 execution_device_id=execution.execution_device_id or "",
                 materialize_execution_request=materialize_request,
             )
+        except HTTPException as exc:
+            raise WeworkRuntimeConfigurationError(str(exc.detail)) from exc
         except WeworkExecutionProfileError as exc:
             raise WeworkRuntimeConfigurationError(str(exc)) from exc
         except Exception as exc:
@@ -2913,10 +3087,15 @@ class LoopItemExecutionService:
                 raise WeworkRuntimeConfigurationError(
                     f"Project robot '{execution.agent_id}' is unavailable"
                 )
-            owner_user_id = int(agent.created_by_user_id or 0)
+            runtime_profile = self._execution_runtime_profile(db, execution)
+            owner_user_id = int(
+                runtime_profile.user_id
+                if runtime_profile is not None
+                else agent.created_by_user_id or 0
+            )
             if owner_user_id != execution.executor_owner_user_id:
                 raise WeworkRuntimeConfigurationError(
-                    "Project robot owner no longer matches the queued execution"
+                    "Selected Runtime owner no longer matches the queued execution"
                 )
             if run is not None and rule is not None:
                 # Automation only decides who receives the task. Once a
@@ -2929,8 +3108,55 @@ class LoopItemExecutionService:
                     db, execution.loop_item_id
                 )
             return (
-                WeworkExecutionProfile.for_project_robot(agent),
+                WeworkExecutionProfile.for_project_robot(
+                    agent,
+                    db=db,
+                    runtime_profile=runtime_profile,
+                    cloud_project_id=execution.cloud_project_id,
+                    model_override=str(origin_context.get("model") or ""),
+                    workspace_binding_override=origin_context.get("workspace_binding"),
+                ),
                 origin_context,
+            )
+
+        if execution.executor_type == "generic_robot":
+            if run is None or rule is None:
+                raise WeworkRuntimeConfigurationError(
+                    "Generic workflow execution has no automation run"
+                )
+            runtime_profile = self._execution_runtime_profile(db, execution)
+            if runtime_profile is None:
+                raise WeworkRuntimeConfigurationError(
+                    "Generic workflow execution has no Runtime profile"
+                )
+            if int(runtime_profile.user_id or 0) != execution.executor_owner_user_id:
+                raise WeworkRuntimeConfigurationError(
+                    "Selected Runtime owner no longer matches the queued execution"
+                )
+            binding = (
+                db.query(CloudProjectLocalBinding)
+                .filter(
+                    CloudProjectLocalBinding.cloud_project_id
+                    == execution.cloud_project_id,
+                    CloudProjectLocalBinding.user_id
+                    == execution.executor_owner_user_id,
+                    CloudProjectLocalBinding.device_id == execution.execution_device_id,
+                    CloudProjectLocalBinding.status == "active",
+                    loop_datetime_is_unset(CloudProjectLocalBinding.deleted_at),
+                )
+                .order_by(CloudProjectLocalBinding.updated_at.desc())
+                .first()
+            )
+            return (
+                WeworkExecutionProfile.for_generic_robot(
+                    runtime_profile=runtime_profile,
+                    display_name=rule.title or "AI",
+                    execution_prompt=rule.description or "",
+                    local_project_id=(
+                        int(binding.local_project_id or 0) if binding else 0
+                    ),
+                ),
+                self._automation_runtime_context(run, rule),
             )
 
         if execution.executor_type != "automation_manager":
@@ -2941,7 +3167,12 @@ class LoopItemExecutionService:
             raise WeworkRuntimeConfigurationError(
                 "AI manager automation run or rule is unavailable"
             )
-        owner_user_id = int(getattr(rule, "created_by_user_id", 0) or 0)
+        runtime_profile = self._execution_runtime_profile(db, execution)
+        owner_user_id = int(
+            runtime_profile.user_id
+            if runtime_profile is not None
+            else getattr(rule, "created_by_user_id", 0) or 0
+        )
         if owner_user_id != execution.executor_owner_user_id:
             raise WeworkRuntimeConfigurationError(
                 "AI manager owner no longer matches the queued execution"
@@ -2955,7 +3186,10 @@ class LoopItemExecutionService:
             raise WeworkRuntimeConfigurationError(
                 "Automation is no longer configured for a custom AI manager"
             )
-        model = rule_metadata.get("model")
+        profile_metadata = (
+            dict(runtime_profile.metadata_json or {}) if runtime_profile else {}
+        )
+        model = profile_metadata.get("model")
         if not isinstance(model, str) or not model:
             raise WeworkRuntimeConfigurationError(
                 "Custom AI manager model is unavailable"
@@ -2989,9 +3223,28 @@ class LoopItemExecutionService:
         )
 
     @staticmethod
+    def _execution_runtime_profile(
+        db: Session, execution: LoopItemExecution
+    ) -> RuntimeProfile | None:
+        profile_id = execution.runtime_selection.get("runtime_profile_id")
+        if not isinstance(profile_id, str) or not profile_id:
+            return None
+        profile = db.get(RuntimeProfile, profile_id)
+        if profile is None or profile.status != "active":
+            raise WeworkRuntimeConfigurationError(
+                "Selected Runtime profile is unavailable"
+            )
+        return profile
+
+    @staticmethod
     def _automation_runtime_context(run: Any, rule: Any) -> dict[str, Any]:
         run_metadata = getattr(run, "metadata_json", None)
         run_metadata = run_metadata if isinstance(run_metadata, dict) else {}
+        workflow_config = run_metadata.get("workflow_execution_config")
+        workflow_config = workflow_config if isinstance(workflow_config, dict) else {}
+        workspace_binding = workflow_config.get("workspaceBinding")
+        if not isinstance(workspace_binding, dict):
+            workspace_binding = workflow_config.get("workspace_binding")
         return {
             "rule_id": str(getattr(rule, "id", "") or ""),
             "run_id": str(getattr(run, "id", "") or ""),
@@ -2999,6 +3252,8 @@ class LoopItemExecutionService:
             "scheduled_for": run_metadata.get("scheduled_for"),
             "event": run_metadata.get("event") or {},
             "workflow_stage_input": run_metadata.get("workflow_stage_input"),
+            "model": workflow_config.get("model"),
+            "workspace_binding": workspace_binding,
         }
 
     @staticmethod
@@ -3062,6 +3317,7 @@ class LoopItemExecutionService:
         db: Session,
         *,
         project_id: str,
+        viewer_user_id: int,
         agent_id: Optional[str] = None,
         assigner_user_id: Optional[int] = None,
         status_filter: Optional[str] = None,
@@ -3147,6 +3403,19 @@ class LoopItemExecutionService:
                 "runtime_device_id": _optional_text(execution.runtime_device_id),
                 "runtime_task_id": _optional_text(execution.runtime_task_id),
                 "agent_max_concurrent_executions": limits.get(execution.agent_id, 1),
+                "runtime_profile_id": execution.runtime_selection.get(
+                    "runtime_profile_id"
+                ),
+                "runtime_source": execution.runtime_selection.get("runtime_source"),
+                "can_select_runtime": (
+                    execution.executor_owner_user_id == viewer_user_id
+                    and execution.status in {"waiting_runtime", "queued"}
+                ),
+                "waiting_runtime_reason": (
+                    execution.execution_note
+                    if execution.status == "waiting_runtime"
+                    else None
+                ),
                 "version": execution.version,
                 "created_at": execution.created_at,
                 "updated_at": execution.updated_at,

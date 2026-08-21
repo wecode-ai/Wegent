@@ -19,6 +19,19 @@ def workflow(*, advancement_policy: str = "manual") -> dict:
         "ai_automation_rule_id": (
             "ai-manager-rule" if advancement_policy == "ai" else None
         ),
+        "execution_config": (
+            {
+                "agent_id": "agent-1",
+                "runtime_profile_id": "runtime-1",
+                "model": "model-1",
+                "workspace_binding": {
+                    "type": "backend_project",
+                    "projectId": 9,
+                },
+            }
+            if advancement_policy == "manual"
+            else None
+        ),
         "nodes": (
             [
                 {
@@ -126,3 +139,28 @@ async def test_start_dispatches_ai_coordinator_once(
         == 0
     )
     process.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_start_keeps_ready_stage_waiting_when_execution_config_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = AsyncMock(return_value={"id": "run-1"})
+    monkeypatch.setattr(project_automation_service, "run_for_workflow_node", run)
+    snapshot = workflow()
+    snapshot["execution_config"] = None
+    item = SimpleNamespace(
+        id="ISSUE-3",
+        cloud_project_id="11",
+        metadata_json={"workflow": snapshot},
+    )
+
+    started = await issue_workflow_start_service.start(
+        SimpleNamespace(),
+        item=item,
+        project=SimpleNamespace(id=11, task_provider="local"),
+        user_id=7,
+    )
+
+    assert started == 0
+    run.assert_not_awaited()

@@ -1967,6 +1967,7 @@ export function WorkbenchProvider({
   const stableGetRemoteDeviceStartupCommand = useStableEvent(getRemoteDeviceStartupCommand)
   const stableUpgradeDevice = useStableEvent(upgradeDevice)
   const stableCreateProject = useStableEvent(projectActions.createProject)
+  const stableCreateLocalRuntimeProject = useStableEvent(projectActions.createLocalRuntimeProject)
   const stableCreateGitWorkspaceProject = useStableEvent(projectActions.createGitWorkspaceProject)
   const stablePrepareDeviceWorkspace = useStableEvent(projectActions.prepareDeviceWorkspace)
   const stableDeleteDeviceWorkspace = useStableEvent(projectActions.deleteDeviceWorkspace)
@@ -2600,6 +2601,7 @@ export function WorkbenchProvider({
     getRemoteDeviceStartupCommand,
     upgradeDevice,
     createProject: projectActions.createProject,
+    createLocalRuntimeProject: projectActions.createLocalRuntimeProject,
     createGitWorkspaceProject: projectActions.createGitWorkspaceProject,
     prepareDeviceWorkspace: projectActions.prepareDeviceWorkspace,
     deleteDeviceWorkspace: projectActions.deleteDeviceWorkspace,
@@ -2690,6 +2692,7 @@ export function WorkbenchProvider({
       getRemoteDeviceStartupCommand: stableGetRemoteDeviceStartupCommand,
       upgradeDevice: stableUpgradeDevice,
       createProject: stableCreateProject,
+      createLocalRuntimeProject: stableCreateLocalRuntimeProject,
       createGitWorkspaceProject: stableCreateGitWorkspaceProject,
       prepareDeviceWorkspace: stablePrepareDeviceWorkspace,
       deleteDeviceWorkspace: stableDeleteDeviceWorkspace,
@@ -2756,6 +2759,7 @@ export function WorkbenchProvider({
       stableCreateEnvironmentBranch,
       stableEditLastUserMessage,
       stableCreateGitWorkspaceProject,
+      stableCreateLocalRuntimeProject,
       stableCreateProject,
       stableCreateEphemeralRuntimeTask,
       stableCreateTemporaryRuntimeTask,

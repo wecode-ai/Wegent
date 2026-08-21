@@ -26,6 +26,8 @@ import {
 } from '@xyflow/react'
 import {
   Bot,
+  Check,
+  ChevronDown,
   GitBranch,
   Plus,
   Settings2,
@@ -43,6 +45,7 @@ import type {
 } from '@/api/deliveries'
 import type { ProjectAutomationRule } from '@/api/projectAutomations'
 import type { ProjectChatAgent } from '@/api/projectChatAgents'
+import { PopupMenu } from '@/components/common/MenuSelect'
 import { Tooltip } from '@/components/ui/tooltip'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
@@ -60,8 +63,14 @@ interface ProjectWorkflowEditorProps {
   onSave: (value: ProjectWorkflowDefinition) => void | Promise<void>
   automationRules?: ProjectAutomationRule[]
   projectAgents?: ProjectChatAgent[]
-  onEnsureStageRobotRule?: (agentId: string) => Promise<string | null>
-  onRequestCreateRobot?: () => void
+  onEnsureStageRobotRule?: (config: {
+    roleSource: 'generic' | 'agent'
+    agentId: string | null
+    runtimeSource: 'issue_creator' | 'agent_default' | 'fixed_profile' | 'runtime_user'
+    runtimeProfileId: string | null
+    runtimeUserId: number | null
+  }) => Promise<string | null>
+  onRequestCreateRobot?: () => Promise<ProjectChatAgent | null>
   onRequestConfigureAiCoordinator?: () => void
 }
 
@@ -398,8 +407,10 @@ export function ProjectWorkflowEditor({
   const { t } = useTranslation('common')
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(value.nodes[0]?.id ?? null)
   const [selectedEdge, setSelectedEdge] = useState<{ source: string; target: string } | null>(null)
+  const [graphActive, setGraphActive] = useState(false)
   const [stageRobotBusyId, setStageRobotBusyId] = useState<string | null>(null)
   const [deliverableDialog, setDeliverableDialog] = useState<DeliverableDialogState | null>(null)
+  const graphContainerRef = useRef<HTMLDivElement>(null)
   const [robotModeNodeIds, setRobotModeNodeIds] = useState<Set<string>>(
     () => new Set(value.nodes.filter(node => node.automation_rule_id).map(node => node.id))
   )
@@ -629,7 +640,7 @@ export function ProjectWorkflowEditor({
             ? t('todo.workflow_stage_robot_named', '机器人：{{name}}', {
                 name: automationRule.agentName || automationRule.name,
               })
-            : t('todo.workflow_stage_human_execution', '人工执行'),
+            : t('todo.workflow_stage_human_execution', '手动执行'),
           dependencyCount: node.depends_on.length,
           onInsertBefore: () => insertNode(node.id, 'before'),
           onInsertAfter: () => insertNode(node.id, 'after'),
@@ -646,6 +657,16 @@ export function ProjectWorkflowEditor({
   }, [insertNode, selectedEdge, selectedNodeId, stageRules, t, value.nodes])
 
   const flowInstanceRef = useRef<ReactFlowInstance<StageFlowNode, WorkflowFlowEdge> | null>(null)
+  useEffect(() => {
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target
+      setGraphActive(
+        target instanceof globalThis.Node && Boolean(graphContainerRef.current?.contains(target))
+      )
+    }
+    document.addEventListener('pointerdown', handlePointerDown, true)
+    return () => document.removeEventListener('pointerdown', handlePointerDown, true)
+  }, [])
   useEffect(() => {
     const instance = flowInstanceRef.current
     if (!instance) return
@@ -676,43 +697,55 @@ export function ProjectWorkflowEditor({
     [updateNode, value.nodes]
   )
 
-  const selectStageExecutor = async (node: WorkflowNodeDefinition, agentId: string) => {
-    if (!agentId) {
-      updateNode(node.id, {
-        automation_rule_id: null,
-        workspace_policy: node.workspace_policy === 'none' ? 'composer' : node.workspace_policy,
-      })
-      return
-    }
-    if (!onEnsureStageRobotRule) return
-    const revertToHumanExecution = () => {
-      setRobotModeNodeIds(current => {
-        const next = new Set(current)
-        next.delete(node.id)
-        return next
-      })
-      updateNode(node.id, {
-        automation_rule_id: null,
-        workspace_policy: node.workspace_policy === 'none' ? 'composer' : node.workspace_policy,
-      })
-    }
-    setStageRobotBusyId(node.id)
-    try {
-      const ruleId = await onEnsureStageRobotRule(agentId)
-      if (!ruleId) {
-        revertToHumanExecution()
+  const selectStageExecutor = useCallback(
+    async (
+      node: WorkflowNodeDefinition,
+      config: {
+        roleSource: 'generic' | 'agent'
+        agentId: string | null
+        runtimeSource: 'issue_creator' | 'agent_default' | 'fixed_profile' | 'runtime_user'
+        runtimeProfileId: string | null
+        runtimeUserId: number | null
+      } | null
+    ) => {
+      if (!config) {
+        updateNode(node.id, {
+          automation_rule_id: null,
+          workspace_policy: node.workspace_policy === 'none' ? 'composer' : node.workspace_policy,
+        })
         return
       }
-      updateNode(node.id, {
-        automation_rule_id: ruleId,
-        workspace_policy: node.workspace_policy === 'none' ? 'composer' : node.workspace_policy,
-      })
-    } catch {
-      revertToHumanExecution()
-    } finally {
-      setStageRobotBusyId(null)
-    }
-  }
+      if (!onEnsureStageRobotRule) return
+      const revertToHumanExecution = () => {
+        setRobotModeNodeIds(current => {
+          const next = new Set(current)
+          next.delete(node.id)
+          return next
+        })
+        updateNode(node.id, {
+          automation_rule_id: null,
+          workspace_policy: node.workspace_policy === 'none' ? 'composer' : node.workspace_policy,
+        })
+      }
+      setStageRobotBusyId(node.id)
+      try {
+        const ruleId = await onEnsureStageRobotRule(config)
+        if (!ruleId) {
+          revertToHumanExecution()
+          return
+        }
+        updateNode(node.id, {
+          automation_rule_id: ruleId,
+          workspace_policy: node.workspace_policy === 'none' ? 'composer' : node.workspace_policy,
+        })
+      } catch {
+        revertToHumanExecution()
+      } finally {
+        setStageRobotBusyId(null)
+      }
+    },
+    [onEnsureStageRobotRule, updateNode]
+  )
   const selectStageExecutionMode = (node: WorkflowNodeDefinition, mode: 'human' | 'robot') => {
     setRobotModeNodeIds(current => {
       const next = new Set(current)
@@ -720,7 +753,7 @@ export function ProjectWorkflowEditor({
       else next.delete(node.id)
       return next
     })
-    if (mode === 'human') void selectStageExecutor(node, '')
+    if (mode === 'human') void selectStageExecutor(node, null)
   }
 
   return (
@@ -894,8 +927,19 @@ export function ProjectWorkflowEditor({
           ) : (
             <div className="grid min-h-[420px] overflow-hidden rounded-xl border border-border bg-muted/20 lg:grid-cols-[minmax(0,1fr)_300px]">
               <div
-                className="h-[420px]"
+                ref={graphContainerRef}
+                className="h-[420px] lg:h-auto"
                 data-testid="project-workflow-dag"
+                data-active={graphActive ? 'true' : 'false'}
+                onFocusCapture={() => setGraphActive(true)}
+                onBlurCapture={event => {
+                  if (
+                    !(event.relatedTarget instanceof globalThis.Node) ||
+                    !event.currentTarget.contains(event.relatedTarget)
+                  ) {
+                    setGraphActive(false)
+                  }
+                }}
                 onKeyDown={handleGraphKeyDown}
               >
                 <ReactFlow
@@ -919,6 +963,11 @@ export function ProjectWorkflowEditor({
                   onConnect={handleConnect}
                   minZoom={0.35}
                   maxZoom={1.5}
+                  zoomOnScroll={graphActive}
+                  zoomOnPinch={graphActive}
+                  zoomOnDoubleClick={graphActive}
+                  panOnDrag={graphActive}
+                  preventScrolling={graphActive}
                   nodesDraggable={false}
                   deleteKeyCode={null}
                   proOptions={{ hideAttribution: true }}
@@ -1083,9 +1132,9 @@ export function ProjectWorkflowEditor({
                             [
                               'human',
                               UserRound,
-                              t('todo.workflow_stage_human_execution', '人工执行'),
+                              t('todo.workflow_stage_human_execution', '手动执行'),
                             ],
-                            ['robot', Bot, t('todo.workflow_stage_robot_execution', '机器人执行')],
+                            ['robot', Bot, t('todo.workflow_stage_robot_execution', '自动执行')],
                           ] as const
                         ).map(([mode, Icon, label]) => (
                           <label
@@ -1114,42 +1163,104 @@ export function ProjectWorkflowEditor({
                     </fieldset>
                     {selectedStageRobotMode ? (
                       <div className="mt-3">
-                        <label className="block text-xs font-medium text-text-secondary">
+                        <span className="block text-xs font-medium text-text-secondary">
                           {t('todo.workflow_stage_robot_label', '执行机器人')}
-                          <div className="mt-1.5 flex gap-2">
-                            <select
-                              value={selectedStageRule?.agentId ?? ''}
-                              data-testid={`project-workflow-stage-automation-${selectedNode.id}`}
-                              disabled={stageRobotBusyId === selectedNode.id}
-                              onChange={event =>
-                                void selectStageExecutor(selectedNode, event.target.value)
-                              }
-                              className="h-9 min-w-0 flex-1 rounded-lg border border-border bg-background px-2 text-sm"
-                            >
-                              <option value="">
-                                {projectAgents.length
-                                  ? t('todo.workflow_stage_select_robot', '选择机器人')
-                                  : t('todo.workflow_stage_no_robots', '暂无可用机器人')}
-                              </option>
-                              {projectAgents.map(agent => (
-                                <option key={agent.id} value={agent.id}>
-                                  {agent.name}
-                                </option>
-                              ))}
-                            </select>
-                            {onRequestCreateRobot ? (
-                              <button
-                                type="button"
-                                data-testid="project-workflow-stage-add-robot"
-                                onClick={onRequestCreateRobot}
-                                aria-label={t('todo.workflow_stage_add_robot', '添加机器人')}
-                                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border text-text-secondary hover:bg-muted"
-                              >
-                                <Plus className="h-4 w-4" />
-                              </button>
-                            ) : null}
-                          </div>
-                        </label>
+                        </span>
+                        <div className="mt-1.5">
+                          <PopupMenu
+                            testId={`project-workflow-stage-automation-${selectedNode.id}`}
+                            disabled={stageRobotBusyId === selectedNode.id}
+                            menuWidth={280}
+                            fullWidth
+                            trigger={
+                              <span className="flex h-10 w-full items-center gap-2 rounded-lg border border-dashed border-border px-3 text-sm text-text-secondary transition hover:border-text-tertiary hover:bg-muted">
+                                <Bot className="h-4 w-4 shrink-0" />
+                                <span className="min-w-0 flex-1 truncate text-left">
+                                  {selectedStageRule?.roleSource === 'generic'
+                                    ? t('todo.workflow_stage_generic_ai', '通用 AI')
+                                    : (projectAgents.find(
+                                        agent => agent.id === selectedStageRule?.agentId
+                                      )?.name ?? t('todo.workflow_stage_add_robot', '添加机器人'))}
+                                </span>
+                                <ChevronDown className="h-4 w-4 shrink-0 text-text-muted" />
+                              </span>
+                            }
+                          >
+                            {close => (
+                              <>
+                                <div className="max-h-60 overflow-y-auto">
+                                  {[
+                                    {
+                                      id: '__generic__',
+                                      name: t('todo.workflow_stage_generic_ai', '通用 AI'),
+                                    },
+                                    ...projectAgents,
+                                  ].map(agent => {
+                                    const selected =
+                                      selectedStageRule?.roleSource === 'generic'
+                                        ? agent.id === '__generic__'
+                                        : agent.id === selectedStageRule?.agentId
+                                    return (
+                                      <button
+                                        key={agent.id}
+                                        type="button"
+                                        role="menuitem"
+                                        data-testid={`project-workflow-stage-automation-${selectedNode.id}-option-${agent.id}`}
+                                        onClick={() => {
+                                          const roleSource =
+                                            agent.id === '__generic__' ? 'generic' : 'agent'
+                                          void selectStageExecutor(selectedNode, {
+                                            roleSource,
+                                            agentId: roleSource === 'agent' ? agent.id : null,
+                                            runtimeSource:
+                                              roleSource === 'agent'
+                                                ? 'agent_default'
+                                                : 'issue_creator',
+                                            runtimeProfileId: null,
+                                            runtimeUserId: null,
+                                          })
+                                          close()
+                                        }}
+                                        className="flex h-10 w-full items-center gap-2 rounded-xl px-3 text-left text-sm hover:bg-surface"
+                                      >
+                                        <Bot className="h-4 w-4 shrink-0 text-text-muted" />
+                                        <span className="min-w-0 flex-1 truncate">
+                                          {agent.name}
+                                        </span>
+                                        {selected ? <Check className="h-4 w-4 shrink-0" /> : null}
+                                      </button>
+                                    )
+                                  })}
+                                </div>
+                                <div className="mt-1 border-t border-border pt-1">
+                                  {onRequestCreateRobot ? (
+                                    <button
+                                      type="button"
+                                      role="menuitem"
+                                      data-testid="project-workflow-stage-create-robot"
+                                      onClick={async () => {
+                                        close()
+                                        const agent = await onRequestCreateRobot()
+                                        if (!agent) return
+                                        await selectStageExecutor(selectedNode, {
+                                          roleSource: 'agent',
+                                          agentId: agent.id,
+                                          runtimeSource: 'agent_default',
+                                          runtimeProfileId: null,
+                                          runtimeUserId: null,
+                                        })
+                                      }}
+                                      className="flex h-10 w-full items-center gap-2 rounded-xl px-3 text-left text-sm font-medium hover:bg-surface"
+                                    >
+                                      <Plus className="h-4 w-4 shrink-0" />
+                                      {t('todo.workflow_stage_create_robot', '创建机器人')}
+                                    </button>
+                                  ) : null}
+                                </div>
+                              </>
+                            )}
+                          </PopupMenu>
+                        </div>
                       </div>
                     ) : null}
                     <p className="mt-1.5 text-xs text-text-muted">

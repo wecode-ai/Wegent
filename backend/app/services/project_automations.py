@@ -31,6 +31,7 @@ from app.schemas.project_automation import (
     ProjectAutomationUpdate,
 )
 from app.services.cloud_projects.access import require_cloud_project_role
+from app.services.cloud_projects.service import cloud_project_service
 from app.services.loop_item_executions.service import loop_item_execution_service
 from app.services.project_automation_domain import (
     ProjectAutomationEvent,
@@ -41,6 +42,8 @@ from app.services.project_automation_domain import (
 from app.services.project_automation_domain import metadata as _metadata
 from app.services.project_automation_domain import next_run as _next_run
 from app.services.project_automation_domain import (
+    role_config,
+    runtime_config,
     text,
 )
 from app.services.project_automation_domain import utc_aware as _utc_aware
@@ -87,6 +90,7 @@ class ProjectAutomationService:
         require_cloud_project_role(db, project_id, user_id, BaseRole.Maintainer)
         configured_mode = values.assignment_mode
         configured_manager = values.manager_type
+        role_source = values.role_source
         validate_assignment(
             db,
             project_id=project_id,
@@ -98,6 +102,20 @@ class ProjectAutomationService:
             model=values.model,
             environment=values.execution_environment,
             device_id=values.execution_device_id,
+            role_source=role_source,
+        )
+        self._validate_runtime_strategy(
+            db,
+            project_id=project_id,
+            user_id=user_id,
+            trigger_type=values.trigger_type,
+            assignment_mode=configured_mode,
+            manager_type=configured_manager,
+            role_source=role_source,
+            agent_id=values.agent_id,
+            runtime_source=values.runtime_source,
+            runtime_profile_id=values.runtime_profile_id,
+            runtime_user_id=values.runtime_user_id,
         )
         validate_trigger(values.trigger_type, values.event_type, values.cron_expression)
         now = utcnow()
@@ -127,6 +145,11 @@ class ProjectAutomationService:
                 model=values.model,
                 environment=values.execution_environment,
                 device_id=values.execution_device_id,
+                agent_id=values.agent_id,
+                role_source=role_source,
+                runtime_source=values.runtime_source,
+                runtime_profile_id=values.runtime_profile_id,
+                runtime_user_id=values.runtime_user_id,
                 base={
                     "trigger_type": values.trigger_type,
                     "event_type": (
@@ -201,10 +224,12 @@ class ProjectAutomationService:
             configured_mode = assignment_mode(rule_metadata)
             configured_manager = manager_type(rule_metadata)
             agent_id = row.assignee_agent_id or None
-            wegent_team_id = integer(rule_metadata.get("wegent_team_id"))
-            model = text(rule_metadata.get("model"))
-            environment = text(rule_metadata.get("execution_environment"))
-            device_id = text(rule_metadata.get("execution_device_id"))
+            manager = rule_metadata.get("manager")
+            manager_config = dict(manager) if isinstance(manager, dict) else {}
+            wegent_team_id = integer(manager_config.get("wegent_team_id"))
+            model = None
+            environment = None
+            device_id = None
         else:
             configured_mode = values.assignment_mode
             configured_manager = values.manager_type
@@ -213,6 +238,22 @@ class ProjectAutomationService:
             model = values.model
             environment = values.execution_environment
             device_id = values.execution_device_id
+        current_role = role_config(rule_metadata)
+        current_runtime = runtime_config(rule_metadata)
+        role_source = values.role_source or str(current_role.get("source") or "agent")
+        runtime_source = values.runtime_source or str(
+            current_runtime.get("source") or "agent_default"
+        )
+        runtime_profile_id = (
+            values.runtime_profile_id
+            if "runtime_profile_id" in values.model_fields_set
+            else text(current_runtime.get("runtime_profile_id"))
+        )
+        runtime_user_id = (
+            values.runtime_user_id
+            if "runtime_user_id" in values.model_fields_set
+            else integer(current_runtime.get("user_id"))
+        )
 
         validate_assignment(
             db,
@@ -225,6 +266,20 @@ class ProjectAutomationService:
             model=model,
             environment=environment,
             device_id=device_id,
+            role_source=role_source,
+        )
+        self._validate_runtime_strategy(
+            db,
+            project_id=project_id,
+            user_id=row.created_by_user_id,
+            trigger_type=trigger_type,
+            assignment_mode=configured_mode,
+            manager_type=configured_manager,
+            role_source=role_source,
+            agent_id=agent_id,
+            runtime_source=runtime_source,
+            runtime_profile_id=runtime_profile_id,
+            runtime_user_id=runtime_user_id,
         )
         row.assignee_agent_id = (
             str(agent_id) if configured_mode == "manual" and agent_id else ""
@@ -256,6 +311,11 @@ class ProjectAutomationService:
             model=model,
             environment=environment,
             device_id=device_id,
+            agent_id=agent_id,
+            role_source=role_source,
+            runtime_source=runtime_source,
+            runtime_profile_id=runtime_profile_id,
+            runtime_user_id=runtime_user_id,
             base=rule_metadata,
         )
         row.due_at = (
@@ -405,6 +465,19 @@ class ProjectAutomationService:
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
                 "Workflow node automation does not match",
             )
+        from app.schemas.issue_workflow import (
+            IssueWorkflowInstance,
+            WorkflowNodeInstance,
+        )
+
+        workflow_snapshot = IssueWorkflowInstance.model_validate(workflow)
+        node_snapshot = WorkflowNodeInstance.model_validate(node)
+        execution_config = workflow_snapshot.execution_config_for(node_snapshot)
+        if execution_config is None or not execution_config.is_complete():
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Workflow execution configuration is incomplete",
+            )
         run = self._create_run(db, rule, "manual", utcnow(), commit=False)
         run.task_id = item.id
         run.task_title = item.title or ""
@@ -413,6 +486,9 @@ class ProjectAutomationService:
             "workflow_node_id": workflow_node_id,
             "instruction_override": str(node.get("prompt") or ""),
             "dependency_context": node.get("dependency_context") or {},
+            "workflow_execution_config": execution_config.model_dump(
+                mode="json", by_alias=True
+            ),
             "workflow_stage_input": workflow_stage_context_resolver.resolve(
                 db,
                 item=item,
@@ -700,30 +776,45 @@ class ProjectAutomationService:
         model: str | None,
         environment: str | None,
         device_id: str | None,
+        agent_id: str | None,
+        role_source: str,
+        runtime_source: str,
+        runtime_profile_id: str | None,
+        runtime_user_id: int | None,
         base: dict,
     ) -> dict:
         rule_metadata = dict(base)
         for key in (
+            "assignment_mode",
             "manager_type",
             "wegent_team_id",
-            "model",
-            "execution_environment",
-            "execution_device_id",
+            "role",
+            "runtime",
+            "action",
+            "manager",
         ):
             rule_metadata.pop(key, None)
-        rule_metadata["assignment_mode"] = assignment_mode
+        rule_metadata["action"] = (
+            "execute" if assignment_mode == "manual" else "ai_assign"
+        )
+        rule_metadata["role"] = {
+            "source": role_source,
+            "agent_id": agent_id if role_source == "agent" else None,
+        }
+        rule_metadata["runtime"] = {
+            "source": runtime_source,
+            "runtime_profile_id": (
+                runtime_profile_id if runtime_source == "fixed_profile" else None
+            ),
+            "user_id": runtime_user_id if runtime_source == "runtime_user" else None,
+        }
         if assignment_mode == "ai_managed" and manager_type == "custom":
-            rule_metadata["manager_type"] = "custom"
-            rule_metadata.update(
-                {
-                    "model": model,
-                    "execution_environment": environment,
-                    "execution_device_id": device_id,
-                }
-            )
+            rule_metadata["manager"] = {"type": "custom"}
         elif assignment_mode == "ai_managed" and manager_type == "wegent":
-            rule_metadata["manager_type"] = "wegent"
-            rule_metadata["wegent_team_id"] = wegent_team_id
+            rule_metadata["manager"] = {
+                "type": "wegent",
+                "wegent_team_id": wegent_team_id,
+            }
         return rule_metadata
 
     @staticmethod
@@ -758,12 +849,17 @@ class ProjectAutomationService:
         rule_metadata = _metadata(row)
         configured_mode = assignment_mode(rule_metadata)
         configured_manager = manager_type(rule_metadata)
+        role = role_config(rule_metadata)
+        runtime = runtime_config(rule_metadata)
         agent = (
             db.get(ProjectChatAgent, row.assignee_agent_id)
             if configured_mode == "manual" and row.assignee_agent_id
             else None
         )
-        team_id = integer(rule_metadata.get("wegent_team_id"))
+        manager = rule_metadata.get("manager")
+        team_id = integer(
+            manager.get("wegent_team_id") if isinstance(manager, dict) else None
+        )
         team = None
         if configured_manager == "wegent" and team_id is not None:
             team = team_share_service.get_resource(
@@ -783,9 +879,9 @@ class ProjectAutomationService:
             model = text(config.get("model"))
         elif configured_manager == "custom":
             display_name = "自定义 AI 调度员"
-            environment = str(rule_metadata.get("execution_environment") or "local")
-            device_id = text(rule_metadata.get("execution_device_id"))
-            model = text(rule_metadata.get("model"))
+            environment = "local"
+            device_id = None
+            model = None
         else:
             display_name = (
                 str(team.name or "Wegent 智能体") if team else "Wegent 智能体"
@@ -816,6 +912,10 @@ class ProjectAutomationService:
             "agent_name": display_name,
             "execution_environment": environment,
             "execution_device_id": device_id,
+            "role_source": str(role.get("source") or "agent"),
+            "runtime_source": str(runtime.get("source") or "agent_default"),
+            "runtime_profile_id": text(runtime.get("runtime_profile_id")),
+            "runtime_user_id": integer(runtime.get("user_id")),
             "enabled": row.status == "enabled",
             "next_run_at": (
                 None
@@ -830,6 +930,65 @@ class ProjectAutomationService:
             "created_at": _utc_aware(row.created_at),
             "updated_at": _utc_aware(row.updated_at),
         }
+
+    @staticmethod
+    def _validate_runtime_strategy(
+        db: Session,
+        *,
+        project_id: str,
+        user_id: int,
+        trigger_type: str,
+        assignment_mode: str,
+        manager_type: str | None,
+        role_source: str,
+        agent_id: str | None,
+        runtime_source: str,
+        runtime_profile_id: str | None,
+        runtime_user_id: int | None,
+    ) -> None:
+        if assignment_mode == "ai_managed" and manager_type == "wegent":
+            return
+        if runtime_source == "issue_creator":
+            if trigger_type == "schedule":
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "Scheduled automation cannot use the Issue creator Runtime",
+                )
+            return
+        if runtime_source == "agent_default":
+            if role_source != "agent" or not agent_id:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "Agent default Runtime requires a robot role",
+                )
+            return
+        if runtime_source == "fixed_profile":
+            if not runtime_profile_id:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "Fixed Runtime profile is required",
+                )
+            from app.services.runtime_profiles import runtime_profile_service
+
+            runtime_profile_service.require_owned(db, runtime_profile_id, user_id)
+            return
+        if runtime_source == "runtime_user":
+            member_ids = {
+                int(member["user_id"])
+                for member in cloud_project_service.list_members(
+                    db, int(project_id), user_id
+                )
+            }
+            if runtime_user_id not in member_ids:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "Runtime user is not a project member",
+                )
+            return
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Unknown Runtime source",
+        )
 
     @staticmethod
     def _run_view(

@@ -25,6 +25,15 @@ function nonEmptyString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value : null
 }
 
+function optionalStringRecord(value: unknown, field: string): Record<string, string> | null {
+  if (value == null) return null
+  const record = recordValue(value)
+  if (!record || Object.values(record).some(entry => typeof entry !== 'string')) {
+    throw new Error(`Transient runtime payload has invalid ${field}`)
+  }
+  return record as Record<string, string>
+}
+
 function requiredNumber(value: unknown, field: string): number {
   if (typeof value === 'number' && Number.isInteger(value) && value >= 0) return value
   throw new Error(`Transient runtime payload is missing ${field}`)
@@ -204,7 +213,7 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
         throw new Error('Execution device does not match the claiming device')
       }
 
-      const payloadLocalProjectId = runtimePayload.local_project_id
+      const payloadLocalProjectId = runtimePayload.projectId ?? runtimePayload.local_project_id
       const boundLocalProjectId =
         typeof payloadLocalProjectId === 'number' && payloadLocalProjectId > 0
           ? payloadLocalProjectId
@@ -255,23 +264,6 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
           `Bound local project ${boundLocalProjectId} is unavailable on device ${deviceId}`
         )
       }
-      if (boundWorkspacePath && execution.agent_max_concurrent_executions > 1) {
-        const gitCheck = await deviceApi.executeCommand(deviceId, {
-          command_key: 'git_is_worktree',
-          args: [boundWorkspacePath],
-          timeout_seconds: 15,
-          max_output_bytes: 4096,
-        })
-        const gitCheckOutput = Array.isArray(gitCheck.stdout)
-          ? gitCheck.stdout.join('\n')
-          : typeof gitCheck.stdout === 'string'
-            ? gitCheck.stdout
-            : ''
-        if (!gitCheck.success || gitCheckOutput.trim() !== 'true') {
-          throw new Error('Robot concurrency above 1 requires an isolated Git worktree workspace')
-        }
-      }
-
       const title = typeof runtimePayload.title === 'string' ? runtimePayload.title : null
       const origin = recordValue(runtimePayload.origin)
       const additionalContext = recordValue(runtimePayload.additionalContext)
@@ -321,7 +313,10 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
       }
 
       const payloadBot = runtimeBot(runtimePayload.bot)
+      const payloadModelOptions = optionalStringRecord(runtimePayload.modelOptions, 'model options')
       const request: RuntimeTaskCreateRequest = {
+        ...(runtimePayload as unknown as RuntimeTaskCreateRequest),
+        schemaVersion: runtimePayload.schemaVersion === 1 ? 1 : 2,
         taskId,
         teamId: requiredNumber(runtimePayload.teamId, 'team identity'),
         runtime: 'codex',
@@ -333,11 +328,17 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
         origin: origin as RuntimeTaskCreateRequest['origin'],
         additionalContext: additionalContext as RuntimeTaskCreateRequest['additionalContext'],
         standaloneChatWorkspace,
+        projectPlugins: execution.agent_plugins ?? [],
         ...modelFields,
-        ...(boundLocalProjectId != null ? { projectId: boundLocalProjectId } : {}),
-        ...(boundLocalProjectId != null && execution.agent_max_concurrent_executions > 1
-          ? { execution: { workspace: { source: 'git_worktree' as const } } }
+        ...(modelFields.modelOptions || payloadModelOptions
+          ? {
+              modelOptions: {
+                ...(payloadModelOptions ?? {}),
+                ...(modelFields.modelOptions ?? {}),
+              },
+            }
           : {}),
+        ...(boundLocalProjectId != null ? { projectId: boundLocalProjectId } : {}),
       }
 
       console.log('[local-robot-queue] claimed transient runtime payload', {

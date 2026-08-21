@@ -12,13 +12,13 @@ from app.services.project_automation_domain import assignment_mode, manager_type
 from app.services.project_automation_execution import ProjectAutomationExecution
 
 
-@pytest.mark.parametrize("value", [{}, {"assignment_mode": "automatic"}])
+@pytest.mark.parametrize("value", [{}, {"action": "automatic"}])
 def test_assignment_mode_rejects_missing_or_unknown_rules(value):
     with pytest.raises(ValueError, match="missing or invalid"):
         assignment_mode(value)
 
 
-@pytest.mark.parametrize("value", [{"manager_type": "robot"}])
+@pytest.mark.parametrize("value", [{"manager": {"type": "robot"}}])
 def test_manager_type_rejects_unknown_sources(value):
     with pytest.raises(ValueError, match="invalid"):
         manager_type(value)
@@ -53,7 +53,9 @@ def _dispatch_objects(configuration: dict[str, object]):
 @pytest.mark.asyncio
 async def test_manual_assignment_enters_only_existing_project_robot_path(monkeypatch):
     service = ProjectAutomationExecution()
-    db, _owner, _project, rule, run = _dispatch_objects({"assignment_mode": "manual"})
+    db, _owner, _project, rule, run = _dispatch_objects(
+        {"action": "execute", "role": {"source": "agent"}}
+    )
     monkeypatch.setattr(service, "_ensure_run_task", MagicMock())
     assign = MagicMock()
     custom = MagicMock()
@@ -74,7 +76,7 @@ async def test_manual_assignment_enters_only_existing_project_robot_path(monkeyp
 async def test_custom_ai_is_only_a_manager_transport(monkeypatch):
     service = ProjectAutomationExecution()
     db, _owner, _project, rule, run = _dispatch_objects(
-        {"assignment_mode": "ai_managed", "manager_type": "custom"}
+        {"action": "ai_assign", "manager": {"type": "custom"}}
     )
     activity = SimpleNamespace(message_id="manager-message")
     monkeypatch.setattr(service, "_ensure_run_task", MagicMock())
@@ -99,7 +101,10 @@ async def test_custom_ai_is_only_a_manager_transport(monkeypatch):
 async def test_wegent_agent_is_only_a_manager_transport(monkeypatch):
     service = ProjectAutomationExecution()
     db, _owner, _project, rule, run = _dispatch_objects(
-        {"assignment_mode": "ai_managed", "manager_type": "wegent"}
+        {
+            "action": "ai_assign",
+            "manager": {"type": "wegent", "wegent_team_id": 42},
+        }
     )
     activity = SimpleNamespace(message_id="manager-message")
     monkeypatch.setattr(service, "_ensure_run_task", MagicMock())

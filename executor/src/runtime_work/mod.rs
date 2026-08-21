@@ -27,7 +27,22 @@ pub(crate) use notification_mapping::codex_stream_debug_enabled;
 
 pub(crate) fn runtime_features() -> serde_json::Value {
     serde_json::json!({
-        "schemaVersion": 1,
+        "schemaVersion": 2,
+        "runtimeTaskCreate": {
+            "schemaVersions": [1, 2],
+            "features": {
+                "attachments": true,
+                "deviceProjectBinding": true,
+                "goal": true,
+                "supervisor": true,
+                "permissionMode": true,
+                "projectPlugins": true,
+                "skills": true,
+                "standaloneWorkspace": true,
+                "workspaceInheritance": true,
+                "worktree": true
+            }
+        },
         "worktrees": worktrees::WorktreeManager::capabilities_from_env(),
     })
 }

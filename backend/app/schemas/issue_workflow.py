@@ -8,6 +8,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.schemas.project_chat import ProjectChatWorkspaceBinding
+
 WorkflowContextSource = Literal["final_result", "deliveries", "activity"]
 DeliverableValueType = Literal[
     "text",
@@ -29,6 +31,33 @@ WorkflowNodeStatus = Literal[
     "forced_completed",
     "failed",
 ]
+
+
+class WorkflowExecutionConfig(BaseModel):
+    """Execution choices snapshotted with a workflow or one Issue."""
+
+    agent_id: str | None = Field(default=None, max_length=64)
+    runtime_profile_id: str | None = Field(default=None, max_length=64)
+    model: str | None = Field(default=None, max_length=255)
+    workspace_binding: ProjectChatWorkspaceBinding | None = None
+
+    @model_validator(mode="after")
+    def normalize_values(self) -> "WorkflowExecutionConfig":
+        self.agent_id = self.agent_id.strip() if self.agent_id else None
+        self.runtime_profile_id = (
+            self.runtime_profile_id.strip() if self.runtime_profile_id else None
+        )
+        self.model = self.model.strip() if self.model else None
+        return self
+
+    def is_complete(self) -> bool:
+        return bool(
+            self.agent_id
+            and self.runtime_profile_id
+            and self.model
+            and self.workspace_binding
+            and self.workspace_binding.type != "standalone"
+        )
 
 
 class DeliverableFileConstraints(BaseModel):
@@ -85,6 +114,8 @@ class WorkflowNodeDefinition(BaseModel):
     )
     workspace_policy: Literal["none", "composer", "inherit"] = "composer"
     automation_rule_id: str | None = Field(default=None, max_length=64)
+    execution_config: WorkflowExecutionConfig | None = None
+    execution_config_override: bool = False
 
     @model_validator(mode="after")
     def validate_execution_configuration(self) -> "WorkflowNodeDefinition":
@@ -110,6 +141,7 @@ class ProjectWorkflowDefinition(BaseModel):
     advancement_policy: Literal["manual", "ai"] = "manual"
     coordinator_prompt: str = Field(default="", max_length=4000)
     ai_automation_rule_id: str | None = Field(default=None, max_length=64)
+    execution_config: WorkflowExecutionConfig | None = None
     nodes: list[WorkflowNodeDefinition] = Field(default_factory=list, max_length=50)
 
     @model_validator(mode="before")
@@ -193,6 +225,7 @@ class IssueWorkflowInstance(BaseModel):
     advancement_policy: Literal["manual", "ai"] = "manual"
     coordinator_prompt: str = Field(default="", max_length=4000)
     ai_automation_rule_id: str | None = Field(default=None, max_length=64)
+    execution_config: WorkflowExecutionConfig | None = None
     nodes: list[WorkflowNodeInstance] = Field(default_factory=list, max_length=50)
 
     @model_validator(mode="after")
@@ -215,11 +248,30 @@ class IssueWorkflowInstance(BaseModel):
                     required_deliverables=node.required_deliverables,
                     workspace_policy=node.workspace_policy,
                     automation_rule_id=node.automation_rule_id,
+                    execution_config=node.execution_config,
+                    execution_config_override=node.execution_config_override,
                 )
                 for node in self.nodes
             ],
+            execution_config=self.execution_config,
         )
         return self
+
+    def execution_config_for(
+        self, node: WorkflowNodeDefinition
+    ) -> WorkflowExecutionConfig | None:
+        if node.execution_config_override:
+            return node.execution_config
+        return self.execution_config or node.execution_config
+
+    def node_needs_execution_config(self, node: WorkflowNodeDefinition) -> bool:
+        return bool(
+            node.automation_rule_id
+            and not (
+                self.execution_config_for(node)
+                and self.execution_config_for(node).is_complete()
+            )
+        )
 
 
 def instantiate_workflow(
@@ -232,6 +284,7 @@ def instantiate_workflow(
         advancement_policy=definition.advancement_policy,
         coordinator_prompt=definition.coordinator_prompt,
         ai_automation_rule_id=definition.ai_automation_rule_id,
+        execution_config=definition.execution_config,
         nodes=[
             WorkflowNodeInstance(
                 **node.model_dump(),

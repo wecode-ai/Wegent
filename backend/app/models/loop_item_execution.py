@@ -9,6 +9,7 @@ the queue. The task row keeps the assignment chain; this table records each
 run's lifecycle (approval, queuing, capacity-gated claiming, lease, retries).
 """
 
+import json
 from datetime import datetime
 
 from sqlalchemy import (
@@ -208,9 +209,24 @@ class LoopItemExecution(Base):
     def executor_type(self) -> str:
         """Return the transport role without persisting redundant state."""
 
+        configured = self.runtime_selection.get("executor_kind")
+        if configured in {"generic_robot", "automation_manager"}:
+            return str(configured)
         if self.agent_id:
             return "project_robot"
         return "wegent_team" if self.team_id else "automation_manager"
+
+    @property
+    def runtime_selection(self) -> dict:
+        """Return the non-secret Runtime selection intent."""
+
+        if not self.execution_payload:
+            return {}
+        try:
+            value = json.loads(self.execution_payload)
+        except (TypeError, ValueError):
+            return {}
+        return value if isinstance(value, dict) else {}
 
     @property
     def optional_team_id(self) -> int | None:

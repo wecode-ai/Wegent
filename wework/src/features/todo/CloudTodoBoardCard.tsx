@@ -1,6 +1,6 @@
 import { useDraggable, useDroppable } from '@dnd-kit/core'
 import { CSS } from '@dnd-kit/utilities'
-import { Archive, Bot, CalendarDays, Ellipsis, Flag, ListTodo } from 'lucide-react'
+import { AlertTriangle, Archive, Bot, CalendarDays, Ellipsis, Flag, ListTodo } from 'lucide-react'
 import {
   useCallback,
   useLayoutEffect,
@@ -32,6 +32,10 @@ import { cn } from '@/lib/utils'
 import type { RuntimeTaskAddress } from '@/types/api'
 import { isLoopItemExecutionActive } from './cloudMyWorkModel'
 import { priorityBadgeClasses } from './todoShared'
+import {
+  workflowExecutionConfigComplete,
+  workflowNeedsExecutionConfiguration,
+} from './workflowExecutionConfig'
 
 export interface BoardCardDisplaySettings {
   showAssignee: boolean
@@ -65,6 +69,14 @@ export function CloudTodoCardContent({ item, display, agentNames }: CloudTodoCar
     (item.assignee_agent_id
       ? item.assignee_agent_name || agentNames?.[item.assignee_agent_id] || null
       : null)
+  const needsExecutionConfiguration =
+    ['pending', 'in_progress'].includes(item.status) &&
+    (workflowNeedsExecutionConfiguration(item.workflow) ||
+      Boolean(
+        item.assignee_agent_id &&
+        (!workflowExecutionConfigComplete(item.execution_config) ||
+          ['waiting_runtime', 'waiting_device'].includes(item.execution_state ?? ''))
+      ))
 
   return (
     <>
@@ -81,6 +93,15 @@ export function CloudTodoCardContent({ item, display, agentNames }: CloudTodoCar
       {item.description ? (
         <span className="mt-1 line-clamp-2 text-sm leading-[18px] text-text-secondary">
           {item.description}
+        </span>
+      ) : null}
+      {needsExecutionConfiguration ? (
+        <span
+          data-testid={`cloud-todo-card-needs-execution-config-${item.id}`}
+          className="mt-2 inline-flex w-fit items-center gap-1 rounded-md bg-amber-500/10 px-2 py-1 text-xs font-medium text-amber-700 dark:text-amber-300"
+        >
+          <AlertTriangle className="h-3.5 w-3.5" />
+          待配置
         </span>
       ) : null}
 

@@ -3083,9 +3083,6 @@ fn codex_model_config_overrides(model_config: &Value) -> Vec<String> {
 }
 
 fn project_plugin_config_overrides(request: &ExecutionRequest) -> Vec<String> {
-    if request.runtime_project_key.is_none() {
-        return Vec::new();
-    }
     request
         .extra
         .get("project_plugin_ids")

@@ -64,6 +64,7 @@ import type {
 } from '@/types/api'
 import type { Automation } from '@/types/automation'
 import type { DeviceInfo } from '@/types/devices'
+import { mergeProjectPluginCatalogs } from '@/features/plugins/projectPluginCatalog'
 
 const LOCAL_DEVICE_ID = 'local-device'
 const CLOUD_BACKGROUND_CACHE_TTL_MS = 30_000
@@ -1285,6 +1286,14 @@ export function createHybridWorkbenchServices(
     },
   }
   const cloudProjectSpaceApi = createCloudProjectSpaceApi(cloudServices.deliveryApi!)
+  const projectPluginApi: NonNullable<WorkbenchServices['pluginApi']> = {
+    async listPlugins(deviceId: string) {
+      const cloudPlugins = await cloudServices.pluginApi?.listPlugins(deviceId).catch(() => [])
+      if (!isLocalDeviceId(deviceId)) return cloudPlugins ?? []
+      const localPlugins = await localServices.pluginApi?.listPlugins(deviceId).catch(() => [])
+      return mergeProjectPluginCatalogs(localPlugins ?? [], cloudPlugins ?? [])
+    },
+  }
 
   return {
     ...cloudServices,
@@ -1300,9 +1309,20 @@ export function createHybridWorkbenchServices(
       defaultLocation: 'cloud',
     },
     projectSpaceDetailServices: {
-      local: localServices.projectSpaceDetailServices?.local,
-      cloud: cloudServices.projectSpaceDetailServices?.cloud,
+      local: localServices.projectSpaceDetailServices?.local
+        ? {
+            ...localServices.projectSpaceDetailServices.local,
+            pluginApi: projectPluginApi,
+          }
+        : undefined,
+      cloud: cloudServices.projectSpaceDetailServices?.cloud
+        ? {
+            ...cloudServices.projectSpaceDetailServices.cloud,
+            pluginApi: projectPluginApi,
+          }
+        : undefined,
     },
+    pluginApi: projectPluginApi,
     teamApi: {
       // Wegent Teams are backend CRDs. The local service only exposes the
       // synthetic id=0 workbench Team, which is valid as the local default but

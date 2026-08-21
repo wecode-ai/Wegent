@@ -190,7 +190,7 @@ def test_dispatch_execution_uses_app_codex_channel_and_writes_back_ids(
     assert payload["executionRequest"]["subtask_id"] == (
         f"codex-queue-{execution.id}-assistant"
     )
-    assert payload["message"] == (
+    visible_prompt = (
         f"project_id: {project.id}\n"
         f"task_id: {execution.loop_item_id}\n"
         f"execution_id: {execution.id}\n\n"
@@ -198,7 +198,10 @@ def test_dispatch_execution_uses_app_codex_channel_and_writes_back_ids(
         f"{execution.loop_item_id}，请通过看板工具自行查看。\n\n"
         "Verify before reporting."
     )
+    assert payload["message"] == visible_prompt
     assert "Build the landing page" not in payload["message"]
+    assert payload["executionRequest"]["prompt"].endswith(visible_prompt)
+    assert "projectSpaceCapability" in payload["executionRequest"]["prompt"]
     assert "system_prompt" not in payload["executionRequest"]
     assert "system_prompt" not in payload["executionRequest"]["bot"][0]
     assert payload["additionalContext"] == {}
@@ -710,6 +713,60 @@ def test_execute_robot_task_fails_and_requeues(
     assert claimed[0].retry_attempt == 0
     assert claimed[0].execution_note == "device_emit_rejected"
     assert "Device did not accept the runtime RPC" in claimed[0].error_message
+
+
+def test_execute_robot_task_fails_when_executor_rejects_create(
+    test_db: Session, test_user: User
+) -> None:
+    from contextlib import contextmanager
+
+    from app.tasks.robot_queue_tasks import execute_robot_task
+
+    @contextmanager
+    def _test_session():
+        yield test_db
+
+    project = _make_project(test_db, test_user)
+    agent = _make_agent(test_db, project, test_user)
+    execution = _make_execution(test_db, project, agent, test_user)
+    claimed = loop_item_execution_service.claim_batch_for_device(
+        test_db,
+        execution_device_id="local-device",
+        environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        runtime_active=0,
+        runtime_active_task_ids=set(),
+        device_capacity=1,
+    )[0]
+    emit_rpc = AsyncMock(
+        return_value={
+            "emitted": True,
+            "accepted": False,
+            "response": {
+                "success": False,
+                "accepted": False,
+                "errorCode": "invalid_request",
+                "error": "workspacePath is required",
+            },
+        }
+    )
+    with (
+        patch("app.tasks.robot_queue_tasks._emit_runtime_rpc", emit_rpc),
+        patch(
+            "app.tasks.robot_queue_tasks.device_service.get_device_online_info",
+            AsyncMock(return_value=True),
+        ),
+        patch("app.db.session.get_db_session", _test_session),
+    ):
+        result = execute_robot_task(claimed.id)
+
+    assert result["status"] == "failed"
+    test_db.refresh(claimed)
+    assert claimed.status == "failed"
+    assert claimed.sync_state != "stale"
+    assert claimed.execution_note == "runtime_create_rejected"
+    assert claimed.error_message == "invalid_request: workspacePath is required"
 
 
 def test_execute_robot_task_keeps_ambiguous_emit_outcome_unknown(

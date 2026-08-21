@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.ws.device_namespace import _project_chat_runtime_event_sync
+from app.core.constants import CLIENT_ORIGIN_WEWORK
 from app.models.delivery import (
     CloudProject,
     LoopItem,
@@ -22,6 +23,7 @@ from app.models.delivery import (
 )
 from app.models.kind import Kind
 from app.models.loop_item_execution import EPOCH_TIME, LoopItemExecution
+from app.models.project import Project
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.user import User
 from app.schemas.project_chat import (
@@ -32,9 +34,12 @@ from app.schemas.project_chat import (
     ProjectChatAutomationManagerContinuation,
     ProjectChatSend,
     ProjectChatSubscribe,
+    ProjectChatWorkspaceBinding,
 )
+from app.schemas.runtime_work import DeviceWorkspaceUpsert
 from app.services.loop_items.service import loop_item_service
 from app.services.project_chat.service import project_chat_service
+from app.services.runtime_work_service import upsert_device_workspace
 
 
 def create_project(test_db: Session, user: User) -> CloudProject:
@@ -84,6 +89,106 @@ def make_device(
     return device
 
 
+def make_code_project(db: Session, user: User, name: str = "Code project") -> Project:
+    project = Project(
+        user_id=user.id,
+        name=name,
+        client_origin=CLIENT_ORIGIN_WEWORK,
+        config={"mode": "workspace"},
+        is_active=True,
+    )
+    db.add(project)
+    db.commit()
+    db.refresh(project)
+    return project
+
+
+def test_cloud_robot_persists_exact_workspace_binding_in_metadata(
+    test_db: Session, test_user: User
+) -> None:
+    project = create_project(test_db, test_user)
+    make_device(test_db, test_user, "cloud-dev-binding", "cloud")
+    code_project = make_code_project(test_db, test_user)
+    workspace = upsert_device_workspace(
+        db=test_db,
+        user_id=test_user.id,
+        payload=DeviceWorkspaceUpsert(
+            projectId=code_project.id,
+            deviceId="cloud-dev-binding",
+            workspacePath="/srv/workspaces/code-project",
+        ),
+    )
+
+    created = project_chat_service.create_agent(
+        test_db,
+        user_id=test_user.id,
+        project_id=project.id,
+        request=ProjectChatAgentCreate(
+            name="Cloud builder",
+            execution_environment="cloud",
+            execution_device_id="cloud-dev-binding",
+            workspace_policy="git_worktree",
+            plugins=[
+                {
+                    "id": "github@openai",
+                    "pluginName": "github",
+                    "marketplaceId": "openai",
+                    "displayName": "GitHub",
+                }
+            ],
+            workspace_binding=ProjectChatWorkspaceBinding(
+                type="backend_project",
+                projectId=code_project.id,
+                deviceWorkspaceId=workspace.id,
+                deviceId="cloud-dev-binding",
+            ),
+        ),
+    )
+
+    row = test_db.get(ProjectChatAgent, created.id)
+    assert row is not None
+    assert row.metadata_json["workspace_binding"] == {
+        "type": "backend_project",
+        "projectId": code_project.id,
+        "deviceWorkspaceId": workspace.id,
+        "deviceId": "cloud-dev-binding",
+    }
+    assert created.workspace_binding.type == "backend_project"
+    assert created.workspace_binding.status == "ready"
+    assert created.workspace_binding.device_workspace_id == workspace.id
+    assert created.local_project_id == code_project.id
+    assert created.workspace_policy == "git_worktree"
+    assert [plugin.id for plugin in created.plugins] == ["github@openai"]
+
+
+def test_legacy_cloud_project_binding_requires_rebind_when_not_unique(
+    test_db: Session, test_user: User
+) -> None:
+    project = create_project(test_db, test_user)
+    code_project = make_code_project(test_db, test_user)
+    row = ProjectChatAgent(
+        cloud_project_id=project.id,
+        title="Legacy cloud robot",
+        name="Legacy cloud robot",
+        status="active",
+        created_by_user_id=test_user.id,
+        device_id="cloud-dev-legacy",
+        local_project_id=code_project.id,
+        metadata_json={
+            "runtime": "codex",
+            "execution_environment": "cloud",
+        },
+    )
+    test_db.add(row)
+    test_db.commit()
+
+    view = project_chat_service.agent_to_view(row, db=test_db)
+
+    assert view.workspace_binding.type == "legacy_project"
+    assert view.workspace_binding.status == "needs_rebind"
+    assert view.workspace_binding.project_id == code_project.id
+
+
 def test_list_agents_accepts_mysql_unset_datetime_sentinel(
     test_db: Session, test_user: User
 ) -> None:
@@ -99,23 +204,18 @@ def test_list_agents_accepts_mysql_unset_datetime_sentinel(
     assert [item.id for item in agents] == ["12"]
 
 
-def test_project_supports_multiple_robots_with_execution_config(
+def test_project_supports_multiple_robots_without_embedded_runtime_config(
     test_db: Session, test_user: User
 ) -> None:
     project = create_project(test_db, test_user)
-    make_device(test_db, test_user, "local-dev-1", "local")
-    make_device(test_db, test_user, "cloud-dev-1", "cloud")
-
     first = project_chat_service.create_agent(
         test_db,
         user_id=test_user.id,
         project_id=project.id,
         request=ProjectChatAgentCreate(
             name="Local Builder",
-            execution_environment="local",
             execution_mode="manual_approval",
             visibility="public",
-            execution_device_id="local-dev-1",
             max_concurrent_executions=3,
         ),
     )
@@ -125,10 +225,8 @@ def test_project_supports_multiple_robots_with_execution_config(
         project_id=project.id,
         request=ProjectChatAgentCreate(
             name="Cloud Reviewer",
-            execution_environment="cloud",
             execution_mode="auto",
             visibility="private",
-            execution_device_id="cloud-dev-1",
         ),
     )
 
@@ -138,15 +236,13 @@ def test_project_supports_multiple_robots_with_execution_config(
     by_id = {agent.id: agent for agent in agents}
 
     assert set(by_id) == {"12", first.id, second.id}
-    assert by_id[first.id].execution_environment == "local"
     assert by_id[first.id].execution_mode == "manual_approval"
     assert by_id[first.id].visibility == "public"
-    assert by_id[first.id].execution_device_id == "local-dev-1"
+    assert by_id[first.id].execution_device_id is None
     assert by_id[first.id].max_concurrent_executions == 3
-    assert by_id[second.id].execution_environment == "cloud"
     assert by_id[second.id].execution_mode == "auto"
     assert by_id[second.id].visibility == "private"
-    assert by_id[second.id].execution_device_id == "cloud-dev-1"
+    assert by_id[second.id].execution_device_id is None
     assert by_id[second.id].max_concurrent_executions == 1
     assert by_id[second.id].created_by_user_id == test_user.id
 
@@ -191,7 +287,6 @@ def test_list_agents_filters_visibility_for_other_members(
     from app.schemas.base_role import BaseRole
 
     project = create_project(test_db, test_user)
-    make_device(test_db, test_user, "local-dev-2", "local")
     private_bot = project_chat_service.create_agent(
         test_db,
         user_id=test_user.id,
@@ -199,7 +294,6 @@ def test_list_agents_filters_visibility_for_other_members(
         request=ProjectChatAgentCreate(
             name="Private",
             visibility="private",
-            execution_device_id="local-dev-2",
         ),
     )
     admin_bot = project_chat_service.create_agent(
@@ -209,7 +303,6 @@ def test_list_agents_filters_visibility_for_other_members(
         request=ProjectChatAgentCreate(
             name="Admin",
             visibility="creator_admin",
-            execution_device_id="local-dev-2",
         ),
     )
     public_bot = project_chat_service.create_agent(
@@ -219,7 +312,6 @@ def test_list_agents_filters_visibility_for_other_members(
         request=ProjectChatAgentCreate(
             name="Public",
             visibility="public",
-            execution_device_id="local-dev-2",
         ),
     )
     member = User(

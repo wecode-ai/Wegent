@@ -357,7 +357,7 @@ async def create_loop_item(
         )
     if created.internal_item is not None:
         db.refresh(created.internal_item)
-        if created.internal_item.status == "pending":
+        if created.internal_item.status in {"pending", "in_progress"}:
             await issue_workflow_start_service.start(
                 db,
                 item=created.internal_item,
@@ -493,7 +493,10 @@ async def update_loop_item(
     existing = loop_item_service.get(db, item_id, current_user.id)
     previous_status = existing.status
     item = loop_item_service.update(db, item_id, current_user.id, values)
-    if previous_status == "inbox" and item.status == "pending":
+    workflow_updated = "workflow" in values.model_fields_set
+    if item.status in {"pending", "in_progress"} and (
+        previous_status not in {"pending", "in_progress"} or workflow_updated
+    ):
         project = cloud_project_service.get(
             db, int(item.cloud_project_id), current_user.id
         )
@@ -505,6 +508,22 @@ async def update_loop_item(
         )
         db.refresh(item)
     if item.assignee_agent_id and "assignee_agent_id" in values.model_fields_set:
+        from app.services.board_team_execution import dispatch_board_team_assignment
+
+        await dispatch_board_team_assignment(db, item=item, user=current_user)
+        db.refresh(item)
+    elif item.assignee_agent_id and (
+        "execution_config" in values.model_fields_set
+        or (
+            previous_status not in {"pending", "in_progress"}
+            and item.status in {"pending", "in_progress"}
+        )
+    ):
+        item = loop_item_service.refresh_agent_execution_configuration(
+            db,
+            item=item,
+            user_id=current_user.id,
+        )
         from app.services.board_team_execution import dispatch_board_team_assignment
 
         await dispatch_board_team_assignment(db, item=item, user=current_user)

@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { ApiError, type HttpClient } from './http'
 import type { ProjectChatAgent } from './projectChatAgents'
+import type { ProjectChatWorkspaceBindingInput } from './projectChatAgents'
 import type { Attachment, RuntimeTaskAddress } from '@/types/api'
 
 import { openLocalFile } from '@/lib/local-terminal'
@@ -168,6 +169,7 @@ export interface CloudLoopItem {
     bug_key?: string
   } | null
   workflow?: IssueWorkflowInstance | null
+  execution_config?: WorkflowExecutionConfig | null
   ai_state?: {
     run_id?: string
     status?: string
@@ -218,6 +220,7 @@ export interface CloudLoopItemExecution {
   team_id?: number | null
   backend_task_id?: number | null
   automation_run_id: string
+  executor_owner_user_id?: number | null
   assigner_user_id: number
   execution_environment: string
   execution_device_id?: string | null
@@ -248,6 +251,10 @@ export interface CloudLoopItemExecution {
   rejected_reason?: string | null
   runtime_device_id?: string | null
   runtime_task_id?: string | null
+  runtime_profile_id?: string | null
+  runtime_source?: string | null
+  can_select_runtime?: boolean
+  waiting_runtime_reason?: string | null
   version: number
   created_at: string
   updated_at: string
@@ -360,6 +367,13 @@ export type WorkflowNodeStatus =
 export type IssueAdvancementPolicy = 'manual' | 'ai'
 export type IssueStageMode = 'none' | 'dag'
 
+export interface WorkflowExecutionConfig {
+  agent_id: string | null
+  runtime_profile_id: string | null
+  model: string | null
+  workspace_binding: ProjectChatWorkspaceBindingInput | null
+}
+
 export interface WorkflowNodeDefinition {
   id: string
   name: string
@@ -371,6 +385,8 @@ export interface WorkflowNodeDefinition {
   required_deliverables?: DeliverableRequirement[]
   workspace_policy: WorkflowWorkspacePolicy
   automation_rule_id?: string | null
+  execution_config?: WorkflowExecutionConfig | null
+  execution_config_override?: boolean
 }
 
 export interface ProjectWorkflowDefinition {
@@ -379,6 +395,7 @@ export interface ProjectWorkflowDefinition {
   advancement_policy?: IssueAdvancementPolicy
   coordinator_prompt?: string
   ai_automation_rule_id?: string | null
+  execution_config?: WorkflowExecutionConfig | null
   nodes: WorkflowNodeDefinition[]
 }
 
@@ -406,6 +423,7 @@ export interface IssueWorkflowInstance {
   advancement_policy?: IssueAdvancementPolicy
   coordinator_prompt?: string
   ai_automation_rule_id?: string | null
+  execution_config?: WorkflowExecutionConfig | null
   nodes: WorkflowNodeInstance[]
 }
 
@@ -711,6 +729,8 @@ export function createDeliveryApi(client: HttpClient) {
             team_id: row.teamId == null ? null : Number(row.teamId),
             backend_task_id: row.backendTaskId == null ? null : Number(row.backendTaskId),
             automation_run_id: String(row.automationRunId ?? ''),
+            executor_owner_user_id:
+              row.executorOwnerUserId == null ? null : Number(row.executorOwnerUserId),
             assigner_user_id: Number(row.assignerUserId ?? 0),
             execution_environment: String(row.executionEnvironment ?? ''),
             execution_device_id:
@@ -744,6 +764,11 @@ export function createDeliveryApi(client: HttpClient) {
             rejected_reason: row.rejectedReason == null ? null : String(row.rejectedReason),
             runtime_device_id: row.runtimeDeviceId == null ? null : String(row.runtimeDeviceId),
             runtime_task_id: row.runtimeTaskId == null ? null : String(row.runtimeTaskId),
+            runtime_profile_id: row.runtimeProfileId == null ? null : String(row.runtimeProfileId),
+            runtime_source: row.runtimeSource == null ? null : String(row.runtimeSource),
+            can_select_runtime: row.canSelectRuntime === true,
+            waiting_runtime_reason:
+              row.waitingRuntimeReason == null ? null : String(row.waitingRuntimeReason),
             version: Number(row.version ?? 1),
             created_at: String(row.createdAt ?? ''),
             updated_at: String(row.updatedAt ?? ''),
@@ -783,6 +808,7 @@ export function createDeliveryApi(client: HttpClient) {
         local_project_id?: number | null
         local_project_name?: string | null
         workflow?: IssueWorkflowInstance | null
+        execution_config?: WorkflowExecutionConfig | null
       }
     ): Promise<CloudLoopItem> {
       return client.post(`/v1/cloud-projects/${projectId}/loop-items`, data)
@@ -803,6 +829,7 @@ export function createDeliveryApi(client: HttpClient) {
           | 'due_at'
           | 'tags'
           | 'workflow'
+          | 'execution_config'
         >
       > & {
         version: number

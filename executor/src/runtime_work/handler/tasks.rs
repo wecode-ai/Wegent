@@ -254,6 +254,25 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn create_task(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let schema_version = payload
+            .get("schemaVersion")
+            .or_else(|| payload.get("schema_version"))
+            .map(|value| {
+                value.as_u64().ok_or_else(|| {
+                    AppIpcError::new(
+                        "bad_request",
+                        "runtime task create schemaVersion must be an integer",
+                    )
+                })
+            })
+            .transpose()?
+            .unwrap_or(1);
+        if !matches!(schema_version, 1 | 2) {
+            return Err(AppIpcError::new(
+                "unsupported_schema_version",
+                format!("runtime task create schemaVersion {schema_version} is unsupported"),
+            ));
+        }
         let runtime = string_field(&payload, "runtime").unwrap_or_else(|| "codex".to_owned());
         if !is_codex_runtime(&runtime) && !is_claude_runtime(&runtime) {
             return Err(AppIpcError::new(
@@ -335,6 +354,16 @@ impl RuntimeWorkRpcHandler {
         let source_workspace_path = payload_workspace_path
             .or(inherited_workspace_path)
             .or_else(|| request.cwd().map(str::to_owned))
+            .or_else(|| {
+                request
+                    .runtime_project_key
+                    .as_deref()
+                    .and_then(|project_key| {
+                        CodexGlobalProjectIndex::load()
+                            .project_for_key(project_key)
+                            .map(|project| project.workspace_path.clone())
+                    })
+            })
             .or_else(|| {
                 id_field(&payload, "local_project_id")
                     .and_then(|value| value.parse::<u64>().ok())

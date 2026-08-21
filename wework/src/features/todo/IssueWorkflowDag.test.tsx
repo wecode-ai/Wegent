@@ -14,7 +14,7 @@ vi.mock('@/hooks/useTranslation', () => ({
         {
           'todo.workflow_active_stages': '当前阶段',
           'todo.workflow_node_details': '节点详情',
-          'todo.workflow_stage_human_execution': '人工执行',
+          'todo.workflow_stage_human_execution': '手动执行',
           'todo.workflow_ai_execution': 'AI 执行',
           'todo.workflow_start_work': '开始处理',
           'todo.workflow_add_stage_task': '添加任务',
@@ -256,7 +256,7 @@ describe('IssueWorkflowDag', () => {
       />
     )
 
-    expect(screen.getByTestId('cloud-todo-workflow-action-编辑')).toHaveTextContent('人工执行')
+    expect(screen.getByTestId('cloud-todo-workflow-action-编辑')).toHaveTextContent('手动执行')
     expect(screen.getByTestId('cloud-todo-workflow-action-编辑')).toHaveTextContent('可开始')
     expect(screen.queryByTestId('cloud-todo-workflow-action-审阅')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-workflow-action-交付')).not.toBeInTheDocument()

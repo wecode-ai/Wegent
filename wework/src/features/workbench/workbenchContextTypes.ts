@@ -4,6 +4,7 @@ import type {
   Attachment,
   BindRuntimeTaskIMSessionsResponse,
   CloneGitRepositoryInput,
+  CreatedRuntimeProject,
   CreateGitWorkspaceProjectRequest,
   CreateProjectRequest,
   DeleteDeviceWorkspaceRequest,
@@ -306,6 +307,11 @@ export interface WorkbenchContextValue {
     data: CreateProjectRequest,
     options?: ProjectMutationOptions
   ) => Promise<ProjectWithTasks>
+  createLocalRuntimeProject: (data: {
+    deviceId: string
+    name: string
+    roots: string[]
+  }) => Promise<CreatedRuntimeProject>
   createGitWorkspaceProject: (data: CreateGitWorkspaceProjectRequest) => Promise<ProjectWithTasks>
   prepareDeviceWorkspace: (
     data: DeviceWorkspacePrepareRequest,
