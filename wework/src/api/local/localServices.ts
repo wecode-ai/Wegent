@@ -175,6 +175,7 @@ import {
   CLOUD_MODEL_RESOURCE_USER_ID_OPTION,
   CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION,
   CLOUD_MODEL_VISION_SIDECAR_OPTION,
+  parseCloudVisionSidecarReference,
   selectedModelExecutionFields,
 } from '@/features/workbench/runtimeModelSelection'
 
@@ -956,45 +957,29 @@ function cloudVisionSidecarConfig(
   const raw = modelOptions?.[CLOUD_MODEL_VISION_SIDECAR_OPTION]
   if (!raw) return null
 
-  let sidecar: Record<string, unknown>
+  let parsed: unknown
   try {
-    const parsed = JSON.parse(raw)
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      throw new Error('Cloud vision sidecar reference is invalid')
-    }
-    sidecar = parsed as Record<string, unknown>
+    parsed = JSON.parse(raw)
   } catch (error) {
     throw new Error('Cloud vision sidecar reference is invalid', { cause: error })
   }
-
-  const modelName = stringValue(sidecar.modelName)
-  const modelType = stringValue(sidecar.modelType)
-  const namespace = stringValue(sidecar.namespace)
-  const resourceUserId = sidecar.resourceUserId
-  const apiFormat = stringValue(sidecar.apiFormat)
-  if (
-    !modelName ||
-    !isCloudModelType(modelType) ||
-    !namespace ||
-    typeof resourceUserId !== 'number' ||
-    !Number.isInteger(resourceUserId) ||
-    resourceUserId < 0 ||
-    !apiFormat ||
-    !['openai-responses', 'openai-chat-completions', 'anthropic-messages'].includes(apiFormat)
-  ) {
-    throw new Error('Cloud vision sidecar reference is incomplete')
+  const sidecar = parseCloudVisionSidecarReference(parsed)
+  if (!sidecar) {
+    throw new Error('Cloud vision sidecar reference is invalid')
   }
 
   return {
     enabled: true,
+    // The backend LLM gateway exposes a single protocol-agnostic route and picks the
+    // upstream endpoint from the referenced Model CRD, so every api_format posts here.
     request_url: `${cloudModelGateway.baseUrl.replace(/\/+$/, '')}/responses`,
-    api_format: apiFormat,
+    api_format: sidecar.apiFormat,
     api_key: cloudModelGateway.apiKey,
-    model_id: modelName,
+    model_id: sidecar.modelName,
     default_headers: {
-      'X-Wegent-Model-Type': modelType,
-      'X-Wegent-Model-Namespace': namespace,
-      'X-Wegent-Model-User-Id': String(resourceUserId),
+      'X-Wegent-Model-Type': sidecar.modelType,
+      'X-Wegent-Model-Namespace': sidecar.namespace,
+      'X-Wegent-Model-User-Id': String(sidecar.resourceUserId),
       'X-Wegent-Upstream-Header-wecode-executor': wecodeExecutorForRuntime(runtime),
       'X-Wegent-Upstream-Header-wecode-source': 'wegent-local',
     },

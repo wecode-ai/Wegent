@@ -19,6 +19,7 @@ import {
   type DragEndEvent,
 } from '@dnd-kit/core'
 import {
+  Archive,
   Bot,
   Check,
   ChevronDown,
@@ -62,6 +63,10 @@ import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRe
 import { ActionMenu } from '@/components/common/ActionMenu'
 import { Tooltip } from '@/components/ui/tooltip'
 import type {
+  ArchiveRuntimeTaskOptions,
+  ArchiveRuntimeTaskResult,
+} from '@/features/workbench/workbenchContextTypes'
+import type {
   DeliveryApi,
   ProjectSpaceLocation,
   WorkbenchServices,
@@ -93,6 +98,7 @@ import type {
   ProjectWithTasks,
   RuntimeProjectSpaceRef,
   RuntimeTaskAddress,
+  RuntimeTaskSummary,
   RuntimeWorkListResponse,
   User as UserProfile,
 } from '@/types/api'
@@ -125,6 +131,7 @@ import { GlobalTodoSearch } from './GlobalTodoSearch'
 import { BoardQuickCreate } from './BoardQuickCreate'
 import { parseDingTalkAITableLink, repositoryProviderConfig } from './projectProviderConfig'
 import { isRuntimeMyWorkItem, runtimeMyWorkItems } from './runtimeMyWork'
+import { finalAssistantTranscriptPreview } from './runtimeTaskResponsePreview'
 import { TaskSearchPanel } from './TaskSearchPanel'
 import { TodoEditor } from './TodoEditor'
 import { IssueComposer } from './IssueComposer'
@@ -244,18 +251,6 @@ const nativeBoardStatusColors: Record<
   in_progress: 'orange',
   in_review: 'purple',
   completed: 'green',
-}
-
-function localProjectFilterStorageKey(userId: number): string {
-  return `wework-my-tasks-local-project:${userId}`
-}
-
-function storedLocalProjectFilter(userId: number): string | null {
-  try {
-    return window.localStorage.getItem(localProjectFilterStorageKey(userId))
-  } catch {
-    return null
-  }
 }
 
 function aitableCellLabels(value: unknown): string[] {
@@ -436,6 +431,36 @@ interface AvailableProjectSpaceApi {
   location: ProjectSpaceLocation
 }
 
+function uniqueLocatedItems(items: LocatedLoopItem[]): LocatedLoopItem[] {
+  const unique = new Map<string, LocatedLoopItem>()
+  for (const item of items) {
+    unique.set(`${item.project_store ?? 'backend'}:${item.id}`, item)
+  }
+  return [...unique.values()]
+}
+
+function runtimeWorkItemReference(
+  task: RuntimeTaskSummary
+): { projectId: string; itemId: string } | null {
+  const handle = task.runtimeHandle
+  const origin =
+    handle?.origin && typeof handle.origin === 'object'
+      ? (handle.origin as Record<string, unknown>)
+      : null
+  const projectId =
+    handle?.cloudProjectId ??
+    handle?.cloud_project_id ??
+    origin?.cloudProjectId ??
+    origin?.cloud_project_id
+  const itemId =
+    handle?.loopItemId ?? handle?.loop_item_id ?? origin?.loopItemId ?? origin?.loop_item_id
+  return (typeof projectId === 'string' || typeof projectId === 'number') &&
+    typeof itemId === 'string' &&
+    itemId
+    ? { projectId: String(projectId), itemId }
+    : null
+}
+
 interface CloudTodoWorkspaceProps {
   user: UserProfile
   localProjects: ProjectWithTasks[]
@@ -448,6 +473,10 @@ interface CloudTodoWorkspaceProps {
   onFocusedItemHandled?: () => void
   onActiveProjectChange?: (project: LocatedCloudProject | null) => void
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
+  onArchiveRuntimeTask?: (
+    address: RuntimeTaskAddress,
+    options?: ArchiveRuntimeTaskOptions
+  ) => Promise<ArchiveRuntimeTaskResult | void> | ArchiveRuntimeTaskResult | void
   onOpenSettings?: (options?: DesktopSidebarAccountSettingsOptions) => void
   onLogout?: () => void
 }
@@ -947,6 +976,7 @@ export function CloudTodoWorkspace({
   onFocusedItemHandled,
   onActiveProjectChange,
   onOpenRuntimeTask,
+  onArchiveRuntimeTask,
   onOpenSettings,
   onLogout,
 }: CloudTodoWorkspaceProps) {
@@ -1069,9 +1099,7 @@ export function CloudTodoWorkspace({
   const [nativeGroupBy, setNativeGroupBy] = useState<NativeBoardGroupBy>('status')
   const [nativeGroupFilter, setNativeGroupFilter] = useState('')
   const [nativeBoardQuery, setNativeBoardQuery] = useState('')
-  const [localProjectFilter, setLocalProjectFilter] = useState(
-    () => storedLocalProjectFilter(user.id) ?? ''
-  )
+  const [localProjectFilter, setLocalProjectFilter] = useState('all')
   const [groupScopeBusy, setGroupScopeBusy] = useState(false)
   const [activeDragItemId, setActiveDragItemId] = useState<string | null>(null)
   const boardSensors = useSensors(
@@ -1204,6 +1232,17 @@ export function CloudTodoWorkspace({
   const [archiveItem, setArchiveItem] = useState<CloudLoopItem | null>(null)
   const [archiveBusy, setArchiveBusy] = useState(false)
   const [archiveError, setArchiveError] = useState<string | null>(null)
+  const [runtimeBatchArchiveItems, setRuntimeBatchArchiveItems] = useState<
+    LocatedLoopItem[] | null
+  >(null)
+  const [runtimeForceArchiveItems, setRuntimeForceArchiveItems] = useState<
+    LocatedLoopItem[] | null
+  >(null)
+  const [runtimeFinalResponsePreviews, setRuntimeFinalResponsePreviews] = useState<
+    Record<string, { signature: string; text: string | null }>
+  >({})
+  const runtimeFinalResponseRequestsRef = useRef(new Set<string>())
+  const runtimeFinalResponseLatestSignatureRef = useRef(new Map<string, string>())
   useEffect(() => {
     if (projectMenuId === null) return
 
@@ -1275,19 +1314,12 @@ export function CloudTodoWorkspace({
     })
   }, [localProjects, runtimeWork])
   const isMyTasksBoard = isDefaultWorkItemProject(selectedProject)
-  const activeRuntimeProjectId = runtimeWork?.projects.find(entry => entry.project.active)?.project
-    .id
-  const defaultLocalProject =
-    localProjectOptions.find(project => project.id === activeRuntimeProjectId) ??
-    localProjectOptions[0] ??
-    null
   const activeLocalProjectFilter =
-    localProjectFilter === 'all' ||
-    localProjectOptions.some(project => String(project.id) === localProjectFilter)
-      ? localProjectFilter
-      : defaultLocalProject
-        ? String(defaultLocalProject.id)
-        : ''
+    localProjectFilter === '' || localProjectFilter === 'all'
+      ? 'all'
+      : localProjectOptions.some(project => String(project.id) === localProjectFilter)
+        ? localProjectFilter
+        : 'all'
   const selectedLocalProject =
     localProjectOptions.find(project => String(project.id) === activeLocalProjectFilter) ?? null
   const runtimeProjectIdByTask = useMemo(() => {
@@ -1298,6 +1330,51 @@ export function CloudTodoWorkspace({
         for (const task of workspace.tasks) {
           result.set(`${workspace.deviceId}:${task.taskId}`, projectWork.project.id)
         }
+      }
+    }
+    return result
+  }, [runtimeWork])
+  const runtimeTasksByKey = useMemo(() => {
+    const result = new Map<string, RuntimeTaskSummary>()
+    const workspaces = [
+      ...(runtimeWork?.projects ?? []).flatMap(projectWork => projectWork.deviceWorkspaces),
+      ...(runtimeWork?.chats ?? []),
+    ]
+    for (const workspace of workspaces) {
+      for (const task of workspace.tasks) {
+        result.set(
+          runtimeConversationKey({
+            deviceId: workspace.deviceId,
+            taskId: task.taskId,
+          }),
+          task
+        )
+      }
+    }
+    return result
+  }, [runtimeWork])
+  const runtimeTaskKeys = useMemo(() => new Set(runtimeTasksByKey.keys()), [runtimeTasksByKey])
+  const runtimeAddressesByWorkItem = useMemo(() => {
+    const result = new Map<string, RuntimeTaskAddress[]>()
+    const workspaces = [
+      ...(runtimeWork?.projects ?? []).flatMap(projectWork => projectWork.deviceWorkspaces),
+      ...(runtimeWork?.chats ?? []),
+    ]
+    for (const workspace of workspaces) {
+      for (const task of workspace.tasks) {
+        const reference = runtimeWorkItemReference(task)
+        if (!reference) continue
+        const key = `${reference.projectId}:${reference.itemId}`
+        const addresses = result.get(key) ?? []
+        addresses.push({
+          deviceId: workspace.deviceId,
+          taskId: task.taskId,
+          runtime: task.runtime,
+          threadId: task.threadId,
+          workspacePath: task.workspacePath || workspace.workspacePath,
+          runtimeHandle: task.runtimeHandle,
+        })
+        result.set(key, addresses)
       }
     }
     return result
@@ -1373,10 +1450,27 @@ export function CloudTodoWorkspace({
                   taskId: binding.task_id,
                 })
               ) ?? false,
+            finalResponsePreview:
+              runtimeFinalResponsePreviews[
+                runtimeConversationKey({
+                  deviceId: binding.device_id,
+                  taskId: binding.task_id,
+                })
+              ]?.text ?? null,
+            finalResponseLoaded:
+              runtimeConversationKey({
+                deviceId: binding.device_id,
+                taskId: binding.task_id,
+              }) in runtimeFinalResponsePreviews,
           })),
         ])
       ),
-    [itemTaskBindings, runtimeTaskByAddress, runtimeTaskRunningByAddress]
+    [
+      itemTaskBindings,
+      runtimeFinalResponsePreviews,
+      runtimeTaskByAddress,
+      runtimeTaskRunningByAddress,
+    ]
   )
   const localProjectIdForItem = useCallback(
     (item: CloudLoopItem): number | null => {
@@ -1518,15 +1612,6 @@ export function CloudTodoWorkspace({
   const personalGroupKey = selectedProject
     ? `wework-board-group:${user.id}:${selectedProject.id}`
     : null
-
-  useEffect(() => {
-    if (!activeLocalProjectFilter) return
-    try {
-      window.localStorage.setItem(localProjectFilterStorageKey(user.id), activeLocalProjectFilter)
-    } catch {
-      // The selector still works for this session when persistence is unavailable.
-    }
-  }, [activeLocalProjectFilter, user.id])
 
   useEffect(() => {
     if (
@@ -1812,15 +1897,31 @@ export function CloudTodoWorkspace({
     ? (projectForItem(createTodoParent) ?? null)
     : selectedProject
   const createTodoApi = apiForProject(createTodoProject)
-  const boardParent = items.find(item => item.id === boardParentId) ?? null
-  const boardLayerCount = items.filter(item => item.parent_id === boardParentId).length
+  const boardItems =
+    !isMyTasksBoard || !selectedProjectKey || itemTaskBindingsProjectKey !== selectedProjectKey
+      ? items
+      : items.filter(item => {
+          const bindings = itemTaskBindings[item.id] ?? []
+          if (bindings.length === 0) return true
+          return bindings.some(binding =>
+            runtimeTaskKeys.has(
+              runtimeConversationKey({
+                deviceId: binding.device_id,
+                taskId: binding.task_id,
+              })
+            )
+          )
+        })
+  const boardParent = boardItems.find(item => item.id === boardParentId) ?? null
+  const boardLayerCount = boardItems.filter(item => item.parent_id === boardParentId).length
   const boardBreadcrumb: CloudLoopItem[] = []
   let breadcrumbItem = boardParent
   const breadcrumbIds = new Set<string>()
   while (breadcrumbItem && !breadcrumbIds.has(breadcrumbItem.id)) {
     boardBreadcrumb.unshift(breadcrumbItem)
     breadcrumbIds.add(breadcrumbItem.id)
-    breadcrumbItem = items.find(candidate => candidate.id === breadcrumbItem?.parent_id) ?? null
+    breadcrumbItem =
+      boardItems.find(candidate => candidate.id === breadcrumbItem?.parent_id) ?? null
   }
 
   function applyProjectSelection(project: LocatedCloudProject | null) {
@@ -1928,6 +2029,77 @@ export function CloudTodoWorkspace({
     } catch (cause) {
       track('operation_failed', { operation: 'board_item_action' })
       setArchiveError(cause instanceof Error ? cause.message : '归档任务失败')
+    } finally {
+      setArchiveBusy(false)
+    }
+  }
+
+  async function archiveCompletedItems(
+    completedItems: LocatedLoopItem[],
+    options?: ArchiveRuntimeTaskOptions
+  ) {
+    if (!onArchiveRuntimeTask || archiveBusy || completedItems.length === 0) return
+    setArchiveBusy(true)
+    setArchiveError(null)
+    const archivedItemKeys = new Set<string>()
+    const dirtyItems: LocatedLoopItem[] = []
+    const failedItems: LocatedLoopItem[] = []
+    try {
+      for (const item of completedItems) {
+        const addresses = new Map<string, RuntimeTaskAddress>()
+        for (const binding of itemTaskBindings[item.id] ?? []) {
+          const address = { deviceId: binding.device_id, taskId: binding.task_id }
+          addresses.set(runtimeConversationKey(address), address)
+        }
+        for (const address of runtimeAddressesByWorkItem.get(
+          `${item.cloud_project_id}:${item.id}`
+        ) ?? []) {
+          addresses.set(runtimeConversationKey(address), address)
+        }
+        let itemIsDirty = false
+        let itemFailed = false
+        try {
+          for (const address of addresses.values()) {
+            const result = await onArchiveRuntimeTask(address, options)
+            if (!options?.force && result?.status === 'dirty_worktree') {
+              itemIsDirty = true
+            } else if (result?.status === 'failed') {
+              itemFailed = true
+            }
+          }
+          if (itemIsDirty) {
+            dirtyItems.push(item)
+            continue
+          }
+          if (itemFailed) {
+            failedItems.push(item)
+            continue
+          }
+          const api = apiForProject(projectForItem(item))
+          if (!api) throw new Error('项目空间当前不可用')
+          await api.archiveLoopItem(item.id)
+          archivedItemKeys.add(`${item.project_store ?? 'backend'}:${item.id}`)
+        } catch (error) {
+          failedItems.push(item)
+          console.error('[Wework my tasks] archive runtime task failed', error)
+        }
+      }
+      if (archivedItemKeys.size > 0) {
+        setItems(current =>
+          current.filter(
+            item => !archivedItemKeys.has(`${item.project_store ?? 'backend'}:${item.id}`)
+          )
+        )
+      }
+      setRuntimeBatchArchiveItems(dirtyItems.length === 0 ? failedItems : null)
+      setRuntimeForceArchiveItems(!options?.force && dirtyItems.length > 0 ? dirtyItems : null)
+      if (failedItems.length > 0) {
+        setArchiveError(
+          t('todo.batch_archive_failed', '{{count}} 个任务归档失败，请稍后重试', {
+            count: failedItems.length,
+          })
+        )
+      }
     } finally {
       setArchiveBusy(false)
     }
@@ -2102,9 +2274,33 @@ export function CloudTodoWorkspace({
           : Promise.resolve()
       const readBoard = async (): Promise<BoardReadResult> => {
         await prepare
-        return selectedProject.location === 'cloud'
-          ? selectedProjectApi.getBoardSnapshot(selectedProjectId)
-          : selectedProjectApi.listLoopItems(selectedProjectId)
+        const selectedResponse =
+          selectedProject.location === 'cloud'
+            ? await selectedProjectApi.getBoardSnapshot(selectedProjectId)
+            : await selectedProjectApi.listLoopItems(selectedProjectId)
+        const selectedItems = locateItems(selectedResponse.items, selectedProject.project_store)
+        if (!isMyTasksBoard) return { ...selectedResponse, items: selectedItems }
+
+        const myWorkResults = await Promise.allSettled(
+          availableProjectSpaceApis.map(async ({ api, location }) => ({
+            location,
+            items: (await api.listMyWork()).items,
+          }))
+        )
+        const aggregatedItems = myWorkResults.flatMap(result => {
+          if (result.status === 'rejected') {
+            console.warn('[Wework my tasks] project-space aggregation failed', result.reason)
+            return []
+          }
+          return locateItems(
+            result.value.items,
+            result.value.location === 'local' ? 'local' : 'backend'
+          )
+        })
+        return {
+          ...selectedResponse,
+          items: uniqueLocatedItems([...selectedItems, ...aggregatedItems]),
+        }
       }
       void readBoard()
         .then(response => {
@@ -2121,7 +2317,7 @@ export function CloudTodoWorkspace({
           const signature = boardSnapshotKey(selectedProjectKey, response.items, null, cloudContext)
           if (boardSnapshotSignatureRef.current === signature) return
           boardSnapshotSignatureRef.current = signature
-          const locatedItems = locateItems(response.items, selectedProject.project_store)
+          const locatedItems = response.items
           applyBoardItems(selectedProjectKey, locatedItems, null)
           if (cloudContext) {
             const bindingsByItem: Record<string, LoopItemTaskBinding[]> = {}
@@ -2209,7 +2405,9 @@ export function CloudTodoWorkspace({
     }
   }, [
     applyBoardItems,
+    availableProjectSpaceApis,
     boardRefreshNonce,
+    isMyTasksBoard,
     selectedProject,
     selectedProjectApi,
     selectedProjectId,
@@ -2265,10 +2463,16 @@ export function CloudTodoWorkspace({
     }
     let active = true
     void Promise.allSettled(
-      items.map(async item => ({
-        itemId: item.id,
-        bindings: await selectedProjectApi.listTaskBindings(item.id),
-      }))
+      items.map(async item => {
+        const api = isMyTasksBoard
+          ? projectSpaceApis[item.project_store === 'local' ? 'local' : 'cloud']
+          : selectedProjectApi
+        if (!api) throw new Error('Project-space API is unavailable')
+        return {
+          itemId: item.id,
+          bindings: await api.listTaskBindings(item.id),
+        }
+      })
     ).then(results => {
       if (!active) return
       const next: Record<string, LoopItemTaskBinding[]> = {}
@@ -2283,7 +2487,86 @@ export function CloudTodoWorkspace({
     return () => {
       active = false
     }
-  }, [items, itemsProjectKey, selectedProject, selectedProjectApi, selectedProjectKey])
+  }, [
+    isMyTasksBoard,
+    items,
+    itemsProjectKey,
+    projectSpaceApis,
+    selectedProject,
+    selectedProjectApi,
+    selectedProjectKey,
+  ])
+  useEffect(() => {
+    const runtimeWorkApi = services.runtimeWorkApi
+    if (
+      !runtimeWorkApi?.getRuntimeTranscript ||
+      !selectedProjectKey ||
+      itemTaskBindingsProjectKey !== selectedProjectKey
+    ) {
+      return
+    }
+    for (const item of items) {
+      if (item.status !== 'in_review') continue
+      for (const binding of itemTaskBindings[item.id] ?? []) {
+        const addressKey = runtimeConversationKey({
+          deviceId: binding.device_id,
+          taskId: binding.task_id,
+        })
+        const task = runtimeTasksByKey.get(addressKey)
+        const signature = [
+          task?.updatedAt ?? '',
+          task?.completedAt ?? '',
+          task?.status ?? '',
+          task?.turnStatus ?? '',
+        ].join(':')
+        if (runtimeFinalResponsePreviews[addressKey]?.signature === signature) continue
+        const requestKey = `${addressKey}:${signature}`
+        if (runtimeFinalResponseRequestsRef.current.has(requestKey)) continue
+        runtimeFinalResponseRequestsRef.current.add(requestKey)
+        runtimeFinalResponseLatestSignatureRef.current.set(addressKey, signature)
+        void runtimeWorkApi
+          .getRuntimeTranscript({
+            deviceId: binding.device_id,
+            taskId: binding.task_id,
+            runtime: task?.runtime,
+            threadId: task?.threadId,
+            workspacePath: task?.workspacePath,
+            runtimeHandle: task?.runtimeHandle,
+            limit: 20,
+          })
+          .then(transcript => {
+            if (runtimeFinalResponseLatestSignatureRef.current.get(addressKey) !== signature) {
+              return
+            }
+            const text = finalAssistantTranscriptPreview(transcript)
+            setRuntimeFinalResponsePreviews(current => ({
+              ...current,
+              [addressKey]: { signature, text },
+            }))
+          })
+          .catch(error => {
+            console.warn('[Wework my tasks] failed to load final task response', {
+              address: {
+                deviceId: binding.device_id,
+                taskId: binding.task_id,
+              },
+              error,
+            })
+          })
+          .finally(() => {
+            runtimeFinalResponseRequestsRef.current.delete(requestKey)
+          })
+      }
+    }
+  }, [
+    itemTaskBindings,
+    itemTaskBindingsProjectKey,
+    items,
+    runtimeFinalResponsePreviews,
+    runtimeTasksByKey,
+    selectedProjectKey,
+    services.runtimeWorkApi,
+  ])
   useEffect(() => {
     if (
       selectedProject?.location !== 'local' ||
@@ -2393,7 +2676,10 @@ export function CloudTodoWorkspace({
     const item = items.find(candidate => candidate.id === itemId)
     const column = boardColumns.find(candidate => candidate.key === columnKey)
     if (!item || !column || item.can_edit === false || isAITableProject) return
-    const taskBindingCount = itemTaskBindings[item.id]?.length ?? 0
+    const taskBindingCount = Math.max(
+      itemTaskBindings[item.id]?.length ?? 0,
+      runtimeAddressesByWorkItem.get(`${item.cloud_project_id}:${item.id}`)?.length ?? 0
+    )
     if (
       nativeGroupBy === 'status' &&
       (column.status === 'pending' || column.status === 'in_progress') &&
@@ -2411,7 +2697,7 @@ export function CloudTodoWorkspace({
       return
     }
     const reordered =
-      nativeGroupBy === 'status'
+      nativeGroupBy === 'status' && !isMyTasksBoard
         ? reorderLaneItems(items, itemId, column.status, beforeItemId)
         : null
     const previousItems = items
@@ -3426,7 +3712,7 @@ export function CloudTodoWorkspace({
                 ) : null}
                 {projectView === 'board' && projectSearchOpen ? (
                   <TaskSearchPanel
-                    items={items}
+                    items={boardItems}
                     members={selectedProjectKey ? (projectMembers[selectedProjectKey] ?? []) : []}
                     query={projectSearchQuery}
                     filters={projectSearchFilters}
@@ -3671,10 +3957,11 @@ export function CloudTodoWorkspace({
                     ) : (
                       <div className="flex items-baseline gap-3 px-2 pb-3.5 pt-1.5">
                         <h1 className="text-heading-sm font-semibold">
-                          {isAITableProject ? '父任务' : 'Issue'}
+                          {isMyTasksBoard ? '任务' : isAITableProject ? '父任务' : 'Issue'}
                         </h1>
                         <span className="text-xs text-text-muted">
-                          {boardLayerCount} {isAITableProject ? '条记录' : '个 Issue'}
+                          {boardLayerCount}{' '}
+                          {isMyTasksBoard ? '个任务' : isAITableProject ? '条记录' : '个 Issue'}
                         </span>
                       </div>
                     )}
@@ -3714,7 +4001,7 @@ export function CloudTodoWorkspace({
                       >
                         <div className="flex h-full min-h-0 items-start gap-3.5 px-6">
                           {boardColumns.map(column => {
-                            const columnItems = items.filter(
+                            const columnItems = boardItems.filter(
                               item =>
                                 item.parent_id === boardParentId &&
                                 (!isMyTasksBoard ||
@@ -3788,40 +4075,69 @@ export function CloudTodoWorkspace({
                                       {columnItems.length}
                                     </span>
                                   </span>
-                                  {canCreateBoardTask &&
-                                    !isAITableProject &&
+                                  <span className="flex items-center gap-1">
+                                    {isMyTasksBoard &&
                                     nativeGroupBy === 'status' &&
-                                    canCreateInColumn && (
+                                    column.status === 'completed' &&
+                                    columnItems.length > 0 &&
+                                    onArchiveRuntimeTask ? (
                                       <Tooltip
                                         label={t(
-                                          boardParent
-                                            ? 'todo.new_task_in_column'
-                                            : 'todo.new_issue_in_column',
-                                          boardParent
-                                            ? '在{{column}}中新建任务'
-                                            : '在{{column}}中新建 Issue',
-                                          { column: column.label }
+                                          'todo.archive_completed_tasks',
+                                          '批量归档已完成任务'
                                         )}
                                         side="bottom"
                                         align="end"
                                       >
                                         <button
                                           type="button"
-                                          data-testid={`cloud-todo-column-add-${column.key}`}
-                                          onClick={openColumnCreation}
+                                          data-testid="cloud-my-tasks-archive-completed"
+                                          onClick={() => setRuntimeBatchArchiveItems(columnItems)}
                                           className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted opacity-0 transition hover:bg-background hover:text-text-primary focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 group-hover:opacity-100"
                                           aria-label={t(
-                                            'todo.new_task_in_column',
+                                            'todo.archive_completed_tasks',
+                                            '批量归档已完成任务'
+                                          )}
+                                        >
+                                          <Archive className="h-3.5 w-3.5" />
+                                        </button>
+                                      </Tooltip>
+                                    ) : null}
+                                    {canCreateBoardTask &&
+                                      !isAITableProject &&
+                                      nativeGroupBy === 'status' &&
+                                      canCreateInColumn && (
+                                        <Tooltip
+                                          label={t(
+                                            boardParent
+                                              ? 'todo.new_task_in_column'
+                                              : 'todo.new_issue_in_column',
                                             boardParent
                                               ? '在{{column}}中新建任务'
                                               : '在{{column}}中新建 Issue',
                                             { column: column.label }
                                           )}
+                                          side="bottom"
+                                          align="end"
                                         >
-                                          <Plus className="h-3.5 w-3.5" />
-                                        </button>
-                                      </Tooltip>
-                                    )}
+                                          <button
+                                            type="button"
+                                            data-testid={`cloud-todo-column-add-${column.key}`}
+                                            onClick={openColumnCreation}
+                                            className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted opacity-0 transition hover:bg-background hover:text-text-primary focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 group-hover:opacity-100"
+                                            aria-label={t(
+                                              'todo.new_task_in_column',
+                                              boardParent
+                                                ? '在{{column}}中新建任务'
+                                                : '在{{column}}中新建 Issue',
+                                              { column: column.label }
+                                            )}
+                                          >
+                                            <Plus className="h-3.5 w-3.5" />
+                                          </button>
+                                        </Tooltip>
+                                      )}
+                                  </span>
                                 </header>
                                 <TodoColumnDropzone status={column.key}>
                                   {columnItems.map(item => (
@@ -3871,7 +4187,7 @@ export function CloudTodoWorkspace({
                                     />
                                   ))}
                                   {columnItems.length === 0 &&
-                                    (boardParent
+                                    (boardParent || isMyTasksBoard
                                       ? columnEmptyHints[column.status]
                                       : issueColumnEmptyHints[column.status]) && (
                                       <>
@@ -3892,7 +4208,7 @@ export function CloudTodoWorkspace({
                                           </button>
                                         ) : (
                                           <div className="rounded-xl border border-dashed border-border px-3 py-6 text-center text-xs text-text-muted">
-                                            {boardParent
+                                            {boardParent || isMyTasksBoard
                                               ? columnEmptyHints[column.status]
                                               : issueColumnEmptyHints[column.status]}
                                           </div>
@@ -4434,6 +4750,79 @@ export function CloudTodoWorkspace({
                 className="h-9 rounded-lg bg-text-primary px-4 text-sm font-medium text-background hover:bg-text-primary/90 disabled:opacity-50"
               >
                 {renameBusy ? '保存中…' : '保存'}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+      {(runtimeBatchArchiveItems || runtimeForceArchiveItems) && (
+        <Modal
+          title={
+            runtimeForceArchiveItems
+              ? t('todo.force_archive_completed_tasks_title', '强制归档已完成任务？')
+              : t('todo.archive_completed_tasks_title', '归档已完成任务？')
+          }
+          onClose={() => {
+            if (archiveBusy) return
+            setRuntimeBatchArchiveItems(null)
+            setRuntimeForceArchiveItems(null)
+            setArchiveError(null)
+          }}
+        >
+          <div className="px-5 pb-5 pt-4">
+            <p className="text-sm leading-5 text-text-secondary">
+              {runtimeForceArchiveItems
+                ? t(
+                    'todo.force_archive_completed_tasks_description',
+                    '{{count}} 个任务的工作树包含未提交修改。强制归档会删除这些工作树目录。',
+                    { count: runtimeForceArchiveItems.length }
+                  )
+                : t(
+                    'todo.archive_completed_tasks_description',
+                    '将从任务列表中归档 {{count}} 个已完成任务。归档后可在设置中恢复。',
+                    { count: runtimeBatchArchiveItems?.length ?? 0 }
+                  )}
+            </p>
+            {archiveError ? (
+              <p className="mt-3 text-xs text-destructive" role="alert">
+                {archiveError}
+              </p>
+            ) : null}
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                type="button"
+                data-testid="cloud-my-tasks-archive-completed-cancel"
+                disabled={archiveBusy}
+                onClick={() => {
+                  setRuntimeBatchArchiveItems(null)
+                  setRuntimeForceArchiveItems(null)
+                  setArchiveError(null)
+                }}
+                className="h-9 rounded-lg border border-border px-4 text-sm text-text-primary hover:bg-muted disabled:opacity-50"
+              >
+                {t('common.cancel', '取消')}
+              </button>
+              <button
+                type="button"
+                data-testid={
+                  runtimeForceArchiveItems
+                    ? 'cloud-my-tasks-force-archive-completed-confirm'
+                    : 'cloud-my-tasks-archive-completed-confirm'
+                }
+                disabled={archiveBusy}
+                onClick={() =>
+                  void archiveCompletedItems(
+                    runtimeForceArchiveItems ?? runtimeBatchArchiveItems ?? [],
+                    runtimeForceArchiveItems ? { force: true } : undefined
+                  )
+                }
+                className="h-9 rounded-lg bg-red-600 px-4 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+              >
+                {archiveBusy
+                  ? t('todo.archiving', '归档中…')
+                  : runtimeForceArchiveItems
+                    ? t('todo.force_archive', '强制归档')
+                    : t('todo.confirm_archive', '确认归档')}
               </button>
             </div>
           </div>

@@ -928,6 +928,8 @@ fn runtime_handle_list_payload_key(key: &str) -> bool {
             | "cachedMessages"
             | "cached_message"
             | "cached_messages"
+            | "completedTranscriptMessages"
+            | "transcriptSnapshotMessages"
     )
 }
 
