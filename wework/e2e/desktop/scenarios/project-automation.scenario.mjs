@@ -2184,6 +2184,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         'Insertion controls remained visible on an unselected workflow stage'
       )
       await control.command(
+        'waitFor',
+        `${activeWorkflow} [data-testid="project-workflow-edge-stage-1-stage-2"]`,
+        { timeoutMs: uiTimeoutMs }
+      )
+      await control.command(
         'press',
         `${activeWorkflow} [data-testid="project-workflow-edge-stage-1-stage-2"]`,
         { key: 'Enter' }
@@ -2577,6 +2582,14 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         `${activeBoard} [data-testid="cloud-todo-workflow-action-stage-3"]`,
         {
           text: '等待前置任务',
+          timeoutMs: uiTimeoutMs,
+          visible: true,
+        }
+      )
+      await control.command(
+        'waitFor',
+        `${activeBoard} [data-testid="cloud-todo-workflow-node-stage-1"]`,
+        {
           timeoutMs: uiTimeoutMs,
           visible: true,
         }
