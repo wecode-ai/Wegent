@@ -1205,21 +1205,11 @@ async function visibleModelOptionId(control, targetOptionIds, providerId) {
   for (const targetOptionId of targetOptionIds) {
     const targetSelector = `[data-testid="model-selector-submenu"] [data-testid="${targetOptionId}"]${modelProviderSelector(providerId)}`
     await control.command('scrollIntoView', targetSelector).catch(() => undefined)
-    const metrics = await control
-      .command('getElementMetrics', targetSelector)
-      .then(value => JSON.parse(value))
-      .catch(() => [])
-    if (
-      metrics.some(
-        metric =>
-          metric.width > 0 &&
-          metric.height > 0 &&
-          metric.bottom > 0 &&
-          metric.right > 0 &&
-          metric.top < 720 &&
-          metric.left < 1280
-      )
-    ) {
+    const visibleCount = await control
+      .command('getElementCount', targetSelector, { visible: true })
+      .then(value => Number(value))
+      .catch(() => 0)
+    if (visibleCount > 0) {
       return targetOptionId
     }
   }
