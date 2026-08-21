@@ -909,6 +909,7 @@ impl RuntimeWorkRpcHandler {
         } else {
             None
         };
+        let had_active_local_execution = self.is_active_local_task(&local_task_id);
         self.resolve_pending_request_user_input_for_stop(&local_task_id);
         if let Some(thread_id) = thread_id.as_deref() {
             if self
@@ -916,6 +917,7 @@ impl RuntimeWorkRpcHandler {
                     &local_task_id,
                     thread_id,
                     "interrupt_and_send_provider_terminal",
+                    PROVIDER_STATE_RECONCILIATION_TIMEOUT,
                 )
                 .await
             {
@@ -924,9 +926,14 @@ impl RuntimeWorkRpcHandler {
         }
         let local_stop = self.abort_active_turn(&local_task_id);
         let provider_stop = async {
-            match thread_id.as_deref() {
-                Some(thread_id) => self.interrupt_provider_active_turn(thread_id).await,
-                None => true,
+            match (had_active_local_execution, thread_id.as_deref()) {
+                (false, Some(thread_id)) => tokio::time::timeout(
+                    Duration::from_secs(10),
+                    self.interrupt_provider_active_turn(thread_id),
+                )
+                .await
+                .unwrap_or(false),
+                _ => true,
             }
         };
         let (local_stopped, provider_stopped) = tokio::join!(local_stop, provider_stop);
@@ -952,21 +959,33 @@ impl RuntimeWorkRpcHandler {
         local_task_id: &str,
         thread_id: &str,
         reason: &str,
+        timeout: Duration,
     ) -> bool {
-        let thread = match self.read_codex_recent_turns(thread_id).await {
-            Ok(thread) => thread,
-            Err(error) => {
-                log_executor_event(
-                    "runtime work provider state read failed during reconciliation",
-                    &[
-                        ("local_task_id", local_task_id.to_owned()),
-                        ("thread_id", thread_id.to_owned()),
-                        ("error", error),
-                    ],
-                );
-                return false;
-            }
-        };
+        let thread =
+            match tokio::time::timeout(timeout, self.read_codex_recent_turns(thread_id)).await {
+                Ok(Ok(thread)) => thread,
+                Ok(Err(error)) => {
+                    log_executor_event(
+                        "runtime work provider state read failed during reconciliation",
+                        &[
+                            ("local_task_id", local_task_id.to_owned()),
+                            ("thread_id", thread_id.to_owned()),
+                            ("error", error),
+                        ],
+                    );
+                    return false;
+                }
+                Err(_) => {
+                    log_executor_event(
+                        "runtime work provider state read timed out during reconciliation",
+                        &[
+                            ("local_task_id", local_task_id.to_owned()),
+                            ("thread_id", thread_id.to_owned()),
+                        ],
+                    );
+                    return false;
+                }
+            };
         let Some(status) = codex_thread_terminal_task_status(&thread) else {
             return false;
         };
@@ -1417,6 +1436,7 @@ impl RuntimeWorkRpcHandler {
         let is_codex = link
             .as_ref()
             .is_none_or(|link| link.runtime.eq_ignore_ascii_case("codex"));
+        let had_active_local_execution = self.is_active_local_task(&local_task_id);
         self.resolve_pending_request_user_input_for_stop(&local_task_id);
         if self.remove_queued_turn(&local_task_id).await? {
             return Ok(match link {
@@ -1447,6 +1467,7 @@ impl RuntimeWorkRpcHandler {
                         &local_task_id,
                         thread_id,
                         "cancel_provider_terminal",
+                        PROVIDER_STATE_RECONCILIATION_TIMEOUT.min(stop_timeout),
                     )
                     .await
                 {
@@ -1464,8 +1485,13 @@ impl RuntimeWorkRpcHandler {
         }
         let local_stop = self.abort_active_turn_with_timeout(&local_task_id, stop_timeout);
         let provider_stop = async {
-            match (is_codex, thread_id.as_deref()) {
-                (true, Some(thread_id)) => self.interrupt_provider_active_turn(thread_id).await,
+            match (is_codex, had_active_local_execution, thread_id.as_deref()) {
+                (true, false, Some(thread_id)) => tokio::time::timeout(
+                    stop_timeout,
+                    self.interrupt_provider_active_turn(thread_id),
+                )
+                .await
+                .unwrap_or(false),
                 _ => true,
             }
         };
