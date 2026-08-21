@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
 import JSZip from 'jszip'
 import {
   Boxes,
@@ -21,6 +21,7 @@ import type {
   SmartAppMarketplaceTag,
   SmartAppsApi,
 } from '@/api/smartApps'
+import { ApiError } from '@/api/http'
 import {
   harnessAppsApi,
   type HarnessAppInstallation,
@@ -52,6 +53,76 @@ function formatBytes(value: number): string {
   if (value < 1024) return `${value} B`
   if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`
   return `${(value / 1024 / 1024).toFixed(1)} MB`
+}
+
+function smartAppErrorMessage(error: unknown, fallback: string, storageUnavailable: string) {
+  if (error instanceof ApiError && error.errorCode === 'smart_app_storage_unavailable') {
+    return storageUnavailable
+  }
+  return getErrorMessage(error, fallback)
+}
+
+function SmartAppFilePicker({
+  accept,
+  files,
+  inputTestId,
+  label,
+  multiple = false,
+  onChange,
+}: {
+  accept: string
+  files: File[]
+  inputTestId: string
+  label: string
+  multiple?: boolean
+  onChange: (files: File[]) => void
+}) {
+  const { t } = useTranslation('common')
+  const inputRef = useRef<HTMLInputElement>(null)
+  const selectionText =
+    files.length === 0
+      ? t('workbench.smart_apps_no_file_selected', '未选择文件')
+      : files.length === 1
+        ? files[0].name
+        : t('workbench.smart_apps_files_selected', '已选择 {{count}} 个文件').replace(
+            '{{count}}',
+            String(files.length)
+          )
+
+  return (
+    <div className="mt-2 flex min-w-0 items-center gap-3">
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        className="h-11 shrink-0 md:h-9"
+        data-testid={`${inputTestId}-trigger`}
+        onClick={() => inputRef.current?.click()}
+      >
+        <Upload className="h-4 w-4" />
+        {t('workbench.smart_apps_choose_file', '选择文件')}
+      </Button>
+      <span
+        className="min-w-0 break-all text-sm font-normal text-text-secondary"
+        data-testid={`${inputTestId}-selection`}
+      >
+        {selectionText}
+      </span>
+      <input
+        ref={inputRef}
+        type="file"
+        accept={accept}
+        multiple={multiple}
+        aria-label={label}
+        data-testid={inputTestId}
+        className="sr-only"
+        onChange={event => {
+          onChange(Array.from(event.target.files ?? []))
+          event.target.value = ''
+        }}
+      />
+    </div>
+  )
 }
 
 function readDataUrl(file: File): Promise<string> {
@@ -109,19 +180,34 @@ export function SmartAppsMarketplacePage({
   const [publishRequestHandled, setPublishRequestHandled] = useState(false)
   const [shareItem, setShareItem] = useState<SmartAppMarketplaceItem | null>(null)
   const [creating, setCreating] = useState(false)
+  const [importing, setImporting] = useState(false)
   const installModelKey = modelKey || modelOptions[0]?.key || ''
+  const createdInstallations = useMemo(
+    () => installed.filter(installation => !installation.smartAppId),
+    [installed]
+  )
+  const createdNames = useMemo(
+    () => new Set(createdInstallations.map(installation => installation.manifest.name)),
+    [createdInstallations]
+  )
+  const catalogItems = useMemo(
+    () => (mode === 'owned' ? items.filter(item => !createdNames.has(item.name)) : items),
+    [createdNames, items, mode]
+  )
+  const hasItems = catalogItems.length > 0 || (mode === 'owned' && createdInstallations.length > 0)
 
   const refresh = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
       const localPromise = harnessAppsApi.list().catch(() => [])
+      const local = await localPromise
+      setInstalled(local)
       if (!api) {
         setItems([])
-        setInstalled(await localPromise)
         return
       }
-      const [catalog, local, tagCatalog] = await Promise.all([
+      const [catalog, tagCatalog] = await Promise.all([
         mode === 'owned'
           ? api.listOwned()
           : api.listMarketplace({
@@ -129,17 +215,16 @@ export function SmartAppsMarketplacePage({
               source: source === 'all' ? undefined : source,
               tag: tag || undefined,
             }),
-        localPromise,
         api.listTags().catch(() => ({ version: 0, items: [] })),
       ])
       setItems(catalog.items)
-      setInstalled(local)
       setTags(tagCatalog.items.filter(item => item.enabled).sort((a, b) => a.sort - b.sort))
     } catch (loadError) {
       setError(
-        getErrorMessage(
+        smartAppErrorMessage(
           loadError,
-          t('workbench.smart_apps_marketplace_load_failed', '智能应用市场加载失败')
+          t('workbench.smart_apps_marketplace_load_failed', '智能应用市场加载失败'),
+          t('workbench.smart_apps_storage_unavailable', '文件存储服务暂不可用，请稍后重试')
         )
       )
     } finally {
@@ -191,9 +276,10 @@ export function SmartAppsMarketplacePage({
       setSelected(null)
     } catch (downloadError) {
       setError(
-        getErrorMessage(
+        smartAppErrorMessage(
           downloadError,
-          t('workbench.smart_apps_download_failed', '智能应用下载失败')
+          t('workbench.smart_apps_download_failed', '智能应用下载失败'),
+          t('workbench.smart_apps_storage_unavailable', '文件存储服务暂不可用，请稍后重试')
         )
       )
     } finally {
@@ -270,23 +356,64 @@ export function SmartAppsMarketplacePage({
     }
   }
 
+  async function importCreatedPackage(path: string) {
+    setImporting(true)
+    setError(null)
+    try {
+      const preview = await harnessAppsApi.preview(path)
+      if (!preview.valid || !preview.manifest) {
+        throw new Error(
+          preview.issues.join('；') ||
+            t('workbench.smart_apps_invalid_package', '不是有效的智能应用安装包')
+        )
+      }
+      await harnessAppsApi.install(preview, null)
+      await refresh()
+    } catch (importError) {
+      setError(
+        getErrorMessage(importError, t('workbench.smart_apps_import_failed', '智能应用导入失败'))
+      )
+    } finally {
+      setImporting(false)
+    }
+  }
+
+  async function chooseCreatedPackage() {
+    const { open } = await import('@tauri-apps/plugin-dialog')
+    const path = await open({
+      multiple: false,
+      directory: false,
+      filters: [{ name: t('workbench.smart_apps_package', '智能应用安装包'), extensions: ['zip'] }],
+    })
+    if (typeof path === 'string') await importCreatedPackage(path)
+  }
+
+  async function dropCreatedPackage(event: DragEvent<HTMLElement>) {
+    event.preventDefault()
+    const uri = event.dataTransfer.getData('text/uri-list').split(/\r?\n/)[0]?.trim()
+    if (!uri) return
+    await importCreatedPackage(decodeURIComponent(new URL(uri).pathname))
+  }
+
   return (
     <section
       data-testid={mode === 'owned' ? 'smart-apps-owned-page' : 'smart-apps-marketplace-page'}
+      onDragOver={mode === 'owned' ? event => event.preventDefault() : undefined}
+      onDrop={mode === 'owned' ? event => void dropCreatedPackage(event) : undefined}
     >
       <SmartAppsSectionNav active={mode === 'owned' ? 'owned' : 'marketplace'} />
       <header className="mt-5 flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="heading-base">
             {mode === 'owned'
-              ? t('workbench.smart_apps_owned', '我的发布')
+              ? t('workbench.smart_apps_owned', '我的创建')
               : t('workbench.smart_apps_marketplace_title', '智能应用市场')}
           </h1>
           <p className="mt-1 text-sm text-text-secondary">
             {mode === 'owned'
               ? t(
                   'workbench.smart_apps_owned_description',
-                  '管理自己发布的应用、分享范围和历史版本。'
+                  '创建或导入智能应用，并按需发布给成员或部门。'
                 )
               : t(
                   'workbench.smart_apps_marketplace_description',
@@ -294,31 +421,36 @@ export function SmartAppsMarketplacePage({
                 )}
           </p>
         </div>
-        <div className="flex gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            data-testid="smart-apps-marketplace-create"
-            onClick={() => void createSmartApp()}
-          >
-            <WandSparkles className="h-4 w-4" />
-            {creating
-              ? t('workbench.smart_apps_preparing', '正在准备…')
-              : t('workbench.smart_apps_create', '创建应用')}
-          </Button>
-          <Button
-            size="sm"
-            data-testid="smart-apps-publish-button"
-            disabled={!api}
-            onClick={() => {
-              setPublishInstallation(null)
-              setPublishItem(null)
-            }}
-          >
-            <Upload className="h-4 w-4" />
-            {t('workbench.smart_apps_publish_app', '发布应用')}
-          </Button>
-        </div>
+        {mode === 'owned' ? (
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              data-testid="smart-apps-created-create"
+              onClick={() => void createSmartApp()}
+            >
+              <WandSparkles className="h-4 w-4" />
+              {creating
+                ? t('workbench.smart_apps_preparing', '正在准备…')
+                : t('workbench.smart_apps_create', '创建智能应用')}
+            </Button>
+            <Button
+              size="sm"
+              data-testid="smart-apps-import-button"
+              disabled={importing}
+              onClick={() => void chooseCreatedPackage()}
+            >
+              {importing ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Upload className="h-4 w-4" />
+              )}
+              {importing
+                ? t('workbench.smart_apps_importing', '导入中…')
+                : t('workbench.smart_apps_import_app', '导入应用')}
+            </Button>
+          </div>
+        ) : null}
       </header>
 
       {mode === 'marketplace' ? (
@@ -367,7 +499,7 @@ export function SmartAppsMarketplacePage({
         </p>
       ) : null}
 
-      {!api ? (
+      {!api && mode === 'marketplace' ? (
         <EmptyState
           icon={<Boxes className="h-6 w-6" />}
           title={t('workbench.smart_apps_cloud_required', '连接云端后使用智能应用市场')}
@@ -391,19 +523,19 @@ export function SmartAppsMarketplacePage({
           <Loader2 className="mr-2 h-5 w-5 animate-spin" />
           {t('workbench.smart_apps_loading', '正在加载')}
         </div>
-      ) : items.length === 0 ? (
+      ) : !hasItems ? (
         <EmptyState
           icon={<Boxes className="h-6 w-6" />}
           title={
             mode === 'owned'
-              ? t('workbench.smart_apps_owned_empty', '还没有发布智能应用')
+              ? t('workbench.smart_apps_owned_empty', '还没有创建智能应用')
               : t('workbench.smart_apps_marketplace_empty', '没有找到智能应用')
           }
           description={
             mode === 'owned'
               ? t(
                   'workbench.smart_apps_owned_empty_hint',
-                  '选择一个本地 ZIP 包，设置市场信息并分享给成员或部门。'
+                  '可以创建新的智能应用，或导入一个本地 ZIP 应用。'
                 )
               : t(
                   'workbench.smart_apps_marketplace_empty_hint',
@@ -412,8 +544,72 @@ export function SmartAppsMarketplacePage({
           }
         />
       ) : (
-        <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          {items.map(item => {
+        <div
+          data-testid={mode === 'owned' ? 'smart-apps-created-list' : undefined}
+          className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3"
+        >
+          {mode === 'owned'
+            ? createdInstallations.map(installation => {
+                const published = items.find(item => item.name === installation.manifest.name)
+                const sameVersion = published?.version === installation.manifest.version
+                return (
+                  <article
+                    key={installation.id}
+                    data-testid={`smart-app-created-item-${installation.id}`}
+                    className="flex flex-col rounded-2xl border border-border/35 bg-surface/25 p-4 hover:bg-surface/45"
+                  >
+                    <div className="flex flex-1 items-start gap-3">
+                      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-background">
+                        <Boxes className="h-5 w-5" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h2 className="truncate font-medium">
+                            {installation.manifest.displayName}
+                          </h2>
+                          <span className="rounded-md bg-background px-1.5 py-0.5 text-xs text-text-muted">
+                            {published
+                              ? t('workbench.smart_apps_published', '已发布')
+                              : t('workbench.smart_apps_unpublished', '未发布')}
+                          </span>
+                        </div>
+                        <p className="mt-1 line-clamp-2 text-sm leading-5 text-text-secondary">
+                          {installation.manifest.description}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="mt-4 flex items-center justify-between border-t border-border/25 pt-3">
+                      <span className="text-xs text-text-muted">
+                        v{installation.manifest.version}
+                      </span>
+                      <div className="flex gap-1">
+                        {published ? (
+                          <Button size="sm" variant="ghost" onClick={() => setShareItem(published)}>
+                            <Share2 className="h-4 w-4" />
+                            {t('workbench.smart_apps_share', '分享')}
+                          </Button>
+                        ) : null}
+                        <Button
+                          size="sm"
+                          data-testid={`smart-app-created-publish-${installation.id}`}
+                          disabled={!api || sameVersion}
+                          onClick={() => {
+                            setPublishInstallation(installation)
+                            setPublishItem(published ?? null)
+                          }}
+                        >
+                          <Upload className="h-4 w-4" />
+                          {sameVersion
+                            ? t('workbench.smart_apps_published', '已发布')
+                            : t('workbench.smart_apps_publish', '发布')}
+                        </Button>
+                      </div>
+                    </div>
+                  </article>
+                )
+              })
+            : null}
+          {catalogItems.map(item => {
             const state = localState(item)
             return (
               <article
@@ -466,9 +662,6 @@ export function SmartAppsMarketplacePage({
                         <Button size="sm" variant="ghost" onClick={() => setShareItem(item)}>
                           <Share2 className="h-4 w-4" />
                           {t('workbench.smart_apps_share', '分享')}
-                        </Button>
-                        <Button size="sm" variant="outline" onClick={() => setPublishItem(item)}>
-                          {t('workbench.smart_apps_publish_version', '发布新版本')}
                         </Button>
                       </>
                     ) : (
@@ -843,7 +1036,11 @@ function SmartAppShareDialog({
             <h2 className="heading-small">{t('workbench.smart_apps_manage_access', '管理分享')}</h2>
             <p className="mt-1 text-sm text-text-secondary">{item.displayName}</p>
           </div>
-          <button aria-label={t('common.close', '关闭')} onClick={onClose}>
+          <button
+            aria-label={t('common.close', '关闭')}
+            data-testid="smart-app-share-close"
+            onClick={onClose}
+          >
             <X className="h-4 w-4" />
           </button>
         </header>
@@ -921,7 +1118,7 @@ function SmartAppPublishDialog({
   const [manifest, setManifest] = useState<HarnessAppManifest | null>(
     installation?.manifest ?? null
   )
-  const [summary, setSummary] = useState(item?.summary ?? '')
+  const [summary, setSummary] = useState(item?.summary ?? installation?.manifest.description ?? '')
   const [description, setDescription] = useState(item?.descriptionMd ?? '')
   const [selectedTags, setSelectedTags] = useState<string[]>(item?.tags ?? [])
   const [icon, setIcon] = useState<File | null>(null)
@@ -1007,7 +1204,13 @@ function SmartAppPublishDialog({
       }
       onPublished()
     } catch (value) {
-      setError(getErrorMessage(value, t('workbench.smart_apps_publish_failed', '智能应用发布失败')))
+      setError(
+        smartAppErrorMessage(
+          value,
+          t('workbench.smart_apps_publish_failed', '智能应用发布失败'),
+          t('workbench.smart_apps_storage_unavailable', '文件存储服务暂不可用，请稍后重试')
+        )
+      )
     } finally {
       setPublishing(false)
     }
@@ -1031,7 +1234,11 @@ function SmartAppPublishDialog({
               {t('workbench.smart_apps_auto_publish_hint', '上传并通过安全扫描后自动发布')}
             </p>
           </div>
-          <button aria-label={t('common.close', '关闭')} onClick={onClose}>
+          <button
+            aria-label={t('common.close', '关闭')}
+            data-testid="smart-app-publish-close"
+            onClick={onClose}
+          >
             <X className="h-4 w-4" />
           </button>
         </header>
@@ -1039,23 +1246,23 @@ function SmartAppPublishDialog({
           {installation ? (
             <div className="rounded-xl border border-border/40 bg-surface p-3 text-sm">
               <span className="font-medium">
-                {t('workbench.smart_apps_publish_installed', '从已安装应用发布')}
+                {t('workbench.smart_apps_publish_installed', '发布已导入应用')}
               </span>
               <span className="ml-2 text-text-muted">
                 {installation.manifest.displayName} · v{installation.manifest.version}
               </span>
             </div>
           ) : (
-            <label className="text-sm font-medium">
-              {t('workbench.smart_apps_zip', '智能应用 ZIP')}
-              <input
-                data-testid="smart-app-publish-package"
-                type="file"
+            <div className="text-sm font-medium">
+              <span>{t('workbench.smart_apps_zip', '智能应用 ZIP')}</span>
+              <SmartAppFilePicker
+                inputTestId="smart-app-publish-package"
+                label={t('workbench.smart_apps_zip', '智能应用 ZIP')}
                 accept=".zip,application/zip"
-                className="mt-2 block w-full text-sm"
-                onChange={event => void choosePackage(event.target.files?.[0] ?? null)}
+                files={file ? [file] : []}
+                onChange={files => void choosePackage(files[0] ?? null)}
               />
-            </label>
+            </div>
           )}
           {manifest ? (
             <div className="rounded-xl bg-surface p-3 text-sm">
@@ -1110,25 +1317,27 @@ function SmartAppPublishDialog({
               ))}
             </div>
           </fieldset>
-          <label className="text-sm font-medium">
-            {t('workbench.smart_apps_icon', '方形图标（PNG/WebP）')}
-            <input
-              type="file"
+          <div className="text-sm font-medium">
+            <span>{t('workbench.smart_apps_icon', '方形图标（PNG/WebP）')}</span>
+            <SmartAppFilePicker
+              inputTestId="smart-app-publish-icon"
+              label={t('workbench.smart_apps_icon', '方形图标（PNG/WebP）')}
               accept="image/png,image/webp"
-              className="mt-2 block w-full text-sm"
-              onChange={event => setIcon(event.target.files?.[0] ?? null)}
+              files={icon ? [icon] : []}
+              onChange={files => setIcon(files[0] ?? null)}
             />
-          </label>
-          <label className="text-sm font-medium">
-            {t('workbench.smart_apps_screenshots', '截图（最多 5 张）')}
-            <input
-              type="file"
-              multiple
+          </div>
+          <div className="text-sm font-medium">
+            <span>{t('workbench.smart_apps_screenshots', '截图（最多 5 张）')}</span>
+            <SmartAppFilePicker
+              inputTestId="smart-app-publish-screenshots"
+              label={t('workbench.smart_apps_screenshots', '截图（最多 5 张）')}
               accept="image/png,image/webp,image/jpeg"
-              className="mt-2 block w-full text-sm"
-              onChange={event => setScreenshots(Array.from(event.target.files ?? []).slice(0, 5))}
+              multiple
+              files={screenshots}
+              onChange={files => setScreenshots(files.slice(0, 5))}
             />
-          </label>
+          </div>
           <label className="text-sm font-medium">
             {t('workbench.smart_apps_release_notes', '版本说明')}
             <textarea
@@ -1142,7 +1351,7 @@ function SmartAppPublishDialog({
             <p className="text-sm text-text-secondary">
               {t(
                 'workbench.smart_apps_inherit_access_hint',
-                '新版本默认沿用当前分享范围，可发布后在“我的发布”中调整。'
+                '新版本默认沿用当前分享范围，可发布后在“我的创建”中调整。'
               )}
             </p>
           ) : (

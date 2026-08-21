@@ -1,7 +1,6 @@
 import { fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { HarnessAppInstallation } from '@/api/local/harnessApps'
-import type { HarnessAppPreview } from '@/api/local/harnessApps'
 import type { SmartAppsApi } from '@/api/smartApps'
 import {
   clearHarnessAppLaunch,
@@ -13,15 +12,12 @@ import { HarnessAppsPage } from './HarnessAppsPage'
 const mocks = vi.hoisted(() => ({
   api: {
     delete: vi.fn(),
-    install: vi.fn(),
     list: vi.fn(),
-    preview: vi.fn(),
     start: vi.fn(),
     stop: vi.fn(),
     update: vi.fn(),
   },
   closeTab: vi.fn(),
-  dialogOpen: vi.fn(),
   listenProgress: vi.fn(),
   navigateTo: vi.fn(),
   openTab: vi.fn(),
@@ -38,10 +34,6 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/api/local/harnessApps', () => ({
   harnessAppsApi: mocks.api,
   listenHarnessAppLaunchProgress: mocks.listenProgress,
-}))
-
-vi.mock('@tauri-apps/plugin-dialog', () => ({
-  open: mocks.dialogOpen,
 }))
 
 vi.mock('@/components/layout/DesktopTopBar', () => ({
@@ -155,19 +147,10 @@ const running: HarnessAppInstallation = {
   webUrl: 'http://127.0.0.1:39000/',
 }
 
-const preview: HarnessAppPreview = {
-  valid: true,
-  archivePath: '/tmp/dsh-ops-text-classifier.zip',
-  sha256: 'preview-hash',
-  manifest: installed.manifest,
-  issues: [],
-}
-
 describe('HarnessAppsPage', () => {
   beforeEach(() => {
     Object.values(mocks.api).forEach(mock => mock.mockReset())
     mocks.closeTab.mockReset()
-    mocks.dialogOpen.mockReset()
     mocks.listenProgress.mockReset()
     mocks.navigateTo.mockReset()
     mocks.openTab.mockReset()
@@ -180,7 +163,6 @@ describe('HarnessAppsPage', () => {
     clearHarnessAppLaunch(running.id)
     workspaceTabs.tabs = []
     mocks.api.stop.mockResolvedValue(undefined)
-    mocks.dialogOpen.mockResolvedValue('/tmp/dsh-ops-text-classifier.zip')
     mocks.listenProgress.mockResolvedValue(vi.fn())
     mocks.resolveLaunch.mockResolvedValue({
       modelId: 'wework-selected',
@@ -219,18 +201,14 @@ describe('HarnessAppsPage', () => {
     expect(screen.getByTestId(`harness-app-stop-${running.id}`)).toBeInTheDocument()
   })
 
-  test('opens package selection when the marketplace requests a local import', async () => {
+  test('does not expose package import from installed apps', async () => {
     mocks.api.list.mockResolvedValue([])
-    mocks.api.preview.mockResolvedValue(preview)
 
-    render(<HarnessAppsPage importRequested />)
+    render(<HarnessAppsPage />)
 
-    await waitFor(() => expect(mocks.dialogOpen).toHaveBeenCalledOnce())
-    expect(mocks.navigateTo).toHaveBeenCalledWith('/sites?app_type=smart_app&view=installed')
-    await waitFor(() =>
-      expect(mocks.api.preview).toHaveBeenCalledWith('/tmp/dsh-ops-text-classifier.zip')
-    )
-    expect(await screen.findByTestId('harness-app-preview')).toBeInTheDocument()
+    expect(await screen.findByTestId('harness-app-list')).toBeInTheDocument()
+    expect(screen.queryByTestId('harness-app-import-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('harness-app-empty-select-package')).not.toBeInTheDocument()
   })
 
   test('starts an installed app, stores its proxy token, and opens one app tab', async () => {
@@ -340,29 +318,6 @@ describe('HarnessAppsPage', () => {
     expect(mocks.proxyTokens.get(installed.id)).toBe('proxy-token')
     expect(mocks.register).toHaveBeenCalledWith(running)
     expect(mocks.openTab).toHaveBeenCalledTimes(1)
-  })
-
-  test('clears an old preview when replacement package inspection fails', async () => {
-    mocks.api.list.mockResolvedValue([])
-    mocks.api.preview
-      .mockResolvedValueOnce(preview)
-      .mockRejectedValueOnce(new Error('invalid replacement'))
-
-    render(<HarnessAppsPage />)
-    const dropZone = await screen.findByTestId('harness-app-drop-zone')
-    const dropPackage = (path: string) =>
-      fireEvent.drop(dropZone, {
-        dataTransfer: {
-          getData: () => `file://${path}`,
-        },
-      })
-
-    dropPackage('/tmp/dsh-ops-text-classifier.zip')
-    expect(await screen.findByTestId('harness-app-preview')).toBeInTheDocument()
-
-    dropPackage('/tmp/invalid-replacement.zip')
-    await waitFor(() => expect(screen.queryByTestId('harness-app-preview')).not.toBeInTheDocument())
-    expect(await screen.findByTestId('harness-app-error')).toHaveTextContent('invalid replacement')
   })
 
   test('stops an app, unregisters its model proxy, and closes stale tabs', async () => {

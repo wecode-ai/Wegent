@@ -348,6 +348,14 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         marketplaceSnapshot.location.includes('/sites?app_type=smart_app'),
         `Smart app marketplace did not open from the top tab add menu: ${marketplaceSnapshot.location}`
       )
+      const marketplaceText = await control.command(
+        'getText',
+        '[data-testid="smart-apps-marketplace-page"]'
+      )
+      assert.ok(
+        !marketplaceText.includes('创建智能应用') && !marketplaceText.includes('导入应用'),
+        'Smart app marketplace unexpectedly exposed creation actions'
+      )
       await control.command('waitFor', '[data-testid="smart-app-marketplace-item-1"]', {
         text: 'DSH E2E Smoke',
         timeoutMs: uiTimeoutMs,
@@ -384,18 +392,71 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       await control.command('waitFor', '[data-testid="smart-apps-marketplace-page"]', {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('click', '[data-testid="smart-apps-marketplace-create"]')
+      await control.command('click', '[data-testid="smart-apps-section-owned"]')
+      await control.command('waitFor', '[data-testid="smart-apps-owned-page"]', {
+        text: '我的创建',
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', '[data-testid="smart-apps-created-create"]')
       await control.command('waitFor', '[data-testid="chat-message-input"]', {
         text: '智能应用开发助手',
         timeoutMs: uiTimeoutMs,
       })
       await captureScreenshot(control, 'harness-apps-03a-builder-chat.png', 'body')
-      await control.command('navigate', 'body', { value: '/sites?app_type=smart_app' })
-      await control.command('waitFor', '[data-testid="smart-apps-marketplace-page"]', {
+      await control.command('navigate', 'body', {
+        value: '/sites?app_type=smart_app&view=owned',
+      })
+      await control.command('waitFor', '[data-testid="smart-apps-owned-page"]', {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('click', '[data-testid="smart-apps-section-installed"]')
-      await control.command('waitFor', '[data-testid="harness-app-drop-zone"]', {
+      await control.command('dropPaths', '[data-testid="smart-apps-owned-page"]', {
+        value: JSON.stringify([
+          {
+            uri: pathToFileURL(packagePath).href,
+            name: 'dsh-e2e-smoke.zip',
+            mimeType: 'application/zip',
+          },
+        ]),
+      })
+      await control.command(
+        'waitFor',
+        `[data-testid="smart-app-created-item-${INSTALLATION_ID}"]`,
+        {
+          text: 'DSH E2E Smoke',
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await captureScreenshot(control, 'harness-apps-04-created.png', 'body')
+      await control.command(
+        'clickWhenEnabled',
+        `[data-testid="smart-app-created-publish-${INSTALLATION_ID}"]`,
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await control.command('waitFor', '[data-testid="smart-app-publish-dialog"]', {
+        text: '选择文件',
+        timeoutMs: uiTimeoutMs,
+      })
+      const publishDialogText = await control.command(
+        'getText',
+        '[data-testid="smart-app-publish-dialog"]'
+      )
+      assert.ok(
+        publishDialogText.includes('未选择文件'),
+        'Smart app publish dialog did not show the localized empty file state'
+      )
+      assert.ok(
+        !publishDialogText.includes('Choose File') &&
+          !publishDialogText.includes('no file selected'),
+        'Smart app publish dialog leaked native English file picker text'
+      )
+      await captureScreenshot(control, 'harness-apps-04a-publish-dialog-zh.png', 'body')
+      await control.command('click', '[data-testid="smart-app-publish-close"]')
+      await control.command('navigate', 'body', {
+        value: '/sites?app_type=smart_app&view=installed',
+      })
+      await control.command('waitFor', `[data-testid="harness-app-start-${INSTALLATION_ID}"]`, {
         timeoutMs: uiTimeoutMs,
       })
       await control.command('waitFor', '[data-testid="smart-apps-section-installed"]', {
@@ -414,27 +475,6 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         { value: 'data-workspace-tab-content' }
       )
       assert.ok(managementTabId, 'Harness management page did not expose its workspace tab ID')
-      await control.command('dropPaths', '[data-testid="harness-app-drop-zone"]', {
-        value: JSON.stringify([
-          {
-            uri: pathToFileURL(packagePath).href,
-            name: 'dsh-e2e-smoke.zip',
-            mimeType: 'application/zip',
-          },
-        ]),
-      })
-      await control.command('waitFor', '[data-testid="harness-app-preview"]', {
-        text: 'DSH E2E Smoke',
-        timeoutMs: uiTimeoutMs,
-      })
-      await captureScreenshot(control, 'harness-apps-04-preview.png', 'body')
-
-      await control.command('clickWhenEnabled', '[data-testid="harness-app-install-confirm"]', {
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('waitFor', `[data-testid="harness-app-start-${INSTALLATION_ID}"]`, {
-        timeoutMs: uiTimeoutMs,
-      })
       await captureScreenshot(control, 'harness-apps-05-installed.png', 'body')
 
       const modelSelector = `[data-testid="harness-app-model-${INSTALLATION_ID}"]`

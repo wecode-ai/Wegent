@@ -4,7 +4,9 @@
 
 """Authenticated Smart app marketplace and restricted publication API."""
 
-from fastapi import APIRouter, Depends
+from typing import NoReturn
+
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -22,9 +24,20 @@ from app.schemas.smart_app import (
     SmartAppSubmissionInitResponse,
     SmartAppSubmissionItem,
 )
+from app.services.marketplace_artifact_storage import MarketplaceArtifactStorageError
 from app.services.smart_app_marketplace_service import smart_app_marketplace_service
 
 router = APIRouter(tags=["smart-apps"])
+
+
+def _raise_storage_unavailable(exc: MarketplaceArtifactStorageError) -> NoReturn:
+    raise HTTPException(
+        status_code=503,
+        detail={
+            "code": "smart_app_storage_unavailable",
+            "message": "Smart app file storage is unavailable",
+        },
+    ) from exc
 
 
 @router.get("/marketplace", response_model=SmartAppMarketplaceListResponse)
@@ -35,9 +48,12 @@ def list_marketplace(
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> SmartAppMarketplaceListResponse:
-    return smart_app_marketplace_service.list_marketplace(
-        db, user_id=current_user.id, query=q, source=source, tag=tag
-    )
+    try:
+        return smart_app_marketplace_service.list_marketplace(
+            db, user_id=current_user.id, query=q, source=source, tag=tag
+        )
+    except MarketplaceArtifactStorageError as exc:
+        _raise_storage_unavailable(exc)
 
 
 @router.get("/owned", response_model=SmartAppOwnedListResponse)
@@ -45,7 +61,10 @@ def list_owned(
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> SmartAppOwnedListResponse:
-    return smart_app_marketplace_service.list_owned(db, user_id=current_user.id)
+    try:
+        return smart_app_marketplace_service.list_owned(db, user_id=current_user.id)
+    except MarketplaceArtifactStorageError as exc:
+        _raise_storage_unavailable(exc)
 
 
 @router.get("/marketplace/{smart_app_id}", response_model=SmartAppMarketplaceItem)
@@ -54,9 +73,12 @@ def get_marketplace_item(
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> SmartAppMarketplaceItem:
-    return smart_app_marketplace_service.get_marketplace_item(
-        db, smart_app_id=smart_app_id, user_id=current_user.id
-    )
+    try:
+        return smart_app_marketplace_service.get_marketplace_item(
+            db, smart_app_id=smart_app_id, user_id=current_user.id
+        )
+    except MarketplaceArtifactStorageError as exc:
+        _raise_storage_unavailable(exc)
 
 
 @router.post(
@@ -68,9 +90,12 @@ def download_marketplace_item(
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> SmartAppDownloadDescriptor:
-    return smart_app_marketplace_service.download_descriptor(
-        db, smart_app_id=smart_app_id, user_id=current_user.id
-    )
+    try:
+        return smart_app_marketplace_service.download_descriptor(
+            db, smart_app_id=smart_app_id, user_id=current_user.id
+        )
+    except MarketplaceArtifactStorageError as exc:
+        _raise_storage_unavailable(exc)
 
 
 @router.post("/submissions/init", response_model=SmartAppSubmissionInitResponse)
@@ -79,9 +104,12 @@ def init_submission(
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> SmartAppSubmissionInitResponse:
-    return smart_app_marketplace_service.init_submission(
-        db, user_id=current_user.id, request=request
-    )
+    try:
+        return smart_app_marketplace_service.init_submission(
+            db, user_id=current_user.id, request=request
+        )
+    except MarketplaceArtifactStorageError as exc:
+        _raise_storage_unavailable(exc)
 
 
 @router.post(
@@ -93,9 +121,12 @@ def complete_submission(
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> SmartAppSubmissionCompleteResponse:
-    return smart_app_marketplace_service.complete_submission(
-        db, submission_id=submission_id, user_id=current_user.id
-    )
+    try:
+        return smart_app_marketplace_service.complete_submission(
+            db, submission_id=submission_id, user_id=current_user.id
+        )
+    except MarketplaceArtifactStorageError as exc:
+        _raise_storage_unavailable(exc)
 
 
 @router.post(

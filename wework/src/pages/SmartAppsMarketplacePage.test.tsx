@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { ApiError } from '@/api/http'
 import type { SmartAppMarketplaceItem, SmartAppsApi } from '@/api/smartApps'
 import { SmartAppsMarketplacePage } from './SmartAppsMarketplacePage'
 
@@ -85,6 +86,31 @@ function api(items: SmartAppMarketplaceItem[] = [item()]): SmartAppsApi {
   }
 }
 
+const importedInstallation = {
+  id: 'research-desk',
+  manifest: {
+    name: 'research-desk',
+    displayName: '研究工作台',
+    version: '1.2.0',
+    type: 'deepseek-harness-plugin-bundle' as const,
+    description: '整理本地研究资料',
+    entry: {
+      installPackage: 'packages/research-desk',
+      profile: 'research',
+      webUrl: 'http://127.0.0.1:3080/',
+    },
+    requirements: { dsh: '1.0.0', node: '>=22' },
+  },
+  packagePath: '/tmp/research-desk',
+  sha256: 'a'.repeat(64),
+  modelKey: null,
+  resident: false,
+  runtimeVersion: null,
+  state: 'installed' as const,
+  webUrl: null,
+  error: null,
+}
+
 describe('SmartAppsMarketplacePage', () => {
   beforeEach(() => {
     navigateTo.mockReset()
@@ -110,6 +136,8 @@ describe('SmartAppsMarketplacePage', () => {
     expect(await screen.findAllByText('研究工作台')).toHaveLength(2)
     expect(screen.getByText('官方')).toBeInTheDocument()
     expect(screen.getByText('Alice')).toBeInTheDocument()
+    expect(screen.queryByTestId('smart-apps-created-create')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('smart-apps-import-button')).not.toBeInTheDocument()
   })
 
   test('merges local installation and exposes a manual update', async () => {
@@ -132,11 +160,50 @@ describe('SmartAppsMarketplacePage', () => {
     expect(downloadPackage).toHaveBeenCalledWith(expect.objectContaining({ smartAppId: 7 }))
   })
 
-  test('keeps publications in the third Smart app section', async () => {
+  test('keeps creations in the third Smart app section', async () => {
     render(<SmartAppsMarketplacePage api={api()} mode="owned" />)
 
     expect(screen.getByTestId('smart-apps-section-owned')).toHaveAttribute('aria-current', 'page')
+    expect(screen.getByRole('heading', { name: '我的创建' })).toBeInTheDocument()
+    expect(screen.getByTestId('smart-apps-created-create')).toBeInTheDocument()
+    expect(screen.getByTestId('smart-apps-import-button')).toBeInTheDocument()
     expect(await screen.findByRole('button', { name: /分享/ })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '发布新版本' })).toBeInTheDocument()
+  })
+
+  test('publishes an imported app with localized file pickers and sharing targets', async () => {
+    listInstalled.mockResolvedValue([importedInstallation])
+    render(<SmartAppsMarketplacePage api={api([])} mode="owned" />)
+
+    fireEvent.click(await screen.findByTestId('smart-app-created-publish-research-desk'))
+
+    expect(screen.getAllByText('选择文件')).toHaveLength(2)
+    expect(screen.getAllByText('未选择文件')).toHaveLength(2)
+    expect(screen.getByText('分享对象（必选）')).toBeInTheDocument()
+
+    fireEvent.change(screen.getByTestId('smart-app-publish-icon'), {
+      target: { files: [new File(['icon'], '应用图标.png', { type: 'image/png' })] },
+    })
+    fireEvent.change(screen.getByTestId('smart-app-publish-screenshots'), {
+      target: {
+        files: [
+          new File(['one'], '截图一.png', { type: 'image/png' }),
+          new File(['two'], '截图二.png', { type: 'image/png' }),
+        ],
+      },
+    })
+
+    expect(screen.getByText('应用图标.png')).toBeInTheDocument()
+    expect(screen.getByText('已选择 2 个文件')).toBeInTheDocument()
+  })
+
+  test('localizes an unavailable marketplace file store', async () => {
+    const smartAppsApi = api()
+    vi.mocked(smartAppsApi.listMarketplace).mockRejectedValue(
+      new ApiError('Smart app file storage is unavailable', 503, 'smart_app_storage_unavailable')
+    )
+
+    render(<SmartAppsMarketplacePage api={smartAppsApi} />)
+
+    expect(await screen.findByText('文件存储服务暂不可用，请稍后重试')).toBeInTheDocument()
   })
 })

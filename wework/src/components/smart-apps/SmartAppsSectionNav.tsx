@@ -46,7 +46,7 @@ export function SmartAppsSectionNav({ active }: SmartAppsSectionNavProps) {
             ? t('workbench.smart_apps_marketplace', '市场')
             : section.id === 'installed'
               ? t('workbench.smart_apps_installed', '已安装')
-              : t('workbench.smart_apps_owned', '我的发布')
+              : t('workbench.smart_apps_owned', '我的创建')
         return (
           <button
             key={section.id}

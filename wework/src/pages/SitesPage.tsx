@@ -231,8 +231,6 @@ export function SitesPage() {
   const searchParams = new URLSearchParams(window.location.search)
   const smartAppsRequested = searchParams.get('app_type') === 'smart_app'
   const smartAppsView = searchParams.get('view')
-  const smartAppsImportRequested =
-    smartAppsView === 'installed' && searchParams.get('action') === 'import'
 
   useEffect(() => {
     if (smartAppsRequested && experimentalFeatures.loaded && !experimentalFeatures.enabled) {
@@ -662,10 +660,7 @@ export function SitesPage() {
           smartAppsEnabled={experimentalFeatures.enabled}
           smartAppsContent={
             smartAppsView === 'installed' ? (
-              <HarnessAppsPage
-                importRequested={smartAppsImportRequested}
-                smartAppsApi={smartAppsApi}
-              />
+              <HarnessAppsPage smartAppsApi={smartAppsApi} />
             ) : smartAppsView === 'owned' ? (
               <SmartAppsMarketplacePage api={smartAppsApi} mode="owned" />
             ) : (

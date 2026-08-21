@@ -43,9 +43,10 @@ describe('SmartAppsSectionNav', () => {
     expect(navigateTo).toHaveBeenCalledWith('/sites?app_type=smart_app')
   })
 
-  test('opens my publications as a peer section', () => {
+  test('opens my creations as a peer section', () => {
     render(<SmartAppsSectionNav active="marketplace" />)
 
+    expect(screen.getByTestId('smart-apps-section-owned')).toHaveTextContent('我的创建')
     fireEvent.click(screen.getByTestId('smart-apps-section-owned'))
 
     expect(navigateTo).toHaveBeenCalledWith('/sites?app_type=smart_app&view=owned')
