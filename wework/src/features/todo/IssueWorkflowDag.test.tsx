@@ -63,6 +63,7 @@ vi.mock('@/hooks/useTranslation', () => ({
           'todo.workflow_wait_repair_queued': '第 {{round}} 轮修复排队中',
           'todo.workflow_wait_repair_failed': '第 {{round}} 轮修复失败',
           'todo.workflow_wait_repair_succeeded': '第 {{round}} 轮修复完成',
+          'todo.workflow_wait_repair_cancelled': '第 {{round}} 轮修复已取消',
           'todo.workflow_more_tasks': '另有 {{count}} 个任务',
         }[key] ??
         fallback ??
@@ -327,6 +328,38 @@ describe('IssueWorkflowDag', () => {
       '等待中 · 第 2 轮修复中'
     )
     expect(screen.getByTestId('cloud-todo-workflow-action-等待')).toHaveTextContent('等待中')
+  })
+
+  test('shows cancelled repair rounds without the in-progress message', () => {
+    render(
+      <IssueWorkflowDag
+        nodes={[
+          stage('等待', {
+            node_type: 'wait',
+            status: 'waiting',
+            wait_round: 1,
+            repair_status: 'cancelled',
+            wait_config: {
+              rules: [
+                {
+                  id: 'rule-1',
+                  event_type: 'ci_failed',
+                  action: 'rerun',
+                },
+              ],
+            },
+          }),
+        ]}
+        tasks={[]}
+      />
+    )
+
+    expect(screen.getByTestId('cloud-todo-workflow-node-等待')).toHaveTextContent(
+      '第 1 轮修复已取消'
+    )
+    expect(screen.getByTestId('cloud-todo-workflow-node-等待')).not.toHaveTextContent(
+      '等待中 · 第 1 轮修复中'
+    )
   })
 
   test('ignores legacy start/end sentinels and renders only real stages', () => {

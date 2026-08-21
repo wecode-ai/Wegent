@@ -22,7 +22,11 @@ export function repositoryProviderConfig(
   const ssh = value.match(/^git@([^:]+):(.+)$/)
   let parsed: URL
   if (ssh) {
-    parsed = new URL(`https://${ssh[1]}/${ssh[2].replace(/^\/+/, '')}`)
+    try {
+      parsed = new URL(`https://${ssh[1]}/${ssh[2].replace(/^\/+/, '')}`)
+    } catch {
+      throw new Error('请输入完整仓库地址，或使用 owner/repository 格式')
+    }
   } else {
     const shorthand = value.match(/^([^/\s]+)\/([^/\s]+)$/)
     if (shorthand) {
@@ -51,9 +55,14 @@ export function repositoryProviderConfig(
       .replace(/^\/+/, '')
     const collectionPrefix = provider === 'github' ? 'repos/' : 'projects/'
     if (apiRepositoryPath.startsWith(collectionPrefix)) {
-      const repository = decodeURIComponent(apiRepositoryPath.slice(collectionPrefix.length))
-        .replace(/\.git$/, '')
-        .replace(/^\/+|\/+$/g, '')
+      let repository: string
+      try {
+        repository = decodeURIComponent(apiRepositoryPath.slice(collectionPrefix.length))
+          .replace(/\.git$/, '')
+          .replace(/^\/+|\/+$/g, '')
+      } catch {
+        throw new Error('请输入完整仓库地址，或使用 owner/repository 格式')
+      }
       const segments = repository.split('/').filter(Boolean)
       if (segments.length < 2 || (provider === 'github' && segments.length !== 2)) {
         throw new Error(
@@ -229,7 +238,12 @@ export function repositoryAddress(project: CloudProject): string {
   const apiBase = project.provider_config.api_base?.trim()
   if (!apiBase) return `https://${domain}/${repository}`
   const webRoot = apiBase.replace(/\/api\/v[34]$/, '')
-  const webRootPath = new URL(webRoot).pathname.replace(/^\/|\/$/g, '')
+  let webRootPath: string
+  try {
+    webRootPath = new URL(webRoot).pathname.replace(/^\/|\/$/g, '')
+  } catch {
+    return `https://${domain}/${repository}`
+  }
   if (webRootPath) {
     // A relative URL root cannot be reconstructed from the web URL alone, so
     // show the canonical API form that round-trips through repositoryProviderConfig.

@@ -3581,6 +3581,7 @@
     "workflow_wait_repair_queued": "第 {{round}} 轮修复排队中",
     "workflow_wait_repair_failed": "第 {{round}} 轮修复失败",
     "workflow_wait_repair_succeeded": "第 {{round}} 轮修复完成",
+    "workflow_wait_repair_cancelled": "第 {{round}} 轮修复已取消",
     "workflow_wait_node_action": "等待外部事件",
     "workflow_no_stage_tasks": "尚无具体任务",
     "task_conversation": "会话",

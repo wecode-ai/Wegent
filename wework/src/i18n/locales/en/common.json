@@ -3584,6 +3584,7 @@
     "workflow_wait_repair_queued": "Round {{round}} fix queued",
     "workflow_wait_repair_failed": "Round {{round}} fix failed",
     "workflow_wait_repair_succeeded": "Round {{round}} fix completed",
+    "workflow_wait_repair_cancelled": "Round {{round}} fix cancelled",
     "workflow_wait_node_action": "Wait for external events",
     "workflow_no_stage_tasks": "No concrete tasks yet",
     "task_conversation": "Conversation",

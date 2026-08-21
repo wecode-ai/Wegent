@@ -149,6 +149,9 @@ function workflowWaitRepairLabel(t: TFunction, stage: WorkflowNodeInstance): str
   if (status === 'succeeded') {
     return t('todo.workflow_wait_repair_succeeded', '第 {{round}} 轮修复完成', { round })
   }
+  if (status === 'cancelled') {
+    return t('todo.workflow_wait_repair_cancelled', '第 {{round}} 轮修复已取消', { round })
+  }
   return t('todo.workflow_wait_round', '等待中 · 第 {{round}} 轮修复中', { round })
 }
 
