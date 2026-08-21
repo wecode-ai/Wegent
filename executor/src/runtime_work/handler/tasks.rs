@@ -276,6 +276,7 @@ impl RuntimeWorkRpcHandler {
         let mut request = execution_request(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
+        set_runtime_task_title(&mut request, &title);
         if is_codex_runtime(&runtime) {
             if let (Some(project_key), Some(project_name)) = (
                 request.runtime_project_key.as_deref(),
@@ -608,21 +609,27 @@ impl RuntimeWorkRpcHandler {
         local_task_id: &str,
         subtask_id: &str,
         turn_id: &str,
+        client_user_message_id: Option<&str>,
     ) {
         self.store.update_task(local_task_id, |link| {
-            let Some(runtime_handle) = link.runtime_handle.as_object_mut() else {
-                link.runtime_handle = json!({
-                    "lastTurnId": turn_id,
-                    "turnIdsBySubtask": {subtask_id: turn_id},
-                });
-                return;
-            };
-            runtime_handle.insert("lastTurnId".to_owned(), Value::String(turn_id.to_owned()));
-            let mappings = runtime_handle
-                .entry("turnIdsBySubtask")
-                .or_insert_with(|| json!({}));
-            if let Some(mappings) = mappings.as_object_mut() {
-                mappings.insert(subtask_id.to_owned(), Value::String(turn_id.to_owned()));
+            if !link.runtime_handle.is_object() {
+                link.runtime_handle = json!({});
+            }
+            if let Some(runtime_handle) = link.runtime_handle.as_object_mut() {
+                runtime_handle.insert("lastTurnId".to_owned(), Value::String(turn_id.to_owned()));
+                let mappings = runtime_handle
+                    .entry("turnIdsBySubtask")
+                    .or_insert_with(|| json!({}));
+                if let Some(mappings) = mappings.as_object_mut() {
+                    mappings.insert(subtask_id.to_owned(), Value::String(turn_id.to_owned()));
+                }
+            }
+            if let Some(client_user_message_id) = client_user_message_id {
+                bind_runtime_handle_user_message_presentation_to_turn(
+                    &mut link.runtime_handle,
+                    client_user_message_id,
+                    turn_id,
+                );
             }
         });
     }
@@ -660,15 +667,10 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let gate = self.task_send_gate(&local_task_id);
         let _guard = gate.lock().await;
-        self.send_message_with_active_turn_check(payload, true)
-            .await
+        self.send_message_after_local_checks(payload).await
     }
 
-    async fn send_message_with_active_turn_check(
-        &self,
-        payload: Value,
-        verify_no_active_turn: bool,
-    ) -> Result<Value, AppIpcError> {
+    async fn send_message_after_local_checks(&self, payload: Value) -> Result<Value, AppIpcError> {
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let existing_link = self.local_task_link(&local_task_id);
@@ -716,6 +718,9 @@ impl RuntimeWorkRpcHandler {
         let mut request = payload_execution_request
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
+        if let Some(link) = existing_link.as_ref() {
+            set_runtime_task_title(&mut request, &link.title);
+        }
         if let Some(link) = existing_link.as_ref() {
             mark_runtime_model_switch(&mut request, link, &payload);
         }
@@ -826,19 +831,6 @@ impl RuntimeWorkRpcHandler {
         };
         let link_for_send = existing_link.as_ref().or(recovered_link.as_ref());
         let ephemeral = request.ephemeral || link_for_send.is_some_and(|link| link.ephemeral);
-        if verify_no_active_turn && !ephemeral {
-            let thread = self
-                .read_codex_recent_turns(&thread_id)
-                .await
-                .map_err(|error| AppIpcError::new("codex_error", error))?;
-            if codex_thread_has_in_progress_turn(&thread) {
-                return Ok(json!({
-                    "success": false,
-                    "error": "runtime task is already running",
-                    "code": "bad_request",
-                }));
-            }
-        }
 
         let mut fields = task_fields(&request.task_id, &request.subtask_id);
         fields.push(("local_task_id", local_task_id.clone()));
@@ -938,8 +930,7 @@ impl RuntimeWorkRpcHandler {
                 }
             }
         }
-        self.send_message_with_active_turn_check(payload, false)
-            .await
+        self.send_message_after_local_checks(payload).await
     }
 
     async fn interrupt_provider_active_turn(&self, thread_id: &str) -> bool {
@@ -1018,6 +1009,7 @@ impl RuntimeWorkRpcHandler {
             .or_else(|| workspace_path(&payload))
             .unwrap_or_default();
         apply_runtime_payload_metadata(&mut request, &payload);
+        set_runtime_task_title(&mut request, &existing_link.title);
         mark_runtime_model_switch(&mut request, &existing_link, &payload);
         restore_cloud_project_id(&mut request, &existing_link.runtime_handle);
         restore_origin(&mut request, &existing_link.runtime_handle);
@@ -1564,6 +1556,10 @@ impl RuntimeWorkRpcHandler {
     ) {
         let presentation = user_message_presentation(payload);
         let updated = self.store.update_task(local_task_id, |link| {
+            if link.thread_id.as_deref() != Some(thread_id) {
+                clear_completed_transcript_messages(&mut link.runtime_handle);
+                clear_transcript_snapshot_messages(&mut link.runtime_handle);
+            }
             link.thread_id = Some(thread_id.to_owned());
             clear_runtime_handle_messages(&mut link.runtime_handle);
             if let Some(presentation) = presentation.clone() {

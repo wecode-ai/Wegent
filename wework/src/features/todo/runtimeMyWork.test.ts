@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { RuntimeTaskSummary, RuntimeWorkListResponse } from '@/types/api'
+import { RuntimeTaskLifecycleStore } from '@/features/workbench/runtimeTaskLifecycle'
 import { runtimeMyWorkItems } from './runtimeMyWork'
 
 function task(overrides: Partial<RuntimeTaskSummary> = {}): RuntimeTaskSummary {
@@ -46,7 +47,7 @@ describe('runtimeMyWorkItems', () => {
       id: 'task-1',
       cloud_project_id: 'runtime:project-1',
       project_name: 'Local project',
-      status: 'pending',
+      status: 'in_review',
       runtime_address: {
         deviceId: 'device-1',
         taskId: 'task-1',
@@ -86,8 +87,44 @@ describe('runtimeMyWorkItems', () => {
     expect(items.map(item => [item.id, item.status, item.has_active_task])).toEqual([
       ['queued', 'pending', false],
       ['running', 'in_progress', true],
-      ['failed', 'pending', false],
+      ['failed', 'in_review', false],
       ['done', 'completed', false],
     ])
+  })
+
+  it('uses the shared lifecycle state that drives the sidebar running indicator', () => {
+    const work = runtimeWork([task({ running: false, status: 'done' })])
+    const address = {
+      deviceId: 'device-1',
+      taskId: 'task-1',
+      runtime: 'codex' as const,
+      workspacePath: '/tmp/project',
+    }
+    const lifecycleStore = new RuntimeTaskLifecycleStore('my-work-test')
+    lifecycleStore.syncRuntimeWork(work)
+    lifecycleStore.executorStarted(address)
+
+    const [item] = runtimeMyWorkItems(work, lifecycleStore.getSnapshot())
+
+    expect(item).toMatchObject({
+      id: 'task-1',
+      status: 'in_progress',
+      has_active_task: true,
+      execution_state: 'running',
+    })
+  })
+
+  it('moves stopped tasks into confirmation instead of back to the queue', () => {
+    const [item] = runtimeMyWorkItems(
+      runtimeWork([
+        task({
+          running: false,
+          status: 'cancelled',
+          turnStatus: 'interrupted',
+        }),
+      ])
+    )
+
+    expect(item.status).toBe('in_review')
   })
 })

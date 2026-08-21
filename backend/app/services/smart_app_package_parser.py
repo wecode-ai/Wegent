@@ -105,8 +105,7 @@ class SmartAppPackageParser:
         entry = manifest.get("entry")
         requirements = manifest.get("requirements")
         if not isinstance(entry, dict) or not all(
-            str(entry.get(key) or "").strip()
-            for key in ("installPackage", "profile", "webUrl")
+            str(entry.get(key) or "").strip() for key in ("installPackage", "profile")
         ):
             raise HTTPException(status_code=400, detail="Smart app entry is incomplete")
         if not isinstance(requirements, dict) or not all(

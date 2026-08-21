@@ -820,11 +820,10 @@ async def bind_runtime_task_to_im_sessions(
             session=session,
             runtime_task=runtime_task,
         )
-    task_title = await _runtime_task_title_for_address(user_id=user_id, address=address)
     notification = await im_notification_dispatcher.send_task_switched(
         db,
         sessions,
-        task_title or address.local_task_id,
+        request.task_title,
     )
     return BindRuntimeTaskIMSessionsResponse(
         address=address,
@@ -2451,49 +2450,6 @@ def _workspace_path_for_runtime_task(
             if isinstance(task_path, str) and task_path.strip():
                 return normalize_workspace_path(task_path)
             return workspace_path
-    return None
-
-
-async def _runtime_task_title_for_address(
-    *,
-    user_id: int,
-    address: RuntimeTaskAddress,
-) -> Optional[str]:
-    """Best-effort resolution of a runtime task title for notifications."""
-
-    try:
-        result = await runtime_rpc_service.call(
-            user_id=user_id,
-            device_id=address.device_id,
-            method="runtime.tasks.list",
-            payload={},
-            timeout_seconds=RUNTIME_LIST_TIMEOUT_SECONDS,
-        )
-    except RuntimeRpcError:
-        return None
-    if result.get("success") is False:
-        return None
-    expected_task_id = str(address.local_task_id).strip()
-    if not expected_task_id:
-        return None
-    expected_workspace_path = (
-        normalize_workspace_path(address.workspace_path)
-        if address.workspace_path
-        else None
-    )
-    for workspace in _iter_runtime_workspaces(result):
-        workspace_path = normalize_workspace_path(workspace["workspacePath"])
-        if expected_workspace_path and workspace_path != expected_workspace_path:
-            continue
-        for task in workspace["tasks"]:
-            if not isinstance(task, dict):
-                continue
-            task_id = str(task.get("taskId") or "")
-            if task_id.strip() != expected_task_id:
-                continue
-            title = task.get("title")
-            if isinstance(title, str) and title.strip():
-                return title.strip()
     return None
 
 

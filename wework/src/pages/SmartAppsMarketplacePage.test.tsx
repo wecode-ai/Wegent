@@ -97,9 +97,8 @@ const importedInstallation = {
     entry: {
       installPackage: 'packages/research-desk',
       profile: 'research',
-      webUrl: 'http://127.0.0.1:3080/',
     },
-    requirements: { dsh: '1.0.0', node: '>=22' },
+    requirements: { dsh: '0.1.0-rc.8', node: '>=22' },
   },
   packagePath: '/tmp/research-desk',
   sha256: 'a'.repeat(64),
@@ -205,5 +204,16 @@ describe('SmartAppsMarketplacePage', () => {
     render(<SmartAppsMarketplacePage api={smartAppsApi} />)
 
     expect(await screen.findByText('文件存储服务暂不可用，请稍后重试')).toBeInTheDocument()
+  })
+
+  test('stays on my creations when the builder cannot install', async () => {
+    ensureBundledPluginInstalled.mockRejectedValue(new Error('install failed'))
+    render(<SmartAppsMarketplacePage api={api([])} mode="owned" />)
+
+    fireEvent.click(screen.getByTestId('smart-apps-created-create'))
+
+    expect(await screen.findByText('智能工作台开发助手安装失败，请重试。')).toBeInTheDocument()
+    expect(queuePluginReferenceTrial).not.toHaveBeenCalled()
+    expect(navigateTo).not.toHaveBeenCalled()
   })
 })

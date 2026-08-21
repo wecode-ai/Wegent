@@ -117,6 +117,16 @@ transport is rebuilt, recovery for a persisted Codex thread must call
 running state; code must not continue inferring them from pre-disconnect
 in-memory events.
 
+The provider transcript reader must not run concurrently with an active Codex
+turn. After a successful idle read of the latest transcript page, the executor
+persists that page's message snapshot scoped to the thread ID. A transcript
+response during execution merges that snapshot with pending user messages,
+settled messages, and active stream messages, deduplicating by message ID.
+This keeps historical assistant replies visible when a new turn starts after a
+WebView or executor rebuild. A thread ID change must clear both the completed
+message cache and transcript snapshot so messages cannot cross thread
+boundaries.
+
 When the first message carries a pending Goal seed, both the send entry point
 and pane initialization must write the seed status into
 `RuntimeTaskLifecycleStore` immediately. An asynchronous `runtime.goal.get`
@@ -185,6 +195,13 @@ task with state captured before the request began. **New chat** clears only the
 current chat pane. It does not archive or delete the previous task, which must
 remain under its project and be reopenable. The environment popover must list
 and copy every project root, not only the primary root.
+
+The local task inventory in My Work comes from `runtimeWork`, but its running
+and queued groups must read the same `RuntimeTaskLifecycleStore` snapshot as the
+sidebar. The sidebar spinner, composer, and My Work must not independently
+infer lifecycle state from `RuntimeTaskSummary.running`, transcript data, or
+messages; an asynchronous task-list snapshot could otherwise project a task
+that is still running into a completed or action-required group.
 
 These rules apply only to local Codex projects. Remote and cloud tasks retain
 their existing single-workspace selection semantics; local multi-root support
@@ -361,6 +378,7 @@ The right workspace **Temporary chat** feature starts a short side conversation 
 - Each temporary chat tab has an independent `chat:<id>` instance id, so the right workspace can hold multiple temporary chats at the same time.
 - Before a runtime thread exists, `TemporaryChatPanel` uses the instance id as its `conversationKey`. After creation, pane workspace state retains the tab's runtime address and `runtimeConversationCache` restores its live message projection. Temporary threads do not support `thread/turns/list`, so a main-conversation switch that unmounts and remounts the panel cannot depend on transcript loading to recover content.
 - Attachment selection, upload progress, and errors are also isolated per temporary-chat instance and must not reuse the main composer attachment state. The first message passes that instance's attachments explicitly to `createTemporaryRuntimeTask`.
+- Every successfully sent or optimistically displayed user message must retain its persisted attachment references, including the first message, regular follow-ups, and queued sends. Clearing composer attachments only resets the current input state and must not remove sent attachments from the message list; local `blob:` preview URLs must be converted to recoverable local paths.
 - When a temporary chat is the only open right-workspace tab, the panel defaults to a compact `420px` width. Opening another workspace tab restores the general split default, while a user-resized width remains authoritative.
 - The first message calls `createTemporaryRuntimeTask`, creating an `ephemeral` runtime task with the current main thread as `sideSource`. This task does not enter the left task list and does not navigate the main pane.
 - Follow-up messages must continue the already loaded temporary thread. The Codex app-server path uses `direct_thread_id` and calls `turn/start` directly; it must not use the normal `resume_thread_id` / `thread/resume` path, because temporary threads do not have rollout mappings and would otherwise fail with `no rollout found`.

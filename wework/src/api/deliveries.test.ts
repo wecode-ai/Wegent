@@ -28,6 +28,8 @@ describe('createDeliveryApi queue and assignment routes', () => {
   })
 
   it('closes and reopens default-board tasks with the runtime lifecycle', () => {
+    expect(nextTaskTrackingStatus('inbox', 'queued')).toBe('pending')
+    expect(nextTaskTrackingStatus('pending', 'queued')).toBeNull()
     expect(nextTaskTrackingStatus('in_progress', 'succeeded', { completeOnSuccess: true })).toBe(
       'completed'
     )
@@ -35,6 +37,11 @@ describe('createDeliveryApi queue and assignment routes', () => {
       'in_progress'
     )
     expect(nextTaskTrackingStatus('in_review', 'archived')).toBe('completed')
+    expect(nextTaskTrackingStatus('in_progress', 'cancelled')).toBe('in_review')
+    expect(nextTaskTrackingStatus('pending', 'failed')).toBe('in_review')
+    expect(nextTaskTrackingStatus('pending', 'succeeded', { completeOnSuccess: true })).toBe(
+      'completed'
+    )
   })
 
   it('lists loop items with queue filters', async () => {
@@ -52,6 +59,23 @@ describe('createDeliveryApi queue and assignment routes', () => {
     expect(client.get).toHaveBeenCalledWith(
       '/v1/cloud-projects/123/loop-items?assignee_type=agent&assignee_id=bot-1&execution_state=queued'
     )
+  })
+
+  it('loads the complete board snapshot through one request', async () => {
+    const client = {
+      get: vi.fn(async () => ({
+        items: [],
+        task_bindings: [],
+        members: [],
+        agents: [],
+      })),
+    } as unknown as HttpClient
+    const api = createDeliveryApi(client)
+
+    await api.getBoardSnapshot(123)
+
+    expect(client.get).toHaveBeenCalledOnce()
+    expect(client.get).toHaveBeenCalledWith('/v1/cloud-projects/123/board-snapshot')
   })
 
   it('lists robot executions through the cloud executions route', async () => {
@@ -216,6 +240,34 @@ describe('createDeliveryApi task tracking', () => {
       taskTitle: 'Runtime task',
     })
     expect(post).toHaveBeenCalledTimes(2)
+  })
+
+  test('creates default My Tasks items in inbox before runtime status synchronization', async () => {
+    const inboxItem = {
+      ...trackedItem,
+      cloud_project_id: DEFAULT_WORK_ITEM_PROJECT_ID,
+      status: 'inbox' as const,
+    }
+    const get = vi.fn().mockRejectedValue(new ApiError('Cloud context not found', 404))
+    const post = vi.fn().mockResolvedValueOnce(inboxItem).mockResolvedValueOnce(undefined)
+    const api = createDeliveryApi(clientWith({ get, post }))
+
+    await api.trackProjectTask(
+      DEFAULT_WORK_ITEM_PROJECT_ID,
+      { deviceId: 'local-device', taskId: 'runtime-1' },
+      'Runtime task',
+      ''
+    )
+
+    expect(post).toHaveBeenNthCalledWith(
+      1,
+      `/v1/cloud-projects/${DEFAULT_WORK_ITEM_PROJECT_ID}/loop-items`,
+      {
+        title: 'Runtime task',
+        description: '',
+        status: 'inbox',
+      }
+    )
   })
 
   test('reuses a created board item when binding is retried', async () => {

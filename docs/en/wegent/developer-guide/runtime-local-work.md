@@ -95,6 +95,8 @@ POST /api/runtime-work/transcript
 
 Backend forwards `deviceId + localTaskId` to the owning device with `runtime.tasks.transcript`. Native Codex tasks are located through their Codex session path or session-file discovery. Non-Codex/imported tasks may use `workspacePath` as a local-index lookup hint, or locate the task from the local LocalTask index by `localTaskId`. The executor reads the native runtime transcript and returns normalized messages.
 
+Cloud and remote devices return runtime RPC results through two Socket.IO acknowledgement hops: executor → Backend and Backend → Wework. The executor compresses first-hop ACKs larger than 512 KiB in the existing `gzip+base64+json` envelope. Backend decodes them and applies service processing such as device ID projection; if the browser-facing result still exceeds 512 KiB, Backend compresses the second-hop ACK in the same envelope and Wework decodes it before resolving the caller. Local App IPC always keeps the original JSON response. Every compressed envelope must remain below the Socket.IO 1 MB limit. If it cannot, the sender returns a small `runtime_rpc_response_too_large` error instead of transmitting an oversized packet that disconnects the device and its heartbeat. The executor runs the potentially slow capability-sync callback in a separate task so it cannot block the Socket.IO receive loop and connection keepalive.
+
 ### Codex Transcript Read Path And Performance
 
 Wework uses one primary read path for local Codex conversations so list, open, and refresh do not each implement separate transcript logic:
@@ -309,8 +311,8 @@ Runtime tasks can send notifications to IM sessions, but notification state is k
 - In IM, `/notify on` enables the current user's global runtime task notification target for the current IM session.
 - `/notify off` disables global notifications, and `/notify status` reports the current state.
 - A single IM session can subscribe to one runtime task and receive only that task's updates.
-- When the executor detects a native Codex task timestamp change, it sends `runtime.tasks.updated` without `workspacePath`, but with `status` and `content`, only after the last assistant message reaches a terminal state and contains reply content. Backend ignores running or streaming updates and delivers the terminal reply according to task subscriptions and global notification settings.
-- Wegent runtime sends and the native Codex watcher use the same `deviceId + localTaskId` for deduplication, so Codex and Wework do not notify twice for the same task update.
+- The executor sends `runtime:event` over the device WebSocket. Backend delivers only `response.completed`, `response.failed`, `response.incomplete`, and `error` terminal updates according to active task bindings, task subscriptions, and global notification settings. Successful terminal events without reply content are not sent.
+- Notification identity uses `deviceId + localTaskId` and excludes `workspacePath`. IM-originated turns do not echo another notification to the same IM, while the legacy `runtime.tasks.updated` receiver remains only for older executors.
 
 ## URL
 

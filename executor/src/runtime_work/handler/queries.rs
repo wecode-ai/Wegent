@@ -226,6 +226,56 @@ impl RuntimeWorkRpcHandler {
             .or_else(|| runtime_session_id_from_payload(&payload));
         let running_hint = local_link.as_ref().is_some_and(|link| link.running);
         let local_execution_running = self.is_active_local_task(&local_task_id);
+        if local_execution_running && !refresh {
+            if let Some(link) = local_link
+                .as_ref()
+                .filter(|link| runtime_has_provider_transcript_reader(&link.runtime))
+            {
+                let mut messages = transcript_snapshot_messages(link);
+                append_unique_transcript_messages(
+                    &mut messages,
+                    cached_runtime_transcript_messages(link),
+                );
+                append_unique_transcript_messages(
+                    &mut messages,
+                    completed_transcript_messages(link),
+                );
+                append_unique_transcript_messages(
+                    &mut messages,
+                    self.active_codex_transcript_messages(&local_task_id),
+                );
+                let presentation_page_messages = messages.clone();
+                attach_user_message_presentations_for_page(
+                    &mut messages,
+                    user_message_presentations(link),
+                    &presentation_page_messages,
+                    false,
+                    false,
+                );
+                log_runtime_transcript_finished(RuntimeTranscriptLog {
+                    started_at,
+                    local_task_id: &local_task_id,
+                    thread_id: session_id.as_deref().unwrap_or(""),
+                    source: "active_runtime_cache",
+                    refresh,
+                    running_hint,
+                    limit,
+                    before_cursor: before_cursor.as_deref(),
+                    after_cursor: after_cursor.as_deref(),
+                    message_count: messages.len(),
+                    running: true,
+                });
+                return Ok(cached_transcript_response(
+                    link,
+                    messages,
+                    None,
+                    true,
+                    limit,
+                    before_cursor.as_deref(),
+                    after_cursor.as_deref(),
+                ));
+            }
+        }
         if let Some(link) = local_link.as_ref().filter(|link| {
             link.ephemeral
                 || !runtime_has_provider_transcript_reader(&link.runtime)
@@ -361,6 +411,24 @@ impl RuntimeWorkRpcHandler {
             remove_superseded_transcript_turns(&mut messages, &link.runtime_handle);
         }
         attach_legacy_thread_preview(&mut messages, &thread, page_before_cursor.is_some());
+        if before_cursor.is_none() && after_cursor.is_none() && !include_full_content {
+            let snapshot_changed = local_link.as_ref().is_some_and(|link| {
+                link.thread_id.as_deref() == Some(thread_id.as_str())
+                    && transcript_snapshot_messages(link) != messages
+            });
+            if snapshot_changed {
+                let snapshot_messages = messages.clone();
+                self.store.update_task(&local_task_id, |link| {
+                    if link.thread_id.as_deref() == Some(thread_id.as_str()) {
+                        set_transcript_snapshot_messages(
+                            &mut link.runtime_handle,
+                            &thread_id,
+                            snapshot_messages,
+                        );
+                    }
+                });
+            }
+        }
         let running = local_execution_running || codex_thread_has_in_progress_turn(&thread);
         let message_count = messages.len();
         log_runtime_transcript_finished(RuntimeTranscriptLog {

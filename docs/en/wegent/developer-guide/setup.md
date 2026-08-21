@@ -268,6 +268,8 @@ The Wework macOS development scripts share Cargo targets by component across Git
 - Set `WEGENT_DISABLE_SHARED_CARGO_TARGET=1` to use Cargo's repository-local default `target/`.
 - Set `WEGENT_DISABLE_SCCACHE=1` to skip automatic installation and disable `sccache`.
 - Explicit `CARGO_TARGET_DIR` and `RUSTC_WRAPPER` values are always preserved.
+- Codex and Claude Code sessions started by Wework derive a stable repository cache key from Git's common directory and set `CARGO_TARGET_DIR` to `$WEGENT_CARGO_TARGET_ROOT/repositories/<repository-key>`. Direct agent commands such as `cargo test`, `cargo build`, and `pnpm tauri build` therefore reuse one Cargo target across every worktree of the same repository while keeping unrelated repositories isolated.
+- Existing per-worktree `executor/target` and `wework/src-tauri/target` directories are not deleted automatically. After confirming that no Cargo build is running, remove those old caches manually; subsequent builds use the shared directory above.
 
 ---
 

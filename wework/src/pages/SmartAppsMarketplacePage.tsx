@@ -180,6 +180,7 @@ export function SmartAppsMarketplacePage({
   const [publishRequestHandled, setPublishRequestHandled] = useState(false)
   const [shareItem, setShareItem] = useState<SmartAppMarketplaceItem | null>(null)
   const [creating, setCreating] = useState(false)
+  const [createError, setCreateError] = useState<string | null>(null)
   const [importing, setImporting] = useState(false)
   const installModelKey = modelKey || modelOptions[0]?.key || ''
   const createdInstallations = useMemo(
@@ -223,7 +224,7 @@ export function SmartAppsMarketplacePage({
       setError(
         smartAppErrorMessage(
           loadError,
-          t('workbench.smart_apps_marketplace_load_failed', '智能应用市场加载失败'),
+          t('workbench.smart_apps_marketplace_load_failed', '智能工作台市场加载失败'),
           t('workbench.smart_apps_storage_unavailable', '文件存储服务暂不可用，请稍后重试')
         )
       )
@@ -278,7 +279,7 @@ export function SmartAppsMarketplacePage({
       setError(
         smartAppErrorMessage(
           downloadError,
-          t('workbench.smart_apps_download_failed', '智能应用下载失败'),
+          t('workbench.smart_apps_download_failed', '智能工作台下载失败'),
           t('workbench.smart_apps_storage_unavailable', '文件存储服务暂不可用，请稍后重试')
         )
       )
@@ -295,7 +296,7 @@ export function SmartAppsMarketplacePage({
         window.confirm(
           t(
             'workbench.smart_apps_update_go_installed_confirm',
-            '应用正在运行，是否前往“已安装”停止后更新？'
+            '工作台正在运行，是否前往“已安装”停止后更新？'
           )
         )
       ) {
@@ -318,7 +319,7 @@ export function SmartAppsMarketplacePage({
       setError(
         getErrorMessage(
           installError,
-          t('workbench.smart_apps_install_failed_keep_old', '智能应用安装失败，原版本已保留')
+          t('workbench.smart_apps_install_failed_keep_old', '智能工作台安装失败，原版本已保留')
         )
       )
     } finally {
@@ -329,27 +330,25 @@ export function SmartAppsMarketplacePage({
   async function createSmartApp() {
     if (creating) return
     setCreating(true)
-    setError(null)
+    setCreateError(null)
     try {
       await ensureBundledPluginInstalled('smart-app-builder')
       const queued = queuePluginReferenceTrial({
         pluginName: 'smart-app-builder',
         marketplaceName: 'wework-personal',
-        displayName: t('workbench.smart_apps_builder_name', '智能应用开发助手'),
+        displayName: t('workbench.smart_apps_builder_name', '智能工作台开发助手'),
         prompt: t(
           'workbench.smart_apps_builder_prompt',
-          '帮我创建一个智能应用，完成 DSH 环境准备、插件检索与拼装、内置浏览器测试、打包和本机安装。'
+          '帮我创建一个智能工作台，完成 DSH 环境准备、插件检索与拼装、内置浏览器测试、打包和本机安装。'
         ),
         openInNewChat: true,
       })
       if (!queued) throw new Error('Smart App Builder reference could not be queued')
       navigateTo('/')
-    } catch (createError) {
-      setError(
-        getErrorMessage(
-          createError,
-          t('workbench.smart_apps_builder_install_failed', '智能应用开发助手安装失败，请重试。')
-        )
+    } catch (builderError) {
+      console.error('[Wework Smart apps] failed to prepare Smart App Builder', builderError)
+      setCreateError(
+        t('workbench.smart_apps_builder_install_failed', '智能工作台开发助手安装失败，请重试。')
       )
     } finally {
       setCreating(false)
@@ -364,14 +363,14 @@ export function SmartAppsMarketplacePage({
       if (!preview.valid || !preview.manifest) {
         throw new Error(
           preview.issues.join('；') ||
-            t('workbench.smart_apps_invalid_package', '不是有效的智能应用安装包')
+            t('workbench.smart_apps_invalid_package', '不是有效的智能工作台安装包')
         )
       }
       await harnessAppsApi.install(preview, null)
       await refresh()
     } catch (importError) {
       setError(
-        getErrorMessage(importError, t('workbench.smart_apps_import_failed', '智能应用导入失败'))
+        getErrorMessage(importError, t('workbench.smart_apps_import_failed', '智能工作台导入失败'))
       )
     } finally {
       setImporting(false)
@@ -383,7 +382,9 @@ export function SmartAppsMarketplacePage({
     const path = await open({
       multiple: false,
       directory: false,
-      filters: [{ name: t('workbench.smart_apps_package', '智能应用安装包'), extensions: ['zip'] }],
+      filters: [
+        { name: t('workbench.smart_apps_package', '智能工作台安装包'), extensions: ['zip'] },
+      ],
     })
     if (typeof path === 'string') await importCreatedPackage(path)
   }
@@ -407,17 +408,17 @@ export function SmartAppsMarketplacePage({
           <h1 className="heading-base">
             {mode === 'owned'
               ? t('workbench.smart_apps_owned', '我的创建')
-              : t('workbench.smart_apps_marketplace_title', '智能应用市场')}
+              : t('workbench.smart_apps_marketplace_title', '智能工作台市场')}
           </h1>
           <p className="mt-1 text-sm text-text-secondary">
             {mode === 'owned'
               ? t(
                   'workbench.smart_apps_owned_description',
-                  '创建或导入智能应用，并按需发布给成员或部门。'
+                  '创建或导入智能工作台，并按需发布给成员或部门。'
                 )
               : t(
                   'workbench.smart_apps_marketplace_description',
-                  '发现官方应用，以及成员定向分享给你的应用。'
+                  '发现官方工作台，以及成员定向分享给你的工作台。'
                 )}
           </p>
         </div>
@@ -432,7 +433,7 @@ export function SmartAppsMarketplacePage({
               <WandSparkles className="h-4 w-4" />
               {creating
                 ? t('workbench.smart_apps_preparing', '正在准备…')
-                : t('workbench.smart_apps_create', '创建智能应用')}
+                : t('workbench.smart_apps_create', '创建智能工作台')}
             </Button>
             <Button
               size="sm"
@@ -447,7 +448,7 @@ export function SmartAppsMarketplacePage({
               )}
               {importing
                 ? t('workbench.smart_apps_importing', '导入中…')
-                : t('workbench.smart_apps_import_app', '导入应用')}
+                : t('workbench.smart_apps_import_app', '导入工作台')}
             </Button>
           </div>
         ) : null}
@@ -460,7 +461,7 @@ export function SmartAppsMarketplacePage({
             <input
               data-testid="smart-apps-marketplace-search"
               value={query}
-              placeholder={t('workbench.smart_apps_search', '搜索应用')}
+              placeholder={t('workbench.smart_apps_search', '搜索工作台')}
               className="h-9 w-full rounded-lg border border-border/50 bg-background pl-9 pr-3 text-sm outline-none focus:border-focus"
               onChange={event => setQuery(event.target.value)}
             />
@@ -473,7 +474,7 @@ export function SmartAppsMarketplacePage({
           >
             <option value="all">{t('workbench.smart_apps_source_all', '全部来源')}</option>
             <option value="official">
-              {t('workbench.smart_apps_source_official', '官方应用')}
+              {t('workbench.smart_apps_source_official', '官方工作台')}
             </option>
             <option value="shared">{t('workbench.smart_apps_source_shared', '分享给我')}</option>
           </select>
@@ -493,19 +494,19 @@ export function SmartAppsMarketplacePage({
         </div>
       ) : null}
 
-      {error ? (
+      {createError || error ? (
         <p role="alert" className="mt-4 rounded-lg bg-danger/10 p-3 text-sm text-danger">
-          {error}
+          {createError ?? error}
         </p>
       ) : null}
 
       {!api && mode === 'marketplace' ? (
         <EmptyState
           icon={<Boxes className="h-6 w-6" />}
-          title={t('workbench.smart_apps_cloud_required', '连接云端后使用智能应用市场')}
+          title={t('workbench.smart_apps_cloud_required', '连接云端后使用智能工作台市场')}
           description={t(
             'workbench.smart_apps_cloud_required_hint',
-            '本地已安装应用不受影响，仍可离线管理和运行。'
+            '本地已安装工作台不受影响，仍可离线管理和运行。'
           )}
           action={
             <Button
@@ -528,14 +529,14 @@ export function SmartAppsMarketplacePage({
           icon={<Boxes className="h-6 w-6" />}
           title={
             mode === 'owned'
-              ? t('workbench.smart_apps_owned_empty', '还没有创建智能应用')
-              : t('workbench.smart_apps_marketplace_empty', '没有找到智能应用')
+              ? t('workbench.smart_apps_owned_empty', '还没有创建智能工作台')
+              : t('workbench.smart_apps_marketplace_empty', '没有找到智能工作台')
           }
           description={
             mode === 'owned'
               ? t(
                   'workbench.smart_apps_owned_empty_hint',
-                  '可以创建新的智能应用，或导入一个本地 ZIP 应用。'
+                  '可以创建新的智能工作台，或导入一个本地 ZIP 工作台。'
                 )
               : t(
                   'workbench.smart_apps_marketplace_empty_hint',
@@ -834,7 +835,7 @@ function SmartAppDetails({
               <img
                 key={url}
                 src={url}
-                alt={t('workbench.smart_apps_screenshot', '应用截图')}
+                alt={t('workbench.smart_apps_screenshot', '工作台截图')}
                 className="h-44 rounded-xl border object-cover"
               />
             ))}
@@ -1138,11 +1139,11 @@ function SmartAppPublishDialog({
           'workbench.smart_apps_manifest_required',
           '安装包必须包含一个 plugin-manifest.json'
         ),
-        invalidPackage: t('workbench.smart_apps_invalid_package', '不是有效的智能应用安装包'),
+        invalidPackage: t('workbench.smart_apps_invalid_package', '不是有效的智能工作台安装包'),
       })
       if (item && parsed.name !== item.name) {
         throw new Error(
-          t('workbench.smart_apps_version_name_mismatch', '新版本的应用名称必须与原应用一致')
+          t('workbench.smart_apps_version_name_mismatch', '新版本的工作台名称必须与原工作台一致')
         )
       }
       setManifest(parsed)
@@ -1207,7 +1208,7 @@ function SmartAppPublishDialog({
       setError(
         smartAppErrorMessage(
           value,
-          t('workbench.smart_apps_publish_failed', '智能应用发布失败'),
+          t('workbench.smart_apps_publish_failed', '智能工作台发布失败'),
           t('workbench.smart_apps_storage_unavailable', '文件存储服务暂不可用，请稍后重试')
         )
       )
@@ -1228,7 +1229,7 @@ function SmartAppPublishDialog({
             <h2 className="heading-small">
               {item
                 ? t('workbench.smart_apps_publish_version', '发布新版本')
-                : t('workbench.smart_apps_publish_smart_app', '发布智能应用')}
+                : t('workbench.smart_apps_publish_smart_app', '发布智能工作台')}
             </h2>
             <p className="mt-1 text-sm text-text-secondary">
               {t('workbench.smart_apps_auto_publish_hint', '上传并通过安全扫描后自动发布')}
@@ -1246,7 +1247,7 @@ function SmartAppPublishDialog({
           {installation ? (
             <div className="rounded-xl border border-border/40 bg-surface p-3 text-sm">
               <span className="font-medium">
-                {t('workbench.smart_apps_publish_installed', '发布已导入应用')}
+                {t('workbench.smart_apps_publish_installed', '发布已导入工作台')}
               </span>
               <span className="ml-2 text-text-muted">
                 {installation.manifest.displayName} · v{installation.manifest.version}
@@ -1254,10 +1255,10 @@ function SmartAppPublishDialog({
             </div>
           ) : (
             <div className="text-sm font-medium">
-              <span>{t('workbench.smart_apps_zip', '智能应用 ZIP')}</span>
+              <span>{t('workbench.smart_apps_zip', '智能工作台 ZIP')}</span>
               <SmartAppFilePicker
                 inputTestId="smart-app-publish-package"
-                label={t('workbench.smart_apps_zip', '智能应用 ZIP')}
+                label={t('workbench.smart_apps_zip', '智能工作台 ZIP')}
                 accept=".zip,application/zip"
                 files={file ? [file] : []}
                 onChange={files => void choosePackage(files[0] ?? null)}

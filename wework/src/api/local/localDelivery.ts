@@ -2,10 +2,12 @@ import { convertFileSrc } from '@tauri-apps/api/core'
 
 import {
   createProjectTaskTrackingSingleFlight,
+  DEFAULT_WORK_ITEM_PROJECT_ID,
   enqueueIssueWorkflowMutation,
   enqueueTaskTrackingMutation,
   isDefaultWorkItemProject,
   nextTaskTrackingStatus,
+  type TaskExecutionStatus,
   type CloudLoopItemAttachment,
   type CloudLoopItem,
   type CloudLoopItemExecution,
@@ -13,6 +15,7 @@ import {
   type CloudProjectFile,
   type CloudProjectId,
   type CloudProjectMember,
+  type ProjectBoardSnapshot,
   type CloudTaskContext,
   type ProjectTaskAttachment,
   type Delivery,
@@ -213,6 +216,12 @@ function localProject(record: LocalLoopItemRecord): CloudProject {
       typeof record.metadata.card_display === 'object' &&
       !Array.isArray(record.metadata.card_display)
         ? (record.metadata.card_display as CloudProject['card_display'])
+        : undefined,
+    pull_request_automation:
+      record.metadata.pull_request_automation &&
+      typeof record.metadata.pull_request_automation === 'object' &&
+      !Array.isArray(record.metadata.pull_request_automation)
+        ? (record.metadata.pull_request_automation as CloudProject['pull_request_automation'])
         : undefined,
     workflow_definition:
       record.metadata.workflow_definition &&
@@ -629,6 +638,8 @@ function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLo
         : null,
     can_view_detail: !isPublicVisitor || ownsTask,
     can_edit: ['Owner', 'Maintainer', 'Developer'].includes(role) || ownsTask,
+    content_revision: 1,
+    is_unread: false,
     assignee_user_id: record.assignee_user_id ?? null,
     assignee_agent_id: record.assignee_agent_id ?? null,
     execution_id: record.execution_id ?? null,
@@ -779,6 +790,7 @@ export function createLocalDeliveryApi(
         tags?: string[]
         board_config?: CloudProject['board_config']
         card_display?: CloudProject['card_display']
+        pull_request_automation?: CloudProject['pull_request_automation']
         workflow_definition?: CloudProject['workflow_definition']
         version: number
       }
@@ -818,6 +830,29 @@ export function createLocalDeliveryApi(
         items = items.filter(item => item.assignee_user_id === userId)
       }
       return { items }
+    },
+    async getBoardSnapshot(projectId: CloudProjectId): Promise<ProjectBoardSnapshot> {
+      const records = await request<LocalLoopItemRecord[]>('todos.list', {
+        project_id: projectId,
+      })
+      rememberTasks(projectId, records)
+      const items = records.map(record => localTask(record))
+      const taskBindings = await Promise.all(
+        items.map(item =>
+          request<LocalTaskBindingRecord[]>('todos.bindings', {
+            task_id: item.id,
+          })
+        )
+      )
+      return {
+        items,
+        task_bindings: taskBindings.flat().map(record => ({
+          ...record,
+          id: Number(record.id),
+        })),
+        members: [],
+        agents: [],
+      }
     },
     async listLoopItemExecutions(
       projectId: CloudProjectId,
@@ -912,6 +947,9 @@ export function createLocalDeliveryApi(
       })
       taskProjects.set(record.id, projectId)
       return localTask(record)
+    },
+    async markLoopItemRead(itemId: string) {
+      return api.getLoopItem(itemId)
     },
     async approveLoopItemRun(projectId: CloudProjectId, itemId: string): Promise<CloudLoopItem> {
       const executions = await request<LocalLoopItemExecution[]>('executions.list', {
@@ -1093,16 +1131,13 @@ export function createLocalDeliveryApi(
         const item = await api.createLoopItem(projectId, {
           title: taskTitle,
           description,
-          status: 'pending',
+          status: String(projectId) === DEFAULT_WORK_ITEM_PROJECT_ID ? 'inbox' : 'pending',
         })
         await api.bindTask(item.id, task, taskTitle)
         return { item }
       })
     },
-    async updateTaskTrackingStatus(
-      task: RuntimeTaskAddress,
-      executionStatus: 'running' | 'succeeded' | 'failed' | 'cancelled' | 'archived'
-    ) {
+    async updateTaskTrackingStatus(task: RuntimeTaskAddress, executionStatus: TaskExecutionStatus) {
       return enqueueTaskTrackingMutation(task, async () => {
         let context: CloudTaskContext
         try {
@@ -1112,7 +1147,7 @@ export function createLocalDeliveryApi(
         }
         if (!context.loop_item_id || !context.loop_item) return null
         const item = context.loop_item
-        if (item.workflow && context.workflow_node_id) {
+        if (executionStatus !== 'queued' && item.workflow && context.workflow_node_id) {
           return enqueueIssueWorkflowMutation(item.id, async () => {
             const current = await api.getLoopItem(item.id)
             if (!current.workflow) return current

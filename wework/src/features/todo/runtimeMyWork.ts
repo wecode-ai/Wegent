@@ -5,20 +5,36 @@ import type {
   RuntimeTaskSummary,
   RuntimeWorkListResponse,
 } from '@/types/api'
+import {
+  getRuntimeTaskLifecycleKey,
+  type RuntimeTaskLifecycleStoreSnapshot,
+} from '@/features/workbench/runtimeTaskLifecycle'
 import { runtimeTaskBoardState } from '@/features/workbench/runtimeTaskLifecycle/projection'
 
 export interface RuntimeMyWorkItem extends CloudMyWorkItem {
   runtime_address: RuntimeTaskAddress
 }
 
-function taskBoardStatus(task: RuntimeTaskSummary): {
+function taskBoardStatus(
+  task: RuntimeTaskSummary,
+  address: RuntimeTaskAddress,
+  lifecycleSnapshot?: RuntimeTaskLifecycleStoreSnapshot
+): {
   status: CloudMyWorkItem['status']
   hasActiveTask: boolean
 } {
-  const state = runtimeTaskBoardState(task)
+  const lifecycle = lifecycleSnapshot?.tasks.get(getRuntimeTaskLifecycleKey(address))
+  if (lifecycle?.derived.isRunning) {
+    return { status: 'in_progress', hasActiveTask: true }
+  }
+  if (lifecycle?.derived.isQueued) {
+    return { status: 'pending', hasActiveTask: false }
+  }
+  const state = runtimeTaskBoardState(lifecycle?.task ?? task)
   if (state === 'active') return { status: 'in_progress', hasActiveTask: true }
   if (state === 'completed') return { status: 'completed', hasActiveTask: false }
-  return { status: 'pending', hasActiveTask: false }
+  if (state === 'queued') return { status: 'pending', hasActiveTask: false }
+  return { status: 'in_review', hasActiveTask: false }
 }
 
 function timestamp(value: string | number | null | undefined): string {
@@ -37,10 +53,19 @@ function runtimeCloudProjectId(task: RuntimeTaskSummary): string | null {
 
 function workspaceItems(
   workspace: RuntimeDeviceWorkspace,
-  project: { key: string; name: string }
+  project: { key: string; name: string },
+  lifecycleSnapshot?: RuntimeTaskLifecycleStoreSnapshot
 ): RuntimeMyWorkItem[] {
   return workspace.tasks.map(task => {
-    const lifecycle = taskBoardStatus(task)
+    const runtimeAddress: RuntimeTaskAddress = {
+      deviceId: workspace.deviceId,
+      taskId: task.taskId,
+      runtime: task.runtime,
+      threadId: task.threadId,
+      workspacePath: task.workspacePath || workspace.workspacePath,
+      runtimeHandle: task.runtimeHandle,
+    }
+    const lifecycle = taskBoardStatus(task, runtimeAddress, lifecycleSnapshot)
     const projectId = runtimeCloudProjectId(task) ?? `runtime:${project.key}`
     return {
       id: task.taskId,
@@ -70,34 +95,38 @@ function workspaceItems(
       project_key: project.key,
       project_name: project.name,
       has_active_task: lifecycle.hasActiveTask,
-      runtime_address: {
-        deviceId: workspace.deviceId,
-        taskId: task.taskId,
-        runtime: task.runtime,
-        threadId: task.threadId,
-        workspacePath: task.workspacePath || workspace.workspacePath,
-        runtimeHandle: task.runtimeHandle,
-      },
+      runtime_address: runtimeAddress,
     }
   })
 }
 
-export function runtimeMyWorkItems(runtimeWork: RuntimeWorkListResponse | null | undefined) {
+export function runtimeMyWorkItems(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  lifecycleSnapshot?: RuntimeTaskLifecycleStoreSnapshot
+) {
   if (!runtimeWork) return []
   const items = [
     ...runtimeWork.projects.flatMap(projectWork =>
       projectWork.deviceWorkspaces.flatMap(workspace =>
-        workspaceItems(workspace, {
-          key: projectWork.project.key,
-          name: projectWork.project.name,
-        })
+        workspaceItems(
+          workspace,
+          {
+            key: projectWork.project.key,
+            name: projectWork.project.name,
+          },
+          lifecycleSnapshot
+        )
       )
     ),
     ...runtimeWork.chats.flatMap(workspace =>
-      workspaceItems(workspace, {
-        key: 'LOCAL',
-        name: workspace.label || '本地任务',
-      })
+      workspaceItems(
+        workspace,
+        {
+          key: 'LOCAL',
+          name: workspace.label || '本地任务',
+        },
+        lifecycleSnapshot
+      )
     ),
   ]
   const unique = new Map<string, RuntimeMyWorkItem>()

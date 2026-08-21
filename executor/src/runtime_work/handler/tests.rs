@@ -417,6 +417,81 @@ async fn stopped_turn_guard_acknowledges_scope_exit() {
 }
 
 #[tokio::test]
+async fn runtime_terminal_cancellation_settles_execution_after_stop_request_times_out() {
+    let root =
+        temp_runtime_work_index_path("stopped-turn-final-consistency").with_extension("directory");
+    let source = root.join("source");
+    let managed_root = root.join("workspace/worktrees");
+    initialize_test_repository(&source);
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(root.join("runtime-work/index.json"));
+    handler.worktrees = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
+    handler
+        .worktrees
+        .update_settings(WorktreeSettingsPatch {
+            worktree_root: Some(managed_root.display().to_string()),
+            ..WorktreeSettingsPatch::default()
+        })
+        .unwrap();
+    let worktree = handler
+        .worktrees
+        .prepare(&source, "task-1", None, false)
+        .unwrap();
+    handler.upsert_local_task(RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        worktree.path.clone(),
+        "Task".to_owned(),
+    ));
+    let (cancel_tx, cancel_rx) = oneshot::channel();
+    let (stopped_tx, stopped_rx) = oneshot::channel();
+    let execution_id = handler
+        .start_local_task_execution(
+            "task-1".to_owned(),
+            Some(&worktree.path),
+            cancel_tx,
+            stopped_rx,
+        )
+        .expect("local execution should start");
+    let _stopped_sender = stopped_tx;
+
+    assert!(
+        !handler
+            .abort_active_turn_with_timeout("task-1", Duration::from_millis(20))
+            .await,
+        "the stop request should time out while the turn scope remains active"
+    );
+    tokio::time::timeout(Duration::from_secs(1), cancel_rx)
+        .await
+        .expect("the stop attempt should send cancellation")
+        .expect("the runtime cancellation receiver should remain available");
+    assert!(handler.is_active_local_task("task-1"));
+
+    handler.settle_cancelled_local_task_execution("task-1", execution_id);
+
+    assert!(
+        !handler.is_active_local_task("task-1"),
+        "the runtime terminal result must settle stale active state without another stop request"
+    );
+    let task = handler
+        .store
+        .get_task("task-1")
+        .expect("the stopped task should remain persisted");
+    assert_eq!(task.status, "cancelled");
+    assert!(!task.running);
+    assert!(task.completed_at.is_some());
+    let restarted = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
+    assert!(
+        restarted
+            .reconcile()
+            .expect("restart reconciliation should succeed")
+            .iter()
+            .all(|outcome| !outcome.interrupted_execution),
+        "the runtime terminal result must clear durable execution evidence"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
 async fn unarchive_restores_managed_worktree_before_reactivating_task() {
     let root =
         temp_runtime_work_index_path("unarchive-worktree-restore").with_extension("directory");
@@ -983,6 +1058,22 @@ fn start_test_execution(handler: &RuntimeWorkRpcHandler, local_task_id: &str) ->
         .expect("test execution should start")
 }
 
+fn isolated_runtime_work_handler(label: &str) -> (RuntimeWorkRpcHandler, PathBuf) {
+    let root = temp_runtime_work_index_path(label).with_extension("directory");
+    let runtime_work_dir = root.join("runtime-work");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(runtime_work_dir.join("index.json"));
+    handler.worktrees = WorktreeManager::new(runtime_work_dir.join("worktrees.json"));
+    handler.turn_queue_path = Arc::new(runtime_work_dir.join("turn-queue.json"));
+    handler
+        .turn_scheduler
+        .lock()
+        .expect("runtime turn scheduler lock should not be poisoned")
+        .queued_turns
+        .clear();
+    (handler, root)
+}
+
 #[test]
 fn applies_backend_connection_from_the_shared_snapshot() {
     let snapshot: Arc<Mutex<Option<ConnectionConfig>>> =
@@ -1071,7 +1162,7 @@ fn codex_cached_transcripts_never_expose_offset_pagination() {
 #[test]
 fn active_codex_items_replace_stale_paginated_items() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    handler.begin_active_codex_transcript("task-1", "turn-1");
+    handler.begin_active_codex_transcript("task-1", "thread-1", "turn-1");
     handler.record_active_codex_transcript_item(
         "task-1",
         "turn-1",
@@ -1148,7 +1239,7 @@ fn active_codex_items_replace_stale_paginated_items() {
 #[test]
 fn late_codex_items_do_not_recreate_cleared_active_transcript() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    handler.begin_active_codex_transcript("task-1", "turn-1");
+    handler.begin_active_codex_transcript("task-1", "thread-1", "turn-1");
     handler.clear_active_codex_transcript("task-1");
 
     handler.record_active_codex_transcript_item(
@@ -1178,7 +1269,7 @@ fn late_codex_items_do_not_recreate_cleared_active_transcript() {
 #[test]
 fn active_codex_items_restore_a_turn_missing_from_paginated_storage() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    handler.begin_active_codex_transcript("task-1", "turn-live");
+    handler.begin_active_codex_transcript("task-1", "thread-1", "turn-live");
     handler.record_active_codex_transcript_item(
         "task-1",
         "turn-live",
@@ -1202,6 +1293,367 @@ fn active_codex_items_restore_a_turn_missing_from_paginated_storage() {
     assert_eq!(thread["turns"][0]["id"], "turn-live");
     assert_eq!(thread["turns"][0]["status"], "inProgress");
     assert_eq!(thread["turns"][0]["items"][0]["id"], "message-live");
+}
+
+#[tokio::test]
+async fn running_codex_transcript_uses_live_cache_without_provider_read() {
+    let (handler, root) = isolated_runtime_work_handler("running-live-cache");
+    let mut link = RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.thread_id = Some("thread-1".to_owned());
+    set_transcript_snapshot_messages(
+        &mut link.runtime_handle,
+        "thread-1",
+        vec![
+            json!({
+                "id": "historical-user",
+                "role": "user",
+                "content": "Explain the approach",
+                "createdAt": 1_779_999_999_000_i64,
+            }),
+            json!({
+                "id": "historical-assistant",
+                "role": "assistant",
+                "content": "Use divide and conquer",
+                "createdAt": 1_779_999_999_500_i64,
+            }),
+        ],
+    );
+    set_runtime_handle_messages(
+        &mut link.runtime_handle,
+        vec![json!({
+            "id": "user-1",
+            "role": "user",
+            "content": "Implement quicksort",
+            "createdAt": 1_780_000_000_000_i64,
+        })],
+    );
+    handler.upsert_local_task(link);
+    start_test_execution(&handler, "task-1");
+    handler.begin_active_codex_transcript("task-1", "thread-1", "turn-completed");
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-completed",
+        &json!({
+            "method": "item/completed",
+            "params": {
+                "turnId": "turn-completed",
+                "item": {
+                    "id": "message-completed",
+                    "type": "agentMessage",
+                    "phase": "final_answer",
+                    "text": "Initial implementation complete"
+                }
+            }
+        }),
+    );
+    handler.persist_and_clear_active_codex_transcript("task-1", "completed");
+    handler.begin_active_codex_transcript("task-1", "thread-1", "turn-live");
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-live",
+        &json!({
+            "method": "item/completed",
+            "params": {
+                "turnId": "turn-live",
+                "item": {
+                    "id": "message-live",
+                    "type": "agentMessage",
+                    "phase": "commentary",
+                    "text": "Writing quicksort"
+                }
+            }
+        }),
+    );
+
+    let transcript = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "taskId": "task-1",
+                "workspacePath": "/tmp/project"
+            }
+        }))
+        .await
+        .expect("running transcript should use the live cache");
+
+    assert_eq!(transcript["running"], true);
+    assert_eq!(transcript["messages"].as_array().unwrap().len(), 5);
+    assert_eq!(transcript["messages"][0]["content"], "Explain the approach");
+    assert_eq!(
+        transcript["messages"][1]["content"],
+        "Use divide and conquer"
+    );
+    assert_eq!(transcript["messages"][2]["content"], "Implement quicksort");
+    assert_eq!(
+        transcript["messages"][3]["content"],
+        "Initial implementation complete"
+    );
+    assert_eq!(
+        transcript["messages"][4]["blocks"][0]["content"],
+        "Writing quicksort"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn running_codex_transcript_binds_same_second_presentations_to_provider_turns() {
+    const PROVIDER_SECOND: i64 = 1_780_000_000;
+    const PRESENTATION_MS: i64 = PROVIDER_SECOND * 1_000 + 900;
+
+    let (handler, root) = isolated_runtime_work_handler("same-second-presentations");
+    let mut link = RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.thread_id = Some("thread-1".to_owned());
+    for (index, content) in [
+        "First instruction",
+        "Second instruction",
+        "Third instruction",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        append_runtime_handle_user_message_presentation(
+            &mut link.runtime_handle,
+            json!({
+                "clientUserMessageId": format!("client-user-{}", index + 1),
+                "content": content,
+                "createdAt": PRESENTATION_MS,
+                "ensureVisible": true,
+                "references": [],
+            }),
+        );
+    }
+    handler.upsert_local_task(link);
+    start_test_execution(&handler, "task-1");
+
+    for index in 0..3 {
+        let turn_id = format!("turn-{}", index + 1);
+        let client_user_message_id = format!("client-user-{}", index + 1);
+        handler.record_runtime_turn_id(
+            "task-1",
+            &format!("subtask-{}", index + 1),
+            &turn_id,
+            Some(&client_user_message_id),
+        );
+        if index < 2 {
+            handler.persist_completed_codex_turn_from_notification(
+                "task-1",
+                &json!({
+                    "method": "turn/completed",
+                    "params": {
+                        "threadId": "thread-1",
+                        "turn": {
+                            "id": turn_id,
+                            "status": "completed",
+                            "startedAt": PROVIDER_SECOND,
+                            "completedAt": PROVIDER_SECOND + 1,
+                            "items": [{
+                                "id": format!("assistant-{}", index + 1),
+                                "type": "agentMessage",
+                                "phase": "final_answer",
+                                "text": format!("Response {}", index + 1),
+                            }],
+                        }
+                    }
+                }),
+            );
+        } else {
+            handler.begin_active_codex_transcript("task-1", "thread-1", &turn_id);
+            handler.record_active_codex_transcript_item(
+                "task-1",
+                &turn_id,
+                &json!({
+                    "method": "item/completed",
+                    "params": {
+                        "turnId": turn_id,
+                        "item": {
+                            "id": "assistant-3",
+                            "type": "agentMessage",
+                            "phase": "commentary",
+                            "createdAt": PROVIDER_SECOND,
+                            "text": "Response 3",
+                        }
+                    }
+                }),
+            );
+        }
+    }
+
+    let transcript = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "taskId": "task-1",
+                "workspacePath": "/tmp/project"
+            }
+        }))
+        .await
+        .expect("running transcript should use turn-bound presentations");
+
+    assert_eq!(transcript["running"], true);
+    let messages = transcript["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 6);
+    let turns = transcript["turns"].as_array().unwrap();
+    assert_eq!(turns.len(), 3);
+    for index in 0..3 {
+        let turn_id = format!("turn-{}", index + 1);
+        assert_eq!(messages[index * 2]["role"], "user");
+        assert_eq!(
+            messages[index * 2]["clientUserMessageId"],
+            format!("client-user-{}", index + 1)
+        );
+        assert_eq!(messages[index * 2]["turnId"], turn_id);
+        assert_eq!(messages[index * 2 + 1]["role"], "assistant");
+        assert_eq!(messages[index * 2 + 1]["turnId"], turn_id);
+        assert_eq!(turns[index]["id"], turn_id);
+        assert_eq!(turns[index]["items"].as_array().unwrap().len(), 2);
+        assert_eq!(turns[index]["items"][0]["type"], "user_message");
+        assert_eq!(
+            turns[index]["items"][1]["type"],
+            if index < 2 { "assistant_text" } else { "block" }
+        );
+    }
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn completed_codex_turn_is_cached_before_automatic_continuation_finishes() {
+    let (handler, root) = isolated_runtime_work_handler("automatic-continuation-cache");
+    let mut link = RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.thread_id = Some("thread-1".to_owned());
+    set_runtime_handle_messages(
+        &mut link.runtime_handle,
+        vec![json!({
+            "id": "user-1",
+            "role": "user",
+            "content": "Keep the goal active",
+            "createdAt": 1_780_000_000_000_i64,
+        })],
+    );
+    handler.upsert_local_task(link);
+    start_test_execution(&handler, "task-1");
+    handler.begin_active_codex_transcript("task-1", "thread-1", "turn-initial");
+    handler.persist_completed_codex_turn_from_notification(
+        "task-1",
+        &json!({
+            "method": "turn/completed",
+            "params": {
+                "threadId": "thread-1",
+                "turn": {
+                    "id": "turn-initial",
+                    "status": "completed",
+                    "completedAt": 1_780_000_001,
+                    "items": [{
+                        "id": "message-initial",
+                        "type": "agentMessage",
+                        "phase": "final_answer",
+                        "text": "Initial goal turn complete"
+                    }]
+                }
+            }
+        }),
+    );
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-continuation",
+        &json!({
+            "method": "item/completed",
+            "params": {
+                "turnId": "turn-continuation",
+                "item": {
+                    "id": "message-continuation",
+                    "type": "agentMessage",
+                    "phase": "commentary",
+                    "text": "Automatic continuation running"
+                }
+            }
+        }),
+    );
+
+    let transcript = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "taskId": "task-1",
+                "workspacePath": "/tmp/project"
+            }
+        }))
+        .await
+        .expect("running transcript should retain the completed goal turn");
+
+    assert_eq!(transcript["running"], true);
+    assert_eq!(transcript["messages"].as_array().unwrap().len(), 3);
+    assert_eq!(transcript["messages"][0]["content"], "Keep the goal active");
+    assert_eq!(
+        transcript["messages"][1]["content"],
+        "Initial goal turn complete"
+    );
+    assert_eq!(
+        transcript["messages"][2]["blocks"][0]["content"],
+        "Automatic continuation running"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn recording_a_new_provider_thread_clears_completed_transcript_cache() {
+    let index_path = temp_runtime_work_index_path("completed-transcript-thread-switch");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let mut link = RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.thread_id = Some("thread-1".to_owned());
+    append_completed_transcript_messages(
+        &mut link.runtime_handle,
+        "thread-1",
+        vec![json!({"id": "message-1", "role": "assistant"})],
+    );
+    set_transcript_snapshot_messages(
+        &mut link.runtime_handle,
+        "thread-1",
+        vec![json!({"id": "snapshot-message-1", "role": "assistant"})],
+    );
+    handler.upsert_local_task(link);
+
+    handler.record_local_task_thread("task-1", "thread-2");
+
+    let link = handler
+        .local_task_link("task-1")
+        .expect("task should remain stored");
+    assert_eq!(link.thread_id.as_deref(), Some("thread-2"));
+    assert!(completed_transcript_messages(&link).is_empty());
+    assert!(link
+        .runtime_handle
+        .get("completedTranscriptMessages")
+        .is_none());
+    assert!(link
+        .runtime_handle
+        .get("completedTranscriptThreadId")
+        .is_none());
+    assert!(link
+        .runtime_handle
+        .get("transcriptSnapshotMessages")
+        .is_none());
+    assert!(link
+        .runtime_handle
+        .get("transcriptSnapshotThreadId")
+        .is_none());
+
+    let _ = fs::remove_file(index_path);
 }
 
 #[tokio::test]
@@ -1876,14 +2328,22 @@ fn runtime_turn_ids_are_persisted_by_subtask() {
     let index_path = temp_runtime_work_index_path("runtime-turn-id");
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
     handler.store = RuntimeWorkStore::new(index_path.clone());
-    handler.upsert_local_task(RuntimeTaskLink::new_pending(
+    let mut link = RuntimeTaskLink::new_pending(
         "task-1".to_owned(),
         "/tmp/project".to_owned(),
         "Task".to_owned(),
-    ));
+    );
+    append_runtime_handle_user_message_presentation(
+        &mut link.runtime_handle,
+        json!({
+            "clientUserMessageId": "client-user-1",
+            "content": "Implement quicksort",
+        }),
+    );
+    handler.upsert_local_task(link);
 
     let codex_turn_id = "019f933f-bf0d-72e3-b366-a6539ab00bcf";
-    handler.record_runtime_turn_id("task-1", "subtask-1", codex_turn_id);
+    handler.record_runtime_turn_id("task-1", "subtask-1", codex_turn_id, Some("client-user-1"));
 
     let link = handler
         .local_task_link("task-1")
@@ -1894,6 +2354,10 @@ fn runtime_turn_ids_are_persisted_by_subtask() {
     );
     assert_eq!(
         tasks::resolve_codex_turn_id(&link, "subtask-1").as_deref(),
+        Some(codex_turn_id)
+    );
+    assert_eq!(
+        link.runtime_handle["userMessagePresentations"][0]["turnId"].as_str(),
         Some(codex_turn_id)
     );
     assert_eq!(

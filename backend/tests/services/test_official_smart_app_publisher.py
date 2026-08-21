@@ -24,7 +24,6 @@ def _source(tmp_path, *, version: str = "1.0.0"):
                 "entry": {
                     "installPackage": "bundle",
                     "profile": "research",
-                    "webUrl": "/",
                 },
                 "requirements": {"dsh": "0.1.0", "node": ">=22"},
             }

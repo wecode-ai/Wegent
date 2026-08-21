@@ -95,6 +95,12 @@ turn ID 可以把乐观消息重新绑定到正确 turn；失败时必须移除�
 的 Codex thread 执行 `thread/resume`，再用 `thread/read(includeTurns)` 读取完整快照；
 快照重新建立 turn、消息和运行状态，不能依赖断线前的内存事件缓存继续推断。
 
+Codex turn 运行期间不能并发调用 provider transcript reader。executor 必须在空闲读取
+最新 transcript 页成功后，按 thread ID 持久化该页的消息快照；运行中的 transcript
+响应由该快照、当前待处理用户消息、已结算消息和活跃流消息按消息 ID 去重合并。这样
+WebView 或 executor 重建后启动的新 turn 不会让历史 assistant 回复消失。thread ID
+变化时必须同时清除完成态缓存和 transcript 快照，不能把旧 thread 的消息带入新会话。
+
 首条消息携带 pending Goal seed 时，发送入口和 pane 初始化都必须先把 seed 的状态
 写入 `RuntimeTaskLifecycleStore`。异步 `runtime.goal.get` 在 Goal 尚未持久化时可能返回
 空值；在 seed 仍属于当前任务时，空结果不能清除 lifecycle 中的 Goal 状态。这样即使
@@ -145,6 +151,11 @@ Claude Code 的 `/compact` 是普通原生命令；Codex 仍使用其 app-server
 最新本地快照合并，不能用请求发起前捕获的旧状态覆盖新建任务。用户选择“新建会话”
 只清空当前聊天 pane，不归档或删除原任务；原任务继续显示在项目下，并可重新打开。
 环境弹层必须展示和复制项目的全部根目录，而不是只显示主根。
+
+“我的工作”中的本地任务清单来自 `runtimeWork`，但任务所处的运行中或排队分组必须
+读取同一个 `RuntimeTaskLifecycleStore` 快照。侧栏 spinner、composer 和“我的工作”
+不能各自从 `RuntimeTaskSummary.running`、transcript 或消息状态重新推断生命周期；
+否则异步任务列表快照会把仍在运行的任务错误投影到已完成或待处理分组。
 
 这些规则只改变本地 Codex 项目。远程和云端任务仍遵循其原有的单 workspace 选择
 语义，不能因为本地多目录支持而隐式扩大远程执行范围。
@@ -305,6 +316,7 @@ assistant 之前。canonical `turns` 是前端 transcript 的唯一输入，不�
 - 每个临时聊天 tab 都有独立的 `chat:<id>` 实例标识，允许在右侧工作区同时打开多个临时聊天。
 - 创建 runtime 线程前，`TemporaryChatPanel` 以实例标识作为 `conversationKey`。线程创建后，pane workspace state 保存该 tab 的 runtime 地址，消息则由 `runtimeConversationCache` 的实时投影恢复。临时线程不支持 `thread/turns/list`，因此切换主会话导致面板卸载、再切回时，不能依赖 transcript 补回内容。
 - 每个临时聊天的附件选择、上传进度和错误状态也按实例隔离，不能复用主聊天 composer 的附件状态；首条消息必须把该实例的附件显式传给 `createTemporaryRuntimeTask`。
+- 每条发送成功或进入乐观展示的 user message 都必须保存对应的持久化附件引用，包含首条消息、普通 follow-up 和队列发送。清空 composer 附件只清理当前输入状态，不能让已经发送的附件从消息列表消失；本地 `blob:` 预览地址必须转换为可恢复的本地路径。
 - 右侧工作区只打开一个临时聊天时，默认使用紧凑的 `420px` 面板宽度；打开其他工作区 tab 后恢复通用分栏默认值，用户手动调整的宽度仍然优先。
 - 首条消息通过 `createTemporaryRuntimeTask` 创建 `ephemeral` runtime task，并携带当前主线程的 `sideSource`。该任务不写入左侧任务列表，也不触发主 pane 导航。
 - 后续消息必须继续使用已加载的临时线程。Codex app-server 路径使用 `direct_thread_id` 直接 `turn/start`，不能走普通 `resume_thread_id` 的 `thread/resume` 路径，否则会因为临时线程没有 rollout 映射而出现 `no rollout found`。

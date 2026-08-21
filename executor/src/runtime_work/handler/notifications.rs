@@ -5,22 +5,125 @@
 use super::*;
 
 impl RuntimeWorkRpcHandler {
-    pub(super) fn begin_active_codex_transcript(&self, local_task_id: &str, turn_id: &str) {
+    pub(super) fn begin_active_codex_transcript(
+        &self,
+        local_task_id: &str,
+        thread_id: &str,
+        turn_id: &str,
+    ) {
         let Ok(mut active_items) = self.active_codex_transcript_items.lock() else {
             return;
         };
         active_items.insert(
             local_task_id.to_owned(),
             ActiveCodexTranscriptItems {
+                thread_id: thread_id.to_owned(),
                 turn_id: turn_id.to_owned(),
                 items: Vec::new(),
             },
         );
     }
 
+    #[cfg(test)]
     pub(super) fn clear_active_codex_transcript(&self, local_task_id: &str) {
         if let Ok(mut active_items) = self.active_codex_transcript_items.lock() {
             active_items.remove(local_task_id);
+        }
+    }
+
+    pub(super) fn persist_and_clear_active_codex_transcript(
+        &self,
+        local_task_id: &str,
+        status: &str,
+    ) {
+        let active = self
+            .active_codex_transcript_items
+            .lock()
+            .ok()
+            .and_then(|mut items| items.remove(local_task_id));
+        let Some(active) = active.filter(|active| !active.items.is_empty()) else {
+            return;
+        };
+        let completed_at = now_ms();
+        let thread = json!({
+            "turns": [{
+                "id": active.turn_id,
+                "items": active.items,
+                "itemsView": "full",
+                "status": status,
+                "completedAt": completed_at,
+            }],
+        });
+        let messages = transcript_messages(&thread, &self.device_id)
+            .into_iter()
+            .filter(|message| {
+                string_field(message, "role")
+                    .is_some_and(|role| role.eq_ignore_ascii_case("assistant"))
+            })
+            .collect::<Vec<_>>();
+        if messages.is_empty() {
+            return;
+        }
+        self.store.update_task(local_task_id, |link| {
+            append_completed_transcript_messages(
+                &mut link.runtime_handle,
+                &active.thread_id,
+                messages,
+            );
+            link.updated_at = link.updated_at.max(completed_at);
+        });
+    }
+
+    pub(super) fn persist_completed_codex_turn_from_notification(
+        &self,
+        local_task_id: &str,
+        message: &Value,
+    ) {
+        let notification = codex_notification(message);
+        if notification.method != "turn/completed" {
+            return;
+        }
+        let Some(turn) = notification
+            .params
+            .get("turn")
+            .filter(|turn| turn.is_object())
+            .cloned()
+        else {
+            return;
+        };
+        let Some(turn_id) = string_field(&turn, "id") else {
+            return;
+        };
+        let thread_id = string_field(notification.params, "threadId")
+            .or_else(|| {
+                self.local_task_link(local_task_id)
+                    .and_then(|link| link.thread_id)
+            })
+            .unwrap_or_default();
+        let completed_at = timestamp_ms_field(&turn, "completedAt").unwrap_or_else(now_ms);
+        let messages = transcript_messages(&json!({"turns": [turn]}), &self.device_id)
+            .into_iter()
+            .filter(|message| {
+                string_field(message, "role")
+                    .is_some_and(|role| role.eq_ignore_ascii_case("assistant"))
+            })
+            .collect::<Vec<_>>();
+        if !messages.is_empty() {
+            self.store.update_task(local_task_id, |link| {
+                append_completed_transcript_messages(
+                    &mut link.runtime_handle,
+                    &thread_id,
+                    messages,
+                );
+                link.updated_at = link.updated_at.max(completed_at);
+            });
+        }
+        if let Ok(mut active_items) = self.active_codex_transcript_items.lock() {
+            if let Some(active) = active_items.get_mut(local_task_id) {
+                if active.turn_id == turn_id {
+                    active.items.clear();
+                }
+            }
         }
     }
 
@@ -99,6 +202,12 @@ impl RuntimeWorkRpcHandler {
             "itemsView": "full",
             "status": "inProgress",
         }));
+    }
+
+    pub(super) fn active_codex_transcript_messages(&self, local_task_id: &str) -> Vec<Value> {
+        let mut thread = json!({"turns": []});
+        self.merge_active_codex_transcript(local_task_id, &mut thread);
+        transcript_messages(&thread, &self.device_id)
     }
 
     pub(super) async fn ensure_notification_router(&self) {
@@ -311,6 +420,10 @@ impl RuntimeWorkRpcHandler {
             return;
         }
         self.store.update_task(local_task_id, |link| {
+            if link.thread_id.as_deref() != Some(thread_id) {
+                clear_completed_transcript_messages(&mut link.runtime_handle);
+                clear_transcript_snapshot_messages(&mut link.runtime_handle);
+            }
             link.thread_id = Some(thread_id.to_owned());
             clear_runtime_handle_messages(&mut link.runtime_handle);
             link.updated_at = now_ms();

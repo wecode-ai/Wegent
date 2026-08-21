@@ -278,6 +278,15 @@ export function WorkspaceTabSurface({
   // disconnects their effects. Keep the current iframe route connected while
   // inactive; AppIframe hides the native WebView through its active prop.
   const keepIframeActive = Boolean(iframe)
+
+  useLayoutEffect(() => {
+    if (!active) return
+    // React Activity may reveal a retained workspace after AppRoutes has already
+    // committed its active-tab effect. Re-sync at the surface boundary so titlebar
+    // portals mounted during that reveal cannot keep the previous tab's visibility.
+    setActiveWorkspaceTabPortalOwner(tab.id)
+  }, [active, tab.id])
+
   return (
     <WorkspaceTabPortalOwner ownerId={tab.id}>
       <Activity

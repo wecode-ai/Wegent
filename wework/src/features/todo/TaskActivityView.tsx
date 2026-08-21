@@ -69,6 +69,9 @@ interface TaskActivityViewProps {
   // message list and a composer pinned to the bottom
   rail?: boolean
   linear?: boolean
+  workflowManagerRunId?: string | null
+  onWorkflowManagerExecutionChange?: (action: (() => void) | null) => void
+  onWorkflowManagerFinished?: () => void
 }
 
 interface TaskCardQueuedReply extends RuntimePaneQueuedMessage {
@@ -90,6 +93,9 @@ export function TaskActivityView({
   selfManagedExecution = false,
   rail = false,
   linear = false,
+  workflowManagerRunId = null,
+  onWorkflowManagerExecutionChange,
+  onWorkflowManagerFinished,
 }: TaskActivityViewProps) {
   const { t } = useTranslation('common')
   const { services, state, createProjectRuntimeTask, cancelRuntimeTask, sendRuntimePaneMessage } =
@@ -205,6 +211,7 @@ export function TaskActivityView({
   const listRef = useRef<HTMLDivElement>(null)
   const followCardRef = useRef<string | null>(null)
   const refreshedRunIds = useRef(new Set<string>())
+  const refreshedWorkflowManagerMessageIds = useRef(new Set<string>())
   const queuedCardReplyInFlightRef = useRef<string | null>(null)
   const compact = rail || linear
 
@@ -212,6 +219,78 @@ export function TaskActivityView({
   const taskAiMessageId = task.ai_state?.project_chat_message_id
   const taskAiRuntimeDeviceId = task.ai_state?.runtime_device_id
   const taskAiRuntimeTaskId = task.ai_state?.runtime_task_id
+  const workflowManagerMessage = useMemo(
+    () =>
+      workflowManagerRunId
+        ? messages
+            .filter(
+              message => String(message.metadata.automation_run_id ?? '') === workflowManagerRunId
+            )
+            .at(-1)
+        : undefined,
+    [messages, workflowManagerRunId]
+  )
+  const workflowManagerRuntimeAddress = useMemo(() => {
+    const address = workflowManagerMessage?.runtimeAddress
+    if (!address?.deviceId || !address.taskId) return null
+    return findRuntimeTask(state.runtimeWork, address) ? address : null
+  }, [state.runtimeWork, workflowManagerMessage])
+  const workflowManagerBackendExecution = useMemo(
+    () => (workflowManagerMessage ? backendTaskExecution(workflowManagerMessage) : null),
+    [workflowManagerMessage]
+  )
+  const openWorkflowManagerExecution = useCallback(() => {
+    if (!workflowManagerMessage) return
+    if (workflowManagerRuntimeAddress) {
+      setExecutionDetail({
+        address: workflowManagerRuntimeAddress,
+        senderName: workflowManagerMessage.sender.name,
+        runId:
+          typeof workflowManagerMessage.metadata.run_id === 'string'
+            ? workflowManagerMessage.metadata.run_id
+            : null,
+        modelName:
+          typeof workflowManagerMessage.metadata.model === 'string'
+            ? workflowManagerMessage.metadata.model
+            : null,
+        runStatus: resolveMessageRunStatus(task.ai_state, workflowManagerMessage),
+      })
+      return
+    }
+    if (workflowManagerBackendExecution) {
+      void openExternalUrl(workflowManagerBackendExecution.executionUrl)
+    }
+  }, [
+    task.ai_state,
+    workflowManagerBackendExecution,
+    workflowManagerMessage,
+    workflowManagerRuntimeAddress,
+  ])
+
+  useEffect(() => {
+    if (!onWorkflowManagerExecutionChange) return
+    const available = Boolean(
+      workflowManagerMessage && (workflowManagerRuntimeAddress || workflowManagerBackendExecution)
+    )
+    onWorkflowManagerExecutionChange(available ? openWorkflowManagerExecution : null)
+    return () => onWorkflowManagerExecutionChange(null)
+  }, [
+    onWorkflowManagerExecutionChange,
+    openWorkflowManagerExecution,
+    workflowManagerBackendExecution,
+    workflowManagerMessage,
+    workflowManagerRuntimeAddress,
+  ])
+
+  useEffect(() => {
+    if (!workflowManagerMessage || !onWorkflowManagerFinished) return
+    if (!['completed', 'failed', 'cancelled', 'canceled'].includes(workflowManagerMessage.status)) {
+      return
+    }
+    if (refreshedWorkflowManagerMessageIds.current.has(workflowManagerMessage.messageId)) return
+    refreshedWorkflowManagerMessageIds.current.add(workflowManagerMessage.messageId)
+    onWorkflowManagerFinished()
+  }, [onWorkflowManagerFinished, workflowManagerMessage])
 
   useEffect(() => {
     const agentApi = projectChatAgentApi ?? services.projectChatAgentApi
@@ -267,38 +346,44 @@ export function TaskActivityView({
 
   // Newest parent comments render at the top, so newly sent comments are
   // visible without scrolling the list to its end.
-  const scrollTaskCommentsToTop = useCallback((behavior: ScrollBehavior = 'auto') => {
-    const scroller = findTaskCommentScrollContainer(listRef.current)
-    if (scroller) {
-      if (typeof scroller.scrollTo === 'function') {
-        scroller.scrollTo({ top: 0, behavior })
-      } else {
-        scroller.scrollTop = 0
+  const scrollTaskCommentsToTop = useCallback(
+    (behavior: ScrollBehavior = 'auto') => {
+      const scroller = resolveTaskCommentScrollContainer(listRef.current, linear)
+      if (scroller) {
+        if (typeof scroller.scrollTo === 'function') {
+          scroller.scrollTo({ top: 0, behavior })
+        } else {
+          scroller.scrollTop = 0
+        }
       }
-    }
-  }, [])
+    },
+    [linear]
+  )
 
   // Card replies grow inside their own card; keep the card's bottom visible
   // (where the new reply and the streaming AI response appear) instead of
   // jumping to the end of the whole comment list.
-  const revealCardBottom = useCallback((cardId: string, behavior: ScrollBehavior = 'auto') => {
-    const card = listRef.current?.querySelector<HTMLElement>(
-      `[data-testid="cloud-task-activity-card-${cardId}"]`
-    )
-    const scroller = findTaskCommentScrollContainer(listRef.current)
-    if (!card || !scroller) return
-    const scrollerRect = scroller.getBoundingClientRect()
-    const cardRect = card.getBoundingClientRect()
-    if (cardRect.bottom > scrollerRect.bottom) {
-      scroller.scrollTo({
-        top: scroller.scrollTop + cardRect.bottom - scrollerRect.bottom + 12,
-        behavior,
-      })
-    }
-  }, [])
+  const revealCardBottom = useCallback(
+    (cardId: string, behavior: ScrollBehavior = 'auto') => {
+      const card = listRef.current?.querySelector<HTMLElement>(
+        `[data-testid="cloud-task-activity-card-${cardId}"]`
+      )
+      const scroller = resolveTaskCommentScrollContainer(listRef.current, linear)
+      if (!card || !scroller) return
+      const scrollerRect = scroller.getBoundingClientRect()
+      const cardRect = card.getBoundingClientRect()
+      if (cardRect.bottom > scrollerRect.bottom) {
+        scroller.scrollTo({
+          top: scroller.scrollTop + cardRect.bottom - scrollerRect.bottom + 12,
+          behavior,
+        })
+      }
+    },
+    [linear]
+  )
 
   useEffect(() => {
-    const scroller = findTaskCommentScrollContainer(listRef.current)
+    const scroller = resolveTaskCommentScrollContainer(listRef.current, linear)
     if (!scroller) return
     const updateFollowState = () => {
       if (followCardRef.current) {
@@ -317,7 +402,7 @@ export function TaskActivityView({
     }
     scroller.addEventListener('scroll', updateFollowState, { passive: true })
     return () => scroller.removeEventListener('scroll', updateFollowState)
-  }, [compact, loading, messages.length])
+  }, [compact, linear, loading, messages.length])
 
   useEffect(() => {
     if (
@@ -1959,4 +2044,11 @@ function findTaskCommentScrollContainer(element: HTMLElement | null): HTMLElemen
     current = current.parentElement
   }
   return null
+}
+
+function resolveTaskCommentScrollContainer(
+  element: HTMLElement | null,
+  linear: boolean
+): HTMLElement | null {
+  return linear ? element : findTaskCommentScrollContainer(element)
 }

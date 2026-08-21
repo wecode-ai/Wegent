@@ -432,6 +432,60 @@ function seedRuntimeConversationTurns(
   return turns
 }
 
+export function appendAcceptedRuntimeConversationUser(
+  turns: RuntimeConversationTurn[],
+  message: WorkbenchMessage,
+  activeTurnId: string | null,
+  turnIdsBeforeSend: ReadonlySet<string>
+): RuntimeConversationTurn[] {
+  if (message.role !== 'user') return appendOptimisticUser(turns, message)
+  if (
+    turns.some(turn =>
+      turn.items.some(item => item.type === 'user_message' && item.id === message.id)
+    )
+  ) {
+    return turns
+  }
+
+  const activeTurnIndex =
+    activeTurnId && !turnIdsBeforeSend.has(activeTurnId)
+      ? turns.findIndex(turn => turn.id === activeTurnId && !hasRuntimeConversationUser(turn))
+      : -1
+  const acceptedTurnIndex =
+    activeTurnIndex >= 0
+      ? activeTurnIndex
+      : turns.findLastIndex(
+          turn =>
+            turn.id !== null && !turnIdsBeforeSend.has(turn.id) && !hasRuntimeConversationUser(turn)
+        )
+  if (acceptedTurnIndex < 0) return appendOptimisticUser(turns, message)
+
+  const acceptedTurn = turns[acceptedTurnIndex]
+  const acceptedTurnId = acceptedTurn.id
+  if (!acceptedTurnId) return appendOptimisticUser(turns, message)
+  return replaceAt(turns, acceptedTurnIndex, {
+    ...acceptedTurn,
+    clientUserMessageId: message.id,
+    items: [
+      {
+        id: message.id,
+        type: 'user_message',
+        message: {
+          ...message,
+          role: 'user',
+          subtaskId: acceptedTurnId,
+          turnId: acceptedTurnId,
+        },
+      },
+      ...acceptedTurn.items,
+    ],
+  })
+}
+
+function hasRuntimeConversationUser(turn: RuntimeConversationTurn): boolean {
+  return turn.items.some(item => item.type === 'user_message')
+}
+
 function appendOptimisticUser(
   turns: RuntimeConversationTurn[],
   message: WorkbenchMessage

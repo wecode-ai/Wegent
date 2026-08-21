@@ -3,6 +3,7 @@ import { useAppUpdate, type AppUpdateContextValue } from './app-update-context'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   APP_UPDATE_AUTO_CHECK_MIN_AGE_MS,
+  APP_UPDATE_AUTO_DOWNLOAD_KEY,
   APP_UPDATE_CHANNEL_KEY,
   APP_UPDATE_INITIAL_CHECK_DELAY_MS,
   APP_UPDATE_LAST_AUTO_CHECK_KEY,
@@ -10,13 +11,18 @@ import {
   APP_UPDATE_TIMER_INTERVAL_MS,
 } from './app-update-context'
 import { AppUpdateProvider } from './AppUpdateProvider'
-import { checkForWeworkUpdate, installPendingWeworkUpdate } from '@/lib/app-updater'
+import {
+  checkForWeworkUpdate,
+  downloadPendingWeworkUpdate,
+  installPendingWeworkUpdate,
+} from '@/lib/app-updater'
 import { APP_UPDATE_PENDING_RELEASE_NOTES_KEY } from './app-release-notes'
 
 const appVersionMock = vi.hoisted(() => ({ value: '0.1.0' }))
 
 vi.mock('@/lib/app-updater', () => ({
   checkForWeworkUpdate: vi.fn(),
+  downloadPendingWeworkUpdate: vi.fn(),
   installPendingWeworkUpdate: vi.fn(),
 }))
 
@@ -43,6 +49,7 @@ describe('AppUpdateProvider', () => {
     enableTauri()
     appVersionMock.value = '0.1.0'
     vi.mocked(checkForWeworkUpdate).mockResolvedValue(null)
+    vi.mocked(downloadPendingWeworkUpdate).mockResolvedValue()
   })
 
   afterEach(() => {
@@ -86,6 +93,92 @@ describe('AppUpdateProvider', () => {
     expect(localStorage.getItem(APP_UPDATE_CHANNEL_KEY)).toBe('beta')
     expect(appUpdate?.updateChannel).toBe('beta')
     expect(checkForWeworkUpdate).toHaveBeenCalledWith('beta')
+  })
+
+  test('downloads a discovered update silently by default', async () => {
+    let appUpdate: AppUpdateContextValue | null = null
+    vi.mocked(checkForWeworkUpdate).mockResolvedValue({
+      currentVersion: '0.1.0',
+      version: '0.2.0',
+    })
+
+    const Probe = () => {
+      appUpdate = useAppUpdate()
+      return null
+    }
+
+    render(
+      <AppUpdateProvider>
+        <Probe />
+      </AppUpdateProvider>
+    )
+
+    await act(async () => {
+      await appUpdate?.checkNow()
+    })
+
+    expect(appUpdate?.autoUpdateEnabled).toBe(true)
+    expect(downloadPendingWeworkUpdate).toHaveBeenCalledWith()
+    expect(appUpdate?.downloadProgress).toBeNull()
+    expect(appUpdate?.status).toBe('available')
+  })
+
+  test('does not download automatically when automatic updates are disabled', async () => {
+    let appUpdate: AppUpdateContextValue | null = null
+    localStorage.setItem(APP_UPDATE_AUTO_DOWNLOAD_KEY, 'false')
+    vi.mocked(checkForWeworkUpdate).mockResolvedValue({
+      currentVersion: '0.1.0',
+      version: '0.2.0',
+    })
+
+    const Probe = () => {
+      appUpdate = useAppUpdate()
+      return null
+    }
+
+    render(
+      <AppUpdateProvider>
+        <Probe />
+      </AppUpdateProvider>
+    )
+
+    await act(async () => {
+      await appUpdate?.checkNow()
+    })
+
+    expect(appUpdate?.autoUpdateEnabled).toBe(false)
+    expect(downloadPendingWeworkUpdate).not.toHaveBeenCalled()
+  })
+
+  test('starts a silent download when automatic updates are enabled for an available update', async () => {
+    let appUpdate: AppUpdateContextValue | null = null
+    localStorage.setItem(APP_UPDATE_AUTO_DOWNLOAD_KEY, 'false')
+    vi.mocked(checkForWeworkUpdate).mockResolvedValue({
+      currentVersion: '0.1.0',
+      version: '0.2.0',
+    })
+
+    const Probe = () => {
+      appUpdate = useAppUpdate()
+      return null
+    }
+
+    render(
+      <AppUpdateProvider>
+        <Probe />
+      </AppUpdateProvider>
+    )
+
+    await act(async () => {
+      await appUpdate?.checkNow()
+    })
+    act(() => {
+      appUpdate?.setAutoUpdateEnabled(true)
+    })
+
+    expect(localStorage.getItem(APP_UPDATE_AUTO_DOWNLOAD_KEY)).toBe('true')
+    expect(downloadPendingWeworkUpdate).toHaveBeenCalledWith()
+    expect(appUpdate?.downloadProgress).toBeNull()
   })
 
   test('restores the persisted Beta channel for automatic checks', async () => {

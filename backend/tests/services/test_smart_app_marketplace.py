@@ -42,7 +42,6 @@ def _package(name: str = "research-desk", version: str = "1.0.0") -> bytes:
                     "entry": {
                         "installPackage": "bundle",
                         "profile": "research",
-                        "webUrl": "/",
                     },
                     "requirements": {"dsh": "0.1.0", "node": ">=22"},
                 }

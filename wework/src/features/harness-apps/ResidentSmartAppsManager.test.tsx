@@ -106,7 +106,7 @@ const installation: HarnessAppInstallation = {
       profile: 'resident',
       webUrl: 'http://127.0.0.1:3080/',
     },
-    requirements: { dsh: '0.1.0-rc.7', node: '>=22' },
+    requirements: { dsh: '0.1.0-rc.8', node: '>=22' },
   },
   packagePath: '/tmp/resident',
   sha256: 'hash',

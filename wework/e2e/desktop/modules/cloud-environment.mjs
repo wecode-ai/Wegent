@@ -761,6 +761,7 @@ class RealCloudEnvironment {
       '',
       codexUpstreamApiFormat(protocol)
     )
+    await this.restartCloudExecutor()
   }
 
   async waitForDevice(deviceId, logPath) {
