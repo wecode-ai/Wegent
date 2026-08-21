@@ -2,10 +2,12 @@ import { convertFileSrc } from '@tauri-apps/api/core'
 
 import {
   createProjectTaskTrackingSingleFlight,
+  DEFAULT_WORK_ITEM_PROJECT_ID,
   enqueueIssueWorkflowMutation,
   enqueueTaskTrackingMutation,
   isDefaultWorkItemProject,
   nextTaskTrackingStatus,
+  type TaskExecutionStatus,
   type CloudLoopItemAttachment,
   type CloudLoopItem,
   type CloudLoopItemExecution,
@@ -1129,16 +1131,13 @@ export function createLocalDeliveryApi(
         const item = await api.createLoopItem(projectId, {
           title: taskTitle,
           description,
-          status: 'pending',
+          status: String(projectId) === DEFAULT_WORK_ITEM_PROJECT_ID ? 'inbox' : 'pending',
         })
         await api.bindTask(item.id, task, taskTitle)
         return { item }
       })
     },
-    async updateTaskTrackingStatus(
-      task: RuntimeTaskAddress,
-      executionStatus: 'running' | 'succeeded' | 'failed' | 'cancelled' | 'archived'
-    ) {
+    async updateTaskTrackingStatus(task: RuntimeTaskAddress, executionStatus: TaskExecutionStatus) {
       return enqueueTaskTrackingMutation(task, async () => {
         let context: CloudTaskContext
         try {
@@ -1148,7 +1147,7 @@ export function createLocalDeliveryApi(
         }
         if (!context.loop_item_id || !context.loop_item) return null
         const item = context.loop_item
-        if (item.workflow && context.workflow_node_id) {
+        if (executionStatus !== 'queued' && item.workflow && context.workflow_node_id) {
           return enqueueIssueWorkflowMutation(item.id, async () => {
             const current = await api.getLoopItem(item.id)
             if (!current.workflow) return current

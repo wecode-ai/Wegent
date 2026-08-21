@@ -89,10 +89,12 @@ use super::{
     },
     runtime_handle_messages::{
         append_completed_transcript_messages, append_runtime_handle_message,
-        append_runtime_handle_user_message_presentation,
+        append_runtime_handle_user_message_presentation, append_unique_transcript_messages,
         bind_runtime_handle_user_message_presentation_to_turn, cached_messages,
         clear_completed_transcript_messages, clear_runtime_handle_messages,
-        completed_transcript_messages, set_runtime_handle_messages, user_message_presentations,
+        clear_transcript_snapshot_messages, completed_transcript_messages,
+        set_runtime_handle_messages, set_transcript_snapshot_messages,
+        transcript_snapshot_messages, user_message_presentations,
     },
     store::{runtime_work_dir, RuntimeWorkStore},
     transcript::{
@@ -446,8 +448,7 @@ pub struct RuntimeWorkRpcHandler {
     turn_queue_operation: Arc<AsyncMutex<()>>,
     turn_queue_path: Arc<PathBuf>,
     preparing_worktree_turns: Arc<Mutex<HashMap<String, PreparingWorktreeTurn>>>,
-    active_turn_cancellations: Arc<Mutex<HashMap<String, ActiveTurnCancellation>>>,
-    active_codex_turns: Arc<Mutex<HashMap<String, ActiveCodexTurn>>>,
+    active_local_executions: Arc<Mutex<HashMap<String, ActiveLocalExecution>>>,
     active_codex_transcript_items: Arc<Mutex<HashMap<String, ActiveCodexTranscriptItems>>>,
     active_request_user_inputs: Arc<Mutex<HashMap<String, ActiveRequestUserInput>>>,
     supervisor_evaluating: Arc<Mutex<HashSet<String>>>,
@@ -482,13 +483,14 @@ struct WorktreeReconciliationState {
     last_attempt: Option<Instant>,
 }
 
-struct ActiveTurnCancellation {
+struct ActiveLocalExecution {
     execution_id: u64,
     stop_requested: bool,
     stop_acknowledged: bool,
     managed_worktree_path: Option<PathBuf>,
     cancel: oneshot::Sender<()>,
     stopped: oneshot::Receiver<()>,
+    codex_turn: Option<ActiveCodexTurn>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -626,8 +628,7 @@ impl RuntimeWorkRpcHandler {
             turn_queue_operation: Arc::new(AsyncMutex::new(())),
             turn_queue_path: Arc::new(turn_queue_path),
             preparing_worktree_turns: Arc::new(Mutex::new(HashMap::new())),
-            active_turn_cancellations: Arc::new(Mutex::new(HashMap::new())),
-            active_codex_turns: Arc::new(Mutex::new(HashMap::new())),
+            active_local_executions: Arc::new(Mutex::new(HashMap::new())),
             active_codex_transcript_items: Arc::new(Mutex::new(HashMap::new())),
             active_request_user_inputs: Arc::new(Mutex::new(HashMap::new())),
             supervisor_evaluating: Arc::new(Mutex::new(HashSet::new())),

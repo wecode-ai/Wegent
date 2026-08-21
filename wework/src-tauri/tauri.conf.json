@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "WeWork",
   "mainBinaryName": "WeWork",
-  "version": "0.2.2-beta.2",
+  "version": "0.2.2-beta.3",
   "identifier": "io.wecode.wework",
   "build": {
     "frontendDist": "../dist",
@@ -21,6 +21,7 @@
         "visible": false,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
+        "acceptFirstMouse": true,
         "decorations": true,
         "transparent": false,
         "dragDropEnabled": false,

@@ -5,6 +5,7 @@ import { describe, expect, test } from 'vitest'
 interface TauriWindowConfig {
   titleBarStyle?: string
   hiddenTitle?: boolean
+  acceptFirstMouse?: boolean
   decorations?: boolean
   transparent?: boolean
   windowEffects?: unknown
@@ -38,6 +39,7 @@ describe('macOS window chrome', () => {
 
     expect(mainWindow.titleBarStyle).toBe('Overlay')
     expect(mainWindow.hiddenTitle).toBe(true)
+    expect(mainWindow.acceptFirstMouse).toBe(true)
     expect(mainWindow.decorations).toBe(true)
     expect(mainWindow.transparent).toBe(false)
     expect(mainWindow).not.toHaveProperty('windowEffects')

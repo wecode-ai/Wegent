@@ -32,10 +32,13 @@ import {
 import { disposeTauriListener } from '@/tauri/disposeTauriListener'
 import { createLocalCodexPluginApi, peekLocalCodexPluginsReadState } from '@/api/local/codexPlugins'
 import { createHttpClient } from '@/api/http'
+import { DEFAULT_WORK_ITEM_PROJECT_ID } from '@/api/deliveries'
 import { createPluginApi } from '@/api/plugins'
 import { listWegentInstalledConnectorApps } from '@/api/cloud/connectorApps'
 import { startLocalRobotQueueDispatcher } from '@/features/todo/localRobotQueueDispatcher'
+import { runtimeTaskBoardState } from '@/features/workbench/runtimeTaskLifecycle/projection'
 import {
+  publishProjectSpaceTaskBindingChanged,
   publishProjectSpaceTaskContextChanged,
   subscribeProjectSpaceTaskBindingChanged,
 } from '@/features/todo/projectSpaceSelection'
@@ -64,6 +67,7 @@ import type {
   ProjectExecutionMode,
   ProjectWithTasks,
   RuntimeContextUsage,
+  RuntimeTaskSummary,
   RuntimeWorkListResponse,
   RuntimeTaskAddress,
   RuntimeTaskQueueReorderRequest,
@@ -169,6 +173,25 @@ const LOCAL_PLUGIN_SKILLS_REFRESH_DEBOUNCE_MS = 250
 const EMPTY_PLUGIN_TRIAL_TEMPLATES: PluginPathComponent[] = []
 const RUNTIME_TASK_SETTLE_SYNC_DELAYS_MS = [0, 250, 500, 1_000, 2_000, 3_000] as const
 
+function runtimeTaskHasWorkItem(task: RuntimeTaskSummary): boolean {
+  const handle = task.runtimeHandle
+  const origin =
+    handle?.origin && typeof handle.origin === 'object'
+      ? (handle.origin as Record<string, unknown>)
+      : null
+  return [handle?.loopItemId, handle?.loop_item_id, origin?.loopItemId, origin?.loop_item_id].some(
+    value => typeof value === 'string' && value.length > 0
+  )
+}
+
+function passiveTaskTrackingStatus(task: RuntimeTaskSummary): 'queued' | 'cancelled' | null {
+  if (task.optimistic === true || task.status?.trim().toLowerCase() === 'archived') return null
+  const state = runtimeTaskBoardState(task)
+  if (state === 'queued') return 'queued'
+  if (state === 'attention') return 'cancelled'
+  return null
+}
+
 function findFirstSelectableProject(
   projects: ProjectWithTasks[],
   runtimeWork: RuntimeWorkListResponse | null | undefined,
@@ -255,6 +278,8 @@ export function WorkbenchProvider({
   const runtimeTaskSettleSyncGenerationRef = useRef(new Map<string, number>())
   const runtimeTaskSettleSyncGenerationCounterRef = useRef(0)
   const runtimeTaskSettleSyncActiveRef = useRef(true)
+  const defaultTrackedTaskKeysRef = useRef(new Set<string>())
+  const defaultTrackingTaskKeysRef = useRef(new Set<string>())
   useEffect(() => {
     const settleSyncGenerations = runtimeTaskSettleSyncGenerationRef.current
     runtimeTaskSettleSyncActiveRef.current = true
@@ -321,6 +346,120 @@ export function WorkbenchProvider({
       }),
     []
   )
+  useEffect(() => {
+    const api = resolvedServices.projectSpaceApis?.local
+    if (!api?.trackProjectTask || !state.runtimeWork) return
+    const workspaces = [
+      ...state.runtimeWork.projects.flatMap(project => project.deviceWorkspaces),
+      ...state.runtimeWork.chats,
+    ]
+    for (const workspace of workspaces) {
+      for (const task of workspace.tasks) {
+        const address: RuntimeTaskAddress = {
+          deviceId: workspace.deviceId,
+          taskId: task.taskId,
+          runtime: task.runtime,
+          threadId: task.threadId,
+          workspacePath: task.workspacePath || workspace.workspacePath,
+          runtimeHandle: task.runtimeHandle,
+        }
+        const key = runtimeConversationKey(address)
+        if (runtimeTaskHasWorkItem(task)) {
+          defaultTrackedTaskKeysRef.current.add(key)
+          continue
+        }
+        if (
+          task.optimistic === true ||
+          task.status?.trim().toLowerCase() === 'archived' ||
+          defaultTrackedTaskKeysRef.current.has(key) ||
+          defaultTrackingTaskKeysRef.current.has(key)
+        ) {
+          continue
+        }
+        defaultTrackingTaskKeysRef.current.add(key)
+        void api
+          .trackProjectTask(
+            DEFAULT_WORK_ITEM_PROJECT_ID,
+            address,
+            task.title || t('workbench.untitled_task', '未命名任务'),
+            ''
+          )
+          .then(async () => {
+            defaultTrackedTaskKeysRef.current.add(key)
+            const executionStatus = passiveTaskTrackingStatus(task)
+            if (executionStatus) {
+              await api.updateTaskTrackingStatus(address, executionStatus)
+            }
+            publishProjectSpaceTaskBindingChanged(address)
+            publishProjectSpaceTaskContextChanged(address)
+          })
+          .catch(error => {
+            console.warn('[Wework my tasks] failed to bind runtime task to My Tasks', {
+              address: { deviceId: address.deviceId, taskId: address.taskId },
+              error,
+            })
+          })
+          .finally(() => {
+            defaultTrackingTaskKeysRef.current.delete(key)
+          })
+      }
+    }
+  }, [resolvedServices.projectSpaceApis?.local, state.runtimeWork, t])
+  useEffect(() => {
+    const trackingApis = [
+      resolvedServices.projectSpaceApis?.local,
+      resolvedServices.projectSpaceApis?.cloud ?? resolvedServices.deliveryApi,
+    ].filter((api, index, values) => Boolean(api) && values.indexOf(api) === index)
+    if (!trackingApis.length || !state.runtimeWork) return
+    const workspaces = [
+      ...state.runtimeWork.projects.flatMap(project => project.deviceWorkspaces),
+      ...state.runtimeWork.chats,
+    ]
+    for (const workspace of workspaces) {
+      for (const task of workspace.tasks) {
+        if (!runtimeTaskHasWorkItem(task)) continue
+        const executionStatus = passiveTaskTrackingStatus(task)
+        if (!executionStatus) continue
+        const address: RuntimeTaskAddress = {
+          deviceId: workspace.deviceId,
+          taskId: task.taskId,
+          runtime: task.runtime,
+          threadId: task.threadId,
+          workspacePath: task.workspacePath || workspace.workspacePath,
+          runtimeHandle: task.runtimeHandle,
+        }
+        const key = runtimeConversationKey(address)
+        if (trackingStatusSignaturesRef.current.get(key) === executionStatus) continue
+        trackingStatusSignaturesRef.current.set(key, executionStatus)
+        void Promise.allSettled(
+          trackingApis.map(api => api!.updateTaskTrackingStatus(address, executionStatus))
+        ).then(results => {
+          const synchronized = results.some(
+            result => result.status === 'fulfilled' && result.value !== null
+          )
+          if (!synchronized) {
+            trackingStatusSignaturesRef.current.delete(key)
+            if (results.every(result => result.status === 'rejected')) {
+              console.warn('[Wework] Failed to synchronize passive project task status', {
+                address,
+                executionStatus,
+                errors: results.map(result =>
+                  result.status === 'rejected' ? result.reason : null
+                ),
+              })
+            }
+            return
+          }
+          publishProjectSpaceTaskContextChanged(address)
+        })
+      }
+    }
+  }, [
+    resolvedServices.deliveryApi,
+    resolvedServices.projectSpaceApis,
+    state.runtimeWork,
+    trackingBindingRevision,
+  ])
   useEffect(() => {
     const trackingApis = [
       resolvedServices.projectSpaceApis?.local,

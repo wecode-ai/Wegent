@@ -2769,6 +2769,94 @@ async fn runtime_tasks_guidance_corrects_a_stale_turn_id_and_retries_once() {
 }
 
 #[tokio::test]
+async fn completed_turn_accepts_follow_up_after_late_guidance_response() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-guidance-completion-race-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-guidance-completion-race-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let log_path = temp_path("runtime-guidance-completion-race-log", "jsonl");
+    let steer_release_path = temp_path("runtime-guidance-completion-race-release", "flag");
+    let fake_codex = write_fake_codex_turn_completes_during_steer(&log_path, &steer_release_path);
+    let (event_tx, mut events) = broadcast::channel(32);
+    let handler = RuntimeWorkRpcHandler::with_event_sender(
+        "device-1",
+        fake_codex.display().to_string(),
+        event_tx,
+    );
+
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "taskId": "local-task-guidance-completion-race",
+                "workspacePath": "/tmp/project",
+                "message": "first turn",
+                "executionRequest": codex_execution_request(
+                    "first turn",
+                    "/tmp/project",
+                    "gpt-5.5"
+                )
+            }
+        }))
+        .await
+        .expect("create should be accepted");
+    wait_until_task_running(&handler, "local-task-guidance-completion-race").await;
+
+    let guidance_handler = handler.clone();
+    let guidance = tokio::spawn(async move {
+        guidance_handler
+            .handle_runtime_rpc(json!({
+                "method": "runtime.tasks.guidance",
+                "payload": {
+                    "workspacePath": "/tmp/project",
+                    "taskId": "local-task-guidance-completion-race",
+                    "message": "finish with this guidance",
+                    "clientGuidanceId": "guide-completion-race"
+                }
+            }))
+            .await
+    });
+    wait_for_response_event(&mut events, "response.completed", "turn-1").await;
+    fs::write(&steer_release_path, b"release").expect("steer response should be released");
+    let guided = guidance
+        .await
+        .expect("guidance task should not panic")
+        .expect("guidance should finish after the turn completes");
+    assert_eq!(guided["accepted"], true);
+
+    let follow_up = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.send",
+            "payload": {
+                "workspacePath": "/tmp/project",
+                "taskId": "local-task-guidance-completion-race",
+                "message": "follow up after the visible completion",
+                "executionRequest": codex_execution_request(
+                    "follow up after the visible completion",
+                    "/tmp/project",
+                    "gpt-5.5"
+                )
+            }
+        }))
+        .await
+        .expect("follow-up should return a contract response");
+
+    assert_eq!(
+        follow_up["accepted"], true,
+        "a late guidance response must not restore the completed task's running state: {follow_up}"
+    );
+}
+
+#[tokio::test]
 async fn refreshed_transcript_resumes_the_thread_before_reading_its_snapshot() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
@@ -3983,6 +4071,75 @@ fn write_fake_codex_hanging_turn(log_path: &Path) -> PathBuf {
 
 fn write_fake_codex_hanging_turn_with_steer_mismatch(log_path: &Path) -> PathBuf {
     write_fake_codex_hanging_turn_inner(log_path, true)
+}
+
+fn write_fake_codex_turn_completes_during_steer(
+    log_path: &Path,
+    steer_release_path: &Path,
+) -> PathBuf {
+    let path = temp_path("fake-codex-guidance-completion-race", "sh");
+    let _ = fs::remove_file(log_path);
+    let _ = fs::remove_file(steer_release_path);
+    let content = format!(
+        r#"#!/bin/sh
+LOG_PATH='{}'
+STEER_RELEASE_PATH='{}'
+turn_count=0
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_PATH"
+  request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"protocolVersion":1}}}}'
+      ;;
+    *'"method":"initialized"'*)
+      ;;
+    *'"method":"thread/list"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"thread-1","cwd":"/tmp/project","name":"Runtime task","preview":"runtime","path":"/tmp/codex/thread-1.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"inProgress","turns":[]}}],"nextCursor":null,"backwardsCursor":null}}}}'
+      ;;
+    *'"method":"thread/start"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
+      ;;
+    *'"method":"thread/unsubscribe"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"status":"unsubscribed"}}}}'
+      ;;
+    *'"method":"thread/resume"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
+      ;;
+    *'"method":"thread/read"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1","cwd":"/tmp/project","turns":[]}}}}}}'
+      ;;
+    *'"method":"thread/turns/list"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[],"nextCursor":null,"backwardsCursor":null}}}}'
+      ;;
+    *'"method":"thread/items/list"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[],"nextCursor":null,"backwardsCursor":null}}}}'
+      ;;
+    *'"method":"thread/goal/get"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"goal":null}}}}'
+      ;;
+    *'"method":"thread/name/set"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
+      ;;
+    *'"method":"turn/start"'*)
+      turn_count=$((turn_count + 1))
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-'"$turn_count"'","status":"inProgress"}}}}}}'
+      ;;
+    *'"method":"turn/steer"'*)
+      printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-1","turn":{{"id":"turn-1","status":"completed","items":[]}}}}}}'
+      while [ ! -f "$STEER_RELEASE_PATH" ]; do
+        sleep 0.02
+      done
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"turnId":"turn-1"}}}}'
+      ;;
+  esac
+done
+"#,
+        log_path.display(),
+        steer_release_path.display()
+    );
+    write_executable(&path, &content);
+    path
 }
 
 fn write_fake_codex_concurrent_send(log_path: &Path) -> PathBuf {

@@ -22,6 +22,7 @@ import { getInputField } from '@/components/chat/blocks/toolBlockKinds'
 import { Tooltip } from '@/components/ui/tooltip'
 import {
   getRuntimeConversationLiveActivitySnapshot,
+  getRuntimeConversationMessages,
   subscribeRuntimeConversation,
 } from '@/features/workbench/runtimeConversationCache'
 import {
@@ -39,6 +40,7 @@ import {
   stoppedTaskNeedsAttention,
 } from '@/features/workbench/changeRequestStatus'
 import { isLoopItemExecutionActive } from './cloudMyWorkModel'
+import { finalAssistantMessagesPreview } from './runtimeTaskResponsePreview'
 import { priorityBadgeClasses } from './todoShared'
 
 export interface BoardCardDisplaySettings {
@@ -163,6 +165,8 @@ export interface CloudTodoBoardTaskBinding {
   task_title: string | null
   running: boolean
   changeRequestTarget?: TaskChangeRequestTarget | null
+  finalResponsePreview?: string | null
+  finalResponseLoaded?: boolean
 }
 
 interface CloudTodoBoardCardProps {
@@ -208,10 +212,21 @@ export function CloudTodoBoardCard({
     currentTaskBinding &&
     (currentTaskBinding.running ||
       hasActiveTask ||
+      item.status === 'in_review' ||
       stoppedTaskNeedsAttention(changeRequestSnapshot?.changeRequest ?? null))
   )
   const [repairingChangeRequest, setRepairingChangeRequest] = useState(false)
   const currentTaskAddress = useMemo<RuntimeTaskAddress | null>(
+    () =>
+      currentTaskBinding
+        ? {
+            deviceId: currentTaskBinding.device_id,
+            taskId: currentTaskBinding.task_id,
+          }
+        : null,
+    [currentTaskBinding]
+  )
+  const currentActivityAddress = useMemo<RuntimeTaskAddress | null>(
     () =>
       currentTaskBinding && (currentTaskBinding.running || hasActiveTask)
         ? {
@@ -221,7 +236,14 @@ export function CloudTodoBoardCard({
         : null,
     [currentTaskBinding, hasActiveTask]
   )
-  const currentActivity = useRuntimeTaskActivity(currentTaskAddress)
+  const currentActivity = useRuntimeTaskActivity(currentActivityAddress)
+  const cachedFinalResponsePreview = useRuntimeTaskFinalResponse(
+    item.status === 'in_review' ? currentTaskAddress : null
+  )
+  const finalResponsePreview =
+    currentTaskBinding?.finalResponsePreview || cachedFinalResponsePreview
+  const finalResponseLoaded =
+    currentTaskBinding?.finalResponseLoaded || cachedFinalResponsePreview !== null
   const {
     attributes,
     listeners,
@@ -304,11 +326,7 @@ export function CloudTodoBoardCard({
           role={onOpenActivity ? 'button' : undefined}
           tabIndex={onOpenActivity ? 0 : undefined}
           aria-label={
-            onOpenActivity
-              ? `${t('todo.current_running_task', '正在执行')} ${
-                  currentTaskBinding.task_title || currentTaskBinding.task_id
-                }`
-              : undefined
+            onOpenActivity ? currentTaskBinding.task_title || currentTaskBinding.task_id : undefined
           }
           data-testid={`cloud-todo-card-tasks-${item.id}`}
           onClick={onOpenActivity}
@@ -350,11 +368,6 @@ export function CloudTodoBoardCard({
             ) : (
               <ListTodo className="h-3.5 w-3.5" />
             )}
-            {currentTaskBinding.running || hasActiveTask ? (
-              <span className="shrink-0 text-text-muted">
-                {t('todo.current_running_task', '正在执行')}
-              </span>
-            ) : null}
             <span
               data-testid={`cloud-todo-card-task-${item.id}-${currentTaskBinding.id}`}
               className="min-w-0 truncate"
@@ -364,6 +377,14 @@ export function CloudTodoBoardCard({
           </div>
           {currentActivity.active ? (
             <RuntimeTaskLiveActivity itemId={item.id} activity={currentActivity} />
+          ) : null}
+          {item.status === 'in_review' && finalResponseLoaded ? (
+            <p
+              data-testid={`cloud-todo-card-final-response-${item.id}`}
+              className="ml-5 mt-1.5 line-clamp-3 whitespace-pre-line border-l border-border/70 pl-2 text-xs leading-5 text-text-secondary"
+            >
+              {finalResponsePreview || t('todo.no_final_task_response', '暂无最终回复')}
+            </p>
           ) : null}
         </div>
       ) : null}
@@ -452,6 +473,19 @@ function useRuntimeTaskActivity(address: RuntimeTaskAddress | null): RuntimeLive
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
 
   return useMemo(() => runtimeLiveActivityFromSnapshot(snapshot), [snapshot])
+}
+
+function useRuntimeTaskFinalResponse(address: RuntimeTaskAddress | null): string | null {
+  const subscribe = useCallback(
+    (listener: () => void) =>
+      address ? subscribeRuntimeConversation(address, listener) : () => undefined,
+    [address]
+  )
+  const getSnapshot = useCallback(
+    () => (address ? finalAssistantMessagesPreview(getRuntimeConversationMessages(address)) : null),
+    [address]
+  )
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
 }
 
 function runtimeToolActivityText(

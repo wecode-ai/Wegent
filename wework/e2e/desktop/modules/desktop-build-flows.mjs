@@ -426,7 +426,7 @@ async function bundleMacHarnessRuntime(contentsPath) {
   return bundledRuntime
 }
 
-async function prepareHarnessRuntimeRoot() {
+async function prepareHarnessRuntimeRoots() {
   const metadataPath = join(weworkDir, 'src-tauri', 'bundled-harness-runtime', 'runtime.json')
   const metadata = JSON.parse(await readFile(metadataPath, 'utf8'))
   const archivePath = join(
@@ -440,13 +440,21 @@ async function prepareHarnessRuntimeRoot() {
   await rm(runtimeRoot, { recursive: true, force: true })
   await mkdir(runtimeRoot, { recursive: true })
   await runChecked('tar', ['-xzf', archivePath, '-C', runtimeRoot], { cwd: weworkDir })
-  const node = join(runtimeRoot, 'node', 'bin', process.platform === 'win32' ? 'node.exe' : 'node')
+  const dshEntry = join(runtimeRoot, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
+  await readFile(dshEntry)
+
+  const nodeRuntimeRoot = join(resultDir, 'node-runtime')
+  const node = join(nodeRuntimeRoot, 'bin', process.platform === 'win32' ? 'node.exe' : 'node')
+  await rm(nodeRuntimeRoot, { recursive: true, force: true })
+  await mkdir(dirname(node), { recursive: true })
+  await copyFile(process.execPath, node)
+  await chmod(node, 0o755)
   assert.equal(
     await isExecutable(node),
     true,
-    `The desktop E2E Harness runtime did not contain an executable Node at ${node}`
+    `The desktop E2E Node runtime was not executable at ${node}`
   )
-  return runtimeRoot
+  return { harnessRuntimeRoot: runtimeRoot, nodeRuntimeRoot }
 }
 
 async function wrapMacDesktopApp(binaryPath, binaryName, appIdentifier, codexBinary) {
@@ -1454,7 +1462,7 @@ export {
   findCodexPackageRoot,
   bundleMacCodex,
   bundleMacHarnessRuntime,
-  prepareHarnessRuntimeRoot,
+  prepareHarnessRuntimeRoots,
   wrapMacDesktopApp,
   buildDesktopApp,
   verifyConnectedModelsOnLocalExecution,
