@@ -203,6 +203,18 @@ class CloudProjectService:
             or "visibility" in values.model_fields_set
         ):
             metadata = dict(project.metadata_json or {})
+            if (
+                "workflow_definition" in values.model_fields_set
+                and values.workflow_definition is not None
+            ):
+                # Validate before any board mutation so a rejected definition
+                # can never leave dirty LoopItem changes behind on the session.
+                try:
+                    require_rerun_agent(values.workflow_definition)
+                except ValueError as exc:
+                    raise HTTPException(
+                        status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)
+                    ) from exc
             if "tags" in values.model_fields_set and values.tags is not None:
                 metadata["tags"] = updates.pop("tags")
             if (
@@ -276,12 +288,6 @@ class CloudProjectService:
                 "workflow_definition" in values.model_fields_set
                 and values.workflow_definition is not None
             ):
-                try:
-                    require_rerun_agent(values.workflow_definition)
-                except ValueError as exc:
-                    raise HTTPException(
-                        status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)
-                    ) from exc
                 metadata["workflow_definition"] = (
                     values.workflow_definition.model_dump()
                 )
