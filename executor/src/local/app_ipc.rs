@@ -1271,11 +1271,30 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                     .map_err(task_runtime_error)?,
             )
         }
+        "runtime_tasks.system_context" => {
+            let device_id = required_task_string(&params, "device_id")?;
+            let runtime_task_id = required_task_string(&params, "task_id")?;
+            serialize_task_value(
+                runtime
+                    .find_system_task_binding(device_id, runtime_task_id)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "runtime_tasks.user_context" => {
+            let device_id = required_task_string(&params, "device_id")?;
+            let runtime_task_id = required_task_string(&params, "task_id")?;
+            serialize_task_value(
+                runtime
+                    .find_user_task_binding(device_id, runtime_task_id)
+                    .map_err(task_runtime_error)?,
+            )
+        }
         "runtime_tasks.unbind" => {
             let device_id = required_task_string(&params, "device_id")?;
             let runtime_task_id = required_task_string(&params, "task_id")?;
+            let item_id = params.get("item_id").and_then(Value::as_str);
             runtime
-                .unbind_task(device_id, runtime_task_id)
+                .unbind_task(device_id, runtime_task_id, item_id)
                 .map_err(task_runtime_error)?;
             Ok(json!({"unbound": true}))
         }

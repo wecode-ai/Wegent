@@ -363,6 +363,8 @@ Execution scope remains owned by the board Bot. `agent_id` determines queue colu
 
 `loop_item_task_bindings` stores the historical many-to-many relationship between a TODO and concrete Wework Tasks. A runtime Task is identified by `task_user_id + device_id + task_id`, because a locally executed Task may not exist in the Backend `tasks` table; `backend_task_id` is only an optional index. Unlinking sets `unlinked_at` so execution provenance remains auditable.
 
+The Wework local runtime classifies bindings as `system` or `user`. Every runtime task must retain one `system` binding to `default-work-items`. The current UI maintains at most one additional `user` binding, while the storage model can be extended to multiple user bindings later. Task-to-issue lookup prefers a user binding and falls back to the system binding. Runtime status, title, and archive synchronization update only the system binding; unlinking a user-selected board can soft-delete only the user binding and must not remove the system binding. The **My tasks** board reads only system issues for currently unarchived runtime tasks. It neither aggregates issues from other project spaces nor shows historical system issues whose runtime tasks have left the Task inventory.
+
 ### Delivery
 
 `deliveries` and `delivery_assets` store immutable snapshot metadata. The nullable `Delivery.source_task_binding_id` points to a verified TODO/Task binding for local delivery and is null when a TODO is completed directly in the cloud UI.

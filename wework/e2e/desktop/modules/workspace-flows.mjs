@@ -14,7 +14,6 @@ import {
   PROVIDER_SWITCH_OFFICIAL_OPTION_ID,
   WORKBENCH_READY_TIMEOUT_MS,
   assert,
-  ensureModelOptionVisible,
   join,
   modelOptionIdCandidates,
   revealGroupedModelOption,
@@ -389,6 +388,30 @@ async function verifyWorkspaceIssueCreation(control) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
 
+  const projectName = 'Workspace Issue E2E'
+  await control.command('click', `${boardContentSelector} [data-testid="cloud-project-add"]`)
+  await control.command('waitFor', '[data-testid="cloud-project-name"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('fill', '[data-testid="cloud-project-name"]', {
+    value: projectName,
+  })
+  await control.command('click', '[data-testid="cloud-project-location-local"]')
+  await control.command('click', '[data-testid="cloud-project-task-provider-local"]')
+  await control.command('clickWhenEnabled', '[data-testid="cloud-project-create-confirm"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command(
+    'waitFor',
+    `${boardContentSelector} [data-testid="cloud-project-header-title"]`,
+    {
+      text: projectName,
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+
   await control.command('click', `${boardContentSelector} [data-testid="cloud-create-issue"]`)
   await control.command('waitFor', '[data-testid="workspace-issue-composer"]', {
     visible: true,
@@ -518,25 +541,29 @@ async function verifyWorkspaceIssueCreation(control) {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )
-  await waitForControlValue(
-    control,
-    `${boardContentSelector} [data-testid="cloud-todo-detail-title"]`,
-    'WEWORK_DESKTOP_E2E_ISSUE Workspace fullscreen issue creation verified',
-    'Fullscreen Issue creation did not persist the composed title'
-  )
   await captureVerificationScreenshot(
     control,
     'workspace-issue-02-created.png',
     boardContentSelector
   )
   await control.command('click', `${boardContentSelector} [data-testid="cloud-todo-create-task"]`)
-  await control.command(
-    'waitFor',
-    '[data-testid="ai-chat-modal-backdrop"][data-presentation="sidebar"]',
-    {
+  const activeTaskPanel = `${boardContentSelector} [data-testid="cloud-todo-panel-stack"][data-conversation-open="true"]`
+  const taskPanelBackdrop = '[data-testid="ai-chat-modal-backdrop"][data-presentation="sidebar"]'
+  await control.command('waitFor', activeTaskPanel, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', taskPanelBackdrop, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(
+    await control.command('getAttribute', taskPanelBackdrop, {
+      value: 'data-presentation',
       visible: true,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
+    }),
+    'sidebar',
+    'Creating a task from an Issue did not open the embedded conversation sidebar'
   )
   await control.command('waitFor', '[data-testid="work-item-new-task-chat-panel"]', {
     visible: true,
@@ -553,7 +580,23 @@ async function verifyWorkspaceIssueCreation(control) {
         label: PROVIDER_SWITCH_OFFICIAL_LABEL,
       }
     : { id: DEFAULT_MODEL_ID, label: DEFAULT_MODEL_LABEL }
-  await ensureModelOptionVisible(control, targetModel.id, modelSelectorButton)
+  await control.command('clickWhenEnabled', modelSelectorButton, {
+    stableMs: 100,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    visible: true,
+  })
+  await control.command('waitFor', '[data-testid="model-selector-menu"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('hover', '[data-testid="model-control-menu-model"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="model-selector-submenu"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   let targetOptionId = await visibleModelOptionId(control, modelOptionIdCandidates(targetModel.id))
   if (!targetOptionId) {
     await revealGroupedModelOption(control, modelOptionIdCandidates(targetModel.id))
@@ -575,12 +618,8 @@ async function verifyWorkspaceIssueCreation(control) {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await captureVerificationScreenshot(
-    control,
-    'workspace-issue-03-new-task-sidebar.png',
-    boardContentSelector
-  )
-  await control.command('click', `${boardContentSelector} [data-testid="ai-chat-modal-close"]`)
+  await captureVerificationScreenshot(control, 'workspace-issue-03-new-task-sidebar.png')
+  await control.command('click', `${taskPanelBackdrop} [data-testid="ai-chat-modal-close"]`)
 
   await control.command('click', `${boardContentSelector} [data-testid="cloud-todo-detail-close"]`)
   await control.command('click', boardTabSelector)

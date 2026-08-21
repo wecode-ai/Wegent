@@ -258,27 +258,23 @@ export function useWorkbenchRuntimeTasks({
 
   const completeArchivedBoardTasks = useCallback(
     async (addresses: RuntimeTaskAddress[]) => {
-      const trackingApis = [
-        services.projectSpaceApis?.local,
-        services.projectSpaceApis?.cloud ?? services.deliveryApi,
-      ].filter((api, index, values) => Boolean(api) && values.indexOf(api) === index)
-      if (trackingApis.length === 0) return
+      const trackingApi = services.projectSpaceApis?.local
+      if (!trackingApi) return
 
       await Promise.all(
         addresses.map(async address => {
-          const results = await Promise.allSettled(
-            trackingApis.map(api => api!.updateTaskTrackingStatus(address, 'archived'))
-          )
-          if (results.every(result => result.status === 'rejected')) {
+          try {
+            await trackingApi.updateTaskTrackingStatus(address, 'archived')
+          } catch (error) {
             console.warn('[Wework] Failed to complete archived task on project board', {
               address: runtimeAddressDebug(address),
-              errors: results.map(result => (result.status === 'rejected' ? result.reason : null)),
+              error,
             })
           }
         })
       )
     },
-    [services.deliveryApi, services.projectSpaceApis]
+    [services.projectSpaceApis?.local]
   )
 
   const archiveRuntimeConversations = useCallback(
