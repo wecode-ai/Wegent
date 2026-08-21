@@ -42,7 +42,7 @@ sequenceDiagram
         B->>B: Provider 引用适配器从交付派生 opaque_ref
         B->>B: 自动注册 EventBinding（无需提示词/手动工具）
     else 手动路径（自定义/无 provider 规则）
-        R->>B: register_external_reference(provider, opaque_ref, run_id)
+        R->>B: register_external_reference(provider, opaque_ref, run_id[, workflow_node_id])
     end
     B->>B: 校验自动化执行与 ready/waiting wait 节点
     B->>B: 创建 EventBinding，wait 状态置为 waiting

@@ -42,7 +42,7 @@ sequenceDiagram
         B->>B: Provider reference adapter derives opaque_ref from the delivery
         B->>B: Register the EventBinding automatically (no prompt or manual tool)
     else Manual path (custom or provider-less rules)
-        R->>B: register_external_reference(provider, opaque_ref, run_id)
+        R->>B: register_external_reference(provider, opaque_ref, run_id[, workflow_node_id])
     end
     B->>B: Validate automation run and ready/waiting wait node
     B->>B: Create EventBinding and set wait status to waiting
