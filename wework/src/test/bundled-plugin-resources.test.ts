@@ -155,6 +155,25 @@ describe('bundled plugin resources', () => {
     ).toBe(true)
   })
 
+  test('keeps the Smart app builder aligned with DSH app development', () => {
+    const skill = readFileSync(
+      resolve(
+        process.cwd(),
+        'src-tauri',
+        bundledSmartAppBuilderDirectory,
+        'skills/create-smart-app/SKILL.md'
+      ),
+      'utf8'
+    )
+
+    expect(skill).toContain('Build against the DSH plugin model')
+    expect(skill).toContain('@deepseek-ai/cordis')
+    expect(skill).toContain('@deepseek-ai/dsh-client-ui-slots')
+    expect(skill).toContain('fresh temporary `DSH_HOME`')
+    expect(skill).toContain('--no-open')
+    expect(skill).toContain('Wework Smart app tab')
+  })
+
   test('packages Smart apps on Windows without evaluating path text', () => {
     const script = readFileSync(
       resolve(

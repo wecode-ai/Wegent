@@ -382,3 +382,19 @@ fn runtime_archive_hash_reports_bytes_and_checksum() {
         "d92c6a81b2ff50096bcda80885427d1f59a25b5f483f7055523504925d16ab23"
     );
 }
+
+#[test]
+fn harness_app_start_args_disable_external_browser() {
+    let args = harness_app_start_args("web", 14201);
+
+    assert_eq!(
+        args,
+        vec![
+            "--profile".to_string(),
+            "web".to_string(),
+            "--port".to_string(),
+            "14201".to_string(),
+            "--no-open".to_string(),
+        ]
+    );
+}

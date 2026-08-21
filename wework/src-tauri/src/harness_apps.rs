@@ -919,6 +919,16 @@ fn dsh_command(runtime: &DshRuntime, args: &[String], home: &Path) -> Command {
     command
 }
 
+fn harness_app_start_args(profile: &str, port: u16) -> Vec<String> {
+    vec![
+        "--profile".to_string(),
+        profile.to_string(),
+        "--port".to_string(),
+        port.to_string(),
+        "--no-open".to_string(),
+    ]
+}
+
 fn configure_process_group(command: &mut Command) {
     #[cfg(unix)]
     unsafe {
@@ -1408,12 +1418,7 @@ pub async fn start_harness_app(
     )?;
     emit_progress("startingApp");
     let port = free_port()?;
-    let args = vec![
-        "--profile".to_string(),
-        installation.manifest.entry.profile.clone(),
-        "--port".to_string(),
-        port.to_string(),
-    ];
+    let args = harness_app_start_args(&installation.manifest.entry.profile, port);
     let mut command = dsh_command(&runtime, &args, &home);
     let log = fs::File::create(home.join("runtime.log"))
         .map_err(|error| format!("Failed to create Harness app runtime log: {error}"))?;
