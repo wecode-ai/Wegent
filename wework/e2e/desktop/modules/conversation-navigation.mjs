@@ -857,9 +857,26 @@ async function reopenCurrentTurnNavigationTask(
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )
-  await control.command('waitFor', '[data-testid="chat-message-input"]:focus', {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
+  const focusStartedAt = Date.now()
+  let activeElementTestId = ''
+  while (Date.now() - focusStartedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    activeElementTestId = await control.command('getActiveElementTestId', 'body')
+    if (activeElementTestId === 'chat-message-input') break
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  if (activeElementTestId !== 'chat-message-input') {
+    const [focusSnapshot, workbenchSnapshot, composerDiagnostics] = await Promise.all([
+      control.command('getComposerFocusSnapshot', 'body'),
+      control.command('getWorkbenchDebugSnapshot', 'body'),
+      control.command('getComposerDiagnosticsSnapshot', 'body'),
+    ])
+    throw new Error(
+      `Opening a conversation from the sidebar did not transfer keyboard focus to the composer; ` +
+        `activeElementTestId=${activeElementTestId}; focus=${focusSnapshot}; ` +
+        `workbench=${workbenchSnapshot}; ` +
+        `composerDiagnostics=${composerDiagnostics}`
+    )
+  }
   if (expectedTurnCount > E2E_TRANSCRIPT_PAGE_SIZE) {
     await control.command('waitFor', '[data-testid="load-older-runtime-transcript-button"]', {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,

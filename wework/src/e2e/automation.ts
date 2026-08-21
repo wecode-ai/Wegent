@@ -25,6 +25,7 @@ import { desktopControlExtension } from '@extensions/desktop-control'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
 import { parseDesktopControlKey } from './desktop-control-keyboard'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
+import { getComposerDiagnosticsSnapshot } from '@/components/chat/composer/composerDiagnostics'
 import {
   getRuntimeConversationCacheStats,
   getRuntimeConversationMessages,
@@ -1712,6 +1713,30 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'getWorkbenchDebugSnapshot':
       return JSON.stringify(getWorkbenchDebugSnapshot())
+    case 'getComposerDiagnosticsSnapshot':
+      return JSON.stringify(getComposerDiagnosticsSnapshot())
+    case 'getComposerFocusSnapshot': {
+      const activeElement = document.activeElement
+      const inputs = findDesktopControlElements('[data-testid="chat-message-input"]').map(input => {
+        const rect = input.getBoundingClientRect()
+        return {
+          active: input === activeElement,
+          contentEditable: input.getAttribute('contenteditable'),
+          height: Math.round(rect.height),
+          width: Math.round(rect.width),
+          visible: desktopControlElementVisible(input),
+        }
+      })
+      return JSON.stringify({
+        activeElement: activeElement
+          ? {
+              tagName: activeElement.tagName.toLowerCase(),
+              testId: activeElement.getAttribute('data-testid'),
+            }
+          : null,
+        inputs,
+      })
+    }
     case 'getActiveElementTestId':
       return document.activeElement?.getAttribute('data-testid') ?? ''
     case 'getLocalExecutorStatus':
