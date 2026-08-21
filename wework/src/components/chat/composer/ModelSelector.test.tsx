@@ -77,6 +77,7 @@ const SAMPLE_MODEL: UnifiedModel = {
   type: 'runtime',
   provider: 'local',
   config: {
+    codexProviderId: 'openai',
     weworkModelKind: 'codex-official',
     ui: { family: 'codex-official', controls: ['speed'] },
   },
@@ -137,6 +138,10 @@ describe('ModelSelector desktop layout', () => {
     )
 
     expect(screen.getByTestId('model-selector-button')).toHaveClass('text-sm', 'font-normal')
+    expect(screen.getByTestId('model-selector-button')).toHaveAttribute(
+      'data-model-provider-id',
+      'openai'
+    )
     expect(screen.getByTestId('model-selector-width-measure')).toHaveClass(
       'left-0',
       'top-0',
@@ -187,7 +192,10 @@ describe('ModelSelector desktop layout', () => {
     fireEvent.click(screen.getByTestId('model-selector-button'))
     fireEvent.mouseEnter(await screen.findByTestId('model-control-menu-model'))
 
-    expect(await screen.findByTestId(`model-option-${SAMPLE_MODEL.name}`)).toBeInTheDocument()
+    expect(await screen.findByTestId(`model-option-${SAMPLE_MODEL.name}`)).toHaveAttribute(
+      'data-model-provider-id',
+      'openai'
+    )
     expect(screen.queryByTestId('model-selector-family-submenu')).not.toBeInTheDocument()
     expect(screen.queryByTestId('model-family-codex-official')).not.toBeInTheDocument()
   })

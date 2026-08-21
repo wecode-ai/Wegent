@@ -786,6 +786,37 @@ impl RuntimeWorkRpcHandler {
         true
     }
 
+    pub(super) fn settle_cancelled_local_task_execution(
+        &self,
+        local_task_id: &str,
+        execution_id: u64,
+    ) {
+        {
+            let mut active = self
+                .active_turn_cancellations
+                .lock()
+                .expect("active turn cancellation map lock should not be poisoned");
+            let Some(control) = active.get_mut(local_task_id) else {
+                return;
+            };
+            if control.execution_id != execution_id || !control.stop_requested {
+                return;
+            }
+            control.stop_acknowledged = true;
+            if !self.clear_worktree_execution_lease(local_task_id, control) {
+                return;
+            }
+            active.remove(local_task_id);
+        }
+        self.store.update_task(local_task_id, |link| {
+            link.updated_at = now_ms();
+            link.completed_at = Some(link.updated_at);
+            link.status = "cancelled".to_owned();
+            apply_local_execution_state(link, false, None);
+        });
+        self.schedule_worktree_prune();
+    }
+
     fn clear_worktree_execution_lease(
         &self,
         local_task_id: &str,

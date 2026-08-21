@@ -93,7 +93,7 @@ export function ExecutionEnvironmentsSettingsPage() {
         title={t('workbench.execution_environments_title', '执行环境')}
         description={t(
           'workbench.execution_environments_description',
-          '管理智能体、Skills、MCP 和智能应用运行脚本所需的环境。Wework 不会修改系统 PATH。'
+          '管理智能体、Skills、MCP 和智能工作台运行脚本所需的环境。Wework 不会修改系统 PATH。'
         )}
       />
 
@@ -152,7 +152,7 @@ export function ExecutionEnvironmentsSettingsPage() {
                     {isNode
                       ? t(
                           'workbench.execution_environment_node_description',
-                          '默认后台安装，供 Codex、Claude Code、JavaScript Skills、MCP 和智能应用使用。'
+                          '默认后台安装，供 Codex、Claude Code、JavaScript Skills、MCP 和智能工作台使用。'
                         )
                       : t(
                           'workbench.execution_environment_python_description',

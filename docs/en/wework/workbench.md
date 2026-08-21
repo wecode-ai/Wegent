@@ -53,6 +53,12 @@ For plain-text requests, the first line becomes the title and the complete body 
 
 The issue details' **Execution history** section lists linked Wework runtime tasks. Selecting a record opens the issue context and task conversation side by side in the unified workspace; select **Open full task** only when the complete execution interface is needed. Board and Task tabs retain their own routes and interface state.
 
+Board cards continue to represent issues; Wework does not create separate PR or MR cards. When a linked task has a PR or MR, its task icon in the execution history is replaced by the change-request status icon. The project sidebar on the Task page reuses the same state and interaction. Running tasks are always shown. A stopped task remains visible only while its PR or MR is open; it is hidden after the request is merged or closed, or when no request was created.
+
+Status lookup runs through the Executor on the device that owns the task. A local task uses the locally authenticated `gh` or `glab` CLI and does not require separate REST task authentication for the board. Wework batches branch lookups by repository and stores results in a local cache instead of querying once per task. Visible pages refresh periodically and check again when the app regains focus.
+
+When checks fail, a merge conflict exists, or Merge Queue enters an abnormal state, the status menu provides **Continue with AI repair**. This action continues the original runtime-task conversation with the failure context instead of creating another task. Closed PRs and MRs do not expose the repair action.
+
 ## Use the project sidebar
 
 Select a project name to expand or collapse its runtime tasks. Collapsed projects use a closed-folder icon; expanding a project changes the icon to an open folder so its state is easy to recognize.

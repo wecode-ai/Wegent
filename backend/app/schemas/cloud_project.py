@@ -139,6 +139,37 @@ class CloudProjectAiAutomation(BaseModel):
     max_retry_count: int = Field(default=1, ge=1, le=10)
 
 
+PullRequestAutoRepairStatus = Literal[
+    "checks_failed",
+    "merge_conflict",
+    "merge_queue_failed",
+    "merge_queue_timed_out",
+    "merge_queue_conflicting",
+]
+
+
+class CloudProjectPullRequestAutomation(BaseModel):
+    enabled: bool = False
+    statuses: list[PullRequestAutoRepairStatus] = Field(
+        default_factory=lambda: [
+            "checks_failed",
+            "merge_conflict",
+            "merge_queue_failed",
+            "merge_queue_timed_out",
+            "merge_queue_conflicting",
+        ],
+        max_length=5,
+    )
+    prompt: str = Field(default="", max_length=10_000)
+
+    @field_validator("statuses")
+    @classmethod
+    def validate_statuses(
+        cls, value: list[PullRequestAutoRepairStatus]
+    ) -> list[PullRequestAutoRepairStatus]:
+        return list(dict.fromkeys(value))
+
+
 class CloudProjectUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=100)
     description: str | None = None
@@ -148,6 +179,7 @@ class CloudProjectUpdate(BaseModel):
     card_display: CloudProjectCardDisplay | None = None
     board_config: CloudProjectBoardConfig | None = None
     ai_automation: CloudProjectAiAutomation | None = None
+    pull_request_automation: CloudProjectPullRequestAutomation | None = None
     workflow_definition: ProjectWorkflowDefinition | None = None
     version: int = Field(ge=1)
 
@@ -194,6 +226,9 @@ class CloudProjectResponse(BaseModel):
     ai_automation: CloudProjectAiAutomation = Field(
         default_factory=CloudProjectAiAutomation
     )
+    pull_request_automation: CloudProjectPullRequestAutomation = Field(
+        default_factory=CloudProjectPullRequestAutomation
+    )
     workflow_definition: ProjectWorkflowDefinition = Field(
         default_factory=ProjectWorkflowDefinition
     )
@@ -225,6 +260,7 @@ class CloudProjectResponse(BaseModel):
                 "card_display": metadata.get("card_display", {}),
                 "board_config": metadata.get("board_config", {}),
                 "ai_automation": metadata.get("ai_automation", {}),
+                "pull_request_automation": metadata.get("pull_request_automation", {}),
                 "workflow_definition": metadata.get("workflow_definition", {}),
                 "visibility": (
                     "public" if metadata.get("visibility") == "public" else "private"

@@ -311,8 +311,8 @@ Runtime tasks can send notifications to IM sessions, but notification state is k
 - In IM, `/notify on` enables the current user's global runtime task notification target for the current IM session.
 - `/notify off` disables global notifications, and `/notify status` reports the current state.
 - A single IM session can subscribe to one runtime task and receive only that task's updates.
-- When the executor detects a native Codex task timestamp change, it sends `runtime.tasks.updated` without `workspacePath`, but with `status` and `content`, only after the last assistant message reaches a terminal state and contains reply content. Backend ignores running or streaming updates and delivers the terminal reply according to task subscriptions and global notification settings.
-- Wegent runtime sends and the native Codex watcher use the same `deviceId + localTaskId` for deduplication, so Codex and Wework do not notify twice for the same task update.
+- The executor sends `runtime:event` over the device WebSocket. Backend delivers only `response.completed`, `response.failed`, `response.incomplete`, and `error` terminal updates according to active task bindings, task subscriptions, and global notification settings. Successful terminal events without reply content are not sent.
+- Notification identity uses `deviceId + localTaskId` and excludes `workspacePath`. IM-originated turns do not echo another notification to the same IM, while the legacy `runtime.tasks.updated` receiver remains only for older executors.
 
 ## URL
 

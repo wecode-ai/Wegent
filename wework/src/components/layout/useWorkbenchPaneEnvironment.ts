@@ -353,11 +353,29 @@ export function useWorkbenchPaneEnvironment({
     async ({ force, showLoading }: { force: boolean; showLoading: boolean }) => {
       const requestId = environmentInfoRequestSequence.current + 1
       environmentInfoRequestSequence.current = requestId
+      const startedAt = performance.now()
+      const logLoad = (stage: string, details: Record<string, unknown> = {}) => {
+        console.info('[Wework] Environment UI', {
+          requestId,
+          stage,
+          elapsedMs: Math.round(performance.now() - startedAt),
+          workspacePath: activeWorkspaceTarget?.path,
+          deviceId: activeWorkspaceTarget?.deviceId,
+          force,
+          showLoading,
+          ...details,
+        })
+      }
+      logLoad('requested', {
+        workspaceTargetResolving,
+        environmentWorkspaceReady,
+      })
 
       if (workspaceTargetResolving) {
         if (showLoading) {
-          setEnvironmentInfo(info => ({ ...info, loading: true }))
+          setEnvironmentInfo(info => ({ ...info, loading: true, branchLoading: true }))
         }
+        logLoad('waiting_for_workspace_target')
         return
       }
 
@@ -365,8 +383,10 @@ export function useWorkbenchPaneEnvironment({
         setEnvironmentInfo(info => ({
           ...info,
           loading: false,
+          branchLoading: false,
           error: workspaceTargetError ?? 'Workspace is not ready',
         }))
+        logLoad('workspace_not_ready', { error: workspaceTargetError })
         return
       }
 
@@ -374,7 +394,11 @@ export function useWorkbenchPaneEnvironment({
         setEnvironmentInfo(info =>
           info.workspacePath === activeWorkspaceTarget?.path &&
           info.deviceId === activeWorkspaceTarget?.deviceId
-            ? { ...info, loading: true }
+            ? {
+                ...info,
+                loading: true,
+                branchLoading: !info.branchName && info.branchLoading !== false,
+              }
             : {
                 additions: '',
                 deletions: '',
@@ -383,6 +407,7 @@ export function useWorkbenchPaneEnvironment({
                 workspacePath: activeWorkspaceTarget?.path,
                 workspaceRoots,
                 loading: true,
+                branchLoading: true,
               }
         )
       }
@@ -392,22 +417,43 @@ export function useWorkbenchPaneEnvironment({
           activeWorkspaceTarget: latestActiveWorkspaceTarget,
         } = environmentContextRef.current
         const applyEnvironmentInfo = (info: EnvironmentInfo, loading: boolean) => {
-          if (environmentInfoRequestSequence.current !== requestId) return
+          if (environmentInfoRequestSequence.current !== requestId) {
+            logLoad('discarded_stale_result', {
+              activeRequestId: environmentInfoRequestSequence.current,
+            })
+            return
+          }
           const actualDevice = findWorkbenchDevice(
             devicesRef.current,
             latestActiveWorkspaceTarget?.deviceId ?? info.deviceId
           )
-          setEnvironmentInfo({
-            ...info,
-            workspaceRoots,
-            executionTarget: actualDevice
-              ? isCloudDevice(actualDevice)
-                ? 'cloud'
-                : isRemoteDevice(actualDevice)
-                  ? 'remote'
-                  : 'local'
-              : info.executionTarget,
-            loading,
+          logLoad(loading ? 'partial_published' : 'completed', {
+            branchName: info.branchName,
+            changeRequestState: info.changeRequest?.state,
+            changeRequestNumber: info.changeRequest?.changeRequest?.number,
+          })
+          setEnvironmentInfo(current => {
+            const preserveCurrentChangeRequest =
+              loading &&
+              !info.changeRequest &&
+              current.workspacePath === info.workspacePath &&
+              current.deviceId === info.deviceId
+            return {
+              ...info,
+              ...(preserveCurrentChangeRequest && current.changeRequest
+                ? { changeRequest: current.changeRequest }
+                : {}),
+              workspaceRoots,
+              executionTarget: actualDevice
+                ? isCloudDevice(actualDevice)
+                  ? 'cloud'
+                  : isRemoteDevice(actualDevice)
+                    ? 'remote'
+                    : 'local'
+                : info.executionTarget,
+              loading,
+              branchLoading: false,
+            }
           })
         }
         const info = await loadEnvironmentInfo(
@@ -421,9 +467,13 @@ export function useWorkbenchPaneEnvironment({
         applyEnvironmentInfo(info, false)
       } catch (error) {
         if (environmentInfoRequestSequence.current === requestId) {
+          logLoad('failed', {
+            error: error instanceof Error ? error.message : String(error),
+          })
           setEnvironmentInfo(info => ({
             ...info,
             loading: false,
+            branchLoading: false,
             error: error instanceof Error ? error.message : 'Failed to load environment info',
           }))
         }
@@ -571,7 +621,7 @@ export function useWorkbenchPaneEnvironment({
       worktreeAvailability,
       isGitProject,
       branchName: environmentInfo.branchName,
-      branchLoading: environmentInfo.loading,
+      branchLoading: environmentInfo.branchLoading ?? environmentInfo.loading,
       onRefreshBranch: undefined,
       onListBranches:
         activeWorkspaceTarget && gitActionsAvailable ? listPaneEnvironmentBranches : undefined,

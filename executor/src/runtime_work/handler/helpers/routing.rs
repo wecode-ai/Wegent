@@ -351,6 +351,7 @@ fn runtime_event_request_from_link(link: &RuntimeTaskLink) -> ExecutionRequest {
         prompt: Value::String(link.title.clone()),
         ..ExecutionRequest::default()
     };
+    set_runtime_task_title(&mut request, &link.title);
     if !link.project_plugin_ids.is_empty() {
         request.extra.insert(
             "project_plugin_ids".to_owned(),

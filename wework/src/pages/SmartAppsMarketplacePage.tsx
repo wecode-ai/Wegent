@@ -21,10 +21,10 @@ export function SmartAppsMarketplacePage() {
       const queued = queuePluginReferenceTrial({
         pluginName: 'smart-app-builder',
         marketplaceName: 'wework-personal',
-        displayName: t('workbench.smart_apps_builder_name', '智能应用开发助手'),
+        displayName: t('workbench.smart_apps_builder_name', '智能工作台开发助手'),
         prompt: t(
           'workbench.smart_apps_builder_prompt',
-          '帮我创建一个智能应用，完成 DSH 环境准备、插件检索与拼装、内置浏览器测试、打包和本机安装。'
+          '帮我创建一个智能工作台，完成 DSH 环境准备、插件检索与拼装、内置浏览器测试、打包和本机安装。'
         ),
         openInNewChat: true,
       })
@@ -33,7 +33,7 @@ export function SmartAppsMarketplacePage() {
     } catch (error) {
       console.error('[Wework Smart apps] failed to prepare Smart App Builder', error)
       setCreateError(
-        t('workbench.smart_apps_builder_install_failed', '智能应用开发助手安装失败，请重试。')
+        t('workbench.smart_apps_builder_install_failed', '智能工作台开发助手安装失败，请重试。')
       )
     } finally {
       setCreating(false)
@@ -54,12 +54,12 @@ export function SmartAppsMarketplacePage() {
           <Boxes className="h-6 w-6 text-text-secondary" />
         </div>
         <strong className="mt-5 text-base font-medium text-text-primary">
-          {t('workbench.smart_apps_marketplace_coming', '智能应用市场即将上线')}
+          {t('workbench.smart_apps_marketplace_coming', '智能工作台市场即将上线')}
         </strong>
         <p className="mt-2 max-w-[440px] text-sm leading-6 text-text-muted">
           {t(
             'workbench.smart_apps_marketplace_coming_hint',
-            '市场内容接入前，可以先导入本地智能应用安装包；已安装应用仍可正常管理和运行。'
+            '市场内容接入前，可以先导入本地智能工作台安装包；已安装工作台仍可正常管理和运行。'
           )}
         </p>
         <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
@@ -72,7 +72,7 @@ export function SmartAppsMarketplacePage() {
             <WandSparkles className="h-4 w-4" />
             {creating
               ? t('workbench.smart_apps_builder_installing', '正在准备创作助手...')
-              : t('workbench.smart_apps_create', '创建智能应用')}
+              : t('workbench.smart_apps_create', '创建智能工作台')}
           </Button>
           <Button
             size="sm"

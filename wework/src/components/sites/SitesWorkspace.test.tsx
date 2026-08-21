@@ -324,16 +324,16 @@ describe('SitesWorkspace', () => {
         api={api}
         onCreate={vi.fn()}
         smartAppsEnabled
-        smartAppsContent={<div data-testid="smart-apps-content">智能应用市场</div>}
+        smartAppsContent={<div data-testid="smart-apps-content">智能工作台市场</div>}
       />
     )
     await screen.findByText('产品发布页')
 
     expect(screen.getByTestId('applications-tab-web')).toHaveTextContent('站点')
     expect(screen.getByTestId('applications-tab-miniapp')).toHaveTextContent('小程序')
-    expect(screen.getByTestId('applications-tab-smart-app')).toHaveTextContent('智能应用')
+    expect(screen.getByTestId('applications-tab-smart-app')).toHaveTextContent('智能工作台')
     expect(screen.getAllByRole('tab').map(tab => tab.textContent)).toEqual([
-      '智能应用实验性',
+      '智能工作台实验性',
       '站点',
       '小程序',
     ])
@@ -358,7 +358,7 @@ describe('SitesWorkspace', () => {
         api={api}
         onCreate={vi.fn()}
         smartAppsEnabled
-        smartAppsContent={<div data-testid="smart-apps-content">智能应用市场</div>}
+        smartAppsContent={<div data-testid="smart-apps-content">智能工作台市场</div>}
       />
     )
 
@@ -381,7 +381,7 @@ describe('SitesWorkspace', () => {
         api={api}
         onCreate={vi.fn()}
         smartAppsEnabled
-        smartAppsContent={<div data-testid="smart-apps-content">智能应用市场</div>}
+        smartAppsContent={<div data-testid="smart-apps-content">智能工作台市场</div>}
       />
     )
 

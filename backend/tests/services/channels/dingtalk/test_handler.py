@@ -29,3 +29,4 @@ def test_parse_message_preserves_dingtalk_message_id() -> None:
     assert context.content == "continue runtime"
     assert context.extra_data["message_id"] == "dingtalk-message-1"
     assert context.extra_data["callback_data"]["msgId"] == "dingtalk-message-1"
+    assert context.proactive_recipient_id == "staff-a"
