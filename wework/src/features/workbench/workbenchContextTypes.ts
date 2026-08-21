@@ -454,6 +454,7 @@ export interface WorkbenchProviderProps {
   onStartupReadyChange?: (ready: boolean) => void
   workspaceTabId?: string
   consumePluginTrials?: boolean
+  publishDebugSnapshots?: boolean
   syncRemoteProjects?: boolean
   syncRuntimeTaskLifecycle?: boolean
 }

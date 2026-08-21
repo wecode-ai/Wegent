@@ -213,6 +213,7 @@ export function WorkbenchProvider({
   onStartupReadyChange,
   workspaceTabId,
   consumePluginTrials = true,
+  publishDebugSnapshots = true,
   syncRemoteProjects = true,
   syncRuntimeTaskLifecycle = true,
 }: WorkbenchProviderProps) {
@@ -1236,6 +1237,8 @@ export function WorkbenchProvider({
   ])
 
   useEffect(() => {
+    if (!publishDebugSnapshots) return
+
     let timeout: number | null = null
     const schedule = () => {
       if (timeout !== null) return
@@ -1276,6 +1279,7 @@ export function WorkbenchProvider({
     lifecycleSnapshot,
     draftInputByScope,
     modelSelection.models,
+    publishDebugSnapshots,
     projectChatScopeKey,
     runtimeTaskReminders,
     state,
