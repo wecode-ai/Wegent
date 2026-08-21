@@ -132,7 +132,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       await control.command('waitFor', '[data-testid="project-automation-view"]', {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('click', '[data-testid^="workspace-tab-select-task-"]')
+      await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
       await control.command('waitFor', '[data-testid="automation-button"]', {
         timeoutMs: uiTimeoutMs,
       })

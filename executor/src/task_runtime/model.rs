@@ -311,6 +311,7 @@ pub struct TaskBinding {
     pub workflow_node_id: Option<String>,
     #[serde(default)]
     pub workflow_stage_input: Option<Value>,
+    pub binding_type: String,
     pub linked_at: String,
 }
 

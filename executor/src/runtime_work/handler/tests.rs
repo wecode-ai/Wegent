@@ -2282,6 +2282,28 @@ fn current_codex_model_provider_reads_configured_provider_name() {
 }
 
 #[test]
+fn current_codex_model_provider_prefers_explicit_user_provider() {
+    let provider = current_codex_model_provider(
+        &json!({
+            "config": {
+                "model_provider": "openai",
+                "model_providers": {
+                    "wework-e2e": {
+                        "name": "Wework Desktop E2E"
+                    }
+                }
+            }
+        }),
+        "wework-e2e",
+    );
+
+    assert_eq!(provider.id, "wework-e2e");
+    assert_eq!(provider.display_name, "Wework Desktop E2E");
+    assert_eq!(provider.kind, "provider");
+    assert!(provider.current);
+}
+
+#[test]
 fn current_codex_model_provider_defaults_to_official() {
     let provider = current_codex_model_provider_from_config(&json!({"config": {}}));
 
@@ -3250,6 +3272,28 @@ async fn codex_app_server_restart_rpc_returns_success() {
     assert_eq!(result["restarted"], true);
     assert_eq!(result["requiresConfirmation"], false);
     assert_eq!(result["activeTaskCount"], 0);
+}
+
+#[tokio::test]
+async fn codex_app_server_restart_waits_for_an_existing_restart() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "unused-codex-binary");
+    let restart_guard = handler.codex_app_server_restart_gate.lock().await;
+    let pending_handler = handler.clone();
+    let pending_restart = tokio::spawn(async move {
+        pending_handler
+            .restart_codex_app_server_with_expected_models(json!({"ifIdle": true}), Vec::new())
+            .await
+    });
+
+    tokio::task::yield_now().await;
+    assert!(!pending_restart.is_finished());
+
+    drop(restart_guard);
+    let result = pending_restart
+        .await
+        .expect("restart task should finish")
+        .expect("restart should return success");
+    assert_eq!(result["restarted"], true);
 }
 
 #[tokio::test]

@@ -191,6 +191,32 @@ impl PersistedRuntimeTask {
             pinned_order: None,
         }
     }
+
+    fn apply_to(self, task: &mut RuntimeTaskLink) {
+        task.thread_id = self.thread_id;
+        task.workspace_path = self.workspace_path;
+        task.title = self.title;
+        task.runtime = self.runtime;
+        task.continuable = self.continuable;
+        task.goal_status = self.goal_status;
+        task.supervisor = self.supervisor;
+        task.created_at = self.created_at;
+        task.updated_at = self.updated_at;
+        task.runtime_handle =
+            merge_persisted_runtime_handle(&task.runtime_handle, self.runtime_handle);
+        task.parent = self.parent;
+        task.ephemeral = self.ephemeral;
+        task.runtime_project_key = self.runtime_project_key;
+        task.runtime_workspace_roots = self.runtime_workspace_roots;
+        task.project_instructions = self.project_instructions;
+        task.project_plugin_ids = self.project_plugin_ids;
+
+        if self.archived {
+            task.status = "archived".to_owned();
+        } else if task.status == "archived" {
+            task.status = "active".to_owned();
+        }
+    }
 }
 
 fn persisted_runtime_handle(runtime_handle: &Value) -> Value {
@@ -199,6 +225,20 @@ fn persisted_runtime_handle(runtime_handle: &Value) -> Value {
     persisted.remove("lastError");
     persisted.remove("lastErrorCode");
     Value::Object(persisted)
+}
+
+fn merge_persisted_runtime_handle(current: &Value, persisted: Value) -> Value {
+    let mut merged = persisted_runtime_handle(&persisted)
+        .as_object()
+        .cloned()
+        .unwrap_or_default();
+    let current = current.as_object();
+    for key in ["queuePosition", "lastError", "lastErrorCode"] {
+        if let Some(value) = current.and_then(|runtime_handle| runtime_handle.get(key)) {
+            merged.insert(key.to_owned(), value.clone());
+        }
+    }
+    Value::Object(merged)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -365,9 +405,9 @@ impl RuntimeWorkStore {
             return;
         }
 
-        let disk_index = read_index_from_path(&self.index_path);
+        let persisted_index = read_persisted_index_from_path(&self.index_path);
         if let Ok(mut index) = self.index.lock() {
-            *index = disk_index;
+            merge_persisted_index(&mut index, persisted_index);
         }
         if let Ok(mut signature) = self.index_signature.lock() {
             *signature = current_signature;
@@ -389,12 +429,17 @@ fn current_time_ms() -> i64 {
 }
 
 fn read_index_from_path(index_path: &Path) -> RuntimeWorkIndex {
+    persisted_index_into_runtime(read_persisted_index_from_path(index_path))
+}
+
+fn read_persisted_index_from_path(index_path: &Path) -> PersistedRuntimeWorkIndex {
     let Ok(content) = fs::read_to_string(index_path) else {
-        return empty_index();
+        return PersistedRuntimeWorkIndex::default();
     };
-    let Ok(persisted) = serde_json::from_str::<PersistedRuntimeWorkIndex>(&content) else {
-        return empty_index();
-    };
+    serde_json::from_str(&content).unwrap_or_default()
+}
+
+fn persisted_index_into_runtime(persisted: PersistedRuntimeWorkIndex) -> RuntimeWorkIndex {
     RuntimeWorkIndex {
         version: persisted.version,
         tasks: persisted
@@ -405,6 +450,22 @@ fn read_index_from_path(index_path: &Path) -> RuntimeWorkIndex {
         workspaces: persisted.workspaces,
         deleted_archived_task_ids: persisted.deleted_archived_task_ids,
     }
+}
+
+fn merge_persisted_index(current: &mut RuntimeWorkIndex, persisted: PersistedRuntimeWorkIndex) {
+    current
+        .tasks
+        .retain(|task_id, _| persisted.tasks.contains_key(task_id));
+    for (task_id, persisted_task) in persisted.tasks {
+        if let Some(task) = current.tasks.get_mut(&task_id) {
+            persisted_task.apply_to(task);
+        } else {
+            current.tasks.insert(task_id, persisted_task.into_runtime());
+        }
+    }
+    current.version = persisted.version;
+    current.workspaces = persisted.workspaces;
+    current.deleted_archived_task_ids = persisted.deleted_archived_task_ids;
 }
 
 fn serialize_index(index: &RuntimeWorkIndex) -> Result<Vec<u8>, serde_json::Error> {
@@ -432,15 +493,6 @@ fn index_file_signature(index_path: &Path) -> Option<IndexFileSignature> {
         len: metadata.len(),
         modified_ms,
     })
-}
-
-fn empty_index() -> RuntimeWorkIndex {
-    RuntimeWorkIndex {
-        version: INDEX_VERSION,
-        tasks: HashMap::new(),
-        workspaces: HashMap::new(),
-        deleted_archived_task_ids: HashMap::new(),
-    }
 }
 
 fn deserialize_deleted_archived_task_ids<'de, D>(
@@ -733,7 +785,7 @@ mod tests {
     }
 
     #[test]
-    fn shared_index_never_persists_execution_state() {
+    fn shared_index_reload_preserves_process_local_execution_state() {
         let directory = tempfile::tempdir().expect("temporary directory should be created");
         let index_path = directory.path().join("index.json");
         let owner_store = RuntimeWorkStore::new(index_path.clone());
@@ -744,6 +796,19 @@ mod tests {
             "/tmp/owner".to_owned(),
             "Owner task".to_owned(),
         ));
+        owner_store.update_task("owner-task", |task| {
+            task.status = "running".to_owned();
+            task.running = true;
+            task.thread_status = "active".to_owned();
+            task.turn_status = Some("inProgress".to_owned());
+            task.runtime_handle["queuePosition"] = Value::from(2);
+            task.runtime_handle["lastError"] = Value::from("temporary error");
+            task.runtime_handle["lastErrorCode"] = Value::from("temporary_error");
+        });
+        peer_store.update_task("owner-task", |task| {
+            task.title = "Updated owner task".to_owned();
+            task.runtime_handle["modelSelection"] = serde_json::json!({"modelName": "gpt-5.6-sol"});
+        });
         peer_store.upsert_task(RuntimeTaskLink::new_imported(
             "peer-task".to_owned(),
             "/tmp/peer".to_owned(),
@@ -756,10 +821,24 @@ mod tests {
         let owner_task = owner_store
             .get_task("owner-task")
             .expect("owner task should survive peer writes");
-        assert!(!owner_task.running);
-        assert_eq!(owner_task.status, "active");
-        assert_eq!(owner_task.thread_status, "notLoaded");
-        assert_eq!(owner_task.turn_status, None);
+        assert_eq!(owner_task.title, "Updated owner task");
+        assert!(owner_task.running);
+        assert_eq!(owner_task.status, "running");
+        assert_eq!(owner_task.thread_status, "active");
+        assert_eq!(owner_task.turn_status.as_deref(), Some("inProgress"));
+        assert_eq!(
+            owner_task.runtime_handle["modelSelection"]["modelName"],
+            Value::from("gpt-5.6-sol")
+        );
+        assert_eq!(owner_task.runtime_handle["queuePosition"], Value::from(2));
+        assert_eq!(
+            owner_task.runtime_handle["lastError"],
+            Value::from("temporary error")
+        );
+        assert_eq!(
+            owner_task.runtime_handle["lastErrorCode"],
+            Value::from("temporary_error")
+        );
 
         let persisted: Value = serde_json::from_slice(
             &fs::read(&index_path).expect("shared index should be readable"),

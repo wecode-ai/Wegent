@@ -144,7 +144,7 @@ Wework 将 executor 高频到达的文本增量与 Markdown 展示节奏分离�
 
 ## 现场取证
 
-release 包默认编译 Tauri Web Inspector 能力，但主 WebView 默认保持不可检查状态，因此其 WebKit 原生右键菜单不包含 Inspect Element。按隐藏快捷键打开 **Developer Commands** 并选择 **Open Web Inspector** 时，原生侧才会动态设置 `WKWebView.isInspectable` 并打开 Inspector；该入口与 Performance Diagnostics 开关相互独立，要求 macOS 13.3 或更高版本。内置浏览器是独立 WebView，会保留右键 Inspect Element。需要构建不含 Inspector 能力的发行包时，设置 `WEWORK_RELEASE_DEVTOOLS=0`。如需在本地诊断启动时自动打开，可以用环境变量：
+release 包默认编译 Tauri Web Inspector 能力，但主 WebView 默认保持不可检查状态，因此其 WebKit 原生右键菜单不包含 Inspect Element。按隐藏快捷键打开 **Developer Commands** 并选择 **Open Web Inspector** 时，原生侧才会动态设置 `WKWebView.isInspectable` 并打开 Inspector；该入口与 Performance Diagnostics 开关相互独立，要求 macOS 13.3 或更高版本。内置浏览器子 WebView 只在 debug 构建中启用 Inspector；macOS 会在 Inspector frontend 首次显示前强制 detach，因此 F12 打开独立窗口，不会停靠、重置子视图尺寸或覆盖工作台。release 构建通过显式 build cfg 禁用子 WebView Inspector。需要构建不含主 WebView Inspector 能力的发行包时，设置 `WEWORK_RELEASE_DEVTOOLS=0`。如需在本地诊断启动时自动打开主 WebView Inspector，可以用环境变量：
 
 ```bash
 WEWORK_WEBVIEW_DEVTOOLS=1 /path/to/WeWork.app/Contents/MacOS/WeWork

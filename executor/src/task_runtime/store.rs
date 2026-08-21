@@ -2001,7 +2001,13 @@ impl LocalTaskStore {
         }
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let active = get_active_binding(&transaction, &input.device_id, &input.task_id)?;
+        let system_binding = project_id == DEFAULT_WORK_ITEM_PROJECT_ID;
+        let active = get_binding_by_kind(
+            &transaction,
+            &input.device_id,
+            &input.task_id,
+            system_binding,
+        )?;
         if let (Some(item_id), Some(workflow_node_id)) =
             (item_id, input.workflow_node_id.as_deref())
         {
@@ -2090,7 +2096,14 @@ impl LocalTaskStore {
                     task_user_id, device_id,
                     task_id, task_title, backend_task_id,
                     json_extract(metadata, '$.workflow_node_id'),
-                    json_extract(metadata, '$.workflow_stage_input'), linked_at
+                    json_extract(metadata, '$.workflow_stage_input'),
+                    CASE
+                        WHEN COALESCE(cloud_project_id, json_extract(metadata, '$.project_id'))
+                             = 'default-work-items'
+                        THEN 'system'
+                        ELSE 'user'
+                    END,
+                    linked_at
              FROM loop_items
              WHERE resource_type = 'execution' AND unlinked_at IS NULL
                AND (loop_item_id = ?1 OR json_extract(metadata, '$.external_item_id') = ?1)
@@ -2107,18 +2120,61 @@ impl LocalTaskStore {
         task_id: &str,
     ) -> Result<TaskBinding, TaskRuntimeError> {
         let connection = self.connection()?;
-        get_active_binding(&connection, device_id, task_id)?.ok_or(TaskRuntimeError::TaskNotFound)
+        get_effective_binding(&connection, device_id, task_id)?
+            .ok_or(TaskRuntimeError::TaskNotFound)
     }
 
-    pub fn unbind_task(&self, device_id: &str, task_id: &str) -> Result<(), TaskRuntimeError> {
+    pub fn find_system_task_binding(
+        &self,
+        device_id: &str,
+        task_id: &str,
+    ) -> Result<TaskBinding, TaskRuntimeError> {
+        let connection = self.connection()?;
+        get_binding_by_kind(&connection, device_id, task_id, true)?
+            .ok_or(TaskRuntimeError::TaskNotFound)
+    }
+
+    pub fn find_user_task_binding(
+        &self,
+        device_id: &str,
+        task_id: &str,
+    ) -> Result<TaskBinding, TaskRuntimeError> {
+        let connection = self.connection()?;
+        get_binding_by_kind(&connection, device_id, task_id, false)?
+            .ok_or(TaskRuntimeError::TaskNotFound)
+    }
+
+    pub fn unbind_task(
+        &self,
+        device_id: &str,
+        task_id: &str,
+        item_id: Option<&str>,
+    ) -> Result<(), TaskRuntimeError> {
         let connection = self.connection()?;
         let timestamp = now();
-        connection.execute(
-            "UPDATE loop_items SET unlinked_at = ?1, updated_at = ?1
-             WHERE resource_type = 'execution' AND device_id = ?2 AND task_id = ?3
-               AND unlinked_at IS NULL",
-            params![timestamp, device_id, task_id],
-        )?;
+        if let Some(item_id) = item_id {
+            connection.execute(
+                "UPDATE loop_items SET unlinked_at = ?1, updated_at = ?1
+                 WHERE resource_type = 'execution' AND device_id = ?2 AND task_id = ?3
+                   AND unlinked_at IS NULL
+                   AND (
+                       loop_item_id = ?4
+                       OR json_extract(metadata, '$.external_item_id') = ?4
+                   )
+                   AND COALESCE(cloud_project_id, json_extract(metadata, '$.project_id'))
+                       != 'default-work-items'",
+                params![timestamp, device_id, task_id, item_id],
+            )?;
+        } else {
+            connection.execute(
+                "UPDATE loop_items SET unlinked_at = ?1, updated_at = ?1
+                 WHERE resource_type = 'execution' AND device_id = ?2 AND task_id = ?3
+                   AND unlinked_at IS NULL
+                   AND COALESCE(cloud_project_id, json_extract(metadata, '$.project_id'))
+                       != 'default-work-items'",
+                params![timestamp, device_id, task_id],
+            )?;
+        }
         Ok(())
     }
 
@@ -2131,7 +2187,14 @@ impl LocalTaskStore {
                         task_user_id, device_id,
                         task_id, task_title, backend_task_id,
                         json_extract(metadata, '$.workflow_node_id'),
-                        json_extract(metadata, '$.workflow_stage_input'), linked_at
+                        json_extract(metadata, '$.workflow_stage_input'),
+                        CASE
+                            WHEN COALESCE(cloud_project_id, json_extract(metadata, '$.project_id'))
+                                 = 'default-work-items'
+                            THEN 'system'
+                            ELSE 'user'
+                        END,
+                        linked_at
                  FROM loop_items WHERE id = ?1 AND resource_type = 'execution'",
                 [id],
                 map_task_binding,
@@ -2167,7 +2230,7 @@ impl LocalTaskStore {
     }
 }
 
-fn get_active_binding(
+fn get_effective_binding(
     connection: &Connection,
     device_id: &str,
     task_id: &str,
@@ -2179,12 +2242,64 @@ fn get_active_binding(
                     task_user_id, device_id,
                     task_id, task_title, backend_task_id,
                     json_extract(metadata, '$.workflow_node_id'),
-                    json_extract(metadata, '$.workflow_stage_input'), linked_at
+                    json_extract(metadata, '$.workflow_stage_input'),
+                    CASE
+                        WHEN COALESCE(cloud_project_id, json_extract(metadata, '$.project_id'))
+                             = 'default-work-items'
+                        THEN 'system'
+                        ELSE 'user'
+                    END,
+                    linked_at
              FROM loop_items
              WHERE resource_type = 'execution' AND device_id = ?1 AND task_id = ?2
                AND unlinked_at IS NULL
+             ORDER BY
+                 CASE
+                     WHEN COALESCE(cloud_project_id, json_extract(metadata, '$.project_id'))
+                          = 'default-work-items'
+                     THEN 1
+                     ELSE 0
+                 END,
+                 linked_at DESC
              LIMIT 1",
             params![device_id, task_id],
+            map_task_binding,
+        )
+        .optional()
+        .map_err(TaskRuntimeError::from)
+}
+
+fn get_binding_by_kind(
+    connection: &Connection,
+    device_id: &str,
+    task_id: &str,
+    system: bool,
+) -> Result<Option<TaskBinding>, TaskRuntimeError> {
+    connection
+        .query_row(
+            "SELECT id, COALESCE(cloud_project_id, json_extract(metadata, '$.project_id')),
+                    COALESCE(loop_item_id, json_extract(metadata, '$.external_item_id')),
+                    task_user_id, device_id,
+                    task_id, task_title, backend_task_id,
+                    json_extract(metadata, '$.workflow_node_id'),
+                    json_extract(metadata, '$.workflow_stage_input'),
+                    CASE
+                        WHEN COALESCE(cloud_project_id, json_extract(metadata, '$.project_id'))
+                             = 'default-work-items'
+                        THEN 'system'
+                        ELSE 'user'
+                    END,
+                    linked_at
+             FROM loop_items
+             WHERE resource_type = 'execution' AND device_id = ?1 AND task_id = ?2
+               AND unlinked_at IS NULL
+               AND (
+                   COALESCE(cloud_project_id, json_extract(metadata, '$.project_id'))
+                       = 'default-work-items'
+               ) = ?3
+             ORDER BY linked_at DESC
+             LIMIT 1",
+            params![device_id, task_id, system],
             map_task_binding,
         )
         .optional()
@@ -2215,7 +2330,7 @@ fn validate_local_workflow_task_binding(
         ));
     }
 
-    let current_binding = get_active_binding(connection, device_id, task_id)?;
+    let current_binding = get_binding_by_kind(connection, device_id, task_id, false)?;
     let is_idempotent = current_binding.as_ref().is_some_and(|binding| {
         binding.loop_item_id.as_deref() == Some(item_id)
             && binding.workflow_node_id.as_deref() == Some(workflow_node_id)
@@ -2252,7 +2367,8 @@ fn map_task_binding(row: &Row<'_>) -> rusqlite::Result<TaskBinding> {
         workflow_stage_input: row
             .get::<_, Option<String>>(9)?
             .and_then(|value| serde_json::from_str(&value).ok()),
-        linked_at: row.get(10)?,
+        binding_type: row.get(10)?,
+        linked_at: row.get(11)?,
     })
 }
 
@@ -5734,11 +5850,111 @@ mod tests {
                 .as_deref(),
             Some("inbox")
         );
-        store.unbind_task("local-device", "runtime-1").unwrap();
+        store
+            .unbind_task("local-device", "runtime-1", Some(&task.id))
+            .unwrap();
         assert!(matches!(
             store.find_task_binding("local-device", "runtime-1"),
             Err(TaskRuntimeError::TaskNotFound)
         ));
+    }
+
+    #[test]
+    fn keeps_one_system_binding_alongside_the_current_user_binding() {
+        let (_directory, store) = store();
+        let user_project = local_project(&store);
+        let system_task = store
+            .create_task(
+                DEFAULT_WORK_ITEM_PROJECT_ID,
+                TaskCreate {
+                    title: "System task".to_owned(),
+                    description: String::new(),
+                    status: "inbox".to_owned(),
+                    priority: "none".to_owned(),
+                    parent_id: None,
+                    tags: vec![],
+                    workflow: None,
+                },
+            )
+            .unwrap();
+        let user_task = store
+            .create_task(
+                &user_project.id,
+                TaskCreate {
+                    title: "User issue".to_owned(),
+                    description: String::new(),
+                    status: "pending".to_owned(),
+                    priority: "none".to_owned(),
+                    parent_id: None,
+                    tags: vec![],
+                    workflow: None,
+                },
+            )
+            .unwrap();
+        let address = RuntimeTaskAddress {
+            device_id: "local-device".to_owned(),
+            task_id: "runtime-1".to_owned(),
+            task_title: Some("Runtime".to_owned()),
+            backend_task_id: None,
+            workflow_node_id: None,
+        };
+
+        let system_binding = store
+            .bind_task(
+                DEFAULT_WORK_ITEM_PROJECT_ID,
+                Some(&system_task.id),
+                None,
+                address.clone(),
+            )
+            .unwrap();
+        let user_binding = store
+            .bind_task(&user_project.id, Some(&user_task.id), None, address)
+            .unwrap();
+
+        assert_eq!(system_binding.binding_type, "system");
+        assert_eq!(user_binding.binding_type, "user");
+        assert_eq!(
+            store
+                .find_task_binding("local-device", "runtime-1")
+                .unwrap()
+                .id,
+            user_binding.id
+        );
+        assert_eq!(
+            store
+                .find_system_task_binding("local-device", "runtime-1")
+                .unwrap()
+                .id,
+            system_binding.id
+        );
+        assert_eq!(
+            store
+                .find_user_task_binding("local-device", "runtime-1")
+                .unwrap()
+                .id,
+            user_binding.id
+        );
+
+        store
+            .unbind_task("local-device", "runtime-1", Some(&user_task.id))
+            .unwrap();
+        assert_eq!(
+            store
+                .find_task_binding("local-device", "runtime-1")
+                .unwrap()
+                .id,
+            system_binding.id
+        );
+        store
+            .unbind_task("local-device", "runtime-1", Some(&system_task.id))
+            .unwrap();
+        assert_eq!(
+            store
+                .find_system_task_binding("local-device", "runtime-1")
+                .unwrap()
+                .id,
+            system_binding.id
+        );
     }
 
     #[test]
