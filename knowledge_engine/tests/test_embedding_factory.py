@@ -11,7 +11,10 @@ import pytest
 from pytest_mock import MockerFixture
 
 from knowledge_engine.embedding.custom import CustomEmbedding
-from knowledge_engine.embedding.errors import EmbeddingDimensionMismatchError
+from knowledge_engine.embedding.errors import (
+    EmbeddingDimensionMismatchError,
+    EmbeddingResponseFormatError,
+)
 from knowledge_engine.embedding.factory import (
     create_embedding_model_from_runtime_config,
 )
@@ -154,37 +157,59 @@ def test_custom_embedding_decodes_base64_float_response(
     assert result == pytest.approx([0.1, 0.2, 0.3])
 
 
-def test_custom_embedding_rejects_non_string_base64_response(
+@pytest.mark.parametrize(
+    ("response_embedding", "encoding_format", "expected_message"),
+    [
+        pytest.param(
+            [0.1, 0.2, 0.3],
+            "base64",
+            "base64 string",
+            id="base64-non-string",
+        ),
+        pytest.param(
+            "not-valid-base64!",
+            "base64",
+            "Invalid base64",
+            id="invalid-base64",
+        ),
+        pytest.param(
+            "not-a-numeric-vector",
+            "float",
+            "numeric embedding array",
+            id="float-string",
+        ),
+        pytest.param(
+            "not-a-numeric-vector",
+            None,
+            "numeric embedding array",
+            id="default-string",
+        ),
+        pytest.param(
+            ["not-a-number"],
+            None,
+            "numeric embedding array",
+            id="non-numeric-array",
+        ),
+    ],
+)
+def test_custom_embedding_rejects_invalid_provider_response_without_retry(
     mocker: MockerFixture,
+    response_embedding: object,
+    encoding_format: str | None,
+    expected_message: str,
 ) -> None:
     post = mocker.patch("knowledge_engine.embedding.custom.requests.post")
-    post.return_value.json.return_value = {"data": [{"embedding": [0.1, 0.2, 0.3]}]}
+    post.return_value.json.return_value = {"data": [{"embedding": response_embedding}]}
     embedding = CustomEmbedding(
         api_url="https://api.example.com/v1/embeddings",
         model="custom-embedding-model",
-        dimensions=3,
-        encoding_format="base64",
+        encoding_format=encoding_format,
     )
 
-    with pytest.raises(ValueError, match="base64 string"):
+    with pytest.raises(EmbeddingResponseFormatError, match=expected_message):
         embedding.get_text_embedding("release plan")
 
-
-def test_custom_embedding_rejects_string_float_response(
-    mocker: MockerFixture,
-) -> None:
-    post = mocker.patch("knowledge_engine.embedding.custom.requests.post")
-    post.return_value.json.return_value = {
-        "data": [{"embedding": "not-a-numeric-vector"}]
-    }
-    embedding = CustomEmbedding(
-        api_url="https://api.example.com/v1/embeddings",
-        model="custom-embedding-model",
-        encoding_format="float",
-    )
-
-    with pytest.raises(ValueError, match="numeric embedding array"):
-        embedding.get_text_embedding("release plan")
+    assert post.call_count == 1
 
 
 def test_custom_embedding_rejects_unexpected_response_dimensions(

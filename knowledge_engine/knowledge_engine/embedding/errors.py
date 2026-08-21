@@ -7,6 +7,12 @@
 from __future__ import annotations
 
 
+class EmbeddingResponseFormatError(ValueError):
+    """Raised when a provider response violates the configured wire format."""
+
+    retryable = False
+
+
 class EmbeddingDimensionMismatchError(RuntimeError):
     """Raised when a provider returns a vector with an unexpected dimension."""
 

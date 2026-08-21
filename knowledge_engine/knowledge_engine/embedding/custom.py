@@ -6,6 +6,7 @@
 
 import asyncio
 import base64
+import binascii
 import struct
 from typing import Any, Optional
 
@@ -18,7 +19,10 @@ from tenacity import (
     wait_exponential,
 )
 
-from knowledge_engine.embedding.errors import EmbeddingDimensionMismatchError
+from knowledge_engine.embedding.errors import (
+    EmbeddingDimensionMismatchError,
+    EmbeddingResponseFormatError,
+)
 
 
 class CustomEmbedding(BaseEmbedding):
@@ -77,7 +81,9 @@ class CustomEmbedding(BaseEmbedding):
         return await asyncio.to_thread(self._get_text_embedding, text)
 
     @retry(
-        retry=retry_if_not_exception_type(EmbeddingDimensionMismatchError),
+        retry=retry_if_not_exception_type(
+            (EmbeddingDimensionMismatchError, EmbeddingResponseFormatError)
+        ),
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=10),
         reraise=True,
@@ -96,33 +102,46 @@ class CustomEmbedding(BaseEmbedding):
             timeout=30,
         )
         response.raise_for_status()
-        embedding = response.json()["data"][0]["embedding"]
-        if self._encoding_format == "float" and isinstance(embedding, str):
-            raise ValueError(
-                "Embedding provider returned a string instead of a numeric "
-                "embedding array"
-            )
+        response_embedding: object = response.json()["data"][0]["embedding"]
         if self._encoding_format == "base64":
-            if not isinstance(embedding, str):
-                raise ValueError(
+            if not isinstance(response_embedding, str):
+                raise EmbeddingResponseFormatError(
                     "Embedding provider returned a non-string response; "
                     "expected a base64 string"
                 )
-            raw_embedding = base64.b64decode(embedding, validate=True)
+            try:
+                raw_embedding = base64.b64decode(response_embedding, validate=True)
+            except binascii.Error as exc:
+                raise EmbeddingResponseFormatError(
+                    "Invalid base64 embedding response"
+                ) from exc
             if len(raw_embedding) % 4 != 0:
-                raise ValueError("Invalid base64 embedding byte length")
+                raise EmbeddingResponseFormatError(
+                    "Invalid base64 embedding byte length"
+                )
             embedding = [value[0] for value in struct.iter_unpack("<f", raw_embedding)]
+        else:
+            if not isinstance(response_embedding, list) or any(
+                isinstance(value, bool) or not isinstance(value, (int, float))
+                for value in response_embedding
+            ):
+                raise EmbeddingResponseFormatError(
+                    "Embedding provider returned an invalid response; "
+                    "expected a numeric embedding array"
+                )
+            embedding = [float(value) for value in response_embedding]
 
+        actual_dimension = len(embedding)
         if (
             self._configured_dimension is not None
-            and len(embedding) != self._configured_dimension
+            and actual_dimension != self._configured_dimension
         ):
             raise EmbeddingDimensionMismatchError(
                 model=self.model,
                 expected=self._configured_dimension,
-                actual=len(embedding),
+                actual=actual_dimension,
             )
         if self._dimension is None:
-            self._dimension = len(embedding)
+            self._dimension = actual_dimension
 
         return embedding
