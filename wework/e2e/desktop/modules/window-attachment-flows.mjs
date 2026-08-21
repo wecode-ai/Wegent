@@ -132,6 +132,23 @@ async function verifyCrossProviderSwitchRetry(control, composerSelector) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await ensureModelOptionVisible(control, `model-option-${PROVIDER_SWITCH_OFFICIAL_OPTION_ID}`)
+  const modelSubmenuMetrics = await getSingleElementMetrics(
+    control,
+    '[data-testid="model-selector-submenu"]',
+    'The narrow-pane model submenu'
+  )
+  const viewportMetrics = await getSingleElementMetrics(
+    control,
+    ACTIVE_WORKBENCH_SELECTOR,
+    'The desktop viewport'
+  )
+  assert.ok(
+    modelSubmenuMetrics.top >= 64 && modelSubmenuMetrics.bottom <= viewportMetrics.bottom - 16,
+    `The narrow-pane model submenu exceeded the desktop viewport: ${JSON.stringify({
+      modelSubmenuMetrics,
+      viewportMetrics,
+    })}`
+  )
   const officialModelSelector = `[data-testid="model-option-${PROVIDER_SWITCH_OFFICIAL_OPTION_ID}"]`
   await control.command('waitFor', officialModelSelector, {
     text: PROVIDER_SWITCH_OFFICIAL_LABEL,

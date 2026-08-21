@@ -224,6 +224,34 @@ describe('ModelSelector desktop layout', () => {
     expect(screen.getByTestId(`model-option-${SAMPLE_MODEL.name}`)).toBeInTheDocument()
   })
 
+  test('uses the available viewport height for a long model list', async () => {
+    createShellElement({ hidden: true })
+    const models = Array.from({ length: 30 }, (_, index) => ({
+      ...SAMPLE_MODEL,
+      name: `gpt-5.5-${index}`,
+      modelId: `gpt-5.5-${index}`,
+      displayName: `GPT 5.5 ${index}`,
+    }))
+
+    render(
+      <ModelSelector
+        models={models}
+        selectedModel={models[0]}
+        selectedModelOptions={{}}
+        disabled={false}
+        onSelectModel={vi.fn()}
+        onSelectModelOption={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('model-selector-button'))
+    fireEvent.mouseEnter(await screen.findByTestId('model-control-menu-model'))
+
+    expect(await screen.findByTestId('model-selector-submenu')).toHaveStyle({
+      maxHeight: `${WINDOW_INNER_HEIGHT - 64 - 16}px`,
+    })
+  })
+
   test('caps the trigger width when maxClosedWidth is provided', () => {
     createShellElement({ hidden: true })
 
