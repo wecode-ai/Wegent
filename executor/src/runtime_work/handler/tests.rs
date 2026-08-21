@@ -1875,7 +1875,7 @@ fn settled_task_projection_normalizes_every_terminal_outcome() {
 }
 
 #[test]
-fn provider_turn_registers_when_execution_control_settles_first() {
+fn provider_turn_cannot_restore_running_state_after_execution_settles() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
     let execution_id = start_test_execution(&handler, "task-1");
 
@@ -1887,10 +1887,26 @@ fn provider_turn_registers_when_execution_control_settles_first() {
         "turn-1".to_owned(),
     );
 
-    assert!(handler.is_active_local_task("task-1"));
-
-    handler.clear_active_codex_turn("task-1", execution_id);
     assert!(!handler.is_active_local_task("task-1"));
+    assert!(handler.active_codex_turn("task-1").is_none());
+}
+
+#[test]
+fn finishing_execution_removes_its_codex_turn_context() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    let execution_id = start_test_execution(&handler, "task-1");
+    handler.record_active_codex_turn(
+        "task-1",
+        execution_id,
+        "thread-1".to_owned(),
+        "turn-1".to_owned(),
+    );
+
+    assert!(handler.active_codex_turn("task-1").is_some());
+    assert!(handler.finish_local_task_execution("task-1", execution_id));
+
+    assert!(!handler.is_active_local_task("task-1"));
+    assert!(handler.active_codex_turn("task-1").is_none());
 }
 
 #[test]
@@ -3203,18 +3219,13 @@ async fn codex_app_server_restart_rpc_returns_success() {
 #[tokio::test]
 async fn codex_app_server_restart_requires_confirmation_for_active_turns() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    handler
-        .active_codex_turns
-        .lock()
-        .expect("active Codex turn registry should not be poisoned")
-        .insert(
-            "thread-1".to_owned(),
-            ActiveCodexTurn {
-                execution_id: 1,
-                thread_id: "thread-1".to_owned(),
-                turn_id: "turn-1".to_owned(),
-            },
-        );
+    let execution_id = start_test_execution(&handler, "task-1");
+    handler.record_active_codex_turn(
+        "task-1",
+        execution_id,
+        "thread-1".to_owned(),
+        "turn-1".to_owned(),
+    );
 
     let result = handler
         .handle_runtime_rpc(json!({
