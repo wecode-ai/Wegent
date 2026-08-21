@@ -162,6 +162,7 @@ async function verifyStartupIgnoresBlockedCodexNetwork({
   restartDesktopApp,
 }) {
   const modelRequestCountBeforeRestart = control.modelRequests.length
+  const blockedRequestCountBeforeRestart = blockingNetworkProxy.requestCount()
   await control.command('storeLocalProxyUrl', 'body', { value: blockingNetworkProxy.url })
   await restartDesktopApp()
   await control.command('waitFor', '[data-testid="projects-create-button"]', {
@@ -193,6 +194,10 @@ async function verifyStartupIgnoresBlockedCodexNetwork({
     control.modelRequests.length,
     modelRequestCountBeforeRestart,
     'The workbench sent an agent model request while Codex was still starting'
+  )
+  assert.ok(
+    blockingNetworkProxy.requestCount() > blockedRequestCountBeforeRestart,
+    'The configured external Git marketplace did not reach the blocking proxy during startup'
   )
 
   blockingNetworkProxy.release()

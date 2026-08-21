@@ -1027,6 +1027,156 @@ enabled = true
 }
 
 #[tokio::test]
+async fn cloud_plugin_update_and_removal_restore_local_state_when_codex_config_is_invalid() {
+    let temp = TempRoot::new("capability-sync-plugin-transaction");
+    let plugins_dir = temp.path().join(".claude/plugins");
+    let codex_plugins_dir = temp.path().join(".codex/plugins");
+    let store_dir = temp.path().join("store");
+    let manifest_path = temp.path().join("capabilities.json");
+    let config_path = codex_plugins_dir.parent().unwrap().join("config.toml");
+    fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+    fs::write(&config_path, "[features]\napps = true\n").unwrap();
+    let version_one = zip_bytes(&[
+        (
+            "enterprise/.codex-plugin/plugin.json",
+            r#"{"name":"enterprise","version":"1.0.0"}"#,
+        ),
+        ("enterprise/version.txt", "1.0.0"),
+    ]);
+    let version_one_checksum = sha256_hex(&version_one);
+    let store =
+        GlobalCapabilityStore::new(manifest_path.clone(), temp.path().join(".claude/skills"))
+            .with_plugins_dir(plugins_dir.clone())
+            .with_codex_plugins_dir(codex_plugins_dir.clone())
+            .with_store_dir(store_dir.clone());
+    let handler = CapabilitySyncHandler::with_package_provider(
+        "token",
+        store.clone(),
+        StaticPackageProvider::default()
+            .with_plugin("/api/plugins/installed/20/download", version_one),
+    );
+    handler
+        .apply_sync(json!({
+            "mode": "replace",
+            "skills": [],
+            "plugins": [{
+                "installed_plugin_id": 20,
+                "name": "enterprise",
+                "marketplace": "wegent",
+                "version": "1.0.0",
+                "download_path": "/api/plugins/installed/20/download",
+                "checksum": version_one_checksum.clone()
+            }],
+            "mcps": [],
+        }))
+        .await
+        .unwrap();
+
+    let runtime_one = plugins_dir.join("cache/wegent/enterprise/1.0.0");
+    let codex_runtime_one = codex_plugins_dir.join("cache/wegent/enterprise/1.0.0");
+    let store_one = store_dir.join("plugins/20-wegent-enterprise-1.0.0");
+    let installed_before = fs::read_to_string(plugins_dir.join("installed_plugins.json")).unwrap();
+    let settings_before =
+        fs::read_to_string(plugins_dir.parent().unwrap().join("settings.json")).unwrap();
+    let invalid_config = "[plugins.\"broken\"\nenabled = true\n";
+    fs::write(&config_path, invalid_config).unwrap();
+
+    let replacement = zip_bytes(&[
+        (
+            "enterprise/.codex-plugin/plugin.json",
+            r#"{"name":"enterprise","version":"1.0.0"}"#,
+        ),
+        ("enterprise/version.txt", "replacement"),
+    ]);
+    let replacement_checksum = sha256_hex(&replacement);
+    let failing_handler = CapabilitySyncHandler::with_package_provider(
+        "token",
+        store,
+        StaticPackageProvider::default()
+            .with_plugin("/api/plugins/installed/20/download", replacement),
+    );
+    let update = failing_handler
+        .apply_sync(json!({
+            "mode": "replace",
+            "skills": [],
+            "plugins": [{
+                "installed_plugin_id": 20,
+                "name": "enterprise",
+                "marketplace": "wegent",
+                "version": "1.0.0",
+                "download_path": "/api/plugins/installed/20/download",
+                "checksum": replacement_checksum
+            }],
+            "mcps": [],
+        }))
+        .await
+        .unwrap();
+
+    assert_eq!(update["success"], false);
+    assert_eq!(update["plugins"][0]["status"], "failed");
+    assert!(update["plugins"][0]["error"]
+        .as_str()
+        .unwrap()
+        .contains("Invalid Codex config"));
+    assert_eq!(
+        fs::read_to_string(runtime_one.join("version.txt")).unwrap(),
+        "1.0.0"
+    );
+    assert_eq!(
+        fs::read_to_string(codex_runtime_one.join("version.txt")).unwrap(),
+        "1.0.0"
+    );
+    assert_eq!(
+        fs::read_to_string(store_one.join("version.txt")).unwrap(),
+        "1.0.0"
+    );
+    assert_eq!(
+        read_json(&manifest_path)["plugins"]["enterprise@wegent"]["version"],
+        "1.0.0"
+    );
+    assert_eq!(
+        read_json(&manifest_path)["plugins"]["enterprise@wegent"]["checksum"],
+        version_one_checksum
+    );
+    assert_eq!(
+        fs::read_to_string(plugins_dir.join("installed_plugins.json")).unwrap(),
+        installed_before
+    );
+    assert_eq!(
+        fs::read_to_string(plugins_dir.parent().unwrap().join("settings.json")).unwrap(),
+        settings_before
+    );
+    assert_eq!(fs::read_to_string(&config_path).unwrap(), invalid_config);
+
+    let remove_error = failing_handler
+        .apply_sync(json!({
+            "mode": "replace",
+            "skills": [],
+            "plugins": [],
+            "mcps": [],
+        }))
+        .await
+        .unwrap_err();
+
+    assert!(remove_error.to_string().contains("Invalid Codex config"));
+    assert!(runtime_one.is_dir());
+    assert!(codex_runtime_one.is_dir());
+    assert!(store_one.is_dir());
+    assert!(read_json(&manifest_path)["plugins"]
+        .get("enterprise@wegent")
+        .is_some());
+    assert_eq!(
+        fs::read_to_string(plugins_dir.join("installed_plugins.json")).unwrap(),
+        installed_before
+    );
+    assert_eq!(
+        fs::read_to_string(plugins_dir.parent().unwrap().join("settings.json")).unwrap(),
+        settings_before
+    );
+    assert_eq!(fs::read_to_string(config_path).unwrap(), invalid_config);
+}
+
+#[tokio::test]
 async fn plugin_sync_links_existing_package_and_downloads_uploaded_plugin_to_wegent_store() {
     let temp = TempRoot::new("capability-sync-uploaded-plugin");
     let skills_dir = temp.path().join("skills");

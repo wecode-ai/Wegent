@@ -88,6 +88,131 @@ impl CapabilitySyncError {
     }
 }
 
+#[derive(Debug)]
+struct FileSnapshot {
+    path: PathBuf,
+    backup: Option<PathBuf>,
+}
+
+#[derive(Debug, Default)]
+struct LocalPluginStateTransaction {
+    files: Vec<FileSnapshot>,
+    moved_paths: Vec<(PathBuf, PathBuf)>,
+}
+
+impl LocalPluginStateTransaction {
+    fn begin(
+        file_paths: impl IntoIterator<Item = PathBuf>,
+        moved_paths: impl IntoIterator<Item = PathBuf>,
+    ) -> Result<Self, CapabilitySyncError> {
+        let mut transaction = Self::default();
+        let result = (|| {
+            for path in file_paths.into_iter().collect::<BTreeSet<_>>() {
+                let backup = if path.exists() || path.is_symlink() {
+                    let backup = rollback_temp_path(&path);
+                    remove_existing_path(&backup)?;
+                    fs::copy(&path, &backup)?;
+                    Some(backup)
+                } else {
+                    None
+                };
+                transaction.files.push(FileSnapshot { path, backup });
+            }
+            for path in moved_paths.into_iter().collect::<BTreeSet<_>>() {
+                if !path.exists() && !path.is_symlink() {
+                    continue;
+                }
+                let backup = rollback_temp_path(&path);
+                remove_existing_path(&backup)?;
+                fs::rename(&path, &backup)?;
+                transaction.moved_paths.push((path, backup));
+            }
+            Ok(())
+        })();
+        if let Err(error) = result {
+            return Err(transaction.add_rollback_context(error));
+        }
+        Ok(transaction)
+    }
+
+    fn commit(self) {
+        for snapshot in self.files {
+            if let Some(backup) = snapshot.backup {
+                let _ = remove_existing_path(&backup);
+            }
+        }
+        for (_, backup) in self.moved_paths {
+            let _ = remove_existing_path(&backup);
+        }
+    }
+
+    fn rollback(&mut self) -> Result<(), CapabilitySyncError> {
+        let mut errors = Vec::new();
+        for (path, backup) in self.moved_paths.iter().rev() {
+            if let Err(error) = remove_existing_path(path)
+                .and_then(|()| fs::rename(backup, path).map_err(CapabilitySyncError::from))
+            {
+                errors.push(error.to_string());
+            }
+        }
+        for snapshot in self.files.iter().rev() {
+            let result = remove_existing_path(&snapshot.path).and_then(|()| {
+                if let Some(backup) = &snapshot.backup {
+                    fs::rename(backup, &snapshot.path).map_err(CapabilitySyncError::from)
+                } else {
+                    Ok(())
+                }
+            });
+            if let Err(error) = result {
+                errors.push(error.to_string());
+            }
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(CapabilitySyncError::invalid_payload(format!(
+                "Local plugin state rollback failed: {}",
+                errors.join("; ")
+            )))
+        }
+    }
+
+    fn add_rollback_context(&mut self, error: CapabilitySyncError) -> CapabilitySyncError {
+        match self.rollback() {
+            Ok(()) => error,
+            Err(rollback_error) => {
+                CapabilitySyncError::invalid_payload(format!("{error}; {rollback_error}"))
+            }
+        }
+    }
+}
+
+fn rollback_temp_path(path: &Path) -> PathBuf {
+    let mut temporary = sibling_temp_path(path).into_os_string();
+    temporary.push(".rollback");
+    PathBuf::from(temporary)
+}
+
+fn rollback_plugin_package(
+    store_path: &Path,
+    backup_path: Option<&Path>,
+    error: CapabilitySyncError,
+) -> CapabilitySyncError {
+    let rollback_result = remove_existing_path(store_path).and_then(|()| {
+        if let Some(backup) = backup_path {
+            fs::rename(backup, store_path).map_err(CapabilitySyncError::from)
+        } else {
+            Ok(())
+        }
+    });
+    match rollback_result {
+        Ok(()) => error,
+        Err(rollback_error) => CapabilitySyncError::invalid_payload(format!(
+            "{error}; plugin package rollback failed: {rollback_error}"
+        )),
+    }
+}
+
 pub trait CapabilityPackageProvider {
     fn stage_skill<'a>(
         &'a self,
@@ -425,7 +550,6 @@ impl GlobalCapabilityStore {
                 continue;
             }
             self.install_plugin_runtime_metadata(&spec, &store_path, &mut manifest)?;
-            self.install_marketplace_metadata(&spec, &store_path)?;
             restored.push(key);
         }
         self.garbage_collect_unreferenced_managed_plugins(&manifest)?;
@@ -614,24 +738,85 @@ impl GlobalCapabilityStore {
         let previous_codex_link = previous_runtime
             .and_then(|runtime| value_string(runtime.get("codex_link")))
             .map(PathBuf::from);
-        self.install_claude_plugin_runtime_metadata(spec, store_path)?;
-        copy_dir_atomic(store_path, &codex_link)?;
-        if let Some(previous_runtime_link) = previous_runtime_link {
-            if previous_runtime_link != runtime_link {
-                self.remove_claude_plugin_runtime_path(&previous_runtime_link)?;
+        if previous_runtime_link
+            .as_ref()
+            .is_some_and(|path| path != &runtime_link && !path.starts_with(&self.plugins_dir))
+        {
+            return Err(CapabilitySyncError::invalid_payload(
+                "Managed Claude plugin runtime path is outside the plugin directory",
+            ));
+        }
+        let claude_marketplace_dir = self
+            .plugins_dir
+            .join("marketplaces")
+            .join(&spec.marketplace);
+        let codex_marketplace_dir = self
+            .codex_plugins_dir
+            .join("marketplaces")
+            .join(&spec.marketplace);
+        let file_paths = [
+            self.plugins_dir.join("known_marketplaces.json"),
+            self.plugins_dir.join("installed_plugins.json"),
+            self.plugins_dir
+                .parent()
+                .unwrap_or_else(|| Path::new("."))
+                .join("settings.json"),
+            claude_marketplace_dir.join(".claude-plugin/marketplace.json"),
+            claude_marketplace_dir.join(".agents/plugins/marketplace.json"),
+            codex_marketplace_dir.join(".agents/plugins/marketplace.json"),
+            self.codex_plugins_dir
+                .parent()
+                .unwrap_or_else(|| Path::new("."))
+                .join("config.toml"),
+        ];
+        let mut moved_paths = vec![
+            runtime_link.clone(),
+            codex_link.clone(),
+            claude_marketplace_dir
+                .join("plugins")
+                .join(plugin_codex_link_name(spec)),
+            codex_marketplace_dir.join("plugins").join(&spec.name),
+        ];
+        if let Some(path) = &previous_runtime_link {
+            moved_paths.push(path.clone());
+        }
+        if let Some(path) = &previous_codex_link {
+            if path.starts_with(&self.codex_plugins_dir) {
+                moved_paths.push(path.clone());
             }
         }
-        if let Some(previous_codex_link) = previous_codex_link {
-            if previous_codex_link != codex_link
-                && previous_codex_link.starts_with(&self.codex_plugins_dir)
-            {
-                self.remove_codex_plugin_runtime_path(&previous_codex_link)?;
+        let original_manifest = manifest.clone();
+        let mut transaction = LocalPluginStateTransaction::begin(file_paths, moved_paths)?;
+        let result = (|| {
+            self.install_claude_plugin_runtime_metadata(spec, store_path)?;
+            copy_dir_atomic(store_path, &codex_link)?;
+            if let Some(previous_runtime_link) = previous_runtime_link {
+                if previous_runtime_link != runtime_link {
+                    self.remove_claude_plugin_runtime_path(&previous_runtime_link)?;
+                }
+            }
+            if let Some(previous_codex_link) = previous_codex_link {
+                if previous_codex_link != codex_link
+                    && previous_codex_link.starts_with(&self.codex_plugins_dir)
+                {
+                    self.remove_codex_plugin_runtime_path(&previous_codex_link)?;
+                }
+            }
+            self.install_codex_marketplace_metadata(spec, store_path)?;
+            let entry = plugin_manifest_entry(spec, store_path, &runtime_link, &codex_link);
+            ensure_object_field(manifest, "plugins").insert(spec.key.clone(), entry);
+            Ok(())
+        })();
+        match result {
+            Ok(()) => {
+                transaction.commit();
+                Ok(())
+            }
+            Err(error) => {
+                *manifest = original_manifest;
+                Err(transaction.add_rollback_context(error))
             }
         }
-        self.install_codex_marketplace_metadata(spec, store_path)?;
-        let entry = plugin_manifest_entry(spec, store_path, &runtime_link, &codex_link);
-        ensure_object_field(manifest, "plugins").insert(spec.key.clone(), entry);
-        Ok(())
     }
 
     fn install_claude_plugin_runtime_metadata(
@@ -1251,29 +1436,32 @@ where
                     });
                 }
             }
-            let backup_path = if store_path.exists() {
-                Some(sibling_temp_path(&store_path).with_extension("rollback"))
+            let backup_path = if store_path.exists() || store_path.is_symlink() {
+                let backup = rollback_temp_path(&store_path);
+                remove_existing_path(&backup)?;
+                fs::rename(&store_path, &backup)?;
+                Some(backup)
             } else {
                 None
             };
-            if let Some(backup) = backup_path.as_ref() {
-                if let Err(error) = copy_dir_recursive(&store_path, backup) {
-                    if !store_path.is_dir() {
-                        let _ = error;
-                    }
-                }
-            }
             let extract_result = extract_plugin_zip(&package, &store_path);
             if let Err(error) = extract_result {
-                if let Some(backup) = backup_path.as_ref() {
-                    let _ = remove_existing_path(&store_path);
-                    let _ = copy_dir_recursive(backup, &store_path);
-                    let _ = remove_existing_path(backup);
-                }
-                return Err(error);
+                return Err(rollback_plugin_package(
+                    &store_path,
+                    backup_path.as_deref(),
+                    error,
+                ));
             }
-            self.store
-                .install_plugin_runtime_metadata(spec, &store_path, manifest)?;
+            if let Err(error) =
+                self.store
+                    .install_plugin_runtime_metadata(spec, &store_path, manifest)
+            {
+                return Err(rollback_plugin_package(
+                    &store_path,
+                    backup_path.as_deref(),
+                    error,
+                ));
+            }
             if let Some(backup) = backup_path.as_ref() {
                 let _ = remove_existing_path(backup);
             }
@@ -1354,32 +1542,85 @@ where
             .collect::<BTreeSet<_>>();
 
         let mut installed = read_installed_plugins(&self.store.plugins_dir)?;
-        let plugins = ensure_object_field(&mut installed, "plugins");
-        for (key, plugin) in stale {
-            plugins.remove(&key);
+        let mut moved_paths = Vec::new();
+        for (_, plugin) in &stale {
             if let Some(runtime) = plugin.get("runtime") {
-                if let Some(path) = value_string(runtime.get("claude_link")) {
-                    remove_existing_path(Path::new(&path))?;
+                if let Some(path) = value_string(runtime.get("claude_link")).map(PathBuf::from) {
+                    if !path.starts_with(&self.store.plugins_dir) {
+                        return Err(CapabilitySyncError::invalid_payload(format!(
+                            "Managed Claude plugin path is outside the plugin directory: {}",
+                            path.display()
+                        )));
+                    }
+                    moved_paths.push(path);
                 }
-                if let Some(path) = value_string(runtime.get("codex_link")) {
-                    remove_existing_path(Path::new(&path))?;
+                if let Some(path) = value_string(runtime.get("codex_link")).map(PathBuf::from) {
+                    if !path.starts_with(&self.store.codex_plugins_dir) {
+                        return Err(CapabilitySyncError::invalid_payload(format!(
+                            "Managed Codex plugin path is outside the plugin directory: {}",
+                            path.display()
+                        )));
+                    }
+                    moved_paths.push(path);
                 }
             }
             if let Some(store_path) = value_string(plugin.get("store_path")).map(PathBuf::from) {
-                remove_existing_path(&store_path)?;
+                moved_paths.push(store_path);
             }
-            ensure_object_field(manifest, "plugins").remove(&key);
         }
-        write_json(
-            &self.store.plugins_dir.join("installed_plugins.json"),
-            &installed,
-        )?;
-        self.store.remove_plugin_runtime_configuration(
-            &stale_keys,
-            &stale_marketplaces,
-            &desired_marketplaces,
-        )?;
-        Ok(())
+        let file_paths = [
+            self.store.plugins_dir.join("installed_plugins.json"),
+            self.store
+                .plugins_dir
+                .parent()
+                .unwrap_or_else(|| Path::new("."))
+                .join("settings.json"),
+            self.store
+                .codex_plugins_dir
+                .parent()
+                .unwrap_or_else(|| Path::new("."))
+                .join("config.toml"),
+        ];
+        let original_manifest = manifest.clone();
+        let mut transaction = LocalPluginStateTransaction::begin(file_paths, moved_paths)?;
+        let result = (|| {
+            for (key, plugin) in stale {
+                ensure_object_field(&mut installed, "plugins").remove(&key);
+                if let Some(runtime) = plugin.get("runtime") {
+                    if let Some(path) = value_string(runtime.get("claude_link")) {
+                        remove_existing_path(Path::new(&path))?;
+                    }
+                    if let Some(path) = value_string(runtime.get("codex_link")) {
+                        remove_existing_path(Path::new(&path))?;
+                    }
+                }
+                if let Some(store_path) = value_string(plugin.get("store_path")).map(PathBuf::from)
+                {
+                    remove_existing_path(&store_path)?;
+                }
+                ensure_object_field(manifest, "plugins").remove(&key);
+            }
+            write_json(
+                &self.store.plugins_dir.join("installed_plugins.json"),
+                &installed,
+            )?;
+            self.store.remove_plugin_runtime_configuration(
+                &stale_keys,
+                &stale_marketplaces,
+                &desired_marketplaces,
+            )?;
+            Ok(())
+        })();
+        match result {
+            Ok(()) => {
+                transaction.commit();
+                Ok(())
+            }
+            Err(error) => {
+                *manifest = original_manifest;
+                Err(transaction.add_rollback_context(error))
+            }
+        }
     }
 
     fn record_mcps(
