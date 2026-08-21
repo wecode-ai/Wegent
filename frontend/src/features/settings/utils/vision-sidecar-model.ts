@@ -71,15 +71,22 @@ export function visionSidecarModelKey(model: UnifiedModel): string {
   )
 }
 
-export function visionSidecarModels(models: UnifiedModel[], currentName: string): UnifiedModel[] {
-  return models.filter(model => {
-    if (model.name === currentName || model.isActive === false) return false
-    if (model.resourceUserId == null || model.modelCapabilities?.supportsImage !== true)
-      return false
-    return visionSidecarApiFormat(model) !== null
-  })
+/** Whether a model can act as a vision sidecar for some other model. */
+function visionSidecarCandidate(model: UnifiedModel): boolean {
+  return (
+    model.isActive !== false &&
+    model.resourceUserId != null &&
+    model.modelCapabilities?.supportsImage === true &&
+    visionSidecarApiFormat(model) !== null
+  )
 }
 
+/** Candidates offered for the model currently being edited. */
+export function visionSidecarModels(models: UnifiedModel[], currentName: string): UnifiedModel[] {
+  return models.filter(model => model.name !== currentName && visionSidecarCandidate(model))
+}
+
+/** Build the reference persisted on a primary model for this sidecar target. */
 export function visionSidecarRef(model: UnifiedModel): VisionSidecarModelRef | null {
   const apiFormat = visionSidecarApiFormat(model)
   if (!apiFormat || model.resourceUserId == null) return null
@@ -92,7 +99,7 @@ export function visionSidecarRef(model: UnifiedModel): VisionSidecarModelRef | n
   }
 }
 
-export function matchesVisionSidecarRef(model: UnifiedModel, ref: VisionSidecarModelRef): boolean {
+function matchesVisionSidecarRef(model: UnifiedModel, ref: VisionSidecarModelRef): boolean {
   return (
     model.name === ref.modelName &&
     model.type === ref.modelType &&
@@ -110,20 +117,40 @@ export function matchesVisionSidecarRef(model: UnifiedModel, ref: VisionSidecarM
 export const UNRESOLVED_VISION_SIDECAR_KEY = '__unresolved-vision-sidecar__'
 
 /**
+ * Choose the option that represents an already configured sidecar reference.
+ *
+ * Only a selectable candidate may claim its own option key. Any other target -- a
+ * model that never declared image support, was deactivated, or is not published to
+ * this surface -- is kept under the sentinel so it stays visible and survives a
+ * save; such a reference still works at runtime, so discarding it here would
+ * silently delete working configuration.
+ */
+export function initialVisionSidecarSelection(
+  models: UnifiedModel[],
+  ref: VisionSidecarModelRef
+): { selectedKey: string; unresolvedRef: VisionSidecarModelRef | null } {
+  const selected = models.find(
+    model => visionSidecarCandidate(model) && matchesVisionSidecarRef(model, ref)
+  )
+  return selected
+    ? { selectedKey: visionSidecarModelKey(selected), unresolvedRef: null }
+    : { selectedKey: UNRESOLVED_VISION_SIDECAR_KEY, unresolvedRef: ref }
+}
+
+/**
  * Resolve the reference to persist for the currently selected sidecar option.
  *
- * Keeping the sentinel selectable makes an unresolvable reference survive a save:
- * a model whose target never declared image support is still honoured at runtime,
- * so dropping it here would silently discard working configuration.
+ * `models` is the full loaded catalog rather than the offered candidates, so a key
+ * chosen before an unrelated edit narrowed the candidate list still resolves.
  */
 export function selectedVisionSidecarRef(
   enabled: boolean,
   selectedKey: string,
-  candidates: UnifiedModel[],
+  models: UnifiedModel[],
   unresolvedRef: VisionSidecarModelRef | null
 ): VisionSidecarModelRef | undefined {
   if (!enabled) return undefined
   if (selectedKey === UNRESOLVED_VISION_SIDECAR_KEY) return unresolvedRef ?? undefined
-  const selected = candidates.find(candidate => visionSidecarModelKey(candidate) === selectedKey)
+  const selected = models.find(model => visionSidecarModelKey(model) === selectedKey)
   return selected ? (visionSidecarRef(selected) ?? undefined) : undefined
 }

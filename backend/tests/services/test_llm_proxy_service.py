@@ -760,11 +760,11 @@ async def test_proxy_llm_responses_infers_anthropic_endpoint_from_env_model(
     """
     model = _model_kind(
         test_user.id,
-        name="wecode-claude-weibo-kimi-k2.5",
+        name="kimi-k2.5-vision",
         protocol=None,
         env_model="claude",
         api_key="sk-anthropic-key",
-        base_url="https://new-api-copilot.example.com",
+        base_url="https://api.example.com",
     )
     test_db.add(model)
     test_db.commit()
@@ -772,7 +772,7 @@ async def test_proxy_llm_responses_infers_anthropic_endpoint_from_env_model(
     request_mock = MagicMock(spec=Request)
     request_mock.body = AsyncMock(
         return_value=(
-            b'{"model":"wecode-claude-weibo-kimi-k2.5","max_tokens":2000,'
+            b'{"model":"kimi-k2.5-vision","max_tokens":2000,'
             b'"messages":[{"role":"user","content":[]}]}'
         )
     )
@@ -805,7 +805,7 @@ async def test_proxy_llm_responses_infers_anthropic_endpoint_from_env_model(
 
     assert response.status_code == 200
     sent_request = client_mock.send.call_args[0][0]
-    assert str(sent_request.url) == "https://new-api-copilot.example.com/v1/messages"
+    assert str(sent_request.url) == "https://api.example.com/v1/messages"
     assert sent_request.headers["x-api-key"] == "sk-anthropic-key"
     assert sent_request.headers["anthropic-version"] == "2023-06-01"
 

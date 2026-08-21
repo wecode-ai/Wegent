@@ -1,5 +1,6 @@
-import type { UnifiedModel } from '@/apis/models'
+import type { UnifiedModel, VisionSidecarModelRef } from '@/apis/models'
 import {
+  initialVisionSidecarSelection,
   selectedVisionSidecarRef,
   UNRESOLVED_VISION_SIDECAR_KEY,
   visionSidecarApiFormat,
@@ -105,25 +106,50 @@ describe('vision sidecar model helpers', () => {
   })
 })
 
-describe('selectedVisionSidecarRef', () => {
+describe('vision sidecar reference round trip', () => {
   const unresolvedRef = {
-    modelName: 'wecode-claude-weibo-kimi-k2.5',
+    modelName: 'kimi-k2.5-vision',
     modelType: 'public' as const,
     namespace: 'default',
     resourceUserId: 0,
     apiFormat: 'anthropic-messages' as const,
   }
+  // Present in the catalog and identity-matching, but never declared image support,
+  // so it is not offered as a candidate.
+  const unselectableTarget: UnifiedModel = {
+    name: unresolvedRef.modelName,
+    type: unresolvedRef.modelType,
+    namespace: unresolvedRef.namespace,
+    resourceUserId: unresolvedRef.resourceUserId,
+    modelCapabilities: {},
+    runtime: { family: 'claude' },
+  }
 
-  test('persists the selected candidate', () => {
-    expect(selectedVisionSidecarRef(true, visionSidecarModelKey(vision), [vision], null)).toEqual(
-      visionSidecarRef(vision)
-    )
+  const persist = (models: UnifiedModel[], ref: VisionSidecarModelRef) => {
+    const selection = initialVisionSidecarSelection(models, ref)
+    return selectedVisionSidecarRef(true, selection.selectedKey, models, selection.unresolvedRef)
+  }
+
+  test('selects a candidate under its own option key', () => {
+    const selection = initialVisionSidecarSelection([vision], visionSidecarRef(vision)!)
+
+    expect(selection).toEqual({
+      selectedKey: visionSidecarModelKey(vision),
+      unresolvedRef: null,
+    })
+    expect(persist([vision], visionSidecarRef(vision)!)).toEqual(visionSidecarRef(vision))
   })
 
-  test('keeps a configured reference whose target is not selectable', () => {
-    expect(
-      selectedVisionSidecarRef(true, UNRESOLVED_VISION_SIDECAR_KEY, [vision], unresolvedRef)
-    ).toEqual(unresolvedRef)
+  test('keeps an identity-matching target that is not a candidate under the sentinel', () => {
+    expect(initialVisionSidecarSelection([unselectableTarget], unresolvedRef)).toEqual({
+      selectedKey: UNRESOLVED_VISION_SIDECAR_KEY,
+      unresolvedRef,
+    })
+    expect(persist([unselectableTarget], unresolvedRef)).toEqual(unresolvedRef)
+  })
+
+  test('keeps a reference whose target left the catalog entirely', () => {
+    expect(persist([], unresolvedRef)).toEqual(unresolvedRef)
   })
 
   test('clears the reference when the sidecar is switched off', () => {

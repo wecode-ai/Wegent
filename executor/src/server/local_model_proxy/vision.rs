@@ -923,7 +923,7 @@ mod tests {
                 .expect("sidecar server should run");
         });
         let body = serde_json::to_vec(&json!({
-            "model": "weibo-glm-5.2",
+            "model": "text-only-primary",
             "input": [{
                 "type": "message",
                 "role": "user",

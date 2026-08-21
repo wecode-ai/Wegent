@@ -691,7 +691,7 @@ describe('createHybridWorkbenchServices', () => {
 
   it('keeps well-formed cloud vision references without a client-side catalog lookup', async () => {
     const reference = {
-      modelName: 'wecode-claude-weibo-kimi-k2.5',
+      modelName: 'kimi-k2.5-vision',
       modelType: 'public',
       namespace: 'default',
       resourceUserId: 0,
@@ -700,10 +700,10 @@ describe('createHybridWorkbenchServices', () => {
     // The sidecar target declares no capabilities and is absent from the Wework
     // catalog; the backend gateway resolves and authorizes it at send time.
     const configuredPrimary = {
-      name: 'wecode-claude-weibo-glm-5.2',
+      name: 'text-only-primary',
       type: 'public',
-      displayName: 'GLM 5.2',
-      modelId: 'weibo-glm-5.2',
+      displayName: 'Text Only Primary',
+      modelId: 'text-only-primary',
       namespace: 'default',
       resourceUserId: 0,
       config: { visionSidecarModel: reference },
@@ -712,8 +712,8 @@ describe('createHybridWorkbenchServices', () => {
     }
     const malformedPrimary = {
       ...configuredPrimary,
-      name: 'wecode-claude-weibo-glm-5.1',
-      modelId: 'weibo-glm-5.1',
+      name: 'text-only-primary-malformed',
+      modelId: 'text-only-primary-malformed',
       config: { visionSidecarModel: { ...reference, apiFormat: 'gemini-generate-content' } },
     }
     mocks.localListModels.mockResolvedValue({ data: [] })

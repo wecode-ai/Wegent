@@ -2840,14 +2840,14 @@ describe('createLocalAppServices', () => {
       taskId: 'task-anthropic-sidecar',
       runtime: 'codex',
       message: 'describe the image',
-      title: 'GLM with Anthropic sidecar',
-      modelId: 'wecode-claude-weibo-glm-5.2',
+      title: 'Text-only primary with Anthropic sidecar',
+      modelId: 'text-only-primary',
       modelType: 'public',
       modelOptions: {
         weworkCloudModelNamespace: 'default',
         weworkCloudModelResourceUserId: '0',
         weworkCloudVisionSidecar:
-          '{"modelName":"wecode-claude-weibo-kimi-k2.5","modelType":"public","namespace":"default","resourceUserId":0,"apiFormat":"anthropic-messages"}',
+          '{"modelName":"kimi-k2.5-vision","modelType":"public","namespace":"default","resourceUserId":0,"apiFormat":"anthropic-messages"}',
       },
     })
 
@@ -2857,7 +2857,7 @@ describe('createLocalAppServices', () => {
       request_url: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy/responses',
       api_format: 'anthropic-messages',
       api_key: 'cloud-login-token',
-      model_id: 'wecode-claude-weibo-kimi-k2.5',
+      model_id: 'kimi-k2.5-vision',
       default_headers: {
         'X-Wegent-Model-Type': 'public',
         'X-Wegent-Model-Namespace': 'default',
@@ -2891,7 +2891,7 @@ describe('createLocalAppServices', () => {
         runtime: 'codex',
         message: 'describe the image',
         title: 'Bad sidecar',
-        modelId: 'wecode-claude-weibo-glm-5.2',
+        modelId: 'text-only-primary',
         modelType: 'public',
         modelOptions: {
           weworkCloudModelNamespace: 'default',

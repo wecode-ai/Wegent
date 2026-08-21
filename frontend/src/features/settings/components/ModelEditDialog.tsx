@@ -64,7 +64,7 @@ import { CapabilityScopeSelector } from '@/features/resource-library/components/
 import { useCapabilityPublicationScope } from '@/features/resource-library/useCapabilityPublicationScope'
 import type { Group } from '@/types/group'
 import {
-  matchesVisionSidecarRef,
+  initialVisionSidecarSelection,
   selectedVisionSidecarRef,
   UNRESOLVED_VISION_SIDECAR_KEY,
   visionSidecarModelKey,
@@ -667,16 +667,9 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         setAvailableVisionModels(response.data)
         const initialRef = effectiveInitialData?.visionSidecarModel
         if (initialRef) {
-          const selected = response.data.find(candidate =>
-            matchesVisionSidecarRef(candidate, initialRef)
-          )
-          // A reference whose target is not selectable (for example a model that never
-          // declared image support) stays selected under its own option, so saving the
-          // model does not silently delete a configured sidecar.
-          setSelectedVisionSidecarKey(
-            selected ? visionSidecarModelKey(selected) : UNRESOLVED_VISION_SIDECAR_KEY
-          )
-          setUnresolvedVisionSidecar(selected ? null : initialRef)
+          const selection = initialVisionSidecarSelection(response.data, initialRef)
+          setSelectedVisionSidecarKey(selection.selectedKey)
+          setUnresolvedVisionSidecar(selection.unresolvedRef)
         }
       })
       .catch(() => {
@@ -1274,7 +1267,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
       const selectedVisionSidecar = selectedVisionSidecarRef(
         modelCategoryType === 'llm' && isWeworkAvailable,
         selectedVisionSidecarKey,
-        visionModelOptions,
+        availableVisionModels,
         unresolvedVisionSidecar
       )
 
@@ -1740,7 +1733,10 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                     {t('common:models.vision_sidecar_disabled')}
                   </SelectItem>
                   {unresolvedVisionSidecar && (
-                    <SelectItem value={UNRESOLVED_VISION_SIDECAR_KEY}>
+                    <SelectItem
+                      value={UNRESOLVED_VISION_SIDECAR_KEY}
+                      data-testid="vision-sidecar-model-unavailable-option"
+                    >
                       {t('common:models.vision_sidecar_unavailable', {
                         modelName: unresolvedVisionSidecar.modelName,
                       })}
