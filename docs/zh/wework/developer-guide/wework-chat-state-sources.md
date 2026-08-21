@@ -95,6 +95,12 @@ turn ID 可以把乐观消息重新绑定到正确 turn；失败时必须移除�
 的 Codex thread 执行 `thread/resume`，再用 `thread/read(includeTurns)` 读取完整快照；
 快照重新建立 turn、消息和运行状态，不能依赖断线前的内存事件缓存继续推断。
 
+Codex turn 运行期间不能并发调用 provider transcript reader。executor 必须在空闲读取
+最新 transcript 页成功后，按 thread ID 持久化该页的消息快照；运行中的 transcript
+响应由该快照、当前待处理用户消息、已结算消息和活跃流消息按消息 ID 去重合并。这样
+WebView 或 executor 重建后启动的新 turn 不会让历史 assistant 回复消失。thread ID
+变化时必须同时清除完成态缓存和 transcript 快照，不能把旧 thread 的消息带入新会话。
+
 首条消息携带 pending Goal seed 时，发送入口和 pane 初始化都必须先把 seed 的状态
 写入 `RuntimeTaskLifecycleStore`。异步 `runtime.goal.get` 在 Goal 尚未持久化时可能返回
 空值；在 seed 仍属于当前任务时，空结果不能清除 lifecycle 中的 Goal 状态。这样即使

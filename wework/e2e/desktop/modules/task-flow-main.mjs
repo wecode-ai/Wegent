@@ -1085,6 +1085,7 @@ async function main() {
         'The restarted Wework application did not reconnect to the desktop controller'
       )
     }
+    desktopScenario?.setRestartDesktopApp?.(restartDesktopApp)
 
     const ready = await withTimeout(
       control.awaitReady(),

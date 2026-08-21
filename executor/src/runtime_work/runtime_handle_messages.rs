@@ -25,6 +25,21 @@ pub(crate) fn completed_transcript_messages(link: &RuntimeTaskLink) -> Vec<Value
     runtime_handle_messages(&link.runtime_handle, "completedTranscriptMessages")
 }
 
+pub(crate) fn transcript_snapshot_messages(link: &RuntimeTaskLink) -> Vec<Value> {
+    let Some(thread_id) = link.thread_id.as_deref() else {
+        return Vec::new();
+    };
+    if link
+        .runtime_handle
+        .get("transcriptSnapshotThreadId")
+        .and_then(Value::as_str)
+        != Some(thread_id)
+    {
+        return Vec::new();
+    }
+    runtime_handle_messages(&link.runtime_handle, "transcriptSnapshotMessages")
+}
+
 pub(crate) fn set_runtime_handle_messages(runtime_handle: &mut Value, messages: Vec<Value>) {
     if !runtime_handle.is_object() {
         *runtime_handle = Value::Object(Map::new());
@@ -33,6 +48,30 @@ pub(crate) fn set_runtime_handle_messages(runtime_handle: &mut Value, messages: 
         .as_object_mut()
         .expect("runtime handle object was just inserted");
     object.insert("messages".to_owned(), Value::Array(messages));
+}
+
+pub(crate) fn set_transcript_snapshot_messages(
+    runtime_handle: &mut Value,
+    thread_id: &str,
+    messages: Vec<Value>,
+) {
+    if thread_id.trim().is_empty() {
+        return;
+    }
+    if !runtime_handle.is_object() {
+        *runtime_handle = Value::Object(Map::new());
+    }
+    let object = runtime_handle
+        .as_object_mut()
+        .expect("runtime handle object was just inserted");
+    object.insert(
+        "transcriptSnapshotThreadId".to_owned(),
+        Value::String(thread_id.to_owned()),
+    );
+    object.insert(
+        "transcriptSnapshotMessages".to_owned(),
+        Value::Array(messages),
+    );
 }
 
 pub(crate) fn append_runtime_handle_message(runtime_handle: &mut Value, message: Value) {
@@ -93,6 +132,29 @@ pub(crate) fn clear_completed_transcript_messages(runtime_handle: &mut Value) {
     if let Some(object) = runtime_handle.as_object_mut() {
         object.remove("completedTranscriptMessages");
         object.remove("completedTranscriptThreadId");
+    }
+}
+
+pub(crate) fn clear_transcript_snapshot_messages(runtime_handle: &mut Value) {
+    if let Some(object) = runtime_handle.as_object_mut() {
+        object.remove("transcriptSnapshotMessages");
+        object.remove("transcriptSnapshotThreadId");
+    }
+}
+
+pub(crate) fn append_unique_transcript_messages(
+    target: &mut Vec<Value>,
+    messages: impl IntoIterator<Item = Value>,
+) {
+    for message in messages {
+        let message_id = message.get("id").and_then(Value::as_str);
+        if let Some(existing) = target.iter_mut().find(|existing| {
+            message_id.is_some() && existing.get("id").and_then(Value::as_str) == message_id
+        }) {
+            *existing = message;
+        } else {
+            target.push(message);
+        }
     }
 }
 
@@ -228,5 +290,44 @@ mod tests {
         let messages = completed_transcript_messages(&link);
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0]["id"], "message-2");
+    }
+
+    #[test]
+    fn transcript_snapshot_is_scoped_to_provider_thread() {
+        let mut link = RuntimeTaskLink {
+            thread_id: Some("thread-1".to_owned()),
+            ..RuntimeTaskLink::default()
+        };
+        set_transcript_snapshot_messages(
+            &mut link.runtime_handle,
+            "thread-1",
+            vec![json!({"id": "message-1", "role": "assistant"})],
+        );
+
+        assert_eq!(transcript_snapshot_messages(&link).len(), 1);
+
+        link.thread_id = Some("thread-2".to_owned());
+        assert!(transcript_snapshot_messages(&link).is_empty());
+    }
+
+    #[test]
+    fn appending_transcript_messages_replaces_matching_ids() {
+        let mut messages = vec![
+            json!({"id": "message-1", "content": "old"}),
+            json!({"id": "message-2", "content": "keep"}),
+        ];
+
+        append_unique_transcript_messages(
+            &mut messages,
+            vec![
+                json!({"id": "message-1", "content": "new"}),
+                json!({"id": "message-3", "content": "append"}),
+            ],
+        );
+
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0]["content"], "new");
+        assert_eq!(messages[1]["content"], "keep");
+        assert_eq!(messages[2]["content"], "append");
     }
 }

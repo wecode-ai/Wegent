@@ -422,6 +422,7 @@ impl RuntimeWorkRpcHandler {
         self.store.update_task(local_task_id, |link| {
             if link.thread_id.as_deref() != Some(thread_id) {
                 clear_completed_transcript_messages(&mut link.runtime_handle);
+                clear_transcript_snapshot_messages(&mut link.runtime_handle);
             }
             link.thread_id = Some(thread_id.to_owned());
             clear_runtime_handle_messages(&mut link.runtime_handle);
