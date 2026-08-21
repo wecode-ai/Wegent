@@ -31,11 +31,73 @@ import {
   spawn,
   stopProcess,
   stopProcessGroup,
-  waitForLogPattern,
   waitForUrl,
   weworkDir,
   writeFile,
 } from './shared.mjs'
+
+const REDIS_START_ATTEMPTS = 5
+const REDIS_READY_PATTERN = /Ready to accept connections/
+const REDIS_PORT_CONFLICT_PATTERN = /Address already in use|Failed listening on port/
+
+async function waitForRedisReady(redis, logPath, fromOffset) {
+  let spawnError = null
+  const captureSpawnError = error => {
+    spawnError = error
+  }
+  redis.once('error', captureSpawnError)
+  const startedAt = Date.now()
+  try {
+    while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+      const content = await readFile(logPath, 'utf8').catch(() => '')
+      const attemptOutput = content.slice(fromOffset)
+      if (REDIS_READY_PATTERN.test(attemptOutput)) return attemptOutput
+      if (spawnError) throw spawnError
+      if (redis.exitCode !== null || redis.signalCode !== null) {
+        throw new Error(
+          `Redis exited before becoming ready: ${attemptOutput.trim() || 'no process output'}`
+        )
+      }
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+    }
+  } finally {
+    redis.off('error', captureSpawnError)
+  }
+  throw new Error(`Timed out waiting for Redis readiness in ${logPath}`)
+}
+
+async function startRedisServer(
+  logPath,
+  { reserveRedisPort = reservePort, spawnRedis = spawn } = {}
+) {
+  for (let attempt = 1; attempt <= REDIS_START_ATTEMPTS; attempt += 1) {
+    const port = await reserveRedisPort()
+    const existingLog = await readFile(logPath, 'utf8').catch(() => '')
+    const fromOffset = existingLog.length
+    await appendFile(logPath, `Redis start attempt ${attempt} on port ${port}\n`)
+    const redis = spawnRedis(
+      'redis-server',
+      ['--port', String(port), '--save', '', '--appendonly', 'no'],
+      { stdio: ['ignore', 'pipe', 'pipe'] }
+    )
+    await Promise.all([
+      appendProcessOutput(redis.stdout, logPath),
+      appendProcessOutput(redis.stderr, logPath),
+    ])
+    try {
+      await waitForRedisReady(redis, logPath, fromOffset)
+      return { port, redis }
+    } catch (error) {
+      await stopProcess(redis)
+      const attemptOutput = (await readFile(logPath, 'utf8').catch(() => '')).slice(fromOffset)
+      if (attempt < REDIS_START_ATTEMPTS && REDIS_PORT_CONFLICT_PATTERN.test(attemptOutput)) {
+        continue
+      }
+      throw error
+    }
+  }
+  throw new Error(`Redis did not start after ${REDIS_START_ATTEMPTS} attempts`)
+}
 
 class LocalPluginObjectStorage {
   constructor() {
@@ -172,17 +234,9 @@ class RealCloudEnvironment {
     this.pluginObjectStorage = new LocalPluginObjectStorage()
     await this.pluginObjectStorage.start()
 
-    this.redisPort = await reservePort()
-    this.redis = spawn(
-      'redis-server',
-      ['--port', String(this.redisPort), '--save', '', '--appendonly', 'no'],
-      { stdio: ['ignore', 'pipe', 'pipe'] }
-    )
-    await Promise.all([
-      appendProcessOutput(this.redis.stdout, this.redisLogPath),
-      appendProcessOutput(this.redis.stderr, this.redisLogPath),
-    ])
-    await waitForLogPattern(this.redisLogPath, /Ready to accept connections/)
+    const redisServer = await startRedisServer(this.redisLogPath)
+    this.redisPort = redisServer.port
+    this.redis = redisServer.redis
 
     this.backendPort = await reservePort()
     this.backendUrl = `http://127.0.0.1:${this.backendPort}`
@@ -935,4 +989,4 @@ async function verifyLocalExecutorUsesCloudSocketUrl(control, cloudEnvironment) 
   )
 }
 
-export { RealCloudEnvironment, verifyLocalExecutorUsesCloudSocketUrl }
+export { RealCloudEnvironment, startRedisServer, verifyLocalExecutorUsesCloudSocketUrl }
