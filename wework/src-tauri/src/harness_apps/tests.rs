@@ -328,7 +328,7 @@ fn node_version_check_reports_v8_initialization_failures() {
     assert!(error.contains("Failed to reserve virtual memory for CodeRange"));
 }
 #[test]
-fn runtime_descriptor_requires_https_and_integrity_metadata() {
+fn runtime_descriptor_requires_http_transport_and_integrity_metadata() {
     let directory = tempdir().unwrap();
     fs::write(
         directory.path().join(BUNDLED_RUNTIME_METADATA),
@@ -349,7 +349,7 @@ fn runtime_descriptor_requires_https_and_integrity_metadata() {
 }
 
 #[test]
-fn runtime_descriptor_rejects_insecure_downloads() {
+fn runtime_descriptor_accepts_http_downloads() {
     let directory = tempdir().unwrap();
     fs::write(
         directory.path().join(BUNDLED_RUNTIME_METADATA),
@@ -363,9 +363,27 @@ fn runtime_descriptor_rejects_insecure_downloads() {
     )
     .unwrap();
 
+    assert!(read_runtime_descriptor(directory.path()).is_ok());
+}
+
+#[test]
+fn runtime_descriptor_rejects_unsupported_download_protocols() {
+    let directory = tempdir().unwrap();
+    fs::write(
+        directory.path().join(BUNDLED_RUNTIME_METADATA),
+        serde_json::to_vec(&serde_json::json!({
+            "sourceFingerprint": "a".repeat(64),
+            "archiveSha256": "b".repeat(64),
+            "archiveBytes": 1024,
+            "downloadUrl": "file:///tmp/runtime.tar.gz"
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
     assert!(read_runtime_descriptor(directory.path())
         .unwrap_err()
-        .contains("must use HTTPS"));
+        .contains("must use HTTP or HTTPS"));
 }
 
 #[test]

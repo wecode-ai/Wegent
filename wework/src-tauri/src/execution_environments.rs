@@ -138,8 +138,8 @@ fn read_descriptor(app: &tauri::AppHandle) -> Result<RuntimeDescriptor, String> 
     }
     let url = reqwest::Url::parse(descriptor.download_url.trim())
         .map_err(|error| format!("Node runtime download URL is invalid: {error}"))?;
-    if url.scheme() != "https" {
-        return Err("Node runtime download URL must use HTTPS".to_string());
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err("Node runtime download URL must use HTTP or HTTPS".to_string());
     }
     Ok(descriptor)
 }

@@ -711,8 +711,8 @@ fn read_runtime_descriptor(resource_root: &Path) -> Result<BundledDshRuntimeMeta
     }
     let url = reqwest::Url::parse(metadata.download_url.trim())
         .map_err(|error| format!("Managed Harness runtime download URL is invalid: {error}"))?;
-    if url.scheme() != "https" {
-        return Err("Managed Harness runtime download URL must use HTTPS".to_string());
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err("Managed Harness runtime download URL must use HTTP or HTTPS".to_string());
     }
     Ok(metadata)
 }
