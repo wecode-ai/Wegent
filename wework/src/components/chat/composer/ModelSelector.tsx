@@ -238,10 +238,6 @@ export function ModelSelector({
     const measuredSubmenuWidth = submenuRect?.width || SUBMENU_WIDTH
     const rightSideLeft = measuredMenuWidth + SUBMENU_GAP
     const viewportWidth = getDesktopViewportRightBoundary()
-    const availableRight = viewportWidth - VIEWPORT_MARGIN - menuRect.left - rightSideLeft
-    const availableLeft = menuRect.left - VIEWPORT_MARGIN - SUBMENU_GAP
-    const rightSideWidth = Math.max(0, Math.min(measuredSubmenuWidth, availableRight))
-    const leftSideWidth = Math.max(0, Math.min(measuredSubmenuWidth, availableLeft))
 
     const rightSideEdge = menuRect.left + rightSideLeft + measuredSubmenuWidth
     if (rightSideEdge <= viewportWidth - VIEWPORT_MARGIN) {
@@ -257,27 +253,16 @@ export function ModelSelector({
       return
     }
 
-    if (leftSideWidth >= rightSideWidth) {
-      setSubmenuWidth(Math.round(leftSideWidth))
-      setSubmenuLeft(-Math.round(leftSideWidth + SUBMENU_GAP))
-      return
-    }
-
-    if (rightSideWidth > 0) {
-      setSubmenuWidth(Math.round(rightSideWidth))
-      setSubmenuLeft(rightSideLeft)
-      return
-    }
-
-    const viewportFittedLeft = Math.max(
-      VIEWPORT_MARGIN - menuRect.left,
-      Math.min(
-        rightSideLeft,
-        viewportWidth - VIEWPORT_MARGIN - measuredSubmenuWidth - menuRect.left
-      )
+    const viewportAvailableWidth = Math.max(0, viewportWidth - VIEWPORT_MARGIN * 2)
+    const fittedSubmenuWidth = Math.min(measuredSubmenuWidth, viewportAvailableWidth)
+    const minOverlayLeft = VIEWPORT_MARGIN - menuRect.left
+    const maxOverlayLeft = viewportWidth - VIEWPORT_MARGIN - fittedSubmenuWidth - menuRect.left
+    const alignedOverlayLeft = measuredMenuWidth - fittedSubmenuWidth
+    const overlayLeft = Math.max(minOverlayLeft, Math.min(alignedOverlayLeft, maxOverlayLeft))
+    setSubmenuWidth(
+      fittedSubmenuWidth < measuredSubmenuWidth ? Math.round(fittedSubmenuWidth) : undefined
     )
-    setSubmenuWidth(undefined)
-    setSubmenuLeft(Math.round(viewportFittedLeft))
+    setSubmenuLeft(Math.round(overlayLeft))
   }, [])
   const activateControl = useCallback(
     (controlId: string) => {

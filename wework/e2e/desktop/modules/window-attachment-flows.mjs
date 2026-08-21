@@ -93,6 +93,12 @@ async function openBrowserForModelSwitchWarning(control) {
     `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-native-view"]`,
     { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
   )
+  await control.command('waitFor', '[data-testid="right-workspace-resize-handle"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('drag', '[data-testid="right-workspace-resize-handle"]', {
+    target: ACTIVE_SWITCH_MODEL_RETRY_SELECTOR,
+  })
 }
 
 async function waitForProcessExit(processId, message) {
@@ -142,11 +148,25 @@ async function verifyCrossProviderSwitchRetry(control, composerSelector) {
     ACTIVE_WORKBENCH_SELECTOR,
     'The desktop viewport'
   )
+  const rightPanelMetrics = await getSingleElementMetrics(
+    control,
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="right-workspace-panel-shell"]`,
+    'The right workspace panel'
+  )
   assert.ok(
     modelSubmenuMetrics.top >= 64 && modelSubmenuMetrics.bottom <= viewportMetrics.bottom - 16,
     `The narrow-pane model submenu exceeded the desktop viewport: ${JSON.stringify({
       modelSubmenuMetrics,
       viewportMetrics,
+    })}`
+  )
+  assert.ok(
+    modelSubmenuMetrics.clientWidth >= 280 &&
+      modelSubmenuMetrics.left >= 16 &&
+      modelSubmenuMetrics.right <= rightPanelMetrics.left - 16,
+    `The narrow-pane model submenu was compressed or crossed into the browser: ${JSON.stringify({
+      modelSubmenuMetrics,
+      rightPanelMetrics,
     })}`
   )
   const officialModelSelector = `[data-testid="model-option-${PROVIDER_SWITCH_OFFICIAL_OPTION_ID}"]`

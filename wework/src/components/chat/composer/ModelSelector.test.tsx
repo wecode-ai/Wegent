@@ -252,6 +252,93 @@ describe('ModelSelector desktop layout', () => {
     })
   })
 
+  test('overlays the main menu at full width when neither side has enough room', async () => {
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: 500,
+    })
+    createShellElement({ hidden: true })
+    const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect
+    HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRect() {
+      const testId = this.getAttribute('data-testid')
+      if (testId === 'model-selector-button') {
+        return {
+          top: 500,
+          left: 230,
+          right: 470,
+          bottom: 540,
+          width: 240,
+          height: 40,
+          x: 230,
+          y: 500,
+          toJSON: () => {},
+        } as DOMRect
+      }
+      if (testId === 'model-selector-menu') {
+        return {
+          top: 300,
+          left: 214,
+          right: 470,
+          bottom: 500,
+          width: 256,
+          height: 200,
+          x: 214,
+          y: 300,
+          toJSON: () => {},
+        } as DOMRect
+      }
+      if (testId === 'model-control-menu-model') {
+        return {
+          top: 308,
+          left: 222,
+          right: 462,
+          bottom: 340,
+          width: 240,
+          height: 32,
+          x: 222,
+          y: 308,
+          toJSON: () => {},
+        } as DOMRect
+      }
+      if (testId === 'model-selector-submenu') {
+        return {
+          top: 308,
+          left: 0,
+          right: 288,
+          bottom: 608,
+          width: 288,
+          height: 300,
+          x: 0,
+          y: 308,
+          toJSON: () => {},
+        } as DOMRect
+      }
+      return originalGetBoundingClientRect.call(this)
+    }
+
+    try {
+      render(
+        <ModelSelector
+          models={[SAMPLE_MODEL]}
+          selectedModel={SAMPLE_MODEL}
+          selectedModelOptions={{}}
+          disabled={false}
+          onSelectModel={vi.fn()}
+          onSelectModelOption={vi.fn()}
+        />
+      )
+
+      fireEvent.click(screen.getByTestId('model-selector-button'))
+      fireEvent.mouseEnter(await screen.findByTestId('model-control-menu-model'))
+
+      const submenu = await screen.findByTestId('model-selector-submenu')
+      await waitFor(() => expect(submenu).toHaveStyle({ left: '-32px' }))
+      expect(submenu.style.width).toBe('')
+    } finally {
+      HTMLElement.prototype.getBoundingClientRect = originalGetBoundingClientRect
+    }
+  })
+
   test('caps the trigger width when maxClosedWidth is provided', () => {
     createShellElement({ hidden: true })
 
