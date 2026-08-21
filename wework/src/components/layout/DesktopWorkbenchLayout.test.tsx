@@ -9496,8 +9496,8 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('environment-branch-row')).toHaveTextContent('加载中')
 
     const cachedPullRequest: EnvironmentInfo = {
-      additions: '+0',
-      deletions: '-0',
+      additions: '+7',
+      deletions: '-2',
       executionTarget: 'local',
       deviceId: 'device-1',
       workspacePath: '/workspace/github_wegent',
@@ -9525,6 +9525,8 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('change-request-button')).toHaveAccessibleName(
       expect.stringContaining('#2875')
     )
+    expect(screen.getByTestId('environment-git-section')).toHaveTextContent('+7')
+    expect(screen.getByTestId('environment-git-section')).toHaveTextContent('-2')
 
     act(() => {
       publishPartialInfo?.({
@@ -9542,6 +9544,8 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('change-request-button')).toHaveAccessibleName(
       expect.stringContaining('#2875')
     )
+    expect(screen.getByTestId('environment-git-section')).toHaveTextContent('+7')
+    expect(screen.getByTestId('environment-git-section')).toHaveTextContent('-2')
   })
 
   test('closes the branch menu when Escape is pressed', async () => {

@@ -474,14 +474,19 @@ export function useWorkbenchPaneEnvironment({
             changeRequestNumber: info.changeRequest?.changeRequest?.number,
           })
           setEnvironmentInfo(current => {
-            const preserveCurrentChangeRequest =
+            const preserveCurrentFields =
               loading &&
-              !info.changeRequest &&
               current.workspacePath === info.workspacePath &&
               current.deviceId === info.deviceId
             return {
               ...info,
-              ...(preserveCurrentChangeRequest && current.changeRequest
+              ...(preserveCurrentFields && !info.additions && current.additions
+                ? { additions: current.additions }
+                : {}),
+              ...(preserveCurrentFields && !info.deletions && current.deletions
+                ? { deletions: current.deletions }
+                : {}),
+              ...(preserveCurrentFields && !info.changeRequest && current.changeRequest
                 ? { changeRequest: current.changeRequest }
                 : {}),
               workspaceRoots,
