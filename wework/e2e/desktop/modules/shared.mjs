@@ -45,7 +45,11 @@ const DESKTOP_CONTROL_SERVER_PORT = readOptionalPort(
 )
 const MODEL_PROTOCOL_MATRIX_TIMEOUT_MS = 120_000
 const COMPOSER_READY_STABILITY_MS = 750
-const DESKTOP_CONTROL_DELIVERY_TIMEOUT_MS = DEFAULT_STEP_TIMEOUT_MS
+const DESKTOP_CONTROL_DELIVERY_TIMEOUT_MS = readPositiveTimeout(
+  process.env.WEWORK_E2E_CONTROL_DELIVERY_TIMEOUT_MS,
+  30_000,
+  'WEWORK_E2E_CONTROL_DELIVERY_TIMEOUT_MS'
+)
 const DESKTOP_CONTROL_RESULT_GRACE_MS = 5_000
 const QUEUE_MANAGEMENT_REQUEST_TIMEOUT_MS = 120_000
 
@@ -1201,21 +1205,11 @@ async function visibleModelOptionId(control, targetOptionIds, providerId) {
   for (const targetOptionId of targetOptionIds) {
     const targetSelector = `[data-testid="model-selector-submenu"] [data-testid="${targetOptionId}"]${modelProviderSelector(providerId)}`
     await control.command('scrollIntoView', targetSelector).catch(() => undefined)
-    const metrics = await control
-      .command('getElementMetrics', targetSelector)
-      .then(value => JSON.parse(value))
-      .catch(() => [])
-    if (
-      metrics.some(
-        metric =>
-          metric.width > 0 &&
-          metric.height > 0 &&
-          metric.bottom > 0 &&
-          metric.right > 0 &&
-          metric.top < 720 &&
-          metric.left < 1280
-      )
-    ) {
+    const visibleCount = await control
+      .command('getElementCount', targetSelector, { visible: true })
+      .then(value => Number(value))
+      .catch(() => 0)
+    if (visibleCount > 0) {
       return targetOptionId
     }
   }

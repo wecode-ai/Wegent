@@ -29,7 +29,7 @@ const corsHeaders = {
 function usage() {
   console.error(`Usage:
   pnpm --filter wework ai:verify start
-  pnpm --filter wework ai:verify <capture|capture-browser|capture-popout|capture-workspace|snapshot|debug|active-element|click|click-at|click-then-macrotask|context-menu|seed-local-project|preview-plugin-import|terminal-snapshot|reload|close-to-tray|request-close|dismiss-popout|drag|drop-file|drop-paths|fill|get-attribute|hover|metrics|navigate|paste-paths|pointer-move|press|scroll-into-view|select-text|show-popout|system-drag-drop|wait-for|window-focus-snapshot|text|status|stop> --session PATH [options]
+  pnpm --filter wework ai:verify <capture|capture-browser|capture-popout|capture-workspace|snapshot|debug|active-element|click|click-at|click-then-macrotask|context-menu|seed-local-project|preview-plugin-import|terminal-snapshot|reload|close-to-tray|request-close|dismiss-popout|drag|drop-file|drop-paths|fill|get-attribute|hover|metrics|navigate|paste-paths|pointer-move|press|scroll-into-view|select-text|show-popout|system-drag-drop|verify-browser-inspector|wait-for|window-focus-snapshot|text|status|stop> --session PATH [options]
 
 Options:
   --codex-home-initialization true
@@ -119,14 +119,11 @@ function authorized(request, token) {
   return request.headers.authorization === `Bearer ${token}`
 }
 
-export function takeWritableCommandPoll(commandPolls) {
-  let poll = commandPolls.shift()
-  while (poll) {
-    clearTimeout(poll.timer)
-    if (!poll.closed && !poll.response.destroyed && !poll.response.writableEnded) return poll
-    poll = commandPolls.shift()
+export function acknowledgeStartedCommand(pending, started) {
+  if (!pending.has(started.id)) {
+    return { status: 404, value: { error: `Unknown command ${started.id}` } }
   }
-  return undefined
+  return { status: 200, value: { ok: true } }
 }
 
 async function stopOwnedSessionProcesses(session) {
@@ -220,7 +217,6 @@ export function monitorAppProcess(app, pending, onExit) {
 async function runServer(sessionPath, token) {
   const session = JSON.parse(await readFile(sessionPath, 'utf8'))
   const queue = []
-  const commandPolls = []
   const pending = new Map()
   let ready = null
   let app = null
@@ -243,27 +239,19 @@ async function runServer(sessionPath, token) {
       if (request.method === 'GET' && url.pathname === '/commands') {
         const command = queue.shift()
         if (command) return json(response, 200, command)
-
-        const poll = { response, timer: undefined, closed: false }
-        poll.timer = setTimeout(() => {
-          const index = commandPolls.indexOf(poll)
-          if (index >= 0) commandPolls.splice(index, 1)
-          response.writeHead(204, corsHeaders)
-          response.end()
-        }, defaultTimeoutMs)
-        commandPolls.push(poll)
-        response.once('close', () => {
-          poll.closed = true
-          const index = commandPolls.indexOf(poll)
-          if (index < 0) return
-          commandPolls.splice(index, 1)
-          clearTimeout(poll.timer)
-        })
-        return
-      }
-      if (request.method === 'GET' && url.pathname === '/control-tick') {
         response.writeHead(204, corsHeaders)
         return response.end()
+      }
+      if (request.method === 'GET' && url.pathname === '/control-tick') {
+        return setTimeout(() => {
+          response.writeHead(204, corsHeaders)
+          response.end()
+        }, 50)
+      }
+      if (request.method === 'POST' && url.pathname === '/started') {
+        const started = await readBody(request)
+        const acknowledgement = acknowledgeStartedCommand(pending, started)
+        return json(response, acknowledgement.status, acknowledgement.value)
       }
       if (request.method === 'POST' && url.pathname === '/results') {
         const result = await readBody(request)
@@ -285,7 +273,6 @@ async function runServer(sessionPath, token) {
           appExitSignal: appExit?.signal ?? null,
           appExitError: appExit?.error ?? null,
           queuedCommands: queue.length,
-          commandPolls: commandPolls.length,
           pendingCommands: pending.size,
         })
       }
@@ -299,12 +286,7 @@ async function runServer(sessionPath, token) {
           pending.set(id, { resolve: resolvePromise, reject })
         )
         const nextCommand = { id, ...command }
-        const poll = takeWritableCommandPoll(commandPolls)
-        if (poll) {
-          json(poll.response, 200, nextCommand)
-        } else {
-          queue.push(nextCommand)
-        }
+        queue.push(nextCommand)
         try {
           return json(response, 200, {
             ok: true,
@@ -316,6 +298,8 @@ async function runServer(sessionPath, token) {
           })
         } catch (error) {
           pending.delete(id)
+          const queuedIndex = queue.findIndex(item => item.id === id)
+          if (queuedIndex >= 0) queue.splice(queuedIndex, 1)
           return json(response, 500, { ok: false, error: String(error.message ?? error) })
         }
       }
@@ -556,6 +540,7 @@ async function main() {
     'select-text': 'selectText',
     'show-popout': 'showPopoutWindow',
     'system-drag-drop': 'completeSystemDragDrop',
+    'verify-browser-inspector': 'verifyEmbeddedBrowserDetachedInspector',
     'wait-for': 'waitFor',
     'window-focus-snapshot': 'getWindowFocusSnapshot',
     text: 'getText',
@@ -587,7 +572,8 @@ async function main() {
     command === 'system-drag-drop' ||
     command === 'window-focus-snapshot' ||
     command === 'close-to-tray' ||
-    command === 'request-close'
+    command === 'request-close' ||
+    command === 'verify-browser-inspector'
       ? 'body'
       : null)
   if (!selector) throw new Error('--selector is required')

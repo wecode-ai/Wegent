@@ -636,9 +636,9 @@ impl AppIpcServer {
 
         let mut reader = BufReader::new(reader);
         let mut events = self.event_tx.subscribe();
-        let mut line = String::new();
+        let mut frame = Vec::new();
         loop {
-            line.clear();
+            frame.clear();
             tokio::select! {
                 writer = &mut writer_task => {
                     return match writer {
@@ -647,16 +647,22 @@ impl AppIpcServer {
                         Err(error) => Err(format!("app IPC writer task failed: {error}")),
                     };
                 }
-                read = reader.read_line(&mut line) => {
+                read = reader.read_until(b'\n', &mut frame) => {
                     let bytes_read = read
                         .map_err(|error| format!("failed to read app IPC request: {error}"))?;
                     if bytes_read == 0 {
                         writer_task.abort();
                         return Ok(());
                     }
+                    let request_line = match std::str::from_utf8(&frame) {
+                        Ok(line) => line.to_owned(),
+                        Err(error) => {
+                            log_invalid_app_ipc_frame(&frame, error);
+                            continue;
+                        }
+                    };
                     let server = self.clone();
                     let response_tx = write_tx.clone();
-                    let request_line = line.clone();
                     let (request_id, method) = app_ipc_request_metadata(&request_line);
                     tokio::spawn(async move {
                         let started_at = Instant::now();
@@ -1245,6 +1251,14 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                     .map_err(task_runtime_error)?,
             )
         }
+        "todos.bindings.batch" => {
+            let task_ids = string_list_field(params.get("task_ids"), "task_ids")?;
+            serialize_task_value(
+                runtime
+                    .list_task_bindings_batch(&task_ids)
+                    .map_err(task_runtime_error)?,
+            )
+        }
         "todos.bind" | "projects.bind_task" => {
             let project_id = required_task_string(&params, "project_id")?;
             let item_id = params.get("item_id").and_then(Value::as_str);
@@ -1271,11 +1285,30 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                     .map_err(task_runtime_error)?,
             )
         }
+        "runtime_tasks.system_context" => {
+            let device_id = required_task_string(&params, "device_id")?;
+            let runtime_task_id = required_task_string(&params, "task_id")?;
+            serialize_task_value(
+                runtime
+                    .find_system_task_binding(device_id, runtime_task_id)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "runtime_tasks.user_context" => {
+            let device_id = required_task_string(&params, "device_id")?;
+            let runtime_task_id = required_task_string(&params, "task_id")?;
+            serialize_task_value(
+                runtime
+                    .find_user_task_binding(device_id, runtime_task_id)
+                    .map_err(task_runtime_error)?,
+            )
+        }
         "runtime_tasks.unbind" => {
             let device_id = required_task_string(&params, "device_id")?;
             let runtime_task_id = required_task_string(&params, "task_id")?;
+            let item_id = params.get("item_id").and_then(Value::as_str);
             runtime
-                .unbind_task(device_id, runtime_task_id)
+                .unbind_task(device_id, runtime_task_id, item_id)
                 .map_err(task_runtime_error)?;
             Ok(json!({"unbound": true}))
         }
@@ -1947,6 +1980,20 @@ fn log_app_ipc_request(
     write_executor_log_line(&format_executor_log(event, &fields));
 }
 
+fn log_invalid_app_ipc_frame(frame: &[u8], error: std::str::Utf8Error) {
+    let mut fields = vec![
+        ("bytes", frame.len().to_string()),
+        ("valid_up_to", error.valid_up_to().to_string()),
+    ];
+    if let Some(error_len) = error.error_len() {
+        fields.push(("invalid_sequence_bytes", error_len.to_string()));
+    }
+    write_executor_log_line(&format_executor_log(
+        "invalid app IPC frame discarded",
+        &fields,
+    ));
+}
+
 fn log_app_ipc_response_error(
     request_id: Option<&str>,
     method: Option<&str>,
@@ -2347,19 +2394,26 @@ fn string_field(value: &Value, key: &str) -> Option<String> {
 }
 
 fn string_list(value: Option<&Value>) -> Result<Vec<String>, AppIpcError> {
+    string_list_field(value, "args")
+}
+
+fn string_list_field(value: Option<&Value>, field: &str) -> Result<Vec<String>, AppIpcError> {
     let Some(value) = value else {
         return Ok(Vec::new());
     };
     let Some(items) = value.as_array() else {
-        return Err(AppIpcError::new("bad_request", "args must be a list"));
+        return Err(AppIpcError::new(
+            "bad_request",
+            format!("{field} must be a list"),
+        ));
     };
 
     items
         .iter()
         .map(|item| {
-            item.as_str()
-                .map(str::to_owned)
-                .ok_or_else(|| AppIpcError::new("bad_request", "args must contain only strings"))
+            item.as_str().map(str::to_owned).ok_or_else(|| {
+                AppIpcError::new("bad_request", format!("{field} must contain only strings"))
+            })
         })
         .collect()
 }
@@ -2473,7 +2527,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::local_app_command;
+    use super::{local_app_command, AppIpcServer};
+    use serde_json::Value;
+    use tokio::io::{duplex, split, AsyncBufReadExt, AsyncWriteExt, BufReader};
 
     #[test]
     fn git_diff_commands_do_not_start_a_login_shell() {
@@ -2484,5 +2540,58 @@ mod tests {
             assert_eq!(command.argv.get(1), Some(&"-c"));
             assert!(!command.argv.contains(&"-l"));
         }
+    }
+
+    #[tokio::test]
+    async fn invalid_utf8_frame_does_not_stop_app_ipc() {
+        let server = AppIpcServer::new();
+        let (client, executor) = duplex(4096);
+        let (client_reader, mut client_writer) = split(client);
+        let (executor_reader, executor_writer) = split(executor);
+        let serving = tokio::spawn(async move {
+            server
+                .serve_io(executor_reader, executor_writer)
+                .await
+                .expect("app IPC should stay available after a malformed frame");
+        });
+
+        client_writer
+            .write_all(b"\xff\n")
+            .await
+            .expect("invalid frame should be written");
+        client_writer
+            .write_all(
+                br#"{"type":"request","id":"health-after-invalid","method":"executor.health","params":{}}
+"#,
+            )
+            .await
+            .expect("health request should be written");
+        let mut client_reader = BufReader::new(client_reader);
+        let mut output = Vec::new();
+        for _ in 0..2 {
+            let mut line = String::new();
+            client_reader
+                .read_line(&mut line)
+                .await
+                .expect("app IPC output should remain valid UTF-8");
+            output.push(line);
+        }
+        client_writer
+            .shutdown()
+            .await
+            .expect("client input should close");
+        serving.await.expect("app IPC task should finish");
+
+        let messages = output
+            .iter()
+            .map(|line| serde_json::from_str::<Value>(line).expect("valid app IPC JSON"))
+            .collect::<Vec<_>>();
+        assert!(messages.iter().any(|message| {
+            message.get("event") == Some(&Value::String("executor.ready".to_owned()))
+        }));
+        assert!(messages.iter().any(|message| {
+            message.get("id") == Some(&Value::String("health-after-invalid".to_owned()))
+                && message.get("ok") == Some(&Value::Bool(true))
+        }));
     }
 }

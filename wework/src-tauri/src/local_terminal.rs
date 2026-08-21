@@ -1749,7 +1749,11 @@ mod tests {
         ));
         fs::create_dir_all(&test_root).unwrap();
         let executable = test_root.join("harness");
-        fs::write(&executable, "#!/bin/sh\nprintf '0.35.0\\n'\nexec sleep 5\n").unwrap();
+        fs::write(
+            &executable,
+            "#!/bin/sh\nprintf '0.35.0\\n'\nexec /bin/sleep 5\n",
+        )
+        .unwrap();
         let mut permissions = fs::metadata(&executable).unwrap().permissions();
         permissions.set_mode(0o755);
         fs::set_permissions(&executable, permissions).unwrap();

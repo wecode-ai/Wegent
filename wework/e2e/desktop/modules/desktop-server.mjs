@@ -230,6 +230,8 @@ import {
   withTimeout,
 } from './shared.mjs'
 
+const DESKTOP_CONTROL_COMMAND_INTERVAL_MS = 250
+
 class DesktopE2EServer {
   constructor(
     workspacePath,
@@ -261,6 +263,7 @@ class DesktopE2EServer {
     this.activeControlClientId = null
     this.controlClientsByWindow = new Map()
     this.controlWindowsByClient = new Map()
+    this.controlCommandAvailableAt = new Map()
     this.readyWaiters = []
     this.commandQueue = []
     this.commandResults = new Map()
@@ -851,6 +854,11 @@ class DesktopE2EServer {
   }
 
   async commandForClient(clientId, action, selector, options = {}) {
+    const availableAt = this.controlCommandAvailableAt.get(clientId) ?? 0
+    const delayMs = Math.max(0, availableAt - Date.now())
+    if (delayMs > 0) {
+      await new Promise(resolvePromise => setTimeout(resolvePromise, delayMs))
+    }
     assert.ok(
       this.controlWindowsByClient.has(clientId),
       `Desktop control client ${clientId} is not registered`
@@ -864,9 +872,15 @@ class DesktopE2EServer {
       rejectDelivery = reject
     })
     const result = new Promise((resolvePromise, reject) => {
-      this.commandResults.set(id, { clientId, resolve: resolvePromise, reject })
+      this.commandResults.set(id, {
+        clientId,
+        resolve: resolvePromise,
+        reject,
+        resolveDelivery,
+        started: false,
+      })
     })
-    this.commandQueue.push({ clientId, command, rejectDelivery, resolveDelivery })
+    this.commandQueue.push({ clientId, command, rejectDelivery })
     try {
       await withTimeout(
         this.guard(Promise.race([delivery, result])),
@@ -883,6 +897,20 @@ class DesktopE2EServer {
       this.commandResults.delete(id)
       throw error
     }
+  }
+
+  deliverQueuedControlCommand(clientId, response) {
+    const commandIndex = this.commandQueue.findIndex(item => item.clientId === clientId)
+    if (commandIndex < 0) return false
+
+    const { command } = this.commandQueue[commandIndex]
+    this.commandHistory.push({
+      ...command,
+      clientId,
+      deliveredAt: new Date().toISOString(),
+    })
+    json(response, 200, command)
+    return true
   }
 
   async handleControl(request, response) {
@@ -1410,6 +1438,7 @@ class DesktopE2EServer {
       this.controlWindowsByClient.set(ready.clientId, ready.windowLabel)
       if (previousClientId && previousClientId !== ready.clientId) {
         this.controlWindowsByClient.delete(previousClientId)
+        this.controlCommandAvailableAt.delete(previousClientId)
         const replacementError = new Error(
           `Desktop control client ${previousClientId} for ${ready.windowLabel} was replaced by ${ready.clientId}`
         )
@@ -1448,18 +1477,7 @@ class DesktopE2EServer {
         response.end()
         return true
       }
-      const commandIndex = this.commandQueue.findIndex(item => item.clientId === clientId)
-      if (commandIndex >= 0) {
-        const [{ command, resolveDelivery }] = this.commandQueue.splice(commandIndex, 1)
-        this.commandHistory.push({
-          ...command,
-          clientId,
-          deliveredAt: new Date().toISOString(),
-        })
-        resolveDelivery()
-        json(response, 200, command)
-        return true
-      }
+      if (this.deliverQueuedControlCommand(clientId, response)) return true
       response.writeHead(204)
       response.end()
       return true
@@ -1470,6 +1488,28 @@ class DesktopE2EServer {
         response.writeHead(204)
         response.end()
       }, 50)
+      return true
+    }
+
+    if (request.method === 'POST' && url.pathname === '/started') {
+      const started = await readRequestBody(request)
+      const pending = this.commandResults.get(started.id)
+      if (!pending) {
+        json(response, 404, { error: `Unknown command ${started.id}` })
+        return true
+      }
+      if (started.clientId !== pending.clientId) {
+        json(response, 409, {
+          error: `Command ${started.id} belongs to a different desktop control client`,
+        })
+        return true
+      }
+      if (!pending.started) {
+        pending.started = true
+        this.commandQueue = this.commandQueue.filter(item => item.command.id !== started.id)
+        pending.resolveDelivery()
+      }
+      json(response, 200, { ok: true })
       return true
     }
 
@@ -1492,6 +1532,10 @@ class DesktopE2EServer {
         return true
       }
       this.commandResults.delete(result.id)
+      this.controlCommandAvailableAt.set(
+        result.clientId,
+        Date.now() + DESKTOP_CONTROL_COMMAND_INTERVAL_MS
+      )
       if (result.ok) {
         pending.resolve(result.value ?? '')
       } else {

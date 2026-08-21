@@ -432,13 +432,55 @@ describe('EnvironmentInfoPopover', () => {
     expect(screen.getByTestId('change-request-title')).toHaveTextContent(
       'feat(wework): show pull request status'
     )
-    expect(screen.getByTestId('change-request-state')).toHaveTextContent('进行中')
-    expect(screen.getByTestId('change-request-checks')).toHaveTextContent('检查通过')
+    expect(screen.getByTestId('change-request-state')).toHaveTextContent('检查通过，等待合并')
+    expect(screen.getByTestId('change-request-checks')).toHaveTextContent('检查通过，等待合并')
     expect(
-      screen.getByTestId('change-request-button').querySelector('[aria-hidden="true"]')
+      screen.getByTestId('environment-change-request-status').querySelector('[aria-hidden="true"]')
     ).toHaveClass('text-green-500')
     expect(screen.getByTestId('change-request-pull-request-icon')).toBeInTheDocument()
     expect(screen.queryByTestId('change-request-merged-icon')).not.toBeInTheDocument()
+  })
+
+  test('opens the shared pull request status control from the environment panel', async () => {
+    const popoverContainer = document.createElement('div')
+    document.body.appendChild(popoverContainer)
+    portalContainers.push(popoverContainer)
+
+    render(
+      <EnvironmentInfoPopover
+        info={{
+          additions: '+2',
+          deletions: '-1',
+          executionTarget: 'local',
+          branchName: 'feature/change-request-status',
+          changeRequest: {
+            provider: 'github',
+            state: 'found',
+            changeRequest: {
+              provider: 'github',
+              number: 2631,
+              url: 'https://github.com/wecode-ai/Wegent/pull/2631',
+              title: 'feat(wework): show pull request status',
+              state: 'open',
+              draft: false,
+              checks: 'failure',
+              mergeability: 'mergeable',
+              mergeQueue: 'not_queued',
+            },
+          },
+        }}
+        popoverContainer={popoverContainer}
+        open
+        onOpenChange={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('environment-change-request-status'))
+
+    expect(screen.getByTestId('environment-change-request-status-popover')).toBeInTheDocument()
+    expect(screen.getByTestId('environment-change-request-status-open')).toHaveTextContent(
+      '打开 PR'
+    )
   })
 
   test('shows merge conflicts on the pull request icon without adding a second row', () => {
@@ -477,9 +519,11 @@ describe('EnvironmentInfoPopover', () => {
 
     const button = screen.getByTestId('change-request-button')
     expect(button).toHaveClass('h-9')
-    expect(screen.getByTestId('change-request-conflict')).toHaveTextContent('存在冲突')
-    expect(button).toHaveAccessibleName(/存在冲突/)
-    expect(button.querySelector('[aria-hidden="true"]')).toHaveClass('text-red-500')
+    expect(screen.getByTestId('change-request-conflict')).toHaveTextContent('存在合并冲突')
+    expect(button).toHaveAccessibleName(/存在合并冲突/)
+    expect(
+      screen.getByTestId('environment-change-request-status').querySelector('[aria-hidden="true"]')
+    ).toHaveClass('text-red-500')
   })
 
   test('shows a pending status while the pull request is in the merge queue', () => {
@@ -517,11 +561,13 @@ describe('EnvironmentInfoPopover', () => {
     )
 
     const button = screen.getByTestId('change-request-button')
-    expect(screen.getByTestId('change-request-merge-queue')).toHaveTextContent('合并队列中')
+    expect(screen.getByTestId('change-request-merge-queue')).toHaveTextContent('Merge Queue 排队中')
     expect(screen.queryByTestId('change-request-checks')).not.toBeInTheDocument()
-    expect(button).toHaveAccessibleName(/合并队列中/)
+    expect(button).toHaveAccessibleName(/Merge Queue 排队中/)
     expect(button).not.toHaveAccessibleName(/检查通过/)
-    expect(button.querySelector('[aria-hidden="true"]')).not.toHaveClass('text-green-500')
+    expect(
+      screen.getByTestId('environment-change-request-status').querySelector('[aria-hidden="true"]')
+    ).not.toHaveClass('text-green-500')
   })
 
   test('shows a purple icon for a merged pull request', () => {
@@ -558,7 +604,9 @@ describe('EnvironmentInfoPopover', () => {
       />
     )
 
-    const icon = screen.getByTestId('change-request-button').querySelector('[aria-hidden="true"]')
+    const icon = screen
+      .getByTestId('environment-change-request-status')
+      .querySelector('[aria-hidden="true"]')
     expect(screen.getByTestId('change-request-state')).toHaveTextContent('已合并')
     expect(icon).toHaveClass('text-violet-500')
     expect(icon).not.toHaveClass('text-green-500')

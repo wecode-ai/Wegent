@@ -43,6 +43,47 @@ const taskRecord = {
 }
 
 describe('local delivery API', () => {
+  test('loads a board snapshot with one batched task-binding request', async () => {
+    const secondTask = {
+      ...taskRecord,
+      id: 'LOCAL-2',
+      title: 'Second task',
+      sequence_number: 2,
+    }
+    const binding = {
+      id: '7',
+      cloud_project_id: 'project-1',
+      loop_item_id: 'LOCAL-2',
+      task_user_id: 0,
+      device_id: 'local-device',
+      task_id: 'runtime-2',
+      task_title: 'Second task',
+      backend_task_id: null,
+      workflow_node_id: null,
+      linked_at: '2026-08-21T00:00:00Z',
+    }
+    const request = vi.fn(async (method: string) => {
+      if (method === 'todos.list') return [taskRecord, secondTask]
+      if (method === 'todos.bindings.batch') return [binding]
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createLocalDeliveryApi(request)
+
+    await expect(api.getBoardSnapshot('project-1')).resolves.toMatchObject({
+      items: [{ id: 'LOCAL-1' }, { id: 'LOCAL-2' }],
+      task_bindings: [{ id: 7, task_id: 'runtime-2' }],
+      members: [],
+      agents: [],
+    })
+    expect(request).toHaveBeenCalledTimes(2)
+    expect(request).toHaveBeenNthCalledWith(1, 'todos.list', {
+      project_id: 'project-1',
+    })
+    expect(request).toHaveBeenNthCalledWith(2, 'todos.bindings.batch', {
+      task_ids: ['LOCAL-1', 'LOCAL-2'],
+    })
+  })
+
   test('lists every task execution associated with a work-item project', async () => {
     const execution = {
       id: 7,
@@ -491,7 +532,7 @@ describe('local delivery API', () => {
   test('tracks concurrent calls for the same runtime task only once', async () => {
     const trackedTask = { ...taskRecord, status: 'in_progress' }
     const request = vi.fn(async (method: string) => {
-      if (method === 'runtime_tasks.context') throw new Error('Task context not found')
+      if (method === 'runtime_tasks.user_context') throw new Error('Task context not found')
       if (method === 'todos.create') return trackedTask
       if (method === 'todos.bind') return { id: 'binding-1' }
       throw new Error(`Unexpected method: ${method}`)
@@ -522,7 +563,7 @@ describe('local delivery API', () => {
     ])
 
     expect(request).toHaveBeenCalledTimes(3)
-    expect(request).toHaveBeenCalledWith('runtime_tasks.context', {
+    expect(request).toHaveBeenCalledWith('runtime_tasks.user_context', {
       device_id: 'local-device',
       task_id: 'runtime-1',
     })
@@ -550,7 +591,7 @@ describe('local delivery API', () => {
 
   test('creates default My Tasks items in inbox before runtime status synchronization', async () => {
     const request = vi.fn(async (method: string) => {
-      if (method === 'runtime_tasks.context') throw new Error('Task context not found')
+      if (method === 'runtime_tasks.system_context') throw new Error('Task context not found')
       if (method === 'todos.create') return { ...taskRecord, status: 'inbox' }
       if (method === 'todos.bind') return { id: 'binding-1' }
       throw new Error(`Unexpected method: ${method}`)
@@ -581,7 +622,7 @@ describe('local delivery API', () => {
     const trackedTask = { ...taskRecord, status: 'in_progress' }
     let createAttempts = 0
     const request = vi.fn(async (method: string) => {
-      if (method === 'runtime_tasks.context') throw new Error('Task context not found')
+      if (method === 'runtime_tasks.user_context') throw new Error('Task context not found')
       if (method === 'todos.create') {
         createAttempts += 1
         if (createAttempts === 1) throw new Error('Temporary create failure')
@@ -615,7 +656,7 @@ describe('local delivery API', () => {
     const trackedTask = { ...taskRecord, status: 'in_progress' }
     const reviewedTask = { ...trackedTask, status: 'in_review', version: 2 }
     const request = vi.fn(async (method: string) => {
-      if (method === 'runtime_tasks.context') {
+      if (method === 'runtime_tasks.system_context') {
         return {
           id: 'binding-1',
           cloud_project_id: 'project-1',
@@ -651,7 +692,7 @@ describe('local delivery API', () => {
   test('synchronizes a friendly runtime title through executor IPC', async () => {
     const renamedTask = { ...taskRecord, title: '修复登录回调', version: 2 }
     const request = vi.fn(async (method: string) => {
-      if (method === 'runtime_tasks.context') {
+      if (method === 'runtime_tasks.system_context') {
         return {
           id: 'binding-1',
           cloud_project_id: 'project-1',

@@ -428,14 +428,6 @@ interface AvailableProjectSpaceApi {
   location: ProjectSpaceLocation
 }
 
-function uniqueLocatedItems(items: LocatedLoopItem[]): LocatedLoopItem[] {
-  const unique = new Map<string, LocatedLoopItem>()
-  for (const item of items) {
-    unique.set(`${item.project_store ?? 'backend'}:${item.id}`, item)
-  }
-  return [...unique.values()]
-}
-
 function runtimeWorkItemReference(
   task: RuntimeTaskSummary
 ): { projectId: string; itemId: string } | null {
@@ -1889,21 +1881,7 @@ export function CloudTodoWorkspace({
     ? (projectForItem(createTodoParent) ?? null)
     : selectedProject
   const createTodoApi = apiForProject(createTodoProject)
-  const boardItems =
-    !isMyTasksBoard || !selectedProjectKey || itemTaskBindingsProjectKey !== selectedProjectKey
-      ? items
-      : items.filter(item => {
-          const bindings = itemTaskBindings[item.id] ?? []
-          if (bindings.length === 0) return true
-          return bindings.some(binding =>
-            runtimeTaskKeys.has(
-              runtimeConversationKey({
-                deviceId: binding.device_id,
-                taskId: binding.task_id,
-              })
-            )
-          )
-        })
+  const boardItems = items
   const boardParent = boardItems.find(item => item.id === boardParentId) ?? null
   const boardLayerCount = boardItems.filter(item => item.parent_id === boardParentId).length
   const boardBreadcrumb: CloudLoopItem[] = []
@@ -2266,54 +2244,46 @@ export function CloudTodoWorkspace({
           : Promise.resolve()
       const readBoard = async (): Promise<BoardReadResult> => {
         await prepare
-        const selectedResponse =
-          selectedProject.location === 'cloud'
-            ? await selectedProjectApi.getBoardSnapshot(selectedProjectId)
-            : await selectedProjectApi.listLoopItems(selectedProjectId)
+        const selectedResponse: BoardReadResult =
+          await selectedProjectApi.getBoardSnapshot(selectedProjectId)
         const selectedItems = locateItems(selectedResponse.items, selectedProject.project_store)
         if (!isMyTasksBoard) return { ...selectedResponse, items: selectedItems }
-
-        const myWorkResults = await Promise.allSettled(
-          availableProjectSpaceApis.map(async ({ api, location }) => ({
-            location,
-            items: (await api.listMyWork()).items,
-          }))
-        )
-        const aggregatedItems = myWorkResults.flatMap(result => {
-          if (result.status === 'rejected') {
-            console.warn('[Wework my tasks] project-space aggregation failed', result.reason)
-            return []
-          }
-          return locateItems(
-            result.value.items,
-            result.value.location === 'local' ? 'local' : 'backend'
+        const activeBindings = (selectedResponse.task_bindings ?? []).filter(binding =>
+          runtimeTaskKeys.has(
+            runtimeConversationKey({
+              deviceId: binding.device_id,
+              taskId: binding.task_id,
+            })
           )
-        })
+        )
+        const activeItemIds = new Set(
+          activeBindings.flatMap(binding => (binding.loop_item_id ? [binding.loop_item_id] : []))
+        )
         return {
           ...selectedResponse,
-          items: uniqueLocatedItems([...selectedItems, ...aggregatedItems]),
+          items: selectedItems.filter(item => activeItemIds.has(item.id)),
+          task_bindings: activeBindings,
         }
       }
       void readBoard()
         .then(response => {
           if (!active) return
           setDingtalkAuthPrompt(false)
-          const cloudContext =
-            response.task_bindings && response.members && response.agents
-              ? {
-                  taskBindings: response.task_bindings,
-                  members: response.members,
-                  agents: response.agents,
-                }
-              : undefined
-          const signature = boardSnapshotKey(selectedProjectKey, response.items, null, cloudContext)
+          const boardContext = response.task_bindings
+            ? {
+                taskBindings: response.task_bindings,
+                members: selectedProject.location === 'cloud' ? (response.members ?? []) : [],
+                agents: selectedProject.location === 'cloud' ? (response.agents ?? []) : [],
+              }
+            : undefined
+          const signature = boardSnapshotKey(selectedProjectKey, response.items, null, boardContext)
           if (boardSnapshotSignatureRef.current === signature) return
           boardSnapshotSignatureRef.current = signature
           const locatedItems = response.items
           applyBoardItems(selectedProjectKey, locatedItems, null)
-          if (cloudContext) {
+          if (boardContext) {
             const bindingsByItem: Record<string, LoopItemTaskBinding[]> = {}
-            for (const binding of cloudContext.taskBindings) {
+            for (const binding of boardContext.taskBindings) {
               if (!binding.loop_item_id) continue
               const itemBindings = bindingsByItem[binding.loop_item_id] ?? []
               itemBindings.push(binding)
@@ -2321,13 +2291,15 @@ export function CloudTodoWorkspace({
             }
             setItemTaskBindings(bindingsByItem)
             setItemTaskBindingsProjectKey(selectedProjectKey)
+          }
+          if (selectedProject.location === 'cloud' && boardContext) {
             setProjectMembers(current => ({
               ...current,
-              [selectedProjectKey]: cloudContext.members,
+              [selectedProjectKey]: boardContext.members,
             }))
             setProjectAgents(current => ({
               ...current,
-              [selectedProjectKey]: cloudContext.agents.filter(agent => agent.status === 'active'),
+              [selectedProjectKey]: boardContext.agents.filter(agent => agent.status === 'active'),
             }))
           }
           // Keep the projects-home cache in sync with the board fetch.
@@ -2377,9 +2349,9 @@ export function CloudTodoWorkspace({
           if (boardSnapshotSignatureRef.current === signature) return
           boardSnapshotSignatureRef.current = signature
           applyBoardItems(selectedProjectKey, [], message)
+          setItemTaskBindings({})
+          setItemTaskBindingsProjectKey(selectedProjectKey)
           if (selectedProject.location === 'cloud') {
-            setItemTaskBindings({})
-            setItemTaskBindingsProjectKey(selectedProjectKey)
             setProjectMembers(current => ({ ...current, [selectedProjectKey]: [] }))
             setProjectAgents(current => ({ ...current, [selectedProjectKey]: [] }))
           }
@@ -2397,7 +2369,6 @@ export function CloudTodoWorkspace({
     }
   }, [
     applyBoardItems,
-    availableProjectSpaceApis,
     boardRefreshNonce,
     isMyTasksBoard,
     selectedProject,
@@ -2405,6 +2376,7 @@ export function CloudTodoWorkspace({
     selectedProjectId,
     selectedProjectKey,
     locateItems,
+    runtimeTaskKeys,
     services.aitableApi,
     services.dwsApi,
   ])
@@ -2443,51 +2415,6 @@ export function CloudTodoWorkspace({
       unsubscribe?.()
     }
   }, [selectedProjectChatClient, selectedProjectId])
-  useEffect(() => {
-    if (
-      selectedProject?.location !== 'local' ||
-      !selectedProjectApi ||
-      !selectedProjectKey ||
-      itemsProjectKey !== selectedProjectKey ||
-      items.length === 0
-    ) {
-      return
-    }
-    let active = true
-    void Promise.allSettled(
-      items.map(async item => {
-        const api = isMyTasksBoard
-          ? projectSpaceApis[item.project_store === 'local' ? 'local' : 'cloud']
-          : selectedProjectApi
-        if (!api) throw new Error('Project-space API is unavailable')
-        return {
-          itemId: item.id,
-          bindings: await api.listTaskBindings(item.id),
-        }
-      })
-    ).then(results => {
-      if (!active) return
-      const next: Record<string, LoopItemTaskBinding[]> = {}
-      for (const result of results) {
-        if (result.status === 'fulfilled') {
-          next[result.value.itemId] = result.value.bindings
-        }
-      }
-      setItemTaskBindings(next)
-      setItemTaskBindingsProjectKey(selectedProjectKey)
-    })
-    return () => {
-      active = false
-    }
-  }, [
-    isMyTasksBoard,
-    items,
-    itemsProjectKey,
-    projectSpaceApis,
-    selectedProject,
-    selectedProjectApi,
-    selectedProjectKey,
-  ])
   useEffect(() => {
     const runtimeWorkApi = services.runtimeWorkApi
     if (
@@ -4317,6 +4244,7 @@ export function CloudTodoWorkspace({
                 }}
                 onCreateTask={async workflowNodeId => {
                   setSelectedTaskBinding(null)
+                  setBackgroundTaskItemId(null)
                   let inheritFromTask: RuntimeTaskAddress | null = null
                   const workflowNode = selectedItem.workflow?.nodes.find(
                     node => node.id === workflowNodeId
@@ -4508,7 +4436,10 @@ export function CloudTodoWorkspace({
                     ? selectedTaskBinding.task_title
                     : null
                 }
-                open={backgroundTaskItemId !== selectedItem.id}
+                open={
+                  selectedTaskBinding?.work_item_id !== selectedItem.id ||
+                  backgroundTaskItemId !== selectedItem.id
+                }
                 embedded
                 initialTaskInput={
                   taskComposerRequest?.workItemId === selectedItem.id

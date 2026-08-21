@@ -1,16 +1,15 @@
 import {
-  Check,
+  CircleCheck,
   CircleDot,
   CircleX,
   Clock3,
   GitMerge,
   GitPullRequest,
-  GitPullRequestClosed,
   Loader2,
   TriangleAlert,
+  type LucideIcon,
 } from 'lucide-react'
-import { useState } from 'react'
-import type { TaskChangeRequestSnapshot } from '@/api/changeRequests'
+import { useEffect, useRef, useState } from 'react'
 import { Tooltip } from '@/components/ui/tooltip'
 import {
   changeRequestVisualStatus,
@@ -19,24 +18,128 @@ import {
 import { useTranslation } from '@/hooks/useTranslation'
 import { openExternalUrl } from '@/lib/external-links'
 import { cn } from '@/lib/utils'
+import type { ChangeRequest } from '@/types/environment'
 
-const statusIcons: Record<
-  ChangeRequestVisualStatus,
-  { icon: typeof GitPullRequest; className: string }
-> = {
-  open: { icon: GitPullRequest, className: 'text-text-muted' },
-  checks_pending: { icon: Clock3, className: 'text-amber-500' },
-  checks_passed: { icon: Check, className: 'text-green-500' },
-  checks_failed: { icon: CircleX, className: 'text-red-500' },
-  merge_conflict: { icon: TriangleAlert, className: 'text-red-500' },
-  merge_queue_queued: { icon: GitMerge, className: 'text-amber-500' },
-  merge_queue_checking: { icon: Loader2, className: 'animate-spin text-amber-500' },
-  merge_queue_failed: { icon: CircleX, className: 'text-red-500' },
-  merge_queue_timed_out: { icon: Clock3, className: 'text-red-500' },
-  merge_queue_conflicting: { icon: TriangleAlert, className: 'text-red-500' },
-  merge_queue_removed: { icon: CircleDot, className: 'text-text-muted' },
-  closed: { icon: GitPullRequestClosed, className: 'text-text-muted' },
-  merged: { icon: GitMerge, className: 'text-violet-500' },
+interface ChangeRequestStatusGlyphConfig {
+  mainClassName: string
+  badgeIcon?: LucideIcon
+  badgeClassName?: string
+  badgeIconClassName?: string
+}
+
+interface ChangeRequestStatusSnapshot {
+  changeRequest: ChangeRequest | null
+  stale?: boolean
+}
+
+const statusGlyphs: Record<ChangeRequestVisualStatus, ChangeRequestStatusGlyphConfig> = {
+  draft: { mainClassName: 'text-text-muted' },
+  open: { mainClassName: 'text-green-500' },
+  checks_pending: {
+    mainClassName: 'text-green-500',
+    badgeIcon: Clock3,
+    badgeClassName: 'text-text-muted',
+  },
+  checks_passed: {
+    mainClassName: 'text-green-500',
+    badgeIcon: CircleCheck,
+    badgeClassName: 'text-green-500',
+  },
+  checks_failed: {
+    mainClassName: 'text-green-500',
+    badgeIcon: CircleX,
+    badgeClassName: 'text-red-500',
+  },
+  merge_conflict: {
+    mainClassName: 'text-red-500',
+    badgeIcon: TriangleAlert,
+    badgeClassName: 'text-red-500',
+  },
+  merge_queue_queued: {
+    mainClassName: 'text-text-secondary',
+    badgeIcon: Clock3,
+    badgeClassName: 'text-text-muted',
+  },
+  merge_queue_checking: {
+    mainClassName: 'text-text-secondary',
+    badgeIcon: Loader2,
+    badgeClassName: 'text-text-muted',
+    badgeIconClassName: 'animate-spin',
+  },
+  merge_queue_failed: {
+    mainClassName: 'text-red-500',
+    badgeIcon: CircleX,
+    badgeClassName: 'text-red-500',
+  },
+  merge_queue_timed_out: {
+    mainClassName: 'text-red-500',
+    badgeIcon: Clock3,
+    badgeClassName: 'text-red-500',
+  },
+  merge_queue_conflicting: {
+    mainClassName: 'text-red-500',
+    badgeIcon: TriangleAlert,
+    badgeClassName: 'text-red-500',
+  },
+  merge_queue_removed: {
+    mainClassName: 'text-text-muted',
+    badgeIcon: CircleDot,
+    badgeClassName: 'text-text-muted',
+  },
+  closed: { mainClassName: 'text-red-500' },
+  merged: { mainClassName: 'text-violet-500' },
+}
+
+export function ChangeRequestStatusGlyph({
+  changeRequest,
+  size = 'compact',
+  className,
+  mainIconTestId,
+}: {
+  changeRequest: ChangeRequest
+  size?: 'compact' | 'environment'
+  className?: string
+  mainIconTestId?: string
+}) {
+  const status = changeRequestVisualStatus(changeRequest)
+  const config = statusGlyphs[status]
+  const MainIcon = status === 'merged' ? GitMerge : GitPullRequest
+  const BadgeIcon = config.badgeIcon
+  const environmentSize = size === 'environment'
+
+  return (
+    <span
+      className={cn(
+        'relative flex shrink-0 items-center justify-center',
+        environmentSize ? 'h-[18px] w-[18px]' : 'h-4 w-4',
+        config.mainClassName,
+        className
+      )}
+      aria-hidden="true"
+    >
+      <MainIcon
+        data-testid={mainIconTestId}
+        className={cn(environmentSize ? 'h-[18px] w-[18px]' : 'h-3.5 w-3.5', config.mainClassName)}
+      />
+      {BadgeIcon ? (
+        <span
+          className={cn(
+            'absolute -bottom-1 -right-1 flex items-center justify-center rounded-full bg-background',
+            environmentSize ? 'h-3.5 w-3.5' : 'h-3 w-3',
+            config.badgeClassName
+          )}
+        >
+          <BadgeIcon
+            className={cn(
+              environmentSize ? 'h-3.5 w-3.5' : 'h-3 w-3',
+              'fill-background',
+              config.badgeIconClassName
+            )}
+          />
+        </span>
+      ) : null}
+    </span>
+  )
 }
 
 export function ChangeRequestStatusIcon({
@@ -46,31 +149,59 @@ export function ChangeRequestStatusIcon({
   onContinueRepair,
   className,
   popoverAlign = 'right',
+  glyphSize = 'compact',
+  mainIconTestId,
 }: {
-  snapshot: TaskChangeRequestSnapshot | null
+  snapshot: ChangeRequestStatusSnapshot | null
   testId: string
   repairing?: boolean
   onContinueRepair?: () => Promise<void> | void
   className?: string
   popoverAlign?: 'left' | 'right'
+  glyphSize?: 'compact' | 'environment'
+  mainIconTestId?: string
 }) {
   const { t } = useTranslation('common')
   const [open, setOpen] = useState(false)
+  const rootRef = useRef<HTMLSpanElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
   const changeRequest = snapshot?.changeRequest
+
+  useEffect(() => {
+    if (!open) return
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!(event.target instanceof Node) || rootRef.current?.contains(event.target)) return
+      setOpen(false)
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      setOpen(false)
+      triggerRef.current?.focus()
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [open])
+
   if (!changeRequest) return null
   const status = changeRequestVisualStatus(changeRequest)
-  const config = statusIcons[status]
-  const Icon = config.icon
   const label = t(`workbench.change_request_status_${status}`, status)
   const prefix = changeRequest.provider === 'gitlab' ? '!' : '#'
 
   return (
     <span
+      ref={rootRef}
       className={cn('relative inline-flex shrink-0', className)}
       onClick={event => event.stopPropagation()}
     >
       <Tooltip label={`${prefix}${changeRequest.number} · ${label}`}>
         <button
+          ref={triggerRef}
           type="button"
           data-testid={testId}
           aria-label={`${prefix}${changeRequest.number} · ${label}`}
@@ -78,7 +209,11 @@ export function ChangeRequestStatusIcon({
           onClick={() => setOpen(current => !current)}
           className="flex h-6 w-6 items-center justify-center rounded-md hover:bg-muted"
         >
-          <Icon className={cn('h-3.5 w-3.5', config.className)} />
+          <ChangeRequestStatusGlyph
+            changeRequest={changeRequest}
+            size={glyphSize}
+            mainIconTestId={mainIconTestId}
+          />
         </button>
       </Tooltip>
       {open ? (
@@ -108,7 +243,10 @@ export function ChangeRequestStatusIcon({
             <button
               type="button"
               data-testid={`${testId}-open`}
-              onClick={() => void openExternalUrl(changeRequest.url)}
+              onClick={() => {
+                setOpen(false)
+                void openExternalUrl(changeRequest.url)
+              }}
               className="h-7 rounded-md px-2 text-xs text-text-secondary hover:bg-muted"
             >
               {t('workbench.change_request_open', '打开 PR')}
@@ -118,7 +256,10 @@ export function ChangeRequestStatusIcon({
                 type="button"
                 data-testid={`${testId}-repair`}
                 disabled={repairing}
-                onClick={() => void onContinueRepair()}
+                onClick={() => {
+                  setOpen(false)
+                  void onContinueRepair()
+                }}
                 className="h-7 rounded-md bg-text-primary px-2 text-xs text-background disabled:opacity-50"
               >
                 {repairing

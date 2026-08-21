@@ -41,7 +41,7 @@ import {
   buildExecutor,
   codexUpstreamApiFormat,
   mcpElicitationConfigToml,
-  prepareHarnessRuntimeRoot,
+  prepareHarnessRuntimeRoots,
   resolveDesktopCodexBinary,
   toolDetailsMcpConfigToml,
   verifyCloudProjectFlow,
@@ -932,10 +932,12 @@ async function main() {
       await desktopScenario?.prepareCloud?.({
         authToken: cloudEnvironment.authToken,
         backendUrl: cloudEnvironment.backendUrl,
+        publishOfficialSmartApp: sourcePath => cloudEnvironment.publishOfficialSmartApp(sourcePath),
       })
     } else {
       executorBinary = await buildExecutor()
     }
+    desktopScenario?.setExecutorBinary?.(executorBinary)
     const desktopAppPromise = prebuiltDesktopApp
       ? Promise.resolve(prebuiltDesktopApp)
       : buildDesktopApp(
@@ -1001,8 +1003,8 @@ async function main() {
       )
     }
 
-    const harnessRuntimeRoot =
-      SELECTED_DESKTOP_SEGMENT === 'harness-apps' ? await prepareHarnessRuntimeRoot() : null
+    const harnessRuntimes =
+      SELECTED_DESKTOP_SEGMENT === 'harness-apps' ? await prepareHarnessRuntimeRoots() : null
     const appEnvironment = {
       ...process.env,
       CODEX_BINARY_PATH: resolvedAppCodexBinary,
@@ -1033,7 +1035,12 @@ async function main() {
       WEWORK_E2E_POSTHOG_HOST: control.url,
       WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR: '127.0.0.1:0',
       WEWORK_EXECUTOR_SIDECAR: executorBinary,
-      ...(harnessRuntimeRoot ? { WEWORK_HARNESS_RUNTIME_ROOT: harnessRuntimeRoot } : {}),
+      ...(harnessRuntimes
+        ? {
+            WEWORK_HARNESS_RUNTIME_ROOT: harnessRuntimes.harnessRuntimeRoot,
+            WEWORK_NODE_RUNTIME_ROOT: harnessRuntimes.nodeRuntimeRoot,
+          }
+        : {}),
       ...(RUNS_PLUGIN_E2E
         ? {
             GIT_CONFIG_COUNT: '1',
@@ -1084,6 +1091,7 @@ async function main() {
         WORKBENCH_READY_TIMEOUT_MS,
         'The restarted Wework application did not reconnect to the desktop controller'
       )
+      return app
     }
     desktopScenario?.setRestartDesktopApp?.(restartDesktopApp)
 
@@ -1227,6 +1235,7 @@ last_updated = "2026-07-30T00:00:00Z"`
           cloudEnvironment,
           control,
           desktopScenario,
+          executorLogPath,
           restartDesktopApp,
           setPhase: value => {
             phase = value
@@ -3047,8 +3056,7 @@ last_updated = "2026-07-30T00:00:00Z"`
         firstTaskWorkspacePath,
         'The first task did not expose a workspace path for review restoration'
       )
-      const activeWorkspaceTabSelector =
-        '[data-testid^="workspace-tab-select-task-"][aria-selected="true"]'
+      const activeWorkspaceTabSelector = '[data-tab-kind="task"][aria-selected="true"]'
       await control.command('waitFor', activeWorkspaceTabSelector, {
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
@@ -3059,7 +3067,7 @@ last_updated = "2026-07-30T00:00:00Z"`
       )
       const activeWorkspaceTabId = activeWorkspaceTabTestId.replace('workspace-tab-select-', '')
       assert.ok(
-        activeWorkspaceTabId.startsWith('task-'),
+        activeWorkspaceTabId === 'fixed-task' || activeWorkspaceTabId.startsWith('task-'),
         `Expected an active task workspace tab, received ${activeWorkspaceTabTestId}`
       )
       const activeTaskWorkbenchSelector =
