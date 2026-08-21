@@ -395,13 +395,12 @@ impl WorktreeManager {
                 record.worktree_id
             ));
         }
-        if expected_execution_id.is_some_and(|expected| {
-            !record
-                .execution_lease
-                .as_ref()
-                .is_some_and(|lease| lease.execution_id == expected)
-        }) {
-            return Ok(false);
+        if let Some(expected) = expected_execution_id {
+            match record.execution_lease.as_ref() {
+                Some(lease) if lease.execution_id == expected => {}
+                None if execution_lease.is_none() => return Ok(true),
+                _ => return Ok(false),
+            }
         }
         record.execution_lease = execution_lease;
         self.save(&state)?;
