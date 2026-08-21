@@ -14,11 +14,17 @@ jest.mock('@/hooks/useTranslation', () => ({
     t: (key: string) => {
       const translations: Record<string, string> = {
         'knowledge:document.splitter.type': 'Chunking Type',
+        'knowledge:document.splitter.typeHelp': 'Choose how to organize searchable chunks.',
         'knowledge:document.splitter.flat': 'Flat',
+        'knowledge:document.splitter.flatDescription': 'Suitable for most documents.',
         'knowledge:document.splitter.hierarchical': 'Hierarchical',
+        'knowledge:document.splitter.hierarchicalDescription': 'Keeps parent context.',
         'knowledge:document.splitter.semantic': 'Semantic',
+        'knowledge:document.splitter.semanticDescription': 'Splits at changes in meaning.',
         'knowledge:document.splitter.fileAware': 'File-aware',
+        'knowledge:document.splitter.fileAwareHelp': 'Selects a parser for each file type.',
         'knowledge:document.splitter.titleEnhancement': 'Title enhancement',
+        'knowledge:document.splitter.titleEnhancementHelp': 'Improves Markdown sections.',
         'knowledge:document.splitter.separator': 'Separator',
         'knowledge:document.splitter.separatorHint': 'Character(s) used to split document',
         'knowledge:document.splitter.chunkSize': 'Max Chunk Size',
@@ -124,6 +130,19 @@ describe('SplitterSettingsSection', () => {
     expect(screen.getByTestId('chunk-strategy-select')).toHaveValue('flat')
     expect(screen.getByTestId('file-aware-checkbox')).toBeChecked()
     expect(screen.getByTestId('title-enhancement-checkbox')).toBeChecked()
+  })
+
+  it('explains the selected strategy and exposes accessible help controls', () => {
+    render(<SplitterSettingsSection config={{}} onChange={jest.fn()} />)
+
+    expect(screen.getByText('Suitable for most documents.')).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Choose how to organize searchable chunks.' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Selects a parser for each file type.' })
+    ).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Improves Markdown sections.' })).toBeInTheDocument()
   })
 
   it('maps legacy smart config to the new display model', () => {
