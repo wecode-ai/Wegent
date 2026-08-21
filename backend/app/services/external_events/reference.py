@@ -113,8 +113,9 @@ def bind_references_from_delivery(
     """Register bindings derived from one delivered reference.
 
     Returns how many bindings were registered. A malformed or undeliverable
-    reference only logs and leaves the manual registration path available; it
-    never fails the delivery itself.
+    reference never fails the delivery itself: the failure is logged and
+    recorded on the affected wait node as ``registration_error`` so a dead
+    listener is visible on the card instead of living only in the logs.
     """
 
     wait_nodes = [
@@ -127,6 +128,7 @@ def bind_references_from_delivery(
     if not wait_nodes:
         return 0
     registered = 0
+    errors: dict[str, list[str]] = {}
     for fulfillment in fulfillments:
         if not isinstance(fulfillment, dict):
             continue
@@ -137,7 +139,14 @@ def bind_references_from_delivery(
             wait_node = _wait_node_for_provider(wait_nodes, provider)
             if wait_node is None:
                 continue
-            for opaque_ref in adapter.extract_opaque_refs(fulfillment):
+            wait_id = str(wait_node.get("id") or "")
+            opaque_refs = adapter.extract_opaque_refs(fulfillment)
+            if not opaque_refs:
+                errors.setdefault(wait_id, []).append(
+                    "no reference derivable from delivered fulfillment"
+                )
+                continue
+            for opaque_ref in opaque_refs:
                 try:
                     external_event_registration_service.register(
                         db,
@@ -164,7 +173,54 @@ def bind_references_from_delivery(
                         provider,
                         opaque_ref,
                     )
+                    errors.setdefault(wait_id, []).append(
+                        f"registration failed for {opaque_ref}"
+                    )
+    _sync_registration_errors(db, item=item, wait_nodes=wait_nodes, errors=errors)
     return registered
+
+
+def _sync_registration_errors(
+    db: Session,
+    *,
+    item: LoopItem,
+    wait_nodes: list[dict[str, Any]],
+    errors: dict[str, list[str]],
+) -> None:
+    """Persist wait-node registration errors and clear fully-successful ones.
+
+    The error is part of the node snapshot the API exposes, so the card can
+    show why a listener is not receiving events. A later delivery that binds
+    every expected reference clears the field again.
+    """
+
+    metadata = item.metadata_json if isinstance(item.metadata_json, dict) else {}
+    workflow = metadata.get("workflow")
+    raw_nodes = workflow.get("nodes") if isinstance(workflow, dict) else None
+    if not isinstance(raw_nodes, list):
+        return
+    nodes = [dict(value) for value in raw_nodes if isinstance(value, dict)]
+    changed = False
+    for wait_node in wait_nodes:
+        wait_id = str(wait_node.get("id") or "")
+        error = "；".join(errors.get(wait_id) or [])
+        for candidate in nodes:
+            if candidate.get("id") != wait_id:
+                continue
+            if error and candidate.get("registration_error") != error:
+                candidate["registration_error"] = error
+                changed = True
+            elif not error and candidate.get("registration_error"):
+                candidate.pop("registration_error", None)
+                changed = True
+            break
+    if changed:
+        from app.services.project_workflow_projection import apply_workflow_nodes
+
+        apply_workflow_nodes(item, workflow=workflow, nodes=nodes)
+        # Registration commits its own transaction; the error snapshot is part
+        # of that same side effect and must not wait for the caller's session.
+        db.commit()
 
 
 def _archive_superseded_bindings(

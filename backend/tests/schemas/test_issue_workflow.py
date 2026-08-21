@@ -5,6 +5,7 @@ from app.schemas.issue_workflow import (
     IssueWorkflowInstance,
     ProjectWorkflowDefinition,
     instantiate_workflow,
+    require_rerun_agent,
 )
 
 
@@ -356,6 +357,86 @@ def test_workflow_definition_rejects_wait_node_without_config() -> None:
                 ],
             }
         )
+
+
+def test_require_rerun_agent_accepts_complete_only_wait_node() -> None:
+    definition = ProjectWorkflowDefinition.model_validate(
+        {
+            "version": 1,
+            "stage_mode": "dag",
+            "nodes": [
+                {
+                    "id": "wait",
+                    "name": "Wait",
+                    "node_type": "wait",
+                    "wait_config": {
+                        "rules": [
+                            {
+                                "id": "merged",
+                                "event_type": "merged",
+                                "action": "complete",
+                            },
+                        ]
+                    },
+                },
+            ],
+        }
+    )
+    require_rerun_agent(definition)
+
+
+def test_require_rerun_agent_rejects_rerun_rule_without_robot() -> None:
+    definition = ProjectWorkflowDefinition.model_validate(
+        {
+            "version": 1,
+            "stage_mode": "dag",
+            "nodes": [
+                {
+                    "id": "wait",
+                    "name": "Wait",
+                    "node_type": "wait",
+                    "wait_config": {
+                        "rules": [
+                            {
+                                "id": "ci",
+                                "event_type": "ci_failed",
+                                "action": "rerun",
+                            },
+                        ]
+                    },
+                },
+            ],
+        }
+    )
+    with pytest.raises(ValueError, match="requires an execution robot"):
+        require_rerun_agent(definition)
+
+
+def test_require_rerun_agent_accepts_rerun_rule_with_robot() -> None:
+    definition = ProjectWorkflowDefinition.model_validate(
+        {
+            "version": 1,
+            "stage_mode": "dag",
+            "nodes": [
+                {
+                    "id": "wait",
+                    "name": "Wait",
+                    "node_type": "wait",
+                    "wait_config": {
+                        "agent_id": "robot-1",
+                        "rules": [
+                            {
+                                "id": "ci",
+                                "event_type": "ci_failed",
+                                "action": "rerun",
+                            },
+                        ],
+                    },
+                },
+            ],
+        }
+    )
+    require_rerun_agent(definition)
 
 
 def test_workflow_definition_rejects_config_on_stage_nodes() -> None:

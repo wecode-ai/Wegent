@@ -376,3 +376,90 @@ def test_generic_provider_adapter_plugs_in_without_special_cases(
     requirements = injected_reference_requirements(workflow, _stage(workflow))
     assert requirements[0]["value_type"] == "url"
     assert requirements[0]["id"] == f"{INJECTED_REQUIREMENT_PREFIX}wait-1_youtube"
+
+
+def test_failed_registration_is_recorded_on_wait_node(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    project, item = _issue(test_db, test_user)
+    workflow = item.metadata_json["workflow"]
+    wait_node = next(
+        node
+        for node in workflow["nodes"]
+        if isinstance(node, dict) and node.get("id") == "wait-1"
+    )
+    # A node that is no longer ready/waiting refuses registration, and the
+    # failure must land on the node instead of silently failing the delivery.
+    wait_node["status"] = "blocked"
+    item.metadata_json = {"workflow": workflow}
+    test_db.flush()
+
+    count = bind_references_from_delivery(
+        test_db,
+        item=item,
+        workflow=workflow,
+        node=_stage(workflow),
+        fulfillments=[
+            {
+                "requirement_id": f"{INJECTED_REQUIREMENT_PREFIX}wait-1_gitlab",
+                "kind": "pull_request",
+                "provider": "gitlab",
+                "url": "https://gitlab.example/acme/app/-/merge_requests/7",
+                "number": 7,
+            }
+        ],
+        automation_run_id="run-1",
+        user_id=test_user.id,
+    )
+    assert count == 0
+    test_db.refresh(item)
+    persisted = item.metadata_json["workflow"]["nodes"]
+    persisted_wait = next(
+        node
+        for node in persisted
+        if isinstance(node, dict) and node.get("id") == "wait-1"
+    )
+    assert "registration failed" in persisted_wait["registration_error"]
+
+
+def test_successful_registration_clears_wait_node_error(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    project, item = _issue(test_db, test_user)
+    workflow = item.metadata_json["workflow"]
+    wait_node = next(
+        node
+        for node in workflow["nodes"]
+        if isinstance(node, dict) and node.get("id") == "wait-1"
+    )
+    wait_node["registration_error"] = "registration failed for acme/app!6"
+    item.metadata_json = {"workflow": workflow}
+    test_db.flush()
+
+    count = bind_references_from_delivery(
+        test_db,
+        item=item,
+        workflow=workflow,
+        node=_stage(workflow),
+        fulfillments=[
+            {
+                "requirement_id": f"{INJECTED_REQUIREMENT_PREFIX}wait-1_gitlab",
+                "kind": "pull_request",
+                "provider": "gitlab",
+                "url": "https://gitlab.example/acme/app/-/merge_requests/7",
+                "number": 7,
+            }
+        ],
+        automation_run_id="run-1",
+        user_id=test_user.id,
+    )
+    assert count == 1
+    test_db.refresh(item)
+    persisted_wait = next(
+        node
+        for node in item.metadata_json["workflow"]["nodes"]
+        if isinstance(node, dict) and node.get("id") == "wait-1"
+    )
+    assert "registration_error" not in persisted_wait

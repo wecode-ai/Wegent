@@ -367,11 +367,17 @@ class ExternalEventEvaluationService:
             return
         issue_id = self._metadata(binding).get("issue_item_id")
         issue = db.get(LoopItem, issue_id) if issue_id else item
+        agent = self._wait_node_agent(db, run=run, node=node)
+        if agent is None:
+            logger.warning(
+                "External event rerun skipped: wait node has no active robot "
+                "binding=%s node=%s",
+                binding.id,
+                node.id,
+            )
+            return
         self._bump_round(db, issue=issue, node=node)
         instruction = self._rerun_instruction(rule, events)
-        agent = self._registered_agent(db, run)
-        if agent is None:
-            return
         # A repair round is its own run scoped to the wait node, exactly like
         # a stage rerun owns a fresh run. The stage that reached the gate
         # stays completed and is never re-activated by the round.
@@ -475,25 +481,30 @@ class ExternalEventEvaluationService:
         )
 
     @staticmethod
-    def _registered_agent(db: Session, run: ProjectAutomationRun):
+    def _wait_node_agent(
+        db: Session,
+        *,
+        run: ProjectAutomationRun,
+        node: WorkflowNodeInstance,
+    ):
+        """Resolve the robot that owns wait-node repair rounds.
+
+        Rerun rounds run on the robot configured on the wait node itself. The
+        upstream stage that registered the binding is irrelevant: a rerun is
+        scoped to the wait gate, not to whichever robot happened to reach it.
+        """
+
         from app.models.delivery import ProjectChatAgent
 
-        if run.assignee_agent_id:
-            agent = db.get(ProjectChatAgent, run.assignee_agent_id)
-            if agent is not None and agent.status == "active":
-                return agent
-        latest = (
-            db.query(LoopItemExecution)
-            .filter(
-                LoopItemExecution.automation_run_id == str(run.id),
-                LoopItemExecution.agent_id != "",
-            )
-            .order_by(LoopItemExecution.id.desc())
-            .first()
-        )
-        if latest is None:
+        agent_id = node.wait_config.agent_id if node.wait_config else None
+        agent = db.get(ProjectChatAgent, agent_id) if agent_id else None
+        if (
+            agent is None
+            or agent.status != "active"
+            or str(agent.cloud_project_id) != str(run.cloud_project_id)
+        ):
             return None
-        return db.get(ProjectChatAgent, latest.agent_id)
+        return agent
 
     @staticmethod
     def _agent_env(agent) -> str:

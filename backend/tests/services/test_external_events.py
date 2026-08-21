@@ -302,7 +302,7 @@ def test_rerun_queues_new_execution_and_bumps_round(
     test_user: User,
 ) -> None:
     issue = _issue(test_db, workflow_project, test_user.id)
-    agent = ProjectChatAgent(
+    stage_agent = ProjectChatAgent(
         cloud_project_id=workflow_project.id,
         loop_item_id=issue.id,
         assignee_agent_id="",
@@ -312,15 +312,27 @@ def test_rerun_queues_new_execution_and_bumps_round(
         created_by_user_id=test_user.id,
         status="active",
     )
-    test_db.add(agent)
+    wait_agent = ProjectChatAgent(
+        cloud_project_id=workflow_project.id,
+        loop_item_id=issue.id,
+        assignee_agent_id="",
+        title="Wait robot",
+        name="Wait robot",
+        description="",
+        created_by_user_id=test_user.id,
+        status="active",
+    )
+    test_db.add(stage_agent)
+    test_db.add(wait_agent)
     test_db.flush()
+    _set_wait_agent(issue, wait_agent)
     run = ProjectAutomationRun(
         cloud_project_id=workflow_project.id,
         parent_id="rule-1",
         loop_item_id=issue.id,
         task_id=issue.id,
         task_title=issue.title,
-        assignee_agent_id=agent.id,
+        assignee_agent_id=stage_agent.id,
         source="manual",
         status="succeeded",
         created_by_user_id=test_user.id,
@@ -369,6 +381,10 @@ def test_rerun_queues_new_execution_and_bumps_round(
     assert execution is not None
     assert execution.status in {"pending_approval", "queued"}
     assert execution.attempt_no == 1
+    # The rerun runs on the robot configured on the wait node itself, never on
+    # the upstream stage's robot that happened to register the binding.
+    assert execution.agent_id == wait_agent.id
+    assert execution.agent_id != stage_agent.id
     test_db.refresh(issue)
     wait_node = next(
         node
@@ -380,13 +396,13 @@ def test_rerun_queues_new_execution_and_bumps_round(
     assert wait_node.get("repair_status") == "queued"
 
 
-def test_wait_node_rerun_keeps_gate_waiting_and_never_reopens_stage(
+def test_rerun_without_configured_robot_never_inherits_upstream_stage(
     test_db: Session,
     workflow_project: CloudProject,
     test_user: User,
 ) -> None:
     issue = _issue(test_db, workflow_project, test_user.id)
-    agent = ProjectChatAgent(
+    stage_agent = ProjectChatAgent(
         cloud_project_id=workflow_project.id,
         loop_item_id=issue.id,
         assignee_agent_id="",
@@ -396,7 +412,7 @@ def test_wait_node_rerun_keeps_gate_waiting_and_never_reopens_stage(
         created_by_user_id=test_user.id,
         status="active",
     )
-    test_db.add(agent)
+    test_db.add(stage_agent)
     test_db.flush()
     run = ProjectAutomationRun(
         cloud_project_id=workflow_project.id,
@@ -404,7 +420,90 @@ def test_wait_node_rerun_keeps_gate_waiting_and_never_reopens_stage(
         loop_item_id=issue.id,
         task_id=issue.id,
         task_title=issue.title,
-        assignee_agent_id=agent.id,
+        assignee_agent_id=stage_agent.id,
+        source="manual",
+        status="succeeded",
+        created_by_user_id=test_user.id,
+    )
+    test_db.add(run)
+    test_db.flush()
+    run_id = str(run.id)
+    test_db.commit()
+
+    binding = external_event_binding_service.create(
+        test_db,
+        provider="gitlab",
+        opaque_ref="acme/app!7",
+        cloud_project_id=str(workflow_project.id),
+        loop_item_id=issue.id,
+        issue_item_id=issue.id,
+        workflow_node_id="wait-1",
+        automation_run_id=run_id,
+        created_by_user_id=test_user.id,
+    )
+    test_db.commit()
+
+    # The wait node has a rerun rule but no configured robot (legacy
+    # definition awaiting re-selection). The round must not run on the
+    # upstream stage's robot and must not consume a round number.
+    external_event_evaluation_service.evaluate_event(
+        test_db, binding=binding, event=_ci_event()
+    )
+    test_db.commit()
+
+    assert (
+        test_db.query(LoopItemExecution)
+        .filter(LoopItemExecution.loop_item_id == issue.id)
+        .count()
+        == 0
+    )
+    test_db.refresh(issue)
+    wait_node = next(
+        node
+        for node in issue.metadata_json["workflow"]["nodes"]
+        if node["id"] == "wait-1"
+    )
+    assert wait_node.get("wait_round", 0) == 0
+    assert wait_node["status"] == "waiting"
+
+
+def test_wait_node_rerun_keeps_gate_waiting_and_never_reopens_stage(
+    test_db: Session,
+    workflow_project: CloudProject,
+    test_user: User,
+) -> None:
+    issue = _issue(test_db, workflow_project, test_user.id)
+    stage_agent = ProjectChatAgent(
+        cloud_project_id=workflow_project.id,
+        loop_item_id=issue.id,
+        assignee_agent_id="",
+        title="Fix robot",
+        name="Fix robot",
+        description="",
+        created_by_user_id=test_user.id,
+        status="active",
+    )
+    wait_agent = ProjectChatAgent(
+        cloud_project_id=workflow_project.id,
+        loop_item_id=issue.id,
+        assignee_agent_id="",
+        title="Wait robot",
+        name="Wait robot",
+        description="",
+        created_by_user_id=test_user.id,
+        status="active",
+    )
+    test_db.add(stage_agent)
+    test_db.add(wait_agent)
+    test_db.flush()
+    _set_wait_agent(issue, wait_agent)
+    run = ProjectAutomationRun(
+        cloud_project_id=workflow_project.id,
+        parent_id="rule-1",
+        loop_item_id=issue.id,
+        task_id=issue.id,
+        task_title=issue.title,
+        assignee_agent_id=stage_agent.id,
         source="manual",
         status="succeeded",
         created_by_user_id=test_user.id,
@@ -698,6 +797,7 @@ def test_merge_policy_settles_after_execution_end(
     )
     test_db.add(agent)
     test_db.flush()
+    _set_wait_agent(issue, agent)
     run = ProjectAutomationRun(
         cloud_project_id=workflow_project.id,
         parent_id="rule-1",
@@ -881,6 +981,17 @@ def _set_wait_rules(issue: LoopItem, rules: list[dict]) -> None:
     wait_node["wait_config"] = {"rules": rules}
 
 
+def _set_wait_agent(issue: LoopItem, agent: ProjectChatAgent) -> None:
+    """Configure the robot that owns this wait node's rerun rounds."""
+
+    wait_node = next(
+        node
+        for node in issue.metadata_json["workflow"]["nodes"]
+        if node["id"] == "wait-1"
+    )
+    wait_node["wait_config"]["agent_id"] = agent.id
+
+
 def _repair_agent_run(
     test_db: Session,
     *,
@@ -900,6 +1011,7 @@ def _repair_agent_run(
     )
     test_db.add(agent)
     test_db.flush()
+    _set_wait_agent(issue, agent)
     run = ProjectAutomationRun(
         cloud_project_id=project.id,
         parent_id="rule-1",

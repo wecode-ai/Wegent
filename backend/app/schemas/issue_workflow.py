@@ -95,6 +95,10 @@ class WaitNodeConfig(BaseModel):
     rules: list[WaitEventRule] = Field(
         default_factory=list, min_length=1, max_length=20
     )
+    # Robot that executes a rerun round when a matching event fires. Wait nodes
+    # are robot-only: the rerun is an autonomous reaction to an external event,
+    # so the human path is expressed by ``complete`` + a downstream human stage.
+    agent_id: str | None = Field(default=None, max_length=64)
 
 
 class WorkflowNodeDefinition(BaseModel):
@@ -192,6 +196,26 @@ def strip_structural_nodes(nodes: list) -> list:
     return cleaned
 
 
+def require_rerun_agent(definition: "ProjectWorkflowDefinition") -> None:
+    """Reject definitions whose rerun wait rules have no execution robot.
+
+    Kept outside the schema so legacy stored definitions and Issue snapshots
+    stay readable: the invariant is enforced where definitions are written
+    (project save) and at rerun time, never on read.
+    """
+
+    for node in definition.nodes:
+        if node.node_type != "wait" or node.wait_config is None:
+            continue
+        if not any(rule.action == "rerun" for rule in node.wait_config.rules):
+            continue
+        if not node.wait_config.agent_id:
+            label = node.name or node.id
+            raise ValueError(
+                f"wait node {label!r} with rerun rules requires an execution robot"
+            )
+
+
 class ProjectWorkflowDefinition(BaseModel):
     version: int = Field(default=1, ge=1)
     stage_mode: Literal["none", "dag"] = "none"
@@ -254,6 +278,9 @@ class WorkflowNodeInstance(WorkflowNodeDefinition):
     delivery_ids: list[str] = Field(default_factory=list, max_length=100)
     wait_round: int = Field(default=0, ge=0)
     repair_status: str | None = Field(default=None, max_length=32)
+    # Set when a delivered reference for this wait node failed to register, so
+    # the card can show why the listener is not receiving events.
+    registration_error: str | None = Field(default=None, max_length=500)
     decision_history: list["WorkflowNodeDecision"] = Field(
         default_factory=list, max_length=100
     )

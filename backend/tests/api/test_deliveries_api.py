@@ -18,10 +18,12 @@ from app.core.security import create_access_token, get_password_hash
 from app.models.cloud_project import CloudProject, LoopItemTaskBinding
 from app.models.delivery import (
     Delivery,
+    ExternalEventBinding,
     LoopItem,
     ProjectAutomationRule,
     ProjectAutomationRun,
 )
+from app.models.loop_item_execution import LoopItemExecution
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.task import TaskResource
@@ -482,7 +484,7 @@ def test_delivery_flow_creates_immutable_snapshot(
     finalized = test_client.post(
         f"/api/v1/deliveries/{delivery_id}/finalize", headers=_auth(test_token)
     )
-    assert finalized.status_code == 200
+    assert finalized.status_code == 200, finalized.json()
     assert finalized.json()["status"] == "delivered"
     assert any(key.endswith("manifest.json") for key in delivery_storage.objects)
     assert published_events == [(item_id, "delivery_finalized")]
@@ -1348,3 +1350,162 @@ def test_mark_loop_item_read_repairs_legacy_metadata_without_read_revisions(
     test_db.refresh(item)
     assert item.metadata_json["legacy"] is True
     assert item.metadata_json["read_revisions"][str(item.created_by_user_id)] == 3
+
+
+def test_rest_delivery_finalize_registers_wait_node_reference(
+    test_client: TestClient,
+    test_token: str,
+    test_db: Session,
+    test_user: User,
+) -> None:
+    """Every finalize entry point registers the wait-node reference binding."""
+
+    public_id = str(uuid.uuid4())
+    project = CloudProject(
+        public_id=public_id,
+        project_key="WAITREG",
+        name="Wait registration",
+        description="",
+        created_by_user_id=test_user.id,
+        storage_prefix=f"projects/{public_id}",
+    )
+    test_db.add(project)
+    test_db.flush()
+    item = LoopItem(
+        id="WAITREG-1",
+        cloud_project_id=str(project.id),
+        sequence_number=1,
+        title="Register wait reference",
+        description="",
+        status="in_progress",
+        priority="none",
+        sort_order=0,
+        created_by_user_id=test_user.id,
+        metadata_json={
+            "workflow": {
+                "version": 1,
+                "stage_mode": "dag",
+                "advancement_policy": "manual",
+                "nodes": [
+                    {
+                        "id": "stage-1",
+                        "name": "Develop MR",
+                        "node_type": "stage",
+                        "depends_on": [],
+                        "required": True,
+                        "workspace_policy": "none",
+                        "status": "completed",
+                        "automation_rule_id": "rule-1",
+                    },
+                    {
+                        "id": "wait-1",
+                        "name": "Wait external",
+                        "node_type": "wait",
+                        "depends_on": ["stage-1"],
+                        "required": True,
+                        "workspace_policy": "none",
+                        "status": "waiting",
+                        "wait_config": {
+                            "rules": [
+                                {
+                                    "id": "rule-merged",
+                                    "provider": "gitlab",
+                                    "event_type": "merged",
+                                    "action": "complete",
+                                    "rerun_prompt": "",
+                                }
+                            ]
+                        },
+                    },
+                ],
+            }
+        },
+    )
+    test_db.add(item)
+    test_db.commit()
+    test_db.refresh(project)
+    test_db.refresh(item)
+
+    headers = _auth(test_token)
+    source_task = {"deviceId": "local-device", "taskId": "codex-queue-99"}
+    binding_response = test_client.post(
+        f"/api/v1/loop-items/{item.id}/tasks",
+        headers=headers,
+        json=source_task,
+    )
+    assert binding_response.status_code == 201
+    task_binding = (
+        test_db.query(LoopItemTaskBinding)
+        .filter(
+            LoopItemTaskBinding.loop_item_id == item.id,
+            LoopItemTaskBinding.task_user_id == test_user.id,
+        )
+        .first()
+    )
+    assert task_binding is not None
+    task_binding.metadata_json = {"workflow_node_id": "stage-1"}
+    test_db.flush()
+
+    draft_response = test_client.post(
+        f"/api/v1/loop-items/{item.id}/deliveries",
+        headers=headers,
+        json={"markdown": "# handoff", "source_task": source_task},
+    )
+    assert draft_response.status_code == 201
+    delivery_id = draft_response.json()["id"]
+
+    execution = LoopItemExecution(
+        loop_item_id=item.id,
+        cloud_project_id=str(project.id),
+        agent_id="agent-1",
+        execution_environment="local",
+        execution_device_id="local-device",
+        runtime_device_id="local-device",
+        runtime_task_id="codex-queue-99",
+        automation_run_id="run-99",
+    )
+    test_db.add(execution)
+    test_db.commit()
+
+    finalized = test_client.post(
+        f"/api/v1/deliveries/{delivery_id}/finalize",
+        headers=headers,
+        json={
+            "fulfillments": [
+                {
+                    "requirement_id": "__wait_ref__wait-1_gitlab",
+                    "kind": "pull_request",
+                    "provider": "gitlab",
+                    "url": "https://gitlab.example/acme/app/-/merge_requests/7",
+                    "number": 7,
+                    "state": "draft",
+                    "head_branch": "feat",
+                    "base_branch": "main",
+                    "head_commit": "0123456789abcdef0123456789abcdef01234567",
+                }
+            ]
+        },
+    )
+    assert finalized.status_code == 200, finalized.json()
+    assert finalized.json()["status"] == "delivered"
+    test_db.refresh(item)
+    assert item.status == "in_progress", item.metadata_json
+    delivery_row = test_db.get(Delivery, delivery_id)
+    assert delivery_row is not None and delivery_row.source_task_binding_id is not None
+    wait_node = next(
+        node
+        for node in item.metadata_json["workflow"]["nodes"]
+        if isinstance(node, dict) and node.get("id") == "wait-1"
+    )
+    assert "registration_error" not in wait_node, wait_node
+
+    binding = (
+        test_db.query(ExternalEventBinding)
+        .filter(ExternalEventBinding.loop_item_id == item.id)
+        .first()
+    )
+    assert binding is not None
+    assert binding.provider == "gitlab"
+    assert binding.opaque_ref == "acme/app!7"
+    assert binding.metadata_json["workflow_node_id"] == "wait-1"
+    assert binding.metadata_json["automation_run_id"] == "run-99"

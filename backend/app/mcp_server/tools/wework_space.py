@@ -50,7 +50,6 @@ from app.services.cloud_projects.service import cloud_project_service
 from app.services.delivery import delivery_service
 from app.services.external_events.binding import external_event_binding_service
 from app.services.external_events.evaluate import external_event_evaluation_service
-from app.services.external_events.reference import bind_references_from_delivery
 from app.services.external_events.registration import (
     external_event_registration_service,
 )
@@ -62,7 +61,6 @@ from app.services.loop_items.provider_router import (
 from app.services.loop_items.service import loop_item_service
 from app.services.project_automation_execution import project_automation_execution
 from app.services.project_chat.service import project_chat_service
-from app.services.project_workflow_projection import update_workflow_node
 from app.services.workflow_deliverables import (
     fulfilled_requirement_ids,
     missing_requirement_ids,
@@ -1024,42 +1022,13 @@ def finalize_delivery(
         project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
         resolved_item_id = _item_id(db, token_info, item_id)
         _read_item(db, project, resolved_item_id, token_info.user_id)
-        _, binding = _delivery_draft_for_binding(
-            db, token_info, resolved_item_id, delivery_id
-        )
+        _delivery_draft_for_binding(db, token_info, resolved_item_id, delivery_id)
         delivery = delivery_service.finalize(
             db,
             delivery_id,
             token_info.user_id,
             DeliveryFinalize.model_validate({"fulfillments": fulfillments or []}),
         )
-        item = db.get(LoopItem, resolved_item_id)
-        workflow = (
-            item.metadata_json.get("workflow")
-            if item is not None and isinstance(item.metadata_json, dict)
-            else None
-        )
-        node = next(
-            (
-                candidate
-                for candidate in (workflow or {}).get("nodes", [])
-                if isinstance(candidate, dict)
-                and candidate.get("id") == binding.workflow_node_id
-            ),
-            None,
-        )
-        run_id = _board_context(db, token_info).get("project_automation_run_id", "")
-        if item is not None and workflow and node and run_id:
-            bind_references_from_delivery(
-                db,
-                item=item,
-                workflow=workflow,
-                node=node,
-                fulfillments=delivery_service.fulfillment_values(delivery),
-                automation_run_id=run_id,
-                user_id=token_info.user_id,
-            )
-            db.commit()
         return _delivery_view(db, delivery)
 
 
