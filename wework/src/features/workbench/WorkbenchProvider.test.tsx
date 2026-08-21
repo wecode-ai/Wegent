@@ -1849,6 +1849,9 @@ function FollowUpProbe() {
       <span data-testid="queued-errors">
         {paneSession.queuedMessages.map(message => message.error ?? '').join('|')}
       </span>
+      <span data-testid="queued-messages-paused">
+        {paneSession.queuedMessagesPaused ? 'paused' : 'running'}
+      </span>
       <span data-testid="queued-notices">
         {paneSession.queuedMessages.map(message => message.notice ?? '').join('|')}
       </span>
@@ -2012,6 +2015,12 @@ function FollowUpProbe() {
       </button>
       <button type="button" onClick={() => void paneSession.send()}>
         send follow-up
+      </button>
+      <button
+        type="button"
+        onClick={() => void paneSession.resumeQueuedMessagesWithInput('手动消息')}
+      >
+        resume queue with manual input
       </button>
       <button
         type="button"
@@ -13762,6 +13771,174 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(sendRuntimeMessage.mock.calls[1][0]).toEqual(
       expect.objectContaining({
         message: '执行ls',
+      })
+    )
+  })
+
+  test('drains the preserved queue when a manual turn settles before React commits', async () => {
+    let streamHandlers: ChatStreamHandlers = {}
+    const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
+      if (hasRuntimeStreamHandler(handlers)) streamHandlers = handlers
+      return vi.fn()
+    })
+    const runningRuntimeWork = createRuntimeWork({
+      projects: [
+        {
+          project: { id: 7, name: 'Wegent' },
+          deviceWorkspaces: [
+            {
+              deviceId: 'device-1',
+              available: true,
+              workspacePath: '/workspace/project-alpha',
+              tasks: [
+                {
+                  taskId: 'runtime-a',
+                  workspacePath: '/workspace/project-alpha',
+                  title: 'Runtime A',
+                  runtime: 'claude_code',
+                  running: true,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      totalTasks: 1,
+    })
+    const idleRuntimeWork = createRuntimeWork({
+      projects: [
+        {
+          project: { id: 7, name: 'Wegent' },
+          deviceWorkspaces: [
+            {
+              deviceId: 'device-1',
+              available: true,
+              workspacePath: '/workspace/project-alpha',
+              tasks: [
+                {
+                  taskId: 'runtime-a',
+                  workspacePath: '/workspace/project-alpha',
+                  title: 'Runtime A',
+                  runtime: 'claude_code',
+                  running: false,
+                  status: 'cancelled',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      totalTasks: 1,
+    })
+    let runtimeRunning = true
+    const sendRuntimeMessage = vi.fn().mockResolvedValue({
+      accepted: true,
+      taskId: 'runtime-a',
+    })
+    const cancelRuntimeTask = vi.fn().mockImplementation(() => {
+      runtimeRunning = false
+      return Promise.resolve({
+        accepted: true,
+        taskId: 'runtime-a',
+      })
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi
+        .fn()
+        .mockImplementation(() =>
+          Promise.resolve(runtimeRunning ? runningRuntimeWork : idleRuntimeWork)
+        ),
+      getRuntimeTranscript: vi.fn().mockResolvedValue({
+        taskId: 'runtime-a',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'claude_code',
+        messages: [{ id: 'runtime-a:user:1', role: 'user', content: 'first message' }],
+      }),
+      sendRuntimeMessage,
+      cancelRuntimeTask,
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      chatStream: {
+        subscribe,
+      } as unknown as WorkbenchServices['chatStream'],
+    })
+
+    renderWorkbench(
+      <>
+        <RuntimeOpenProbe />
+        <FollowUpProbe />
+      </>,
+      services
+    )
+
+    await userEvent.click(await screen.findByText('open runtime a'))
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('first message')
+    )
+    await waitFor(() => expect(streamHandlers.onChatStart).toBeDefined())
+    await act(async () => {
+      streamHandlers.onChatStart?.({
+        taskId: 'runtime-a',
+        subtaskId: 'active-turn',
+        shellType: 'Chat',
+        deviceId: 'device-1',
+      })
+    })
+    await userEvent.click(screen.getByText('set follow-up'))
+    await userEvent.click(screen.getByText('send follow-up'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('queued-messages')).toHaveTextContent('queued:继续修')
+    )
+    await userEvent.click(screen.getByText('stop current response'))
+    await waitFor(() => expect(cancelRuntimeTask).toHaveBeenCalledTimes(1))
+    await act(async () => {
+      streamHandlers.onChatDone?.({
+        taskId: 'runtime-a',
+        subtaskId: 'active-turn',
+        deviceId: 'device-1',
+        result: { error: 'cancelled' },
+      })
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('queued-messages-paused')).toHaveTextContent('paused')
+    )
+    await waitFor(() => expect(screen.getByTestId('follow-up-pane-busy')).toHaveTextContent('idle'))
+
+    await userEvent.click(screen.getByText('resume queue with manual input'))
+
+    await waitFor(() => expect(sendRuntimeMessage).toHaveBeenCalledTimes(1))
+    expect(sendRuntimeMessage.mock.calls[0][0]).toEqual(
+      expect.objectContaining({
+        message: '手动消息',
+      })
+    )
+    expect(screen.getByTestId('queued-messages')).toHaveTextContent('queued:继续修')
+    expect(screen.getByTestId('queued-messages-paused')).toHaveTextContent('paused')
+
+    await act(async () => {
+      streamHandlers.onChatStart?.({
+        taskId: 'runtime-a',
+        subtaskId: 'manual-turn',
+        shellType: 'Chat',
+        deviceId: 'device-1',
+      })
+      streamHandlers.onChatDone?.({
+        taskId: 'runtime-a',
+        subtaskId: 'manual-turn',
+        deviceId: 'device-1',
+        result: { value: 'done' },
+      })
+    })
+
+    await waitFor(() =>
+      expect(screen.getByTestId('queued-messages-paused')).toHaveTextContent('running')
+    )
+    await waitFor(() => expect(sendRuntimeMessage).toHaveBeenCalledTimes(2))
+    expect(sendRuntimeMessage.mock.calls[1][0]).toEqual(
+      expect.objectContaining({
+        message: '继续修',
       })
     )
   })
