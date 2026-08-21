@@ -42,7 +42,7 @@ class CustomEmbedding(BaseEmbedding):
         embed_batch_size: int = 10,
         dimensions: int | None = None,
         encoding_format: str | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         final_headers = headers.copy() if headers else {}
         if api_key and "Authorization" not in final_headers:
@@ -102,7 +102,12 @@ class CustomEmbedding(BaseEmbedding):
                 "Embedding provider returned a string instead of a numeric "
                 "embedding array"
             )
-        if self._encoding_format == "base64" and isinstance(embedding, str):
+        if self._encoding_format == "base64":
+            if not isinstance(embedding, str):
+                raise ValueError(
+                    "Embedding provider returned a non-string response; "
+                    "expected a base64 string"
+                )
             raw_embedding = base64.b64decode(embedding, validate=True)
             if len(raw_embedding) % 4 != 0:
                 raise ValueError("Invalid base64 embedding byte length")

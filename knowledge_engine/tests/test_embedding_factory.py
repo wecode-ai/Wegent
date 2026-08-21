@@ -154,6 +154,22 @@ def test_custom_embedding_decodes_base64_float_response(
     assert result == pytest.approx([0.1, 0.2, 0.3])
 
 
+def test_custom_embedding_rejects_non_string_base64_response(
+    mocker: MockerFixture,
+) -> None:
+    post = mocker.patch("knowledge_engine.embedding.custom.requests.post")
+    post.return_value.json.return_value = {"data": [{"embedding": [0.1, 0.2, 0.3]}]}
+    embedding = CustomEmbedding(
+        api_url="https://api.example.com/v1/embeddings",
+        model="custom-embedding-model",
+        dimensions=3,
+        encoding_format="base64",
+    )
+
+    with pytest.raises(ValueError, match="base64 string"):
+        embedding.get_text_embedding("release plan")
+
+
 def test_custom_embedding_rejects_string_float_response(
     mocker: MockerFixture,
 ) -> None:
