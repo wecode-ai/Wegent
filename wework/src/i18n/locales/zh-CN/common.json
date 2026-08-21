@@ -1147,6 +1147,7 @@
     "environment_change_request_unavailable_gitlab": "安装 GitLab CLI（glab）后可查询合并请求状态",
     "environment_change_request_unauthenticated_gitlab": "登录 GitLab CLI（glab auth login）后可查询状态",
     "environment_change_request_error_gitlab": "暂时无法查询 GitLab 合并请求状态",
+    "change_request_status_draft": "草稿",
     "change_request_status_open": "等待处理",
     "change_request_status_checks_pending": "检查中",
     "change_request_status_checks_passed": "检查通过，等待合并",

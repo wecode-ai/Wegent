@@ -1,23 +1,18 @@
 import {
   Check,
   ChevronDown,
-  CircleCheck,
   CircleDot,
-  CircleX,
   Cloud,
   Copy,
   FolderOpen,
   GitCommit,
   GitBranch,
-  GitMerge,
   GitPullRequest,
   Info,
   Link2,
   Laptop,
   LoaderCircle,
-  Clock3,
   Square,
-  TriangleAlert,
   Upload,
   CornerDownLeft,
 } from 'lucide-react'
@@ -31,6 +26,8 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { BranchSelector } from '@/components/common/BranchSelector'
+import { ChangeRequestStatusGlyph } from '@/components/common/ChangeRequestStatusIcon'
+import { changeRequestVisualStatus } from '@/features/workbench/changeRequestStatus'
 import { useTranslation } from '@/hooks/useTranslation'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { openExternalUrl } from '@/lib/external-links'
@@ -178,32 +175,10 @@ export function EnvironmentInfoPopover({
           : []
   const changeRequest = info.changeRequest?.changeRequest
   const changeRequestPrefix = changeRequest?.provider === 'gitlab' ? '!' : '#'
-  const changeRequestStateLabel = changeRequest
-    ? changeRequest.draft
-      ? t('workbench.environment_change_request_draft', '草稿')
-      : t(`workbench.environment_change_request_${changeRequest.state}`, changeRequest.state)
+  const changeRequestStatus = changeRequest ? changeRequestVisualStatus(changeRequest) : null
+  const changeRequestStatusLabel = changeRequestStatus
+    ? t(`workbench.change_request_status_${changeRequestStatus}`, changeRequestStatus)
     : ''
-  const changeRequestChecksLabel =
-    changeRequest && changeRequest.checks !== 'unknown'
-      ? t(
-          `workbench.environment_change_request_checks_${changeRequest.checks}`,
-          changeRequest.checks
-        )
-      : ''
-  const changeRequestConflictLabel =
-    changeRequest?.mergeability === 'conflicting'
-      ? t('workbench.environment_change_request_conflicting', '存在冲突')
-      : ''
-  const changeRequestMergeQueueLabel =
-    changeRequest?.mergeQueue === 'queued'
-      ? t('workbench.environment_change_request_merge_queue', '合并队列中')
-      : ''
-  const changeRequestStatusLabel = [
-    changeRequestStateLabel,
-    changeRequestConflictLabel || changeRequestMergeQueueLabel || changeRequestChecksLabel,
-  ]
-    .filter(Boolean)
-    .join('，')
 
   function handleCreatePullRequest() {
     if (!info.createPullRequestUrl) {
@@ -563,52 +538,15 @@ export function EnvironmentInfoPopover({
                           aria-label={`${changeRequestPrefix}${changeRequest.number} ${changeRequest.title}，${changeRequestStatusLabel}`}
                           className="flex h-9 w-full items-center gap-3 rounded-md text-left text-sm text-text-primary hover:bg-hover"
                         >
-                          <span
-                            className={cn(
-                              'relative flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary',
-                              changeRequest.state === 'open' &&
-                                !changeRequest.draft &&
-                                changeRequest.mergeQueue !== 'queued' &&
-                                'text-green-500',
-                              changeRequest.state === 'merged' && 'text-violet-500',
-                              changeRequest.state === 'closed' && 'text-red-500',
-                              changeRequest.mergeability === 'conflicting' && 'text-red-500'
-                            )}
-                            aria-hidden="true"
-                          >
-                            {changeRequest.state === 'merged' ? (
-                              <GitMerge
-                                data-testid="change-request-merged-icon"
-                                className="h-[18px] w-[18px]"
-                              />
-                            ) : (
-                              <GitPullRequest
-                                data-testid="change-request-pull-request-icon"
-                                className="h-[18px] w-[18px]"
-                              />
-                            )}
-                            {changeRequest.mergeability === 'conflicting' ? (
-                              <span className="absolute -bottom-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-background text-red-500">
-                                <TriangleAlert className="h-3 w-3 fill-background" />
-                              </span>
-                            ) : changeRequest.mergeQueue === 'queued' ? (
-                              <span className="absolute -bottom-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-background text-text-muted">
-                                <Clock3 className="h-3 w-3 fill-background" />
-                              </span>
-                            ) : changeRequest.checks === 'success' ? (
-                              <span className="absolute -bottom-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-background text-green-500">
-                                <CircleCheck className="h-3.5 w-3.5 fill-background" />
-                              </span>
-                            ) : changeRequest.checks === 'failure' ? (
-                              <span className="absolute -bottom-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-background text-red-500">
-                                <CircleX className="h-3.5 w-3.5 fill-background" />
-                              </span>
-                            ) : changeRequest.checks === 'pending' ? (
-                              <span className="absolute -bottom-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-background text-text-muted">
-                                <Clock3 className="h-3 w-3 fill-background" />
-                              </span>
-                            ) : null}
-                          </span>
+                          <ChangeRequestStatusGlyph
+                            changeRequest={changeRequest}
+                            size="environment"
+                            mainIconTestId={
+                              changeRequestStatus === 'merged'
+                                ? 'change-request-merged-icon'
+                                : 'change-request-pull-request-icon'
+                            }
+                          />
                           <span className="flex min-w-0 flex-1 items-center gap-1.5">
                             <span
                               data-testid="change-request-number"
@@ -624,22 +562,21 @@ export function EnvironmentInfoPopover({
                               {changeRequest.title}
                             </span>
                             <span data-testid="change-request-state" className="sr-only">
-                              {changeRequestStateLabel}
+                              {changeRequestStatusLabel}
                             </span>
-                            {changeRequest.checks !== 'unknown' &&
-                              changeRequest.mergeQueue !== 'queued' && (
-                                <span data-testid="change-request-checks" className="sr-only">
-                                  {changeRequestChecksLabel}
-                                </span>
-                              )}
-                            {changeRequest.mergeability === 'conflicting' && (
-                              <span data-testid="change-request-conflict" className="sr-only">
-                                {changeRequestConflictLabel}
+                            {changeRequestStatus?.startsWith('checks_') && (
+                              <span data-testid="change-request-checks" className="sr-only">
+                                {changeRequestStatusLabel}
                               </span>
                             )}
-                            {changeRequest.mergeQueue === 'queued' && (
+                            {changeRequestStatus === 'merge_conflict' && (
+                              <span data-testid="change-request-conflict" className="sr-only">
+                                {changeRequestStatusLabel}
+                              </span>
+                            )}
+                            {changeRequestStatus?.startsWith('merge_queue_') && (
                               <span data-testid="change-request-merge-queue" className="sr-only">
-                                {changeRequestMergeQueueLabel}
+                                {changeRequestStatusLabel}
                               </span>
                             )}
                           </span>
