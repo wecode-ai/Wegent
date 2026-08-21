@@ -4290,6 +4290,7 @@ export function CloudTodoWorkspace({
                 }}
                 onCreateTask={async workflowNodeId => {
                   setSelectedTaskBinding(null)
+                  setBackgroundTaskItemId(null)
                   let inheritFromTask: RuntimeTaskAddress | null = null
                   const workflowNode = selectedItem.workflow?.nodes.find(
                     node => node.id === workflowNodeId
@@ -4481,7 +4482,10 @@ export function CloudTodoWorkspace({
                     ? selectedTaskBinding.task_title
                     : null
                 }
-                open={backgroundTaskItemId !== selectedItem.id}
+                open={
+                  selectedTaskBinding?.work_item_id !== selectedItem.id ||
+                  backgroundTaskItemId !== selectedItem.id
+                }
                 embedded
                 initialTaskInput={
                   taskComposerRequest?.workItemId === selectedItem.id

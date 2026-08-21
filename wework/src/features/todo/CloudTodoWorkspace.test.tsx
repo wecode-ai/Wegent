@@ -1221,6 +1221,7 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByTestId('cloud-todo-detail')).toBeInTheDocument()
     expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute('data-task-id', item.id)
     expect(screen.getByTestId('ai-chat-modal')).not.toHaveAttribute('data-runtime-task-id')
+    expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute('data-open', 'yes')
   })
 
   it('continues a task in the background after sending it from pending', async () => {
