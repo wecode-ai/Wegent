@@ -2,6 +2,7 @@ import { fireEvent, render, renderHook, screen, waitFor } from '@testing-library
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { HarnessAppInstallation } from '@/api/local/harnessApps'
 import type { HarnessAppPreview } from '@/api/local/harnessApps'
+import type { SmartAppsApi } from '@/api/smartApps'
 import {
   clearHarnessAppLaunch,
   useHarnessAppLaunchState,
@@ -269,6 +270,20 @@ describe('HarnessAppsPage', () => {
       expect(mocks.api.update).toHaveBeenCalledWith(installed.id, { modelKey: nextModelKey })
     )
     expect(await screen.findByTestId(`harness-app-model-${installed.id}`)).toHaveValue(nextModelKey)
+  })
+
+  test('publishes directly from an installed Smart app', async () => {
+    mocks.api.list.mockResolvedValue([installed])
+    const smartAppsApi = {
+      listMarketplace: vi.fn().mockResolvedValue({ items: [] }),
+    } as unknown as SmartAppsApi
+
+    render(<HarnessAppsPage smartAppsApi={smartAppsApi} />)
+    fireEvent.click(await screen.findByTestId(`harness-app-publish-${installed.id}`))
+
+    expect(mocks.navigateTo).toHaveBeenCalledWith(
+      `/sites?app_type=smart_app&view=owned&action=publish&installationId=${installed.id}`
+    )
   })
 
   test('toggles whether a Smart app stays resident across launches', async () => {

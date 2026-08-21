@@ -42,4 +42,12 @@ describe('SmartAppsSectionNav', () => {
 
     expect(navigateTo).toHaveBeenCalledWith('/sites?app_type=smart_app')
   })
+
+  test('opens my publications as a peer section', () => {
+    render(<SmartAppsSectionNav active="marketplace" />)
+
+    fireEvent.click(screen.getByTestId('smart-apps-section-owned'))
+
+    expect(navigateTo).toHaveBeenCalledWith('/sites?app_type=smart_app&view=owned')
+  })
 })

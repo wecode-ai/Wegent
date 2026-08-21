@@ -22,6 +22,13 @@ flowchart LR
     DISCOVER --> BROWSER[Wework built-in browser verification]
     BROWSER --> ZIP
     MARKET --> INSTALLED[Installed Smart apps]
+    OFFICIAL[Official publisher script] --> CATALOG[(Cloud Smart app catalog)]
+    USER[User publication] --> SUBMISSION[Upload and security scan]
+    SUBMISSION --> ACL[User / department grants]
+    ACL --> CATALOG
+    CATALOG --> MARKET
+    CATALOG --> DOWNLOAD[Short-lived download URL]
+    DOWNLOAD --> ZIP
     MARKET --> ZIP
     INSTALLED --> ZIP
     ZIP[Smart app ZIP] --> VALIDATE[manifest / SHA-256 / path / size validation]
@@ -63,10 +70,18 @@ sequenceDiagram
     participant B as Smart App Builder
     participant WB as Wework built-in browser
     participant UI as HarnessAppsPage
+    participant API as Smart app marketplace API
     participant T as Tauri HarnessAppRuntime
     participant P as Wework model proxy
     participant D as DeepSeek Harness
     participant W as Native WebView
+
+    opt Publish and restricted-share
+        U->>M: Select a local ZIP and publish
+        M->>API: Upload package, listing metadata, and recipients
+        API->>API: Validate, scan, and create immutable release
+        API-->>M: Publication ready
+    end
 
     U->>C: + → Smart apps
     C->>A: Open the Applications workspace
@@ -79,7 +94,9 @@ sequenceDiagram
         B->>WB: Launch the local profile and verify its primary flow
         B-->>U: Produce a validated ZIP
     else Use an existing package
-        U->>M: Import a local package or open Installed
+        U->>M: Download from the market or import a local package
+        M->>API: Request a short-lived URL for an authorized release
+        API-->>M: URL + SHA-256 + size
     end
     M->>UI: Open installed Smart apps
     U->>UI: Select ZIP and model
@@ -132,6 +149,9 @@ sequenceDiagram
 | Top tab bar entry                                                                      | `wework/src/features/workspace-tabs/WorkspaceTabStrip.tsx`                                                                                                 |
 | Applications workspace and Sites / Mini Programs / Smart apps navigation               | `wework/src/pages/SitesPage.tsx`, `wework/src/components/sites/SitesWorkspace.tsx`                                                                         |
 | Smart app marketplace and Marketplace / Installed navigation                           | `wework/src/pages/SmartAppsMarketplacePage.tsx`, `wework/src/components/smart-apps/SmartAppsSectionNav.tsx`                                                |
+| Cloud catalog, immutable releases, scanning, ACL, and download authorization            | `backend/app/api/endpoints/smart_apps.py`, `backend/app/services/smart_app_marketplace_service.py`                                                         |
+| Cloud catalog relationships, versioned extension JSON, and database constraints         | `backend/app/models/smart_app_marketplace.py`, `backend/alembic/versions/20260820_f82c5d1a9e37_add_smart_app_marketplace.py`                               |
+| Deterministic official Smart app publication                                             | `backend/scripts/publish_official_smart_app.py`                                                                                                             |
 | Bundled marketplace registration and default plugin installation                       | `wework/src/tauri/localExecutor.ts`, `wework/src-tauri/src/local_executor.rs`, `executor/src/runtime_work/handler/runtime_rpc.rs`                          |
 | Smart app creation workflow plugin                                                     | `wework/src-tauri/bundled-plugins/wework-personal/plugins/smart-app-builder/`                                                                              |
 | Installation, management, and lifecycle UI                                             | `wework/src/pages/HarnessAppsPage.tsx`                                                                                                                     |
@@ -139,6 +159,8 @@ sequenceDiagram
 | Starting / failed state, workspace tabs, and native WebViews                           | `wework/src/App.tsx`, `wework/src/features/harness-apps/`, `wework/src/features/workspace-tabs/workspaceTabs.ts`                                           |
 
 Application-type navigation order invariant: when experimental Smart apps are enabled, Smart apps appear before Sites and Mini Programs.
+
+Cloud-distribution invariant: the cloud catalog owns only publication and download authorization. Official-script releases are visible to every signed-in user, user releases require at least one user or department grant, and immutable versions cannot be overwritten. App-level and release-level extension data uses JSON objects capped at 64 KiB, carrying `schemaVersion` and organization-scoped namespaces; publishing a new app version without extension updates preserves unknown existing app fields, while release extensions freeze with the immutable release. Ownership, ACL, status, version, hash, and every field used for indexing, sorting, uniqueness, or authorization remain relational columns; extension JSON never stores credentials or replaces a security boundary. Releases and submissions must reference an existing Smart app. After download, installation, model binding, residency, runtime data, and offline launch are device-owned, so revoking cloud access only prevents future discovery, downloads, and updates and must never remotely stop or uninstall the local copy.
 
 Invariants: all user-facing names use “Smart apps,” while DeepSeek Harness appears only as a runtime implementation detail; Smart apps belong to the Applications workspace and must appear as a peer application type beside Sites and Mini Programs, while the plugin marketplace and plugin management page do not host Smart app management UI; `smart-app-builder` may exist as a development-tool plugin, but its product entry belongs to the experimental Smart app marketplace, its workflow keeps DSH source read-only, composes external plugin packages, verifies them in the Wework built-in browser, and ends installation through native preview, version validation, and model confirmation instead of editing the local installation registry; the entire Smart apps feature is experimental, so when the toggle is off the top “+” and Applications workspace expose no Smart apps entry, direct visits to `/sites?app_type=smart_app` and stale app tabs leave the feature, and resident apps are not restored; when enabled, `/sites?app_type=smart_app` owns the Smart app marketplace and installed management views, while running apps use independent tabs, with no mixing of the Applications workspace, management view, and runtime tab responsibilities; top tab bar “+ → Smart apps” opens the Smart apps type inside Applications, while the workspace tab title remains “Applications”; DeepSeek Harness source remains read-only; application installers contain only a small runtime descriptor and never the DSH runtime archive or recursively registered `node_modules`; runtime release assets use the exact `harness-runtime-<platform>-<content-fingerprint>.tar.gz` naming convention, while the descriptor pins an HTTPS download URL, SHA-256, and byte length; first use downloads to a temporary file, validates it completely, atomically activates an archive-hash cache entry, and then extracts by content fingerprint under app data; failed, truncated, or mismatched downloads never activate or pollute the cache, and concurrent app launches share one download and extraction critical section; production macOS builds sign every Mach-O file in staging with a Developer ID, secure timestamp, and hardened runtime before creating the release asset, and signing mode and identity are part of the content fingerprint so unsigned or differently signed assets are never reused; the archived Node then receives the V8 JIT and executable-memory entitlements after generic Mach-O pre-signing and passes a real V8 Isolate startup check instead of only `node --version`; packages are validated before being written to immutable `name/version` directories; the package DSH version range must contain the actual runtime version; every Smart app instance owns an isolated `DSH_HOME`, port, and process group; the bound model is persisted and can only be changed while the app is stopped, while credentials exist only in the runtime proxy and child environment; Resident means that the main window automatically starts the app and opens its tab once per Wework launch; a normal Open action creates and selects the app's single tab immediately, shows real “prepare runtime, load app, start app” stages tied to the current app name with continuous motion, reuses that same tab for the native WebView after HTTP readiness, and shows failure plus retry in the same tab without allowing tab-strip motion or backend startup time to block tab creation; switching to another workspace tab only hides the running Smart app host and suspends interaction, without disconnecting React effects or closing or recreating the native WebView, and switching back restores the same page and in-memory state; starting, stopping, or failing one instance cannot affect another; stop, uninstall, disabling experimental features, and Wework exit reclaim the complete process group.
 Plugins marked `INSTALLED_BY_DEFAULT` in the `wework-personal` catalog are installed idempotently after bundled marketplace registration. The Smart app creation entry confirms `smart-app-builder` is installed before writing the plugin-referenced fresh-chat draft and navigating; installation failure stays on the marketplace page instead of opening an empty chat. Default-plugin reconciliation reads existing plugin configuration through the Executor-explicitly-allowed Codex `config/read` method and treats a present but user-disabled plugin as configured, so default synchronization must never re-enable it.

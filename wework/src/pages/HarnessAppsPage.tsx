@@ -8,10 +8,12 @@ import {
   Pin,
   Play,
   Plus,
+  RefreshCw,
   Square,
   Trash2,
   Upload,
 } from 'lucide-react'
+import type { SmartAppMarketplaceItem, SmartAppsApi } from '@/api/smartApps'
 import {
   harnessAppsApi,
   type HarnessAppInstallation,
@@ -47,9 +49,13 @@ import { navigateTo } from '@/lib/navigation'
 
 interface HarnessAppsPageProps {
   importRequested?: boolean
+  smartAppsApi?: SmartAppsApi | null
 }
 
-export function HarnessAppsPage({ importRequested = false }: HarnessAppsPageProps) {
+export function HarnessAppsPage({
+  importRequested = false,
+  smartAppsApi = null,
+}: HarnessAppsPageProps) {
   const { t } = useTranslation('common')
   const { projectChat, services } = useWorkbench()
   const workspaceTabs = useOptionalWorkspaceTabs()
@@ -58,6 +64,7 @@ export function HarnessAppsPage({ importRequested = false }: HarnessAppsPageProp
     [projectChat.models]
   )
   const [items, setItems] = useState<HarnessAppInstallation[]>([])
+  const [marketItems, setMarketItems] = useState<SmartAppMarketplaceItem[]>([])
   const [preview, setPreview] = useState<HarnessAppPreview | null>(null)
   const [modelKey, setModelKey] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
@@ -65,7 +72,14 @@ export function HarnessAppsPage({ importRequested = false }: HarnessAppsPageProp
   const importHandled = useRef(false)
   const installModelKey = modelKey || modelOptions[0]?.key || ''
 
-  const refresh = async () => setItems(await harnessAppsApi.list())
+  const refresh = async () => {
+    const [nextItems, marketplace] = await Promise.all([
+      harnessAppsApi.list(),
+      smartAppsApi?.listMarketplace().catch(() => ({ items: [] })) ?? { items: [] },
+    ])
+    setItems(nextItems)
+    setMarketItems(marketplace.items)
+  }
 
   function closeAppTabs(installationId: string) {
     if (!workspaceTabs) return
@@ -86,14 +100,17 @@ export function HarnessAppsPage({ importRequested = false }: HarnessAppsPageProp
 
   useEffect(() => {
     let active = true
-    void harnessAppsApi
-      .list()
-      .then(installations => {
+    void Promise.all([
+      harnessAppsApi.list(),
+      smartAppsApi?.listMarketplace().catch(() => ({ items: [] })) ?? { items: [] },
+    ])
+      .then(([installations, marketplace]) => {
         if (!active) return
         installations
           .filter(installation => installation.state === 'running' && installation.webUrl)
           .forEach(installation => registerHarnessAppTab(installation))
         setItems(installations)
+        setMarketItems(marketplace.items)
       })
       .catch(loadError => {
         if (active) {
@@ -103,7 +120,7 @@ export function HarnessAppsPage({ importRequested = false }: HarnessAppsPageProp
     return () => {
       active = false
     }
-  }, [t])
+  }, [smartAppsApi, t])
 
   const previewPackage = useCallback(
     async (path: string) => {
@@ -251,7 +268,7 @@ export function HarnessAppsPage({ importRequested = false }: HarnessAppsPageProp
     }
   }
 
-  async function stop(item: HarnessAppInstallation) {
+  async function stop(item: HarnessAppInstallation): Promise<boolean> {
     setBusy(item.id)
     try {
       await harnessAppsApi.stop(item.id)
@@ -263,8 +280,53 @@ export function HarnessAppsPage({ importRequested = false }: HarnessAppsPageProp
       const contextToken = await takeHarnessAppContextToken(item.id)
       if (contextToken) await services.localHarnessModelApi?.unregisterContext(contextToken)
       await refresh()
+      return true
     } catch (stopError) {
       setError(getErrorMessage(stopError, t('workbench.harness_apps_stop_failed')))
+      return false
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  function availableUpdate(item: HarnessAppInstallation): SmartAppMarketplaceItem | null {
+    if (!item.smartAppId) return null
+    const marketplace = marketItems.find(candidate => candidate.id === item.smartAppId)
+    if (!marketplace || marketplace.latestReleaseId === item.releaseId) return null
+    return marketplace
+  }
+
+  async function updateFromMarketplace(
+    item: HarnessAppInstallation,
+    marketplace: SmartAppMarketplaceItem
+  ) {
+    if (!smartAppsApi || !item.modelKey) return
+    if (
+      item.state === 'running' &&
+      (!window.confirm(
+        t('workbench.smart_apps_update_stop_confirm', '更新需要先停止正在运行的应用，是否继续？')
+      ) ||
+        !(await stop(item)))
+    ) {
+      return
+    }
+    setBusy(item.id)
+    setError(null)
+    try {
+      const descriptor = await smartAppsApi.getDownload(marketplace.id)
+      const nextPreview = await harnessAppsApi.download(descriptor)
+      await harnessAppsApi.install(nextPreview, item.modelKey, {
+        smartAppId: marketplace.id,
+        releaseId: marketplace.latestReleaseId,
+      })
+      await refresh()
+    } catch (updateError) {
+      setError(
+        getErrorMessage(
+          updateError,
+          t('workbench.smart_apps_update_failed', '更新失败，原版本已保留。')
+        )
+      )
     } finally {
       setBusy(null)
     }
@@ -480,6 +542,34 @@ export function HarnessAppsPage({ importRequested = false }: HarnessAppsPageProp
                     ) : null}
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      data-testid={`harness-app-publish-${item.id}`}
+                      className="h-11 gap-1 rounded-lg px-2.5 sm:h-9"
+                      disabled={!smartAppsApi || busy === item.id}
+                      onClick={() =>
+                        navigateTo(
+                          `/sites?app_type=smart_app&view=owned&action=publish&installationId=${encodeURIComponent(item.id)}`
+                        )
+                      }
+                    >
+                      <Upload className="h-4 w-4" />
+                      {t('workbench.smart_apps_publish', '发布')}
+                    </Button>
+                    {availableUpdate(item) ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        data-testid={`harness-app-update-${item.id}`}
+                        className="h-11 gap-1 rounded-lg px-3 sm:h-9"
+                        disabled={busy === item.id}
+                        onClick={() => void updateFromMarketplace(item, availableUpdate(item)!)}
+                      >
+                        <RefreshCw className="h-4 w-4" />
+                        {t('workbench.smart_apps_update', '更新')}
+                      </Button>
+                    ) : null}
                     <Button
                       size="sm"
                       variant={item.resident ? 'secondary' : 'ghost'}

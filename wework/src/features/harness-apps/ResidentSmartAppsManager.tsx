@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { harnessAppsApi } from '@/api/local/harnessApps'
 import {
   harnessAppRoute,
@@ -24,12 +24,15 @@ export function ResidentSmartAppsManager({ enabled }: ResidentSmartAppsManagerPr
   const workspaceTabsRef = useRef(workspaceTabs)
   const completedIds = useRef(new Set<string>())
   const launchingIds = useRef(new Set<string>())
+  const residentRetryAttempt = useRef(0)
+  const [residentRetryTick, setResidentRetryTick] = useState(0)
   const disabledCleanupStarted = useRef(false)
   const disabledCleanupGeneration = useRef(0)
   const modelOptions = useMemo(
     () => listLocalHarnessModelOptions('opencode', projectChat.models),
     [projectChat.models]
   )
+  const modelOptionsRef = useRef(modelOptions)
   const openResidentAppTab = (installation: Parameters<typeof openHarnessAppTab>[1]) => {
     const tabs = workspaceTabsRef.current
     if (tabs.tabs.some(tab => tab.contentRoute === harnessAppRoute(installation.id))) return
@@ -39,6 +42,10 @@ export function ResidentSmartAppsManager({ enabled }: ResidentSmartAppsManagerPr
   useEffect(() => {
     workspaceTabsRef.current = workspaceTabs
   }, [workspaceTabs])
+
+  useEffect(() => {
+    modelOptionsRef.current = modelOptions
+  }, [modelOptions])
 
   useEffect(() => {
     if (enabled) {
@@ -98,13 +105,44 @@ export function ResidentSmartAppsManager({ enabled }: ResidentSmartAppsManagerPr
 
   useEffect(() => {
     if (!enabled || !services.localHarnessModelApi) return
-    const optionsByKey = new Map(modelOptions.map(option => [option.key, option]))
+    const optionsByKey = new Map(modelOptionsRef.current.map(option => [option.key, option]))
     let cancelled = false
+    let retryTimer: number | null = null
+    let retryScheduled = false
+    const scheduleRetry = () => {
+      if (cancelled || retryScheduled) return
+      retryScheduled = true
+      const delayMs = Math.min(500 * 2 ** residentRetryAttempt.current, 30_000)
+      residentRetryAttempt.current += 1
+      retryTimer = window.setTimeout(() => {
+        retryTimer = null
+        if (!cancelled) setResidentRetryTick(value => value + 1)
+      }, delayMs)
+    }
+    const refreshModelOptions = async () => {
+      const response = await services.modelApi.listModels()
+      if (cancelled) return
+      for (const option of listLocalHarnessModelOptions('opencode', response.data)) {
+        optionsByKey.set(option.key, option)
+      }
+    }
 
     void harnessAppsApi
       .list()
       .then(async installations => {
-        for (const installation of installations.filter(item => item.resident)) {
+        const residentInstallations = installations.filter(item => item.resident)
+        if (
+          residentInstallations.some(
+            installation => installation.modelKey && !optionsByKey.has(installation.modelKey)
+          )
+        ) {
+          try {
+            await refreshModelOptions()
+          } catch (error) {
+            console.warn('[Wework] failed to refresh models for resident Smart apps', error)
+          }
+        }
+        for (const installation of residentInstallations) {
           if (cancelled) return
           if (
             completedIds.current.has(installation.id) ||
@@ -136,6 +174,7 @@ export function ResidentSmartAppsManager({ enabled }: ResidentSmartAppsManagerPr
             console.warn(
               `[Wework] resident Smart app ${installation.id} cannot start because its model is unavailable`
             )
+            scheduleRetry()
             continue
           }
           let proxyToken: string | null = null
@@ -180,18 +219,24 @@ export function ResidentSmartAppsManager({ enabled }: ResidentSmartAppsManagerPr
                 .catch(() => undefined)
             }
             console.warn(`[Wework] failed to start resident Smart app ${installation.id}`, error)
+            scheduleRetry()
           } finally {
             launchingIds.current.delete(installation.id)
           }
         }
+        if (!retryScheduled) residentRetryAttempt.current = 0
       })
       .catch(error => {
-        if (!cancelled) console.warn('[Wework] failed to load resident Smart apps', error)
+        if (!cancelled) {
+          console.warn('[Wework] failed to load resident Smart apps', error)
+          scheduleRetry()
+        }
       })
     return () => {
       cancelled = true
+      if (retryTimer !== null) window.clearTimeout(retryTimer)
     }
-  }, [enabled, modelOptions, services.localHarnessModelApi])
+  }, [enabled, residentRetryTick, services.localHarnessModelApi, services.modelApi])
 
   return null
 }

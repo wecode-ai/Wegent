@@ -72,6 +72,10 @@ pub struct HarnessAppInstallation {
     state: String,
     web_url: Option<String>,
     error: Option<String>,
+    #[serde(default)]
+    smart_app_id: Option<u64>,
+    #[serde(default)]
+    release_id: Option<u64>,
 }
 
 #[derive(Serialize)]
@@ -82,6 +86,15 @@ pub struct HarnessAppPreview {
     sha256: String,
     manifest: Option<HarnessAppManifest>,
     issues: Vec<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessAppExport {
+    archive_path: String,
+    sha256: String,
+    size_bytes: u64,
+    manifest: HarnessAppManifest,
 }
 
 #[derive(Clone, Serialize)]
@@ -297,6 +310,132 @@ fn dsh_version_requirement(raw: &str) -> Result<VersionReq, semver::Error> {
     VersionReq::parse(raw)
 }
 
+fn market_installation_id(smart_app_id: Option<u64>, manifest_name: &str) -> String {
+    smart_app_id
+        .map(|value| format!("market-{value}"))
+        .unwrap_or_else(|| manifest_name.to_string())
+}
+
+fn write_verified_download<R: Read>(
+    mut input: R,
+    temporary: &Path,
+    expected_size: u64,
+    expected_sha256: &str,
+) -> Result<(), String> {
+    let mut output = fs::File::create(temporary)
+        .map_err(|error| format!("Failed to create Smart app download: {error}"))?;
+    let mut hash = Sha256::new();
+    let mut bytes = 0_u64;
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = input
+            .read(&mut buffer)
+            .map_err(|error| format!("Failed to read Smart app download: {error}"))?;
+        if read == 0 {
+            break;
+        }
+        bytes += read as u64;
+        if bytes > expected_size || bytes > MAX_ARCHIVE_BYTES {
+            return Err("Smart app download exceeds its declared size".to_string());
+        }
+        hash.update(&buffer[..read]);
+        output
+            .write_all(&buffer[..read])
+            .map_err(|error| format!("Failed to write Smart app download: {error}"))?;
+    }
+    output
+        .sync_all()
+        .map_err(|error| format!("Failed to flush Smart app download: {error}"))?;
+    if bytes != expected_size {
+        return Err("Smart app download is incomplete".to_string());
+    }
+    if format!("{:x}", hash.finalize()) != expected_sha256 {
+        return Err("Smart app download checksum mismatch".to_string());
+    }
+    Ok(())
+}
+
+fn collect_package_files(
+    root: &Path,
+    directory: &Path,
+    files: &mut Vec<PathBuf>,
+) -> Result<(), String> {
+    let entries = fs::read_dir(directory)
+        .map_err(|error| format!("Failed to read Harness app package: {error}"))?;
+    for entry in entries {
+        let entry =
+            entry.map_err(|error| format!("Failed to read Harness app package: {error}"))?;
+        let path = entry.path();
+        let metadata = fs::symlink_metadata(&path)
+            .map_err(|error| format!("Failed to inspect Harness app package: {error}"))?;
+        if metadata.file_type().is_symlink() {
+            return Err("Harness app packages cannot contain symbolic links".to_string());
+        }
+        if metadata.is_dir() {
+            collect_package_files(root, &path, files)?;
+        } else if metadata.is_file() {
+            path.strip_prefix(root)
+                .map_err(|_| "Harness app package path escaped its root".to_string())?;
+            files.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn export_package_directory(
+    package_root: &Path,
+    archive_path: &Path,
+) -> Result<(String, u64), String> {
+    let temporary = archive_path.with_extension("zip.part");
+    let _ = fs::remove_file(&temporary);
+    if let Some(parent) = temporary.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("Failed to create Harness app export directory: {error}"))?;
+    }
+    let mut files = Vec::new();
+    collect_package_files(package_root, package_root, &mut files)?;
+    files.sort_by_key(|path| {
+        path.strip_prefix(package_root)
+            .unwrap_or(path)
+            .to_path_buf()
+    });
+    let output = fs::File::create(&temporary)
+        .map_err(|error| format!("Failed to create Harness app export: {error}"))?;
+    let mut archive = zip::ZipWriter::new(output);
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated)
+        .last_modified_time(zip::DateTime::default());
+    for path in files {
+        let relative = path
+            .strip_prefix(package_root)
+            .map_err(|_| "Harness app package path escaped its root".to_string())?;
+        let name = relative
+            .components()
+            .map(|component| component.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
+        archive
+            .start_file(name, options)
+            .map_err(|error| format!("Failed to write Harness app export: {error}"))?;
+        let value = fs::read(&path)
+            .map_err(|error| format!("Failed to read Harness app package file: {error}"))?;
+        archive
+            .write_all(&value)
+            .map_err(|error| format!("Failed to write Harness app export: {error}"))?;
+    }
+    archive
+        .finish()
+        .map_err(|error| format!("Failed to finish Harness app export: {error}"))?;
+    let (sha256, size_bytes) = file_sha256(&temporary)?;
+    if size_bytes > MAX_ARCHIVE_BYTES {
+        let _ = fs::remove_file(&temporary);
+        return Err("Harness app export is too large".to_string());
+    }
+    fs::rename(&temporary, archive_path)
+        .map_err(|error| format!("Failed to activate Harness app export: {error}"))?;
+    Ok((sha256, size_bytes))
+}
+
 #[tauri::command]
 pub async fn preview_harness_app(archive_path: String) -> HarnessAppPreview {
     match inspect_archive(Path::new(&archive_path), None) {
@@ -315,6 +454,135 @@ pub async fn preview_harness_app(archive_path: String) -> HarnessAppPreview {
             issues: vec![error],
         },
     }
+}
+
+#[tauri::command]
+pub async fn download_harness_app_package(
+    app: tauri::AppHandle,
+    download_url: String,
+    expected_sha256: String,
+    expected_size: u64,
+    smart_app_id: u64,
+    release_id: u64,
+) -> Result<HarnessAppPreview, String> {
+    if !valid_sha256(expected_sha256.trim()) {
+        return Err("Smart app download checksum is invalid".to_string());
+    }
+    if expected_size == 0 || expected_size > MAX_ARCHIVE_BYTES {
+        return Err("Smart app download size is invalid".to_string());
+    }
+    let url = reqwest::Url::parse(download_url.trim())
+        .map_err(|error| format!("Smart app download URL is invalid: {error}"))?;
+    let loopback_http = url.scheme() == "http"
+        && url
+            .host_str()
+            .is_some_and(|host| matches!(host, "127.0.0.1" | "localhost" | "::1"));
+    if url.scheme() != "https" && !loopback_http {
+        return Err("Smart app download URL must use HTTPS".to_string());
+    }
+    let download_directory = root(&app)?.join("downloads").join(smart_app_id.to_string());
+    fs::create_dir_all(&download_directory)
+        .map_err(|error| format!("Failed to create Smart app download directory: {error}"))?;
+    let archive_path = download_directory.join(format!("{release_id}.zip"));
+    let temporary = archive_path.with_extension("zip.part");
+    let _ = fs::remove_file(&temporary);
+    let expected_sha256 = expected_sha256.to_lowercase();
+    let result = tokio::task::spawn_blocking(move || {
+        let download = (|| {
+            let client = reqwest::blocking::Client::builder()
+                .connect_timeout(Duration::from_secs(10))
+                .timeout(Duration::from_secs(10 * 60))
+                .build()
+                .map_err(|error| format!("Failed to prepare Smart app download: {error}"))?;
+            let response = client
+                .get(url)
+                .send()
+                .map_err(|error| format!("Failed to download Smart app: {error}"))?
+                .error_for_status()
+                .map_err(|error| format!("Smart app download failed: {error}"))?;
+            if response
+                .content_length()
+                .is_some_and(|bytes| bytes != expected_size)
+            {
+                return Err("Smart app download size does not match".to_string());
+            }
+            write_verified_download(response, &temporary, expected_size, &expected_sha256)?;
+            fs::rename(&temporary, &archive_path)
+                .map_err(|error| format!("Failed to activate Smart app download: {error}"))?;
+            Ok(archive_path)
+        })();
+        if download.is_err() {
+            let _ = fs::remove_file(&temporary);
+        }
+        download
+    })
+    .await
+    .map_err(|error| format!("Smart app download task failed: {error}"))??;
+    Ok(preview_harness_app(result.display().to_string()).await)
+}
+
+#[tauri::command]
+pub fn export_harness_app_package(
+    app: tauri::AppHandle,
+    state: State<'_, HarnessAppRuntimeState>,
+    installation_id: String,
+) -> Result<HarnessAppExport, String> {
+    let _registry = state
+        .registry
+        .lock()
+        .map_err(|_| "Harness app registry lock failed")?;
+    let installation = read_registry(&app)?
+        .into_iter()
+        .find(|item| item.id == installation_id)
+        .ok_or_else(|| "Harness app installation not found".to_string())?;
+    let archive_path = root(&app)?
+        .join("exports")
+        .join(&installation.id)
+        .join(format!("{}.zip", installation.manifest.version));
+    let (sha256, size_bytes) =
+        export_package_directory(Path::new(&installation.package_path), &archive_path)?;
+    Ok(HarnessAppExport {
+        archive_path: archive_path.display().to_string(),
+        sha256,
+        size_bytes,
+        manifest: installation.manifest,
+    })
+}
+
+#[tauri::command]
+pub async fn upload_harness_app_package(
+    archive_path: String,
+    upload_url: String,
+) -> Result<(), String> {
+    let url = reqwest::Url::parse(upload_url.trim())
+        .map_err(|error| format!("Smart app upload URL is invalid: {error}"))?;
+    let loopback_http = url.scheme() == "http"
+        && url
+            .host_str()
+            .is_some_and(|host| matches!(host, "127.0.0.1" | "localhost" | "::1"));
+    if url.scheme() != "https" && !loopback_http {
+        return Err("Smart app upload URL must use HTTPS".to_string());
+    }
+    let path = PathBuf::from(archive_path);
+    tokio::task::spawn_blocking(move || {
+        let value =
+            fs::read(path).map_err(|error| format!("Failed to read Smart app upload: {error}"))?;
+        reqwest::blocking::Client::builder()
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(10 * 60))
+            .build()
+            .map_err(|error| format!("Failed to prepare Smart app upload: {error}"))?
+            .put(url)
+            .header("Content-Type", "application/zip")
+            .body(value)
+            .send()
+            .map_err(|error| format!("Failed to upload Smart app: {error}"))?
+            .error_for_status()
+            .map_err(|error| format!("Smart app upload failed: {error}"))?;
+        Ok::<(), String>(())
+    })
+    .await
+    .map_err(|error| format!("Smart app upload task failed: {error}"))?
 }
 
 #[tauri::command]
@@ -358,6 +626,8 @@ pub async fn install_harness_app(
     archive_path: String,
     expected_sha256: String,
     model_key: Option<String>,
+    smart_app_id: Option<u64>,
+    release_id: Option<u64>,
 ) -> Result<HarnessAppInstallation, String> {
     let staging = root(&app)?.join(format!(
         ".install-{}-{}",
@@ -376,10 +646,10 @@ pub async fn install_harness_app(
         .registry
         .lock()
         .map_err(|_| "Harness app registry lock failed")?;
-    let id = manifest.name.clone();
+    let id = market_installation_id(smart_app_id, &manifest.name);
     let target = root(&app)?
         .join("packages")
-        .join(&manifest.name)
+        .join(&id)
         .join(&manifest.version);
     if target.exists() {
         let existing = read_registry(&app)?.into_iter().find(|item| {
@@ -402,20 +672,24 @@ pub async fn install_harness_app(
         fs::rename(&staging, &target)
             .map_err(|error| format!("Failed to activate Harness app package: {error}"))?;
     }
+    let mut installations = read_registry(&app)?;
+    let previous = installations.iter().find(|item| item.id == id).cloned();
     let installation = HarnessAppInstallation {
         id: id.clone(),
         manifest,
         package_path: target.display().to_string(),
         sha256,
         model_key: model_key
-            .and_then(|value| (!value.trim().is_empty()).then(|| value.trim().to_string())),
-        resident: false,
+            .and_then(|value| (!value.trim().is_empty()).then(|| value.trim().to_string()))
+            .or_else(|| previous.as_ref().and_then(|item| item.model_key.clone())),
+        resident: previous.as_ref().is_some_and(|item| item.resident),
         runtime_version: None,
         state: "installed".to_string(),
         web_url: None,
         error: None,
+        smart_app_id,
+        release_id,
     };
-    let mut installations = read_registry(&app)?;
     installations.retain(|item| item.id != id);
     installations.push(installation.clone());
     write_registry(&app, &installations)?;

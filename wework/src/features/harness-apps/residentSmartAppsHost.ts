@@ -1,3 +1,5 @@
+import { stripAppBasePath } from '@/config/runtime'
+
 interface ResidentSmartAppsHostTab {
   id: string
   contentRoute: string
@@ -15,4 +17,17 @@ export function findResidentSmartAppsHostTabId(
   if (preferredTab && isProviderBacked(preferredTab)) return preferredTab.id
   return tabs.find(isProviderBacked)?.id
 }
-import { stripAppBasePath } from '@/config/runtime'
+
+export function retainResidentSmartAppsHostTabId(
+  tabs: ResidentSmartAppsHostTab[],
+  currentHostTabId: string | undefined,
+  preferredTabId?: string
+): string | undefined {
+  if (
+    currentHostTabId &&
+    findResidentSmartAppsHostTabId(tabs, currentHostTabId) === currentHostTabId
+  ) {
+    return currentHostTabId
+  }
+  return findResidentSmartAppsHostTabId(tabs, preferredTabId)
+}

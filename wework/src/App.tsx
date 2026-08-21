@@ -87,7 +87,7 @@ import {
 } from '@/lib/wework-dev-instance'
 import { AppshotBridge } from '@/features/appshots/AppshotBridge'
 import { ResidentSmartAppsManager } from '@/features/harness-apps/ResidentSmartAppsManager'
-import { findResidentSmartAppsHostTabId } from '@/features/harness-apps/residentSmartAppsHost'
+import { retainResidentSmartAppsHostTabId } from '@/features/harness-apps/residentSmartAppsHost'
 import { SystemDragPanel } from '@/features/system-drag/SystemDragPanel'
 import { SystemDragBridge } from '@/features/system-drag/SystemDragBridge'
 import { installMacOSInputArrowKeyGuard } from '@/lib/macosInputArrowKeyGuard'
@@ -270,19 +270,29 @@ export function WorkspaceTabSurface({
   // Task-scoped browser routing is owned by workbench effects and must remain
   // available while another workspace tab is active.
   const keepTaskRuntimeActive = tab.kind === 'task' && renderWorkbench
+  // Resident Smart apps may need to wait for the model catalog or local proxy
+  // after reload. Keep their provider-backed manager connected while its tab
+  // is in the background so recovery timers and catalog updates can complete.
+  const keepResidentManagerActive = manageResidentSmartApps && renderProvider
   // App WebViews own in-memory page state that is lost when React Activity
   // disconnects their effects. Keep the current iframe route connected while
   // inactive; AppIframe hides the native WebView through its active prop.
   const keepIframeActive = Boolean(iframe)
   return (
     <WorkspaceTabPortalOwner ownerId={tab.id}>
-      <Activity mode={active || keepTaskRuntimeActive || keepIframeActive ? 'visible' : 'hidden'}>
+      <Activity
+        mode={
+          active || keepTaskRuntimeActive || keepResidentManagerActive || keepIframeActive
+            ? 'visible'
+            : 'hidden'
+        }
+      >
         <div
           className={cn(
             'min-h-0 min-w-0 overflow-hidden',
             active ? 'relative h-full' : 'absolute inset-0',
             !active &&
-              (keepTaskRuntimeActive || keepIframeActive) &&
+              (keepTaskRuntimeActive || keepResidentManagerActive || keepIframeActive) &&
               'pointer-events-none invisible'
           )}
           data-testid={`workspace-tab-content-${tab.id}`}
@@ -366,6 +376,7 @@ function AppRoutes({
   const cloudConnection = useCloudConnection()
   const experimentalFeatures = useExperimentalFeaturesState()
   const workspaceTabs = useOptionalWorkspaceTabs()
+  const [residentManagerHostTabId, setResidentManagerHostTabId] = useState<string | undefined>()
   const [mountedTabs, setMountedTabs] = useState(() => ({
     activeTabId: workspaceTabs?.activeTabId ?? null,
     ids: new Set(workspaceTabs ? [workspaceTabs.activeTabId] : []),
@@ -487,9 +498,18 @@ function AppRoutes({
   }
 
   if (!workspaceTabs) return null
+  // Keep one provider-backed owner stable across workspace navigation. Moving the
+  // manager between tabs unmounts it and cancels model-catalog recovery timers.
   const residentManagerTabId = enableResidentSmartApps
-    ? findResidentSmartAppsHostTabId(workspaceTabs.tabs, workspaceTabs.activeTabId)
+    ? retainResidentSmartAppsHostTabId(
+        workspaceTabs.tabs,
+        residentManagerHostTabId,
+        workspaceTabs.activeTabId
+      )
     : undefined
+  if (residentManagerTabId !== residentManagerHostTabId) {
+    setResidentManagerHostTabId(residentManagerTabId)
+  }
 
   return (
     <>

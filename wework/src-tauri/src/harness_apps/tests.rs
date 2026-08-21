@@ -82,6 +82,65 @@ fn installation_registry_defaults_resident_for_existing_records() {
     .unwrap();
 
     assert!(!installation.resident);
+    assert!(installation.smart_app_id.is_none());
+    assert!(installation.release_id.is_none());
+}
+
+#[test]
+fn marketplace_installations_isolate_publishers_with_same_manifest_name() {
+    assert_eq!(market_installation_id(Some(41), "same-name"), "market-41");
+    assert_eq!(market_installation_id(Some(82), "same-name"), "market-82");
+    assert_eq!(market_installation_id(None, "same-name"), "same-name");
+}
+
+#[test]
+fn remote_download_rejects_truncated_content() {
+    let directory = tempdir().unwrap();
+    let temporary = directory.path().join("app.zip.part");
+
+    let error = write_verified_download(
+        std::io::Cursor::new(b"short"),
+        &temporary,
+        10,
+        &"0".repeat(64),
+    )
+    .unwrap_err();
+
+    assert!(error.contains("incomplete"));
+}
+
+#[test]
+fn remote_download_rejects_hash_mismatch() {
+    let directory = tempdir().unwrap();
+    let temporary = directory.path().join("app.zip.part");
+
+    let error = write_verified_download(
+        std::io::Cursor::new(b"complete"),
+        &temporary,
+        8,
+        &"0".repeat(64),
+    )
+    .unwrap_err();
+
+    assert!(error.contains("checksum"));
+}
+
+#[test]
+fn installed_package_export_is_deterministic_and_valid() {
+    let directory = tempdir().unwrap();
+    let package = directory.path().join("package");
+    fs::create_dir_all(package.join("bundle")).unwrap();
+    fs::write(package.join("plugin-manifest.json"), manifest("0.1.0-rc.7")).unwrap();
+    fs::write(package.join("bundle/app.js"), "export default {}\n").unwrap();
+    let first = directory.path().join("first.zip");
+    let second = directory.path().join("second.zip");
+
+    let first_result = export_package_directory(&package, &first).unwrap();
+    let second_result = export_package_directory(&package, &second).unwrap();
+
+    assert_eq!(first_result, second_result);
+    assert_eq!(fs::read(&first).unwrap(), fs::read(&second).unwrap());
+    assert!(inspect_archive(&first, None).is_ok());
 }
 
 #[test]
@@ -119,6 +178,8 @@ fn instance_patch_binds_provider_and_model() {
         state: "installed".to_string(),
         web_url: None,
         error: None,
+        smart_app_id: None,
+        release_id: None,
     };
 
     let output = prepare_instance_bundle(&installation, directory.path(), true).unwrap();

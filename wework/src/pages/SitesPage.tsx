@@ -3,6 +3,7 @@ import { Menu } from 'lucide-react'
 import { ApiError, createHttpClient } from '@/api/http'
 import { createPluginApi } from '@/api/plugins'
 import { createSitesApi, createUnavailableSitesApi } from '@/api/sites'
+import { createSmartAppsApi } from '@/api/smartApps'
 import type { Site, SiteAppType } from '@/api/sites'
 import { DesktopSidebar } from '@/components/layout/DesktopSidebar'
 import { DesktopCollapsedSidebarToggle } from '@/components/layout/DesktopCollapsedSidebarToggle'
@@ -300,6 +301,28 @@ export function SitesPage() {
 
     const token = cloudConnection.token
     return createPluginApi(
+      createHttpClient({
+        baseUrl: cloudConnection.apiBaseUrl,
+        getToken: () => token,
+        redirectOnUnauthorized: false,
+      })
+    )
+  }, [
+    apiBaseUrl,
+    cloudConnection.apiBaseUrl,
+    cloudConnection.isConnected,
+    cloudConnection.token,
+    isLocalFirst,
+  ])
+  const smartAppsApi = useMemo(() => {
+    if (!isLocalFirst) {
+      return createSmartAppsApi(createHttpClient({ baseUrl: apiBaseUrl }))
+    }
+    if (!cloudConnection.isConnected || !cloudConnection.apiBaseUrl || !cloudConnection.token) {
+      return null
+    }
+    const token = cloudConnection.token
+    return createSmartAppsApi(
       createHttpClient({
         baseUrl: cloudConnection.apiBaseUrl,
         getToken: () => token,
@@ -639,9 +662,14 @@ export function SitesPage() {
           smartAppsEnabled={experimentalFeatures.enabled}
           smartAppsContent={
             smartAppsView === 'installed' ? (
-              <HarnessAppsPage importRequested={smartAppsImportRequested} />
+              <HarnessAppsPage
+                importRequested={smartAppsImportRequested}
+                smartAppsApi={smartAppsApi}
+              />
+            ) : smartAppsView === 'owned' ? (
+              <SmartAppsMarketplacePage api={smartAppsApi} mode="owned" />
             ) : (
-              <SmartAppsMarketplacePage />
+              <SmartAppsMarketplacePage api={smartAppsApi} />
             )
           }
           sidebarCollapsed={sidebarCollapsed && !isMobile}

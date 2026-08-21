@@ -35,7 +35,13 @@ class PluginPackageStorage:
         except (S3Error, ValueError) as exc:
             raise PluginPackageStorageError(str(exc)) from exc
 
-    def put(self, object_key: str, package_bytes: bytes) -> None:
+    def put(
+        self,
+        object_key: str,
+        package_bytes: bytes,
+        *,
+        content_type: str = "application/zip",
+    ) -> None:
         self.ensure_bucket()
         try:
             self.client.put_object(
@@ -43,19 +49,25 @@ class PluginPackageStorage:
                 object_key,
                 io.BytesIO(package_bytes),
                 len(package_bytes),
-                content_type="application/zip",
+                content_type=content_type,
             )
-        except S3Error as exc:
+        except (S3Error, ValueError) as exc:
             raise PluginPackageStorageError(str(exc)) from exc
 
-    def put_immutable(self, object_key: str, package_bytes: bytes) -> bool:
+    def put_immutable(
+        self,
+        object_key: str,
+        package_bytes: bytes,
+        *,
+        content_type: str = "application/zip",
+    ) -> bool:
         """Create an immutable object, or verify an identical existing object."""
         try:
             self.client.stat_object(self.bucket, object_key)
         except S3Error as exc:
             if exc.code not in {"NoSuchKey", "NoSuchObject", "NoSuchBucket"}:
                 raise PluginPackageStorageError(str(exc)) from exc
-            self.put(object_key, package_bytes)
+            self.put(object_key, package_bytes, content_type=content_type)
             return True
         except ValueError as exc:
             raise PluginPackageStorageError(str(exc)) from exc

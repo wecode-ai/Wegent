@@ -1,12 +1,35 @@
 import assert from 'node:assert/strict'
-import { writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { createHash } from 'node:crypto'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import JSZip from 'jszip'
 
 const INSTALLATION_ID = 'dsh-e2e-smoke'
 const APP_ROUTE = `/app/harness-${INSTALLATION_ID}`
 const MODEL_LABEL = 'Desktop E2E Chat'
+const RECIPIENT_NAME = 'smart-app-e2e-recipient'
+const STRANGER_NAME = 'smart-app-e2e-stranger'
+const USER_PASSWORD = 'smart-app-e2e-password'
+
+async function requestJson(baseUrl, token, pathname, options = {}) {
+  const response = await fetch(`${baseUrl}${pathname}`, {
+    ...options,
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+      ...options.headers,
+    },
+  })
+  const text = await response.text()
+  const body = text ? JSON.parse(text) : null
+  assert.equal(
+    response.ok,
+    true,
+    `${options.method ?? 'GET'} ${pathname} failed with HTTP ${response.status}: ${text}`
+  )
+  return body
+}
 
 async function setExperimentalFeatures(control, enabled, uiTimeoutMs) {
   await control.command('navigate', 'body', { value: '/settings/general' })
@@ -101,9 +124,173 @@ async function createHarnessPackage(resultDir) {
   return packagePath
 }
 
+async function createOfficialSource(resultDir, packagePath) {
+  const source = join(resultDir, 'official-smart-app')
+  await rm(source, { recursive: true, force: true })
+  await mkdir(source, { recursive: true })
+  const archive = await JSZip.loadAsync(await readFile(packagePath))
+  for (const entry of Object.values(archive.files)) {
+    if (entry.dir) continue
+    const relative = entry.name.replace(/^harness-e2e-plugin\//, '')
+    if (!relative || relative === entry.name) continue
+    const target = join(source, relative)
+    await mkdir(dirname(target), { recursive: true })
+    await writeFile(target, await entry.async('nodebuffer'))
+  }
+  await writeFile(
+    join(source, 'icon.png'),
+    Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      'base64'
+    )
+  )
+  await writeFile(
+    join(source, 'smart-app-marketplace.json'),
+    JSON.stringify({
+      summary: 'Official desktop E2E Smart app',
+      descriptionMd: '# Official desktop E2E Smart app',
+      tags: ['data_analysis'],
+      icon: 'icon.png',
+      releaseNotes: 'Initial official E2E release',
+      extensions: {
+        schemaVersion: 1,
+        'com.weibo.internal': { businessOwner: 'desktop-e2e' },
+      },
+      releaseExtensions: {
+        'com.weibo.build': { pipeline: 'desktop-e2e-official' },
+      },
+    })
+  )
+  return source
+}
+
 export async function createDesktopScenario({ captureScreenshot, resultDir, uiTimeoutMs }) {
   const packagePath = await createHarnessPackage(resultDir)
+  const officialSource = await createOfficialSource(resultDir, packagePath)
   return {
+    requiresCloudEnvironment: true,
+
+    async prepareCloud({ authToken, backendUrl, publishOfficialSmartApp }) {
+      await publishOfficialSmartApp(officialSource)
+      const ownerRequest = (pathname, options) =>
+        requestJson(backendUrl, authToken, pathname, options)
+      const ownerCatalog = await ownerRequest('/api/smart-apps/marketplace')
+      const officialItem = ownerCatalog.items.find(
+        item => item.name === INSTALLATION_ID && item.sourceType === 'official'
+      )
+      assert.deepEqual(officialItem?.extensions?.['com.weibo.internal'], {
+        businessOwner: 'desktop-e2e',
+      })
+      assert.deepEqual(officialItem?.releaseExtensions?.['com.weibo.build'], {
+        pipeline: 'desktop-e2e-official',
+      })
+      const [recipient, stranger] = await Promise.all(
+        [RECIPIENT_NAME, STRANGER_NAME].map(user_name =>
+          ownerRequest('/api/admin/users', {
+            method: 'POST',
+            body: JSON.stringify({
+              user_name,
+              password: USER_PASSWORD,
+              role: 'user',
+              auth_source: 'password',
+            }),
+          })
+        )
+      )
+      const [recipientLogin, strangerLogin] = await Promise.all(
+        [RECIPIENT_NAME, STRANGER_NAME].map(user_name =>
+          requestJson(backendUrl, null, '/api/auth/login', {
+            method: 'POST',
+            body: JSON.stringify({ user_name, password: USER_PASSWORD }),
+          })
+        )
+      )
+      const packageBytes = await readFile(packagePath)
+      const initialized = await ownerRequest('/api/smart-apps/submissions/init', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: INSTALLATION_ID,
+          displayName: 'DSH E2E Shared',
+          version: '0.1.0',
+          filename: 'dsh-e2e-shared.zip',
+          sha256: createHash('sha256').update(packageBytes).digest('hex'),
+          sizeBytes: packageBytes.length,
+          summary: 'Shared desktop E2E Smart app',
+          descriptionMd: '# Shared desktop E2E Smart app',
+          tags: ['data_analysis'],
+          iconDataUrl:
+            'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+          screenshotDataUrls: [],
+          releaseNotes: 'Initial shared E2E release',
+          extensions: {
+            'io.wegent.e2e': { owner: 'shared-app' },
+          },
+          releaseExtensions: {
+            'io.wegent.build': { pipeline: 'desktop-e2e-user' },
+          },
+          targets: [
+            {
+              entityType: 'user',
+              entityId: String(recipient.id),
+              displayName: recipient.user_name,
+            },
+          ],
+        }),
+      })
+      const upload = await fetch(initialized.uploadUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/zip' },
+        body: packageBytes,
+      })
+      assert.equal(upload.ok, true, `Smart app E2E upload failed with HTTP ${upload.status}`)
+      const completed = await ownerRequest(
+        `/api/smart-apps/submissions/${initialized.submissionId}/complete`,
+        { method: 'POST' }
+      )
+      assert.equal(completed.item.extensions.schemaVersion, 1)
+      assert.deepEqual(completed.item.extensions['io.wegent.e2e'], { owner: 'shared-app' })
+      assert.deepEqual(completed.item.releaseExtensions['io.wegent.build'], {
+        pipeline: 'desktop-e2e-user',
+      })
+      const recipientCatalog = await requestJson(
+        backendUrl,
+        recipientLogin.access_token,
+        '/api/smart-apps/marketplace'
+      )
+      const strangerCatalog = await requestJson(
+        backendUrl,
+        strangerLogin.access_token,
+        '/api/smart-apps/marketplace'
+      )
+      assert.ok(
+        recipientCatalog.items.some(
+          item => item.name === INSTALLATION_ID && item.sourceType === 'user'
+        ),
+        'Direct recipient could not discover the shared Smart app'
+      )
+      assert.ok(
+        !strangerCatalog.items.some(
+          item => item.name === INSTALLATION_ID && item.sourceType === 'user'
+        ),
+        `Unrelated user ${stranger.user_name} discovered the shared Smart app`
+      )
+      await ownerRequest(`/api/smart-apps/${initialized.smartAppId}/access`, {
+        method: 'PUT',
+        body: JSON.stringify({ scope: 'private', targets: [] }),
+      })
+      const revokedCatalog = await requestJson(
+        backendUrl,
+        recipientLogin.access_token,
+        '/api/smart-apps/marketplace'
+      )
+      assert.ok(
+        !revokedCatalog.items.some(
+          item => item.name === INSTALLATION_ID && item.sourceType === 'user'
+        ),
+        'Revoked recipient retained Smart app marketplace access'
+      )
+    },
+
     async verify(control) {
       await setExperimentalFeatures(control, false, uiTimeoutMs)
       await control.command('navigate', 'body', { value: '/' })
@@ -161,6 +348,42 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         marketplaceSnapshot.location.includes('/sites?app_type=smart_app'),
         `Smart app marketplace did not open from the top tab add menu: ${marketplaceSnapshot.location}`
       )
+      await control.command('waitFor', '[data-testid="smart-app-marketplace-item-1"]', {
+        text: 'DSH E2E Smoke',
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', '[data-testid="smart-app-marketplace-install-1"]')
+      await control.command('waitFor', '[data-testid="harness-app-preview"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('clickWhenEnabled', '[data-testid="harness-app-install-confirm"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', '[data-testid="harness-app-start-market-1"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', '[data-testid="harness-app-start-market-1"]')
+      await control.command('waitFor', '[data-testid="harness-app-launch-market-1"]', {
+        timeoutMs: 60_000,
+      })
+      await control.command('waitFor', '[data-testid="app-iframe-harness-market-1"]', {
+        timeoutMs: 600_000,
+      })
+      await captureScreenshot(control, 'harness-apps-03a-official-running.png', 'body')
+      await control.command('navigate', 'body', {
+        value: '/sites?app_type=smart_app&view=installed',
+      })
+      await control.command('waitFor', '[data-testid="harness-app-stop-market-1"]', {
+        timeoutMs: 60_000,
+      })
+      await control.command('click', '[data-testid="harness-app-stop-market-1"]')
+      await control.command('waitFor', '[data-testid="harness-app-start-market-1"]', {
+        timeoutMs: 30_000,
+      })
+      await control.command('click', '[data-testid="smart-apps-section-marketplace"]')
+      await control.command('waitFor', '[data-testid="smart-apps-marketplace-page"]', {
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('click', '[data-testid="smart-apps-marketplace-create"]')
       await control.command('waitFor', '[data-testid="chat-message-input"]', {
         text: '智能应用开发助手',

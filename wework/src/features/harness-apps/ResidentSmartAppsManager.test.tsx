@@ -3,11 +3,15 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { HarnessAppInstallation } from '@/api/local/harnessApps'
 import type { UnifiedModel } from '@/types/api'
 import { ResidentSmartAppsManager } from './ResidentSmartAppsManager'
-import { findResidentSmartAppsHostTabId } from './residentSmartAppsHost'
+import {
+  findResidentSmartAppsHostTabId,
+  retainResidentSmartAppsHostTabId,
+} from './residentSmartAppsHost'
 
 const mocks = vi.hoisted(() => ({
   closeTab: vi.fn(),
   list: vi.fn(),
+  listModels: vi.fn(),
   openTab: vi.fn(),
   register: vi.fn(),
   resolveLaunch: vi.fn(),
@@ -17,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   unregister: vi.fn(),
   unregisterProxy: vi.fn(),
   unregisterContext: vi.fn(),
+  projectModels: [] as UnifiedModel[],
   workspaceTabs: [] as Array<{
     id: string
     kind: string
@@ -60,18 +65,24 @@ const model: UnifiedModel = {
   config: { weworkModelKind: 'model-interface' },
 }
 
-vi.mock('@/features/workbench/useWorkbench', () => ({
-  useWorkbench: () => ({
-    projectChat: { models: [model] },
-    services: {
-      localHarnessModelApi: {
-        resolveLaunch: mocks.resolveLaunch,
-        unregisterProxy: mocks.unregisterProxy,
-        unregisterContext: mocks.unregisterContext,
-      },
+vi.mock('@/features/workbench/useWorkbench', () => {
+  const services = {
+    modelApi: {
+      listModels: mocks.listModels,
     },
-  }),
-}))
+    localHarnessModelApi: {
+      resolveLaunch: mocks.resolveLaunch,
+      unregisterProxy: mocks.unregisterProxy,
+      unregisterContext: mocks.unregisterContext,
+    },
+  }
+  return {
+    useWorkbench: () => ({
+      projectChat: { models: mocks.projectModels },
+      services,
+    }),
+  }
+})
 
 vi.mock('@/features/workspace-tabs/workspaceTabsContextValue', () => ({
   useWorkspaceTabs: () => ({
@@ -110,12 +121,15 @@ const installation: HarnessAppInstallation = {
 describe('ResidentSmartAppsManager', () => {
   beforeEach(() => {
     Object.entries(mocks).forEach(([key, mock]) => {
-      if (key !== 'proxyTokens' && key !== 'workspaceTabs') mock.mockReset()
+      if (!['projectModels', 'proxyTokens', 'workspaceTabs'].includes(key)) mock.mockReset()
     })
     mocks.proxyTokens.clear()
+    mocks.projectModels.length = 0
+    mocks.projectModels.push(model)
     mocks.workspaceTabs.length = 0
     mocks.unregisterContext.mockResolvedValue(undefined)
     mocks.list.mockResolvedValue([installation])
+    mocks.listModels.mockResolvedValue({ data: [model] })
     mocks.resolveLaunch.mockResolvedValue({
       proxyToken: 'proxy-token',
       baseUrl: 'http://127.0.0.1:41000/v1/harness-router/proxy-token',
@@ -152,6 +166,29 @@ describe('ResidentSmartAppsManager', () => {
     ).toBe('applications')
   })
 
+  test('retains one provider-backed host while the active tab changes', () => {
+    const tabs = [
+      { id: 'task', contentRoute: '/tasks' },
+      { id: 'applications', contentRoute: '/sites?app_type=smart_app&view=installed' },
+      { id: 'smart-app', contentRoute: '/app/harness-resident-app' },
+    ]
+
+    expect(retainResidentSmartAppsHostTabId(tabs, 'applications', 'task')).toBe('applications')
+  })
+
+  test('selects a new host after the retained provider tab is removed', () => {
+    expect(
+      retainResidentSmartAppsHostTabId(
+        [
+          { id: 'task', contentRoute: '/tasks' },
+          { id: 'smart-app', contentRoute: '/app/harness-resident-app' },
+        ],
+        'applications',
+        'task'
+      )
+    ).toBe('task')
+  })
+
   test('strips the runtime base path before selecting a resident host tab', () => {
     expect(
       findResidentSmartAppsHostTabId([
@@ -173,6 +210,66 @@ describe('ResidentSmartAppsManager', () => {
     expect(mocks.register).toHaveBeenCalledOnce()
     expect(mocks.openTab).toHaveBeenCalledOnce()
     expect(mocks.proxyTokens.get(installation.id)).toBe('proxy-token')
+  })
+
+  test('retries resident startup after the model proxy becomes ready', async () => {
+    mocks.resolveLaunch.mockResolvedValueOnce(null).mockResolvedValue({
+      proxyToken: 'proxy-token',
+      baseUrl: 'http://127.0.0.1:41000/v1/harness-router/proxy-token',
+    })
+
+    render(<ResidentSmartAppsManager enabled />)
+
+    await waitFor(() => expect(mocks.resolveLaunch).toHaveBeenCalledTimes(2), { timeout: 3_000 })
+    expect(mocks.start).toHaveBeenCalledWith(
+      installation.id,
+      'http://127.0.0.1:41000/v1/harness-router/proxy-token'
+    )
+    expect(mocks.register).toHaveBeenCalledOnce()
+  })
+
+  test('refreshes the model catalog when the workbench snapshot is not ready', async () => {
+    mocks.projectModels.length = 0
+
+    render(<ResidentSmartAppsManager enabled />)
+
+    await waitFor(() => expect(mocks.listModels).toHaveBeenCalledOnce())
+    await waitFor(() => expect(mocks.start).toHaveBeenCalledOnce())
+    expect(mocks.resolveLaunch).toHaveBeenCalledWith(
+      'opencode',
+      expect.objectContaining({ key: installation.modelKey })
+    )
+  })
+
+  test('does not cancel an in-flight resident launch when the model snapshot changes', async () => {
+    let finishStart: ((value: HarnessAppInstallation) => void) | undefined
+    mocks.start.mockImplementation(
+      () =>
+        new Promise<HarnessAppInstallation>(resolve => {
+          finishStart = resolve
+        })
+    )
+    const { rerender } = render(<ResidentSmartAppsManager enabled />)
+    await waitFor(() => expect(mocks.start).toHaveBeenCalledOnce())
+
+    mocks.projectModels = [
+      model,
+      {
+        ...model,
+        name: 'local-model:model-2',
+        modelId: 'local-upstream-2',
+      },
+    ]
+    rerender(<ResidentSmartAppsManager enabled />)
+    finishStart?.({
+      ...installation,
+      state: 'running',
+      webUrl: 'http://127.0.0.1:39000/',
+    })
+
+    await waitFor(() => expect(mocks.register).toHaveBeenCalledOnce())
+    expect(mocks.stop).not.toHaveBeenCalled()
+    expect(mocks.unregisterProxy).not.toHaveBeenCalled()
   })
 
   test('does not steal focus when the resident app tab is already open', async () => {
