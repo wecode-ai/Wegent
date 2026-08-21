@@ -21,6 +21,16 @@ const pullRequest: ChangeRequest = {
 }
 
 describe('changeRequestStatus', () => {
+  it('uses draft as the canonical status before checks', () => {
+    expect(
+      changeRequestVisualStatus({
+        ...pullRequest,
+        draft: true,
+        checks: 'success',
+      })
+    ).toBe('draft')
+  })
+
   it('prioritizes merge queue failure over successful PR checks', () => {
     const failed = {
       ...pullRequest,
