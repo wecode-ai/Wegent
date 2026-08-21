@@ -3,18 +3,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+use crate::agents::replace_config;
 use std::io::{BufReader, Read};
-use tokio::sync::oneshot;
-use toml_edit::DocumentMut;
+use toml_edit::{value, DocumentMut};
 
 const WEWORK_PERSONAL_MARKETPLACE: &str = "wework-personal";
-const LOCAL_INSTALL_COMMIT_TIMEOUT: Duration = Duration::from_secs(15);
-const LOCAL_INSTALL_POLL_INTERVAL: Duration = Duration::from_millis(250);
-
 #[derive(Debug)]
 struct LocalPluginInstallTarget {
-    marketplace_path: PathBuf,
-    plugin_name: String,
     plugin_key: String,
     source_root: PathBuf,
     cache_root: PathBuf,
@@ -22,92 +17,61 @@ struct LocalPluginInstallTarget {
 }
 
 impl RuntimeWorkRpcHandler {
-    pub(super) async fn install_local_plugin_before_post_install_network(
+    pub(super) async fn install_local_plugin(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let target = resolve_local_plugin_install_target(&payload)
+            .map_err(|error| AppIpcError::new("invalid_local_plugin_install", error))?;
+        let plugin_key = target.plugin_key.clone();
+        let started_at = Instant::now();
+        tokio::task::spawn_blocking(move || install_local_plugin_files(&target))
+            .await
+            .map_err(|error| {
+                AppIpcError::new(
+                    "local_plugin_install_failed",
+                    format!("failed to join local plugin installation: {error}"),
+                )
+            })?
+            .map_err(|error| AppIpcError::new("local_plugin_install_failed", error))?;
+        log_executor_event(
+            "local plugin install committed",
+            &[
+                ("plugin_key", plugin_key.clone()),
+                ("elapsed_ms", started_at.elapsed().as_millis().to_string()),
+            ],
+        );
+        Ok(json!({
+            "pluginKey": plugin_key,
+            "localCommitted": true,
+        }))
+    }
+
+    pub(super) async fn uninstall_local_plugin(
         &self,
         payload: Value,
     ) -> Result<Value, AppIpcError> {
         let target = resolve_local_plugin_install_target(&payload)
-            .map_err(|error| AppIpcError::new("invalid_local_plugin_install", error))?;
-        let request_params = json!({
-            "marketplacePath": target.marketplace_path,
-            "remoteMarketplaceName": Value::Null,
-            "pluginName": target.plugin_name,
-        });
+            .map_err(|error| AppIpcError::new("invalid_local_plugin_uninstall", error))?;
         let plugin_key = target.plugin_key.clone();
-        let client = self.codex_app_server.clone();
-        let (result_tx, mut result_rx) = oneshot::channel();
-
-        tokio::spawn(async move {
-            let result = client.request("plugin/install", request_params).await;
-            if let Err(result) = result_tx.send(result) {
-                log_executor_event(
-                    "local plugin post-install network work finished",
-                    &[
-                        ("plugin_key", plugin_key),
-                        (
-                            "result",
-                            if result.is_ok() { "ok" } else { "failed" }.to_owned(),
-                        ),
-                    ],
-                );
-            }
-        });
-
         let started_at = Instant::now();
-        loop {
-            if local_plugin_install_is_committed(&target)
-                .map_err(|error| AppIpcError::new("local_plugin_commit_check_failed", error))?
-            {
-                log_executor_event(
-                    "local plugin install committed before post-install network completed",
-                    &[
-                        ("plugin_key", target.plugin_key.clone()),
-                        ("elapsed_ms", started_at.elapsed().as_millis().to_string()),
-                    ],
-                );
-                return Ok(json!({
-                    "pluginKey": target.plugin_key,
-                    "localCommitted": true,
-                }));
-            }
-
-            if started_at.elapsed() >= LOCAL_INSTALL_COMMIT_TIMEOUT {
-                return Err(AppIpcError::new(
-                    "local_plugin_commit_timeout",
-                    format!(
-                        "Local plugin {} was not committed within {}s",
-                        target.plugin_key,
-                        LOCAL_INSTALL_COMMIT_TIMEOUT.as_secs()
-                    ),
-                ));
-            }
-
-            tokio::select! {
-                result = &mut result_rx => {
-                    return match result {
-                        Ok(Ok(_)) => Ok(json!({
-                            "pluginKey": target.plugin_key,
-                            "localCommitted": true,
-                        })),
-                        Ok(Err(error)) => {
-                            if local_plugin_install_is_committed(&target).unwrap_or(false) {
-                                Ok(json!({
-                                    "pluginKey": target.plugin_key,
-                                    "localCommitted": true,
-                                }))
-                            } else {
-                                Err(AppIpcError::new("local_plugin_install_failed", error))
-                            }
-                        }
-                        Err(_) => Err(AppIpcError::new(
-                            "local_plugin_install_failed",
-                            "Codex plugin installation stopped before local commit",
-                        )),
-                    };
-                }
-                _ = sleep(LOCAL_INSTALL_POLL_INTERVAL) => {}
-            }
-        }
+        tokio::task::spawn_blocking(move || uninstall_local_plugin_files(&target))
+            .await
+            .map_err(|error| {
+                AppIpcError::new(
+                    "local_plugin_uninstall_failed",
+                    format!("failed to join local plugin uninstall: {error}"),
+                )
+            })?
+            .map_err(|error| AppIpcError::new("local_plugin_uninstall_failed", error))?;
+        log_executor_event(
+            "local plugin uninstall committed",
+            &[
+                ("plugin_key", plugin_key.clone()),
+                ("elapsed_ms", started_at.elapsed().as_millis().to_string()),
+            ],
+        );
+        Ok(json!({
+            "pluginKey": plugin_key,
+            "localCommitted": true,
+        }))
     }
 }
 
@@ -184,9 +148,7 @@ fn resolve_local_plugin_install_target(
         .join(&plugin_name)
         .join(plugin_version);
     Ok(LocalPluginInstallTarget {
-        marketplace_path,
         plugin_key: format!("{plugin_name}@{WEWORK_PERSONAL_MARKETPLACE}"),
-        plugin_name,
         source_root,
         cache_root,
         codex_home,
@@ -208,6 +170,129 @@ fn validate_path_segment(value: &str, label: &str) -> Result<(), String> {
 fn read_json_file(path: &Path, label: &str) -> Result<Value, String> {
     let bytes = fs::read(path).map_err(|error| format!("failed to read {label}: {error}"))?;
     serde_json::from_slice(&bytes).map_err(|error| format!("invalid {label}: {error}"))
+}
+
+fn install_local_plugin_files(target: &LocalPluginInstallTarget) -> Result<(), String> {
+    replace_cache_from_source(&target.source_root, &target.cache_root)?;
+    if let Err(error) = set_plugin_config_enabled(&target.codex_home, &target.plugin_key, true) {
+        let _ = fs::remove_dir_all(&target.cache_root);
+        return Err(error);
+    }
+    if !local_plugin_install_is_committed(target)? {
+        return Err("local plugin files did not match the committed installation".to_owned());
+    }
+    Ok(())
+}
+
+fn uninstall_local_plugin_files(target: &LocalPluginInstallTarget) -> Result<(), String> {
+    remove_plugin_config(&target.codex_home, &target.plugin_key)?;
+    let plugin_cache_root = target
+        .cache_root
+        .parent()
+        .ok_or_else(|| "local plugin cache path is invalid".to_owned())?;
+    if plugin_cache_root.is_dir() {
+        fs::remove_dir_all(plugin_cache_root)
+            .map_err(|error| format!("failed to remove local plugin cache: {error}"))?;
+    }
+    Ok(())
+}
+
+fn replace_cache_from_source(source: &Path, destination: &Path) -> Result<(), String> {
+    let parent = destination
+        .parent()
+        .ok_or_else(|| "local plugin cache path has no parent".to_owned())?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("failed to prepare local plugin cache: {error}"))?;
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let staging = parent.join(format!(".wework-install-{}-{unique}", std::process::id()));
+    let backup = parent.join(format!(".wework-backup-{}-{unique}", std::process::id()));
+    if let Err(error) = copy_directory(source, &staging) {
+        let _ = fs::remove_dir_all(&staging);
+        return Err(error);
+    }
+
+    let had_destination = destination.exists();
+    if had_destination {
+        fs::rename(destination, &backup)
+            .map_err(|error| format!("failed to stage existing plugin cache: {error}"))?;
+    }
+    if let Err(error) = fs::rename(&staging, destination) {
+        if had_destination {
+            let _ = fs::rename(&backup, destination);
+        }
+        let _ = fs::remove_dir_all(&staging);
+        return Err(format!("failed to commit local plugin cache: {error}"));
+    }
+    if had_destination {
+        let _ = fs::remove_dir_all(&backup);
+    }
+    Ok(())
+}
+
+fn copy_directory(source: &Path, destination: &Path) -> Result<(), String> {
+    fs::create_dir_all(destination)
+        .map_err(|error| format!("failed to create local plugin cache directory: {error}"))?;
+    let entries = fs::read_dir(source)
+        .map_err(|error| format!("failed to read local plugin source: {error}"))?;
+    for entry in entries {
+        let entry =
+            entry.map_err(|error| format!("failed to read plugin source entry: {error}"))?;
+        let file_type = entry
+            .file_type()
+            .map_err(|error| format!("failed to inspect plugin source entry: {error}"))?;
+        let source_path = entry.path();
+        let destination_path = destination.join(entry.file_name());
+        if file_type.is_dir() {
+            copy_directory(&source_path, &destination_path)?;
+        } else if file_type.is_file() {
+            fs::copy(&source_path, &destination_path)
+                .map_err(|error| format!("failed to copy local plugin file: {error}"))?;
+        } else {
+            let _ = fs::remove_dir_all(destination);
+            return Err("plugin source contains an unsupported file type".to_owned());
+        }
+    }
+    Ok(())
+}
+
+fn set_plugin_config_enabled(
+    codex_home: &Path,
+    plugin_key: &str,
+    enabled: bool,
+) -> Result<(), String> {
+    fs::create_dir_all(codex_home)
+        .map_err(|error| format!("failed to prepare Codex home: {error}"))?;
+    let config_path = codex_home.join("config.toml");
+    let content = fs::read_to_string(&config_path).unwrap_or_default();
+    let mut document = content
+        .parse::<DocumentMut>()
+        .map_err(|error| format!("invalid Codex config: {error}"))?;
+    document["plugins"][plugin_key]["enabled"] = value(enabled);
+    replace_config(&config_path, document.to_string())
+}
+
+fn remove_plugin_config(codex_home: &Path, plugin_key: &str) -> Result<(), String> {
+    let config_path = codex_home.join("config.toml");
+    let content = match fs::read_to_string(&config_path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(format!("failed to read Codex config: {error}")),
+    };
+    let mut document = content
+        .parse::<DocumentMut>()
+        .map_err(|error| format!("invalid Codex config: {error}"))?;
+    let removed = document
+        .get_mut("plugins")
+        .and_then(|plugins| plugins.as_table_like_mut())
+        .and_then(|plugins| plugins.remove(plugin_key))
+        .is_some();
+    if !removed {
+        return Ok(());
+    }
+    replace_config(&config_path, document.to_string())
 }
 
 fn local_plugin_install_is_committed(target: &LocalPluginInstallTarget) -> Result<bool, String> {
@@ -338,6 +423,32 @@ mod tests {
 
         assert!(plugin_config_enabled(temp.path(), "example@wework-personal").unwrap());
         assert!(!plugin_config_enabled(temp.path(), "other@wework-personal").unwrap());
+    }
+
+    #[test]
+    fn installs_and_uninstalls_personal_plugin_without_app_server() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        let cache = temp
+            .path()
+            .join("codex/plugins/cache/wework-personal/example/1.0.0");
+        let codex_home = temp.path().join("codex");
+        write_plugin_fixture(&source, "source");
+        let target = LocalPluginInstallTarget {
+            plugin_key: "example@wework-personal".to_owned(),
+            source_root: source,
+            cache_root: cache.clone(),
+            codex_home: codex_home.clone(),
+        };
+
+        install_local_plugin_files(&target).unwrap();
+        assert!(local_plugin_install_is_committed(&target).unwrap());
+
+        uninstall_local_plugin_files(&target).unwrap();
+        assert!(!cache.parent().unwrap().exists());
+        assert!(!plugin_config_enabled(&codex_home, &target.plugin_key).unwrap());
+        let config = fs::read_to_string(codex_home.join("config.toml")).unwrap();
+        assert!(!config.contains(&target.plugin_key));
     }
 
     #[test]

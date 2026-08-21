@@ -588,6 +588,10 @@ async function verifyMarketplacePluginLifecycle({
     'The plugin import dialog did not explain the standard Wework plugin package structure'
   )
   const archivePath = await createDirectRemoteMcpPluginZip(marketplacePath)
+  const personalMarketplacePath = join(
+    executorHome,
+    'capabilities/bundled-marketplaces/wework-personal'
+  )
   const preview = JSON.parse(
     await control.command('previewPluginImport', 'body', {
       value: JSON.stringify({ archivePath, marketplacePath }),
@@ -626,13 +630,40 @@ async function verifyMarketplacePluginLifecycle({
       true,
       'The offline import returned before the local plugin cache was committed'
     )
+    const codexConfigAfterImport = await readFile(join(codexHome, 'config.toml'), 'utf8')
     assert.ok(
-      (await readFile(join(codexHome, 'config.toml'), 'utf8')).includes(
-        '[plugins."direct-remote-mcp-plugin@wework-personal"]'
-      ),
+      codexConfigAfterImport.includes('"direct-remote-mcp-plugin@wework-personal"') &&
+        codexConfigAfterImport.includes('enabled = true'),
       'The offline import returned before the plugin was enabled in Codex config'
     )
-    await blockingNetworkProxy.waitForRequestAfter(blockedRequestCount, WORKBENCH_READY_TIMEOUT_MS)
+    const deleteStartedAt = Date.now()
+    await control.command('deleteLocalPluginPackage', 'body', {
+      value: JSON.stringify({
+        pluginId: 'direct-remote-mcp-plugin@wework-personal',
+        pluginName: 'direct-remote-mcp-plugin',
+      }),
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    const deleteElapsedMs = Date.now() - deleteStartedAt
+    assert.ok(
+      deleteElapsedMs <= DEFAULT_STEP_TIMEOUT_MS,
+      `Local plugin deletion waited ${deleteElapsedMs}ms for blocked marketplace network work`
+    )
+    assert.equal(
+      await pathExists(join(codexHome, 'plugins/cache/wework-personal/direct-remote-mcp-plugin')),
+      false,
+      'The offline delete left the local Codex plugin cache behind'
+    )
+    assert.equal(
+      await pathExists(join(personalMarketplacePath, 'plugins/direct-remote-mcp-plugin')),
+      false,
+      'The offline delete left the personal plugin source behind'
+    )
+    assert.equal(
+      blockingNetworkProxy.requestCount(),
+      blockedRequestCount,
+      'Local plugin import or deletion unexpectedly requested external network access'
+    )
   } finally {
     blockingNetworkProxy.release()
     await control.command('setLocalProxyUrl', 'body', { value: '' })

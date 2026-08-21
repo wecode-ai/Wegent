@@ -1032,8 +1032,8 @@ interface EnsurePersonalPluginResult {
 async function resolveWeworkPersonalMarketplacePath(
   state?: LocalCodexPluginsState | null
 ): Promise<string> {
-  const current = state ?? cachedState ?? (await readState({ skipPersonalReconcile: true }))
-  const marketplace = current.marketplaces.find(item => item.id === WEWORK_PERSONAL_MARKETPLACE_ID)
+  const current = state ?? cachedState
+  const marketplace = current?.marketplaces.find(item => item.id === WEWORK_PERSONAL_MARKETPLACE_ID)
   if (marketplace && isLocalMarketplacePath(marketplace.path)) {
     return normalizeMarketplaceSource(marketplace.path)
   }
@@ -1041,7 +1041,42 @@ async function resolveWeworkPersonalMarketplacePath(
   if (bundled?.path && isLocalMarketplacePath(bundled.path)) {
     return normalizeMarketplaceSource(bundled.path)
   }
+  const loaded = await readState({ skipPersonalReconcile: true })
+  const loadedMarketplace = loaded.marketplaces.find(
+    item => item.id === WEWORK_PERSONAL_MARKETPLACE_ID
+  )
+  if (loadedMarketplace && isLocalMarketplacePath(loadedMarketplace.path)) {
+    return normalizeMarketplaceSource(loadedMarketplace.path)
+  }
   throw new Error(`The ${WEWORK_PERSONAL_MARKETPLACE_ID} marketplace is unavailable`)
+}
+
+async function uninstallWeworkPersonalPluginLocally(
+  pluginName: string,
+  marketplacePath: string
+): Promise<void> {
+  const commit = await requestLocalExecutor<LocalPluginInstallCommitResult>(
+    'runtime.codex.plugin.uninstall_local',
+    {
+      marketplacePath: codexMarketplaceManifestSource(marketplacePath),
+      pluginName,
+    }
+  )
+  if (!commit.localCommitted) {
+    throw new Error('Plugin did not reach its local uninstall commit')
+  }
+  clearLocalCodexPluginsReadStateCache()
+  try {
+    await invoke('local_executor_unlink_plugin_release', {
+      marketplacePath,
+      localPluginName: pluginName,
+    })
+  } catch (error) {
+    throw new LocalPluginUninstallCleanupError(
+      getErrorMessage(error, 'Failed to unlink local plugin release'),
+      { cause: error }
+    )
+  }
 }
 
 async function ensurePluginInWeworkPersonal(options: {
@@ -1062,9 +1097,8 @@ async function ensurePluginInWeworkPersonal(options: {
   )
   if (options.installAfterMigrate !== false && ensured.migrated) {
     try {
-      await codexAppServerRequest('plugin/install', {
+      await requestLocalExecutor('runtime.codex.plugin.install_local_first', {
         marketplacePath: codexMarketplaceManifestSource(ensured.marketplacePath),
-        remoteMarketplaceName: null,
         pluginName: ensured.pluginName,
       })
     } catch (error) {
@@ -3198,8 +3232,17 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       return installed
     },
     async uninstallInstalledPlugin(id) {
-      const currentState = cachedState ?? (await readState({ mergeAllMarketplaces: true }))
       const requestedId = String(id)
+      const localPersonalSuffix = `@${WEWORK_PERSONAL_MARKETPLACE_ID}`
+      if (requestedId.endsWith(localPersonalSuffix)) {
+        const pluginName = requestedId.slice(0, -localPersonalSuffix.length)
+        if (pluginName) {
+          const marketplacePath = await resolveWeworkPersonalMarketplacePath()
+          await uninstallWeworkPersonalPluginLocally(pluginName, marketplacePath)
+          return
+        }
+      }
+      const currentState = cachedState ?? (await readState({ mergeAllMarketplaces: true }))
       const marketplaceItem = currentState.marketplaceItems.find(
         item =>
           String(item.id) === requestedId ||
@@ -3251,6 +3294,19 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         marketplaceItem?.name ||
         requestedId.split('@')[0] ||
         requestedId
+      if (marketplaceName === WEWORK_PERSONAL_MARKETPLACE_ID) {
+        const personalMarketplace = currentState.marketplaces.find(
+          marketplace =>
+            marketplace.id === WEWORK_PERSONAL_MARKETPLACE_ID &&
+            marketplace.path &&
+            isLocalMarketplacePath(marketplace.path)
+        )
+        if (!personalMarketplace?.path) {
+          throw new Error('Wework personal marketplace path is unavailable')
+        }
+        await uninstallWeworkPersonalPluginLocally(String(pluginName), personalMarketplace.path)
+        return
+      }
       const remotePluginId =
         (typeof payload.remotePluginId === 'string' && payload.remotePluginId.trim()) ||
         (typeof installed?.spec.source.catalogItemId === 'string' &&

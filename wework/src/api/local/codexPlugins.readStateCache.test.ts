@@ -117,6 +117,10 @@ describe('local codex plugin readState cache', () => {
         }
       }
       if (command === 'local_executor_link_plugin_release') return null
+      if (command === 'local_executor_unlink_plugin_release') return null
+      if (command === 'local_executor_list_wegent_store_plugins') {
+        return { storePath: '/tmp/store/plugins', plugins: [] }
+      }
       throw new Error(`Unexpected invoke ${command}`)
     })
   })
@@ -2520,6 +2524,78 @@ describe('local codex plugin readState cache', () => {
       expect.objectContaining({ name: 'github', installed: false }),
     ])
     expect(after.installedPlugins).toEqual([])
+  })
+
+  test('uninstalls Wework personal plugins locally without Codex marketplace refresh', async () => {
+    let installed = true
+    mocks.requestLocalExecutor.mockImplementation(
+      async (
+        method: string,
+        params: {
+          method?: string
+          pluginName?: string
+        }
+      ) => {
+        if (method === 'runtime.codex.plugin.uninstall_local') {
+          expect(params).toEqual({
+            marketplacePath: '/tmp/wework-personal/.agents/plugins/marketplace.json',
+            pluginName: 'dev-tools',
+          })
+          installed = false
+          return {
+            pluginKey: 'dev-tools@wework-personal',
+            localCommitted: true,
+          }
+        }
+        if (method === 'codex.app_server_request') {
+          if (params.method === 'plugin/list' || params.method === 'plugin/installed') {
+            return {
+              marketplaces: [
+                {
+                  ...personalMarketplace,
+                  plugins: installed
+                    ? [
+                        {
+                          id: 'dev-tools@wework-personal',
+                          name: 'dev-tools',
+                          installed: true,
+                          enabled: true,
+                          source: { source: 'local', path: './plugins/dev-tools' },
+                        },
+                      ]
+                    : [],
+                },
+              ],
+            }
+          }
+          throw new Error(`Unexpected app-server method ${params.method}`)
+        }
+        throw new Error(`Unexpected executor method ${method}`)
+      }
+    )
+    const api = createLocalCodexPluginApi()
+    await api.readState({ mergeAllMarketplaces: true })
+    mocks.requestLocalExecutor.mockClear()
+
+    await api.uninstallInstalledPlugin('dev-tools@wework-personal')
+
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledTimes(1)
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledWith(
+      'runtime.codex.plugin.uninstall_local',
+      {
+        marketplacePath: '/tmp/wework-personal/.agents/plugins/marketplace.json',
+        pluginName: 'dev-tools',
+      }
+    )
+    expect(
+      mocks.requestLocalExecutor.mock.calls.some(
+        ([method, params]) =>
+          method === 'codex.app_server_request' &&
+          ['plugin/uninstall', 'plugin/list'].includes(
+            String((params as { method?: string }).method ?? '')
+          )
+      )
+    ).toBe(false)
   })
 
   test('uninstalls local marketplace plugins without requiring remote catalog auth', async () => {

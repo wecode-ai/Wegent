@@ -302,6 +302,16 @@ function mockCodexAppServerInvoke(
         localCommitted: true,
       })
     }
+    if (request.method === 'runtime.codex.plugin.uninstall_local') {
+      const pluginName = String(
+        (args as { params?: { pluginName?: string } }).params?.pluginName ?? ''
+      )
+      installedPluginNames.delete(pluginName)
+      return Promise.resolve({
+        pluginKey: `${pluginName}@wework-personal`,
+        localCommitted: true,
+      })
+    }
     if (request.method === 'executor.backend.status') {
       const connected =
         typeof options.backendConnected === 'function'
@@ -436,6 +446,13 @@ function expectCodexAppServerRequest(method: string, params: Record<string, unkn
       method,
       params: expect.objectContaining(params),
     },
+  })
+}
+
+function expectCodexAppServerRequestNotCalled(method: string) {
+  expect(invoke).not.toHaveBeenCalledWith('local_executor_request', {
+    method: 'codex.app_server_request',
+    params: expect.objectContaining({ method }),
   })
 }
 
@@ -4557,8 +4574,15 @@ describe('PluginsWorkspace', () => {
     )
     // Bare ids like documents-local-id look like Codex remote plugin ids and must
     // not be probed for local/personal uninstalls.
-    expectCodexAppServerRequest('plugin/uninstall', { pluginId: 'documents@wework-personal' })
-    expectCodexAppServerRequest('plugin/uninstall', { pluginId: 'documents@personal' })
+    expect(invoke).toHaveBeenCalledWith('local_executor_request', {
+      method: 'runtime.codex.plugin.uninstall_local',
+      params: {
+        marketplacePath:
+          '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal/.agents/plugins/marketplace.json',
+        pluginName: 'documents',
+      },
+    })
+    expectCodexAppServerRequestNotCalled('plugin/uninstall')
     expect(invoke).toHaveBeenCalledWith('local_executor_unlink_plugin_release', {
       marketplacePath: '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal',
       localPluginName: 'documents',

@@ -1971,7 +1971,7 @@ export function PluginsWorkspace({
       setSelectedMarketplacePluginId(null)
       setPendingPersonalPluginDelete(null)
       notifyLocalPluginSkillsChanged()
-      setMarketplaceRefreshTick(previous => previous + 1)
+      refreshLocalMarketplace()
       setPluginOperationNotice({
         id: `deleted-${pending.pluginName}`,
         kind: 'success',
