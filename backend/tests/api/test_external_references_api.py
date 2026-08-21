@@ -8,7 +8,7 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.models.delivery import ExternalEventBinding, LoopItem
+from app.models.delivery import ExternalEventBinding, LoopItem, ProjectAutomationRun
 from app.models.user import User
 
 
@@ -70,6 +70,7 @@ def _issue(
     project_id: str,
     user_id: int,
     item_id: str = "reg-issue-1",
+    run_id: str = "run-1",
 ) -> LoopItem:
     item = LoopItem(
         id=item_id,
@@ -84,6 +85,15 @@ def _issue(
         metadata_json={"workflow": _workflow_definition()},
     )
     test_db.add(item)
+    run = ProjectAutomationRun(
+        id=run_id,
+        cloud_project_id=project_id,
+        task_id=item.id,
+        task_title=item.title,
+        status="pending",
+        created_by_user_id=user_id,
+    )
+    test_db.add(run)
     test_db.commit()
     test_db.refresh(item)
     return item
@@ -192,3 +202,38 @@ def test_register_external_reference_rejects_item_without_wait_node(
     )
 
     assert response.status_code == 400
+
+
+def test_register_external_reference_rejects_run_of_another_item(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+    test_user: User,
+) -> None:
+    project = _project(test_client, test_token)
+    _issue(
+        test_db,
+        project_id=str(project["id"]),
+        user_id=test_user.id,
+    )
+    other = _issue(
+        test_db,
+        project_id=str(project["id"]),
+        user_id=test_user.id,
+        item_id="reg-issue-2",
+        run_id="run-2",
+    )
+
+    response = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/external-references",
+        headers=_auth(test_token),
+        json={
+            "provider": "gitlab",
+            "opaque_ref": "acme/app!7",
+            "item_id": other.id,
+            "automation_run_id": "run-1",
+        },
+    )
+
+    assert response.status_code == 400
+    assert "Automation run" in response.json()["detail"]

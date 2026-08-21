@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core.security import get_current_user, get_current_user_flexible_for_executor
-from app.models.delivery import LoopItem
+from app.models.delivery import LoopItem, ProjectAutomationRun
 from app.models.user import User
 from app.schemas.cloud_file import (
     CloudFileAccessResponse,
@@ -140,6 +140,17 @@ def register_external_reference(
 ) -> ExternalReferenceResponse:
     """Register one external reference for a waiting workflow node."""
 
+    run = db.get(ProjectAutomationRun, values.automation_run_id)
+    if (
+        run is None
+        or str(run.cloud_project_id) != str(project_id)
+        or run.task_id != values.item_id
+        or run.created_by_user_id != current_user.id
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Automation run does not match the board item or caller",
+        )
     try:
         result = external_event_registration_service.register(
             db,
@@ -151,7 +162,7 @@ def register_external_reference(
             automation_run_id=values.automation_run_id,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return ExternalReferenceResponse.model_validate(result)
 
 

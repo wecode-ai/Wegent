@@ -1038,6 +1038,7 @@ def register_external_reference(
     opaque_ref: str,
     space_id: str = "",
     item_id: str = "",
+    workflow_node_id: str = "",
 ) -> dict[str, Any]:
     """Register an external reference so a waiting workflow node can receive
     provider events (e.g. the GitLab MR that this task just opened).
@@ -1071,6 +1072,7 @@ def register_external_reference(
             provider=provider,
             opaque_ref=opaque_ref,
             automation_run_id=run_id,
+            workflow_node_id=workflow_node_id or None,
         )
 
 

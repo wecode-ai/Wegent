@@ -10,7 +10,12 @@ import uuid
 import pytest
 from sqlalchemy.orm import Session
 
-from app.models.delivery import CloudProject, ExternalEventBinding, LoopItem
+from app.models.delivery import (
+    CloudProject,
+    ExternalEventBinding,
+    LoopItem,
+    ProjectAutomationRun,
+)
 from app.models.user import User
 from app.services.external_events.registration import (
     external_event_registration_service,
@@ -21,6 +26,7 @@ def test_provider_kind_classifies_native_and_generic_providers() -> None:
     from app.services.external_events.adapters import provider_kind
 
     assert provider_kind("gitlab") == "native"
+    assert provider_kind(" GitLab ") == "native"
     assert provider_kind("gitea") == "generic"
     assert provider_kind("my-crm") == "generic"
     assert provider_kind(" generic ") == "generic"
@@ -89,6 +95,15 @@ def _issue(test_db: Session, user: User) -> tuple[CloudProject, LoopItem]:
         metadata_json={"workflow": _workflow_definition()},
     )
     test_db.add(item)
+    run = ProjectAutomationRun(
+        id="run-1",
+        cloud_project_id=str(project.id),
+        task_id=item.id,
+        task_title=item.title,
+        status="pending",
+        created_by_user_id=user.id,
+    )
+    test_db.add(run)
     test_db.commit()
     test_db.refresh(project)
     test_db.refresh(item)

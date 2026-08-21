@@ -13,9 +13,8 @@ from sqlalchemy.orm import Session
 
 from app.mcp_server.auth import MCPAuthInfo
 from app.mcp_server.tools import wework_space
-from app.models.delivery import CloudProject, LoopItem
+from app.models.delivery import CloudProject, LoopItem, ProjectAutomationRun
 from app.models.user import User
-from app.services.external_events.buffer import external_event_buffer
 
 
 class _SessionContext:
@@ -89,6 +88,15 @@ def _issue(db: Session, user: User) -> LoopItem:
         },
     )
     db.add(item)
+    run = ProjectAutomationRun(
+        id="run-1",
+        cloud_project_id=str(project.id),
+        task_id=item.id,
+        task_title=item.title,
+        status="pending",
+        created_by_user_id=user.id,
+    )
+    db.add(run)
     db.commit()
     db.refresh(project)
     db.refresh(item)
@@ -145,7 +153,6 @@ def test_register_external_reference_creates_binding_and_waits(
         run_id="run-1",
     )
     token = _task_token(test_user)
-    external_event_buffer.take_for_reference("gitlab", "acme/app!7")
 
     result = wework_space.register_external_reference(
         token, provider="gitlab", opaque_ref="acme/app!7"

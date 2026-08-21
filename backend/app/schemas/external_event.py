@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class ExternalReferenceRegister(BaseModel):
-    provider: str = Field(min_length=1, max_length=128)
+    provider: str = Field(min_length=1, max_length=64)
     opaque_ref: str = Field(min_length=1, max_length=512)
     item_id: str = Field(min_length=1, max_length=64)
     automation_run_id: str = Field(min_length=1, max_length=64)

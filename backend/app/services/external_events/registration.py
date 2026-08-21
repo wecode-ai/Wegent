@@ -9,7 +9,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.models.delivery import LoopItem
+from app.models.delivery import LoopItem, ProjectAutomationRun
 from app.schemas.base_role import BaseRole
 from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.external_events.adapters import provider_kind
@@ -56,6 +56,15 @@ class ExternalEventRegistrationService:
         item = db.get(LoopItem, loop_item_id)
         if item is None or str(item.cloud_project_id) != cloud_project_id:
             raise ValueError("Board item not found in this space")
+        run = db.get(ProjectAutomationRun, automation_run_id)
+        if (
+            run is None
+            or run.task_id != loop_item_id
+            or str(run.cloud_project_id) != cloud_project_id
+        ):
+            raise ValueError(
+                "Automation run does not match the board item in this space"
+            )
         issue = item
         if item.parent_id:
             parent = db.get(LoopItem, item.parent_id)
