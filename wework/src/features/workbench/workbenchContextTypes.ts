@@ -103,6 +103,9 @@ export interface SendCurrentInputOptions {
     address: RuntimeTaskAddress,
     context?: { previousAddress?: RuntimeTaskAddress }
   ) => void | Promise<void>
+  prepareRuntimeTask?: (
+    address: RuntimeTaskAddress
+  ) => void | (() => void | Promise<void>) | Promise<void | (() => void | Promise<void>)>
   additionalContext?: RuntimeAdditionalContext
   cloudProjectId?: string
 }
@@ -153,6 +156,7 @@ export interface CreateProjectRuntimeTaskOptions {
   deviceId?: string | null
   additionalContext?: RuntimeAdditionalContext
   onError?: (error: string) => void
+  prepareRuntimeTask?: SendCurrentInputOptions['prepareRuntimeTask']
   onRuntimeTaskOptimisticOpen?: SendCurrentInputOptions['onRuntimeTaskOptimisticOpen']
 }
 
@@ -187,6 +191,7 @@ export interface WorkbenchContextValue {
     isModelSelectionReady: boolean
     input: string
     composerError?: string | null
+    composerErrorByScope?: Readonly<Record<string, string>>
     trialTemplates: PluginPathComponent[]
     trialPluginName?: string
     trialPluginApp?: LocalDeviceApp
@@ -210,6 +215,7 @@ export interface WorkbenchContextValue {
     setInput: (value: string) => void
     setInputForScope: (scopeKey: string, value: string) => void
     setComposerError?: (error: string | null) => void
+    setComposerErrorForScope?: (scopeKey: string, error: string | null) => void
     setSelectedSkills: (skills: SkillRef[]) => void
     toggleSkill: (skill: SkillRef) => void
     handleFileSelect: (files: File | File[]) => Promise<void>

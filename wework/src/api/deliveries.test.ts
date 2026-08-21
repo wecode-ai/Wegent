@@ -54,6 +54,23 @@ describe('createDeliveryApi queue and assignment routes', () => {
     )
   })
 
+  it('loads the complete board snapshot through one request', async () => {
+    const client = {
+      get: vi.fn(async () => ({
+        items: [],
+        task_bindings: [],
+        members: [],
+        agents: [],
+      })),
+    } as unknown as HttpClient
+    const api = createDeliveryApi(client)
+
+    await api.getBoardSnapshot(123)
+
+    expect(client.get).toHaveBeenCalledOnce()
+    expect(client.get).toHaveBeenCalledWith('/v1/cloud-projects/123/board-snapshot')
+  })
+
   it('lists robot executions through the cloud executions route', async () => {
     const client = {
       get: vi.fn(async () => ({

@@ -579,8 +579,18 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     git_github_pull_request_merge_queue_definition = resolve_local_device_command(
         "git_github_pull_request_merge_queue", settings.LOCAL_DEVICE_COMMANDS
     )
+    git_github_pull_requests_batch_definition = resolve_local_device_command(
+        "git_github_pull_requests_batch", settings.LOCAL_DEVICE_COMMANDS
+    )
+    git_github_pull_request_merge_queue_batch_definition = resolve_local_device_command(
+        "git_github_pull_request_merge_queue_batch",
+        settings.LOCAL_DEVICE_COMMANDS,
+    )
     git_gitlab_merge_requests_definition = resolve_local_device_command(
         "git_gitlab_merge_requests", settings.LOCAL_DEVICE_COMMANDS
+    )
+    git_gitlab_merge_requests_batch_definition = resolve_local_device_command(
+        "git_gitlab_merge_requests_batch", settings.LOCAL_DEVICE_COMMANDS
     )
     git_add_all_definition = resolve_local_device_command(
         "git_add_all", settings.LOCAL_DEVICE_COMMANDS
@@ -671,10 +681,14 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     assert git_diff_shortstat_definition.command == "git diff --shortstat"
     assert git_diff_shortstat_definition.post_processor is None
     assert git_diff_definition is not None
+    assert git_diff_definition.command.startswith("bash -c ")
+    assert not git_diff_definition.command.startswith("bash -lc ")
     assert "git diff --binary HEAD --" in git_diff_definition.command
     assert "git ls-files --others --exclude-standard" in git_diff_definition.command
     assert git_diff_definition.post_processor is None
     assert git_branch_diff_definition is not None
+    assert git_branch_diff_definition.command.startswith("bash -c ")
+    assert not git_branch_diff_definition.command.startswith("bash -lc ")
     assert "git merge-base" in git_branch_diff_definition.command
     assert "git diff --binary" in git_branch_diff_definition.command
     assert (
@@ -682,6 +696,8 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     )
     assert git_branch_diff_definition.post_processor is None
     assert git_branch_diff_shortstat_definition is not None
+    assert git_branch_diff_shortstat_definition.command.startswith("bash -c ")
+    assert not git_branch_diff_shortstat_definition.command.startswith("bash -lc ")
     assert "git merge-base" in git_branch_diff_shortstat_definition.command
     assert "git diff --shortstat" in git_branch_diff_shortstat_definition.command
     assert (
@@ -698,9 +714,19 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     assert git_github_pull_request_merge_queue_definition is not None
     assert "mergeQueueEntry" in git_github_pull_request_merge_queue_definition.command
     assert git_github_pull_request_merge_queue_definition.post_processor == "json"
+    assert git_github_pull_requests_batch_definition is not None
+    assert "gh api --method GET" in git_github_pull_requests_batch_definition.command
+    assert "per_page=100" in git_github_pull_requests_batch_definition.command
+    assert "--jq" in git_github_pull_requests_batch_definition.command
+    assert git_github_pull_request_merge_queue_batch_definition is not None
+    assert (
+        git_github_pull_request_merge_queue_batch_definition.command == "gh api graphql"
+    )
     assert git_gitlab_merge_requests_definition is not None
     assert "glab mr list --all" in git_gitlab_merge_requests_definition.command
     assert git_gitlab_merge_requests_definition.post_processor == "json"
+    assert git_gitlab_merge_requests_batch_definition is not None
+    assert "--source-branch" not in git_gitlab_merge_requests_batch_definition.command
     assert git_add_all_definition is not None
     assert git_add_all_definition.command == "git add --all"
     assert git_add_all_definition.post_processor is None

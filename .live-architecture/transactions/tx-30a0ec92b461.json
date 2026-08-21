@@ -1,0 +1,26 @@
+{
+  "abandoned": {
+    "by": "codex",
+    "reason": "User removed the DWS upgrade capability; the upgrade lifecycle is no longer part of the intended design",
+    "timestamp": "2026-08-20T08:15:31Z"
+  },
+  "actor": {
+    "id": "codex",
+    "kind": "ai"
+  },
+  "authority": "ai",
+  "base_revision": "A00000047",
+  "changes": [],
+  "created_at": "2026-08-20T07:26:56Z",
+  "id": "tx-30a0ec92b461",
+  "intent": "Let users upgrade DingTalk DWS from project management, invalidate the old DWS login after upgrade, and make every Wework packaging build embed the latest published DWS",
+  "read_set": [
+    "arch://wegent/flow/issue-runtime-project-space-binding"
+  ],
+  "resolutions": [],
+  "status": "abandoned",
+  "updated_at": "2026-08-20T08:15:31Z",
+  "write_set": [
+    "arch://wegent/flow/dws-runtime-lifecycle"
+  ]
+}

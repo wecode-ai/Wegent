@@ -110,7 +110,7 @@ export function DesktopSidebarSectionHeader({
       </button>
       <div
         data-testid={`${toggleTestId}-actions`}
-        className="pointer-events-none absolute right-2.5 top-1/2 z-[70] flex -translate-y-1/2 items-center opacity-0 transition-opacity group-hover/section:pointer-events-auto group-hover/section:opacity-100 hover:pointer-events-auto hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100"
+        className="absolute right-1 top-1/2 z-[70] flex -translate-y-1/2 items-center"
       >
         {children}
       </div>

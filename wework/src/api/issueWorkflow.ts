@@ -29,7 +29,12 @@ export function instantiateIssueWorkflow(
     stage_mode: stageMode,
     advancement_policy: advancementPolicy,
     coordinator_prompt: definition.coordinator_prompt ?? '',
+    approval_policy: definition.approval_policy ?? 'required',
     ai_automation_rule_id: definition.ai_automation_rule_id ?? null,
+    orchestration_status: 'idle',
+    active_run_id: null,
+    active_plan_version: null,
+    current_stage_id: null,
     nodes: (stageMode === 'dag' ? definition.nodes : []).map(node => ({
       ...node,
       status: node.depends_on.length === 0 ? 'ready' : 'blocked',

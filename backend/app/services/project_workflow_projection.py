@@ -10,8 +10,10 @@ from app.models.delivery import (
     LoopItem,
     LoopItemTaskBinding,
     ProjectAutomationRun,
+    ProjectWorkflowRun,
     loop_datetime_is_unset,
 )
+from app.services.loop_item_unread import advance_content_revision
 
 COMPLETED_NODE_STATUSES = {"completed", "forced_completed"}
 SUCCESS_TASK_STATUSES = {"succeeded", "archived"}
@@ -191,6 +193,7 @@ def apply_workflow_nodes(
     *,
     workflow: dict,
     nodes: list[dict],
+    actor_user_id: int | None = None,
 ) -> LoopItem:
     completed = {
         str(node.get("id"))
@@ -210,7 +213,7 @@ def apply_workflow_nodes(
     next_workflow["nodes"] = nodes
     metadata = dict(item.metadata_json or {})
     metadata["workflow"] = next_workflow
-    item.metadata_json = metadata
+    item.metadata_json = advance_content_revision(metadata, actor_user_id=actor_user_id)
     required = [node for node in nodes if node.get("required", True)]
     if required and all(
         node.get("status") in COMPLETED_NODE_STATUSES for node in required
@@ -266,7 +269,9 @@ def sync_automation_workflow_node(
 ) -> LoopItem | None:
     metadata = run.metadata_json if isinstance(run.metadata_json, dict) else {}
     node_id = metadata.get("workflow_node_id")
-    if not isinstance(node_id, str) or not node_id or not run.task_id:
+    if not isinstance(node_id, str) or not node_id:
+        return _sync_ai_planning_run(db, run, metadata)
+    if not run.task_id:
         return None
     status_map = {
         "pending": "queued",
@@ -310,3 +315,43 @@ def sync_automation_workflow_node(
         node_status=node_status,
         automation_run_id=str(run.id),
     )
+
+
+def _sync_ai_planning_run(
+    db: Session,
+    run: ProjectAutomationRun,
+    metadata: dict,
+) -> LoopItem | None:
+    event = metadata.get("event")
+    payload = event.get("payload") if isinstance(event, dict) else None
+    workflow_run_id = (
+        str(payload.get("workflow_run_id") or "") if isinstance(payload, dict) else ""
+    )
+    if not workflow_run_id or not run.task_id:
+        return None
+    workflow_run = db.get(ProjectWorkflowRun, workflow_run_id)
+    issue = db.get(LoopItem, str(run.task_id))
+    if workflow_run is None or issue is None or workflow_run.parent_id != issue.id:
+        return None
+    issue_metadata = (
+        dict(issue.metadata_json) if isinstance(issue.metadata_json, dict) else {}
+    )
+    workflow = issue_metadata.get("workflow")
+    if (
+        not isinstance(workflow, dict)
+        or workflow.get("active_run_id") != workflow_run.id
+        or workflow_run.status != "planning"
+    ):
+        return issue
+    if run.status not in {"failed", "cancelled", "skipped"}:
+        return issue
+    workflow_run.status = "failed"
+    workflow_run.description = run.description or "AI manager did not submit a plan"
+    workflow_run.version += 1
+    next_workflow = dict(workflow)
+    next_workflow["version"] = int(workflow.get("version") or 1) + 1
+    next_workflow["orchestration_status"] = "failed"
+    issue_metadata["workflow"] = next_workflow
+    issue.metadata_json = issue_metadata
+    issue.version += 1
+    return issue

@@ -9,6 +9,7 @@ import {
   FolderOpen,
   GitCommit,
   GitBranch,
+  GitMerge,
   GitPullRequest,
   Info,
   Link2,
@@ -33,6 +34,7 @@ import { BranchSelector } from '@/components/common/BranchSelector'
 import { useTranslation } from '@/hooks/useTranslation'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { openExternalUrl } from '@/lib/external-links'
+import { normalizeRuntimeWorkspacePath } from '@/lib/runtime-project'
 import { cn } from '@/lib/utils'
 import { navigateTo } from '@/lib/navigation'
 import {
@@ -75,9 +77,17 @@ const FLOATING_POPOVER_WIDTH = 300
 const FLOATING_POPOVER_GAP = 8
 const FLOATING_POPOVER_MARGIN = 16
 
-function getWorkspacePathDisplayName(path: string): string {
-  const normalizedPath = path.replace(/[\\/]+$/, '')
-  return normalizedPath.split(/[\\/]/).filter(Boolean).at(-1) || path
+function compactWorkspacePath(workspacePath: string): string {
+  const segments = workspacePath
+    .replace(/[\\/]+$/, '')
+    .split(/[\\/]+/)
+    .filter(Boolean)
+  return segments.at(-1) || workspacePath
+}
+
+function normalizeWorkspacePathForComparison(workspacePath: string): string {
+  const normalizedPath = normalizeRuntimeWorkspacePath(workspacePath.replace(/\\/g, '/'))
+  return /^(?:[A-Za-z]:|\/\/)/.test(normalizedPath) ? normalizedPath.toLowerCase() : normalizedPath
 }
 
 export function EnvironmentInfoPopover({
@@ -148,12 +158,24 @@ export function EnvironmentInfoPopover({
   const hasDiffStats = gitRepositoryAvailable && Boolean(info.additions || info.deletions)
   const showChangesSection = hasDiffStats || hasGitInfo || canShowBranchSelector
   const taskSummaryToggleLabel = t('workbench.task_summary_toggle', '切换摘要')
+  const normalizedWorkspacePath = info.workspacePath
+    ? normalizeWorkspacePathForComparison(info.workspacePath)
+    : ''
+  const workspacePathIsProjectRoot = Boolean(
+    normalizedWorkspacePath &&
+    info.workspaceRoots?.some(
+      workspaceRoot =>
+        normalizeWorkspacePathForComparison(workspaceRoot) === normalizedWorkspacePath
+    )
+  )
   const workspacePaths =
-    info.workspaceRoots && info.workspaceRoots.length > 0
-      ? info.workspaceRoots
-      : info.workspacePath
-        ? [info.workspacePath]
-        : []
+    info.workspacePath && !workspacePathIsProjectRoot
+      ? [info.workspacePath]
+      : info.workspaceRoots && info.workspaceRoots.length > 0
+        ? info.workspaceRoots
+        : info.workspacePath
+          ? [info.workspacePath]
+          : []
   const changeRequest = info.changeRequest?.changeRequest
   const changeRequestPrefix = changeRequest?.provider === 'gitlab' ? '!' : '#'
   const changeRequestStateLabel = changeRequest
@@ -370,13 +392,17 @@ export function EnvironmentInfoPopover({
               >
                 {workspacePaths.map((workspacePath, index) => {
                   const copied = copiedWorkspacePath === workspacePath
+                  const displayWorkspacePath = compactWorkspacePath(workspacePath)
                   return (
                     <div
                       key={workspacePath}
-                      className="flex h-11 min-w-0 items-center gap-2 md:h-7"
+                      className="flex min-h-11 min-w-0 items-start gap-2 py-1 md:min-h-0"
                       data-testid={`environment-workspace-root-row-${index}`}
                     >
-                      <FolderOpen className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
+                      <FolderOpen
+                        className="mt-0.5 h-4 w-4 shrink-0 text-text-muted"
+                        aria-hidden="true"
+                      />
                       <button
                         type="button"
                         data-testid={
@@ -387,7 +413,7 @@ export function EnvironmentInfoPopover({
                         onClick={() => void handleCopyWorkspacePath(workspacePath)}
                         title={workspacePath}
                         aria-label={`${t('workbench.environment_workspace_path')} · ${workspacePath}`}
-                        className="flex min-h-11 min-w-0 flex-1 items-center gap-1 rounded py-1 text-left hover:text-text-primary md:min-h-0"
+                        className="flex min-h-11 min-w-0 flex-1 items-start gap-1 rounded text-left hover:text-text-primary md:min-h-0"
                       >
                         <span className="sr-only">{t('workbench.environment_workspace_path')}</span>
                         <span
@@ -396,9 +422,9 @@ export function EnvironmentInfoPopover({
                               ? 'environment-workspace-path'
                               : `environment-workspace-root-${index}`
                           }
-                          className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-sm font-medium text-text-primary"
+                          className="min-w-0 flex-1 truncate text-sm font-medium text-text-primary"
                         >
-                          {getWorkspacePathDisplayName(workspacePath)}
+                          {displayWorkspacePath}
                         </span>
                         <span
                           data-testid={
@@ -407,7 +433,7 @@ export function EnvironmentInfoPopover({
                               : `environment-workspace-root-copy-icon-${index}`
                           }
                           className={cn(
-                            'flex h-3.5 w-3.5 shrink-0 items-center justify-center',
+                            'mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center',
                             copied ? 'text-green-500' : 'text-text-muted'
                           )}
                           aria-hidden="true"
@@ -472,7 +498,7 @@ export function EnvironmentInfoPopover({
                     <BranchSelector
                       variant="environment"
                       currentBranch={info.branchName}
-                      loading={info.loading}
+                      loading={info.branchLoading ?? info.loading}
                       onRefresh={onRefresh}
                       onListBranches={onListBranches}
                       onCheckoutBranch={onCheckoutBranch}
@@ -544,13 +570,23 @@ export function EnvironmentInfoPopover({
                                 !changeRequest.draft &&
                                 changeRequest.mergeQueue !== 'queued' &&
                                 'text-green-500',
-                              changeRequest.state === 'merged' && 'text-green-500',
+                              changeRequest.state === 'merged' && 'text-violet-500',
                               changeRequest.state === 'closed' && 'text-red-500',
                               changeRequest.mergeability === 'conflicting' && 'text-red-500'
                             )}
                             aria-hidden="true"
                           >
-                            <GitPullRequest className="h-[18px] w-[18px]" />
+                            {changeRequest.state === 'merged' ? (
+                              <GitMerge
+                                data-testid="change-request-merged-icon"
+                                className="h-[18px] w-[18px]"
+                              />
+                            ) : (
+                              <GitPullRequest
+                                data-testid="change-request-pull-request-icon"
+                                className="h-[18px] w-[18px]"
+                              />
+                            )}
                             {changeRequest.mergeability === 'conflicting' ? (
                               <span className="absolute -bottom-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-background text-red-500">
                                 <TriangleAlert className="h-3 w-3 fill-background" />
