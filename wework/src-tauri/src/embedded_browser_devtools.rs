@@ -1,4 +1,5 @@
 use std::{
+    cell::Cell,
     ffi::c_void,
     sync::OnceLock,
     time::{Duration, Instant},
@@ -18,6 +19,7 @@ use tauri::{Webview, Wry};
 static INSPECTOR_DELEGATE_KEY: u8 = 0;
 const INSPECTOR_E2E_TIMEOUT: Duration = Duration::from_secs(10);
 const INSPECTOR_E2E_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const EXPECTED_FRAME_IVAR: &std::ffi::CStr = c"_expectedFrame";
 
 #[derive(Clone, Copy)]
 struct NativeInspectorState {
@@ -26,8 +28,32 @@ struct NativeInspectorState {
     window_count: usize,
 }
 
+fn inspector_delegate_frame(delegate: &AnyObject) -> [f64; 4] {
+    let class = inspector_delegate_class()
+        .expect("Embedded browser Inspector delegate class should be registered");
+    unsafe {
+        class
+            .instance_variable(EXPECTED_FRAME_IVAR)
+            .expect("Expected frame ivar should exist")
+            .load::<Cell<[f64; 4]>>(delegate)
+            .get()
+    }
+}
+
+fn set_inspector_delegate_frame(delegate: &AnyObject, frame: [f64; 4]) {
+    let class = inspector_delegate_class()
+        .expect("Embedded browser Inspector delegate class should be registered");
+    unsafe {
+        class
+            .instance_variable(EXPECTED_FRAME_IVAR)
+            .expect("Expected frame ivar should exist")
+            .load::<Cell<[f64; 4]>>(delegate)
+            .set(frame);
+    }
+}
+
 unsafe extern "C-unwind" fn inspector_frontend_loaded(
-    _delegate: &AnyObject,
+    delegate: &AnyObject,
     _command: Sel,
     inspector: *mut AnyObject,
 ) {
@@ -35,9 +61,14 @@ unsafe extern "C-unwind" fn inspector_frontend_loaded(
         return;
     }
     let webview: *mut NSView = unsafe { msg_send![&*inspector, webView] };
-    let frame = unsafe { webview.as_ref().map(NSView::frame) };
+    let expected_frame = inspector_delegate_frame(delegate);
     let _: () = unsafe { msg_send![&*inspector, detach] };
-    if let (Some(webview), Some(frame)) = (unsafe { webview.as_ref() }, frame) {
+    if let Some(webview) = unsafe { webview.as_ref() } {
+        let mut frame = webview.frame();
+        frame.origin.x = expected_frame[0];
+        frame.origin.y = expected_frame[1];
+        frame.size.width = expected_frame[2];
+        frame.size.height = expected_frame[3];
         webview.setFrame(frame);
     }
 }
@@ -56,6 +87,7 @@ fn inspector_delegate_class() -> Result<&'static AnyClass, String> {
                     .ok_or_else(|| {
                         "Failed to allocate embedded browser Inspector delegate class".to_string()
                     })?;
+            builder.add_ivar::<Cell<[f64; 4]>>(EXPECTED_FRAME_IVAR);
             unsafe {
                 builder.add_method(
                     sel!(inspectorFrontendLoaded:),
@@ -82,6 +114,16 @@ unsafe fn install_detached_inspector(webview: *mut AnyObject) -> Result<(), Stri
 
     let class = inspector_delegate_class()?;
     let delegate: Retained<AnyObject> = unsafe { msg_send![class, new] };
+    let frame = unsafe { (&*webview.cast::<NSView>()).frame() };
+    set_inspector_delegate_frame(
+        &delegate,
+        [
+            frame.origin.x,
+            frame.origin.y,
+            frame.size.width,
+            frame.size.height,
+        ],
+    );
     unsafe {
         objc_setAssociatedObject(
             Retained::as_ptr(&inspector).cast_mut(),
@@ -91,6 +133,25 @@ unsafe fn install_detached_inspector(webview: *mut AnyObject) -> Result<(), Stri
         );
         let _: () = msg_send![&*inspector, setDelegate: &*delegate];
     }
+    Ok(())
+}
+
+unsafe fn remember_native_frame(webview: *mut AnyObject) -> Result<(), String> {
+    let inspector = unsafe { native_inspector(webview)? };
+    let delegate: *mut AnyObject = unsafe { msg_send![&*inspector, delegate] };
+    let Some(delegate) = (unsafe { delegate.as_ref() }) else {
+        return Err("Embedded browser Inspector delegate is unavailable".to_string());
+    };
+    let frame = unsafe { (&*webview.cast::<NSView>()).frame() };
+    set_inspector_delegate_frame(
+        delegate,
+        [
+            frame.origin.x,
+            frame.origin.y,
+            frame.size.width,
+            frame.size.height,
+        ],
+    );
     Ok(())
 }
 
@@ -208,6 +269,18 @@ pub async fn register_detached_inspector(webview: &Webview<Wry>) -> Result<(), S
         .ok_or_else(|| "Detached browser Inspector registration was cancelled".to_string())?
 }
 
+pub fn remember_webview_frame(webview: &Webview<Wry>) -> Result<(), String> {
+    webview
+        .with_webview(move |platform_webview| {
+            if let Err(error) =
+                unsafe { remember_native_frame(platform_webview.inner().cast::<AnyObject>()) }
+            {
+                log::warn!("Failed to remember embedded browser frame: {error}");
+            }
+        })
+        .map_err(|error| format!("Failed to remember embedded browser frame: {error}"))
+}
+
 pub async fn verify_detached_inspector_for_e2e(webview: &Webview<Wry>) -> Result<Value, String> {
     let before = inspector_state(webview).await?;
     set_inspector_visibility(webview, true).await?;
@@ -257,5 +330,6 @@ mod tests {
         assert!(class
             .instance_method(sel!(inspectorFrontendLoaded:))
             .is_some());
+        assert!(class.instance_variable(EXPECTED_FRAME_IVAR).is_some());
     }
 }
