@@ -104,7 +104,6 @@ import { TelemetryBridge } from '@/telemetry/TelemetryBridge'
 import { track, useTelemetryEnabled } from '@/telemetry/client'
 import { WorkspaceTabPortalOwner } from '@/components/topnav/TitlebarActionsPortal'
 import { setActiveWorkspaceTabPortalOwner } from '@/components/topnav/workspaceTabPortalOwnership'
-import { LocalManagementSection } from '@wecode/features/local-executor/LocalManagementSection'
 import { getWorkbenchPluginRuntime } from '@/plugin-runtime/bootstrap'
 import { DynamicWorkbenchPluginHost } from '@/plugin-runtime/DynamicWorkbenchPluginHost'
 import { useActiveWorkbenchApps } from '@/plugin-runtime/apps'
@@ -170,7 +169,6 @@ function useCurrentLocation() {
 
 function telemetryFeatureForPath(path: string) {
   if (path === '/login' || path === '/login/oidc') return 'login' as const
-  if (path === '/local-management') return 'settings' as const
   const pluginRoute = getWorkbenchPluginRuntime().routes.resolve(path)
   if (pluginRoute) return pluginRoute.telemetryFeature
   if (path.startsWith('/app/')) return 'apps' as const
@@ -203,7 +201,6 @@ function workspaceTabIframe(
 }
 
 function workspaceTabAuxiliaryPage(path: string, search: string) {
-  if (path === '/local-management') return <LocalManagementSection />
   return getWorkbenchPluginRuntime().routes.resolve(path)?.render({ search }) ?? null
 }
 

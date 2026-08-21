@@ -229,3 +229,13 @@ def test_runtime_asset_manifest_rejects_paths_outside_the_release_directory(
 
     with pytest.raises(SystemExit, match="invalid asset name"):
         module.load_runtime_assets(tmp_path)
+
+
+def test_minio_macos_build_inherits_the_complete_tauri_resource_list() -> None:
+    script = (SCRIPT_DIR / "build-minio-mac-release.sh").read_text(encoding="utf-8")
+
+    assert 'BASE_CONFIG="$WEWORK_DIR/src-tauri/tauri.conf.json"' in script
+    assert "verify_runtime_descriptors_in_app" in script
+    assert "bundled-execution-runtimes/node.json" in script
+    assert "bundled-harness-runtime/runtime.json" in script
+    assert 'bash "$SCRIPT_DIR/release-mac-app.sh"' not in script
