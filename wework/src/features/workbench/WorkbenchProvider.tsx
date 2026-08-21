@@ -526,20 +526,21 @@ export function WorkbenchProvider({
     },
     [projectChatScopeKey, setDraftInputForScope]
   )
+  const setComposerErrorForScope = useCallback((scopeKey: string, error: string | null) => {
+    setComposerErrorByScope(current => {
+      if (error) {
+        if (current[scopeKey] === error) return current
+        return { ...current, [scopeKey]: error }
+      }
+      if (!current[scopeKey]) return current
+      const next = { ...current }
+      delete next[scopeKey]
+      return next
+    })
+  }, [])
   const setComposerError = useCallback(
-    (error: string | null) => {
-      setComposerErrorByScope(current => {
-        if (error) {
-          if (current[projectChatScopeKey] === error) return current
-          return { ...current, [projectChatScopeKey]: error }
-        }
-        if (!current[projectChatScopeKey]) return current
-        const next = { ...current }
-        delete next[projectChatScopeKey]
-        return next
-      })
-    },
-    [projectChatScopeKey]
+    (error: string | null) => setComposerErrorForScope(projectChatScopeKey, error),
+    [projectChatScopeKey, setComposerErrorForScope]
   )
   const dismissTrialGuideForScope = useCallback(() => {
     if (trialPluginName.trim()) {
@@ -2452,6 +2453,7 @@ export function WorkbenchProvider({
       isModelSelectionReady: modelSelection.isSelectionReady,
       input: draftInput,
       composerError,
+      composerErrorByScope,
       trialTemplates,
       trialPluginName,
       trialPluginApp,
@@ -2475,6 +2477,7 @@ export function WorkbenchProvider({
       setInput: setDraftInput,
       setInputForScope: setDraftInputForScope,
       setComposerError,
+      setComposerErrorForScope,
       setSelectedSkills: skillSelection.setSelectedSkills,
       toggleSkill: skillSelection.toggleSkill,
       handleFileSelect: attachmentSelection.handleFileSelect,
@@ -2506,6 +2509,7 @@ export function WorkbenchProvider({
       draftInput,
       draftInputByScope,
       composerError,
+      composerErrorByScope,
       trialTemplates,
       trialPluginName,
       trialPluginApp,
@@ -2530,6 +2534,7 @@ export function WorkbenchProvider({
       setDraftInput,
       setDraftInputForScope,
       setComposerError,
+      setComposerErrorForScope,
       skillSelection.selectedSkills,
       skillSelection.setSelectedSkills,
       skillSelection.skills,
@@ -2548,6 +2553,7 @@ export function WorkbenchProvider({
       isModelSelectionReady: modelSelection.isSelectionReady,
       input: draftInput,
       composerError,
+      composerErrorByScope,
       trialTemplates,
       trialPluginName,
       trialPluginApp,
@@ -2571,6 +2577,7 @@ export function WorkbenchProvider({
       setInput: setDraftInput,
       setInputForScope: setDraftInputForScope,
       setComposerError,
+      setComposerErrorForScope,
       setSelectedSkills: skillSelection.setSelectedSkills,
       toggleSkill: skillSelection.toggleSkill,
       handleFileSelect: attachmentSelection.handleFileSelect,
@@ -2602,6 +2609,7 @@ export function WorkbenchProvider({
       draftInput,
       draftInputByScope,
       composerError,
+      composerErrorByScope,
       trialTemplates,
       trialPluginName,
       trialPluginApp,
@@ -2625,6 +2633,7 @@ export function WorkbenchProvider({
       setDraftInput,
       setDraftInputForScope,
       setComposerError,
+      setComposerErrorForScope,
       skillSelection.selectedSkills,
       skillSelection.setSelectedSkills,
       skillSelection.skills,

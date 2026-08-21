@@ -999,6 +999,14 @@ function ProjectSendProbe({
       <button type="button" onClick={() => workbench.startNewChat()}>
         start new chat
       </button>
+      <button
+        type="button"
+        onClick={() => {
+          if (currentRuntimeTask) void workbench.archiveRuntimeTask(currentRuntimeTask)
+        }}
+      >
+        archive current runtime task
+      </button>
       <button type="button" onClick={() => workbench.startNewProjectChat(7)}>
         start new project chat
       </button>
@@ -5824,6 +5832,70 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('runtime-task-errors')).toHaveTextContent(
       'executor-not-found:device-1'
     )
+    expect(screen.getByTestId('pane-session-error')).toHaveTextContent(
+      'executor-not-found:device-1'
+    )
+
+    await userEvent.click(screen.getByText('start new chat'))
+
+    expect(screen.getByTestId('pane-session-error')).toHaveTextContent('')
+  })
+
+  test('archives a failed optimistic runtime task locally and keeps it hidden after refresh', async () => {
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 7, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-alpha',
+                  mapped: true,
+                  available: true,
+                  tasks: [],
+                },
+              ],
+            },
+          ],
+          totalTasks: 0,
+        })
+      ),
+      createRuntimeTask: vi.fn(async request => ({
+        accepted: false,
+        deviceId: request.deviceId,
+        taskId: request.taskId,
+        workspacePath: request.workspacePath,
+        runtime: 'claude_code',
+        error: 'executor-not-found:device-1',
+      })),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<ProjectSendProbe />, services)
+
+    await userEvent.click(await screen.findByText('select project'))
+    await userEvent.click(screen.getByText('set input'))
+    await userEvent.click(screen.getByText('send'))
+
+    await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-task-statuses')).toHaveTextContent('failed')
+    )
+
+    await userEvent.click(screen.getByText('archive current runtime task'))
+
+    await waitFor(() => expect(screen.getByTestId('runtime-task-titles')).toBeEmptyDOMElement())
+    expect(runtimeWorkApi.archiveConversation).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByText('refresh work lists'))
+
+    await waitFor(() => expect(screen.getByTestId('runtime-task-titles')).toBeEmptyDOMElement())
   })
 
   test('keeps new runtime task model selection for context usage window resolution', async () => {

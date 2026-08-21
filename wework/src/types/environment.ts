@@ -41,4 +41,5 @@ export interface EnvironmentInfo {
   changeRequest?: ChangeRequestLookup
   error?: string
   loading?: boolean
+  branchLoading?: boolean
 }
