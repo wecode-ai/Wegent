@@ -47,7 +47,6 @@ import { getDesktopE2EClipboardText, installDesktopE2EClipboard } from './clipbo
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
-const DESKTOP_CONTROL_RETRY_DELAY_MS = 250
 
 interface DesktopControlResult {
   id: string
@@ -1848,7 +1847,7 @@ async function runDesktopControlClient(url: string, windowLabel: string): Promis
     try {
       const response = await commandRequest
       if (response.status === 204) {
-        await new Promise(resolve => window.setTimeout(resolve, DESKTOP_CONTROL_RETRY_DELAY_MS))
+        await waitForDesktopControlTick()
         commandRequest = pollForCommand()
         continue
       }
@@ -1856,7 +1855,6 @@ async function runDesktopControlClient(url: string, windowLabel: string): Promis
         throw new Error(`Desktop E2E control command failed with ${response.status}`)
       }
       const command = (await response.json()) as DesktopControlCommand
-      commandRequest = pollForCommand()
       await postDesktopControlStarted(url, command, clientId)
       try {
         const value = await executeDesktopControlCommand(command)
@@ -1877,10 +1875,10 @@ async function runDesktopControlClient(url: string, windowLabel: string): Promis
           error: error instanceof Error ? error.message : String(error),
         })
       }
-      await new Promise(resolve => window.setTimeout(resolve, DESKTOP_CONTROL_RETRY_DELAY_MS))
+      commandRequest = pollForCommand()
     } catch (error) {
       console.error('[Wework] Desktop E2E control client failed:', error)
-      await new Promise(resolve => window.setTimeout(resolve, DESKTOP_CONTROL_RETRY_DELAY_MS))
+      await waitForDesktopControlTick()
       commandRequest = pollForCommand()
     }
   }
