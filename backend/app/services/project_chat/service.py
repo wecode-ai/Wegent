@@ -1601,6 +1601,47 @@ class ProjectChatService:
         task.sort_order = 0
         task.version += 1
 
+        ProjectChatService._sync_issue_workflow_from_completed_task(
+            db,
+            task=task,
+        )
+
+    @staticmethod
+    def _sync_issue_workflow_from_completed_task(
+        db: Session,
+        *,
+        task: LoopItem,
+    ) -> None:
+        """Keep a secondary workflow projection from aborting finalization."""
+
+        metadata = task.metadata_json if isinstance(task.metadata_json, dict) else {}
+        plan = metadata.get("workflow_plan")
+        if (
+            not task.parent_id
+            or not isinstance(plan, dict)
+            or not str(plan.get("run_id") or "")
+        ):
+            return
+        # Flush the activity and task truth before opening the projection
+        # savepoint. A failure in these primary writes must still abort the
+        # caller's transaction.
+        db.flush()
+        from app.services.issue_workflow_planning import (
+            issue_workflow_planning_service,
+        )
+
+        try:
+            with db.begin_nested():
+                issue_workflow_planning_service.sync_from_child(
+                    db,
+                    child_id=task.id,
+                )
+        except Exception:
+            logger.exception(
+                "[ProjectChat] Issue workflow projection failed task_id=%s",
+                task.id,
+            )
+
     def fail_agent_response(
         self,
         db: Session,

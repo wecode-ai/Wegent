@@ -5,10 +5,12 @@
 
 from sqlalchemy.orm import Session
 
+from app.db.session import SessionLocal
 from app.models.delivery import LoopItem, ProjectChatAgent
 from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.user import User
+from app.schemas.issue_workflow import WorkflowPlanView
 from app.services.loop_item_executions.profile import build_project_robot_user_input
 from app.services.project_automation_managed_execution import (
     project_automation_managed_execution_service,
@@ -155,28 +157,83 @@ def schedule_board_robot_execution(
 ) -> None:
     """Schedule runtime activation after the assignment transaction commits."""
 
-    if (
-        execution.status != "queued"
-        or not execution.agent_id
-        or not execution.team_id
-        or execution.backend_task_id
-    ):
+    if not _board_robot_execution_is_schedulable(execution):
         return
+    _enqueue_board_robot_execution(execution.id, failure_db=db)
+
+
+def schedule_board_robot_execution_by_id(execution_id: int) -> None:
+    """Schedule one execution without holding a database session while enqueueing."""
+
+    with SessionLocal() as db:
+        execution = db.get(LoopItemExecution, execution_id)
+        if execution is None or not _board_robot_execution_is_schedulable(execution):
+            return
+    _enqueue_board_robot_execution(execution_id)
+
+
+def workflow_plan_execution_ids(
+    db: Session,
+    plan: WorkflowPlanView,
+) -> list[int]:
+    """Collect materialized execution IDs before releasing the planning session."""
+
+    execution_ids: list[int] = []
+    for plan_item in plan.items:
+        if not plan_item.task_id:
+            continue
+        execution = (
+            db.query(LoopItemExecution)
+            .filter(
+                LoopItemExecution.loop_item_id == plan_item.task_id,
+                LoopItemExecution.status == "queued",
+            )
+            .order_by(LoopItemExecution.id.desc())
+            .first()
+        )
+        if execution is not None:
+            execution_ids.append(execution.id)
+    return execution_ids
+
+
+def _board_robot_execution_is_schedulable(execution: LoopItemExecution) -> bool:
+    return (
+        execution.status == "queued"
+        and bool(execution.agent_id)
+        and bool(execution.team_id)
+        and not execution.backend_task_id
+    )
+
+
+def _enqueue_board_robot_execution(
+    execution_id: int,
+    *,
+    failure_db: Session | None = None,
+) -> None:
     from app.tasks.project_automation_tasks import dispatch_board_robot_execution
 
     try:
-        dispatch_board_robot_execution.delay(execution_id=execution.id)
+        dispatch_board_robot_execution.delay(execution_id=execution_id)
     except Exception as exc:
         from app.services.loop_item_executions.service import (
             loop_item_execution_service,
         )
 
-        loop_item_execution_service.fail(
-            db,
-            execution_id=execution.id,
-            error=str(exc) or "Wegent runtime activation enqueue failed",
-            termination_reason="wegent_runtime_activation_enqueue_failed",
-        )
+        if failure_db is not None:
+            loop_item_execution_service.fail(
+                failure_db,
+                execution_id=execution_id,
+                error=str(exc) or "Wegent runtime activation enqueue failed",
+                termination_reason="wegent_runtime_activation_enqueue_failed",
+            )
+        else:
+            with SessionLocal() as db:
+                loop_item_execution_service.fail(
+                    db,
+                    execution_id=execution_id,
+                    error=str(exc) or "Wegent runtime activation enqueue failed",
+                    termination_reason="wegent_runtime_activation_enqueue_failed",
+                )
         raise
 
 

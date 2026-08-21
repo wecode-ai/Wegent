@@ -32,10 +32,13 @@ import {
 import { disposeTauriListener } from '@/tauri/disposeTauriListener'
 import { createLocalCodexPluginApi, peekLocalCodexPluginsReadState } from '@/api/local/codexPlugins'
 import { createHttpClient } from '@/api/http'
+import { DEFAULT_WORK_ITEM_PROJECT_ID } from '@/api/deliveries'
 import { createPluginApi } from '@/api/plugins'
 import { listWegentInstalledConnectorApps } from '@/api/cloud/connectorApps'
 import { startLocalRobotQueueDispatcher } from '@/features/todo/localRobotQueueDispatcher'
+import { runtimeTaskBoardState } from '@/features/workbench/runtimeTaskLifecycle/projection'
 import {
+  publishProjectSpaceTaskBindingChanged,
   publishProjectSpaceTaskContextChanged,
   subscribeProjectSpaceTaskBindingChanged,
 } from '@/features/todo/projectSpaceSelection'
@@ -64,6 +67,7 @@ import type {
   ProjectExecutionMode,
   ProjectWithTasks,
   RuntimeContextUsage,
+  RuntimeTaskSummary,
   RuntimeWorkListResponse,
   RuntimeTaskAddress,
   RuntimeTaskQueueReorderRequest,
@@ -167,6 +171,26 @@ export type { WorkbenchServices } from './workbenchServices'
 const LOCAL_SKILLS_CACHE_TTL_MS = 30_000
 const LOCAL_PLUGIN_SKILLS_REFRESH_DEBOUNCE_MS = 250
 const EMPTY_PLUGIN_TRIAL_TEMPLATES: PluginPathComponent[] = []
+const RUNTIME_TASK_SETTLE_SYNC_DELAYS_MS = [0, 250, 500, 1_000, 2_000, 3_000] as const
+
+function runtimeTaskHasWorkItem(task: RuntimeTaskSummary): boolean {
+  const handle = task.runtimeHandle
+  const origin =
+    handle?.origin && typeof handle.origin === 'object'
+      ? (handle.origin as Record<string, unknown>)
+      : null
+  return [handle?.loopItemId, handle?.loop_item_id, origin?.loopItemId, origin?.loop_item_id].some(
+    value => typeof value === 'string' && value.length > 0
+  )
+}
+
+function passiveTaskTrackingStatus(task: RuntimeTaskSummary): 'queued' | 'cancelled' | null {
+  if (task.optimistic === true || task.status?.trim().toLowerCase() === 'archived') return null
+  const state = runtimeTaskBoardState(task)
+  if (state === 'queued') return 'queued'
+  if (state === 'attention') return 'cancelled'
+  return null
+}
 
 function findFirstSelectableProject(
   projects: ProjectWithTasks[],
@@ -251,6 +275,19 @@ export function WorkbenchProvider({
   const trackingStatusSignaturesRef = useRef(new Map<string, string>())
   const [trackingBindingRevision, setTrackingBindingRevision] = useState(0)
   const trackingTitleSignaturesRef = useRef(new Map<string, string>())
+  const runtimeTaskSettleSyncGenerationRef = useRef(new Map<string, number>())
+  const runtimeTaskSettleSyncGenerationCounterRef = useRef(0)
+  const runtimeTaskSettleSyncActiveRef = useRef(true)
+  const defaultTrackedTaskKeysRef = useRef(new Set<string>())
+  const defaultTrackingTaskKeysRef = useRef(new Set<string>())
+  useEffect(() => {
+    const settleSyncGenerations = runtimeTaskSettleSyncGenerationRef.current
+    runtimeTaskSettleSyncActiveRef.current = true
+    return () => {
+      runtimeTaskSettleSyncActiveRef.current = false
+      settleSyncGenerations.clear()
+    }
+  }, [])
   const [state, dispatch] = useReducer(workbenchReducer, initialWorkbenchState)
   // The cloud connection context falls back to a synthetic "backend" user when
   // no real cloud provider is mounted; never let that placeholder override the
@@ -309,6 +346,120 @@ export function WorkbenchProvider({
       }),
     []
   )
+  useEffect(() => {
+    const api = resolvedServices.projectSpaceApis?.local
+    if (!api?.trackProjectTask || !state.runtimeWork) return
+    const workspaces = [
+      ...state.runtimeWork.projects.flatMap(project => project.deviceWorkspaces),
+      ...state.runtimeWork.chats,
+    ]
+    for (const workspace of workspaces) {
+      for (const task of workspace.tasks) {
+        const address: RuntimeTaskAddress = {
+          deviceId: workspace.deviceId,
+          taskId: task.taskId,
+          runtime: task.runtime,
+          threadId: task.threadId,
+          workspacePath: task.workspacePath || workspace.workspacePath,
+          runtimeHandle: task.runtimeHandle,
+        }
+        const key = runtimeConversationKey(address)
+        if (runtimeTaskHasWorkItem(task)) {
+          defaultTrackedTaskKeysRef.current.add(key)
+          continue
+        }
+        if (
+          task.optimistic === true ||
+          task.status?.trim().toLowerCase() === 'archived' ||
+          defaultTrackedTaskKeysRef.current.has(key) ||
+          defaultTrackingTaskKeysRef.current.has(key)
+        ) {
+          continue
+        }
+        defaultTrackingTaskKeysRef.current.add(key)
+        void api
+          .trackProjectTask(
+            DEFAULT_WORK_ITEM_PROJECT_ID,
+            address,
+            task.title || t('workbench.untitled_task', '未命名任务'),
+            ''
+          )
+          .then(async () => {
+            defaultTrackedTaskKeysRef.current.add(key)
+            const executionStatus = passiveTaskTrackingStatus(task)
+            if (executionStatus) {
+              await api.updateTaskTrackingStatus(address, executionStatus)
+            }
+            publishProjectSpaceTaskBindingChanged(address)
+            publishProjectSpaceTaskContextChanged(address)
+          })
+          .catch(error => {
+            console.warn('[Wework my tasks] failed to bind runtime task to My Tasks', {
+              address: { deviceId: address.deviceId, taskId: address.taskId },
+              error,
+            })
+          })
+          .finally(() => {
+            defaultTrackingTaskKeysRef.current.delete(key)
+          })
+      }
+    }
+  }, [resolvedServices.projectSpaceApis?.local, state.runtimeWork, t])
+  useEffect(() => {
+    const trackingApis = [
+      resolvedServices.projectSpaceApis?.local,
+      resolvedServices.projectSpaceApis?.cloud ?? resolvedServices.deliveryApi,
+    ].filter((api, index, values) => Boolean(api) && values.indexOf(api) === index)
+    if (!trackingApis.length || !state.runtimeWork) return
+    const workspaces = [
+      ...state.runtimeWork.projects.flatMap(project => project.deviceWorkspaces),
+      ...state.runtimeWork.chats,
+    ]
+    for (const workspace of workspaces) {
+      for (const task of workspace.tasks) {
+        if (!runtimeTaskHasWorkItem(task)) continue
+        const executionStatus = passiveTaskTrackingStatus(task)
+        if (!executionStatus) continue
+        const address: RuntimeTaskAddress = {
+          deviceId: workspace.deviceId,
+          taskId: task.taskId,
+          runtime: task.runtime,
+          threadId: task.threadId,
+          workspacePath: task.workspacePath || workspace.workspacePath,
+          runtimeHandle: task.runtimeHandle,
+        }
+        const key = runtimeConversationKey(address)
+        if (trackingStatusSignaturesRef.current.get(key) === executionStatus) continue
+        trackingStatusSignaturesRef.current.set(key, executionStatus)
+        void Promise.allSettled(
+          trackingApis.map(api => api!.updateTaskTrackingStatus(address, executionStatus))
+        ).then(results => {
+          const synchronized = results.some(
+            result => result.status === 'fulfilled' && result.value !== null
+          )
+          if (!synchronized) {
+            trackingStatusSignaturesRef.current.delete(key)
+            if (results.every(result => result.status === 'rejected')) {
+              console.warn('[Wework] Failed to synchronize passive project task status', {
+                address,
+                executionStatus,
+                errors: results.map(result =>
+                  result.status === 'rejected' ? result.reason : null
+                ),
+              })
+            }
+            return
+          }
+          publishProjectSpaceTaskContextChanged(address)
+        })
+      }
+    }
+  }, [
+    resolvedServices.deliveryApi,
+    resolvedServices.projectSpaceApis,
+    state.runtimeWork,
+    trackingBindingRevision,
+  ])
   useEffect(() => {
     const trackingApis = [
       resolvedServices.projectSpaceApis?.local,
@@ -958,6 +1109,8 @@ export function WorkbenchProvider({
     refreshDevices,
     updateLocalRuntimeTaskSupervisor,
     updateLocalRuntimeTaskSnapshot,
+    updateLocalRuntimeTaskPinned,
+    rollbackLocalRuntimeTaskPinned,
     updateLocalRuntimeTaskTitle,
     getRemoteDeviceStartupCommand,
   } = useWorkbenchDataRefresh({
@@ -1538,10 +1691,13 @@ export function WorkbenchProvider({
       if (!resolvedServices.runtimeWorkApi) {
         return Promise.reject(new Error('Runtime work API is unavailable'))
       }
+      const task = findRuntimeTask(state.runtimeWork, address)
+      const taskTitle = task?.title.trim()
+      if (!taskTitle) {
+        return Promise.reject(new Error('Runtime task title is unavailable'))
+      }
       let taskModelSelection =
-        findRuntimeTask(state.runtimeWork, address)?.modelSelection ??
-        modelSelectionFromRuntimeHandle(address.runtimeHandle) ??
-        null
+        task?.modelSelection ?? modelSelectionFromRuntimeHandle(address.runtimeHandle) ?? null
       const taskModel = findModelForSelection(modelSelection.models, taskModelSelection)
       if (taskModelSelection && taskModel) {
         const executionModel = selectedModelExecutionFields(
@@ -1556,6 +1712,7 @@ export function WorkbenchProvider({
       }
       return resolvedServices.runtimeWorkApi.bindRuntimeTaskImSessions({
         address,
+        taskTitle,
         sessionKeys,
         ...(taskModelSelection ? { modelSelection: taskModelSelection } : {}),
       })
@@ -1607,6 +1764,8 @@ export function WorkbenchProvider({
     executorClient,
     services: resolvedServices,
     refreshWorkLists,
+    updateLocalRuntimeTaskPinned,
+    rollbackLocalRuntimeTaskPinned,
     markRuntimeProjectRemoved,
     invalidateRemoteProjectSync,
     clearRemoteProjectSyncRemoval,
@@ -1771,6 +1930,71 @@ export function WorkbenchProvider({
         })
       })
   })
+  const syncRuntimeTaskUntilExecutorSettles = useStableEvent(
+    async (address: RuntimeTaskAddress) => {
+      if (!runtimeTaskSettleSyncActiveRef.current) return
+      const key = runtimeConversationKey(address)
+      const generation = ++runtimeTaskSettleSyncGenerationCounterRef.current
+      runtimeTaskSettleSyncGenerationRef.current.set(key, generation)
+
+      try {
+        for (const delayMs of RUNTIME_TASK_SETTLE_SYNC_DELAYS_MS) {
+          if (delayMs > 0) {
+            await new Promise(resolve => globalThis.setTimeout(resolve, delayMs))
+          }
+          if (!runtimeTaskSettleSyncActiveRef.current) return
+          if (runtimeTaskSettleSyncGenerationRef.current.get(key) !== generation) return
+
+          const expectedLifecycle = lifecycleStore.getTask(address)
+          if (expectedLifecycle?.turn.phase === 'streaming') return
+
+          try {
+            const task = await refreshRuntimeTask(address)
+            if (runtimeTaskSettleSyncGenerationRef.current.get(key) !== generation) return
+            if (!task) {
+              const transcript = await runtimeTasks.loadRuntimeTranscriptForPane(address, {
+                refresh: true,
+              })
+              if (runtimeTaskSettleSyncGenerationRef.current.get(key) !== generation) return
+              lifecycleStore.syncTranscript(address, transcript)
+              if (lifecycleStore.getTask(address)?.execution.phase === 'idle') return
+              continue
+            }
+            const applied = lifecycleStore.syncRuntimeTask(address, task, expectedLifecycle)
+            if (applied) updateLocalRuntimeTaskSnapshot(address, task)
+
+            const currentLifecycle = lifecycleStore.getTask(address)
+            if (
+              currentLifecycle?.execution.phase === 'idle' ||
+              currentLifecycle?.turn.phase === 'streaming'
+            ) {
+              return
+            }
+          } catch (error) {
+            console.warn('[Wework] Runtime task settle snapshot sync failed', {
+              deviceId: address.deviceId,
+              taskId: address.taskId,
+              delayMs,
+              error,
+            })
+          }
+        }
+
+        const lifecycle = lifecycleStore.getTask(address)
+        console.warn('[Wework] Runtime task remained busy after turn settlement polling', {
+          deviceId: address.deviceId,
+          taskId: address.taskId,
+          executionPhase: lifecycle?.execution.phase ?? null,
+          turnPhase: lifecycle?.turn.phase ?? null,
+          executorSnapshotRunning: lifecycle?.task?.running ?? null,
+        })
+      } finally {
+        if (runtimeTaskSettleSyncGenerationRef.current.get(key) === generation) {
+          runtimeTaskSettleSyncGenerationRef.current.delete(key)
+        }
+      }
+    }
+  )
   const syncRuntimeGoalSnapshot = useStableEvent((address: RuntimeTaskAddress) => {
     const expectedGoalStatus = lifecycleStore.getTask(address)?.goalStatus
     if (expectedGoalStatus === null || expectedGoalStatus === undefined) return
@@ -1856,7 +2080,7 @@ export function WorkbenchProvider({
               turnId,
               outcome === 'succeeded' ? 'success' : outcome === 'failed' ? 'failure' : 'cancelled'
             )
-            syncRuntimeTaskSnapshot(address)
+            void syncRuntimeTaskUntilExecutorSettles(address)
             syncRuntimeGoalSnapshot(address)
           },
           onContextUsageUpdated: updateCanonicalRuntimeContextUsage,
@@ -1900,6 +2124,7 @@ export function WorkbenchProvider({
       settleCanonicalRuntimeGuidance,
       syncRuntimeGoalSnapshot,
       syncRuntimeTaskSnapshot,
+      syncRuntimeTaskUntilExecutorSettles,
       syncRuntimeTaskTitle,
       updateCanonicalRuntimeContextUsage,
       updateLocalRuntimeTaskSnapshot,

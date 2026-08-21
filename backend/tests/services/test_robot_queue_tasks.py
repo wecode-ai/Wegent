@@ -5,6 +5,8 @@
 """Focused contracts for the cloud Wework execution dispatcher."""
 
 import uuid
+from collections.abc import Iterator
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -781,15 +783,25 @@ async def test_stale_reconciliation_uses_runtime_turn_status(test_db: Session) -
             ]
         },
     }
+
+    def _stale_for_reconciliation(db: Session) -> list[LoopItemExecution]:
+        db.query(LoopItemExecution).count()
+        assert db.in_transaction()
+        return [execution]
+
+    async def _emit_runtime_rpc(**_kwargs: Any) -> dict[str, Any]:
+        assert not test_db.in_transaction()
+        return response
+
     with (
         patch.object(
             loop_item_execution_service,
             "stale_for_reconciliation",
-            return_value=[execution],
+            side_effect=_stale_for_reconciliation,
         ),
         patch(
             "app.tasks.robot_queue_tasks._emit_runtime_rpc",
-            AsyncMock(return_value=response),
+            AsyncMock(side_effect=_emit_runtime_rpc),
         ),
         patch.object(
             loop_item_execution_service,
@@ -806,6 +818,72 @@ async def test_stale_reconciliation_uses_runtime_turn_status(test_db: Session) -
         running=False,
         turn_status="completed",
     )
+
+
+@pytest.mark.asyncio
+async def test_device_reconnect_reconciles_active_execution_without_open_transaction(
+    test_db: Session, test_user: User
+) -> None:
+    from contextlib import contextmanager
+
+    from app.tasks.robot_queue_tasks import reconcile_device_executions
+
+    project = _make_project(test_db, test_user)
+    agent = _make_agent(test_db, project, test_user)
+    execution = _make_execution(test_db, project, agent, test_user)
+    execution.status = "running"
+    execution.runtime_device_id = "local-device"
+    execution.runtime_task_id = f"codex-queue-{execution.id}"
+    test_db.commit()
+
+    session_open = False
+
+    @contextmanager
+    def _test_session() -> Iterator[Session]:
+        nonlocal session_open
+        assert not session_open
+        session_open = True
+        try:
+            yield test_db
+        finally:
+            session_open = False
+
+    async def _emit(**_kwargs: Any) -> dict[str, Any]:
+        assert session_open is False
+        return {
+            "accepted": True,
+            "response": {
+                "workspaces": [
+                    {
+                        "tasks": [
+                            {
+                                "taskId": execution.runtime_task_id,
+                                "status": "active",
+                                "running": False,
+                                "turnStatus": "completed",
+                            }
+                        ]
+                    }
+                ]
+            },
+        }
+
+    with (
+        patch("app.db.session.get_db_session", _test_session),
+        patch(
+            "app.tasks.robot_queue_tasks._emit_runtime_rpc",
+            AsyncMock(side_effect=_emit),
+        ) as emit_rpc,
+    ):
+        reconciled = await reconcile_device_executions(
+            user_id=test_user.id,
+            device_id="local-device",
+        )
+
+    assert reconciled == 1
+    emit_rpc.assert_awaited_once()
+    test_db.refresh(execution)
+    assert execution.status == "completed"
 
 
 def test_execute_robot_task_requeues_offline_without_consuming_retries(

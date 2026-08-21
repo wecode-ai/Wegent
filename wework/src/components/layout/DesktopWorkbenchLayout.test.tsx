@@ -539,6 +539,15 @@ describe('DesktopWorkbenchLayout', () => {
     return { promise, resolve, reject }
   }
 
+  function setComposerValue(container: HTMLElement, value: string) {
+    const editor = within(container).getByTestId('chat-message-input') as HTMLElement & {
+      value: string
+    }
+    act(() => {
+      editor.value = value
+    })
+  }
+
   function getDesktopWorkbenchMainElement() {
     const main = screen.getByTestId('desktop-workbench-content').closest('main')
     if (!main) {
@@ -2128,7 +2137,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
-  test('hides task fork and IM actions while experimental features are disabled', () => {
+  test('keeps IM actions available while experimental features are disabled', () => {
     experimentalFeatures.enabled = false
 
     render(
@@ -2146,7 +2155,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(screen.queryByTestId('fork-runtime-task-button')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('continue-in-im-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('continue-in-im-button')).toBeInTheDocument()
     expect(screen.queryByTestId('workbench-harness-selector')).not.toBeInTheDocument()
   })
 
@@ -6724,12 +6733,11 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
 
     const sideChat = await screen.findByTestId('right-workspace-chat-panel')
-    const sideChatInput = within(sideChat).getByTestId('chat-message-input')
-    await userEvent.type(sideChatInput, 'first message')
+    setComposerValue(sideChat, 'first message')
     await userEvent.click(within(sideChat).getByTestId('send-message-button'))
     await waitFor(() => expect(createTemporaryRuntimeTaskMock).toHaveBeenCalledTimes(1))
 
-    await userEvent.type(sideChatInput, 'queued follow-up')
+    setComposerValue(sideChat, 'queued follow-up')
     await userEvent.click(within(sideChat).getByTestId('send-message-button'))
 
     expect(sendRuntimePaneMessageMock).not.toHaveBeenCalled()
@@ -6770,8 +6778,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
 
     const sideChat = await screen.findByTestId('right-workspace-chat-panel')
-    const sideChatInput = within(sideChat).getByTestId('chat-message-input')
-    await userEvent.type(sideChatInput, 'first message')
+    setComposerValue(sideChat, 'first message')
     await userEvent.click(within(sideChat).getByTestId('send-message-button'))
     await waitFor(() => expect(createTemporaryRuntimeTaskMock).toHaveBeenCalledTimes(1))
 
@@ -6780,7 +6787,7 @@ describe('DesktopWorkbenchLayout', () => {
       | undefined
     act(() => streamHandlers?.onAssistantStart?.())
 
-    await userEvent.type(sideChatInput, 'direct follow-up')
+    setComposerValue(sideChat, 'direct follow-up')
     await userEvent.click(within(sideChat).getByTestId('send-message-button'))
 
     const userMessages = await within(sideChat).findAllByTestId('user-message-content')
@@ -6814,12 +6821,11 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
 
     const sideChat = await screen.findByTestId('right-workspace-chat-panel')
-    const sideChatInput = within(sideChat).getByTestId('chat-message-input')
-    await userEvent.type(sideChatInput, 'first message')
+    setComposerValue(sideChat, 'first message')
     await userEvent.click(within(sideChat).getByTestId('send-message-button'))
     await waitFor(() => expect(createTemporaryRuntimeTaskMock).toHaveBeenCalledTimes(1))
 
-    await userEvent.type(sideChatInput, 'guide the current response')
+    setComposerValue(sideChat, 'guide the current response')
     await userEvent.click(within(sideChat).getByTestId('send-mode-menu-button'))
     await userEvent.click(await screen.findByTestId('guide-current-turn-option'))
 
@@ -6919,7 +6925,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(within(sideChat).queryByTitle('draft attachment')).not.toBeInTheDocument()
   }, 15_000)
 
-  test('temporary chat converts a stale busy rejection into a queued follow-up', async () => {
+  test('temporary chat keeps a stale busy rejection queued without blind retries', async () => {
     const address: RuntimeTaskAddress = {
       deviceId: 'workspace-cloud-device',
       taskId: 'runtime-side-chat-stale-busy',
@@ -6929,15 +6935,9 @@ describe('DesktopWorkbenchLayout', () => {
       options?.onRuntimeTaskOptimisticOpen?.(address)
       return address
     })
-    const retryResult = createDeferred<boolean>()
-    let sendAttempt = 0
     sendRuntimePaneMessageMock.mockImplementation(async (_request, options) => {
-      sendAttempt += 1
-      if (sendAttempt === 1) {
-        options?.onError?.('runtime task is already running')
-        return false
-      }
-      return retryResult.promise
+      options?.onError?.('runtime task is already running')
+      return false
     })
     renderWorkspacePanelLayout()
 
@@ -6958,23 +6958,55 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.type(sideChatInput, 'follow-up during stale state')
     await userEvent.click(within(sideChat).getByTestId('send-message-button'))
 
-    await waitFor(() => expect(sendRuntimePaneMessageMock).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(sendRuntimePaneMessageMock).toHaveBeenCalledTimes(1))
     expect(within(sideChat).getByTestId('conversation-queue-panel')).toHaveTextContent(
       'follow-up during stale state'
     )
     expect(within(sideChat).queryByTestId('chat-input-error')).not.toBeInTheDocument()
 
-    await act(async () => {
-      retryResult.resolve(true)
-      await retryResult.promise
-    })
-    await waitFor(() =>
-      expect(within(sideChat).queryByTestId('conversation-queue-panel')).not.toBeInTheDocument()
-    )
-    expect(within(sideChat).getAllByTestId('user-message-content').at(-1)).toHaveTextContent(
-      'follow-up during stale state'
-    )
+    expect(sendRuntimePaneMessageMock).toHaveBeenCalledTimes(1)
   }, 20_000)
+
+  test('temporary chat marks a rejected queued send as failed', async () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'workspace-cloud-device',
+      taskId: 'runtime-side-chat-rejected-queue',
+      workspacePath: '/workspace/project',
+    }
+    createTemporaryRuntimeTaskMock.mockImplementation(async (_input, options) => {
+      options?.onRuntimeTaskOptimisticOpen?.(address)
+      return address
+    })
+    sendRuntimePaneMessageMock.mockRejectedValueOnce(new Error('network unavailable'))
+    renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
+
+    const sideChat = await screen.findByTestId('right-workspace-chat-panel')
+    const sideChatInput = within(sideChat).getByTestId('chat-message-input')
+    await userEvent.type(sideChatInput, 'first message')
+    await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+    await waitFor(() => expect(subscribeRuntimeTaskStreamMock).toHaveBeenCalled())
+
+    await userEvent.type(sideChatInput, 'queued follow-up')
+    await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+    expect(within(sideChat).getByTestId('conversation-queue-panel')).toHaveTextContent(
+      'queued follow-up'
+    )
+
+    const streamHandlers = subscribeRuntimeTaskStreamMock.mock.calls.at(-1)?.[1] as
+      | { onAssistantStart?: () => void }
+      | undefined
+    act(() => streamHandlers?.onAssistantStart?.())
+
+    await waitFor(() =>
+      expect(within(sideChat).getByTestId('conversation-queue-panel')).toHaveTextContent(
+        'network unavailable'
+      )
+    )
+    expect(sendRuntimePaneMessageMock).toHaveBeenCalledTimes(1)
+  }, 15_000)
 
   test('temporary chat rolls back its optimistic address when runtime creation fails', async () => {
     const createResult = createDeferred<RuntimeTaskAddress | false>()

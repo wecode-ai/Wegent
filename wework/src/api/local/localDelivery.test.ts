@@ -548,6 +548,35 @@ describe('local delivery API', () => {
     })
   })
 
+  test('creates default My Tasks items in inbox before runtime status synchronization', async () => {
+    const request = vi.fn(async (method: string) => {
+      if (method === 'runtime_tasks.context') throw new Error('Task context not found')
+      if (method === 'todos.create') return { ...taskRecord, status: 'inbox' }
+      if (method === 'todos.bind') return { id: 'binding-1' }
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createLocalDeliveryApi(request)
+
+    await api.trackProjectTask(
+      'default-work-items',
+      { deviceId: 'local-device', taskId: 'runtime-1' },
+      'Runtime task',
+      ''
+    )
+
+    expect(request).toHaveBeenCalledWith('todos.create', {
+      project_id: 'default-work-items',
+      todo: {
+        title: 'Runtime task',
+        description: '',
+        status: 'inbox',
+        priority: 'none',
+        parent_id: null,
+        tags: [],
+      },
+    })
+  })
+
   test('allows retrying project tracking after a failed request', async () => {
     const trackedTask = { ...taskRecord, status: 'in_progress' }
     let createAttempts = 0

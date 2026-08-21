@@ -57,6 +57,7 @@ import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
 import type { WeworkInstalledReleaseNotes } from '@/features/app-update/app-release-notes'
 import { SHOW_PLUGINS_NAVIGATION } from '@/features/plugins/visibility'
 import { getRuntimeTaskReminderItemKey } from '@/features/workbench/runtimeTaskReminders'
+import { getRuntimeTaskThreadId } from '@/features/workbench/workbenchRuntimeHelpers'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import {
   getChangeRequestMonitor,
@@ -1005,19 +1006,6 @@ function getRuntimeNotificationKey(address: RuntimeTaskAddress): string {
   return `${address.deviceId}\0${address.taskId}\0${address.workspacePath ?? ''}`
 }
 
-function getRuntimeTaskThreadId(task: RuntimeTaskSummary): string | null {
-  const explicitThreadId = task.threadId?.trim()
-  if (explicitThreadId) return explicitThreadId
-
-  const runtimeHandleThreadId = [task.runtimeHandle?.threadId, task.runtimeHandle?.thread_id].find(
-    value => typeof value === 'string' && value.trim()
-  )
-  if (typeof runtimeHandleThreadId === 'string') return runtimeHandleThreadId.trim()
-
-  const taskId = task.taskId.trim()
-  return task.runtime === 'codex' && !task.optimistic && taskId ? taskId : null
-}
-
 function isRuntimeTaskNotificationSubscribed(
   settings: RuntimeIMNotificationSettingsResponse | null | undefined,
   address: RuntimeTaskAddress
@@ -1747,6 +1735,19 @@ function RuntimeTaskRow({
             (archivePending || archiving) && 'hidden'
           )}
         >
+          <ChangeRequestStatusIcon
+            snapshot={changeRequestSnapshot}
+            testId={`runtime-local-task-change-request-${task.taskId}`}
+            repairing={repairingChangeRequest}
+            onContinueRepair={
+              changeRequestSnapshot?.changeRequest &&
+              autoRepairStatus(changeRequestSnapshot.changeRequest)
+                ? continueChangeRequestRepair
+                : undefined
+            }
+            className={priorityLayout ? 'mr-1' : '-ml-7 mr-1'}
+            popoverAlign="left"
+          />
           {priorityLayout ? (
             <span className="flex min-w-0 flex-1 flex-col justify-center gap-0.5">
               <span
@@ -1830,17 +1831,6 @@ function RuntimeTaskRow({
               <span>{splitGroup.displayNumber}</span>
             </span>
           ) : null}
-          <ChangeRequestStatusIcon
-            snapshot={changeRequestSnapshot}
-            testId={`runtime-local-task-change-request-${task.taskId}`}
-            repairing={repairingChangeRequest}
-            onContinueRepair={
-              changeRequestSnapshot?.changeRequest &&
-              autoRepairStatus(changeRequestSnapshot.changeRequest)
-                ? continueChangeRequestRepair
-                : undefined
-            }
-          />
           <span
             data-testid={`runtime-local-task-trailing-${task.taskId}`}
             className={cn(
@@ -4739,28 +4729,26 @@ export function DesktopSidebar({
             onLogout={onLogout}
             containerRef={settingsMenuRef}
             trailingActions={
-              experimentalFeaturesEnabled ? (
-                <GlobalImNotificationBell
-                  devices={devices}
-                  imNotificationSettings={imNotificationSettings}
-                  menuOpen={imNotificationMenuOpen}
-                  menuContainerRef={settingsMenuRef}
-                  onMenuOpenChange={open => {
-                    setImNotificationMenuOpen(open)
-                  }}
-                  onToggleGlobalImNotification={onToggleGlobalImNotification}
-                  onOpenGlobalImNotificationSettings={onOpenGlobalImNotificationSettings}
-                  onOpenSettings={() => onOpenSettings()}
-                  onAddCloudDevice={() => {
-                    if (onOpenStandaloneFolderProject) {
-                      onOpenStandaloneFolderProject('remote', 'add-device')
-                    } else {
-                      setStandaloneRemoteDialogIntent('add-device')
-                      setStandaloneWorkspaceDialogMode('remote')
-                    }
-                  }}
-                />
-              ) : null
+              <GlobalImNotificationBell
+                devices={devices}
+                imNotificationSettings={imNotificationSettings}
+                menuOpen={imNotificationMenuOpen}
+                menuContainerRef={settingsMenuRef}
+                onMenuOpenChange={open => {
+                  setImNotificationMenuOpen(open)
+                }}
+                onToggleGlobalImNotification={onToggleGlobalImNotification}
+                onOpenGlobalImNotificationSettings={onOpenGlobalImNotificationSettings}
+                onOpenSettings={() => onOpenSettings()}
+                onAddCloudDevice={() => {
+                  if (onOpenStandaloneFolderProject) {
+                    onOpenStandaloneFolderProject('remote', 'add-device')
+                  } else {
+                    setStandaloneRemoteDialogIntent('add-device')
+                    setStandaloneWorkspaceDialogMode('remote')
+                  }
+                }}
+              />
             }
           />
 
