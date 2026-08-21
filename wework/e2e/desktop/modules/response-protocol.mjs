@@ -458,11 +458,14 @@ function selectOfficialPluginMcpTool(request, argumentsValue) {
 }
 
 function selectMcpTool(request, namespaceName, toolName, argumentsValue) {
-  const namespace = requestToolSearchResults(request).find(
+  const namespaces = requestToolSearchResults(request).filter(
     candidate => candidate?.type === 'namespace' && candidate.name === namespaceName
   )
-  assert.ok(namespace, `tool_search did not return MCP namespace ${namespaceName}`)
-  const tool = namespace.tools?.find(
+  assert.ok(namespaces.length > 0, `tool_search did not return MCP namespace ${namespaceName}`)
+  const namespace = namespaces.find(candidate =>
+    candidate.tools?.some(tool => tool?.type === 'function' && tool.name === toolName)
+  )
+  const tool = namespace?.tools?.find(
     candidate => candidate?.type === 'function' && candidate.name === toolName
   )
   assert.ok(tool, `Searched MCP namespace ${namespaceName} did not expose ${toolName}`)
