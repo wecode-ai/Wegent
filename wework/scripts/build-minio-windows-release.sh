@@ -144,6 +144,14 @@ config = {
     "version": os.environ["VERSION"],
     "bundle": {
         "createUpdaterArtifacts": True,
+        "resources": [
+            "binaries/codex/x86_64-pc-windows-msvc/**/*",
+            "binaries/codex/legal/**/*",
+            "bundled-execution-runtimes/*",
+            "bundled-harness-runtime/*",
+            "bundled-hooks/**/*",
+            "bundled-plugins",
+        ],
     },
     "plugins": {
         "updater": {

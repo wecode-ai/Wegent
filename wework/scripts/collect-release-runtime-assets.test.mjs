@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { test } from 'node:test'
+import { test } from 'vitest'
 
 import { collectReleaseRuntimeAssets } from './collect-release-runtime-assets.mjs'
 
