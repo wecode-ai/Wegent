@@ -27,6 +27,11 @@ from app.schemas.kind import Skill as SkillCRD
 from app.schemas.kind import Team, TeamMember
 from app.schemas.project import ProjectConfig
 from app.services.auth import create_skill_identity_token
+from app.services.execution.git_credentials import (
+    build_execution_git_user_info,
+    classify_git_auth_transport,
+    extract_git_domain,
+)
 from app.services.execution.skill_mcp import extract_skill_mcp_servers
 from app.services.mcp_provider_registry import (
     get_mcp_service_by_skill_name,
@@ -46,7 +51,6 @@ from app.services.user_mcp_service import user_mcp_service
 from app.stores.tasks import task_store
 from shared.models import ExecutionRequest
 from shared.models.db import Kind, User
-from shared.utils.url_util import domains_match
 
 logger = logging.getLogger(__name__)
 SELECTED_KB_PRELOAD_SKILL = "wegent-knowledge"
@@ -226,7 +230,7 @@ class TaskRequestBuilder:
         if workspace and workspace.get("repository"):
             repo = workspace["repository"]
             git_url = repo.get("gitUrl")
-            git_domain = repo.get("gitDomain")
+            git_domain = repo.get("gitDomain") or extract_git_domain(git_url)
             git_repo = repo.get("gitRepo")
             git_repo_id = repo.get("gitRepoId")
             branch_name = repo.get("branchName") or workspace.get("branch")
@@ -235,6 +239,7 @@ class TaskRequestBuilder:
 
         # Build user info with git_domain to match correct git account
         user_info = self._build_user_info(user, git_domain)
+        git_auth_transport = classify_git_auth_transport(user_info)
 
         # Get model config with full resolution (decryption, placeholder replacement)
         model_config = self._get_model_config(
@@ -504,6 +509,7 @@ class TaskRequestBuilder:
             git_repo=git_repo,
             git_repo_id=git_repo_id,
             branch_name=branch_name,
+            git_auth_transport=git_auth_transport,
             message_id=subtask.message_id,
             user_message_id=None,
             is_group_chat=is_group_chat,
@@ -2583,45 +2589,7 @@ Response template:
         Returns:
             User info dictionary with matched git account info
         """
-        user_info = {
-            "id": user.id,
-            "name": user.user_name,
-            "git_domain": None,
-            "git_token": None,
-            "git_id": None,
-            "git_login": None,
-            "git_email": None,
-        }
-
-        # git_info is a list of git account configurations
-        git_info_list = user.git_info or []
-        if not isinstance(git_info_list, list):
-            # Handle edge case where git_info might be a dict (legacy)
-            git_info_list = [git_info_list] if git_info_list else []
-
-        if not git_info_list:
-            return user_info
-
-        # Find matching git_info entry by domain
-        matched_git_info = None
-        if git_domain:
-            for git_info in git_info_list:
-                if domains_match(git_info.get("git_domain", ""), git_domain):
-                    matched_git_info = git_info
-                    break
-
-        # Fallback to first entry if no domain match
-        if not matched_git_info and git_info_list:
-            matched_git_info = git_info_list[0]
-
-        if matched_git_info:
-            user_info["git_domain"] = matched_git_info.get("git_domain")
-            user_info["git_token"] = matched_git_info.get("git_token")
-            user_info["git_id"] = matched_git_info.get("git_id")
-            user_info["git_login"] = matched_git_info.get("git_login")
-            user_info["git_email"] = matched_git_info.get("git_email")
-
-        return user_info
+        return build_execution_git_user_info(user, git_domain)
 
     def _build_workspace(self, task: TaskResource) -> dict:
         """Build workspace configuration.

@@ -556,6 +556,11 @@ def test_create_executor_from_warmpool_omits_task_secrets_from_metadata(mocker):
             "type": "online",
             "auth_token": "task-jwt",
             "skill_identity_token": "skill-jwt",
+            "git_auth_transport": "encrypted_request_token",
+            "user": {
+                "git_domain": "github.com",
+                "git_token": "iOuoSwc/HrF6ZhttvtSNeQ==",
+            },
         },
         executor_name="executor-1",
         user_name="test_user",
@@ -589,6 +594,15 @@ def test_create_executor_from_warmpool_omits_task_secrets_from_metadata(mocker):
     assert ANNOTATION_SKILL_IDENTITY_TOKEN not in annotations
     assert ANNOTATION_SKILL_USER_NAME not in annotations
     assert ANNOTATION_HEARTBEAT_ID not in annotations
+    metadata_calls = json.dumps(
+        {
+            "create": warm_pool_client.create_sandbox_claim.call_args.kwargs,
+            "claim_patch": warm_pool_client.patch_sandbox_claim.call_args.kwargs,
+            "pod_patch": warm_pool_client.patch_pod_metadata.call_args.kwargs,
+        },
+        default=str,
+    )
+    assert "iOuoSwc/HrF6ZhttvtSNeQ==" not in metadata_calls
 
 
 def test_create_executor_from_warmpool_reconciles_reusable_claim_metadata(mocker):
@@ -672,8 +686,10 @@ def test_executor_warmpool_is_enabled_by_default(monkeypatch):
 
     with monkeypatch.context() as patch:
         patch.delenv("EXECUTOR_WARMPOOL_ENABLED", raising=False)
+        patch.delenv("EXECUTOR_GIT_WARMPOOL_ENABLED", raising=False)
         reloaded_config = importlib.reload(config)
         assert reloaded_config.EXECUTOR_WARMPOOL_ENABLED is True
+        assert reloaded_config.EXECUTOR_GIT_WARMPOOL_ENABLED is False
 
     importlib.reload(config)
 
@@ -730,6 +746,7 @@ def test_create_instance_uses_direct_pod_for_git_task(mocker):
     module = "executor_manager.wecode.executors.k8s.k8s_executor"
     mocker.patch(f"{module}.WARMPOOL_ENABLED", True)
     mocker.patch(f"{module}.EXECUTOR_WARMPOOL_ENABLED", True)
+    mocker.patch(f"{module}.EXECUTOR_GIT_WARMPOOL_ENABLED", False)
     mocker.patch(f"{module}.WARMPOOL_TEMPLATE_NAME", "wegent-sandbox-1.0.214")
     mocker.patch(f"{module}.EXECUTOR_DEFAULT_MAGE", "registry/executor:1.0.214")
     claim = mocker.patch.object(executor, "_create_pod_from_warmpool")
@@ -746,7 +763,12 @@ def test_create_instance_uses_direct_pod_for_git_task(mocker):
         "type": "online",
         "git_url": "https://github.com/wecode-ai/Wegent.git",
         "git_repo": "wecode-ai/Wegent",
-        "user": {"name": "test_user"},
+        "git_auth_transport": "encrypted_request_token",
+        "user": {
+            "name": "test_user",
+            "git_domain": "github.com",
+            "git_token": "iOuoSwc/HrF6ZhttvtSNeQ==",
+        },
     }
     executor.create_instance(
         task=task,
@@ -761,6 +783,54 @@ def test_create_instance_uses_direct_pod_for_git_task(mocker):
     claim.assert_not_called()
     build.assert_called_once()
     submit.assert_called_once_with(direct_pod, K8S_NAMESPACE, "executor-1", "123")
+
+
+def test_create_instance_claims_warmpool_for_safe_https_git_task(mocker):
+    executor = object.__new__(K8sExecutor)
+    module = "executor_manager.wecode.executors.k8s.k8s_executor"
+    mocker.patch(f"{module}.WARMPOOL_ENABLED", True)
+    mocker.patch(f"{module}.EXECUTOR_WARMPOOL_ENABLED", True)
+    mocker.patch(f"{module}.EXECUTOR_GIT_WARMPOOL_ENABLED", True)
+    mocker.patch(f"{module}.WARMPOOL_TEMPLATE_NAME", "wegent-sandbox-1.0.214")
+    mocker.patch(f"{module}.EXECUTOR_DEFAULT_MAGE", "registry/executor:1.0.214")
+    claim = mocker.patch.object(
+        executor,
+        "_create_pod_from_warmpool",
+        return_value={"status": "success"},
+    )
+    direct_create = mocker.patch(f"{module}.build_pod_configuration")
+    task = {
+        "task_id": 123,
+        "type": "online",
+        "git_url": "https://github.com/wecode-ai/Wegent.git",
+        "git_auth_transport": "encrypted_request_token",
+        "user": {
+            "name": "test_user",
+            "git_domain": "github.com",
+            "git_token": "iOuoSwc/HrF6ZhttvtSNeQ==",
+        },
+    }
+
+    executor.create_instance(
+        task=task,
+        task_info={
+            "task_id": "123",
+            "subtask_id": "456",
+            "user_name": "test_user",
+        },
+        executor_name="executor-1",
+    )
+
+    claim.assert_called_once_with(
+        task=task,
+        executor_name="executor-1",
+        user_name="test_user",
+        task_id="123",
+        subtask_id="456",
+        template_name="wegent-sandbox-1.0.214",
+        workload_type="executor",
+    )
+    direct_create.assert_not_called()
 
 
 def test_executor_warmpool_rejects_task_specific_pod_shapes(mocker):
@@ -789,31 +859,89 @@ def test_executor_warmpool_rejects_task_specific_pod_shapes(mocker):
     )
 
 
-def test_executor_warmpool_rejects_git_tasks(mocker):
+def test_executor_warmpool_accepts_https_git_with_encrypted_request_token(mocker):
     executor = object.__new__(K8sExecutor)
-    mocker.patch(
-        "executor_manager.wecode.executors.k8s.k8s_executor.EXECUTOR_DEFAULT_MAGE",
+    module = "executor_manager.wecode.executors.k8s.k8s_executor"
+    mocker.patch(f"{module}.EXECUTOR_DEFAULT_MAGE", "registry/executor:1.0.214")
+    mocker.patch(f"{module}.EXECUTOR_GIT_WARMPOOL_ENABLED", True)
+
+    reason = executor._executor_warmpool_ineligibility_reason(
+        {
+            "type": "online",
+            "git_url": "https://github.com/org/repo.git",
+            "git_auth_transport": "encrypted_request_token",
+            "user": {
+                "git_domain": "https://github.com",
+                "git_token": "iOuoSwc/HrF6ZhttvtSNeQ==",
+            },
+        },
         "registry/executor:1.0.214",
     )
 
-    git_tasks = [
-        {"type": "online", "git_url": "https://github.com/org/repo.git"},
-        {"type": "online", "git_repo": "org/repo"},
-        {"type": "online", "git_repo_id": 123},
-        {"type": "online", "workspace_source": "git_worktree"},
-        {
-            "type": "online",
-            "workspace": {"repository": {"gitUrl": "ssh://git/org/repo.git"}},
-        },
+    assert reason is None
+
+
+def test_executor_warmpool_rejects_unsafe_git_credentials(mocker):
+    executor = object.__new__(K8sExecutor)
+    module = "executor_manager.wecode.executors.k8s.k8s_executor"
+    mocker.patch(f"{module}.EXECUTOR_DEFAULT_MAGE", "registry/executor:1.0.214")
+    mocker.patch(f"{module}.EXECUTOR_GIT_WARMPOOL_ENABLED", True)
+    encrypted_token = "iOuoSwc/HrF6ZhttvtSNeQ=="
+    base_task = {
+        "type": "online",
+        "git_url": "https://github.com/org/repo.git",
+        "git_auth_transport": "encrypted_request_token",
+        "user": {"git_domain": "github.com", "git_token": encrypted_token},
+    }
+    cases = [
+        (
+            {**base_task, "git_url": "ssh://git@github.com/org/repo.git"},
+            "git_requires_https",
+        ),
+        (
+            {**base_task, "git_url": "http://github.com/org/repo.git"},
+            "git_requires_https",
+        ),
+        (
+            {
+                **base_task,
+                "git_url": "https://octocat:token@github.com/org/repo.git",
+            },
+            "git_url_contains_credentials",
+        ),
+        (
+            {**base_task, "git_url": "https://github.com/org/repo.git?token=x"},
+            "git_url_contains_credentials",
+        ),
+        ({**base_task, "workspace_source": "git_worktree"}, "git_worktree"),
+        (
+            {**base_task, "git_auth_transport": "legacy_user_secret"},
+            "git_credentials_not_request_scoped",
+        ),
+        (
+            {**base_task, "user": {"git_domain": "github.com", "git_token": "***"}},
+            "git_credentials_missing",
+        ),
+        (
+            {**base_task, "user": {"git_domain": "github.com", "git_token": "plain"}},
+            "git_credentials_not_encrypted",
+        ),
+        (
+            {
+                **base_task,
+                "user": {"git_domain": "gitlab.com", "git_token": encrypted_token},
+            },
+            "git_credential_domain_mismatch",
+        ),
     ]
 
-    for task in git_tasks:
+    for task, expected_reason in cases:
         assert (
             executor._executor_warmpool_ineligibility_reason(
                 task,
                 "registry/executor:1.0.214",
             )
-            == "git_repository"
+            == expected_reason
         )
 
 
