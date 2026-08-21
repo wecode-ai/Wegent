@@ -47,6 +47,7 @@ from app.services.chat.subtask_history import (
 from app.services.chat.webpage_ws_chat_emitter import get_webpage_ws_emitter
 from app.stores.tasks import subtask_store, task_store
 from shared.prompts.constants import parse_prompt_blocks
+from shared.telemetry.context import get_request_id
 from shared.telemetry.decorators import trace_async, trace_sync
 
 logger = logging.getLogger(__name__)
@@ -904,9 +905,12 @@ async def get_chat_history(
             detail="Only task-based sessions are supported",
         )
 
+    request_id = get_request_id()
     logger.info(
-        "get_chat_history:start session_id=%s task_id=%s before_message_id=%s "
-        "limit=%s is_group_chat=%s from_latest_compaction=%s statuses=%s",
+        "get_chat_history:start request_id=%s session_id=%s task_id=%s "
+        "before_message_id=%s limit=%s is_group_chat=%s "
+        "from_latest_compaction=%s statuses=%s",
+        request_id or "",
         session_id,
         task_id,
         before_message_id,
@@ -943,7 +947,9 @@ async def get_chat_history(
         limit,
     )
     logger.info(
-        "get_chat_history:done session_id=%s task_id=%s count=%d message_ids=%s",
+        "get_chat_history:done request_id=%s session_id=%s task_id=%s count=%d "
+        "message_ids=%s",
+        request_id or "",
         session_id,
         task_id,
         len(messages),
