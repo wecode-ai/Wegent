@@ -288,7 +288,14 @@ function parallelCheckpointLimit() {
 
 function parallelCheckpointArgs(checkpoint) {
   const scope = process.env.WEWORK_E2E_PARALLEL_SCOPE ?? 'cloud'
-  if (scope === 'cloud') return ['--cloud-only', '--segment', checkpoint]
+  if (scope === 'cloud') {
+    // Scenario-only checkpoints manage their own app lifecycle and opt into
+    // the cloud environment through requiresCloudEnvironment; the explicit
+    // cloud-only mode is mutually exclusive with scenario-only mode.
+    return SCENARIO_ONLY_CHECKPOINTS.has(checkpoint)
+      ? ['--segment', checkpoint]
+      : ['--cloud-only', '--segment', checkpoint]
+  }
   if (scope === 'core') return ['--segment', checkpoint]
   throw new Error('WEWORK_E2E_PARALLEL_SCOPE must be "cloud" or "core"')
 }

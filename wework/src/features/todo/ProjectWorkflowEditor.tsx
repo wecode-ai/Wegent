@@ -1744,103 +1744,115 @@ export function ProjectWorkflowEditor({
               </button>
             </div>
           </div>
-          <div className="grid min-h-[420px] overflow-hidden rounded-xl border border-border bg-muted/20 lg:grid-cols-[minmax(0,1fr)_300px]">
-            <div className="h-[420px]" data-testid="project-workflow-dag">
-              <ReactFlow
-                className="workflow-react-flow"
-                nodes={graph.nodes}
-                edges={graph.edges}
-                nodeTypes={nodeTypes}
-                edgeTypes={edgeTypes}
-                onInit={instance => {
-                  flowInstanceRef.current = instance
-                  void instance.fitView({ padding: 0.25, maxZoom: 1 })
-                }}
-                onNodeClick={(_, node) => {
-                  setSelectedEdge(null)
-                  setSelectedNodeId(node.id)
-                }}
-                onPaneClick={() => {
-                  setSelectedNodeId(null)
-                  setSelectedEdge(null)
-                }}
-                onConnect={handleConnect}
-                onDelete={handleDelete}
-                minZoom={0.35}
-                maxZoom={1.5}
-                nodesDraggable={false}
-                deleteKeyCode={['Backspace', 'Delete']}
-                proOptions={{ hideAttribution: true }}
-                defaultEdgeOptions={{ deletable: true }}
-              >
-                <Background gap={24} size={1} color="rgb(var(--color-border))" />
-                <Controls showInteractive={false} />
-              </ReactFlow>
-            </div>
-            <aside className="border-t border-border bg-background p-4 lg:border-l lg:border-t-0">
-              {selectedEdge ? (
-                <DependencyContextInspector
-                  source={normalized.nodes.find(node => node.id === selectedEdge.source)}
-                  target={normalized.nodes.find(node => node.id === selectedEdge.target)}
-                  contextSources={
-                    normalized.nodes.find(node => node.id === selectedEdge.target)
-                      ?.dependency_context?.[selectedEdge.source] ?? DEFAULT_DEPENDENCY_CONTEXT
-                  }
-                  onChange={sources => {
-                    const targetNode = normalized.nodes.find(
-                      node => node.id === selectedEdge.target
-                    )
-                    if (!targetNode) return
-                    updateNode(targetNode.id, {
-                      dependency_context: {
-                        ...(targetNode.dependency_context ?? {}),
-                        [selectedEdge.source]: sources,
-                      },
-                    })
+          {normalized.nodes.length === 0 ? (
+            <button
+              type="button"
+              data-testid="project-workflow-empty-add"
+              onClick={addNode}
+              className="flex h-40 w-full items-center justify-center gap-2 rounded-xl border border-dashed border-border text-sm text-text-muted hover:bg-muted"
+            >
+              <Plus className="h-4 w-4" />
+              {t('todo.workflow_add_first_stage', '添加第一个阶段')}
+            </button>
+          ) : (
+            <div className="grid min-h-[420px] overflow-hidden rounded-xl border border-border bg-muted/20 lg:grid-cols-[minmax(0,1fr)_300px]">
+              <div className="h-[420px]" data-testid="project-workflow-dag">
+                <ReactFlow
+                  className="workflow-react-flow"
+                  nodes={graph.nodes}
+                  edges={graph.edges}
+                  nodeTypes={nodeTypes}
+                  edgeTypes={edgeTypes}
+                  onInit={instance => {
+                    flowInstanceRef.current = instance
+                    void instance.fitView({ padding: 0.25, maxZoom: 1 })
                   }}
-                  onDelete={() => removeDependency(selectedEdge.source, selectedEdge.target)}
-                />
-              ) : selectedNode ? (
-                selectedNode.node_type === 'wait' ? (
-                  <WaitNodeInspector
-                    node={selectedNode}
-                    onUpdate={patch => updateNode(selectedNode.id, patch)}
-                    onRemove={() => removeNode(selectedNode.id)}
-                    externalEventCatalog={externalEventCatalog}
-                    projectAgents={projectAgents}
-                    onRequestCreateRobot={onRequestCreateRobot}
+                  onNodeClick={(_, node) => {
+                    setSelectedEdge(null)
+                    setSelectedNodeId(node.id)
+                  }}
+                  onPaneClick={() => {
+                    setSelectedNodeId(null)
+                    setSelectedEdge(null)
+                  }}
+                  onConnect={handleConnect}
+                  onDelete={handleDelete}
+                  minZoom={0.35}
+                  maxZoom={1.5}
+                  nodesDraggable={false}
+                  deleteKeyCode={['Backspace', 'Delete']}
+                  proOptions={{ hideAttribution: true }}
+                  defaultEdgeOptions={{ deletable: true }}
+                >
+                  <Background gap={24} size={1} color="rgb(var(--color-border))" />
+                  <Controls showInteractive={false} />
+                </ReactFlow>
+              </div>
+              <aside className="border-t border-border bg-background p-4 lg:border-l lg:border-t-0">
+                {selectedEdge ? (
+                  <DependencyContextInspector
+                    source={normalized.nodes.find(node => node.id === selectedEdge.source)}
+                    target={normalized.nodes.find(node => node.id === selectedEdge.target)}
+                    contextSources={
+                      normalized.nodes.find(node => node.id === selectedEdge.target)
+                        ?.dependency_context?.[selectedEdge.source] ?? DEFAULT_DEPENDENCY_CONTEXT
+                    }
+                    onChange={sources => {
+                      const targetNode = normalized.nodes.find(
+                        node => node.id === selectedEdge.target
+                      )
+                      if (!targetNode) return
+                      updateNode(targetNode.id, {
+                        dependency_context: {
+                          ...(targetNode.dependency_context ?? {}),
+                          [selectedEdge.source]: sources,
+                        },
+                      })
+                    }}
+                    onDelete={() => removeDependency(selectedEdge.source, selectedEdge.target)}
                   />
+                ) : selectedNode ? (
+                  selectedNode.node_type === 'wait' ? (
+                    <WaitNodeInspector
+                      node={selectedNode}
+                      onUpdate={patch => updateNode(selectedNode.id, patch)}
+                      onRemove={() => removeNode(selectedNode.id)}
+                      externalEventCatalog={externalEventCatalog}
+                      projectAgents={projectAgents}
+                      onRequestCreateRobot={onRequestCreateRobot}
+                    />
+                  ) : (
+                    <StageInspector
+                      node={selectedNode}
+                      automationRule={selectedStageRule}
+                      robotMode={selectedStageRobotMode}
+                      robotBusy={stageRobotBusyId === selectedNode.id}
+                      projectAgents={projectAgents}
+                      dependencies={normalized.nodes}
+                      onUpdate={patch => updateNode(selectedNode.id, patch)}
+                      onRemove={() => removeNode(selectedNode.id)}
+                      onRemoveDependency={dependencyId =>
+                        removeDependency(dependencyId, selectedNode.id)
+                      }
+                      onSelectExecutor={agentId => void selectStageExecutor(selectedNode, agentId)}
+                      onSelectExecutionMode={mode => selectStageExecutionMode(selectedNode, mode)}
+                      onRequestCreateRobot={onRequestCreateRobot}
+                      onManageDeliverables={requirements =>
+                        setDeliverableDialog({ nodeId: selectedNode.id, requirements })
+                      }
+                    />
+                  )
                 ) : (
-                  <StageInspector
-                    node={selectedNode}
-                    automationRule={selectedStageRule}
-                    robotMode={selectedStageRobotMode}
-                    robotBusy={stageRobotBusyId === selectedNode.id}
-                    projectAgents={projectAgents}
-                    dependencies={normalized.nodes}
-                    onUpdate={patch => updateNode(selectedNode.id, patch)}
-                    onRemove={() => removeNode(selectedNode.id)}
-                    onRemoveDependency={dependencyId =>
-                      removeDependency(dependencyId, selectedNode.id)
-                    }
-                    onSelectExecutor={agentId => void selectStageExecutor(selectedNode, agentId)}
-                    onSelectExecutionMode={mode => selectStageExecutionMode(selectedNode, mode)}
-                    onRequestCreateRobot={onRequestCreateRobot}
-                    onManageDeliverables={requirements =>
-                      setDeliverableDialog({ nodeId: selectedNode.id, requirements })
-                    }
-                  />
-                )
-              ) : (
-                <div className="flex h-full min-h-40 flex-col items-center justify-center text-center">
-                  <GitBranch className="h-5 w-5 text-text-muted" />
-                  <p className="mt-2 text-sm text-text-secondary">
-                    {t('todo.workflow_select_stage', '选择一个阶段进行配置')}
-                  </p>
-                </div>
-              )}
-            </aside>
-          </div>
+                  <div className="flex h-full min-h-40 flex-col items-center justify-center text-center">
+                    <GitBranch className="h-5 w-5 text-text-muted" />
+                    <p className="mt-2 text-sm text-text-secondary">
+                      {t('todo.workflow_select_stage', '选择一个阶段进行配置')}
+                    </p>
+                  </div>
+                )}
+              </aside>
+            </div>
+          )}
         </div>
       ) : (
         <div className="mt-5 rounded-xl border border-dashed border-border px-4 py-8 text-center">
