@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, ChevronDown } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useAnchoredMenuPosition } from '@/hooks/useAnchoredMenuPosition'
 import { cn } from '@/lib/utils'
 
 export interface MenuOption {
@@ -190,28 +191,8 @@ export function PopupMenu({
   const rootRef = useRef<HTMLSpanElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useState(false)
-  const [position, setPosition] = useState<{ top: number; right: number; width: number } | null>(
-    null
-  )
+  const position = useAnchoredMenuPosition({ open, anchorRef: rootRef, menuRef, menuWidth })
   const close = useCallback(() => setOpen(false), [])
-
-  useLayoutEffect(() => {
-    if (!open) return
-    const triggerRect = rootRef.current?.getBoundingClientRect()
-    if (!triggerRect) return
-    const width = Math.max(180, triggerRect.width, menuWidth ?? 0)
-    const belowTop = triggerRect.bottom + 6
-    const estimatedHeight = Math.min(360, menuRef.current?.scrollHeight ?? 320)
-    const top =
-      belowTop + estimatedHeight <= window.innerHeight - 8
-        ? belowTop
-        : Math.max(8, triggerRect.top - estimatedHeight - 6)
-    setPosition({
-      top,
-      right: Math.max(8, window.innerWidth - triggerRect.right),
-      width,
-    })
-  }, [menuWidth, open])
 
   useEffect(() => {
     if (!open) return

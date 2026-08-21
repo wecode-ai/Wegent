@@ -18,8 +18,6 @@ import {
 } from '@xyflow/react'
 import {
   Bot,
-  Check,
-  ChevronDown,
   GitBranch,
   Hourglass,
   Plus,
@@ -41,7 +39,7 @@ import type { ExternalEventType } from '@/api/externalEvents'
 import { stripWorkflowEndpointNodes } from '@/api/issueWorkflow'
 import type { ProjectAutomationRule } from '@/api/projectAutomations'
 import type { ProjectChatAgent } from '@/api/projectChatAgents'
-import { PopupMenu } from '@/components/common/MenuSelect'
+import { Combobox, type ComboboxOption } from '@/components/common/Combobox'
 import { Tooltip } from '@/components/ui/tooltip'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
@@ -208,6 +206,7 @@ function createWaitNode(
           rerun_prompt: '',
         },
       ],
+      agent_id: null,
     },
     depends_on: dependsOn,
     dependency_context: dependencyContexts,
@@ -859,34 +858,49 @@ function WaitNodeInspector({
   onUpdate,
   onRemove,
   externalEventCatalog,
+  projectAgents = [],
+  onRequestCreateRobot,
 }: {
   node: WorkflowNodeDefinition
   onUpdate: (patch: Partial<WorkflowNodeDefinition>) => void
   onRemove: () => void
   externalEventCatalog?: ExternalEventType[] | null
+  projectAgents?: ProjectChatAgent[]
+  onRequestCreateRobot?: () => void
 }) {
   const { t } = useTranslation('common')
   const rules = node.wait_config?.rules ?? []
-  const [customEventRuleId, setCustomEventRuleId] = useState<string | null>(null)
   const catalogGroups = useMemo(
     () => groupExternalEventCatalog(externalEventCatalog ?? []),
     [externalEventCatalog]
   )
-  const catalogOptionLabels = useMemo(() => {
-    const labels = new Map<string, string>()
+  const catalogOptions = useMemo(() => {
+    const options: ComboboxOption[] = []
     for (const group of catalogGroups) {
       for (const category of group.categories) {
-        const categoryLabel = t(
-          `todo.workflow_wait_event_category_${category.category}`,
-          category.category
-        )
         for (const type of category.types) {
-          labels.set(type.event_type, `${type.event_type}（${group.provider} · ${categoryLabel}）`)
+          options.push({
+            id: `${type.provider}-${type.event_type}`,
+            value: type.event_type,
+            detail: t(`todo.workflow_wait_event_category_${type.category}`, type.category),
+            groupLabel: group.provider,
+          })
         }
       }
     }
-    return labels
+    return options
   }, [catalogGroups, t])
+  const catalogTypesByValue = useMemo(() => {
+    const byValue = new Map<string, ExternalEventType>()
+    for (const group of catalogGroups) {
+      for (const category of group.categories) {
+        for (const type of category.types) {
+          byValue.set(type.event_type, type)
+        }
+      }
+    }
+    return byValue
+  }, [catalogGroups])
   const referenceHints = useMemo(() => {
     const hints = new Map<string, ExternalEventType>()
     for (const group of catalogGroups) {
@@ -903,6 +917,7 @@ function WaitNodeInspector({
   const updateRule = (ruleId: string, patch: Partial<WaitEventRule>) => {
     onUpdate({
       wait_config: {
+        ...node.wait_config,
         rules: rules.map(rule => (rule.id === ruleId ? { ...rule, ...patch } : rule)),
       },
     })
@@ -911,6 +926,7 @@ function WaitNodeInspector({
     const id = nextRuleId(rules)
     onUpdate({
       wait_config: {
+        ...node.wait_config,
         rules: [
           ...rules,
           {
@@ -925,7 +941,12 @@ function WaitNodeInspector({
     })
   }
   const removeRule = (ruleId: string) => {
-    onUpdate({ wait_config: { rules: rules.filter(rule => rule.id !== ruleId) } })
+    onUpdate({
+      wait_config: {
+        ...node.wait_config,
+        rules: rules.filter(rule => rule.id !== ruleId),
+      },
+    })
   }
   return (
     <div data-testid={`project-workflow-inspector-${node.id}`}>
@@ -955,6 +976,50 @@ function WaitNodeInspector({
           className="mt-1.5 h-9 w-full rounded-lg border border-border bg-background px-2.5 text-sm outline-none focus:border-blue-500"
         />
       </label>
+      {rules.some(rule => rule.action === 'rerun') ? (
+        <div className="mt-5">
+          <label className="block text-xs font-medium text-text-secondary">
+            {t('todo.workflow_stage_robot_label', '执行机器人')}
+            <div className="mt-1.5 flex gap-2">
+              <select
+                value={node.wait_config?.agent_id ?? ''}
+                data-testid={`project-workflow-wait-robot-${node.id}`}
+                onChange={event =>
+                  onUpdate({
+                    wait_config: {
+                      ...node.wait_config,
+                      agent_id: event.target.value || null,
+                    },
+                  })
+                }
+                className="h-9 min-w-0 flex-1 rounded-lg border border-border bg-background px-2 text-sm"
+              >
+                <option value="">
+                  {projectAgents.length
+                    ? t('todo.workflow_stage_select_robot', '选择机器人')
+                    : t('todo.workflow_stage_no_robots', '暂无可用机器人')}
+                </option>
+                {projectAgents.map(agent => (
+                  <option key={agent.id} value={agent.id}>
+                    {agent.name}
+                  </option>
+                ))}
+              </select>
+              {onRequestCreateRobot ? (
+                <button
+                  type="button"
+                  data-testid={`project-workflow-wait-add-robot-${node.id}`}
+                  onClick={onRequestCreateRobot}
+                  aria-label={t('todo.workflow_stage_add_robot', '添加机器人')}
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border text-text-secondary hover:bg-muted"
+                >
+                  <Plus className="h-4 w-4" />
+                </button>
+              ) : null}
+            </div>
+          </label>
+        </div>
+      ) : null}
       <div className="mt-5">
         <div className="flex items-center justify-between gap-2">
           <p className="text-xs font-medium text-text-secondary">
@@ -994,102 +1059,23 @@ function WaitNodeInspector({
               <label className="mt-3 block text-xs font-medium text-text-secondary">
                 {t('todo.workflow_wait_rule_event_type', '事件类型')}
                 <div className="mt-1.5">
-                  {catalogGroups.length === 0 ? (
-                    <input
-                      value={rule.event_type}
-                      data-testid={`project-workflow-wait-rule-event-${node.id}-${rule.id}`}
-                      onChange={event => updateRule(rule.id, { event_type: event.target.value })}
-                      placeholder={t(
-                        'todo.workflow_wait_rule_event_type_placeholder',
-                        '选择或输入事件类型'
-                      )}
-                      className="h-9 w-full rounded-lg border border-border bg-background px-2.5 text-sm outline-none focus:border-blue-500"
-                    />
-                  ) : customEventRuleId === rule.id ? (
-                    <input
-                      autoFocus
-                      value={rule.event_type}
-                      data-testid={`project-workflow-wait-rule-event-custom-${node.id}-${rule.id}`}
-                      onChange={event => updateRule(rule.id, { event_type: event.target.value })}
-                      onBlur={() => setCustomEventRuleId(null)}
-                      placeholder={t(
-                        'todo.workflow_wait_rule_event_type_custom_placeholder',
-                        '输入自定义事件类型'
-                      )}
-                      className="h-9 w-full rounded-lg border border-border bg-background px-2.5 text-sm outline-none focus:border-blue-500"
-                    />
-                  ) : (
-                    <PopupMenu
-                      testId={`project-workflow-wait-rule-event-${node.id}-${rule.id}`}
-                      menuWidth={248}
-                      trigger={
-                        <span className="flex h-9 w-64 items-center justify-between gap-2 rounded-lg border border-border bg-background px-2.5 text-sm">
-                          <span className="truncate text-text-primary">
-                            {(catalogOptionLabels.get(rule.event_type) ?? rule.event_type) ||
-                              t('todo.workflow_wait_rule_event_type_placeholder', '选择事件类型')}
-                          </span>
-                          <ChevronDown className="h-4 w-4 shrink-0 text-text-secondary" />
-                        </span>
-                      }
-                    >
-                      {close => (
-                        <div className="space-y-0.5 py-0.5">
-                          {catalogGroups.map(group => (
-                            <div key={group.provider}>
-                              <div className="px-2 pb-0.5 pt-2 text-xs font-medium leading-4 text-text-muted first:pt-0.5">
-                                {group.provider}
-                              </div>
-                              {group.categories.flatMap(category =>
-                                category.types.map(type => (
-                                  <button
-                                    key={`${group.provider}-${type.event_type}`}
-                                    type="button"
-                                    data-testid={`project-workflow-wait-rule-event-${node.id}-${rule.id}-option-${type.provider}-${type.event_type}`}
-                                    onClick={() => {
-                                      updateRule(rule.id, {
-                                        event_type: type.event_type,
-                                        provider: type.provider,
-                                      })
-                                      close()
-                                    }}
-                                    className="flex h-8 w-full items-center gap-2 rounded-lg pl-5 pr-2 text-left text-sm leading-[18px] text-text-primary hover:bg-muted"
-                                  >
-                                    <span className="flex min-w-0 flex-1 items-center gap-1.5 truncate font-normal">
-                                      <span className="min-w-0 flex-1 truncate">
-                                        {type.event_type}
-                                      </span>
-                                      <span className="shrink-0 text-xs text-text-muted">
-                                        {t(
-                                          `todo.workflow_wait_event_category_${type.category}`,
-                                          type.category
-                                        )}
-                                      </span>
-                                    </span>
-                                    {rule.event_type === type.event_type ? (
-                                      <Check className="h-4 w-4 shrink-0 text-text-secondary" />
-                                    ) : null}
-                                  </button>
-                                ))
-                              )}
-                            </div>
-                          ))}
-                          <div className="mt-1 border-t border-border pt-1">
-                            <button
-                              type="button"
-                              data-testid={`project-workflow-wait-rule-event-${node.id}-${rule.id}-option-custom`}
-                              onClick={() => {
-                                setCustomEventRuleId(rule.id)
-                                close()
-                              }}
-                              className="flex h-8 w-full items-center rounded-lg px-2 text-left text-sm text-text-primary hover:bg-muted"
-                            >
-                              {t('todo.workflow_wait_rule_event_custom', '自定义事件类型…')}
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </PopupMenu>
-                  )}
+                  <Combobox
+                    testId={`project-workflow-wait-rule-event-${node.id}-${rule.id}`}
+                    value={rule.event_type}
+                    onChange={value => updateRule(rule.id, { event_type: value })}
+                    onPick={option => {
+                      const type = catalogTypesByValue.get(option.value)
+                      updateRule(rule.id, {
+                        event_type: option.value,
+                        provider: type?.provider ?? null,
+                      })
+                    }}
+                    options={catalogOptions}
+                    placeholder={t(
+                      'todo.workflow_wait_rule_event_type_placeholder',
+                      '选择或输入事件类型'
+                    )}
+                  />
                 </div>
               </label>
               {rule.provider && referenceHints.has(rule.provider) ? (
@@ -1143,9 +1129,6 @@ function WaitNodeInspector({
           ))}
         </div>
       </div>
-      <p className="mt-4 text-xs text-text-muted">
-        {t('todo.workflow_wait_hint', '外部事件由登记工具绑定后到达。')}
-      </p>
     </div>
   )
 }
@@ -1210,11 +1193,15 @@ export function ProjectWorkflowEditor({
     normalized.nodes.every(node => node.name.trim() && node.depends_on.every(Boolean)) &&
     normalized.nodes
       .filter(node => node.node_type === 'wait')
-      .every(
-        node =>
-          (node.wait_config?.rules ?? []).length > 0 &&
-          node.wait_config!.rules.every(rule => rule.event_type.trim())
-      )
+      .every(node => {
+        const rules = node.wait_config?.rules ?? []
+        const hasRerun = rules.some(rule => rule.action === 'rerun')
+        return (
+          rules.length > 0 &&
+          rules.every(rule => rule.event_type.trim()) &&
+          (!hasRerun || Boolean(node.wait_config?.agent_id))
+        )
+      })
   const canSave =
     (currentStageMode === 'none' || nodesValid) &&
     (currentAdvancementPolicy === 'manual' || Boolean(normalized.ai_automation_rule_id))
@@ -1786,6 +1773,8 @@ export function ProjectWorkflowEditor({
                     onUpdate={patch => updateNode(selectedNode.id, patch)}
                     onRemove={() => removeNode(selectedNode.id)}
                     externalEventCatalog={externalEventCatalog}
+                    projectAgents={projectAgents}
+                    onRequestCreateRobot={onRequestCreateRobot}
                   />
                 ) : (
                   <StageInspector

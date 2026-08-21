@@ -602,6 +602,7 @@ describe('ProjectWorkflowEditor', () => {
                 rerun_prompt: '',
               },
             ],
+            agent_id: null,
           },
         },
       ],
@@ -670,19 +671,23 @@ describe('ProjectWorkflowEditor', () => {
           automation_rule_id: null,
           wait_config: {
             rules: [{ id: 'rule-1', event_type: '', action: 'rerun', rerun_prompt: '' }],
+            agent_id: null,
           },
         },
         workflow.nodes[1],
       ],
     }
-    const { rerender } = render(
-      <ProjectWorkflowEditor
-        value={workflowWithWait}
-        busy={false}
-        onChange={onChange}
-        onSave={vi.fn()}
-      />
-    )
+    const renderEditor = (value: ProjectWorkflowDefinition) =>
+      render(
+        <ProjectWorkflowEditor
+          value={value}
+          busy={false}
+          onChange={onChange}
+          onSave={vi.fn()}
+          projectAgents={[robot]}
+        />
+      )
+    const { rerender } = renderEditor(workflowWithWait)
 
     expect(screen.getByTestId('project-workflow-save')).toBeDisabled()
     fireEvent.click(screen.getByTestId('project-workflow-wait-wait-1'))
@@ -700,6 +705,7 @@ describe('ProjectWorkflowEditor', () => {
           expect.objectContaining({
             id: 'wait-1',
             wait_config: {
+              agent_id: null,
               rules: [
                 expect.objectContaining({
                   id: 'rule-1',
@@ -719,6 +725,7 @@ describe('ProjectWorkflowEditor', () => {
           ? {
               ...node,
               wait_config: {
+                ...node.wait_config,
                 rules: [
                   {
                     ...node.wait_config!.rules[0],
@@ -736,6 +743,50 @@ describe('ProjectWorkflowEditor', () => {
         busy={false}
         onChange={onChange}
         onSave={vi.fn()}
+        projectAgents={[robot]}
+      />
+    )
+    // A rerun rule with no robot still blocks saving: the robot must be picked
+    // explicitly instead of inheriting the upstream stage's robot.
+    expect(screen.getByTestId('project-workflow-save')).toBeDisabled()
+    fireEvent.change(screen.getByTestId('project-workflow-wait-robot-wait-1'), {
+      target: { value: robot.id },
+    })
+    expect(onChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        nodes: expect.arrayContaining([
+          expect.objectContaining({
+            id: 'wait-1',
+            wait_config: {
+              agent_id: 'robot-1',
+              rules: [expect.objectContaining({ id: 'rule-1' })],
+            },
+          }),
+        ]),
+      })
+    )
+
+    const ruleWithRobot: ProjectWorkflowDefinition = {
+      ...ruleWithEvent,
+      nodes: ruleWithEvent.nodes.map(node =>
+        node.id === 'wait-1'
+          ? {
+              ...node,
+              wait_config: {
+                ...node.wait_config,
+                agent_id: robot.id,
+              },
+            }
+          : node
+      ),
+    }
+    rerender(
+      <ProjectWorkflowEditor
+        value={ruleWithRobot}
+        busy={false}
+        onChange={onChange}
+        onSave={vi.fn()}
+        projectAgents={[robot]}
       />
     )
     expect(screen.getByTestId('project-workflow-save')).toBeEnabled()
@@ -747,6 +798,7 @@ describe('ProjectWorkflowEditor', () => {
           expect.objectContaining({
             id: 'wait-1',
             wait_config: {
+              agent_id: 'robot-1',
               rules: [
                 expect.objectContaining({ id: 'rule-1' }),
                 expect.objectContaining({ id: 'rule-2', event_type: '' }),
@@ -757,12 +809,13 @@ describe('ProjectWorkflowEditor', () => {
       })
     )
     const workflowWithTwoRules: ProjectWorkflowDefinition = {
-      ...ruleWithEvent,
-      nodes: ruleWithEvent.nodes.map(node =>
+      ...ruleWithRobot,
+      nodes: ruleWithRobot.nodes.map(node =>
         node.id === 'wait-1'
           ? {
               ...node,
               wait_config: {
+                ...node.wait_config,
                 rules: [
                   {
                     ...node.wait_config!.rules[0],
@@ -785,6 +838,7 @@ describe('ProjectWorkflowEditor', () => {
         busy={false}
         onChange={onChange}
         onSave={vi.fn()}
+        projectAgents={[robot]}
       />
     )
     expect(screen.getByTestId('project-workflow-save')).toBeDisabled()
@@ -796,6 +850,7 @@ describe('ProjectWorkflowEditor', () => {
           expect.objectContaining({
             id: 'wait-1',
             wait_config: {
+              agent_id: 'robot-1',
               rules: [expect.objectContaining({ id: 'rule-1' })],
             },
           }),
@@ -804,10 +859,11 @@ describe('ProjectWorkflowEditor', () => {
     )
     rerender(
       <ProjectWorkflowEditor
-        value={ruleWithEvent}
+        value={ruleWithRobot}
         busy={false}
         onChange={onChange}
         onSave={vi.fn()}
+        projectAgents={[robot]}
       />
     )
     expect(screen.getByTestId('project-workflow-save')).toBeEnabled()
@@ -862,7 +918,70 @@ describe('ProjectWorkflowEditor', () => {
     ).not.toBeInTheDocument()
   })
 
-  test('picks adapter event types from a dropdown and supports custom values', () => {
+  test('only shows a rerun robot picker when a rerun rule exists', () => {
+    const onChange = vi.fn()
+    const completeOnly: ProjectWorkflowDefinition = {
+      ...workflow,
+      nodes: [
+        workflow.nodes[0],
+        workflow.nodes[1],
+        {
+          id: 'wait-1',
+          name: '等待外部事件',
+          node_type: 'wait',
+          depends_on: ['test'],
+          required: true,
+          workspace_policy: 'none',
+          automation_rule_id: null,
+          wait_config: {
+            rules: [{ id: 'rule-1', event_type: 'merged', action: 'complete', rerun_prompt: '' }],
+            agent_id: null,
+          },
+        },
+      ],
+    }
+    const { rerender } = render(
+      <ProjectWorkflowEditor
+        value={completeOnly}
+        busy={false}
+        onChange={onChange}
+        onSave={vi.fn()}
+        projectAgents={[robot]}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('project-workflow-wait-wait-1'))
+    expect(screen.queryByTestId('project-workflow-wait-robot-wait-1')).not.toBeInTheDocument()
+
+    const withRerun: ProjectWorkflowDefinition = {
+      ...completeOnly,
+      nodes: completeOnly.nodes.map(node =>
+        node.id === 'wait-1'
+          ? {
+              ...node,
+              wait_config: {
+                ...node.wait_config,
+                rules: [
+                  { id: 'rule-1', event_type: 'ci_failed', action: 'rerun', rerun_prompt: '' },
+                ],
+              },
+            }
+          : node
+      ),
+    }
+    rerender(
+      <ProjectWorkflowEditor
+        value={withRerun}
+        busy={false}
+        onChange={onChange}
+        onSave={vi.fn()}
+        projectAgents={[robot]}
+      />
+    )
+    expect(screen.getByTestId('project-workflow-wait-robot-wait-1')).toBeInTheDocument()
+  })
+
+  test('picks adapter event types from a combobox and keeps typing for custom values', () => {
     const onChange = vi.fn()
     const catalog = [
       {
@@ -931,10 +1050,22 @@ describe('ProjectWorkflowEditor', () => {
 
     fireEvent.click(screen.getByTestId('project-workflow-wait-wait-1'))
     expect(screen.getByTestId('project-workflow-inspector-wait-1')).toBeInTheDocument()
+    expect(screen.getByTestId('project-workflow-wait-rule-event-wait-1-rule-1')).toHaveClass(
+      'w-full'
+    )
 
-    fireEvent.click(screen.getByTestId('project-workflow-wait-rule-event-wait-1-rule-1'))
+    fireEvent.focus(screen.getByTestId('project-workflow-wait-rule-event-wait-1-rule-1'))
     expect(screen.getByText('gitlab')).toBeInTheDocument()
     expect(screen.getByText('ci_failed')).toBeInTheDocument()
+    fireEvent.change(screen.getByTestId('project-workflow-wait-rule-event-wait-1-rule-1'), {
+      target: { value: 'ci' },
+    })
+    expect(screen.getByText('ci_failed')).toBeInTheDocument()
+    expect(screen.queryByText('merged')).not.toBeInTheDocument()
+    expect(screen.queryByText('review_comment')).not.toBeInTheDocument()
+    fireEvent.change(screen.getByTestId('project-workflow-wait-rule-event-wait-1-rule-1'), {
+      target: { value: '' },
+    })
     fireEvent.click(
       screen.getByTestId('project-workflow-wait-rule-event-wait-1-rule-1-option-gitlab-ci_failed')
     )
@@ -969,11 +1100,7 @@ describe('ProjectWorkflowEditor', () => {
     )
     expect(screen.getByText(/opaque_ref 形如 group\/project!iid/)).toBeInTheDocument()
 
-    fireEvent.click(screen.getByTestId('project-workflow-wait-rule-event-wait-1-rule-1'))
-    fireEvent.click(
-      screen.getByTestId('project-workflow-wait-rule-event-wait-1-rule-1-option-custom')
-    )
-    fireEvent.change(screen.getByTestId('project-workflow-wait-rule-event-custom-wait-1-rule-1'), {
+    fireEvent.change(screen.getByTestId('project-workflow-wait-rule-event-wait-1-rule-1'), {
       target: { value: 'gitlab.merge' },
     })
     expect(onChange).toHaveBeenLastCalledWith(

@@ -253,6 +253,14 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       '[data-testid="project-workflow-wait-rule-rerun-prompt-wait-1-rule-2"]',
       { value: RERUN_PROMPT }
     )
+    await control.command(
+      'waitFor',
+      `[data-testid="project-workflow-wait-robot-wait-1"] option[value="${cloudAgent.id}"]`,
+      { timeoutMs: uiTimeoutMs * 2 }
+    )
+    await control.command('select', '[data-testid="project-workflow-wait-robot-wait-1"]', {
+      value: String(cloudAgent.id),
+    })
     await captureScreenshot(control, 'external-event-02-wait-rules-inspector.png')
 
     await control.command('click', '[data-testid="project-workflow-stage-stage-1"]')
@@ -308,6 +316,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
           wait.wait_config?.rules?.some(
             rule => rule.event_type === 'ci_failed' && rule.action === 'rerun'
           ) &&
+          wait.wait_config?.agent_id === String(cloudAgent.id) &&
           stage?.automation_rule_id === workflowRule.id &&
           stage?.workspace_policy === 'none'
         )
@@ -581,6 +590,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       assert.ok(
         rerunExecution.id > firstExecution.id,
         'Rerun execution did not follow the first run'
+      )
+      assert.equal(
+        String(rerunExecution.agentId),
+        String(cloudAgent.id),
+        'The wait rerun did not run on the wait node robot'
       )
       issue = await issueByTitle(projectId, ISSUE_TITLE)
       const rerunStatuses = nodeStatuses(issue)

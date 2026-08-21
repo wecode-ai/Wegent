@@ -374,6 +374,8 @@ export interface WaitEventRule {
 
 export interface WaitNodeConfig {
   rules: WaitEventRule[]
+  /** Robot that executes a rerun round for this wait node. */
+  agent_id?: string | null
 }
 
 export interface WorkflowNodeDefinition {
