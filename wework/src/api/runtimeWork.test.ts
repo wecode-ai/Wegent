@@ -367,6 +367,7 @@ describe('createRuntimeWorkApi', () => {
           workspacePath: '/workspace/project-alpha',
           taskId: 'runtime-1',
         },
+        taskTitle: '修复 IM 通知标题',
         sessionKeys: ['session-a', 'session-b'],
         modelSelection: {
           modelName: 'gpt-5.6-luna',
@@ -390,6 +391,7 @@ describe('createRuntimeWorkApi', () => {
         workspacePath: '/workspace/project-alpha',
         taskId: 'runtime-1',
       },
+      taskTitle: '修复 IM 通知标题',
       sessionKeys: ['session-a', 'session-b'],
       modelSelection: {
         modelName: 'gpt-5.6-luna',

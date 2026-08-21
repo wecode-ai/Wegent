@@ -572,6 +572,7 @@ async fn agent_process_engine_refreshes_existing_bot_skills_for_regular_claude_t
     let fake_claude = write_fake_executable(
         "fake-claude-refresh-bot-skill",
         r#"#!/bin/sh
+cat >/dev/null
 printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"done"}]}}'
 "#,
     );

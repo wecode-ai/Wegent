@@ -134,6 +134,8 @@ class LoopItemResponse(BaseModel):
     created_by_user_name: str | None = None
     can_view_detail: bool = True
     can_edit: bool = True
+    content_revision: int = 1
+    is_unread: bool = False
     current_delivery_id: str | None
     version: int
     created_at: datetime

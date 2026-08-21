@@ -22,7 +22,7 @@ from executor_manager.services.sandbox import get_sandbox_manager
 from routers.routers import app  # Import the FastAPI app defined in routes.py
 
 # Import the shared logger
-from shared.logger import setup_logger
+from shared.logger import configure_file_logging, setup_logger
 from shared.telemetry.config import get_otel_config
 
 # Setup logger
@@ -35,6 +35,10 @@ async def lifespan(app):
     FastAPI application lifecycle manager.
     Starts the task queue consumers when the application starts, and performs cleanup operations when the application shuts down.
     """
+    log_file = os.environ.get("WEGENT_LOG_FILE_PATH", "").strip()
+    if log_file:
+        configure_file_logging(log_file)
+
     # Initialize OpenTelemetry if enabled (configuration from shared/telemetry/config.py)
     otel_config = get_otel_config("wegent-executor-manager")
     if otel_config.enabled:

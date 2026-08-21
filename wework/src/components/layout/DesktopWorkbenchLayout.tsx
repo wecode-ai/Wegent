@@ -37,6 +37,7 @@ import { ConnectionsSettingsPage } from '@/components/settings/ConnectionsSettin
 import { useTranslation } from '@/hooks/useTranslation'
 import { useWorkbenchShellEventHandlers } from './workbenchShellEvents'
 import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskReminders'
+import { useRuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
 import { CloudTodoWorkspace } from '@/features/todo/CloudTodoWorkspace'
 import { resolveLocalTodoProjects } from '@/features/todo/localTodoProjects'
 import { projectSpaceApis } from '@/features/todo/projectSpaceSelection'
@@ -110,6 +111,7 @@ interface DesktopWorkbenchLayoutProps {
 export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchLayoutProps) {
   const { t } = useTranslation('common')
   const { logout: onLogout } = useAuth()
+  const runtimeTaskLifecycle = useRuntimeTaskLifecycleStoreSnapshot()
   const {
     state,
     cloudWorkStatus,
@@ -1062,6 +1064,7 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
                 user={state.user}
                 localProjects={localTodoProjects}
                 runtimeWork={state.runtimeWork}
+                runtimeTaskLifecycle={runtimeTaskLifecycle}
                 services={services}
                 onOpenRuntimeTask={openProjectSpaceRuntimeTask}
                 onOpenSettings={options => openSettings(options, '/todo')}

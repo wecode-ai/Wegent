@@ -80,6 +80,7 @@ export function AboutSettingsPage() {
   const appVersion = useAppVersion()
   const appUpdate = useOptionalAppUpdate()
   const availableUpdate = appUpdate?.availableUpdate ?? null
+  const autoUpdateEnabled = appUpdate?.autoUpdateEnabled ?? true
   const updateChannel = appUpdate?.updateChannel ?? 'stable'
   const updateStatus = appUpdate?.status ?? 'idle'
   const downloadProgress = appUpdate?.downloadProgress ?? null
@@ -138,6 +139,24 @@ export function AboutSettingsPage() {
       </p>
 
       <SettingsGroup className="mt-7 w-full text-left">
+        <SettingsRow
+          label={t('workbench.app_update_auto_update', {
+            defaultValue: '自动更新',
+          })}
+          control={
+            <SettingsSwitch
+              data-testid="about-auto-update-switch"
+              aria-label={t('workbench.app_update_auto_update', {
+                defaultValue: '自动更新',
+              })}
+              checked={autoUpdateEnabled}
+              disabled={!appUpdate || updateStatus === 'installing'}
+              onCheckedChange={checked => {
+                appUpdate?.setAutoUpdateEnabled(checked)
+              }}
+            />
+          }
+        />
         <SettingsRow
           label={t('workbench.app_update_beta_channel', {
             defaultValue: '接收 Beta 版本更新',

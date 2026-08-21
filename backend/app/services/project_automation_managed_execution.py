@@ -360,12 +360,12 @@ class ProjectAutomationManagedExecutionService:
             )
 
             with get_db_session() as db:
-                execution = loop_item_execution_service.mark_managed_running(
+                execution_status = loop_item_execution_service.mark_managed_running(
                     db,
                     execution_id=execution_id,
                     backend_task_id=handle.task_id,
-                )
-            if execution.status != "running":
+                ).status
+            if execution_status != "running":
                 self._mark_cancelled(
                     task_id=handle.task_id,
                     user_id=user_id,
@@ -381,7 +381,7 @@ class ProjectAutomationManagedExecutionService:
                     "longer queued: task_id=%s execution_id=%s status=%s",
                     handle.task_id,
                     execution_id,
-                    execution.status,
+                    execution_status,
                 )
                 return False
         elif source == "project_automation":
