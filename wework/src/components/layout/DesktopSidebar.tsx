@@ -4693,28 +4693,26 @@ export function DesktopSidebar({
             onLogout={onLogout}
             containerRef={settingsMenuRef}
             trailingActions={
-              experimentalFeaturesEnabled ? (
-                <GlobalImNotificationBell
-                  devices={devices}
-                  imNotificationSettings={imNotificationSettings}
-                  menuOpen={imNotificationMenuOpen}
-                  menuContainerRef={settingsMenuRef}
-                  onMenuOpenChange={open => {
-                    setImNotificationMenuOpen(open)
-                  }}
-                  onToggleGlobalImNotification={onToggleGlobalImNotification}
-                  onOpenGlobalImNotificationSettings={onOpenGlobalImNotificationSettings}
-                  onOpenSettings={() => onOpenSettings()}
-                  onAddCloudDevice={() => {
-                    if (onOpenStandaloneFolderProject) {
-                      onOpenStandaloneFolderProject('remote', 'add-device')
-                    } else {
-                      setStandaloneRemoteDialogIntent('add-device')
-                      setStandaloneWorkspaceDialogMode('remote')
-                    }
-                  }}
-                />
-              ) : null
+              <GlobalImNotificationBell
+                devices={devices}
+                imNotificationSettings={imNotificationSettings}
+                menuOpen={imNotificationMenuOpen}
+                menuContainerRef={settingsMenuRef}
+                onMenuOpenChange={open => {
+                  setImNotificationMenuOpen(open)
+                }}
+                onToggleGlobalImNotification={onToggleGlobalImNotification}
+                onOpenGlobalImNotificationSettings={onOpenGlobalImNotificationSettings}
+                onOpenSettings={() => onOpenSettings()}
+                onAddCloudDevice={() => {
+                  if (onOpenStandaloneFolderProject) {
+                    onOpenStandaloneFolderProject('remote', 'add-device')
+                  } else {
+                    setStandaloneRemoteDialogIntent('add-device')
+                    setStandaloneWorkspaceDialogMode('remote')
+                  }
+                }}
+              />
             }
           />
 

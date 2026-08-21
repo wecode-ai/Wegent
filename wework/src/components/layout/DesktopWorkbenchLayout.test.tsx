@@ -2127,7 +2127,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
-  test('hides task fork and IM actions while experimental features are disabled', () => {
+  test('keeps IM actions available while experimental features are disabled', () => {
     experimentalFeatures.enabled = false
 
     render(
@@ -2145,7 +2145,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(screen.queryByTestId('fork-runtime-task-button')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('continue-in-im-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('continue-in-im-button')).toBeInTheDocument()
     expect(screen.queryByTestId('workbench-harness-selector')).not.toBeInTheDocument()
   })
 
