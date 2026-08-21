@@ -203,7 +203,7 @@ function createWaitNode(
           id: 'rule-1',
           event_type: '',
           action: 'complete',
-          rerun_prompt: '',
+          prompt: '',
         },
       ],
       agent_id: null,
@@ -934,7 +934,7 @@ function WaitNodeInspector({
             provider: null,
             event_type: '',
             action: 'complete',
-            rerun_prompt: '',
+            prompt: '',
           },
         ],
       },
@@ -1108,19 +1108,31 @@ function WaitNodeInspector({
                   <option value="rerun">
                     {t('todo.workflow_wait_rule_action_rerun', '重跑当前任务')}
                   </option>
+                  <option value="continue">
+                    {t('todo.workflow_wait_rule_action_continue', '在当前任务发提示词继续')}
+                  </option>
                 </select>
               </label>
-              {rule.action === 'rerun' ? (
+              {rule.action === 'rerun' || rule.action === 'continue' ? (
                 <label className="mt-3 block text-xs font-medium text-text-secondary">
-                  {t('todo.workflow_wait_rule_rerun_prompt', '重跑提示词')}
+                  {rule.action === 'continue'
+                    ? t('todo.workflow_wait_rule_continue_prompt', '继续对话提示词')
+                    : t('todo.workflow_wait_rule_rerun_prompt', '重跑提示词')}
                   <textarea
-                    value={rule.rerun_prompt ?? ''}
+                    value={rule.prompt ?? ''}
                     data-testid={`project-workflow-wait-rule-rerun-prompt-${node.id}-${rule.id}`}
-                    onChange={event => updateRule(rule.id, { rerun_prompt: event.target.value })}
-                    placeholder={t(
-                      'todo.workflow_wait_rule_rerun_prompt_placeholder',
-                      '事件命中后按此提示词发一轮新消息'
-                    )}
+                    onChange={event => updateRule(rule.id, { prompt: event.target.value })}
+                    placeholder={
+                      rule.action === 'continue'
+                        ? t(
+                            'todo.workflow_wait_rule_continue_prompt_placeholder',
+                            '事件命中后，把此提示词作为一条新消息发进当前任务会话'
+                          )
+                        : t(
+                            'todo.workflow_wait_rule_rerun_prompt_placeholder',
+                            '事件命中后按此提示词发一轮新消息'
+                          )
+                    }
                     className="mt-1.5 min-h-20 w-full resize-y rounded-lg border border-border bg-background px-2.5 py-2 text-sm outline-none focus:border-blue-500"
                   />
                 </label>

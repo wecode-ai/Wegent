@@ -6,7 +6,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
 
 WorkflowContextSource = Literal["final_result", "deliveries", "activity"]
 WorkflowOrchestrationStatus = Literal[
@@ -31,7 +31,7 @@ DeliverableValueType = Literal[
     "url",
 ]
 WorkflowNodeType = Literal["stage", "wait"]
-WaitEventAction = Literal["rerun", "complete"]
+WaitEventAction = Literal["rerun", "complete", "continue"]
 WorkflowNodeStatus = Literal[
     "blocked",
     "ready",
@@ -93,7 +93,14 @@ class WaitEventRule(BaseModel):
     # Delivery policy (window / busy-period merge) is declared by the event
     # type in the provider catalog and is never stored on the rule.
     action: WaitEventAction = "complete"
-    rerun_prompt: str = Field(default="", max_length=20_000)
+    # Prompt used by every prompt-driven action (rerun / continue). Accepts the
+    # legacy ``rerun_prompt`` key so definitions written before the rename stay
+    # readable without a migration.
+    prompt: str = Field(
+        default="",
+        max_length=20_000,
+        validation_alias=AliasChoices("prompt", "rerun_prompt"),
+    )
 
     @field_validator("provider")
     @classmethod
@@ -295,6 +302,9 @@ class WorkflowNodeInstance(WorkflowNodeDefinition):
     # Set when a delivered reference for this wait node failed to register, so
     # the card can show why the listener is not receiving events.
     registration_error: str | None = Field(default=None, max_length=500)
+    # Set when a continue round could not be dispatched into the current task,
+    # so the card can show why a repair prompt never landed.
+    continue_error: str | None = Field(default=None, max_length=500)
     decision_history: list["WorkflowNodeDecision"] = Field(
         default_factory=list, max_length=100
     )

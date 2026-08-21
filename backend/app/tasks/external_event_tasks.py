@@ -71,3 +71,49 @@ def settle_external_event_window(
         event_type=event_type,
         generation=generation,
     )
+
+
+def dispatch_external_event_continue_sync(
+    *,
+    binding_id: str,
+    instruction: str,
+) -> None:
+    """Send one continue prompt into the issue's current task conversation."""
+
+    db: Session = SessionLocal()
+    try:
+        binding = db.get(ExternalEventBinding, binding_id)
+        if binding is None:
+            logger.warning(
+                "External event continue binding missing binding=%s",
+                binding_id,
+            )
+            return
+        external_event_evaluation_service.continue_round(
+            db,
+            binding=binding,
+            instruction=instruction,
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception(
+            "External event continue failed binding=%s",
+            binding_id,
+        )
+    finally:
+        db.close()
+
+
+@celery_app.task(name="app.tasks.external_event_tasks.dispatch_external_event_continue")
+def dispatch_external_event_continue(
+    *,
+    binding_id: str,
+    instruction: str,
+) -> None:
+    """Dispatch a wait-node continue round to the owning device."""
+
+    dispatch_external_event_continue_sync(
+        binding_id=binding_id,
+        instruction=instruction,
+    )

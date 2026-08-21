@@ -599,7 +599,7 @@ describe('ProjectWorkflowEditor', () => {
                 id: 'rule-1',
                 event_type: '',
                 action: 'complete',
-                rerun_prompt: '',
+                prompt: '',
               },
             ],
             agent_id: null,
@@ -670,7 +670,7 @@ describe('ProjectWorkflowEditor', () => {
           workspace_policy: 'none',
           automation_rule_id: null,
           wait_config: {
-            rules: [{ id: 'rule-1', event_type: '', action: 'rerun', rerun_prompt: '' }],
+            rules: [{ id: 'rule-1', event_type: '', action: 'rerun', prompt: '' }],
             agent_id: null,
           },
         },
@@ -824,7 +824,7 @@ describe('ProjectWorkflowEditor', () => {
                     id: 'rule-2',
                     event_type: '',
                     action: 'complete',
-                    rerun_prompt: '',
+                    prompt: '',
                   },
                 ],
               },
@@ -869,6 +869,69 @@ describe('ProjectWorkflowEditor', () => {
     expect(screen.getByTestId('project-workflow-save')).toBeEnabled()
   })
 
+  test('continues the current task with a prompt without requiring a robot', () => {
+    const onChange = vi.fn()
+    const workflowWithWait: ProjectWorkflowDefinition = {
+      ...workflow,
+      nodes: [
+        workflow.nodes[0],
+        {
+          id: 'wait-1',
+          name: '等待外部事件',
+          node_type: 'wait',
+          depends_on: ['test'],
+          required: true,
+          workspace_policy: 'none',
+          automation_rule_id: null,
+          wait_config: {
+            rules: [{ id: 'rule-1', event_type: 'ci_failed', action: 'continue', prompt: '' }],
+            agent_id: null,
+          },
+        },
+        workflow.nodes[1],
+      ],
+    }
+    render(
+      <ProjectWorkflowEditor
+        value={workflowWithWait}
+        busy={false}
+        onChange={onChange}
+        onSave={vi.fn()}
+        projectAgents={[robot]}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('project-workflow-wait-wait-1'))
+    expect(
+      screen.getByTestId('project-workflow-wait-rule-rerun-prompt-wait-1-rule-1')
+    ).toBeInTheDocument()
+    expect(screen.queryByTestId('project-workflow-wait-robot-wait-1')).not.toBeInTheDocument()
+
+    fireEvent.change(screen.getByTestId('project-workflow-wait-rule-rerun-prompt-wait-1-rule-1'), {
+      target: { value: 'Fix the failing pipeline' },
+    })
+    expect(onChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        nodes: expect.arrayContaining([
+          expect.objectContaining({
+            id: 'wait-1',
+            wait_config: {
+              agent_id: null,
+              rules: [
+                expect.objectContaining({
+                  id: 'rule-1',
+                  action: 'continue',
+                  prompt: 'Fix the failing pipeline',
+                }),
+              ],
+            },
+          }),
+        ]),
+      })
+    )
+    expect(screen.getByTestId('project-workflow-save')).toBeEnabled()
+  })
+
   test('shows no trigger policy controls in the wait rule panel', () => {
     const onChange = vi.fn()
     const workflowWithWait: ProjectWorkflowDefinition = {
@@ -890,7 +953,7 @@ describe('ProjectWorkflowEditor', () => {
                 id: 'rule-1',
                 event_type: 'ci_failed',
                 action: 'rerun',
-                rerun_prompt: '',
+                prompt: '',
               },
             ],
           },
@@ -934,7 +997,7 @@ describe('ProjectWorkflowEditor', () => {
           workspace_policy: 'none',
           automation_rule_id: null,
           wait_config: {
-            rules: [{ id: 'rule-1', event_type: 'merged', action: 'complete', rerun_prompt: '' }],
+            rules: [{ id: 'rule-1', event_type: 'merged', action: 'complete', prompt: '' }],
             agent_id: null,
           },
         },
@@ -961,9 +1024,7 @@ describe('ProjectWorkflowEditor', () => {
               ...node,
               wait_config: {
                 ...node.wait_config,
-                rules: [
-                  { id: 'rule-1', event_type: 'ci_failed', action: 'rerun', rerun_prompt: '' },
-                ],
+                rules: [{ id: 'rule-1', event_type: 'ci_failed', action: 'rerun', prompt: '' }],
               },
             }
           : node
@@ -1031,7 +1092,7 @@ describe('ProjectWorkflowEditor', () => {
                 id: 'rule-1',
                 event_type: '',
                 action: 'complete',
-                rerun_prompt: '',
+                prompt: '',
               },
             ],
           },

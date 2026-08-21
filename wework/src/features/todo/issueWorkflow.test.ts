@@ -70,7 +70,7 @@ const endpointDefinition = {
             event_type: 'merged',
             mode: 'trigger' as const,
             action: 'complete' as const,
-            rerun_prompt: '',
+            prompt: '',
           },
         ],
       },

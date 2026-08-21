@@ -4,13 +4,14 @@
 """Wait node evaluation: the internal state machine for external events.
 
 The wait node is a DAG node whose status stays ``waiting`` while it listens.
-Reruns are an internal state machine (round counter + fresh executions) and
-never add graph edges. Terminal events complete the node, and the Issue
-enters review once every required stage completes.
+Repair rounds are an internal state machine (round counter + fresh executions
+or continue messages) and never add graph edges. Terminal events complete the
+node, and the Issue enters review once every required stage completes.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -19,6 +20,7 @@ from sqlalchemy.orm import Session
 from app.models.delivery import ExternalEventBinding, LoopItem, ProjectAutomationRun
 from app.models.loop_item_execution import LoopItemExecution
 from app.schemas.issue_workflow import WaitEventRule, WorkflowNodeInstance
+from app.schemas.runtime_work import RuntimeSendRequest, RuntimeTaskAddress
 from app.services.external_events.adapters import (
     NormalizedExternalEvent,
     event_type_policy,
@@ -62,7 +64,7 @@ class ExternalEventEvaluationService:
         if rule.action == "complete":
             self.complete_wait_node(db, issue=issue, node=node, binding=binding)
             return
-        self._schedule_rerun(db, binding=binding, node=node, event=event)
+        self._schedule_repair_round(db, binding=binding, node=node, event=event)
 
     def settle_aggregate(
         self,
@@ -93,7 +95,7 @@ class ExternalEventEvaluationService:
             str(events[0].get("provider") or ""),
             str(events[0].get("event_type") or ""),
         )
-        if rule is None or rule.action != "rerun":
+        if rule is None or rule.action not in {"rerun", "continue"}:
             return
         group, rest = self._split_event_groups(events)
         policy = event_type_policy(
@@ -102,11 +104,15 @@ class ExternalEventEvaluationService:
         )
         if policy is not None and policy.merge_while_running:
             self._park_events(db, binding=binding, events=rest)
-            self._start_rerun(db, binding=binding, node=node, rule=rule, events=group)
+            self._start_repair_round(
+                db, binding=binding, node=node, rule=rule, events=group
+            )
             return
         fired, *remainder = group
         self._park_events(db, binding=binding, events=[*remainder, *rest])
-        self._start_rerun(db, binding=binding, node=node, rule=rule, events=[fired])
+        self._start_repair_round(
+            db, binding=binding, node=node, rule=rule, events=[fired]
+        )
 
     def settle_window(
         self,
@@ -122,7 +128,7 @@ class ExternalEventEvaluationService:
         if issue is None or node is None or node.status != "waiting":
             return
         rule = self._matching_rule(node, binding.provider, event_type)
-        if rule is None or rule.action != "rerun":
+        if rule is None or rule.action not in {"rerun", "continue"}:
             return
         events = external_event_buffer.take_window(
             task_id=binding.loop_item_id,
@@ -137,7 +143,9 @@ class ExternalEventEvaluationService:
             # window events so they settle together when that round ends.
             self._park_events(db, binding=binding, events=events)
             return
-        self._start_rerun(db, binding=binding, node=node, rule=rule, events=events)
+        self._start_repair_round(
+            db, binding=binding, node=node, rule=rule, events=events
+        )
 
     def compensate(
         self,
@@ -215,7 +223,7 @@ class ExternalEventEvaluationService:
                     execution.id,
                 )
 
-    def _schedule_rerun(
+    def _schedule_repair_round(
         self,
         db: Session,
         *,
@@ -224,7 +232,7 @@ class ExternalEventEvaluationService:
         event: NormalizedExternalEvent,
     ) -> None:
         rule = self._matching_rule(node, event.provider, event.event_type)
-        if rule is None or rule.action != "rerun":
+        if rule is None or rule.action not in {"rerun", "continue"}:
             return
         if self._has_active_execution(db, binding):
             self._park_event(db, binding=binding, event=event)
@@ -254,14 +262,191 @@ class ExternalEventEvaluationService:
         group, rest = self._split_event_groups(events)
         if policy is not None and policy.merge_while_running:
             self._park_events(db, binding=binding, events=rest)
-            self._start_rerun(db, binding=binding, node=node, rule=rule, events=group)
+            self._start_repair_round(
+                db, binding=binding, node=node, rule=rule, events=group
+            )
             return
         # Immediate policy: fire rounds one by one. Settle the oldest event of
         # the first type now and park everything else so the following settles
         # fire them serially without merging events into one round.
         fired, *remainder = group
         self._park_events(db, binding=binding, events=[*remainder, *rest])
-        self._start_rerun(db, binding=binding, node=node, rule=rule, events=[fired])
+        self._start_repair_round(
+            db, binding=binding, node=node, rule=rule, events=[fired]
+        )
+
+    def _start_repair_round(
+        self,
+        db: Session,
+        *,
+        binding: ExternalEventBinding,
+        node: WorkflowNodeInstance,
+        rule: WaitEventRule,
+        events: list[dict[str, Any]],
+    ) -> None:
+        """Start one repair round with the action the rule declares."""
+
+        if rule.action == "continue":
+            self._start_continue(
+                db, binding=binding, node=node, rule=rule, events=events
+            )
+            return
+        self._start_rerun(db, binding=binding, node=node, rule=rule, events=events)
+
+    def _start_continue(
+        self,
+        db: Session,
+        *,
+        binding: ExternalEventBinding,
+        node: WorkflowNodeInstance,
+        rule: WaitEventRule,
+        events: list[dict[str, Any]],
+    ) -> None:
+        """Queue one continue round for the issue's current task conversation.
+
+        The runtime send is a device RPC that must run outside the webhook's
+        event loop (it can take minutes), so the round is dispatched to a
+        worker. The wait gate keeps waiting and the round counter moves only
+        once the worker has sent the prompt into the existing task.
+        """
+
+        from app.tasks.external_event_tasks import dispatch_external_event_continue
+
+        dispatch_external_event_continue.apply_async(
+            kwargs={
+                "binding_id": str(binding.id),
+                "instruction": self._repair_instruction(rule, events),
+            }
+        )
+
+    def continue_round(
+        self,
+        db: Session,
+        *,
+        binding: ExternalEventBinding,
+        instruction: str,
+    ) -> bool:
+        """Send one repair prompt into the issue's current task conversation.
+
+        Runs in the worker context where no event loop is active. A continue
+        round does not create a new automation run or execution: the executor
+        appends the prompt to the runtime task that actually ran most recently
+        for this issue. When the target cannot be resolved or the device is
+        unreachable, the wait node records a visible error and the request is
+        not silently dropped.
+        """
+
+        issue, node = self._issue_and_node(db, binding)
+        if issue is None or node is None or node.status != "waiting":
+            return False
+        target = self._continue_target(db, binding)
+        if target is None:
+            self._record_continue_error(
+                db, issue=issue, node=node, error="No runnable task for continue"
+            )
+            return False
+        try:
+            self._send_continue_message(db, target=target, message=instruction)
+        except Exception:
+            logger.exception(
+                "[ExternalEvent] Continue send failed binding=%s task=%s",
+                binding.id,
+                target[0].local_task_id,
+            )
+            self._record_continue_error(
+                db, issue=issue, node=node, error="Device is not reachable"
+            )
+            return False
+        self._bump_round(db, issue=issue, node=node)
+        self._record_continue_error(db, issue=issue, node=node, error=None)
+        return True
+
+    @staticmethod
+    def _continue_target(
+        db: Session,
+        binding: ExternalEventBinding,
+    ) -> tuple[RuntimeTaskAddress, int] | None:
+        """Resolve the runtime task that actually ran last for this issue."""
+
+        execution = (
+            db.query(LoopItemExecution)
+            .filter(
+                LoopItemExecution.loop_item_id == binding.loop_item_id,
+                LoopItemExecution.runtime_device_id != "",
+                LoopItemExecution.runtime_task_id != "",
+            )
+            .order_by(LoopItemExecution.id.desc())
+            .first()
+        )
+        if execution is None:
+            return None
+        return (
+            RuntimeTaskAddress(
+                device_id=str(execution.runtime_device_id),
+                local_task_id=str(execution.runtime_task_id),
+            ),
+            int(execution.executor_owner_user_id or 0),
+        )
+
+    @staticmethod
+    def _send_continue_message(
+        db: Session,
+        *,
+        target: tuple[RuntimeTaskAddress, int],
+        message: str,
+    ) -> None:
+        """Dispatch one prompt into the target runtime task conversation."""
+
+        from app.services import runtime_work_service
+
+        address, user_id = target
+        request = RuntimeSendRequest(address=address, message=message)
+        asyncio.run(
+            runtime_work_service.send_runtime_message(
+                db=db,
+                user_id=user_id,
+                request=request,
+            )
+        )
+
+    @staticmethod
+    def _record_continue_error(
+        db: Session,
+        *,
+        issue: LoopItem,
+        node: WorkflowNodeInstance,
+        error: str | None,
+    ) -> None:
+        """Persist the last continue failure on the wait node.
+
+        The error is part of the node snapshot the API exposes so a dead
+        listener is visible on the card instead of living only in the logs. A
+        later successful continue clears the field again.
+        """
+
+        raw_workflow = (
+            issue.metadata_json.get("workflow")
+            if isinstance(issue.metadata_json, dict)
+            else None
+        )
+        if not isinstance(raw_workflow, dict):
+            return
+        nodes = [dict(candidate) for candidate in raw_workflow.get("nodes") or []]
+        changed = False
+        for candidate in nodes:
+            if candidate.get("id") != node.id:
+                continue
+            if error and candidate.get("continue_error") != error:
+                candidate["continue_error"] = error
+                changed = True
+            elif not error and candidate.get("continue_error"):
+                candidate.pop("continue_error", None)
+                changed = True
+            break
+        if not changed:
+            return
+        apply_workflow_nodes(issue, workflow=raw_workflow, nodes=nodes)
+        db.commit()
 
     def _schedule_window(
         self,
@@ -377,7 +562,7 @@ class ExternalEventEvaluationService:
             )
             return
         self._bump_round(db, issue=issue, node=node)
-        instruction = self._rerun_instruction(rule, events)
+        instruction = self._repair_instruction(rule, events)
         # A repair round is its own run scoped to the wait node, exactly like
         # a stage rerun owns a fresh run. The stage that reached the gate
         # stays completed and is never re-activated by the round.
@@ -468,12 +653,12 @@ class ExternalEventEvaluationService:
         return row
 
     @staticmethod
-    def _rerun_instruction(rule: WaitEventRule, events: list[dict[str, Any]]) -> str:
+    def _repair_instruction(rule: WaitEventRule, events: list[dict[str, Any]]) -> str:
         summaries = [
             str(event.get("summary") or "") for event in events if event.get("summary")
         ]
         body = "\n".join(f"- {summary}" for summary in summaries) if summaries else ""
-        base = (rule.rerun_prompt or "").strip()
+        base = (rule.prompt or "").strip()
         if not body:
             return base
         return (

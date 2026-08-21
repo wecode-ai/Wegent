@@ -1512,3 +1512,261 @@ def test_rule_without_provider_matches_any_provider(
         for node in issue.metadata_json["workflow"]["nodes"]
     }
     assert nodes["wait-1"] == "completed"
+
+
+def _continue_rule() -> dict:
+    return {
+        "id": "rule-continue",
+        "event_type": "ci_failed",
+        "action": "continue",
+        "prompt": "CI failed, please fix it",
+    }
+
+
+def _ran_execution(
+    test_db: Session,
+    *,
+    issue: LoopItem,
+    project: CloudProject,
+    user_id: int,
+    run_id: str,
+    device_id: str = "device-1",
+    task_id: str = "task-1",
+) -> LoopItemExecution:
+    execution = LoopItemExecution(
+        loop_item_id=issue.id,
+        cloud_project_id=project.id,
+        executor_owner_user_id=user_id,
+        automation_run_id=run_id,
+        execution_device_id=device_id,
+        runtime_device_id=device_id,
+        runtime_task_id=task_id,
+        status="succeeded",
+    )
+    test_db.add(execution)
+    test_db.flush()
+    return execution
+
+
+def test_continue_round_sends_prompt_into_current_task(
+    test_db: Session,
+    workflow_project: CloudProject,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    issue = _issue(test_db, workflow_project, test_user.id)
+    _set_wait_rules(issue, [_continue_rule()])
+    run = ProjectAutomationRun(
+        cloud_project_id=workflow_project.id,
+        parent_id="rule-continue",
+        loop_item_id=issue.id,
+        task_id=issue.id,
+        task_title=issue.title,
+        assignee_agent_id="",
+        source="manual",
+        status="succeeded",
+        created_by_user_id=test_user.id,
+    )
+    test_db.add(run)
+    test_db.flush()
+    run_id = str(run.id)
+    _ran_execution(
+        test_db,
+        issue=issue,
+        project=workflow_project,
+        user_id=test_user.id,
+        run_id=run_id,
+    )
+    test_db.commit()
+    binding = _binding(
+        test_db,
+        project=workflow_project,
+        issue=issue,
+        user_id=test_user.id,
+        opaque_ref="acme/app!7",
+    )
+    test_db.commit()
+
+    sent: list[dict[str, object]] = []
+
+    async def fake_send(*, db: Session, user_id: int, request: object) -> None:
+        sent.append({"user_id": user_id, "request": request})
+
+    monkeypatch.setattr(
+        "app.services.runtime_work_service.send_runtime_message", fake_send
+    )
+
+    accepted = external_event_evaluation_service.continue_round(
+        test_db, binding=binding, instruction="CI failed, please fix it"
+    )
+    test_db.commit()
+
+    assert accepted is True
+    assert len(sent) == 1
+    assert sent[0]["user_id"] == test_user.id
+    request = sent[0]["request"]
+    assert request.address.device_id == "device-1"
+    assert request.address.local_task_id == "task-1"
+    assert request.message == "CI failed, please fix it"
+
+    test_db.refresh(issue)
+    wait_node = next(
+        node
+        for node in issue.metadata_json["workflow"]["nodes"]
+        if node["id"] == "wait-1"
+    )
+    assert wait_node["wait_round"] == 1
+    assert "continue_error" not in wait_node
+    # Continue never creates a new run or execution.
+    assert (
+        test_db.query(LoopItemExecution)
+        .filter(LoopItemExecution.loop_item_id == issue.id)
+        .count()
+        == 1
+    )
+    assert (
+        test_db.query(ProjectAutomationRun)
+        .filter(ProjectAutomationRun.loop_item_id == issue.id)
+        .count()
+        == 1
+    )
+
+
+def test_continue_rule_event_enqueues_worker_round(
+    test_db: Session,
+    workflow_project: CloudProject,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    issue = _issue(test_db, workflow_project, test_user.id)
+    _set_wait_rules(issue, [_continue_rule()])
+    binding = _binding(
+        test_db,
+        project=workflow_project,
+        issue=issue,
+        user_id=test_user.id,
+        opaque_ref="acme/app!7",
+    )
+    test_db.commit()
+
+    queued: list[dict[str, str]] = []
+
+    def fake_apply_async(*, kwargs: dict[str, str], **ignored: object) -> None:
+        queued.append(kwargs)
+
+    monkeypatch.setattr(
+        "app.tasks.external_event_tasks.dispatch_external_event_continue.apply_async",
+        fake_apply_async,
+    )
+
+    external_event_evaluation_service.evaluate_event(
+        test_db, binding=binding, event=_ci_event()
+    )
+    test_db.commit()
+
+    assert len(queued) == 1
+    assert queued[0]["binding_id"] == binding.id
+    instruction = queued[0]["instruction"]
+    assert "CI failed, please fix it" in instruction
+    assert "Pipeline #pipeline-1 failed" in instruction
+    test_db.refresh(issue)
+    wait_node = next(
+        node
+        for node in issue.metadata_json["workflow"]["nodes"]
+        if node["id"] == "wait-1"
+    )
+    # The round counter moves only after the worker accepts the send.
+    assert wait_node.get("wait_round", 0) == 0
+
+
+def test_continue_round_without_runnable_task_records_error(
+    test_db: Session,
+    workflow_project: CloudProject,
+    test_user: User,
+) -> None:
+    issue = _issue(test_db, workflow_project, test_user.id)
+    _set_wait_rules(issue, [_continue_rule()])
+    binding = _binding(
+        test_db,
+        project=workflow_project,
+        issue=issue,
+        user_id=test_user.id,
+        opaque_ref="acme/app!7",
+    )
+    test_db.commit()
+
+    accepted = external_event_evaluation_service.continue_round(
+        test_db, binding=binding, instruction="CI failed, please fix it"
+    )
+    test_db.commit()
+
+    assert accepted is False
+    test_db.refresh(issue)
+    wait_node = next(
+        node
+        for node in issue.metadata_json["workflow"]["nodes"]
+        if node["id"] == "wait-1"
+    )
+    assert wait_node.get("continue_error") == "No runnable task for continue"
+    assert wait_node.get("wait_round", 0) == 0
+
+
+def test_continue_round_records_error_when_device_unreachable(
+    test_db: Session,
+    workflow_project: CloudProject,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    issue = _issue(test_db, workflow_project, test_user.id)
+    _set_wait_rules(issue, [_continue_rule()])
+    run = ProjectAutomationRun(
+        cloud_project_id=workflow_project.id,
+        parent_id="rule-continue",
+        loop_item_id=issue.id,
+        task_id=issue.id,
+        task_title=issue.title,
+        assignee_agent_id="",
+        source="manual",
+        status="succeeded",
+        created_by_user_id=test_user.id,
+    )
+    test_db.add(run)
+    test_db.flush()
+    _ran_execution(
+        test_db,
+        issue=issue,
+        project=workflow_project,
+        user_id=test_user.id,
+        run_id=str(run.id),
+    )
+    test_db.commit()
+    binding = _binding(
+        test_db,
+        project=workflow_project,
+        issue=issue,
+        user_id=test_user.id,
+        opaque_ref="acme/app!7",
+    )
+    test_db.commit()
+
+    async def failing_send(**kwargs: object) -> None:
+        raise RuntimeError("device offline")
+
+    monkeypatch.setattr(
+        "app.services.runtime_work_service.send_runtime_message", failing_send
+    )
+
+    accepted = external_event_evaluation_service.continue_round(
+        test_db, binding=binding, instruction="CI failed, please fix it"
+    )
+    test_db.commit()
+
+    assert accepted is False
+    test_db.refresh(issue)
+    wait_node = next(
+        node
+        for node in issue.metadata_json["workflow"]["nodes"]
+        if node["id"] == "wait-1"
+    )
+    assert wait_node.get("continue_error") == "Device is not reachable"
+    assert wait_node.get("wait_round", 0) == 0

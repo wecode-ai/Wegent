@@ -108,10 +108,10 @@ In the preset workflow, each stage can configure a name, prompt, required delive
 **Add wait node** inserts a waiting gate into the flow: the downstream stages are only released when a matching external event arrives. A wait node supports multiple **event rules**, each containing:
 
 - **Event type**: type a custom event type directly, or pick one from the connected adapter catalog (for example GitLab CI, review, and lifecycle events); typing filters the catalog instantly.
-- **Action**: `complete and continue`, or `start a new task with prompt` (rerun the current wait gate).
-- **Rerun prompt**: required when the action is rerun; a new repair round starts with this prompt when the event matches.
+- **Action**: `complete and continue`, `start a new task with prompt` (rerun the current wait gate), or `continue the current task with a prompt` (no new task: the prompt is sent as a new message into the Issue's current task conversation).
+- **Prompt**: used by the rerun and continue actions; the matched event starts a new repair round or continues one conversation round with this prompt.
 
-When a rule uses a catalog event, upstream stages automatically require a reference delivery of the matching kind (for example a GitLab MR), and the system registers the wait event when it is delivered; custom event types are bound manually through the registration tool. Rerun rules must pick an execution robot, because the repair round runs on that robot.
+When a rule uses a catalog event, upstream stages automatically require a reference delivery of the matching kind (for example a GitLab MR), and the system registers the wait event when it is delivered; custom event types are bound manually through the registration tool. Rerun rules must pick an execution robot, because the repair round runs on that robot; continue rules reuse the current task's original session and device, so no extra robot is required.
 
 The Automation tab is available for local, GitHub, and GitLab project spaces. DingTalk AI Table project spaces keep their data in the external table and do not show the tab.
 

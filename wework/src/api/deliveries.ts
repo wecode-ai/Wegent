@@ -368,7 +368,7 @@ export interface CloudTaskContext {
 export type WorkflowWorkspacePolicy = 'none' | 'composer' | 'inherit'
 export type WorkflowContextSource = 'final_result' | 'deliveries' | 'activity'
 export type WorkflowNodeType = 'stage' | 'wait'
-export type WaitEventAction = 'rerun' | 'complete'
+export type WaitEventAction = 'rerun' | 'complete' | 'continue'
 export type WorkflowNodeStatus =
   | 'blocked'
   | 'ready'
@@ -390,7 +390,8 @@ export interface WaitEventRule {
   provider?: string | null
   event_type: string
   action: WaitEventAction
-  rerun_prompt?: string
+  /** Prompt used by prompt-driven actions (rerun / continue). */
+  prompt?: string
 }
 
 export interface WaitNodeConfig {
