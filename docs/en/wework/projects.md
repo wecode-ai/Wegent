@@ -87,6 +87,26 @@ After a robot is selected, automation calls the same board-assignment path as a 
 
 The manager's decision is shown in its own parent comment. When the selected project robot starts, it creates a separate execution comment. Only the project robot's completion can move the original task to review; completing the manager decision does not complete the task.
 
+### Issue orchestration (preset workflow)
+
+The **Automation** tab provides **Issue orchestration**, which splits one Issue's progress into stages. Three advancement modes are available:
+
+- **Manage tasks yourself**: no stage split; the Issue advances as an ordinary task.
+- **Preset workflow**: a stage DAG fixes the stages and their dependencies, and the Issue advances along them in order.
+- **AI-coordinated**: a coordinator AI reads the Issue, breaks it down, and assigns the work; the coordinator itself never executes tasks.
+
+In the preset workflow, each stage can configure a name, prompt, required deliverables, execution mode (human or project robot), and prerequisite dependencies. Clicking the edge between two stages configures which upstream context is passed downstream.
+
+#### Wait nodes and event rules
+
+**Add wait node** inserts a waiting gate into the flow: the downstream stages are only released when a matching external event arrives. A wait node supports multiple **event rules**, each containing:
+
+- **Event type**: type a custom event type directly, or pick one from the connected adapter catalog (for example GitLab CI, review, and lifecycle events); typing filters the catalog instantly.
+- **Action**: `complete and continue`, or `start a new task with prompt` (rerun the current wait gate).
+- **Rerun prompt**: required when the action is rerun; a new repair round starts with this prompt when the event matches.
+
+When a rule uses a catalog event, upstream stages automatically require a reference delivery of the matching kind (for example a GitLab MR), and the system registers the wait event when it is delivered; custom event types are bound manually through the registration tool. Rerun rules must pick an execution robot, because the repair round runs on that robot.
+
 The Automation tab is available for local, GitHub, and GitLab project spaces. DingTalk AI Table project spaces keep their data in the external table and do not show the tab.
 
 ## Create a project from the composer
