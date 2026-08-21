@@ -3,12 +3,18 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { RuntimeWorkListResponse } from '@/types/api'
 import type { ChatStreamHandlers } from '@/stream/chatStream'
 import type { WorkbenchServices } from '../workbenchServices'
+import {
+  cacheRuntimeConversationQueuedMessages,
+  clearRuntimeConversationCacheForTests,
+  getRuntimeConversationQueuedMessages,
+} from '../runtimeConversationCache'
 import { RuntimeTaskLifecycleStore } from './RuntimeTaskLifecycleStore'
 import { RuntimeTaskLifecycleStreamCoordinator } from './RuntimeTaskLifecycleStreamCoordinator'
 
 describe('RuntimeTaskLifecycleStreamCoordinator', () => {
   afterEach(() => {
     vi.useRealTimers()
+    clearRuntimeConversationCacheForTests()
   })
 
   test('does not poll running task transcripts or work lists', async () => {
@@ -87,6 +93,80 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
     expect(store.getTask(address)?.execution.phase).toBe('idle')
     expect(store.getTask(address)?.turn.phase).toBe('idle')
     expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(false)
+  })
+
+  test('refreshes the transcript and requeues an interrupted send after runtime replacement', async () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    const address = runtimeTaskAddress()
+    store.syncRuntimeWork(runtimeWork(true))
+    store.setCurrentTask(address)
+    cacheRuntimeConversationQueuedMessages(address, [
+      {
+        id: 'queued-follow-up',
+        content: 'continue after restart',
+        status: 'sending',
+        deliveryMode: 'message',
+        awaitingTurnStart: false,
+        createdAt: '2026-08-21T00:00:00.000Z',
+      },
+    ])
+    let streamHandlers: ChatStreamHandlers = {}
+    const listRuntimeWork = vi.fn().mockResolvedValue(runtimeWork(false))
+    const getRuntimeTranscript = vi.fn().mockResolvedValue({
+      taskId: address.taskId,
+      workspacePath: address.workspacePath,
+      runtime: address.runtime,
+      running: false,
+      messages: [],
+      turns: [
+        {
+          id: 'interrupted-turn',
+          status: 'failed',
+          completedAt: 1_787_296_150_000,
+          items: [],
+        },
+      ],
+    })
+    const services = {
+      chatStream: {
+        subscribe: vi.fn((handlers: ChatStreamHandlers) => {
+          streamHandlers = handlers
+          return vi.fn()
+        }),
+      },
+      executorClient: {
+        runtime: {
+          listRuntimeWork,
+          getRuntimeTranscript,
+        },
+      },
+    } as unknown as WorkbenchServices
+
+    render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
+    await act(async () => {
+      streamHandlers.onRuntimeTransportReplaced?.({
+        previousRuntimeInstanceId: 'runtime-1',
+        runtimeInstanceId: 'runtime-2',
+      })
+    })
+
+    await waitFor(() => {
+      expect(getRuntimeTranscript).toHaveBeenCalledWith({
+        ...address,
+        limit: 50,
+        refresh: true,
+      })
+    })
+    await waitFor(() => {
+      expect(getRuntimeConversationQueuedMessages(address)).toEqual([
+        expect.objectContaining({
+          id: 'queued-follow-up',
+          status: 'queued',
+          awaitingTurnStart: undefined,
+        }),
+      ])
+    })
+    expect(store.getTask(address)?.derived.isRunning).toBe(false)
   })
 
   test('settles a matching turn without projecting executor execution as idle', async () => {

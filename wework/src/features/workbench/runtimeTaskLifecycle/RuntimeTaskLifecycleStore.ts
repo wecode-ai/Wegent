@@ -31,6 +31,7 @@ const EMPTY_STORE_SNAPSHOT: RuntimeTaskLifecycleStoreSnapshot = {
 const RUNTIME_TASK_LIFECYCLE_READ_METHODS = new Set<PropertyKey>([
   'subscribe',
   'getSnapshot',
+  'getCurrentTask',
   'getTask',
   'selectTask',
 ])
@@ -62,6 +63,11 @@ export class RuntimeTaskLifecycleStore {
   }
 
   getSnapshot = (): RuntimeTaskLifecycleStoreSnapshot => this.snapshot
+
+  getCurrentTask(): RuntimeTaskLifecycleSnapshot | null {
+    if (!this.currentTaskKey) return null
+    return this.snapshot.tasks.get(this.currentTaskKey) ?? null
+  }
 
   getTask(address: RuntimeTaskAddress | null | undefined): RuntimeTaskLifecycleSnapshot | null {
     if (!address) return null
