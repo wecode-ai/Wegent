@@ -3354,7 +3354,13 @@ mod tests {
             .as_object()
             .expect("input schema properties");
 
-        for name in ["provider", "opaque_ref", "space_id", "item_id", "workflow_node_id"] {
+        for name in [
+            "provider",
+            "opaque_ref",
+            "space_id",
+            "item_id",
+            "workflow_node_id",
+        ] {
             assert!(
                 properties.contains_key(name),
                 "missing input schema property {name}"
