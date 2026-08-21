@@ -2282,6 +2282,28 @@ fn current_codex_model_provider_reads_configured_provider_name() {
 }
 
 #[test]
+fn current_codex_model_provider_prefers_explicit_user_provider() {
+    let provider = current_codex_model_provider(
+        &json!({
+            "config": {
+                "model_provider": "openai",
+                "model_providers": {
+                    "wework-e2e": {
+                        "name": "Wework Desktop E2E"
+                    }
+                }
+            }
+        }),
+        "wework-e2e",
+    );
+
+    assert_eq!(provider.id, "wework-e2e");
+    assert_eq!(provider.display_name, "Wework Desktop E2E");
+    assert_eq!(provider.kind, "provider");
+    assert!(provider.current);
+}
+
+#[test]
 fn current_codex_model_provider_defaults_to_official() {
     let provider = current_codex_model_provider_from_config(&json!({"config": {}}));
 

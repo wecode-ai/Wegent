@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   AlertTriangle,
   Box,
@@ -6,16 +6,13 @@ import {
   Circle,
   ExternalLink,
   Play,
-  Plus,
+  RefreshCw,
   Square,
   Trash2,
   Upload,
 } from 'lucide-react'
-import {
-  harnessAppsApi,
-  type HarnessAppInstallation,
-  type HarnessAppPreview,
-} from '@/api/local/harnessApps'
+import type { SmartAppMarketplaceItem, SmartAppsApi } from '@/api/smartApps'
+import { harnessAppsApi, type HarnessAppInstallation } from '@/api/local/harnessApps'
 import { SmartAppsSectionNav } from '@/components/smart-apps/SmartAppsSectionNav'
 import { listLocalHarnessModelOptions } from '@/features/local-harness/localHarnessModels'
 import {
@@ -30,7 +27,6 @@ import {
   beginHarnessAppLaunch,
   clearHarnessAppLaunch,
 } from '@/features/harness-apps/harnessAppLaunchState'
-import { HarnessAppInstallDialog } from '@/features/harness-apps/HarnessAppInstallDialog'
 import { Button } from '@/components/ui/button'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
@@ -39,10 +35,10 @@ import { getErrorMessage } from '@/lib/error-message'
 import { navigateTo } from '@/lib/navigation'
 
 interface HarnessAppsPageProps {
-  importRequested?: boolean
+  smartAppsApi?: SmartAppsApi | null
 }
 
-export function HarnessAppsPage({ importRequested = false }: HarnessAppsPageProps) {
+export function HarnessAppsPage({ smartAppsApi = null }: HarnessAppsPageProps) {
   const { t } = useTranslation('common')
   const { projectChat, services } = useWorkbench()
   const workspaceTabs = useWorkspaceTabs()
@@ -51,14 +47,18 @@ export function HarnessAppsPage({ importRequested = false }: HarnessAppsPageProp
     [projectChat.models]
   )
   const [items, setItems] = useState<HarnessAppInstallation[]>([])
-  const [preview, setPreview] = useState<HarnessAppPreview | null>(null)
-  const [modelKey, setModelKey] = useState('')
+  const [marketItems, setMarketItems] = useState<SmartAppMarketplaceItem[]>([])
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const importHandled = useRef(false)
-  const installModelKey = modelKey || modelOptions[0]?.key || ''
 
-  const refresh = async () => setItems(await harnessAppsApi.list())
+  const refresh = async () => {
+    const [nextItems, marketplace] = await Promise.all([
+      harnessAppsApi.list(),
+      smartAppsApi?.listMarketplace().catch(() => ({ items: [] })) ?? { items: [] },
+    ])
+    setItems(nextItems)
+    setMarketItems(marketplace.items)
+  }
 
   function closeAppTabs(installationId: string) {
     const route = harnessAppRoute(installationId)
@@ -78,14 +78,17 @@ export function HarnessAppsPage({ importRequested = false }: HarnessAppsPageProp
 
   useEffect(() => {
     let active = true
-    void harnessAppsApi
-      .list()
-      .then(installations => {
+    void Promise.all([
+      harnessAppsApi.list(),
+      smartAppsApi?.listMarketplace().catch(() => ({ items: [] })) ?? { items: [] },
+    ])
+      .then(([installations, marketplace]) => {
         if (!active) return
         installations
           .filter(installation => installation.state === 'running' && installation.webUrl)
           .forEach(installation => registerHarnessAppTab(installation))
         setItems(installations)
+        setMarketItems(marketplace.items)
       })
       .catch(loadError => {
         if (active) {
@@ -95,64 +98,7 @@ export function HarnessAppsPage({ importRequested = false }: HarnessAppsPageProp
     return () => {
       active = false
     }
-  }, [t])
-
-  const previewPackage = useCallback(
-    async (path: string) => {
-      setError(null)
-      setPreview(null)
-      try {
-        setPreview(await harnessAppsApi.preview(path))
-      } catch (previewError) {
-        setError(getErrorMessage(previewError, t('workbench.harness_apps_preview_failed')))
-      }
-    },
-    [t]
-  )
-
-  const choosePackage = useCallback(async () => {
-    const { open } = await import('@tauri-apps/plugin-dialog')
-    const path = await open({
-      multiple: false,
-      directory: false,
-      filters: [
-        { name: t('workbench.smart_apps_package', '智能工作台安装包'), extensions: ['zip'] },
-      ],
-    })
-    if (typeof path !== 'string') return
-    await previewPackage(path)
-  }, [previewPackage, t])
-
-  useEffect(() => {
-    if (!importRequested || importHandled.current) return
-    importHandled.current = true
-    navigateTo('/sites?app_type=smart_app&view=installed')
-    void choosePackage()
-  }, [choosePackage, importRequested])
-
-  async function dropPackage(event: DragEvent<HTMLElement>) {
-    event.preventDefault()
-    const uri = event.dataTransfer.getData('text/uri-list').split(/\r?\n/)[0]?.trim()
-    if (!uri) return
-    const path = decodeURIComponent(new URL(uri).pathname)
-    await previewPackage(path)
-  }
-
-  async function install() {
-    if (!preview?.valid || !preview.manifest || !installModelKey) return
-    setBusy('install')
-    setError(null)
-    try {
-      await harnessAppsApi.install(preview, installModelKey)
-      setPreview(null)
-      setModelKey('')
-      await refresh()
-    } catch (installError) {
-      setError(getErrorMessage(installError, t('workbench.harness_apps_install_failed')))
-    } finally {
-      setBusy(null)
-    }
-  }
+  }, [smartAppsApi, t])
 
   function start(item: HarnessAppInstallation) {
     if (!hasSelectedModel(item)) {
@@ -167,7 +113,7 @@ export function HarnessAppsPage({ importRequested = false }: HarnessAppsPageProp
     return modelOptions.some(option => option.key === item.modelKey)
   }
 
-  async function stop(item: HarnessAppInstallation) {
+  async function stop(item: HarnessAppInstallation): Promise<boolean> {
     setBusy(item.id)
     try {
       await harnessAppsApi.stop(item.id)
@@ -179,8 +125,53 @@ export function HarnessAppsPage({ importRequested = false }: HarnessAppsPageProp
       const contextToken = await takeHarnessAppContextToken(item.id)
       if (contextToken) await services.localHarnessModelApi?.unregisterContext(contextToken)
       await refresh()
+      return true
     } catch (stopError) {
       setError(getErrorMessage(stopError, t('workbench.harness_apps_stop_failed')))
+      return false
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  function availableUpdate(item: HarnessAppInstallation): SmartAppMarketplaceItem | null {
+    if (!item.smartAppId) return null
+    const marketplace = marketItems.find(candidate => candidate.id === item.smartAppId)
+    if (!marketplace || marketplace.latestReleaseId === item.releaseId) return null
+    return marketplace
+  }
+
+  async function updateFromMarketplace(
+    item: HarnessAppInstallation,
+    marketplace: SmartAppMarketplaceItem
+  ) {
+    if (!smartAppsApi || !item.modelKey) return
+    if (
+      item.state === 'running' &&
+      (!window.confirm(
+        t('workbench.smart_apps_update_stop_confirm', '更新需要先停止正在运行的应用，是否继续？')
+      ) ||
+        !(await stop(item)))
+    ) {
+      return
+    }
+    setBusy(item.id)
+    setError(null)
+    try {
+      const descriptor = await smartAppsApi.getDownload(marketplace.id)
+      const nextPreview = await harnessAppsApi.download(descriptor)
+      await harnessAppsApi.install(nextPreview, item.modelKey, {
+        smartAppId: marketplace.id,
+        releaseId: marketplace.latestReleaseId,
+      })
+      await refresh()
+    } catch (updateError) {
+      setError(
+        getErrorMessage(
+          updateError,
+          t('workbench.smart_apps_update_failed', '更新失败，原版本已保留。')
+        )
+      )
     } finally {
       setBusy(null)
     }
@@ -256,14 +247,6 @@ export function HarnessAppsPage({ importRequested = false }: HarnessAppsPageProp
             )}
           </p>
         </div>
-        <Button
-          size="sm"
-          data-testid="harness-app-import-button"
-          onClick={() => void choosePackage()}
-        >
-          <Plus className="h-4 w-4" />
-          {t('workbench.harness_apps_import', '导入安装包')}
-        </Button>
       </header>
 
       {error ? (
@@ -275,12 +258,7 @@ export function HarnessAppsPage({ importRequested = false }: HarnessAppsPageProp
         </div>
       ) : null}
 
-      <section
-        data-testid="harness-app-drop-zone"
-        className="mt-5 min-h-0"
-        onDragOver={event => event.preventDefault()}
-        onDrop={event => void dropPackage(event)}
-      >
+      <section data-testid="harness-app-list" className="mt-5 min-h-0">
         {items.length === 0 ? (
           <div
             data-testid="harness-app-empty"
@@ -295,22 +273,9 @@ export function HarnessAppsPage({ importRequested = false }: HarnessAppsPageProp
             <p className="mt-2 max-w-[420px] text-sm leading-6 text-text-muted">
               {t(
                 'workbench.harness_apps_empty_hint',
-                '导入智能工作台安装包，安装后可以从这里启动，并在独立标签页中使用。'
+                '从市场安装工作台，或前往“我的创建”导入本地 ZIP 工作台。'
               )}
             </p>
-            <Button
-              size="sm"
-              variant="outline"
-              data-testid="harness-app-empty-select-package"
-              className="mt-5 rounded-lg"
-              onClick={() => void choosePackage()}
-            >
-              <Upload className="h-4 w-4" />
-              {t('workbench.harness_apps_select_package', '选择安装包')}
-            </Button>
-            <span className="mt-3 text-xs text-text-muted">
-              {t('workbench.harness_apps_drop_hint', '也可以将 ZIP 安装包拖到这里')}
-            </span>
           </div>
         ) : (
           <div className="grid gap-3">
@@ -383,6 +348,34 @@ export function HarnessAppsPage({ importRequested = false }: HarnessAppsPageProp
                     ) : null}
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      data-testid={`harness-app-publish-${item.id}`}
+                      className="h-11 gap-1 rounded-lg px-2.5 sm:h-9"
+                      disabled={!smartAppsApi || busy === item.id}
+                      onClick={() =>
+                        navigateTo(
+                          `/sites?app_type=smart_app&view=owned&action=publish&installationId=${encodeURIComponent(item.id)}`
+                        )
+                      }
+                    >
+                      <Upload className="h-4 w-4" />
+                      {t('workbench.smart_apps_publish', '发布')}
+                    </Button>
+                    {availableUpdate(item) ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        data-testid={`harness-app-update-${item.id}`}
+                        className="h-11 gap-1 rounded-lg px-3 sm:h-9"
+                        disabled={busy === item.id}
+                        onClick={() => void updateFromMarketplace(item, availableUpdate(item)!)}
+                      >
+                        <RefreshCw className="h-4 w-4" />
+                        {t('workbench.smart_apps_update', '更新')}
+                      </Button>
+                    ) : null}
                     {item.state === 'running' ? (
                       <>
                         <Button
@@ -434,30 +427,9 @@ export function HarnessAppsPage({ importRequested = false }: HarnessAppsPageProp
                 </div>
               </article>
             ))}
-            <div className="rounded-xl border border-dashed border-border/35 px-4 py-3 text-center text-xs text-text-muted">
-              {t('workbench.harness_apps_drop_hint', '也可以将 ZIP 安装包拖到这里')}
-            </div>
           </div>
         )}
       </section>
-      {preview ? (
-        <HarnessAppInstallDialog
-          busy={busy === 'install'}
-          error={error}
-          modelKey={installModelKey}
-          modelOptions={modelOptions}
-          preview={preview}
-          onCancel={() => {
-            if (busy !== 'install') {
-              setPreview(null)
-              setError(null)
-            }
-          }}
-          onChooseAnother={() => void choosePackage()}
-          onInstall={() => void install()}
-          onModelChange={setModelKey}
-        />
-      ) : null}
     </section>
   )
 }

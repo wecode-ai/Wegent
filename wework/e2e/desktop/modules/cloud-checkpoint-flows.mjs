@@ -167,6 +167,10 @@ async function createCloudProjectFixture(control, workspacePath) {
 }
 
 async function verifyCloudProjectCreationSources(control, workspacePath) {
+  await control.command('waitFor', '[data-testid="projects-create-button"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+
   const homePath = join(resultDir, 'cloud-executor-home')
 
   const createProjectAndSnapshotMenus = async sourceTestId => {

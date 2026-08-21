@@ -215,6 +215,7 @@ class RealCloudEnvironment {
       ATTACHMENT_S3_USE_SSL: 'false',
       PLUGIN_PUBLISH_ENABLED: 'true',
     }
+    this.backendEnv = backendEnv
     await runChecked('uv', ['run', 'alembic', 'upgrade', 'head'], {
       cwd: join(repoDir, 'backend'),
       env: backendEnv,
@@ -247,6 +248,14 @@ class RealCloudEnvironment {
     assert.ok(this.authToken, 'Real cloud backend did not return an authentication token')
     await this.seedCloudProtocolModels()
     await this.seedCloudVisionSidecarModels()
+  }
+
+  async publishOfficialSmartApp(sourcePath) {
+    assert.ok(this.backendEnv, 'Cloud backend environment is not initialized')
+    await runChecked('uv', ['run', 'python', 'scripts/publish_official_smart_app.py', sourcePath], {
+      cwd: join(repoDir, 'backend'),
+      env: this.backendEnv,
+    })
   }
 
   async seedPluginAutoUpdateFixtures(count = 6) {
