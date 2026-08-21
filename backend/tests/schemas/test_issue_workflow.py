@@ -293,11 +293,13 @@ def test_wait_rule_provider_is_optional_and_normalized() -> None:
                                 "provider": "",
                                 "event_type": "my_event",
                                 "action": "rerun",
+                                "rerun_prompt": "Retry the custom event",
                             },
                             {
                                 "id": "legacy",
                                 "event_type": "ci_failed",
                                 "action": "rerun",
+                                "rerun_prompt": "Fix the pipeline",
                             },
                         ]
                     },
@@ -309,6 +311,64 @@ def test_wait_rule_provider_is_optional_and_normalized() -> None:
     assert rules[0].provider == "gitlab"
     assert rules[1].provider is None
     assert rules[2].provider is None
+
+
+def test_rerun_rule_requires_non_blank_prompt() -> None:
+    with pytest.raises(ValidationError, match="non-empty repair prompt"):
+        ProjectWorkflowDefinition.model_validate(
+            {
+                "version": 1,
+                "stage_mode": "dag",
+                "nodes": [
+                    {
+                        "id": "wait",
+                        "name": "Wait",
+                        "node_type": "wait",
+                        "depends_on": [],
+                        "wait_config": {
+                            "rules": [
+                                {
+                                    "id": "ci",
+                                    "event_type": "ci_failed",
+                                    "action": "rerun",
+                                    "rerun_prompt": "   ",
+                                },
+                            ]
+                        },
+                    },
+                ],
+            }
+        )
+
+
+def test_root_wait_node_instantiates_waiting() -> None:
+    definition = ProjectWorkflowDefinition.model_validate(
+        {
+            "version": 1,
+            "stage_mode": "dag",
+            "nodes": [
+                {
+                    "id": "wait",
+                    "name": "Wait",
+                    "node_type": "wait",
+                    "depends_on": [],
+                    "wait_config": {
+                        "rules": [
+                            {
+                                "id": "merged",
+                                "event_type": "merged",
+                                "action": "complete",
+                            },
+                        ]
+                    },
+                },
+            ],
+        }
+    )
+
+    workflow = instantiate_workflow(definition)
+
+    assert [node.status for node in workflow.nodes] == ["waiting"]
 
 
 def test_wait_rule_ignores_legacy_mode_keys() -> None:
@@ -333,6 +393,7 @@ def test_wait_rule_ignores_legacy_mode_keys() -> None:
                                 "event_type": "ci_failed",
                                 "mode": "debounce",
                                 "action": "rerun",
+                                "rerun_prompt": "Fix the pipeline",
                             },
                         ]
                     },
@@ -401,6 +462,7 @@ def test_require_rerun_agent_rejects_rerun_rule_without_robot() -> None:
                                 "id": "ci",
                                 "event_type": "ci_failed",
                                 "action": "rerun",
+                                "rerun_prompt": "Fix the pipeline",
                             },
                         ]
                     },
@@ -429,6 +491,7 @@ def test_require_rerun_agent_accepts_rerun_rule_with_robot() -> None:
                                 "id": "ci",
                                 "event_type": "ci_failed",
                                 "action": "rerun",
+                                "rerun_prompt": "Fix the pipeline",
                             },
                         ],
                     },

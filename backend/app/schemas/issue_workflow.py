@@ -4,7 +4,7 @@
 """Validated project orchestration definitions and per-Issue snapshots."""
 
 from datetime import datetime
-from typing import Literal
+from typing import Literal, Sequence
 
 from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
 
@@ -110,6 +110,12 @@ class WaitEventRule(BaseModel):
         normalized = value.strip()
         return normalized or None
 
+    @model_validator(mode="after")
+    def validate_prompt_driven_rule(self) -> "WaitEventRule":
+        if self.action in {"rerun", "continue"} and not self.prompt.strip():
+            raise ValueError(f"{self.action} rules require a non-empty repair prompt")
+        return self
+
 
 class WaitNodeConfig(BaseModel):
     rules: list[WaitEventRule] = Field(
@@ -166,7 +172,9 @@ class WorkflowNodeDefinition(BaseModel):
         return self
 
 
-def strip_structural_nodes(nodes: list) -> list:
+def strip_structural_nodes(
+    nodes: Sequence[dict[str, object] | WorkflowNodeDefinition],
+) -> list[dict[str, object]]:
     """Drop legacy start/end sentinels so stored data matches the current model.
 
     Old definitions and snapshots may still carry ``start``/``end`` marker
@@ -193,7 +201,7 @@ def strip_structural_nodes(nodes: list) -> list:
         if node_type(node) in {"start", "end"} and node_id(node)
     }
     if not structural:
-        return nodes
+        return [node if isinstance(node, dict) else node.model_dump() for node in nodes]
     cleaned = [
         node if isinstance(node, dict) else node.model_dump()
         for node in nodes
@@ -420,7 +428,11 @@ def instantiate_workflow(
     nodes = [
         WorkflowNodeInstance(
             **node.model_dump(),
-            status="ready" if node.id in roots else "blocked",
+            status=(
+                "waiting"
+                if node.id in roots and node.node_type == "wait"
+                else ("ready" if node.id in roots else "blocked")
+            ),
         )
         for node in (definition.nodes if definition.stage_mode == "dag" else [])
     ]
