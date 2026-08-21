@@ -114,4 +114,31 @@ describe('HarnessAppAutoLauncher', () => {
     await waitFor(() => expect(mocks.register).toHaveBeenCalledWith(running))
     expect(mocks.start).not.toHaveBeenCalled()
   })
+
+  test('starts an installation only once across concurrent mounts', async () => {
+    let resolveInstallations: ((value: (typeof installation)[]) => void) | undefined
+    mocks.list.mockImplementation(
+      () =>
+        new Promise(resolve => {
+          resolveInstallations = resolve
+        })
+    )
+    const running = {
+      ...installation,
+      state: 'running',
+      webUrl: 'http://127.0.0.1:4173',
+    }
+    mocks.start.mockResolvedValue(running)
+
+    render(
+      <>
+        <HarnessAppAutoLauncher installationId="app-1" />
+        <HarnessAppAutoLauncher installationId="app-1" />
+      </>
+    )
+
+    expect(mocks.list).toHaveBeenCalledTimes(1)
+    resolveInstallations?.([installation])
+    await waitFor(() => expect(mocks.start).toHaveBeenCalledTimes(1))
+  })
 })

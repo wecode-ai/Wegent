@@ -433,6 +433,9 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       })
       await captureScreenshot(control, 'harness-apps-11-direct-add-opened.png', 'body')
       await control.command('click', '[data-testid="workspace-tab-add"]')
+      await control.command('waitFor', '[data-testid="workspace-tab-add-smart-app"]', {
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('click', '[data-testid="workspace-tab-add-smart-app"]')
       await control.command('waitFor', `[data-testid="harness-app-stop-${INSTALLATION_ID}"]`, {
         timeoutMs: uiTimeoutMs,

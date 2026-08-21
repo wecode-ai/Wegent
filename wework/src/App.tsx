@@ -611,26 +611,30 @@ function AppShell() {
   const fixedWorkspaceTabs = useMemo(
     () =>
       isMainWindow && appPreferences?.loaded
-        ? appPreferences.preferences.fixedWorkspaceTabs
-            .filter(
-              preference =>
-                preference.kind !== 'smart_app' ||
-                appPreferences.preferences.experimentalFeaturesEnabled
-            )
-            .map(preference => {
-              if (preference.kind === 'smart_app') {
-                return createWorkspaceTab('auxiliary', workspaceTabLabels, {
+        ? appPreferences.preferences.fixedWorkspaceTabs.flatMap(preference => {
+            if (preference.kind === 'smart_app') {
+              if (
+                !appPreferences.preferences.experimentalFeaturesEnabled ||
+                !preference.installationId
+              ) {
+                return []
+              }
+              return [
+                createWorkspaceTab('auxiliary', workspaceTabLabels, {
                   id: preference.id,
                   title: preference.title ?? t('workbench.smart_apps_title', '智能工作台'),
-                  contentRoute: harnessAppRoute(preference.installationId ?? ''),
+                  contentRoute: harnessAppRoute(preference.installationId),
                   fixed: true,
-                })
-              }
-              return createWorkspaceTab(preference.kind, workspaceTabLabels, {
+                }),
+              ]
+            }
+            return [
+              createWorkspaceTab(preference.kind, workspaceTabLabels, {
                 id: preference.id,
                 fixed: true,
-              })
-            })
+              }),
+            ]
+          })
         : [],
     [appPreferences, isMainWindow, t, workspaceTabLabels]
   )

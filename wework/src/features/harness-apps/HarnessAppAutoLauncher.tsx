@@ -33,6 +33,7 @@ export function HarnessAppAutoLauncher({ installationId }: { installationId: str
     if (!services.localHarnessModelApi || launchingIds.has(installationId)) return
     let cancelled = false
     const retry = () => setAttempt(current => current + 1)
+    launchingIds.add(installationId)
 
     void harnessAppsApi
       .list()
@@ -56,7 +57,6 @@ export function HarnessAppAutoLauncher({ installationId }: { installationId: str
           return
         }
 
-        launchingIds.add(installationId)
         beginHarnessAppLaunch(installationId, installation.manifest.displayName, retry)
         let proxyToken: string | null = null
         let contextToken: string | null = null
@@ -107,8 +107,6 @@ export function HarnessAppAutoLauncher({ installationId }: { installationId: str
               getErrorMessage(error, t('workbench.smart_apps_launch_failed', '智能工作台启动失败'))
             )
           }
-        } finally {
-          launchingIds.delete(installationId)
         }
       })
       .catch(error => {
@@ -123,6 +121,9 @@ export function HarnessAppAutoLauncher({ installationId }: { installationId: str
             getErrorMessage(error, t('workbench.smart_apps_load_failed', '智能工作台加载失败'))
           )
         }
+      })
+      .finally(() => {
+        launchingIds.delete(installationId)
       })
 
     return () => {

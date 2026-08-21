@@ -470,7 +470,7 @@ export function GeneralSettingsPage() {
                 {fixedWorkspaceTabs.map((tab, index) => {
                   const label =
                     tab.kind === 'smart_app'
-                      ? tab.title
+                      ? (tab.title ?? t('workbench.smart_apps_title', '智能工作台'))
                       : t(`workbench.general_settings_default_workspace_tab_${tab.kind}`)
                   return (
                     <div
