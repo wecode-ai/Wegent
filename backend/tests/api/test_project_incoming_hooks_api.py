@@ -83,9 +83,10 @@ def test_incoming_hook_buffers_unmatched_event_and_deduplicates(
     assert event.title == "MR !7 merged"
     assert event.metadata_json.get("event_type") == "merged"
     assert event.metadata_json.get("opaque_ref") == "acme/app!7"
-    from app.services.external_events.buffer import external_event_buffer
-
-    external_event_buffer.clear()
+    # The raw payload is stored once; the routing-only detail must not
+    # duplicate the same webhook body in the audit row.
+    assert "payload" in event.metadata_json
+    assert "detail" not in event.metadata_json
 
 
 def test_incoming_hook_url_uses_configured_public_base(
