@@ -2,6 +2,7 @@ import type { PullRequestAutoRepairStatus } from '@/api/deliveries'
 import type { ChangeRequest } from '@/types/environment'
 
 export type ChangeRequestVisualStatus =
+  | 'draft'
   | 'open'
   | 'checks_pending'
   | 'checks_passed'
@@ -34,6 +35,7 @@ export function changeRequestVisualStatus(changeRequest: ChangeRequest): ChangeR
   if (changeRequest.mergeQueue === 'conflicting') return 'merge_queue_conflicting'
   if (changeRequest.mergeability === 'conflicting') return 'merge_conflict'
   if (changeRequest.checks === 'failure') return 'checks_failed'
+  if (changeRequest.draft) return 'draft'
   if (changeRequest.mergeQueue === 'checking') return 'merge_queue_checking'
   if (changeRequest.mergeQueue === 'queued') return 'merge_queue_queued'
   if (changeRequest.mergeQueue === 'removed') return 'merge_queue_removed'

@@ -1221,6 +1221,7 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByTestId('cloud-todo-detail')).toBeInTheDocument()
     expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute('data-task-id', item.id)
     expect(screen.getByTestId('ai-chat-modal')).not.toHaveAttribute('data-runtime-task-id')
+    expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute('data-open', 'yes')
   })
 
   it('continues a task in the background after sending it from pending', async () => {
@@ -3528,7 +3529,7 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByTestId('my-work-group-action-runtime-standalone')).toBeVisible()
   })
 
-  it('aggregates bound Issues into My Tasks and batch archives completed tasks', async () => {
+  it('shows only current system Issues in My Tasks and batch archives completed tasks', async () => {
     const defaultProject = {
       ...project,
       id: 'default-work-items',
@@ -3539,11 +3540,13 @@ describe('CloudTodoWorkspace', () => {
     const workbenchServices = services()
     const stoppedIssue = {
       ...item,
+      cloud_project_id: defaultProject.id,
       title: 'Stopped task Issue',
       status: 'in_review' as const,
     }
     const completedIssue = {
       ...item,
+      cloud_project_id: defaultProject.id,
       id: 'WEG-2',
       sequence_number: 2,
       title: 'Completed task Issue',
@@ -3552,6 +3555,7 @@ describe('CloudTodoWorkspace', () => {
     }
     const archivedIssue = {
       ...item,
+      cloud_project_id: defaultProject.id,
       id: 'WEG-3',
       sequence_number: 3,
       title: 'Archived task Issue',
@@ -3560,6 +3564,7 @@ describe('CloudTodoWorkspace', () => {
     }
     const noResponseIssue = {
       ...item,
+      cloud_project_id: defaultProject.id,
       id: 'WEG-4',
       sequence_number: 4,
       title: 'Stopped without final response',
@@ -3568,36 +3573,8 @@ describe('CloudTodoWorkspace', () => {
     vi.mocked(workbenchServices.deliveryApi!.listCloudProjects).mockResolvedValue({
       items: [defaultProject, project],
     })
-    vi.mocked(workbenchServices.deliveryApi!.listMyWork).mockResolvedValue({
-      items: [
-        {
-          ...stoppedIssue,
-          project_key: project.project_key,
-          project_name: project.name,
-          has_active_task: false,
-        },
-        {
-          ...completedIssue,
-          project_key: project.project_key,
-          project_name: project.name,
-          has_active_task: false,
-        },
-        {
-          ...archivedIssue,
-          project_key: project.project_key,
-          project_name: project.name,
-          has_active_task: false,
-        },
-        {
-          ...noResponseIssue,
-          project_key: project.project_key,
-          project_name: project.name,
-          has_active_task: false,
-        },
-      ],
-    })
     workbenchServices.deliveryApi!.getBoardSnapshot = vi.fn(async () => ({
-      items: [],
+      items: [stoppedIssue, completedIssue, archivedIssue, noResponseIssue],
       task_bindings: [
         {
           id: 1,
@@ -3698,7 +3675,7 @@ describe('CloudTodoWorkspace', () => {
                       status: 'cancelled',
                       turnStatus: 'interrupted',
                       runtimeHandle: {
-                        cloudProjectId: project.id,
+                        cloudProjectId: defaultProject.id,
                         loopItemId: stoppedIssue.id,
                       },
                     },
@@ -3710,7 +3687,7 @@ describe('CloudTodoWorkspace', () => {
                       running: false,
                       completedAt: 1_700_000_000,
                       runtimeHandle: {
-                        cloudProjectId: project.id,
+                        cloudProjectId: defaultProject.id,
                         loopItemId: completedIssue.id,
                       },
                     },
@@ -3723,7 +3700,7 @@ describe('CloudTodoWorkspace', () => {
                       status: 'cancelled',
                       turnStatus: 'interrupted',
                       runtimeHandle: {
-                        cloudProjectId: project.id,
+                        cloudProjectId: defaultProject.id,
                         loopItemId: noResponseIssue.id,
                       },
                     },
@@ -3744,6 +3721,7 @@ describe('CloudTodoWorkspace', () => {
     )
 
     expect(await screen.findByTestId('cloud-local-project-filter')).toHaveValue('all')
+    expect(workbenchServices.deliveryApi!.listMyWork).not.toHaveBeenCalled()
     expect(await screen.findByTestId('cloud-todo-column-in_review')).toHaveTextContent(
       'Stopped task Issue'
     )

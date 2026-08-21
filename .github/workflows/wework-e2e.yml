@@ -47,6 +47,7 @@ jobs:
       wework_desktop_cloud_e2e_matrix: ${{ steps.classify.outputs.wework_desktop_cloud_e2e_matrix }}
       wework_desktop_other_e2e: ${{ steps.classify.outputs.wework_desktop_other_e2e }}
       wework_desktop_other_e2e_matrix: ${{ steps.classify.outputs.wework_desktop_other_e2e_matrix }}
+      wework_desktop_macos_inspector_e2e: ${{ steps.classify.outputs.wework_desktop_macos_inspector_e2e }}
 
     steps:
       - name: Checkout code
@@ -545,6 +546,7 @@ jobs:
       - wework-desktop-cloud-e2e
       - wework-desktop-core-e2e
       - wework-desktop-e2e
+      - wework-desktop-memory-e2e
     if: always()
     runs-on: ubuntu-latest
 
@@ -555,12 +557,14 @@ jobs:
           RUN_DESKTOP_CORE_E2E: ${{ github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.wework_desktop_core_e2e == 'true' && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')) }}
           RUN_DESKTOP_CLOUD_E2E: ${{ github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.wework_desktop_cloud_e2e == 'true' && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')) }}
           RUN_DESKTOP_OTHER_E2E: ${{ github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.wework_desktop_other_e2e == 'true' && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')) }}
+          RUN_MACOS_INSPECTOR_E2E: ${{ github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
           CHANGES_RESULT: ${{ needs.changes.result }}
           WEB_E2E_RESULT: ${{ needs.wework-e2e.result }}
           DESKTOP_CORE_BUILD_RESULT: ${{ needs.build-wework-desktop-core-e2e.result }}
           DESKTOP_CLOUD_E2E_RESULT: ${{ needs.wework-desktop-cloud-e2e.result }}
           DESKTOP_CORE_E2E_RESULT: ${{ needs.wework-desktop-core-e2e.result }}
           DESKTOP_OTHER_E2E_RESULT: ${{ needs.wework-desktop-e2e.result }}
+          MACOS_INSPECTOR_E2E_RESULT: ${{ needs.wework-desktop-memory-e2e.result }}
         run: |
           if [[ "$CHANGES_RESULT" != "success" ]]; then
             echo "Wework E2E change detection completed with: $CHANGES_RESULT"
@@ -602,12 +606,18 @@ jobs:
             exit 1
           fi
 
+          if [[ "$RUN_MACOS_INSPECTOR_E2E" == "true" && \
+            "$MACOS_INSPECTOR_E2E_RESULT" != "success" ]]; then
+            echo "Wework desktop macOS Inspector E2E completed with: $MACOS_INSPECTOR_E2E_RESULT"
+            exit 1
+          fi
+
   wework-desktop-memory-e2e:
     name: Wework Desktop Memory E2E
     needs: changes
-    if: github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (contains(github.event.pull_request.labels.*.name, 'ci:memory') || contains(github.event.pull_request.labels.*.name, 'ci:all'))))
+    if: github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:memory') || contains(github.event.pull_request.labels.*.name, 'ci:all'))))
     runs-on: macos-14
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       WEWORK_E2E_SKIP_TYPECHECK: "true"
 
@@ -673,11 +683,20 @@ jobs:
           echo "CODEX_BIN=$codex_bin" >> "$GITHUB_ENV"
 
       - name: Run Wework desktop memory E2E
+        if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:memory') || contains(github.event.pull_request.labels.*.name, 'ci:all')
         env:
           CI: true
         run: |
           test -x "$CODEX_BIN"
           pnpm --filter wework e2e:desktop:memory
+
+      - name: Run Wework desktop macOS Inspector E2E
+        if: github.event_name != 'pull_request' || needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all')
+        env:
+          CI: true
+        run: |
+          test -x "$CODEX_BIN"
+          pnpm --filter wework e2e:desktop -- --segment browser-toolbar-actions
 
       - name: Save shared Wework Cargo sources
         if: github.ref == 'refs/heads/main' && steps.wework-cargo-sources-cache.outputs.cache-hit != 'true'

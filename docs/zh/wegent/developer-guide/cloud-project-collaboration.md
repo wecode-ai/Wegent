@@ -363,6 +363,8 @@ sequenceDiagram
 
 `loop_item_task_bindings` 表达 TODO 与实际 Wework Task 的多对多历史关系。运行时 Task 使用 `task_user_id + device_id + task_id` 标识，因为本地执行 Task 不一定存在于 Backend `tasks` 表；`backend_task_id` 仅作为可选索引。解绑使用 `unlinked_at` 软删除，以保留执行来源审计。
 
+Wework 本地运行时把绑定区分为 `system` 和 `user`。每个运行任务必须保留一个指向 `default-work-items` 的 `system` 绑定；当前交互最多维护一个额外的 `user` 绑定，但存储模型允许后续扩展为多个。读取任务对应 Issue 时优先返回 `user`，没有用户绑定时返回 `system`。运行状态、标题和归档同步只写系统绑定；用户解绑只能软删除用户绑定，不能删除系统绑定。**我的任务** 看板只读取当前未归档运行任务对应的系统 Issue，不聚合其他项目空间的 Issue，也不展示已经离开任务列表的历史系统 Issue。
+
 ### Delivery
 
 `deliveries` 和 `delivery_assets` 保存不可变快照元数据。`Delivery.source_task_binding_id` 是可空外键：云端直接完成 TODO 时为空，本地任务交付时指向已经验证的 TODO/Task 关联。

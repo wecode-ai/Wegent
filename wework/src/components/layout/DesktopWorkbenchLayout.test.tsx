@@ -5273,10 +5273,9 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('projects-create-button'))
     await userEvent.click(screen.getByTestId('project-create-remote-option'))
     await userEvent.click(screen.getByTestId('remote-project-source-git'))
-    await userEvent.type(
-      screen.getByTestId('remote-project-git-url-input'),
-      'https://token@github.com/owner/repository.git'
-    )
+    fireEvent.change(screen.getByTestId('remote-project-git-url-input'), {
+      target: { value: 'https://token@github.com/owner/repository.git' },
+    })
     await userEvent.click(screen.getByTestId('remote-project-git-submit'))
 
     expect(await screen.findByTestId('remote-project-git-error')).toHaveTextContent(
@@ -5284,11 +5283,9 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(onCloneGitRepository).not.toHaveBeenCalled()
 
-    await userEvent.clear(screen.getByTestId('remote-project-git-url-input'))
-    await userEvent.type(
-      screen.getByTestId('remote-project-git-url-input'),
-      'https://user:password@github.com/owner/repository.git'
-    )
+    fireEvent.change(screen.getByTestId('remote-project-git-url-input'), {
+      target: { value: 'https://user:password@github.com/owner/repository.git' },
+    })
     await userEvent.click(screen.getByTestId('remote-project-git-submit'))
 
     expect(await screen.findByTestId('remote-project-git-error')).toHaveTextContent(

@@ -432,8 +432,8 @@ describe('EnvironmentInfoPopover', () => {
     expect(screen.getByTestId('change-request-title')).toHaveTextContent(
       'feat(wework): show pull request status'
     )
-    expect(screen.getByTestId('change-request-state')).toHaveTextContent('进行中')
-    expect(screen.getByTestId('change-request-checks')).toHaveTextContent('检查通过')
+    expect(screen.getByTestId('change-request-state')).toHaveTextContent('检查通过，等待合并')
+    expect(screen.getByTestId('change-request-checks')).toHaveTextContent('检查通过，等待合并')
     expect(
       screen.getByTestId('change-request-button').querySelector('[aria-hidden="true"]')
     ).toHaveClass('text-green-500')
@@ -477,8 +477,8 @@ describe('EnvironmentInfoPopover', () => {
 
     const button = screen.getByTestId('change-request-button')
     expect(button).toHaveClass('h-9')
-    expect(screen.getByTestId('change-request-conflict')).toHaveTextContent('存在冲突')
-    expect(button).toHaveAccessibleName(/存在冲突/)
+    expect(screen.getByTestId('change-request-conflict')).toHaveTextContent('存在合并冲突')
+    expect(button).toHaveAccessibleName(/存在合并冲突/)
     expect(button.querySelector('[aria-hidden="true"]')).toHaveClass('text-red-500')
   })
 
@@ -517,9 +517,9 @@ describe('EnvironmentInfoPopover', () => {
     )
 
     const button = screen.getByTestId('change-request-button')
-    expect(screen.getByTestId('change-request-merge-queue')).toHaveTextContent('合并队列中')
+    expect(screen.getByTestId('change-request-merge-queue')).toHaveTextContent('Merge Queue 排队中')
     expect(screen.queryByTestId('change-request-checks')).not.toBeInTheDocument()
-    expect(button).toHaveAccessibleName(/合并队列中/)
+    expect(button).toHaveAccessibleName(/Merge Queue 排队中/)
     expect(button).not.toHaveAccessibleName(/检查通过/)
     expect(button.querySelector('[aria-hidden="true"]')).not.toHaveClass('text-green-500')
   })

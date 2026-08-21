@@ -38,6 +38,8 @@ export interface HarnessAppInstallation {
   state: 'installed' | 'running' | 'failed'
   webUrl: string | null
   error: string | null
+  smartAppId?: number | null
+  releaseId?: number | null
 }
 
 export interface HarnessAppPreview {
@@ -48,18 +50,52 @@ export interface HarnessAppPreview {
   issues: string[]
 }
 
+export interface HarnessAppExport {
+  archivePath: string
+  sha256: string
+  sizeBytes: number
+  manifest: HarnessAppManifest
+}
+
 export const harnessAppsApi = {
   preview(archivePath: string) {
     return invoke<HarnessAppPreview>('preview_harness_app', { archivePath })
   },
+  download(input: {
+    downloadUrl: string
+    sha256: string
+    sizeBytes: number
+    smartAppId: number
+    releaseId: number
+  }) {
+    return invoke<HarnessAppPreview>('download_harness_app_package', {
+      downloadUrl: input.downloadUrl,
+      expectedSha256: input.sha256,
+      expectedSize: input.sizeBytes,
+      smartAppId: input.smartAppId,
+      releaseId: input.releaseId,
+    })
+  },
+  export(installationId: string) {
+    return invoke<HarnessAppExport>('export_harness_app_package', { installationId })
+  },
+  upload(archivePath: string, uploadUrl: string) {
+    return invoke<void>('upload_harness_app_package', { archivePath, uploadUrl })
+  },
   list() {
     return invoke<HarnessAppInstallation[]>('list_harness_apps')
   },
-  install(preview: HarnessAppPreview, modelKey: string | null) {
+  install(
+    preview: HarnessAppPreview,
+    modelKey: string | null,
+    source: { smartAppId: number; releaseId: number } | null = null
+  ) {
     return invoke<HarnessAppInstallation>('install_harness_app', {
       archivePath: preview.archivePath,
       expectedSha256: preview.sha256,
       modelKey,
+      smartAppId: source?.smartAppId ?? null,
+      releaseId: source?.releaseId ?? null,
     })
   },
   start(
